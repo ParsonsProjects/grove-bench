@@ -2,6 +2,8 @@
 // JSON-RPC on stdio like a real agent. FAKE_ACP_SCENARIO picks behaviour:
 //   default  - normal session with modes and a model config option
 //   auth     - session/new answers auth_required
+//   keyauth  - like Gemini CLI set to a retired sign-in: session/new is
+//              turned down until authenticate brings the key 'good-key'
 //   nohttp   - no HTTP MCP support
 // Prompt texts pick a turn: 'wait', 'titled-exec', 'env', 'unasked', 'unasked-read',
 // 'echo', 'mcp', 'mcp-call', 'self-mode', 'cost'; anything else runs the default turn.
@@ -17,6 +19,7 @@ let model = 'm1';
 let lastMcpServers = [];
 let busy = false;
 let spent = 0;
+let keySignedIn = false;
 
 function send(msg) {
   process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...msg }) + '\n');
@@ -187,10 +190,15 @@ async function handle(msg) {
         protocolVersion: 1,
         agentCapabilities: { loadSession: true, promptCapabilities: { image: true }, mcpCapabilities: { http: scenario !== 'nohttp' } },
         agentInfo: { name: 'fake', version: '1' },
-        authMethods: [],
+        authMethods: scenario === 'keyauth' ? [{ id: 'fake-api-key', name: 'API key' }] : [],
       });
+    case 'authenticate':
+      if (params?.methodId !== 'fake-api-key' || params?._meta?.['api-key'] !== 'good-key') return fail(-32000, 'Bad key');
+      keySignedIn = true;
+      return reply({});
     case 'session/new':
       if (scenario === 'auth') return fail(-32000, 'Authentication required');
+      if (scenario === 'keyauth' && !keySignedIn) return fail(-32000, 'This client is no longer supported');
       lastMcpServers = params.mcpServers ?? [];
       setTimeout(() => update('s1', { sessionUpdate: 'available_commands_update', availableCommands: [{ name: 'compress', description: 'Compress' }] }), 0);
       return reply({ sessionId: 's1', modes, configOptions: configOptions() });

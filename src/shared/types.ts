@@ -144,6 +144,16 @@ export interface AgentPrerequisiteStatus {
   errorMessage?: string;
   /** Adapter-provided message when not authenticated. */
   authErrorMessage?: string;
+  /** The agent's own words the last time it turned Grove down for sign-in. */
+  authMessage?: string;
+  /** The agent can be asked whether it is signed in (checkAgentSignIn). */
+  signInCheckable?: boolean;
+  /** When the agent isn't installed: the command that installs it, for the
+   *  user to copy and run (Grove never runs it). */
+  installCommand?: string;
+  /** Conversations run the installed program, so a saved key alone isn't
+   *  enough (ACP agents; Claude Code runs on the SDK's own copy). */
+  installRequired?: boolean;
   /** Present when the provider accepts an API key entered in the app. The
    *  key itself never reaches the renderer. */
   apiKey?: {
@@ -1120,6 +1130,9 @@ export interface GroveBenchAPI {
   setApiKey(adapterId: string, key: string): Promise<PrerequisiteStatus>;
   /** Remove an agent's saved API key. Resolves with the updated status. */
   clearApiKey(adapterId: string): Promise<PrerequisiteStatus>;
+  /** Start an agent briefly to find out whether it is signed in
+   *  (signInCheckable agents). Resolves with the updated status. */
+  checkAgentSignIn(adapterId: string): Promise<PrerequisiteStatus>;
   /** Tell main that startup session restore has finished. */
   notifyRestoreComplete(): void;
 
@@ -1770,6 +1783,7 @@ export const IPC = {
   PREREQUISITES_CHECK: 'prerequisites:check',
   PREREQUISITES_CACHED: 'prerequisites:cached',
   PREREQUISITES_GH: 'prerequisites:gh',
+  PREREQUISITES_CHECK_SIGN_IN: 'prerequisites:checkSignIn',
   CREDENTIALS_SET_API_KEY: 'credentials:setApiKey',
   CREDENTIALS_CLEAR_API_KEY: 'credentials:clearApiKey',
   /** Renderer → main: session restore finished; deferred background work may start. */

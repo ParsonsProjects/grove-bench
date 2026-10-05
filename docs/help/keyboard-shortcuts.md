@@ -33,7 +33,7 @@ Inside a Preview page, browser keys work as usual (`F5`, `F12`, `Alt+Left`). See
 
 | Shortcut | Action |
 |----------|--------|
-| `Alt+M` | Cycle the modes this agent offers (Claude Code: Ask / Plan / Edit / Auto / Read-safe; other agents: Ask / Edit / Read-safe) |
+| `Alt+M` | Cycle agent mode (Claude Code: Ask / Plan / Edit / Auto / Read-safe; other agents: Ask / Edit / Read-safe) |
 | `Alt+E` | Cycle effort level (Low / Medium / High / Extra / Max, as offered by the current model) |
 | `Alt+T` | Toggle thinking (On / Off; fixed levels on Haiku 4.5; not shown on models that always think) |
 

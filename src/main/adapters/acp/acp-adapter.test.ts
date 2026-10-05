@@ -10,9 +10,12 @@ vi.mock('../../logger.js', () => ({ logger: { warn: vi.fn(), info: vi.fn(), debu
 const savedKeys = vi.hoisted(() => new Map<string, string>());
 vi.mock('../../credentials.js', () => ({ getApiKey: (id: string) => savedKeys.get(id) ?? null }));
 const catalog = new Map<string, unknown[]>();
+const signIn = new Map<string, { signedIn: boolean; message?: string; checkedAt: number }>();
 vi.mock('../../app-state.js', () => ({
   loadModelCatalog: (id: string) => catalog.get(id) ?? null,
   saveModelCatalog: (id: string, models: unknown[]) => { catalog.set(id, models); },
+  loadAgentSignIn: (id: string) => signIn.get(id) ?? null,
+  saveAgentSignIn: (id: string, record: { signedIn: boolean; message?: string; checkedAt: number }) => { signIn.set(id, record); },
 }));
 
 const FIXTURE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fake-acp-agent.test-fixture.mjs');
@@ -31,6 +34,7 @@ function def(scenario = 'default'): AcpAgentDefinition {
 let cwd: string;
 beforeEach(() => {
   catalog.clear();
+  signIn.clear();
   savedKeys.clear();
   cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'acp-test-'));
 });
@@ -252,12 +256,41 @@ describe('AcpAdapter', () => {
     handle.close();
   });
 
-  it('says how to sign in when the agent needs it', async () => {
+  it('says how to sign in when the agent needs it, and remembers it is signed out', async () => {
     const adapter = new AcpAdapter(def('auth'));
     const handle = await adapter.start(config());
     const events: AdapterEvent[] = [];
     for await (const e of handle.events) events.push(e);
-    expect(events.find((e) => e.type === 'error')).toMatchObject({ message: expect.stringContaining('Run "fake" in a terminal') });
+    expect(events.find((e) => e.type === 'error')).toMatchObject({ auth: true, message: expect.stringContaining('Run "fake" in a terminal') });
+    expect(await adapter.checkPrerequisites()).toMatchObject({ available: true, authenticated: false, authMessage: 'Authentication required' });
+  });
+
+  it('passes on the agent\'s reason, and signs in with the saved key when the agent offers that', async () => {
+    const keyDef: AcpAgentDefinition = { ...def('keyauth'), apiKey: { envVar: 'FAKE_KEY_VAR', label: 'Fake key', helpUrl: 'https://example.com', authMethodId: 'fake-api-key' } };
+
+    const withoutKey = await new AcpAdapter(keyDef).start(config());
+    const failed: AdapterEvent[] = [];
+    for await (const e of withoutKey.events) failed.push(e);
+    expect(failed.find((e) => e.type === 'error')).toMatchObject({
+      auth: true,
+      message: expect.stringMatching(/^Fake Agent needs you to sign in: This client is no longer supported\. Run "fake".*or save a Fake key/),
+    });
+
+    savedKeys.set('fake-acp', 'good-key');
+    const adapter = new AcpAdapter(keyDef);
+    const handle = await adapter.start(config());
+    await until(handle, 'system_init');
+    expect(signIn.get('fake-acp')?.signedIn).toBe(true);
+    handle.close();
+  });
+
+  it('checks sign-in by opening a session it throws away', async () => {
+    expect(await new AcpAdapter(def()).checkSignIn!()).toEqual({ signedIn: true });
+    expect(await new AcpAdapter(def('auth')).checkSignIn!()).toEqual({ signedIn: false, message: 'Authentication required' });
+    expect(signIn.get('fake-acp')).toMatchObject({ signedIn: false });
+    expect((await new AcpAdapter({ ...def(), command: 'definitely-not-an-acp-agent-xyz' }).checkSignIn!()).signedIn).toBeNull();
+    // Agents without a CLI sign-in aren't started just to check.
+    expect(new AcpAdapter({ ...def(), cliSignIn: undefined }).checkSignIn).toBeUndefined();
   });
 
   it('reports a program that does not start', async () => {

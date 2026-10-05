@@ -1561,7 +1561,8 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         authenticated: envMethod !== null,
         ...(envMethod ? { authMethod: envMethod } : {}),
         errorMessage: 'Claude Code CLI not found',
-        installInstructions: 'Install Claude Code: https://code.claude.com/docs/en/setup',
+        // The native installer for PowerShell (code.claude.com/docs/en/setup).
+        installCommand: 'irm https://claude.ai/install.ps1 | iex',
       };
     }
 

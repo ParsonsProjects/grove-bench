@@ -25,7 +25,7 @@ import { app } from 'electron';
 import { execa, type ResultPromise } from 'execa';
 import type {
   AdapterConfig, AdapterEvent, AdapterPrerequisiteStatus, AgentAdapter, AgentCapabilities, AgentQueryHandle,
-  ApiKeyDescriptor, CliSignInDescriptor, ModelInfo, PermissionResponse, UserMessage,
+  ApiKeyDescriptor, CliSignInDescriptor, ModelInfo, PermissionResponse, SignInCheck, UserMessage,
 } from '../types.js';
 import type { AgentStage, ControlDescriptor, ControlOption, PermissionMode, ImageMediaType } from '../../../shared/types.js';
 import { CONTROL_IDS } from '../../../shared/types.js';
@@ -33,7 +33,7 @@ import { checkToolRules, cleanEnv, isPathInside } from '../../agent-utils.js';
 import { getApiKey } from '../../credentials.js';
 import { logger } from '../../logger.js';
 import { isReadOnlyToolCall } from '../../read-only-tools.js';
-import { loadModelCatalog, saveModelCatalog } from '../../app-state.js';
+import { loadAgentSignIn, loadModelCatalog, saveAgentSignIn, saveModelCatalog } from '../../app-state.js';
 import { memoryServer, previewServer, type GroveServer } from '../grove-tools.js';
 import { startGroveMcpHttp, type GroveMcpHttp } from '../grove-mcp-http.js';
 import { stdioBridgeLaunch } from '../mcp-bridge/launch.js';
@@ -70,8 +70,9 @@ export interface AcpAgentDefinition {
   spawnEnv?(env: Readonly<Record<string, string>>, info: { savedKey: boolean }): Record<string, string>;
   /** How the user signs in with the agent's own CLI, when it has one. */
   cliSignIn?: CliSignInDescriptor;
-  /** Shown when the program isn't found. */
-  installInstructions?: string;
+  /** The command that installs the program, shown with a copy button when
+   *  it isn't found. */
+  installCommand?: string;
   /** 'alpha' to keep it out of the agent picker until the user turns it on. */
   stage?: AgentStage;
 }
@@ -211,6 +212,36 @@ async function initializeAgent(rpc: JsonRpcConnection, displayName: string): Pro
   return init;
 }
 
+function isAuthRequired(e: unknown): e is JsonRpcError {
+  return e instanceof JsonRpcError && e.code === RPC_ERRORS.authRequired;
+}
+
+/**
+ * Run a session request (new, resume, load), and when the agent turns it
+ * down for sign-in, sign in once with the key saved in Grove, if the agent
+ * offers the key's sign-in method (Gemini CLI's 'gemini-api-key'), and try
+ * again. The key also reaches the agent in its environment variable, which
+ * is enough unless the agent was set to sign in some other way.
+ */
+async function withKeySignIn<T>(rpc: JsonRpcConnection, def: AcpAgentDefinition, init: AcpInitializeResponse | null, request: () => Promise<T>): Promise<T> {
+  try {
+    return await request();
+  } catch (e) {
+    const methodId = def.apiKey?.authMethodId;
+    if (!isAuthRequired(e) || !methodId || !init?.authMethods?.some((m) => m?.id === methodId)) throw e;
+    const key = getApiKey(def.id);
+    if (!key) throw e;
+    await rpc.request('authenticate', { methodId, _meta: { 'api-key': key } });
+    return request();
+  }
+}
+
+/** Throw away a session a check opened, when the agent lets us. */
+async function closeSession(rpc: JsonRpcConnection, init: AcpInitializeResponse | null, sessionId: string): Promise<void> {
+  if (!init?.agentCapabilities?.sessionCapabilities?.close) return;
+  await rpc.request('session/close', { sessionId }).catch(() => {});
+}
+
 /** Ask the agent to switch a session's model the way it lists them. Returns
  *  the full config options when it answers with them. */
 async function requestModel(rpc: JsonRpcConnection, sessionId: string, models: AcpModelList, model: string): Promise<AcpConfigOption[] | undefined> {
@@ -262,9 +293,79 @@ export class AcpAdapter implements AgentAdapter {
     this.apiKey = def.apiKey;
     this.stage = def.stage;
     if (def.verifyApiKey) this.verifyApiKey = (key) => def.verifyApiKey!(key);
-    this.authErrorMessage = def.cliSignIn
-      ? `${def.displayName} needs you to sign in. Run "${def.cliSignIn.command}" in a terminal, sign in, then try again.`
-      : `${def.displayName} needs you to sign in. Sign in with its own command line tool, then try again.`;
+    this.authErrorMessage = this.signInHelp();
+    if (def.cliSignIn) this.checkSignIn = () => this.probeSignIn();
+  }
+
+  /** What to do about a sign-in refusal, after the agent's own reason. */
+  private signInHelp(reason?: string): string {
+    const { cliSignIn, apiKey } = this.def;
+    const lead = reason && !/^authentication required\.?$/i.test(reason.trim())
+      ? `${this.displayName} needs you to sign in: ${reason.trim().replace(/[.\s]*$/, '')}.`
+      : `${this.displayName} needs you to sign in.`;
+    const how = cliSignIn
+      ? `Run "${cliSignIn.command}" in a terminal and sign in${apiKey ? `, or save a ${apiKey.label} in Settings > Agents` : ''}, then try again.`
+      : apiKey ? `Save a ${apiKey.label} in Settings > Agents, or sign in with its own command line tool, then try again.`
+        : 'Sign in with its own command line tool, then try again.';
+    return `${lead} ${how}`;
+  }
+
+  /** The sign-in message for a refusal from the agent. */
+  authFailure(e: JsonRpcError): string {
+    return this.signInHelp(e.message);
+  }
+
+  /** Remember what a session start (or a check) found out about sign-in,
+   *  so the draft pane can ask before the next conversation fails. */
+  recordSignIn(signedIn: boolean, message?: string): void {
+    try {
+      saveAgentSignIn(this.id, { signedIn, ...(message ? { message } : {}), checkedAt: Date.now() });
+    } catch (e) {
+      logger.warn(`[${this.id}] could not save sign-in state:`, e);
+    }
+  }
+
+  /**
+   * Start the agent in an empty folder and open a session, which is where
+   * agents check sign-in, then throw both away. Signed in when the session
+   * opens; turned down (with the agent's reason) on auth_required; null when
+   * something else went wrong. Only agents that sign in through their own
+   * CLI get it (Gemini CLI, Copilot CLI): for others a session can cost
+   * something (OpenCode names each new session with a model request).
+   */
+  readonly checkSignIn?: () => Promise<SignInCheck>;
+
+  private async probeSignIn(): Promise<SignInCheck> {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'grove-signin-'));
+    const proc = spawnAgent(this.def, dir);
+    let stderr = '';
+    collectStderr(proc, (tail) => { stderr = tail; });
+    const rpc = new JsonRpcConnection(proc.stdout!, proc.stdin!, {
+      onRequest: async (method) => { throw new JsonRpcError(RPC_ERRORS.methodNotFound, `Not supported: ${method}`); },
+      onNotification: () => {},
+    });
+    try {
+      const init = await initializeAgent(rpc, this.displayName);
+      const setup = await withTimeout(
+        withKeySignIn(rpc, this.def, init, () => rpc.request<AcpSessionSetup>('session/new', { cwd: dir, mcpServers: [] })),
+        STARTUP_TIMEOUT_MS, `${this.displayName} sign-in check`,
+      );
+      if (setup?.sessionId) await closeSession(rpc, init, setup.sessionId);
+      this.recordSignIn(true);
+      return { signedIn: true };
+    } catch (e) {
+      if (isAuthRequired(e)) {
+        this.recordSignIn(false, e.message);
+        return { signedIn: false, message: e.message };
+      }
+      const message = e instanceof Error ? e.message : String(e);
+      logger.warn(`[${this.id}] sign-in check failed: ${message}${stderr.trim() ? `\n${stderr.trim().slice(-400)}` : ''}`);
+      return { signedIn: null, message };
+    } finally {
+      rpc.close();
+      if (proc.exitCode === null) proc.kill();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   }
 
   // ─── What the agent offers (learned from its sessions) ───
@@ -335,12 +436,13 @@ export class AcpAdapter implements AgentAdapter {
     // A full path is checked directly: where.exe takes a name or
     // path:pattern, not a path.
     if (path.isAbsolute(this.def.command)) {
-      if (fs.existsSync(this.def.command)) return { available: true, path: this.def.command, authenticated: true, authUnchecked: true };
+      if (fs.existsSync(this.def.command)) return { available: true, path: this.def.command, installRequired: true, ...this.knownSignIn() };
       return {
         available: false,
+        installRequired: true,
         authenticated: false,
         errorMessage: `${this.displayName} not found at ${this.def.command}`,
-        ...(this.def.installInstructions ? { installInstructions: this.def.installInstructions } : {}),
+        ...(this.def.installCommand ? { installCommand: this.def.installCommand } : {}),
       };
     }
     const lookup = process.platform === 'win32' ? 'where.exe' : 'which';
@@ -349,18 +451,33 @@ export class AcpAdapter implements AgentAdapter {
       const found = exitCode === 0 ? String(stdout).trim().split(/\r?\n/)[0] : '';
       if (found) {
         // Signing in happens in the agent's own CLI and is only reported when
-        // a session starts (an auth_required error), so it can't be checked here.
-        return { available: true, path: found, authenticated: true, authUnchecked: true };
+        // a session starts (an auth_required error), so it isn't checked here:
+        // the answer is what the last start (or Check sign-in) found.
+        return { available: true, path: found, installRequired: true, ...this.knownSignIn() };
       }
     } catch {
       // fall through
     }
     return {
       available: false,
+      installRequired: true,
       authenticated: false,
       errorMessage: `${this.displayName} not found (looked for "${this.def.command}")`,
-      ...(this.def.installInstructions ? { installInstructions: this.def.installInstructions } : {}),
+      ...(this.def.installCommand ? { installCommand: this.def.installCommand } : {}),
     };
+  }
+
+  /** Sign-in as last found out: turned down, or (not known to be otherwise)
+   *  assumed fine until a session says so. */
+  private knownSignIn(): Pick<AdapterPrerequisiteStatus, 'authenticated' | 'authUnchecked' | 'authMessage'> {
+    let known: ReturnType<typeof loadAgentSignIn> = null;
+    try {
+      known = loadAgentSignIn(this.id);
+    } catch {
+      // unknown
+    }
+    if (known && !known.signedIn) return { authenticated: false, ...(known.message ? { authMessage: known.message } : {}) };
+    return { authenticated: true, authUnchecked: true };
   }
 
   // ─── One-shot text (commit messages, branch names, memory notes) ───
@@ -393,8 +510,11 @@ export class AcpAdapter implements AgentAdapter {
     };
     options?.abortSignal?.addEventListener('abort', abort, { once: true });
     try {
-      await initializeAgent(rpc, this.displayName);
-      const setup = await withTimeout(rpc.request<AcpSessionSetup>('session/new', { cwd, mcpServers: [] }), STARTUP_TIMEOUT_MS, `${this.displayName} session start`);
+      const init = await initializeAgent(rpc, this.displayName);
+      const setup = await withTimeout(
+        withKeySignIn(rpc, this.def, init, () => rpc.request<AcpSessionSetup>('session/new', { cwd, mcpServers: [] })),
+        STARTUP_TIMEOUT_MS, `${this.displayName} session start`,
+      );
       if (!setup?.sessionId) throw new Error(`${this.displayName} did not start a session`);
       sessionId = setup.sessionId;
       const models = modelList(setup.configOptions, setup.models);
@@ -585,14 +705,14 @@ class AcpQuery {
     if (resumeSessionId) {
       try {
         if (caps?.sessionCapabilities?.resume) {
-          this.takeSetup(await rpc.request<AcpSessionSetup>('session/resume', { sessionId: resumeSessionId, cwd, mcpServers }), false);
+          this.takeSetup(await this.signedIn(() => rpc.request<AcpSessionSetup>('session/resume', { sessionId: resumeSessionId, cwd, mcpServers })), false);
           this.sessionId = resumeSessionId;
           return;
         }
         if (caps?.loadSession) {
           this.replaying = true;
           try {
-            this.takeSetup(await rpc.request<AcpSessionSetup>('session/load', { sessionId: resumeSessionId, cwd, mcpServers }), false);
+            this.takeSetup(await this.signedIn(() => rpc.request<AcpSessionSetup>('session/load', { sessionId: resumeSessionId, cwd, mcpServers })), false);
           } finally {
             this.replaying = false;
           }
@@ -601,16 +721,24 @@ class AcpQuery {
         }
         this.emit({ type: 'status', level: 'warning', message: `${this.def.displayName} can't reopen earlier conversations, so it starts a new one. The thread above stays, but the agent won't remember it.` });
       } catch (e) {
-        if (e instanceof JsonRpcError && e.code === RPC_ERRORS.authRequired) throw e;
+        if (isAuthRequired(e)) throw e;
         logger.warn(`[${this.def.id}] resume failed:`, e);
         this.emit({ type: 'status', level: 'warning', message: `${this.def.displayName} couldn't reopen this conversation, so it starts a new one. The thread above stays, but the agent won't remember it.` });
       }
     }
-    const setup = await rpc.request<AcpSessionSetup>('session/new', { cwd, mcpServers });
+    const setup = await this.signedIn(() => rpc.request<AcpSessionSetup>('session/new', { cwd, mcpServers }));
     if (!setup?.sessionId) throw new Error(`${this.def.displayName} did not start a session`);
     this.sessionId = setup.sessionId;
     this.takeSetup(setup, true);
     this.pendingInstructions = this.instructions();
+  }
+
+  /** A session request, signing in with the saved key if the agent asks.
+   *  An answer means the agent is signed in, which the adapter remembers. */
+  private async signedIn<T>(request: () => Promise<T>): Promise<T> {
+    const result = await withKeySignIn(this.rpc!, this.def, this.init, request);
+    this.adapter.recordSignIn(true);
+    return result;
   }
 
   private instructions(): string | null {
@@ -647,9 +775,15 @@ class AcpQuery {
 
   private fail(e: unknown): void {
     if (this.closing) return;
-    const auth = e instanceof JsonRpcError && e.code === RPC_ERRORS.authRequired;
-    const message = auth ? this.adapter.authErrorMessage
-      : `${e instanceof Error ? e.message : String(e)}${this.stderrTail.trim() ? `\n${this.stderrTail.trim().slice(-800)}` : ''}`;
+    if (isAuthRequired(e)) {
+      this.adapter.recordSignIn(false, e.message);
+      const message = this.adapter.authFailure(e);
+      logger.error(`[${this.def.id}] ${message}`);
+      this.events.push({ type: 'error', message, auth: true });
+      void this.shutdown();
+      return;
+    }
+    const message = `${e instanceof Error ? e.message : String(e)}${this.stderrTail.trim() ? `\n${this.stderrTail.trim().slice(-800)}` : ''}`;
     logger.error(`[${this.def.id}] ${message}`);
     this.events.push({ type: 'error', message });
     void this.shutdown();
@@ -705,6 +839,8 @@ class AcpQuery {
     this.resetTurn();
     let stopReason: AcpStopReason | null = null;
     let error: string | null = null;
+    /** The error was already shown, as an error the UI offers a fix for. */
+    let shown = false;
     try {
       const res = await this.rpc!.request<AcpPromptResponse>('session/prompt', {
         sessionId: this.sessionId,
@@ -717,8 +853,15 @@ class AcpQuery {
       if (typeof out === 'number' && out > 0) this.emit({ type: 'usage', inputTokens: this.contextUsed, outputTokens: out });
     } catch (e) {
       if (this.closing) return;
-      error = e instanceof JsonRpcError && e.code === RPC_ERRORS.authRequired ? this.adapter.authErrorMessage
-        : e instanceof Error ? e.message : String(e);
+      if (isAuthRequired(e)) {
+        // Signed out mid-conversation: say so where the UI offers a fix.
+        this.adapter.recordSignIn(false, e.message);
+        error = this.adapter.authFailure(e);
+        this.emit({ type: 'error', message: error, auth: true });
+        shown = true;
+      } else {
+        error = e instanceof Error ? e.message : String(e);
+      }
     }
     this.flushText();
     this.finishOpenTools(stopReason === 'cancelled' ? 'Cancelled' : error ? 'The turn ended with an error' : '');
@@ -732,7 +875,7 @@ class AcpQuery {
       type: 'result',
       subtype: stopReason === 'max_turn_requests' ? 'error_max_turns' : failed ? 'error_during_execution' : 'success',
       isError: failed,
-      ...(reason ? { errors: [reason] } : {}),
+      ...(reason && !shown ? { errors: [reason] } : {}),
       durationMs: Date.now() - started,
       numTurns: this.turns,
       ...(this.contextSize ? { contextWindow: this.contextSize } : {}),

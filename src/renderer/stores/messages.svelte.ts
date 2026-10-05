@@ -1460,10 +1460,11 @@ class MessageStore {
           text: event.message,
           ...(event.auth ? { auth: true } : {}),
         });
-        // Main has flagged a refused key: re-check so a new conversation asks
-        // for credentials instead of failing the same way. Live only, not when
-        // an old failure is replayed.
-        if (event.keyRejected && this.sideEffects && this._replayBuffer === null) void prerequisitesStore.refresh();
+        // Main has flagged a refused key, or the agent turned the sign-in
+        // down: re-check so a new conversation asks for credentials instead
+        // of failing the same way. Live only, not when an old failure is
+        // replayed.
+        if ((event.keyRejected || event.auth) && this.sideEffects && this._replayBuffer === null) void prerequisitesStore.refresh();
         // If the session never initialized (system_init never arrived),
         // unlock the input so the user can see the error and retry.
         if (!this.getIsReady(sessionId)) {

@@ -528,6 +528,33 @@ describe('SettingsPanel alpha agents', () => {
 describe('SettingsPanel agent groups', () => {
   const gemini: AgentSummary = { id: 'gemini', displayName: 'Gemini CLI', capabilities: {} };
 
+  it('say when an agent with its own sign-in is signed out, with the command and a real check', async () => {
+    agentsStore.list = [claude, gemini];
+    const signedOut = {
+      git: { available: true },
+      agents: { gemini: {
+        available: true, authenticated: false, authMessage: 'This client is no longer supported', signInCheckable: true,
+        cliSignIn: { accountLabel: 'Google account', cliName: 'Gemini CLI', command: 'gemini', setupUrl: 'https://example.com' },
+      } },
+    };
+    store.prerequisites = signedOut;
+    mockGroveBench.checkAgentSignIn.mockResolvedValue(signedOut);
+    try {
+      await openAgentSection();
+      await screen.findByRole('button', { name: 'Gemini CLI default model' });
+      await fireEvent.click(fold('Gemini CLI').querySelector('summary')!);
+      const group = fold('Gemini CLI');
+      expect(within(group).getByTestId('sign-in-state')).toHaveTextContent('Not signed in (Gemini CLI said: This client is no longer supported).');
+      expect(within(group).getByRole('group', { name: 'Sign-in command' })).toHaveTextContent('gemini');
+
+      await fireEvent.click(within(group).getByRole('button', { name: 'Check sign-in' }));
+      expect(mockGroveBench.checkAgentSignIn).toHaveBeenCalledWith('gemini');
+      expect(await within(group).findByRole('alert')).toHaveTextContent('Still not signed in.');
+    } finally {
+      store.prerequisites = null;
+    }
+  });
+
   /** The fold an agent's settings sit in. */
   function fold(name: string) {
     return screen.getByText(name, { selector: 'h4' }).closest('details')!;

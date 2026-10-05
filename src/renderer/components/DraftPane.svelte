@@ -14,6 +14,7 @@
   import { agentReady, gitReady } from '../../shared/prerequisites.js';
   import { controlHint } from '../lib/control-hint.js';
   import ApiKeyField from './ApiKeyField.svelte';
+  import CommandLine from './CommandLine.svelte';
   import GroveEmptyState from './GroveEmptyState.svelte';
   import GitIdentityNotice from './GitIdentityNotice.svelte';
   import GitNotice from './GitNotice.svelte';
@@ -40,6 +41,18 @@
     if (prerequisitesStore.checking) return 'checking';
     return 'missing';
   });
+
+  let signInError = $state('');
+  /** Start the agent briefly to see whether signing in worked. */
+  async function checkSignIn() {
+    signInError = '';
+    try {
+      await prerequisitesStore.checkSignIn(agentId);
+      if (store.prerequisites?.agents[agentId]?.authenticated === false) signInError = `${agentName} still isn't signed in.`;
+    } catch (e) {
+      signInError = e instanceof Error ? e.message : String(e);
+    }
+  }
 
   function retryAgents() {
     agentsTried = false;
@@ -206,16 +219,33 @@
       </div>
     {:else if credentials === 'missing'}
       {@const cli = agentStatus?.cliSignIn}
+      {@const installed = agentStatus?.available !== false}
+      {@const needsInstall = !installed && !!agentStatus?.installRequired}
+      {@const signedOut = installed && agentStatus?.authenticated === false && !agentStatus?.apiKey?.saved}
       <div class="relative z-10 w-full max-w-md flex flex-col gap-4 bg-background border border-border p-4">
         <p class="text-sm text-foreground">
-          {#if agentStatus?.apiKey?.saved && agentStatus.apiKey.rejected}
+          {#if needsInstall}
+            {agentName} isn't installed on this computer.
+          {:else if agentStatus?.apiKey?.saved && agentStatus.apiKey.rejected}
             {agentName} couldn't sign in with the saved API key.
+          {:else if signedOut}
+            {agentName} isn't signed in.
           {:else}
             Add credentials for {agentName} to start.
           {/if}
         </p>
+        {#if signedOut && agentStatus?.authMessage && !/^authentication required\.?$/i.test(agentStatus.authMessage.trim())}
+          <p class="text-xs text-muted-foreground -mt-2" data-testid="auth-message">{agentName} said: {agentStatus.authMessage}</p>
+        {/if}
         {#if cli && cli.cliName !== agentName}
           <p class="text-xs text-muted-foreground -mt-2">{agentName} runs on {cli.cliName}, so it signs in the same way.</p>
+        {/if}
+        {#if !installed && agentStatus?.installCommand}
+          <section class="flex flex-col gap-1.5" aria-label="Install {cli?.cliName ?? agentName}">
+            <p class="text-xs font-medium text-foreground">Install {cli?.cliName ?? agentName}</p>
+            <p class="text-xs text-muted-foreground">Copy this into a terminal (PowerShell) and run it, then click <span class="text-foreground">Re-check</span>.</p>
+            <CommandLine command={agentStatus.installCommand} label="Install command" />
+          </section>
         {/if}
         {#if cli}
           <!-- Two ways in, subscription first: most people have a plan, not
@@ -224,10 +254,11 @@
             <p class="text-xs font-medium text-foreground">
               Use your {cli.accountLabel}{#if cli.accountDetail}{' '}<span class="font-normal text-muted-foreground">({cli.accountDetail})</span>{/if}
             </p>
-            {#if agentStatus?.available}
+            {#if installed}
               <p class="text-xs text-muted-foreground">
-                Run <code class="text-foreground">{cli.command}</code> in a terminal and sign in when it asks. Then click <span class="text-foreground">Re-check</span>.
+                Run <code class="text-foreground">{cli.command}</code> in a terminal and sign in when it asks. Then click <span class="text-foreground">{agentStatus?.signInCheckable ? 'Check sign-in' : 'Re-check'}</span>.
               </p>
+              <CommandLine command={cli.command} label="Sign-in command" />
             {:else}
               <p class="text-xs text-muted-foreground">
                 Install {cli.cliName}, run <code class="text-foreground">{cli.command}</code> in a terminal and sign in when it asks. Then click <span class="text-foreground">Re-check</span>.
@@ -250,13 +281,20 @@
             {/key}
           </section>
         {/if}
-        {#if !cli && !agentStatus?.apiKey}
+        {#if !cli && !agentStatus?.apiKey && !agentStatus?.installCommand}
           <p class="text-sm text-muted-foreground">
             {agentStatus?.authErrorMessage ?? agentStatus?.errorMessage ?? 'Could not check the agent\'s credentials.'}
           </p>
         {/if}
-        <div class="flex justify-end">
-          <Button variant="secondary" size="sm" onclick={() => prerequisitesStore.refresh()}>Re-check</Button>
+        {#if signInError}
+          <p class="text-xs text-destructive" role="alert">{signInError}</p>
+        {/if}
+        <div class="flex justify-end gap-2">
+          {#if installed && agentStatus?.signInCheckable}
+            <Button variant="secondary" size="sm" onclick={checkSignIn}>Check sign-in</Button>
+          {:else}
+            <Button variant="secondary" size="sm" onclick={() => prerequisitesStore.refresh()}>Re-check</Button>
+          {/if}
         </div>
       </div>
     {:else if settingsStore.current.groveCharacters}

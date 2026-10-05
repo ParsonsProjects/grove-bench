@@ -15,12 +15,21 @@ If [git](https://git-scm.com/downloads) isn't installed, the first screen and ea
 
 The first time you start a conversation, it may ask for the agent's credentials. Claude Agent runs on Claude Code, so it signs in the same way. There are two ways in:
 
-- **Use your Claude plan** (Pro, Max, Team or Enterprise): install Claude Code (**How to install Claude Code** opens Anthropic's setup page), run `claude` in a terminal and sign in when it asks, then click **Re-check**. Grove Bench never sees your sign-in; the agent reads it itself.
+- **Use your Claude plan** (Pro, Max, Team or Enterprise): install Claude Code (copy the install command shown, or **How to install Claude Code** opens Anthropic's setup page), run `claude` in a terminal and sign in when it asks, then click **Re-check**. Grove Bench never sees your sign-in; the agent reads it itself.
 - **Or use an API key**: paste an Anthropic API key (**Get a key** opens the Claude Console) and click **Save key**. Grove Bench checks the key with Anthropic before saving it, so a mistyped key is turned away there and then. If Anthropic can't be reached, the key is saved anyway and your first message shows whether it works. API usage is billed per use by Anthropic, separately from any Claude plan. The key is stored encrypted on this computer, and while saved it is used instead of a plan sign-in. You can change or remove it later in **Settings → Agents (Grovekeepers)**.
 
 If you already set `ANTHROPIC_API_KEY`, just click **Re-check**.
 
 If a conversation can't sign in later (a key was revoked, or the plan sign-in expired), its thread says so with a link to **Settings → Agents (Grovekeepers)**, and new conversations ask for credentials again until you replace or remove the key.
+
+### Other agents
+
+Gemini CLI, GitHub Copilot CLI and OpenCode are separate programs. When one isn't installed, a new conversation shows the command that installs it with a copy button; run it in a terminal (Grove Bench never runs it for you), then click **Re-check**.
+
+- **GitHub Copilot CLI** signs in with your GitHub Copilot plan: copy `copilot login`, run it in a terminal, then click **Check sign-in**. That starts Copilot CLI for a moment to see whether it lets Grove Bench in.
+- **Gemini CLI** stopped working with personal Google accounts on 18 June 2026. A Gemini API key works (**Get a key** opens Google AI Studio; billed by Google through the Gemini API), as does a Gemini Code Assist Standard or Enterprise sign-in or Vertex AI set up in Gemini CLI itself. If Gemini CLI was set to sign in another way, saving a key switches it to the key, and Gemini CLI remembers that.
+
+When an agent turns the sign-in down, the thread shows its own reason, and new conversations with it ask you to sign in until a check or a conversation gets through.
 
 ## Adding a Project
 

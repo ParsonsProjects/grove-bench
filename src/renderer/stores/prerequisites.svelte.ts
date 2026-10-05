@@ -44,6 +44,18 @@ class PrerequisitesStore {
     }
   }
 
+  /** Start the agent briefly to find out whether it is signed in. */
+  async checkSignIn(adapterId: string): Promise<void> {
+    this.checking = true;
+    try {
+      this.apply(await window.groveBench.checkAgentSignIn(adapterId));
+    } catch (err) {
+      throw new Error(errorMessage(err));
+    } finally {
+      this.checking = false;
+    }
+  }
+
   async clearApiKey(adapterId: string): Promise<void> {
     try {
       this.apply(await window.groveBench.clearApiKey(adapterId));

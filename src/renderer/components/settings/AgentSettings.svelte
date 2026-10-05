@@ -4,6 +4,8 @@
   import { store } from '../../stores/sessions.svelte.js';
   import { agentsStore } from '../../stores/agents.svelte.js';
   import ApiKeyField from '../ApiKeyField.svelte';
+  import CommandLine from '../CommandLine.svelte';
+  import { prerequisitesStore } from '../../stores/prerequisites.svelte.js';
   import * as Select from '$lib/components/ui/select/index.js';
   import { Textarea } from '$lib/components/ui/textarea/index.js';
   import { defaultModelChoices, DEFAULT_MODEL_VALUE } from '$lib/model-choices.js';
@@ -36,6 +38,20 @@
     /** Offers the Show thinking summaries setting. */
     thinkingSummaries: boolean;
   }
+  /** Why the last Check sign-in didn't sign an agent in, by agent id. */
+  let signInErrors = $state<Record<string, string>>({});
+  async function checkSignIn(adapterId: string) {
+    signInErrors = { ...signInErrors, [adapterId]: '' };
+    try {
+      await prerequisitesStore.checkSignIn(adapterId);
+      if (store.prerequisites?.agents[adapterId]?.authenticated === false) {
+        signInErrors = { ...signInErrors, [adapterId]: 'Still not signed in.' };
+      }
+    } catch (e) {
+      signInErrors = { ...signInErrors, [adapterId]: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
   let agentGroups = $state<AgentGroup[]>([]);
   let agentGroupsLoading = $state(false);
   let agentGroupsRequest = 0;
@@ -173,22 +189,41 @@
 
     {#if agent.stage !== 'alpha' || settingsStore.isAlphaEnabled(agent.id)}
       <!-- Credentials: asked for when a conversation starts, changed here -->
-      {#if status?.apiKey}
+      {#if status && (status.apiKey || status.cliSignIn || status.installCommand)}
         <div data-setting="credentials" class="flex flex-col gap-2">
-          <p class="text-xs text-muted-foreground">
-            {#if status.apiKey.saved && status.apiKey.rejected}
+          {#if !status.available && status.installCommand}
+            <p class="text-xs text-muted-foreground">
+              {status.cliSignIn?.cliName ?? agent.displayName} isn't installed. Run this in a terminal (PowerShell), then come back:
+            </p>
+            <CommandLine command={status.installCommand} label="Install command" />
+          {/if}
+          <p class="text-xs text-muted-foreground" data-testid="sign-in-state">
+            {#if status.apiKey?.saved && status.apiKey.rejected}
               The saved API key was refused.
-            {:else if status.apiKey.saved}
+            {:else if status.apiKey?.saved}
               Using the saved API key.
+            {:else if status.available && status.authenticated === false && status.cliSignIn}
+              Not signed in{status.authMessage && !/^authentication required\.?$/i.test(status.authMessage.trim()) ? ` (${agent.displayName} said: ${status.authMessage.replace(/[.\s]*$/, '')})` : ''}.
             {:else if status.authUnchecked}
-              No key saved. {agent.displayName} uses its own sign-in if you set one up in a terminal; Grove Bench can only check that when a conversation starts.
+              {status.apiKey ? 'No key saved. ' : ''}{agent.displayName} uses its own sign-in if you set one up in a terminal. Grove Bench finds out when a conversation starts{status.signInCheckable ? ', or when you check here' : ''}.
             {:else if status.authenticated}
               Signed in{status.email ? ` as ${status.email}` : ''}{status.authMethod ? ` via ${status.authMethod}` : ''}.
             {:else}
-              No credentials found. Add a key, or sign in with the CLI in a terminal.
+              No credentials found. {status.apiKey ? 'Add a key, or sign in' : 'Sign in'} with the CLI in a terminal.
             {/if}
           </p>
-          <ApiKeyField adapterId={agent.id} />
+          {#if status.cliSignIn && status.available && !status.apiKey?.saved}
+            <div class="flex items-center gap-2">
+              <div class="flex-1 min-w-0"><CommandLine command={status.cliSignIn.command} label="Sign-in command" /></div>
+              {#if status.signInCheckable}
+                <Button variant="secondary" size="sm" disabled={prerequisitesStore.checking} onclick={() => checkSignIn(agent.id)}>Check sign-in</Button>
+              {/if}
+            </div>
+            {#if signInErrors[agent.id]}<p class="text-xs text-destructive" role="alert">{signInErrors[agent.id]}</p>{/if}
+          {/if}
+          {#if status.apiKey}
+            <ApiKeyField adapterId={agent.id} />
+          {/if}
         </div>
       {/if}
 

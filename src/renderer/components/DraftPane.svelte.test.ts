@@ -218,6 +218,53 @@ describe('DraftPane sign-in choices', () => {
   });
 });
 
+describe('DraftPane for agents that sign in with their own CLI', () => {
+  const gemini: AgentSummary = { id: 'gemini-cli', displayName: 'Gemini CLI', capabilities: {} };
+  const cliSignIn = { accountLabel: 'Google account', cliName: 'Gemini CLI', command: 'gemini', setupUrl: 'https://example.com/gemini' };
+  function withGemini(agent: Partial<AgentPrerequisiteStatus>): PrerequisiteStatus {
+    const s = status(true);
+    s.agents['gemini-cli'] = { available: true, installRequired: true, cliSignIn, signInCheckable: true, ...agent } as AgentPrerequisiteStatus;
+    return s;
+  }
+
+  beforeEach(() => {
+    agentsStore.list = [claude, gemini];
+  });
+
+  it('says it is signed out, in the agent\'s own words, with the command to copy and a real check', async () => {
+    const signedOut = withGemini({ authenticated: false, authMessage: 'This client is no longer supported' });
+    store.prerequisites = signedOut;
+    mockGroveBench.checkPrerequisites.mockResolvedValue(signedOut);
+    mockGroveBench.checkAgentSignIn.mockResolvedValue(signedOut);
+    draftStore.setAgent('gemini-cli');
+    render(DraftPane);
+
+    expect(await screen.findByText("Gemini CLI isn't signed in.")).toBeInTheDocument();
+    expect(screen.getByTestId('auth-message')).toHaveTextContent('Gemini CLI said: This client is no longer supported');
+    expect(screen.getByRole('group', { name: 'Sign-in command' })).toHaveTextContent('gemini');
+    expect(screen.getByRole('button', { name: 'Start' })).toBeDisabled();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Check sign-in' }));
+    expect(mockGroveBench.checkAgentSignIn).toHaveBeenCalledWith('gemini-cli');
+    expect(await screen.findByRole('alert')).toHaveTextContent("Gemini CLI still isn't signed in.");
+  });
+
+  it('asks for the program before a saved key counts, with its install command', async () => {
+    const missing = withGemini({
+      available: false, authenticated: false, installCommand: 'npm install -g @google/gemini-cli',
+      apiKey: { label: 'Gemini API key', helpUrl: 'https://example.com', saved: true, canStore: true },
+    });
+    store.prerequisites = missing;
+    mockGroveBench.checkPrerequisites.mockResolvedValue(missing);
+    draftStore.setAgent('gemini-cli');
+    render(DraftPane);
+
+    expect(await screen.findByText("Gemini CLI isn't installed on this computer.")).toBeInTheDocument();
+    expect(screen.getByRole('group', { name: 'Install command' })).toHaveTextContent('npm install -g @google/gemini-cli');
+    expect(screen.getByRole('button', { name: 'Start' })).toBeDisabled();
+  });
+});
+
 describe('DraftPane with no agent', () => {
   it('says so instead of waiting forever, and can try again', async () => {
     agentsStore.list = [];

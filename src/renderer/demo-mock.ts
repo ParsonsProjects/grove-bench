@@ -316,6 +316,7 @@ const api: Record<string, unknown> = {
     },
   }),
   checkGhPrerequisite: async () => ({ available: true, version: '2.65.0', authenticated: true }),
+  checkAgentSignIn: async () => ({ git: { available: true, version: '2.47.1', meetsMinimum: true }, agents: {} }),
   listRepos: async () => [],
   // Adding a project picks a folder without git.
   addRepo: async () => ({ kind: 'folder', path: 'C:\\Users\\sam\\notes' }),

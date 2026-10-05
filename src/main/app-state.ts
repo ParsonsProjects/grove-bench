@@ -16,6 +16,13 @@ export interface ModelCatalogCache {
   fetchedAt: number;
 }
 
+export interface AgentSignInRecord {
+  signedIn: boolean;
+  /** The agent's own words when it turned Grove down. */
+  message?: string;
+  checkedAt: number;
+}
+
 export interface SkillSuggestionCache {
   suggestions: SkillSuggestion[];
   /** Suggestion ids the user dismissed — never resurface these. */
@@ -51,6 +58,9 @@ export interface AppState {
   /** The plan usage each agent last reported, keyed by adapter id, so a new
    *  conversation (or the next launch) shows it before the agent connects. */
   usageSnapshots?: Record<string, ProviderUsage>;
+  /** Whether each agent that signs in through its own CLI was signed in the
+   *  last time Grove found out (a conversation starting, or Check sign-in). */
+  agentSignIn?: Record<string, AgentSignInRecord>;
   /** Projects the user added, in the order they were added. The manifest
    *  only knows projects that have conversations, so without this a project
    *  with none was forgotten at restart. Absent until first listed. */
@@ -133,6 +143,11 @@ const appStateSchema = z.object({
   modelCatalogs: z.record(z.string(), z.object({
     models: z.array(z.unknown()),
     fetchedAt: z.number(),
+  })).optional().catch(undefined),
+  agentSignIn: z.record(z.string(), z.object({
+    signedIn: z.boolean(),
+    message: z.string().optional(),
+    checkedAt: z.number(),
   })).optional().catch(undefined),
   usageSnapshots: z.record(z.string(), z.object({
     available: z.boolean(),
@@ -329,6 +344,21 @@ export function loadModelCatalog(adapterId: string): unknown[] | null {
 export function saveModelCatalog(adapterId: string, models: unknown[]): void {
   updateAppState((state) => {
     state.modelCatalogs = { ...(state.modelCatalogs ?? {}), [adapterId]: { models, fetchedAt: Date.now() } };
+  });
+}
+
+/** What Grove last learned about an agent's sign-in, or null. */
+export function loadAgentSignIn(adapterId: string): AgentSignInRecord | null {
+  return loadAppState().agentSignIn?.[adapterId] ?? null;
+}
+
+/** Write-through: only on a conversation start or a check, and only when the
+ *  answer changes. */
+export function saveAgentSignIn(adapterId: string, record: AgentSignInRecord): void {
+  const prev = loadAgentSignIn(adapterId);
+  if (prev && prev.signedIn === record.signedIn && prev.message === record.message) return;
+  updateAppState((state) => {
+    state.agentSignIn = { ...(state.agentSignIn ?? {}), [adapterId]: record };
   });
 }
 

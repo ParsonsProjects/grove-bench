@@ -273,6 +273,7 @@ const api: GroveBenchAPI = {
   checkPrerequisites: () => ipcRenderer.invoke(IPC.PREREQUISITES_CHECK),
   getCachedPrerequisites: () => ipcRenderer.invoke(IPC.PREREQUISITES_CACHED),
   checkGhPrerequisite: () => ipcRenderer.invoke(IPC.PREREQUISITES_GH),
+  checkAgentSignIn: (adapterId: string) => ipcRenderer.invoke(IPC.PREREQUISITES_CHECK_SIGN_IN, adapterId),
   setApiKey: (adapterId: string, key: string) => ipcRenderer.invoke(IPC.CREDENTIALS_SET_API_KEY, adapterId, key),
   clearApiKey: (adapterId: string) => ipcRenderer.invoke(IPC.CREDENTIALS_CLEAR_API_KEY, adapterId),
   notifyRestoreComplete: () => ipcRenderer.send(IPC.APP_RESTORE_COMPLETE),

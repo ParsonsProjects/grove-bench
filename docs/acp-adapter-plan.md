@@ -70,8 +70,15 @@ Code: `src/main/adapters/acp/`.
   each message to the HTTP server with the conversation's token
   (`adapters/mcp-bridge/`). electron-builder unpacks the script from
   app.asar, and `scripts/smoke-deps.mjs` checks the packaged app runs it.
-- **Sign-in**: done in the agent's own CLI. An `auth_required` error says
-  which command to run.
+- **Sign-in**: done in the agent's own CLI, or with an API key saved in
+  Grove. An `auth_required` error keeps the agent's own reason, says which
+  command to run, and is remembered (`agentSignIn` in app state) so the next
+  draft asks first. An agent with a CLI sign-in can be checked for real
+  (`checkSignIn`: a throwaway session in an empty folder). When a key is
+  saved and the agent offers the key's method (Gemini CLI's
+  `gemini-api-key`), Grove calls `authenticate` with it and tries again.
+- **Install**: Grove never installs anything. A missing agent shows its
+  install command with a copy button.
 - **Background tasks** (commit messages, branch names, memory notes) run as
   a one-off session with every tool request turned down.
 - **Custom agents**: Settings → Agent → Other Agents (ACP). Read at launch.

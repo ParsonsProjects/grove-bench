@@ -815,6 +815,18 @@ export function registerHandlers() {
     return loadPrerequisiteCache()?.status ?? null;
   });
 
+  // One agent's sign-in, checked for real (it starts the agent briefly),
+  // then the core check again so the answer shows everywhere.
+  ipcMain.handle(IPC.PREREQUISITES_CHECK_SIGN_IN, async (_event, adapterId: unknown): Promise<PrerequisiteStatus> => {
+    const adapter = typeof adapterId === 'string' ? adapterRegistry.get(adapterId) : undefined;
+    if (!adapter?.checkSignIn) throw new Error('This agent can\'t be asked whether it is signed in.');
+    await adapter.checkSignIn();
+    const core = await checkCorePrerequisites();
+    const status: PrerequisiteStatus = { ...core, gh: loadPrerequisiteCache()?.status.gh };
+    savePrerequisiteCache(status);
+    return status;
+  });
+
   ipcMain.handle(IPC.PREREQUISITES_GH, async () => {
     const gh = await checkGh();
     const cached = loadPrerequisiteCache();
