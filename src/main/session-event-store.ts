@@ -7,6 +7,7 @@ import { app } from 'electron';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { AgentEvent } from '../shared/types.js';
+import { freezeLog } from './freeze-log.js';
 import { logger } from './logger.js';
 import { SearchIndexCache, type EventSearchIndex, type EventSearchHit } from './event-search.js';
 import type { ManagedSession } from './session-types.js';
@@ -31,6 +32,9 @@ const SEARCH_INDEX_BUDGET = 128 * 1024 * 1024;
 export const getEventsDir = () => path.join(app.getPath('userData'), 'worktrees', 'events');
 
 export const eventLogPath = (id: string) => path.join(getEventsDir(), `${id}.jsonl`);
+
+/** A size for the freeze log, which names event-log reads and writes. */
+const kb = (bytes: number) => `${Math.round(bytes / 1024)} KB`;
 
 /** The parts of a live session the store reads and writes. */
 type LoggedSession = Pick<ManagedSession, 'id' | 'eventHistory' | 'eventLogPath' | 'logBuffer' | 'logBufferBytes' | 'logFlushTimer'>;
@@ -80,7 +84,7 @@ export class SessionEventStore {
     session.logBuffer = [];
     session.logBufferBytes = 0;
     try {
-      fs.appendFileSync(session.eventLogPath, data);
+      freezeLog.timeWork(`event log write, ${kb(data.length)}`, () => fs.appendFileSync(session.eventLogPath, data));
     } catch { /* non-fatal */ }
   }
 
@@ -93,7 +97,8 @@ export class SessionEventStore {
     session.logBufferBytes = 0;
     this.flush(session);
     try {
-      fs.writeFileSync(session.eventLogPath, events.length > 0 ? events.map((e) => JSON.stringify(e)).join('\n') + '\n' : '');
+      freezeLog.timeWork(`event log rewrite, ${events.length} events`, () =>
+        fs.writeFileSync(session.eventLogPath, events.length > 0 ? events.map((e) => JSON.stringify(e)).join('\n') + '\n' : ''));
     } catch { /* non-fatal */ }
   }
 
@@ -129,7 +134,7 @@ export class SessionEventStore {
       this.historyCache.set(id, cached);
       return cached.events;
     }
-    const events = this.readLog(id, logPath);
+    const events = this.readLog(id, logPath, stat.size);
     if (!events) return [];
     this.historyCache.delete(id);
     this.historyCache.set(id, { mtimeMs: stat.mtimeMs, size: stat.size, events });
@@ -143,7 +148,11 @@ export class SessionEventStore {
 
   /** Parse a JSONL event log, or null if it can't be read (so callers don't
    *  cache an empty history over a transient failure). */
-  private readLog(id: string, logPath: string): AgentEvent[] | null {
+  private readLog(id: string, logPath: string, size: number): AgentEvent[] | null {
+    return freezeLog.timeWork(`event log read, ${kb(size)}`, () => this.parseLog(id, logPath));
+  }
+
+  private parseLog(id: string, logPath: string): AgentEvent[] | null {
     try {
       const data = fs.readFileSync(logPath, 'utf-8');
       const events: AgentEvent[] = [];
@@ -178,7 +187,7 @@ export class SessionEventStore {
     return this.searchIndexes.snapshot(id, `${stat.mtimeMs}:${stat.size}`, () => {
       const cached = this.historyCache.get(id);
       if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) return cached.events;
-      return this.readLog(id, logPath);
+      return this.readLog(id, logPath, stat.size);
     });
   }
 

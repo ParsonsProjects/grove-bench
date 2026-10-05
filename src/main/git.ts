@@ -1,4 +1,4 @@
-import { execa } from 'execa';
+import { runProcess } from './process-host.js';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import type { BranchCommit, CommitEntry, GitOpResult, GitSyncStatus } from '../shared/types.js';
@@ -13,13 +13,13 @@ export interface GitOptions {
 }
 
 export async function git(args: string[], cwd: string, opts?: GitOptions): Promise<string> {
-  const result = await execa('git', args, opts?.timeout ? { cwd, timeout: opts.timeout } : { cwd });
+  const result = await runProcess('git', args, opts?.timeout ? { cwd, timeout: opts.timeout } : { cwd });
   return result.stdout;
 }
 
 /** Whether `git <args>` exits 0. For yes/no commands such as check-ignore. */
 async function gitSucceeds(args: string[], cwd: string): Promise<boolean> {
-  const result = await execa('git', args, { cwd, reject: false });
+  const result = await runProcess('git', args, { cwd, reject: false });
   return result.exitCode === 0;
 }
 
@@ -54,13 +54,13 @@ export async function excludeFromGit(cwd: string, relPaths: readonly string[]): 
 export async function gitEnv(
   args: string[], cwd: string, env: Record<string, string>
 ): Promise<string> {
-  const result = await execa('git', args, { cwd, env: { ...process.env, ...env } });
+  const result = await runProcess('git', args, { cwd, env: { ...process.env, ...env } });
   return result.stdout;
 }
 
 export async function gitVersion(): Promise<{ version: string; major: number; minor: number; patch: number } | null> {
   try {
-    const { stdout } = await execa('git', ['--version']);
+    const { stdout } = await runProcess('git', ['--version']);
     const match = stdout.match(/(\d+)\.(\d+)\.(\d+)/);
     if (!match) return null;
     return {
@@ -76,7 +76,7 @@ export async function gitVersion(): Promise<{ version: string; major: number; mi
 
 export async function isGitRepo(path: string): Promise<boolean> {
   try {
-    await execa('git', ['rev-parse', '--git-dir'], { cwd: path });
+    await runProcess('git', ['rev-parse', '--git-dir'], { cwd: path });
     return true;
   } catch {
     return false;
@@ -85,7 +85,7 @@ export async function isGitRepo(path: string): Promise<boolean> {
 
 export async function branchExists(cwd: string, branch: string): Promise<boolean> {
   try {
-    await execa('git', ['rev-parse', '--verify', branch], { cwd });
+    await runProcess('git', ['rev-parse', '--verify', branch], { cwd });
     return true;
   } catch {
     return false;
@@ -98,7 +98,7 @@ export async function branchExistsAnywhere(cwd: string, branch: string): Promise
   if (await branchExists(cwd, branch)) return true;
   // Check remote-tracking refs (e.g. origin/feat/API-1388)
   try {
-    const output = await execa('git', ['branch', '-r', '--format=%(refname:short)'], { cwd });
+    const output = await runProcess('git', ['branch', '-r', '--format=%(refname:short)'], { cwd });
     const remotes = output.stdout.split('\n').map(l => l.trim()).filter(Boolean);
     return remotes.some(ref => {
       // Strip remote name prefix (e.g. "origin/feat/foo" → "feat/foo")
@@ -165,7 +165,7 @@ export async function listBranches(cwd: string, opts: { fetch?: boolean } = {}):
 
 export async function validateBranchName(name: string): Promise<boolean> {
   try {
-    await execa('git', ['check-ref-format', '--branch', name]);
+    await runProcess('git', ['check-ref-format', '--branch', name]);
     return true;
   } catch {
     return false;
@@ -476,7 +476,7 @@ export async function indexFileContent(cwd: string, relPath: string): Promise<st
  *  "hashes unavailable this round". */
 export async function hashWorkingFiles(cwd: string, relPaths: string[]): Promise<string> {
   if (relPaths.length === 0) return '';
-  const result = await execa('git', ['hash-object', '--stdin-paths'], { cwd, input: relPaths.join('\n') + '\n' });
+  const result = await runProcess('git', ['hash-object', '--stdin-paths'], { cwd, input: relPaths.join('\n') + '\n' });
   return result.stdout;
 }
 

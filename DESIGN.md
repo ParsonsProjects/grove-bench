@@ -517,11 +517,13 @@ FitAddon.fit()     ──IPC──> pty.resize(cols,rows) (terminal resizes)
 
 We use `execa` to call the `git` CLI directly rather than `simple-git`. The reason: `simple-git` doesn't have native worktree methods, so every call would be `git.raw()` anyway. Direct `execa` calls are lighter, have fewer dependencies, and avoid native module rebuild issues.
 
+git and gh run from the **process host** (`process-host.ts`), an Electron utility process, not from the main process. Starting a process is synchronous: on Windows, execa's PATH search (cross-spawn stats every PATH folder for every PATHEXT extension) and CreateProcess together held the main process for tens of ms per call, and sometimes seconds, freezing the window. `runProcess()` takes execa's arguments and sends them to the host; before the app is ready, while the host starts, and after it has failed three times, it runs execa in the main process as before.
+
 ```typescript
-import { execa } from 'execa';
+import { runProcess } from './process-host.js';
 
 async function git(args: string[], cwd: string) {
-  const result = await execa('git', args, { cwd });
+  const result = await runProcess('git', args, { cwd });
   return result.stdout;
 }
 

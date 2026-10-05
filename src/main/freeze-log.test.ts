@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import type { IpcMain } from 'electron';
 import { ChildProcess, execFile } from 'node:child_process';
-import { createFreezeLog, launchLabel, sanitizeReport, startStallWatch, freezeLog, STALL_GAP_MS, TICK_MS } from './freeze-log.js';
+import { constants as perfConstants, PerformanceObserver } from 'node:perf_hooks';
+import { createFreezeLog, launchLabel, sanitizeReport, startStallWatch, freezeLog, GC_MIN_MS, STALL_GAP_MS, TICK_MS, type GcEntry } from './freeze-log.js';
 import { logger } from './logger.js';
 
 /** A freeze log on a clock the test moves by hand. */
@@ -154,6 +155,88 @@ describe('startStallWatch', () => {
     startStallWatch({ on: vi.fn() } as never);
     expect(start).toHaveBeenCalledOnce();
     start.mockRestore();
+  });
+
+  it('names garbage collections', () => {
+    const watchGc = vi.spyOn(freezeLog, 'watchGc').mockImplementation(() => {});
+    vi.useFakeTimers();
+    startStallWatch({ on: vi.fn() } as never);
+    expect(watchGc).toHaveBeenCalledOnce();
+    watchGc.mockRestore();
+  });
+});
+
+describe('timed work', () => {
+  it('names work timed during a stall, beside the IPC call it ran in', () => {
+    const { log, lines, advance } = setup();
+    const { ipc, invoke } = fakeIpc();
+    log.timeIpcHandlers(ipc);
+    ipc.handle('agent:history', () => log.timeWork('event log read, 2048 KB', () => { advance(300); return []; }));
+
+    advance(TICK_MS); log.tick();
+    expect(invoke('agent:history')).toEqual([]);
+    log.tick();
+
+    expect(lines).toEqual(["main process didn't run for 300 ms; IPC calls during it: agent:history (300 ms); other work: event log read, 2048 KB (300 ms)"]);
+  });
+
+  it('returns what the work returns, and records it even when it throws', () => {
+    const { log, lines, advance } = setup();
+    expect(log.timeWork('quick', () => 42)).toBe(42);
+    advance(TICK_MS); log.tick();
+    expect(() => log.timeWork('event log rewrite, 900 events', () => { advance(200); throw new Error('EBUSY'); })).toThrow('EBUSY');
+    log.tick();
+    expect(lines).toEqual(["main process didn't run for 200 ms; other work: event log rewrite, 900 events (200 ms)"]);
+  });
+});
+
+describe('garbage collection', () => {
+  /** A freeze log watching collections that the test reports by hand. */
+  function watched() {
+    const s = setup();
+    let report: (entry: GcEntry) => void = () => {};
+    s.log.watchGc((onEntry) => { report = onEntry; });
+    return { ...s, gc: (entry: GcEntry) => report(entry) };
+  }
+
+  it('writes a stall at the next tick, naming the collections Node reported meanwhile', () => {
+    const { log, lines, advance, gc } = watched();
+    advance(TICK_MS); log.tick();
+    const from = 1000 + TICK_MS;
+    advance(500); log.tick();
+    expect(lines).toEqual([]);
+
+    // Node reports a collection after the code it paused has finished.
+    gc({ startTime: from + 100, duration: 380, kind: perfConstants.NODE_PERFORMANCE_GC_MAJOR });
+    gc({ startTime: from + 20, duration: 12, kind: perfConstants.NODE_PERFORMANCE_GC_MINOR });
+    advance(TICK_MS); log.tick();
+
+    expect(lines).toEqual(["main process didn't run for 500 ms; garbage collection: major (380 ms), minor (12 ms)"]);
+  });
+
+  it('leaves out short collections and ones outside the stall', () => {
+    const { log, lines, advance, gc } = watched();
+    gc({ startTime: 900, duration: 200, kind: perfConstants.NODE_PERFORMANCE_GC_MAJOR }); // before it
+    advance(400); log.tick();
+    gc({ startTime: 1100, duration: GC_MIN_MS - 1, kind: perfConstants.NODE_PERFORMANCE_GC_MINOR });
+    gc({ startTime: 1200, duration: 50 });
+    advance(TICK_MS); log.tick();
+    expect(lines).toEqual(["main process didn't run for 400 ms; garbage collection: collection (50 ms)"]);
+  });
+
+  it('watches only once', () => {
+    const { log } = setup();
+    const observe = vi.fn();
+    log.watchGc(observe);
+    log.watchGc(observe);
+    expect(observe).toHaveBeenCalledOnce();
+  });
+
+  it("listens to Node's gc entries by default", () => {
+    const observe = vi.spyOn(PerformanceObserver.prototype, 'observe').mockImplementation(() => {});
+    createFreezeLog({ write: () => {} }).watchGc();
+    expect(observe).toHaveBeenCalledWith({ entryTypes: ['gc'] });
+    observe.mockRestore();
   });
 });
 

@@ -12,7 +12,13 @@
  *
  * Launching a process blocks the main process until the OS has created it,
  * which on Windows can take tens of milliseconds, so every launch is timed.
+ * (git and gh launch from the process host instead: process-host.ts.)
+ *
+ * A stall with nothing named used to be a mystery, so two more things are
+ * named: synchronous work the app marks with timeWork (reading an event log,
+ * execa's PATH search before a launch), and garbage collection pauses.
  */
+import { constants as perfConstants, PerformanceObserver } from 'node:perf_hooks';
 import type { IpcMain, PowerMonitor } from 'electron';
 import type { FreezeReport } from '../shared/types.js';
 import { logger } from './logger.js';
@@ -27,11 +33,15 @@ export const STALL_GAP_MS = 150;
 const SLEEP_GAP_MS = 30_000;
 /** At most this many freeze lines a minute, so a bad state can't flood the log. */
 const MAX_LINES_PER_MINUTE = 30;
-/** IPC calls and process launches remembered, to name the ones that ran
- *  during a stall. */
+/** IPC calls, process launches, timed work and collections remembered, to
+ *  name the ones that ran during a stall. */
 const RECENT = 32;
+/** Shorter collections are left out: a stall is 100 ms or more, and V8's
+ *  small young-generation collections run all the time. */
+export const GC_MIN_MS = 10;
 
-/** Something that ran on the main process: an IPC handler or a launch. */
+/** Something that ran on the main process: an IPC handler, a launch, a piece
+ *  of work timed with timeWork, or a garbage collection. */
 interface Activity {
   name: string;
   start: number;
@@ -39,6 +49,21 @@ interface Activity {
    *  reached its first await; a launch: until the OS created the process). */
   ms: number;
 }
+
+/** A garbage collection, as Node's performance timeline reports it. */
+export interface GcEntry {
+  startTime: number;
+  duration: number;
+  /** perf_hooks.constants.NODE_PERFORMANCE_GC_*, when Node says. */
+  kind?: number;
+}
+
+const GC_KINDS: Record<number, string> = {
+  [perfConstants.NODE_PERFORMANCE_GC_MAJOR]: 'major',
+  [perfConstants.NODE_PERFORMANCE_GC_MINOR]: 'minor',
+  [perfConstants.NODE_PERFORMANCE_GC_INCREMENTAL]: 'incremental',
+  [perfConstants.NODE_PERFORMANCE_GC_WEAKCB]: 'weak callbacks',
+};
 
 /** Totals since the last health line (see perf-health.ts). */
 export interface FreezeStats {
@@ -118,6 +143,13 @@ export function createFreezeLog({ now = () => performance.now(), write = writeFr
   let suspended = false;
   const ipcCalls: Activity[] = [];
   const launches: Activity[] = [];
+  const work: Activity[] = [];
+  const collections: Activity[] = [];
+  /** Set by watchGc. Node reports a collection only once the code it paused
+   *  has finished, after the tick that saw the stall, so with this on a stall
+   *  is written at the next tick. */
+  let gcWatched = false;
+  let pendingStall: { from: number; t: number; gap: number } | null = null;
   let stats = emptyStats();
   /** How late each tick ran since the last takeStats (about 12,000 for ten
    *  minutes); the health line's event-loop delay comes from these, so it
@@ -148,9 +180,31 @@ export function createFreezeLog({ now = () => performance.now(), write = writeFr
     write(line);
   }
 
+  /** Write a stall from `from` to `t`, naming what ran during it. */
+  function report(from: number, t: number, gap: number): void {
+    const during = (list: Activity[]) => list
+      .filter((c) => c.start >= from - 1 && c.start <= t)
+      .map((c) => `${c.name} (${Math.round(c.ms)} ms)`)
+      .join(', ');
+    const ipc = during(ipcCalls);
+    const launched = during(launches);
+    const other = during(work);
+    const gc = during(collections);
+    emit(`main process didn't run for ${Math.round(gap)} ms`
+      + (ipc ? `; IPC calls during it: ${ipc}` : '')
+      + (launched ? `; processes started: ${launched}` : '')
+      + (other ? `; other work: ${other}` : '')
+      + (gc ? `; garbage collection: ${gc}` : ''));
+  }
+
   /** Run TICK_MS apart. Logs a stall when this run comes late. */
   function tick(): void {
     const t = now();
+    if (pendingStall) {
+      const { from, t: end, gap } = pendingStall;
+      pendingStall = null;
+      report(from, end, gap);
+    }
     const gap = t - lastTick;
     lastTick = t;
     if (suspended || gap >= SLEEP_GAP_MS) return;
@@ -159,15 +213,36 @@ export function createFreezeLog({ now = () => performance.now(), write = writeFr
     stats.stalls++;
     stats.stallMs += gap;
     const from = t - gap;
-    const during = (list: Activity[]) => list
-      .filter((c) => c.start >= from - 1 && c.start <= t)
-      .map((c) => `${c.name} (${Math.round(c.ms)} ms)`)
-      .join(', ');
-    const ipc = during(ipcCalls);
-    const launched = during(launches);
-    emit(`main process didn't run for ${Math.round(gap)} ms`
-      + (ipc ? `; IPC calls during it: ${ipc}` : '')
-      + (launched ? `; processes started: ${launched}` : ''));
+    if (gcWatched) pendingStall = { from, t, gap };
+    else report(from, t, gap);
+  }
+
+  /** Run `fn` and remember how long it held the main process, so a stall
+   *  during it names it. For synchronous work: with an async `fn`, only the
+   *  part before its first await is timed. `name` must not carry a user's
+   *  text or paths (see launchLabel). */
+  function timeWork<T>(name: string, fn: () => T): T {
+    const start = now();
+    try {
+      return fn();
+    } finally {
+      remember(work, { name, start, ms: now() - start });
+    }
+  }
+
+  /** Remember a garbage collection, if it's long enough to matter. */
+  function noteGc(entry: GcEntry): void {
+    if (entry.duration < GC_MIN_MS) return;
+    const kind = entry.kind === undefined ? undefined : GC_KINDS[entry.kind];
+    remember(collections, { name: kind ?? 'collection', start: entry.startTime, ms: entry.duration });
+  }
+
+  /** Name garbage collections in stall lines from now on. `observe` hands
+   *  each collection to the callback (Node's PerformanceObserver by default). */
+  function watchGc(observe: (onEntry: (entry: GcEntry) => void) => void = observeGcEntries): void {
+    if (gcWatched) return;
+    gcWatched = true;
+    observe(noteGc);
   }
 
   /** Time every process launch from now on (all of them go through
@@ -223,6 +298,8 @@ export function createFreezeLog({ now = () => performance.now(), write = writeFr
     tick,
     timeIpcHandlers,
     timeProcessLaunches,
+    timeWork,
+    watchGc,
     logWindowFreeze,
     /** The totals since the last call, for the health line. */
     takeStats(): FreezeStats {
@@ -241,6 +318,18 @@ export function createFreezeLog({ now = () => performance.now(), write = writeFr
     suspend(): void { suspended = true; },
     resume(): void { suspended = false; lastTick = now(); },
   };
+}
+
+/** Hand every garbage collection Node reports to `onEntry`. */
+function observeGcEntries(onEntry: (entry: GcEntry) => void): void {
+  const observer = new PerformanceObserver((list) => {
+    for (const e of list.getEntries()) {
+      // A gc entry's detail holds its kind (Node 16+); the types don't say so.
+      const detail = (e as { detail?: { kind?: unknown } | null }).detail;
+      onEntry({ startTime: e.startTime, duration: e.duration, kind: typeof detail?.kind === 'number' ? detail.kind : undefined });
+    }
+  });
+  observer.observe({ entryTypes: ['gc'] });
 }
 
 /** A FreezeReport from the window, with every field checked, or null. */
@@ -270,6 +359,7 @@ export function startStallWatch(powerMonitor: Pick<PowerMonitor, 'on'>): void {
   // From now, not from when this file loaded: the wait for the app to be
   // ready isn't a freeze.
   freezeLog.start();
+  freezeLog.watchGc();
   const timer = setInterval(freezeLog.tick, TICK_MS);
   timer.unref?.();
   powerMonitor.on('suspend', freezeLog.suspend);

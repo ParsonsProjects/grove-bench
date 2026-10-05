@@ -125,3 +125,9 @@ export default {
 export const net = {
   fetch: vi.fn(async () => ({ ok: false, status: 0 })),
 };
+
+// The process host (process-host.ts). Tests never start it: commands run in
+// the test's own process, where execa mocks see them.
+export const utilityProcess = {
+  fork: vi.fn(),
+};

@@ -19,7 +19,8 @@ src/
     index.ts           # App entry point
     preload.ts         # Context bridge (IPC exposure)
     ipc.ts             # IPC handler registration
-    git.ts             # Git CLI wrapper (execa)
+    git.ts             # Git CLI wrapper (execa, through the process host)
+    process-host*.ts   # Utility process git and gh launch from, so launches can't freeze the window (2nd Vite entry)
     worktree-manager.ts
     agent-session.ts   # Session lifecycle management
     session-*.ts       # Session types, event log + history, permission prompts, skills, agent config
@@ -34,7 +35,7 @@ src/
     credentials.ts     # Encrypted API key storage (safeStorage)
     logger.ts          # File-based logging
     rotating-log.ts    # Size-rotated log file (app log and performance.log share it)
-    freeze-log.ts      # Main-process stalls, slow window frames (100 ms+), process launch timing
+    freeze-log.ts      # Main-process stalls, slow window frames (100 ms+), process launches, timed work, GC pauses
     perf-*.ts          # performance.log, step timings (new/resume/wake), health line, traces
     git-status-parser.ts
     preview.ts         # Preview tab: your page (WebContentsView) + the agent's (offscreen)
@@ -102,7 +103,9 @@ Use the user-facing words in any new UI text, help page or doc. See `docs/projec
 
 - Main process manages AgentSessions, each with a node-pty instance and git worktree
 - IPC bridge via Electron contextBridge (preload.ts)
-- Git operations use `execa` calling `git` CLI directly (not simple-git)
+- Git operations use `execa` calling `git` CLI directly (not simple-git), via
+  `runProcess` (`src/main/process-host.ts`), which runs git and gh in a utility
+  process so launching them never blocks the main process
 - Multiple concurrent agent sessions per repository
 - Worktrees stored in a managed directory with short IDs (PATH_MAX safety)
 - Windows-only (no cross-platform support in v1)

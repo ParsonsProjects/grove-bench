@@ -1,4 +1,4 @@
-import { execa } from 'execa';
+import { runProcess } from './process-host.js';
 import type { OpenPrSummary, PrChecksSummary, PrCreateOpts, PrInfo, PrReviewComment } from '../shared/types.js';
 
 /** gh can sit forever on a stalled connection or an interactive prompt. The
@@ -8,7 +8,7 @@ import type { OpenPrSummary, PrChecksSummary, PrCreateOpts, PrInfo, PrReviewComm
 export const GH_TIMEOUT_MS = 30_000;
 
 export async function gh(args: string[], cwd?: string): Promise<string> {
-  const result = await execa('gh', args, { ...(cwd ? { cwd } : {}), timeout: GH_TIMEOUT_MS });
+  const result = await runProcess('gh', args, { ...(cwd ? { cwd } : {}), timeout: GH_TIMEOUT_MS });
   return result.stdout;
 }
 
