@@ -75,7 +75,7 @@ const SETTINGS = {
 };
 
 const GOALS: Record<string, string> = {
-  's-sidebar': 'Redesign the sidebar so conversations group by project and show their status at a glance',
+  's-sidebar': 'Redesign the sidebar so threads group by project and show their status at a glance',
   's-oauth': 'Fix the OAuth refresh flow so sessions stop dropping after one hour',
 };
 
@@ -427,7 +427,7 @@ const api: Record<string, unknown> = {
     // The MCP popover only offers controls the agent declares.
     mcp: {
       controls: { list: true, reconnect: true, toggle: true, signIn: true, contextCost: true },
-      disconnectHint: 'Disconnect this server in this project. New conversations here also start without it until you connect it again.',
+      disconnectHint: 'Disconnect this server in this project. New threads here also start without it until you connect it again.',
     },
   }, {
     id: 'codex', displayName: 'Codex', capabilities: { permissionModes: true },

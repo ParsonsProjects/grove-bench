@@ -27,7 +27,7 @@
     setting="branch-naming-rule"
     label="Branch naming rule"
     for="settings-branch-rule"
-    description="How to name a branch when a new conversation starts without one, in your own words. Leave empty to copy the style of the project's recent branches."
+    description="How to name a branch when a new thread starts without one, in your own words. Leave empty to copy the style of the project's recent branches."
   >
     <Input
       id="settings-branch-rule"

@@ -366,7 +366,7 @@ class MemoryStore {
         this.selectedFile = null;
       }
       this.files = await window.groveBench.memoryList(this.activeRepo);
-      this.compactMessage = `Deleted ${relativePaths.length} conversation ${relativePaths.length === 1 ? 'note' : 'notes'}`;
+      this.compactMessage = `Deleted ${relativePaths.length} thread ${relativePaths.length === 1 ? 'note' : 'notes'}`;
       await this.loadStats();
     } catch (e: any) {
       this.error = e.message || String(e);

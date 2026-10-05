@@ -74,7 +74,7 @@
     // Saved across restarts, so say when it is on rather than leave it hidden.
     const auto = [prAuto.fixCi && 'fix CI', prAuto.addressReviews && 'address reviews'].filter(Boolean);
     if (prOpen && auto.length > 0) parts.push(`auto: ${auto.join(' + ')}`);
-    if (otherPrs.length > 0) parts.push(`+${otherPrs.length} more in this conversation`);
+    if (otherPrs.length > 0) parts.push(`+${otherPrs.length} more in this thread`);
     return `${prInfo.title ? `${prInfo.title}\n` : ''}${parts.join(', ')}. Click for checks, reviews, and automation`;
   });
 
@@ -294,7 +294,7 @@
        second branch. Only the primary is watched; "watch" swaps it. -->
   {#if otherPrs.length > 0}
     <div class="border-t border-border pt-2 mt-2 space-y-0.5">
-      <div class="text-muted-foreground px-1.5 -mx-1.5 mb-1">Other PRs in this conversation</div>
+      <div class="text-muted-foreground px-1.5 -mx-1.5 mb-1">Other PRs in this thread</div>
       {#each otherPrs as other (other.number)}
         {@const otherHealth = prHealth(other)}
         <!-- Same colours as the pill, so a PR reads the same in both places. -->
@@ -359,7 +359,7 @@
       </label>
     </div>
     <p class="text-[10px] text-muted-foreground/60 mt-1.5">
-      Auto turns run only while the conversation is idle; git push / gh may need to be allowed.
+      Auto turns run only while the thread is idle; git push / gh may need to be allowed.
     </p>
   </div>
   {/if}

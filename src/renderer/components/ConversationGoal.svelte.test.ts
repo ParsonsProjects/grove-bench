@@ -86,7 +86,7 @@ describe('ConversationGoal', () => {
     await renderWith(goal());
 
     await fireEvent.click(screen.getByLabelText('Edit the goal'));
-    const input = screen.getByLabelText('Conversation goal') as HTMLInputElement;
+    const input = screen.getByLabelText('Thread goal') as HTMLInputElement;
     expect(input.value).toBe('Add a dark mode toggle');
     await fireEvent.input(input, { target: { value: 'Ship dark mode' } });
     await fireEvent.keyDown(input, { key: 'Enter' });
@@ -95,7 +95,7 @@ describe('ConversationGoal', () => {
     expect(await screen.findByText('Ship dark mode')).toBeInTheDocument();
 
     await fireEvent.click(screen.getByLabelText('Edit the goal'));
-    const again = screen.getByLabelText('Conversation goal');
+    const again = screen.getByLabelText('Thread goal');
     await fireEvent.input(again, { target: { value: 'Something else' } });
     await fireEvent.keyDown(again, { key: 'Escape' });
     expect(mockGroveBench.setConversationGoal).toHaveBeenCalledTimes(1);
@@ -105,13 +105,13 @@ describe('ConversationGoal', () => {
   it('leaves Enter and Escape to an IME that is composing', async () => {
     await renderWith(goal());
     await fireEvent.click(screen.getByLabelText('Edit the goal'));
-    const input = screen.getByLabelText('Conversation goal');
+    const input = screen.getByLabelText('Thread goal');
     await fireEvent.input(input, { target: { value: 'ダーク' } });
     await fireEvent.keyDown(input, { key: 'Enter', isComposing: true });
     await fireEvent.keyDown(input, { key: 'Escape', isComposing: true });
 
     expect(mockGroveBench.setConversationGoal).not.toHaveBeenCalled();
-    expect(screen.getByLabelText('Conversation goal')).toBeInTheDocument();
+    expect(screen.getByLabelText('Thread goal')).toBeInTheDocument();
   });
 
   it('refreshes the goal, and says why when that fails', async () => {

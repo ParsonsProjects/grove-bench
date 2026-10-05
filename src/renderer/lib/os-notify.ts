@@ -6,7 +6,7 @@ import { store as sessionStore } from '../stores/sessions.svelte.js';
 export function sessionLabel(sessionId: string): string {
   const session = sessionStore.sessions.find((s) => s.id === sessionId);
   if (!session) return sessionId;
-  return session.displayName || session.branch || 'New conversation';
+  return session.displayName || session.branch || 'New thread';
 }
 
 /** Fire-and-forget desktop notification request. Main gates on window focus

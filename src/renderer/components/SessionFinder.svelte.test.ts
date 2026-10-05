@@ -50,7 +50,7 @@ afterEach(() => {
 });
 
 async function typeQuery(text: string) {
-  const input = screen.getByPlaceholderText('Search conversations and messages...');
+  const input = screen.getByPlaceholderText('Search threads and messages...');
   await fireEvent.input(input, { target: { value: text } });
   // Debounce (150ms) then the resolved promise
   await new Promise((r) => setTimeout(r, 300));
@@ -211,7 +211,7 @@ describe('SessionFinder', () => {
 
     // With the stale hit counted, the arrow keys could reach it though it
     // isn't shown, and Enter would jump into that conversation's messages.
-    const input = screen.getByPlaceholderText('Search conversations and messages...');
+    const input = screen.getByPlaceholderText('Search threads and messages...');
     for (let i = 0; i < 3; i++) await fireEvent.keyDown(input, { key: 'ArrowDown' });
     await fireEvent.keyDown(input, { key: 'Enter' });
     expect(messageStore.pendingJumpBySession['s2']).toBeUndefined();
@@ -224,7 +224,7 @@ describe('SessionFinder', () => {
     const onclose = vi.fn();
     cleanup();
     render(SessionFinder, { onclose });
-    const input = screen.getByPlaceholderText('Search conversations and messages...');
+    const input = screen.getByPlaceholderText('Search threads and messages...');
     await fireEvent.input(input, { target: { value: 'zzqq edge' } }); // no conversation matches
     await fireEvent.keyDown(input, { key: 'ArrowDown' });
     await new Promise((r) => setTimeout(r, 200));

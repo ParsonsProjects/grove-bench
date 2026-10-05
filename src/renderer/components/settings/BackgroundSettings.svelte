@@ -10,7 +10,7 @@
 </script>
 
 <p class="text-xs text-muted-foreground leading-relaxed">
-  Memory, skill suggestions and conversation goals run on each conversation's own agent, using its background model, set under
+  Memory, skill suggestions and thread goals run on each thread's own agent, using its background model, set under
   <button type="button" class="text-primary hover:underline" onclick={() => ongoto('agents')}>Grovekeepers (Agents)</button>.
 </p>
 
@@ -18,7 +18,7 @@
   <CheckboxSetting
     setting="memory-auto-save"
     label="Auto-save project memory"
-    description="After substantial conversations, save what was learned about the project, and notes on the conversation, to memory."
+    description="After substantial threads, save what was learned about the project, and notes on the thread, to memory."
     bind:checked={settingsStore.draft.memoryAutoSave}
   />
   <CheckboxSetting
@@ -39,7 +39,7 @@
   />
 </SettingsGroup>
 
-<SettingsGroup title="Conversations">
+<SettingsGroup title="Threads">
   <CheckboxSetting
     setting="skill-suggestions"
     label="Suggest skills automatically"
@@ -48,17 +48,17 @@
   />
   <CheckboxSetting
     setting="conversation-goal"
-    label="Show the conversation goal"
-    description="Pin one line at the top of the Thread tab saying what the conversation is for, written after its first reply. Costs one model call per conversation, plus one each time you press Refresh. You can edit it or hide it per conversation."
+    label="Show the thread goal"
+    description="Pin one line at the top of the Thread tab saying what the thread is for, written after its first reply. Costs one model call per thread, plus one each time you press Refresh. You can edit it or hide it per thread."
     bind:checked={settingsStore.draft.showConversationGoal}
   />
   <NumberSetting
     setting="idle-sleep"
-    label="Sleep idle conversations after"
+    label="Sleep idle threads after"
     unit="minutes"
     min={0}
     value={settingsStore.draft.idleSleepMinutes}
     onchange={(v) => { settingsStore.draft.idleSleepMinutes = v; }}
-    description="Stops a conversation's agent to save memory and CPU. It wakes when you open it or send it a message, with the same mode and &quot;always allow&quot; choices. 0 turns this off."
+    description="Stops a thread's agent to save memory and CPU. It wakes when you open it or send it a message, with the same mode and &quot;always allow&quot; choices. 0 turns this off."
   />
 </SettingsGroup>

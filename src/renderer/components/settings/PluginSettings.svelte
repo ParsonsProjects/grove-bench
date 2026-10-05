@@ -34,7 +34,7 @@
   // Plugins configure the default agent (the IPC calls don't name an agent).
   const defaultAgent = $derived(agentsStore.get(agentsStore.defaultId));
   const agentNote = $derived(
-    agentsStore.list.length > 1 && defaultAgent ? `These plugins are for ${defaultAgent.displayName} conversations.` : '',
+    agentsStore.list.length > 1 && defaultAgent ? `These plugins are for ${defaultAgent.displayName} threads.` : '',
   );
 
   const triggerClass = 'px-3 py-1 text-xs transition-colors text-muted-foreground hover:text-foreground data-[state=active]:bg-accent data-[state=active]:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';

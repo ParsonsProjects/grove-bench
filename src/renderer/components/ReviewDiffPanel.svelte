@@ -894,7 +894,7 @@
           <button
             onclick={() => toggleEditHistory(key)}
             class="text-xs text-muted-foreground hover:text-foreground {historyExpanded ? 'text-foreground' : ''}"
-            title="Show individual edits from this conversation"
+            title="Show individual edits from this thread"
           >
             {history.edits.length} edit{history.edits.length !== 1 ? 's' : ''}
           </button>

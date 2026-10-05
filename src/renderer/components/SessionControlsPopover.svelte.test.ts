@@ -103,14 +103,14 @@ describe('SessionControlsPopover', () => {
     }
     // The current agent is marked; others offer to switch to them
     expect(screen.getByRole('button', { name: 'Claude Agent' })).toHaveAttribute('aria-current', 'true');
-    expect(screen.getByRole('button', { name: /Codex/ })).toHaveAttribute('title', expect.stringContaining('Switch this conversation to Codex'));
+    expect(screen.getByRole('button', { name: /Codex/ })).toHaveAttribute('title', expect.stringContaining('Switch this thread to Codex'));
   });
 
   it('asks before switching, saying what the transcript is and where it goes', async () => {
     await openPopover();
     await fireEvent.click(screen.getByRole('button', { name: /Codex/ }));
     const ask = screen.getByRole('group', { name: 'Switch agent' });
-    expect(ask).toHaveTextContent('Switch this conversation to Codex?');
+    expect(ask).toHaveTextContent('Switch this thread to Codex?');
     expect(ask).toHaveTextContent("That transcript goes to Codex's provider.");
     expect(mockGroveBench.switchAgent).not.toHaveBeenCalled();
 
@@ -130,7 +130,7 @@ describe('SessionControlsPopover', () => {
     store.activeSessionId = SID;
     await openPopover();
     await fireEvent.click(screen.getByRole('button', { name: /Codex/ }));
-    await fireEvent.click(screen.getByRole('button', { name: /New conversation instead/ }));
+    await fireEvent.click(screen.getByRole('button', { name: /New thread instead/ }));
 
     expect(draftStore.draft).toMatchObject({ repoPath: '/repo', agentId: 'codex' });
     expect(store.activeSessionId).toBeNull();

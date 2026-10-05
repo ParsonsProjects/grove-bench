@@ -15,7 +15,7 @@
 <!-- The default mode depends on the agent and model, so it lives with each
      agent's other defaults. -->
 <p class="text-xs text-muted-foreground leading-relaxed">
-  The permission mode new conversations start in is set per agent, under
+  The permission mode new threads start in is set per agent, under
   <button type="button" class="text-primary hover:underline" onclick={() => ongoto('agents')}>Grovekeepers (Agents)</button>.
 </p>
 

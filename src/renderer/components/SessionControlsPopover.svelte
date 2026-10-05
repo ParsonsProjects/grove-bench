@@ -171,7 +171,7 @@
               onclick={() => { if (!current) switchTo = { id: a.id, displayName: a.displayName }; }}
               class="w-full text-left px-2 py-1 border-l-2 transition-colors group/agent flex items-center justify-between gap-2
                 {current ? 'border-primary text-foreground bg-accent/50 cursor-default' : switchTo?.id === a.id ? 'border-primary/50 text-foreground bg-accent' : 'border-transparent text-muted-foreground hover:bg-accent hover:text-foreground'}"
-              title={current ? 'This conversation\'s agent' : `Switch this conversation to ${a.displayName}, or start a new one with it`}
+              title={current ? 'This thread\'s agent' : `Switch this thread to ${a.displayName}, or start a new one with it`}
               aria-current={current ? 'true' : undefined}
             >
               <span>
@@ -241,7 +241,7 @@
         <!-- Switching sends this conversation to another provider only if
              the user picks the transcript button, which says so. -->
         <div class="mt-3 pt-2 border-t border-border max-w-[36rem] flex flex-col gap-2" role="group" aria-label="Switch agent">
-          <p class="text-foreground">Switch this conversation to {target.displayName}?</p>
+          <p class="text-foreground">Switch this thread to {target.displayName}?</p>
           <p class="text-[11px] text-muted-foreground">
             {target.displayName} starts its own session in the same worktree; the thread, files and checkpoints stay.
             To carry on where {agentName} left off, it can get a short transcript with your next message: your messages,
@@ -252,7 +252,7 @@
           <div class="flex flex-wrap items-center gap-2">
             <button type="button" class="px-2 py-1 bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50" disabled={switching} onclick={() => switchAgent(target.id, true)}>Switch and send the transcript</button>
             <button type="button" class="px-2 py-1 border border-border hover:bg-accent disabled:opacity-50" disabled={switching} onclick={() => switchAgent(target.id, false)}>Switch without it</button>
-            <button type="button" class="px-2 py-1 text-primary hover:underline" onclick={() => startWithAgent(target.id)}>New conversation instead ↗</button>
+            <button type="button" class="px-2 py-1 text-primary hover:underline" onclick={() => startWithAgent(target.id)}>New thread instead ↗</button>
             <button type="button" class="px-2 py-1 text-muted-foreground hover:text-foreground" onclick={() => { switchTo = null; switchError = ''; }}>Cancel</button>
           </div>
         </div>

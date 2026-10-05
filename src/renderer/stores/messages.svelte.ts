@@ -1741,7 +1741,7 @@ class MessageStore {
       kind: 'system',
       id: nextId(),
       text: wasCleared
-        ? `Conversation cleared — connected to ${event.model}`
+        ? `Thread cleared. Connected to ${event.model}`
         : `Connected to ${event.model}`,
     });
 

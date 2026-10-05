@@ -110,7 +110,7 @@
       name: s.name,
       description: s.description,
       scope: 'project',
-      notes: `${s.draftInstructions}\n\nEvidence from past conversations (${s.rationale}):\n${s.evidence.map((e) => `- ${e}`).join('\n')}`,
+      notes: `${s.draftInstructions}\n\nEvidence from past threads (${s.rationale}):\n${s.evidence.map((e) => `- ${e}`).join('\n')}`,
     });
     messageStore.addUserMessage(sessionId, prompt);
     window.groveBench.sendMessage(sessionId, prompt);
@@ -143,7 +143,7 @@
         <span class="w-1.5 h-1.5 {enabledSkillCount === 0 ? 'bg-muted-foreground/40' : 'bg-green-500'}"></span>
         Skills {disabledSkillCount > 0 ? `${enabledSkillCount}/${allSkills.length}` : allSkills.length}
         {#if suggestions.length > 0}
-          <span class="text-blue-400" title="{suggestions.length} suggested skill{suggestions.length === 1 ? '' : 's'} from your conversations">+{suggestions.length}</span>
+          <span class="text-blue-400" title="{suggestions.length} suggested skill{suggestions.length === 1 ? '' : 's'} from your threads">+{suggestions.length}</span>
         {/if}
       </button>
     {/snippet}
@@ -155,7 +155,7 @@
           onclick={analyzeSuggestions}
           disabled={analyzingSuggestions}
           class="text-blue-400/80 hover:text-blue-300 transition-colors disabled:opacity-50"
-          title="Mine this project's conversation history for recurring workflows and suggest skills"
+          title="Mine this project's thread history for recurring workflows and suggest skills"
         >
           {analyzingSuggestions ? 'Scanning…' : 'Suggest'}
         </button>
@@ -176,7 +176,7 @@
     {#if suggestions.length > 0}
       <div class="mb-2 pb-2 border-b border-border">
         <div class="text-[10px] uppercase tracking-wide text-blue-400/80 mb-1.5">
-          Suggested from your conversations
+          Suggested from your threads
         </div>
         <div class="space-y-1.5">
           {#each suggestions as suggestion (suggestion.id)}
@@ -199,7 +199,7 @@
                   class="px-1.5 py-0.5 border border-border text-muted-foreground hover:text-foreground hover:bg-accent transition-colors shrink-0 disabled:opacity-50"
                   title={canAskAgent
                     ? 'Ask the agent to write this skill, with the mined evidence as notes'
-                    : 'Needs a running, idle conversation'}
+                    : 'Needs a running, idle thread'}
                 >
                   Agent
                 </button>
@@ -265,7 +265,7 @@
 
     <div class="flex items-center gap-2 mt-2 pt-2 border-t border-border">
       <span class="text-muted-foreground/50 text-[10px] flex-1">
-        Applies to all projects, when a conversation's agent (re)starts — running turns keep their current skills.
+        Applies to all projects, when a thread's agent (re)starts. Running turns keep their current skills.
       </span>
       <button
         onclick={() => { skillsExpanded = false; addSkillOpen = true; }}

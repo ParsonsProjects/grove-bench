@@ -211,7 +211,7 @@
       console.error(`[WorkspacePane] history replay failed for ${sessionId}:`, e);
       messageStore.ingestEvent(sessionId, {
         type: 'error',
-        message: `Failed to load conversation history: ${e?.message || e}`,
+        message: `Failed to load thread history: ${e?.message || e}`,
       });
     } finally {
       messageStore.releaseLiveEvents(sessionId, replayedPage);
@@ -247,12 +247,12 @@
            while it edits your files in place, sitting when it's idle. -->
       <GroveEmptyState variant="agent" {agent} tab={scene}>
         <p class="text-sm mt-5 mb-2 text-foreground/80">{tab} needs git</p>
-        <p class="text-xs text-muted-foreground max-w-md">This conversation runs without git, so {why}</p>
+        <p class="text-xs text-muted-foreground max-w-md">This thread runs without git, so {why}</p>
       </GroveEmptyState>
     {:else}
       <div class="max-w-md text-center">
         <p class="text-sm text-foreground">{tab} needs git</p>
-        <p class="text-xs text-muted-foreground mt-1">This conversation runs without git, so {why}</p>
+        <p class="text-xs text-muted-foreground mt-1">This thread runs without git, so {why}</p>
       </div>
     {/if}
   </div>
@@ -290,8 +290,8 @@
           <button
             onclick={() => goalStore.setHidden(sessionId, false)}
             class="pr-3 text-muted-foreground hover:text-foreground transition-colors"
-            title="Show the conversation goal"
-            aria-label="Show the conversation goal"
+            title="Show the thread goal"
+            aria-label="Show the thread goal"
           >
             <GoalFlagIcon />
           </button>
@@ -379,7 +379,7 @@
   </div>
   <div class="flex-1 overflow-hidden flex flex-col {activeTab === 'checkpoints' ? '' : 'hidden'}">
     {#if noGit}
-      {@render noGitNote('checkpoints', 'Checkpoints', 'no checkpoints are saved and file edits can\'t be restored. You can still rewind the conversation from a message in the Thread tab; files stay as they are.')}
+      {@render noGitNote('checkpoints', 'Checkpoints', 'no checkpoints are saved and file edits can\'t be restored. You can still rewind the thread from a message in the Thread tab; files stay as they are.')}
     {:else if checkpointsMounted}
       {#await loadCheckpointsPanel() then CheckpointsPanel}
         <CheckpointsPanel {sessionId} />

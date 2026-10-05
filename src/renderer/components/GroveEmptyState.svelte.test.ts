@@ -63,8 +63,8 @@ describe('GroveEmptyState', () => {
   it('offers to start a conversation once a project exists', async () => {
     store.repos = ['/repo/one'];
     render(GroveEmptyState, { variant: 'empty' });
-    expect(screen.getByText('No conversations yet')).toBeInTheDocument();
-    await fireEvent.click(screen.getByRole('button', { name: 'Start a conversation' }));
+    expect(screen.getByText('No threads yet')).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'Start a thread' }));
     expect(draftStore.draft?.repoPath).toBe('/repo/one');
     draftStore.discard();
   });
@@ -72,8 +72,8 @@ describe('GroveEmptyState', () => {
   it('starts the first conversation in the project added last, and says which', async () => {
     store.repos = ['/repo/one', '/repo/two'];
     render(GroveEmptyState, { variant: 'empty' });
-    expect(screen.getByText(/Start a conversation in two and tell the agent/)).toBeInTheDocument();
-    await fireEvent.click(screen.getByRole('button', { name: 'Start a conversation' }));
+    expect(screen.getByText(/Start a thread in two and tell the agent/)).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'Start a thread' }));
     expect(draftStore.draft?.repoPath).toBe('/repo/two');
     draftStore.discard();
   });
@@ -144,7 +144,7 @@ describe('GroveEmptyState', () => {
 
     render(GroveEmptyState, { variant: 'pick' });
 
-    expect(screen.getByText('No open conversations')).toBeInTheDocument();
+    expect(screen.getByText('No open threads')).toBeInTheDocument();
     expect(screen.queryByRole('button')).toBeNull();
   });
 

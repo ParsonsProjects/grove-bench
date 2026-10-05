@@ -1,7 +1,7 @@
 import type { ToolCategory } from '../../shared/types.js';
 import { parseMcpToolName } from './tool-names.js';
 
-const LASTS = 'Lasts until you stop the conversation or restart Grove Bench.';
+const LASTS = 'Lasts until you stop the thread or restart Grove Bench.';
 
 /**
  * Button text and tooltip for a permission prompt's "always allow" choice.
@@ -17,7 +17,7 @@ export function alwaysAllowLabel(toolName: string, category?: ToolCategory): { l
   if (category === 'edit') {
     return {
       label: 'Allow all edits (Edit mode)',
-      title: 'Switches this conversation to Edit mode: file edits inside the worktree, new files included, are applied without asking. Commands still ask. Switch back in the agent settings (Alt+M).',
+      title: 'Switches this thread to Edit mode: file edits inside the worktree, new files included, are applied without asking. Commands still ask. Switch back in the agent settings (Alt+M).',
     };
   }
   const { label, covers } = scope(toolName, category);
@@ -26,15 +26,15 @@ export function alwaysAllowLabel(toolName: string, category?: ToolCategory): { l
 
 function scope(toolName: string, category?: ToolCategory): { label: string; covers: string } {
   if (category === 'bash' || toolName === 'Bash') {
-    return { label: 'Allow all commands', covers: 'Runs every shell command in this conversation without asking.' };
+    return { label: 'Allow all commands', covers: 'Runs every shell command in this thread without asking.' };
   }
   if (category === 'web_fetch' || toolName === 'WebFetch') {
-    return { label: 'Allow all web fetches', covers: 'Fetches any web address in this conversation without asking.' };
+    return { label: 'Allow all web fetches', covers: 'Fetches any web address in this thread without asking.' };
   }
   if (toolName === 'NotebookEdit') {
-    return { label: 'Allow all notebook edits', covers: 'Applies every notebook edit in this conversation without asking.' };
+    return { label: 'Allow all notebook edits', covers: 'Applies every notebook edit in this thread without asking.' };
   }
   const name = parseMcpToolName(toolName)?.tool ?? toolName;
-  return { label: `Always allow ${name}`, covers: `Runs every ${name} call in this conversation without asking.` };
+  return { label: `Always allow ${name}`, covers: `Runs every ${name} call in this thread without asking.` };
 }
 

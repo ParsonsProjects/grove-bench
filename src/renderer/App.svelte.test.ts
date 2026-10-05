@@ -48,7 +48,7 @@ describe('App startup', () => {
 
     render(App);
 
-    expect(await screen.findByText('Pick a conversation', {}, { timeout: 5000 })).toBeInTheDocument();
+    expect(await screen.findByText('Pick a thread', {}, { timeout: 5000 })).toBeInTheDocument();
     expect(store.activeSessionId).toBeNull();
     // Both stay listed as open, and neither starts its agent until opened.
     expect(store.deferredResume).toEqual({ a: true, b: true });

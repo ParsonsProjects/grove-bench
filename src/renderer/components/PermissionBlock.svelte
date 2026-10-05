@@ -307,7 +307,7 @@
       <div class="flex gap-2 mt-2 flex-wrap">
         {#if confirmFresh}
           <p class="basis-full text-xs text-foreground" role="alert">
-            Clear this conversation's messages and start again with only the plan? Your files stay as they are.
+            Clear this thread's messages and start again with only the plan? Your files stay as they are.
           </p>
           <Button variant="outline" size="sm" onclick={() => confirmFresh = false} disabled={submitting}>
             Cancel
@@ -317,11 +317,11 @@
           </Button>
         {:else}
           <!-- Approving always switches to Edit mode (messageStore.resolvePermission). -->
-          <Button variant="outline" size="sm" onclick={approve} disabled={submitting} title="Approve the plan. The conversation switches to Edit mode so the plan's file edits don't each ask; commands still ask." class="text-green-400 border-green-600 hover:bg-green-900/30">
+          <Button variant="outline" size="sm" onclick={approve} disabled={submitting} title="Approve the plan. The thread switches to Edit mode so the plan's file edits don't each ask; commands still ask." class="text-green-400 border-green-600 hover:bg-green-900/30">
             Approve
           </Button>
           {#if planText}
-            <Button variant="outline" size="sm" onclick={() => confirmFresh = true} disabled={submitting} title="Clear this conversation's messages and send the plan as a new first message, so the agent starts with a clean context. Asks first." class="text-blue-400 border-blue-600 hover:bg-blue-900/30">
+            <Button variant="outline" size="sm" onclick={() => confirmFresh = true} disabled={submitting} title="Clear this thread's messages and send the plan as a new first message, so the agent starts with a clean context. Asks first." class="text-blue-400 border-blue-600 hover:bg-blue-900/30">
               Approve and start fresh…
             </Button>
           {/if}

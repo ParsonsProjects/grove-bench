@@ -300,12 +300,12 @@ describe('SettingsPanel background work', () => {
   it('groups the one-off settings under Conversations', async () => {
     await renderPanel();
     await openSection('Background work');
-    const group = screen.getByRole('heading', { name: 'Conversations' }).closest('section')!;
+    const group = screen.getByRole('heading', { name: 'Threads' }).closest('section')!;
 
-    for (const name of ['Suggest skills automatically', 'Show the conversation goal']) {
+    for (const name of ['Suggest skills automatically', 'Show the thread goal']) {
       expect(within(group).getByRole('checkbox', { name })).toBeInTheDocument();
     }
-    expect(within(group).getByLabelText('Sleep idle conversations after')).toBeInTheDocument();
+    expect(within(group).getByLabelText('Sleep idle threads after')).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Skill suggestions' })).not.toBeInTheDocument();
   });
 });
@@ -337,14 +337,14 @@ describe('SettingsPanel number settings', () => {
     await renderPanel();
     await openSection('Background work');
 
-    expect(screen.getByLabelText('Sleep idle conversations after')).toHaveValue('2.5');
+    expect(screen.getByLabelText('Sleep idle threads after')).toHaveValue('2.5');
     expect(screen.queryByText(/Not saved/)).not.toBeInTheDocument();
   });
 
   it('does not save a cleared idle time as the default', async () => {
     await renderPanel();
     await openSection('Background work');
-    const field = screen.getByLabelText('Sleep idle conversations after');
+    const field = screen.getByLabelText('Sleep idle threads after');
 
     await fireEvent.input(field, { target: { value: '' } });
     await fireEvent.blur(field);

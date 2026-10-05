@@ -141,13 +141,13 @@ describe('StatusBar MCP controls follow the agent', () => {
   });
 
   it("uses the agent's own words for Disconnect", async () => {
-    useAgent({ controls: { ...NONE, list: true, toggle: true }, disconnectHint: 'Off until this conversation restarts' });
+    useAgent({ controls: { ...NONE, list: true, toggle: true }, disconnectHint: 'Off until this thread restarts' });
     messageStore.systemInfoBySession[ID] = { tools: [], agents: [], skills: [], slashCommands: [], mcpServers: [{ name: 'docs', status: 'connected' }] };
     render(StatusBar, { props: { sessionId: ID } });
 
     await fireEvent.click(screen.getByRole('button', { name: /MCP 1/ }));
 
-    expect(screen.getByRole('button', { name: 'Disconnect' }).getAttribute('title')).toBe('Off until this conversation restarts');
+    expect(screen.getByRole('button', { name: 'Disconnect' }).getAttribute('title')).toBe('Off until this thread restarts');
     expect(screen.queryByRole('button', { name: 'Reconnect' })).toBeNull();
   });
 
@@ -487,7 +487,7 @@ describe('StatusBar PR', () => {
     ));
     const row = screen.getByText('#70').closest('div')!;
     expect(row.querySelector('span')!.className).toContain('bg-orange-400');
-    expect(screen.getByText('Other PRs in this conversation')).toBeTruthy();
+    expect(screen.getByText('Other PRs in this thread')).toBeTruthy();
   });
 
   it('drops a "push failed" note once nothing is left to push', async () => {

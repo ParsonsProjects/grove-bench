@@ -172,25 +172,25 @@ describe('Sidebar session rows', () => {
 
   it('keeps the quick action outside the row button', async () => {
     render(Sidebar);
-    const close = screen.getByTitle(/^Close conversation/);
+    const close = screen.getByTitle(/^Close thread/);
     expect(close.tagName).toBe('BUTTON');
     expect(close.parentElement!.closest('button')).toBeNull();
-    expect(close).toHaveAccessibleName('Close conversation Sidebar revamp');
+    expect(close).toHaveAccessibleName('Close thread Sidebar revamp');
   });
 
   it('offers Close, not delete, on a tab restored at startup', async () => {
     store.sessions = [{ id: 's1', branch: 'feat-x', repoPath: '/repo-a', status: 'stopped', displayName: 'Sidebar revamp' }] as any;
     store.deferResume('s1');
     render(Sidebar);
-    expect(screen.getByTitle(/^Close conversation/)).toBeInTheDocument();
-    expect(screen.queryByTitle('Delete conversation')).toBeNull();
+    expect(screen.getByTitle(/^Close thread/)).toBeInTheDocument();
+    expect(screen.queryByTitle('Delete thread')).toBeNull();
   });
 
   it('swaps the age for the quick action on keyboard focus anywhere in the row', async () => {
     store.sessions = [{ id: 's1', branch: 'feat-x', repoPath: '/repo-a', status: 'running', displayName: 'Sidebar revamp', createdAt: Date.now() }] as any;
     render(Sidebar);
     const focusRule = 'group-has-[:focus-visible]/session';
-    expect(screen.getByTitle(/^Close conversation/)).toHaveClass(`${focusRule}:opacity-100`);
+    expect(screen.getByTitle(/^Close thread/)).toHaveClass(`${focusRule}:opacity-100`);
     expect(screen.getByTitle(/^Created /)).toHaveClass(`${focusRule}:invisible`);
   });
 
@@ -198,7 +198,7 @@ describe('Sidebar session rows', () => {
     render(Sidebar);
     await fireEvent.contextMenu(screen.getByText('Sidebar revamp'));
     expect(screen.getByRole('menu')).toBeInTheDocument();
-    expect(screen.queryByText('New Conversation')).toBeNull();
+    expect(screen.queryByText('New Thread')).toBeNull();
   });
 
   it('shows the project colour on the laptop instead of a square when grove characters are on', async () => {
@@ -232,8 +232,8 @@ describe('Sidebar session rows', () => {
     render(Sidebar);
     const row = (await screen.findAllByText('Sidebar revamp'))
       .map((el) => el.closest('.group\\/session'))
-      .find((el) => el?.querySelector('[title^="Close conversation"]'))!;
-    await fireEvent.click(row.querySelector('[title^="Close conversation"]')!);
+      .find((el) => el?.querySelector('[title^="Close thread"]'))!;
+    await fireEvent.click(row.querySelector('[title^="Close thread"]')!);
 
     expect(closeSession).toHaveBeenCalledWith('s1');
     // Not the other running conversation.
@@ -242,24 +242,24 @@ describe('Sidebar session rows', () => {
 
   it('describes the quick close for screen readers without repeating its name', async () => {
     render(Sidebar);
-    const close = screen.getByTitle(/^Close conversation/);
-    expect(close).toHaveAccessibleName('Close conversation Sidebar revamp');
-    expect(close).toHaveAccessibleDescription(/^Stops the agent and terminal and takes it off the Conversations list/);
+    const close = screen.getByTitle(/^Close thread/);
+    expect(close).toHaveAccessibleName('Close thread Sidebar revamp');
+    expect(close).toHaveAccessibleDescription(/^Stops the agent and terminal and takes it off the Threads list/);
   });
 
   it('closes an idle conversation straight away', async () => {
     render(Sidebar);
-    await fireEvent.click(screen.getByTitle(/^Close conversation/));
+    await fireEvent.click(screen.getByTitle(/^Close thread/));
     expect(mockGroveBench.closeSession).toHaveBeenCalledWith('s1');
-    expect(screen.queryByText('Close conversation?')).toBeNull();
+    expect(screen.queryByText('Close thread?')).toBeNull();
   });
 
   it('asks before closing a conversation in the middle of a turn', async () => {
     messageStore.setIsRunning('s1', true);
     render(Sidebar);
 
-    await fireEvent.click(screen.getByTitle(/^Close conversation/));
-    expect(await screen.findByText('Close conversation?')).toBeInTheDocument();
+    await fireEvent.click(screen.getByTitle(/^Close thread/));
+    expect(await screen.findByText('Close thread?')).toBeInTheDocument();
     expect(screen.getByText(/is in the middle of a turn/)).toBeInTheDocument();
     await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(mockGroveBench.closeSession).not.toHaveBeenCalled();
@@ -267,7 +267,7 @@ describe('Sidebar session rows', () => {
 
     // The context menu asks too.
     await fireEvent.contextMenu(screen.getAllByText('Sidebar revamp')[0]);
-    await fireEvent.click(screen.getByText('Close Conversation'));
+    await fireEvent.click(screen.getByText('Close Thread'));
     await fireEvent.click(await screen.findByRole('button', { name: 'Stop and close' }));
     expect(mockGroveBench.closeSession).toHaveBeenCalledWith('s1');
     expect(store.sessions[0].status).toBe('stopped');
@@ -308,7 +308,7 @@ describe('Sidebar session rows', () => {
 
   it('opens the session finder from the search field', async () => {
     render(Sidebar);
-    await fireEvent.click(screen.getByTitle('Search conversations (Ctrl+R)'));
+    await fireEvent.click(screen.getByTitle('Search threads (Ctrl+R)'));
     expect(store.finderOpen).toBe(true);
   });
 });
@@ -337,7 +337,7 @@ describe('Sidebar attention triage', () => {
   it('shows filter chips with mutually exclusive counts', async () => {
     render(Sidebar);
 
-    const group = screen.getByRole('group', { name: 'Filter conversations' });
+    const group = screen.getByRole('group', { name: 'Filter threads' });
     expect(group).not.toHaveTextContent('All');
     expect(group).toHaveTextContent('Needs you 1');
     expect(group).toHaveTextContent('Working 1');
@@ -367,7 +367,7 @@ describe('Sidebar attention triage', () => {
   it('counts a conversation that is starting up as working, matching its colour', async () => {
     store.sessions = [...store.sessions, { id: 'booting', branch: 'feat-e', repoPath: '/repo-b', status: 'starting', displayName: 'Booting one' }] as any;
     render(Sidebar);
-    expect(screen.getByRole('group', { name: 'Filter conversations' })).toHaveTextContent('Working 2');
+    expect(screen.getByRole('group', { name: 'Filter threads' })).toHaveTextContent('Working 2');
     expect(screen.getByRole('img', { name: 'Starting' })).toHaveClass(AGENT_SPRITES.working.colorClass);
   });
 
@@ -377,7 +377,7 @@ describe('Sidebar attention triage', () => {
     render(Sidebar);
     // Red, not green: it isn't counted as unread.
     expect(screen.getByRole('img', { name: 'Error' })).toHaveClass(AGENT_SPRITES.error.colorClass);
-    expect(screen.getByRole('group', { name: 'Filter conversations' })).toHaveTextContent('Unread 1');
+    expect(screen.getByRole('group', { name: 'Filter threads' })).toHaveTextContent('Unread 1');
   });
 
   it('shows only dots and counts on the chips when the sidebar is narrow', async () => {
@@ -406,7 +406,7 @@ describe('Sidebar attention triage', () => {
     render(Sidebar);
 
     await fireEvent.contextMenu(screen.getByText('Finished one'));
-    await fireEvent.click(screen.getByText('Close Conversation'));
+    await fireEvent.click(screen.getByText('Close Thread'));
 
     expect(mockGroveBench.closeSession).toHaveBeenCalledWith('finished');
     expect(store.sessions.find((s) => s.id === 'finished')?.status).toBe('stopped');
@@ -423,7 +423,7 @@ describe('Sidebar attention triage', () => {
     await fireEvent.contextMenu(await screen.findByText('Quiet one'));
 
     expect(screen.getByRole('menu')).toBeInTheDocument();
-    expect(screen.queryByText('Close Conversation')).toBeNull();
+    expect(screen.queryByText('Close Thread')).toBeNull();
   });
 });
 
@@ -432,10 +432,10 @@ describe('Sidebar for a new user', () => {
     store.repos = ['/repo-a', '/repo-b'];
     store.sessions = [];
     render(Sidebar);
-    expect(await screen.findByText('No conversations')).toBeInTheDocument();
-    expect(screen.queryByRole('group', { name: 'Filter conversations' })).toBeNull();
-    expect(screen.queryByRole('group', { name: 'Sort conversations' })).toBeNull();
-    expect(screen.queryByText('Right-click a conversation to start a group')).toBeNull();
+    expect(await screen.findByText('No threads')).toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: 'Filter threads' })).toBeNull();
+    expect(screen.queryByRole('group', { name: 'Sort threads' })).toBeNull();
+    expect(screen.queryByText('Right-click a thread to start a group')).toBeNull();
   });
 });
 
@@ -447,16 +447,16 @@ describe('Sidebar bottom buttons', () => {
 
   it('shows text labels at the default width', async () => {
     render(Sidebar);
-    const newConversation = await screen.findByRole('button', { name: 'New conversation' });
-    expect(newConversation).toHaveTextContent('+ Conversation');
+    const newConversation = await screen.findByRole('button', { name: 'New thread' });
+    expect(newConversation).toHaveTextContent('+ Thread');
     expect(screen.getByRole('button', { name: 'Add a project' })).toHaveTextContent('+ Project');
   });
 
   it('collapses to icons when the sidebar is narrow', async () => {
     mockGroveBench.getSidebarWidth.mockResolvedValue(250);
     render(Sidebar);
-    const newConversation = await screen.findByRole('button', { name: 'New conversation' });
-    await waitFor(() => expect(newConversation).not.toHaveTextContent('Conversation'));
+    const newConversation = await screen.findByRole('button', { name: 'New thread' });
+    await waitFor(() => expect(newConversation).not.toHaveTextContent('Thread'));
     expect(newConversation.querySelector('svg')).not.toBeNull();
     const addRepo = screen.getByRole('button', { name: 'Add a project' });
     expect(addRepo).not.toHaveTextContent('Repository');
@@ -569,7 +569,7 @@ describe('Sidebar groups', () => {
   it('opens a draft in the group, in a project it has nothing in yet', async () => {
     const group = make('Billing', ['api1', 'web1']);
     render(Sidebar);
-    await fireEvent.click(screen.getByRole('button', { name: 'New conversation in Billing' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'New thread in Billing' }));
     expect(draftStore.draft).toMatchObject({ repoPath: '/infra', groupId: group.id, start: { kind: 'new', branchName: 'feat/billing' } });
   });
 
@@ -589,9 +589,9 @@ describe('Sidebar groups', () => {
     const group = make('Billing', ['api1']);
     store.repos = ['/api', '/web'];
     render(Sidebar);
-    await fireEvent.click(screen.getByRole('button', { name: 'New conversation in Billing' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'New thread in Billing' }));
     expect(draftStore.draft?.groupId).toBe(group.id);
-    await fireEvent.click(screen.getByRole('button', { name: 'New conversation in web' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'New thread in web' }));
     expect(draftStore.draft?.groupId).toBeUndefined();
     expect(draftStore.draft?.start).toMatchObject({ branchName: '' });
   });
@@ -610,7 +610,7 @@ describe('Sidebar groups', () => {
     render(Sidebar);
 
     await fireEvent.contextMenu(within(groupEl(group.id)).getByText('Billing'));
-    await fireEvent.click(screen.getByText('Close all conversations'));
+    await fireEvent.click(screen.getByText('Close all threads'));
     expect(mockGroveBench.closeSession).toHaveBeenCalledWith('api1');
     expect(mockGroveBench.closeSession).toHaveBeenCalledWith('web1');
     expect(store.sessions.map((s) => s.status)).toEqual(['stopped', 'stopped']);
@@ -620,7 +620,7 @@ describe('Sidebar groups', () => {
 
     // Nothing open is left to close.
     await fireEvent.contextMenu(within(groupEl(group.id)).getByText('Billing'));
-    expect(screen.queryByText('Close all conversations')).toBeNull();
+    expect(screen.queryByText('Close all threads')).toBeNull();
   });
 
   it('asks once before closing a group with a conversation mid-turn, then closes them all', async () => {
@@ -629,8 +629,8 @@ describe('Sidebar groups', () => {
     render(Sidebar);
 
     await fireEvent.contextMenu(within(groupEl(group.id)).getByText('Billing'));
-    await fireEvent.click(screen.getByText('Close all conversations'));
-    expect(await screen.findByText('Close 2 conversations?')).toBeInTheDocument();
+    await fireEvent.click(screen.getByText('Close all threads'));
+    expect(await screen.findByText('Close 2 threads?')).toBeInTheDocument();
     expect(screen.getByText(/1 of them is in the middle of a turn/)).toBeInTheDocument();
     expect(mockGroveBench.closeSession).not.toHaveBeenCalled();
 
@@ -688,7 +688,7 @@ describe('Sidebar clean-up dialog', () => {
 
   async function openDialog() {
     render(Sidebar);
-    await fireEvent.click(screen.getByTitle('Clean up old conversations'));
+    await fireEvent.click(screen.getByTitle('Clean up old threads'));
     return await screen.findByRole('dialog');
   }
 
@@ -892,14 +892,14 @@ describe('Sidebar delete conversation', () => {
     store.activeSessionId = null;
     mockGroveBench.getCollapsedRepos.mockResolvedValue({ '/repo-a': false });
     render(Sidebar);
-    await fireEvent.click(await screen.findByTitle('Delete conversation'));
+    await fireEvent.click(await screen.findByTitle('Delete thread'));
     return screen.findByRole('dialog');
   }
 
   it('warns about uncommitted files before deleting', async () => {
     mockGroveBench.getGitStatus.mockResolvedValueOnce({ entries: [{ filePath: 'a.ts', status: 'modified', staged: false }, { filePath: 'b.ts', status: 'untracked', staged: false }] } as any);
     const dialog = await openDeleteDialog();
-    expect(dialog).toHaveTextContent('Delete conversation?');
+    expect(dialog).toHaveTextContent('Delete thread?');
     expect(await screen.findByText('2 files have uncommitted changes that will be lost.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument();
   });
@@ -919,7 +919,7 @@ describe('Sidebar delete conversation', () => {
     store.activeSessionId = null;
     mockGroveBench.getCollapsedRepos.mockResolvedValue({ '/repo-a': false });
     render(Sidebar);
-    await fireEvent.click(await screen.findByTitle('Delete conversation'));
+    await fireEvent.click(await screen.findByTitle('Delete thread'));
     const dialog = await screen.findByRole('dialog');
     expect(dialog).toHaveTextContent('It worked in the project folder itself, so no files are deleted.');
     expect(screen.queryByText('Also delete the branch')).toBeNull();
@@ -1035,7 +1035,7 @@ describe('Sidebar remove project', () => {
 
   it('is offered while the project still has conversations, and says they go too', async () => {
     const dialog = await openRemoveDialog();
-    expect(dialog).toHaveTextContent('This also deletes its 3 conversations and their copies of the project (worktrees).');
+    expect(dialog).toHaveTextContent('This also deletes its 3 threads and their copies of the project (worktrees).');
     expect(dialog).toHaveTextContent("The project folder itself isn't touched.");
   });
 
@@ -1044,7 +1044,7 @@ describe('Sidebar remove project', () => {
       entries: id === 'w2' ? [{ filePath: 'a.ts', status: 'modified', staged: false }] : [],
     })) as any);
     await openRemoveDialog();
-    expect(await screen.findByText('1 conversation has uncommitted changes that will be lost.')).toBeInTheDocument();
+    expect(await screen.findByText('1 thread has uncommitted changes that will be lost.')).toBeInTheDocument();
     expect(mockGroveBench.getGitStatus).not.toHaveBeenCalledWith('d1');
     expect(mockGroveBench.getGitStatus).not.toHaveBeenCalledWith('other');
   });
@@ -1071,7 +1071,7 @@ describe('Sidebar remove project', () => {
   it('says which conversations are running and will be stopped', async () => {
     messageStore.setIsRunning('w1', true);
     const dialog = await openRemoveDialog();
-    expect(dialog).toHaveTextContent('1 conversation is running and will be stopped, 1 in the middle of a turn.');
+    expect(dialog).toHaveTextContent('1 thread is running and will be stopped, 1 in the middle of a turn.');
   });
 
   it('runs at most 3 git checks at once', async () => {
@@ -1100,8 +1100,8 @@ describe('Sidebar remove project', () => {
 
     expect(destroySession).not.toHaveBeenCalled();
     const dialog = screen.getByRole('dialog');
-    expect(dialog).toHaveTextContent('New conversations started in this project, so it checked again.');
-    expect(dialog).toHaveTextContent('This also deletes its 4 conversations');
+    expect(dialog).toHaveTextContent('New threads started in this project, so it checked again.');
+    expect(dialog).toHaveTextContent('This also deletes its 4 threads');
     expect(screen.getByRole('checkbox')).toBeChecked();
     await waitFor(() => expect(mockGroveBench.getGitStatus).toHaveBeenCalledWith('late'));
   });
@@ -1137,7 +1137,7 @@ describe('Sidebar rows for folder projects without git', () => {
       { id: 'n1', branch: '', repoPath: '/repo-a', status: 'running', direct: true, noGit: true, displayName: null },
     ] as any;
     render(Sidebar);
-    expect(await screen.findByText('New conversation')).toBeInTheDocument();
+    expect(await screen.findByText('New thread')).toBeInTheDocument();
     expect(screen.getByRole('img', { name: 'In the project folder (no git)' })).toBeInTheDocument();
   });
 });
@@ -1226,15 +1226,15 @@ describe('Sidebar sections', () => {
 
   it('folds Projects down to its heading, and saves it', async () => {
     render(Sidebar);
-    expect(screen.getByRole('button', { name: 'New conversation in api' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'New thread in api' })).toBeInTheDocument();
 
     await fireEvent.click(toggle('projectsSection'));
     expect(toggle('projectsSection')).toHaveAttribute('aria-expanded', 'false');
     expect(mockGroveBench.setCollapsedPanels).toHaveBeenLastCalledWith({ projectsSection: true });
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'New conversation in api' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'New thread in api' })).toBeNull());
 
     await fireEvent.click(toggle('projectsSection'));
-    expect(screen.getByRole('button', { name: 'New conversation in api' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'New thread in api' })).toBeInTheDocument();
   });
 
   it('starts folded when it was folded last time', () => {
@@ -1284,6 +1284,6 @@ describe('Sidebar sections', () => {
 
     await fireEvent.click(toggle('projectsSection'));
     await waitFor(() => expect(list.scrollTo).toHaveBeenCalledWith({ top: 800, behavior: 'smooth' }));
-    expect(screen.getByRole('button', { name: 'New conversation in api' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'New thread in api' })).toBeInTheDocument();
   });
 });

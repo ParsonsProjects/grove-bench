@@ -37,6 +37,6 @@ describe('alwaysAllowLabel', () => {
   });
 
   it('says how long the choice lasts', () => {
-    expect(alwaysAllowLabel('Bash', 'bash').title).toContain('until you stop the conversation or restart Grove Bench');
+    expect(alwaysAllowLabel('Bash', 'bash').title).toContain('until you stop the thread or restart Grove Bench');
   });
 });

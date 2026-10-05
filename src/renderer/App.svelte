@@ -489,7 +489,7 @@
       <svelte:boundary onerror={(e) => console.error('Draft pane crashed:', e)}>
         <DraftPane />
         {#snippet failed(error, reset)}
-          {@render crashed('The new conversation', error, reset)}
+          {@render crashed('The new thread', error, reset)}
         {/snippet}
       </svelte:boundary>
     {:else if store.sessions.length === 0}
@@ -520,7 +520,7 @@
           <GroveEmptyState variant="pick" />
         {:else}
           <div class="text-center relative z-10">
-            <p class="text-sm">Select a conversation from the sidebar.</p>
+            <p class="text-sm">Select a thread from the sidebar.</p>
           </div>
         {/if}
       </div>
@@ -543,7 +543,7 @@
             <svelte:boundary onerror={paneError(session.id)}>
               <WorkspacePane sessionId={session.id} />
               {#snippet failed(error, reset)}
-                {@render crashed('This conversation view', error, reset)}
+                {@render crashed('This thread view', error, reset)}
               {/snippet}
             </svelte:boundary>
           {/if}

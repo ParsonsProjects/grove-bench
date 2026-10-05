@@ -22,7 +22,7 @@
   <SettingRow
     setting="performance-log"
     label="Performance log"
-    description="Freezes, how long each new conversation, resume and wake took step by step, and a summary every 10 minutes are written to performance.log in the logs folder. It stays on this computer; send it along when reporting something slow."
+    description="Freezes, how long each new thread, resume and wake took step by step, and a summary every 10 minutes are written to performance.log in the logs folder. It stays on this computer; send it along when reporting something slow."
   >
     <div>
       <Button size="sm" variant="outline" onclick={() => window.groveBench.showPerformanceFile('log')}>Show performance log</Button>
@@ -32,7 +32,7 @@
   <SettingRow
     setting="performance-trace"
     label="Record a performance trace"
-    description="Records what every part of the app does for {PERFORMANCE_TRACE_SECONDS} seconds and saves it as a file. Start it, then do the slow thing, such as starting a new conversation. Open the file at ui.perfetto.dev or in chrome://tracing. It stays on this computer; it holds timings, file paths and page addresses, not conversation text. The newest 5 are kept."
+    description="Records what every part of the app does for {PERFORMANCE_TRACE_SECONDS} seconds and saves it as a file. Start it, then do the slow thing, such as starting a new thread. Open the file at ui.perfetto.dev or in chrome://tracing. It stays on this computer; it holds timings, file paths and page addresses, not thread text. The newest 5 are kept."
   >
     <div class="flex flex-wrap items-center gap-2">
       <Button size="sm" variant="outline" onclick={() => perfTraceStore.record()} disabled={perfTraceStore.state === 'recording'}>

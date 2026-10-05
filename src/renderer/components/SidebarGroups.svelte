@@ -70,11 +70,11 @@
   function menuItems(groupId: string) {
     const open = groupStore.members(groupId).filter((s) => store.isOpenTab(s));
     return [
-      { label: 'New conversation in group', icon: 'add', action: () => newConversationIn(groupId) },
+      { label: 'New thread in group', icon: 'add', action: () => newConversationIn(groupId) },
       { label: 'Rename group', icon: 'rename', action: () => { groupStore.nameRequest = { kind: 'rename', groupId }; } },
       // Done with the piece of work: every conversation leaves the working set.
       ...(open.length > 0
-        ? [{ label: 'Close all conversations', icon: 'close', action: () => stopSessions(open.map((s) => s.id)) }]
+        ? [{ label: 'Close all threads', icon: 'close', action: () => stopSessions(open.map((s) => s.id)) }]
         : []),
       { label: 'Ungroup', icon: 'ungroup', action: () => groupStore.ungroup(groupId), separator: true },
     ];
@@ -126,7 +126,7 @@
         type="button"
         onclick={() => { groupStore.nameRequest = { kind: 'new' }; }}
         class="w-5 h-5 shrink-0 flex items-center justify-center text-muted-foreground/70 hover:text-primary hover:bg-sidebar-accent transition-colors"
-        title="New group: conversations in different projects that belong to one piece of work"
+        title="New group: threads in different projects that belong to one piece of work"
         aria-label="New group"
       >
         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
@@ -135,7 +135,7 @@
 
     <div class="pt-1 pb-2">
       {#if groupStore.groups.length === 0}
-        <p class="text-xs text-muted-foreground/50 pl-4 py-1">Right-click a conversation to start a group</p>
+        <p class="text-xs text-muted-foreground/50 pl-4 py-1">Right-click a thread to start a group</p>
       {/if}
       {#each groupStore.groups as group (group.id)}
         {@const members = groupStore.members(group.id)}
@@ -169,7 +169,7 @@
                 type="button"
                 onclick={() => groupStore.ungroup(group.id)}
                 class="w-5 h-5 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-sidebar-accent transition-all opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
-                title="Ungroup (the conversations stay)"
+                title="Ungroup (the threads stay)"
                 aria-label="Ungroup {group.name}"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="8" height="6" x="5" y="4" rx="1"/><rect width="8" height="6" x="11" y="14" rx="1"/></svg>
@@ -178,8 +178,8 @@
                 type="button"
                 onclick={() => newConversationIn(group.id)}
                 class="w-5 h-5 flex items-center justify-center text-muted-foreground/70 hover:text-primary hover:bg-sidebar-accent transition-colors"
-                title="New conversation in {group.name}"
-                aria-label="New conversation in {group.name}"
+                title="New thread in {group.name}"
+                aria-label="New thread in {group.name}"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
               </button>
@@ -194,9 +194,9 @@
             {#if shown.length === 0}
               <p class="text-xs text-muted-foreground/40 pl-4 py-1">
                 {#if members.length === 0}
-                  Its conversations are in projects that didn't load
+                  Its threads are in projects that didn't load
                 {:else}
-                  No conversations match "{filterLabel}"
+                  No threads match "{filterLabel}"
                 {/if}
               </p>
             {/if}
@@ -225,7 +225,7 @@
         <Dialog.Title>{renaming ? 'Rename Group' : 'New Group'}</Dialog.Title>
         {#if !renaming}
           <Dialog.Description>
-            Conversations in different projects that belong to one piece of work. Each one keeps its own project and agent.
+            Threads in different projects that belong to one piece of work. Each one keeps its own project and agent.
           </Dialog.Description>
         {/if}
       </Dialog.Header>

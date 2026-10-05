@@ -105,7 +105,7 @@
     if (!draft || draftStore.starting) return null;
     if (credentials === 'missing') return 'Add credentials above to start.';
     if (credentials === 'checking') return 'Checking credentials…';
-    if (credentials === 'no-agent') return 'No agent is available to start this conversation.';
+    if (credentials === 'no-agent') return 'No agent is available to start this thread.';
     if (start?.kind === 'existing' && !start.branch) return 'Pick a branch or pull request first.';
     return null;
   });
@@ -191,7 +191,7 @@
 {#if draft}
 <div class="flex flex-col h-full bg-background">
   <div class="flex items-center gap-2 border-b border-border bg-card/50 shrink-0 px-4 py-1.5 text-xs">
-    <span class="font-medium text-foreground">New conversation</span>
+    <span class="font-medium text-foreground">New thread</span>
     <span class="text-muted-foreground/60">in {store.repoDisplayName(draft.repoPath)}{agentName ? ` · ${agentName}` : ''}</span>
     <button
       type="button"
@@ -211,7 +211,7 @@
       </div>
     {:else if credentials === 'no-agent'}
       <div class="relative z-10 w-full max-w-sm flex flex-col gap-3 bg-background border border-border p-4">
-        <p class="text-sm text-foreground">No agent is available to start this conversation.</p>
+        <p class="text-sm text-foreground">No agent is available to start this thread.</p>
         <p class="text-xs text-muted-foreground">Grove Bench couldn't load its list of agents. Try again, or restart the app if it keeps happening.</p>
         <div class="flex justify-end">
           <Button variant="secondary" size="sm" onclick={retryAgents}>Try again</Button>
@@ -299,7 +299,7 @@
       </div>
     {:else if settingsStore.current.groveCharacters}
       <GroveEmptyState variant="draft">
-        <p class="text-sm mt-5 mb-2 text-foreground/80">New conversation in {store.repoDisplayName(draft.repoPath)}</p>
+        <p class="text-sm mt-5 mb-2 text-foreground/80">New thread in {store.repoDisplayName(draft.repoPath)}</p>
         <p class="text-xs text-muted-foreground max-w-md">{plan}</p>
         {#if modeHint}
           <p class="text-xs text-muted-foreground max-w-md mt-1">Mode: <span class="text-foreground/80">{modeHint.label}</span>. {modeHint.description}.</p>
@@ -309,7 +309,7 @@
       </GroveEmptyState>
     {:else}
       <div class="relative z-10 text-center">
-        <p class="text-sm mb-2 text-foreground/80">New conversation in {store.repoDisplayName(draft.repoPath)}</p>
+        <p class="text-sm mb-2 text-foreground/80">New thread in {store.repoDisplayName(draft.repoPath)}</p>
         <p class="text-xs max-w-md">{plan}</p>
         {#if modeHint}
           <p class="text-xs max-w-md mt-1">Mode: {modeHint.label}. {modeHint.description}.</p>
@@ -345,7 +345,7 @@
         variant="outline"
         onclick={() => draftStore.start()}
         disabled={!canStart}
-        title={startBlocker ?? `Start the conversation${draft.text.trim() ? ' and send this message' : ''}`}
+        title={startBlocker ?? `Start the thread${draft.text.trim() ? ' and send this message' : ''}`}
         class="text-primary border-primary hover:bg-primary/10 h-auto"
       >
         {draftStore.starting ? 'Starting…' : 'Start'}

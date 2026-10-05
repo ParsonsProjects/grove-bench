@@ -62,7 +62,7 @@ describe('RewindDialog', () => {
     messageStore.openRewindDialog(SID, 'uuid-1');
 
     await waitFor(() => expect(document.querySelector('button[aria-pressed="true"]')).not.toBeNull());
-    expect(document.body.textContent).toContain('This conversation runs without git, so files on disk stay as');
+    expect(document.body.textContent).toContain('This thread runs without git, so files on disk stay as');
     expect(document.getElementById('conversation-only')).toBeNull();
     expect(groveBench().getCheckpointDiff).not.toHaveBeenCalled();
 

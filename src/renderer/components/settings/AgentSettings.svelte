@@ -183,7 +183,7 @@
       <CheckboxSetting
         setting="alpha-agents"
         label="Enable {agent.displayName}"
-        description="Offer {agent.displayName} as an agent for new conversations. Conversations already on it keep working either way."
+        description="Offer {agent.displayName} as an agent for new threads. Threads already on it keep working either way."
         bind:checked={() => settingsStore.isAlphaEnabled(agent.id), (on) => settingsStore.setAlphaEnabled(agent.id, on)}
       />
     {/if}
@@ -206,7 +206,7 @@
             {:else if status.available && status.authenticated === false && status.cliSignIn}
               Not signed in{status.authMessage && !/^authentication required\.?$/i.test(status.authMessage.trim()) ? ` (${agent.displayName} said: ${status.authMessage.replace(/[.\s]*$/, '')})` : ''}.
             {:else if status.authUnchecked}
-              {status.apiKey ? 'No key saved. ' : ''}{agent.displayName} uses its own sign-in if you set one up in a terminal. Grove Bench finds out when a conversation starts{status.signInCheckable ? ', or when you check here' : ''}.
+              {status.apiKey ? 'No key saved. ' : ''}{agent.displayName} uses its own sign-in if you set one up in a terminal. Grove Bench finds out when a thread starts{status.signInCheckable ? ', or when you check here' : ''}.
             {:else if status.authenticated}
               Signed in{status.email ? ` as ${status.email}` : ''}{status.authMethod ? ` via ${status.authMethod}` : ''}.
             {:else}
@@ -232,7 +232,7 @@
         setting="default-model"
         label="Default model"
         for="settings-{agent.id}-model"
-        description="New conversations with this agent start on this model. Each conversation can switch from the status bar."
+        description="New threads with this agent start on this model. Each thread can switch from the status bar."
       >
         <Select.Root
           type="single"
@@ -254,7 +254,7 @@
         setting="background-model"
         label="Background model"
         for="settings-{agent.id}-background-model"
-        description="Used for memory notes, memory compaction, commit messages and skill suggestions in this agent's conversations. These run often, so a cheap model is best."
+        description="Used for memory notes, memory compaction, commit messages and skill suggestions in this agent's threads. These run often, so a cheap model is best."
       >
         <Select.Root
           type="single"
@@ -273,10 +273,10 @@
       </SettingRow>
 
       {#if agent.controls.length === 0}
-        <p class="text-xs text-muted-foreground">This agent has no conversation controls to set.</p>
+        <p class="text-xs text-muted-foreground">This agent has no thread controls to set.</p>
       {:else}
         <div data-setting="default-controls" class="flex flex-col gap-5">
-          <p class="text-xs text-muted-foreground">Options depend on the default model above. They apply to new conversations.</p>
+          <p class="text-xs text-muted-foreground">Options depend on the default model above. They apply to new threads.</p>
           {#each agent.controls as control (control.id)}
             {@const value = controlValue(agent.id, control)}
             {@const selected = control.options.find((o) => o.value === value)}
@@ -284,7 +284,7 @@
               {#snippet help()}
                 {selected?.description ? selected.description.replace(/[.\s]*$/, '') + '.' : ''}
                 {#if controlShortcut(control)}
-                  Each conversation can change it from the status bar ({controlShortcut(control)}).
+                  Each thread can change it from the status bar ({controlShortcut(control)}).
                 {/if}
               {/snippet}
               <Select.Root type="single" {value} onValueChange={(v) => { if (v) settingsStore.setAdapterDefault(agent.id, control.id, v === control.default ? null : v); }}>
@@ -314,12 +314,12 @@
   </SettingsGroup>
 {/each}
 
-<SettingsGroup title="All agents" description="These apply to every agent's conversations." card collapse={{ key: 'all-agents', open: true }}>
+<SettingsGroup title="All agents" description="These apply to every agent's threads." card collapse={{ key: 'all-agents', open: true }}>
   <SettingRow
     setting="system-prompt"
     label="System prompt append"
     for="settings-prompt"
-    description="Instructions added to every conversation."
+    description="Instructions added to every thread."
   >
     <Textarea
       id="settings-prompt"
@@ -363,7 +363,7 @@
     <CheckboxSetting
       setting="thinking-summaries"
       label="Show thinking summaries"
-      description="Show a short summary of the model's thinking in the conversation. Doesn't change how much the model thinks or what it costs. Applies to agents started after the change.{summaryAgents.length < agentGroups.length ? ` Only ${summaryAgents.map((a) => a.displayName).join(' and ')} can show these.` : ''}"
+      description="Show a short summary of the model's thinking in the thread. Doesn't change how much the model thinks or what it costs. Applies to agents started after the change.{summaryAgents.length < agentGroups.length ? ` Only ${summaryAgents.map((a) => a.displayName).join(' and ')} can show these.` : ''}"
       bind:checked={settingsStore.draft.showThinkingSummaries}
     />
   {/if}

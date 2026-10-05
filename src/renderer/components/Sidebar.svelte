@@ -174,10 +174,10 @@
     // already-stopped ones. For an open tab still waiting to reconnect it
     // just closes the tab.
     if (store.isOpenTab(session)) {
-      items.push({ label: 'Close Conversation', icon: 'close', action: () => requestClose([sessionId]) });
+      items.push({ label: 'Close Thread', icon: 'close', action: () => requestClose([sessionId]) });
     }
     items.push(...groupMenuItems(sessionId));
-    items.push({ label: 'Delete Conversation', icon: 'destroy', action: () => requestDestroy(sessionId), variant: 'destructive', separator: true });
+    items.push({ label: 'Delete Thread', icon: 'destroy', action: () => requestDestroy(sessionId), variant: 'destructive', separator: true });
     return items;
   }
 
@@ -433,7 +433,7 @@
 
   /** What closing does: the quick ✕'s tooltip, and its description for
    *  screen readers (which already read its name, so it isn't repeated). */
-  const CLOSE_HINT = 'Stops the agent and terminal and takes it off the Conversations list. Open it again any time.';
+  const CLOSE_HINT = 'Stops the agent and terminal and takes it off the Threads list. Open it again any time.';
 
   /** Conversations waiting on the close confirmation, and how many of them
    *  were mid-turn when it was asked. */
@@ -646,7 +646,7 @@
    *  the plain name without the index. */
   function sessionRowLabel(s: { id: string; repoPath: string; displayName?: string | null; branch: string }): string {
     if (s.displayName) return s.displayName;
-    return s.branch ? branchIndex(s) + s.branch : 'New conversation';
+    return s.branch ? branchIndex(s) + s.branch : 'New thread';
   }
 
   function startRename(sessionId: string, currentLabel: string) {
@@ -789,7 +789,7 @@
       variant="ghost"
       size="sm"
       class="px-2 shrink-0"
-      title="Clean up old conversations"
+      title="Clean up old threads"
     >
       <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m13 11 9-9"/><path d="M14.6 12.6c.8.8.9 2.1.2 3L10 22l-8-8 6.4-4.8c.9-.7 2.2-.6 3 .2Z"/><path d="m6.8 10.4 6.8 6.8"/><path d="m5 17 1.4-1.4"/></svg>
     </Button>
@@ -884,8 +884,8 @@
           <!-- Closed session: delete (removes the worktree, after asking). -->
           <button
             type="button"
-            title="Delete conversation"
-            aria-label="Delete conversation {label}"
+            title="Delete thread"
+            aria-label="Delete thread {label}"
             onclick={() => requestDestroy(session.id)}
             class="absolute top-1.5 right-2 w-5 h-5 flex items-center justify-center text-muted-foreground transition-colors
               hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover/session:opacity-100 group-has-[:focus-visible]/session:opacity-100"
@@ -898,8 +898,8 @@
                context menu): close it (stops the agent but keeps it resumable). -->
           <button
             type="button"
-            title={`Close conversation\n${CLOSE_HINT}`}
-            aria-label="Close conversation {label}"
+            title={`Close thread\n${CLOSE_HINT}`}
+            aria-label="Close thread {label}"
             aria-describedby="close-conversation-hint"
             onclick={() => requestClose([session.id])}
             class="absolute top-1.5 right-2 w-5 h-5 flex items-center justify-center text-muted-foreground transition-colors
@@ -949,8 +949,8 @@
       <button
         onclick={() => store.finderOpen = true}
         class="p-1.5 text-muted-foreground/70 hover:text-foreground hover:bg-sidebar-accent transition-colors"
-        title="Search conversations (Ctrl+R)"
-        aria-label="Search conversations"
+        title="Search threads (Ctrl+R)"
+        aria-label="Search threads"
       >
         <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
       </button>
@@ -961,8 +961,8 @@
           type="button"
           onclick={() => draftStore.show()}
           class="w-full flex justify-center py-2 transition-colors {draftStore.visible ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}"
-          title="New conversation, not started yet"
-          aria-label="New conversation, not started yet"
+          title="New thread, not started yet"
+          aria-label="New thread, not started yet"
         >
           <span class="w-2 h-2 border border-dashed border-muted-foreground"></span>
         </button>
@@ -994,8 +994,8 @@
         disabled={!store.canCreate}
         size="sm"
         class="px-2"
-        title="New conversation (Ctrl+N)"
-        aria-label="New conversation"
+        title="New thread (Ctrl+N)"
+        aria-label="New thread"
       >
         <MessageSquarePlusIcon aria-hidden="true" />
       </Button>
@@ -1009,10 +1009,10 @@
     <button
       onclick={() => store.finderOpen = true}
       class="flex-1 min-w-0 flex items-center gap-2 px-2 py-1.5 bg-sidebar-accent/40 border border-sidebar-border text-muted-foreground/70 hover:text-foreground hover:bg-sidebar-accent transition-colors"
-      title="Search conversations (Ctrl+R)"
+      title="Search threads (Ctrl+R)"
     >
       <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-      <span class="text-xs truncate">Search conversations…</span>
+      <span class="text-xs truncate">Search threads…</span>
       <span class="ml-auto text-[10px] text-muted-foreground/40 shrink-0">Ctrl+R</span>
     </button>
     <PanelToggle panel="sidebar" label="sidebar" class="-mr-1" />
@@ -1025,7 +1025,7 @@
            Click a chip to show only those; click it again to show all. Hidden,
            with the sort, until there is a conversation to filter. -->
       {#if store.sessions.length > 0}
-      <div class="flex items-center gap-1 mb-2 px-1" role="group" aria-label="Filter conversations">
+      <div class="flex items-center gap-1 mb-2 px-1" role="group" aria-label="Filter threads">
         {#each CHIP_FILTERS as f (f)}
           {@const n = counts[f]}
           {@const active = triageFilter === f}
@@ -1051,9 +1051,9 @@
       <!-- CONVERSATIONS: the live working set, always visible at the top. The sort
            applies to the Projects tree too. -->
       <div class="flex items-center justify-between mb-1 px-1">
-        <span class="text-xs text-muted-foreground uppercase tracking-wide">Conversations</span>
+        <span class="text-xs text-muted-foreground uppercase tracking-wide">Threads</span>
         {#if store.sessions.length > 0}
-          <div class="flex items-center" role="group" aria-label="Sort conversations">
+          <div class="flex items-center" role="group" aria-label="Sort threads">
             {@render sortButton('name', 'Name')}
             {@render sortButton('age', 'Age')}
           </div>
@@ -1068,11 +1068,11 @@
           type="button"
           onclick={() => draftStore.show()}
           class="w-full flex flex-col pl-4 pr-2 py-1.5 text-left transition-colors {draftStore.visible ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}"
-          title="New conversation, not started yet"
+          title="New thread, not started yet"
         >
           <span class="w-full flex items-center gap-2 min-w-0">
             <span class="w-2 h-2 shrink-0 border border-dashed border-muted-foreground"></span>
-            <span class="text-sm truncate min-w-0 flex-1 italic text-muted-foreground">{draft.text.trim() ? draft.text.trim().split('\n')[0] : 'New conversation'}</span>
+            <span class="text-sm truncate min-w-0 flex-1 italic text-muted-foreground">{draft.text.trim() ? draft.text.trim().split('\n')[0] : 'New thread'}</span>
             <span class="text-[10px] text-muted-foreground/50 shrink-0">draft</span>
           </span>
           {#if store.repos.length > 1 || draftGroup}
@@ -1085,7 +1085,7 @@
         {@render sessionRow(session, store.repos.length > 1, null, true)}
       {/each}
       {#if activeSessions.length === 0 && !draftStore.draft}
-        <p class="text-xs text-muted-foreground/50 pl-4 py-1">{triageFilter === 'all' ? 'No conversations' : `No conversations match "${TRIAGE_FILTER_LABELS[triageFilter]}"`}</p>
+        <p class="text-xs text-muted-foreground/50 pl-4 py-1">{triageFilter === 'all' ? 'No threads' : `No threads match "${TRIAGE_FILTER_LABELS[triageFilter]}"`}</p>
       {/if}
     </div>
 
@@ -1154,8 +1154,8 @@
                 <button
                   onclick={() => openNewAgent(repo)}
                   class="w-5 h-5 flex items-center justify-center text-muted-foreground/70 hover:text-primary hover:bg-sidebar-accent transition-colors"
-                  title="New conversation in {store.repoDisplayName(repo)}"
-                  aria-label="New conversation in {store.repoDisplayName(repo)}"
+                  title="New thread in {store.repoDisplayName(repo)}"
+                  aria-label="New thread in {store.repoDisplayName(repo)}"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
                 </button>
@@ -1182,7 +1182,7 @@
                     </button>
                     {#if !branchCollapsed}
                       {#each sessions as session, i (session.id)}
-                        {@render sessionRow(session, false, session.displayName || `conversation ${i + 1}`, true)}
+                        {@render sessionRow(session, false, session.displayName || `thread ${i + 1}`, true)}
                       {/each}
                     {/if}
                   </div>
@@ -1190,7 +1190,7 @@
               {/each}
 
               {#if branchGroups.length === 0}
-                <p class="text-xs text-muted-foreground/40 pl-4 py-1">{triageFilter === 'all' ? 'No conversations in this project' : `No conversations match "${TRIAGE_FILTER_LABELS[triageFilter]}"`}</p>
+                <p class="text-xs text-muted-foreground/40 pl-4 py-1">{triageFilter === 'all' ? 'No threads in this project' : `No threads match "${TRIAGE_FILTER_LABELS[triageFilter]}"`}</p>
               {/if}
             {/if}
           </div>
@@ -1214,13 +1214,13 @@
         disabled={!store.canCreate}
         class="flex-1"
         size="sm"
-        title="New conversation (Ctrl+N)"
-        aria-label="New conversation"
+        title="New thread (Ctrl+N)"
+        aria-label="New thread"
       >
         {#if compact}
           <MessageSquarePlusIcon aria-hidden="true" />
         {:else}
-          + Conversation
+          + Thread
         {/if}
       </Button>
     </div>
@@ -1291,9 +1291,9 @@
   <Dialog.Root open={true} onOpenChange={(o) => { if (!o && !cleaningUp) showCleanup = false; }}>
     <Dialog.Content class="max-w-md">
       <Dialog.Header>
-        <Dialog.Title>Clean Up Old Conversations</Dialog.Title>
+        <Dialog.Title>Clean Up Old Threads</Dialog.Title>
         <Dialog.Description>
-          Remove closed conversations you no longer need. Removing a conversation kills its shell and deletes its worktree. Conversations with uncommitted changes are flagged and left unselected — tick them only if you're sure. Each conversation's pull request state is shown when the GitHub CLI is available; merged ones are the safest to remove. Branches are kept unless you choose otherwise. Running conversations are never listed.
+          Remove closed threads you no longer need. Removing a thread kills its shell and deletes its worktree. Threads with uncommitted changes are flagged and left unselected. Tick them only if you're sure. Each thread's pull request state is shown when the GitHub CLI is available; merged ones are the safest to remove. Branches are kept unless you choose otherwise. Running threads are never listed.
         </Dialog.Description>
       </Dialog.Header>
 
@@ -1320,7 +1320,7 @@
       </div>
 
       {#if cleanupCandidates.length === 0}
-        <p class="text-sm text-muted-foreground/50 py-2">No closed conversations inactive for {cleanupDaysNum} days.</p>
+        <p class="text-sm text-muted-foreground/50 py-2">No closed threads inactive for {cleanupDaysNum} days.</p>
       {:else}
         <div class="flex items-center justify-between text-xs text-muted-foreground">
           <span>{cleanupSelectedIds.length} of {cleanupCandidates.length} selected</span>
@@ -1329,7 +1329,7 @@
               type="button"
               onclick={cleanupSelectAllClean}
               class="hover:text-foreground hover:underline"
-              title="Tick every listed conversation without uncommitted changes"
+              title="Tick every listed thread without uncommitted changes"
             >
               <!-- Says what it leaves out, so "all" never means less than all. -->
               {cleanupDirtyCount > 0 ? `Select all except ${cleanupDirtyCount} with changes` : 'Select all'}
@@ -1341,7 +1341,7 @@
                 onclick={cleanupSelectMerged}
                 disabled={cleanupMergedCount === 0}
                 class="text-purple-400 hover:text-purple-300 hover:underline disabled:opacity-50 disabled:no-underline"
-                title="Tick only conversations whose pull request has been merged (and that have no uncommitted changes)"
+                title="Tick only threads whose pull request has been merged (and that have no uncommitted changes)"
               >
                 Select merged ({cleanupMergedCount})
               </button>
@@ -1396,7 +1396,7 @@
         >
           {cleaningUp
             ? 'Removing…'
-            : `Remove ${cleanupSelectedIds.length} ${cleanupSelectedIds.length === 1 ? 'conversation' : 'conversations'}`}
+            : `Remove ${cleanupSelectedIds.length} ${cleanupSelectedIds.length === 1 ? 'thread' : 'threads'}`}
         </Button>
       </Dialog.Footer>
     </Dialog.Content>
@@ -1408,9 +1408,9 @@
   <Dialog.Root open={true} onOpenChange={(o) => { if (!o) confirmCleanup = false; }}>
     <Dialog.Content class="max-w-xs">
       <Dialog.Header>
-        <Dialog.Title>Remove Conversations?</Dialog.Title>
+        <Dialog.Title>Remove Threads?</Dialog.Title>
         <Dialog.Description>
-          Permanently remove {cleanupSelectedIds.length} {cleanupSelectedIds.length === 1 ? 'conversation' : 'conversations'} and {cleanupSelectedIds.length === 1 ? 'its worktree' : 'their worktrees'}{cleanupDeleteBranches ? ', and delete their branches' : ' (branches are kept)'}?
+          Permanently remove {cleanupSelectedIds.length} {cleanupSelectedIds.length === 1 ? 'thread' : 'threads'} and {cleanupSelectedIds.length === 1 ? 'its worktree' : 'their worktrees'}{cleanupDeleteBranches ? ', and delete their branches' : ' (branches are kept)'}?
           {#if cleanupSelectedDirtyCount > 0}
             <span class="text-amber-500 font-medium">
               {cleanupSelectedDirtyCount} of them {cleanupSelectedDirtyCount === 1 ? 'has' : 'have'} uncommitted changes that will be lost.
@@ -1433,7 +1433,7 @@
   <Dialog.Root open={true} onOpenChange={(o) => { if (!o) confirmClose = null; }}>
     <Dialog.Content class="max-w-sm">
       <Dialog.Header>
-        <Dialog.Title>{ids.length === 1 ? 'Close conversation?' : `Close ${ids.length} conversations?`}</Dialog.Title>
+        <Dialog.Title>{ids.length === 1 ? 'Close thread?' : `Close ${ids.length} threads?`}</Dialog.Title>
         <Dialog.Description>
           {#if one}
             <span class="text-foreground font-medium">{sessionRowLabel(one)}</span> is in the middle of a turn.
@@ -1459,15 +1459,15 @@
   <Dialog.Root open={true} onOpenChange={(o) => { if (!o) confirmDestroyId = null; }}>
     <Dialog.Content class="max-w-sm">
       <Dialog.Header>
-        <Dialog.Title>Delete conversation?</Dialog.Title>
+        <Dialog.Title>Delete thread?</Dialog.Title>
         <Dialog.Description>
           {#if session?.noGit}
-            This stops the conversation and removes it. It worked in the project folder itself, so no files are deleted.
+            This stops the thread and removes it. It worked in the project folder itself, so no files are deleted.
           {:else if session?.direct}
-            This stops the conversation and removes it. It worked in the project folder on
+            This stops the thread and removes it. It worked in the project folder on
             <span class="text-foreground font-medium">{branch}</span>, so no files are deleted.
           {:else}
-            This removes the conversation and its copy of the project (the worktree for
+            This removes the thread and its copy of the project (the worktree for
             <span class="text-foreground font-medium">{branch}</span>).
           {/if}
         </Dialog.Description>
@@ -1516,22 +1516,22 @@
         <Dialog.Description>
           Remove <span class="text-foreground font-medium">{store.repoDisplayName(confirmRemoveRepo)}</span> from Grove Bench?
           {#if n > 0}
-            This also deletes its {n} {n === 1 ? 'conversation' : 'conversations'}{hasWorktrees ? ' and their copies of the project (worktrees)' : ''}.
+            This also deletes its {n} {n === 1 ? 'thread' : 'threads'}{hasWorktrees ? ' and their copies of the project (worktrees)' : ''}.
           {/if}
           The project folder itself isn't touched.
         </Dialog.Description>
       </Dialog.Header>
       {#if removeRepoRechecked}
-        <p class="text-xs text-muted-foreground mt-3">New conversations started in this project, so it checked again.</p>
+        <p class="text-xs text-muted-foreground mt-3">New threads started in this project, so it checked again.</p>
       {/if}
       {#if running.length}
         <p class="text-xs text-yellow-500 mt-3" role="alert">
-          {running.length} {running.length === 1 ? 'conversation is' : 'conversations are'} running and will be stopped{midTurn ? `, ${midTurn} in the middle of a turn` : ''}.
+          {running.length} {running.length === 1 ? 'thread is' : 'threads are'} running and will be stopped{midTurn ? `, ${midTurn} in the middle of a turn` : ''}.
         </p>
       {/if}
       {#if removeRepoDirty}
         <p class="text-xs text-yellow-500 mt-3" role="alert">
-          {removeRepoDirty} {removeRepoDirty === 1 ? 'conversation has' : 'conversations have'} uncommitted changes that will be lost.
+          {removeRepoDirty} {removeRepoDirty === 1 ? 'thread has' : 'threads have'} uncommitted changes that will be lost.
         </p>
       {/if}
       {#if hasWorktrees}

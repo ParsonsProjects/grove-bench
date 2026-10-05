@@ -96,7 +96,7 @@
       <div>
         <h4 class="text-sm font-semibold text-foreground">Configured servers</h4>
         <p class="text-xs text-muted-foreground leading-relaxed mt-1">
-          From {mcpAgent ? `${mcpAgent.displayName}'s` : "the agent's"} configuration. New and restarted conversations pick them up.
+          From {mcpAgent ? `${mcpAgent.displayName}'s` : "the agent's"} configuration. New and restarted threads pick them up.
         </p>
       </div>
       <div class="flex items-center gap-1 shrink-0">
@@ -113,7 +113,7 @@
     </div>
 
     {#if added}
-      <p class="text-xs text-green-400" role="status">Added {added}. Restart conversations to connect.</p>
+      <p class="text-xs text-green-400" role="status">Added {added}. Restart threads to connect.</p>
     {/if}
 
     <!-- Each agent keeps its own MCP configuration. -->
@@ -179,11 +179,11 @@
                 <div class="text-xs text-muted-foreground">{server.managedBy.hint}</div>
               {:else if server.status === 'needs-approval'}
                 <div class="text-xs text-muted-foreground">
-                  {rules?.approvalHint ?? "Conversations won't connect it until it is approved."}
+                  {rules?.approvalHint ?? "Threads won't connect it until it is approved."}
                 </div>
               {:else if server.status === 'rejected'}
                 <div class="text-xs text-muted-foreground">
-                  Turned down for this project. Approve it to let conversations connect it.
+                  Turned down for this project. Approve it to let threads connect it.
                 </div>
               {/if}
             </div>
@@ -214,7 +214,7 @@
                   class="text-xs shrink-0"
                   disabled={mcpConfigStore.actionInProgress !== null}
                   onclick={() => mcpConfigStore.approve(server.name)}
-                  title="Approve for this project and its conversations"
+                  title="Approve for this project and its threads"
                 >
                   {mcpConfigStore.actionInProgress === server.name && mcpConfigStore.actionKind === 'approve' ? 'Approving...' : 'Approve'}
                 </Button>

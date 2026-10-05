@@ -83,7 +83,7 @@
     isDiffLoading && !files
       ? 'Loading diff...'
       : files?.scopeError
-        ?? (isFullThread ? 'No file changes in this conversation' : diffMode === 'turn' ? 'No file changes in this turn' : 'No file changes since this checkpoint'),
+        ?? (isFullThread ? 'No file changes in this thread' : diffMode === 'turn' ? 'No file changes in this turn' : 'No file changes since this checkpoint'),
   );
 </script>
 
@@ -124,7 +124,7 @@
           onclick={() => checkpointStore.selectFullThread(sessionId)}
           class="w-full h-7 flex items-center justify-center border-b border-border border-l-2 transition-colors
             {isFullThread ? 'bg-sidebar-accent border-l-primary' : 'border-l-transparent hover:bg-accent/30'}"
-          title="All turns: everything changed since the conversation started"
+          title="All turns: everything changed since the thread started"
           aria-label="All turns"
         >
           <svg class="w-3 h-3 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -159,7 +159,7 @@
           onclick={() => checkpointStore.selectFullThread(sessionId)}
           class="w-full flex items-start gap-2 px-3 py-2 text-left text-xs border-b border-border transition-colors
             {isFullThread ? 'bg-sidebar-accent border-l-2 border-l-primary' : 'hover:bg-accent/30'}"
-          title="Cumulative diff of everything changed since the conversation started"
+          title="Cumulative diff of everything changed since the thread started"
         >
           <svg class="w-3 h-3 shrink-0 mt-0.5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h7" />
@@ -178,7 +178,7 @@
             {#if i === firstBeforeClearIdx}
               <div
                 class="px-3 py-1 text-[10px] uppercase tracking-wide text-muted-foreground/70 bg-muted/30 border-b border-border/50"
-                title="Turns from a conversation that was cleared with /clear. Their files can still be restored."
+                title="Turns from a thread that was cleared with /clear. Their files can still be restored."
               >
                 Before /clear
               </div>
@@ -208,7 +208,7 @@
           {#if groveAgent}
             <GroveEmptyState variant="agent" agent={groveAgent} tab="checkpoints">
               <p class="text-sm mt-5 mb-2 text-foreground/80">Select a checkpoint to view changes</p>
-              <p class="text-xs text-muted-foreground max-w-md">Pick a turn on the left to see what it changed, or All turns for the whole conversation.</p>
+              <p class="text-xs text-muted-foreground max-w-md">Pick a turn on the left to see what it changed, or All turns for the whole thread.</p>
             </GroveEmptyState>
           {:else}
             Select a checkpoint to view changes
@@ -261,7 +261,7 @@
                   onclick={() => handleRewind('files')}
                   disabled={rewinding}
                   class="px-2 py-1 text-[10px] bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
-                  title="Restore files to this checkpoint. The conversation was cleared, so it is left as is."
+                  title="Restore files to this checkpoint. The thread was cleared, so it is left as is."
                 >
                   {rewinding ? 'Restoring...' : 'Restore files'}
                 </button>
@@ -270,7 +270,7 @@
                   onclick={() => handleRewind('all')}
                   disabled={rewinding}
                   class="px-2 py-1 text-[10px] bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
-                  title="Restore files and rewind conversation to this point"
+                  title="Restore files and rewind thread to this point"
                 >
                   {rewinding ? 'Rewinding...' : 'Rewind all'}
                 </button>
@@ -278,9 +278,9 @@
                   onclick={() => handleRewind('conversation')}
                   disabled={rewinding}
                   class="px-2 py-1 text-[10px] bg-muted text-muted-foreground hover:text-foreground disabled:opacity-50 transition-colors"
-                  title="Only rewind conversation, keep current files"
+                  title="Only rewind thread, keep current files"
                 >
-                  Conv. only
+                  Thread only
                 </button>
               {/if}
             {/if}
@@ -300,7 +300,7 @@
           entries={files?.entries ?? []}
           active={sessionStore.activeSessionId === sessionId && messageStore.getActiveTab(sessionId) === 'checkpoints'}
           loading={isDiffLoading}
-          changesLabel={isFullThread ? 'Changed this conversation' : diffMode === 'turn' ? 'Changed this turn' : 'Changed since checkpoint'}
+          changesLabel={isFullThread ? 'Changed this thread' : diffMode === 'turn' ? 'Changed this turn' : 'Changed since checkpoint'}
           {loadDiff}
           {loadFileLines}
           onRefresh={() => checkpointStore.reloadFiles(sessionId)}

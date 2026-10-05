@@ -50,8 +50,8 @@ afterEach(() => {
 describe('DraftStatusBar', () => {
   it('closes the start picker on a click outside or Escape, with no Done button', async () => {
     render(DraftStatusBar);
-    const where = screen.getByTitle(/Where this conversation runs/);
-    const picker = () => screen.queryByRole('dialog', { name: 'Where this conversation runs' });
+    const where = screen.getByTitle(/Where this thread runs/);
+    const picker = () => screen.queryByRole('dialog', { name: 'Where this thread runs' });
 
     await fireEvent.click(where);
     expect(picker()).toBeInTheDocument();

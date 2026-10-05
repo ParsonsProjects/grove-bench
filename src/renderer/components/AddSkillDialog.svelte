@@ -96,7 +96,7 @@
     <Dialog.Header>
       <Dialog.Title>Add Skill</Dialog.Title>
       <Dialog.Description>
-        Package instructions the agent can invoke by name. Loaded when a conversation's agent (re)starts.
+        Package instructions the agent can invoke by name. Loaded when a thread's agent (re)starts.
       </Dialog.Description>
     </Dialog.Header>
 
@@ -120,7 +120,7 @@
               type="button"
               onclick={() => scope = 'project'}
               class="px-2.5 py-1.5 text-xs transition-colors {scope === 'project' ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:text-foreground'}"
-              title="Written into this conversation's worktree — ships with the branch and gets code review"
+              title="Written into this thread's worktree, so it ships with the branch and gets code review"
             >
               Project
             </button>
@@ -181,7 +181,7 @@
           disabled={!canSendToAgent}
           title={canAskAgent
             ? 'Send a turn asking the agent to draft and write the skill itself (instructions above become optional notes)'
-            : 'Needs a running, idle conversation'}
+            : 'Needs a running, idle thread'}
         >
           Ask Agent to Write It
         </Button>

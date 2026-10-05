@@ -21,16 +21,16 @@
 {#if store.repos.length === 0}
   <p class="text-sm mb-2 text-foreground/80">Add a project to start</p>
   <p class="text-xs text-muted-foreground max-w-sm">
-    A project is a folder on this computer, ideally a git repository. With git, each conversation works in its own copy
+    A project is a folder on this computer, ideally a git repository. With git, each thread works in its own copy
     (a git worktree), so the agent's changes stay apart from yours until you merge them.
   </p>
   <Button class="mt-4" size="sm" onclick={addProject}>Add a project</Button>
 {:else}
-  <p class="text-sm mb-2 text-foreground/80">No conversations yet</p>
+  <p class="text-sm mb-2 text-foreground/80">No threads yet</p>
   <p class="text-xs text-muted-foreground max-w-sm">
-    Start a conversation in {store.repoDisplayName(newestRepo)} and tell the agent what to work on.
+    Start a thread in {store.repoDisplayName(newestRepo)} and tell the agent what to work on.
   </p>
-  <Button class="mt-4" size="sm" onclick={() => draftStore.open(newestRepo)}>Start a conversation</Button>
+  <Button class="mt-4" size="sm" onclick={() => draftStore.open(newestRepo)}>Start a thread</Button>
 {/if}
 {#if store.prerequisites && !gitReady(store.prerequisites)}
   <div class="mt-4 w-full max-w-md text-left"><GitNotice boxed /></div>
