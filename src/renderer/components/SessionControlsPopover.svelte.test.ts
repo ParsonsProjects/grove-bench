@@ -118,6 +118,14 @@ describe('SessionControlsPopover', () => {
     expect(mockGroveBench.switchAgent).toHaveBeenCalledWith(SID, 'codex', true);
   });
 
+  it('says why a switch was refused', async () => {
+    mockGroveBench.switchAgent.mockRejectedValueOnce(new Error("Error invoking remote method 'agent:switch': Error: Codex isn't signed in. Sign in (Settings > Agents), then switch."));
+    await openPopover();
+    await fireEvent.click(screen.getByRole('button', { name: /Codex/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Switch and send the transcript' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/^Codex isn't signed in/);
+  });
+
   it('can switch without the transcript', async () => {
     await openPopover();
     await fireEvent.click(screen.getByRole('button', { name: /Codex/ }));

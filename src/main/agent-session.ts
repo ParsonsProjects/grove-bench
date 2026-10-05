@@ -5,7 +5,7 @@ import { CONTROL_IDS, PERMISSION_MODES, subagentParent } from '../shared/types.j
 import { displayTextFromSent } from '../shared/prompt-text.js';
 import { applyRateLimit } from '../shared/usage.js';
 import { loadUsageSnapshot, saveUsageSnapshot } from './app-state.js';
-import { handoffTranscript, pendingHandoff } from './agent-handoff.js';
+import { handoffTranscript, isSlashCommand, lastAgentChange, pendingHandoff } from './agent-handoff.js';
 import { pruneImages, removeImages, saveImages, storeToolImages } from './attachments.js';
 import { logger } from './logger.js';
 import { perfSteps } from './perf-steps.js';
@@ -19,7 +19,7 @@ import type { AgentAdapter, AgentQueryHandle, UserMessage } from './adapters/typ
 import { ResumeNotFoundError } from './adapters/types.js';
 import { getGitIdentity } from './git.js';
 import { findRewindForkPoint, isAuthFailure, lastTurnUuid } from './agent-utils.js';
-import { markApiKeyRejected } from './credentials.js';
+import { hasApiKey, isApiKeyRejected, markApiKeyRejected } from './credentials.js';
 import { CheckpointManager } from './checkpoints.js';
 import type { EventSearchHit } from './event-search.js';
 import { noGitCheckpoints } from './no-git-checkpoints.js';
@@ -896,9 +896,11 @@ class AgentSessionManager {
       images = undefined;
     }
     const storedImages = images?.length ? await saveImages(id, images) : [];
-    // The first message after a switch the user wanted a transcript for
-    // carries it ahead of what they typed; the thread shows only theirs.
-    const handoff = pendingHandoff(session.eventHistory);
+    // After a switch the user wanted a transcript for, messages carry it
+    // ahead of what they typed until the new agent replies; the thread shows
+    // only theirs. A slash command is left alone (it must lead the text) and
+    // the transcript waits for the next message.
+    const handoff = isSlashCommand(content) ? null : pendingHandoff(session.eventHistory);
     const handoffNote = handoff ? handoffTranscript(session.eventHistory.slice(0, handoff.index), handoff.event) : null;
     const userEvent: AgentEvent = {
       type: 'user_message', text: content, uuid,
@@ -936,7 +938,11 @@ class AgentSessionManager {
     logger.debug(`[sendMessage] session=${id} sending to adapter, providerSessionId=${sessionId || '(not yet initialized)'}${images?.length ? ` with ${images.length} image(s)` : ''}`);
     try {
       session.turnHandle = queryHandle;
-      const message: UserMessage = { text: handoffNote ? `${handoffNote}\n${content}` : content, images };
+      // Once per query: a second message before the reply doesn't repeat it,
+      // but a query that failed to start and was replaced gets it again.
+      const withNote = handoffNote !== null && session.handoffSentTo !== queryHandle;
+      const message: UserMessage = { text: withNote ? `${handoffNote}\n${content}` : content, images };
+      if (withNote) session.handoffSentTo = queryHandle;
       queryHandle.sendMessage(message);
       if (session.promptsBeforeInit?.handle === queryHandle) session.promptsBeforeInit.prompts.push(message);
       logger.debug(`[sendMessage] session=${id} sent successfully`);
@@ -1311,14 +1317,20 @@ class AgentSessionManager {
 
   /**
    * Stop the current query but keep the session alive so the user can send
-   * follow-up messages without losing state or remounting the UI.
+   * follow-up messages without losing state or remounting the UI: a new
+   * query starts at once. `beforeRestart` runs in between, once the old
+   * query is closed and aborted (its event loop drops anything it still
+   * sends), and also for a sleeping session, whose wake starts the new one.
    */
-  async stopQuery(id: string): Promise<void> {
+  async stopQuery(id: string, beforeRestart?: () => Promise<void>): Promise<void> {
     const session = this.sessions.get(id);
     if (!session) return;
     // Asleep: there is no query to stop. A rewind's fork point (set before
     // this is called) is picked up when the session wakes.
-    if (session.status === 'sleeping') return;
+    if (session.status === 'sleeping') {
+      await beforeRestart?.();
+      return;
+    }
     // Waking while the sleep is still killing the old agent: starting a run
     // now would put a second agent on the transcript beside it, and the
     // wake would then start a third. Wait for the wake's run to begin; this
@@ -1327,7 +1339,11 @@ class AgentSessionManager {
     if (session.sleepSettled) {
       await session.sleepSettled;
       // Re-read after the wait (TypeScript keeps the check above's narrowing)
-      if (session.destroying || (session.status as SessionStatus) === 'sleeping' || !this.sessions.has(id)) return;
+      if (session.destroying || !this.sessions.has(id)) return;
+      if ((session.status as SessionStatus) === 'sleeping') {
+        await beforeRestart?.();
+        return;
+      }
     }
 
     // Tell runQuery not to emit process_exit / SESSION_STATUS 'stopped'
@@ -1356,10 +1372,6 @@ class AgentSessionManager {
     denyPendingPermissions(session, 'Query stopped by user', emit);
     cancelElicitations(session);
 
-    // Re-sync the renderer with the current permission mode so the status bar
-    // reflects the correct state after a stop/restart cycle.
-    emit({ type: 'mode_sync', mode: session.permissionMode, source: 'session' });
-
     // Create a deferred promise so sendMessage() can wait for the new
     // queryHandle. Keep one that's still pending (e.g. a wake's): messages
     // already waiting on it would otherwise never be delivered.
@@ -1368,6 +1380,12 @@ class AgentSessionManager {
         session.resolveQueryReady = resolve;
       });
     }
+
+    await beforeRestart?.();
+
+    // Re-sync the renderer with the current permission mode so the status bar
+    // reflects the correct state after a stop/restart cycle.
+    emit({ type: 'mode_sync', mode: session.permissionMode, source: 'session' });
 
     // Start a new query loop — the session stays in the map so sendMessage works
     this.runQuery(session, emit).catch((err) => {
@@ -1686,12 +1704,6 @@ class AgentSessionManager {
     return this.events.search(id, this.sessions.get(id)?.eventHistory, query, limit);
   }
 
-  /** Rewind files on disk to their state at a specific user message checkpoint.
-   *  When options.conversationOnly is true, only truncate the conversation
-   *  without restoring files on disk. When options.filesOnly is true, only
-   *  restore the files: the conversation, event history and later checkpoint
-   *  refs are untouched (used for checkpoints from before a /clear, whose
-   *  messages are gone). */
   /**
    * Hand a conversation to another agent. The thread, worktree and
    * checkpoints stay; the new agent starts a session of its own, on its
@@ -1706,58 +1718,81 @@ class AgentSessionManager {
     const adapter = adapterRegistry.get(adapterId);
     if (!adapter) throw new Error(`Unknown agent: ${adapterId}`);
 
+    // Don't stop a working agent for one that can't run: the same check a
+    // draft makes before its first message.
+    const ready = await adapter.checkPrerequisites().catch(() => null);
+    const keyOk = !!adapter.apiKey && hasApiKey(adapter.id) && !isApiKeyRejected(adapter.id);
+    if (!ready || (!ready.available && ready.installRequired)) {
+      throw new Error(`${adapter.displayName} isn't installed. Install it (Settings > Agents shows how), then switch.`);
+    }
+    if (ready.authenticated === false && !keyOk) {
+      throw new Error(`${adapter.displayName} isn't signed in. Sign in (Settings > Agents), then switch.`);
+    }
+
     // The old agent mustn't keep editing while the new one starts.
     if (this.isMidTurn(id)) await this.interruptQuery(id);
     memoryAutosave.cancelAutoSave(id);
 
     const previous = session.adapter;
-    const appSettings = settings.getSettings();
-    const defaults = appSettings.adapterDefaults?.[adapter.id];
-    const model = appSettings.defaultModels?.[adapter.id] || adapter.getModels()[0]?.id || null;
-    session.adapter = adapter;
-    session.agentType = adapter.id;
-    session.model = model;
-    session.permissionMode = startingPermissionMode(adapter, model, session.permissionMode, defaults?.[CONTROL_IDS.permissionMode]);
-    session.controls = initialControls(adapter, model, defaults);
-    // Tool names are the old agent's: an "always allow" for its Bash says
-    // nothing about the new one's commands.
-    session.alwaysAllowedTools.clear();
-    session.editToolNames = undefined;
-    // Its session belongs to the old agent.
-    session.providerSessionId = null;
-    session.pendingResumeAt = null;
+    const swap = async () => {
+      const appSettings = settings.getSettings();
+      const defaults = appSettings.adapterDefaults?.[adapter.id];
+      const model = appSettings.defaultModels?.[adapter.id] || adapter.getModels()[0]?.id || null;
+      session.adapter = adapter;
+      session.agentType = adapter.id;
+      session.model = model;
+      session.permissionMode = startingPermissionMode(adapter, model, session.permissionMode, defaults?.[CONTROL_IDS.permissionMode]);
+      session.controls = initialControls(adapter, model, defaults);
+      // Tool names are the old agent's: an "always allow" for its Bash says
+      // nothing about the new one's commands.
+      session.alwaysAllowedTools.clear();
+      session.editToolNames = undefined;
+      // Its session belongs to the old agent.
+      session.providerSessionId = null;
+      session.pendingResumeAt = null;
+      session.handoffSentTo = undefined;
 
-    worktreeManager.saveAdapterType(id, adapter.id).catch((e) => logger.warn(`Failed to record agent for ${id}:`, e));
-    worktreeManager.saveProviderSessionId(id, '').catch(() => { /* non-fatal */ });
-    if (model) worktreeManager.saveModel(id, model).catch((e) => logger.warn(`Failed to persist model for ${id}:`, e));
-    // A worktree of its own may need the new agent's files (Claude Code's
-    // local settings); a direct conversation's folder is the user's.
-    if (session.worktreePath !== session.repoPath) {
-      await worktreeManager.writeAgentSettings(session.worktreePath, session.repoPath, adapter.id)
-        .catch((e) => logger.warn(`Could not write ${adapter.displayName}'s worktree settings for ${id}:`, e));
-    }
+      worktreeManager.saveAdapterType(id, adapter.id).catch((e) => logger.warn(`Failed to record agent for ${id}:`, e));
+      worktreeManager.saveProviderSessionId(id, '').catch(() => { /* non-fatal */ });
+      // No model yet (an agent never run): clear the old agent's.
+      worktreeManager.saveModel(id, model).catch((e) => logger.warn(`Failed to persist model for ${id}:`, e));
+      // A worktree of its own may need the new agent's files (Claude Code's
+      // local settings); a direct thread's folder is the user's.
+      if (session.worktreePath !== session.repoPath) {
+        await worktreeManager.writeAgentSettings(session.worktreePath, session.repoPath, adapter.id)
+          .catch((e) => logger.warn(`Could not write ${adapter.displayName}'s worktree settings for ${id}:`, e));
+      }
 
-    session.emit?.({
-      type: 'agent_changed',
-      from: previous.id,
-      to: adapter.id,
-      fromName: previous.displayName,
-      toName: adapter.displayName,
-      transcript: opts.transcript,
-    });
-    // A rewind must not fork into the old agent's session.
-    session.emit?.({
-      type: 'status',
-      newConversation: true,
-      message: opts.transcript
-        ? `Switched from ${previous.displayName} to ${adapter.displayName}. It gets a short transcript of this thread with your next message.`
-        : `Switched from ${previous.displayName} to ${adapter.displayName}. It starts without the thread so far, which stays above.`,
-    });
+      session.emit?.({
+        type: 'agent_changed',
+        from: previous.id,
+        to: adapter.id,
+        fromName: previous.displayName,
+        toName: adapter.displayName,
+        transcript: opts.transcript,
+      });
+      // A rewind must not fork into the old agent's session.
+      session.emit?.({
+        type: 'status',
+        newConversation: true,
+        message: opts.transcript
+          ? `Switched from ${previous.displayName} to ${adapter.displayName}. It gets a short transcript of this thread with your next message.`
+          : `Switched from ${previous.displayName} to ${adapter.displayName}. It starts without the thread so far, which stays above.`,
+      });
+    };
 
-    // Closes the old agent and starts the new one in its place.
-    await this.stopQuery(id);
+    // The swap happens once the old agent is closed and its event loop has
+    // stopped, so nothing it still sends is taken for the new agent's; then
+    // the new agent starts in its place (or on wake, for a sleeping thread).
+    await this.stopQuery(id, swap);
   }
 
+  /** Rewind files on disk to their state at a specific user message checkpoint.
+   *  When options.conversationOnly is true, only truncate the conversation
+   *  without restoring files on disk. When options.filesOnly is true, only
+   *  restore the files: the conversation, event history and later checkpoint
+   *  refs are untouched (used for checkpoints from before a /clear, whose
+   *  messages are gone). */
   async rewindFiles(id: string, userMessageId: string, options?: import('../shared/types.js').RewindOptions): Promise<void> {
     const session = this.sessions.get(id);
     if (!session) throw new Error(`Thread ${id} not found`);
@@ -1808,6 +1843,7 @@ class AgentSessionManager {
     const rewindIdx = session.eventHistory.findLastIndex(
       (e) => e.type === 'user_message' && e.uuid === userMessageId,
     );
+    const cutEvents = rewindIdx >= 0 ? session.eventHistory.slice(rewindIdx) : [];
     if (rewindIdx >= 0) {
       // Exclude the rewind target message — it gets placed back into the
       // input. The disk log is rewritten to match.
@@ -1815,6 +1851,11 @@ class AgentSessionManager {
     }
 
     session.emit?.({ type: 'rewind', toMessageId: userMessageId, conversationOnly: options?.conversationOnly });
+    // Rewinding to before a switch takes its marker out of the log, which is
+    // what keeps the earlier agent's turns away from this agent's background
+    // tasks (agent-handoff.ts): put it back, after the rewind point.
+    const removedSwitch = rewindIdx >= 0 ? lastAgentChange(cutEvents) : null;
+    if (removedSwitch) session.emit?.({ ...removedSwitch, transcript: false });
     // Starting over below turns the agent could fork from: mark where the new
     // conversation begins, so a later rewind can't fork into the old one.
     if (!(forkPoint && canFork) && lastTurnUuid(session.eventHistory)) {

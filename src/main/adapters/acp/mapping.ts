@@ -254,10 +254,10 @@ function controlOption(value: string, label: string, description?: string | null
   return { value, label, ...(description ? { description } : {}) };
 }
 
-/** Agent modes that run tools without asking (Gemini CLI's YOLO, a "bypass"
- *  or "full access" mode). Matched on the id, name and description, since ACP
- *  modes carry no flag for it. */
-const SKIPS_ASKING = /\b(yolo|bypass\w*|dangerous\w*|full[-_ ]?access|auto[-_ ]?approv\w*|allow[-_ ]?all|skip\w*[-_ ]permissions?)\b|without (asking|approval|confirmation)/i;
+/** Agent modes that run every tool without asking (Gemini CLI's YOLO,
+ *  "Auto-approves all tools"; a "bypass" or "full access" mode). Matched on
+ *  the id, name and description, since ACP modes carry no flag for it. */
+const SKIPS_ASKING = /\b(yolo|bypass\w*|dangerous\w*|full[-_ ]?access|allow[-_ ]?all|skip\w*[-_ ]permissions?)\b|approves? all|without (asking|approval|confirmation)/i;
 
 /**
  * A colour for one of the agent's own modes, so the badge reads like Grove's:
@@ -265,10 +265,13 @@ const SKIPS_ASKING = /\b(yolo|bypass\w*|dangerous\w*|full[-_ ]?access|auto[-_ ]?
  * Others stay neutral.
  */
 export function agentModeTone(option: Pick<ControlOption, 'value' | 'label' | 'description'>): ControlTone | undefined {
-  const text = `${option.value} ${option.label} ${option.description ?? ''}`;
-  if (SKIPS_ASKING.test(text)) return 'danger';
-  if (/\bplan/i.test(`${option.value} ${option.label}`)) return 'warning';
-  if (/auto[-_ ]?edit|accept[-_ ]?edits?/i.test(`${option.value} ${option.label}`)) return 'accent';
+  const name = `${option.value} ${option.label}`;
+  // First: an edits-only mode says it approves edits without asking, which
+  // must not read as approving everything (Gemini CLI's Auto Edit,
+  // "Auto-approves edit tools").
+  if (/auto[-_ ]?edit|accept[-_ ]?edits?/i.test(name)) return 'accent';
+  if (SKIPS_ASKING.test(`${name} ${option.description ?? ''}`)) return 'danger';
+  if (/\bplan/i.test(name)) return 'warning';
   return undefined;
 }
 

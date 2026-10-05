@@ -383,12 +383,14 @@ export class WorktreeManager {
     return entry?.providerSessionId ?? entry?.claudeSessionId;
   }
 
-  /** Persist the model a session is running with so it survives app restart. */
-  async saveModel(worktreeId: string, model: string): Promise<void> {
+  /** Persist the model a session is running with so it survives app restart.
+   *  Null forgets it (an agent switched to that has no model yet starts on
+   *  its own default). */
+  async saveModel(worktreeId: string, model: string | null): Promise<void> {
     await this.withManifest((manifest) => {
-      if (manifest[worktreeId]) {
-        manifest[worktreeId].model = model;
-      }
+      if (!manifest[worktreeId]) return;
+      if (model) manifest[worktreeId].model = model;
+      else delete manifest[worktreeId].model;
     });
   }
 

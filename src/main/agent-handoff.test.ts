@@ -1,18 +1,30 @@
 import { describe, it, expect } from 'vitest';
 import type { AgentEvent } from '../shared/types.js';
-import { HANDOFF_MAX_CHARS, eventsSinceAgentChange, handoffTranscript, pendingHandoff } from './agent-handoff.js';
+import { HANDOFF_MAX_CHARS, eventsSinceAgentChange, handoffTranscript, isSlashCommand, lastAgentChange, pendingHandoff } from './agent-handoff.js';
 import { goalInputFromEvents } from './session-goal.js';
 
 const switched = (transcript: boolean, fromName = 'Claude Agent', toName = 'Gemini CLI'): Extract<AgentEvent, { type: 'agent_changed' }> =>
   ({ type: 'agent_changed', from: 'claude-code', to: 'gemini-cli', fromName, toName, transcript });
 
 describe('pendingHandoff', () => {
-  it('is the last switch that asked for a transcript, until a message goes', () => {
+  it('is the last switch that asked for a transcript, until the new agent replies', () => {
     const events: AgentEvent[] = [{ type: 'user_message', text: 'hi' }, switched(true), { type: 'status', message: 'Switched' }];
     expect(pendingHandoff(events)?.index).toBe(1);
-    expect(pendingHandoff([...events, { type: 'user_message', text: 'next' }])).toBeNull();
+    // A message the agent never answered (its start failed) leaves it pending.
+    const sent: AgentEvent[] = [...events, { type: 'user_message', text: 'next' }, { type: 'error', message: 'auth' }];
+    expect(pendingHandoff(sent)?.index).toBe(1);
+    expect(pendingHandoff([...sent, { type: 'assistant_text', text: 'On it', uuid: 'a1' }])).toBeNull();
     expect(pendingHandoff([{ type: 'user_message', text: 'hi' }, switched(false)])).toBeNull();
     expect(pendingHandoff([])).toBeNull();
+  });
+
+  it('knows slash commands and the last switch', () => {
+    expect(isSlashCommand('/clear')).toBe(true);
+    expect(isSlashCommand('  /compact now')).toBe(true);
+    expect(isSlashCommand('a/b test')).toBe(false);
+    expect(isSlashCommand('/ not a command')).toBe(false);
+    expect(lastAgentChange([switched(true), { type: 'user_message', text: 'x' }, switched(false)])?.transcript).toBe(false);
+    expect(lastAgentChange([])).toBeNull();
   });
 });
 

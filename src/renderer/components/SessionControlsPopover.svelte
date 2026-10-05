@@ -18,6 +18,7 @@
   import { controlHint, controlSummary } from '../lib/control-hint.js';
   import AgentSettingsTrigger from './AgentSettingsTrigger.svelte';
   import UsageSection from './UsageSection.svelte';
+  import { stripIpcErrorPrefix } from '../lib/mcp-errors.js';
   import AlphaBadge from './AlphaBadge.svelte';
 
   export interface ModelOption { value: string; label: string; contextWindow?: number }
@@ -93,7 +94,7 @@
       await window.groveBench.switchAgent(sessionId, adapterId, transcript);
       open = false;
     } catch (e) {
-      switchError = e instanceof Error ? e.message : String(e);
+      switchError = stripIpcErrorPrefix(e instanceof Error ? e.message : String(e));
     } finally {
       switching = false;
     }

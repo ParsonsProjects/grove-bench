@@ -43,6 +43,10 @@ export interface ManagedSession {
    *  (category 'edit'), so leaving an edit-accepting mode can take them back
    *  out of alwaysAllowedTools whatever the agent calls them. */
   editToolNames?: Set<string>;
+  /** The query that was sent the transcript after an agent switch, so a
+   *  second message before the agent replies doesn't carry it again
+   *  (agent-handoff.ts). A new query (a failed start) gets it again. */
+  handoffSentTo?: AgentQueryHandle;
   providerSessionId: string | null;
   /** Set by rewindFiles(): provider chain-entry uuid to fork the conversation
    *  at on the next query start (resume truncated at this point, forkSession).

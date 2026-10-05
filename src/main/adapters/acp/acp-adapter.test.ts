@@ -292,6 +292,13 @@ describe('AcpAdapter', () => {
       message: expect.stringMatching(/^Fake Agent needs you to sign in: This client is no longer supported\. Run "fake".*or save a Fake key/),
     });
 
+    // A saved key the agent turns down is flagged, so new threads ask again.
+    savedKeys.set('fake-acp', 'bad-key');
+    const refused = await new AcpAdapter(keyDef).start(config());
+    const refusedEvents: AdapterEvent[] = [];
+    for await (const e of refused.events) refusedEvents.push(e);
+    expect(refusedEvents.find((e) => e.type === 'error')).toMatchObject({ auth: true, keyRejected: true });
+
     savedKeys.set('fake-acp', 'good-key');
     const adapter = new AcpAdapter(keyDef);
     const handle = await adapter.start(config());
@@ -304,6 +311,8 @@ describe('AcpAdapter', () => {
     expect(await new AcpAdapter(def()).checkSignIn!()).toEqual({ signedIn: true });
     expect(await new AcpAdapter(def('auth')).checkSignIn!()).toEqual({ signedIn: false, message: 'Authentication required' });
     expect(signIn.get('fake-acp')).toMatchObject({ signedIn: false });
+    // An agent without Check sign-in isn't held back by an old refusal.
+    expect(await new AcpAdapter({ ...def(), command: process.execPath, cliSignIn: undefined }).checkPrerequisites()).toMatchObject({ authenticated: true, authUnchecked: true });
     expect((await new AcpAdapter({ ...def(), command: 'definitely-not-an-acp-agent-xyz' }).checkSignIn!()).signedIn).toBeNull();
     // Agents without a CLI sign-in aren't started just to check.
     expect(new AcpAdapter({ ...def(), cliSignIn: undefined }).checkSignIn).toBeUndefined();

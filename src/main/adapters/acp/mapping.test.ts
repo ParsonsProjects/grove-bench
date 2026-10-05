@@ -122,6 +122,11 @@ describe('controls and models', () => {
     expect(agentModeTone({ value: 'bypassPermissions', label: 'Bypass' })).toBe('danger');
     expect(agentModeTone({ value: 'plan', label: 'Plan' })).toBe('warning');
     expect(agentModeTone({ value: 'autoEdit', label: 'Auto Edit' })).toBe('accent');
+    // Gemini CLI 0.62's own modes and descriptions.
+    expect(agentModeTone({ value: 'autoEdit', label: 'Auto Edit', description: 'Auto-approves edit tools' })).toBe('accent');
+    expect(agentModeTone({ value: 'yolo', label: 'YOLO', description: 'Auto-approves all tools' })).toBe('danger');
+    expect(agentModeTone({ value: 'plan', label: 'Plan', description: 'Read-only mode' })).toBe('warning');
+    expect(agentModeTone({ value: 'full', label: 'Full', description: 'Approves all tool calls' })).toBe('danger');
     expect(agentModeTone({ value: 'build', label: 'build' })).toBeUndefined();
     // "Ask before applying edits" is not "skip asking".
     expect(agentModeTone({ value: 'default', label: 'Default', description: 'Prompts for approval' })).toBeUndefined();

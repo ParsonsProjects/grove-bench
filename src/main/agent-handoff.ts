@@ -35,12 +35,30 @@ export function eventsSinceAgentChange<T extends { type: string }>(events: reado
   return [...events];
 }
 
-/** The switch whose transcript hasn't gone yet: the last agent_changed,
- *  when it asked for one and no message has been sent since. */
+/** The last switch in `events`, or null. */
+export function lastAgentChange(events: readonly AgentEvent[]): AgentChanged | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.type === 'agent_changed') return e;
+  }
+  return null;
+}
+
+/** A message the agent reads as a command, which must lead the text. */
+export function isSlashCommand(text: string): boolean {
+  return /^\s*\/[A-Za-z]/.test(text);
+}
+
+/** Events that show the new agent got a message and answered it. */
+const REPLIES: ReadonlySet<AgentEvent['type']> = new Set(['assistant_text', 'assistant_tool_use', 'thinking']);
+
+/** The switch whose transcript the agent hasn't had yet: the last
+ *  agent_changed, when it asked for one and the new agent hasn't replied
+ *  since. A first message lost to a failed start leaves it pending. */
 export function pendingHandoff(history: readonly AgentEvent[]): { index: number; event: AgentChanged } | null {
   for (let i = history.length - 1; i >= 0; i--) {
     const e = history[i];
-    if (e.type === 'user_message') return null;
+    if (REPLIES.has(e.type) && !subagentParent(e)) return null;
     if (e.type === 'agent_changed') return e.transcript ? { index: i, event: e } : null;
   }
   return null;

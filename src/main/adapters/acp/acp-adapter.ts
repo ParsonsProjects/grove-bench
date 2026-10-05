@@ -31,6 +31,7 @@ import type { AgentStage, ControlDescriptor, ControlOption, PermissionMode, Imag
 import { CONTROL_IDS } from '../../../shared/types.js';
 import { checkToolRules, cleanEnv, isPathInside } from '../../agent-utils.js';
 import { getApiKey } from '../../credentials.js';
+import { killTree } from '../../process-tree.js';
 import { logger } from '../../logger.js';
 import { isReadOnlyToolCall } from '../../read-only-tools.js';
 import { loadAgentSignIn, loadModelCatalog, saveAgentSignIn, saveModelCatalog } from '../../app-state.js';
@@ -380,8 +381,15 @@ export class AcpAdapter implements AgentAdapter {
       return { signedIn: null, message };
     } finally {
       rpc.close();
-      if (proc.exitCode === null) proc.kill();
-      fs.rmSync(dir, { recursive: true, force: true });
+      // On Windows the agent runs under npm's .cmd shim: kill() would stop
+      // only cmd.exe and leave the agent running in the folder.
+      if (proc.exitCode === null && proc.pid) await killTree(proc.pid).catch(() => proc.kill());
+      try {
+        fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
+      } catch (e) {
+        // A folder still in use mustn't turn the answer into an error.
+        logger.debug(`[${this.id}] could not remove ${dir}:`, e);
+      }
     }
   }
 
@@ -492,6 +500,10 @@ export class AcpAdapter implements AgentAdapter {
   /** Sign-in as last found out: turned down, or (not known to be otherwise)
    *  assumed fine until a session says so. */
   private knownSignIn(): Pick<AdapterPrerequisiteStatus, 'authenticated' | 'authUnchecked' | 'authMessage'> {
+    // Only an agent that can be checked again (Check sign-in) is held back
+    // by an old refusal; any other would have no way back but a conversation
+    // that happens to get through.
+    if (!this.checkSignIn) return { authenticated: true, authUnchecked: true };
     let known: ReturnType<typeof loadAgentSignIn> = null;
     try {
       known = loadAgentSignIn(this.id);
@@ -801,7 +813,10 @@ class AcpQuery {
       this.adapter.recordSignIn(false, e.message);
       const message = this.adapter.authFailure(e);
       logger.error(`[${this.def.id}] ${message}`);
-      this.events.push({ type: 'error', message, auth: true });
+      // A saved key is used over any other sign-in, so it is the one turned
+      // down: flag it so new conversations ask for another.
+      const keyRejected = !!this.def.apiKey && getApiKey(this.def.id) !== null;
+      this.events.push({ type: 'error', message, auth: true, ...(keyRejected ? { keyRejected: true } : {}) });
       void this.shutdown();
       return;
     }
@@ -871,15 +886,19 @@ class AcpQuery {
       stopReason = res?.stopReason ?? 'end_turn';
       // The turn's own token counts, when the agent reports them; the context
       // figure stays the one usage_update gave.
+      // Without a usage_update yet, the turn's own input count is the best
+      // figure for the context; 0 would empty the context meter.
       const out = res?.usage?.outputTokens;
-      if (typeof out === 'number' && out > 0) this.emit({ type: 'usage', inputTokens: this.contextUsed, outputTokens: out });
+      const input = this.contextUsed || (typeof res?.usage?.inputTokens === 'number' ? res.usage.inputTokens : 0);
+      if (typeof out === 'number' && out > 0 && input > 0) this.emit({ type: 'usage', inputTokens: input, outputTokens: out });
     } catch (e) {
       if (this.closing) return;
       if (isAuthRequired(e)) {
         // Signed out mid-conversation: say so where the UI offers a fix.
         this.adapter.recordSignIn(false, e.message);
         error = this.adapter.authFailure(e);
-        this.emit({ type: 'error', message: error, auth: true });
+        const keyRejected = !!this.def.apiKey && getApiKey(this.def.id) !== null;
+        this.emit({ type: 'error', message: error, auth: true, ...(keyRejected ? { keyRejected: true } : {}) });
         shown = true;
       } else {
         error = e instanceof Error ? e.message : String(e);

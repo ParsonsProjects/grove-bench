@@ -196,9 +196,10 @@ interface CatalogOptions {
 }
 
 export class Catalogs {
+  /** undefined until read from disk; null when there is no copy. */
   private registryCopy: Saved<RegistryAgent[]> | null | undefined;
   private modelsCopy: Saved<ModelCatalogData> | null | undefined;
-  private refreshing: Promise<void> | null = null;
+  private refreshing: { forced: boolean; done: Promise<void> } | null = null;
   private readonly dir: () => string;
   private readonly fetchFn: FetchFn;
   private readonly now: () => number;
@@ -212,7 +213,9 @@ export class Catalogs {
 
   /** The registry's agents, from the last copy (empty without one). */
   registry(): RegistryAgent[] {
-    this.registryCopy ??= this.load<RegistryAgent[]>('acp-registry.json', (v) => (Array.isArray(v) ? parseRegistry({ agents: v }) : null));
+    if (this.registryCopy === undefined) {
+      this.registryCopy = this.load<RegistryAgent[]>('acp-registry.json', (v) => (Array.isArray(v) ? parseRegistry({ agents: v }) : null));
+    }
     return this.registryCopy?.data ?? [];
   }
 
@@ -227,7 +230,9 @@ export class Catalogs {
 
   /** models.dev, from the last copy (empty without one). */
   models(): ModelCatalogData {
-    this.modelsCopy ??= this.load<ModelCatalogData>('models-dev.json', (v) => (v && typeof v === 'object' ? v as ModelCatalogData : null));
+    if (this.modelsCopy === undefined) {
+      this.modelsCopy = this.load<ModelCatalogData>('models-dev.json', (v) => (v && typeof v === 'object' ? v as ModelCatalogData : null));
+    }
     return this.modelsCopy?.data ?? {};
   }
 
@@ -244,42 +249,48 @@ export class Catalogs {
   /** Fetch whichever list is older than a day (or both, with `force`).
    *  Failures keep the last copy and are only logged. */
   refresh(force = false): Promise<void> {
-    this.refreshing ??= this.doRefresh(force).finally(() => { this.refreshing = null; });
-    return this.refreshing;
+    const running = this.refreshing;
+    // A forced refresh asked for while a routine one runs goes after it.
+    if (running && (running.forced || !force)) return running.done;
+    const done = (running ? running.done.catch(() => {}) : Promise.resolve())
+      .then(() => this.doRefresh(force))
+      .finally(() => { if (this.refreshing?.done === done) this.refreshing = null; });
+    this.refreshing = { forced: force, done };
+    return done;
   }
 
   private async doRefresh(force: boolean): Promise<void> {
     const stale = (saved: Saved<unknown> | null | undefined) => force || !saved || this.now() - saved.fetchedAt > CATALOG_MAX_AGE_MS;
     this.registry();
     this.models();
+    const [registryRaw, modelsRaw] = await Promise.all([
+      stale(this.registryCopy) ? this.fetchJson(ACP_REGISTRY_URL) : Promise.resolve(null),
+      stale(this.modelsCopy) ? this.fetchJson(MODELS_DEV_URL) : Promise.resolve(null),
+    ]);
     let changed = false;
-    if (stale(this.registryCopy)) {
-      const raw = await this.fetchJson(ACP_REGISTRY_URL);
-      const agents = raw === null ? [] : parseRegistry(raw);
-      if (agents.length > 0) {
-        this.registryCopy = this.save('acp-registry.json', agents);
-        changed = true;
-      }
+    const agents = registryRaw === null ? [] : parseRegistry(registryRaw);
+    if (agents.length > 0) {
+      this.registryCopy = this.save('acp-registry.json', agents);
+      changed = true;
     }
-    if (stale(this.modelsCopy)) {
-      const raw = await this.fetchJson(MODELS_DEV_URL);
-      const data = raw === null ? {} : trimModelsDev(raw);
-      if (Object.keys(data).length > 0) {
-        this.modelsCopy = this.save('models-dev.json', data);
-        changed = true;
-      }
+    const data = modelsRaw === null ? {} : trimModelsDev(modelsRaw);
+    if (Object.keys(data).length > 0) {
+      this.modelsCopy = this.save('models-dev.json', data);
+      changed = true;
     }
     if (changed) for (const l of this.listeners) l();
   }
 
   /** A registry icon as a data URL, or null. Only SVG from the registry's
-   *  own CDN, small enough to be an icon; shown as a mask, never as markup. */
-  async icon(agent: RegistryAgent): Promise<string | null> {
+   *  own CDN, small enough to be an icon; shown as a mask, never as markup.
+   *  Without `download`, only an icon fetched before is returned. */
+  async icon(agent: RegistryAgent, { download = true }: { download?: boolean } = {}): Promise<string | null> {
     if (!agent.icon?.startsWith('https://cdn.agentclientprotocol.com/')) return null;
     const file = `icon-${agent.id.replace(/[^a-z0-9-]/gi, '_')}-${agent.version.replace(/[^a-z0-9.-]/gi, '_')}.svg`;
     const cached = path.join(this.dir(), file);
     try {
       if (fs.existsSync(cached)) return svgDataUrl(fs.readFileSync(cached, 'utf8'));
+      if (!download) return null;
       const res = await this.fetchFn(agent.icon, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
       if (!res.ok) return null;
       const svg = await res.text();

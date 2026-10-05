@@ -1441,7 +1441,6 @@ export const TOOL_RULE_KEYWORDS: Record<string, ToolCategory> = {
   question: 'question',
 };
 
-/** An agent the user added that speaks the Agent Client Protocol over stdio. */
 /** One agent in the ACP Registry, as Settings lists it. */
 export interface RegistryAgentSummary {
   id: string;
@@ -1457,6 +1456,7 @@ export interface RegistryAgentSummary {
   builtIn: boolean;
 }
 
+/** An agent the user added that speaks the Agent Client Protocol over stdio. */
 export interface AcpAgentSetting {
   /** Stable id (the adapter id is `acp-<id>`); defaults from the name. */
   id: string;

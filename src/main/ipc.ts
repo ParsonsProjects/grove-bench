@@ -1689,7 +1689,8 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.CATALOGS_ICON, (_event, id: unknown) => {
     const agent = typeof id === 'string' ? catalogs.registryAgent(id) : null;
-    return agent ? catalogs.icon(agent) : null;
+    // With online lookups off, only icons already on disk.
+    return agent ? catalogs.icon(agent, { download: settings.getSettings().onlineCatalogs }) : null;
   });
 
   ipcMain.handle(IPC.CATALOGS_REFRESH, async () => {

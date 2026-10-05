@@ -3695,6 +3695,59 @@ describe('AgentSessionManager.switchAgent', () => {
     await sessionManager.destroySession('sw-2');
   });
 
+  it('keeps the transcript for the message after a slash command', async () => {
+    const other = otherAgent();
+    await sessionManager.createSession({ id: 'sw-4', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    await sessionManager.sendMessage('sw-4', 'first');
+
+    await sessionManager.switchAgent('sw-4', 'other', { transcript: true });
+    await vi.waitFor(() => expect(other.control).not.toBeNull());
+    await sessionManager.sendMessage('sw-4', '/compact');
+    await sessionManager.sendMessage('sw-4', 'go on');
+
+    const sent = vi.mocked(other.handles.at(-1)!.sendMessage).mock.calls.map(([m]) => m.text);
+    expect(sent[0]).toBe('/compact');
+    expect(sent[1]).toMatch(/^Note from Grove Bench[\s\S]*\ngo on$/);
+    await sessionManager.destroySession('sw-4');
+  });
+
+  it('leaves the thread alone when the new agent isn\'t installed or signed in', async () => {
+    const other = otherAgent();
+    await sessionManager.createSession({ id: 'sw-5', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    const session = sessionManager.getSession('sw-5')!;
+
+    other.checkPrerequisites = async () => ({ available: false, installRequired: true });
+    await expect(sessionManager.switchAgent('sw-5', 'other', { transcript: true })).rejects.toThrow(/isn't installed/);
+    other.checkPrerequisites = async () => ({ available: true, authenticated: false });
+    await expect(sessionManager.switchAgent('sw-5', 'other', { transcript: true })).rejects.toThrow(/isn't signed in/);
+
+    expect(session.adapter).toBe(mockAdapter);
+    expect(sessionManager.getEventHistory('sw-5').some((e) => e.type === 'agent_changed')).toBe(false);
+    await sessionManager.destroySession('sw-5');
+  });
+
+  it('keeps the switch marker when a rewind goes back past it', async () => {
+    const other = otherAgent();
+    await sessionManager.createSession({ id: 'sw-6', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    await sessionManager.sendMessage('sw-6', 'before the switch');
+    const session = sessionManager.getSession('sw-6')!;
+    const uuid = (session.eventHistory.find((e) => e.type === 'user_message') as { uuid: string }).uuid;
+    await sessionManager.switchAgent('sw-6', 'other', { transcript: true });
+    await vi.waitFor(() => expect(other.control).not.toBeNull());
+
+    await sessionManager.rewindFiles('sw-6', uuid, { conversationOnly: true });
+
+    const history = sessionManager.getEventHistory('sw-6');
+    expect(history.some((e) => e.type === 'user_message')).toBe(false);
+    // Still marked, so background tasks on Other Agent skip what came before.
+    expect(history.filter((e) => e.type === 'agent_changed')).toEqual([expect.objectContaining({ to: 'other', transcript: false })]);
+    expect(session.adapter).toBe(other);
+    await sessionManager.destroySession('sw-6');
+  });
+
   it('refuses an agent it doesn\'t know', async () => {
     await sessionManager.createSession({ id: 'sw-3', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
     await expect(sessionManager.switchAgent('sw-3', 'nope', { transcript: true })).rejects.toThrow(/Unknown agent/);

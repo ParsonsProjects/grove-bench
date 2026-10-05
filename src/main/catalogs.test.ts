@@ -123,6 +123,27 @@ describe('Catalogs', () => {
     expect(fetchFn).toHaveBeenCalledTimes(4);
   });
 
+  it('reads the disk once when there is no copy, and runs a forced refresh after a routine one', async () => {
+    const catalogs = make();
+    const read = vi.spyOn(fs, 'readFileSync');
+    catalogs.registry();
+    catalogs.registry();
+    catalogs.models();
+    catalogs.models();
+    // One try per file, even though neither exists.
+    expect(read).toHaveBeenCalledTimes(2);
+    read.mockRestore();
+
+    answers.set(ACP_REGISTRY_URL, { agents: [GEMINI] });
+    answers.set(MODELS_DEV_URL, { google: { models: { g: { limit: { context: 5 } } } } });
+    await catalogs.refresh();
+    const routine = catalogs.refresh();
+    const forced = catalogs.refresh(true);
+    await Promise.all([routine, forced]);
+    // The routine one fetched nothing (both copies are fresh); the forced one fetched both.
+    expect(fetchFn).toHaveBeenCalledTimes(4);
+  });
+
   it('keeps the last copy when a fetch fails', async () => {
     answers.set(ACP_REGISTRY_URL, { agents: [GEMINI] });
     const catalogs = make();
@@ -138,7 +159,10 @@ describe('Catalogs', () => {
     answers.set(OPENCODE.icon, svg);
     const [opencode] = parseRegistry({ agents: [OPENCODE] });
     const catalogs = make();
+    expect(await catalogs.icon(opencode, { download: false })).toBeNull();
     expect(await catalogs.icon(opencode)).toBe(svgDataUrl(svg));
+    // Once fetched it is on disk, so it shows with online lookups off too.
+    expect(await catalogs.icon(opencode, { download: false })).toBe(svgDataUrl(svg));
     expect(await catalogs.icon({ ...opencode, icon: 'https://evil.example/x.svg' })).toBeNull();
     expect(svgDataUrl('<html><script>alert(1)</script></html>')).toBeNull();
     expect(svgDataUrl(`<svg>${'x'.repeat(40_000)}</svg>`)).toBeNull();
