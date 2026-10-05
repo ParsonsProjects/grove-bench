@@ -7,6 +7,7 @@
   import { messageStore } from '../stores/messages.svelte.js';
   import { collectTailLines, formatTerminalContext, DEFAULT_TAIL_LINES } from '$lib/terminal-context.js';
   import { openLink } from '$lib/preview-links.js';
+  import { terminalColors, prefersLight, onColorSchemeChange } from '$lib/terminal-theme.js';
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -14,6 +15,15 @@
   let terminal: Terminal | null = null;
   let fitAddon: FitAddon | null = null;
   let resizeObserver: ResizeObserver | null = null;
+  // Recolour the terminal when the Theme setting or Windows switches theme.
+  let colors = $state.raw(terminalColors(prefersLight()));
+  const stopSchemeListener = onColorSchemeChange((light) => {
+    colors = terminalColors(light);
+    if (terminal) {
+      terminal.options.theme = colors.theme;
+      terminal.options.minimumContrastRatio = colors.minimumContrastRatio;
+    }
+  });
 
   let isAlive = $derived(terminalStore.isAlive(sessionId));
 
@@ -25,28 +35,7 @@
       cursorStyle: 'block',
       fontSize: 13,
       fontFamily: "'JetBrains Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace",
-      theme: {
-        background: '#1f1f1f',
-        foreground: '#cccccc',
-        cursor: '#cccccc',
-        selectionBackground: '#04395e',
-        black: '#000000',
-        red: '#cd3131',
-        green: '#0dbc79',
-        yellow: '#e5e510',
-        blue: '#2472c8',
-        magenta: '#bc3fbc',
-        cyan: '#11a8cd',
-        white: '#e5e5e5',
-        brightBlack: '#666666',
-        brightRed: '#f14c4c',
-        brightGreen: '#23d18b',
-        brightYellow: '#f5f543',
-        brightBlue: '#3b8eea',
-        brightMagenta: '#d670d6',
-        brightCyan: '#29b8db',
-        brightWhite: '#e5e5e5',
-      },
+      ...colors,
       allowProposedApi: true,
       scrollback: 10000,
     });
@@ -140,6 +129,7 @@
   });
 
   onDestroy(() => {
+    stopSchemeListener();
     resizeObserver?.disconnect();
     resizeObserver = null;
     terminal?.dispose();
@@ -198,6 +188,6 @@
   <div
     class="flex-1 overflow-hidden"
     bind:this={containerEl}
-    style="background: #1f1f1f;"
+    style="background: {colors.theme.background};"
   ></div>
 </div>

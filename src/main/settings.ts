@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, nativeTheme } from 'electron';
 import { z } from 'zod';
 import type { GroveBenchSettings } from '../shared/types.js';
 import { effectiveCompactTimeoutSeconds } from '../shared/compact-timeout.js';
@@ -349,8 +349,7 @@ export function applyImmediateEffects(win: BrowserWindow | null, settings: Grove
   if (win && !win.isDestroyed()) {
     win.setAlwaysOnTop(settings.alwaysOnTop);
   }
-  // `theme` isn't applied to nativeTheme.themeSource until the app has a
-  // light palette (TODO.md, Light theme): Settings can't change it, and it
-  // also sets prefers-color-scheme for Preview pages. Electron's default,
-  // following Windows, stays in place.
+  // Sets prefers-color-scheme, which picks the renderer's palette
+  // (globals.css), along with native menus and Preview pages.
+  nativeTheme.themeSource = settings.theme;
 }

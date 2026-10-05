@@ -167,13 +167,23 @@ describe('applyImmediateEffects', () => {
     expect(win.setAlwaysOnTop).toHaveBeenCalledWith(true);
   });
 
-  it('leaves nativeTheme following the system until there is a light theme', () => {
+  it('applies the theme to nativeTheme, which sets prefers-color-scheme', () => {
     const win = { isDestroyed: vi.fn(() => false), setAlwaysOnTop: vi.fn() } as any;
     nativeTheme.themeSource = 'system';
     const s = loadSettings();
+    for (const theme of ['light', 'dark', 'system'] as const) {
+      s.theme = theme;
+      applyImmediateEffects(win, s);
+      expect(nativeTheme.themeSource).toBe(theme);
+    }
+  });
+
+  it('applies the theme even without a window', () => {
+    nativeTheme.themeSource = 'system';
+    const s = loadSettings();
     s.theme = 'light';
-    applyImmediateEffects(win, s);
-    expect(nativeTheme.themeSource).toBe('system');
+    applyImmediateEffects(null, s);
+    expect(nativeTheme.themeSource).toBe('light');
   });
 
   it('handles null window', () => {

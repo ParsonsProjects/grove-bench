@@ -9,5 +9,5 @@
 </script>
 
 {#each segments as seg}
-  {#if seg.match}<mark class="bg-yellow-400/80 text-neutral-950 rounded-sm">{seg.text}</mark>{:else}{seg.text}{/if}
+  {#if seg.match}<mark class="bg-highlight text-highlight-foreground rounded-sm">{seg.text}</mark>{:else}{seg.text}{/if}
 {/each}
