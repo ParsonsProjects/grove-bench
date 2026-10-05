@@ -20,6 +20,7 @@ import { handleAttachmentProtocol, registerAttachmentScheme, removeDeletedFolder
 import { freezeLog, startStallWatch } from './freeze-log.js';
 import { closePerfLog } from './perf-log.js';
 import { startHealthLog } from './perf-health.js';
+import { startProcessHost, stopProcessHost } from './process-host.js';
 import { ChildProcess } from 'node:child_process';
 
 // Time every process launch from the start: on Windows each one blocks the
@@ -124,6 +125,10 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  // git and gh launch from here on in a utility process, so a slow launch
+  // can't freeze the window (process-host.ts). First, before the window
+  // starts asking for git status.
+  startProcessHost();
   handleAttachmentProtocol();
   void removeDeletedFolders();
   createWindow();
@@ -183,6 +188,14 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   app.quit();
+});
+
+// After shutdown (before-quit waits for it), so the agents' last git calls
+// still had the host; stopping it first means its exit isn't taken for a crash.
+app.on('will-quit', () => {
+  stopProcessHost();
+  // A stall seen at the last tick waits for the next one, which won't come.
+  freezeLog.flush();
 });
 
 /** Nothing running: no live conversation, none still closing (one closed

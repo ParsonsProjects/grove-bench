@@ -24,6 +24,9 @@ export default defineConfig({
         // src/main/adapters/mcp-bridge). electron-builder unpacks it from
         // app.asar so it can run outside the app.
         'mcp-stdio-bridge': path.resolve('src/main/adapters/mcp-bridge/main.mjs'),
+        // The utility process git and gh launch from (src/main/process-host.ts).
+        // Electron runs it from inside app.asar, so it isn't unpacked.
+        'process-host-child': path.resolve('src/main/process-host-child.ts'),
       },
       formats: ['cjs'],
       fileName: (_format, entryName) => `${entryName}.js`,
