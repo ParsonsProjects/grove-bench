@@ -11,6 +11,7 @@
   import { draftStore } from '../stores/draft.svelte.js';
   import { groupStore } from '../stores/groups.svelte.js';
   import SidebarGroups from './SidebarGroups.svelte';
+  import SidebarSection from './SidebarSection.svelte';
   import AttentionCounts from './AttentionCounts.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Checkbox } from '$lib/components/ui/checkbox/index.js';
@@ -62,6 +63,9 @@
   // position and filters are still there when it opens again.
   const RAIL_WIDTH = 48;
   let collapsed = $derived(panelStore.isCollapsed('sidebar'));
+  // The Groups and Projects sections, each folded down to its heading.
+  let groupsCollapsed = $derived(panelStore.isCollapsed('groupsSection'));
+  let projectsCollapsed = $derived(panelStore.isCollapsed('projectsSection'));
 
   onMount(async () => {
     let savedWidth: number | null;
@@ -935,6 +939,18 @@
     </button>
   {/snippet}
 
+  <!-- Folded sections at the end of the list sit at the bottom of the sidebar:
+       the free space goes just above the first of them. Its flex-grow eases
+       in and out with the section's slide, so a heading glides to and from
+       the bottom rather than jumping. -->
+  {#snippet dockSpacer(section: string, active: boolean)}
+    <div
+      class="shrink-0 {active ? 'grow' : 'grow-0'} transition-[flex-grow] duration-200 ease-[cubic-bezier(0.33,1,0.68,1)] motion-reduce:transition-none"
+      data-dock-spacer={section}
+      data-active={active}
+    ></div>
+  {/snippet}
+
   {#if collapsed}
     <!-- Rail: expand, search, the open conversations, the footer's buttons -->
     <div class="flex flex-col items-center gap-1 pt-3 pb-2 shrink-0 border-b border-sidebar-border" data-rail>
@@ -1005,94 +1021,100 @@
     <PanelToggle panel="sidebar" label="sidebar" class="-mr-1" />
   </div>
 
-  <div class="flex-1 overflow-auto px-3 py-3 {collapsed ? 'hidden' : ''}">
-    <!-- Triage filter: what needs me, what is working, what finished while I was away.
-         Click a chip to show only those; click it again to show all. Hidden,
-         with the sort, until there is a conversation to filter. -->
-    {#if store.sessions.length > 0}
-    <div class="flex items-center gap-1 mb-2 px-1" role="group" aria-label="Filter conversations">
-      {#each CHIP_FILTERS as f (f)}
-        {@const n = counts[f]}
-        {@const active = triageFilter === f}
+  <!-- No bottom padding: a folded section's heading sits right on the footer. -->
+  <div class="flex-1 overflow-auto px-3 pt-3 flex-col {collapsed ? 'hidden' : 'flex'}">
+    <div class="shrink-0 pb-3">
+      <!-- Triage filter: what needs me, what is working, what finished while I was away.
+           Click a chip to show only those; click it again to show all. Hidden,
+           with the sort, until there is a conversation to filter. -->
+      {#if store.sessions.length > 0}
+      <div class="flex items-center gap-1 mb-2 px-1" role="group" aria-label="Filter conversations">
+        {#each CHIP_FILTERS as f (f)}
+          {@const n = counts[f]}
+          {@const active = triageFilter === f}
+          <button
+            type="button"
+            onclick={() => toggleFilter(f)}
+            aria-pressed={active}
+            aria-label="{TRIAGE_FILTER_LABELS[f]} {n}"
+            class="flex items-center gap-1 px-1.5 py-0.5 text-[10px] border transition-colors
+              {active ? 'border-border bg-sidebar-accent text-foreground' : 'border-transparent text-muted-foreground/60 hover:text-foreground hover:bg-sidebar-accent/50'}
+              {n === 0 ? 'opacity-50' : ''}"
+            title="{TRIAGE_FILTER_LABELS[f]}: {n}{active ? '. Click again to show all' : ''}"
+          >
+            <span class="w-1.5 h-1.5 shrink-0 {TRIAGE_DOT[f]}"></span>
+            <!-- Narrow sidebar: dot and count only, the label is in the tooltip. -->
+            {#if !compact}{TRIAGE_FILTER_LABELS[f]}{/if}
+            <span class="text-muted-foreground/50">{n}</span>
+          </button>
+        {/each}
+      </div>
+      {/if}
+
+      <!-- CONVERSATIONS: the live working set, always visible at the top. The sort
+           applies to the Projects tree too. -->
+      <div class="flex items-center justify-between mb-1 px-1">
+        <span class="text-xs text-muted-foreground uppercase tracking-wide">Conversations</span>
+        {#if store.sessions.length > 0}
+          <div class="flex items-center" role="group" aria-label="Sort conversations">
+            {@render sortButton('name', 'Name')}
+            {@render sortButton('age', 'Age')}
+          </div>
+        {/if}
+      </div>
+
+      {#if draftStore.draft}
+        {@const draft = draftStore.draft}
+        {@const draftGroup = draftStore.groupName}
+        <!-- The draft conversation: not started, so nothing exists yet. -->
         <button
           type="button"
-          onclick={() => toggleFilter(f)}
-          aria-pressed={active}
-          aria-label="{TRIAGE_FILTER_LABELS[f]} {n}"
-          class="flex items-center gap-1 px-1.5 py-0.5 text-[10px] border transition-colors
-            {active ? 'border-border bg-sidebar-accent text-foreground' : 'border-transparent text-muted-foreground/60 hover:text-foreground hover:bg-sidebar-accent/50'}
-            {n === 0 ? 'opacity-50' : ''}"
-          title="{TRIAGE_FILTER_LABELS[f]}: {n}{active ? '. Click again to show all' : ''}"
+          onclick={openDraftRow}
+          class="w-full flex flex-col pl-4 pr-2 py-1.5 text-left transition-colors {draftStore.visible ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}"
+          title="New conversation, not started yet"
+          data-draft-row
         >
-          <span class="w-1.5 h-1.5 shrink-0 {TRIAGE_DOT[f]}"></span>
-          <!-- Narrow sidebar: dot and count only, the label is in the tooltip. -->
-          {#if !compact}{TRIAGE_FILTER_LABELS[f]}{/if}
-          <span class="text-muted-foreground/50">{n}</span>
+          <span class="w-full flex items-center gap-2 min-w-0">
+            <span class="w-2 h-2 shrink-0 border border-dashed border-muted-foreground"></span>
+            <span class="text-sm truncate min-w-0 flex-1 italic text-muted-foreground">{draft.text.trim() ? draft.text.trim().split('\n')[0] : 'New conversation'}</span>
+            <span class="text-[10px] text-muted-foreground/50 shrink-0">draft</span>
+          </span>
+          {#if store.repos.length > 1 || draftGroup}
+            <span class="pl-4 mt-0.5 text-[11px] text-muted-foreground/70 truncate">{#if draftGroup}<span class="text-foreground/60">{draftGroup}</span>{#if store.repos.length > 1}<span class="text-muted-foreground/40">{' · '}</span>{/if}{/if}{#if store.repos.length > 1}{store.repoDisplayName(draft.repoPath)}{/if}</span>
+          {/if}
         </button>
+      {:else}
+        <!-- Always first: starts a draft in the open conversation's project,
+             which then takes this row's place. -->
+        <button
+          type="button"
+          onclick={openDraftRow}
+          disabled={!store.canCreate}
+          class="w-full flex items-center gap-2 pl-4 pr-2 py-1.5 text-left transition-colors hover:bg-sidebar-accent/50
+            disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+          title={newConversationHint}
+          aria-label="New conversation"
+          data-draft-row
+        >
+          <svg class="shrink-0 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+          <span class="text-sm truncate min-w-0 flex-1 italic text-muted-foreground">New conversation</span>
+          <span class="text-[10px] text-muted-foreground/50 shrink-0">Ctrl+N</span>
+        </button>
+      {/if}
+      {#each activeSessions as session (session.id)}
+        <!-- The project name only helps when there is more than one. -->
+        {@render sessionRow(session, store.repos.length > 1, null, true)}
       {/each}
-    </div>
-    {/if}
-
-    <!-- CONVERSATIONS: the live working set, always visible at the top. The sort
-         applies to the Projects tree too. -->
-    <div class="flex items-center justify-between mb-1 px-1">
-      <span class="text-xs text-muted-foreground uppercase tracking-wide">Conversations</span>
-      {#if store.sessions.length > 0}
-        <div class="flex items-center" role="group" aria-label="Sort conversations">
-          {@render sortButton('name', 'Name')}
-          {@render sortButton('age', 'Age')}
-        </div>
+      <!-- With no filter the draft row is enough; a filter says why the list is short. -->
+      {#if activeSessions.length === 0 && triageFilter !== 'all'}
+        <p class="text-xs text-muted-foreground/50 pl-4 py-1">No conversations match "{TRIAGE_FILTER_LABELS[triageFilter]}"</p>
       {/if}
     </div>
 
-    {#if draftStore.draft}
-      {@const draft = draftStore.draft}
-      {@const draftGroup = draftStore.groupName}
-      <!-- The draft conversation: not started, so nothing exists yet. -->
-      <button
-        type="button"
-        onclick={openDraftRow}
-        class="w-full flex flex-col pl-4 pr-2 py-1.5 text-left transition-colors {draftStore.visible ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}"
-        title="New conversation, not started yet"
-        data-draft-row
-      >
-        <span class="w-full flex items-center gap-2 min-w-0">
-          <span class="w-2 h-2 shrink-0 border border-dashed border-muted-foreground"></span>
-          <span class="text-sm truncate min-w-0 flex-1 italic text-muted-foreground">{draft.text.trim() ? draft.text.trim().split('\n')[0] : 'New conversation'}</span>
-          <span class="text-[10px] text-muted-foreground/50 shrink-0">draft</span>
-        </span>
-        {#if store.repos.length > 1 || draftGroup}
-          <span class="pl-4 mt-0.5 text-[11px] text-muted-foreground/70 truncate">{#if draftGroup}<span class="text-foreground/60">{draftGroup}</span>{#if store.repos.length > 1}<span class="text-muted-foreground/40">{' · '}</span>{/if}{/if}{#if store.repos.length > 1}{store.repoDisplayName(draft.repoPath)}{/if}</span>
-        {/if}
-      </button>
-    {:else}
-      <!-- Always first: starts a draft in the open conversation's project,
-           which then takes this row's place. -->
-      <button
-        type="button"
-        onclick={openDraftRow}
-        disabled={!store.canCreate}
-        class="w-full flex items-center gap-2 pl-4 pr-2 py-1.5 text-left transition-colors hover:bg-sidebar-accent/50
-          disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent"
-        title={newConversationHint}
-        aria-label="New conversation"
-        data-draft-row
-      >
-        <svg class="shrink-0 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
-        <span class="text-sm truncate min-w-0 flex-1 italic text-muted-foreground">New conversation</span>
-        <span class="text-[10px] text-muted-foreground/50 shrink-0">Ctrl+N</span>
-      </button>
-    {/if}
-    {#each activeSessions as session (session.id)}
-      <!-- The project name only helps when there is more than one. -->
-      {@render sessionRow(session, store.repos.length > 1, null, true)}
-    {/each}
-    <!-- With no filter the draft row is enough; a filter says why the list is short. -->
-    {#if activeSessions.length === 0 && triageFilter !== 'all'}
-      <p class="text-xs text-muted-foreground/50 pl-4 py-1">No conversations match "{TRIAGE_FILTER_LABELS[triageFilter]}"</p>
-    {/if}
-
-    <!-- GROUPS: conversations across projects that belong to one piece of work -->
+    <!-- GROUPS: conversations across projects that belong to one piece of work.
+         Its spacer is there even when the section isn't: it is then right above
+         Projects', so it docks Projects just the same. -->
+    {@render dockSpacer('groups', groupsCollapsed && projectsCollapsed)}
     <SidebarGroups
       row={sessionRow}
       {rowVisible}
@@ -1102,112 +1124,114 @@
     />
 
     <!-- PROJECTS: every repo with its sessions (stopped ones actionable); hosts repo management -->
-    <div class="flex items-center justify-between mt-5 mb-2 px-1">
-      <span class="text-xs text-muted-foreground uppercase tracking-wide">Projects</span>
-      <div class="flex items-center gap-2 text-[10px] text-muted-foreground/50">
+    {@render dockSpacer('projects', projectsCollapsed && !groupsCollapsed)}
+    <SidebarSection panel="projectsSection" label="Projects" count={store.repos.length} {counts}>
+      {#snippet actions()}
         {#if closedCount}
-          <span>{closedCount} closed</span>
+          <span class="text-[10px] text-muted-foreground/50 shrink-0">{closedCount} closed</span>
         {/if}
         <button
           type="button"
           onclick={addProject}
-          class="w-5 h-5 flex items-center justify-center text-muted-foreground/70 hover:text-primary hover:bg-sidebar-accent transition-colors"
+          class="w-5 h-5 shrink-0 flex items-center justify-center text-muted-foreground/70 hover:text-primary hover:bg-sidebar-accent transition-colors"
           title="Add a project"
           aria-label="Add a project"
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
         </button>
-      </div>
-    </div>
+      {/snippet}
 
-    {#each store.repos as repo (repo)}
-      {@const repoColor = getRepoColor(store.repos, repo, settingsStore.current.repoColors)}
-      {@const branchGroups = getBranchGroups(repo)}
-      {@const rowCount = branchGroups.reduce((n, [, s]) => n + s.length, 0)}
-      {@const repoCollapsed = isRepoCollapsed(collapsedRepos, repo)}
-      <div class="mb-3">
-        <!-- Repo header (click to collapse/expand the repo's conversation tree) -->
-        <div class="flex items-center justify-between group px-1 py-1">
-          <button
-            type="button"
-            onclick={() => toggleRepoCollapsed(repo)}
-            aria-expanded={!repoCollapsed}
-            class="flex items-center gap-1.5 min-w-0 flex-1 text-left hover:text-foreground transition-colors"
-            title={repoCollapsed ? 'Expand project' : 'Collapse project'}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 text-muted-foreground/60 transition-transform" style={repoCollapsed ? 'transform: rotate(-90deg)' : ''}><path d="m6 9 6 6 6-6"/></svg>
-            {#if repoColor}
-              <span class="w-2 h-2 shrink-0" style="background-color: {repoColor}"></span>
-            {/if}
-            <span class="text-xs font-medium text-muted-foreground truncate" title={repo}>
-              {store.repoDisplayName(repo)}
-            </span>
-            {#if rowCount}
-              <span class="text-xs text-muted-foreground/40 shrink-0">{rowCount}</span>
-            {/if}
-            <!-- Per-repo attention counts, same dots as the filter chips -->
-            <AttentionCounts counts={repoCounts(repo)} />
-          </button>
-          <div class="flex items-center gap-0.5">
-            <!-- A bin, like a conversation's delete: removing a project deletes its conversations too (it asks first).
-                 Before the +: it only shows on hover, and on the outside it left a gap at the row's edge. -->
-            <button
-              onclick={() => requestRemoveRepo(repo)}
-              class="w-5 h-5 flex items-center justify-center text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-all opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
-              title="Remove project"
-              aria-label="Remove project {store.repoDisplayName(repo)}"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
-            </button>
-            <!-- Always shown: this is the main way to start a conversation in a project. -->
-            <button
-              onclick={() => openNewAgent(repo)}
-              class="w-5 h-5 flex items-center justify-center text-muted-foreground/70 hover:text-primary hover:bg-sidebar-accent transition-colors"
-              title="New conversation in {store.repoDisplayName(repo)}"
-              aria-label="New conversation in {store.repoDisplayName(repo)}"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
-            </button>
-          </div>
-        </div>
-
-        <!-- The project's conversations, grouped by branch -->
-        {#if !repoCollapsed}
-          {#each branchGroups as [branch, sessions] (branch)}
-            {#if sessions.length === 1}
-              {@render sessionRow(sessions[0], false, null, true)}
-            {:else}
-              {@const branchCollapsed = !!collapsedBranches[branchKey(repo, branch)]}
-              <div class="pl-3 mt-0.5">
-                <button
-                  type="button"
-                  onclick={() => toggleBranchCollapsed(repo, branch)}
-                  aria-expanded={!branchCollapsed}
-                  class="w-full flex items-center gap-1.5 px-1 py-0.5 text-left text-xs text-muted-foreground/70 hover:text-foreground transition-colors"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 transition-transform" style={branchCollapsed ? 'transform: rotate(-90deg)' : ''} aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
-                  <span class="truncate" title={branch}>{branch}</span>
-                  <span class="text-muted-foreground/40">({sessions.length})</span>
-                </button>
-                {#if !branchCollapsed}
-                  {#each sessions as session, i (session.id)}
-                    {@render sessionRow(session, false, session.displayName || `conversation ${i + 1}`, true)}
-                  {/each}
+      <div class="pt-1 pb-2">
+        {#each store.repos as repo (repo)}
+          {@const repoColor = getRepoColor(store.repos, repo, settingsStore.current.repoColors)}
+          {@const branchGroups = getBranchGroups(repo)}
+          {@const rowCount = branchGroups.reduce((n, [, s]) => n + s.length, 0)}
+          {@const repoCollapsed = isRepoCollapsed(collapsedRepos, repo)}
+          <div class="mb-3">
+            <!-- Repo header (click to collapse/expand the repo's conversation tree) -->
+            <div class="flex items-center justify-between group px-1 py-1">
+              <button
+                type="button"
+                onclick={() => toggleRepoCollapsed(repo)}
+                aria-expanded={!repoCollapsed}
+                class="flex items-center gap-1.5 min-w-0 flex-1 text-left hover:text-foreground transition-colors"
+                title={repoCollapsed ? 'Expand project' : 'Collapse project'}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 text-muted-foreground/60 transition-transform" style={repoCollapsed ? 'transform: rotate(-90deg)' : ''}><path d="m6 9 6 6 6-6"/></svg>
+                {#if repoColor}
+                  <span class="w-2 h-2 shrink-0" style="background-color: {repoColor}"></span>
                 {/if}
+                <span class="text-xs font-medium text-muted-foreground truncate" title={repo}>
+                  {store.repoDisplayName(repo)}
+                </span>
+                {#if rowCount}
+                  <span class="text-xs text-muted-foreground/40 shrink-0">{rowCount}</span>
+                {/if}
+                <!-- Per-repo attention counts, same dots as the filter chips -->
+                <AttentionCounts counts={repoCounts(repo)} />
+              </button>
+              <div class="flex items-center gap-0.5">
+                <!-- A bin, like a conversation's delete: removing a project deletes its conversations too (it asks first).
+                     Before the +: it only shows on hover, and on the outside it left a gap at the row's edge. -->
+                <button
+                  onclick={() => requestRemoveRepo(repo)}
+                  class="w-5 h-5 flex items-center justify-center text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-all opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+                  title="Remove project"
+                  aria-label="Remove project {store.repoDisplayName(repo)}"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+                </button>
+                <!-- Always shown: this is the main way to start a conversation in a project. -->
+                <button
+                  onclick={() => openNewAgent(repo)}
+                  class="w-5 h-5 flex items-center justify-center text-muted-foreground/70 hover:text-primary hover:bg-sidebar-accent transition-colors"
+                  title="New conversation in {store.repoDisplayName(repo)}"
+                  aria-label="New conversation in {store.repoDisplayName(repo)}"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+                </button>
               </div>
-            {/if}
-          {/each}
+            </div>
 
-          {#if branchGroups.length === 0}
-            <p class="text-xs text-muted-foreground/40 pl-4 py-1">{triageFilter === 'all' ? 'No conversations in this project' : `No conversations match "${TRIAGE_FILTER_LABELS[triageFilter]}"`}</p>
-          {/if}
+            <!-- The project's conversations, grouped by branch -->
+            {#if !repoCollapsed}
+              {#each branchGroups as [branch, sessions] (branch)}
+                {#if sessions.length === 1}
+                  {@render sessionRow(sessions[0], false, null, true)}
+                {:else}
+                  {@const branchCollapsed = !!collapsedBranches[branchKey(repo, branch)]}
+                  <div class="pl-3 mt-0.5">
+                    <button
+                      type="button"
+                      onclick={() => toggleBranchCollapsed(repo, branch)}
+                      aria-expanded={!branchCollapsed}
+                      class="w-full flex items-center gap-1.5 px-1 py-0.5 text-left text-xs text-muted-foreground/70 hover:text-foreground transition-colors"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 transition-transform" style={branchCollapsed ? 'transform: rotate(-90deg)' : ''} aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+                      <span class="truncate" title={branch}>{branch}</span>
+                      <span class="text-muted-foreground/40">({sessions.length})</span>
+                    </button>
+                    {#if !branchCollapsed}
+                      {#each sessions as session, i (session.id)}
+                        {@render sessionRow(session, false, session.displayName || `conversation ${i + 1}`, true)}
+                      {/each}
+                    {/if}
+                  </div>
+                {/if}
+              {/each}
+
+              {#if branchGroups.length === 0}
+                <p class="text-xs text-muted-foreground/40 pl-4 py-1">{triageFilter === 'all' ? 'No conversations in this project' : `No conversations match "${TRIAGE_FILTER_LABELS[triageFilter]}"`}</p>
+              {/if}
+            {/if}
+          </div>
+        {/each}
+
+        {#if store.repos.length === 0}
+          <p class="text-xs text-muted-foreground/50 mt-2">Add a project to get started.</p>
         {/if}
       </div>
-    {/each}
-
-    {#if store.repos.length === 0}
-      <p class="text-xs text-muted-foreground/50 mt-2">Add a project to get started.</p>
-    {/if}
+    </SidebarSection>
   </div>
 
   <!-- Bottom controls -->

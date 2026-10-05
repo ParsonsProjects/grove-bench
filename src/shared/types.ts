@@ -934,9 +934,10 @@ export interface ConversationGroup {
   sessionIds: string[];
 }
 
-/** Sidebars that fold down to a thin rail. The Changes and Checkpoints file
- *  lists are separate so each tab keeps its own. */
-export const COLLAPSIBLE_PANELS = ['sidebar', 'changesFiles', 'checkpointList', 'checkpointFiles'] as const;
+/** Panels that fold: sidebars down to a thin rail, and the sidebar's Groups
+ *  and Projects sections down to their heading. The Changes and Checkpoints
+ *  file lists are separate so each tab keeps its own. */
+export const COLLAPSIBLE_PANELS = ['sidebar', 'changesFiles', 'checkpointList', 'checkpointFiles', 'groupsSection', 'projectsSection'] as const;
 export type CollapsiblePanel = (typeof COLLAPSIBLE_PANELS)[number];
 /** Which panels are collapsed (persisted via app-state). Absent = open. */
 export type CollapsedPanels = Partial<Record<CollapsiblePanel, boolean>>;

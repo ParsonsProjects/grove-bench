@@ -2,8 +2,10 @@ import type { CollapsedPanels, CollapsiblePanel } from '../../shared/types.js';
 
 /**
  * Which sidebars are folded down to a thin rail: the main sidebar, the
- * Checkpoints tab's turn list, and each tab's file list. One flag per panel,
- * shared by every conversation, saved in app state so it survives a restart.
+ * Checkpoints tab's turn list, and each tab's file list. Also the sidebar's
+ * Groups and Projects sections, folded down to their heading. One flag per
+ * panel, shared by every conversation, saved in app state so it survives a
+ * restart.
  */
 class PanelStore {
   collapsed = $state<CollapsedPanels>({});
