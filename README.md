@@ -1,14 +1,14 @@
 # Grove Bench
 
-Multi-agent git worktree orchestrator for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). A Windows-native Electron desktop app that manages concurrent AI coding conversations, each in an isolated git worktree with a dedicated PTY terminal.
+Multi-agent git worktree orchestrator for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). A Windows-native Electron desktop app that manages concurrent AI coding threads, each in an isolated git worktree with a dedicated PTY terminal.
 
 ## Features
 
-- **Concurrent conversations** — Run multiple Claude Code instances in parallel, one per conversation
-- **Isolated worktrees** — In a git project, every conversation gets its own worktree so agents never conflict. A folder without git works too, with conversations editing it in place
+- **Concurrent threads** — Run multiple Claude Code instances in parallel, one per thread
+- **Isolated worktrees** — In a git project, every thread gets its own worktree so agents never conflict. A folder without git works too, with threads editing it in place
 - **Integrated terminal** — Built-in xterm.js terminals with full PTY support
-- **Conversation management** — Start, monitor, and stop conversations across projects from a single UI
-- **Project memory** — Persistent notes per project, shared across conversations
+- **Thread management** — Start, monitor, and stop threads across projects from a single UI
+- **Project memory** — Persistent notes per project, shared across threads
 
 ## Tech Stack
 
@@ -23,7 +23,7 @@ Download `Grove-Bench-Setup-<version>.exe` from [Releases](https://github.com/Pa
 You need either a Claude plan (Pro, Max, Team or Enterprise) with [Claude Code](https://code.claude.com/docs/en/setup) installed and signed in, or an Anthropic API key. Git 2.17 or later is recommended: without it, the agent edits your project folder in place and its edits can't be rewound.
 
 1. **Add a project**: a folder on your computer, ideally a git repository. A folder without git is added as it is.
-2. **Start a conversation**: tell the agent what to work on. By default it works on a new branch in its own copy of the project (a git worktree), so your checkout is left alone.
+2. **Start a thread**: tell the agent what to work on. By default it works on a new branch in its own copy of the project (a git worktree), so your checkout is left alone.
 3. **Approve its actions**: in the default **Ask** mode the agent checks with you before each edit or command.
 4. **Finish**: review the work in the **Changes** tab, commit it, then open a pull request (**Create PR**) or merge the branch yourself.
 

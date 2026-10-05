@@ -21,9 +21,9 @@
 | Shortcut | Action |
 |----------|--------|
 | `Ctrl+F` | Search in Thread tab |
-| `Ctrl+R` | Open conversation finder (quick-switch between conversations) |
-| `Ctrl+N` | New conversation draft (in the open conversation's project) |
-| `Ctrl+Shift+T` | Reopen the last conversation you closed |
+| `Ctrl+R` | Open thread finder (quick-switch between threads) |
+| `Ctrl+N` | New thread draft (in the open thread's project) |
+| `Ctrl+Shift+T` | Reopen the last thread you closed |
 | `Ctrl+B` | Open or close bookmarks |
 | `Ctrl+L` | Go to the address bar (Preview tab) |
 

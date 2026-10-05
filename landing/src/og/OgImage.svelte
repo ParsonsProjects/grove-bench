@@ -42,7 +42,7 @@
 
   <div class="gb card">
     <div class="chips"><Chips states={convs.map((c) => c.state)} /></div>
-    <p class="sec">Conversations</p>
+    <p class="sec">Threads</p>
     {#each convs as c (c.id)}<Row {c} selected={c.state === 'permission'} />{/each}
   </div>
 </div>

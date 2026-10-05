@@ -1,16 +1,16 @@
 # Status Bar
 
-The status bar sits at the bottom of the workspace, just above the prompt, and shows live information about the open conversation.
+The status bar sits at the bottom of the workspace, just above the prompt, and shows live information about the open thread.
 
 In a narrow window the bar drops its extras so the agent settings, the activity, the branch and the context meter keep their room. As it narrows it drops, in order: the last turn's cost and duration, the project name (the branch's tooltip still names it), then **Keys** (the same list is under Keyboard Shortcuts in Help, `F1`) and the **MCP** and **Skills** badges. The MCP badge stays while a server is down.
 
 ## Agent Settings
 
-The left side is a single **Agent settings** control. The first line is the model and the mode, for example `Opus 5.5 · Ask`; a long model name is cut short, and hovering shows it in full. The second line is the agent, followed by any control that is off its default, for example `Claude Agent · Low · Fast`. Click it to open a popup with one column per setting: **Agent**, **Model**, and each control the provider declares for that model (Mode, Effort, Thinking, Speed). Pick an option in any column; the change applies immediately. A line under the columns says what the current mode does, or what any option you point at or tab to does. `Esc` or clicking outside closes the popup. Picking another agent asks how to switch. **Switch and send the transcript** hands this conversation to it: it starts its own session in the same worktree, and with your next message it gets a short transcript of the conversation so far (your messages, the replies and the list of files changed, without tool output), which goes to that agent's provider. **Switch without it** does the same with no transcript, so the new agent starts knowing nothing but your files. Either way the thread, the files and the checkpoints stay, the thread marks where the switch happened, the model, mode and controls change to the new agent's (the mode is kept when it offers it), and memory notes and other background work on the new agent only read what came after the switch. **New conversation instead** starts a draft with that agent in the same project and leaves this one as it is. In a draft (see [Getting started](getting-started.md#starting-a-conversation)) every column can still change, the agent included.
+The left side is a single **Agent settings** control. The first line is the model and the mode, for example `Opus 5.5 · Ask`; a long model name is cut short, and hovering shows it in full. The second line is the agent, followed by any control that is off its default, for example `Claude Agent · Low · Fast`. Click it to open a popup with one column per setting: **Agent**, **Model**, and each control the provider declares for that model (Mode, Effort, Thinking, Speed). Pick an option in any column; the change applies immediately. A line under the columns says what the current mode does, or what any option you point at or tab to does. `Esc` or clicking outside closes the popup. Picking another agent asks how to switch. **Switch and send the transcript** hands this thread to it: it starts its own session in the same worktree, and with your next message it gets a short transcript of the thread so far (your messages, the replies and the list of files changed, without tool output), which goes to that agent's provider. **Switch without it** does the same with no transcript, so the new agent starts knowing nothing but your files. Either way the thread, the files and the checkpoints stay, the thread marks where the switch happened, the model, mode and controls change to the new agent's (the mode is kept when it offers it), and memory notes and other background work on the new agent only read what came after the switch. **New thread instead** starts a draft with that agent in the same project and leaves this one as it is. In a draft (see [Getting started](getting-started.md#starting-a-thread)) every column can still change, the agent included.
 
 ### Usage
 
-Under the agent, the popup shows your **plan usage**: one bar per rate-limit window (for example 5-hour and Weekly, plus per-model weekly windows when your plan has them) with the percentage used and when it resets. Like the context meter, each bar is a row of pixel blocks, here 5% each, in the same colours. It refreshes when you open the popup and after each turn, and live rate-limit headers keep it current in between. Usage is per sign-in, so every conversation on the same account shows the same numbers. API-key and third-party sign-ins have no plan limits, and the popup says so instead.
+Under the agent, the popup shows your **plan usage**: one bar per rate-limit window (for example 5-hour and Weekly, plus per-model weekly windows when your plan has them) with the percentage used and when it resets. Like the context meter, each bar is a row of pixel blocks, here 5% each, in the same colours. It refreshes when you open the popup and after each turn, and live rate-limit headers keep it current in between. Usage is per sign-in, so every thread on the same account shows the same numbers. API-key and third-party sign-ins have no plan limits, and the popup says so instead.
 
 ### Mode
 
@@ -42,7 +42,7 @@ When the bar is wide enough, it shows how long the last turn took. With an API k
 
 ## Project and Branch
 
-The branch area shows the conversation's project and branch, for example `grove-bench / feat/login`. The branch has a dashed underline while you can click it. Under it are the sync state (commits to push or pull) and the pull request. Click `↑N` to push those commits. If a push fails, from here or from the Changes tab, **push failed** appears: click it to see the error, copy it, **Retry** the push or **Dismiss** the note. It also goes away by itself once nothing is left to push.
+The branch area shows the thread's project and branch, for example `grove-bench / feat/login`. The branch has a dashed underline while you can click it. Under it are the sync state (commits to push or pull) and the pull request. Click `↑N` to push those commits. If a push fails, from here or from the Changes tab, **push failed** appears: click it to see the error, copy it, **Retry** the push or **Dismiss** the note. It also goes away by itself once nothing is left to push.
 
 Click the branch name to switch branches. Type to filter local and remote branches, then click one or press `Enter`. If the name you type doesn't exist yet, **Create branch** makes it from the current commit and switches to it.
 
@@ -50,8 +50,8 @@ Click the branch name to switch branches. Type to filter local and remote branch
 - Switching is refused while the checkout has uncommitted changes or untracked files, so commit, stash or remove them first. Creating a new branch is still allowed: no files change, so your uncommitted work comes along.
 - A branch can only be checked out in one place. A branch in use by another worktree (your project folder included) can't be picked.
 - The branch name can't be clicked while the agent is working. Switch once its turn ends.
-- Conversations that share a checkout move together. For a direct conversation that checkout is your project folder, so your editor sees the switch too.
-- Closing a conversation with "Also delete the branch" never deletes the project's default branch, even if the conversation switched onto it.
+- Threads that share a checkout move together. For a direct thread that checkout is your project folder, so your editor sees the switch too.
+- Closing a thread with "Also delete the branch" never deletes the project's default branch, even if the thread switched onto it.
 
 ## Speed
 
@@ -84,14 +84,14 @@ When thinking is active, a purple pulsing dot appears while the agent reasons.
 
 ## MCP Servers
 
-When the agent has MCP servers configured, an **MCP** badge shows how many are configured. The dot is green when every connection is healthy, orange when some are down but others are still connected, and red when none are connected. It refreshes when each turn ends. Click it to manage the servers without restarting the conversation. The popover only offers the controls the conversation's agent supports:
+When the agent has MCP servers configured, an **MCP** badge shows how many are configured. The dot is green when every connection is healthy, orange when some are down but others are still connected, and red when none are connected. It refreshes when each turn ends. Click it to manage the servers without restarting the thread. The popover only offers the controls the thread's agent supports:
 
 - Each server shows where it comes from (for example user, project, plugin or claude.ai), its status and its tool count
 - Click the tool count to list the server's tools. Tools the server marks as destructive or read-only are tagged
 - An estimate of how much of the context window the server's tool definitions use, so you can see which servers are worth disconnecting. "loaded on demand" means the agent only loads the tools when it searches for them
 - A failed server shows its error, with a button to copy it
 - **Reconnect** restarts a connection. **Sign in** starts the browser sign-in for a server that needs it
-- **Disconnect** turns a server off, and **Connect** turns it back on. How long a disconnect lasts depends on the agent: hover the button to see. With Claude Agent it applies to the whole project, not just this conversation, so new conversations in the project also start without it
+- **Disconnect** turns a server off, and **Connect** turns it back on. How long a disconnect lasts depends on the agent: hover the button to see. With Claude Agent it applies to the whole project, not just this thread, so new threads in the project also start without it
 
 New servers are added from Settings → MCP servers (Tool shed).
 
@@ -107,7 +107,7 @@ Each server in the popover shows a status dot:
 
 ## Context
 
-**Context N%** and a bar of pixel blocks show how much of the agent's context window has been used. Each block is 10% (5% in the popup), and the block the usage is partway through shows dimmed. Context is what the agent can hold in mind at once: your messages, its replies, files it read and command output. Near the limit, Claude Code clears old tool output first, then summarises the conversation, so details from early on can be lost ([How Claude Code works](https://code.claude.com/docs/en/how-claude-code-works#when-context-fills-up)).
+**Context N%** and a bar of pixel blocks show how much of the agent's context window has been used. Each block is 10% (5% in the popup), and the block the usage is partway through shows dimmed. Context is what the agent can hold in mind at once: your messages, its replies, files it read and command output. Near the limit, Claude Code clears old tool output first, then summarises the thread, so details from early on can be lost ([How Claude Code works](https://code.claude.com/docs/en/how-claude-code-works#when-context-fills-up)).
 
 | Usage | Color | Meaning |
 |-------|-------|---------|
@@ -121,9 +121,9 @@ Every filled block takes the colour. Tokens served from the prompt cache take up
 Click the bar for details and two actions:
 
 - **Summarise to free space** (`/compact`): replaces the earlier messages with a summary, so the agent has room to keep going. It keeps the gist, not every detail.
-- **Start fresh…** (`/clear`): clears the conversation and the agent's memory of it. It asks you to confirm first. Your files are not changed.
+- **Start fresh…** (`/clear`): clears the thread and the agent's memory of it. It asks you to confirm first. Your files are not changed.
 
-With **Show grove characters** on (Settings → General (The grove)), a strip of pixel grove also runs along the top of the status bar. It starts with a few small plants and fills in as the conversation uses its context window: grass and saplings first, then bushes and trees, until it is a full grove at 100%. Its leaves change with the bar's colour: summer green while there is plenty of room, then late summer, autumn, and rust when the context is nearly full. They turn a plant at a time in the run-up to each change, so by the time the bar changes colour the whole grove has. After `/compact` or `/clear` it thins out and turns green again. Each conversation grows its own grove, with the plants in their own random places. In the open conversation you can watch it happen: new plants sprout one after another and rise out of the ground (unless your system is set to reduce motion).
+With **Show grove characters** on (Settings → General (The grove)), a strip of pixel grove also runs along the top of the status bar. It starts with a few small plants and fills in as the thread uses its context window: grass and saplings first, then bushes and trees, until it is a full grove at 100%. Its leaves change with the bar's colour: summer green while there is plenty of room, then late summer, autumn, and rust when the context is nearly full. They turn a plant at a time in the run-up to each change, so by the time the bar changes colour the whole grove has. After `/compact` or `/clear` it thins out and turns green again. Each thread grows its own grove, with the plants in their own random places. In the open thread you can watch it happen: new plants sprout one after another and rise out of the ground (unless your system is set to reduce motion).
 
 ## Rate Limiting
 

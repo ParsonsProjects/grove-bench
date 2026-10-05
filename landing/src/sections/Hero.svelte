@@ -155,7 +155,7 @@
       <Sprite state={shown.state} seed={shown.id} projectColor={shown.projectColor} scale={3} label="" />
       <p><b>{shown.name}</b><span>{MEANS[shown.state] ?? ''}</span></p>
     </div>
-    <p class="hint small">{narrow ? 'Sample conversations in the app’s sidebar. Tap one, or answer the prompt.' : 'Sample conversations in the app’s own layout. Point at one to see what its character means, or click around.'}</p>
+    <p class="hint small">{narrow ? 'Sample threads in the app’s sidebar. Tap one, or answer the prompt.' : 'Sample threads in the app’s own layout. Point at one to see what its character means, or click around.'}</p>
   </div>
 </section>
 

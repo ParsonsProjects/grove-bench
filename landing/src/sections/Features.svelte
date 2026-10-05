@@ -114,7 +114,7 @@
       <div class="ctx-grove"><ContextStrip seed="a3f8b2c1" percent={pct} width={110} scale={3} /></div>
       <div class="ctx-bar"><span>feat/auth</span><b>Context {pct}%</b></div>
     </div>
-    <span class="cap">{t < 4 ? 'grows as the conversation fills its context' : '/compact: the grove thins out'}</span>
+    <span class="cap">{t < 4 ? 'grows as the thread fills its context' : '/compact: the grove thins out'}</span>
   </div>
 {/snippet}
 

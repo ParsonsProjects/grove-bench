@@ -16,8 +16,8 @@ Type `@` followed by a filename to open the file picker. Select a file to refere
 
 Type `/` to see available commands:
 
-- `/compact` — Compact the conversation to free context space
-- `/clear` — Clear the conversation and start fresh
+- `/compact` — Compact the thread to free context space
+- `/clear` — Clear the thread and start fresh
 - `/rewind` — Rewind to a previous checkpoint
 
 Additional slash commands may be available depending on your agent configuration.
