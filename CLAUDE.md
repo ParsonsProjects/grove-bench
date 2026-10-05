@@ -113,6 +113,12 @@ Use the user-facing words in any new UI text, help page or doc. See `docs/projec
 - Adapters describe tool calls with a provider-neutral `ToolView`
   (`src/shared/tool-view.ts`); the UI and Read-safe mode read that, never a
   provider's tool names. Events without one are read as Claude Code tools
+- Colours come from the theme tokens in `src/renderer/styles/globals.css`
+  (dark: VS Code Dark Modern, light: Light Modern). Light applies under
+  `prefers-color-scheme: light`, which main sets from the Theme setting
+  (`nativeTheme.themeSource`). Status colours use Tailwind's palette
+  (`text-green-400`); light mode swaps those shades for darker ones, and
+  `light-theme.test.ts` fails if a component uses one with no light value
 - Panels, dialogs and tabs that open on demand load on first use via
   `lazyComponent` (`src/renderer/lib/lazy-component.ts`), keeping their code
   (and libraries only they use, such as xterm) out of the startup bundle

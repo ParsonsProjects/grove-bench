@@ -1272,3 +1272,14 @@ describe('adapters, skills and MCP config', () => {
     await expect(invoke(IPC.MCP_CONFIG_APPROVE, 'srv', '/nowhere')).rejects.toThrow("The project folder /nowhere wasn't found");
   });
 });
+
+describe('SETTINGS_SAVE', () => {
+  it('applies the saved, checked settings rather than what the renderer sent', () => {
+    const saved = { theme: 'system', alwaysOnTop: false };
+    m.settings.getSettings.mockReturnValue(saved);
+
+    invoke(IPC.SETTINGS_SAVE, { theme: 'bogus', alwaysOnTop: false });
+    expect(m.settings.saveSettings).toHaveBeenCalledWith({ theme: 'bogus', alwaysOnTop: false });
+    expect(m.settings.applyImmediateEffects).toHaveBeenCalledWith(win, saved);
+  });
+});

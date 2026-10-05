@@ -1818,8 +1818,11 @@ export function registerHandlers() {
   ipcMain.handle(IPC.SETTINGS_SAVE, (event, data: import('../shared/types.js').GroveBenchSettings) => {
     settings.saveSettings(data);
     const win = BrowserWindow.fromWebContents(event.sender);
-    settings.applyImmediateEffects(win, data);
-    applyUpdateSettings(settings.getSettings());
+    // The saved copy, which saveSettings has checked, so only a valid theme
+    // reaches nativeTheme.themeSource
+    const saved = settings.getSettings();
+    settings.applyImmediateEffects(win, saved);
+    applyUpdateSettings(saved);
   });
 
   // ─── App State ───

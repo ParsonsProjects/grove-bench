@@ -167,11 +167,11 @@
 
 <style>
   :global(a.localhost-link) {
-    color: #4ade80;
+    color: var(--ok);
     text-decoration: underline;
     cursor: pointer;
   }
   :global(a.localhost-link:hover) {
-    color: #86efac;
+    color: var(--ok-hover);
   }
 </style>

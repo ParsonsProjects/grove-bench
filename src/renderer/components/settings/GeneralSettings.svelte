@@ -5,13 +5,19 @@
   import * as Select from '$lib/components/ui/select/index.js';
   import { Label } from '$lib/components/ui/label/index.js';
   import { VIEW_MODE_DESCRIPTIONS, VIEW_MODE_LABELS } from '$lib/message-view.js';
-  import { ACTIVITY_VIEW_MODES, type ActivityViewMode } from '../../../shared/types.js';
+  import { ACTIVITY_VIEW_MODES, type ActivityViewMode, type GroveBenchSettings } from '../../../shared/types.js';
   import SettingRow from './SettingRow.svelte';
   import CheckboxSetting from './CheckboxSetting.svelte';
   import SettingsGroup from './SettingsGroup.svelte';
   import UpdateSettings from '../UpdateSettings.svelte';
 
   const draft = $derived(settingsStore.draft);
+
+  const THEMES: { value: GroveBenchSettings['theme']; label: string }[] = [
+    { value: 'system', label: 'System' },
+    { value: 'dark', label: 'Dark' },
+    { value: 'light', label: 'Light' },
+  ];
 
   const DIFF_VIEWS: { value: 'unified' | 'side-by-side'; label: string; description: string }[] = [
     { value: 'unified', label: 'Unified', description: 'Removed and added lines in one column.' },
@@ -87,6 +93,24 @@
 </SettingsGroup>
 
 <SettingsGroup title="Appearance">
+  <SettingRow
+    setting="theme"
+    label="Theme"
+    for="settings-theme"
+    description="System follows your Windows setting. Menus and pages in the Preview tab follow the theme too."
+  >
+    <Select.Root type="single" value={draft.theme} onValueChange={(v) => { if (v) settingsStore.draft.theme = v as GroveBenchSettings['theme']; }}>
+      <Select.Trigger id="settings-theme" class="w-48">
+        {THEMES.find((t) => t.value === draft.theme)?.label ?? 'System'}
+      </Select.Trigger>
+      <Select.Content>
+        {#each THEMES as theme (theme.value)}
+          <Select.Item value={theme.value} label={theme.label} />
+        {/each}
+      </Select.Content>
+    </Select.Root>
+  </SettingRow>
+
   <CheckboxSetting
     setting="grove-characters"
     label="Show grove characters"

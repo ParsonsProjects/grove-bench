@@ -102,7 +102,7 @@
       }
 
       const isBlue = rand(x * 3, y * 7) > 0.75;
-      const color = isBlue ? '#6888aa' : '#ffffff';
+      const color = isBlue ? '#6888aa' : 'var(--pixel-ink)';
       const opacity = isBlue ? 0.02 : 0.025;
 
       greyPixels.push({
@@ -123,7 +123,7 @@
       left,
       top,
       opacity: isBlue ? 0.015 : 0.02,
-      color: isBlue ? '#6888aa' : '#ffffff',
+      color: isBlue ? '#6888aa' : 'var(--pixel-ink)',
     });
   }
 </script>
