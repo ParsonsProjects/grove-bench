@@ -127,6 +127,16 @@ describe('saveFiles', () => {
     expect(odd.stored.file).toMatch(/^[0-9a-f]{32}$/);
   });
 
+  it('writes over a saved copy whose content changed, so a reattached file is the original', async () => {
+    const [first] = await saveFiles('abc123', [{ data: PDF, mediaType: 'application/pdf', name: 'a.pdf' }]);
+    fs.writeFileSync(first.path, 'edited by the agent');
+
+    const [again] = await saveFiles('abc123', [{ data: PDF, mediaType: 'application/pdf', name: 'a.pdf' }]);
+
+    expect(again.path).toBe(first.path);
+    expect(fs.readFileSync(again.path).toString()).toBe('%PDF-1.4 fake');
+  });
+
   it('stores the same file once', async () => {
     const [a, b] = await saveFiles('abc123', [
       { data: PDF, mediaType: 'application/pdf', name: 'a.pdf' },
@@ -286,6 +296,9 @@ describe('removeAttachments', () => {
 });
 
 describe('pruneAttachments', () => {
+  beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); });
+  afterEach(() => { vi.useRealTimers(); });
+
   it('deletes the images no event refers to any more and keeps the rest', async () => {
     const [kept, dropped, fromTool] = await saveImages('abc123', [
       { data: PNG, mediaType: 'image/png', name: 'kept.png' },
@@ -297,6 +310,7 @@ describe('pruneAttachments', () => {
       { type: 'tool_result', toolUseId: 't1', content: '', images: [{ file: fromTool.file }] },
     ];
 
+    vi.setSystemTime(Date.now() + 61_000); // past the grace period for new saves
     await pruneAttachments('abc123', events);
 
     expect(fs.readdirSync(folder('abc123')).sort()).toEqual([kept.file, fromTool.file].sort());
@@ -310,10 +324,41 @@ describe('pruneAttachments', () => {
     ]);
     const events: AgentEvent[] = [{ type: 'user_message', text: 'read this', uuid: 'u1', files: [kept.stored] }];
 
+    vi.setSystemTime(Date.now() + 61_000);
     await pruneAttachments('abc123', events);
 
     expect(fs.readdirSync(folder('abc123'))).toEqual([kept.stored.file]);
     expect(fs.existsSync(dropped.path)).toBe(false);
+  });
+
+  it('keeps a file saved in the last minute, whose message may not be in the history yet', async () => {
+    const [justSaved] = await saveFiles('abc123', [{ data: 'CCCC', mediaType: '', name: 'new.bin' }]);
+
+    await pruneAttachments('abc123', []);
+    expect(fs.existsSync(justSaved.path)).toBe(true);
+
+    vi.setSystemTime(Date.now() + 61_000);
+    await pruneAttachments('abc123', []);
+    expect(fs.existsSync(justSaved.path)).toBe(false);
+  });
+
+  it('counts a reattached copy as just saved', async () => {
+    const [first] = await saveFiles('abc123', [{ data: 'DDDD', mediaType: '', name: 'a.bin' }]);
+    vi.setSystemTime(Date.now() + 61_000);
+    await saveFiles('abc123', [{ data: 'DDDD', mediaType: '', name: 'again.bin' }]);
+
+    await pruneAttachments('abc123', []);
+    expect(fs.existsSync(first.path)).toBe(true);
+  });
+
+  it('forgets the grace period with the conversation', async () => {
+    const [saved] = await saveFiles('abc123', [{ data: 'EEEE', mediaType: '', name: 'a.bin' }]);
+    await removeAttachments('abc123');
+    fs.mkdirSync(folder('abc123'), { recursive: true });
+    fs.writeFileSync(saved.path, 'x');
+
+    await pruneAttachments('abc123', []);
+    expect(fs.existsSync(saved.path)).toBe(false);
   });
 
   it('leaves files that are not stored images alone', async () => {

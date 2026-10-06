@@ -12,7 +12,6 @@ import type {
   AdapterPrerequisiteStatus,
   ApiKeyDescriptor,
   CliSignInDescriptor,
-  MessageFile,
   ModelInfo,
   PermissionResponse,
   ToolImageData,
@@ -24,7 +23,7 @@ import { getApiKey } from '../credentials.js';
 import { loadModelCatalog, saveModelCatalog } from '../app-state.js';
 import { z } from 'zod';
 import { asarUnpackedPath, cleanEnv, isPathInside, checkToolRules, toolCallSpecifier, readableStreamToAsyncIterable } from '../agent-utils.js';
-import { attachedFilesNote, isInlinePdf } from './file-attachments.js';
+import { attachedFilesNote } from './file-attachments.js';
 import { createMemoryMcpServer, GROVE_MEMORY_TOOL_NAMES } from './memory-mcp-server.js';
 import { createPreviewMcpServer, GROVE_PREVIEW_READ_TOOL_NAMES } from './preview-mcp-server.js';
 import * as skillsModule from '../skills.js';
@@ -197,25 +196,18 @@ export function fromSdkSyncMode(mode: PermissionMode, ctx: MessageContext): Perm
 const IMAGE_MEDIA_TYPES = new Set<string>(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
 
 /**
- * A user message as the SDK takes it: attached images and small PDFs as
- * content blocks ahead of the text, and a note with the path of every other
- * attached file, which Claude reads with its own tools.
+ * A user message as the SDK takes it: attached images as content blocks
+ * ahead of the text, and a note with the path of every other attached file
+ * (PDFs included), which Claude reads with its own tools.
  */
 export function userMessageContent(message: UserMessage): string | Array<Record<string, unknown>> {
-  const blocks: Array<Record<string, unknown>> = [];
-  for (const img of message.images ?? []) {
-    blocks.push({ type: 'image', source: { type: 'base64', media_type: img.mediaType, data: img.data } });
-  }
-  const byPath: MessageFile[] = [];
-  for (const file of message.files ?? []) {
-    if (isInlinePdf(file)) {
-      blocks.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: file.data }, title: file.name });
-    } else {
-      byPath.push(file);
-    }
-  }
-  const text = byPath.length > 0 ? `${attachedFilesNote(byPath)}\n\n${message.text}` : message.text;
-  return blocks.length > 0 ? [...blocks, { type: 'text', text }] : text;
+  const files = message.files ?? [];
+  const text = files.length > 0 ? `${attachedFilesNote(files)}\n\n${message.text}` : message.text;
+  if (!message.images?.length) return text;
+  return [
+    ...message.images.map((img) => ({ type: 'image', source: { type: 'base64', media_type: img.mediaType, data: img.data } })),
+    { type: 'text', text },
+  ];
 }
 
 /** The base64 images in a tool result's content: API image blocks (Read on an

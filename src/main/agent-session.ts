@@ -2,11 +2,11 @@ import type { BrowserWindow } from 'electron';
 import { IPC } from '../shared/types.js';
 import type { SessionInfo, SessionStatus, AgentEvent, PermissionDecision, PermissionMode, McpServerInfo, McpAuthStartResult, McpElicitationResponse, McpServerContextCost, ProviderUsage, SessionControls } from '../shared/types.js';
 import { CONTROL_IDS, PERMISSION_MODES, subagentParent } from '../shared/types.js';
-import { displayTextFromSent } from '../shared/prompt-text.js';
+import { userEventText } from '../shared/prompt-text.js';
 import { applyRateLimit } from '../shared/usage.js';
 import { loadUsageSnapshot, saveUsageSnapshot } from './app-state.js';
 import { handoffTranscript, isSlashCommand, lastAgentChange, pendingHandoff } from './agent-handoff.js';
-import { ensureAttachmentsFolder, pruneAttachments, removeAttachments, saveFiles, saveImages, storeToolImages } from './attachments.js';
+import { attachmentsFolder, ensureAttachmentsFolder, imagePath, pruneAttachments, removeAttachments, saveFiles, saveImages, storeToolImages } from './attachments.js';
 import { logger } from './logger.js';
 import { perfSteps } from './perf-steps.js';
 import { perfLine } from './perf-log.js';
@@ -915,8 +915,8 @@ class AgentSessionManager {
     // only theirs. A slash command is left alone (it must lead the text) and
     // the transcript waits for the next message.
     const handoff = isSlashCommand(content) ? null : pendingHandoff(session.eventHistory);
-    const handoffNote = handoff ? handoffTranscript(session.eventHistory.slice(0, handoff.index), handoff.event) : null;
-    const userEvent: AgentEvent = {
+    const handoffNote = handoff ? handoffTranscript(session.eventHistory.slice(0, handoff.index), handoff.event, attachmentsFolder(id)) : null;
+    const userEvent: Extract<AgentEvent, { type: 'user_message' }> = {
       type: 'user_message', text: content, uuid,
       ...(storedImages.length > 0 && { images: storedImages }),
       ...(savedFiles.length > 0 && { files: savedFiles.map((f) => f.stored) }),
@@ -930,9 +930,7 @@ class AgentSessionManager {
     // throws; a false result means there is no checkpoint for this message,
     // which the thread shows so a later rewind attempt is not a surprise.
     // Label the checkpoint with what the chat shows, not attached file content.
-    const captured = await session.checkpoints.capture(
-      id, session.worktreePath, uuid, displayTextFromSent(content, [...(images ?? []), ...savedFiles.map((f) => f.stored)]),
-    );
+    const captured = await session.checkpoints.capture(id, session.worktreePath, uuid, userEventText(userEvent));
     // Without git there are no checkpoints to capture, so nothing failed.
     if (captured) {
       session.checkpointFailing = false;
@@ -960,7 +958,12 @@ class AgentSessionManager {
       const withNote = handoffNote !== null && session.handoffSentTo !== queryHandle;
       const message: UserMessage = {
         text: withNote ? `${handoffNote}\n${content}` : content,
-        images,
+        // With the path of each saved copy when every one was saved (so the
+        // lists line up), for an agent that can't take images.
+        images: images?.map((img, i) => {
+          const saved = storedImages.length === images!.length ? imagePath(id, storedImages[i].file) : null;
+          return saved ? { ...img, path: saved.path } : img;
+        }),
         ...(savedFiles.length > 0 && {
           files: savedFiles.map(({ stored, path, data }) => ({ name: stored.name, mediaType: stored.mediaType, size: stored.size, path, data })),
         }),

@@ -15,7 +15,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { app, protocol, shell } from 'electron';
 import type { AgentEvent, FileAttachment, ImageMediaType, StoredFile, StoredImage } from '../shared/types.js';
-import { ATTACHMENT_SCHEME } from '../shared/attachments.js';
+import { ATTACHMENT_SCHEME, knownMediaType } from '../shared/attachments.js';
 import type { AdapterEvent } from './adapters/types.js';
 import { logger } from './logger.js';
 
@@ -49,6 +49,34 @@ function folderFor(sessionId: string): string | null {
   return ID_RE.test(sessionId) ? path.join(getAttachmentsDir(), sessionId) : null;
 }
 
+/** A conversation's attachments folder (which may not exist yet), or null
+ *  for an id that could be a path. */
+export function attachmentsFolder(sessionId: string): string | null {
+  return folderFor(sessionId);
+}
+
+/** How long a just-saved file is safe from a prune: its message may not be
+ *  in the history yet (a send straight after a rewind). */
+const RECENT_SAVE_MS = 60_000;
+/** Files saved (or reused) lately, by conversation, with when. */
+const recentSaves = new Map<string, Map<string, number>>();
+
+function markSaved(sessionId: string, file: string): void {
+  let saves = recentSaves.get(sessionId);
+  if (!saves) recentSaves.set(sessionId, (saves = new Map()));
+  const now = Date.now();
+  // Forget old saves now and then, so a long thread's list stays short.
+  if (saves.size >= 50) {
+    for (const [f, at] of saves) if (now - at >= RECENT_SAVE_MS) saves.delete(f);
+  }
+  saves.set(file, now);
+}
+
+function savedLately(sessionId: string, file: string): boolean {
+  const at = recentSaves.get(sessionId)?.get(file);
+  return at !== undefined && Date.now() - at < RECENT_SAVE_MS;
+}
+
 /** A conversation's attachments folder, created if missing, so an agent can
  *  be given access to it before anything is saved there. Null if it can't be.
  *  Synchronous (one mkdir) so starting an agent doesn't wait a tick for it. */
@@ -79,10 +107,14 @@ function contentHash(base64: string): string {
   return crypto.createHash('sha256').update(base64).digest('hex').slice(0, 32);
 }
 
-/** Write `data` to `<folder>/<file>` unless a copy is already there. */
+/** Write `data` to `<folder>/<file>` unless the same content is already
+ *  there. A copy that changed (an agent can edit files in this folder) is
+ *  written over, so a reattached file is never the edited one. */
 async function writeOnce(folder: string, file: string, data: Buffer): Promise<void> {
   const dest = path.join(folder, file);
-  if (fs.existsSync(dest)) return;
+  try {
+    if ((await fs.promises.readFile(dest)).equals(data)) return;
+  } catch { /* not there yet */ }
   // Write then rename, so a crash mid-write can't leave a truncated file
   // that every later copy of this content would be skipped in favour of.
   const tmp = `${dest}.${crypto.randomUUID()}.tmp`;
@@ -100,6 +132,7 @@ async function saveImage(sessionId: string, folder: string, img: ImageInput): Pr
   try {
     if (!Object.hasOwn(EXT_BY_TYPE, img.mediaType)) return null;
     const file = `${contentHash(img.data)}.${EXT_BY_TYPE[img.mediaType]}`;
+    markSaved(sessionId, file);
     await writeOnce(folder, file, Buffer.from(img.data, 'base64'));
     return img.name ? { file, name: img.name } : { file };
   } catch (err) {
@@ -150,6 +183,7 @@ export async function saveFiles(sessionId: string, files: FileAttachment[]): Pro
       if (typeof f.data !== 'string') return null;
       const data = Buffer.from(f.data, 'base64');
       const file = `${contentHash(f.data)}${storedExt(f.name)}`;
+      markSaved(sessionId, file);
       await writeOnce(folder, file, data);
       return {
         stored: { file, name: f.name, mediaType: f.mediaType, size: data.length },
@@ -164,19 +198,15 @@ export async function saveFiles(sessionId: string, files: FileAttachment[]): Pro
   return saved.filter((s): s is SavedFile => s !== null);
 }
 
-/** Types the OS opens in a viewer. Anything else (an .exe, a script) is only
- *  shown in its folder, so a click in the thread never runs it. */
-const OPENABLE_EXT = new Set(['pdf', 'mp3', 'wav', 'm4a', 'ogg', 'oga', 'opus', 'flac', 'aac', 'weba']);
-
-/** Open a saved file attachment in its default app, or show it in its folder
- *  when it isn't a type that's safe to open. False when it isn't there. */
+/** Open a saved file attachment in its default app when it's a PDF or audio,
+ *  which open in a viewer. Anything else (an .exe, a script) is only shown in
+ *  its folder, so a click in the thread never runs it. False when it isn't there. */
 export async function openAttachedFile(sessionId: string, file: string): Promise<boolean> {
   const folder = folderFor(sessionId);
   if (!folder || !STORED_RE.test(file)) return false;
   const filePath = path.join(folder, file);
   if (!fs.existsSync(filePath)) return false;
-  const ext = path.extname(file).slice(1);
-  if (OPENABLE_EXT.has(ext) && (await shell.openPath(filePath)) === '') return true;
+  if (knownMediaType(file) && (await shell.openPath(filePath)) === '') return true;
   shell.showItemInFolder(filePath);
   return true;
 }
@@ -240,6 +270,7 @@ function deleteFolder(folder: string): Promise<void> {
 export function removeAttachments(sessionId: string): Promise<void> {
   const folder = folderFor(sessionId);
   if (!folder) return Promise.resolve();
+  recentSaves.delete(sessionId);
   let target = folder;
   try {
     const moved = path.join(getAttachmentsDir(), `${DELETED_PREFIX}${crypto.randomUUID()}`);
@@ -266,7 +297,8 @@ export async function removeDeletedFolders(): Promise<void> {
 }
 
 /** Delete a conversation's attachments that no event refers to any more,
- *  after a rewind cut the turns that showed them. */
+ *  after a rewind cut the turns that showed them. Ones saved in the last
+ *  minute stay: the message that refers to them may still be on its way. */
 export async function pruneAttachments(sessionId: string, events: AgentEvent[]): Promise<void> {
   const folder = folderFor(sessionId);
   if (!folder) return;
@@ -287,7 +319,7 @@ export async function pruneAttachments(sessionId: string, events: AgentEvent[]):
   }
   await Promise.all(
     files
-      .filter((f) => STORED_RE.test(f) && !keep.has(f))
+      .filter((f) => STORED_RE.test(f) && !keep.has(f) && !savedLately(sessionId, f))
       .map((f) => fs.promises.rm(path.join(folder, f), { force: true, maxRetries: 3 })
         .catch((err) => logger.warn(`[attachments] could not remove ${f} for ${sessionId}:`, err))),
   );

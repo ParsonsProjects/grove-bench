@@ -1102,9 +1102,8 @@ describe('TEXT_GENERATION_OPTIONS', () => {
 // ─── userMessageContent (what the SDK is sent for a prompt) ───
 
 describe('userMessageContent()', () => {
-  const PDF = '%PDF-1.4\n2 0 obj << /Type /Pages /Count 1 >> endobj\n3 0 obj << /Type /Page >> endobj';
   function file(over: Partial<MessageFile> = {}): MessageFile {
-    return { name: 'spec.pdf', mediaType: 'application/pdf', data: Buffer.from(PDF).toString('base64'), path: 'C:\\att\\a.pdf', size: PDF.length, ...over };
+    return { name: 'logs.zip', mediaType: 'application/zip', data: 'UEsD', path: 'C:\\att\\b.zip', size: 10, ...over };
   }
 
   it('is the plain text when nothing is attached', () => {
@@ -1118,31 +1117,27 @@ describe('userMessageContent()', () => {
     ]);
   });
 
-  it('sends a short PDF as a document block named after the file', () => {
-    const pdf = file();
-    expect(userMessageContent({ text: 'summarise', files: [pdf] })).toEqual([
-      { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: pdf.data }, title: 'spec.pdf' },
-      { type: 'text', text: 'summarise' },
-    ]);
-  });
-
-  it('gives any other file by path in a note ahead of the text', () => {
-    const zip = file({ name: 'logs.zip', mediaType: 'application/zip', path: 'C:\\att\\b.zip', size: 10 });
-    const content = userMessageContent({ text: 'what failed?', files: [zip] });
+  it('gives other files by path in a note ahead of the text', () => {
+    const content = userMessageContent({ text: 'what failed?', files: [file()] });
     expect(typeof content).toBe('string');
     expect(content).toMatch(/^<attached_files>\n/);
     expect(content).toContain('<file name="logs.zip" type="application/zip" size="10" path="C:\\att\\b.zip" />');
     expect(content).toMatch(/<\/attached_files>\n\nwhat failed\?$/);
   });
 
-  it('gives a PDF whose pages it cannot count by path', () => {
-    const content = userMessageContent({ text: 'read it', files: [file({ data: Buffer.from('%PDF-1.5 packed').toString('base64') })] });
-    expect(content).toContain('<file name="spec.pdf"');
+  it('gives a PDF by path too, never as a document block', () => {
+    const content = userMessageContent({ text: 'summarise', files: [file({ name: 'spec.pdf', mediaType: 'application/pdf' })] });
+    expect(typeof content).toBe('string');
+    expect(content).toContain('<file name="spec.pdf" type="application/pdf"');
   });
 
-  it('mixes blocks and the note when both are attached', () => {
-    const content = userMessageContent({ text: 'go', files: [file(), file({ name: 'a.mp3', mediaType: 'audio/mpeg' })] }) as Array<Record<string, unknown>>;
-    expect(content.map((b) => b.type)).toEqual(['document', 'text']);
+  it('puts the note in the text block when images are attached too', () => {
+    const content = userMessageContent({
+      text: 'go',
+      images: [{ data: 'iVBOR', mediaType: 'image/png', name: 'a.png' }],
+      files: [file({ name: 'a.mp3', mediaType: 'audio/mpeg' })],
+    }) as Array<Record<string, unknown>>;
+    expect(content.map((b) => b.type)).toEqual(['image', 'text']);
     expect(content[1].text).toContain('<file name="a.mp3" type="audio/mpeg"');
     expect(content[1].text).toMatch(/\n\ngo$/);
   });

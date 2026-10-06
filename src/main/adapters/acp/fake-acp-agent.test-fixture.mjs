@@ -6,6 +6,7 @@
 //              turned down until authenticate brings the key 'good-key'
 //   nohttp   - no HTTP MCP support
 //   media    - takes audio and embedded resources in prompts too
+//   noimage  - takes nothing beyond the baseline (no images)
 // Prompt texts pick a turn: 'wait', 'titled-exec', 'env', 'unasked', 'unasked-read',
 // 'echo', 'blocks', 'mcp', 'mcp-call', 'self-mode', 'cost'; anything else runs the default turn.
 import { createInterface } from 'node:readline';
@@ -197,7 +198,8 @@ async function handle(msg) {
         protocolVersion: 1,
         agentCapabilities: {
           loadSession: true,
-          promptCapabilities: scenario === 'media' ? { image: true, audio: true, embeddedContext: true } : { image: true },
+          promptCapabilities: scenario === 'media' ? { image: true, audio: true, embeddedContext: true }
+            : scenario === 'noimage' ? {} : { image: true },
           mcpCapabilities: { http: scenario !== 'nohttp' },
         },
         agentInfo: { name: 'fake', version: '1' },

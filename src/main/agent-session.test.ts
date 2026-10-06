@@ -123,6 +123,8 @@ const attachments = vi.hoisted(() => ({
       data: f.data,
     }))),
   ensureAttachmentsFolder: vi.fn((id: string) => `/attachments/${id}`),
+  attachmentsFolder: vi.fn((id: string) => `/attachments/${id}`),
+  imagePath: vi.fn((id: string, file: string) => ({ path: `/attachments/${id}/${file}`, mediaType: 'image/png' })),
   removeAttachments: vi.fn(async () => {}),
   pruneAttachments: vi.fn(async () => {}),
   storeToolImages: vi.fn(async (_id: string, event: any) => {
@@ -2198,8 +2200,12 @@ describe('AgentSessionManager.sendMessage()', () => {
     expect(attachments.saveImages).toHaveBeenCalledWith('test-send-images', images);
     const userMsgs = sessionManager.getEventHistory('test-send-images').filter((e) => e.type === 'user_message');
     expect(userMsgs[0]).toMatchObject({ text: 'What is this?', images: [{ file: 'img0.png', name: 'shot.png' }] });
-    // The agent still gets the image data itself.
-    expect(mockAdapter.lastHandle!.sendMessage).toHaveBeenCalledWith({ text: 'What is this?', images });
+    // The agent still gets the image data itself, and the saved copy's path
+    // for an agent that can't take images.
+    expect(mockAdapter.lastHandle!.sendMessage).toHaveBeenCalledWith({
+      text: 'What is this?',
+      images: [{ ...images[0], path: '/attachments/test-send-images/img0.png' }],
+    });
 
     await sessionManager.destroySession('test-send-images');
   });

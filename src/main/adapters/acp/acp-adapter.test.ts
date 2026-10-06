@@ -4,6 +4,7 @@ import os from 'node:os';
 import fs from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { AcpAdapter, type AcpAgentDefinition } from './acp-adapter.js';
+import { AUDIO_INLINE_BUDGET_BYTES, AUDIO_INLINE_MAX_BYTES } from '../file-attachments.js';
 import type { AdapterConfig, AdapterEvent, AgentQueryHandle, MessageFile, PermissionRequest, PermissionResponse } from '../types.js';
 
 vi.mock('../../logger.js', () => ({ logger: { warn: vi.fn(), info: vi.fn(), debug: vi.fn(), error: vi.fn() } }));
@@ -237,34 +238,59 @@ describe('AcpAdapter', () => {
   });
 
   describe('attached files', () => {
-    const PDF = '%PDF-1.4\n2 0 obj << /Type /Pages /Count 1 >> endobj\n3 0 obj << /Type /Page >> endobj';
-    const files: MessageFile[] = [
-      { name: 'spec.pdf', mediaType: 'application/pdf', data: Buffer.from(PDF).toString('base64'), path: path.join(os.tmpdir(), 'att', 'a.pdf'), size: PDF.length },
-      { name: 'memo.mp3', mediaType: 'audio/mpeg', data: 'SUQz', path: path.join(os.tmpdir(), 'att', 'b.mp3'), size: 3 },
-      { name: 'logs.zip', mediaType: 'application/zip', data: 'UEsD', path: path.join(os.tmpdir(), 'att', 'c.zip'), size: 3 },
-    ];
+    const dir = path.join(os.tmpdir(), 'att');
+    const pdf: MessageFile = { name: 'spec.pdf', mediaType: 'application/pdf', data: 'JVBE', path: path.join(dir, 'a.pdf'), size: 3 };
+    const mp3: MessageFile = { name: 'memo.mp3', mediaType: 'audio/mpeg', data: 'SUQz', path: path.join(dir, 'b.mp3'), size: 3 };
+    const zip: MessageFile = { name: 'logs.zip', mediaType: 'application/zip', data: 'UEsD', path: path.join(dir, 'c.zip'), size: 3 };
+    const link = (f: MessageFile) => ({ type: 'resource_link', uri: pathToFileURL(f.path).href, name: f.name, mimeType: f.mediaType, size: f.size });
 
-    async function sentBlocks(scenario: string): Promise<unknown[]> {
+    /** The blocks after the text of each message, as the fake agent saw them. */
+    async function sentBlocks(scenario: string, ...messages: Parameters<AgentQueryHandle['sendMessage']>[0][]): Promise<unknown[][]> {
       const handle = await new AcpAdapter(def(scenario)).start(config());
       await until(handle, 'system_init');
-      handle.sendMessage({ text: 'blocks', files });
-      const turn = await until(handle, 'result');
+      const seen: unknown[][] = [];
+      for (const m of messages) {
+        handle.sendMessage(m);
+        const turn = await until(handle, 'result');
+        seen.push(JSON.parse((turn.find((e) => e.type === 'assistant_text') as { text: string }).text));
+      }
       handle.close();
-      return JSON.parse((turn.find((e) => e.type === 'assistant_text') as { text: string }).text);
+      return seen;
     }
 
     it('links every file when the agent takes nothing more than the baseline', async () => {
-      expect(await sentBlocks('default')).toEqual(files.map((f) => ({
-        type: 'resource_link', uri: pathToFileURL(f.path).href, name: f.name, mimeType: f.mediaType, size: f.size,
-      })));
+      const [blocks] = await sentBlocks('default', { text: 'blocks', files: [pdf, mp3, zip] });
+      expect(blocks).toEqual([link(pdf), link(mp3), link(zip)]);
     });
 
-    it('embeds a short PDF and sends audio inline to an agent that takes them', async () => {
-      expect(await sentBlocks('media')).toEqual([
-        { type: 'resource', resource: { uri: pathToFileURL(files[0].path).href, mimeType: 'application/pdf', blob: files[0].data } },
-        { type: 'audio', data: 'SUQz', mimeType: 'audio/mpeg' },
-        { type: 'resource_link', uri: pathToFileURL(files[2].path).href, name: 'logs.zip', mimeType: 'application/zip', size: 3 },
-      ]);
+    it('sends audio inline to an agent that takes it, and still links a PDF', async () => {
+      const [blocks] = await sentBlocks('media', { text: 'blocks', files: [pdf, mp3, zip] });
+      expect(blocks).toEqual([link(pdf), { type: 'audio', data: 'SUQz', mimeType: 'audio/mpeg' }, link(zip)]);
+    });
+
+    it('links audio over the size cap, and once the inline total is used up', async () => {
+      const big = { ...mp3, name: 'big.mp3', size: AUDIO_INLINE_MAX_BYTES + 1 };
+      const half = { ...mp3, name: 'half.mp3', size: AUDIO_INLINE_BUDGET_BYTES / 2 };
+      const [first, second] = await sentBlocks('media',
+        { text: 'blocks', files: [big, half, half] },
+        { text: 'blocks', files: [mp3] });
+      expect(first).toEqual([link(big), { type: 'audio', data: 'SUQz', mimeType: 'audio/mpeg' }, { type: 'audio', data: 'SUQz', mimeType: 'audio/mpeg' }]);
+      expect(second).toEqual([link(mp3)]);
+    });
+
+    it('links an image by its saved copy for an agent that can\'t take images', async () => {
+      const shot = { data: 'iVBORw==', mediaType: 'image/png' as const, name: 'shot.png', path: path.join(dir, 'd.png') };
+      const [blocks] = await sentBlocks('noimage', { text: 'blocks', images: [shot] });
+      expect(blocks).toEqual([{ type: 'resource_link', uri: pathToFileURL(shot.path).href, name: 'shot.png', mimeType: 'image/png', size: 4 }]);
+    });
+
+    it('says so when an image with no saved copy is left out', async () => {
+      const handle = await new AcpAdapter(def('noimage')).start(config());
+      await until(handle, 'system_init');
+      handle.sendMessage({ text: 'blocks', images: [{ data: 'iVBOR', mediaType: 'image/png', name: 'shot.png' }] });
+      const turn = await until(handle, 'result');
+      handle.close();
+      expect(turn.some((e) => e.type === 'status' && /can't take images, so the attached image was left out/.test(e.message))).toBe(true);
     });
   });
 

@@ -87,11 +87,15 @@ export type ElicitationHandler = (request: McpElicitationRequest, signal: AbortS
 
 export interface UserMessage {
   text: string;
-  images?: ImageAttachment[];
+  images?: MessageImage[];
   /** Other files attached to the message, already saved to disk. See
    *  file-attachments.ts for how each adapter passes them on. */
   files?: MessageFile[];
 }
+
+/** An image attached to a message. `path` is its saved copy, for an agent
+ *  that can't take images but can be given a file's path. */
+export type MessageImage = ImageAttachment & { path?: string };
 
 /** A file attached to a message (shared FileAttachment) once the session
  *  manager has saved it to the conversation's attachments folder. */

@@ -1,3 +1,5 @@
+import { knownMediaType } from '../../shared/attachments.js';
+
 // ─── File attachment constants and utilities ───
 
 export const MAX_TEXT_SIZE = 100 * 1024; // 100KB
@@ -62,21 +64,6 @@ export const TEXT_EXTENSIONS = new Set([
   'rst', 'tex', 'bib', 'org', 'adoc', 'rmd', 'qmd', 'srt', 'vtt',
 ]);
 
-/** MIME types for the files agents treat specially (PDFs, audio), for when
- *  the browser reports none: on Windows it only knows what the registry has. */
-const MEDIA_TYPE_BY_EXT: Record<string, string> = {
-  pdf: 'application/pdf',
-  mp3: 'audio/mpeg',
-  wav: 'audio/wav',
-  m4a: 'audio/mp4',
-  aac: 'audio/aac',
-  ogg: 'audio/ogg',
-  oga: 'audio/ogg',
-  opus: 'audio/ogg',
-  flac: 'audio/flac',
-  weba: 'audio/webm',
-};
-
 export type AttachedFile =
   | { name: string; content: string; type: 'text' }
   | { name: string; dataUrl: string; type: 'image' }
@@ -106,9 +93,9 @@ export function classifyFile(file: { name: string; type: string }): AttachmentKi
 }
 
 /** A file's MIME type: the browser's, or one from its extension for the types
- *  agents treat specially. '' when neither knows. */
+ *  Grove treats specially (shared/attachments.ts). '' when neither knows. */
 export function mediaTypeOf(file: { name: string; type: string }): string {
-  return file.type || MEDIA_TYPE_BY_EXT[extensionOf(file.name)] || '';
+  return file.type || knownMediaType(file.name);
 }
 
 /** Validate a file's size given its classification. Returns an error message or null. */
@@ -224,9 +211,11 @@ export function base64Size(data: string): number {
   return Math.floor((data.length * 3) / 4) - padding;
 }
 
-/** The base64 data of a data: URL (what FileReader.readAsDataURL gives). */
+/** The base64 data of a data: URL (what FileReader.readAsDataURL gives).
+ *  '' when it has no data part, as an empty file's may not. */
 export function dataUrlData(dataUrl: string): string {
-  return dataUrl.slice(dataUrl.indexOf(',') + 1);
+  const comma = dataUrl.indexOf(',');
+  return comma < 0 ? '' : dataUrl.slice(comma + 1);
 }
 
 /**

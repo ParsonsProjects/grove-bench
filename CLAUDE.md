@@ -47,7 +47,7 @@ src/
       registry.ts      # Adapter registry
       claude-code.ts   # Claude Code adapter implementation
       acp/             # Agent Client Protocol adapter (Gemini CLI, Copilot CLI, OpenCode, custom agents)
-      file-attachments.ts # How attached PDFs, audio and other files reach each agent (inline or by path)
+      file-attachments.ts # How attached files reach each agent (by path; audio inline for ACP agents that take it)
       grove-tools.ts   # Grove's memory and Preview tools, defined once
       grove-mcp-http.ts # Those tools over MCP HTTP, for agents other than Claude Code
       mcp-bridge/      # stdio bridge to that server, for agents without HTTP MCP (2nd Vite entry)

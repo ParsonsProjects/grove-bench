@@ -133,6 +133,10 @@ describe('mediaTypeOf', () => {
   it('is empty when nothing knows the type', () => {
     expect(mediaTypeOf({ name: 'data.bin', type: '' })).toBe('');
   });
+
+  it('is a string even for an extension that names an Object.prototype member', () => {
+    expect(mediaTypeOf({ name: 'x.constructor', type: '' })).toBe('');
+  });
 });
 
 // ─── validateFileSize ───
@@ -378,6 +382,11 @@ describe('extractClipboardImages', () => {
 describe('dataUrlData and base64Size', () => {
   it('takes the base64 data off a data: URL', () => {
     expect(dataUrlData('data:application/pdf;base64,JVBERi0=')).toBe('JVBERi0=');
+  });
+
+  it('is empty for a data: URL with no data part, as an empty file may give', () => {
+    expect(dataUrlData('data:')).toBe('');
+    expect(dataUrlData('data:application/octet-stream;base64,')).toBe('');
   });
 
   it('gives the decoded size of base64 data, padding included', () => {

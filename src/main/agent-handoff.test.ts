@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import path from 'node:path';
 import type { AgentEvent } from '../shared/types.js';
 import { HANDOFF_MAX_CHARS, eventsSinceAgentChange, handoffTranscript, isSlashCommand, lastAgentChange, pendingHandoff } from './agent-handoff.js';
 import { goalInputFromEvents } from './session-goal.js';
@@ -62,6 +63,32 @@ describe('handoffTranscript', () => {
     const text = handoffTranscript(events, switched(true, 'Gemini CLI', 'OpenCode'));
     expect(text).toContain('Claude Agent: from claude');
     expect(text).toContain('Gemini CLI: from gemini');
+  });
+
+  it('lists the images and files the user attached with the paths of their saved copies', () => {
+    const dir = path.join('C:', 'att', 's1');
+    const events: AgentEvent[] = [
+      {
+        type: 'user_message', text: 'Read these', uuid: 'u1',
+        images: [{ file: `${'a'.repeat(32)}.png`, name: 'shot.png' }],
+        files: [{ file: `${'b'.repeat(32)}.pdf`, name: 'spec.pdf', mediaType: 'application/pdf', size: 10 }],
+      },
+      { type: 'tool_result', toolUseId: 't1', content: '', images: [{ file: `${'c'.repeat(32)}.png` }] },
+    ];
+    const text = handoffTranscript(events, switched(true), dir);
+
+    expect(text).toContain([
+      'Files the user attached, saved outside the project (open them by the absolute path given):',
+      `- shot.png: ${path.join(dir, `${'a'.repeat(32)}.png`)}`,
+      `- spec.pdf: ${path.join(dir, `${'b'.repeat(32)}.pdf`)}`,
+    ].join('\n'));
+    // A tool's screenshot isn't something the user attached.
+    expect(text).not.toContain('c'.repeat(32));
+  });
+
+  it('leaves the list out without a folder to give paths in', () => {
+    const events: AgentEvent[] = [{ type: 'user_message', text: 'x', files: [{ file: 'f', name: 'spec.pdf', mediaType: '', size: 1 }] }];
+    expect(handoffTranscript(events, switched(true))).not.toContain('Files the user attached');
   });
 
   it('keeps the newest turns when the conversation is long', () => {
