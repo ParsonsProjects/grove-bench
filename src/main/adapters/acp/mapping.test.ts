@@ -154,6 +154,12 @@ describe('customAcpAgents', () => {
     expect(defs).toEqual([{ id: 'acp-codex-acp', displayName: 'Codex (ACP)', command: 'codex-acp', args: [] }]);
   });
 
+  it('passes on the environment variables a program can read', () => {
+    const [def] = customAcpAgents([{ id: '', name: 'Codex', command: 'codex-acp', args: [], env: { OPENAI_API_KEY: 'sk-x', 'NOT-A-NAME': 'y' } }]);
+    expect(def.env).toEqual({ OPENAI_API_KEY: 'sk-x' });
+    expect(customAcpAgents([{ id: '', name: 'Bare', command: 'bare', args: [], env: {} }])[0]).not.toHaveProperty('env');
+  });
+
   it('falls back to the command when the name gives no usable id', () => {
     expect(customAcpAgents([{ id: '', name: '\u4ee3\u7406', command: 'codex-acp', args: [] }]))
       .toEqual([{ id: 'acp-codex-acp', displayName: '\u4ee3\u7406', command: 'codex-acp', args: [] }]);

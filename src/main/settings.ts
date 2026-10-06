@@ -227,6 +227,7 @@ const settingsSchema = z.object({
     name: z.string().catch(''),
     command: z.string(),
     args: z.array(z.string()).catch([]),
+    env: z.record(z.string(), z.string()).optional().catch(undefined),
   })).catch(DEFAULT_SETTINGS.acpAgents),
   enabledAlphaAgents: z.array(z.string()).catch(DEFAULT_SETTINGS.enabledAlphaAgents),
 

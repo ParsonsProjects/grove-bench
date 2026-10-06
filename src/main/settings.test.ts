@@ -327,6 +327,16 @@ describe('schema versioning', () => {
 });
 
 describe('validateSettings', () => {
+  it('keeps a custom agent\'s environment variables, and drops a damaged set alone', () => {
+    const agents = validateSettings({ acpAgents: [
+      { id: '', name: 'Codex', command: 'codex-acp', args: [], env: { OPENAI_API_KEY: 'sk-x' } },
+      { id: '', name: 'Other', command: 'other', args: [], env: { BAD: 1 } },
+      { id: '', name: 'Plain', command: 'plain', args: [] },
+    ] }).acpAgents;
+    expect(agents.map((a) => a.env)).toEqual([{ OPENAI_API_KEY: 'sk-x' }, undefined, undefined]);
+    expect(agents.map((a) => a.command)).toEqual(['codex-acp', 'other', 'plain']);
+  });
+
   it('stores the compaction timeout as compaction will use it', () => {
     const timeout = (v: unknown) => validateSettings({ memoryCompactTimeoutSeconds: v }).memoryCompactTimeoutSeconds;
     expect(timeout(5)).toBe(30);

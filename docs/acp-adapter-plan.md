@@ -102,7 +102,9 @@ Code: `src/main/adapters/acp/`.
   context meter is right before the first reply.
 - **Background tasks** (commit messages, branch names, memory notes) run as
   a one-off session with every tool request turned down.
-- **Custom agents**: Settings → Agent → Other Agents (ACP). Read at launch.
+- **Custom agents**: Settings → Agent → Other Agents (ACP): a name, command,
+  arguments and environment variables (like the `command`, `args` and `env`
+  of Zed's `agent_servers` entries). Read at launch.
 
 ## Not done yet
 

@@ -86,6 +86,9 @@ export const ACP_PRESETS: AcpAgentDefinition[] = [
   },
 ];
 
+/** Variable names Windows and every shell accept. */
+const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
 /** Adapter ids of the user's own ACP agents carry this prefix, so they can't
  *  take a built-in id. */
 export const CUSTOM_ACP_PREFIX = 'acp-';
@@ -95,9 +98,10 @@ function slugify(text: string | undefined): string {
 }
 
 /** Definitions for the user's own agents. Entries without a command, or that
- *  repeat an id, are skipped. The id comes from the first of id, name and
- *  command that gives a usable slug, else a hash of the command, so a name
- *  in any script still works and stays the same across launches. */
+ *  repeat an id, are skipped, and so are variables with a name no program
+ *  could read. The id comes from the first of id, name and command that
+ *  gives a usable slug, else a hash of the command, so a name in any script
+ *  still works and stays the same across launches. */
 export function customAcpAgents(settings: readonly AcpAgentSetting[] | undefined): AcpAgentDefinition[] {
   const out: AcpAgentDefinition[] = [];
   const seen = new Set<string>();
@@ -109,7 +113,11 @@ export function customAcpAgents(settings: readonly AcpAgentSetting[] | undefined
     const id = `${CUSTOM_ACP_PREFIX}${slug}`;
     if (seen.has(id)) continue;
     seen.add(id);
-    out.push({ id, displayName: s.name?.trim() || command, command, args: s.args ?? [] });
+    const env = Object.fromEntries(Object.entries(s.env ?? {}).filter(([name, value]) => ENV_NAME.test(name) && typeof value === 'string'));
+    out.push({
+      id, displayName: s.name?.trim() || command, command, args: s.args ?? [],
+      ...(Object.keys(env).length > 0 ? { env } : {}),
+    });
   }
   return out;
 }

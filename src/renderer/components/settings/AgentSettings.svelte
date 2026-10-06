@@ -10,6 +10,7 @@
   import * as Select from '$lib/components/ui/select/index.js';
   import { Textarea } from '$lib/components/ui/textarea/index.js';
   import { defaultModelChoices, DEFAULT_MODEL_VALUE } from '$lib/model-choices.js';
+  import { parseEnvLines } from '$lib/env-lines.js';
   import type { AgentStage, CavemanMode, ControlDescriptor, ControlOption } from '../../../shared/types.js';
   import { CONTROL_IDS, controlShortcut } from '../../../shared/types.js';
   import SettingRow from './SettingRow.svelte';
@@ -142,17 +143,27 @@
   let acpName = $state('');
   let acpCommand = $state('');
   let acpArgs = $state('');
+  let acpEnv = $state('');
+  let acpEnvError = $state<string | null>(null);
   function addAcpAgent() {
     const command = acpCommand.trim();
     if (!command) return;
+    const parsed = parseEnvLines(acpEnv);
+    if ('error' in parsed) {
+      acpEnvError = parsed.error;
+      return;
+    }
+    acpEnvError = null;
     settingsStore.addAcpAgent({
       name: acpName.trim() || command,
       command,
       args: acpArgs.trim() ? acpArgs.trim().split(/\s+/) : [],
+      ...(Object.keys(parsed.env).length > 0 ? { env: parsed.env } : {}),
     });
     acpName = '';
     acpCommand = '';
     acpArgs = '';
+    acpEnv = '';
   }
 </script>
 
@@ -387,7 +398,8 @@
       <ul class="flex flex-col gap-1" aria-label="Other agents">
         {#each settingsStore.draft.acpAgents as agent, i (i)}
           <li class="flex items-center justify-between gap-1 pl-2 text-xs min-w-0 bg-muted">
-            <span class="truncate"><span class="text-foreground">{agent.name}</span> <code class="text-muted-foreground">{[agent.command, ...agent.args].join(' ')}</code></span>
+            <!-- Variable names only: values are often keys. -->
+            <span class="truncate"><span class="text-foreground">{agent.name}</span> <code class="text-muted-foreground">{[agent.command, ...agent.args].join(' ')}</code>{#if agent.env && Object.keys(agent.env).length > 0}<span class="text-muted-foreground">{` · ${Object.keys(agent.env).join(', ')}`}</span>{/if}</span>
             <button
               type="button"
               onclick={() => settingsStore.removeAcpAgent(i)}
@@ -412,6 +424,19 @@
         class="flex-1"
       />
       <Button variant="secondary" onclick={addAcpAgent}>Add</Button>
+    </div>
+    <div class="flex flex-col gap-1 max-w-2xl">
+      <Textarea
+        bind:value={acpEnv}
+        placeholder="Environment variables, one per line as KEY=value (optional)"
+        aria-label="Agent environment variables"
+        class="min-h-14 max-h-40 resize-y font-mono text-xs"
+      />
+      {#if acpEnvError}
+        <p class="text-xs text-destructive" role="alert">{acpEnvError}</p>
+      {:else}
+        <p class="text-xs text-muted-foreground">For a key or setting the agent reads from its environment. Saved as typed in Grove Bench's settings.</p>
+      {/if}
     </div>
     <RegistryAgents onUse={(a) => { acpName = a.name; acpCommand = a.command; acpArgs = a.args.join(' '); }} />
   </div>

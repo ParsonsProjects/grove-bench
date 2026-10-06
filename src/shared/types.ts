@@ -1468,6 +1468,9 @@ export interface AcpAgentSetting {
   /** Program to run, on PATH or a full path. */
   command: string;
   args: string[];
+  /** Variables the program is started with, over those Grove was started
+   *  with (an API key the agent reads, a config path). */
+  env?: Record<string, string>;
 }
 
 export interface GroveBenchSettings {

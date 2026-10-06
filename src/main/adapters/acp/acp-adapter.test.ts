@@ -4,6 +4,7 @@ import os from 'node:os';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { AcpAdapter, type AcpAgentDefinition } from './acp-adapter.js';
+import { customAcpAgents } from './presets.js';
 import type { AdapterConfig, AdapterEvent, AgentQueryHandle, PermissionRequest, PermissionResponse } from '../types.js';
 
 vi.mock('../../logger.js', () => ({ logger: { warn: vi.fn(), info: vi.fn(), debug: vi.fn(), error: vi.fn() } }));
@@ -264,6 +265,21 @@ describe('AcpAdapter', () => {
       { type: 'http', name: 'docs', auth: true },
     ]);
     handle.close();
+  });
+
+  it('starts a custom agent with the environment variables saved for it, over inherited ones', async () => {
+    vi.stubEnv('FAKE_KEY_VAR', 'k-inherited');
+    try {
+      const [custom] = customAcpAgents([{ id: '', name: 'Mine', command: process.execPath, args: [FIXTURE], env: { FAKE_KEY_VAR: 'k-from-settings' } }]);
+      const handle = await new AcpAdapter(custom).start(config());
+      await until(handle, 'system_init');
+      handle.sendMessage({ text: 'env' });
+      const text = (await until(handle, 'result')).find((e) => e.type === 'assistant_text');
+      expect(JSON.parse((text as { text: string }).text)).toMatchObject({ key: 'k-from-settings' });
+      handle.close();
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it('sends Grove\'s instructions ahead of the first prompt of a new session', async () => {

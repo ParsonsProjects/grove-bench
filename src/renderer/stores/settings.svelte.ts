@@ -281,7 +281,7 @@ class SettingsStore {
     this.draft.workingDirectories = this.draft.workingDirectories.filter((_, i) => i !== index);
   }
 
-  addAcpAgent(agent: { name: string; command: string; args: string[] }) {
+  addAcpAgent(agent: { name: string; command: string; args: string[]; env?: Record<string, string> }) {
     this.draft.acpAgents = [...this.draft.acpAgents, { id: '', ...agent }];
   }
 

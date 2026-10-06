@@ -10,6 +10,7 @@
   import { Label } from '$lib/components/ui/label/index.js';
   import * as Select from '$lib/components/ui/select/index.js';
   import { parseMcpJson } from '$lib/mcp-json.js';
+  import { parseEnvLines } from '$lib/env-lines.js';
   import type { McpConfigScope } from '../../../shared/types.js';
 
   /** Add an MCP server to the agent the Tool shed shows, from a form or a
@@ -103,17 +104,12 @@
 
   async function addServer() {
     if (!canAdd || mcpConfigStore.actionInProgress) return;
-    const envVars: Record<string, string> = {};
-    for (const line of env.split('\n')) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      const eq = trimmed.indexOf('=');
-      if (eq <= 0) {
-        envError = `Write each variable as KEY=value (got "${trimmed}").`;
-        return;
-      }
-      envVars[trimmed.slice(0, eq)] = trimmed.slice(eq + 1);
+    const parsed = parseEnvLines(env);
+    if ('error' in parsed) {
+      envError = parsed.error;
+      return;
     }
+    const envVars = parsed.env;
     envError = null;
     const headerLines = headers.split('\n').map((h) => h.trim()).filter(Boolean);
 
