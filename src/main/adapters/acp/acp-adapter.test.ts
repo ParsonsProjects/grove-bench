@@ -18,6 +18,12 @@ vi.mock('../../app-state.js', () => ({
   saveAgentSignIn: (id: string, record: { signedIn: boolean; message?: string; checkedAt: number }) => { signIn.set(id, record); },
 }));
 
+const savedMcp = vi.hoisted(() => [] as import('./mcp-servers.js').AcpMcpServerConfig[]);
+vi.mock('./mcp-servers.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./mcp-servers.js')>()),
+  savedAcpMcpServers: () => savedMcp,
+}));
+
 const registry = new Map<string, unknown>();
 const models = new Map<string, { context?: number }>();
 vi.mock('../../catalogs.js', async (importOriginal) => {
@@ -57,6 +63,7 @@ beforeEach(() => {
   registry.clear();
   models.clear();
   savedKeys.clear();
+  savedMcp.length = 0;
   cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'acp-test-'));
 });
 
@@ -236,6 +243,29 @@ describe('AcpAdapter', () => {
     handle.close();
   });
 
+  it('gives the agent the MCP servers saved for ACP agents, leaving out what it can\'t connect to', async () => {
+    savedMcp.push(
+      { name: 'files', transport: 'stdio', commandOrUrl: process.execPath, env: { TOKEN: 'abc' } },
+      { name: 'docs', transport: 'http', commandOrUrl: 'https://example.com/mcp', headers: ['Authorization: Bearer x'] },
+      { name: 'old', transport: 'sse', commandOrUrl: 'https://example.com/sse' },
+      { name: 'theirs', transport: 'stdio', commandOrUrl: process.execPath, repoPath: '/repo/other' },
+    );
+    const adapter = new AcpAdapter(def());
+    const handle = await adapter.start(config({ repoPath: '/repo/mine' }));
+    const started = await until(handle, 'system_init');
+    expect(started.find((e) => e.type === 'status')).toMatchObject({
+      level: 'warning',
+      message: "Fake Agent can't connect to SSE MCP servers, so it starts without old.",
+    });
+    handle.sendMessage({ text: 'mcp' });
+    const turn = await until(handle, 'result');
+    expect(JSON.parse((turn.find((e) => e.type === 'assistant_text') as { text: string }).text)).toEqual([
+      { type: 'stdio', name: 'files', env: ['TOKEN'] },
+      { type: 'http', name: 'docs', auth: true },
+    ]);
+    handle.close();
+  });
+
   it('sends Grove\'s instructions ahead of the first prompt of a new session', async () => {
     const adapter = new AcpAdapter(def());
     const handle = await adapter.start(config({ appendSystemPrompt: 'Use relative paths.' }));
@@ -322,6 +352,21 @@ describe('AcpAdapter', () => {
     expect(new AcpAdapter({ ...def(), cliSignIn: undefined }).checkSignIn).toBeUndefined();
   }, SPAWNS_TIMEOUT_MS);
 
+  it('learns the agent\'s models and controls from Check sign-in', async () => {
+    const adapter = new AcpAdapter(def());
+    const changed = vi.fn();
+    adapter.onModelsChanged(changed);
+    expect(adapter.getControls().map((c) => c.id)).toEqual(['permissionMode']);
+    expect(adapter.getModels()).toEqual([]);
+
+    expect(await adapter.checkSignIn!()).toEqual({ signedIn: true });
+    expect(adapter.getModels().map((m) => m.id)).toEqual(['m1', 'm2']);
+    expect(adapter.getControls().map((c) => c.id)).toEqual(['permissionMode', 'acp:mode', 'acp:effort']);
+    expect(changed).toHaveBeenCalled();
+    // Kept for the next launch, like a thread's.
+    expect(new AcpAdapter(def()).getControls('m1').map((c) => c.id)).toEqual(['permissionMode', 'acp:mode', 'acp:effort']);
+  }, SPAWNS_TIMEOUT_MS);
+
   it('can\'t tell whether a program that doesn\'t start is signed in', async () => {
     expect((await new AcpAdapter({ ...def(), command: 'definitely-not-an-acp-agent-xyz' }).checkSignIn!()).signedIn).toBeNull();
   }, SPAWNS_TIMEOUT_MS);
@@ -344,6 +389,53 @@ describe('AcpAdapter', () => {
     const defaults = Object.fromEntries(adapter.getControls().map((c) => [c.id, c.default]));
     expect(defaults).toMatchObject({ 'acp:mode': 'default', 'acp:effort': 'low' });
     handle.close();
+  });
+
+  it('keeps each model\'s own options, and where a new thread on it starts', async () => {
+    const effort = (a: AcpAdapter, model?: string) => a.getControls(model).find((c) => c.id === 'acp:effort');
+    const adapter = new AcpAdapter(def());
+    const handle = await adapter.start(config());
+    await until(handle, 'system_init');
+    // Switching before anything else changed, as a new thread on m2 does:
+    // where the agent puts m2's options is where they start.
+    await handle.setModel!('m2');
+    expect(effort(adapter, 'm2')).toMatchObject({ default: 'max', options: [{ value: 'high' }, { value: 'max' }] });
+    // Later choices aren't starts, on m2 or on m1.
+    await handle.setControl!('acp:effort', 'high');
+    await handle.setControl!('acp:mode', 'yolo');
+    await handle.setModel!('m1');
+    expect(effort(adapter, 'm2')?.default).toBe('max');
+    expect(effort(adapter, 'm1')).toMatchObject({ default: 'low', options: [{ value: 'low' }, { value: 'high' }] });
+    expect(adapter.getControls('m1').find((c) => c.id === 'acp:mode')?.default).toBe('default');
+    handle.close();
+
+    const relaunched = new AcpAdapter(def());
+    expect(effort(relaunched, 'm2')?.default).toBe('max');
+    expect(effort(relaunched, 'm1')?.default).toBe('low');
+  });
+
+  it('doesn\'t take a model\'s start from a thread that changed something first', async () => {
+    const adapter = new AcpAdapter(def());
+    const handle = await adapter.start(config());
+    await until(handle, 'system_init');
+    // The fake agent keeps effort across a switch when the new model has it.
+    await handle.setControl!('acp:effort', 'high');
+    await handle.setModel!('m2');
+    handle.close();
+    // m2 wasn't seen untouched, so it gets the last options seen, as a guess.
+    const relaunched = new AcpAdapter(def());
+    expect(relaunched.getControls('m2').find((c) => c.id === 'acp:effort')?.options.map((o) => o.value)).toEqual(['high', 'max']);
+    // A new thread on m2 then shows its real start.
+    const next = await relaunched.start(config({ model: 'm2' }));
+    await until(next, 'system_init');
+    expect(relaunched.getControls('m2').find((c) => c.id === 'acp:effort')?.default).toBe('max');
+    next.close();
+  });
+
+  it('reads options saved before they were kept per model', () => {
+    const effort = { id: 'acp:effort', label: 'Effort', options: [{ value: 'low', label: 'Low' }], default: 'low' };
+    catalog.set('fake-acp', [{ models: [{ id: 'm1', label: 'Model 1' }], controls: [effort], byModel: 'junk' }]);
+    expect(new AcpAdapter(def()).getControls('m1').map((c) => c.id)).toEqual(['permissionMode', 'acp:effort']);
   });
 
   it('runs messages queued during start-up one at a time', async () => {

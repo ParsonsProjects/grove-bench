@@ -27,7 +27,9 @@ import type {
   AdapterConfig, AdapterEvent, AdapterPrerequisiteStatus, AgentAdapter, AgentCapabilities, AgentQueryHandle,
   ApiKeyDescriptor, CliSignInDescriptor, ModelInfo, PermissionResponse, SignInCheck, UserMessage,
 } from '../types.js';
-import type { AgentStage, ControlDescriptor, ControlOption, PermissionMode, ImageMediaType } from '../../../shared/types.js';
+import type {
+  AgentStage, ControlDescriptor, ControlOption, PermissionMode, ImageMediaType, McpAddServerOpts, McpConfigScope, McpConfiguredServer,
+} from '../../../shared/types.js';
 import { CONTROL_IDS } from '../../../shared/types.js';
 import { checkToolRules, cleanEnv, isPathInside } from '../../agent-utils.js';
 import { getApiKey } from '../../credentials.js';
@@ -39,6 +41,7 @@ import { catalogs, installFor } from '../../catalogs.js';
 import { memoryServer, previewServer, type GroveServer } from '../grove-tools.js';
 import { startGroveMcpHttp, type GroveMcpHttp } from '../grove-mcp-http.js';
 import { stdioBridgeLaunch } from '../mcp-bridge/launch.js';
+import { ACP_MCP_SUPPORT, acpMcpServersFor, addAcpMcpServer, listAcpMcpServers, removeAcpMcpServer, savedAcpMcpServers } from './mcp-servers.js';
 import { JsonRpcConnection, JsonRpcError, RPC_ERRORS } from './rpc.js';
 import {
   ACP_PROTOCOL_VERSION,
@@ -110,7 +113,19 @@ const MODE_OPTIONS: ControlOption[] = [
 /** What a conversation taught us about the agent, kept for the next launch. */
 interface LearnedAgent {
   models: AcpModelList['models'];
+  /** The controls as last reported, for a model not seen yet. */
   controls: ControlDescriptor[];
+  /** The controls each model was seen with: options such as effort levels
+   *  can differ by model (OpenCode's do). */
+  byModel?: Record<string, ControlDescriptor[]>;
+}
+
+/** Keep the defaults `before` had, where they are still offered. */
+function keepDefaults(controls: ControlDescriptor[], before: ControlDescriptor[]): ControlDescriptor[] {
+  return controls.map((c) => {
+    const prev = before.find((p) => p.id === c.id)?.default;
+    return prev !== undefined && c.options.some((o) => o.value === prev) ? { ...c, default: prev } : c;
+  });
 }
 
 /** A push-based async iterable: the adapter pushes events as they arrive. */
@@ -271,6 +286,8 @@ export class AcpAdapter implements AgentAdapter {
   readonly apiKey?: ApiKeyDescriptor;
   readonly verifyApiKey?: (key: string) => Promise<boolean | null>;
   readonly stage?: AgentStage;
+  /** One list of MCP servers, saved in Grove, for every ACP agent. */
+  readonly mcp = ACP_MCP_SUPPORT;
   readonly capabilities: AgentCapabilities = {
     permissions: true,
     permissionModes: true,
@@ -368,7 +385,12 @@ export class AcpAdapter implements AgentAdapter {
         withKeySignIn(rpc, this.def, init, () => rpc.request<AcpSessionSetup>('session/new', { cwd: dir, mcpServers: [] })),
         STARTUP_TIMEOUT_MS, `${this.displayName} sign-in check`,
       );
-      if (setup?.sessionId) await closeSession(rpc, init, setup.sessionId);
+      if (setup?.sessionId) {
+        await closeSession(rpc, init, setup.sessionId);
+        // The session also says what the agent offers, so Settings can show
+        // its models and options before the first thread.
+        this.learn(setup.configOptions, setup.modes, setup.models, true, modelList(setup.configOptions, setup.models)?.current ?? null);
+      }
       this.recordSignIn(true);
       return { signedIn: true };
     } catch (e) {
@@ -399,7 +421,15 @@ export class AcpAdapter implements AgentAdapter {
     if (this.learned === undefined) {
       try {
         const raw = loadModelCatalog(this.id)?.[0] as LearnedAgent | undefined;
-        this.learned = raw && Array.isArray(raw.models) && Array.isArray(raw.controls) ? raw : null;
+        if (raw && Array.isArray(raw.models) && Array.isArray(raw.controls)) {
+          // Saved before options were kept per model, or damaged: keep the rest.
+          const byModel = raw.byModel && typeof raw.byModel === 'object'
+            ? Object.fromEntries(Object.entries(raw.byModel).filter(([, c]) => Array.isArray(c)))
+            : undefined;
+          this.learned = { models: raw.models, controls: raw.controls, ...(byModel ? { byModel } : {}) };
+        } else {
+          this.learned = null;
+        }
       } catch {
         this.learned = null;
       }
@@ -407,23 +437,29 @@ export class AcpAdapter implements AgentAdapter {
     return this.learned;
   }
 
-  /** Record what a session reported. Listeners hear only real changes.
-   *  A control's default is the value a new session starts with, and only a
-   *  new session (`fresh`) shows it: later reports carry what someone chose
-   *  since (a mode switched to YOLO), which must not become the start of
-   *  every new conversation. */
-  private learn(configOptions: AcpConfigOption[] | null | undefined, modes: AcpModeState | null | undefined, models: AcpModelState | null | undefined, fresh: boolean): void {
+  /** Record what a session reported while on `model` (null when the agent
+   *  doesn't say). Listeners hear only real changes. A control's default is
+   *  the value a new thread starts with on that model. Only `startValues`
+   *  (nothing in the session changed yet) show it: any other report carries
+   *  what someone chose since (a mode switched to YOLO), which must not
+   *  become the start of every new thread, so it keeps the defaults known
+   *  and adds no model not seen before. */
+  private learn(
+    configOptions: AcpConfigOption[] | null | undefined,
+    modes: AcpModeState | null | undefined,
+    models: AcpModelState | null | undefined,
+    startValues: boolean,
+    model: string | null,
+  ): void {
     const prev = this.learnedAgent();
+    const seen = model ? prev?.byModel?.[model] : undefined;
     let controls = agentControls(configOptions, modes);
-    if (!fresh && prev) {
-      controls = controls.map((c) => {
-        const before = prev.controls.find((p) => p.id === c.id)?.default;
-        return before !== undefined && c.options.some((o) => o.value === before) ? { ...c, default: before } : c;
-      });
-    }
+    if (!startValues && prev) controls = keepDefaults(controls, seen ?? prev.controls);
+    const byModel = model && (startValues || seen) ? { ...prev?.byModel, [model]: controls } : prev?.byModel;
     const next: LearnedAgent = {
       models: modelList(configOptions, models)?.models ?? prev?.models ?? [],
       controls,
+      ...(byModel ? { byModel } : {}),
     };
     if (JSON.stringify(next) === JSON.stringify(this.learnedAgent())) return;
     this.learned = next;
@@ -449,10 +485,13 @@ export class AcpAdapter implements AgentAdapter {
     return () => this.modelListeners.delete(listener);
   }
 
-  getControls(): ControlDescriptor[] {
+  /** Grove's modes, then what the agent offered on `model`. A model not seen
+   *  yet gets what it offered last, the best guess until a session on it. */
+  getControls(model?: string | null): ControlDescriptor[] {
+    const learned = this.learnedAgent();
     return [
       { id: CONTROL_IDS.permissionMode, label: 'Mode', options: MODE_OPTIONS, default: 'default' },
-      ...(this.learnedAgent()?.controls ?? []),
+      ...((model ? learned?.byModel?.[model] : undefined) ?? learned?.controls ?? []),
     ];
   }
 
@@ -512,6 +551,20 @@ export class AcpAdapter implements AgentAdapter {
     }
     if (known && !known.signedIn) return { authenticated: false, ...(known.message ? { authMessage: known.message } : {}) };
     return { authenticated: true, authUnchecked: true };
+  }
+
+  // ─── MCP servers saved in Grove (Settings > MCP servers) ───
+
+  async listConfiguredMcpServers(cwd?: string): Promise<McpConfiguredServer[]> {
+    return listAcpMcpServers(cwd);
+  }
+
+  async addConfiguredMcpServer(opts: McpAddServerOpts): Promise<void> {
+    addAcpMcpServer(opts);
+  }
+
+  async removeConfiguredMcpServer(name: string, scope?: McpConfigScope, cwd?: string): Promise<void> {
+    removeAcpMcpServer(name, scope, cwd);
   }
 
   // ─── One-shot text (commit messages, branch names, memory notes) ───
@@ -575,7 +628,7 @@ export class AcpAdapter implements AgentAdapter {
 
   async start(config: AdapterConfig): Promise<AgentQueryHandle> {
     return new AcpQuery(this, this.def, config, {
-      learn: (c, m, models, fresh) => this.learn(c, m, models, fresh),
+      learn: (c, m, models, startValues, model) => this.learn(c, m, models, startValues, model),
       setTitle: (sessionId, title) => { this.titles.set(sessionId, title); },
       currentModels: () => this.learnedAgent()?.models ?? [],
     }).handle();
@@ -583,7 +636,7 @@ export class AcpAdapter implements AgentAdapter {
 }
 
 interface AdapterHooks {
-  learn(configOptions: AcpConfigOption[] | null | undefined, modes: AcpModeState | null | undefined, models: AcpModelState | null | undefined, fresh: boolean): void;
+  learn(configOptions: AcpConfigOption[] | null | undefined, modes: AcpModeState | null | undefined, models: AcpModelState | null | undefined, startValues: boolean, model: string | null): void;
   setTitle(sessionId: string, title: string): void;
   currentModels(): AcpModelList['models'];
 }
@@ -594,7 +647,8 @@ class AcpQuery {
   private proc: ResultPromise | null = null;
   private rpc: JsonRpcConnection | null = null;
   private mcp: GroveMcpHttp | null = null;
-  /** Grove's tool servers as the agent is told about them (also for /clear). */
+  /** Grove's tool servers and the saved ones, as the agent is told about
+   *  them (also for /clear). */
   private mcpServers: AcpMcpServer[] = [];
   private init: AcpInitializeResponse | null = null;
   private sessionId: string | null = null;
@@ -608,6 +662,10 @@ class AcpQuery {
   private closing = false;
   /** session/load replays the conversation; Grove has its own copy. */
   private replaying = false;
+  /** Nothing has changed the session's controls since the agent started it
+   *  (a new session, until a control is set or a turn runs), so what it
+   *  reports, on whichever model, is where a new thread starts. */
+  private startValues = false;
   private groveMode: PermissionMode;
   /** Grove's instructions (path rules, project memory, the user's own),
    *  sent ahead of the first prompt of a new session: ACP has no system
@@ -693,8 +751,8 @@ class AcpQuery {
 
     this.init = await initializeAgent(this.rpc, def.displayName);
 
-    const mcpServers = await this.groveMcpServers();
-    await withTimeout(this.openSession(mcpServers), STARTUP_TIMEOUT_MS, `${def.displayName} session start`);
+    this.mcpServers = [...await this.groveMcpServers(), ...await this.savedMcpServers()];
+    await withTimeout(this.openSession(this.mcpServers), STARTUP_TIMEOUT_MS, `${def.displayName} session start`);
     await this.applyStartingChoices();
     await Promise.race([this.commandsArrived, new Promise((resolve) => setTimeout(resolve, COMMANDS_WAIT_MS))]);
 
@@ -719,7 +777,7 @@ class AcpQuery {
     if (servers.length === 0) return [];
     this.mcp = await startGroveMcpHttp(servers);
     const http = this.init?.agentCapabilities?.mcpCapabilities?.http === true;
-    this.mcpServers = this.mcp.endpoints.map((e): AcpMcpServer => {
+    return this.mcp.endpoints.map((e): AcpMcpServer => {
       if (http) return { type: 'http', name: e.name, url: e.url, headers: e.headers };
       const launch = stdioBridgeLaunch(e);
       return {
@@ -729,7 +787,23 @@ class AcpQuery {
         env: Object.entries(launch.env).map(([name, value]) => ({ name, value })),
       };
     });
-    return this.mcpServers;
+  }
+
+  /** The servers saved in Grove for ACP agents (mcp-servers.ts). One whose
+   *  transport the agent can't use is left out, and the thread says so. */
+  private async savedMcpServers(): Promise<AcpMcpServer[]> {
+    const { servers, skipped } = await acpMcpServersFor(
+      savedAcpMcpServers(), this.config.repoPath, this.init?.agentCapabilities?.mcpCapabilities,
+    );
+    if (skipped.length > 0) {
+      const transports = [...new Set(skipped.map((s) => s.transport.toUpperCase()))].join(' or ');
+      this.emit({
+        type: 'status',
+        level: 'warning',
+        message: `${this.def.displayName} can't connect to ${transports} MCP servers, so it starts without ${skipped.map((s) => s.name).join(', ')}.`,
+      });
+    }
+    return servers;
   }
 
   private async openSession(mcpServers: AcpMcpServer[]): Promise<void> {
@@ -788,10 +862,12 @@ class AcpQuery {
       this.sessionCost = 0;
       this.contextUsed = 0;
     }
+    // A resumed session has the values chosen in it.
+    this.startValues = fresh;
     if (Array.isArray(setup.configOptions)) this.configOptions = setup.configOptions;
     if (setup.modes) this.modes = setup.modes;
     this.models = modelList(this.configOptions, setup.models);
-    this.hooks.learn(this.configOptions, this.modes, setup.models, fresh);
+    this.hooks.learn(this.configOptions, this.modes, setup.models, this.startValues, this.models?.current ?? null);
   }
 
   /** Apply the conversation's model and control values where they differ
@@ -872,6 +948,8 @@ class AcpQuery {
     }
     const started = Date.now();
     const costBefore = this.sessionCost;
+    // The agent may change its own controls while it works.
+    this.startValues = false;
     this.turns++;
     this.resetTurn();
     let stopReason: AcpStopReason | null = null;
@@ -987,6 +1065,7 @@ class AcpQuery {
     if (configId) {
       const current = this.configOptions.find((o) => o.id === configId)?.currentValue;
       if (current === value) return;
+      this.startValues = false;
       const res = await this.rpc.request<{ configOptions?: AcpConfigOption[] }>('session/set_config_option', {
         sessionId: this.sessionId, configId, value,
       });
@@ -995,6 +1074,7 @@ class AcpQuery {
     }
     if (controlId === AGENT_MODE_CONTROL && this.modes) {
       if (this.modes.currentModeId === value) return;
+      this.startValues = false;
       await this.rpc.request('session/set_mode', { sessionId: this.sessionId, modeId: value });
       this.modes = { ...this.modes, currentModeId: value };
     }
@@ -1004,7 +1084,7 @@ class AcpQuery {
     if (!Array.isArray(options)) return;
     this.configOptions = options;
     this.models = modelList(options, null) ?? this.models;
-    this.hooks.learn(options, this.modes, null, false);
+    this.hooks.learn(options, this.modes, null, this.startValues, this.models?.current ?? null);
   }
 
   /** What each of the agent's controls is set to now, by Grove control id. */

@@ -416,6 +416,7 @@ class AgentSessionManager {
     try {
     handle = await session.adapter.start({
       cwd: session.worktreePath,
+      repoPath: session.repoPath,
       // session.model is the source of truth — it survives stop/restart and
       // resume cycles, so the user's selected model isn't lost when the query
       // is torn down and recreated.

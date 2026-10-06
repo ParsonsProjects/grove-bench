@@ -136,6 +136,9 @@ export interface PreviewOperations {
 
 export interface AdapterConfig {
   cwd: string;
+  /** The project the thread belongs to (its main checkout, or the folder of
+   *  a folder project), for things kept per project. */
+  repoPath?: string | null;
   permissionMode: PermissionMode;
   /** Model to start the session with. When unset, the provider's own default is used. */
   model?: string | null;

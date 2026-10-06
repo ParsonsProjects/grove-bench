@@ -32,12 +32,19 @@ function request(method, params) {
   send({ id, method, params });
   return new Promise((resolve) => waiting.set(id, resolve));
 }
+/** Like OpenCode, each model has effort levels of its own: m2 has no Low. */
+const EFFORTS = {
+  m1: { levels: [{ value: 'low', name: 'Low' }, { value: 'high', name: 'High' }], start: 'low' },
+  m2: { levels: [{ value: 'high', name: 'High' }, { value: 'max', name: 'Max' }], start: 'max' },
+};
+let effort = null;
 function configOptions() {
+  const efforts = EFFORTS[model];
   return [
     { id: 'model', name: 'Model', category: 'model', type: 'select', currentValue: model,
       options: [{ value: 'm1', name: 'Model 1' }, { value: 'm2', name: 'Model 2' }] },
-    { id: 'effort', name: 'Effort', category: 'thought_level', type: 'select', currentValue: 'low',
-      options: [{ value: 'low', name: 'Low' }, { value: 'high', name: 'High' }] },
+    { id: 'effort', name: 'Effort', category: 'thought_level', type: 'select',
+      currentValue: efforts.levels.some((l) => l.value === effort) ? effort : efforts.start, options: efforts.levels },
   ];
 }
 const modes = { currentModeId: 'default', availableModes: [{ id: 'default', name: 'Default' }, { id: 'yolo', name: 'YOLO' }] };
@@ -211,6 +218,7 @@ async function handle(msg) {
       return reply({ modes, configOptions: configOptions() });
     case 'session/set_config_option':
       if (params.configId === 'model') model = params.value;
+      if (params.configId === 'effort') effort = params.value;
       return reply({ configOptions: configOptions() });
     case 'session/set_mode':
       return reply({});

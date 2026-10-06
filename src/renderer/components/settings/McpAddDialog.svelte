@@ -145,7 +145,11 @@
     <Dialog.Header>
       <Dialog.Title>Add MCP server</Dialog.Title>
       <Dialog.Description>
-        Adds it to {mcpAgent ? `${mcpAgent.displayName}'s` : "the agent's"} configuration. New and restarted threads pick it up.
+        {#if rules?.shared}
+          Adds it to the list every ACP agent gets. New and restarted threads pick it up.
+        {:else}
+          Adds it to {mcpAgent ? `${mcpAgent.displayName}'s` : "the agent's"} configuration. New and restarted threads pick it up.
+        {/if}
       </Dialog.Description>
     </Dialog.Header>
 

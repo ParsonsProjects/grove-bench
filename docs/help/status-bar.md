@@ -93,6 +93,8 @@ When the agent has MCP servers configured, an **MCP** badge shows how many are c
 - **Reconnect** restarts a connection. **Sign in** starts the browser sign-in for a server that needs it
 - **Disconnect** turns a server off, and **Connect** turns it back on. How long a disconnect lasts depends on the agent: hover the button to see. With Claude Agent it applies to the whole project, not just this thread, so new threads in the project also start without it
 
+With ACP agents the badge lists only Grove Bench's own servers (memory and Preview), since ACP agents don't report on their servers.
+
 New servers are added from Settings → MCP servers (Tool shed).
 
 Each server in the popover shows a status dot:

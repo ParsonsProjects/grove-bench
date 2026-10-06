@@ -8,12 +8,15 @@
   import * as Select from '$lib/components/ui/select/index.js';
   import SettingsGroup from './SettingsGroup.svelte';
   import McpAddDialog from './McpAddDialog.svelte';
+  import { mcpAgentChoices } from '$lib/mcp-agents.js';
   import PlusIcon from '@lucide/svelte/icons/plus';
 
-  /** Agents whose MCP config Grove can edit, and the one the section shows
-   *  (undefined in the store: the default agent). */
-  let mcpAgents = $derived(agentsStore.supporting('mcpConfig'));
+  /** Agents whose MCP config Grove can edit, one entry per list (the ACP
+   *  agents share one), and the agent the section shows (undefined in the
+   *  store: the default agent). */
+  let mcpChoices = $derived(mcpAgentChoices(agentsStore.supporting('mcpConfig')));
   let mcpAgent = $derived(agentsStore.get(mcpConfigStore.adapterType ?? agentsStore.defaultId));
+  let mcpChoice = $derived(mcpChoices.find((c) => !!mcpAgent && c.agentIds.includes(mcpAgent.id)));
 
   // Listing health-checks every server (slow, e.g. `claude mcp list`), so it
   // loads on the first visit here rather than whenever Settings opens.
@@ -25,7 +28,7 @@
       // Start with the open conversation's agent (if it can edit MCP config)
       // and project: project and local servers only list for one project.
       const active = store.activeSession;
-      mcpConfigStore.adapterType ??= mcpAgents.find((a) => a.id === active?.agentType)?.id;
+      mcpConfigStore.adapterType ??= mcpChoices.find((c) => !!active?.agentType && c.agentIds.includes(active.agentType))?.id;
       mcpConfigStore.showProject(mcpConfigStore.cwd ?? active?.repoPath ?? store.repos[0]);
     });
   });
@@ -65,14 +68,14 @@
   }
 
   function statusLabel(status: string): string {
-    return status === 'needs-approval' ? 'needs approval' : status;
+    return status === 'needs-approval' ? 'needs approval' : status === 'unchecked' ? 'not checked' : status;
   }
 
   function statusDot(status: string): string {
     return status === 'connected' ? 'bg-green-500'
       : status === 'pending' ? 'bg-yellow-400 animate-pulse'
       : status === 'needs-auth' || status === 'needs-approval' ? 'bg-yellow-500'
-      : status === 'disabled' || status === 'rejected' ? 'bg-muted-foreground'
+      : status === 'disabled' || status === 'rejected' || status === 'unchecked' ? 'bg-muted-foreground'
       : 'bg-red-500';
   }
 </script>
@@ -96,7 +99,7 @@
       <div>
         <h4 class="text-sm font-semibold text-foreground">Configured servers</h4>
         <p class="text-xs text-muted-foreground leading-relaxed mt-1">
-          From {mcpAgent ? `${mcpAgent.displayName}'s` : "the agent's"} configuration. New and restarted threads pick them up.
+          {rules?.shared?.note ?? `From ${mcpAgent ? `${mcpAgent.displayName}'s` : "the agent's"} configuration. New and restarted threads pick them up.`}
         </p>
       </div>
       <div class="flex items-center gap-1 shrink-0">
@@ -116,17 +119,17 @@
       <p class="text-xs text-green-400" role="status">Added {added}. Restart threads to connect.</p>
     {/if}
 
-    <!-- Each agent keeps its own MCP configuration. -->
-    {#if mcpAgents.length > 1}
+    <!-- Each agent keeps its own MCP configuration, except the ACP agents, which share Grove's list. -->
+    {#if mcpChoices.length > 1}
       <div class="flex items-center gap-2 max-w-xl">
         <Label for="settings-mcp-agent" class="text-xs w-16 shrink-0">Agent</Label>
-        <Select.Root type="single" value={mcpAgent?.id ?? ''} onValueChange={(v) => { if (v) mcpConfigStore.showAgent(v); }}>
+        <Select.Root type="single" value={mcpChoice?.id ?? ''} onValueChange={(v) => { if (v) mcpConfigStore.showAgent(v); }}>
           <Select.Trigger id="settings-mcp-agent" class="w-full" disabled={mcpConfigStore.loading}>
-            <span class="truncate">{mcpAgent?.displayName ?? 'Select an agent...'}</span>
+            <span class="truncate">{mcpChoice?.label ?? 'Select an agent...'}</span>
           </Select.Trigger>
           <Select.Content>
-            {#each mcpAgents as agent (agent.id)}
-              <Select.Item value={agent.id} label={agent.displayName} />
+            {#each mcpChoices as choice (choice.id)}
+              <Select.Item value={choice.id} label={choice.label} />
             {/each}
           </Select.Content>
         </Select.Root>

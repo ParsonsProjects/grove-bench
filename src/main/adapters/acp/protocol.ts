@@ -143,5 +143,5 @@ export type AcpPermissionOutcome =
   | { outcome: { outcome: 'selected'; optionId: string } };
 
 export type AcpMcpServer =
-  | { type: 'http'; name: string; url: string; headers: Array<{ name: string; value: string }> }
+  | { type: 'http' | 'sse'; name: string; url: string; headers: Array<{ name: string; value: string }> }
   | { name: string; command: string; args: string[]; env: Array<{ name: string; value: string }> };

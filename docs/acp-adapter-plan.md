@@ -54,7 +54,10 @@ Code: `src/main/adapters/acp/`.
   permission requests. An agent that edits or runs a command without sending
   one is out of their reach; the thread says so once (`warnIfUnasked`). The agent's own modes and select options (Gemini's
   YOLO, Plan) are separate controls, learned from the first session and kept
-  for the next launch. Modes that skip asking show in red (`agentModeTone`).
+  for the next launch. Options can differ by model (OpenCode's effort
+  levels do), so they are kept per model (`byModel`), with each model's own
+  starting values, and Settings shows the default model's. A model no
+  session has used yet gets the last options seen. Modes that skip asking show in red (`agentModeTone`).
   When the agent changes a control itself (`current_mode_update`,
   `config_option_update`), the adapter sends `agent_controls` and the session
   manager records it, so the badge follows.
@@ -70,11 +73,23 @@ Code: `src/main/adapters/acp/`.
   each message to the HTTP server with the conversation's token
   (`adapters/mcp-bridge/`). electron-builder unpacks the script from
   app.asar, and `scripts/smoke-deps.mjs` checks the packaged app runs it.
+- **Your MCP servers**: ACP can't list or change the servers in an agent's
+  own settings; a client can only hand servers over in `session/new`, `load`
+  and `resume`. So Grove keeps one list for all ACP agents
+  (`acp/mcp-servers.ts`, `acp-mcp-servers.json` in userData), edited in
+  Settings → MCP servers under one "ACP agents" entry, for all projects or
+  one. They go after Grove's own servers. A stdio command is looked up on
+  PATH (PATHEXT on Windows), since the protocol asks for an absolute path.
+  HTTP and SSE servers go only to agents whose `mcpCapabilities` say they
+  can connect; the thread names the ones left out. Agents don't report on
+  their servers, so Settings shows them "not checked" and the status bar
+  lists only Grove's.
 - **Sign-in**: done in the agent's own CLI, or with an API key saved in
   Grove. An `auth_required` error keeps the agent's own reason, says which
   command to run, and is remembered (`agentSignIn` in app state) so the next
   draft asks first. An agent with a CLI sign-in can be checked for real
-  (`checkSignIn`: a throwaway session in an empty folder). When a key is
+  (`checkSignIn`: a throwaway session in an empty folder), which also
+  learns the agent's models and options for Settings. When a key is
   saved and the agent offers the key's method (Gemini CLI's
   `gemini-api-key`), Grove calls `authenticate` with it and tries again.
 - **Install**: Grove never installs anything. A missing agent shows its

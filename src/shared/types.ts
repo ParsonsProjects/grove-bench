@@ -800,8 +800,9 @@ export interface McpConfiguredServer {
   /** Transport when the CLI reports one (e.g. HTTP, SSE). */
   transport?: string;
   /** `needs-approval` and `rejected` are project (.mcp.json) servers the user
-   *  hasn't approved, or has turned down. Neither is connected. */
-  status: McpServerInfo['status'] | 'needs-approval' | 'rejected';
+   *  hasn't approved, or has turned down. Neither is connected. `unchecked`:
+   *  saved, but the agent never says whether it connected. */
+  status: McpServerInfo['status'] | 'needs-approval' | 'rejected' | 'unchecked';
   /** Set when something else owns the server (e.g. a plugin), so it can't be
    *  removed from Grove. */
   managedBy?: McpServerManager;
@@ -846,6 +847,9 @@ export interface McpSupport {
     /** Set when project servers must be approved before they connect: the
      *  explanation shown next to Approve. */
     approvalHint?: string;
+    /** Set when the list is Grove's own and several agents share it (the ACP
+     *  agents): their one entry in the agent picker, and where the list lives. */
+    shared?: { label: string; note: string };
   };
 }
 

@@ -21,8 +21,8 @@ Each group in this section folds: click its heading to fold it away or open it a
 
 There is one group per agent, each with:
 
-- **Credentials**: Shows how the agent signs in. Paste an API key to save it (stored encrypted on this computer), or remove a saved key. While a key is saved it is used instead of a CLI sign-in. For agents that sign in with their own program (Gemini CLI, GitHub Copilot CLI) it shows whether the last try got in, the sign-in command with a copy button, and **Check sign-in**, which starts the agent for a moment to find out. When the agent isn't installed, the command that installs it is shown too
-- **Default model**: Pick the model new threads with this agent start on. The list comes from the agent itself and updates after a thread starts, so new models appear without an app update. **Default** follows the agent's own default model (shown in brackets). A model ID typed in an older version stays in the list, marked "custom"
+- **Credentials**: Shows how the agent signs in. Paste an API key to save it (stored encrypted on this computer), or remove a saved key. While a key is saved it is used instead of a CLI sign-in. For agents that sign in with their own program (Gemini CLI, GitHub Copilot CLI) it shows whether the last try got in, the sign-in command with a copy button, and **Check sign-in**, which starts the agent for a moment to find out (and to learn its models and options, so they show here before the first thread). When the agent isn't installed, the command that installs it is shown too
+- **Default model**: Pick the model new threads with this agent start on. The list comes from the agent itself and updates after a thread starts (or, for agents with **Check sign-in**, after a check), so new models appear without an app update. **Default** follows the agent's own default model (shown in brackets). A model ID typed in an older version stays in the list, marked "custom"
 - **Background model**: The model used for this agent's background tasks: memory notes, memory compaction, commit messages, skill suggestions and thread goals. **Default** is the agent's own cheap model (Haiku 4.5 for Claude Agent). Each task runs on the agent of the thread it belongs to, so a thread's content only goes to the provider you chose for it
 - **Default permission mode**: The mode new threads with this agent start in. Only the modes the agent offers on its default model are listed. See [Status bar](status-bar.md#mode) for what each mode allows. For Claude Agent:
   - **Ask**: checks with you before each edit or command; reading files and read-only commands run without asking
@@ -30,8 +30,8 @@ There is one group per agent, each with:
   - **Edit**: accepts file edits inside the worktree
   - **Auto**: Claude's classifier approves or blocks each action instead of asking
   - **Read-safe**: Grove Bench's own mode, under the "Grove Bench" divider. Accepts edits and read-only commands; everything else asks
-  - For agents that speak ACP (Gemini CLI, GitHub Copilot CLI and any you add), Grove Bench applies the modes itself, on the requests the agent sends before it runs a tool. **Ask** puts every request to you, **Edit** approves file edits inside the worktree, and **Read-safe** also approves read-only commands inside the worktree. The agent's own modes and options (for example Gemini CLI's YOLO or Plan) show as separate controls once a thread has started
-- **Default effort**, **Default thinking**, **Default speed**: The thread controls the agent declares for its default model (for Claude Agent, each one shows only when the default model offers it). Pick the value new threads start with; each thread can still change it from the status bar
+  - For agents that speak ACP (Gemini CLI, GitHub Copilot CLI and any you add), Grove Bench applies the modes itself, on the requests the agent sends before it runs a tool. **Ask** puts every request to you, **Edit** approves file edits inside the worktree, and **Read-safe** also approves read-only commands inside the worktree. The agent's own modes and options (for example Gemini CLI's YOLO or Plan) show as separate controls once a thread has started or **Check sign-in** has run
+- **Default effort**, **Default thinking**, **Default speed**: The thread controls the agent declares for its default model (for Claude Agent, each one shows only when the default model offers it). Pick the value new threads start with; each thread can still change it from the status bar. An ACP agent's options can differ by model (OpenCode's effort levels do): Grove Bench remembers the ones each model offered, and for a model no thread has used yet it shows the last ones it saw
 
 If a thread starts on a model that doesn't offer the saved mode, it starts in Code instead.
 
@@ -52,6 +52,7 @@ OpenCode (`opencode acp`) is built in too, for open models such as DeepSeek. It 
 With ACP agents:
 
 - Grove Bench's memory and Preview browser tools are offered to every ACP agent. They are served on this computer only, with a key for each thread. Agents that can't connect to a server by address start a small bridge program that comes with Grove Bench
+- MCP servers you add for **ACP agents** in [Tool shed (MCP servers)](#tool-shed-mcp-servers) are given to every ACP agent when a thread starts, on top of the servers in the agent's own settings. ACP has no way to read or change an agent's own MCP settings, so those stay in the agent's own files
 - Rewinding a thread starts the agent on a new session from that point, since ACP agents can't forget part of one
 - Your mode and tool rules work on the requests an agent sends before it acts. If an agent edits a file or runs a command without asking, the thread says so once, since nothing Grove Bench does can stop it. Set the agent to ask first (for Gemini CLI, leave YOLO off)
 - Skills, plugins and plan usage are not managed for them
@@ -95,9 +96,9 @@ Memory, skill suggestions and thread goals run on each thread's own agent, using
 
 View the MCP servers configured for an agent and add new ones without leaving the app:
 
-- **Agent** picks whose servers to list, when more than one agent can manage MCP servers. It starts with the open thread's agent
+- **Agent** picks whose servers to list, when more than one agent can manage MCP servers. It starts with the open thread's agent. The ACP agents (Gemini CLI, GitHub Copilot CLI, OpenCode and any you add) share one list, saved in Grove Bench, so they show as one entry: **ACP agents**
 - **Project** picks which project's servers to list. Project and local servers belong to one project, so the list starts with the open thread's project. Pick **None** to see only your user servers
-- The list shows each configured server with its live health status (the check can take a few seconds)
+- The list shows each configured server with its live health status (the check can take a few seconds). ACP agents don't report whether they connected a server, so their servers show **not checked**
 - **Remove** asks you to confirm before it removes a server. Removing a project server changes the project's `.mcp.json`, which your team may share
 - Servers the agent can't remove, such as a plugin's, show who owns them and how to turn them off instead. With Claude Agent: a plugin's servers are turned off under Plugins (Seed packets), and claude.ai connectors on claude.ai
 - With agents that approve project servers before connecting them (Claude Agent does, for `.mcp.json`), an unapproved server shows **needs approval**. Threads don't connect it until you click **Approve**, which approves it for the project and its threads. Only approve servers you trust: they run on your machine
@@ -105,6 +106,8 @@ View the MCP servers configured for an agent and add new ones without leaving th
   - **User**: available in all projects on this machine
   - **Project**: shared with your team via `.mcp.json` in the chosen project's repository
   - **Local**: only this machine, only the chosen project
+  - For **ACP agents**: **All projects**, or **One project** (the chosen one). Either way the server is saved in Grove Bench, not in the project, and environment variables and headers are saved as typed, as in the agents' own settings files
+  - Grove Bench gives an ACP agent HTTP and SSE servers only if the agent says it can connect to them. Otherwise the thread starts without them and says which were left out
 - stdio servers accept arguments and environment variables (one `KEY=value` per line); HTTP/SSE servers accept request headers (one per line)
 - **Paste JSON** adds servers from a config you copied, such as a server's README or Claude Desktop's `mcpServers` block. It shows what it found before you add it
 - If adding fails, the error shows in the dialog and what you typed stays, so you can fix it and try again. Once a server is added the dialog closes and the section says what was added
