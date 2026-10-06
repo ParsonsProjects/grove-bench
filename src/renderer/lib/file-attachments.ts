@@ -7,6 +7,9 @@ export const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB
 /** Any other file. It's read into memory and sent to main over IPC, so it's
  *  capped, but well above what text and images are held to. */
 export const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25MB
+/** All of one message's attachments together: they go to main in one IPC
+ *  message, which Chromium caps, and sit in memory until sent. */
+export const MAX_TOTAL_SIZE = 50 * 1024 * 1024; // 50MB
 
 export const IMAGE_MIME_TYPES = new Set([
   'image/jpeg',
@@ -161,9 +164,11 @@ export function processFiles(
   const skipped: string[] = [];
   const promises: Promise<void>[] = [];
   const takenNames = new Set(existing.map((f) => f.name));
+  let total = existing.reduce((sum, f) => sum + attachedSize(f), 0);
 
   for (const file of Array.from(files)) {
     let kind = classifyFile(file);
+    const isText = kind === 'text';
     // Too large to send with the message, or an image the agent can't see:
     // attached as a file, which the agent gets by path.
     if (kind === 'image' && (options.allowImages === false || file.size > MAX_IMAGE_SIZE)) kind = 'file';
@@ -180,8 +185,15 @@ export function processFiles(
       if (!options.renameDuplicates) continue;
       name = uniquifyFileName(name, takenNames);
     }
+    if (total + file.size > MAX_TOTAL_SIZE) {
+      skipped.push(`${file.name} (over the 50MB limit for one message)`);
+      continue;
+    }
+    total += file.size;
     takenNames.add(name);
 
+    // A text file goes by path as text: the OS may call a .ts file a video.
+    const mediaType = isText ? (file.type.startsWith('text/') ? file.type : 'text/plain') : mediaTypeOf(file);
     promises.push(readFile(file, kind === 'text' ? 'text' : 'dataUrl').then((read) => {
       if (read === null) {
         skipped.push(`${file.name} (could not be read)`);
@@ -190,12 +202,19 @@ export function processFiles(
       } else if (kind === 'image') {
         result.push({ name, dataUrl: read, type: 'image' });
       } else {
-        result.push({ name, dataUrl: read, mediaType: mediaTypeOf(file), size: file.size, type: 'file' });
+        result.push({ name, dataUrl: read, mediaType, size: file.size, type: 'file' });
       }
     }));
   }
 
   return Promise.all(promises).then(() => ({ files: result, skipped }));
+}
+
+/** About how many bytes an attachment takes, toward MAX_TOTAL_SIZE. */
+function attachedSize(f: AttachedFile): number {
+  if (f.type === 'text') return f.content.length;
+  if (f.type === 'image') return base64Size(dataUrlData(f.dataUrl));
+  return f.size;
 }
 
 /** A size for a chip's tooltip: "512 B", "12 KB", "3.4 MB". */

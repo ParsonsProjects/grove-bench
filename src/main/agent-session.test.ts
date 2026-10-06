@@ -122,7 +122,6 @@ const attachments = vi.hoisted(() => ({
       path: `/attachments/${id}/file${i}`,
       data: f.data,
     }))),
-  ensureAttachmentsFolder: vi.fn((id: string) => `/attachments/${id}`),
   attachmentsFolder: vi.fn((id: string) => `/attachments/${id}`),
   imagePath: vi.fn((id: string, file: string) => ({ path: `/attachments/${id}/${file}`, mediaType: 'image/png' })),
   removeAttachments: vi.fn(async () => {}),
@@ -2229,16 +2228,40 @@ describe('AgentSessionManager.sendMessage()', () => {
       text: 'Summarise',
       files: [{ file: 'file0', name: 'spec.pdf', mediaType: 'application/pdf', size: 3 }],
     });
+    // A PDF goes by path, so it doesn't carry its data.
     expect(mockAdapter.lastHandle!.sendMessage).toHaveBeenCalledWith({
       text: 'Summarise',
       images: undefined,
-      files: [{ name: 'spec.pdf', mediaType: 'application/pdf', size: 3, path: '/attachments/test-send-files/file0', data: 'JVBE' }],
+      files: [{ name: 'spec.pdf', mediaType: 'application/pdf', size: 3, path: '/attachments/test-send-files/file0' }],
     });
     // The checkpoint is labelled as the chat shows the message.
     const session = sessionManager.getSession('test-send-files')!;
     expect(session.checkpoints.capture).toHaveBeenLastCalledWith('test-send-files', expect.any(String), expect.any(String), '[spec.pdf] Summarise');
 
     await sessionManager.destroySession('test-send-files');
+  });
+
+  it('gives a clip that may go inline its data, and the audio already in the conversation', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-send-audio', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 's', model: 'm', tools: [] });
+    await new Promise((r) => setTimeout(r, 50));
+
+    const clip = [{ data: 'SUQz', mediaType: 'audio/mpeg', name: 'memo.mp3' }];
+    expect(await sessionManager.sendMessage('test-send-audio', 'first', undefined, clip)).toBe(true);
+    expect(mockAdapter.lastHandle!.sendMessage).toHaveBeenLastCalledWith({
+      text: 'first', images: undefined,
+      files: [{ name: 'memo.mp3', mediaType: 'audio/mpeg', size: 3, path: '/attachments/test-send-audio/file0', data: 'SUQz' }],
+    });
+
+    // The first clip is in the history now, and counts toward the inline budget.
+    expect(await sessionManager.sendMessage('test-send-audio', 'second', undefined, clip)).toBe(true);
+    expect(mockAdapter.lastHandle!.sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({ text: 'second', audioInHistory: 3 }));
+
+    await sessionManager.destroySession('test-send-audio');
   });
 
   it('says so when an attached file could not be saved, and sends the rest', async () => {

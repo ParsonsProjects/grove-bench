@@ -91,6 +91,9 @@ export interface UserMessage {
   /** Other files attached to the message, already saved to disk. See
    *  file-attachments.ts for how each adapter passes them on. */
   files?: MessageFile[];
+  /** Bytes of audio that may already be inline in the agent's conversation
+   *  (audioSentInline), so the inline budget holds across restarts. */
+  audioInHistory?: number;
 }
 
 /** An image attached to a message. `path` is its saved copy, for an agent
@@ -103,8 +106,9 @@ export interface MessageFile {
   name: string;
   /** MIME type, or '' when unknown. */
   mediaType: string;
-  /** base64-encoded content, for agents that take this type inline. */
-  data: string;
+  /** base64-encoded content, only for a file that may go inline (audio of
+   *  a listed type and size); others go by path and don't carry it. */
+  data?: string;
   /** Absolute path of the saved copy, for agents that open it themselves. */
   path: string;
   /** Size in bytes. */
@@ -158,8 +162,7 @@ export interface PreviewOperations {
 export interface AdapterConfig {
   cwd: string;
   /** The folder files attached to this conversation's messages are saved in,
-   *  outside cwd. Adapters whose agent limits file access to its working
-   *  directories add it there, so the agent can read them. */
+   *  outside cwd. Claude Code lets the agent read there without a prompt. */
   attachmentsDir?: string | null;
   permissionMode: PermissionMode;
   /** Model to start the session with. When unset, the provider's own default is used. */

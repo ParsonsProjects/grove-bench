@@ -14,6 +14,7 @@ import {
   MAX_TEXT_SIZE,
   MAX_IMAGE_SIZE,
   MAX_FILE_SIZE,
+  MAX_TOTAL_SIZE,
 } from './file-attachments.js';
 
 // ─── classifyFile ───
@@ -234,6 +235,21 @@ describe('processFiles', () => {
     const file = sized(makeFile('huge.png', 'png', 'image/png'), MAX_IMAGE_SIZE + 1);
     const result = await processFiles([file], []);
     expect(result.files[0]).toMatchObject({ name: 'huge.png', type: 'file', mediaType: 'image/png' });
+  });
+
+  it('sends a large text file by path as text, whatever type the OS gives it', async () => {
+    const ts = sized(makeFile('generated.ts', 'x', 'video/mp2t'), MAX_TEXT_SIZE + 1);
+    const log = sized(makeFile('big.log', 'x', 'text/x-log'), MAX_TEXT_SIZE + 1);
+    const result = await processFiles([ts, log], []);
+    expect(result.files.find((f) => f.name === 'generated.ts')).toMatchObject({ type: 'file', mediaType: 'text/plain' });
+    expect(result.files.find((f) => f.name === 'big.log')).toMatchObject({ type: 'file', mediaType: 'text/x-log' });
+  });
+
+  it('skips a file that would take the message past the 50MB total', async () => {
+    const existing = [{ name: 'a.zip', dataUrl: 'data:,', mediaType: 'application/zip', size: MAX_TOTAL_SIZE - 10, type: 'file' as const }];
+    const result = await processFiles([makeFile('small.txt', 'hi', 'text/plain'), sized(makeFile('b.zip', 'z', 'application/zip'), 20)], existing);
+    expect(result.files.map((f) => f.name)).toEqual(['small.txt']);
+    expect(result.skipped).toEqual(['b.zip (over the 50MB limit for one message)']);
   });
 
   it('skips files over 25MB', async () => {

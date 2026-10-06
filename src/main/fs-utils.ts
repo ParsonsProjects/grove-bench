@@ -65,7 +65,7 @@ export async function pathExists(p: string): Promise<boolean> {
 const TRANSIENT_FS_CODES = new Set(['EBUSY', 'EPERM', 'EACCES']);
 
 /** Retry `op` a few times while it fails with a transient lock error. */
-async function withLockRetry<T>(
+export async function withLockRetry<T>(
   op: () => Promise<T>,
   delaysMs: number[] = [50, 150, 400],
   sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import path from 'node:path';
-import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS, thinkingConfigFor, parseMcpListOutput, mcpServerManager, claudeMcpOrigin, mcpToolServerKey, mcpContextCostByServer, toMcpElicitationRequest, withMcpjsonApproval, mcpjsonApprovalsFrom, buildMcpAddArgs, quoteArg, validatePluginId, validateConfigScope, capToolResult, claudeControlsFor, supportsAdaptiveThinking, supportsFastMode, supportsAutoMode, claudeModelCaps, effortFor, reasoningOptionsFor, toSdkPermissionMode, fromSdkSyncMode, stripAnsi, mapClaudeUsage, thinkingDisplayFor, TEXT_GENERATION_OPTIONS, missingConversationError, userMessageContent } from './claude-code.js';
+import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS, thinkingConfigFor, parseMcpListOutput, mcpServerManager, claudeMcpOrigin, mcpToolServerKey, mcpContextCostByServer, toMcpElicitationRequest, withMcpjsonApproval, mcpjsonApprovalsFrom, buildMcpAddArgs, quoteArg, validatePluginId, validateConfigScope, capToolResult, claudeControlsFor, supportsAdaptiveThinking, supportsFastMode, supportsAutoMode, claudeModelCaps, effortFor, reasoningOptionsFor, toSdkPermissionMode, fromSdkSyncMode, stripAnsi, mapClaudeUsage, thinkingDisplayFor, TEXT_GENERATION_OPTIONS, missingConversationError, userMessageContent, readsAttachedFile } from './claude-code.js';
 import type { AgentEvent } from '../../shared/types.js';
 import type { MessageFile } from './types.js';
 
@@ -1140,5 +1140,30 @@ describe('userMessageContent()', () => {
     expect(content.map((b) => b.type)).toEqual(['image', 'text']);
     expect(content[1].text).toContain('<file name="a.mp3" type="audio/mpeg"');
     expect(content[1].text).toMatch(/\n\ngo$/);
+  });
+});
+
+// ─── readsAttachedFile (reads of attached files need no prompt) ───
+
+describe('readsAttachedFile()', () => {
+  const att = path.resolve('/data/attachments/s1');
+  const cwd = path.resolve('/wt/abc');
+
+  it('is true for a read tool inside the attachments folder', () => {
+    expect(readsAttachedFile('Read', { file_path: path.join(att, 'a.pdf') }, cwd, att)).toBe(true);
+    expect(readsAttachedFile('Grep', { path: att, pattern: 'x' }, cwd, att)).toBe(true);
+  });
+
+  it('is false outside it, for a path that climbs out, or for a tool that writes', () => {
+    expect(readsAttachedFile('Read', { file_path: path.join(cwd, 'a.ts') }, cwd, att)).toBe(false);
+    expect(readsAttachedFile('Read', { file_path: path.join(att, '..', 's2', 'a.pdf') }, cwd, att)).toBe(false);
+    expect(readsAttachedFile('Write', { file_path: path.join(att, 'a.pdf') }, cwd, att)).toBe(false);
+    expect(readsAttachedFile('Edit', { file_path: path.join(att, 'a.pdf') }, cwd, att)).toBe(false);
+  });
+
+  it('is false without a folder or a path, and for Object.prototype names', () => {
+    expect(readsAttachedFile('Read', { file_path: path.join(att, 'a.pdf') }, cwd, null)).toBe(false);
+    expect(readsAttachedFile('Glob', { pattern: '*' }, cwd, att)).toBe(false);
+    expect(readsAttachedFile('constructor', { file_path: path.join(att, 'a.pdf') }, cwd, att)).toBe(false);
   });
 });

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -12,7 +13,7 @@ vi.mock('./logger.js', () => ({
 
 import {
   attachmentResponse,
-  ensureAttachmentsFolder,
+  attachmentsFolder,
   getAttachmentsDir,
   handleAttachmentProtocol,
   openAttachedFile,
@@ -95,14 +96,14 @@ describe('saveImages', () => {
   });
 });
 
-describe('ensureAttachmentsFolder', () => {
-  it("creates the conversation's folder and returns it", () => {
-    expect(ensureAttachmentsFolder('abc123')).toBe(folder('abc123'));
-    expect(fs.statSync(folder('abc123')).isDirectory()).toBe(true);
+describe('attachmentsFolder', () => {
+  it("is the conversation's folder, without creating it", () => {
+    expect(attachmentsFolder('abc123')).toBe(folder('abc123'));
+    expect(fs.existsSync(folder('abc123'))).toBe(false);
   });
 
   it('refuses a conversation id that could be a path', () => {
-    expect(ensureAttachmentsFolder('../escape')).toBeNull();
+    expect(attachmentsFolder('../escape')).toBeNull();
   });
 });
 
@@ -116,6 +117,27 @@ describe('saveFiles', () => {
     expect(saved.path).toBe(path.join(folder('abc123'), saved.stored.file));
     expect(saved.data).toBe(PDF);
     expect(fs.readFileSync(saved.path).toString()).toBe('%PDF-1.4 fake');
+  });
+
+  it('names a file by the SHA-256 of its bytes', async () => {
+    const [saved] = await saveFiles('abc123', [{ data: PDF, mediaType: 'application/pdf', name: 'a.pdf' }]);
+    const hash = crypto.createHash('sha256').update(Buffer.from(PDF, 'base64')).digest('hex').slice(0, 32);
+    expect(saved.stored.file).toBe(`${hash}.pdf`);
+  });
+
+  it('leaves a file out when an edited copy of it is locked and cannot be replaced', async () => {
+    const [first] = await saveFiles('abc123', [{ data: PDF, mediaType: 'application/pdf', name: 'a.pdf' }]);
+    fs.writeFileSync(first.path, 'edited by the agent');
+    const locked = Object.assign(new Error('locked'), { code: 'EPERM' });
+    const rename = vi.spyOn(fs.promises, 'rename').mockRejectedValue(locked);
+    try {
+      expect(await saveFiles('abc123', [{ data: PDF, mediaType: 'application/pdf', name: 'a.pdf' }])).toEqual([]);
+      // Retried before giving up.
+      expect(rename.mock.calls.length).toBeGreaterThan(1);
+    } finally {
+      rename.mockRestore();
+    }
+    expect(fs.readFileSync(first.path).toString()).toBe('edited by the agent');
   });
 
   it('drops an extension that is not plain letters and digits', async () => {
@@ -285,6 +307,26 @@ describe('removeAttachments', () => {
     await expect(removeAttachments('none')).resolves.toBeUndefined();
   });
 
+  it("deletes what's in a folder it can't move, and nothing saved after", async () => {
+    const [old] = await saveFiles('busy', [{ data: 'AAAA', mediaType: '', name: 'old.bin' }]);
+    const rename = vi.spyOn(fs, 'renameSync').mockImplementationOnce(() => {
+      throw Object.assign(new Error('a file in it is open'), { code: 'EBUSY' });
+    });
+    try {
+      const done = removeAttachments('busy');
+      // The next message's file lands while the delete runs.
+      const [next] = await saveFiles('busy', [{ data: 'BBBB', mediaType: '', name: 'next.bin' }]);
+      await done;
+
+      expect(rename).toHaveBeenCalledTimes(1);
+      expect(fs.readdirSync(getAttachmentsDir())).toEqual(['busy']); // not moved aside
+      expect(fs.existsSync(old.path)).toBe(false);
+      expect(fs.existsSync(next.path)).toBe(true);
+    } finally {
+      rename.mockRestore();
+    }
+  });
+
   it('finishes deletions a quit interrupted', async () => {
     await saveImages('keep', [{ data: PNG, mediaType: 'image/png' }]);
     fs.mkdirSync(path.join(getAttachmentsDir(), '.deleted-1234', 'x'), { recursive: true });
@@ -296,8 +338,14 @@ describe('removeAttachments', () => {
 });
 
 describe('pruneAttachments', () => {
-  beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); });
-  afterEach(() => { vi.useRealTimers(); });
+  /** Make a saved file look like it was written a while ago. */
+  function age(filePath: string): void {
+    const then = new Date(Date.now() - 60_000);
+    fs.utimesSync(filePath, then, then);
+  }
+  const ageAll = (id: string) => {
+    for (const f of fs.readdirSync(folder(id))) age(path.join(folder(id), f));
+  };
 
   it('deletes the images no event refers to any more and keeps the rest', async () => {
     const [kept, dropped, fromTool] = await saveImages('abc123', [
@@ -309,8 +357,8 @@ describe('pruneAttachments', () => {
       { type: 'user_message', text: 'look', uuid: 'u1', images: [kept] },
       { type: 'tool_result', toolUseId: 't1', content: '', images: [{ file: fromTool.file }] },
     ];
+    ageAll('abc123');
 
-    vi.setSystemTime(Date.now() + 61_000); // past the grace period for new saves
     await pruneAttachments('abc123', events);
 
     expect(fs.readdirSync(folder('abc123')).sort()).toEqual([kept.file, fromTool.file].sort());
@@ -323,42 +371,45 @@ describe('pruneAttachments', () => {
       { data: 'BBBB', mediaType: 'application/zip', name: 'dropped.zip' },
     ]);
     const events: AgentEvent[] = [{ type: 'user_message', text: 'read this', uuid: 'u1', files: [kept.stored] }];
+    ageAll('abc123');
 
-    vi.setSystemTime(Date.now() + 61_000);
     await pruneAttachments('abc123', events);
 
     expect(fs.readdirSync(folder('abc123'))).toEqual([kept.stored.file]);
     expect(fs.existsSync(dropped.path)).toBe(false);
   });
 
-  it('keeps a file saved in the last minute, whose message may not be in the history yet', async () => {
+  it('keeps a file saved while it runs, whose message may not be in the history yet', async () => {
+    const [old] = await saveFiles('abc123', [{ data: 'AAAA', mediaType: '', name: 'old.bin' }]);
+    age(old.path);
+
+    const pruning = pruneAttachments('abc123', []);
     const [justSaved] = await saveFiles('abc123', [{ data: 'CCCC', mediaType: '', name: 'new.bin' }]);
+    await pruning;
 
-    await pruneAttachments('abc123', []);
+    expect(fs.existsSync(old.path)).toBe(false);
     expect(fs.existsSync(justSaved.path)).toBe(true);
-
-    vi.setSystemTime(Date.now() + 61_000);
-    await pruneAttachments('abc123', []);
-    expect(fs.existsSync(justSaved.path)).toBe(false);
   });
 
   it('counts a reattached copy as just saved', async () => {
     const [first] = await saveFiles('abc123', [{ data: 'DDDD', mediaType: '', name: 'a.bin' }]);
-    vi.setSystemTime(Date.now() + 61_000);
+    age(first.path);
     await saveFiles('abc123', [{ data: 'DDDD', mediaType: '', name: 'again.bin' }]);
 
     await pruneAttachments('abc123', []);
     expect(fs.existsSync(first.path)).toBe(true);
   });
 
-  it('forgets the grace period with the conversation', async () => {
-    const [saved] = await saveFiles('abc123', [{ data: 'EEEE', mediaType: '', name: 'a.bin' }]);
-    await removeAttachments('abc123');
-    fs.mkdirSync(folder('abc123'), { recursive: true });
-    fs.writeFileSync(saved.path, 'x');
+  it('reads the history after listing the folder, so a message added meanwhile counts', async () => {
+    const [file] = await saveFiles('abc123', [{ data: 'EEEE', mediaType: '', name: 'a.bin' }]);
+    age(file.path);
+    const events: AgentEvent[] = [];
 
-    await pruneAttachments('abc123', []);
-    expect(fs.existsSync(saved.path)).toBe(false);
+    const pruning = pruneAttachments('abc123', events);
+    events.push({ type: 'user_message', text: 'x', files: [file.stored] });
+    await pruning;
+
+    expect(fs.existsSync(file.path)).toBe(true);
   });
 
   it('leaves files that are not stored images alone', async () => {

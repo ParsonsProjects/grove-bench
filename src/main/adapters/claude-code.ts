@@ -210,6 +210,26 @@ export function userMessageContent(message: UserMessage): string | Array<Record<
   ];
 }
 
+/** Claude's read tools and the input field naming what each reads. */
+const READ_TOOL_PATH_FIELD: Readonly<Record<string, string>> = { Read: 'file_path', Glob: 'path', Grep: 'path', LS: 'path' };
+
+/**
+ * Whether a call only reads inside the attachments folder, where the files
+ * the user attached are saved. Those reads are allowed without a prompt.
+ * Only reads: the folder isn't a working directory, so Claude can't edit
+ * the saved copies without asking.
+ */
+export function readsAttachedFile(
+  toolName: string,
+  input: Record<string, unknown>,
+  cwd: string,
+  attachmentsDir: string | null | undefined,
+): boolean {
+  const field = Object.hasOwn(READ_TOOL_PATH_FIELD, toolName) ? READ_TOOL_PATH_FIELD[toolName] : null;
+  const target = field ? input[field] : undefined;
+  return !!attachmentsDir && typeof target === 'string' && isPathInside(attachmentsDir, path.resolve(cwd, target));
+}
+
 /** The base64 images in a tool result's content: API image blocks (Read on an
  *  image file) or MCP ones (`data` + `mimeType`), in case they arrive unconverted. */
 export function toolResultImages(content: unknown[]): ToolImageData[] {
@@ -1673,6 +1693,12 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         return { behavior: 'allow' as const, updatedInput: input };
       }
 
+      // The files the user attached are saved outside the checkout, and the
+      // message gives Claude their paths: reading them needs no prompt.
+      if (readsAttachedFile(toolName, input, config.cwd, config.attachmentsDir)) {
+        return { behavior: 'allow' as const, updatedInput: input };
+      }
+
       // Sandbox auto-approve Bash — only when the sandbox config opts in,
       // matching SDK semantics. Read-safe mode's sandbox deliberately does
       // NOT opt in: there the sandbox is an enforcement backstop and Bash
@@ -1738,9 +1764,6 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       prompt: readableStreamToAsyncIterable(inputStream),
       options: {
         cwd: config.cwd,
-        // Files attached by path are saved there, outside cwd: without this
-        // every read of one would ask for permission.
-        ...(config.attachmentsDir ? { additionalDirectories: [config.attachmentsDir] } : {}),
         abortController,
         includePartialMessages: true,
         // Subagents' text and thinking too, not only their tool calls: the

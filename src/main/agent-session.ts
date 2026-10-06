@@ -6,7 +6,7 @@ import { userEventText } from '../shared/prompt-text.js';
 import { applyRateLimit } from '../shared/usage.js';
 import { loadUsageSnapshot, saveUsageSnapshot } from './app-state.js';
 import { handoffTranscript, isSlashCommand, lastAgentChange, pendingHandoff } from './agent-handoff.js';
-import { attachmentsFolder, ensureAttachmentsFolder, imagePath, pruneAttachments, removeAttachments, saveFiles, saveImages, storeToolImages } from './attachments.js';
+import { attachmentsFolder, imagePath, pruneAttachments, removeAttachments, saveFiles, saveImages, storeToolImages } from './attachments.js';
 import { logger } from './logger.js';
 import { perfSteps } from './perf-steps.js';
 import { perfLine } from './perf-log.js';
@@ -16,6 +16,7 @@ import * as memory from './memory.js';
 import * as memoryAutosave from './memory-autosave.js';
 import { adapterRegistry } from './adapters/index.js';
 import type { AgentAdapter, AgentQueryHandle, UserMessage } from './adapters/types.js';
+import { audioSentInline, inlineAudioType } from './adapters/file-attachments.js';
 import { ResumeNotFoundError } from './adapters/types.js';
 import { getGitIdentity } from './git.js';
 import { findRewindForkPoint, isAuthFailure, lastTurnUuid } from './agent-utils.js';
@@ -412,13 +413,11 @@ class AgentSessionManager {
 
     // Git identity, skills and the baseline above.
     perfSteps.step(id, 'agent setup');
-    // Made now so the agent can be given access to it before a file is saved.
-    const attachmentsDir = ensureAttachmentsFolder(id);
     let handle: AgentQueryHandle;
     try {
     handle = await session.adapter.start({
       cwd: session.worktreePath,
-      attachmentsDir,
+      attachmentsDir: attachmentsFolder(id),
       // session.model is the source of truth — it survives stop/restart and
       // resume cycles, so the user's selected model isn't lost when the query
       // is torn down and recreated.
@@ -916,6 +915,8 @@ class AgentSessionManager {
     // the transcript waits for the next message.
     const handoff = isSlashCommand(content) ? null : pendingHandoff(session.eventHistory);
     const handoffNote = handoff ? handoffTranscript(session.eventHistory.slice(0, handoff.index), handoff.event, attachmentsFolder(id)) : null;
+    // Read before this message joins the history.
+    const audioInHistory = savedFiles.length > 0 ? audioSentInline(session.eventHistory) : 0;
     const userEvent: Extract<AgentEvent, { type: 'user_message' }> = {
       type: 'user_message', text: content, uuid,
       ...(storedImages.length > 0 && { images: storedImages }),
@@ -964,8 +965,13 @@ class AgentSessionManager {
           const saved = storedImages.length === images!.length ? imagePath(id, storedImages[i].file) : null;
           return saved ? { ...img, path: saved.path } : img;
         }),
+        // Only a clip that may go inline carries its data; the rest go by path.
         ...(savedFiles.length > 0 && {
-          files: savedFiles.map(({ stored, path, data }) => ({ name: stored.name, mediaType: stored.mediaType, size: stored.size, path, data })),
+          files: savedFiles.map(({ stored, path, data }) => ({
+            name: stored.name, mediaType: stored.mediaType, size: stored.size, path,
+            ...(inlineAudioType(stored) ? { data } : {}),
+          })),
+          ...(audioInHistory > 0 && { audioInHistory }),
         }),
       };
       if (withNote) session.handoffSentTo = queryHandle;

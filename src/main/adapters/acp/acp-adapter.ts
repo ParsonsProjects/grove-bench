@@ -30,7 +30,6 @@ import type {
 } from '../types.js';
 import type { AgentStage, ControlDescriptor, ControlOption, PermissionMode, ImageMediaType } from '../../../shared/types.js';
 import { CONTROL_IDS } from '../../../shared/types.js';
-import { isAudioType } from '../../../shared/attachments.js';
 import { checkToolRules, cleanEnv, isPathInside } from '../../agent-utils.js';
 import { getApiKey } from '../../credentials.js';
 import { killTree } from '../../process-tree.js';
@@ -38,7 +37,7 @@ import { logger } from '../../logger.js';
 import { isReadOnlyToolCall } from '../../read-only-tools.js';
 import { loadAgentSignIn, loadModelCatalog, saveAgentSignIn, saveModelCatalog } from '../../app-state.js';
 import { catalogs, installFor } from '../../catalogs.js';
-import { AUDIO_INLINE_BUDGET_BYTES, AUDIO_INLINE_MAX_BYTES } from '../file-attachments.js';
+import { AUDIO_INLINE_BUDGET_BYTES, inlineAudioType } from '../file-attachments.js';
 import { memoryServer, previewServer, type GroveServer } from '../grove-tools.js';
 import { startGroveMcpHttp, type GroveMcpHttp } from '../grove-mcp-http.js';
 import { stdioBridgeLaunch } from '../mcp-bridge/launch.js';
@@ -621,8 +620,6 @@ class AcpQuery {
   private queue: UserMessage[] = [];
   private promptInFlight: Promise<void> | null = null;
   private turns = 0;
-  /** Audio sent inline in this process: it stays in the agent's history. */
-  private inlineAudioBytes = 0;
 
   // Per turn
   private tools = new Map<string, AcpToolCall>();
@@ -951,12 +948,12 @@ class AcpQuery {
     if (leftOut > 0) {
       this.emit({ type: 'status', level: 'warning', message: `${this.def.displayName} can't take images, so the attached image${leftOut > 1 ? 's were' : ' was'} left out.` });
     }
+    let audioBytes = message.audioInHistory ?? 0;
     for (const file of message.files ?? []) {
-      const inlineAudio = caps?.audio === true && isAudioType(file.mediaType) && file.size <= AUDIO_INLINE_MAX_BYTES
-        && this.inlineAudioBytes + file.size <= AUDIO_INLINE_BUDGET_BYTES;
-      if (inlineAudio) {
-        this.inlineAudioBytes += file.size;
-        blocks.push({ type: 'audio', data: file.data, mimeType: file.mediaType });
+      const audioType = caps?.audio === true && file.data ? inlineAudioType(file) : null;
+      if (audioType && audioBytes + file.size <= AUDIO_INLINE_BUDGET_BYTES) {
+        audioBytes += file.size;
+        blocks.push({ type: 'audio', data: file.data, mimeType: audioType });
       } else {
         blocks.push(link(file.path, file.name, file.mediaType, file.size));
       }
@@ -976,7 +973,6 @@ class AcpQuery {
       this.takeSetup(setup, true);
       this.pendingInstructions = this.instructions();
       this.turns = 0;
-      this.inlineAudioBytes = 0;
       this.emit({ type: 'system_init', sessionId: this.sessionId, model: this.models?.current ?? this.config.model ?? '', tools: [], slashCommands: this.commands });
       this.emit({ type: 'result', subtype: 'success', isError: false, numTurns: 0 });
     } catch (e) {

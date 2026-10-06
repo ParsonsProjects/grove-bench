@@ -121,12 +121,27 @@ export function withAttachmentLabel(names: string[], typed: string): string {
  * so they are passed in (from the event).
  */
 export function displayTextFromSent(sent: string, others: { name?: string }[] = []): string {
-  const { files, typed } = attachedFilesFromSent(sent);
-  const otherNames = others.flatMap((a) => (a.name ? [a.name] : []));
-  return withAttachmentLabel([...files.map((f) => f.path), ...otherNames], typed);
+  return userEventText({ text: sent, images: others });
+}
+
+type UserEventLike = { text: string; images?: { name?: string }[]; files?: { name: string }[] };
+
+/** A user_message event split for display: what was typed, and the names of
+ *  what was attached (text files, then images, then other files). */
+export function userEventParts(e: UserEventLike): { typed: string; names: string[] } {
+  const { files, typed } = attachedFilesFromSent(e.text);
+  return {
+    typed,
+    names: [
+      ...files.map((f) => f.path),
+      ...(e.images ?? []).flatMap((img) => (img.name ? [img.name] : [])),
+      ...(e.files ?? []).map((f) => f.name),
+    ],
+  };
 }
 
 /** A user_message event as one line of text, as displayTextFromSent. */
-export function userEventText(e: { text: string; images?: { name?: string }[]; files?: { name: string }[] }): string {
-  return displayTextFromSent(e.text, [...(e.images ?? []), ...(e.files ?? [])]);
+export function userEventText(e: UserEventLike): string {
+  const { typed, names } = userEventParts(e);
+  return withAttachmentLabel(names, typed);
 }

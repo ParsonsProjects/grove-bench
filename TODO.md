@@ -153,7 +153,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [x] Context length indicator (token usage / remaining)
 - [x] Drag and drop (files, images into prompt)
 - [x] Image attachments in messages (paste/drop, up to 8 per turn, pass as base64)
-- [x] Any file as an attachment: saved with the thread and given by path (Claude Code: a note plus `additionalDirectories`; ACP: `resource_link`). Only audio goes inline, to ACP agents that take it (5 MB a clip, 10 MB per process). PDFs go by path: inline ones stay in the history and count toward every later request's size and page limits
+- [x] Any file as an attachment: saved with the thread and given by path (Claude Code: a note, and reads in that folder allowed without a prompt; ACP: `resource_link`). Only audio goes inline, to ACP agents that take it (listed formats, 5 MB a clip, 10 MB per conversation counted from the thread's history). PDFs go by path: inline ones stay in the history and count toward every later request's size and page limits. 50 MB per message
 
 ### Markdown Preview Panel
 - [x] Slide-out panel rendering markdown full-width (reuses the marked + highlight.js + DOMPurify pipeline; Esc / backdrop click to close, copy button)

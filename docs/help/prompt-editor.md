@@ -29,10 +29,10 @@ Drag and drop files into the prompt editor, paste an image, or click the papercl
 - **Text and code files** up to 100 KB are included in the message.
 - **Images** (PNG, JPEG, GIF, WebP) up to 5 MB are sent for the agent to look at.
 - **PDFs** are saved with the thread and the agent gets the path, then reads the pages it needs. Sending a whole PDF with the message would keep it in every later request, and a few could push the thread past the model's size limits.
-- **Audio** clips up to 5 MB are sent to agents that take audio, up to 10 MB in all while the agent runs. Other agents, Claude Code included, and anything over those limits get the path.
+- **Audio** clips up to 5 MB in a common format (MP3, WAV, AAC, OGG, FLAC, AIFF, M4A, Opus, WebM) are sent to agents that take audio, up to 10 MB in all per thread since you last switched agent. Other agents, Claude Code included, other formats and anything over those limits get the path.
 - **Any other file** up to 25 MB is saved with the thread and the agent gets its path, so it can open the file with its own tools. Text files over 100 KB and images over 5 MB are attached this way too, and so are images sent to an agent that can't take images.
 
-Hover a file's chip to see its size. Click × to remove it before sending.
+One message's attachments can add up to 50 MB. Hover a file's chip to see its size. Click × to remove it before sending.
 
 ## While the Agent is Working
 

@@ -1,7 +1,7 @@
 import type { AgentAdapter } from './adapters/types.js';
 import { MAX_USER_GOAL_LENGTH, type AgentEvent } from '../shared/types.js';
 import { assertTextGeneration, generateBackgroundText, unwrapFence } from './background-text.js';
-import { stripFileContext, userEventText } from '../shared/prompt-text.js';
+import { userEventParts, withAttachmentLabel } from '../shared/prompt-text.js';
 import { eventsSinceAgentChange } from './agent-handoff.js';
 
 /**
@@ -49,9 +49,10 @@ type UserMessage = Extract<AgentEvent, { type: 'user_message' }>;
 /** A user message as the chat shows it (attachments as a name label), or
  *  null for a slash command or an empty one. */
 function promptText(e: UserMessage): string | null {
-  const text = stripFileContext(e.text).trim();
+  const { typed, names } = userEventParts(e);
+  const text = typed.trim();
   if (!text || text.startsWith('/')) return null;
-  return userEventText(e).trim();
+  return withAttachmentLabel(names, text);
 }
 
 /** Whether a message looks typed, judged without parsing its attachments:

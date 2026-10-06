@@ -78,6 +78,20 @@ describe('UserPromptBlock attachments', () => {
     expect(chip).toHaveAttribute('title', 'logs.zip is no longer available');
   });
 
+  it('keeps the chip usable when opening the file fails in main', async () => {
+    vi.mocked(mockGroveBench.openAttachedFile).mockRejectedValueOnce(new Error('shell failed'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    render(UserPromptBlock, {
+      sessionId: SID, text: 'look', attachments: [{ file: `${'e'.repeat(32)}.pdf`, name: 'spec.pdf', mediaType: 'application/pdf', size: 10 }],
+    });
+
+    const chip = screen.getByRole('button', { name: 'spec.pdf' });
+    await fireEvent.click(chip);
+    await waitFor(() => expect(warn).toHaveBeenCalled());
+    expect(chip).not.toBeDisabled();
+    warn.mockRestore();
+  });
+
   it('shows a file main has not saved yet without a way to open it', () => {
     render(UserPromptBlock, { sessionId: SID, text: 'look', attachments: [{ name: 'memo.mp3', mediaType: 'audio/mpeg', size: 10 }] });
     expect(screen.getByRole('button', { name: 'memo.mp3' })).toBeDisabled();

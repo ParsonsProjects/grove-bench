@@ -17,6 +17,7 @@ import { app, protocol, shell } from 'electron';
 import type { AgentEvent, FileAttachment, ImageMediaType, StoredFile, StoredImage } from '../shared/types.js';
 import { ATTACHMENT_SCHEME, knownMediaType } from '../shared/attachments.js';
 import type { AdapterEvent } from './adapters/types.js';
+import { withLockRetry } from './fs-utils.js';
 import { logger } from './logger.js';
 
 const EXT_BY_TYPE: Record<ImageMediaType, string> = {
@@ -45,46 +46,18 @@ const DELETED_PREFIX = '.deleted-';
 /** Not under the worktrees folder: its sweep removes folders it doesn't know. */
 export const getAttachmentsDir = () => path.join(app.getPath('userData'), 'attachments');
 
-function folderFor(sessionId: string): string | null {
-  return ID_RE.test(sessionId) ? path.join(getAttachmentsDir(), sessionId) : null;
-}
-
 /** A conversation's attachments folder (which may not exist yet), or null
  *  for an id that could be a path. */
 export function attachmentsFolder(sessionId: string): string | null {
-  return folderFor(sessionId);
+  return ID_RE.test(sessionId) ? path.join(getAttachmentsDir(), sessionId) : null;
 }
 
-/** How long a just-saved file is safe from a prune: its message may not be
- *  in the history yet (a send straight after a rewind). */
-const RECENT_SAVE_MS = 60_000;
-/** Files saved (or reused) lately, by conversation, with when. */
-const recentSaves = new Map<string, Map<string, number>>();
-
-function markSaved(sessionId: string, file: string): void {
-  let saves = recentSaves.get(sessionId);
-  if (!saves) recentSaves.set(sessionId, (saves = new Map()));
-  const now = Date.now();
-  // Forget old saves now and then, so a long thread's list stays short.
-  if (saves.size >= 50) {
-    for (const [f, at] of saves) if (now - at >= RECENT_SAVE_MS) saves.delete(f);
-  }
-  saves.set(file, now);
-}
-
-function savedLately(sessionId: string, file: string): boolean {
-  const at = recentSaves.get(sessionId)?.get(file);
-  return at !== undefined && Date.now() - at < RECENT_SAVE_MS;
-}
-
-/** A conversation's attachments folder, created if missing, so an agent can
- *  be given access to it before anything is saved there. Null if it can't be.
- *  Synchronous (one mkdir) so starting an agent doesn't wait a tick for it. */
-export function ensureAttachmentsFolder(sessionId: string): string | null {
-  const folder = folderFor(sessionId);
+/** The conversation's attachments folder, created if missing. Null if it can't be. */
+async function ensureFolder(sessionId: string): Promise<string | null> {
+  const folder = attachmentsFolder(sessionId);
   if (!folder) return null;
   try {
-    fs.mkdirSync(folder, { recursive: true });
+    await fs.promises.mkdir(folder, { recursive: true });
     return folder;
   } catch (err) {
     logger.warn(`[attachments] could not create ${folder}:`, err);
@@ -94,7 +67,7 @@ export function ensureAttachmentsFolder(sessionId: string): string | null {
 
 /** Where a stored image is on disk and its type, or null if a name isn't valid. */
 export function imagePath(sessionId: string, file: string): { path: string; mediaType: ImageMediaType } | null {
-  const folder = folderFor(sessionId);
+  const folder = attachmentsFolder(sessionId);
   const match = FILE_RE.exec(file);
   if (!folder || !match) return null;
   return { path: path.join(folder, file), mediaType: TYPE_BY_EXT[match[1]] };
@@ -102,29 +75,51 @@ export function imagePath(sessionId: string, file: string): { path: string; medi
 
 type ImageInput = { data: string; mediaType: ImageMediaType; name?: string };
 
-/** The content-hash part of a stored name. */
+/** The content-hash part of an image's stored name (images are small). */
 function contentHash(base64: string): string {
   return crypto.createHash('sha256').update(base64).digest('hex').slice(0, 32);
 }
 
+/** The content-hash part of a file's stored name. Files can be large, so
+ *  this uses SubtleCrypto, which Node runs off the main thread. */
+async function fileHash(data: Buffer): Promise<string> {
+  const digest = await crypto.webcrypto.subtle.digest('SHA-256', data);
+  return Buffer.from(digest).toString('hex').slice(0, 32);
+}
+
+/** Whether `file` holds exactly `data`. */
+async function sameContent(file: string, data: Buffer): Promise<boolean> {
+  try {
+    if ((await fs.promises.stat(file)).size !== data.length) return false;
+    return (await fs.promises.readFile(file)).equals(data);
+  } catch {
+    return false;
+  }
+}
+
 /** Write `data` to `<folder>/<file>` unless the same content is already
- *  there. A copy that changed (an agent can edit files in this folder) is
- *  written over, so a reattached file is never the edited one. */
+ *  there. A copy that changed (the agent edited it) is written over, so a
+ *  reattached file is never the edited one. */
 async function writeOnce(folder: string, file: string, data: Buffer): Promise<void> {
   const dest = path.join(folder, file);
-  try {
-    if ((await fs.promises.readFile(dest)).equals(data)) return;
-  } catch { /* not there yet */ }
+  if (await sameContent(dest, data)) {
+    // Reused: it counts as just saved, so a prune running now keeps it.
+    const now = new Date();
+    await fs.promises.utimes(dest, now, now).catch(() => {});
+    return;
+  }
   // Write then rename, so a crash mid-write can't leave a truncated file
   // that every later copy of this content would be skipped in favour of.
   const tmp = `${dest}.${crypto.randomUUID()}.tmp`;
   try {
     await fs.promises.writeFile(tmp, data);
-    await fs.promises.rename(tmp, dest);
+    // Retries: on Windows a copy open in another app can't be replaced.
+    await withLockRetry(() => fs.promises.rename(tmp, dest));
   } catch (err) {
     await fs.promises.rm(tmp, { force: true }).catch(() => {});
-    // A concurrent save of the same content may have won the rename.
-    if (!fs.existsSync(dest)) throw err;
+    // A concurrent save of the same content may have won the rename. A copy
+    // that still differs is an error, not a save.
+    if (!(await sameContent(dest, data))) throw err;
   }
 }
 
@@ -132,7 +127,6 @@ async function saveImage(sessionId: string, folder: string, img: ImageInput): Pr
   try {
     if (!Object.hasOwn(EXT_BY_TYPE, img.mediaType)) return null;
     const file = `${contentHash(img.data)}.${EXT_BY_TYPE[img.mediaType]}`;
-    markSaved(sessionId, file);
     await writeOnce(folder, file, Buffer.from(img.data, 'base64'));
     return img.name ? { file, name: img.name } : { file };
   } catch (err) {
@@ -147,7 +141,7 @@ async function saveImage(sessionId: string, folder: string, img: ImageInput): Pr
  * goes through, it just shows without that image.
  */
 export async function saveImages(sessionId: string, images: ImageInput[]): Promise<StoredImage[]> {
-  const folder = images.length > 0 ? ensureAttachmentsFolder(sessionId) : null;
+  const folder = images.length > 0 ? await ensureFolder(sessionId) : null;
   if (!folder) return [];
   const saved = await Promise.all(images.map((img) => saveImage(sessionId, folder, img)));
   return saved.filter((s): s is StoredImage => s !== null);
@@ -176,14 +170,13 @@ export interface SavedFile {
  * in order. One that can't be saved is logged and left out, as with images.
  */
 export async function saveFiles(sessionId: string, files: FileAttachment[]): Promise<SavedFile[]> {
-  const folder = files.length > 0 ? ensureAttachmentsFolder(sessionId) : null;
+  const folder = files.length > 0 ? await ensureFolder(sessionId) : null;
   if (!folder) return [];
   const saved = await Promise.all(files.map(async (f): Promise<SavedFile | null> => {
     try {
       if (typeof f.data !== 'string') return null;
       const data = Buffer.from(f.data, 'base64');
-      const file = `${contentHash(f.data)}${storedExt(f.name)}`;
-      markSaved(sessionId, file);
+      const file = `${await fileHash(data)}${storedExt(f.name)}`;
       await writeOnce(folder, file, data);
       return {
         stored: { file, name: f.name, mediaType: f.mediaType, size: data.length },
@@ -202,7 +195,7 @@ export async function saveFiles(sessionId: string, files: FileAttachment[]): Pro
  *  which open in a viewer. Anything else (an .exe, a script) is only shown in
  *  its folder, so a click in the thread never runs it. False when it isn't there. */
 export async function openAttachedFile(sessionId: string, file: string): Promise<boolean> {
-  const folder = folderFor(sessionId);
+  const folder = attachmentsFolder(sessionId);
   if (!folder || !STORED_RE.test(file)) return false;
   const filePath = path.join(folder, file);
   if (!fs.existsSync(filePath)) return false;
@@ -255,6 +248,12 @@ export function handleAttachmentProtocol(): void {
   protocol.handle(ATTACHMENT_SCHEME, (request) => attachmentResponse(request.url));
 }
 
+/** Delete these entries of `folder`, and nothing saved there since. */
+function deleteEntries(folder: string, entries: string[]): Promise<void> {
+  return Promise.all(entries.map((e) => fs.promises.rm(path.join(folder, e), { recursive: true, force: true, maxRetries: 5 })
+    .catch((err) => logger.warn(`[attachments] could not remove ${e} from ${folder}:`, err)))).then(() => {});
+}
+
 function deleteFolder(folder: string): Promise<void> {
   // Retries: on Windows a file still open (an image loading) fails with EBUSY.
   return fs.promises.rm(folder, { recursive: true, force: true, maxRetries: 5 })
@@ -268,19 +267,25 @@ function deleteFolder(folder: string): Promise<void> {
  * folder doesn't hold up the main process.
  */
 export function removeAttachments(sessionId: string): Promise<void> {
-  const folder = folderFor(sessionId);
+  const folder = attachmentsFolder(sessionId);
   if (!folder) return Promise.resolve();
-  recentSaves.delete(sessionId);
-  let target = folder;
+  const moved = path.join(getAttachmentsDir(), `${DELETED_PREFIX}${crypto.randomUUID()}`);
   try {
-    const moved = path.join(getAttachmentsDir(), `${DELETED_PREFIX}${crypto.randomUUID()}`);
     fs.renameSync(folder, moved);
-    target = moved;
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return Promise.resolve();
-    // Can't be moved (a file open on Windows): delete it where it is.
+    // Can't be moved (on Windows, a file in it is open: a PDF opened from
+    // the thread). Delete what's in it now, and leave anything saved there
+    // from here on, which belongs to the next message.
+    let entries: string[];
+    try {
+      entries = fs.readdirSync(folder);
+    } catch {
+      return Promise.resolve();
+    }
+    return deleteEntries(folder, entries);
   }
-  return deleteFolder(target);
+  return deleteFolder(moved);
 }
 
 /** Finish deletions a quit interrupted. */
@@ -296,12 +301,12 @@ export async function removeDeletedFolders(): Promise<void> {
   );
 }
 
-/** Delete a conversation's attachments that no event refers to any more,
- *  after a rewind cut the turns that showed them. Ones saved in the last
- *  minute stay: the message that refers to them may still be on its way. */
-export async function pruneAttachments(sessionId: string, events: AgentEvent[]): Promise<void> {
-  const folder = folderFor(sessionId);
-  if (!folder) return;
+/** File times can trail the clock by a tick (about 16 ms on Windows), so the
+ *  cut-off for "saved during the prune" starts a second early. */
+const PRUNE_CLOCK_SLACK_MS = 1000;
+
+/** The stored names the events refer to. */
+function referencedNames(events: readonly AgentEvent[]): Set<string> {
   const keep = new Set<string>();
   for (const e of events) {
     if ((e.type === 'user_message' || e.type === 'tool_result') && e.images) {
@@ -311,16 +316,32 @@ export async function pruneAttachments(sessionId: string, events: AgentEvent[]):
       for (const f of e.files) keep.add(f.file);
     }
   }
+  return keep;
+}
+
+/** Delete a conversation's attachments that no event refers to any more,
+ *  after a rewind cut the turns that showed them. One saved (or reused)
+ *  after the prune started stays: its message may not be in `events` yet,
+ *  as with a send straight after a rewind. */
+export async function pruneAttachments(sessionId: string, events: readonly AgentEvent[]): Promise<void> {
+  const folder = attachmentsFolder(sessionId);
+  if (!folder) return;
+  const startedAt = Date.now() - PRUNE_CLOCK_SLACK_MS;
   let files: string[];
   try {
     files = await fs.promises.readdir(folder);
   } catch {
     return;
   }
-  await Promise.all(
-    files
-      .filter((f) => STORED_RE.test(f) && !keep.has(f) && !savedLately(sessionId, f))
-      .map((f) => fs.promises.rm(path.join(folder, f), { force: true, maxRetries: 3 })
-        .catch((err) => logger.warn(`[attachments] could not remove ${f} for ${sessionId}:`, err))),
-  );
+  // Read after the listing, so a message added to `events` meanwhile counts.
+  const keep = referencedNames(events);
+  await Promise.all(files.filter((f) => STORED_RE.test(f) && !keep.has(f)).map(async (f) => {
+    const filePath = path.join(folder, f);
+    try {
+      if ((await fs.promises.stat(filePath)).mtimeMs >= startedAt) return;
+      await fs.promises.rm(filePath, { force: true, maxRetries: 3 });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') logger.warn(`[attachments] could not remove ${f} for ${sessionId}:`, err);
+    }
+  }));
 }

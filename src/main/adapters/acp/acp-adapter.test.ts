@@ -268,14 +268,22 @@ describe('AcpAdapter', () => {
       expect(blocks).toEqual([link(pdf), { type: 'audio', data: 'SUQz', mimeType: 'audio/mpeg' }, link(zip)]);
     });
 
-    it('links audio over the size cap, and once the inline total is used up', async () => {
+    it('links audio over the size cap, and past the total already in the conversation', async () => {
       const big = { ...mp3, name: 'big.mp3', size: AUDIO_INLINE_MAX_BYTES + 1 };
       const half = { ...mp3, name: 'half.mp3', size: AUDIO_INLINE_BUDGET_BYTES / 2 };
       const [first, second] = await sentBlocks('media',
         { text: 'blocks', files: [big, half, half] },
-        { text: 'blocks', files: [mp3] });
+        { text: 'blocks', files: [mp3], audioInHistory: AUDIO_INLINE_BUDGET_BYTES });
       expect(first).toEqual([link(big), { type: 'audio', data: 'SUQz', mimeType: 'audio/mpeg' }, { type: 'audio', data: 'SUQz', mimeType: 'audio/mpeg' }]);
       expect(second).toEqual([link(mp3)]);
+    });
+
+    it('sends a browser alias as the listed type, and links a type that is not listed or has no data', async () => {
+      const wav = { ...mp3, name: 'a.wav', mediaType: 'audio/x-wav' };
+      const wma = { ...mp3, name: 'a.wma', mediaType: 'audio/x-ms-wma' };
+      const noData = { ...mp3, name: 'b.mp3', data: undefined };
+      const [blocks] = await sentBlocks('media', { text: 'blocks', files: [wav, wma, noData] });
+      expect(blocks).toEqual([{ type: 'audio', data: 'SUQz', mimeType: 'audio/wav' }, link(wma), link(noData)]);
     });
 
     it('links an image by its saved copy for an agent that can\'t take images', async () => {

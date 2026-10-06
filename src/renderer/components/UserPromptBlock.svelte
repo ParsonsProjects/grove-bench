@@ -34,7 +34,11 @@
   let missing = $state<Record<string, true>>({});
 
   async function openAttachment(file: string) {
-    if (!(await window.groveBench.openAttachedFile(sessionId, file))) missing[file] = true;
+    try {
+      if (!(await window.groveBench.openAttachedFile(sessionId, file))) missing[file] = true;
+    } catch (err) {
+      console.warn(`Could not open attached file ${file}:`, err);
+    }
   }
 </script>
 
