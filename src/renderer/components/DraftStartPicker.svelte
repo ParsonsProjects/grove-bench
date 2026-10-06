@@ -113,7 +113,7 @@
   const isBranch = (name: string) => start?.kind === 'existing' && !start.pr && start.branch === name;
 </script>
 
-<div class="w-96 bg-popover border border-border shadow-xl text-xs" role="dialog" aria-label="Where this conversation runs">
+<div class="w-96 bg-popover border border-border shadow-xl text-xs" role="dialog" aria-label="Where this thread runs">
   <div class="flex border-b border-border" role="group" aria-label="Where it runs">
     {#each tabs as [value, label] (value)}
       <button
@@ -130,7 +130,7 @@
   <div class="p-3">
     {#if tab === 'new'}
       <p class="text-muted-foreground mb-3">
-        A separate copy of the project on a new branch, so this conversation's changes stay away from your other work.
+        A separate copy of the project on a new branch, so this thread's changes stay away from your other work.
       </p>
       <label class="block mb-1 text-muted-foreground" for="draft-branch-name">Branch name</label>
       <input
@@ -221,10 +221,10 @@
       {/if}
     {:else if folderProject}
       <p class="text-muted-foreground">
-        This project is used without git, so conversations run in the folder itself. The agent edits your files in place, and its edits can't be rewound.
+        This project is used without git, so threads run in the folder itself. The agent edits your files in place, and its edits can't be rewound.
       </p>
       <p class="text-muted-foreground/70 mt-2">
-        For a separate copy per conversation and undo, run <code class="text-foreground">git init</code> in the folder, commit its files, then remove and add the project again.
+        For a separate copy per thread and undo, run <code class="text-foreground">git init</code> in the folder, commit its files, then remove and add the project again.
       </p>
     {:else}
       <p class="text-muted-foreground">

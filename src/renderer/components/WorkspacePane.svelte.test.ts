@@ -35,7 +35,7 @@ describe('WorkspacePane in a conversation without git', () => {
     store.prerequisites = { git: { available: true, meetsMinimum: true }, agents };
     render(WorkspacePane, { sessionId: 'n1' });
     expect(await screen.findByText('Changes needs git')).toBeInTheDocument();
-    expect(screen.getByText(/This conversation runs without git, so there is nothing to compare/)).toBeInTheDocument();
+    expect(screen.getByText(/This thread runs without git, so there is nothing to compare/)).toBeInTheDocument();
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
     expect(mockGroveBench.getGitStatus).not.toHaveBeenCalled();
   });
@@ -73,7 +73,7 @@ describe('WorkspacePane in a conversation without git', () => {
     messageStore.setActiveTab('n1', 'checkpoints');
     render(WorkspacePane, { sessionId: 'n1' });
     await screen.findByText('Checkpoints needs git');
-    expect(screen.getByText(/This conversation runs without git, so no checkpoints are saved/)).toBeInTheDocument();
+    expect(screen.getByText(/This thread runs without git, so no checkpoints are saved/)).toBeInTheDocument();
     // One on Checkpoints, one on the hidden Changes tab.
     expect(screen.getAllByRole('img', { name: 'Ready' })).toHaveLength(2);
     expect(mockGroveBench.listCheckpoints).not.toHaveBeenCalled();
@@ -154,6 +154,20 @@ describe('WorkspacePane load timing', () => {
     expect(report.sessionId).toBe('n1');
     expect(report.steps.map((s) => s.name)).toEqual(['history fetch', 'replay', 'first draw']);
     expect(report.detail).toMatch(/^\d+ events, shown$/);
+  });
+
+  it('reports nothing for a pane closed before it drew, so a later one never gets its numbers', async () => {
+    store.prerequisites = { git: { available: true, meetsMinimum: true }, agents };
+    let answerPage: (page: unknown) => void = () => {};
+    mockGroveBench.getEventHistoryPage.mockImplementationOnce((() => new Promise((r) => { answerPage = r; })) as never);
+    const { unmount } = render(WorkspacePane, { sessionId: 'n1' });
+    await waitFor(() => expect(mockGroveBench.getEventHistoryPage).toHaveBeenCalled());
+    // Closed while its history is still on the way.
+    unmount();
+    answerPage({ events: [], totalCount: 0, startIndex: 0 });
+    await waitFor(() => expect(messageStore.isHistoryLoaded('n1')).toBe(true));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(mockGroveBench.reportTiming).not.toHaveBeenCalled();
   });
 
   it('says when loading the history failed', async () => {

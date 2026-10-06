@@ -119,6 +119,10 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.AGENT_GET_CONTROLS, sessionId),
   getUsage: (sessionId: string) =>
     ipcRenderer.invoke(IPC.AGENT_GET_USAGE, sessionId),
+  switchAgent: (sessionId: string, adapterId: string, transcript: boolean) =>
+    ipcRenderer.invoke(IPC.AGENT_SWITCH, sessionId, adapterId, transcript),
+  getCachedUsage: (adapterId: string) =>
+    ipcRenderer.invoke(IPC.AGENT_GET_CACHED_USAGE, adapterId),
   setControl: (sessionId: string, controlId: string, value: string) =>
     ipcRenderer.invoke(IPC.AGENT_SET_CONTROL, sessionId, controlId, value),
 
@@ -271,6 +275,7 @@ const api: GroveBenchAPI = {
   checkPrerequisites: () => ipcRenderer.invoke(IPC.PREREQUISITES_CHECK),
   getCachedPrerequisites: () => ipcRenderer.invoke(IPC.PREREQUISITES_CACHED),
   checkGhPrerequisite: () => ipcRenderer.invoke(IPC.PREREQUISITES_GH),
+  checkAgentSignIn: (adapterId: string) => ipcRenderer.invoke(IPC.PREREQUISITES_CHECK_SIGN_IN, adapterId),
   setApiKey: (adapterId: string, key: string) => ipcRenderer.invoke(IPC.CREDENTIALS_SET_API_KEY, adapterId, key),
   clearApiKey: (adapterId: string) => ipcRenderer.invoke(IPC.CREDENTIALS_CLEAR_API_KEY, adapterId),
   notifyRestoreComplete: () => ipcRenderer.send(IPC.APP_RESTORE_COMPLETE),
@@ -456,6 +461,9 @@ const api: GroveBenchAPI = {
 
   // Agent adapters
   listAdapters: () => ipcRenderer.invoke(IPC.AGENT_LIST_ADAPTERS),
+  listRegistryAgents: () => ipcRenderer.invoke(IPC.CATALOGS_REGISTRY),
+  getRegistryIcon: (id: string) => ipcRenderer.invoke(IPC.CATALOGS_ICON, id),
+  refreshCatalogs: () => ipcRenderer.invoke(IPC.CATALOGS_REFRESH),
   getAdapterControls: (adapterType?: string, model?: string | null) =>
     ipcRenderer.invoke(IPC.AGENT_GET_ADAPTER_CONTROLS, adapterType, model),
   getModels: (adapterType?: string) => ipcRenderer.invoke(IPC.AGENT_GET_MODELS, adapterType),

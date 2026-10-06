@@ -383,12 +383,14 @@ export class WorktreeManager {
     return entry?.providerSessionId ?? entry?.claudeSessionId;
   }
 
-  /** Persist the model a session is running with so it survives app restart. */
-  async saveModel(worktreeId: string, model: string): Promise<void> {
+  /** Persist the model a session is running with so it survives app restart.
+   *  Null forgets it (an agent switched to that has no model yet starts on
+   *  its own default). */
+  async saveModel(worktreeId: string, model: string | null): Promise<void> {
     await this.withManifest((manifest) => {
-      if (manifest[worktreeId]) {
-        manifest[worktreeId].model = model;
-      }
+      if (!manifest[worktreeId]) return;
+      if (model) manifest[worktreeId].model = model;
+      else delete manifest[worktreeId].model;
     });
   }
 
@@ -509,7 +511,7 @@ export class WorktreeManager {
     const others = (await this.sharersOfPath(id, info.path)).filter((other) => other !== id);
     if (others.length === 0) return;
     throw new Error(
-      `${others.length === 1 ? 'Another conversation is' : `${others.length} other conversations are`} still working in this conversation's worktree. `
+      `${others.length === 1 ? 'Another thread is' : `${others.length} other threads are`} still working in this thread's worktree. `
       + 'Delete them first; deleting this one would remove their checkout too.',
     );
   }
@@ -792,11 +794,11 @@ export class WorktreeManager {
       const manifest = await this.loadManifest();
       const entry = manifest[id];
       if (!entry) throw new Error(`Worktree ${id} not found`);
-      throw new Error(`Conversation ${id} is not active`);
+      throw new Error(`Thread ${id} is not active`);
     }
 
     if (info.direct) {
-      throw new Error('Cannot rename branch for direct conversations');
+      throw new Error('Cannot rename branch for direct threads');
     }
 
     const oldName = info.branch;
@@ -876,7 +878,7 @@ export class WorktreeManager {
     opts: { create?: boolean; busySessionIds?: string[] } = {},
   ): Promise<BranchSwitchResult> {
     const info = this.worktrees.get(id);
-    if (!info) return { success: false, error: 'This conversation is not active.' };
+    if (!info) return { success: false, error: 'This thread is not active.' };
     const name = branch.trim();
     if (!name || name.startsWith('-') || !(await validateBranchName(name))) {
       return { success: false, error: `"${name}" is not a valid branch name.` };
@@ -1326,6 +1328,12 @@ export class WorktreeManager {
     } catch { /* repoDir doesn't exist yet */ }
 
     return null;
+  }
+
+  /** Write the files an agent needs in a worktree (Claude Code's local
+   *  settings, say), for a conversation switched to that agent. */
+  async writeAgentSettings(wtPath: string, repoPath: string, adapterType: string): Promise<void> {
+    await this.generateAdapterSettings(wtPath, repoPath, adapterType);
   }
 
   private async generateAdapterSettings(wtPath: string, repoPath: string, adapterType?: string): Promise<void> {

@@ -41,8 +41,8 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
   {
     title: 'General',
     rows: [
-      { label: 'Conversation finder', key: { key: 'r', ctrl: true } },
-      { label: 'New conversation', key: { key: 'n', ctrl: true } },
+      { label: 'Thread finder', key: { key: 'r', ctrl: true } },
+      { label: 'New thread', key: { key: 'n', ctrl: true } },
       { label: 'Reopen closed tab', key: { key: 't', ctrl: true, shift: true } },
       { label: 'Bookmarks', key: { key: 'b', ctrl: true } },
       { label: 'Search messages', key: { key: 'f', ctrl: true } },

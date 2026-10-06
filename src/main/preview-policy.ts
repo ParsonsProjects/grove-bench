@@ -35,14 +35,14 @@ export function checkNavigation(url: string, audience: PreviewAudience, worktree
     if (audience === 'user' || isLocalHttpUrl(u.href)) return { ok: true };
     return {
       ok: false,
-      reason: `The agent's browser only opens local pages (localhost, 127.0.0.1, [::1]) or .html files in this conversation's worktree, not ${u.host}.`,
+      reason: `The agent's browser only opens local pages (localhost, 127.0.0.1, [::1]) or .html files in this thread's worktree, not ${u.host}.`,
     };
   }
 
   if (u.protocol === 'file:') {
     const filePath = worktreeFile(u, worktreePath);
     if (!filePath) {
-      return { ok: false, reason: `Only files inside this conversation's worktree can be opened (${worktreePath}).` };
+      return { ok: false, reason: `Only files inside this thread's worktree can be opened (${worktreePath}).` };
     }
     if (audience === 'agent' && !/\.html?$/i.test(filePath)) {
       return { ok: false, reason: "The agent's browser only opens .html files from the worktree. Use the Read tool for other files." };
@@ -74,7 +74,7 @@ export function checkFileRequest(url: string, audience: PreviewAudience, worktre
   try { u = new URL(url); } catch { return { ok: false, reason: `Not a valid URL: ${url}` }; }
   if (u.protocol !== 'file:') return { ok: true };
   const filePath = worktreeFile(u, worktreePath);
-  if (!filePath) return { ok: false, reason: `Blocked a file outside this conversation's worktree: ${url}` };
+  if (!filePath) return { ok: false, reason: `Blocked a file outside this thread's worktree: ${url}` };
   if (audience === 'agent' && !WEB_FILE.test(filePath)) {
     return { ok: false, reason: `Blocked a non-web file in the agent's browser: ${url}` };
   }

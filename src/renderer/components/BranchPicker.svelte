@@ -121,7 +121,7 @@
 
   {#if direct}
     <div class="px-2 py-1.5 border-b border-border text-orange-400/80">
-      This conversation runs in your project folder. Switching changes the branch there too, for your editor and any other conversation using that folder.
+      This thread runs in your project folder. Switching changes the branch there too, for your editor and any other thread using that folder.
     </div>
   {/if}
 

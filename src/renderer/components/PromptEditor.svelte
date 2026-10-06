@@ -100,8 +100,8 @@
   let commandSelectedIndex = $state(0);
 
   const builtinCommands = [
-    { name: '/compact', description: 'Compact conversation to free context space' },
-    { name: '/clear', description: 'Clear conversation and start fresh' },
+    { name: '/compact', description: 'Compact thread to free context space' },
+    { name: '/clear', description: 'Clear thread and start fresh' },
     { name: '/rewind', description: 'Rewind to a previous checkpoint' },
   ];
 

@@ -14,6 +14,7 @@
   import { controlHint, controlSummary } from '../lib/control-hint.js';
   import AgentSettingsTrigger from './AgentSettingsTrigger.svelte';
   import AlphaBadge from './AlphaBadge.svelte';
+  import UsageSection from './UsageSection.svelte';
 
   let open = $state(false);
   /** Option under the pointer or focus, explained in the footer. Removing
@@ -75,7 +76,7 @@
     >
       <div class="flex items-center justify-between gap-6 mb-2">
         <span class="font-medium text-foreground">Agent settings</span>
-        <span class="text-muted-foreground/60 text-[10px]">The agent is fixed once you send the first message</span>
+        <span class="text-muted-foreground/60 text-[10px]">You can switch agent later from the status bar</span>
       </div>
 
       <div class="flex gap-3 overflow-x-auto max-w-[80vw]">
@@ -93,6 +94,8 @@
               {#if a.stage === 'alpha'}<AlphaBadge class="ml-1.5 align-middle" />{/if}
             </button>
           {/each}
+
+          <UsageSection providerId={draft.agentId} {agentName} />
         </div>
 
         <div class="min-w-32">

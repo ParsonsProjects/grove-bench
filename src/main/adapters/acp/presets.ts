@@ -2,10 +2,15 @@
  * ACP agents Grove knows how to start, and the user's own (Settings > Agent).
  *
  * Launch commands come from each agent's documentation:
- * - Gemini CLI: `gemini --acp` (google-gemini/gemini-cli, docs/cli/acp-mode.md)
- * - GitHub Copilot CLI: `copilot --acp` (github/copilot-cli, changelog.md)
+ * - Gemini CLI: `gemini --acp` (google-gemini/gemini-cli, docs/cli/acp-mode.md);
+ *   its API key is in gemini.ts
+ * - GitHub Copilot CLI: `copilot --acp` (github/copilot-cli, changelog.md).
+ *   Its only ACP sign-in method is `copilot login` in a terminal
+ *   (github/copilot-cli#3161)
  * - OpenCode: `opencode acp` (opencode.ai/docs/acp); its settings and the
  *   OpenRouter key are in opencode.ts
+ * Install commands are the npm packages that provide each command
+ * (@google/gemini-cli, @github/copilot and opencode-ai on npm).
  * Agents that need a separate ACP wrapper (Codex through codex-acp, for
  * example) are added as custom agents.
  */
@@ -13,6 +18,7 @@ import crypto from 'node:crypto';
 import type { AcpAgentSetting } from '../../../shared/types.js';
 import type { AcpAgentDefinition } from './acp-adapter.js';
 import { openCodeEnv, verifyOpenRouterKey } from './opencode.js';
+import { verifyGeminiKey } from './gemini.js';
 
 export const ACP_PRESETS: AcpAgentDefinition[] = [
   {
@@ -20,32 +26,49 @@ export const ACP_PRESETS: AcpAgentDefinition[] = [
     displayName: 'Gemini CLI',
     command: 'gemini',
     args: ['--acp'],
+    registryId: 'gemini',
+    modelProvider: 'google',
     cliSignIn: {
       accountLabel: 'Google account',
+      // Personal accounts stopped working on 18 June 2026 (gemini.ts).
+      accountDetail: 'Gemini Code Assist Standard or Enterprise, or Vertex AI',
       cliName: 'Gemini CLI',
       command: 'gemini',
       setupUrl: 'https://github.com/google-gemini/gemini-cli',
     },
-    installInstructions: 'Install Gemini CLI: https://github.com/google-gemini/gemini-cli',
+    apiKey: {
+      envVar: 'GEMINI_API_KEY',
+      label: 'Gemini API key',
+      helpUrl: 'https://aistudio.google.com/apikey',
+      billingNote: 'Billed by Google through the Gemini API, separately from any Google AI subscription. If Gemini CLI was set to sign in another way, Grove switches it to this key, and Gemini CLI remembers that.',
+      authMethodId: 'gemini-api-key',
+    },
+    verifyApiKey: (key) => verifyGeminiKey(key),
+    installCommand: 'npm install -g @google/gemini-cli',
   },
   {
     id: 'copilot-cli',
     displayName: 'GitHub Copilot CLI',
     command: 'copilot',
     args: ['--acp'],
+    registryId: 'github-copilot-cli',
+    modelProvider: 'github-copilot',
     cliSignIn: {
       accountLabel: 'GitHub Copilot plan',
       cliName: 'GitHub Copilot CLI',
-      command: 'copilot',
+      command: 'copilot login',
       setupUrl: 'https://github.com/github/copilot-cli',
     },
-    installInstructions: 'Install GitHub Copilot CLI: https://github.com/github/copilot-cli',
+    installCommand: 'npm install -g @github/copilot',
   },
   {
     id: 'opencode',
     displayName: 'OpenCode',
     command: 'opencode',
     args: ['acp'],
+    // The registry has downloads for OpenCode, not a package, so the npm
+    // command below stays.
+    registryId: 'opencode',
     // Not yet run on Windows with a real key (docs/open-model-harnesses-plan.md).
     stage: 'alpha',
     // Optional: OpenCode also uses the providers the user signed in to with
@@ -59,7 +82,7 @@ export const ACP_PRESETS: AcpAgentDefinition[] = [
     },
     verifyApiKey: (key) => verifyOpenRouterKey(key),
     spawnEnv: openCodeEnv,
-    installInstructions: 'Install OpenCode: npm install -g opencode-ai (https://opencode.ai/docs)',
+    installCommand: 'npm install -g opencode-ai',
   },
 ];
 

@@ -84,7 +84,7 @@
       <Dialog.Title>Rewind to Checkpoint</Dialog.Title>
       <Dialog.Description>
         {#if noGit}
-          Select a message to rewind the conversation to. This conversation runs without git, so files on disk stay as
+          Select a message to rewind the thread to. This thread runs without git, so files on disk stay as
           they are: the agent's edits after that point are not undone.
         {:else}
           Select a message to rewind to. Files on disk will be restored to their state at that point.
@@ -137,7 +137,7 @@
       <div class="flex items-center gap-2 mt-2">
         <Checkbox bind:checked={conversationOnly} id="conversation-only" />
         <label for="conversation-only" class="text-sm text-muted-foreground cursor-pointer select-none">
-          Conversation only (keep file changes on disk)
+          Thread only (keep file changes on disk)
         </label>
       </div>
     {/if}

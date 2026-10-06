@@ -59,7 +59,7 @@
          behaviour near the limit: https://code.claude.com/docs/en/how-claude-code-works#when-context-fills-up -->
     <p class="text-muted-foreground mb-3">
       How much the agent can hold in mind at once: your messages, its replies, files it read and command
-      output. Near the limit it clears old tool output, then summarises the conversation, so early details
+      output. Near the limit it clears old tool output, then summarises the thread, so early details
       can be lost.
     </p>
 
@@ -126,7 +126,7 @@
     <!-- System info breakdown -->
     {#if systemInfo.tools.length > 0 || systemInfo.agents.length > 0 || systemInfo.skills.length > 0 || systemInfo.mcpServers.length > 0}
       <div class="border-t border-border pt-2.5 mt-2.5">
-        <div class="font-medium text-foreground mb-2">Conversation Info</div>
+        <div class="font-medium text-foreground mb-2">Thread Info</div>
         <div class="space-y-1.5 text-muted-foreground">
           {#if systemInfo.tools.length > 0}
             <div class="flex justify-between">
@@ -189,7 +189,7 @@
     <div class="border-t border-border pt-2.5 mt-2.5">
       {#if confirmClear}
         <p class="text-xs text-foreground mb-2" role="alert">
-          Clear this conversation? Its messages, and the agent's memory of them, are removed. Your files stay as they are.
+          Clear this thread? Its messages, and the agent's memory of them, are removed. Your files stay as they are.
         </p>
         <div class="flex gap-2">
           <button
@@ -221,7 +221,7 @@
             onclick={() => confirmClear = true}
             disabled={isRunning}
             class="w-full px-2 py-1.5 text-xs border border-border hover:bg-accent hover:text-accent-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            title="Clear the conversation and start again with an empty context. Asks first. (/clear)"
+            title="Clear the thread and start again with an empty context. Asks first. (/clear)"
           >
             Start fresh…
           </button>

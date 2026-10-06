@@ -13,14 +13,12 @@
   import { offeredForNew } from '../stores/agents.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
   import { usageStore } from '../stores/usage.svelte.js';
-  import { formatResetTime } from '../lib/reset-time.js';
   import { toneClass } from '../lib/control-tones.js';
-  // The same scale as the context meter, so the two read alike.
-  import { usageTextClass, usageBarClass } from '../lib/usage-tone.js';
-  import { CONTROL_SHORTCUTS, type AgentSummary, type ControlOption } from '../../shared/types.js';
+  import { CONTROL_SHORTCUTS, controlShortcut, type AgentSummary, type ControlOption } from '../../shared/types.js';
   import { controlHint, controlSummary } from '../lib/control-hint.js';
   import AgentSettingsTrigger from './AgentSettingsTrigger.svelte';
-  import PixelMeter from './PixelMeter.svelte';
+  import UsageSection from './UsageSection.svelte';
+  import { stripIpcErrorPrefix } from '../lib/mcp-errors.js';
   import AlphaBadge from './AlphaBadge.svelte';
 
   export interface ModelOption { value: string; label: string; contextWindow?: number }
@@ -54,8 +52,6 @@
   $effect(() => { messageStore.loadControls(sessionId); });
 
   // ── Plan usage ("runway") for the session's provider ──
-  let usage = $derived(usageStore.get(agentType));
-  let usageLoading = $derived(usageStore.loading[agentType] ?? false);
   // Opening the popover is the moment the numbers matter — refresh unless
   // they are only seconds old.
   $effect(() => {
@@ -82,9 +78,30 @@
     messageStore.setControl(sessionId, controlId, value).catch((e) => console.error(`Failed to set ${controlId}:`, e));
   }
 
-  /** A conversation keeps the agent it started with (its history is that
-   *  agent's own session). Picking another starts a new conversation with it
-   *  in the same project, as a draft. */
+  /** The agent picked in the Agent column, waiting for the user to choose
+   *  how to switch (or to start a new conversation with it instead). */
+  let switchTo = $state<{ id: string; displayName: string } | null>(null);
+  let switching = $state(false);
+  let switchError = $state('');
+  $effect(() => { if (!open) { switchTo = null; switchError = ''; } });
+  let running = $derived(messageStore.getIsRunning(sessionId));
+
+  /** Hand this conversation to another agent (main's switchAgent). */
+  async function switchAgent(adapterId: string, transcript: boolean) {
+    switching = true;
+    switchError = '';
+    try {
+      await window.groveBench.switchAgent(sessionId, adapterId, transcript);
+      open = false;
+    } catch (e) {
+      switchError = stripIpcErrorPrefix(e instanceof Error ? e.message : String(e));
+    } finally {
+      switching = false;
+    }
+  }
+
+  /** Leave this conversation on its agent and start a new one with
+   *  `adapterId` in the same project, as a draft. */
   function startWithAgent(adapterId: string) {
     if (!session) return;
     open = false;
@@ -139,7 +156,7 @@
         <span class="font-medium text-foreground">Agent settings</span>
         <span class="text-muted-foreground/60 text-[10px]">
           {#each Object.entries(CONTROL_SHORTCUTS) as [id, key] (id)}
-            {@const label = controls.find((c) => c.id === id)?.label}
+            {@const label = (controls.find((c) => c.id === id) ?? controls.find((c) => c.role === id))?.label}
             {#if label}<kbd class="text-foreground/70">{key}</kbd> {label.toLowerCase()}&nbsp;&nbsp;{/if}
           {/each}
         </span>
@@ -152,57 +169,21 @@
           {#each agentChoices.length > 0 ? agentChoices : [{ id: agentType, displayName: agentName, stage: undefined }] as a (a.id)}
             {@const current = a.id === agentType}
             <button
-              onclick={() => { if (!current) startWithAgent(a.id); }}
+              onclick={() => { if (!current) switchTo = { id: a.id, displayName: a.displayName }; }}
               class="w-full text-left px-2 py-1 border-l-2 transition-colors group/agent flex items-center justify-between gap-2
-                {current ? 'border-primary text-foreground bg-accent/50 cursor-default' : 'border-transparent text-muted-foreground hover:bg-accent hover:text-foreground'}"
-              title={current ? 'This conversation\'s agent' : `Start a new conversation in this project with ${a.displayName}. This one keeps its agent.`}
+                {current ? 'border-primary text-foreground bg-accent/50 cursor-default' : switchTo?.id === a.id ? 'border-primary/50 text-foreground bg-accent' : 'border-transparent text-muted-foreground hover:bg-accent hover:text-foreground'}"
+              title={current ? 'This thread\'s agent' : `Switch this thread to ${a.displayName}, or start a new one with it`}
               aria-current={current ? 'true' : undefined}
             >
               <span>
                 {a.displayName}
                 {#if a.stage === 'alpha'}<AlphaBadge class="ml-1.5 align-middle" />{/if}
               </span>
-              {#if !current}<span class="text-[10px] text-muted-foreground/50 group-hover/agent:text-primary">new ↗</span>{/if}
+              {#if !current}<span class="text-[10px] text-muted-foreground/50 group-hover/agent:text-primary">switch…</span>{/if}
             </button>
           {/each}
 
-          <!-- Runway: how much of each plan window is used and when it resets -->
-          <div class="mt-3 pt-2 border-t border-border/60" data-testid="usage">
-            <div class="flex items-center justify-between text-[10px] uppercase tracking-wide text-muted-foreground/60 mb-1">
-              <span>Usage</span>
-              {#if usage?.plan}<span class="normal-case tracking-normal text-muted-foreground/40">{usage.plan} plan</span>{/if}
-            </div>
-            {#if usage && usage.available && usage.windows.length > 0}
-              {#each usage.windows as w (w.id)}
-                <div
-                  class="py-1"
-                  title={w.resetsAt ? `Resets ${new Date(w.resetsAt * 1000).toLocaleString()}` : undefined}
-                >
-                  <div class="flex items-baseline justify-between gap-2">
-                    <span class="text-muted-foreground">{w.label}</span>
-                    <span class="font-medium {usageTextClass(w.utilization * 100)}">{Math.round(w.utilization * 100)}%</span>
-                  </div>
-                  <!-- Pixel blocks of 5%, like the context meter in the status bar. -->
-                  <PixelMeter
-                    percent={Math.min(100, w.utilization * 100)}
-                    cells={20}
-                    fillClass={usageBarClass(w.utilization * 100)}
-                    class="h-1.5 mt-1"
-                    data-testid="usage-bar-{w.id}"
-                  />
-                  {#if w.resetsAt}
-                    <div class="text-[10px] text-muted-foreground/60 mt-0.5">resets {formatResetTime(w.resetsAt)}</div>
-                  {/if}
-                </div>
-              {/each}
-            {:else if usage && !usage.available}
-              <div class="py-1 text-muted-foreground/50">Plan usage isn't reported for this sign-in (API key or third-party provider).</div>
-            {:else if usageLoading}
-              <div class="py-1 text-muted-foreground/50">Loading usage…</div>
-            {:else}
-              <div class="py-1 text-muted-foreground/50">No usage reported yet. Available once the agent has connected.</div>
-            {/if}
-          </div>
+          <UsageSection providerId={agentType} {agentName} />
         </div>
 
         <!-- Model -->
@@ -229,7 +210,7 @@
           <div class="min-w-32">
             <div class="text-[10px] uppercase tracking-wide text-muted-foreground/60 mb-1">
               {ctl.label}
-              {#if CONTROL_SHORTCUTS[ctl.id]}<span class="normal-case tracking-normal text-muted-foreground/40">{CONTROL_SHORTCUTS[ctl.id]}</span>{/if}
+              {#if controlShortcut(ctl)}<span class="normal-case tracking-normal text-muted-foreground/40">{controlShortcut(ctl)}</span>{/if}
             </div>
             {#each ctl.options as opt, i (opt.value)}
               {@const current = opt.value === value}
@@ -255,6 +236,28 @@
           </div>
         {/each}
       </div>
+
+      {#if switchTo}
+        {@const target = switchTo}
+        <!-- Switching sends this conversation to another provider only if
+             the user picks the transcript button, which says so. -->
+        <div class="mt-3 pt-2 border-t border-border max-w-[36rem] flex flex-col gap-2" role="group" aria-label="Switch agent">
+          <p class="text-foreground">Switch this thread to {target.displayName}?</p>
+          <p class="text-[11px] text-muted-foreground">
+            {target.displayName} starts its own session in the same worktree; the thread, files and checkpoints stay.
+            To carry on where {agentName} left off, it can get a short transcript with your next message: your messages,
+            {agentName}'s replies and the list of files changed, without tool output. That transcript goes to {target.displayName}'s provider.
+            {#if running}The turn that is running now stops.{/if}
+          </p>
+          {#if switchError}<p class="text-[11px] text-destructive" role="alert">{switchError}</p>{/if}
+          <div class="flex flex-wrap items-center gap-2">
+            <button type="button" class="px-2 py-1 bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50" disabled={switching} onclick={() => switchAgent(target.id, true)}>Switch and send the transcript</button>
+            <button type="button" class="px-2 py-1 border border-border hover:bg-accent disabled:opacity-50" disabled={switching} onclick={() => switchAgent(target.id, false)}>Switch without it</button>
+            <button type="button" class="px-2 py-1 text-primary hover:underline" onclick={() => startWithAgent(target.id)}>New thread instead ↗</button>
+            <button type="button" class="px-2 py-1 text-muted-foreground hover:text-foreground" onclick={() => { switchTo = null; switchError = ''; }}>Cancel</button>
+          </div>
+        </div>
+      {/if}
 
       <!-- Choices apply on click, so there is no Done button: the hint gets
            the full width. Two lines stay reserved so a longer hint can't

@@ -468,7 +468,7 @@
     <div class="flex items-center justify-center h-full text-muted-foreground">
       <div class="text-center relative z-10">
         <p class="text-sm mb-1 opacity-60">Waiting for input...</p>
-        <p class="text-xs opacity-40">Type a message below to start the conversation.</p>
+        <p class="text-xs opacity-40">Type a message below to start the thread.</p>
       </div>
     </div>
   {/if}

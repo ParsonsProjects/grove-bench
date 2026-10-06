@@ -2,7 +2,7 @@ import path from 'node:path';
 import { app } from 'electron';
 import { z } from 'zod';
 
-import { COLLAPSIBLE_PANELS, type CollapsedPanels, type ConversationGroup, type PrerequisiteStatus, type SessionSortState, type SkillSuggestion } from '../shared/types.js';
+import { COLLAPSIBLE_PANELS, type CollapsedPanels, type ConversationGroup, type PrerequisiteStatus, type ProviderUsage, type SessionSortState, type SkillSuggestion } from '../shared/types.js';
 import { migrateRaw, stampSchemaVersion, type Migration } from './persisted-state.js';
 import { readJsonFile, writeFileAtomicSync } from './json-file.js';
 
@@ -14,6 +14,13 @@ export interface PrerequisiteCache {
 export interface ModelCatalogCache {
   models: unknown[];
   fetchedAt: number;
+}
+
+export interface AgentSignInRecord {
+  signedIn: boolean;
+  /** The agent's own words when it turned Grove down. */
+  message?: string;
+  checkedAt: number;
 }
 
 export interface SkillSuggestionCache {
@@ -48,6 +55,12 @@ export interface AppState {
    *  Shown at the next launch until the agent reports its list again. The
    *  shape of `models` belongs to the adapter, which validates it on load. */
   modelCatalogs?: Record<string, ModelCatalogCache>;
+  /** The plan usage each agent last reported, keyed by adapter id, so a new
+   *  conversation (or the next launch) shows it before the agent connects. */
+  usageSnapshots?: Record<string, ProviderUsage>;
+  /** Whether each agent that signs in through its own CLI was signed in the
+   *  last time Grove found out (a conversation starting, or Check sign-in). */
+  agentSignIn?: Record<string, AgentSignInRecord>;
   /** Projects the user added, in the order they were added. The manifest
    *  only knows projects that have conversations, so without this a project
    *  with none was forgotten at restart. Absent until first listed. */
@@ -130,6 +143,23 @@ const appStateSchema = z.object({
   modelCatalogs: z.record(z.string(), z.object({
     models: z.array(z.unknown()),
     fetchedAt: z.number(),
+  })).optional().catch(undefined),
+  agentSignIn: z.record(z.string(), z.object({
+    signedIn: z.boolean(),
+    message: z.string().optional(),
+    checkedAt: z.number(),
+  })).optional().catch(undefined),
+  usageSnapshots: z.record(z.string(), z.object({
+    available: z.boolean(),
+    plan: z.string().nullable().optional(),
+    windows: z.array(z.object({
+      id: z.string(),
+      label: z.string(),
+      utilization: z.number(),
+      resetsAt: z.number().optional(),
+    })),
+    fetchedAt: z.number(),
+    updatedAt: z.number().optional(),
   })).optional().catch(undefined),
   projects: z.array(z.string()).optional().catch(undefined),
   groups: groupsSchema.optional().catch(undefined),
@@ -236,6 +266,7 @@ const sidebarWidthWriter = debouncedWriter<number>((s, v) => { s.sidebarWidth = 
 const collapsedPanelsWriter = debouncedWriter<CollapsedPanels>((s, v) => { s.collapsedPanels = v; });
 const unreadWriter = debouncedWriter<string[]>((s, v) => { s.unreadSessionIds = v; });
 const groupsWriter = debouncedWriter<ConversationGroup[]>((s, v) => { s.groups = v; });
+const usageWriter = debouncedWriter<Record<string, ProviderUsage>>((s, v) => { s.usageSnapshots = v; });
 
 export function saveOpenTabs(ids: string[]): void {
   openTabsWriter.save(ids);
@@ -314,6 +345,38 @@ export function saveModelCatalog(adapterId: string, models: unknown[]): void {
   updateAppState((state) => {
     state.modelCatalogs = { ...(state.modelCatalogs ?? {}), [adapterId]: { models, fetchedAt: Date.now() } };
   });
+}
+
+/** What Grove last learned about an agent's sign-in, or null. */
+export function loadAgentSignIn(adapterId: string): AgentSignInRecord | null {
+  return loadAppState().agentSignIn?.[adapterId] ?? null;
+}
+
+/** Write-through: only on a conversation start or a check, and only when the
+ *  answer changes. */
+export function saveAgentSignIn(adapterId: string, record: AgentSignInRecord): void {
+  const prev = loadAgentSignIn(adapterId);
+  if (prev && prev.signedIn === record.signedIn && prev.message === record.message) return;
+  updateAppState((state) => {
+    state.agentSignIn = { ...(state.agentSignIn ?? {}), [adapterId]: record };
+  });
+}
+
+/** In memory once read: rate-limit events update it often, and the debounced
+ *  write would otherwise race the next read. */
+let usageSnapshots: Record<string, ProviderUsage> | null = null;
+
+/** The plan usage an agent last reported, or null. */
+export function loadUsageSnapshot(adapterId: string): ProviderUsage | null {
+  usageSnapshots ??= { ...(loadAppState().usageSnapshots ?? {}) };
+  return usageSnapshots[adapterId] ?? null;
+}
+
+/** Debounced: rate-limit events can arrive with every reply. */
+export function saveUsageSnapshot(adapterId: string, usage: ProviderUsage): void {
+  usageSnapshots ??= { ...(loadAppState().usageSnapshots ?? {}) };
+  usageSnapshots = { ...usageSnapshots, [adapterId]: usage };
+  usageWriter.save(usageSnapshots);
 }
 
 /** The saved groups, or null when the file exists but can't be read right

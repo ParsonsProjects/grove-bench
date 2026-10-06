@@ -39,9 +39,21 @@ export const READ_SAFE_SANDBOX_WARNING =
   '(on Windows the sandbox has to be set up first). Without it, commands the read-only check lets ' +
   'through run unsandboxed, so treat that check as a convenience, not protection.';
 
-/** Whether a conversation has already shown READ_SAFE_SANDBOX_WARNING. */
+/** Shown instead for agents Grove can't give a sandbox (capabilities.sandbox
+ *  is false, as for every ACP agent). */
+export const READ_SAFE_NO_SANDBOX_WARNING =
+  'Read-safe mode has no OS sandbox with this agent: commands the read-only check lets through run ' +
+  'without one, so treat that check as a convenience, not protection.';
+
+/** The read-safe warning that is true for this agent. */
+export function readSafeWarning(hasSandbox: boolean): string {
+  return hasSandbox ? READ_SAFE_SANDBOX_WARNING : READ_SAFE_NO_SANDBOX_WARNING;
+}
+
+/** Whether a conversation has already shown a read-safe sandbox warning. */
 export function hasSandboxWarning(history: readonly AgentEvent[]): boolean {
-  return history.some((e) => e.type === 'status' && e.message === READ_SAFE_SANDBOX_WARNING);
+  return history.some((e) => e.type === 'status'
+    && (e.message === READ_SAFE_SANDBOX_WARNING || e.message === READ_SAFE_NO_SANDBOX_WARNING));
 }
 
 /**

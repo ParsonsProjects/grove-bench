@@ -6,6 +6,7 @@ import { worktreeManager } from './worktree-manager.js';
 import { keepOnScreen, loadWindowState, trackWindowState } from './window-state.js';
 import { flushPendingSaves } from './app-state.js';
 import * as settings from './settings.js';
+import { catalogs } from './catalogs.js';
 import { logger } from './logger.js';
 import { terminalManager } from './terminal.js';
 import { previewManager } from './preview.js';
@@ -148,6 +149,12 @@ app.whenReady().then(() => {
   };
   appEvents.once('restore-complete', scheduleFirstSweep);
   setTimeout(scheduleFirstSweep, 60_000);
+
+  // The ACP Registry and models.dev (catalogs.ts): at most once a day, after
+  // the restore, and only while the user allows it (Settings > Privacy).
+  appEvents.once('restore-complete', () => setTimeout(() => {
+    if (settings.getSettings().onlineCatalogs) void catalogs.refresh();
+  }, 10_000));
   const scheduleSweep = () => setTimeout(() => { runSweep(); scheduleSweep(); }, 15 * 60_000);
   scheduleSweep();
 

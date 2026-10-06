@@ -55,12 +55,12 @@
 
   <div class="body">
     <aside class="side">
-      <div class="search t-faint"><span>⌕ Search conversations...</span><span class="kbd">Ctrl+K</span></div>
+      <div class="search t-faint"><span>⌕ Search threads...</span><span class="kbd">Ctrl+K</span></div>
       <div class="chips"><Chips states={world.convs.map((x) => x.state)} /></div>
-      <div class="sec"><span>Conversations</span><span class="t-faint sort">Name <b class="t-muted">Age ⌄</b></span></div>
+      <div class="sec"><span>Threads</span><span class="t-faint sort">Name <b class="t-muted">Age ⌄</b></span></div>
       <div class="rows">
         {#if world.draft}
-          <div class="draftrow"><span class="t-primary">✎</span> New conversation <span class="t-faint">draft</span></div>
+          <div class="draftrow"><span class="t-primary">✎</span> New thread <span class="t-faint">draft</span></div>
         {/if}
         {#each world.convs as x (x.id)}
           <Row c={x} selected={!world.draft && x.id === world.selected} target="row-{x.id}" onclick={() => onselect?.(x.id)} />
@@ -71,17 +71,17 @@
       <div class="foot">
         <div class="fbtns">
           <span class="gb-btn">+ Project</span>
-          <button type="button" class="gb-btn primary" data-target="new" onclick={onnew}>+ Conversation</button>
+          <button type="button" class="gb-btn primary" data-target="new" onclick={onnew}>+ Thread</button>
         </div>
       </div>
     </aside>
 
     <section class="work">
       {#if world.draft}
-        <div class="draft-h"><b>New conversation</b><span class="t-faint">in {world.project} · Claude Agent</span><span class="t-muted dis">Discard</span></div>
+        <div class="draft-h"><b>New thread</b><span class="t-faint">in {world.project} · Claude Agent</span><span class="t-muted dis">Discard</span></div>
         <div class="pane dots draft">
           <GroveScene scale={4} />
-          <p class="dt">New conversation in {world.project}</p>
+          <p class="dt">New thread in {world.project}</p>
           <p class="t-muted dp">The agent will work on a new branch from main, in a separate copy. The branch is named from your message after the first reply.</p>
           <p class="t-muted dp">Mode: <span class="t-green">Read-safe</span>. Auto-accept edits and read-only commands; everything else asks. Uses an OS sandbox where one can start.</p>
         </div>

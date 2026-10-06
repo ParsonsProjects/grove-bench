@@ -10,10 +10,32 @@ vi.mock('../../logger.js', () => ({ logger: { warn: vi.fn(), info: vi.fn(), debu
 const savedKeys = vi.hoisted(() => new Map<string, string>());
 vi.mock('../../credentials.js', () => ({ getApiKey: (id: string) => savedKeys.get(id) ?? null }));
 const catalog = new Map<string, unknown[]>();
+const signIn = new Map<string, { signedIn: boolean; message?: string; checkedAt: number }>();
 vi.mock('../../app-state.js', () => ({
   loadModelCatalog: (id: string) => catalog.get(id) ?? null,
   saveModelCatalog: (id: string, models: unknown[]) => { catalog.set(id, models); },
+  loadAgentSignIn: (id: string) => signIn.get(id) ?? null,
+  saveAgentSignIn: (id: string, record: { signedIn: boolean; message?: string; checkedAt: number }) => { signIn.set(id, record); },
 }));
+
+const registry = new Map<string, unknown>();
+const models = new Map<string, { context?: number }>();
+vi.mock('../../catalogs.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../catalogs.js')>();
+  return {
+    ...actual,
+    catalogs: {
+      registryAgent: (id?: string) => (id ? registry.get(id) ?? null : null),
+      model: (id: string, provider?: string) => models.get(`${provider ?? ''}:${id}`) ?? null,
+      onChange: () => () => {},
+    },
+  };
+});
+
+/** For tests that start several real processes, or one that doesn't exist:
+ *  on Windows a missing program goes through cmd.exe and where.exe, which
+ *  on CI runners can take longer than the 5 s default. */
+const SPAWNS_TIMEOUT_MS = 20_000;
 
 const FIXTURE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fake-acp-agent.test-fixture.mjs');
 
@@ -31,6 +53,9 @@ function def(scenario = 'default'): AcpAgentDefinition {
 let cwd: string;
 beforeEach(() => {
   catalog.clear();
+  signIn.clear();
+  registry.clear();
+  models.clear();
   savedKeys.clear();
   cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'acp-test-'));
 });
@@ -59,6 +84,38 @@ async function until(handle: AgentQueryHandle, type: AdapterEvent['type'], seen:
 }
 
 describe('AcpAdapter', () => {
+  it('gives each turn its share of the session\'s running cost, and its output tokens', async () => {
+    const adapter = new AcpAdapter(def());
+    const handle = await adapter.start(config());
+    await until(handle, 'system_init');
+
+    handle.sendMessage({ text: 'cost' });
+    const first = await until(handle, 'result');
+    handle.sendMessage({ text: 'cost' });
+    const second = await until(handle, 'result');
+
+    expect(first.at(-1)).toMatchObject({ type: 'result', totalCostUsd: 0.01 });
+    expect((second.at(-1) as { totalCostUsd: number }).totalCostUsd).toBeCloseTo(0.01, 10);
+    expect(first.filter((e) => e.type === 'usage').at(-1)).toEqual({ type: 'usage', inputTokens: 900, outputTokens: 40 });
+    handle.close();
+  });
+
+  it('reports controls the agent changes by itself', async () => {
+    const adapter = new AcpAdapter(def());
+    const handle = await adapter.start(config());
+    await until(handle, 'system_init');
+
+    handle.sendMessage({ text: 'self-mode' });
+    const turn = await until(handle, 'result');
+
+    const changes = turn.filter((e) => e.type === 'agent_controls');
+    expect(changes).toEqual([
+      { type: 'agent_controls', values: { 'acp:mode': 'yolo' } },
+      { type: 'agent_controls', values: { 'acp:effort': 'high' } },
+    ]);
+    handle.close();
+  });
+
   it('starts a session, streams a turn and asks before an edit', async () => {
     const adapter = new AcpAdapter(def());
     const asked: PermissionRequest[] = [];
@@ -220,13 +277,54 @@ describe('AcpAdapter', () => {
     handle.close();
   });
 
-  it('says how to sign in when the agent needs it', async () => {
+  it('says how to sign in when the agent needs it, and remembers it is signed out', async () => {
     const adapter = new AcpAdapter(def('auth'));
     const handle = await adapter.start(config());
     const events: AdapterEvent[] = [];
     for await (const e of handle.events) events.push(e);
-    expect(events.find((e) => e.type === 'error')).toMatchObject({ message: expect.stringContaining('Run "fake" in a terminal') });
+    expect(events.find((e) => e.type === 'error')).toMatchObject({ auth: true, message: expect.stringContaining('Run "fake" in a terminal') });
+    expect(await adapter.checkPrerequisites()).toMatchObject({ available: true, authenticated: false, authMessage: 'Authentication required' });
   });
+
+  it('passes on the agent\'s reason, and signs in with the saved key when the agent offers that', async () => {
+    const keyDef: AcpAgentDefinition = { ...def('keyauth'), apiKey: { envVar: 'FAKE_KEY_VAR', label: 'Fake key', helpUrl: 'https://example.com', authMethodId: 'fake-api-key' } };
+
+    const withoutKey = await new AcpAdapter(keyDef).start(config());
+    const failed: AdapterEvent[] = [];
+    for await (const e of withoutKey.events) failed.push(e);
+    expect(failed.find((e) => e.type === 'error')).toMatchObject({
+      auth: true,
+      message: expect.stringMatching(/^Fake Agent needs you to sign in: This client is no longer supported\. Run "fake".*or save a Fake key/),
+    });
+
+    // A saved key the agent turns down is flagged, so new threads ask again.
+    savedKeys.set('fake-acp', 'bad-key');
+    const refused = await new AcpAdapter(keyDef).start(config());
+    const refusedEvents: AdapterEvent[] = [];
+    for await (const e of refused.events) refusedEvents.push(e);
+    expect(refusedEvents.find((e) => e.type === 'error')).toMatchObject({ auth: true, keyRejected: true });
+
+    savedKeys.set('fake-acp', 'good-key');
+    const adapter = new AcpAdapter(keyDef);
+    const handle = await adapter.start(config());
+    await until(handle, 'system_init');
+    expect(signIn.get('fake-acp')?.signedIn).toBe(true);
+    handle.close();
+  }, SPAWNS_TIMEOUT_MS);
+
+  it('checks sign-in by opening a session it throws away', async () => {
+    expect(await new AcpAdapter(def()).checkSignIn!()).toEqual({ signedIn: true });
+    expect(await new AcpAdapter(def('auth')).checkSignIn!()).toEqual({ signedIn: false, message: 'Authentication required' });
+    expect(signIn.get('fake-acp')).toMatchObject({ signedIn: false });
+    // An agent without Check sign-in isn't held back by an old refusal.
+    expect(await new AcpAdapter({ ...def(), command: process.execPath, cliSignIn: undefined }).checkPrerequisites()).toMatchObject({ authenticated: true, authUnchecked: true });
+    // Agents without a CLI sign-in aren't started just to check.
+    expect(new AcpAdapter({ ...def(), cliSignIn: undefined }).checkSignIn).toBeUndefined();
+  }, SPAWNS_TIMEOUT_MS);
+
+  it('can\'t tell whether a program that doesn\'t start is signed in', async () => {
+    expect((await new AcpAdapter({ ...def(), command: 'definitely-not-an-acp-agent-xyz' }).checkSignIn!()).signedIn).toBeNull();
+  }, SPAWNS_TIMEOUT_MS);
 
   it('reports a program that does not start', async () => {
     const adapter = new AcpAdapter({ ...def(), command: 'definitely-not-an-acp-agent-xyz' });
@@ -235,7 +333,7 @@ describe('AcpAdapter', () => {
     for await (const e of handle.events) events.push(e);
     expect(events.some((e) => e.type === 'error')).toBe(true);
     expect((await adapter.checkPrerequisites()).available).toBe(false);
-  });
+  }, SPAWNS_TIMEOUT_MS);
 
   it('keeps the agent\'s own defaults when a conversation changes a control', async () => {
     const adapter = new AcpAdapter(def());
@@ -278,6 +376,21 @@ describe('AcpAdapter', () => {
     expect(asked[0]).toMatchObject({ toolName: 'execute', toolCategory: 'bash', toolView: { kind: 'other', summary: 'npm test' } });
     expect(turn.find((e) => e.type === 'tool_result' && e.toolUseId === 'e1')).toMatchObject({ isError: true });
     handle.close();
+  });
+
+  it('takes the install command from the ACP Registry, and context sizes from models.dev', async () => {
+    const missing = path.join(cwd, 'no-such-agent.exe');
+    const listed: AcpAgentDefinition = { ...def(), command: missing, registryId: 'fake', modelProvider: 'fakeco', installCommand: 'npm install -g fake-old' };
+    expect((await new AcpAdapter(listed).checkPrerequisites()).installCommand).toBe('npm install -g fake-old');
+    registry.set('fake', { id: 'fake', name: 'Fake', version: '2.0.0', distribution: { npx: { package: 'fake-agent@2.0.0', args: ['--acp'] } } });
+    expect((await new AcpAdapter(listed).checkPrerequisites()).installCommand).toBe('npm install -g fake-agent@2.0.0');
+
+    catalog.set('fake-acp', [{ models: [{ id: 'm1', label: 'Model 1' }, { id: 'm2', label: 'Model 2' }], controls: [] }]);
+    models.set('fakeco:m1', { context: 1_000_000 });
+    expect(new AcpAdapter(listed).getModels()).toEqual([
+      { id: 'm1', label: 'Model 1', contextWindow: 1_000_000 },
+      { id: 'm2', label: 'Model 2' },
+    ]);
   });
 
   it('finds an agent given by full path', async () => {
@@ -365,7 +478,7 @@ describe('AcpAdapter', () => {
       await until(handle, 'system_init');
       handle.sendMessage({ text: 'unasked' });
       const [warning] = warnings(await until(handle, 'result'));
-      expect(warning.message).toContain('ran "b.txt" without asking, though this conversation doesn\'t allow that tool');
+      expect(warning.message).toContain('ran "b.txt" without asking, though this thread doesn\'t allow that tool');
       handle.close();
     });
 

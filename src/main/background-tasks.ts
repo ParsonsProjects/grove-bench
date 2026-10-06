@@ -9,7 +9,8 @@ import { worktreeManager } from './worktree-manager.js';
  * commit messages and skill suggestions. Each task runs on the agent of the
  * conversation it belongs to, so a conversation's content only goes to the
  * provider the user chose for it, and uses that agent's cheap background
- * model rather than its conversation model.
+ * model rather than its conversation model. After a switch to another agent
+ * the tasks read only what came after it (agent-handoff.ts).
  */
 
 /** The user's pick in Settings > Agents, else the adapter's own cheap default,

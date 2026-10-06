@@ -1,12 +1,12 @@
 # Project Memory
 
-Open the Memory panel from the brain icon in the sidebar bottom controls. Project memory stores persistent notes about your project that the agent can read and write across conversations.
+Open the Memory panel from the brain icon in the sidebar bottom controls. Project memory stores persistent notes about your project that the agent can read and write across threads.
 
 ## How It Works
 
 Memory files are markdown documents organized into folders. They are stored per project, so each project has its own set of notes.
 
-The agent automatically reads relevant memory files at the start of each conversation and can create or update them as it learns about your project.
+The agent automatically reads relevant memory files at the start of each thread and can create or update them as it learns about your project.
 
 ## Folders
 
@@ -15,13 +15,13 @@ Memory is organized into four folders:
 - **repo/** — Overview information about the repository (tech stack, structure, key files)
 - **conventions/** — Coding conventions, naming patterns, and style guidelines
 - **architecture/** — Data flow, module relationships, and architectural decisions
-- **sessions/** — Conversation notes: what past conversations did and learned
+- **sessions/** — Thread notes: what past threads did and learned
 
 ## Auto-Compaction
 
-Memory grows as the agent saves notes across conversations, and over time it accumulates duplicates, stale details, and statements that contradict newer discoveries. When **Auto-compact project memory** is turned on, Grove Bench compacts memory automatically:
+Memory grows as the agent saves notes across threads, and over time it accumulates duplicates, stale details, and statements that contradict newer discoveries. When **Auto-compact project memory** is turned on, Grove Bench compacts memory automatically:
 
-- **Conversation note pruning** — only the 20 most recent conversation notes are kept. A note's age comes from its `updatedAt` frontmatter, falling back to the file's modification time, so an actively-written note is never pruned by mistake. Pruned notes are archived to a hidden folder inside the memory directory (the last 50 are kept) rather than destroyed outright.
+- **Thread note pruning** — only the 20 most recent thread notes are kept. A note's age comes from its `updatedAt` frontmatter, falling back to the file's modification time, so an actively-written note is never pruned by mistake. Pruned notes are archived to a hidden folder inside the memory directory (the last 50 are kept) rather than destroyed outright.
 - **Dedupe & merge** — when memory grows past its budget, an AI pass merges files covering the same topic and removes repeated facts.
 - **Contradiction resolution** — when two notes conflict, the more recently updated one wins; explicit user corrections always take priority over inferred facts.
 
@@ -31,7 +31,7 @@ The Memory panel shows a budget meter (**Agent prompt budget**) — how much of 
 
 You can also compact on demand with the **Compact** button. After a pass, a summary lists every file that was rewritten or removed with the reason, and **Undo** restores the pre-compaction snapshot in one click. **Backups** lists all snapshots — use **View** to inspect a snapshot's files before restoring it; restoring takes a snapshot of the current state first so the restore itself can be undone.
 
-**Clean up notes** lists conversation notes older than a chosen cutoff (any number of days) so you can review exactly what will be removed before deleting it. This deletes memory files only — your actual conversations in the sidebar are never touched. Notes without a readable date are surfaced at the top as "unknown date" rather than deleted silently. Unlike compaction, conversation-note deletion is permanent — conversation notes are not included in backups. (To remove old *conversations* themselves, use **Clean up old conversations** in the sidebar.)
+**Clean up notes** lists thread notes older than a chosen cutoff (any number of days) so you can review exactly what will be removed before deleting it. This deletes memory files only — your actual threads in the sidebar are never touched. Notes without a readable date are surfaced at the top as "unknown date" rather than deleted silently. Unlike compaction, thread-note deletion is permanent — thread notes are not included in backups. (To remove old *threads* themselves, use **Clean up old threads** in the sidebar.)
 
 **Auto-save project memory** (on by default) and **Auto-compact project memory** (off by default) are both in **Settings → Background work (Tending)**.
 
@@ -44,6 +44,6 @@ You can also compact on demand with the **Compact** button. After a pass, a summ
 
 ## Tips
 
-- Memory helps the agent avoid repeating mistakes across conversations
+- Memory helps the agent avoid repeating mistakes across threads
 - If the agent keeps getting something wrong, add a note to the conventions folder
-- Conversation summaries help future conversations understand context from past work
+- Thread summaries help future threads understand context from past work

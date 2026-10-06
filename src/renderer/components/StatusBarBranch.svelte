@@ -255,7 +255,7 @@
                   title={isRunning
                     ? 'Create a pull request once the agent finishes its turn'
                     : canAgentCreatePr
-                      ? 'Ask the agent to commit, push, and create a pull request in this conversation'
+                      ? 'Ask the agent to commit, push, and create a pull request in this thread'
                       : 'Push this branch and create a pull request'}
                 >
                   Create PR

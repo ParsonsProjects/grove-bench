@@ -22,7 +22,7 @@ export interface HelpTopic {
 export const topics: HelpTopic[] = [
   { id: 'getting-started', title: 'Getting Started', section: 'Getting Started', content: gettingStarted },
   { id: 'sidebar', title: 'Sidebar & Projects', section: 'Interface', content: sidebar },
-  { id: 'session-states', title: 'Conversation States & Colors', section: 'Interface', content: sessionStates },
+  { id: 'session-states', title: 'Thread States & Colors', section: 'Interface', content: sessionStates },
   { id: 'thread-tab', title: 'Thread Tab', section: 'Interface', content: threadTab },
   { id: 'changes-tab', title: 'Changes Tab', section: 'Interface', content: changesTab },
   { id: 'checkpoints-tab', title: 'Checkpoints Tab', section: 'Interface', content: checkpointsTab },

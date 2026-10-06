@@ -42,10 +42,17 @@
     if (usd === 0) return '$0.00';
     return usd < 0.01 ? '<$0.01' : `$${usd.toFixed(2)}`;
   });
+  /** Claude Code's figure is list price; other agents pass on what their
+   *  provider reported (OpenCode through OpenRouter, for example). */
+  let reportsPlanUsage = $derived.by(() => {
+    const agentType = store.sessions.find((s) => s.id === sessionId)?.agentType ?? agentsStore.defaultId;
+    return agentsStore.get(agentType)?.capabilities.usage !== false;
+  });
   let lastTurnTitle = $derived.by(() => {
     const usd = lastResult?.totalCostUsd;
     const took = lastResult?.durationMs !== undefined ? `took ${(lastResult.durationMs / 1000).toFixed(1)}s` : '';
-    if (lastTurnCost && usd !== undefined) return `Last turn: $${usd.toFixed(4)} at list price (an estimate)${took ? `, ${took}` : ''}`;
+    const basis = reportsPlanUsage ? 'at list price (an estimate)' : 'as the agent reported it';
+    if (lastTurnCost && usd !== undefined) return `Last turn: $${usd.toFixed(4)} ${basis}${took ? `, ${took}` : ''}`;
     return `Last turn ${took}${onPlan ? '. Your plan covers it: see Usage in Agent settings' : ''}`;
   });
 </script>

@@ -42,6 +42,7 @@ vi.mock('./worktree-manager.js', () => ({
     getAdapterType: vi.fn().mockResolvedValue(undefined),
     getAgentAndModel: vi.fn().mockResolvedValue({}),
     saveAdapterType: vi.fn().mockResolvedValue(undefined),
+    writeAgentSettings: vi.fn().mockResolvedValue(undefined),
     list: vi.fn().mockResolvedValue([]),
     getWorktreeOrManifest: vi.fn().mockResolvedValue(undefined),
   },
@@ -282,7 +283,7 @@ function makeMockWindow() {
 // Import the module under test AFTER mocks are set up
 const { sessionManager } = await import('./agent-session.js');
 const { sanitizeElicitationResponse } = await import('./session-permissions.js');
-const { READ_SAFE_SANDBOX_WARNING } = await import('./session-config.js');
+const { READ_SAFE_SANDBOX_WARNING, READ_SAFE_NO_SANDBOX_WARNING } = await import('./session-config.js');
 const settingsMock = await import('./settings.js') as unknown as { getSettings: ReturnType<typeof vi.fn> };
 const { getGitIdentity, isGitRepo } = await import('./git.js');
 const { CheckpointManager } = await import('./checkpoints.js') as unknown as { CheckpointManager: { instances: unknown[] } };
@@ -1127,6 +1128,21 @@ describe('read-safe sandbox warning', () => {
 
     expect(warnings(win).length).toBeGreaterThan(0);
     await sessionManager.destroySession('test-rs-switch');
+  });
+
+  it('says there is no sandbox at all for an agent Grove can\'t sandbox', async () => {
+    (mockAdapter.capabilities as Record<string, boolean>).sandbox = false;
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-rs-acp', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(sessionManager.getSession('test-rs-acp')?.queryHandle).toBeTruthy());
+
+    sessionManager.setMode('test-rs-acp', 'readSafe');
+
+    // Nothing about a sandbox arriving at the next restart: it never will.
+    expect(warnings(win)).toEqual([{ type: 'status', level: 'warning', message: READ_SAFE_NO_SANDBOX_WARNING }]);
+    await sessionManager.destroySession('test-rs-acp');
   });
 
   it('does not warn in other modes', async () => {
@@ -2629,7 +2645,7 @@ describe('AgentSessionManager.rewindFiles()', () => {
     // Resuming would bring back the rewound turns, so the agent starts over.
     expect(mockAdapter.lastConfig?.resumeSessionId).toBeNull();
     expect(mockAdapter.lastConfig?.resumeAtUuid).toBeNull();
-    expect(session!.eventHistory.some((e) => e.type === 'status' && /can't forget part of a conversation/.test(e.message))).toBe(true);
+    expect(session!.eventHistory.some((e) => e.type === 'status' && /can't forget part of a thread/.test(e.message))).toBe(true);
 
     await sessionManager.destroySession('test-rewind-fresh');
   });
@@ -2750,7 +2766,7 @@ describe('AgentSessionManager.rewindFiles()', () => {
 
     await expect(
       sessionManager.rewindFiles('test-rewind-stale', 'not-in-history', { conversationOnly: true }),
-    ).rejects.toThrow(/no longer part of the conversation/);
+    ).rejects.toThrow(/no longer part of the thread/);
 
     await sessionManager.destroySession('test-rewind-stale');
   });
@@ -3175,7 +3191,7 @@ describe('AgentSessionManager resume of a missing conversation', () => {
 
     const events = eventsOf(win);
     expect(events).toContainEqual(expect.objectContaining({
-      type: 'status', level: 'warning', newConversation: true, message: expect.stringContaining("couldn't find this conversation"),
+      type: 'status', level: 'warning', newConversation: true, message: expect.stringContaining("couldn't find its record of this thread"),
     }));
     // Not reported as stopped: the renderer would resume the same id again.
     expect(events.some((e) => e.type === 'process_exit' || e.type === 'error')).toBe(false);
@@ -3334,7 +3350,7 @@ describe('AgentSessionManager resume of a missing conversation', () => {
       expect(mockAdapter.lastConfig?.resumeSessionId).toBeNull();
       // The switch's marker went with the rewound turns; old-1 is still kept,
       // so a new marker stops a later rewind from forking at it.
-      expect(markers(session.eventHistory)).toEqual([expect.objectContaining({ message: expect.stringContaining('starts a new conversation from here') })]);
+      expect(markers(session.eventHistory)).toEqual([expect.objectContaining({ message: expect.stringContaining('starts afresh from here') })]);
       const markerAt = session.eventHistory.findIndex((e) => e.type === 'status' && e.newConversation);
       expect(markerAt).toBeGreaterThan(session.eventHistory.findIndex((e) => e.type === 'assistant_text' && e.uuid === 'old-1'));
 
@@ -3484,6 +3500,24 @@ describe('AgentSessionManager session controls', () => {
     await sessionManager.destroySession('ctl-set');
   });
 
+  it('records controls the agent changed by itself, without sending them back or logging the event', async () => {
+    const session = await createWithHandle('ctl-agent');
+
+    mockAdapter.control!.emitEvent({ type: 'agent_controls', values: { thinking: 'off', speed: 'warp', permissionMode: 'plan' } });
+
+    await vi.waitFor(() => expect(session.controls.thinking).toBe('off'));
+    // Values the descriptors don't offer, and the permission mode, are ignored.
+    expect(session.controls.speed).toBe('standard');
+    expect(session.permissionMode).toBe('default');
+    expect(session.queryHandle?.setControl).not.toHaveBeenCalled();
+    const history = sessionManager.getEventHistory('ctl-agent');
+    expect(history.some((e) => e.type === 'agent_controls')).toBe(false);
+    const syncs = history.filter((e) => e.type === 'controls_sync') as Extract<AgentEvent, { type: 'controls_sync' }>[];
+    expect(syncs.at(-1)?.values.thinking).toBe('off');
+
+    await sessionManager.destroySession('ctl-agent');
+  });
+
   it('setControl records the value without a live handle so the next query start picks it up', async () => {
     await sessionManager.createSession({ id: 'ctl-idle', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
     const session = sessionManager.getSession('ctl-idle')!;
@@ -3594,6 +3628,130 @@ describe('AgentSessionManager session controls', () => {
     expect(controls.descriptors.map((d) => d.id)).toEqual(['acp:mode']);
     expect(other.getControls).toHaveBeenCalledWith('other-model');
     expect(controls.values).toEqual({});
+  });
+});
+
+describe('AgentSessionManager.switchAgent', () => {
+  function otherAgent(): MockAdapter {
+    const other = new MockAdapter();
+    Object.defineProperty(other, 'id', { value: 'other' });
+    Object.defineProperty(other, 'displayName', { value: 'Other Agent' });
+    extraAdapters.other = other as unknown as AgentAdapter;
+    return other;
+  }
+
+  it('hands the conversation to the new agent, which gets a short transcript with the next message only', async () => {
+    const { worktreeManager } = await import('./worktree-manager.js');
+    const other = otherAgent();
+    await sessionManager.createSession({ id: 'sw-1', branch: 'main', cwd: '/wt/sw-1', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 'old-session', model: 'mock-model', tools: [] });
+    await vi.waitFor(() => expect(sessionManager.getSession('sw-1')?.providerSessionId).toBeTruthy());
+    await sessionManager.sendMessage('sw-1', 'Add a README');
+    mockAdapter.control!.emitEvent({ type: 'assistant_text', text: 'Added it.', uuid: 'a1' });
+    await new Promise((r) => setTimeout(r, 20));
+    const session = sessionManager.getSession('sw-1')!;
+    session.alwaysAllowedTools.add('Bash');
+
+    await sessionManager.switchAgent('sw-1', 'other', { transcript: true });
+    await vi.waitFor(() => expect(other.control).not.toBeNull());
+
+    expect(session.adapter).toBe(other);
+    expect(session.agentType).toBe('other');
+    expect(session.providerSessionId).toBeNull();
+    expect(session.alwaysAllowedTools.size).toBe(0);
+    expect(worktreeManager.saveAdapterType).toHaveBeenCalledWith('sw-1', 'other');
+    expect(worktreeManager.saveProviderSessionId).toHaveBeenCalledWith('sw-1', '');
+    expect(worktreeManager.writeAgentSettings).toHaveBeenCalledWith('/wt/sw-1', '/repo', 'other');
+    const history = sessionManager.getEventHistory('sw-1');
+    expect(history.find((e) => e.type === 'agent_changed')).toMatchObject({ from: 'mock', to: 'other', fromName: 'Mock Agent', toName: 'Other Agent', transcript: true });
+    expect(history.some((e) => e.type === 'status' && e.newConversation)).toBe(true);
+    // The new agent starts afresh, not on the old agent's session.
+    expect(other.lastConfig?.resumeSessionId ?? null).toBeNull();
+
+    await sessionManager.sendMessage('sw-1', 'carry on');
+    await sessionManager.sendMessage('sw-1', 'and then');
+    const sent = vi.mocked(other.handles.at(-1)!.sendMessage).mock.calls.map(([m]) => m.text);
+    expect(sent[0]).toMatch(/^Note from Grove Bench[\s\S]*User: Add a README[\s\S]*Mock Agent: Added it\.[\s\S]*\ncarry on$/);
+    expect(sent[1]).toBe('and then');
+    // The thread shows only what the user typed.
+    expect(sessionManager.getEventHistory('sw-1').filter((e) => e.type === 'user_message').map((e) => (e as { text: string }).text))
+      .toEqual(['Add a README', 'carry on', 'and then']);
+
+    await sessionManager.destroySession('sw-1');
+  });
+
+  it('sends nothing of the conversation when the user said no', async () => {
+    const other = otherAgent();
+    await sessionManager.createSession({ id: 'sw-2', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    await sessionManager.sendMessage('sw-2', 'secret plan');
+
+    await sessionManager.switchAgent('sw-2', 'other', { transcript: false });
+    await vi.waitFor(() => expect(other.control).not.toBeNull());
+    await sessionManager.sendMessage('sw-2', 'hello');
+
+    expect(vi.mocked(other.handles.at(-1)!.sendMessage).mock.calls.map(([m]) => m.text)).toEqual(['hello']);
+    await sessionManager.destroySession('sw-2');
+  });
+
+  it('keeps the transcript for the message after a slash command', async () => {
+    const other = otherAgent();
+    await sessionManager.createSession({ id: 'sw-4', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    await sessionManager.sendMessage('sw-4', 'first');
+
+    await sessionManager.switchAgent('sw-4', 'other', { transcript: true });
+    await vi.waitFor(() => expect(other.control).not.toBeNull());
+    await sessionManager.sendMessage('sw-4', '/compact');
+    await sessionManager.sendMessage('sw-4', 'go on');
+
+    const sent = vi.mocked(other.handles.at(-1)!.sendMessage).mock.calls.map(([m]) => m.text);
+    expect(sent[0]).toBe('/compact');
+    expect(sent[1]).toMatch(/^Note from Grove Bench[\s\S]*\ngo on$/);
+    await sessionManager.destroySession('sw-4');
+  });
+
+  it('leaves the thread alone when the new agent isn\'t installed or signed in', async () => {
+    const other = otherAgent();
+    await sessionManager.createSession({ id: 'sw-5', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    const session = sessionManager.getSession('sw-5')!;
+
+    other.checkPrerequisites = async () => ({ available: false, installRequired: true });
+    await expect(sessionManager.switchAgent('sw-5', 'other', { transcript: true })).rejects.toThrow(/isn't installed/);
+    other.checkPrerequisites = async () => ({ available: true, authenticated: false });
+    await expect(sessionManager.switchAgent('sw-5', 'other', { transcript: true })).rejects.toThrow(/isn't signed in/);
+
+    expect(session.adapter).toBe(mockAdapter);
+    expect(sessionManager.getEventHistory('sw-5').some((e) => e.type === 'agent_changed')).toBe(false);
+    await sessionManager.destroySession('sw-5');
+  });
+
+  it('keeps the switch marker when a rewind goes back past it', async () => {
+    const other = otherAgent();
+    await sessionManager.createSession({ id: 'sw-6', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    await sessionManager.sendMessage('sw-6', 'before the switch');
+    const session = sessionManager.getSession('sw-6')!;
+    const uuid = (session.eventHistory.find((e) => e.type === 'user_message') as { uuid: string }).uuid;
+    await sessionManager.switchAgent('sw-6', 'other', { transcript: true });
+    await vi.waitFor(() => expect(other.control).not.toBeNull());
+
+    await sessionManager.rewindFiles('sw-6', uuid, { conversationOnly: true });
+
+    const history = sessionManager.getEventHistory('sw-6');
+    expect(history.some((e) => e.type === 'user_message')).toBe(false);
+    // Still marked, so background tasks on Other Agent skip what came before.
+    expect(history.filter((e) => e.type === 'agent_changed')).toEqual([expect.objectContaining({ to: 'other', transcript: false })]);
+    expect(session.adapter).toBe(other);
+    await sessionManager.destroySession('sw-6');
+  });
+
+  it('refuses an agent it doesn\'t know', async () => {
+    await sessionManager.createSession({ id: 'sw-3', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
+    await expect(sessionManager.switchAgent('sw-3', 'nope', { transcript: true })).rejects.toThrow(/Unknown agent/);
+    await sessionManager.destroySession('sw-3');
   });
 });
 

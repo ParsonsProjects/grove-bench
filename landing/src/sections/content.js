@@ -13,7 +13,7 @@ export const FOUNDER = {
   commit: '7f3a9c2e41b8d05a6c19f3e2b7d4a8c0e5f1b923',
   paragraphs: [
     'I wanted to hand out more than one task at a time. Running AI agents one after another meant a lot of waiting. Running them side by side in the same folder meant they edited the same files and broke each other’s tests.',
-    'Git already had the fix: worktrees. A separate copy of the project for each task, on its own branch. Grove Bench gives every conversation one, with its own terminal, so you can start three tasks, step away, and review each one on its own.',
+    'Git already had the fix: worktrees. A separate copy of the project for each task, on its own branch. Grove Bench gives every thread one, with its own terminal, so you can start three tasks, step away, and review each one on its own.',
     'The little characters are there so you never have to wonder. One look at the sidebar says who’s working, who needs you and who’s done.',
     'It’s free and source-available. I hope it gives you back some of the time it gave me.',
   ],
@@ -24,15 +24,15 @@ export const FOUNDER = {
 export const FEATURES = [
   {
     key: 'worktrees',
-    where: 'New conversation',
+    where: 'New thread',
     title: 'A branch for every agent',
-    text: 'Each conversation gets its own git worktree, branch and terminal. Your checkout stays as it is.',
+    text: 'Each thread gets its own git worktree, branch and terminal. Your checkout stays as it is.',
   },
   {
     key: 'permissions',
     where: 'Thread tab',
     title: 'It asks before it acts',
-    text: 'Pick a mode per conversation: Ask, Plan, Edit, Auto or Read-\u2060safe. Anything outside it waits for you.',
+    text: 'Pick a mode per thread: Ask, Plan, Edit, Auto or Read-\u2060safe. Anything outside it waits for you.',
   },
   {
     key: 'status',
@@ -44,13 +44,13 @@ export const FEATURES = [
     key: 'checkpoints',
     where: 'Checkpoints tab',
     title: 'Every message is a checkpoint',
-    text: 'Went the wrong way? Rewind the files and the conversation to before any message you sent.',
+    text: 'Went the wrong way? Rewind the files and the thread to before any message you sent.',
   },
   {
     key: 'sleep',
     where: 'Settings → Tending',
     title: 'Naps when idle',
-    text: 'After 30 idle minutes a conversation’s agent sleeps to save memory and CPU, then wakes where it left off.',
+    text: 'After 30 idle minutes a thread’s agent sleeps to save memory and CPU, then wakes where it left off.',
   },
   {
     key: 'context',
@@ -63,7 +63,7 @@ export const FEATURES = [
 export const STEPS = [
   { ui: '+ Project', title: 'Add a project', text: 'Pick a folder on your computer, ideally a git repository.' },
   {
-    ui: '+ Conversation',
+    ui: '+ Thread',
     title: 'Hand out tasks',
     text: 'Describe what you want. It starts on a new branch in its own worktree. Start another whenever you like.',
   },
@@ -75,10 +75,10 @@ export const STEPS = [
 ];
 
 export const INCLUDED = [
-  'several conversations at once, each in its own worktree',
-  'a real terminal for every conversation',
+  'several threads at once, each in its own worktree',
+  'a real terminal for every thread',
   'permission modes, checkpoints and rewind',
-  'project memory shared across conversations',
+  'project memory shared across threads',
   'updates that download in the background',
 ];
 
@@ -89,7 +89,7 @@ export const FAQ = [
   },
   {
     q: 'What do I need?',
-    a: 'Windows 10 or later, and either a Claude plan (Pro, Max, Team or Enterprise) with Claude Code installed and signed in, or an Anthropic API key. Git 2.17 or later is recommended: without it, conversations edit your folder in place and can’t be rewound.',
+    a: 'Windows 10 or later, and either a Claude plan (Pro, Max, Team or Enterprise) with Claude Code installed and signed in, or an Anthropic API key. Git 2.17 or later is recommended: without it, threads edit your folder in place and can’t be rewound.',
   },
   {
     q: 'Which agents does it work with?',
@@ -98,7 +98,7 @@ export const FAQ = [
   { q: 'Does it run on Mac or Linux?', a: 'No. Grove Bench is a Windows app.' },
   {
     q: 'Will the agents overwrite each other’s work?',
-    a: 'No. In a git project each conversation works in its own worktree, on its own branch. Branches that change the same lines can still conflict when you merge them, as with any branches.',
+    a: 'No. In a git project each thread works in its own worktree, on its own branch. Branches that change the same lines can still conflict when you merge them, as with any branches.',
   },
   {
     q: 'Do I have to name the branches?',

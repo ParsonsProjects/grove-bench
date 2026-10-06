@@ -92,8 +92,8 @@
         onblur={commit}
         type="text"
         maxlength={MAX_USER_GOAL_LENGTH}
-        placeholder="What should this conversation get done?"
-        aria-label="Conversation goal"
+        placeholder="What should this thread get done?"
+        aria-label="Thread goal"
         class="flex-1 min-w-0 bg-transparent border border-input px-1.5 py-0.5 text-xs text-foreground outline-none focus:border-ring placeholder:text-muted-foreground"
       />
     {:else if goal.text}
@@ -123,7 +123,7 @@
           class={ICON_BUTTON}
           onclick={() => goalStore.refresh(sessionId)}
           disabled={generating}
-          title="Write a new goal from the conversation so far (one background model call)"
+          title="Write a new goal from the thread so far (one background model call)"
           aria-label="Refresh the goal"
         >
           <svg class="w-3.5 h-3.5 {generating ? 'animate-spin' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -134,7 +134,7 @@
           type="button"
           class={ICON_BUTTON}
           onclick={() => goalStore.setHidden(sessionId, true)}
-          title="Hide the goal for this conversation"
+          title="Hide the goal for this thread"
           aria-label="Hide the goal"
         >
           <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>

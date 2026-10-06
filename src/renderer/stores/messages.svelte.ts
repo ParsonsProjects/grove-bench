@@ -728,7 +728,10 @@ class MessageStore {
    *  Alt+M, Alt+T). Falls back to the built-in mode cycle when no descriptors
    *  have arrived yet so the shortcut never goes dead. */
   cycleControl(sessionId: string, controlId: string) {
-    const descriptor = this.getControlDescriptors(sessionId).find((d) => d.id === controlId);
+    const descriptors = this.getControlDescriptors(sessionId);
+    // A control may stand in for a well-known one (an ACP agent's effort).
+    const descriptor = descriptors.find((d) => d.id === controlId) ?? descriptors.find((d) => d.role === controlId);
+    if (descriptor && descriptor.id !== controlId) controlId = descriptor.id;
     if (!descriptor || descriptor.options.length === 0) {
       if (controlId === CONTROL_IDS.permissionMode) this.cycleMode(sessionId);
       return;
@@ -1068,14 +1071,15 @@ class MessageStore {
 
   cycleMode(sessionId: string) {
     const current = this.getMode(sessionId);
-    // Cycle through the modes the adapter declared for this session; the
-    // built-in list only serves sessions whose descriptors haven't arrived.
+    // Cycle through the modes the adapter declared for this session. Before
+    // they arrive, only the modes every agent offers: Plan and Auto are
+    // Claude Code's, and an ACP agent would take them as Ask.
     const declared = this.getControlDescriptors(sessionId)
       .find((d) => d.id === CONTROL_IDS.permissionMode)
       ?.options.map((o) => o.value as PermissionMode);
     const modes: readonly PermissionMode[] = declared && declared.length > 0
       ? declared
-      : ['default', 'plan', 'acceptEdits', 'auto', 'readSafe'];
+      : ['default', 'acceptEdits', 'readSafe'];
     const idx = modes.indexOf(current);
     const next = modes[(idx + 1) % modes.length];
     this.setMode(sessionId, next);
@@ -1445,7 +1449,7 @@ class MessageStore {
         this.onResult(sessionId, event);
         // A finished turn is the cheapest moment to learn what it cost the
         // plan; the store throttles so back-to-back turns don't spam the SDK.
-        if (this.sideEffects) usageStore.refresh(sessionId).catch(() => {});
+        if (this.sideEffects && this._replayBuffer === null) usageStore.refresh(sessionId).catch(() => {});
         break;
 
       case 'error':
@@ -1456,10 +1460,11 @@ class MessageStore {
           text: event.message,
           ...(event.auth ? { auth: true } : {}),
         });
-        // Main has flagged a refused key: re-check so a new conversation asks
-        // for credentials instead of failing the same way. Live only, not when
-        // an old failure is replayed.
-        if (event.keyRejected && this.sideEffects && this._replayBuffer === null) void prerequisitesStore.refresh();
+        // Main has flagged a refused key, or the agent turned the sign-in
+        // down: re-check so a new conversation asks for credentials instead
+        // of failing the same way. Live only, not when an old failure is
+        // replayed.
+        if ((event.keyRejected || event.auth) && this.sideEffects && this._replayBuffer === null) void prerequisitesStore.refresh();
         // If the session never initialized (system_init never arrived),
         // unlock the input so the user can see the error and retry.
         if (!this.getIsReady(sessionId)) {
@@ -1557,7 +1562,8 @@ class MessageStore {
             utilization: event.utilization,
             rateLimitType: event.rateLimitType,
           });
-          usageStore.applyRateLimitEvent(sessionId, event);
+          // Live only: a replayed one is from whenever that turn ran.
+          if (this._replayBuffer === null) usageStore.applyRateLimitEvent(sessionId, event);
         }
         if (event.status === 'rejected') {
           this.pushMessage(sessionId, {
@@ -1662,6 +1668,20 @@ class MessageStore {
         }
         break;
 
+      case 'agent_changed': {
+        // The conversation runs on another agent from here. The last switch
+        // in the log wins, so a replay ends on the right one too.
+        const entry = sessionStore.sessions.find((s) => s.id === sessionId);
+        if (entry) entry.agentType = event.to;
+        if (this._replayBuffer === null) {
+          // The old agent's model and controls no longer apply; the new
+          // agent's arrive with its controls_sync.
+          delete this.controlsBySession[sessionId];
+          delete this.modelBySession[sessionId];
+        }
+        break;
+      }
+
       case 'controls_sync':
         this.controlsBySession[sessionId] = { descriptors: event.descriptors, values: event.values };
         break;
@@ -1721,7 +1741,7 @@ class MessageStore {
       kind: 'system',
       id: nextId(),
       text: wasCleared
-        ? `Conversation cleared — connected to ${event.model}`
+        ? `Thread cleared. Connected to ${event.model}`
         : `Connected to ${event.model}`,
     });
 

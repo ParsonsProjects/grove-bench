@@ -54,11 +54,11 @@
       "softwareRequirements": "Windows 10 or later. Claude Code with a Claude plan, or an Anthropic API key. Git 2.17 or later recommended.",
       "featureList": [
         "Several AI coding agents running in parallel on one project",
-        "Each conversation in its own git worktree and branch",
-        "A dedicated terminal per conversation",
+        "Each thread in its own git worktree and branch",
+        "A dedicated terminal per thread",
         "Permission prompts for edits and commands",
         "Checkpoints and rewind",
-        "Project memory shared across conversations"
+        "Project memory shared across threads"
       ]
     }
     </script>
@@ -74,17 +74,17 @@
       <p>Grove Bench is a free, source-available Windows app for running several AI coding agents on one project at once, starting with Claude Code. Every task gets its own git worktree, branch and terminal, so the agents never trip over each other.</p>
       <h2>Features</h2>
       <ul>
-        <li><strong>A branch for every agent:</strong> each conversation gets its own git worktree, branch and terminal. Your checkout stays as it is.</li>
-        <li><strong>It asks before it acts:</strong> pick a mode per conversation (Ask, Plan, Edit, Auto or Read-safe). Anything outside it waits for you.</li>
+        <li><strong>A branch for every agent:</strong> each thread gets its own git worktree, branch and terminal. Your checkout stays as it is.</li>
+        <li><strong>It asks before it acts:</strong> pick a mode per thread (Ask, Plan, Edit, Auto or Read-safe). Anything outside it waits for you.</li>
         <li><strong>Status at a glance:</strong> a small pixel character shows whether each agent is working, needs you or has finished.</li>
-        <li><strong>Every message is a checkpoint:</strong> rewind the files and the conversation to before any message you sent.</li>
-        <li><strong>Naps when idle:</strong> after 30 idle minutes a conversation's agent sleeps to save memory and CPU, then wakes where it left off.</li>
+        <li><strong>Every message is a checkpoint:</strong> rewind the files and the thread to before any message you sent.</li>
+        <li><strong>Naps when idle:</strong> after 30 idle minutes a thread's agent sleeps to save memory and CPU, then wakes where it left off.</li>
         <li><strong>Watch the context fill:</strong> a strip of grove grows along the status bar as the context window fills.</li>
       </ul>
       <h2>How it works</h2>
       <ol>
         <li>Add a project: pick a folder on your computer, ideally a git repository.</li>
-        <li>Hand out tasks: each conversation starts on a new branch in its own worktree.</li>
+        <li>Hand out tasks: each thread starts on a new branch in its own worktree.</li>
         <li>Review and ship: read the diff in the Changes tab, then open a pull request or merge the branch your usual way.</li>
       </ol>
       <p>Needs Windows 10 or later, and either a Claude plan with Claude Code or an Anthropic API key. Git 2.17 or later is recommended.</p>

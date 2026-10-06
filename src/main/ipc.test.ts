@@ -219,7 +219,7 @@ describe('repos', () => {
 
   it('REPO_REMOVE refuses while the project has live conversations', async () => {
     m.sessionManager.getSessionsByRepo.mockReturnValue([{ id: 's1' }]);
-    await expect(invoke(IPC.REPO_REMOVE, '/repo')).rejects.toThrow('active conversations');
+    await expect(invoke(IPC.REPO_REMOVE, '/repo')).rejects.toThrow('active threads');
     expect(m.worktreeManager.cleanupOrphans).not.toHaveBeenCalled();
   });
 });
@@ -478,9 +478,9 @@ describe('conversation lifecycle', () => {
   });
 
   it('SESSION_DESTROY stops nothing when other conversations share the worktree', async () => {
-    m.worktreeManager.assertRemovable.mockRejectedValue(new Error('Another conversation is still working in this worktree.'));
+    m.worktreeManager.assertRemovable.mockRejectedValue(new Error('Another thread is still working in this worktree.'));
 
-    await expect(invoke(IPC.SESSION_DESTROY, 's1', true)).rejects.toThrow('Another conversation');
+    await expect(invoke(IPC.SESSION_DESTROY, 's1', true)).rejects.toThrow('Another thread');
 
     expect(m.previewManager.close).not.toHaveBeenCalled();
     expect(m.terminalManager.killAllForSession).not.toHaveBeenCalled();

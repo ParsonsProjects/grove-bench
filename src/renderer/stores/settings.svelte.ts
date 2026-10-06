@@ -40,6 +40,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   analyticsEnabled: false,
   analyticsPrompted: false,
   crashReportsEnabled: false,
+  onlineCatalogs: true,
 };
 
 /** Settings edited in a text field. Typing saves them after a pause rather

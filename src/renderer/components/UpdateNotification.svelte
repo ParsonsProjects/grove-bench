@@ -24,8 +24,8 @@
     const working = store.sessions.filter((s) => messageStore.getIsRunning(s.id)).length;
     if (working > 0) {
       const message = working === 1
-        ? '1 conversation is still working. Restarting stops it; it reopens after the update.'
-        : `${working} conversations are still working. Restarting stops them; they reopen after the update.`;
+        ? '1 thread is still working. Restarting stops it; it reopens after the update.'
+        : `${working} threads are still working. Restarting stops them; they reopen after the update.`;
       if (!confirm(`${message}\n\nRestart now?`)) return;
     }
     restarting = true;

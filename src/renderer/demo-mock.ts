@@ -71,10 +71,11 @@ const SETTINGS = {
   analyticsEnabled: false,
   analyticsPrompted: true,
   crashReportsEnabled: false,
+  onlineCatalogs: true,
 };
 
 const GOALS: Record<string, string> = {
-  's-sidebar': 'Redesign the sidebar so conversations group by project and show their status at a glance',
+  's-sidebar': 'Redesign the sidebar so threads group by project and show their status at a glance',
   's-oauth': 'Fix the OAuth refresh flow so sessions stop dropping after one hour',
 };
 
@@ -316,6 +317,7 @@ const api: Record<string, unknown> = {
     },
   }),
   checkGhPrerequisite: async () => ({ available: true, version: '2.65.0', authenticated: true }),
+  checkAgentSignIn: async () => ({ git: { available: true, version: '2.47.1', meetsMinimum: true }, agents: {} }),
   listRepos: async () => [],
   // Adding a project picks a folder without git.
   addRepo: async () => ({ kind: 'folder', path: 'C:\\Users\\sam\\notes' }),
@@ -417,12 +419,15 @@ const api: Record<string, unknown> = {
   listMcpServers: async () => [],
   // A second agent so screenshots can show agent choice. Only Claude Code is
   // registered in the app itself.
+  listRegistryAgents: async () => [],
+  getRegistryIcon: async () => null,
+  refreshCatalogs: async () => ({ fetchedAt: null }),
   listAdapters: async () => [{
     id: 'claude-code', displayName: 'Claude Agent', capabilities: { mcpConfig: true, plugins: true, permissionModes: true }, isDefault: true, backgroundModel: 'claude-haiku-4-5-20251001',
     // The MCP popover only offers controls the agent declares.
     mcp: {
       controls: { list: true, reconnect: true, toggle: true, signIn: true, contextCost: true },
-      disconnectHint: 'Disconnect this server in this project. New conversations here also start without it until you connect it again.',
+      disconnectHint: 'Disconnect this server in this project. New threads here also start without it until you connect it again.',
     },
   }, {
     id: 'codex', displayName: 'Codex', capabilities: { permissionModes: true },
@@ -464,6 +469,8 @@ const api: Record<string, unknown> = {
       { id: 'seven_day_opus', label: 'Weekly · Opus', utilization: 0.71, resetsAt: Math.round((now + 3 * 24 * 60 * min) / 1000) },
     ],
   }),
+  getCachedUsage: async () => null,
+  switchAgent: async () => {},
   // Mirrors the Claude Code adapter's declared controls (for Opus 5.5, the
   // default model) so the status bar
   // renders its badges in the browser demo.

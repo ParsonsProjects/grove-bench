@@ -89,11 +89,11 @@
       </div>
       {#if apiKey.saved && apiKey.rejected}
         <p class="text-xs text-destructive" role="alert">
-          The saved key was refused when a conversation used it. Paste a new key, or remove it to use your CLI sign-in instead.
+          The saved key was refused when a thread used it. Paste a new key, or remove it to use your CLI sign-in instead.
         </p>
       {:else if apiKey.saved && apiKey.unverified}
         <p class="text-xs text-muted-foreground" role="status">
-          Saved, but it couldn't be checked: Grove Bench couldn't reach the provider. Your first conversation will show if it works.
+          Saved, but it couldn't be checked: Grove Bench couldn't reach the provider. Your first thread will show if it works.
         </p>
       {/if}
       <p class="text-xs text-muted-foreground">

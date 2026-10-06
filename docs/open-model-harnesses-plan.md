@@ -114,7 +114,7 @@ the spike pins.
 | Error mid-stream? | OpenRouter reports it as a final chunk with `finish_reason: "error"` [16]. OpenCode retries with a doubling wait and fails after about **65 s**, with **no signal to the client**, and streams the retry into the **same message** after the failed text. | Not fixable in Grove; see Left to do. |
 | Tool call shape? | `tool_call` arrives with an empty `rawInput`; the input comes in the first `in_progress` update. | The adapter's `tool_update` fills it in. |
 | To-do lists? | No ACP `plan` update. To-dos are a `todowrite` tool call. | Shown as a plain tool call. |
-| Usage? | `usage_update` gives tokens used, context size and running cost in USD. | Tokens and context size shown; cost not yet. |
+| Usage? | `usage_update` gives tokens used, context size and running cost in USD; `session/prompt`'s answer gives the turn's input and output tokens. | Context, output tokens and each turn's cost (the rise in the running cost) shown. |
 | Restart? | `session/load` replays the conversation; `session/resume` doesn't. `fork` takes no message id. | Adapter prefers `session/resume`; no conversation rewind. |
 | Memory tools? | An `http` MCP server with a bearer header works; the model sees `grove-memory_memory_read`; MCP calls don't ask. | Served by main's `grove-mcp-http.ts`. |
 | Where does it write? | Its data folder: a SQLite database, a log, and for git projects its own snapshot repo. Nothing in the worktree. | The user's normal OpenCode data folder. |
@@ -149,8 +149,6 @@ the spike pins.
 - **To-do lists.** OpenCode's `todowrite` and Claude Code's `TodoWrite` both
   show as plain tool calls. A shared `todo_list` event and checklist block
   would serve both; the ACP adapter would map OpenCode's tool to it.
-- **Cost.** OpenCode reports each session's running cost; Grove doesn't show
-  it yet.
 - **A long model list.** OpenCode lists every model of every provider it can
   use (598 in testing), so the picker is long. Grouping or search would help.
 - **Custom agents can't set environment variables.** The adapter takes an

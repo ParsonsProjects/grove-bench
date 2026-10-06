@@ -17,7 +17,7 @@
     {#if beforeStart}
       Run these in a terminal with your own details, before or after you start.
     {:else}
-      Run these in a terminal with your own details. There's no need to restart the conversation.
+      Run these in a terminal with your own details. There's no need to restart the thread.
     {/if}
   </p>
   <ul class="mt-1.5 space-y-0.5">

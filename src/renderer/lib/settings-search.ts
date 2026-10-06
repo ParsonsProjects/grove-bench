@@ -6,12 +6,12 @@ export const SETTINGS_SECTIONS = [
   { id: 'general', grove: 'The grove', label: 'General', description: 'How the app looks and behaves.' },
   { id: 'agents', grove: 'Grovekeepers', label: 'Agents', description: 'Sign-in, models and defaults for each agent, and settings for all of them.' },
   { id: 'permissions', grove: 'The gate', label: 'Permissions', description: 'What agents may do without asking you first.' },
-  { id: 'git', grove: 'Branches & roots', label: 'Git & worktrees', description: 'How new conversations get their branch and worktree.' },
+  { id: 'git', grove: 'Branches & roots', label: 'Git & worktrees', description: 'How new threads get their branch and worktree.' },
   { id: 'notifications', grove: 'Bells', label: 'Notifications', description: 'Desktop notifications and taskbar alerts.' },
-  { id: 'background', grove: 'Tending', label: 'Background work', description: 'Project memory, skill suggestions, conversation goals and sleeping idle conversations.' },
+  { id: 'background', grove: 'Tending', label: 'Background work', description: 'Project memory, skill suggestions, thread goals and sleeping idle threads.' },
   { id: 'mcp', grove: 'Tool shed', label: 'MCP servers', description: 'Servers that give agents extra tools.' },
   { id: 'plugins', grove: 'Seed packets', label: 'Plugins', description: 'Add and manage plugins.' },
-  { id: 'privacy', grove: 'Hedges', label: 'Privacy', description: 'Usage data and crash reports.' },
+  { id: 'privacy', grove: 'Hedges', label: 'Privacy', description: 'Usage data, crash reports and online lookups.' },
   { id: 'diagnostics', grove: 'Field notes', label: 'Diagnostics', description: 'The performance log and traces, for tracking down slowness.' },
 ] as const;
 
@@ -68,8 +68,8 @@ export const SETTINGS_INDEX: readonly SettingsEntry[] = [
   { id: 'memory-auto-compact', section: 'background', label: 'Auto-compact project memory' },
   { id: 'memory-compact-timeout', section: 'background', label: 'Compaction timeout', keywords: 'memory seconds' },
   { id: 'skill-suggestions', section: 'background', label: 'Suggest skills automatically' },
-  { id: 'conversation-goal', section: 'background', label: 'Show the conversation goal', keywords: 'summary thread pinned' },
-  { id: 'idle-sleep', section: 'background', label: 'Sleep idle conversations', keywords: 'idle stop cpu memory minutes' },
+  { id: 'conversation-goal', section: 'background', label: 'Show the thread goal', keywords: 'summary thread pinned conversation' },
+  { id: 'idle-sleep', section: 'background', label: 'Sleep idle threads', keywords: 'idle stop cpu memory minutes conversation' },
 
   { id: 'mcp-servers', section: 'mcp', label: 'Configured MCP servers', keywords: 'approve remove health' },
   { id: 'mcp-add', section: 'mcp', label: 'Add MCP server', keywords: 'stdio http sse json' },
@@ -78,6 +78,7 @@ export const SETTINGS_INDEX: readonly SettingsEntry[] = [
 
   { id: 'analytics', section: 'privacy', label: 'Send anonymous usage data', keywords: 'analytics telemetry' },
   { id: 'crash-reports', section: 'privacy', label: 'Send crash reports', keywords: 'errors' },
+  { id: 'online-catalogs', section: 'privacy', label: 'Look up agents and models online', keywords: 'acp registry models.dev network download catalog' },
 
   { id: 'performance-log', section: 'diagnostics', label: 'Performance log', keywords: 'slow lag freeze logs folder' },
   { id: 'performance-trace', section: 'diagnostics', label: 'Record a performance trace', keywords: 'trace profile perfetto slow lag freeze' },

@@ -38,7 +38,7 @@
   const pruneDayPresets = [7, 30, 90, 180];
 
   const compactStageLabels: Record<string, string> = {
-    pruning: 'Pruning old conversation notes',
+    pruning: 'Pruning old thread notes',
     generating: 'Asking the agent to consolidate memory',
     validating: 'Validating the result',
     applying: 'Applying changes',
@@ -356,7 +356,7 @@
           <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>
           Backups
         </Button>
-        <Button size="sm" variant="ghost" onclick={() => showPrune = true} title="Review and delete old conversation notes (memory files only — never your actual conversations)">
+        <Button size="sm" variant="ghost" onclick={() => showPrune = true} title="Review and delete old thread notes (memory files only, never your actual threads)">
           <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m13 11 9-9"/><path d="M14.6 12.6c.8.8.9 2.1.2 3L10 22l-8-8 6.4-4.8c.9-.7 2.2-.6 3 .2Z"/><path d="m6.8 10.4 6.8 6.8"/><path d="m5 17 1.4-1.4"/></svg>
           Clean up notes
         </Button>
@@ -515,9 +515,9 @@
   <Dialog.Root open={true} onOpenChange={(o) => { if (!o) showPrune = false; }}>
     <Dialog.Content class="max-w-md">
       <Dialog.Header>
-        <Dialog.Title>Clean Up Conversation Notes</Dialog.Title>
+        <Dialog.Title>Clean Up Thread Notes</Dialog.Title>
         <Dialog.Description>
-          Delete old conversation notes — the agent's memory files about past work. Your actual conversations in the sidebar are never touched. Deletion is permanent; conversation notes are not included in compaction backups.
+          Delete old thread notes: the agent's memory files about past work. Your actual threads in the sidebar are never touched. Deletion is permanent; thread notes are not included in compaction backups.
         </Dialog.Description>
       </Dialog.Header>
 
@@ -544,7 +544,7 @@
       </div>
 
       {#if prunableNotes.length === 0}
-        <p class="text-sm text-muted-foreground/50 py-2">No conversation notes older than {pruneDays} days.</p>
+        <p class="text-sm text-muted-foreground/50 py-2">No thread notes older than {pruneDays} days.</p>
       {:else}
         <div class="flex flex-col gap-1 max-h-64 overflow-auto">
           {#each prunableNotes as note (note.relativePath)}
@@ -586,9 +586,9 @@
   <Dialog.Root open={true} onOpenChange={(o) => { if (!o) confirmPrune = false; }}>
     <Dialog.Content class="max-w-xs">
       <Dialog.Header>
-        <Dialog.Title>Delete Conversation Notes?</Dialog.Title>
+        <Dialog.Title>Delete Thread Notes?</Dialog.Title>
         <Dialog.Description>
-          Permanently delete {pruneSelectedPaths.length} conversation {pruneSelectedPaths.length === 1 ? 'note' : 'notes'}? This cannot be undone.
+          Permanently delete {pruneSelectedPaths.length} thread {pruneSelectedPaths.length === 1 ? 'note' : 'notes'}? This cannot be undone.
         </Dialog.Description>
       </Dialog.Header>
       <Dialog.Footer>

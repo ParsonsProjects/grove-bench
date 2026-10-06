@@ -1,7 +1,7 @@
 import { ipcMain, BrowserWindow, dialog, shell } from 'electron';
 import { runProcess } from './process-host.js';
 import { IPC, PERMISSION_MODES } from '../shared/types.js';
-import type { BranchSwitchResult, BranchSyncResult, ConversationGoal, CreateSessionOpts, OpenPrSummary, PermissionMode, PrerequisiteStatus, PermissionDecision, SessionInfo, SkillDefinition, WorktreeInfo } from '../shared/types.js';
+import type { BranchSwitchResult, BranchSyncResult, ConversationGoal, CreateSessionOpts, OpenPrSummary, PermissionMode, PrerequisiteStatus, PermissionDecision, RegistryAgentSummary, SessionInfo, SkillDefinition, WorktreeInfo } from '../shared/types.js';
 import { sessionManager } from './agent-session.js';
 import { searchEvents, findEventIndexByUuid, extractSessionPreview, firstUserPrompt } from './event-search.js';
 import { decideAutoName } from './session-auto-name.js';
@@ -29,11 +29,13 @@ import { terminalManager } from './terminal.js';
 import { previewManager } from './preview.js';
 import { applyUpdateSettings, checkForUpdate, downloadUpdate, getUpdateState, restartToUpdate } from './auto-updater.js';
 import * as settings from './settings.js';
+import { catalogs, installFor, launchFor } from './catalogs.js';
+import { ACP_PRESETS } from './adapters/acp/presets.js';
 import * as skillSuggestions from './skill-suggestions.js';
 import * as memory from './memory.js';
 import * as memoryCompact from './memory-compact.js';
 import * as bookmarks from './bookmarks.js';
-import { listProjects, rememberProject, forgetProject, loadAppState, saveOpenTabs, saveCollapsedRepos, saveSessionSort, saveSidebarWidth, saveCollapsedPanels, loadConversationGroups, saveConversationGroups, saveUnreadSessionIds, loadUnreadSessionIds, flushPendingSaves, loadPrerequisiteCache, savePrerequisiteCache } from './app-state.js';
+import { listProjects, rememberProject, forgetProject, loadAppState, saveOpenTabs, saveCollapsedRepos, saveSessionSort, saveSidebarWidth, saveCollapsedPanels, loadConversationGroups, saveConversationGroups, saveUnreadSessionIds, loadUnreadSessionIds, flushPendingSaves, loadPrerequisiteCache, savePrerequisiteCache, loadUsageSnapshot } from './app-state.js';
 import { logRendererError } from './crash-handling.js';
 import { freezeLog } from './freeze-log.js';
 import { perfSteps, logWindowTiming } from './perf-steps.js';
@@ -107,7 +109,7 @@ async function generateAndSaveGoal(sessionId: string, current: ConversationGoal,
   const live = sessionManager.getSession(sessionId);
   const adapter = live?.adapter ?? await recordedAgent(sessionId);
   const cwd = live?.worktreePath ?? (await worktreeManager.getWorktreeOrManifest(sessionId))?.path;
-  if (!cwd) throw new Error('The conversation\'s folder could not be found');
+  if (!cwd) throw new Error('The thread\'s folder could not be found');
   const text = await generateGoal(input, adapter, cwd);
   return worktreeManager.saveGoal(sessionId, text, 'auto', current);
 }
@@ -238,7 +240,7 @@ export function registerHandlers() {
   ipcMain.handle(IPC.REPO_REMOVE, async (_event, repoPath: string) => {
     const activeSessions = sessionManager.getSessionsByRepo(repoPath);
     if (activeSessions.length > 0) {
-      throw new Error('Cannot remove a project while it has active conversations');
+      throw new Error('Cannot remove a project while it has active threads');
     }
 
     if (await projectKind(repoPath) === 'git') {
@@ -269,8 +271,8 @@ export function registerHandlers() {
     const noGit = kind === 'folder';
     if (noGit && !opts.direct) {
       throw new Error((await gitVersion())
-        ? 'This project isn\'t a git repository, so a conversation can only work in the project folder itself.'
-        : 'Git isn\'t installed, so a conversation can only work in the project folder itself.');
+        ? 'This project isn\'t a git repository, so a thread can only work in the project folder itself.'
+        : 'Git isn\'t installed, so a thread can only work in the project folder itself.');
     }
 
     if (opts.direct) {
@@ -321,7 +323,7 @@ export function registerHandlers() {
       if (await branchExistsAnywhere(opts.repoPath, name)) {
         const holder = (await worktreeBranches(opts.repoPath).catch(() => null))?.get(name);
         if (holder) {
-          throw new Error(`Branch "${name}" is already checked out at ${holder}. Pick another branch name for this conversation.`);
+          throw new Error(`Branch "${name}" is already checked out at ${holder}. Pick another branch name for this thread.`);
         }
         useExisting = true;
       }
@@ -815,6 +817,18 @@ export function registerHandlers() {
     return loadPrerequisiteCache()?.status ?? null;
   });
 
+  // One agent's sign-in, checked for real (it starts the agent briefly),
+  // then the core check again so the answer shows everywhere.
+  ipcMain.handle(IPC.PREREQUISITES_CHECK_SIGN_IN, async (_event, adapterId: unknown): Promise<PrerequisiteStatus> => {
+    const adapter = typeof adapterId === 'string' ? adapterRegistry.get(adapterId) : undefined;
+    if (!adapter?.checkSignIn) throw new Error('This agent can\'t be asked whether it is signed in.');
+    await adapter.checkSignIn();
+    const core = await checkCorePrerequisites();
+    const status: PrerequisiteStatus = { ...core, gh: loadPrerequisiteCache()?.status.gh };
+    savePrerequisiteCache(status);
+    return status;
+  });
+
   ipcMain.handle(IPC.PREREQUISITES_GH, async () => {
     const gh = await checkGh();
     const cached = loadPrerequisiteCache();
@@ -885,7 +899,7 @@ export function registerHandlers() {
     sessionManager.sendMessage(sessionId, content, images).then(
       (ok) => {
         // Session is dead or never connected
-        if (!ok) notDelivered('Message not delivered: the agent is not connected. Send it again once the conversation shows as connected.');
+        if (!ok) notDelivered('Message not delivered: the agent is not connected. Send it again once the thread shows as connected.');
       },
       (err) => {
         logger.warn(`[AGENT_SEND] session=${sessionId} failed:`, err);
@@ -908,6 +922,15 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.AGENT_GET_USAGE, (_event, sessionId: string) => {
     return sessionManager.getUsage(sessionId);
+  });
+
+  ipcMain.handle(IPC.AGENT_SWITCH, (_event, sessionId: unknown, adapterId: unknown, transcript: unknown) => {
+    if (typeof sessionId !== 'string' || typeof adapterId !== 'string') throw new Error('Bad agent switch request');
+    return sessionManager.switchAgent(sessionId, adapterId, { transcript: transcript === true });
+  });
+
+  ipcMain.handle(IPC.AGENT_GET_CACHED_USAGE, (_event, adapterId: string) => {
+    return typeof adapterId === 'string' ? loadUsageSnapshot(adapterId) : null;
   });
 
   ipcMain.handle(IPC.AGENT_SET_CONTROL, (_event, sessionId: string, controlId: string, value: string) => {
@@ -954,7 +977,7 @@ export function registerHandlers() {
       throw new Error(`${adapter.displayName} does not support adding skills`);
     }
     const root = sessionManager.getWorktreePath(sessionId) ?? fallbackPath;
-    if (!root) throw new Error('No project root available for this conversation');
+    if (!root) throw new Error('No project root available for this thread');
     return adapter.addSkill(root, def);
   });
 
@@ -1135,7 +1158,7 @@ export function registerHandlers() {
   ipcMain.handle(IPC.PREVIEW_NAVIGATE, (_event, sessionId: string, page: unknown, url: unknown) => {
     if (!isPreviewPage(page) || typeof url !== 'string') throw new Error('Invalid preview request');
     const worktree = worktreeManager.getWorktree(sessionId);
-    if (!worktree) throw new Error("This conversation's worktree isn't ready yet.");
+    if (!worktree) throw new Error("This thread's worktree isn't ready yet.");
     previewManager.navigate(sessionId, worktree.path, page, url);
   });
 
@@ -1168,7 +1191,7 @@ export function registerHandlers() {
       await shell.openPath(wt.path);
       return;
     }
-    throw new Error('Conversation not found');
+    throw new Error('Thread not found');
   });
 
   // ─── File revert & diff (for changes review panel) ───
@@ -1647,6 +1670,33 @@ export function registerHandlers() {
       }
     });
   }
+
+  // ─── ACP Registry and models.dev (catalogs.ts) ───
+
+  ipcMain.handle(IPC.CATALOGS_REGISTRY, (): RegistryAgentSummary[] => {
+    const builtIn = new Set(ACP_PRESETS.map((p) => p.registryId).filter(Boolean));
+    return catalogs.registry().map((a) => ({
+      id: a.id,
+      name: a.name,
+      version: a.version,
+      ...(a.description ? { description: a.description } : {}),
+      ...(a.website?.startsWith('https://') ? { website: a.website } : {}),
+      install: installFor(a),
+      launch: launchFor(a),
+      builtIn: builtIn.has(a.id),
+    }));
+  });
+
+  ipcMain.handle(IPC.CATALOGS_ICON, (_event, id: unknown) => {
+    const agent = typeof id === 'string' ? catalogs.registryAgent(id) : null;
+    // With online lookups off, only icons already on disk.
+    return agent ? catalogs.icon(agent, { download: settings.getSettings().onlineCatalogs }) : null;
+  });
+
+  ipcMain.handle(IPC.CATALOGS_REFRESH, async () => {
+    if (settings.getSettings().onlineCatalogs) await catalogs.refresh(true);
+    return { fetchedAt: catalogs.registryFetchedAt() };
+  });
 
   ipcMain.handle(IPC.AGENT_LIST_ADAPTERS, () => {
     const defaultId = adapterRegistry.getDefault().id;

@@ -61,7 +61,7 @@
                   <button type="button" class="gb-btn deny" data-target="rewind-all">Rewind all</button>
                   <button type="button" class="gb-btn">Conv. only</button>
                 </div>
-                <p class="t-faint small"><b class="t-muted">Rewind all</b> restores the files and the conversation. <b class="t-muted">Conv. only</b> resets the conversation and leaves files as they are.</p>
+                <p class="t-faint small"><b class="t-muted">Rewind all</b> restores the files and the thread. <b class="t-muted">Thread only</b> resets the thread and leaves files as they are.</p>
               </div>
             {/if}
           </li>

@@ -53,7 +53,7 @@
       '';
     return {
       id: s.id,
-      label: s.displayName || s.branch || 'New conversation',
+      label: s.displayName || s.branch || 'New thread',
       branch: s.branch,
       repoName: store.repoDisplayName(s.repoPath),
       repoPath: s.repoPath,
@@ -134,7 +134,7 @@
   function sessionLabelFor(sessionId: string): { repoName: string; label: string } {
     const s = store.sessions.find((x) => x.id === sessionId);
     if (!s) return { repoName: '?', label: sessionId };
-    return { repoName: store.repoDisplayName(s.repoPath), label: s.displayName || s.branch || 'New conversation' };
+    return { repoName: store.repoDisplayName(s.repoPath), label: s.displayName || s.branch || 'New thread' };
   }
 
   function selectSession(entry: SessionEntry) {
@@ -206,7 +206,7 @@
         bind:this={inputEl}
         bind:value={query}
         type="text"
-        placeholder="Search conversations and messages..."
+        placeholder="Search threads and messages..."
         class="w-full bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
       />
     </div>
@@ -216,7 +216,7 @@
         <div class="px-3 py-4 text-xs text-muted-foreground text-center">No matches found</div>
       {:else}
         {#if sessionResults.length > 0}
-          <div class="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wide text-muted-foreground/50">Conversations</div>
+          <div class="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wide text-muted-foreground/50">Threads</div>
           {#each sessionResults as entry, i}
             {@const isActive = store.activeSessionId === entry.id}
             <button

@@ -47,7 +47,7 @@ export async function excludeFromGit(cwd: string, relPaths: readonly string[]): 
   } catch { /* not there yet */ }
   const lead = current && !current.endsWith('\n') ? '\n' : '';
   await fs.mkdir(path.dirname(excludeFile), { recursive: true });
-  await fs.appendFile(excludeFile, `${lead}# Written by Grove Bench into each conversation's worktree\n${added.map((rel) => `/${rel}`).join('\n')}\n`);
+  await fs.appendFile(excludeFile, `${lead}# Written by Grove Bench into each thread's worktree\n${added.map((rel) => `/${rel}`).join('\n')}\n`);
   return added;
 }
 

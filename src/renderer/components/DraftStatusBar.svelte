@@ -96,7 +96,7 @@
         type="button"
         onclick={() => { pickerOpen = !pickerOpen; projectMenuOpen = false; }}
         class="text-foreground/80 hover:text-foreground truncate max-w-56 transition-colors border-b border-dashed border-muted-foreground/40"
-        title="Where this conversation runs. Click to pick a branch, a pull request or the project folder"
+        title="Where this thread runs. Click to pick a branch, a pull request or the project folder"
         aria-haspopup="dialog"
         aria-expanded={pickerOpen}
       >

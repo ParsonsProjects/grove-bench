@@ -26,7 +26,7 @@ npm run build     # builds into landing/dist
   (`scroll.svelte.js`).
 - `src/shared/app/`: a copy of the app window's look, checked against the
   app in its demo mode (`demo.html`). The hero uses it with sample
-  conversations; visitors can click conversations, tabs and the permission
+  threads; visitors can click threads, tabs and the permission
   prompt. On phones the hero shows the sidebar and the open prompt instead,
   at full size.
 - `src/shared/app-art.js`: the app's own sprite code from `src/renderer/lib`,
@@ -45,7 +45,7 @@ build leaves `og.html` out of the site.
 
 Only after consent: `download_click`, `github_click` and `docs_click` (with a
 `location` such as `trail-hero`), `footer_click` (with the link), and
-`trail_conversation_open` when a visitor opens a sample conversation in the
+`trail_conversation_open` when a visitor opens a sample thread in the
 hero.
 
 The deploy reads the PostHog project key from the `POSTHOG_API_KEY`
@@ -68,7 +68,7 @@ Type, buttons and labels come from the app, not from a generic product page:
 - What you get is a file added in the Changes tab, one green line each.
 - The FAQ is a Thread: each question is your message, opening it shows the
   reply.
-- Under the hero window, a line says what the conversation you point at is
+- Under the hero window, a line says what the thread you point at is
   doing, in the help pages' words. Opening the sleeping one wakes it.
 
 ### The path

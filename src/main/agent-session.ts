@@ -3,6 +3,9 @@ import { IPC } from '../shared/types.js';
 import type { SessionInfo, SessionStatus, AgentEvent, PermissionDecision, PermissionMode, McpServerInfo, McpAuthStartResult, McpElicitationResponse, McpServerContextCost, ProviderUsage, SessionControls } from '../shared/types.js';
 import { CONTROL_IDS, PERMISSION_MODES, subagentParent } from '../shared/types.js';
 import { displayTextFromSent } from '../shared/prompt-text.js';
+import { applyRateLimit } from '../shared/usage.js';
+import { loadUsageSnapshot, saveUsageSnapshot } from './app-state.js';
+import { handoffTranscript, isSlashCommand, lastAgentChange, pendingHandoff } from './agent-handoff.js';
 import { pruneImages, removeImages, saveImages, storeToolImages } from './attachments.js';
 import { logger } from './logger.js';
 import { perfSteps } from './perf-steps.js';
@@ -16,7 +19,7 @@ import type { AgentAdapter, AgentQueryHandle, UserMessage } from './adapters/typ
 import { ResumeNotFoundError } from './adapters/types.js';
 import { getGitIdentity } from './git.js';
 import { findRewindForkPoint, isAuthFailure, lastTurnUuid } from './agent-utils.js';
-import { markApiKeyRejected } from './credentials.js';
+import { hasApiKey, isApiKeyRejected, markApiKeyRejected } from './credentials.js';
 import { CheckpointManager } from './checkpoints.js';
 import type { EventSearchHit } from './event-search.js';
 import { noGitCheckpoints } from './no-git-checkpoints.js';
@@ -30,7 +33,7 @@ import {
 } from './session-permissions.js';
 import { SessionSkills } from './session-skills.js';
 import {
-  READ_SAFE_SANDBOX_WARNING, readSafeSandbox, hasSandboxWarning, startingPermissionMode,
+  readSafeWarning, readSafeSandbox, hasSandboxWarning, startingPermissionMode,
   initialControls, normalizeModelId, appendedSystemPrompt,
 } from './session-config.js';
 
@@ -380,7 +383,7 @@ class AgentSessionManager {
     // Read-safe mode leans on a sandbox that may not start: say so once per
     // conversation (eventHistory is reloaded from disk, so across restarts too).
     if (session.permissionMode === 'readSafe' && !session.sandbox && !hasSandboxWarning(session.eventHistory)) {
-      emit({ type: 'status', level: 'warning', message: READ_SAFE_SANDBOX_WARNING });
+      emit({ type: 'status', level: 'warning', message: readSafeWarning(session.adapter.capabilities.sandbox === true) });
     }
 
     // Fresh conversation: snapshot the working tree as the session's baseline
@@ -549,6 +552,22 @@ class AgentSessionManager {
 
         // Skip adapter user_message events — we emit our own with UUIDs in sendMessage
         if (event.type === 'user_message') continue;
+
+        // The agent switched a control itself: record it so the badge, the
+        // next start and the renderer agree with the agent.
+        if (event.type === 'agent_controls') {
+          this.applyAgentControls(session, event.values);
+          continue;
+        }
+
+        // Plan usage is the account's, not the conversation's: keep the
+        // latest for the next conversation and the next launch.
+        if (event.type === 'rate_limit') {
+          const adapterId = session.adapter.id;
+          const current = loadUsageSnapshot(adapterId);
+          const next = applyRateLimit(current, event);
+          if (next && next !== current) saveUsageSnapshot(adapterId, next);
+        }
 
         // A reply means a turn is running, including ones the agent starts
         // itself (e.g. when a background task finishes). A subagent's work
@@ -774,7 +793,7 @@ class AgentSessionManager {
       type: 'status',
       level: 'warning',
       newConversation: true,
-      message: `${session.adapter.displayName} couldn't find this conversation any more, so it starts a new one. The thread above stays, but the agent won't remember it.`,
+      message: `${session.adapter.displayName} couldn't find its record of this thread any more, so it starts afresh. The thread above stays, but the agent won't remember it.`,
     });
     // Prompts sent meanwhile wait for the new run (see awaitQueryHandle).
     if (!session.resolveQueryReady) {
@@ -877,6 +896,12 @@ class AgentSessionManager {
       images = undefined;
     }
     const storedImages = images?.length ? await saveImages(id, images) : [];
+    // After a switch the user wanted a transcript for, messages carry it
+    // ahead of what they typed until the new agent replies; the thread shows
+    // only theirs. A slash command is left alone (it must lead the text) and
+    // the transcript waits for the next message.
+    const handoff = isSlashCommand(content) ? null : pendingHandoff(session.eventHistory);
+    const handoffNote = handoff ? handoffTranscript(session.eventHistory.slice(0, handoff.index), handoff.event) : null;
     const userEvent: AgentEvent = {
       type: 'user_message', text: content, uuid,
       ...(storedImages.length > 0 && { images: storedImages }),
@@ -913,7 +938,11 @@ class AgentSessionManager {
     logger.debug(`[sendMessage] session=${id} sending to adapter, providerSessionId=${sessionId || '(not yet initialized)'}${images?.length ? ` with ${images.length} image(s)` : ''}`);
     try {
       session.turnHandle = queryHandle;
-      const message: UserMessage = { text: content, images };
+      // Once per query: a second message before the reply doesn't repeat it,
+      // but a query that failed to start and was replaced gets it again.
+      const withNote = handoffNote !== null && session.handoffSentTo !== queryHandle;
+      const message: UserMessage = { text: withNote ? `${handoffNote}\n${content}` : content, images };
+      if (withNote) session.handoffSentTo = queryHandle;
       queryHandle.sendMessage(message);
       if (session.promptsBeforeInit?.handle === queryHandle) session.promptsBeforeInit.prompts.push(message);
       logger.debug(`[sendMessage] session=${id} sent successfully`);
@@ -975,14 +1004,18 @@ class AgentSessionManager {
     // Entering read-safe mode with a live query: the sandbox is only applied
     // at query start, so until the next (re)start the read-only classifier is
     // the sole protection layer. Surface that honestly.
+    // An agent Grove can't sandbox never gets one, restart or not.
     if (mode === 'readSafe' && prevMode !== 'readSafe' && session.queryHandle && !session.sandbox) {
-      session.emit?.({
-        type: 'status',
-        level: 'warning',
-        message: 'Read-safe mode on: read-only tool calls run without asking. The sandbox only applies once the agent restarts, and may not start at all on this machine.',
-      });
+      const canSandbox = session.adapter.capabilities.sandbox === true;
+      if (canSandbox) {
+        session.emit?.({
+          type: 'status',
+          level: 'warning',
+          message: 'Read-safe mode on: read-only tool calls run without asking. The sandbox only applies once the agent restarts, and may not start at all on this machine.',
+        });
+      }
       if (!hasSandboxWarning(session.eventHistory)) {
-        session.emit?.({ type: 'status', level: 'warning', message: READ_SAFE_SANDBOX_WARNING });
+        session.emit?.({ type: 'status', level: 'warning', message: readSafeWarning(canSandbox) });
       }
     }
 
@@ -1063,6 +1096,21 @@ class AgentSessionManager {
     return { descriptors, values };
   }
 
+  /** Record control values the agent changed by itself. Only values its
+   *  descriptors offer count; nothing is sent back to the agent. */
+  private applyAgentControls(session: ManagedSession, values: Record<string, string>): void {
+    const descriptors = session.adapter.getControls(session.model);
+    let changed = false;
+    for (const [controlId, value] of Object.entries(values)) {
+      if (controlId === CONTROL_IDS.permissionMode || session.controls[controlId] === value) continue;
+      const d = descriptors.find((x) => x.id === controlId);
+      if (!d?.options.some((o) => o.value === value)) continue;
+      session.controls = { ...session.controls, [controlId]: value };
+      changed = true;
+    }
+    if (changed) session.emit?.({ type: 'controls_sync', ...this.reconcileControls(session) });
+  }
+
   /** Controls for a session. One that isn't running (asleep, closed, or never
    *  restored) gets the descriptors of the agent and model its manifest
    *  records, so a Gemini CLI conversation doesn't show Claude Code's
@@ -1105,12 +1153,15 @@ class AgentSessionManager {
 
   /** Plan usage for the session's provider; null without a live query or when
    *  the adapter cannot report it. Failures are logged, never surfaced — the
-   *  popover treats null as "nothing to show". */
+   *  popover treats null as "nothing to show". Each answer is saved for
+   *  getCachedUsage. */
   async getUsage(id: string): Promise<ProviderUsage | null> {
     const session = this.sessions.get(id);
     if (!session?.queryHandle?.getUsage || session.adapter.capabilities.usage !== true) return null;
     try {
-      return await session.queryHandle.getUsage();
+      const usage = await session.queryHandle.getUsage();
+      if (usage) saveUsageSnapshot(session.adapter.id, usage);
+      return usage;
     } catch (e) {
       logger.warn(`Failed to fetch usage for session ${id}:`, e);
       return null;
@@ -1142,7 +1193,7 @@ class AgentSessionManager {
   async reconnectMcpServer(id: string, serverName: string): Promise<void> {
     const session = this.sessions.get(id);
     if (!session?.queryHandle?.reconnectMcpServer) {
-      throw new Error('MCP server control is not available for this conversation');
+      throw new Error('MCP server control is not available for this thread');
     }
     try {
       await session.queryHandle.reconnectMcpServer(serverName);
@@ -1155,7 +1206,7 @@ class AgentSessionManager {
   async authenticateMcpServer(id: string, serverName: string): Promise<McpAuthStartResult> {
     const session = this.sessions.get(id);
     if (!session?.queryHandle?.authenticateMcpServer) {
-      throw new Error('MCP sign-in is not available for this conversation');
+      throw new Error('MCP sign-in is not available for this thread');
     }
     try {
       return await session.queryHandle.authenticateMcpServer(serverName);
@@ -1168,7 +1219,7 @@ class AgentSessionManager {
   async setMcpServerEnabled(id: string, serverName: string, enabled: boolean): Promise<void> {
     const session = this.sessions.get(id);
     if (!session?.queryHandle?.setMcpServerEnabled) {
-      throw new Error('MCP server control is not available for this conversation');
+      throw new Error('MCP server control is not available for this thread');
     }
     try {
       await session.queryHandle.setMcpServerEnabled(serverName, enabled);
@@ -1266,14 +1317,20 @@ class AgentSessionManager {
 
   /**
    * Stop the current query but keep the session alive so the user can send
-   * follow-up messages without losing state or remounting the UI.
+   * follow-up messages without losing state or remounting the UI: a new
+   * query starts at once. `beforeRestart` runs in between, once the old
+   * query is closed and aborted (its event loop drops anything it still
+   * sends), and also for a sleeping session, whose wake starts the new one.
    */
-  async stopQuery(id: string): Promise<void> {
+  async stopQuery(id: string, beforeRestart?: () => Promise<void>): Promise<void> {
     const session = this.sessions.get(id);
     if (!session) return;
     // Asleep: there is no query to stop. A rewind's fork point (set before
     // this is called) is picked up when the session wakes.
-    if (session.status === 'sleeping') return;
+    if (session.status === 'sleeping') {
+      await beforeRestart?.();
+      return;
+    }
     // Waking while the sleep is still killing the old agent: starting a run
     // now would put a second agent on the transcript beside it, and the
     // wake would then start a third. Wait for the wake's run to begin; this
@@ -1282,7 +1339,11 @@ class AgentSessionManager {
     if (session.sleepSettled) {
       await session.sleepSettled;
       // Re-read after the wait (TypeScript keeps the check above's narrowing)
-      if (session.destroying || (session.status as SessionStatus) === 'sleeping' || !this.sessions.has(id)) return;
+      if (session.destroying || !this.sessions.has(id)) return;
+      if ((session.status as SessionStatus) === 'sleeping') {
+        await beforeRestart?.();
+        return;
+      }
     }
 
     // Tell runQuery not to emit process_exit / SESSION_STATUS 'stopped'
@@ -1311,10 +1372,6 @@ class AgentSessionManager {
     denyPendingPermissions(session, 'Query stopped by user', emit);
     cancelElicitations(session);
 
-    // Re-sync the renderer with the current permission mode so the status bar
-    // reflects the correct state after a stop/restart cycle.
-    emit({ type: 'mode_sync', mode: session.permissionMode, source: 'session' });
-
     // Create a deferred promise so sendMessage() can wait for the new
     // queryHandle. Keep one that's still pending (e.g. a wake's): messages
     // already waiting on it would otherwise never be delivered.
@@ -1323,6 +1380,12 @@ class AgentSessionManager {
         session.resolveQueryReady = resolve;
       });
     }
+
+    await beforeRestart?.();
+
+    // Re-sync the renderer with the current permission mode so the status bar
+    // reflects the correct state after a stop/restart cycle.
+    emit({ type: 'mode_sync', mode: session.permissionMode, source: 'session' });
 
     // Start a new query loop — the session stays in the map so sendMessage works
     this.runQuery(session, emit).catch((err) => {
@@ -1641,6 +1704,89 @@ class AgentSessionManager {
     return this.events.search(id, this.sessions.get(id)?.eventHistory, query, limit);
   }
 
+  /**
+   * Hand a conversation to another agent. The thread, worktree and
+   * checkpoints stay; the new agent starts a session of its own, on its
+   * default model, keeping the conversation's mode where it offers it. With
+   * `transcript`, the next message carries a short transcript of the
+   * conversation (agent-handoff.ts); the user agreed to that in the dialog.
+   */
+  async switchAgent(id: string, adapterId: string, opts: { transcript: boolean }): Promise<void> {
+    const session = this.sessions.get(id);
+    if (!session) throw new Error(`Thread ${id} not found`);
+    if (session.agentType === adapterId) return;
+    const adapter = adapterRegistry.get(adapterId);
+    if (!adapter) throw new Error(`Unknown agent: ${adapterId}`);
+
+    // Don't stop a working agent for one that can't run: the same check a
+    // draft makes before its first message.
+    const ready = await adapter.checkPrerequisites().catch(() => null);
+    const keyOk = !!adapter.apiKey && hasApiKey(adapter.id) && !isApiKeyRejected(adapter.id);
+    if (!ready || (!ready.available && ready.installRequired)) {
+      throw new Error(`${adapter.displayName} isn't installed. Install it (Settings > Agents shows how), then switch.`);
+    }
+    if (ready.authenticated === false && !keyOk) {
+      throw new Error(`${adapter.displayName} isn't signed in. Sign in (Settings > Agents), then switch.`);
+    }
+
+    // The old agent mustn't keep editing while the new one starts.
+    if (this.isMidTurn(id)) await this.interruptQuery(id);
+    memoryAutosave.cancelAutoSave(id);
+
+    const previous = session.adapter;
+    const swap = async () => {
+      const appSettings = settings.getSettings();
+      const defaults = appSettings.adapterDefaults?.[adapter.id];
+      const model = appSettings.defaultModels?.[adapter.id] || adapter.getModels()[0]?.id || null;
+      session.adapter = adapter;
+      session.agentType = adapter.id;
+      session.model = model;
+      session.permissionMode = startingPermissionMode(adapter, model, session.permissionMode, defaults?.[CONTROL_IDS.permissionMode]);
+      session.controls = initialControls(adapter, model, defaults);
+      // Tool names are the old agent's: an "always allow" for its Bash says
+      // nothing about the new one's commands.
+      session.alwaysAllowedTools.clear();
+      session.editToolNames = undefined;
+      // Its session belongs to the old agent.
+      session.providerSessionId = null;
+      session.pendingResumeAt = null;
+      session.handoffSentTo = undefined;
+
+      worktreeManager.saveAdapterType(id, adapter.id).catch((e) => logger.warn(`Failed to record agent for ${id}:`, e));
+      worktreeManager.saveProviderSessionId(id, '').catch(() => { /* non-fatal */ });
+      // No model yet (an agent never run): clear the old agent's.
+      worktreeManager.saveModel(id, model).catch((e) => logger.warn(`Failed to persist model for ${id}:`, e));
+      // A worktree of its own may need the new agent's files (Claude Code's
+      // local settings); a direct thread's folder is the user's.
+      if (session.worktreePath !== session.repoPath) {
+        await worktreeManager.writeAgentSettings(session.worktreePath, session.repoPath, adapter.id)
+          .catch((e) => logger.warn(`Could not write ${adapter.displayName}'s worktree settings for ${id}:`, e));
+      }
+
+      session.emit?.({
+        type: 'agent_changed',
+        from: previous.id,
+        to: adapter.id,
+        fromName: previous.displayName,
+        toName: adapter.displayName,
+        transcript: opts.transcript,
+      });
+      // A rewind must not fork into the old agent's session.
+      session.emit?.({
+        type: 'status',
+        newConversation: true,
+        message: opts.transcript
+          ? `Switched from ${previous.displayName} to ${adapter.displayName}. It gets a short transcript of this thread with your next message.`
+          : `Switched from ${previous.displayName} to ${adapter.displayName}. It starts without the thread so far, which stays above.`,
+      });
+    };
+
+    // The swap happens once the old agent is closed and its event loop has
+    // stopped, so nothing it still sends is taken for the new agent's; then
+    // the new agent starts in its place (or on wake, for a sleeping thread).
+    await this.stopQuery(id, swap);
+  }
+
   /** Rewind files on disk to their state at a specific user message checkpoint.
    *  When options.conversationOnly is true, only truncate the conversation
    *  without restoring files on disk. When options.filesOnly is true, only
@@ -1649,7 +1795,7 @@ class AgentSessionManager {
    *  messages are gone). */
   async rewindFiles(id: string, userMessageId: string, options?: import('../shared/types.js').RewindOptions): Promise<void> {
     const session = this.sessions.get(id);
-    if (!session) throw new Error(`Conversation ${id} not found`);
+    if (!session) throw new Error(`Thread ${id} not found`);
 
     // A running turn would keep editing files while, and after, they are
     // restored. Stop it first; the query itself is restarted at the end.
@@ -1664,7 +1810,7 @@ class AgentSessionManager {
     );
     if (options?.filesOnly || !inConversation) {
       if (options?.conversationOnly) {
-        throw new Error('That message is no longer part of the conversation, so there is nothing to rewind. Its files can still be restored.');
+        throw new Error('That message is no longer part of the thread, so there is nothing to rewind. Its files can still be restored.');
       }
       await session.checkpoints.restore(id, session.worktreePath, userMessageId);
       session.emit?.({ type: 'rewind', toMessageId: userMessageId, filesOnly: true });
@@ -1697,6 +1843,7 @@ class AgentSessionManager {
     const rewindIdx = session.eventHistory.findLastIndex(
       (e) => e.type === 'user_message' && e.uuid === userMessageId,
     );
+    const cutEvents = rewindIdx >= 0 ? session.eventHistory.slice(rewindIdx) : [];
     if (rewindIdx >= 0) {
       // Exclude the rewind target message — it gets placed back into the
       // input. The disk log is rewritten to match.
@@ -1704,6 +1851,11 @@ class AgentSessionManager {
     }
 
     session.emit?.({ type: 'rewind', toMessageId: userMessageId, conversationOnly: options?.conversationOnly });
+    // Rewinding to before a switch takes its marker out of the log, which is
+    // what keeps the earlier agent's turns away from this agent's background
+    // tasks (agent-handoff.ts): put it back, after the rewind point.
+    const removedSwitch = rewindIdx >= 0 ? lastAgentChange(cutEvents) : null;
+    if (removedSwitch) session.emit?.({ ...removedSwitch, transcript: false });
     // Starting over below turns the agent could fork from: mark where the new
     // conversation begins, so a later rewind can't fork into the old one.
     if (!(forkPoint && canFork) && lastTurnUuid(session.eventHistory)) {
@@ -1712,8 +1864,8 @@ class AgentSessionManager {
         level: 'warning',
         newConversation: true,
         message: canFork
-          ? `${session.adapter.displayName} starts a new conversation from here. The thread above stays, but the agent won't remember it.`
-          : `${session.adapter.displayName} can't forget part of a conversation, so it starts a new one from here. The thread above stays, but the agent won't remember it.`,
+          ? `${session.adapter.displayName} starts afresh from here. The thread above stays, but the agent won't remember it.`
+          : `${session.adapter.displayName} can't forget part of a thread, so it starts afresh from here. The thread above stays, but the agent won't remember it.`,
       });
     }
 
@@ -1748,7 +1900,7 @@ class AgentSessionManager {
   /** Dry-run rewind to get the diff of what would change. */
   async getCheckpointDiff(id: string, userMessageId: string): Promise<string> {
     const session = this.sessions.get(id);
-    if (!session) throw new Error(`Conversation ${id} not found`);
+    if (!session) throw new Error(`Thread ${id} not found`);
 
     return session.checkpoints.diff(id, session.worktreePath, userMessageId);
   }
@@ -1770,27 +1922,27 @@ class AgentSessionManager {
   /** Unified diff of what a single turn changed. */
   async getTurnDiff(id: string, userMessageId: string): Promise<string> {
     const session = this.sessions.get(id);
-    if (!session) throw new Error(`Conversation ${id} not found`);
+    if (!session) throw new Error(`Thread ${id} not found`);
     return session.checkpoints.turnDiff(id, session.worktreePath, userMessageId);
   }
 
   /** Cumulative diff from the session baseline to the current working tree. */
   async getFullThreadDiff(id: string): Promise<string> {
     const session = this.sessions.get(id);
-    if (!session) throw new Error(`Conversation ${id} not found`);
+    if (!session) throw new Error(`Thread ${id} not found`);
     return session.checkpoints.fullThreadDiff(id, session.worktreePath);
   }
 
   /** Files changed across a checkpoint comparison (for the review panel). */
   async getCheckpointFiles(id: string, uuid: string, scope: import('../shared/types.js').CheckpointDiffScope): Promise<import('../shared/types.js').GitStatusResult> {
     const session = this.sessions.get(id);
-    if (!session) return { entries: [], scopeError: 'Conversation not found' };
+    if (!session) return { entries: [], scopeError: 'Thread not found' };
     return session.checkpoints.files(id, session.worktreePath, uuid, scope);
   }
 
   async getCheckpointFileDiff(id: string, uuid: string, scope: import('../shared/types.js').CheckpointDiffScope, relPath: string): Promise<import('../shared/types.js').FileDiffResult> {
     const session = this.sessions.get(id);
-    if (!session) throw new Error(`Conversation ${id} not found`);
+    if (!session) throw new Error(`Thread ${id} not found`);
     return session.checkpoints.fileDiff(id, session.worktreePath, uuid, scope, relPath);
   }
 

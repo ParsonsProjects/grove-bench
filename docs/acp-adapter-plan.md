@@ -54,7 +54,10 @@ Code: `src/main/adapters/acp/`.
   permission requests. An agent that edits or runs a command without sending
   one is out of their reach; the thread says so once (`warnIfUnasked`). The agent's own modes and select options (Gemini's
   YOLO, Plan) are separate controls, learned from the first session and kept
-  for the next launch.
+  for the next launch. Modes that skip asking show in red (`agentModeTone`).
+  When the agent changes a control itself (`current_mode_update`,
+  `config_option_update`), the adapter sends `agent_controls` and the session
+  manager records it, so the badge follows.
 - **Models**: from a config option in the `model` category, or Gemini's older
   `models` field with `session/set_model` (removed from the protocol, still
   used by Gemini CLI).
@@ -67,17 +70,27 @@ Code: `src/main/adapters/acp/`.
   each message to the HTTP server with the conversation's token
   (`adapters/mcp-bridge/`). electron-builder unpacks the script from
   app.asar, and `scripts/smoke-deps.mjs` checks the packaged app runs it.
-- **Sign-in**: done in the agent's own CLI. An `auth_required` error says
-  which command to run.
+- **Sign-in**: done in the agent's own CLI, or with an API key saved in
+  Grove. An `auth_required` error keeps the agent's own reason, says which
+  command to run, and is remembered (`agentSignIn` in app state) so the next
+  draft asks first. An agent with a CLI sign-in can be checked for real
+  (`checkSignIn`: a throwaway session in an empty folder). When a key is
+  saved and the agent offers the key's method (Gemini CLI's
+  `gemini-api-key`), Grove calls `authenticate` with it and tries again.
+- **Install**: Grove never installs anything. A missing agent shows its
+  install command with a copy button: the ACP Registry's when it lists an
+  npm or Python package for it, else the preset's.
+- **Online lists** (`catalogs.ts`): the ACP Registry and models.dev, fetched
+  at most once a day while Settings > Privacy allows it and kept in
+  userData/catalogs. The registry gives install commands and the list
+  under Other agents; models.dev gives each model's context size, so the
+  context meter is right before the first reply.
 - **Background tasks** (commit messages, branch names, memory notes) run as
   a one-off session with every tool request turned down.
 - **Custom agents**: Settings → Agent → Other Agents (ACP). Read at launch.
 
 ## Not done yet
 
-- Agent-initiated control changes (`config_option_update`,
-  `current_mode_update`) update the adapter but not the session's recorded
-  values, so a badge can lag until the next start.
 - Replying to a denied permission with a message: ACP's reject options carry
   no text, so the reply doesn't reach the agent.
 - File system and terminal client capabilities (letting the agent read

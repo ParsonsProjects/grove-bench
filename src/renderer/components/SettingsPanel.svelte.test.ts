@@ -34,7 +34,7 @@ function settings(adapterDefaults: GroveBenchSettings['adapterDefaults'] = {}): 
     autoInstallDeps: false, previewAgentTools: true, idleSleepMinutes: 30, defaultBaseBranch: '', branchNamingRule: '', theme: 'system', alwaysOnTop: false, autoDownloadUpdates: true,
     repoColors: {}, groveCharacters: true, diffViewMode: 'unified', defaultActivityView: 'summary', spellcheck: true,
     notifyOnTurnComplete: true, notifyOnPermission: true, notifyOnPrAlert: true, notifyTaskbarFlash: true, notifyTaskbarBadge: true,
-    analyticsEnabled: false, analyticsPrompted: false, crashReportsEnabled: false,
+    analyticsEnabled: false, analyticsPrompted: false, crashReportsEnabled: false, onlineCatalogs: true,
   };
 }
 
@@ -300,12 +300,12 @@ describe('SettingsPanel background work', () => {
   it('groups the one-off settings under Conversations', async () => {
     await renderPanel();
     await openSection('Background work');
-    const group = screen.getByRole('heading', { name: 'Conversations' }).closest('section')!;
+    const group = screen.getByRole('heading', { name: 'Threads' }).closest('section')!;
 
-    for (const name of ['Suggest skills automatically', 'Show the conversation goal']) {
+    for (const name of ['Suggest skills automatically', 'Show the thread goal']) {
       expect(within(group).getByRole('checkbox', { name })).toBeInTheDocument();
     }
-    expect(within(group).getByLabelText('Sleep idle conversations after')).toBeInTheDocument();
+    expect(within(group).getByLabelText('Sleep idle threads after')).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Skill suggestions' })).not.toBeInTheDocument();
   });
 });
@@ -337,14 +337,14 @@ describe('SettingsPanel number settings', () => {
     await renderPanel();
     await openSection('Background work');
 
-    expect(screen.getByLabelText('Sleep idle conversations after')).toHaveValue('2.5');
+    expect(screen.getByLabelText('Sleep idle threads after')).toHaveValue('2.5');
     expect(screen.queryByText(/Not saved/)).not.toBeInTheDocument();
   });
 
   it('does not save a cleared idle time as the default', async () => {
     await renderPanel();
     await openSection('Background work');
-    const field = screen.getByLabelText('Sleep idle conversations after');
+    const field = screen.getByLabelText('Sleep idle threads after');
 
     await fireEvent.input(field, { target: { value: '' } });
     await fireEvent.blur(field);
@@ -527,6 +527,33 @@ describe('SettingsPanel alpha agents', () => {
 
 describe('SettingsPanel agent groups', () => {
   const gemini: AgentSummary = { id: 'gemini', displayName: 'Gemini CLI', capabilities: {} };
+
+  it('say when an agent with its own sign-in is signed out, with the command and a real check', async () => {
+    agentsStore.list = [claude, gemini];
+    const signedOut = {
+      git: { available: true },
+      agents: { gemini: {
+        available: true, authenticated: false, authMessage: 'This client is no longer supported', signInCheckable: true,
+        cliSignIn: { accountLabel: 'Google account', cliName: 'Gemini CLI', command: 'gemini', setupUrl: 'https://example.com' },
+      } },
+    };
+    store.prerequisites = signedOut;
+    mockGroveBench.checkAgentSignIn.mockResolvedValue(signedOut);
+    try {
+      await openAgentSection();
+      await screen.findByRole('button', { name: 'Gemini CLI default model' });
+      await fireEvent.click(fold('Gemini CLI').querySelector('summary')!);
+      const group = fold('Gemini CLI');
+      expect(within(group).getByTestId('sign-in-state')).toHaveTextContent('Not signed in (Gemini CLI said: This client is no longer supported).');
+      expect(within(group).getByRole('group', { name: 'Sign-in command' })).toHaveTextContent('gemini');
+
+      await fireEvent.click(within(group).getByRole('button', { name: 'Check sign-in' }));
+      expect(mockGroveBench.checkAgentSignIn).toHaveBeenCalledWith('gemini');
+      expect(await within(group).findByRole('alert')).toHaveTextContent('Still not signed in.');
+    } finally {
+      store.prerequisites = null;
+    }
+  });
 
   /** The fold an agent's settings sit in. */
   function fold(name: string) {

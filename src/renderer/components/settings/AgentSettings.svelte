@@ -4,11 +4,14 @@
   import { store } from '../../stores/sessions.svelte.js';
   import { agentsStore } from '../../stores/agents.svelte.js';
   import ApiKeyField from '../ApiKeyField.svelte';
+  import CommandLine from '../CommandLine.svelte';
+  import RegistryAgents from './RegistryAgents.svelte';
+  import { prerequisitesStore } from '../../stores/prerequisites.svelte.js';
   import * as Select from '$lib/components/ui/select/index.js';
   import { Textarea } from '$lib/components/ui/textarea/index.js';
   import { defaultModelChoices, DEFAULT_MODEL_VALUE } from '$lib/model-choices.js';
   import type { AgentStage, CavemanMode, ControlDescriptor, ControlOption } from '../../../shared/types.js';
-  import { CONTROL_IDS, CONTROL_SHORTCUTS } from '../../../shared/types.js';
+  import { CONTROL_IDS, controlShortcut } from '../../../shared/types.js';
   import SettingRow from './SettingRow.svelte';
   import CheckboxSetting from './CheckboxSetting.svelte';
   import ListSetting from './ListSetting.svelte';
@@ -36,6 +39,20 @@
     /** Offers the Show thinking summaries setting. */
     thinkingSummaries: boolean;
   }
+  /** Why the last Check sign-in didn't sign an agent in, by agent id. */
+  let signInErrors = $state<Record<string, string>>({});
+  async function checkSignIn(adapterId: string) {
+    signInErrors = { ...signInErrors, [adapterId]: '' };
+    try {
+      await prerequisitesStore.checkSignIn(adapterId);
+      if (store.prerequisites?.agents[adapterId]?.authenticated === false) {
+        signInErrors = { ...signInErrors, [adapterId]: 'Still not signed in.' };
+      }
+    } catch (e) {
+      signInErrors = { ...signInErrors, [adapterId]: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
   let agentGroups = $state<AgentGroup[]>([]);
   let agentGroupsLoading = $state(false);
   let agentGroupsRequest = 0;
@@ -166,29 +183,48 @@
       <CheckboxSetting
         setting="alpha-agents"
         label="Enable {agent.displayName}"
-        description="Offer {agent.displayName} as an agent for new conversations. Conversations already on it keep working either way."
+        description="Offer {agent.displayName} as an agent for new threads. Threads already on it keep working either way."
         bind:checked={() => settingsStore.isAlphaEnabled(agent.id), (on) => settingsStore.setAlphaEnabled(agent.id, on)}
       />
     {/if}
 
     {#if agent.stage !== 'alpha' || settingsStore.isAlphaEnabled(agent.id)}
       <!-- Credentials: asked for when a conversation starts, changed here -->
-      {#if status?.apiKey}
+      {#if status && (status.apiKey || status.cliSignIn || status.installCommand)}
         <div data-setting="credentials" class="flex flex-col gap-2">
-          <p class="text-xs text-muted-foreground">
-            {#if status.apiKey.saved && status.apiKey.rejected}
+          {#if !status.available && status.installCommand}
+            <p class="text-xs text-muted-foreground">
+              {status.cliSignIn?.cliName ?? agent.displayName} isn't installed. Run this in a terminal (PowerShell), then come back:
+            </p>
+            <CommandLine command={status.installCommand} label="Install command" />
+          {/if}
+          <p class="text-xs text-muted-foreground" data-testid="sign-in-state">
+            {#if status.apiKey?.saved && status.apiKey.rejected}
               The saved API key was refused.
-            {:else if status.apiKey.saved}
+            {:else if status.apiKey?.saved}
               Using the saved API key.
+            {:else if status.available && status.authenticated === false && status.cliSignIn}
+              Not signed in{status.authMessage && !/^authentication required\.?$/i.test(status.authMessage.trim()) ? ` (${agent.displayName} said: ${status.authMessage.replace(/[.\s]*$/, '')})` : ''}.
             {:else if status.authUnchecked}
-              No key saved. {agent.displayName} uses its own sign-in if you set one up in a terminal; Grove Bench can only check that when a conversation starts.
+              {status.apiKey ? 'No key saved. ' : ''}{agent.displayName} uses its own sign-in if you set one up in a terminal. Grove Bench finds out when a thread starts{status.signInCheckable ? ', or when you check here' : ''}.
             {:else if status.authenticated}
               Signed in{status.email ? ` as ${status.email}` : ''}{status.authMethod ? ` via ${status.authMethod}` : ''}.
             {:else}
-              No credentials found. Add a key, or sign in with the CLI in a terminal.
+              No credentials found. {status.apiKey ? 'Add a key, or sign in' : 'Sign in'} with the CLI in a terminal.
             {/if}
           </p>
-          <ApiKeyField adapterId={agent.id} />
+          {#if status.cliSignIn && status.available && !status.apiKey?.saved}
+            <div class="flex items-center gap-2">
+              <div class="flex-1 min-w-0"><CommandLine command={status.cliSignIn.command} label="Sign-in command" /></div>
+              {#if status.signInCheckable}
+                <Button variant="secondary" size="sm" disabled={prerequisitesStore.checking} onclick={() => checkSignIn(agent.id)}>Check sign-in</Button>
+              {/if}
+            </div>
+            {#if signInErrors[agent.id]}<p class="text-xs text-destructive" role="alert">{signInErrors[agent.id]}</p>{/if}
+          {/if}
+          {#if status.apiKey}
+            <ApiKeyField adapterId={agent.id} />
+          {/if}
         </div>
       {/if}
 
@@ -196,7 +232,7 @@
         setting="default-model"
         label="Default model"
         for="settings-{agent.id}-model"
-        description="New conversations with this agent start on this model. Each conversation can switch from the status bar."
+        description="New threads with this agent start on this model. Each thread can switch from the status bar."
       >
         <Select.Root
           type="single"
@@ -218,7 +254,7 @@
         setting="background-model"
         label="Background model"
         for="settings-{agent.id}-background-model"
-        description="Used for memory notes, memory compaction, commit messages and skill suggestions in this agent's conversations. These run often, so a cheap model is best."
+        description="Used for memory notes, memory compaction, commit messages and skill suggestions in this agent's threads. These run often, so a cheap model is best."
       >
         <Select.Root
           type="single"
@@ -237,18 +273,18 @@
       </SettingRow>
 
       {#if agent.controls.length === 0}
-        <p class="text-xs text-muted-foreground">This agent has no conversation controls to set.</p>
+        <p class="text-xs text-muted-foreground">This agent has no thread controls to set.</p>
       {:else}
         <div data-setting="default-controls" class="flex flex-col gap-5">
-          <p class="text-xs text-muted-foreground">Options depend on the default model above. They apply to new conversations.</p>
+          <p class="text-xs text-muted-foreground">Options depend on the default model above. They apply to new threads.</p>
           {#each agent.controls as control (control.id)}
             {@const value = controlValue(agent.id, control)}
             {@const selected = control.options.find((o) => o.value === value)}
             <SettingRow setting="default-{control.id}" label={controlLabel(control)} for="settings-{agent.id}-{control.id}">
               {#snippet help()}
                 {selected?.description ? selected.description.replace(/[.\s]*$/, '') + '.' : ''}
-                {#if CONTROL_SHORTCUTS[control.id]}
-                  Each conversation can change it from the status bar ({CONTROL_SHORTCUTS[control.id]}).
+                {#if controlShortcut(control)}
+                  Each thread can change it from the status bar ({controlShortcut(control)}).
                 {/if}
               {/snippet}
               <Select.Root type="single" {value} onValueChange={(v) => { if (v) settingsStore.setAdapterDefault(agent.id, control.id, v === control.default ? null : v); }}>
@@ -278,12 +314,12 @@
   </SettingsGroup>
 {/each}
 
-<SettingsGroup title="All agents" description="These apply to every agent's conversations." card collapse={{ key: 'all-agents', open: true }}>
+<SettingsGroup title="All agents" description="These apply to every agent's threads." card collapse={{ key: 'all-agents', open: true }}>
   <SettingRow
     setting="system-prompt"
     label="System prompt append"
     for="settings-prompt"
-    description="Instructions added to every conversation."
+    description="Instructions added to every thread."
   >
     <Textarea
       id="settings-prompt"
@@ -327,7 +363,7 @@
     <CheckboxSetting
       setting="thinking-summaries"
       label="Show thinking summaries"
-      description="Show a short summary of the model's thinking in the conversation. Doesn't change how much the model thinks or what it costs. Applies to agents started after the change.{summaryAgents.length < agentGroups.length ? ` Only ${summaryAgents.map((a) => a.displayName).join(' and ')} can show these.` : ''}"
+      description="Show a short summary of the model's thinking in the thread. Doesn't change how much the model thinks or what it costs. Applies to agents started after the change.{summaryAgents.length < agentGroups.length ? ` Only ${summaryAgents.map((a) => a.displayName).join(' and ')} can show these.` : ''}"
       bind:checked={settingsStore.draft.showThinkingSummaries}
     />
   {/if}
@@ -342,7 +378,7 @@
 
 <SettingsGroup
   title="Other agents (ACP)"
-  description="Any agent that speaks the Agent Client Protocol over stdio, such as Codex through codex-acp. Gemini CLI, GitHub Copilot CLI and OpenCode are built in. Restart Grove Bench after a change."
+  description="Any agent that speaks the Agent Client Protocol over stdio, such as Codex through codex-acp: type its command, or pick one from the public ACP Registry. Gemini CLI, GitHub Copilot CLI and OpenCode are built in. Restart Grove Bench after a change."
   card
   collapse={{ key: 'acp-agents', open: false }}
 >
@@ -377,5 +413,6 @@
       />
       <Button variant="secondary" onclick={addAcpAgent}>Add</Button>
     </div>
+    <RegistryAgents onUse={(a) => { acpName = a.name; acpCommand = a.command; acpArgs = a.args.join(' '); }} />
   </div>
 </SettingsGroup>

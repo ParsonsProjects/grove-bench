@@ -4,7 +4,7 @@
  * permission options. No I/O, so it is tested directly.
  */
 import path from 'node:path';
-import type { ControlDescriptor, ControlOption, ToolCategory } from '../../../shared/types.js';
+import type { ControlDescriptor, ControlOption, ControlTone, ToolCategory } from '../../../shared/types.js';
 import type { ToolView, ToolTextEdit } from '../../../shared/tool-view.js';
 import type {
   AcpConfigOption, AcpConfigSelectOption, AcpContentBlock, AcpModeState, AcpModelState, AcpPermissionOption,
@@ -254,6 +254,33 @@ function controlOption(value: string, label: string, description?: string | null
   return { value, label, ...(description ? { description } : {}) };
 }
 
+/** Agent modes that run every tool without asking (Gemini CLI's YOLO,
+ *  "Auto-approves all tools"; a "bypass" or "full access" mode). Matched on
+ *  the id, name and description, since ACP modes carry no flag for it. */
+const SKIPS_ASKING = /\b(yolo|bypass\w*|dangerous\w*|full[-_ ]?access|allow[-_ ]?all|skip\w*[-_ ]permissions?)\b|approves? all|without (asking|approval|confirmation)/i;
+
+/**
+ * A colour for one of the agent's own modes, so the badge reads like Grove's:
+ * red for modes that skip asking, yellow for plan, purple for auto-edit.
+ * Others stay neutral.
+ */
+export function agentModeTone(option: Pick<ControlOption, 'value' | 'label' | 'description'>): ControlTone | undefined {
+  const name = `${option.value} ${option.label}`;
+  // First: an edits-only mode says it approves edits without asking, which
+  // must not read as approving everything (Gemini CLI's Auto Edit,
+  // "Auto-approves edit tools").
+  if (/auto[-_ ]?edit|accept[-_ ]?edits?/i.test(name)) return 'accent';
+  if (SKIPS_ASKING.test(`${name} ${option.description ?? ''}`)) return 'danger';
+  if (/\bplan/i.test(name)) return 'warning';
+  return undefined;
+}
+
+function modeOption(value: string, label: string, description?: string | null): ControlOption {
+  const option = controlOption(value, label, description);
+  const tone = agentModeTone(option);
+  return tone ? { ...option, tone } : option;
+}
+
 /**
  * Controls for what the agent offers: its config options (select type only,
  * not the model, which Grove shows as its model picker), or its modes when it
@@ -271,15 +298,17 @@ export function agentControls(configOptions: readonly AcpConfigOption[] | null |
     controls.push({
       id: isMode ? AGENT_MODE_CONTROL : `${AGENT_CONTROL_PREFIX}${opt.id}`,
       label: opt.name,
-      options: values.map((v) => controlOption(v.value, v.name, v.description)),
+      options: values.map((v) => (isMode ? modeOption : controlOption)(v.value, v.name, v.description)),
       default: opt.currentValue,
+      // How hard the model thinks: Grove's Effort, so Alt+E reaches it.
+      ...(opt.category === 'thought_level' ? { role: 'effort' as const } : {}),
     });
   }
   if (!hasMode && modes && modes.availableModes?.length) {
     controls.unshift({
       id: AGENT_MODE_CONTROL,
       label: 'Agent mode',
-      options: modes.availableModes.map((m) => controlOption(m.id, m.name, m.description)),
+      options: modes.availableModes.map((m) => modeOption(m.id, m.name, m.description)),
       default: modes.currentModeId,
     });
   }

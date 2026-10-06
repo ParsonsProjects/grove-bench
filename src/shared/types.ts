@@ -144,6 +144,16 @@ export interface AgentPrerequisiteStatus {
   errorMessage?: string;
   /** Adapter-provided message when not authenticated. */
   authErrorMessage?: string;
+  /** The agent's own words the last time it turned Grove down for sign-in. */
+  authMessage?: string;
+  /** The agent can be asked whether it is signed in (checkAgentSignIn). */
+  signInCheckable?: boolean;
+  /** When the agent isn't installed: the command that installs it, for the
+   *  user to copy and run (Grove never runs it). */
+  installCommand?: string;
+  /** Conversations run the installed program, so a saved key alone isn't
+   *  enough (ACP agents; Claude Code runs on the SDK's own copy). */
+  installRequired?: boolean;
   /** Present when the provider accepts an API key entered in the app. The
    *  key itself never reaches the renderer. */
   apiKey?: {
@@ -267,6 +277,14 @@ export type AgentEvent =
   // Adapter-declared session controls (descriptors depend on the model) and
   // their current values — emitted on query start, model switch, and control change
   | { type: 'controls_sync'; descriptors: ControlDescriptor[]; values: Record<string, string> }
+  // The user switched the conversation to another agent. Kept in the log:
+  // it marks who answered which turns, and `transcript` says whether the new
+  // agent gets a short transcript with the next message (agent-handoff.ts).
+  | { type: 'agent_changed'; from: string; to: string; fromName: string; toName: string; transcript: boolean }
+  // The agent changed its own controls (an ACP agent leaving plan mode by
+  // itself). Main records the values and sends controls_sync instead, so this
+  // never reaches the renderer or the event log.
+  | { type: 'agent_controls'; values: Record<string, string> }
   // Permission resolved (authoritative — emitted by main for all resolution paths)
   | {
       type: 'permission_resolved';
@@ -561,7 +579,7 @@ export const THINKING_LEVELS: ThinkingLevel[] = ['off', 'low', 'medium', 'high',
 /** Visual weight for a control option's status-bar badge. Adapters pick a
  *  tone; the renderer maps it to theme colours so providers never hardcode
  *  CSS. */
-export type ControlTone = 'muted' | 'neutral' | 'info' | 'warning' | 'accent' | 'accent-soft' | 'success' | 'highlight';
+export type ControlTone = 'muted' | 'neutral' | 'info' | 'warning' | 'accent' | 'accent-soft' | 'success' | 'highlight' | 'danger';
 
 export interface ControlOption {
   value: string;
@@ -591,6 +609,9 @@ export interface ControlDescriptor {
   options: ControlOption[];
   /** Value applied when the session has no recorded choice. */
   default: string;
+  /** A well-known control this one stands in for, so its shortcut applies:
+   *  an ACP agent's thought level ('acp:effort') is its Effort. */
+  role?: 'thinking' | 'effort' | 'speed';
 }
 
 /** Control ids the app knows about. Permission mode is special-cased because
@@ -609,6 +630,12 @@ export const CONTROL_SHORTCUTS: Record<string, string> = {
   [CONTROL_IDS.thinking]: 'Alt+T',
   [CONTROL_IDS.effort]: 'Alt+E',
 };
+
+/** The shortcut for a control: its own id's, or the one of the well-known
+ *  control it stands in for. */
+export function controlShortcut(d: Pick<ControlDescriptor, 'id' | 'role'>): string | undefined {
+  return CONTROL_SHORTCUTS[d.id] ?? (d.role ? CONTROL_SHORTCUTS[d.role] : undefined);
+}
 
 // ─── Provider usage ("runway") ───
 
@@ -635,6 +662,8 @@ export interface ProviderUsage {
   windows: UsageWindow[];
   /** Epoch ms of the fetch that produced this snapshot. */
   fetchedAt: number;
+  /** Epoch ms of the latest rate-limit event folded in since that fetch. */
+  updatedAt?: number;
 }
 
 /** Snapshot of a session's controls: the descriptors valid for its current
@@ -1105,6 +1134,9 @@ export interface GroveBenchAPI {
   setApiKey(adapterId: string, key: string): Promise<PrerequisiteStatus>;
   /** Remove an agent's saved API key. Resolves with the updated status. */
   clearApiKey(adapterId: string): Promise<PrerequisiteStatus>;
+  /** Start an agent briefly to find out whether it is signed in
+   *  (signInCheckable agents). Resolves with the updated status. */
+  checkAgentSignIn(adapterId: string): Promise<PrerequisiteStatus>;
   /** Tell main that startup session restore has finished. */
   notifyRestoreComplete(): void;
 
@@ -1123,9 +1155,16 @@ export interface GroveBenchAPI {
   getControls(sessionId: string): Promise<SessionControls>;
   /** Set a non-permission control; rejects unknown ids/values. */
   setControl(sessionId: string, controlId: string, value: string): Promise<void>;
+  /** Switch a conversation to another agent. It starts a session of its own;
+   *  with `transcript` its first message carries a short transcript of the
+   *  conversation so far. */
+  switchAgent(sessionId: string, adapterId: string, transcript: boolean): Promise<void>;
   /** Plan usage windows for the session's provider, or null when the session
    *  has no live query or the adapter cannot report usage. */
   getUsage(sessionId: string): Promise<ProviderUsage | null>;
+  /** The plan usage an agent last reported, saved across conversations and
+   *  launches, or null when it never has. */
+  getCachedUsage(adapterId: string): Promise<ProviderUsage | null>;
 
   // MCP server control
   listMcpServers(sessionId: string): Promise<McpServerInfo[]>;
@@ -1341,6 +1380,12 @@ export interface GroveBenchAPI {
   /** Registered agents, in registration order. `isDefault` marks the one new
    *  conversations use unless another is picked. */
   listAdapters(): Promise<AgentSummary[]>;
+  /** Agents in the ACP Registry, from the last copy Grove downloaded. */
+  listRegistryAgents(): Promise<RegistryAgentSummary[]>;
+  /** A registry agent's icon as an SVG data URL, or null. */
+  getRegistryIcon(id: string): Promise<string | null>;
+  /** Download the ACP Registry and models.dev again now (when allowed). */
+  refreshCatalogs(): Promise<{ fetchedAt: number | null }>;
   /** Control descriptors an adapter declares for `model` (null = its default
    *  model), without needing a session. Used by Settings for per-adapter
    *  defaults. Unknown adapter = []. */
@@ -1395,6 +1440,21 @@ export const TOOL_RULE_KEYWORDS: Record<string, ToolCategory> = {
   agent: 'agent',
   question: 'question',
 };
+
+/** One agent in the ACP Registry, as Settings lists it. */
+export interface RegistryAgentSummary {
+  id: string;
+  name: string;
+  version: string;
+  description?: string;
+  website?: string;
+  /** A command to copy (npm or uv), or a download for this computer. */
+  install: { command: string } | { download: string } | null;
+  /** How Grove would start it (npx or uvx), or null for downloads. */
+  launch: { command: string; args: string[] } | null;
+  /** Grove has it built in (Gemini CLI, Copilot CLI, OpenCode). */
+  builtIn: boolean;
+}
 
 /** An agent the user added that speaks the Agent Client Protocol over stdio. */
 export interface AcpAgentSetting {
@@ -1537,6 +1597,9 @@ export interface GroveBenchSettings {
    *  stack itself) to the analytics backend. Only effective while
    *  analyticsEnabled is on. Off by default. */
   crashReportsEnabled: boolean;
+  /** Fetch the ACP Registry and models.dev (at most once a day) for agent
+   *  install commands and model details. On by default. */
+  onlineCatalogs: boolean;
 }
 
 /**
@@ -1752,6 +1815,7 @@ export const IPC = {
   PREREQUISITES_CHECK: 'prerequisites:check',
   PREREQUISITES_CACHED: 'prerequisites:cached',
   PREREQUISITES_GH: 'prerequisites:gh',
+  PREREQUISITES_CHECK_SIGN_IN: 'prerequisites:checkSignIn',
   CREDENTIALS_SET_API_KEY: 'credentials:setApiKey',
   CREDENTIALS_CLEAR_API_KEY: 'credentials:clearApiKey',
   /** Renderer → main: session restore finished; deferred background work may start. */
@@ -1800,6 +1864,8 @@ export const IPC = {
   AGENT_SET_CONTROL: 'agent:setControl',
   AGENT_GET_CONTROLS: 'agent:getControls',
   AGENT_GET_USAGE: 'agent:getUsage',
+  AGENT_SWITCH: 'agent:switch',
+  AGENT_GET_CACHED_USAGE: 'agent:getCachedUsage',
   AGENT_MCP_LIST: 'agent:mcpList',
   SKILLS_LIST: 'skills:list',
   SKILLS_ADD: 'skills:add',
@@ -1895,6 +1961,9 @@ export const IPC = {
   AGENT_CHECKPOINT_FILE_DIFF: 'agent:checkpointFileDiff',
   AGENT_CHECKPOINT_FILE_LINES: 'agent:checkpointFileLines',
   AGENT_LIST_ADAPTERS: 'agent:listAdapters',
+  CATALOGS_REGISTRY: 'catalogs:registry',
+  CATALOGS_ICON: 'catalogs:icon',
+  CATALOGS_REFRESH: 'catalogs:refresh',
   AGENT_MODELS_CHANGED: 'agent:modelsChanged',
   AGENT_GET_ADAPTER_CONTROLS: 'agent:getAdapterControls',
   AGENT_GET_MODELS: 'agent:getModels',

@@ -56,7 +56,7 @@
     setting="default-thread-view"
     label="Default thread view"
     for="settings-thread-view"
-    description="{VIEW_MODE_DESCRIPTIONS[draft.defaultActivityView] ?? VIEW_MODE_DESCRIPTIONS.summary}. New conversations start in this view; each can switch from its Thread tab."
+    description="{VIEW_MODE_DESCRIPTIONS[draft.defaultActivityView] ?? VIEW_MODE_DESCRIPTIONS.summary}. New threads start in this view; each one can switch from the Thread tab."
   >
     <Select.Root type="single" value={draft.defaultActivityView} onValueChange={(v) => { if (v) settingsStore.draft.defaultActivityView = v as ActivityViewMode; }}>
       <Select.Trigger id="settings-thread-view" class="w-48">
@@ -114,14 +114,14 @@
   <CheckboxSetting
     setting="grove-characters"
     label="Show grove characters"
-    description="Small pixel agents show each conversation's status by pose as well as colour: in the sidebar, in prompts, and on empty tabs."
+    description="Small pixel agents show each thread's status by pose as well as colour: in the sidebar, in prompts, and on empty tabs."
     bind:checked={settingsStore.draft.groveCharacters}
   />
 
   {#if store.repos.length > 0}
     <div data-setting="project-colors" class="flex flex-col gap-1.5">
       <Label>Project colors</Label>
-      <p class="text-xs text-muted-foreground leading-relaxed">Accent colors show which conversations and tabs belong to each project.</p>
+      <p class="text-xs text-muted-foreground leading-relaxed">Accent colors show which threads and tabs belong to each project.</p>
       <ul class="flex flex-col gap-1.5 mt-1">
         {#each store.repos as repo, i (repo)}
           {@const name = store.repoDisplayName(repo)}

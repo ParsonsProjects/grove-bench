@@ -23,7 +23,7 @@
 
 <SettingsGroup
   title="Desktop notifications"
-  description="Shown only while the Grove Bench window isn't focused. Clicking one opens the conversation."
+  description="Shown only while the Grove Bench window isn't focused. Clicking one opens the thread."
 >
   <CheckboxSetting setting="notify-turn-complete" label="Agent finishes a turn" bind:checked={settingsStore.draft.notifyOnTurnComplete} />
   <CheckboxSetting setting="notify-permission" label="Agent is waiting on a permission or question" bind:checked={settingsStore.draft.notifyOnPermission} />
@@ -57,7 +57,7 @@
   <CheckboxSetting
     setting="taskbar-badge"
     label="Badge the taskbar icon"
-    description="Shows how many conversations need you."
+    description="Shows how many threads need you."
     bind:checked={settingsStore.draft.notifyTaskbarBadge}
   />
 </SettingsGroup>

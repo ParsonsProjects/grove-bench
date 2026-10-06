@@ -18,4 +18,10 @@
     disabled={!settingsStore.draft.analyticsEnabled}
     bind:checked={settingsStore.draft.crashReportsEnabled}
   />
+  <CheckboxSetting
+    setting="online-catalogs"
+    label="Look up agents and models online"
+    description="Once a day, download the public ACP Registry (agents and their install commands) and models.dev (model context sizes and prices). Nothing about you or your projects is sent."
+    bind:checked={settingsStore.draft.onlineCatalogs}
+  />
 </SettingsGroup>

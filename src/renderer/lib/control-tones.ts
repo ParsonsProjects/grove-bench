@@ -11,6 +11,7 @@ const TONE_CLASSES: Record<ControlTone, string> = {
   'accent-soft': 'text-purple-300/70 border-purple-300/30',
   success: 'text-green-400 border-green-400/40',
   highlight: 'text-cyan-400 border-cyan-400/50',
+  danger: 'text-red-400 border-red-400/50',
 };
 
 export function toneClass(tone?: ControlTone): string {

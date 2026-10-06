@@ -145,7 +145,7 @@
     <Dialog.Header>
       <Dialog.Title>Add MCP server</Dialog.Title>
       <Dialog.Description>
-        Adds it to {mcpAgent ? `${mcpAgent.displayName}'s` : "the agent's"} configuration. New and restarted conversations pick it up.
+        Adds it to {mcpAgent ? `${mcpAgent.displayName}'s` : "the agent's"} configuration. New and restarted threads pick it up.
       </Dialog.Description>
     </Dialog.Header>
 

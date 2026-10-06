@@ -232,9 +232,9 @@
 <svelte:window onkeydown={handleWindowKeydown} />
 
 {#snippet userEmptyText()}
-  <p class="text-xs mb-4">Open a local dev server, any web address, or an HTML file in this worktree. Links to localhost in the conversation open here too; Ctrl+click opens them in your system browser.</p>
+  <p class="text-xs mb-4">Open a local dev server, any web address, or an HTML file in this worktree. Links to localhost in the thread open here too; Ctrl+click opens them in your system browser.</p>
   {#if detected.length > 0}
-    <p class="text-[10px] uppercase tracking-wide mb-2">Seen in this conversation</p>
+    <p class="text-[10px] uppercase tracking-wide mb-2">Seen in this thread</p>
     <div class="flex flex-col gap-1 items-stretch">
       {#each [...detected].reverse() as url (url)}
         <button onclick={() => go('user', url)} class="px-3 py-1 text-xs font-mono border border-border bg-card hover:border-primary/60 hover:text-foreground truncate">
@@ -249,7 +249,7 @@
 
 {#snippet agentEmptyText()}
   {#if agentToolsOn && asleep}
-    <p class="text-xs mb-4">The agent's page closes while the conversation is asleep. It opens again when the agent next uses the browser.</p>
+    <p class="text-xs mb-4">The agent's page closes while the thread is asleep. It opens again when the agent next uses the browser.</p>
   {:else if agentToolsOn}
     <p class="text-xs mb-4">When the agent checks its work in the browser, its page shows here and updates as it clicks and types. It opens local pages only. Try asking: "start the dev server and check the page in the preview".</p>
   {:else}

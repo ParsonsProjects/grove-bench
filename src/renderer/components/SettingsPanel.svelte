@@ -97,7 +97,7 @@
   /** Settings that only show in some setups, and when they do: search
    *  shouldn't offer a row that isn't there. */
   const SHOWN_WHEN: Record<string, () => boolean> = {
-    credentials: () => Object.values(store.prerequisites?.agents ?? {}).some((a) => a.apiKey),
+    credentials: () => Object.values(store.prerequisites?.agents ?? {}).some((a) => a.apiKey || a.cliSignIn || a.installCommand),
     'thinking-summaries': () => agentsStore.list.some((a) => a.capabilities.thinkingSummaries),
     'alpha-agents': () => agentsStore.list.some((a) => a.stage === 'alpha'),
     'project-colors': () => store.repos.length > 0,

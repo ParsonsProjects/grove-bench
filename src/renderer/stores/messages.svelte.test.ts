@@ -8,6 +8,7 @@ import { store as sessionStore } from './sessions.svelte.js';
 import { checkpointStore } from './checkpoints.svelte.js';
 import { backgroundTaskStore } from './backgroundTask.svelte.js';
 import { rateLimitStore } from './rateLimit.svelte.js';
+import { usageStore } from './usage.svelte.js';
 import { settingsStore } from './settings.svelte.js';
 import type { AgentEvent } from '../../shared/types.js';
 
@@ -703,6 +704,34 @@ describe('ingestEvent — rate_limit (delegates to rateLimitStore)', () => {
     expect((msgs[0] as any).text).toContain('Rate limited');
     expect((msgs[0] as any).text).toContain('token');
   });
+
+  it('updates plan usage from a live event but not from a replayed one', () => {
+    usageStore.byProvider = {};
+    sessionStore.sessions = [{ id: SID, branch: 'b', repoPath: '/r', status: 'running', agentType: 'claude-code' }] as any;
+    const old = { type: 'rate_limit', status: 'allowed', rateLimitType: 'five_hour', utilization: 0.9 } as AgentEvent;
+
+    messageStore.replayEvents(SID, [old]);
+    expect(usageStore.get('claude-code')).toBeNull();
+    expect(rateLimitStore.get(SID)?.utilization).toBe(0.9);
+
+    messageStore.ingestEvent(SID, { ...old, utilization: 0.3 } as AgentEvent);
+    expect(usageStore.get('claude-code')?.windows[0].utilization).toBe(0.3);
+    usageStore.byProvider = {};
+  });
+});
+
+describe('ingestEvent — agent_changed', () => {
+  it('moves the conversation to the new agent and drops the old agent\'s controls', () => {
+    sessionStore.sessions = [{ id: SID, branch: 'b', repoPath: '/r', status: 'running', agentType: 'claude-code' }] as any;
+    messageStore.controlsBySession[SID] = { descriptors: [], values: {} };
+    messageStore.modelBySession[SID] = 'claude-opus-5-5';
+
+    messageStore.ingestEvent(SID, { type: 'agent_changed', from: 'claude-code', to: 'gemini-cli', fromName: 'Claude Agent', toName: 'Gemini CLI', transcript: true });
+
+    expect(sessionStore.sessions[0].agentType).toBe('gemini-cli');
+    expect(messageStore.controlsBySession[SID]).toBeUndefined();
+    expect(messageStore.getModel(SID)).toBe('');
+  });
 });
 
 describe('ingestEvent — compact_boundary', () => {
@@ -1274,16 +1303,10 @@ describe('markSessionStopped', () => {
 });
 
 describe('cycleMode', () => {
-  it('cycles default → plan → acceptEdits → auto → readSafe → default', () => {
+  it('before the agent declares its modes, cycles only the ones every agent offers', () => {
     messageStore.modeBySession[SID] = 'default';
     messageStore.cycleMode(SID);
-    expect(messageStore.getMode(SID)).toBe('plan');
-
-    messageStore.cycleMode(SID);
     expect(messageStore.getMode(SID)).toBe('acceptEdits');
-
-    messageStore.cycleMode(SID);
-    expect(messageStore.getMode(SID)).toBe('auto');
 
     messageStore.cycleMode(SID);
     expect(messageStore.getMode(SID)).toBe('readSafe');
@@ -1498,12 +1521,23 @@ describe('session controls', () => {
     expect(messageStore.getMode(SID)).toBe('default');
   });
 
+  it('cycleControl reaches a control that stands in for a well-known one (Alt+E on an ACP agent)', () => {
+    const acp = [{ id: 'acp:effort', label: 'Effort', role: 'effort', default: 'low', options: [
+      { value: 'low', label: 'Low' }, { value: 'high', label: 'High' },
+    ] }];
+    messageStore.ingestEvent(SID, { type: 'controls_sync', descriptors: acp, values: { 'acp:effort': 'low' } } as AgentEvent);
+
+    messageStore.cycleControl(SID, 'effort');
+
+    expect(mockGroveBench.setControl).toHaveBeenCalledWith(SID, 'acp:effort', 'high');
+  });
+
   it('cycleControl on permissionMode still works before any descriptors arrive', () => {
     messageStore.modeBySession[SID] = 'default';
 
     messageStore.cycleControl(SID, 'permissionMode');
 
-    expect(messageStore.getMode(SID)).toBe('plan');
+    expect(messageStore.getMode(SID)).toBe('acceptEdits');
   });
 
   it('loadControls fetches once and keeps a controls_sync that landed mid-fetch', async () => {

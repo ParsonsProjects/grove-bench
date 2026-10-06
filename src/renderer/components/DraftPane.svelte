@@ -14,6 +14,7 @@
   import { agentReady, gitReady } from '../../shared/prerequisites.js';
   import { controlHint } from '../lib/control-hint.js';
   import ApiKeyField from './ApiKeyField.svelte';
+  import CommandLine from './CommandLine.svelte';
   import GroveEmptyState from './GroveEmptyState.svelte';
   import GitIdentityNotice from './GitIdentityNotice.svelte';
   import GitNotice from './GitNotice.svelte';
@@ -40,6 +41,18 @@
     if (prerequisitesStore.checking) return 'checking';
     return 'missing';
   });
+
+  let signInError = $state('');
+  /** Start the agent briefly to see whether signing in worked. */
+  async function checkSignIn() {
+    signInError = '';
+    try {
+      await prerequisitesStore.checkSignIn(agentId);
+      if (store.prerequisites?.agents[agentId]?.authenticated === false) signInError = `${agentName} still isn't signed in.`;
+    } catch (e) {
+      signInError = e instanceof Error ? e.message : String(e);
+    }
+  }
 
   function retryAgents() {
     agentsTried = false;
@@ -92,7 +105,7 @@
     if (!draft || draftStore.starting) return null;
     if (credentials === 'missing') return 'Add credentials above to start.';
     if (credentials === 'checking') return 'Checking credentials…';
-    if (credentials === 'no-agent') return 'No agent is available to start this conversation.';
+    if (credentials === 'no-agent') return 'No agent is available to start this thread.';
     if (start?.kind === 'existing' && !start.branch) return 'Pick a branch or pull request first.';
     return null;
   });
@@ -178,7 +191,7 @@
 {#if draft}
 <div class="flex flex-col h-full bg-background">
   <div class="flex items-center gap-2 border-b border-border bg-card/50 shrink-0 px-4 py-1.5 text-xs">
-    <span class="font-medium text-foreground">New conversation</span>
+    <span class="font-medium text-foreground">New thread</span>
     <span class="text-muted-foreground/60">in {store.repoDisplayName(draft.repoPath)}{agentName ? ` · ${agentName}` : ''}</span>
     <button
       type="button"
@@ -198,7 +211,7 @@
       </div>
     {:else if credentials === 'no-agent'}
       <div class="relative z-10 w-full max-w-sm flex flex-col gap-3 bg-background border border-border p-4">
-        <p class="text-sm text-foreground">No agent is available to start this conversation.</p>
+        <p class="text-sm text-foreground">No agent is available to start this thread.</p>
         <p class="text-xs text-muted-foreground">Grove Bench couldn't load its list of agents. Try again, or restart the app if it keeps happening.</p>
         <div class="flex justify-end">
           <Button variant="secondary" size="sm" onclick={retryAgents}>Try again</Button>
@@ -206,16 +219,33 @@
       </div>
     {:else if credentials === 'missing'}
       {@const cli = agentStatus?.cliSignIn}
+      {@const installed = agentStatus?.available !== false}
+      {@const needsInstall = !installed && !!agentStatus?.installRequired}
+      {@const signedOut = installed && agentStatus?.authenticated === false && !agentStatus?.apiKey?.saved}
       <div class="relative z-10 w-full max-w-md flex flex-col gap-4 bg-background border border-border p-4">
         <p class="text-sm text-foreground">
-          {#if agentStatus?.apiKey?.saved && agentStatus.apiKey.rejected}
+          {#if needsInstall}
+            {agentName} isn't installed on this computer.
+          {:else if agentStatus?.apiKey?.saved && agentStatus.apiKey.rejected}
             {agentName} couldn't sign in with the saved API key.
+          {:else if signedOut}
+            {agentName} isn't signed in.
           {:else}
             Add credentials for {agentName} to start.
           {/if}
         </p>
+        {#if signedOut && agentStatus?.authMessage && !/^authentication required\.?$/i.test(agentStatus.authMessage.trim())}
+          <p class="text-xs text-muted-foreground -mt-2" data-testid="auth-message">{agentName} said: {agentStatus.authMessage}</p>
+        {/if}
         {#if cli && cli.cliName !== agentName}
           <p class="text-xs text-muted-foreground -mt-2">{agentName} runs on {cli.cliName}, so it signs in the same way.</p>
+        {/if}
+        {#if !installed && agentStatus?.installCommand}
+          <section class="flex flex-col gap-1.5" aria-label="Install {cli?.cliName ?? agentName}">
+            <p class="text-xs font-medium text-foreground">Install {cli?.cliName ?? agentName}</p>
+            <p class="text-xs text-muted-foreground">Copy this into a terminal (PowerShell) and run it, then click <span class="text-foreground">Re-check</span>.</p>
+            <CommandLine command={agentStatus.installCommand} label="Install command" />
+          </section>
         {/if}
         {#if cli}
           <!-- Two ways in, subscription first: most people have a plan, not
@@ -224,10 +254,11 @@
             <p class="text-xs font-medium text-foreground">
               Use your {cli.accountLabel}{#if cli.accountDetail}{' '}<span class="font-normal text-muted-foreground">({cli.accountDetail})</span>{/if}
             </p>
-            {#if agentStatus?.available}
+            {#if installed}
               <p class="text-xs text-muted-foreground">
-                Run <code class="text-foreground">{cli.command}</code> in a terminal and sign in when it asks. Then click <span class="text-foreground">Re-check</span>.
+                Run <code class="text-foreground">{cli.command}</code> in a terminal and sign in when it asks. Then click <span class="text-foreground">{agentStatus?.signInCheckable ? 'Check sign-in' : 'Re-check'}</span>.
               </p>
+              <CommandLine command={cli.command} label="Sign-in command" />
             {:else}
               <p class="text-xs text-muted-foreground">
                 Install {cli.cliName}, run <code class="text-foreground">{cli.command}</code> in a terminal and sign in when it asks. Then click <span class="text-foreground">Re-check</span>.
@@ -250,18 +281,25 @@
             {/key}
           </section>
         {/if}
-        {#if !cli && !agentStatus?.apiKey}
+        {#if !cli && !agentStatus?.apiKey && !agentStatus?.installCommand}
           <p class="text-sm text-muted-foreground">
             {agentStatus?.authErrorMessage ?? agentStatus?.errorMessage ?? 'Could not check the agent\'s credentials.'}
           </p>
         {/if}
-        <div class="flex justify-end">
-          <Button variant="secondary" size="sm" onclick={() => prerequisitesStore.refresh()}>Re-check</Button>
+        {#if signInError}
+          <p class="text-xs text-destructive" role="alert">{signInError}</p>
+        {/if}
+        <div class="flex justify-end gap-2">
+          {#if installed && agentStatus?.signInCheckable}
+            <Button variant="secondary" size="sm" onclick={checkSignIn}>Check sign-in</Button>
+          {:else}
+            <Button variant="secondary" size="sm" onclick={() => prerequisitesStore.refresh()}>Re-check</Button>
+          {/if}
         </div>
       </div>
     {:else if settingsStore.current.groveCharacters}
       <GroveEmptyState variant="draft">
-        <p class="text-sm mt-5 mb-2 text-foreground/80">New conversation in {store.repoDisplayName(draft.repoPath)}</p>
+        <p class="text-sm mt-5 mb-2 text-foreground/80">New thread in {store.repoDisplayName(draft.repoPath)}</p>
         <p class="text-xs text-muted-foreground max-w-md">{plan}</p>
         {#if modeHint}
           <p class="text-xs text-muted-foreground max-w-md mt-1">Mode: <span class="text-foreground/80">{modeHint.label}</span>. {modeHint.description}.</p>
@@ -271,7 +309,7 @@
       </GroveEmptyState>
     {:else}
       <div class="relative z-10 text-center">
-        <p class="text-sm mb-2 text-foreground/80">New conversation in {store.repoDisplayName(draft.repoPath)}</p>
+        <p class="text-sm mb-2 text-foreground/80">New thread in {store.repoDisplayName(draft.repoPath)}</p>
         <p class="text-xs max-w-md">{plan}</p>
         {#if modeHint}
           <p class="text-xs max-w-md mt-1">Mode: {modeHint.label}. {modeHint.description}.</p>
@@ -307,7 +345,7 @@
         variant="outline"
         onclick={() => draftStore.start()}
         disabled={!canStart}
-        title={startBlocker ?? `Start the conversation${draft.text.trim() ? ' and send this message' : ''}`}
+        title={startBlocker ?? `Start the thread${draft.text.trim() ? ' and send this message' : ''}`}
         class="text-primary border-primary hover:bg-primary/10 h-auto"
       >
         {draftStore.starting ? 'Starting…' : 'Start'}

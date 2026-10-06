@@ -27,7 +27,7 @@ describe('PreviewPanel', () => {
     store.sessions = [{ id: 's1', branch: 'b', repoPath: '/r', status: 'sleeping' }] as any;
     previewStore.setMode('s1', 'agent');
     render(PreviewPanel, { sessionId: 's1', active: true });
-    expect(screen.getByText(/closes while the conversation is asleep/)).toBeInTheDocument();
+    expect(screen.getByText(/closes while the thread is asleep/)).toBeInTheDocument();
   });
 
   it('offers URLs seen in the conversation and opens them in your page', async () => {

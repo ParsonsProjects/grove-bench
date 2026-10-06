@@ -259,7 +259,7 @@ export function transformMessage(
       } else if (message.subtype === 'status') {
         const m = message as any;
         if (m.status === 'compacting') {
-          events.push({ type: 'status', message: 'Compacting conversation...' });
+          events.push({ type: 'status', message: 'Compacting thread...' });
         }
         const modeValue = m.permissionMode ?? m.permission_mode;
         if (modeValue) {
@@ -1047,7 +1047,7 @@ export const CLAUDE_MCP_SUPPORT: McpSupport = {
   controls: { list: true, reconnect: true, toggle: true, signIn: true, contextCost: true },
   // The CLI saves a disconnect to disabledMcpServers for the project (keyed by
   // the main repo root, so every worktree shares it), not just this conversation.
-  disconnectHint: 'Disconnect this server in this project. New conversations here also start without it until you connect it again.',
+  disconnectHint: 'Disconnect this server in this project. New threads here also start without it until you connect it again.',
   config: {
     scopes: [
       { value: 'user', label: 'User', description: 'Available in all projects on this machine' },
@@ -1056,7 +1056,7 @@ export const CLAUDE_MCP_SUPPORT: McpSupport = {
     ],
     namePattern: CLAUDE_MCP_NAME_PATTERN,
     nameRule: 'Server names can only contain letters, numbers, hyphens and underscores',
-    approvalHint: "From this project's .mcp.json. Conversations won't connect it until you approve it. Only approve servers you trust: they run on your machine.",
+    approvalHint: "From this project's .mcp.json. Threads won't connect it until you approve it. Only approve servers you trust: they run on your machine.",
   },
 };
 
@@ -1561,7 +1561,8 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         authenticated: envMethod !== null,
         ...(envMethod ? { authMethod: envMethod } : {}),
         errorMessage: 'Claude Code CLI not found',
-        installInstructions: 'Install Claude Code: https://code.claude.com/docs/en/setup',
+        // The native installer for PowerShell (code.claude.com/docs/en/setup).
+        installCommand: 'irm https://claude.ai/install.ps1 | iex',
       };
     }
 

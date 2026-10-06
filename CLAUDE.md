@@ -32,6 +32,7 @@ src/
     memory-autosave.ts # Auto-save memory on interval
     settings.ts        # User settings
     prerequisites.ts   # Git/Claude detection & version checks
+    catalogs.ts        # ACP Registry and models.dev, fetched daily (install commands, model sizes)
     credentials.ts     # Encrypted API key storage (safeStorage)
     logger.ts          # File-based logging
     rotating-log.ts    # Size-rotated log file (app log and performance.log share it)
@@ -93,8 +94,8 @@ npm run test:renderer  # Tests for renderer only
 
 User-facing names and internal names differ on purpose:
 
-- **Conversation** (UI, help, docs) = `AgentSession` / `session:*` IPC / `sessions` store in code. Keep "session" internally: it also names the provider's own resumable session (`providerSessionId`).
-- **Thread tab** (UI, help, docs) = the `'activity'` workspace tab in code (`WorkspaceTab`, `setActiveTab`), and its view modes are `ActivityViewMode` / `defaultActivityView`. It was called Activity before; the code names stay so saved settings keep working.
+- **Thread** (UI, help, docs) = `AgentSession` / `session:*` IPC / `sessions` store in code. It was called Conversation before, and some code names still say so (`ConversationGoal`, `showConversationGoal`, `getConversationGroups`); keep them so saved settings keep working. Keep "session" internally: it also names the provider's own resumable session (`providerSessionId`). Text sent to the model (prompts, tool descriptions) may still say "conversation".
+- **Thread tab** (UI, help, docs) = the `'activity'` workspace tab in code (`WorkspaceTab`, `setActiveTab`), and its view modes are `ActivityViewMode` / `defaultActivityView`. It was called Activity before; the code names stay so saved settings keep working. Where "thread" and "Thread tab" would clash in a sentence, name the tab.
 - **Project** (UI, help, docs) = `repoPath` in code. Keep "repo" internally: `'project'` is already a Claude Code config scope (`'project' | 'user' | 'local'`) for MCP servers, skills and plugins.
 
 Use the user-facing words in any new UI text, help page or doc. See `docs/projects-plan.md` for where projects are heading.

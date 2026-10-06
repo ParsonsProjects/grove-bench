@@ -95,7 +95,7 @@ describe('UpdateNotification', () => {
     emit({ state: 'downloaded', info: INFO });
     await fireEvent.click(await screen.findByRole('button', { name: 'Restart to update' }));
 
-    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining('2 conversations are still working'));
+    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining('2 threads are still working'));
     expect(groveBench().restartToUpdate).not.toHaveBeenCalled();
 
     confirmSpy.mockReturnValue(true);

@@ -7,6 +7,7 @@ import { draftStore } from '../stores/draft.svelte.js';
 import { store } from '../stores/sessions.svelte.js';
 import { agentsStore } from '../stores/agents.svelte.js';
 import { settingsStore } from '../stores/settings.svelte.js';
+import { usageStore } from '../stores/usage.svelte.js';
 
 const settle = () => new Promise((r) => setTimeout(r, 0));
 
@@ -39,6 +40,7 @@ afterEach(() => {
   store.repos = [];
   agentsStore.list = [];
   agentsStore.loaded = false;
+  usageStore.reset();
 });
 
 async function openPopover() {
@@ -48,6 +50,18 @@ async function openPopover() {
 }
 
 describe('DraftAgentControl', () => {
+  it('shows the plan usage the agent last reported, before anything has started', async () => {
+    mockGroveBench.getCachedUsage.mockResolvedValue({
+      available: true, plan: 'max', fetchedAt: Date.now(),
+      windows: [{ id: 'five_hour', label: '5-hour', utilization: 0.42 }],
+    });
+
+    const dialog = await openPopover();
+
+    await waitFor(() => expect(dialog.querySelector('[data-testid="usage"]')).toHaveTextContent('42%'));
+    expect(mockGroveBench.getCachedUsage).toHaveBeenCalledWith('claude-code');
+  });
+
   it('shows the agent, model and mode the draft would start on', () => {
     render(DraftAgentControl);
     const trigger = screen.getByTitle(/Agent settings/);

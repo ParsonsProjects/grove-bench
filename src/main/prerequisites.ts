@@ -88,10 +88,7 @@ function buildAgentStatus(agentStatus: AdapterPrerequisiteStatus, adapter: Agent
   let errorMessage: string | undefined;
   let authErrorMessage: string | undefined;
   if (!agentStatus.available) {
-    errorMessage = agentStatus.errorMessage
-      ?? (agentStatus.installInstructions
-        ? `Agent not found. ${agentStatus.installInstructions}`
-        : 'Agent CLI not found.');
+    errorMessage = agentStatus.errorMessage ?? 'Agent CLI not found.';
   }
   if (agentStatus.available && !agentStatus.authenticated) {
     authErrorMessage = adapter.authErrorMessage;
@@ -106,6 +103,10 @@ function buildAgentStatus(agentStatus: AdapterPrerequisiteStatus, adapter: Agent
     email: agentStatus.email,
     errorMessage,
     authErrorMessage,
+    ...(agentStatus.authMessage ? { authMessage: agentStatus.authMessage } : {}),
+    ...(!agentStatus.available && agentStatus.installCommand ? { installCommand: agentStatus.installCommand } : {}),
+    ...(agentStatus.installRequired ? { installRequired: true } : {}),
+    ...(adapter.checkSignIn ? { signInCheckable: true } : {}),
     apiKey: apiKeyState(adapter),
     ...(adapter.cliSignIn ? { cliSignIn: { ...adapter.cliSignIn } } : {}),
   };

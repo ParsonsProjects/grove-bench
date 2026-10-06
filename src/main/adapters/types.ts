@@ -271,7 +271,19 @@ export interface AdapterPrerequisiteStatus {
   authMethod?: string;
   email?: string;
   errorMessage?: string;
-  installInstructions?: string;
+  installCommand?: string;
+  /** The agent's own words the last time it turned Grove down for sign-in
+   *  (e.g. Gemini CLI's "This client is no longer supported..."). */
+  authMessage?: string;
+  /** Conversations need the installed program even with a saved key. */
+  installRequired?: boolean;
+}
+
+/** What a sign-in check found: signed in, turned down (with the agent's
+ *  reason), or couldn't tell (null). */
+export interface SignInCheck {
+  signedIn: boolean | null;
+  message?: string;
 }
 
 /** An API key the user can enter in the app instead of signing in through the
@@ -287,6 +299,10 @@ export interface ApiKeyDescriptor {
   /** How using a key is paid for, shown under the field, e.g. that it is
    *  billed separately from a subscription. */
   billingNote?: string;
+  /** ACP agents: the sign-in method to ask for with the saved key when the
+   *  agent turns a session down (Gemini CLI's 'gemini-api-key'). The key
+   *  goes in the request's `_meta['api-key']`. */
+  authMethodId?: string;
 }
 
 /** Signing in through the provider's own CLI instead of an API key: the
@@ -299,7 +315,8 @@ export interface CliSignInDescriptor {
   accountDetail?: string;
   /** The CLI's product name, e.g. "Claude Code". */
   cliName: string;
-  /** The command that starts it and asks the user to sign in. */
+  /** The command that signs in, or starts the CLI so it asks
+   *  (e.g. `copilot login`, `claude`). Shown with a copy button. */
   command: string;
   /** The provider's install and setup page. */
   setupUrl: string;
@@ -354,6 +371,10 @@ export interface AgentAdapter {
 
   /** Set when the user can sign in with the provider's CLI instead. */
   readonly cliSignIn?: CliSignInDescriptor;
+
+  /** Find out for real whether the agent is signed in, for agents whose
+   *  prerequisite check can't tell (it starts the agent briefly). */
+  checkSignIn?(): Promise<SignInCheck>;
 
   /** Cheap model for background tasks run on this agent: memory notes and
    *  compaction, commit messages, skill suggestions. Used unless the user
