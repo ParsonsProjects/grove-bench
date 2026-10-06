@@ -28,6 +28,20 @@ tools over HTTP MCP. Takes about a minute. Every PASS means OpenCode still behav
 as the plan's "Spike findings" section says. Re-run it before bumping the
 pinned OpenCode version.
 
+## Rewind check (any OS, no key, no network)
+
+```
+node probe-revert.mjs               # in a git repository, as a Grove worktree is
+node probe-revert.mjs --no-git      # in a plain folder
+node probe-revert.mjs --restart     # a new process resumes the session after the revert
+```
+
+ACP can't make an agent forget turns, but `opencode acp` also runs OpenCode's
+HTTP server. This checks whether `POST /session/:id/revert` there, with the
+ACP connection open, makes the model forget the reverted turns, which message
+a revert removes, what it does to files, and how to find OpenCode's id for a
+message. Findings are in `docs/open-model-harnesses-plan.md`.
+
 ## Real check (Windows, your OpenRouter key)
 
 PowerShell:

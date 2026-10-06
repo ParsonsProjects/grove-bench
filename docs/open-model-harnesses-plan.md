@@ -33,7 +33,7 @@
 | Route | Verdict | Reason |
 |---|---|---|
 | Generic ACP adapter | **Chosen** | ACP is a JSON-RPC 2.0 standard between editors and coding agents [1]. The ACP registry lists about 50 agents, including OpenCode, Goose, Qwen Code, Gemini CLI, Kimi CLI and Codex CLI [2]. One adapter, many harnesses. Main built it (#140) while this plan was being written. |
-| Dedicated OpenCode SDK adapter | Not needed | Richer (session revert, provider lists, todos), MIT, but tied to one vendor, and its SDK ships a `v2` folder, so its API is still moving. ACP covers what Grove needs except rewind. |
+| Dedicated OpenCode SDK adapter | Not needed | Richer (session revert, provider lists, todos), MIT, but tied to one vendor, and its SDK ships a `v2` folder, so its API is still moving. ACP covers what Grove needs except rewind, and OpenCode's local server covers that on top of ACP (`probe-revert.mjs`). |
 | Claude adapter pointed at another endpoint | Rejected | DeepSeek offers an Anthropic-format endpoint that Claude Code can use [4], but Anthropic's docs say it "doesn't support routing Claude Code to non-Claude models through any gateway" [5]. Claude Code is also not open source, so it misses goal 2. |
 | Codex app-server | Rejected for this goal | Codex removed the Chat Completions wire API in February 2026; only `wire_api = "responses"` is accepted [6]. DeepSeek's own API is Chat Completions and Anthropic format [4], so it needs a gateway. A native Codex adapter stays on `TODO.md`. |
 
@@ -115,13 +115,20 @@ the spike pins.
 | Tool call shape? | `tool_call` arrives with an empty `rawInput`; the input comes in the first `in_progress` update. | The adapter's `tool_update` fills it in. |
 | To-do lists? | No ACP `plan` update. To-dos are a `todowrite` tool call. | Shown as a plain tool call. |
 | Usage? | `usage_update` gives tokens used, context size and running cost in USD; `session/prompt`'s answer gives the turn's input and output tokens. | Context, output tokens and each turn's cost (the rise in the running cost) shown. |
-| Restart? | `session/load` replays the conversation; `session/resume` doesn't. `fork` takes no message id. | Adapter prefers `session/resume`; no conversation rewind. |
+| Restart? | `session/load` replays the conversation; `session/resume` doesn't. `fork` takes no message id. | Adapter prefers `session/resume`; no conversation rewind over ACP. |
+| **Rewind through the local server?** (`probe-revert.mjs`) | `POST /session/:id/revert` with a user message's id, sent while the ACP connection is open, makes the model forget that message and everything after it. The next prompt deletes them for good, over the same connection or after a restart and `session/resume`. The ACP session id is the server's, and agent message ids match, but live turns carry no user message ids: `GET /session/:id/message` lists them. In a git repository the revert also restores files from OpenCode's own snapshots; in a plain folder it leaves them. The answer is the session, not the boolean the docs give. | Not built. Needs `--port`, the message lookup, and for "Thread only" rewinds a guard so OpenCode's file restore doesn't change the files. |
 | Memory tools? | An `http` MCP server with a bearer header works; the model sees `grove-memory_memory_read`; MCP calls don't ask. | Served by main's `grove-mcp-http.ts`. |
 | Where does it write? | Its data folder: a SQLite database, a log, and for git projects its own snapshot repo. Nothing in the worktree. | The user's normal OpenCode data folder. |
 | Extra traffic? | One title request per new session (uses `small_model`). At start-up it fetches `models.opencode.ai` (falls back to a bundled list) and tries a background `npm install` of its plugin package. | With a saved key, `small_model` is Flash too, so titles cost little. |
 | **Local server** | `opencode acp` opens an HTTP server on `127.0.0.1` (4096, or a free port). **Without a password** it serves saved provider keys (`/config/providers`, `/provider`, and `/config` when the key is in the config) and lets any local process create sessions. `OPENCODE_SERVER_PASSWORD` makes it return 401. | Preset sets a random password per process. |
 
 ## Left to do
+
+- **Conversation rewind for OpenCode.** The spike shows it works through the
+  local server (see "Rewind through the local server?" above), on top of ACP:
+  no separate adapter is needed. Grove would start `opencode acp --port`, look
+  up the user message's id, call `revert`, and restore its own checkpoint
+  afterwards (or keep the current files for "Thread only").
 
 - **Windows run with a real key (Phase 0b).** `scripts/acp-spike/probe-real.mjs`
   runs a small task on DeepSeek V4.1 Flash in a temp folder (well under

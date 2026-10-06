@@ -28,7 +28,12 @@ When you're ready to rewind, you have two choices:
 
 A checkpoint whose message is no longer in the thread (one from before a `/clear`, or the target of an earlier rewind) can only have its files restored; the thread is left untouched. Checkpoints from before a `/clear` show a single **Restore files** button in place of the two above.
 
-After a rewind, the agent keeps its memory of the thread up to the rewind point and genuinely forgets the turns that were rewound away. One caveat: project memory files (the Memory panel) are not rolled back — notes the agent saved during rewound turns are kept, so it may still recall facts it wrote to memory.
+What the agent remembers afterwards depends on the agent:
+
+- **Claude Agent** keeps its memory of the thread up to the rewind point and genuinely forgets the turns that were rewound away.
+- **Other agents** (Gemini CLI, GitHub Copilot CLI, OpenCode and any you add) can't forget part of a thread, so they start a new session from the rewind point. The files and the thread you see are rewound as usual, but the agent no longer remembers any of the thread, including the turns before the rewind point. The thread says so when it happens.
+
+One caveat for every agent: project memory files (the Memory panel) are not rolled back. Notes the agent saved during rewound turns are kept, so it may still recall facts it wrote to memory.
 
 ## When to Use Checkpoints
 
