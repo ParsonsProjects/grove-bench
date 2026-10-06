@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { attachedFilesFromSent, buildContentBlock, displayTextFromSent, parseSentPrompt, stripFileContext } from './prompt-text.js';
+import { attachedFilesFromSent, buildContentBlock, displayTextFromSent, parseSentPrompt, stripFileContext, userEventText } from './prompt-text.js';
 
 describe('parseSentPrompt', () => {
   it('reads past a closing tag inside the file content, using its length', () => {
@@ -103,5 +103,16 @@ describe('displayTextFromSent with images', () => {
   it('lists attached files, then images, before the typed text', () => {
     const sent = `${buildContentBlock('file', 'a.ts', 'x')}\n\nfix it`;
     expect(displayTextFromSent(sent, [{ name: 'shot.png' }, {}])).toBe('[a.ts, shot.png] fix it');
+  });
+});
+
+describe('userEventText', () => {
+  it('lists text files, then images, then other files before the typed text', () => {
+    const sent = `${buildContentBlock('file', 'a.ts', 'x')}\n\nfix it`;
+    expect(userEventText({
+      text: sent,
+      images: [{ name: 'shot.png' }],
+      files: [{ name: 'spec.pdf' }],
+    })).toBe('[a.ts, shot.png, spec.pdf] fix it');
   });
 });

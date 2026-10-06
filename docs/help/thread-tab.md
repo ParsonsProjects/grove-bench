@@ -17,7 +17,7 @@ Goals are off until you tick **Show the thread goal** in **Settings > Tending**.
 ### User Messages
 Your messages appear with a blue left border. These are the instructions and follow-ups you send to the agent.
 
-Files you attached show above the message text. Click a file to show or hide its content. Images show as thumbnails; click one to see it full size, and press `Esc` or click outside to close it. Images stay when you reopen the thread. They are deleted with the thread, when you `/clear` it, or when you rewind to before the message or tool that showed them.
+Files you attached show above the message text. Click a text file to show or hide its content. Click a PDF or audio file to open it in its default app; any other file is shown in File Explorer instead, so a click never runs a program. Images show as thumbnails; click one to see it full size, and press `Esc` or click outside to close it. Images and files stay when you reopen the thread. They are deleted with the thread, when you `/clear` it, or when you rewind to before the message or tool that showed them.
 
 Hover a message to reveal the rewind icon (**Rewind to this message**). It opens the rewind dialog with that message selected and a preview of everything that would be undone: files go back to how they were just before that message, and the message plus every turn after it are dropped. The message text is placed back in the prompt box so you can rephrase it and try again. Tick **Thread only** in the dialog to keep the files and only reset the thread. In a thread that runs without git there are no checkpoints, so the dialog always resets only the thread and says the files stay as they are. The Checkpoints tab (`Alt+3`) offers the same rewind with a full per-file diff.
 

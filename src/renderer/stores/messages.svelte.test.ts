@@ -1614,6 +1614,19 @@ describe('ingestEvent — user_message UUID stamping', () => {
     expect((messageStore.getMessages(SID)[0] as ChatUserMessage).images).toEqual(inline);
   });
 
+  it('swaps attached files shown by name for the ones main saved', () => {
+    messageStore.addUserMessage(SID, 'read these', undefined, [
+      { name: 'a.pdf', mediaType: 'application/pdf', size: 3 },
+      { name: 'b.zip', mediaType: 'application/zip', size: 3 },
+    ]);
+    // b.zip could not be saved, so it drops off.
+    const saved = [{ file: `${'a'.repeat(32)}.pdf`, name: 'a.pdf', mediaType: 'application/pdf', size: 3 }];
+
+    messageStore.ingestEvent(SID, { type: 'user_message', text: 'read these', uuid: 'u-files', files: saved } as AgentEvent);
+
+    expect((messageStore.getMessages(SID)[0] as ChatUserMessage).attachments).toEqual(saved);
+  });
+
   it('stamps UUID onto the most recent UUID-less user message', () => {
     messageStore.addUserMessage(SID, 'first prompt');
     messageStore.addUserMessage(SID, 'second prompt');
@@ -1693,6 +1706,17 @@ describe('ingestEvent — user_message UUID stamping', () => {
     expect(msg.text).toBe('what is wrong here?');
     expect(msg.images).toEqual([{ file: 'a'.repeat(32) + '.png', name: 'shot.png' }]);
     expect(userMessageLabel(msg)).toBe('[shot.png] what is wrong here?');
+  });
+
+  it('shows the other files a replayed message was sent with', () => {
+    const files = [{ file: 'a'.repeat(32) + '.pdf', name: 'spec.pdf', mediaType: 'application/pdf', size: 1200 }];
+    messageStore.replayEvents(SID, [
+      { type: 'user_message', text: 'summarise', uuid: 'uuid-pdf', images: [{ file: 'b'.repeat(32) + '.png', name: 'shot.png' }], files },
+    ] as AgentEvent[]);
+
+    const msg = messageStore.getMessages(SID)[0] as ChatUserMessage;
+    expect(msg.attachments).toEqual(files);
+    expect(userMessageLabel(msg)).toBe('[shot.png, spec.pdf] summarise');
   });
 });
 
@@ -2186,7 +2210,7 @@ describe('outgoing message queue', () => {
     const outcome = messageStore.submitMessage(SID, { displayText: 'hi', outgoing: 'hi' });
 
     expect(outcome).toBe('sent');
-    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, 'hi', undefined);
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, 'hi', undefined, undefined);
     expect(messageStore.getQueue(SID)).toEqual([]);
     expect(messageStore.getIsRunning(SID)).toBe(true);
     expect(messageStore.getMessages(SID).map((m) => m.kind)).toEqual(['user']);
@@ -2200,11 +2224,21 @@ describe('outgoing message queue', () => {
       images,
     });
 
-    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, '<file path="notes.md" length="5">\nnotes\n</file>\n\nlook at this', images);
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, '<file path="notes.md" length="5">\nnotes\n</file>\n\nlook at this', images, undefined);
     const msg = messageStore.getMessages(SID)[0] as ChatUserMessage;
     expect(msg.text).toBe('look at this');
     expect(msg.files).toEqual([{ path: 'notes.md', content: 'notes' }]);
     expect(msg.images).toEqual([{ name: 'shot.png', dataUrl: 'data:image/png;base64,iVBOR' }]);
+  });
+
+  it('sends attached files and shows them by name until main saves them', () => {
+    const files = [{ data: 'JVBERg==', mediaType: 'application/pdf', name: 'spec.pdf' }];
+    messageStore.submitMessage(SID, { displayText: '[spec.pdf] summarise', outgoing: 'summarise', files });
+
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, 'summarise', undefined, files);
+    const msg = messageStore.getMessages(SID)[0] as ChatUserMessage;
+    expect(msg.text).toBe('summarise');
+    expect(msg.attachments).toEqual([{ name: 'spec.pdf', mediaType: 'application/pdf', size: 4 }]);
   });
 
   it('queues (and does not send) while a turn is running', () => {
@@ -2231,7 +2265,7 @@ describe('outgoing message queue', () => {
     messageStore.ingestEvent(SID, result);
 
     expect(mockGroveBench.sendMessage).toHaveBeenCalledTimes(1);
-    expect(mockGroveBench.sendMessage).toHaveBeenLastCalledWith(SID, 'second', undefined);
+    expect(mockGroveBench.sendMessage).toHaveBeenLastCalledWith(SID, 'second', undefined, undefined);
     expect(messageStore.getQueue(SID).map((m) => m.displayText)).toEqual(['third']);
     // The new turn is running again, so the third waits
     expect(messageStore.getIsRunning(SID)).toBe(true);
@@ -2239,7 +2273,7 @@ describe('outgoing message queue', () => {
     messageStore.ingestEvent(SID, result);
 
     expect(mockGroveBench.sendMessage).toHaveBeenCalledTimes(2);
-    expect(mockGroveBench.sendMessage).toHaveBeenLastCalledWith(SID, 'third', [{ data: 'x', mediaType: 'image/png', name: 'a.png' }]);
+    expect(mockGroveBench.sendMessage).toHaveBeenLastCalledWith(SID, 'third', [{ data: 'x', mediaType: 'image/png', name: 'a.png' }], undefined);
     expect(messageStore.getQueue(SID)).toEqual([]);
 
     const userTexts = messageStore.getMessages(SID).filter((m) => m.kind === 'user').map((m) => (m as any).text);
@@ -2255,7 +2289,7 @@ describe('outgoing message queue', () => {
 
     messageStore.ingestEvent(SID, init);
 
-    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, 'later', undefined);
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, 'later', undefined, undefined);
     expect(messageStore.getQueue(SID)).toEqual([]);
   });
 
@@ -2294,7 +2328,7 @@ describe('outgoing message queue', () => {
     expect(messageStore.getQueue(SID).map((m) => m.displayText)).toEqual(['b']);
     mockGroveBench.sendMessage.mockClear();
     messageStore.ingestEvent(SID, result);
-    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, 'b', undefined);
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, 'b', undefined, undefined);
   });
 
   it('clearQueue drops everything so nothing is sent after the turn', () => {
@@ -2355,7 +2389,7 @@ describe('outgoing message queue', () => {
 
     messageStore.resumeQueue(SID);
     expect(messageStore.isQueuePaused(SID)).toBe(false);
-    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, 'second', undefined);
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, 'second', undefined, undefined);
     expect(messageStore.getQueue(SID)).toEqual([]);
   });
 
@@ -2375,7 +2409,7 @@ describe('outgoing message queue', () => {
     const outcome = messageStore.submitMessage(SID, { displayText: 'correction', outgoing: 'correction' });
 
     expect(outcome).toBe('sent');
-    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, 'correction', undefined);
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, 'correction', undefined, undefined);
     // Still paused: the held item waits for an explicit Resume
     expect(messageStore.isQueuePaused(SID)).toBe(true);
     expect(messageStore.getQueue(SID).map((m) => m.displayText)).toEqual(['held']);
@@ -2457,7 +2491,7 @@ describe('outgoing message queue', () => {
     expect(messageStore.getQueue(SID)).toHaveLength(1);
     // ...but the item is sent once the resumed query connects idle
     messageStore.ingestEvent(SID, init);
-    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, 'second', undefined);
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, 'second', undefined, undefined);
   });
 
   it('destroySession drops the queue and pause state', () => {

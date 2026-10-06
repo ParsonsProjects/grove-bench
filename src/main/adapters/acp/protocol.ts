@@ -72,7 +72,7 @@ export type AcpContentBlock =
   | { type: 'text'; text: string }
   | { type: 'image'; data: string; mimeType: string; uri?: string | null }
   | { type: 'audio'; data: string; mimeType: string }
-  | { type: 'resource_link'; uri: string; name: string; title?: string | null }
+  | { type: 'resource_link'; uri: string; name: string; title?: string | null; mimeType?: string | null; size?: number | null }
   | { type: 'resource'; resource: { uri: string; text?: string; blob?: string; mimeType?: string | null } };
 
 export type AcpToolKind = 'read' | 'edit' | 'delete' | 'move' | 'search' | 'execute' | 'think' | 'fetch' | 'switch_mode' | 'other';

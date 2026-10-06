@@ -24,7 +24,15 @@ Additional slash commands may be available depending on your agent configuration
 
 ## File Attachments
 
-Drag and drop files or images into the prompt editor to attach them. Text files are included as content; images are sent as visual context for the agent.
+Drag and drop files into the prompt editor, paste an image, or click the paperclip to pick files. How each one reaches the agent depends on its type:
+
+- **Text and code files** up to 100 KB are included in the message.
+- **Images** (PNG, JPEG, GIF, WebP) up to 5 MB are sent for the agent to look at.
+- **PDFs** of up to 10 pages and 5 MB are sent whole, so the agent sees their text and pictures. A longer PDF is given by path, and the agent reads the pages it needs.
+- **Audio** is sent to agents that take it. Claude Code doesn't, so it gets the path.
+- **Any other file** up to 25 MB is saved with the thread and the agent gets its path, so it can open the file with its own tools. Text files over 100 KB and images over 5 MB are attached this way too.
+
+Hover a file's chip to see its size. Click × to remove it before sending.
 
 ## While the Agent is Working
 

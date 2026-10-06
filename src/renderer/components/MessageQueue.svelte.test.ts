@@ -87,7 +87,7 @@ describe('MessageQueue', () => {
 
     await fireEvent.click(screen.getByText('Resume'));
 
-    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, 'update the README\nwith details', undefined);
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, 'update the README\nwith details', undefined, undefined);
     expect(messageStore.getQueue(SID).map((m) => m.displayText)).toEqual(['/compact']);
     expect(screen.queryByText('Resume')).not.toBeInTheDocument();
   });

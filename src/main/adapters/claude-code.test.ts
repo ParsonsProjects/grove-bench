@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import path from 'node:path';
-import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS, thinkingConfigFor, parseMcpListOutput, mcpServerManager, claudeMcpOrigin, mcpToolServerKey, mcpContextCostByServer, toMcpElicitationRequest, withMcpjsonApproval, mcpjsonApprovalsFrom, buildMcpAddArgs, quoteArg, validatePluginId, validateConfigScope, capToolResult, claudeControlsFor, supportsAdaptiveThinking, supportsFastMode, supportsAutoMode, claudeModelCaps, effortFor, reasoningOptionsFor, toSdkPermissionMode, fromSdkSyncMode, stripAnsi, mapClaudeUsage, thinkingDisplayFor, TEXT_GENERATION_OPTIONS, missingConversationError } from './claude-code.js';
+import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS, thinkingConfigFor, parseMcpListOutput, mcpServerManager, claudeMcpOrigin, mcpToolServerKey, mcpContextCostByServer, toMcpElicitationRequest, withMcpjsonApproval, mcpjsonApprovalsFrom, buildMcpAddArgs, quoteArg, validatePluginId, validateConfigScope, capToolResult, claudeControlsFor, supportsAdaptiveThinking, supportsFastMode, supportsAutoMode, claudeModelCaps, effortFor, reasoningOptionsFor, toSdkPermissionMode, fromSdkSyncMode, stripAnsi, mapClaudeUsage, thinkingDisplayFor, TEXT_GENERATION_OPTIONS, missingConversationError, userMessageContent } from './claude-code.js';
 import type { AgentEvent } from '../../shared/types.js';
+import type { MessageFile } from './types.js';
 
 // ─── isPathInside (sandbox allowWrite containment) ───
 
@@ -1095,5 +1096,54 @@ describe('TEXT_GENERATION_OPTIONS', () => {
 
   it('stays out of plan mode, whose reminder sends the model exploring', () => {
     expect(TEXT_GENERATION_OPTIONS.permissionMode).toBe('dontAsk');
+  });
+});
+
+// ─── userMessageContent (what the SDK is sent for a prompt) ───
+
+describe('userMessageContent()', () => {
+  const PDF = '%PDF-1.4\n2 0 obj << /Type /Pages /Count 1 >> endobj\n3 0 obj << /Type /Page >> endobj';
+  function file(over: Partial<MessageFile> = {}): MessageFile {
+    return { name: 'spec.pdf', mediaType: 'application/pdf', data: Buffer.from(PDF).toString('base64'), path: 'C:\\att\\a.pdf', size: PDF.length, ...over };
+  }
+
+  it('is the plain text when nothing is attached', () => {
+    expect(userMessageContent({ text: 'hello' })).toBe('hello');
+  });
+
+  it('puts images ahead of the text', () => {
+    expect(userMessageContent({ text: 'look', images: [{ data: 'iVBOR', mediaType: 'image/png', name: 'a.png' }] })).toEqual([
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'iVBOR' } },
+      { type: 'text', text: 'look' },
+    ]);
+  });
+
+  it('sends a short PDF as a document block named after the file', () => {
+    const pdf = file();
+    expect(userMessageContent({ text: 'summarise', files: [pdf] })).toEqual([
+      { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: pdf.data }, title: 'spec.pdf' },
+      { type: 'text', text: 'summarise' },
+    ]);
+  });
+
+  it('gives any other file by path in a note ahead of the text', () => {
+    const zip = file({ name: 'logs.zip', mediaType: 'application/zip', path: 'C:\\att\\b.zip', size: 10 });
+    const content = userMessageContent({ text: 'what failed?', files: [zip] });
+    expect(typeof content).toBe('string');
+    expect(content).toMatch(/^<attached_files>\n/);
+    expect(content).toContain('<file name="logs.zip" type="application/zip" size="10" path="C:\\att\\b.zip" />');
+    expect(content).toMatch(/<\/attached_files>\n\nwhat failed\?$/);
+  });
+
+  it('gives a PDF whose pages it cannot count by path', () => {
+    const content = userMessageContent({ text: 'read it', files: [file({ data: Buffer.from('%PDF-1.5 packed').toString('base64') })] });
+    expect(content).toContain('<file name="spec.pdf"');
+  });
+
+  it('mixes blocks and the note when both are attached', () => {
+    const content = userMessageContent({ text: 'go', files: [file(), file({ name: 'a.mp3', mediaType: 'audio/mpeg' })] }) as Array<Record<string, unknown>>;
+    expect(content.map((b) => b.type)).toEqual(['document', 'text']);
+    expect(content[1].text).toContain('<file name="a.mp3" type="audio/mpeg"');
+    expect(content[1].text).toMatch(/\n\ngo$/);
   });
 });

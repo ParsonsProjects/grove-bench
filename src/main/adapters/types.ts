@@ -88,6 +88,23 @@ export type ElicitationHandler = (request: McpElicitationRequest, signal: AbortS
 export interface UserMessage {
   text: string;
   images?: ImageAttachment[];
+  /** Other files attached to the message, already saved to disk. See
+   *  file-attachments.ts for how each adapter passes them on. */
+  files?: MessageFile[];
+}
+
+/** A file attached to a message (shared FileAttachment) once the session
+ *  manager has saved it to the conversation's attachments folder. */
+export interface MessageFile {
+  name: string;
+  /** MIME type, or '' when unknown. */
+  mediaType: string;
+  /** base64-encoded content, for agents that take this type inline. */
+  data: string;
+  /** Absolute path of the saved copy, for agents that open it themselves. */
+  path: string;
+  /** Size in bytes. */
+  size: number;
 }
 
 // ─── Memory Operations ───
@@ -136,6 +153,10 @@ export interface PreviewOperations {
 
 export interface AdapterConfig {
   cwd: string;
+  /** The folder files attached to this conversation's messages are saved in,
+   *  outside cwd. Adapters whose agent limits file access to its working
+   *  directories add it there, so the agent can read them. */
+  attachmentsDir?: string | null;
   permissionMode: PermissionMode;
   /** Model to start the session with. When unset, the provider's own default is used. */
   model?: string | null;

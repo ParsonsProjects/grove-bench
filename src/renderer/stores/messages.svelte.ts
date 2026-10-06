@@ -1,4 +1,4 @@
-import type { AgentEvent, ControlDescriptor, ImageAttachment, McpElicitationRequest, McpElicitationResponse, McpServerInfo, PermissionDecision, PermissionMode, SessionControls, StoredImage } from '../../shared/types.js';
+import type { AgentEvent, ControlDescriptor, FileAttachment, ImageAttachment, McpElicitationRequest, McpElicitationResponse, McpServerInfo, PermissionDecision, PermissionMode, SessionControls, StoredFile, StoredImage } from '../../shared/types.js';
 import { CONTROL_IDS, subagentParent } from '../../shared/types.js';
 import { attachedFilesFromSent, type SentBlock } from '../../shared/prompt-text.js';
 import { userMessageLabel } from '../lib/message-label.js';
@@ -12,7 +12,7 @@ import { store as sessionStore } from './sessions.svelte.js';
 import { settingsStore } from './settings.svelte.js';
 import { previewStore } from './preview.svelte.js';
 import { prerequisitesStore } from './prerequisites.svelte.js';
-import type { AttachedFile } from '../lib/file-attachments.js';
+import { base64Size, type AttachedFile } from '../lib/file-attachments.js';
 import { approvalRequest } from '../lib/tool-names.js';
 import { changesFiles, toolViewOf, toolViewSummary, type ToolView } from '../../shared/tool-view.js';
 import { liveEventsMissingFrom } from '../../shared/live-events.js';
@@ -69,14 +69,20 @@ export interface PendingTool {
  *  (just sent), otherwise a file in the conversation's attachments folder. */
 export type ThreadImage = { name: string; dataUrl: string } | StoredImage;
 
+/** Another file attached to a message (a PDF, audio, ...). `file` is its name
+ *  in the attachments folder, once main has saved it. */
+export type ThreadFile = Omit<StoredFile, 'file'> & { file?: string };
+
 export interface ChatUserMessage {
   kind: 'user';
   id: string;
-  /** What the user typed. Attachments are in `files` and `images`. */
+  /** What the user typed. Attachments are in `files`, `images` and `attachments`. */
   text: string;
   /** Text files attached to the message, with their content. */
   files?: SentBlock[];
   images?: ThreadImage[];
+  /** Other files attached to the message (the event's `files`). */
+  attachments?: ThreadFile[];
   /** SDK user message UUID — used as checkpoint ID for /rewind */
   uuid?: string;
 }
@@ -215,6 +221,8 @@ export interface QueuedMessage {
   /** Prepared outgoing text sent to main (file tags + prompt), or the slash command. */
   outgoing: string;
   images?: ImageAttachment[];
+  /** Other files attached (PDFs, audio, ...), sent alongside like images. */
+  files?: FileAttachment[];
   /** Slash command — dispatched through sendCommand rather than as a prompt. */
   isCommand?: boolean;
   /** The prompt as typed and attached, so Edit can put it back as it was
@@ -226,8 +234,9 @@ function nextId(): string {
   return `msg_${++msgCounter}_${Date.now()}`;
 }
 
-/** A user message from the text as sent to the agent, plus its images. */
-function userMessage(sent: string, images?: ThreadImage[]): ChatUserMessage {
+/** A user message from the text as sent to the agent, plus its images and
+ *  other files. */
+function userMessage(sent: string, images?: ThreadImage[], attachments?: ThreadFile[]): ChatUserMessage {
   const { files, typed } = attachedFilesFromSent(sent);
   return {
     kind: 'user',
@@ -235,6 +244,7 @@ function userMessage(sent: string, images?: ThreadImage[]): ChatUserMessage {
     text: typed,
     ...(files.length > 0 ? { files } : {}),
     ...(images?.length ? { images } : {}),
+    ...(attachments?.length ? { attachments } : {}),
   };
 }
 
@@ -852,7 +862,7 @@ class MessageStore {
   }
 
   /** Submit a prompt: send it now if the agent is idle, otherwise queue it. */
-  submitMessage(sessionId: string, msg: Pick<QueuedMessage, 'displayText' | 'outgoing' | 'images' | 'typed'>): 'sent' | 'queued' {
+  submitMessage(sessionId: string, msg: Pick<QueuedMessage, 'displayText' | 'outgoing' | 'images' | 'files' | 'typed'>): 'sent' | 'queued' {
     return this.submitOrQueue(sessionId, { ...msg, isCommand: false });
   }
 
@@ -935,8 +945,15 @@ class MessageStore {
       sessionId,
       item.outgoing,
       item.images?.map((img) => ({ name: img.name, dataUrl: `data:${img.mediaType};base64,${img.data}` })),
+      // Shown by name until main has saved them.
+      item.files?.map((f) => ({ name: f.name, mediaType: f.mediaType, size: base64Size(f.data) })),
     );
-    window.groveBench.sendMessage(sessionId, item.outgoing, item.images?.length ? item.images : undefined);
+    window.groveBench.sendMessage(
+      sessionId,
+      item.outgoing,
+      item.images?.length ? item.images : undefined,
+      item.files?.length ? item.files : undefined,
+    );
     sessionStore.updateLastActive(sessionId);
   }
 
@@ -1332,8 +1349,8 @@ class MessageStore {
 
   /** Add a user message to the display. `sent` is the text as sent to the
    *  agent: attached files' content blocks come off it and show as chips. */
-  addUserMessage(sessionId: string, sent: string, images?: ThreadImage[]) {
-    this.pushMessage(sessionId, userMessage(sent, images));
+  addUserMessage(sessionId: string, sent: string, images?: ThreadImage[], attachments?: ThreadFile[]) {
+    this.pushMessage(sessionId, userMessage(sent, images, attachments));
     this.setIsRunning(sessionId, true);
     this.awaitingResponse[sessionId] = true;
     this.activityBySession[sessionId] = { activity: 'generating' };
@@ -2042,7 +2059,9 @@ class MessageStore {
         // Main has saved the images: show them from disk and let go of the
         // inline data. Only when every one was saved, so the two lists line up.
         const saved = event.images?.length && event.images.length === msg.images?.length ? { images: event.images } : {};
-        updated[existingIdx] = { ...msg, uuid: event.uuid, ...saved };
+        // Files show what main saved, so one it couldn't save drops off.
+        const savedFiles = msg.attachments?.length ? { attachments: event.files ?? [] } : {};
+        updated[existingIdx] = { ...msg, uuid: event.uuid, ...saved, ...savedFiles };
         this.setMessagesForMutation(sessionId, updated);
         // Schedule checkpoint refresh so the Checkpoints tab picks up the new checkpoint
         if (this.sideEffects) checkpointStore.scheduleRefresh(sessionId);
@@ -2051,7 +2070,7 @@ class MessageStore {
     }
     // Replayed from history: the event holds the text as sent (file content
     // blocks first), so rebuild what the chat showed when it was sent.
-    this.pushMessage(sessionId, { ...userMessage(event.text, event.images), uuid: event.uuid });
+    this.pushMessage(sessionId, { ...userMessage(event.text, event.images, event.files), uuid: event.uuid });
     // Schedule checkpoint list refresh so the Checkpoints tab updates
     if (event.uuid && this.sideEffects) {
       checkpointStore.scheduleRefresh(sessionId);

@@ -48,6 +48,9 @@
           {#if item.images?.length}
             <span class="text-muted-foreground shrink-0">{item.images.length} image{item.images.length === 1 ? '' : 's'}</span>
           {/if}
+          {#if item.files?.length}
+            <span class="text-muted-foreground shrink-0">{item.files.length} file{item.files.length === 1 ? '' : 's'}</span>
+          {/if}
           <button
             onclick={() => messageStore.editQueuedMessage(sessionId, item.id)}
             class="text-muted-foreground hover:text-foreground shrink-0"

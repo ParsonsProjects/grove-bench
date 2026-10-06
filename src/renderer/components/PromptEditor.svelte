@@ -15,9 +15,10 @@
     type AttachedFile,
     processFiles,
     extractClipboardImages,
-    IMAGE_MIME_TYPES,
-    TEXT_EXTENSIONS,
+    dataUrlData,
+    formatFileSize,
   } from '$lib/file-attachments.js';
+  import AttachmentIcon from './AttachmentIcon.svelte';
   import { extractAtRefs, buildRefTags, buildOutgoingMessage } from '$lib/prompt-file-refs.js';
   import { buildContentBlock } from '../../shared/prompt-text.js';
 
@@ -172,9 +173,10 @@
 
     const refs = extractAtRefs(text);
 
-    // Separate text files and image attachments
+    // Text files go in the message text; images and other files alongside it
     const textFiles = attachedFiles.filter((f): f is AttachedFile & { type: 'text' } => f.type === 'text');
     const imageFiles = attachedFiles.filter((f): f is AttachedFile & { type: 'image' } => f.type === 'image');
+    const otherFiles = attachedFiles.filter((f): f is AttachedFile & { type: 'file' } => f.type === 'file');
 
     // Build file tags from text attachments
     const droppedTags = textFiles.map((f) => buildContentBlock('file', f.name, f.content));
@@ -186,6 +188,7 @@
       const mediaType = header.match(/data:(image\/\w+)/)?.[1] ?? 'image/png';
       return { data, mediaType: mediaType as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp', name: f.name };
     });
+    const files = otherFiles.map((f) => ({ data: dataUrlData(f.dataUrl), mediaType: f.mediaType, name: f.name }));
 
     const displayText = attachedFiles.length > 0
       ? `[${attachedFiles.map((f) => f.name).join(', ')}] ${text}`
@@ -199,6 +202,7 @@
         displayText,
         outgoing,
         images: images.length > 0 ? images : undefined,
+        files: files.length > 0 ? files : undefined,
         typed,
       });
     }
@@ -573,13 +577,14 @@
   {#if attachedFiles.length > 0}
     <div class="flex flex-wrap gap-1.5 px-4 pt-2 max-h-24 overflow-y-auto">
       {#each attachedFiles as file, i}
-        <span class="inline-flex items-center gap-1 bg-primary/15 text-primary text-xs px-2 py-1 font-mono border border-primary/25">
+        <span
+          class="inline-flex items-center gap-1 bg-primary/15 text-primary text-xs px-2 py-1 font-mono border border-primary/25"
+          title={file.type === 'file' ? `${file.name} (${formatFileSize(file.size)})` : undefined}
+        >
           {#if file.type === 'image'}
             <img src={file.dataUrl} alt={file.name} class="w-5 h-5 object-cover shrink-0" />
           {:else}
-            <svg class="w-3 h-3 shrink-0" viewBox="0 0 16 16" fill="currentColor">
-              <path d="M3.5 1A1.5 1.5 0 002 2.5v11A1.5 1.5 0 003.5 15h9a1.5 1.5 0 001.5-1.5V5.621a1 1 0 00-.293-.707l-3.621-3.621A1 1 0 009.379 1H3.5z"/>
-            </svg>
+            <AttachmentIcon mediaType={file.type === 'file' ? file.mediaType : ''} />
           {/if}
           {file.name}
           <button
@@ -616,7 +621,6 @@
       bind:this={fileInput}
       type="file"
       multiple
-      accept="image/jpeg,image/png,image/gif,image/webp,.ts,.tsx,.js,.jsx,.svelte,.vue,.html,.css,.scss,.less,.json,.yaml,.yml,.toml,.xml,.md,.txt,.csv,.sql,.py,.rb,.go,.rs,.java,.kt,.c,.cpp,.h,.hpp,.cs,.swift,.php,.sh,.bash,.lua,.dart,.zig,.jl,.graphql,.log,.diff,.patch,.svg"
       onchange={handleFileInputChange}
       class="hidden"
     />

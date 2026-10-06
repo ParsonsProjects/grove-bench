@@ -1,14 +1,19 @@
 import { describe, it, expect } from 'vitest';
 import {
   classifyFile,
+  mediaTypeOf,
   validateFileSize,
   processFiles,
   extractClipboardImages,
   uniquifyFileName,
+  base64Size,
+  dataUrlData,
+  formatFileSize,
   TEXT_EXTENSIONS,
   IMAGE_MIME_TYPES,
   MAX_TEXT_SIZE,
   MAX_IMAGE_SIZE,
+  MAX_FILE_SIZE,
 } from './file-attachments.js';
 
 // ─── classifyFile ───
@@ -84,15 +89,49 @@ describe('classifyFile', () => {
     expect(classifyFile({ name: '.prettierrc', type: '' })).toBe('text');
   });
 
-  it('returns null for unsupported binary types', () => {
-    expect(classifyFile({ name: 'archive.zip', type: 'application/zip' })).toBeNull();
-    expect(classifyFile({ name: 'video.mp4', type: 'video/mp4' })).toBeNull();
-    expect(classifyFile({ name: 'music.mp3', type: 'audio/mpeg' })).toBeNull();
+  it('classifies module, infrastructure and schema files as text', () => {
+    for (const name of ['vite.config.mjs', 'index.cjs', 'main.tf', 'schema.prisma', 'api.proto', 'events.jsonl', 'page.htm']) {
+      expect(classifyFile({ name, type: '' })).toBe('text');
+    }
   });
 
-  it('returns null for unsupported image types (bmp, tiff)', () => {
-    expect(classifyFile({ name: 'old.bmp', type: 'image/bmp' })).toBeNull();
-    expect(classifyFile({ name: 'scan.tiff', type: 'image/tiff' })).toBeNull();
+  it('classifies extensionless build files like Gemfile and Jenkinsfile', () => {
+    expect(classifyFile({ name: 'Gemfile', type: '' })).toBe('text');
+    expect(classifyFile({ name: 'Jenkinsfile', type: '' })).toBe('text');
+  });
+
+  it('classifies a .ts file as text even when the OS calls it a video', () => {
+    expect(classifyFile({ name: 'index.ts', type: 'video/mp2t' })).toBe('text');
+  });
+
+  it('attaches anything else as a file', () => {
+    expect(classifyFile({ name: 'spec.pdf', type: 'application/pdf' })).toBe('file');
+    expect(classifyFile({ name: 'archive.zip', type: 'application/zip' })).toBe('file');
+    expect(classifyFile({ name: 'video.mp4', type: 'video/mp4' })).toBe('file');
+    expect(classifyFile({ name: 'music.mp3', type: 'audio/mpeg' })).toBe('file');
+  });
+
+  it('attaches images the agent cannot see (bmp, tiff) as files', () => {
+    expect(classifyFile({ name: 'old.bmp', type: 'image/bmp' })).toBe('file');
+    expect(classifyFile({ name: 'scan.tiff', type: 'image/tiff' })).toBe('file');
+  });
+});
+
+// ─── mediaTypeOf ───
+
+describe('mediaTypeOf', () => {
+  it("keeps the browser's type", () => {
+    expect(mediaTypeOf({ name: 'a.zip', type: 'application/zip' })).toBe('application/zip');
+  });
+
+  it('fills in PDFs and audio the OS has no type for', () => {
+    expect(mediaTypeOf({ name: 'Spec.PDF', type: '' })).toBe('application/pdf');
+    expect(mediaTypeOf({ name: 'memo.mp3', type: '' })).toBe('audio/mpeg');
+    expect(mediaTypeOf({ name: 'memo.wav', type: '' })).toBe('audio/wav');
+  });
+
+  it('is empty when nothing knows the type', () => {
+    expect(mediaTypeOf({ name: 'data.bin', type: '' })).toBe('');
   });
 });
 
@@ -120,6 +159,11 @@ describe('validateFileSize', () => {
   it('accepts files at exactly the size limit', () => {
     expect(validateFileSize({ name: 'exact.ts', size: MAX_TEXT_SIZE }, 'text')).toBeNull();
     expect(validateFileSize({ name: 'exact.png', size: MAX_IMAGE_SIZE }, 'image')).toBeNull();
+    expect(validateFileSize({ name: 'exact.zip', size: MAX_FILE_SIZE }, 'file')).toBeNull();
+  });
+
+  it('rejects other files over 25MB', () => {
+    expect(validateFileSize({ name: 'huge.zip', size: MAX_FILE_SIZE + 1 }, 'file')).toBe('huge.zip (too large, max 25MB)');
   });
 });
 
@@ -148,31 +192,51 @@ describe('processFiles', () => {
     expect(result.skipped).toHaveLength(0);
   });
 
-  it('skips images when the agent can\'t take them, and keeps text files', async () => {
+  /** A file that reports `size` without holding that much data. */
+  function sized(file: File, size: number): File {
+    Object.defineProperty(file, 'size', { value: size });
+    return file;
+  }
+
+  it('attaches images as files when the agent can\'t take them, and keeps text files', async () => {
     const result = await processFiles(
       [makeFile('photo.png', 'fake-png-data', 'image/png'), makeFile('a.ts', 'x', 'text/typescript')],
       [],
       { allowImages: false },
     );
-    expect(result.files.map((f) => f.name)).toEqual(['a.ts']);
-    expect(result.skipped).toEqual(["photo.png (this agent can't take images)"]);
+    expect(result.files.map((f) => [f.name, f.type]).sort()).toEqual([['a.ts', 'text'], ['photo.png', 'file']]);
+    expect(result.skipped).toEqual([]);
   });
 
-  it('skips unsupported file types', async () => {
+  it('attaches other files with their type and size', async () => {
     const file = makeFile('archive.zip', 'data', 'application/zip');
     const result = await processFiles([file], []);
-    expect(result.files).toHaveLength(0);
-    expect(result.skipped).toHaveLength(1);
-    expect(result.skipped[0]).toContain('unsupported type');
+    expect(result.files).toEqual([
+      { name: 'archive.zip', dataUrl: expect.stringMatching(/^data:application\/zip;base64,/), mediaType: 'application/zip', size: 4, type: 'file' },
+    ]);
+    expect(result.skipped).toEqual([]);
   });
 
-  it('skips oversized text files', async () => {
+  it('attaches text files too large to send inline as files', async () => {
     const bigContent = 'x'.repeat(MAX_TEXT_SIZE + 1);
-    const file = makeFile('big.ts', bigContent, 'text/typescript');
+    const file = makeFile('big.log', bigContent, 'text/plain');
     const result = await processFiles([file], []);
-    expect(result.files).toHaveLength(0);
-    expect(result.skipped).toHaveLength(1);
-    expect(result.skipped[0]).toContain('too large');
+    expect(result.files).toHaveLength(1);
+    expect(result.files[0]).toMatchObject({ name: 'big.log', type: 'file', size: MAX_TEXT_SIZE + 1 });
+    expect(result.skipped).toEqual([]);
+  });
+
+  it('attaches images over 5MB as files', async () => {
+    const file = sized(makeFile('huge.png', 'png', 'image/png'), MAX_IMAGE_SIZE + 1);
+    const result = await processFiles([file], []);
+    expect(result.files[0]).toMatchObject({ name: 'huge.png', type: 'file', mediaType: 'image/png' });
+  });
+
+  it('skips files over 25MB', async () => {
+    const file = sized(makeFile('backup.zip', 'zip', 'application/zip'), MAX_FILE_SIZE + 1);
+    const result = await processFiles([file], []);
+    expect(result.files).toEqual([]);
+    expect(result.skipped).toEqual(['backup.zip (too large, max 25MB)']);
   });
 
   it('skips duplicate files based on name', async () => {
@@ -190,8 +254,8 @@ describe('processFiles', () => {
       makeFile('data.zip', 'bin', 'application/zip'),
     ];
     const result = await processFiles(files, []);
-    expect(result.files).toHaveLength(2);
-    expect(result.skipped).toHaveLength(1);
+    expect(result.files.map((f) => f.type).sort()).toEqual(['file', 'image', 'text']);
+    expect(result.skipped).toHaveLength(0);
   });
 
   it('renames duplicates instead of skipping when renameDuplicates is set', async () => {
@@ -306,6 +370,28 @@ describe('extractClipboardImages', () => {
     const dt = makeDataTransfer([{ kind: 'file', type: 'image/png', file: null }]);
     const result = extractClipboardImages(dt);
     expect(result).toHaveLength(0);
+  });
+});
+
+// ─── Data helpers ───
+
+describe('dataUrlData and base64Size', () => {
+  it('takes the base64 data off a data: URL', () => {
+    expect(dataUrlData('data:application/pdf;base64,JVBERi0=')).toBe('JVBERi0=');
+  });
+
+  it('gives the decoded size of base64 data, padding included', () => {
+    for (const bytes of ['', 'a', 'ab', 'abc', 'abcd']) {
+      expect(base64Size(btoa(bytes))).toBe(bytes.length);
+    }
+  });
+});
+
+describe('formatFileSize', () => {
+  it('uses bytes, then KB, then MB', () => {
+    expect(formatFileSize(512)).toBe('512 B');
+    expect(formatFileSize(12 * 1024)).toBe('12 KB');
+    expect(formatFileSize(3.4 * 1024 * 1024)).toBe('3.4 MB');
   });
 });
 

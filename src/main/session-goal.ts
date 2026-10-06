@@ -53,7 +53,8 @@ function promptText(e: UserMessage): string | null {
   const text = typed.trim();
   if (!text || text.startsWith('/')) return null;
   const imageNames = (e.images ?? []).flatMap((img) => (img.name ? [img.name] : []));
-  return withAttachmentLabel([...files.map((f) => f.path), ...imageNames], text);
+  const fileNames = (e.files ?? []).map((f) => f.name);
+  return withAttachmentLabel([...files.map((f) => f.path), ...imageNames, ...fileNames], text);
 }
 
 /** Whether a message looks typed, judged without parsing its attachments:

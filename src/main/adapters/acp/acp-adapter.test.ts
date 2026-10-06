@@ -2,9 +2,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { AcpAdapter, type AcpAgentDefinition } from './acp-adapter.js';
-import type { AdapterConfig, AdapterEvent, AgentQueryHandle, PermissionRequest, PermissionResponse } from '../types.js';
+import type { AdapterConfig, AdapterEvent, AgentQueryHandle, MessageFile, PermissionRequest, PermissionResponse } from '../types.js';
 
 vi.mock('../../logger.js', () => ({ logger: { warn: vi.fn(), info: vi.fn(), debug: vi.fn(), error: vi.fn() } }));
 const savedKeys = vi.hoisted(() => new Map<string, string>());
@@ -234,6 +234,38 @@ describe('AcpAdapter', () => {
     const text = (turn.find((e) => e.type === 'assistant_text') as { text: string }).text;
     expect(JSON.parse(text)).toEqual([{ type: 'http', name: 'grove-memory', auth: true }]);
     handle.close();
+  });
+
+  describe('attached files', () => {
+    const PDF = '%PDF-1.4\n2 0 obj << /Type /Pages /Count 1 >> endobj\n3 0 obj << /Type /Page >> endobj';
+    const files: MessageFile[] = [
+      { name: 'spec.pdf', mediaType: 'application/pdf', data: Buffer.from(PDF).toString('base64'), path: path.join(os.tmpdir(), 'att', 'a.pdf'), size: PDF.length },
+      { name: 'memo.mp3', mediaType: 'audio/mpeg', data: 'SUQz', path: path.join(os.tmpdir(), 'att', 'b.mp3'), size: 3 },
+      { name: 'logs.zip', mediaType: 'application/zip', data: 'UEsD', path: path.join(os.tmpdir(), 'att', 'c.zip'), size: 3 },
+    ];
+
+    async function sentBlocks(scenario: string): Promise<unknown[]> {
+      const handle = await new AcpAdapter(def(scenario)).start(config());
+      await until(handle, 'system_init');
+      handle.sendMessage({ text: 'blocks', files });
+      const turn = await until(handle, 'result');
+      handle.close();
+      return JSON.parse((turn.find((e) => e.type === 'assistant_text') as { text: string }).text);
+    }
+
+    it('links every file when the agent takes nothing more than the baseline', async () => {
+      expect(await sentBlocks('default')).toEqual(files.map((f) => ({
+        type: 'resource_link', uri: pathToFileURL(f.path).href, name: f.name, mimeType: f.mediaType, size: f.size,
+      })));
+    });
+
+    it('embeds a short PDF and sends audio inline to an agent that takes them', async () => {
+      expect(await sentBlocks('media')).toEqual([
+        { type: 'resource', resource: { uri: pathToFileURL(files[0].path).href, mimeType: 'application/pdf', blob: files[0].data } },
+        { type: 'audio', data: 'SUQz', mimeType: 'audio/mpeg' },
+        { type: 'resource_link', uri: pathToFileURL(files[2].path).href, name: 'logs.zip', mimeType: 'application/zip', size: 3 },
+      ]);
+    });
   });
 
   it('sends Grove\'s instructions ahead of the first prompt of a new session', async () => {

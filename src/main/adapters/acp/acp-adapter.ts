@@ -21,6 +21,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { app } from 'electron';
 import { execa, type ResultPromise } from 'execa';
 import type {
@@ -36,6 +37,7 @@ import { logger } from '../../logger.js';
 import { isReadOnlyToolCall } from '../../read-only-tools.js';
 import { loadAgentSignIn, loadModelCatalog, saveAgentSignIn, saveModelCatalog } from '../../app-state.js';
 import { catalogs, installFor } from '../../catalogs.js';
+import { isAudio, isInlinePdf } from '../file-attachments.js';
 import { memoryServer, previewServer, type GroveServer } from '../grove-tools.js';
 import { startGroveMcpHttp, type GroveMcpHttp } from '../grove-mcp-http.js';
 import { stdioBridgeLaunch } from '../mcp-bridge/launch.js';
@@ -866,7 +868,7 @@ class AcpQuery {
   }
 
   private async runTurn(message: UserMessage): Promise<void> {
-    if (message.text.trim() === '/clear' && !message.images?.length) {
+    if (message.text.trim() === '/clear' && !message.images?.length && !message.files?.length) {
       await this.clear();
       return;
     }
@@ -938,6 +940,19 @@ class AcpQuery {
     }
     if (!takesImages && message.images?.length) {
       this.emit({ type: 'status', level: 'warning', message: `${this.def.displayName} can't take images, so the attached image${message.images.length > 1 ? 's were' : ' was'} left out.` });
+    }
+    // Every agent takes a link to a file (the protocol's baseline); audio and
+    // an embedded PDF only when it says it takes them.
+    const caps = this.init?.agentCapabilities?.promptCapabilities;
+    for (const file of message.files ?? []) {
+      const uri = pathToFileURL(file.path).href;
+      if (caps?.audio === true && isAudio(file)) {
+        blocks.push({ type: 'audio', data: file.data, mimeType: file.mediaType });
+      } else if (caps?.embeddedContext === true && isInlinePdf(file)) {
+        blocks.push({ type: 'resource', resource: { uri, mimeType: 'application/pdf', blob: file.data } });
+      } else {
+        blocks.push({ type: 'resource_link', uri, name: file.name, ...(file.mediaType ? { mimeType: file.mediaType } : {}), size: file.size });
+      }
     }
     return blocks;
   }

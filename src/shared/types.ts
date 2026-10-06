@@ -239,7 +239,7 @@ export type AgentEvent =
   | { type: 'compact_boundary'; trigger: 'manual' | 'auto'; preTokens: number }
   | { type: 'tool_progress'; toolName: string; toolUseId: string; elapsedSeconds: number }
   | { type: 'activity'; activity: 'thinking' | 'tool_starting' | 'generating' | 'idle' ; toolName?: string }
-  | { type: 'user_message'; text: string; uuid?: string; images?: StoredImage[] }
+  | { type: 'user_message'; text: string; uuid?: string; images?: StoredImage[]; files?: StoredFile[] }
   /** `level: 'warning'` renders prominently (e.g. read-safe mode without a sandbox).
    *  `newConversation` marks where the agent started a new conversation: it
    *  doesn't remember the turns above, so a rewind can't fork from them. */
@@ -916,6 +916,32 @@ export interface StoredImage {
   name?: string;
 }
 
+// ─── File Attachment ───
+
+/** A file attached to a message that goes neither as text nor as an image:
+ *  a PDF, an audio clip, or any other file. Agents get it inline where they
+ *  can take that type, otherwise the path of the saved copy. */
+export interface FileAttachment {
+  /** base64-encoded file content (no data: prefix) */
+  data: string;
+  /** MIME type, or '' when unknown. */
+  mediaType: string;
+  name: string;
+}
+
+/** A file attachment saved in a conversation's attachments folder
+ *  (main/attachments.ts). Events carry this instead of the file's data. */
+export interface StoredFile {
+  /** File name in the attachments folder. */
+  file: string;
+  /** The name it was attached under. */
+  name: string;
+  /** MIME type, or '' when unknown. */
+  mediaType: string;
+  /** Size in bytes. */
+  size: number;
+}
+
 // ─── Plugins ───
 
 export interface InstalledPlugin {
@@ -1092,7 +1118,10 @@ export interface GroveBenchAPI {
   getCheckoutSharers(sessionId: string): Promise<string[]>;
 
   // Agent I/O (replaces terminal I/O)
-  sendMessage(sessionId: string, content: string, images?: ImageAttachment[]): void;
+  sendMessage(sessionId: string, content: string, images?: ImageAttachment[], files?: FileAttachment[]): void;
+  /** Open a file attached to a message (PDFs and audio in their default app),
+   *  or show it in its folder for other types. False when it's gone. */
+  openAttachedFile(sessionId: string, file: string): Promise<boolean>;
   respondToPermission(sessionId: string, decision: PermissionDecision): Promise<boolean>;
   /** Answer an MCP elicitation. False when it already resolved or timed out. */
   respondToElicitation(sessionId: string, requestId: string, response: McpElicitationResponse): Promise<boolean>;
@@ -1822,6 +1851,7 @@ export const IPC = {
   APP_RESTORE_COMPLETE: 'app:restoreComplete',
   AGENT_EVENT: 'agent:event',          // agent:event:{sessionId}
   AGENT_SEND: 'agent:send',
+  ATTACHMENT_OPEN: 'attachment:open',
   AGENT_PERMISSION: 'agent:permission',
   AGENT_HISTORY: 'agent:history',
   AGENT_HISTORY_PAGE: 'agent:history-page',

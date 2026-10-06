@@ -12,6 +12,7 @@ import type {
   AdapterPrerequisiteStatus,
   ApiKeyDescriptor,
   CliSignInDescriptor,
+  MessageFile,
   ModelInfo,
   PermissionResponse,
   ToolImageData,
@@ -23,6 +24,7 @@ import { getApiKey } from '../credentials.js';
 import { loadModelCatalog, saveModelCatalog } from '../app-state.js';
 import { z } from 'zod';
 import { asarUnpackedPath, cleanEnv, isPathInside, checkToolRules, toolCallSpecifier, readableStreamToAsyncIterable } from '../agent-utils.js';
+import { attachedFilesNote, isInlinePdf } from './file-attachments.js';
 import { createMemoryMcpServer, GROVE_MEMORY_TOOL_NAMES } from './memory-mcp-server.js';
 import { createPreviewMcpServer, GROVE_PREVIEW_READ_TOOL_NAMES } from './preview-mcp-server.js';
 import * as skillsModule from '../skills.js';
@@ -193,6 +195,28 @@ export function fromSdkSyncMode(mode: PermissionMode, ctx: MessageContext): Perm
 }
 
 const IMAGE_MEDIA_TYPES = new Set<string>(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
+
+/**
+ * A user message as the SDK takes it: attached images and small PDFs as
+ * content blocks ahead of the text, and a note with the path of every other
+ * attached file, which Claude reads with its own tools.
+ */
+export function userMessageContent(message: UserMessage): string | Array<Record<string, unknown>> {
+  const blocks: Array<Record<string, unknown>> = [];
+  for (const img of message.images ?? []) {
+    blocks.push({ type: 'image', source: { type: 'base64', media_type: img.mediaType, data: img.data } });
+  }
+  const byPath: MessageFile[] = [];
+  for (const file of message.files ?? []) {
+    if (isInlinePdf(file)) {
+      blocks.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: file.data }, title: file.name });
+    } else {
+      byPath.push(file);
+    }
+  }
+  const text = byPath.length > 0 ? `${attachedFilesNote(byPath)}\n\n${message.text}` : message.text;
+  return blocks.length > 0 ? [...blocks, { type: 'text', text }] : text;
+}
 
 /** The base64 images in a tool result's content: API image blocks (Read on an
  *  image file) or MCP ones (`data` + `mimeType`), in case they arrive unconverted. */
@@ -1722,6 +1746,9 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       prompt: readableStreamToAsyncIterable(inputStream),
       options: {
         cwd: config.cwd,
+        // Files attached by path are saved there, outside cwd: without this
+        // every read of one would ask for permission.
+        ...(config.attachmentsDir ? { additionalDirectories: [config.attachmentsDir] } : {}),
         abortController,
         includePartialMessages: true,
         // Subagents' text and thinking too, not only their tool calls: the
@@ -1815,23 +1842,10 @@ export class ClaudeCodeAdapter implements AgentAdapter {
           return;
         }
 
-        let messageContent: string | Array<Record<string, unknown>> = message.text;
-        if (message.images && message.images.length > 0) {
-          const blocks: Array<Record<string, unknown>> = [];
-          for (const img of message.images) {
-            blocks.push({
-              type: 'image',
-              source: { type: 'base64', media_type: img.mediaType, data: img.data },
-            });
-          }
-          blocks.push({ type: 'text', text: message.text });
-          messageContent = blocks;
-        }
-
         inputController.enqueue({
           type: 'user',
           session_id: sessionId ?? '',
-          message: { role: 'user', content: messageContent },
+          message: { role: 'user', content: userMessageContent(message) },
           parent_tool_use_id: null,
         } as SDKUserMessage);
       },

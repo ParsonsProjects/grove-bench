@@ -1,5 +1,5 @@
 import { subagentParent, type AgentEvent, type EventSearchHit, type SessionPreview } from '../shared/types.js';
-import { displayTextFromSent, stripFileContext } from '../shared/prompt-text.js';
+import { stripFileContext, userEventText } from '../shared/prompt-text.js';
 import { oneLine, plainSnippet } from '../shared/plain-text.js';
 
 export type { EventSearchHit };
@@ -50,7 +50,7 @@ export function searchableEventText(event: AgentEvent): string {
   switch (event.type) {
     case 'user_message':
       // As the chat shows it, so a hit never lands in attached file content.
-      return displayTextFromSent(event.text, event.images);
+      return userEventText(event);
     case 'assistant_text':
     case 'tool_use_summary':
       return 'text' in event ? event.text : event.summary;
@@ -120,7 +120,7 @@ export function extractSessionPreview(events: AgentEvent[]): SessionPreview {
   let firstPrompt = '';
   for (const e of events) {
     if (e.type !== 'user_message') continue;
-    const text = displayTextFromSent(e.text, e.images).trim();
+    const text = userEventText(e).trim();
     if (!text || text.startsWith('/')) continue;
     // A message that is only markdown syntax has no preview; try the next.
     firstPrompt = plainSnippet(text, PREVIEW_MAX_LEN);
@@ -132,7 +132,7 @@ export function extractSessionPreview(events: AgentEvent[]): SessionPreview {
     const e = events[i];
     if (subagentParent(e)) continue;
     if (e.type === 'assistant_text' || e.type === 'user_message') {
-      const text = (e.type === 'user_message' ? displayTextFromSent(e.text, e.images) : e.text).trim();
+      const text = (e.type === 'user_message' ? userEventText(e) : e.text).trim();
       if (!text || (e.type === 'user_message' && text.startsWith('/'))) continue;
       // A message that is only markdown syntax has no preview; look further back.
       lastText = plainSnippet(text, PREVIEW_MAX_LEN);

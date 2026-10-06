@@ -153,6 +153,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [x] Context length indicator (token usage / remaining)
 - [x] Drag and drop (files, images into prompt)
 - [x] Image attachments in messages (paste/drop, up to 8 per turn, pass as base64)
+- [x] Any file as an attachment: PDFs inline when short (10 pages, 5 MB), audio inline for ACP agents that take it, anything else saved with the thread and given by path (Claude Code: a note plus `additionalDirectories`; ACP: `resource_link`)
 
 ### Markdown Preview Panel
 - [x] Slide-out panel rendering markdown full-width (reuses the marked + highlight.js + DOMPurify pipeline; Esc / backdrop click to close, copy button)

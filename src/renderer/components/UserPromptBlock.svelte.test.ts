@@ -1,6 +1,7 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
-import { render, cleanup, screen, fireEvent } from '@testing-library/svelte';
+import { render, cleanup, screen, fireEvent, waitFor } from '@testing-library/svelte';
+import { mockGroveBench } from '../__mocks__/setup.js';
 
 import UserPromptBlock from './UserPromptBlock.svelte';
 
@@ -51,6 +52,35 @@ describe('UserPromptBlock attachments', () => {
     await fireEvent.error(screen.getByRole('img', { name: 'shot.png' }));
     expect(screen.getByText('Image not available')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'View shot.png' })).toBeNull();
+  });
+
+  it('shows other attached files as chips that open the saved copy', async () => {
+    const file = `${'c'.repeat(32)}.pdf`;
+    render(UserPromptBlock, {
+      sessionId: SID, text: 'summarise', attachments: [{ file, name: 'spec.pdf', mediaType: 'application/pdf', size: 2048 }],
+    });
+
+    const chip = screen.getByRole('button', { name: 'spec.pdf' });
+    expect(chip).toHaveAttribute('title', 'spec.pdf (2 KB)');
+    await fireEvent.click(chip);
+    expect(mockGroveBench.openAttachedFile).toHaveBeenCalledWith(SID, file);
+  });
+
+  it('turns a chip off when its file is gone', async () => {
+    vi.mocked(mockGroveBench.openAttachedFile).mockResolvedValueOnce(false);
+    render(UserPromptBlock, {
+      sessionId: SID, text: 'look', attachments: [{ file: `${'d'.repeat(32)}.zip`, name: 'logs.zip', mediaType: 'application/zip', size: 10 }],
+    });
+
+    const chip = screen.getByRole('button', { name: 'logs.zip' });
+    await fireEvent.click(chip);
+    await waitFor(() => expect(chip).toBeDisabled());
+    expect(chip).toHaveAttribute('title', 'logs.zip is no longer available');
+  });
+
+  it('shows a file main has not saved yet without a way to open it', () => {
+    render(UserPromptBlock, { sessionId: SID, text: 'look', attachments: [{ name: 'memo.mp3', mediaType: 'audio/mpeg', size: 10 }] });
+    expect(screen.getByRole('button', { name: 'memo.mp3' })).toBeDisabled();
   });
 
   it('shows an image sent without text', () => {

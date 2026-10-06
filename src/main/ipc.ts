@@ -18,7 +18,7 @@ import { inspectProjectFolder, projectKind } from './project-path.js';
 import { prsForBranches, prCreate, prReviewComments, ghLogin, isNetworkError, isRateLimitError, openPrs, GH_OFFLINE_COOLDOWN_MS, GH_OFFLINE_MESSAGE, GH_RATE_LIMITED_MESSAGE } from './gh.js';
 import { tempBranchName, isTempBranch, generateBranchName } from './branch-name.js';
 import { displayTextFromSent } from '../shared/prompt-text.js';
-import { removeImages } from './attachments.js';
+import { openAttachedFile, removeAttachments } from './attachments.js';
 import { generateCommitMessage } from './commit-message.js';
 import type { PreviewBounds, PreviewCommand, PreviewPageKind } from '../shared/types.js';
 import type { CheckpointDiffScope, FileDiffResult, FileLinesResult, GitStatusOptions, GitStatusResult, GitStatusEntry, ImageDiffContent, PrCreateOpts } from '../shared/types.js';
@@ -585,7 +585,7 @@ export function registerHandlers() {
     // Cascade: no orphan bookmarks. The conversation is already gone, so a
     // bookmarks file that can't be read right now doesn't fail the delete.
     try { bookmarks.removeBookmarksForSession(id); } catch (err) { logger.warn(`Could not remove bookmarks for ${id}:`, err); }
-    void removeImages(id); // images shown in its Activity thread
+    void removeAttachments(id); // images and files shown in its thread
     goalAutoAttempts.delete(id);
     logger.info(`Session destroyed: id=${id}`);
   });
@@ -887,7 +887,13 @@ export function registerHandlers() {
 
   // ─── Agent I/O ───
 
-  ipcMain.on(IPC.AGENT_SEND, (event, sessionId: string, content: string, images?: import('../shared/types.js').ImageAttachment[]) => {
+  ipcMain.on(IPC.AGENT_SEND, (
+    event,
+    sessionId: string,
+    content: string,
+    images?: import('../shared/types.js').ImageAttachment[],
+    files?: import('../shared/types.js').FileAttachment[],
+  ) => {
     // Tell the user the prompt was not delivered, then unlock the renderer
     // so it doesn't stay stuck in "Writing message".
     const notDelivered = (message: string) => {
@@ -896,7 +902,7 @@ export function registerHandlers() {
       event.sender.send(channel, { type: 'error', message } as import('../shared/types.js').AgentEvent);
       event.sender.send(channel, { type: 'process_exit' } as import('../shared/types.js').AgentEvent);
     };
-    sessionManager.sendMessage(sessionId, content, images).then(
+    sessionManager.sendMessage(sessionId, content, images, files).then(
       (ok) => {
         // Session is dead or never connected
         if (!ok) notDelivered('Message not delivered: the agent is not connected. Send it again once the thread shows as connected.');
@@ -907,6 +913,11 @@ export function registerHandlers() {
       },
     );
   });
+
+  // The file name is checked against the stored-name pattern, so it can't
+  // reach outside the conversation's attachments folder.
+  ipcMain.handle(IPC.ATTACHMENT_OPEN, (_event, sessionId: unknown, file: unknown) =>
+    typeof sessionId === 'string' && typeof file === 'string' ? openAttachedFile(sessionId, file) : false);
 
   ipcMain.handle(IPC.AGENT_SET_MODE, (_event, sessionId: string, mode: string) => {
     sessionManager.setMode(sessionId, mode);

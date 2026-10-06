@@ -2,14 +2,17 @@
   import MarkdownBlock from './MarkdownBlock.svelte';
   import CopyButton from './CopyButton.svelte';
   import ImageAttachments from './ImageAttachments.svelte';
+  import AttachmentIcon from './AttachmentIcon.svelte';
+  import { formatFileSize } from '$lib/file-attachments.js';
   import type { SentBlock } from '../../shared/prompt-text.js';
-  import type { ThreadImage } from '../stores/messages.svelte.js';
+  import type { ThreadFile, ThreadImage } from '../stores/messages.svelte.js';
 
   let {
     sessionId,
     text,
     files,
     images,
+    attachments,
     onRewind,
   }: {
     sessionId: string;
@@ -17,6 +20,9 @@
     /** Text files attached to the message, shown as chips that open their content. */
     files?: SentBlock[];
     images?: ThreadImage[];
+    /** Other files attached (PDFs, audio, ...), shown as chips that open the
+     *  saved copy. */
+    attachments?: ThreadFile[];
     /** When set, a "Rewind to here" action is shown on hover. Only messages
      *  with a checkpoint (a uuid) get one. */
     onRewind?: () => void;
@@ -24,6 +30,12 @@
 
   let openFile = $state<number | null>(null);
   let shownFile = $derived(openFile !== null ? files?.[openFile] : undefined);
+  /** Saved files that turned out to be gone (the folder was cleared). */
+  let missing = $state<Record<string, true>>({});
+
+  async function openAttachment(file: string) {
+    if (!(await window.groveBench.openAttachedFile(sessionId, file))) missing[file] = true;
+  }
 </script>
 
 <div class="user-prompt group py-2.5 px-3 my-1 text-sm text-foreground bg-primary/8 border-l-2 border-primary flex items-start">
@@ -56,6 +68,24 @@
     {/if}
     {#if images?.length}
       <ImageAttachments {sessionId} {images} />
+    {/if}
+    {#if attachments?.length}
+      <div class="flex flex-wrap gap-1.5">
+        {#each attachments as att, i (i)}
+          {@const gone = !att.file || missing[att.file]}
+          <button
+            type="button"
+            onclick={() => att.file && openAttachment(att.file)}
+            disabled={gone}
+            class="inline-flex items-center gap-1 max-w-full bg-primary/15 text-primary text-xs px-2 py-1 font-mono border
+              border-primary/25 enabled:hover:border-primary/50 disabled:opacity-60 transition-colors"
+            title={att.file && missing[att.file] ? `${att.name} is no longer available` : `${att.name} (${formatFileSize(att.size)})`}
+          >
+            <AttachmentIcon mediaType={att.mediaType} />
+            <span class="truncate">{att.name}</span>
+          </button>
+        {/each}
+      </div>
     {/if}
     {#if text.trim()}
       <MarkdownBlock content={text} />

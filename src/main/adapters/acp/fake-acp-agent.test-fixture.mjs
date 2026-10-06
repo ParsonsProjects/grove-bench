@@ -5,8 +5,9 @@
 //   keyauth  - like Gemini CLI set to a retired sign-in: session/new is
 //              turned down until authenticate brings the key 'good-key'
 //   nohttp   - no HTTP MCP support
+//   media    - takes audio and embedded resources in prompts too
 // Prompt texts pick a turn: 'wait', 'titled-exec', 'env', 'unasked', 'unasked-read',
-// 'echo', 'mcp', 'mcp-call', 'self-mode', 'cost'; anything else runs the default turn.
+// 'echo', 'blocks', 'mcp', 'mcp-call', 'self-mode', 'cost'; anything else runs the default turn.
 import { createInterface } from 'node:readline';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
@@ -124,6 +125,12 @@ async function prompt(params) {
     update(sid, { sessionUpdate: 'tool_call_update', toolCallId: 'e1', status: answer.outcome.optionId === 'ok' ? 'completed' : 'failed' });
     return { stopReason: 'end_turn' };
   }
+  if (text === 'blocks') {
+    // Every block after the text, as JSON, so a test can see what was sent.
+    const rest = params.prompt.slice(params.prompt.findIndex((b) => b.type === 'text') + 1);
+    update(sid, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: JSON.stringify(rest) } });
+    return { stopReason: 'end_turn' };
+  }
   if (params.prompt.at(-1)?.text === 'echo') {
     await new Promise((resolve) => setTimeout(resolve, 50));
     const texts = params.prompt.filter((b) => b.type === 'text').map((b) => b.text).join('|');
@@ -188,7 +195,11 @@ async function handle(msg) {
       }
       return reply({
         protocolVersion: 1,
-        agentCapabilities: { loadSession: true, promptCapabilities: { image: true }, mcpCapabilities: { http: scenario !== 'nohttp' } },
+        agentCapabilities: {
+          loadSession: true,
+          promptCapabilities: scenario === 'media' ? { image: true, audio: true, embeddedContext: true } : { image: true },
+          mcpCapabilities: { http: scenario !== 'nohttp' },
+        },
         agentInfo: { name: 'fake', version: '1' },
         authMethods: scenario === 'keyauth' ? [{ id: 'fake-api-key', name: 'API key' }] : [],
       });
