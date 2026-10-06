@@ -32,6 +32,11 @@ vi.mock('../../catalogs.js', async (importOriginal) => {
   };
 });
 
+/** For tests that start several real processes, or one that doesn't exist:
+ *  on Windows a missing program goes through cmd.exe and where.exe, which
+ *  on CI runners can take longer than the 5 s default. */
+const SPAWNS_TIMEOUT_MS = 20_000;
+
 const FIXTURE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fake-acp-agent.test-fixture.mjs');
 
 function def(scenario = 'default'): AcpAgentDefinition {
@@ -305,7 +310,7 @@ describe('AcpAdapter', () => {
     await until(handle, 'system_init');
     expect(signIn.get('fake-acp')?.signedIn).toBe(true);
     handle.close();
-  });
+  }, SPAWNS_TIMEOUT_MS);
 
   it('checks sign-in by opening a session it throws away', async () => {
     expect(await new AcpAdapter(def()).checkSignIn!()).toEqual({ signedIn: true });
@@ -313,10 +318,13 @@ describe('AcpAdapter', () => {
     expect(signIn.get('fake-acp')).toMatchObject({ signedIn: false });
     // An agent without Check sign-in isn't held back by an old refusal.
     expect(await new AcpAdapter({ ...def(), command: process.execPath, cliSignIn: undefined }).checkPrerequisites()).toMatchObject({ authenticated: true, authUnchecked: true });
-    expect((await new AcpAdapter({ ...def(), command: 'definitely-not-an-acp-agent-xyz' }).checkSignIn!()).signedIn).toBeNull();
     // Agents without a CLI sign-in aren't started just to check.
     expect(new AcpAdapter({ ...def(), cliSignIn: undefined }).checkSignIn).toBeUndefined();
-  });
+  }, SPAWNS_TIMEOUT_MS);
+
+  it('can\'t tell whether a program that doesn\'t start is signed in', async () => {
+    expect((await new AcpAdapter({ ...def(), command: 'definitely-not-an-acp-agent-xyz' }).checkSignIn!()).signedIn).toBeNull();
+  }, SPAWNS_TIMEOUT_MS);
 
   it('reports a program that does not start', async () => {
     const adapter = new AcpAdapter({ ...def(), command: 'definitely-not-an-acp-agent-xyz' });
@@ -325,7 +333,7 @@ describe('AcpAdapter', () => {
     for await (const e of handle.events) events.push(e);
     expect(events.some((e) => e.type === 'error')).toBe(true);
     expect((await adapter.checkPrerequisites()).available).toBe(false);
-  });
+  }, SPAWNS_TIMEOUT_MS);
 
   it('keeps the agent\'s own defaults when a conversation changes a control', async () => {
     const adapter = new AcpAdapter(def());

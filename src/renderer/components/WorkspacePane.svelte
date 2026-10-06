@@ -227,13 +227,18 @@
     const minimized = document.hidden;
     if (!minimized) {
       await afterNextPaint();
+      // Closed before it drew: there is no first draw to report, and the
+      // pane on screen by now (or a test after this one) isn't this one.
+      if (destroyed) return;
       timing.step('first draw');
     }
     const where = minimized ? 'window minimized' : store.activeSessionId === sessionId ? 'shown' : 'behind another conversation';
     timing.done(`${historyFailed ? 'history failed' : `${eventCount} events`}, ${where}`);
   });
 
+  let destroyed = false;
   onDestroy(() => {
+    destroyed = true;
     window.removeEventListener('keydown', handleKeydown);
     messageStore.unsubscribe(sessionId);
   });

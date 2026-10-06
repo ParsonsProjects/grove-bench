@@ -156,6 +156,20 @@ describe('WorkspacePane load timing', () => {
     expect(report.detail).toMatch(/^\d+ events, shown$/);
   });
 
+  it('reports nothing for a pane closed before it drew, so a later one never gets its numbers', async () => {
+    store.prerequisites = { git: { available: true, meetsMinimum: true }, agents };
+    let answerPage: (page: unknown) => void = () => {};
+    mockGroveBench.getEventHistoryPage.mockImplementationOnce((() => new Promise((r) => { answerPage = r; })) as never);
+    const { unmount } = render(WorkspacePane, { sessionId: 'n1' });
+    await waitFor(() => expect(mockGroveBench.getEventHistoryPage).toHaveBeenCalled());
+    // Closed while its history is still on the way.
+    unmount();
+    answerPage({ events: [], totalCount: 0, startIndex: 0 });
+    await waitFor(() => expect(messageStore.isHistoryLoaded('n1')).toBe(true));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(mockGroveBench.reportTiming).not.toHaveBeenCalled();
+  });
+
   it('says when loading the history failed', async () => {
     store.prerequisites = { git: { available: true, meetsMinimum: true }, agents };
     mockGroveBench.getEventHistoryPage.mockRejectedValueOnce(new Error('gone'));
