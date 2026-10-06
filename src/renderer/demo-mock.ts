@@ -15,6 +15,102 @@ window.addEventListener('unhandledrejection', (e) => {
 });
 
 const now = Date.now();
+
+// ─── ACP agents (demo.html?acp) ───
+// Gemini CLI, GitHub Copilot CLI and OpenCode as main reports them: one MCP
+// list shared by all three (ACP_MCP_SUPPORT in adapters/acp/mcp-servers.ts),
+// options learned by Check sign-in, and OpenCode's effort levels per model
+// (from scripts/acp-spike/fixtures/handshake.jsonl). Off by default so other
+// screenshots keep their two agents.
+const DEMO_ACP = new URLSearchParams(location.search).has('acp');
+const ACP_IDS = new Set(['gemini-cli', 'copilot-cli', 'opencode']);
+const ACP_MCP = {
+  controls: { list: false, reconnect: false, toggle: false, signIn: false, contextCost: false },
+  disconnectHint: '',
+  config: {
+    scopes: [
+      { value: 'user', label: 'All projects', description: 'Every ACP agent gets it, in every project' },
+      { value: 'local', label: 'One project', description: 'Every ACP agent gets it, in the chosen project only' },
+    ],
+    namePattern: '^[A-Za-z0-9_-]+$',
+    nameRule: 'Server names can only contain letters, numbers, hyphens and underscores',
+    shared: {
+      label: 'ACP agents',
+      note: "Saved in Grove Bench and given to every ACP agent when a thread starts, on top of the servers in the agent's own settings. Grove Bench can't see whether the agent connected them.",
+    },
+  },
+};
+// Grove's own modes for ACP agents (MODE_OPTIONS in acp-adapter.ts).
+const ACP_MODE = { id: 'permissionMode', label: 'Mode', default: 'default', options: [
+  { value: 'default', label: 'Ask', tone: 'info', description: 'Check with you whenever the agent asks to run something' },
+  { value: 'acceptEdits', label: 'Edit', tone: 'accent', description: 'Approve file edits inside the worktree; everything else still asks' },
+  { value: 'readSafe', label: 'Read-safe', tone: 'success', group: 'Grove Bench', description: 'Approve edits and read-only commands inside the worktree; everything else asks' },
+] };
+/** Gemini CLI has told Grove nothing until Check sign-in runs. */
+let geminiLearned = false;
+const modelsListeners = new Set<(adapterId: string) => void>();
+const OPENCODE_EFFORT: Record<string, { default: string; options: { value: string; label: string }[] }> = {
+  'openrouter/deepseek/deepseek-v4.1-flash': { default: 'low', options: [
+    { value: 'low', label: 'Low' }, { value: 'high', label: 'High' }, { value: 'max', label: 'Max' }, { value: 'default', label: 'Default' },
+  ] },
+  'openrouter/deepseek/deepseek-v4-pro': { default: 'high', options: [
+    { value: 'high', label: 'High' }, { value: 'xhigh', label: 'Xhigh' }, { value: 'default', label: 'Default' },
+  ] },
+};
+function acpControls(adapterType: string, model?: string | null) {
+  if (adapterType === 'gemini-cli') {
+    return geminiLearned ? [ACP_MODE, { id: 'acp:mode', label: 'Agent mode', default: 'default', options: [
+      { value: 'default', label: 'Default' },
+      { value: 'autoEdit', label: 'Auto Edit', tone: 'accent', description: 'Auto-approves edit tools' },
+      { value: 'yolo', label: 'YOLO', tone: 'danger', description: 'Auto-approves all tools' },
+      { value: 'plan', label: 'Plan', tone: 'warning', description: 'Read-only mode' },
+    ] }] : [ACP_MODE];
+  }
+  if (adapterType === 'opencode') {
+    const effort = OPENCODE_EFFORT[model ?? ''] ?? OPENCODE_EFFORT['openrouter/deepseek/deepseek-v4.1-flash'];
+    return [
+      ACP_MODE,
+      { id: 'acp:mode', label: 'Session Mode', default: 'build', options: [
+        { value: 'build', label: 'build', description: 'The default agent. Executes tools based on configured permissions.' },
+        { value: 'plan', label: 'plan', tone: 'warning', description: 'Plan mode. Disallows all edit tools.' },
+      ] },
+      { id: 'acp:effort', label: 'Effort', role: 'effort', ...effort },
+    ];
+  }
+  return [ACP_MODE];
+}
+function acpModels(adapterType: string) {
+  if (adapterType === 'gemini-cli') {
+    return geminiLearned ? [{ id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' }, { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' }] : [];
+  }
+  if (adapterType === 'opencode') {
+    return [
+      { id: 'openrouter/deepseek/deepseek-v4.1-flash', label: 'OpenRouter/DeepSeek V4.1 Flash' },
+      { id: 'openrouter/deepseek/deepseek-v4-pro', label: 'OpenRouter/DeepSeek V4 Pro' },
+    ];
+  }
+  return [];
+}
+const ACP_PREREQS = {
+  'gemini-cli': {
+    available: true, installRequired: true, authenticated: true, authUnchecked: true, signInCheckable: true,
+    cliSignIn: { accountLabel: 'Google account', cliName: 'Gemini CLI', command: 'gemini', setupUrl: 'https://github.com/google-gemini/gemini-cli' },
+    apiKey: { label: 'Gemini API key', helpUrl: 'https://aistudio.google.com/apikey', saved: false, canStore: true },
+  },
+  'copilot-cli': {
+    available: true, installRequired: true, authenticated: true, authUnchecked: true, signInCheckable: true,
+    cliSignIn: { accountLabel: 'GitHub Copilot plan', cliName: 'GitHub Copilot CLI', command: 'copilot login', setupUrl: 'https://github.com/github/copilot-cli' },
+  },
+  opencode: {
+    available: true, installRequired: true, authenticated: true,
+    apiKey: { label: 'OpenRouter API key', helpUrl: 'https://openrouter.ai/keys', saved: true, canStore: true },
+  },
+};
+const ACP_ADAPTERS = [
+  { id: 'gemini-cli', displayName: 'Gemini CLI', capabilities: { mcpConfig: true, permissionModes: true, modelSwitching: true }, mcp: ACP_MCP },
+  { id: 'copilot-cli', displayName: 'GitHub Copilot CLI', capabilities: { mcpConfig: true, permissionModes: true, modelSwitching: true }, mcp: ACP_MCP },
+  { id: 'opencode', displayName: 'OpenCode', stage: 'alpha', capabilities: { mcpConfig: true, permissionModes: true, modelSwitching: true }, mcp: ACP_MCP },
+];
 const min = 60_000;
 
 // The Claude Code adapter's mode options (PERMISSION_MODE_OPTIONS in
@@ -45,7 +141,7 @@ const SETTINGS = {
   workingDirectories: [],
   defaultSystemPromptAppend: '',
   acpAgents: [],
-  enabledAlphaAgents: [],
+  enabledAlphaAgents: DEMO_ACP ? ['opencode'] : [],
   memoryAutoSave: true,
   memoryAutoCompact: false,
   memoryCompactTimeoutSeconds: 300,
@@ -314,10 +410,30 @@ const api: Record<string, unknown> = {
     agents: {
       'claude-code': { available: true, authenticated: true, authMethod: 'oauth', email: 'demo@example.com' },
       codex: { available: true, authenticated: true },
+      ...(DEMO_ACP ? ACP_PREREQS : {}),
     },
   }),
   checkGhPrerequisite: async () => ({ available: true, version: '2.65.0', authenticated: true }),
-  checkAgentSignIn: async () => ({ git: { available: true, version: '2.47.1', meetsMinimum: true }, agents: {} }),
+  // Like main: the check's session also teaches Grove the agent's models and
+  // options, and listeners hear the models changed.
+  checkAgentSignIn: async (adapterId?: string) => {
+    if (adapterId === 'gemini-cli' && !geminiLearned) {
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      geminiLearned = true;
+      for (const l of modelsListeners) l(adapterId);
+    }
+    return {
+      git: { available: true, version: '2.47.1', meetsMinimum: true },
+      agents: {
+        'claude-code': { available: true, authenticated: true, authMethod: 'oauth', email: 'demo@example.com' },
+        ...(DEMO_ACP ? { ...ACP_PREREQS, 'gemini-cli': { ...ACP_PREREQS['gemini-cli'], authUnchecked: false } } : {}),
+      },
+    };
+  },
+  onModelsChanged: (cb: (adapterId: string) => void) => {
+    modelsListeners.add(cb);
+    return () => modelsListeners.delete(cb);
+  },
   listRepos: async () => [],
   // Adding a project picks a folder without git.
   addRepo: async () => ({ kind: 'folder', path: 'C:\\Users\\sam\\notes' }),
@@ -429,10 +545,10 @@ const api: Record<string, unknown> = {
       controls: { list: true, reconnect: true, toggle: true, signIn: true, contextCost: true },
       disconnectHint: 'Disconnect this server in this project. New threads here also start without it until you connect it again.',
     },
-  }, {
+  }, ...(DEMO_ACP ? ACP_ADAPTERS : [{
     id: 'codex', displayName: 'Codex', capabilities: { permissionModes: true },
-  }],
-  getAdapterControls: async (adapterType?: string) => adapterType === 'codex' ? [
+  }])],
+  getAdapterControls: async (adapterType?: string, model?: string | null) => adapterType && ACP_IDS.has(adapterType) ? acpControls(adapterType, model) : adapterType === 'codex' ? [
     { id: 'permissionMode', label: 'Mode', default: 'default', options: [
       { value: 'default', label: 'Ask', tone: 'info' }, { value: 'acceptEdits', label: 'Auto edit', tone: 'accent' },
     ] },
@@ -448,7 +564,7 @@ const api: Record<string, unknown> = {
       { value: 'max', label: 'Max', description: 'Uncapped reasoning; slow and token-hungry, for the hardest tasks' },
     ] },
   ],
-  getModels: async (adapterType?: string) => adapterType === 'codex' ? [
+  getModels: async (adapterType?: string) => adapterType && ACP_IDS.has(adapterType) ? acpModels(adapterType) : adapterType === 'codex' ? [
     { id: 'codex-default', label: 'Default model', contextWindow: 400_000 },
   ] : [
     { id: 'claude-opus-5-5', label: 'Opus 5.5', contextWindow: 1_000_000 },
@@ -500,8 +616,15 @@ const api: Record<string, unknown> = {
   },
   ptyIsAlive: async () => false,
   winIsMaximized: async () => false,
-  // The MCP settings tab reads `.length` of this list.
-  mcpConfigList: async () => [],
+  // The MCP settings tab reads `.length` of this list. With ?acp: Claude
+  // Code's own servers, and the list the ACP agents share.
+  mcpConfigList: async (_cwd?: string, adapterType?: string) => !DEMO_ACP ? [] : adapterType && ACP_IDS.has(adapterType) ? [
+    { name: 'github', target: 'https://api.githubcopilot.com/mcp/', transport: 'HTTP', status: 'unchecked' },
+    { name: 'postgres', target: 'npx -y @modelcontextprotocol/server-postgres postgresql://localhost/dev', transport: 'stdio', status: 'unchecked' },
+  ] : [
+    { name: 'figma', target: 'https://mcp.figma.com/mcp', transport: 'HTTP', status: 'connected' },
+    { name: 'postgres', target: 'npx -y @modelcontextprotocol/server-postgres postgresql://localhost/dev', status: 'connected' },
+  ],
   testNotification: async () => 'sent',
 };
 
