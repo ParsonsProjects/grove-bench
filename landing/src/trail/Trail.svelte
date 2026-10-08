@@ -4,6 +4,7 @@
   import Nav from '../sections/Nav.svelte';
   import Hero from '../sections/Hero.svelte';
   import Founder from '../sections/Founder.svelte';
+  import Honest from '../sections/Honest.svelte';
   import Features from '../sections/Features.svelte';
   import Steps from '../sections/Steps.svelte';
   import Free from '../sections/Free.svelte';
@@ -52,6 +53,7 @@
     <main id="main">
       <Hero title={['Plant a task.', 'Grow a branch.']} lede="Grove Bench is a free Windows app for running several AI coding agents on one project at once, starting with Claude Code. Every task gets its own git worktree, branch and terminal, so the agents never trip over each other." />
       <Founder />
+      <Honest />
       <Features />
       <Steps />
       <Free />

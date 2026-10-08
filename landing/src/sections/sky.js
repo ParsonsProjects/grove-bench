@@ -37,6 +37,7 @@ export const MOON_COLORS = { m: '#f4f1ff', s: '#d9d3f3', d: '#c9c2ec' };
 export const BANDS = [
   ['b-hero', '#fffdf7', '#fdf7ea'],
   ['b-founder', '#fdf7ea', '#faefd9'],
+  ['b-honest', '#faefd9', '#faefd9'],
   ['b-features', '#faefd9', '#f7e3c4'],
   ['b-steps', '#f7e3c4', '#f3cda5'],
   ['b-free', '#f3cda5', '#eaa682'],

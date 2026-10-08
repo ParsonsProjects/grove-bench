@@ -65,6 +65,10 @@ Type, buttons and labels come from the app, not from a generic product page:
 - Buttons are the app's: square, flat, 1px edge.
 - The founder note is a commit in the Terminal tab (`git log -1`, signed off
   by Parsons Projects; cmd.exe prompt, as the app's terminal uses).
+- Straight after it, a heads-up note (`Honest.svelte`) says plainly that
+  it's a vibe-coded side project, so bugs and changes are likely. Its
+  character sits in the app's error pose. It's on a flat band in the
+  founder note's end colour, and the walker passes it without stopping.
 - What you get is a file added in the Changes tab, one green line each.
 - The FAQ is a Thread: each question is your message, opening it shows the
   reply.
