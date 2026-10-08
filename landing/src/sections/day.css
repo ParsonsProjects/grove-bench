@@ -57,6 +57,9 @@
 .b-founder {
   background: linear-gradient(var(--c1), var(--c2));
 }
+.b-honest {
+  background: var(--c2);
+}
 .b-features {
   background: linear-gradient(var(--c2), var(--c3));
 }
