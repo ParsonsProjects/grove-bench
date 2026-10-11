@@ -53,6 +53,9 @@ beforeEach(async () => {
   // Drop any save a previous test left waiting.
   await settingsStore.save();
   vi.clearAllMocks();
+  // clearAllMocks keeps implementations, so a test that makes saves fail
+  // (mockRejectedValue) would fail every save after it in a shuffled run.
+  mockGroveBench.saveSettings.mockReset();
   settingsStore.loading = false;
   settingsStore.loaded = false;
   settingsStore.saving = false;
