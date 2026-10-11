@@ -14,14 +14,14 @@
 		class: className,
 		children,
 		...restProps
-	}: WithElementRef<HTMLAttributes<HTMLElement>> & {
+	}: WithElementRef<HTMLAttributes<HTMLDivElement>> & {
 		title?: string;
 		/** Buttons on the right, usually Button size="icon-2xs" variant="quiet". */
 		actions?: Snippet;
 	} = $props();
 </script>
 
-<header
+<div
 	bind:this={ref}
 	data-slot="panel-header"
 	class={cn("flex min-h-8 shrink-0 items-center gap-2 border-b border-border bg-card/50 px-3 py-1 text-xs", className)}
@@ -32,4 +32,4 @@
 		{@render children?.()}
 	</div>
 	{#if actions}<div class="flex shrink-0 items-center gap-1">{@render actions()}</div>{/if}
-</header>
+</div>

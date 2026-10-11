@@ -9,6 +9,8 @@
   import { lazyComponent } from '../lib/lazy-component.js';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
+  import * as Segmented from '$lib/components/ui/segmented/index.js';
+  import { Pulse } from '$lib/components/ui/pulse/index.js';
 
   /**
    * The Changes tab: git status (uncommitted working tree, or the whole
@@ -164,20 +166,22 @@
 </script>
 
 {#snippet scopeToggle()}
-  <div class="inline-flex border border-border/60 text-micro" role="group" aria-label="Diff scope">
-    <button
-      onclick={() => setScope('working')}
-      disabled={switchingScope}
-      class="px-2 py-0.5 transition-colors {!isBranchScope ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:text-foreground'}"
+  <!-- Reads the scope from the store, so a switch that fails leaves the
+       toggle where it was. -->
+  <Segmented.Root
+    bind:value={() => (isBranchScope ? 'branch' : 'working'), (v) => setScope(v as DiffScope)}
+    disabled={switchingScope}
+    aria-label="Diff scope"
+  >
+    <Segmented.Item
+      value="working"
       title="Uncommitted changes in the working tree (staged, unstaged, untracked)"
-    >Uncommitted</button>
-    <button
-      onclick={() => setScope('branch')}
-      disabled={switchingScope}
-      class="px-2 py-0.5 border-l border-border/60 transition-colors {isBranchScope ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:text-foreground'}"
+    >Uncommitted</Segmented.Item>
+    <Segmented.Item
+      value="branch"
       title="Everything changed on this branch since it left the base branch, committed or not (like a pull request)"
-    >Branch</button>
-  </div>
+    >Branch</Segmented.Item>
+  </Segmented.Root>
 {/snippet}
 
 {#snippet sidebarTop()}
@@ -188,13 +192,15 @@
 {/snippet}
 
 {#snippet sidebarSummaryExtra()}
-  <button
+  <Button
+    size="2xs"
+    variant="subtle"
     onclick={() => gitOpsOpen = true}
-    class="px-1.5 py-0.5 border border-border text-muted-foreground hover:text-foreground hover:border-muted-foreground/50 transition-colors shrink-0"
+    class="shrink-0"
     title="Rebase, squash, or cherry-pick between this branch and other threads' branches"
   >
     Branch…
-  </button>
+  </Button>
 {/snippet}
 
 {#snippet commitBox()}
@@ -206,42 +212,48 @@
           placeholder={generatingMsg ? 'Generating…' : 'Commit message…'}
           rows="2"
           onkeydown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); doCommit(); } }}
-          class="w-full text-xs bg-background/50 border border-border/50 px-2 py-1 pr-6 text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50 resize-none"
+          class="w-full text-xs bg-background/50 border border-border/50 px-2 py-1 pr-6 text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/50 resize-none"
         ></textarea>
-        <button
+        <Button
+          size="icon-2xs"
+          variant="quiet"
           onclick={generateMessage}
           disabled={generatingMsg || committing}
-          class="absolute right-1 top-1 p-0.5 text-muted-foreground/60 hover:text-primary disabled:cursor-not-allowed transition-colors"
+          class="absolute right-0.5 top-0.5 disabled:cursor-not-allowed"
           title="Generate a commit message from the staged changes"
+          aria-label="Generate a commit message from the staged changes"
         >
           {#if generatingMsg}
-            <span class="block w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin"></span>
+            <Pulse motion="spin" tone="muted" size="sm" />
           {:else}
-            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <svg class="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M12 3l1.9 5.7a2 2 0 0 0 1.3 1.3L21 12l-5.8 1.9a2 2 0 0 0-1.3 1.3L12 21l-1.9-5.8a2 2 0 0 0-1.3-1.3L3 12l5.8-2a2 2 0 0 0 1.3-1.2L12 3z"/>
             </svg>
           {/if}
-        </button>
+        </Button>
       </div>
       {#if commitError}
         <div class="text-micro text-destructive">{commitError}</div>
       {/if}
       <div class="flex gap-1.5">
-        <button
+        <Button
+          size="xs"
           onclick={() => doCommit()}
           disabled={!commitMessage.trim() || committing}
-          class="flex-1 text-xs px-2 py-1 bg-primary/90 text-primary-foreground hover:bg-primary disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          class="flex-1 disabled:cursor-not-allowed"
         >
           {committing && !pushing ? 'Committing…' : `Commit ${stagedEntries.length} file${stagedEntries.length !== 1 ? 's' : ''}`}
-        </button>
-        <button
+        </Button>
+        <Button
+          size="xs"
+          variant="outline"
           onclick={() => doCommit(true)}
           disabled={!commitMessage.trim() || committing}
-          class="text-xs px-2 py-1 border border-border text-foreground/80 hover:bg-accent hover:text-accent-foreground disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          class="disabled:cursor-not-allowed"
           title="Commit staged files, then push the branch to origin"
         >
           {pushing ? 'Pushing…' : '& Push'}
-        </button>
+        </Button>
       </div>
     </div>
   {/if}
@@ -251,18 +263,20 @@
   {#if !isBranchScope}
     {@const isUntracked = entry.status === 'untracked'}
     {@const reverting = revertingFiles.has(`${entry.filePath}:${entry.staged}`)}
-    <button
+    <Button
+      size="xs"
+      variant="outline-destructive"
       onclick={() => confirmEntry = entry}
       disabled={reverting}
-      class="text-xs px-2 py-0.5 border border-destructive/40 text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-50"
       title={isUntracked ? 'Delete this untracked file' : 'Revert this file to its state before changes'}
     >
       {#if reverting}
+        <!-- Pulse has no destructive tone: a plain square, as before. -->
         <span class="w-2 h-2 bg-destructive animate-pulse inline-block"></span>
       {:else}
         {isUntracked ? 'Discard' : 'Revert'}
       {/if}
-    </button>
+    </Button>
   {/if}
 {/snippet}
 

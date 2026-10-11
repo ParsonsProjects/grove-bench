@@ -19,6 +19,10 @@
   import type { CollapsiblePanel } from '../../shared/types.js';
   import { panelStore } from '../stores/panels.svelte.js';
   import PanelToggle from './PanelToggle.svelte';
+  import { Button } from '$lib/components/ui/button/index.js';
+  import { PanelHeader } from '$lib/components/ui/panel-header/index.js';
+  import { Pulse } from '$lib/components/ui/pulse/index.js';
+  import { menuPanel, menuItem } from '$lib/components/ui/menu/index.js';
 
   /**
    * Shared review UI: a file sidebar (search, sections, viewed marks, comment
@@ -623,7 +627,7 @@
     <div class="min-w-0 flex-1">
       <div class="truncate">{fileName(entry.filePath)}</div>
       {#if dirPath(entry.filePath)}
-        <div class="truncate text-micro text-muted-foreground/60">{dirPath(entry.filePath)}</div>
+        <div class="truncate text-micro text-muted-foreground">{dirPath(entry.filePath)}</div>
       {/if}
     </div>
     {#if nComments > 0}
@@ -636,7 +640,7 @@
       <span class="text-micro text-green-400 shrink-0">S</span>
     {/if}
     {#if changed}
-      <span class="shrink-0 w-1.5 h-1.5 bg-yellow-400" title="Changed since you viewed it"></span>
+      <span class="shrink-0 w-1.5 h-1.5 bg-amber-500" title="Changed since you viewed it"></span>
     {:else if viewed}
       <svg class="w-3 h-3 shrink-0 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-label="Viewed"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
     {/if}
@@ -654,12 +658,12 @@
           <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clip-rule="evenodd" />
         </svg>
         <span class={colorClass}>{title}</span>
-        <span class="text-muted-foreground/60">{count}</span>
+        <span class="text-muted-foreground">{count}</span>
       </button>
       {#if mode === 'stage' && onStageAll}
-        <button onclick={() => onStageAll(entries)} class="px-2 py-1 text-micro text-muted-foreground hover:text-green-400 shrink-0 opacity-0 group-hover/sec:opacity-100">stage all</button>
+        <Button size="2xs" variant="quiet" onclick={() => onStageAll(entries)} class="mr-1 opacity-0 group-hover/sec:opacity-100">stage all</Button>
       {:else if mode === 'unstage' && onUnstageAll}
-        <button onclick={() => onUnstageAll(entries)} class="px-2 py-1 text-micro text-muted-foreground hover:text-yellow-400 shrink-0 opacity-0 group-hover/sec:opacity-100">unstage all</button>
+        <Button size="2xs" variant="quiet" onclick={() => onUnstageAll(entries)} class="mr-1 opacity-0 group-hover/sec:opacity-100">unstage all</Button>
       {/if}
     </div>
   {/if}
@@ -682,8 +686,8 @@
     {/each}
     {#snippet emptyDetails()}
       {#if hint}
-        <span class="text-xs text-muted-foreground/60 flex items-center gap-1.5">
-          <span class="w-1.5 h-1.5 bg-status-working animate-pulse"></span>
+        <span class="text-xs text-muted-foreground flex items-center gap-1.5">
+          <Pulse size="xs" />
           {hint}
         </span>
       {/if}
@@ -755,30 +759,32 @@
               onkeydown={handleSearchKeydown}
               type="text"
               placeholder="Filter files..."
-              class="w-full text-xs bg-background/50 border border-border/50 px-2 py-1 pl-7 text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50"
+              class="w-full text-xs bg-background/50 border border-border/50 px-2 py-1 pl-7 text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/50"
             />
             {#if searchQuery}
-              <button
+              <Button
+                size="icon-2xs"
+                variant="quiet"
                 onclick={() => { searchQuery = ''; searchInputEl?.focus(); }}
-                class="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                class="absolute right-0.5 top-1/2 -translate-y-1/2"
                 aria-label="Clear filter"
                 title="Clear filter"
               >
-                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
                 </svg>
-              </button>
+              </Button>
             {/if}
 
             <!-- Dropdown -->
             {#if showDropdown}
-              <div class="absolute left-0 right-0 top-full mt-1 bg-card border border-border shadow-lg max-h-56 overflow-y-auto z-50">
+              <div class="{menuPanel({ padding: 'list' })} absolute left-0 right-0 top-full mt-1 max-h-56 overflow-y-auto z-50">
                 {#each dropdownEntries as entry, i (entry.filePath + ':' + entry.staged)}
                   {@const badge = statusBadge(entry.status)}
                   <button
                     onmousedown={() => selectDropdownEntry(entry)}
                     onmouseenter={() => dropdownIndex = i}
-                    class="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left hover:bg-accent/50 {i === dropdownIndex ? 'bg-accent/50' : ''}"
+                    class={menuItem({ selected: i === dropdownIndex })}
                   >
                     <span class="font-bold {badge.color} shrink-0">{badge.label}</span>
                     <span class="truncate">
@@ -812,11 +818,11 @@
             <span class="text-yellow-400">{unstagedEntries.length}M</span>
           {/if}
           {#if untrackedEntries.length > 0}
-            <span class="text-muted-foreground/60">{untrackedEntries.length}?</span>
+            <span class="text-muted-foreground">{untrackedEntries.length}?</span>
           {/if}
         </div>
         {#if viewedCount > 0}
-          <div class="text-micro text-green-400/80 mt-1 flex items-center gap-1" title="Files marked viewed (press x on the selected file)">
+          <div class="text-micro text-green-400 mt-1 flex items-center gap-1" title="Files marked viewed (press x on the selected file)">
             <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
             {viewedCount} of {entries.length} viewed
           </div>
@@ -871,7 +877,7 @@
       {@const historyExpanded = editHistoryExpanded.has(key)}
 
       <!-- Diff header -->
-      <div class="border-b border-border bg-card/50 px-4 py-2 shrink-0 flex items-center gap-2 group/diff-hdr">
+      <PanelHeader class="group/diff-hdr">
         <span class="text-xs font-bold {badge.color}">{badge.label}</span>
 
         <button
@@ -891,73 +897,68 @@
         <CopyButton text={selectedEntry.filePath} class="opacity-0 group-hover/diff-hdr:opacity-100 shrink-0" />
 
         {#if history && history.edits.length > 0}
-          <button
+          <Button
+            size="xs"
+            variant="quiet"
             onclick={() => toggleEditHistory(key)}
-            class="text-xs text-muted-foreground hover:text-foreground {historyExpanded ? 'text-foreground' : ''}"
+            class={historyExpanded ? 'text-foreground' : ''}
             title="Show individual edits from this thread"
           >
             {history.edits.length} edit{history.edits.length !== 1 ? 's' : ''}
-          </button>
+          </Button>
         {/if}
 
-        <div class="ml-auto flex items-center gap-2">
-          {#if selectedHunkCount > 1}
-            <div class="flex items-center text-muted-foreground" title="Jump between hunks">
-              <button onclick={() => gotoHunk(-1)} class="hover:text-foreground px-0.5" aria-label="Previous hunk">
-                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" /></svg>
-              </button>
-              <button onclick={() => gotoHunk(1)} class="hover:text-foreground px-0.5" aria-label="Next hunk">
-                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg>
-              </button>
-            </div>
-          {/if}
-          <label class="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground cursor-pointer select-none" title="Mark this file as viewed (x). Clears automatically if the file changes again.">
-            <input type="checkbox" checked={isViewed(selectedEntry)} onchange={() => toggleViewed(selectedEntry)} class="accent-green-500" />
-            Viewed
-            {#if changedSinceViewed(selectedEntry)}
-              <span class="text-micro text-yellow-400">· changed since</span>
+        {#snippet actions()}
+          <div class="flex items-center gap-2">
+            {#if selectedHunkCount > 1}
+              <div class="flex items-center" title="Jump between hunks">
+                <Button size="icon-xs" variant="quiet" onclick={() => gotoHunk(-1)} aria-label="Previous hunk">
+                  <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" /></svg>
+                </Button>
+                <Button size="icon-xs" variant="quiet" onclick={() => gotoHunk(1)} aria-label="Next hunk">
+                  <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg>
+                </Button>
+              </div>
             {/if}
-          </label>
-          {#if !hasStaging}
-            <!-- No staging for this source (branch scope / checkpoints): the diff doesn't map onto the index. -->
-          {:else if selectedEntry.staged}
-            <button
-              onclick={() => unstageEntry(selectedEntry)}
-              class="text-xs px-2 py-0.5 border border-border text-muted-foreground hover:text-foreground hover:border-foreground/40 transition-colors"
-              title="Unstage this file"
-            >
-              Unstage
-            </button>
-          {:else}
-            <button
-              onclick={() => stageEntry(selectedEntry)}
-              class="text-xs px-2 py-0.5 border border-green-700/40 text-green-400 hover:bg-green-900/20 transition-colors"
-              title="Stage this file"
-            >
-              Stage
-            </button>
-          {/if}
-          <button
-            onclick={() => sideBySide = !sideBySide}
-            class="text-xs text-muted-foreground hover:text-foreground select-none"
-          >
-            {sideBySide ? 'unified' : 'side-by-side'}
-          </button>
-          {#if onRefresh}
-          <button
-            onclick={onRefresh}
-            class="text-muted-foreground hover:text-foreground transition-colors p-0.5"
-            title="Refresh"
-            disabled={isLoading}
-          >
-            <svg class="w-3.5 h-3.5 {isLoading ? 'animate-spin' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-            </svg>
-          </button>
-          {/if}
-          {#if headerActions}{@render headerActions(selectedEntry)}{/if}
-        </div>
-      </div>
+            <label class="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground cursor-pointer select-none" title="Mark this file as viewed (x). Clears automatically if the file changes again.">
+              <input type="checkbox" checked={isViewed(selectedEntry)} onchange={() => toggleViewed(selectedEntry)} class="accent-green-500" />
+              Viewed
+              {#if changedSinceViewed(selectedEntry)}
+                <span class="text-micro text-amber-500">· changed since</span>
+              {/if}
+            </label>
+            {#if !hasStaging}
+              <!-- No staging for this source (branch scope / checkpoints): the diff doesn't map onto the index. -->
+            {:else if selectedEntry.staged}
+              <Button size="xs" variant="subtle" onclick={() => unstageEntry(selectedEntry)} title="Unstage this file">
+                Unstage
+              </Button>
+            {:else}
+              <Button size="xs" variant="outline-success" onclick={() => stageEntry(selectedEntry)} title="Stage this file">
+                Stage
+              </Button>
+            {/if}
+            <Button size="xs" variant="quiet" onclick={() => sideBySide = !sideBySide} class="select-none">
+              {sideBySide ? 'unified' : 'side-by-side'}
+            </Button>
+            {#if onRefresh}
+              <Button
+                size="icon-2xs"
+                variant="quiet"
+                onclick={onRefresh}
+                title="Refresh"
+                aria-label="Refresh"
+                disabled={isLoading}
+              >
+                <svg class="size-3.5 {isLoading ? 'animate-spin' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+              </Button>
+            {/if}
+            {#if headerActions}{@render headerActions(selectedEntry)}{/if}
+          </div>
+        {/snippet}
+      </PanelHeader>
 
       <!-- Diff content -->
       <div class="flex-1 overflow-y-auto px-4 py-2" bind:this={diffContainer}>
@@ -997,7 +998,7 @@
               {@const editDiffLines = computeDiffLines(toolViewOf(edit), selectedEntry.filePath)}
               {#if editDiffLines.length > 0}
                 <div class="mb-2 {idx > 0 ? 'border-t border-border/30 pt-2' : ''}">
-                  <div class="text-micro text-muted-foreground/60 mb-1">
+                  <div class="text-micro text-muted-foreground mb-1">
                     {edit.toolName} #{idx + 1}
                   </div>
                   <DiffView lines={editDiffLines} sideBySide={false} maxHeight="300px" filePath={selectedEntry.filePath} />
@@ -1010,13 +1011,13 @@
       {#if comments.length > 0}
         <div data-review-bar class="border-t border-primary/30 bg-card/60 px-4 py-1.5 shrink-0 flex items-center gap-2 text-xs">
           <span class="text-foreground/80">{comments.length} review comment{comments.length === 1 ? '' : 's'}</span>
-          <span class="text-muted-foreground/60">across {new Set(comments.map(c => c.filePath)).size} file{new Set(comments.map(c => c.filePath)).size === 1 ? '' : 's'}</span>
+          <span class="text-muted-foreground">across {new Set(comments.map(c => c.filePath)).size} file{new Set(comments.map(c => c.filePath)).size === 1 ? '' : 's'}</span>
           <div class="ml-auto flex items-center gap-1.5">
-            <button onclick={() => { if (confirm('Discard all review comments?')) { reviewStore.clearComments(sessionId); composer = null; } }} class="px-2 py-0.5 text-muted-foreground hover:text-destructive">Discard</button>
-            <button onclick={reviewToPrompt} class="px-2 py-0.5 border border-border text-foreground/80 hover:bg-accent hover:text-accent-foreground" title="Put the batched comments into the prompt so you can edit before sending">To prompt</button>
-            <button onclick={sendReview} disabled={sendingReview} class="px-2 py-0.5 bg-primary/90 text-primary-foreground hover:bg-primary disabled:opacity-40" title="Send all comments to the agent as one prompt (queued if it is busy)">
+            <Button size="2xs" variant="outline-destructive" onclick={() => { if (confirm('Discard all review comments?')) { reviewStore.clearComments(sessionId); composer = null; } }}>Discard</Button>
+            <Button size="2xs" variant="outline" onclick={reviewToPrompt} title="Put the batched comments into the prompt so you can edit before sending">To prompt</Button>
+            <Button size="2xs" onclick={sendReview} disabled={sendingReview} title="Send all comments to the agent as one prompt (queued if it is busy)">
               Send to agent
-            </button>
+            </Button>
           </div>
         </div>
       {/if}

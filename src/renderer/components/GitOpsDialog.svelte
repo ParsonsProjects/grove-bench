@@ -4,6 +4,9 @@
   import { Button } from '$lib/components/ui/button/index.js';
   import { Input } from '$lib/components/ui/input/index.js';
   import { Label } from '$lib/components/ui/label/index.js';
+  import { Notice } from '$lib/components/ui/notice/index.js';
+  import { Pulse } from '$lib/components/ui/pulse/index.js';
+  import * as Tabs from '$lib/components/ui/tabs/index.js';
   import { store } from '../stores/sessions.svelte.js';
   import { messageStore } from '../stores/messages.svelte.js';
   import { gitStatusStore } from '../stores/gitStatus.svelte.js';
@@ -160,130 +163,140 @@
       </Dialog.Description>
     </Dialog.Header>
 
-    <div class="flex border-b border-border mt-3">
-      {#each MODES as m (m.id)}
-        <button
-          onclick={() => { mode = m.id; result = null; }}
-          class="px-3 py-1.5 text-xs transition-colors border-b-2 -mb-px
-            {mode === m.id ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'}"
-        >
-          {m.label}
-        </button>
-      {/each}
-    </div>
+    <!-- Picking a tab (even the open one) clears the last result. -->
+    <Tabs.Root
+      bind:value={() => mode, (v) => { if (v !== mode) { mode = v as GitOpMode; result = null; } }}
+      class="mt-3"
+    >
+      <Tabs.List>
+        {#each MODES as m (m.id)}
+          <Tabs.Trigger value={m.id} onclick={() => { result = null; }}>{m.label}</Tabs.Trigger>
+        {/each}
+      </Tabs.List>
 
-    <div class="flex flex-col gap-3 mt-3">
-      {#if mode === 'rebase'}
-        <div>
-          <Label for="gitops-onto" class="mb-1 block">Rebase onto</Label>
-          <Input id="gitops-onto" type="text" bind:value={rebaseOnto} placeholder={baseBranch || 'main'} list="gitops-branches" />
-          <p class="text-micro text-muted-foreground mt-1">
-            Replays this branch's commits on top of the target. Pick the base branch to catch up, or another
-            thread's branch to build on its work.
-          </p>
-        </div>
-      {:else if mode === 'squash'}
-        <div>
-          <Label for="gitops-squash-base" class="mb-1 block">Squash commits since</Label>
-          <Input id="gitops-squash-base" type="text" bind:value={squashBase} placeholder={baseBranch || 'main'} list="gitops-branches" />
-        </div>
-        <div>
-          <div class="text-micro text-muted-foreground mb-1">
-            {#if squashLoading}
-              Loading commits…
-            {:else if squashCommits.length === 0}
-              No commits since {squashBase || 'the base'}.
-            {:else if squashCommits.length === 1}
-              Only one commit since {squashBase} — nothing to squash.
-            {:else}
-              {squashCommits.length} commits will become one:
-            {/if}
-          </div>
-          {#if squashCommits.length > 1}
-            <ul class="max-h-28 overflow-y-auto border border-border/50 bg-background/50 text-xs font-mono px-2 py-1 space-y-0.5">
-              {#each squashCommits as c (c.sha)}
-                <li class="truncate"><span class="text-muted-foreground">{c.shortSha}</span> {c.subject}</li>
-              {/each}
-            </ul>
-          {/if}
-        </div>
-        <div>
-          <Label for="gitops-squash-msg" class="mb-1 block">New commit message</Label>
-          <textarea
-            id="gitops-squash-msg"
-            bind:value={squashMessage}
-            rows="4"
-            class="w-full text-sm bg-background border border-input px-3 py-2 text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-ring resize-y"
-          ></textarea>
-        </div>
-      {:else}
-        <div>
-          <Label for="gitops-source" class="mb-1 block">Pick from branch</Label>
-          <Input id="gitops-source" type="text" bind:value={pickSource} placeholder="another thread's branch" list="gitops-branches" />
-        </div>
-        <div>
-          <div class="text-micro text-muted-foreground mb-1">
-            {#if pickLoading}
-              Loading commits…
-            {:else if !pickSource.trim()}
-              Enter a branch to see its commits.
-            {:else if pickCommits.length === 0}
-              {pickSource} has no commits that this branch is missing.
-            {:else}
-              Commits on {pickSource} not on this branch:
-            {/if}
-          </div>
-          {#if pickCommits.length > 0}
-            <div class="max-h-40 overflow-y-auto border border-border/50 bg-background/50">
-              {#each pickCommits as c (c.sha)}
-                <label class="flex items-center gap-2 px-2 py-1 text-xs cursor-pointer hover:bg-accent/30 {pickSha === c.sha ? 'bg-sidebar-accent' : ''}">
-                  <input type="radio" name="gitops-pick" value={c.sha} bind:group={pickSha} class="shrink-0" />
-                  <span class="font-mono text-muted-foreground shrink-0">{c.shortSha}</span>
-                  <span class="truncate">{c.subject}</span>
-                </label>
-              {/each}
+      <div class="flex flex-col gap-3 mt-7">
+        <!-- Each panel mounts only while its tab is open, so the other
+             modes' commit lists aren't in the page. -->
+        <Tabs.Content value="rebase" class="flex flex-col gap-3">
+          {#if mode === 'rebase'}
+            <div>
+              <Label for="gitops-onto" class="mb-1 block">Rebase onto</Label>
+              <Input id="gitops-onto" type="text" bind:value={rebaseOnto} placeholder={baseBranch || 'main'} list="gitops-branches" />
+              <p class="text-micro text-muted-foreground mt-1">
+                Replays this branch's commits on top of the target. Pick the base branch to catch up, or another
+                thread's branch to build on its work.
+              </p>
             </div>
           {/if}
-        </div>
-      {/if}
-
-      <datalist id="gitops-branches">
-        {#each candidates as c (c.branch)}
-          <option value={c.branch}>{c.label}</option>
-        {/each}
-      </datalist>
-
-      {#if agentBusy}
-        <div role="status" class="p-2 text-xs border border-border bg-muted/40 text-muted-foreground">
-          An agent is working in this checkout. Wait for its turn to finish, then try again.
-        </div>
-      {/if}
-
-      {#if result}
-        <div class="p-2 text-xs whitespace-pre-wrap border {result.ok ? 'bg-green-500/10 border-green-500/40 text-green-400' : 'bg-destructive/10 border-destructive/50 text-destructive'}">
-          {result.text}
-        </div>
-      {/if}
-
-      <Dialog.Footer>
-        <Button variant="secondary" onclick={() => { open = false; onclose(); }}>
-          Close
-        </Button>
-        <Button onclick={run} disabled={!canRun}>
-          {#if busy}
-            <span class="inline-flex items-center gap-1.5">
-              <span class="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin"></span>
-              Working…
-            </span>
-          {:else if mode === 'rebase'}
-            Rebase
-          {:else if mode === 'squash'}
-            Squash {squashCommits.length > 1 ? squashCommits.length : ''} commits
-          {:else}
-            Cherry-pick
+        </Tabs.Content>
+        <Tabs.Content value="squash" class="flex flex-col gap-3">
+          {#if mode === 'squash'}
+            <div>
+              <Label for="gitops-squash-base" class="mb-1 block">Squash commits since</Label>
+              <Input id="gitops-squash-base" type="text" bind:value={squashBase} placeholder={baseBranch || 'main'} list="gitops-branches" />
+            </div>
+            <div>
+              <div class="text-micro text-muted-foreground mb-1">
+                {#if squashLoading}
+                  Loading commits…
+                {:else if squashCommits.length === 0}
+                  No commits since {squashBase || 'the base'}.
+                {:else if squashCommits.length === 1}
+                  Only one commit since {squashBase} — nothing to squash.
+                {:else}
+                  {squashCommits.length} commits will become one:
+                {/if}
+              </div>
+              {#if squashCommits.length > 1}
+                <ul class="max-h-28 overflow-y-auto border border-border/50 bg-background/50 text-xs font-mono px-2 py-1 space-y-0.5">
+                  {#each squashCommits as c (c.sha)}
+                    <li class="truncate"><span class="text-muted-foreground">{c.shortSha}</span> {c.subject}</li>
+                  {/each}
+                </ul>
+              {/if}
+            </div>
+            <div>
+              <Label for="gitops-squash-msg" class="mb-1 block">New commit message</Label>
+              <textarea
+                id="gitops-squash-msg"
+                bind:value={squashMessage}
+                rows="4"
+                class="w-full text-sm bg-background border border-input px-3 py-2 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring resize-y"
+              ></textarea>
+            </div>
           {/if}
-        </Button>
-      </Dialog.Footer>
-    </div>
+        </Tabs.Content>
+        <Tabs.Content value="cherry-pick" class="flex flex-col gap-3">
+          {#if mode === 'cherry-pick'}
+            <div>
+              <Label for="gitops-source" class="mb-1 block">Pick from branch</Label>
+              <Input id="gitops-source" type="text" bind:value={pickSource} placeholder="another thread's branch" list="gitops-branches" />
+            </div>
+            <div>
+              <div class="text-micro text-muted-foreground mb-1">
+                {#if pickLoading}
+                  Loading commits…
+                {:else if !pickSource.trim()}
+                  Enter a branch to see its commits.
+                {:else if pickCommits.length === 0}
+                  {pickSource} has no commits that this branch is missing.
+                {:else}
+                  Commits on {pickSource} not on this branch:
+                {/if}
+              </div>
+              {#if pickCommits.length > 0}
+                <div class="max-h-40 overflow-y-auto border border-border/50 bg-background/50">
+                  {#each pickCommits as c (c.sha)}
+                    <label class="flex items-center gap-2 px-2 py-1 text-xs cursor-pointer hover:bg-accent/30 {pickSha === c.sha ? 'bg-sidebar-accent' : ''}">
+                      <input type="radio" name="gitops-pick" value={c.sha} bind:group={pickSha} class="shrink-0" />
+                      <span class="font-mono text-muted-foreground shrink-0">{c.shortSha}</span>
+                      <span class="truncate">{c.subject}</span>
+                    </label>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+          {/if}
+        </Tabs.Content>
+
+        <datalist id="gitops-branches">
+          {#each candidates as c (c.branch)}
+            <option value={c.branch}>{c.label}</option>
+          {/each}
+        </datalist>
+
+        {#if agentBusy}
+          <Notice tone="neutral">
+            <p>An agent is working in this checkout. Wait for its turn to finish, then try again.</p>
+          </Notice>
+        {/if}
+
+        {#if result}
+          <Notice tone={result.ok ? 'success' : 'danger'}>
+            <p class="whitespace-pre-wrap">{result.text}</p>
+          </Notice>
+        {/if}
+
+        <Dialog.Footer>
+          <Button variant="secondary" onclick={() => { open = false; onclose(); }}>
+            Close
+          </Button>
+          <Button onclick={run} disabled={!canRun}>
+            {#if busy}
+              <span class="inline-flex items-center gap-1.5">
+                <Pulse motion="spin" size="sm" tone="current" />
+                Working…
+              </span>
+            {:else if mode === 'rebase'}
+              Rebase
+            {:else if mode === 'squash'}
+              Squash {squashCommits.length > 1 ? squashCommits.length : ''} commits
+            {:else}
+              Cherry-pick
+            {/if}
+          </Button>
+        </Dialog.Footer>
+      </div>
+    </Tabs.Root>
   </Dialog.Content>
 </Dialog.Root>

@@ -1,5 +1,6 @@
 <script lang="ts">
   import CopyButton from './CopyButton.svelte';
+  import { Notice } from '$lib/components/ui/notice/index.js';
 
   /** Shown on the new conversation screen, before there is a conversation. */
   let { beforeStart = false }: { beforeStart?: boolean } = $props();
@@ -11,8 +12,8 @@
   ];
 </script>
 
-<div class="my-1 px-3 py-2 text-xs border-l-4 border-yellow-500 bg-yellow-500/10" role="note">
-  <p class="text-foreground/80">
+<Notice tone="warning" role="note" class="my-1">
+  <p>
     Git doesn't have your name and email for this project, so it will likely refuse the agent's commits.
     {#if beforeStart}
       Run these in a terminal with your own details, before or after you start.
@@ -29,4 +30,4 @@
     {/each}
   </ul>
   <p class="mt-1 text-muted-foreground">Leave out <code class="font-mono">--global</code> to set them for this project only.</p>
-</div>
+</Notice>

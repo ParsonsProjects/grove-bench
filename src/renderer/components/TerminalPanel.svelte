@@ -9,6 +9,9 @@
   import { openLink } from '$lib/preview-links.js';
   import { terminalColors, prefersLight, onColorSchemeChange } from '$lib/terminal-theme.js';
   import { FONTS } from '../../shared/brand.js';
+  import { PanelHeader } from '$lib/components/ui/panel-header/index.js';
+  import { Button } from '$lib/components/ui/button/index.js';
+  import { Pulse } from '$lib/components/ui/pulse/index.js';
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -144,48 +147,38 @@
 
 <div class="flex flex-col h-full">
   <!-- Terminal toolbar -->
-  <div class="border-b border-border flex items-center gap-2 px-3 py-1 shrink-0 bg-card/50">
+  <PanelHeader>
     <span class="text-micro text-muted-foreground flex items-center gap-1.5">
       {#if isAlive}
-        <span class="inline-block w-1.5 h-1.5 bg-green-500"></span>
+        <Pulse size="xs" motion="none" />
         Running
       {:else}
-        <span class="inline-block w-1.5 h-1.5 bg-muted-foreground/50"></span>
+        <Pulse tone="muted" size="xs" motion="none" />
         Stopped
       {/if}
     </span>
-    <div class="flex-1"></div>
-    <button
-      onclick={handleAttachToPrompt}
-      class="text-micro px-2 py-0.5 border border-border text-muted-foreground hover:text-foreground hover:border-muted-foreground/50 transition-colors"
-      title="Attach the selected text (or the last {DEFAULT_TAIL_LINES} lines of output) to the next message"
-    >
-      To prompt
-    </button>
-    {#if isAlive}
-      <button
-        onclick={handleKill}
-        class="text-micro px-2 py-0.5 border border-destructive text-destructive hover:bg-destructive/10 transition-colors"
-        title="Kill terminal process"
+    {#snippet actions()}
+      <Button
+        size="2xs"
+        variant="subtle"
+        onclick={handleAttachToPrompt}
+        title="Attach the selected text (or the last {DEFAULT_TAIL_LINES} lines of output) to the next message"
       >
-        Kill
-      </button>
-    {/if}
-    <button
-      onclick={handleRestart}
-      class="text-micro px-2 py-0.5 border border-border text-muted-foreground hover:text-foreground hover:border-muted-foreground/50 transition-colors"
-      title="Restart terminal"
-    >
-      Restart
-    </button>
-    <button
-      onclick={handleClear}
-      class="text-micro px-2 py-0.5 border border-border text-muted-foreground hover:text-foreground hover:border-muted-foreground/50 transition-colors"
-      title="Clear terminal output"
-    >
-      Clear
-    </button>
-  </div>
+        To prompt
+      </Button>
+      {#if isAlive}
+        <Button size="2xs" variant="outline-destructive" onclick={handleKill} title="Kill terminal process">
+          Kill
+        </Button>
+      {/if}
+      <Button size="2xs" variant="subtle" onclick={handleRestart} title="Restart terminal">
+        Restart
+      </Button>
+      <Button size="2xs" variant="subtle" onclick={handleClear} title="Clear terminal output">
+        Clear
+      </Button>
+    {/snippet}
+  </PanelHeader>
 
   <!-- xterm.js container -->
   <div

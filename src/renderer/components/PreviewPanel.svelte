@@ -19,6 +19,10 @@
   import { stripIpcErrorPrefix } from '$lib/mcp-errors.js';
   import { formatAge } from '$lib/format-age.js';
   import type { PreviewBounds } from '../../shared/types.js';
+  import { Button } from '$lib/components/ui/button/index.js';
+  import { Notice } from '$lib/components/ui/notice/index.js';
+  import { SectionLabel } from '$lib/components/ui/section-label/index.js';
+  import * as Segmented from '$lib/components/ui/segmented/index.js';
 
   /** `active`: this conversation is open and its Preview tab is showing. */
   let { sessionId, active }: { sessionId: string; active: boolean } = $props();
@@ -234,7 +238,7 @@
 {#snippet userEmptyText()}
   <p class="text-xs mb-4">Open a local dev server, any web address, or an HTML file in this worktree. Links to localhost in the thread open here too; Ctrl+click opens them in your system browser.</p>
   {#if detected.length > 0}
-    <p class="text-micro uppercase tracking-wide mb-2">Seen in this thread</p>
+    <SectionLabel class="mb-2">Seen in this thread</SectionLabel>
     <div class="flex flex-col gap-1 items-stretch">
       {#each [...detected].reverse() as url (url)}
         <button onclick={() => go('user', url)} class="px-3 py-1 text-xs font-mono border border-border bg-card hover:border-primary/60 hover:text-foreground truncate">
@@ -256,7 +260,7 @@
     <p class="text-xs mb-4">The agent's browser tools are turned off in Settings → Agents (Grovekeepers), so the agent can't open pages here.</p>
   {/if}
   {#if detected.length > 0}
-    <p class="text-micro uppercase tracking-wide mb-2">Open for the agent</p>
+    <SectionLabel class="mb-2">Open for the agent</SectionLabel>
     <div class="flex flex-col gap-1 items-stretch">
       {#each [...detected].reverse() as url (url)}
         <button onclick={() => openForAgent(url)} class="px-3 py-1 text-xs font-mono border border-border bg-card hover:border-primary/60 hover:text-foreground truncate">
@@ -268,46 +272,41 @@
 {/snippet}
 
 <div class="flex flex-col h-full min-h-0">
-  <!-- Toolbar -->
-  <div class="flex items-center gap-1 px-2 py-1 border-b border-border bg-card/50 shrink-0">
-    <div class="flex items-center border border-border mr-1" role="group" aria-label="Which page to show">
-      <button
-        onclick={() => setMode('user')}
-        class="flex items-center gap-1 px-2 py-0.5 text-xs transition-colors {mode === 'user' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}"
-        title="Your page: browse and click around yourself"
-        aria-pressed={mode === 'user'}
-      >
-        <UserIcon class="w-3 h-3" />
+  <!-- Toolbar. Not a PanelHeader (it holds the address field), so it
+       matches one: same edge, fill, padding and height. -->
+  <div class="flex items-center gap-1 px-3 py-1 min-h-8 border-b border-border bg-card/50 shrink-0">
+    <Segmented.Root
+      bind:value={() => mode, (v) => setMode(v as PreviewMode)}
+      class="mr-1"
+      aria-label="Which page to show"
+    >
+      <Segmented.Item value="user" title="Your page: browse and click around yourself">
+        <UserIcon />
         Yours
-      </button>
-      <button
-        onclick={() => setMode('agent')}
-        class="flex items-center gap-1 px-2 py-0.5 text-xs transition-colors {mode === 'agent' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}"
-        title="The agent's page: what it opened with its browser tools"
-        aria-pressed={mode === 'agent'}
-      >
-        <BotIcon class="w-3 h-3" />
+      </Segmented.Item>
+      <Segmented.Item value="agent" title="The agent's page: what it opened with its browser tools">
+        <BotIcon />
         Agent's
         {#if agentUnseen && mode !== 'agent'}
           <span class="inline-block w-1.5 h-1.5 bg-primary" aria-label="New activity"></span>
         {/if}
-      </button>
-    </div>
+      </Segmented.Item>
+    </Segmented.Root>
 
-    <button onclick={() => cmd('back')} disabled={!page?.canGoBack} class="p-1 text-muted-foreground hover:text-foreground disabled:opacity-30 disabled:hover:text-muted-foreground" title="Back (Alt+Left)" aria-label="Back">
-      <ArrowLeftIcon class="w-3.5 h-3.5" />
-    </button>
-    <button onclick={() => cmd('forward')} disabled={!page?.canGoForward} class="p-1 text-muted-foreground hover:text-foreground disabled:opacity-30 disabled:hover:text-muted-foreground" title="Forward (Alt+Right)" aria-label="Forward">
-      <ArrowRightIcon class="w-3.5 h-3.5" />
-    </button>
+    <Button size="icon-xs" variant="quiet" onclick={() => cmd('back')} disabled={!page?.canGoBack} title="Back (Alt+Left)" aria-label="Back">
+      <ArrowLeftIcon />
+    </Button>
+    <Button size="icon-xs" variant="quiet" onclick={() => cmd('forward')} disabled={!page?.canGoForward} title="Forward (Alt+Right)" aria-label="Forward">
+      <ArrowRightIcon />
+    </Button>
     {#if page?.loading}
-      <button onclick={() => cmd('stop')} class="p-1 text-muted-foreground hover:text-foreground" title="Stop loading" aria-label="Stop loading">
-        <XIcon class="w-3.5 h-3.5" />
-      </button>
+      <Button size="icon-xs" variant="quiet" onclick={() => cmd('stop')} title="Stop loading" aria-label="Stop loading">
+        <XIcon />
+      </Button>
     {:else}
-      <button onclick={() => cmd('reload')} disabled={!page?.url} class="p-1 text-muted-foreground hover:text-foreground disabled:opacity-30 disabled:hover:text-muted-foreground" title="Reload (F5)" aria-label="Reload">
-        <RotateCwIcon class="w-3.5 h-3.5" />
-      </button>
+      <Button size="icon-xs" variant="quiet" onclick={() => cmd('reload')} disabled={!page?.url} title="Reload (F5)" aria-label="Reload">
+        <RotateCwIcon />
+      </Button>
     {/if}
 
     <form class="flex-1 min-w-0" onsubmit={submitAddress}>
@@ -322,26 +321,28 @@
         autocomplete="off"
         placeholder={mode === 'user' ? 'localhost:3000, a URL, or a file in this worktree (Ctrl+L)' : "Local URL for the agent's page, e.g. localhost:5173"}
         aria-label="Address"
-        class="w-full bg-background border border-border px-2 py-0.5 text-xs font-mono text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:border-primary/60"
+        class="w-full bg-background border border-border px-2 py-0.5 text-xs font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/60"
       />
     </form>
 
     {#if mode === 'agent' && agent?.url}
-      <button onclick={openAgentPageInYours} class="flex items-center gap-1 px-2 py-0.5 text-xs text-muted-foreground hover:text-foreground border border-border" title="Open this address in your page, where you can click around">
-        <UserIcon class="w-3 h-3" />
+      <Button size="xs" variant="subtle" onclick={openAgentPageInYours} title="Open this address in your page, where you can click around">
+        <UserIcon />
         Open in yours
-      </button>
+      </Button>
     {/if}
-    <button onclick={() => page?.url && window.groveBench.openExternal(page.url)} disabled={!canOpenExternally} class="p-1 text-muted-foreground hover:text-foreground disabled:opacity-30 disabled:hover:text-muted-foreground" title="Open in system browser" aria-label="Open in system browser">
-      <ExternalLinkIcon class="w-3.5 h-3.5" />
-    </button>
-    <button onclick={() => cmd('devtools')} disabled={!page?.url} class="p-1 text-muted-foreground hover:text-foreground disabled:opacity-30 disabled:hover:text-muted-foreground" title="Developer tools (F12)" aria-label="Developer tools">
-      <CodeXmlIcon class="w-3.5 h-3.5" />
-    </button>
+    <Button size="icon-xs" variant="quiet" onclick={() => page?.url && window.groveBench.openExternal(page.url)} disabled={!canOpenExternally} title="Open in system browser" aria-label="Open in system browser">
+      <ExternalLinkIcon />
+    </Button>
+    <Button size="icon-xs" variant="quiet" onclick={() => cmd('devtools')} disabled={!page?.url} title="Developer tools (F12)" aria-label="Developer tools">
+      <CodeXmlIcon />
+    </Button>
   </div>
 
   {#if navError}
-    <div class="px-3 py-1 text-xs text-destructive border-b border-border bg-destructive/10 shrink-0" role="alert">{navError}</div>
+    <Notice tone="danger" class="shrink-0 border-b border-b-border">
+      <p>{navError}</p>
+    </Notice>
   {/if}
 
   <!-- Page area -->
@@ -375,7 +376,7 @@
             <div class="max-w-md">
               <p class="text-sm text-foreground mb-1">The page stopped working.</p>
               <p class="text-xs text-muted-foreground mb-3 break-all">{user.url}</p>
-              <button onclick={() => cmd('reload')} class="text-xs px-3 py-1.5 bg-primary text-primary-foreground hover:bg-primary/90">Reload</button>
+              <Button size="xs" onclick={() => cmd('reload')}>Reload</Button>
             </div>
           </div>
         {:else if user.error}
@@ -384,9 +385,9 @@
               <p class="text-sm text-foreground mb-1">Couldn't load the page</p>
               <p class="text-xs text-muted-foreground mb-1 break-all font-mono">{user.error.url}</p>
               <p class="text-xs text-muted-foreground mb-3">{loadErrorHint(user.error)}</p>
-              <button onclick={() => cmd('reload')} disabled={user.loading} class="text-xs px-3 py-1.5 bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
+              <Button size="xs" onclick={() => cmd('reload')} disabled={user.loading}>
                 {user.loading ? 'Loading…' : 'Try again'}
-              </button>
+              </Button>
             </div>
           </div>
         {:else}
@@ -426,7 +427,7 @@
                 <p class="text-xs text-muted-foreground">{loadErrorHint(agent.error)}</p>
               </div>
             {:else if agentFrame}
-              <img src={agentFrame} alt="The agent's page" class="max-w-full max-h-full object-contain border border-border shadow-sm" draggable="false" />
+              <img src={agentFrame} alt="The agent's page" class="max-w-full max-h-full object-contain border border-border" draggable="false" />
             {:else}
               <span class="text-xs text-muted-foreground">Loading…</span>
             {/if}

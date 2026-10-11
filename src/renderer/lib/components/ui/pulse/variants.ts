@@ -17,6 +17,8 @@ export const pulseVariants = tv({
 			error: "bg-status-error",
 			primary: "bg-primary",
 			muted: "bg-muted-foreground",
+			// The text colour around it: inside a filled button, for example.
+			current: "bg-current",
 		},
 		size: {
 			xs: "size-1.5",

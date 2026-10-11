@@ -13,14 +13,14 @@
 				outline:
 					"bg-background hover:bg-accent hover:text-accent-foreground dark:bg-input/30 dark:border-input dark:hover:bg-input/50 border",
 				secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/80",
-				ghost: "hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50",
-				link: "text-primary underline-offset-4 hover:underline",
+				ghost: "hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50 disabled:hover:bg-transparent",
+				link: "text-primary underline-offset-4 hover:underline disabled:hover:no-underline",
 				// Grove's own (docs/ui-kit.md). subtle: the bordered toolbar
 				// button; quiet: an icon or text that only brightens on hover.
-				subtle: "border border-border text-muted-foreground hover:text-foreground hover:bg-accent",
-				quiet: "text-muted-foreground hover:text-foreground",
+				subtle: "border border-border text-muted-foreground hover:text-foreground hover:bg-accent disabled:hover:text-muted-foreground disabled:hover:bg-transparent",
+				quiet: "text-muted-foreground hover:text-foreground disabled:hover:text-muted-foreground",
 				// An icon that deletes, closes for good or stops: quiet until hovered.
-				"quiet-destructive": "text-muted-foreground hover:text-destructive hover:bg-destructive/10",
+				"quiet-destructive": "text-muted-foreground hover:text-destructive hover:bg-destructive/10 disabled:hover:text-muted-foreground disabled:hover:bg-transparent",
 				"outline-primary": "border border-primary/60 text-primary hover:bg-primary/10",
 				"outline-destructive": "border border-destructive/60 text-destructive hover:bg-destructive/10",
 				// Allowing something the agent asked for: done-green, not brand green.

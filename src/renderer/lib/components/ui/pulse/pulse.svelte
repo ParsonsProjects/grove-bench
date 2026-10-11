@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { cn } from "$lib/utils.js";
+	import type { HTMLAttributes } from "svelte/elements";
 	import { pulseVariants, type PulseMotion, type PulseSize, type PulseTone } from "./variants.js";
 
 	let {
@@ -8,7 +9,8 @@
 		motion = "pulse",
 		label,
 		class: className,
-	}: {
+		...restProps
+	}: Omit<HTMLAttributes<HTMLSpanElement>, "children"> & {
 		tone?: PulseTone;
 		size?: PulseSize;
 		motion?: PulseMotion;
@@ -24,4 +26,5 @@
 	role={label ? "img" : undefined}
 	aria-label={label}
 	aria-hidden={label ? undefined : "true"}
+	{...restProps}
 ></span>

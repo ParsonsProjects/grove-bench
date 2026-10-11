@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { ImageDiffContent } from '../../shared/types.js';
+  import { SectionLabel } from '$lib/components/ui/section-label/index.js';
 
   let { sessionId, filePath }: { sessionId: string; filePath: string } = $props();
 
@@ -27,18 +28,18 @@
   <div class="flex flex-wrap gap-4 py-2">
     {#if content.head}
       <div class="flex flex-col gap-1">
-        <span class="text-micro uppercase tracking-wide text-red-400">Before</span>
+        <SectionLabel as="span" class="text-red-400">Before</SectionLabel>
         <img src={content.head} alt="previous version" class="max-w-xs max-h-80 border border-red-900/40 bg-[repeating-conic-gradient(var(--checker-a)_0_25%,var(--checker-b)_0_50%)] bg-[length:16px_16px]" />
       </div>
     {/if}
     {#if content.working}
       <div class="flex flex-col gap-1">
-        <span class="text-micro uppercase tracking-wide text-green-400">{content.head ? 'After' : 'Added'}</span>
+        <SectionLabel as="span" class="text-green-400">{content.head ? 'After' : 'Added'}</SectionLabel>
         <img src={content.working} alt="current version" class="max-w-xs max-h-80 border border-green-900/40 bg-[repeating-conic-gradient(var(--checker-a)_0_25%,var(--checker-b)_0_50%)] bg-[length:16px_16px]" />
       </div>
     {:else if content.head}
       <div class="flex flex-col gap-1">
-        <span class="text-micro uppercase tracking-wide text-muted-foreground">Deleted</span>
+        <SectionLabel as="span">Deleted</SectionLabel>
         <div class="max-w-xs max-h-80 px-4 py-8 text-xs text-muted-foreground border border-border/50">File removed</div>
       </div>
     {/if}
