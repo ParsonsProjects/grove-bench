@@ -22,6 +22,12 @@ export function isPathInside(parent: string, child: string): boolean {
   return rel === '' || (rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel));
 }
 
+/** `text` as lowercase letters, digits and dashes, for ids made from names
+ *  the user types. Empty when nothing usable is left. */
+export function slugify(text: string | undefined): string {
+  return (text ?? '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
 /**
  * Environment variable prefixes that leak noisy paths into the LLM context.
  */

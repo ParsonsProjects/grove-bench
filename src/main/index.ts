@@ -40,8 +40,10 @@ app.setPath('userData', path.join(app.getPath('appData'), 'grove-bench'));
 app.setAppUserModelId('com.parsonsprojects.grove-bench');
 
 // Register agent adapters before anything else uses them. The user's own
-// ACP agents come from settings, so a change applies after a restart.
-initAdapters(settings.loadSettings().acpAgents);
+// ACP agents and other Claude accounts come from settings, so a change
+// applies after a restart.
+const launchSettings = settings.loadSettings();
+initAdapters(launchSettings.acpAgents, launchSettings.claudeAccounts);
 
 // Custom schemes can only be registered before the app is ready.
 registerAttachmentScheme();

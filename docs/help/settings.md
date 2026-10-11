@@ -43,6 +43,20 @@ If a thread starts on a model that doesn't offer the saved mode, it starts in Co
 - **Show thinking summaries** (shown when an agent offers it, such as Claude Agent): Show a short summary of the model's thinking in the thread. Newer Claude models send no thinking text unless asked, so with this off their thinking doesn't show. Some older models, such as Haiku 4.5, may still show theirs. It doesn't change how much the model thinks or what it costs. Applies to agents started after the change (on by default)
 - **Let the agent use the Preview browser**: Give the agent its own page in the [Preview tab](preview-tab.md#the-agents-browser) to open local pages, take screenshots, read, click and type in. Applies to agents started after the change (on by default)
 
+### Claude accounts
+
+Use more than one Claude account, such as a work plan next to a personal one. Add an account with a name and, if you like, a folder. Each account gets its own Claude Code folder (`.claude-<name>` in your home folder unless you pick one), which holds its sign-in, thread history, settings, MCP servers and plugins. Your first account keeps `~/.claude` and works as before. Restart Grove Bench after adding or removing one.
+
+After the restart, each account shows up as its own agent, **Claude Agent (Name)**, in the agent picker for new threads, with its own group above. Sign in from that group: copy the sign-in command into PowerShell (it runs Claude Code's own `claude auth login` with the account's folder), or save an API key for that account. A thread stays on the account it started on.
+
+Good to know:
+
+- An account ignores Claude credentials set in your environment (`ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, the Bedrock and Vertex switches), so a key in your shell can't stand in for it. Your first account still uses them
+- **MCP servers** can be managed for any account: pick it under **Agent**. The **Plugins** section manages your first account only; for another account, run `claude plugin` in PowerShell after the `$env:CLAUDE_CONFIG_DIR` part of its sign-in command
+- Threads on another account are named by Grove Bench rather than by Claude
+- Claude Code has been reported to read some files, such as your personal `CLAUDE.md`, from `~/.claude` for every account ([anthropics/claude-code#30230](https://github.com/anthropics/claude-code/issues/30230))
+- If your organisation's managed settings only allow its own Claude accounts on this computer, other accounts won't start here
+
 ### Other agents (ACP)
 
 Grove Bench can run any agent that speaks the [Agent Client Protocol](https://agentclientprotocol.com) (ACP) over stdio. Gemini CLI (`gemini --acp`) and GitHub Copilot CLI (`copilot --acp`) are built in: install one (`npm install -g @google/gemini-cli` or `npm install -g @github/copilot`), sign in (a Gemini API key, or `copilot login` in a terminal), and pick it as the agent for a new thread. Add others, such as Codex through `codex-acp`, with a name, the command (a name on PATH or a full path) and its arguments, or pick one under **From the ACP Registry**: each shows how to install it (a command to copy, or a download) and **Use** fills in the form with the registry's own command, which downloads the package the first time it starts. Nothing is installed or added until you do it. Restart Grove Bench after adding or removing one.

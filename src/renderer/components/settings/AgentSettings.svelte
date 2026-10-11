@@ -138,6 +138,17 @@
   /** Thinking summaries is one setting, offered only by some agents. */
   const summaryAgents = $derived(agentGroups.filter((a) => a.thinkingSummaries));
 
+  // The user's other Claude accounts (read at launch).
+  let accountName = $state('');
+  let accountFolder = $state('');
+  function addClaudeAccount() {
+    const name = accountName.trim();
+    if (!name) return;
+    settingsStore.addClaudeAccount({ name, configDir: accountFolder.trim() });
+    accountName = '';
+    accountFolder = '';
+  }
+
   // The user's own ACP agents (read at launch).
   let acpName = $state('');
   let acpCommand = $state('');
@@ -374,6 +385,45 @@
     description="Gives the agent its own page in the Preview tab to open, screenshot, read, click and type in. Local addresses only. Applies to agents started after the change."
     bind:checked={settingsStore.draft.previewAgentTools}
   />
+</SettingsGroup>
+
+<SettingsGroup
+  title="Claude accounts"
+  description="Use more than one Claude account, such as work and personal. Each gets its own Claude Code folder, with its own sign-in, thread history, MCP servers and plugins, and shows up as its own agent for new threads. With no folder, it uses .claude-<name> in your home folder. Restart Grove Bench after a change, then sign in from the account's own group above."
+  card
+  collapse={{ key: 'claude-accounts', open: false }}
+>
+  <div data-setting="claude-accounts" class="flex flex-col gap-2">
+    {#if settingsStore.draft.claudeAccounts.length > 0}
+      <ul class="flex flex-col gap-1" aria-label="Claude accounts">
+        {#each settingsStore.draft.claudeAccounts as account, i (i)}
+          <li class="flex items-center justify-between gap-1 pl-2 text-xs min-w-0 bg-muted">
+            <span class="truncate"><span class="text-foreground">{account.name}</span> <code class="text-muted-foreground">{account.configDir || 'default folder'}</code></span>
+            <button
+              type="button"
+              onclick={() => settingsStore.removeClaudeAccount(i)}
+              class="size-6 shrink-0 inline-flex items-center justify-center text-muted-foreground hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              aria-label="Remove account {account.name}"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+            </button>
+          </li>
+        {/each}
+      </ul>
+    {/if}
+    <div class="flex items-center gap-2 max-w-2xl">
+      <Input type="text" bind:value={accountName} placeholder="Name, e.g. Work" aria-label="Account name" class="w-40" />
+      <Input
+        type="text"
+        bind:value={accountFolder}
+        placeholder="Folder (optional)"
+        aria-label="Account folder"
+        onkeydown={(e) => { if (e.key === 'Enter') addClaudeAccount(); }}
+        class="flex-1"
+      />
+      <Button variant="secondary" onclick={addClaudeAccount}>Add</Button>
+    </div>
+  </div>
 </SettingsGroup>
 
 <SettingsGroup

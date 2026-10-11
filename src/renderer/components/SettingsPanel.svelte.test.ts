@@ -29,7 +29,7 @@ const MODE: ControlDescriptor = {
 function settings(adapterDefaults: GroveBenchSettings['adapterDefaults'] = {}): GroveBenchSettings {
   return {
     toolAllowRules: [], toolDenyRules: [], disabledSkills: [], autoSkillSuggestions: false, showConversationGoal: true,
-    defaultModels: {}, adapterDefaults, showThinkingSummaries: true, cavemanMode: 'off', workingDirectories: [], defaultSystemPromptAppend: '', acpAgents: [], enabledAlphaAgents: [],
+    defaultModels: {}, adapterDefaults, showThinkingSummaries: true, cavemanMode: 'off', workingDirectories: [], defaultSystemPromptAppend: '', acpAgents: [], claudeAccounts: [], enabledAlphaAgents: [],
     memoryAutoSave: true, memoryAutoCompact: false, memoryCompactTimeoutSeconds: 300, backgroundModels: {},
     autoInstallDeps: false, previewAgentTools: true, idleSleepMinutes: 30, defaultBaseBranch: '', branchNamingRule: '', theme: 'system', alwaysOnTop: false, autoDownloadUpdates: true,
     repoColors: {}, groveCharacters: true, diffViewMode: 'unified', defaultActivityView: 'summary', spellcheck: true,
@@ -466,6 +466,29 @@ describe('SettingsPanel project colors', () => {
     } finally {
       store.repos = [];
     }
+  });
+});
+
+describe('SettingsPanel Claude accounts', () => {
+  it('adds an account with an optional folder, and removes it', async () => {
+    await openAgentSection();
+    const name = await screen.findByRole('textbox', { name: 'Account name' });
+    const folder = screen.getByRole('textbox', { name: 'Account folder' });
+    const group = name.closest('[data-setting="claude-accounts"]') as HTMLElement;
+
+    // A name is needed.
+    await fireEvent.click(within(group).getByRole('button', { name: 'Add' }));
+    expect(settingsStore.draft.claudeAccounts).toEqual([]);
+
+    await fireEvent.input(name, { target: { value: ' Work ' } });
+    await fireEvent.input(folder, { target: { value: 'D:\\claude-work' } });
+    await fireEvent.click(within(group).getByRole('button', { name: 'Add' }));
+    await waitFor(() => expect(lastSaved().claudeAccounts).toEqual([{ id: '', name: 'Work', configDir: 'D:\\claude-work' }]));
+    expect(within(group).getByRole('list', { name: 'Claude accounts' })).toHaveTextContent('Work D:\\claude-work');
+    expect(name).toHaveValue('');
+
+    await fireEvent.click(within(group).getByRole('button', { name: 'Remove account Work' }));
+    await waitFor(() => expect(lastSaved().claudeAccounts).toEqual([]));
   });
 });
 

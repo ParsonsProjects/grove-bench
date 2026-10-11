@@ -14,6 +14,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   workingDirectories: [],
   defaultSystemPromptAppend: '',
   acpAgents: [],
+  claudeAccounts: [],
   enabledAlphaAgents: [],
   memoryAutoSave: true,
   memoryAutoCompact: false,
@@ -287,6 +288,14 @@ class SettingsStore {
 
   removeAcpAgent(index: number) {
     this.draft.acpAgents = this.draft.acpAgents.filter((_, i) => i !== index);
+  }
+
+  addClaudeAccount(account: { name: string; configDir: string }) {
+    this.draft.claudeAccounts = [...this.draft.claudeAccounts, { id: '', ...account }];
+  }
+
+  removeClaudeAccount(index: number) {
+    this.draft.claudeAccounts = this.draft.claudeAccounts.filter((_, i) => i !== index);
   }
 
 }

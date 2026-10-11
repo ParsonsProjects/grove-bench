@@ -75,6 +75,15 @@ describe('loadSettings', () => {
     expect(loadSettings().enabledAlphaAgents).toEqual([]);
   });
 
+  it('starts with no other Claude accounts, fills a missing id or folder, and drops a malformed list', () => {
+    mockReadFileSync.mockImplementation(() => { throw enoent(); });
+    expect(loadSettings().claudeAccounts).toEqual([]);
+    mockReadFileSync.mockReturnValue(JSON.stringify({ claudeAccounts: [{ name: 'Work' }] }));
+    expect(loadSettings().claudeAccounts).toEqual([{ id: '', name: 'Work', configDir: '' }]);
+    mockReadFileSync.mockReturnValue(JSON.stringify({ claudeAccounts: [{ configDir: 'C:\\x' }] }));
+    expect(loadSettings().claudeAccounts).toEqual([]);
+  });
+
   it('handles corrupt JSON gracefully', () => {
     mockReadFileSync.mockReturnValue('not valid json {{{');
     const s = loadSettings();

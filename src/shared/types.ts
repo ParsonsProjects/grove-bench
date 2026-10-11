@@ -1466,6 +1466,17 @@ export interface AcpAgentSetting {
   args: string[];
 }
 
+/** Another Claude account, such as work next to personal. Claude Code keeps
+ *  each account's sign-in, history and settings in its own folder
+ *  (CLAUDE_CONFIG_DIR); the default account keeps `~/.claude`. */
+export interface ClaudeAccountSetting {
+  /** Stable id (the adapter id is `claude-account-<id>`); defaults from the name. */
+  id: string;
+  name: string;
+  /** The account's Claude Code folder. Empty for `~/.claude-<id>`. */
+  configDir: string;
+}
+
 export interface GroveBenchSettings {
   // Permission & Security
   toolAllowRules: ToolRule[];
@@ -1503,6 +1514,9 @@ export interface GroveBenchSettings {
   defaultSystemPromptAppend: string;
   /** The user's own ACP agents. Read at launch, so a change applies after a restart. */
   acpAgents: AcpAgentSetting[];
+  /** Claude accounts besides the default one, each offered as its own agent.
+   *  Read at launch, so a change applies after a restart. */
+  claudeAccounts: ClaudeAccountSetting[];
   /** Ids of alpha agents (AgentSummary.stage) the user turned on. Others
    *  stay out of the agent picker; their existing conversations still work. */
   enabledAlphaAgents: string[];
