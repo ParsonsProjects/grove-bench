@@ -30,7 +30,7 @@
   <CheckboxSetting setting="notify-pr-alert" label="PR activity: new CI failures and review comments" bind:checked={settingsStore.draft.notifyOnPrAlert} />
 
   <div data-setting="notify-test" class="flex flex-col gap-1.5">
-    <Button variant="outline" size="sm" class="self-start" onclick={sendTest} disabled={testing}>
+    <Button variant="subtle" size="sm" class="self-start" onclick={sendTest} disabled={testing}>
       {testing ? 'Sending...' : 'Send a test notification'}
     </Button>
     <p class="text-xs leading-relaxed {testResult === 'failed' ? 'text-destructive' : 'text-muted-foreground'}" aria-live="polite">

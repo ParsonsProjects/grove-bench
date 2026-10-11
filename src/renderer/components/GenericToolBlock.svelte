@@ -1,5 +1,6 @@
 <script lang="ts">
   import CopyButton from './CopyButton.svelte';
+  import { Pulse } from '$lib/components/ui/pulse/index.js';
 
   let {
     toolName,
@@ -45,15 +46,15 @@
     class="w-full flex items-center gap-2 text-left text-xs hover:bg-accent/30 -ml-1 pl-1 py-0.5"
   >
     <span class="text-muted-foreground font-bold">{toolName}</span>
-    <span class="text-muted-foreground/70 truncate flex-1">{summary || summarizeInput(toolInput)}</span>
+    <span class="text-muted-foreground truncate flex-1">{summary || summarizeInput(toolInput)}</span>
     {#if pending}
-      <span class="w-2.5 h-2.5 bg-primary animate-pulse shrink-0"></span>
+      <Pulse />
     {:else if isError}
       <span class="text-destructive">error</span>
     {:else if result !== undefined}
       <span class="text-muted-foreground">done</span>
     {/if}
-    <span class="text-muted-foreground/40 transition-transform {expanded ? 'rotate-90' : ''}">&rsaquo;</span>
+    <span class="text-muted-foreground transition-transform {expanded ? 'rotate-90' : ''}">&rsaquo;</span>
   </button>
 
   {#if expanded}

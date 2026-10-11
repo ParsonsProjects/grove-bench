@@ -8,6 +8,7 @@
     wakePhase, arrivePhase, type WakePhase, type ArrivePhase,
   } from '../lib/grove-walk.js';
   import { prefersReducedMotion } from '../lib/utils.js';
+  import { PALETTE } from '../../shared/brand.js';
   import type { WakeScene } from '../stores/wakeScene.svelte.js';
 
   /**
@@ -127,7 +128,7 @@
       </g>
     {/each}
     {/key}
-    <rect x="0" y={WALK_GROUND_Y} width={WALK_VIEW_W} height="1" fill="#3a9a48" opacity="0.45" />
+    <rect x="0" y={WALK_GROUND_Y} width={WALK_VIEW_W} height="1" fill={PALETTE.fern} opacity="0.45" />
     {#if !seated}
       <!-- The agent, in its sidebar colour. Its frames sit side by side and
            this viewBox shows one at a time, as in AgentSprite. -->
@@ -180,7 +181,7 @@
     <p class="text-sm mt-4 text-muted-foreground">{phase === 'walking' ? 'Starting agent...' : 'Waking up...'}</p>
   {/if}
   {#if wake}
-    <p class="text-xs mt-1 text-muted-foreground/60">Click or press any key to skip</p>
+    <p class="text-xs mt-1 text-muted-foreground">Click or press any key to skip</p>
   {/if}
 </div>
 

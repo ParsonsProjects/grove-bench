@@ -5,7 +5,8 @@
   import Row from '../shared/app/Row.svelte';
   import '../shared/app/app.css';
   import '../sections/day.css';
-  import { treeGreens } from '../lib/brand.js';
+  import { PALETTE } from '../lib/brand.js';
+  import { PIXEL_TREE } from '../shared/app-art.js';
   import { heroWorld } from '../sections/heroWorld.js';
 
   /**
@@ -15,9 +16,9 @@
   const convs = heroWorld().convs;
   const TREES = [
     { y: 150, side: -1, s: 4, tint: null },
-    { y: 270, side: 1, s: 3, tint: '#3b82f6' },
+    { y: 270, side: 1, s: 3, tint: PALETTE.sky },
     { y: 520, side: 1, s: 4, tint: null },
-    { y: 600, side: -1, s: 3, tint: '#f59e0b' },
+    { y: 600, side: -1, s: 3, tint: PALETTE.sun },
   ];
 </script>
 
@@ -32,7 +33,7 @@
 
   <div class="copy">
     <p class="brand">
-      <svg width="27" height="30" viewBox="0 0 21 24" aria-hidden="true">{#each treeGreens as p}<rect x={p.x} y={p.y} width="2" height="2" fill={p.fill} />{/each}</svg>
+      <svg width="27" height="30" viewBox="0 0 21 24" aria-hidden="true">{#each PIXEL_TREE as p}<rect x={p.x} y={p.y} width="2" height="2" fill={p.fill} />{/each}</svg>
       grove bench
     </p>
     <h1 class="h1 prompt"><span class="gt">&gt;</span>Plant a task.<br />Grow a branch.<span class="caret"></span></h1>
@@ -73,8 +74,8 @@
     width: 25px;
     background: #a8845e;
     box-shadow:
-      inset 4px 0 0 #8a6a4a,
-      inset -4px 0 0 #8a6a4a;
+      inset 4px 0 0 var(--bark),
+      inset -4px 0 0 var(--bark);
     opacity: 0.85;
   }
   .tree {

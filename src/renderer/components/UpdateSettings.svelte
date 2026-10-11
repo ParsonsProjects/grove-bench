@@ -50,15 +50,15 @@
   {#if updateState}
     <p class="text-xs text-muted-foreground leading-relaxed">
       Version {updateState.currentVersion}.
-      <button
-        type="button"
-        class="text-primary hover:underline"
+      <Button
+        variant="external"
+        size="inline"
         onclick={() => window.groveBench.openExternal(releaseNotesUrl())}
-      >All releases</button>
+      >All releases</Button>
     </p>
     {#if updateState.enabled}
       <div class="flex items-center gap-2">
-        <Button size="sm" variant="outline" onclick={check} disabled={checking}>Check for updates</Button>
+        <Button size="sm" variant="subtle" onclick={check} disabled={checking}>Check for updates</Button>
         <span class="text-xs text-muted-foreground" aria-live="polite">
           {checking ? 'Checking...' : describe(updateState.status)}
         </span>

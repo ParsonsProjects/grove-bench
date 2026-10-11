@@ -2,6 +2,9 @@
   /** "Keys": the keyboard shortcuts, with a link to the full list in Help. */
   import { SHORTCUT_GROUPS, formatShortcut } from '../lib/shortcut-list.js';
   import { helpStore } from '../stores/help.svelte.js';
+  import { Button } from '$lib/components/ui/button/index.js';
+  import { Kbd } from '$lib/components/ui/kbd/index.js';
+  import { SectionLabel } from '$lib/components/ui/section-label/index.js';
   import StatusBarPopover from './StatusBarPopover.svelte';
 
   let shortcutsOpen = $state(false);
@@ -13,7 +16,7 @@
   class="hidden @2xl:block"
   id="status-bar-shortcuts"
   label="Keyboard shortcuts"
-  panelClass="bg-popover border border-border shadow-xl p-3 text-xs w-64 max-h-[70vh] overflow-y-auto"
+  panelClass="w-64 max-h-[70vh] overflow-y-auto"
 >
   {#snippet trigger()}
     <button
@@ -29,18 +32,20 @@
 
   <div class="font-medium text-foreground mb-2">Keyboard shortcuts</div>
   {#each SHORTCUT_GROUPS as group, i (group.title)}
-    <div class="text-muted-foreground font-medium mb-1 {i > 0 ? 'mt-3' : ''}">{group.title}</div>
+    <SectionLabel class="mb-1 {i > 0 ? 'mt-3' : ''}">{group.title}</SectionLabel>
     <dl class="space-y-1.5 text-muted-foreground">
       {#each group.rows as row (row.label)}
-        <div class="flex justify-between gap-3"><dt>{row.label}</dt><dd><kbd class="text-foreground">{formatShortcut(row.key)}</kbd></dd></div>
+        <!-- A keycap per key; the "+" between them is for screen readers. -->
+        <div class="flex items-center justify-between gap-3"><dt>{row.label}</dt><dd class="flex shrink-0 items-center gap-0.5">{#each formatShortcut(row.key).split('+') as key, k (k)}{#if k > 0}<span class="sr-only">+</span>{/if}<Kbd variant="key">{key}</Kbd>{/each}</dd></div>
       {/each}
     </dl>
   {/each}
-  <button
-    type="button"
-    class="mt-3 text-primary hover:underline"
+  <Button
+    variant="link"
+    size="inline"
+    class="mt-3"
     onclick={() => { shortcutsOpen = false; helpStore.show('keyboard-shortcuts'); }}
   >
     All shortcuts
-  </button>
+  </Button>
 </StatusBarPopover>

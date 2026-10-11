@@ -46,7 +46,7 @@ export function prHealth(pr: PrInfo | null | undefined): PrHealth {
   if (pr.state === 'MERGED') return { kind: 'merged', label: 'Merged', bgClass: 'bg-purple-400', textClass: 'text-purple-400' };
   if (pr.state === 'CLOSED') return { kind: 'closed', label: 'Closed', bgClass: 'bg-red-500', textClass: 'text-red-500' };
   if ((pr.checks?.failed ?? 0) > 0) return { kind: 'failing', label: 'CI failing', bgClass: 'bg-red-500', textClass: 'text-red-500' };
-  if (pr.reviewDecision === 'CHANGES_REQUESTED') return { kind: 'changes-requested', label: 'Changes requested', bgClass: 'bg-orange-400', textClass: 'text-orange-400' };
+  if (pr.reviewDecision === 'CHANGES_REQUESTED') return { kind: 'changes-requested', label: 'Changes requested', bgClass: 'bg-amber-500', textClass: 'text-amber-500' };
   if ((pr.checks?.pending ?? 0) > 0) return { kind: 'pending', label: 'Checks pending', bgClass: 'bg-yellow-400', textClass: 'text-yellow-400' };
   if (pr.reviewDecision === 'APPROVED') return { kind: 'passing', label: 'Approved', bgClass: 'bg-green-500', textClass: 'text-green-500' };
   if (pr.checks) return { kind: 'passing', label: 'Checks passing', bgClass: 'bg-green-500', textClass: 'text-green-500' };

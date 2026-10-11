@@ -88,7 +88,7 @@
   .links a {
     display: inline-block;
     padding-block: 6px;
-    color: var(--blue-ink);
+    color: var(--link);
   }
   .pic {
     display: flex;

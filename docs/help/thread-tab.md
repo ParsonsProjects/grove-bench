@@ -15,7 +15,7 @@ Goals are off until you tick **Show the thread goal** in **Settings > Tending**.
 ## Message Types
 
 ### User Messages
-Your messages appear with a blue left border. These are the instructions and follow-ups you send to the agent.
+Your messages appear with a green left border. These are the instructions and follow-ups you send to the agent.
 
 Files you attached show above the message text. Click a file to show or hide its content. Images show as thumbnails; click one to see it full size, and press `Esc` or click outside to close it. Images stay when you reopen the thread. They are deleted with the thread, when you `/clear` it, or when you rewind to before the message or tool that showed them.
 
@@ -78,5 +78,5 @@ Text boxes keep their own spell check menu.
 ## Controls
 
 - **Search** (`Ctrl+F`) — Search through the thread history
-- **Thread view** — While the Thread tab is open, the tab shows the current view next to its name, for example **Thread · Summary**, with how many messages it hides when there's room. Click it to pick **Detailed**, **Summary** or **Focus**. A view that hides messages is shown in blue. Detailed shows everything. Summary hides thinking blocks and most tool calls. It keeps file edits, commands, tools that returned images (such as a preview screenshot), and tools from MCP servers you added, since those can act outside the project (for example creating a ticket or sending a message). Focus shows only the agent's responses, its questions and your answers. Summary and Focus both keep the one-line entry for each subagent. New threads start in the view set by **Default thread view** in **Settings → General (The grove)**.
+- **Thread view** — While the Thread tab is open, the tab shows the current view next to its name, for example **Thread · Summary**, with how many messages it hides when there's room. Click it to pick **Detailed**, **Summary** or **Focus**. A view that hides messages is shown in green. Detailed shows everything. Summary hides thinking blocks and most tool calls. It keeps file edits, commands, tools that returned images (such as a preview screenshot), and tools from MCP servers you added, since those can act outside the project (for example creating a ticket or sending a message). Focus shows only the agent's responses, its questions and your answers. Summary and Focus both keep the one-line entry for each subagent. New threads start in the view set by **Default thread view** in **Settings → General (The grove)**.
 - **Scroll** — The view auto-scrolls to the latest message. Scroll up to browse history; new messages will appear at the bottom.

@@ -4,6 +4,7 @@
   import { Button } from '$lib/components/ui/button/index.js';
   import { Input } from '$lib/components/ui/input/index.js';
   import { Label } from '$lib/components/ui/label/index.js';
+  import { Notice } from '$lib/components/ui/notice/index.js';
 
   /** API key entry for one agent. Used by the New Conversation dialog and
    *  Settings > Agents. The saved key never comes back to the renderer; only
@@ -62,13 +63,14 @@
   <div class="flex flex-col gap-1">
     <div class="flex items-baseline justify-between">
       <Label for={inputId}>{apiKey.label}</Label>
-      <button
-        type="button"
-        class="text-xs text-primary hover:underline"
+      <Button
+        variant="external"
+        size="inline"
+        class="text-xs"
         onclick={() => window.groveBench.openExternal(apiKey.helpUrl)}
       >
         Get a key
-      </button>
+      </Button>
     </div>
 
     {#if apiKey.canStore}
@@ -100,14 +102,15 @@
         {#if apiKey.billingNote}{apiKey.billingNote}{' '}{/if}Stored encrypted on this computer. While saved, it is used instead of a CLI sign-in.
       </p>
       {#if apiKey.saved}
-        <button
-          type="button"
-          class="self-start text-xs text-muted-foreground hover:text-destructive disabled:opacity-50"
+        <Button
+          variant="quiet-destructive"
+          size="inline"
+          class="self-start text-xs"
           disabled={busy}
           onclick={remove}
         >
           Remove saved key
-        </button>
+        </Button>
       {/if}
     {:else}
       <p class="text-xs text-muted-foreground">
@@ -116,9 +119,7 @@
     {/if}
 
     {#if error}
-      <div class="bg-destructive/10 border border-destructive/50 p-2 text-xs text-destructive" role="alert">
-        {error}
-      </div>
+      <Notice tone="danger"><p>{error}</p></Notice>
     {/if}
   </div>
 {/if}

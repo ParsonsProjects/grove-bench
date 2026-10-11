@@ -107,6 +107,7 @@
 <script lang="ts">
   import { languageForPath, highlightLine, markRanges } from '../lib/diff-highlight.js';
   import { EXPAND_STEP } from '../lib/diff-context.js';
+  import { Button } from '$lib/components/ui/button/index.js';
 
   let {
     lines,
@@ -207,7 +208,7 @@
 
 {#snippet expander(gap: ContextGap)}
   {@const n = gap.toNew - gap.fromNew + 1}
-  <div data-expander class="flex items-center gap-1 text-[10px] text-cyan-300/80 bg-cyan-950/10 border-y border-cyan-900/20 px-2 py-0.5 select-none">
+  <div data-expander class="flex items-center gap-1 text-micro text-cyan-300/80 bg-cyan-950/10 border-y border-cyan-900/20 px-2 py-0.5 select-none">
     {#if n <= EXPAND_STEP}
       <button onclick={() => onExpand?.(gap, 'all')} class="flex items-center gap-1 hover:text-cyan-200 px-1" title="Show {n} hidden lines">
         <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l4-4 4 4m0 6l-4 4-4-4"/></svg>
@@ -220,7 +221,7 @@
       <button onclick={() => onExpand?.(gap, 'up')} class="hover:text-cyan-200 px-1" title="Show {EXPAND_STEP} more lines above the next hunk" aria-label="Expand up">
         <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/></svg>
       </button>
-      <span class="text-cyan-300/50 ml-1">{gapLabel(gap)}</span>
+      <span class="ml-1">{gapLabel(gap)}</span>
       <button onclick={() => onExpand?.(gap, 'all')} class="hover:text-cyan-200 px-1 ml-1" title="Show all hidden lines">all</button>
     {/if}
   </div>
@@ -231,7 +232,7 @@
     <button
       onclick={(e) => onAddComment?.({ side, lineNum, text, shiftKey: e.shiftKey })}
       data-side={side}
-      class="diff-add-comment absolute left-0 top-0 h-full w-4 flex items-center justify-center bg-primary text-primary-foreground text-[11px] leading-none opacity-0 group-hover/line:opacity-100 focus:opacity-100"
+      class="diff-add-comment absolute left-0 top-0 h-full w-4 flex items-center justify-center bg-primary text-primary-foreground text-caption leading-none opacity-0 group-hover/line:opacity-100 focus:opacity-100"
       title="Add a review comment on this line (shift-click to extend the open comment's range)"
       aria-label="Add comment on line {lineNum}"
     >+</button>
@@ -241,19 +242,19 @@
 {#snippet commentCards(side: 'old' | 'new', lineNum: number | undefined)}
   {#each commentsAt(side, lineNum) as c (c.id)}
     <div data-review-comment class="my-1 mx-2 border border-primary/30 bg-card/80 text-xs font-sans">
-      <div class="flex items-center gap-2 px-2 py-1 border-b border-border/40 text-[10px] text-muted-foreground">
+      <div class="flex items-center gap-2 px-2 py-1 border-b border-border/40 text-micro text-muted-foreground">
         <span>Line {c.startLine === c.endLine ? c.startLine : `${c.startLine}–${c.endLine}`}{c.side === 'old' ? ' (removed)' : ''}</span>
         <span class="ml-auto flex items-center gap-2">
-          <button onclick={() => startEdit(c)} class="hover:text-foreground">edit</button>
-          <button onclick={() => onRemoveComment?.(c.id)} class="hover:text-destructive">delete</button>
+          <Button size="inline" variant="quiet" onclick={() => startEdit(c)}>edit</Button>
+          <Button size="inline" variant="quiet-destructive" onclick={() => onRemoveComment?.(c.id)}>delete</Button>
         </span>
       </div>
       {#if editingId === c.id}
         <div class="p-2 space-y-1">
           <textarea bind:value={editDraft} onkeydown={editKeydown} rows="2" class="w-full text-xs bg-background/60 border border-border/50 px-2 py-1 focus:outline-none focus:border-primary/50 resize-y"></textarea>
           <div class="flex gap-1 justify-end">
-            <button onclick={() => editingId = null} class="px-2 py-0.5 border border-border text-muted-foreground hover:text-foreground">Cancel</button>
-            <button onclick={commitEdit} class="px-2 py-0.5 bg-primary/90 text-primary-foreground hover:bg-primary">Save</button>
+            <Button size="2xs" variant="subtle" onclick={() => editingId = null}>Cancel</Button>
+            <Button size="2xs" onclick={commitEdit}>Save</Button>
           </div>
         </div>
       {:else}
@@ -266,9 +267,9 @@
 {#snippet composerBox(side: 'old' | 'new', lineNum: number | undefined)}
   {#if composerAt(side, lineNum) && composer}
     <div data-review-composer class="my-1 mx-2 border border-primary/50 bg-card text-xs font-sans p-2 space-y-1">
-      <div class="text-[10px] text-muted-foreground">
+      <div class="text-micro text-muted-foreground">
         Comment on line {composer.startLine === composer.endLine ? composer.startLine : `${composer.startLine}–${composer.endLine}`}
-        <span class="text-muted-foreground/60">· shift-click another line's + to extend</span>
+        <span>· shift-click another line's + to extend</span>
       </div>
       <!-- svelte-ignore a11y_autofocus -->
       <textarea
@@ -277,12 +278,12 @@
         rows="2"
         autofocus
         placeholder="What should the agent change here?"
-        class="w-full text-xs bg-background/60 border border-border/50 px-2 py-1 placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50 resize-y"
+        class="w-full text-xs bg-background/60 border border-border/50 px-2 py-1 placeholder:text-muted-foreground focus:outline-none focus:border-primary/50 resize-y"
       ></textarea>
       <div class="flex items-center gap-1 justify-end">
-        <span class="text-[10px] text-muted-foreground/60 mr-auto">Ctrl+Enter to add</span>
-        <button onclick={() => onCancelComment?.()} class="px-2 py-0.5 border border-border text-muted-foreground hover:text-foreground">Cancel</button>
-        <button onclick={submitDraft} disabled={!draft.trim()} class="px-2 py-0.5 bg-primary/90 text-primary-foreground hover:bg-primary disabled:opacity-40">Add comment</button>
+        <span class="text-micro text-muted-foreground mr-auto">Ctrl+Enter to add</span>
+        <Button size="2xs" variant="subtle" onclick={() => onCancelComment?.()}>Cancel</Button>
+        <Button size="2xs" onclick={submitDraft} disabled={!draft.trim()}>Add comment</Button>
       </div>
     </div>
   {/if}
@@ -319,16 +320,16 @@
               {@const pairedOld = row.type !== 'context' && row.right ? row.left?.lineNum : undefined}
               {#if row.type === 'context'}
                 <tr class="group/line {inRange ? 'outline outline-1 outline-primary/60' : ''}">
-                  <td class="w-8 text-right text-muted-foreground/40 pr-2 select-none align-top relative">{@render addButton(side, anchorNum, anchorText)}{row.left?.lineNum ?? ''}</td>
+                  <td class="w-8 text-right text-muted-foreground pr-2 select-none align-top relative">{@render addButton(side, anchorNum, anchorText)}{row.left?.lineNum ?? ''}</td>
                   <td class="text-muted-foreground px-2 border-r border-border/30 whitespace-pre-wrap break-all align-top">{#if row.left}{@html hl(row.left.text)}{/if}</td>
-                  <td class="w-8 text-right text-muted-foreground/40 pr-2 select-none align-top">{row.right?.lineNum ?? ''}</td>
+                  <td class="w-8 text-right text-muted-foreground pr-2 select-none align-top">{row.right?.lineNum ?? ''}</td>
                   <td class="text-muted-foreground px-2 whitespace-pre-wrap break-all align-top">{#if row.right}{@html hl(row.right.text)}{/if}</td>
                 </tr>
               {:else}
                 <tr class="group/line {inRange ? 'outline outline-1 outline-primary/60' : ''}">
-                  <td class="w-8 text-right text-muted-foreground/40 pr-2 select-none align-top relative {row.left ? 'bg-red-950/30' : ''}">{@render addButton(side, anchorNum, anchorText)}{row.left?.lineNum ?? ''}</td>
+                  <td class="w-8 text-right text-muted-foreground pr-2 select-none align-top relative {row.left ? 'bg-red-950/30' : ''}">{@render addButton(side, anchorNum, anchorText)}{row.left?.lineNum ?? ''}</td>
                   <td class="diff-del px-2 border-r border-border/30 whitespace-pre-wrap break-all align-top {row.left ? 'bg-red-950/30 text-red-300' : ''}">{#if row.left}{@html hl(row.left.text, row.leftRanges)}{/if}</td>
-                  <td class="w-8 text-right text-muted-foreground/40 pr-2 select-none align-top {row.right ? 'bg-green-950/30' : ''}">{row.right?.lineNum ?? ''}</td>
+                  <td class="w-8 text-right text-muted-foreground pr-2 select-none align-top {row.right ? 'bg-green-950/30' : ''}">{row.right?.lineNum ?? ''}</td>
                   <td class="diff-add px-2 whitespace-pre-wrap break-all align-top {row.right ? 'bg-green-950/30 text-green-300' : ''}">{#if row.right}{@html hl(row.right.text, row.rightRanges)}{/if}</td>
                 </tr>
               {/if}
@@ -354,21 +355,21 @@
           {#if line.type === 'add'}
             <div class="group/line relative flex bg-green-950/30 text-green-300 px-2 diff-add {inRange ? 'outline outline-1 outline-primary/60' : ''}">
               {@render addButton(side, num, line.text)}
-              <span class="shrink-0 w-8 text-right text-muted-foreground/40 mr-2 select-none">{num ?? ''}</span>
+              <span class="shrink-0 w-8 text-right text-muted-foreground mr-2 select-none">{num ?? ''}</span>
               <span class="shrink-0 text-green-500 select-none mr-1">+</span>
               <span class="flex-1 min-w-0 whitespace-pre-wrap break-all">{@html hl(line.text, intraline.get(idx))}</span>
             </div>
           {:else if line.type === 'del'}
             <div class="group/line relative flex bg-red-950/30 text-red-300 px-2 diff-del {inRange ? 'outline outline-1 outline-primary/60' : ''}">
               {@render addButton(side, num, line.text)}
-              <span class="shrink-0 w-8 text-right text-muted-foreground/40 mr-2 select-none">{num ?? ''}</span>
+              <span class="shrink-0 w-8 text-right text-muted-foreground mr-2 select-none">{num ?? ''}</span>
               <span class="shrink-0 text-red-500 select-none mr-1">-</span>
               <span class="flex-1 min-w-0 whitespace-pre-wrap break-all">{@html hl(line.text, intraline.get(idx))}</span>
             </div>
           {:else}
             <div class="group/line relative flex text-muted-foreground px-2 {inRange ? 'outline outline-1 outline-primary/60' : ''}">
               {@render addButton(side, num, line.text)}
-              <span class="shrink-0 w-8 text-right text-muted-foreground/40 mr-2 select-none">{num ?? ''}</span>
+              <span class="shrink-0 w-8 text-right text-muted-foreground mr-2 select-none">{num ?? ''}</span>
               <span class="shrink-0 select-none mr-1">&nbsp;</span>
               <span class="flex-1 min-w-0 whitespace-pre-wrap break-all">{@html hl(line.text)}</span>
             </div>
@@ -383,6 +384,6 @@
 
 <style>
   /* Intraline marks: stronger tint of the line colour, no text colour change. */
-  .diff-add :global(mark.diff-mark) { background-color: rgb(34 197 94 / 0.32); color: inherit; border-radius: 2px; }
-  .diff-del :global(mark.diff-mark) { background-color: rgb(239 68 68 / 0.32); color: inherit; border-radius: 2px; }
+  .diff-add :global(mark.diff-mark) { background-color: rgb(34 197 94 / 0.32); color: inherit; }
+  .diff-del :global(mark.diff-mark) { background-color: rgb(239 68 68 / 0.32); color: inherit; }
 </style>

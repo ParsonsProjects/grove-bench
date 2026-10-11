@@ -7,7 +7,7 @@
   import Panes from './Panes.svelte';
   import GroveScene from '../GroveScene.svelte';
   import GroveWalk from '../GroveWalk.svelte';
-  import { treeGreens } from '../../lib/brand.js';
+  import { PIXEL_TREE } from '../app-art.js';
 
   /**
    * A copy of the Grove Bench window, drawn from a `world` object: the
@@ -48,7 +48,7 @@
 
 <div class="gb win">
   <div class="title dots">
-    <svg width="12" height="14" viewBox="0 0 21 24" aria-hidden="true">{#each treeGreens as p}<rect x={p.x} y={p.y} width="2" height="2" fill={p.fill} />{/each}</svg>
+    <svg width="12" height="14" viewBox="0 0 21 24" aria-hidden="true">{#each PIXEL_TREE as p}<rect x={p.x} y={p.y} width="2" height="2" fill={p.fill} />{/each}</svg>
     <span>Grove Bench</span>
     <span class="wc" aria-hidden="true"><i>?</i><i>–</i><i>□</i><i>✕</i></span>
   </div>
@@ -145,8 +145,9 @@
     width: 1120px;
     height: 620px;
     overflow: hidden;
-    border: 1px solid oklch(0.32 0 0);
+    border: 1px solid var(--input);
   }
+  /* The title bar is a card, as in the app (TitleBar.svelte). */
   .title {
     display: flex;
     align-items: center;
@@ -155,7 +156,7 @@
     padding: 0 10px;
     font-size: 12px;
     color: var(--muted-fg);
-    background-color: oklch(0.17 0 0);
+    background-color: var(--card);
     flex: none;
   }
   .wc {
@@ -216,7 +217,7 @@
     gap: 8px;
     padding: 9px 12px;
     font-size: 13px;
-    background: oklch(0.26 0 0);
+    background: var(--selected);
   }
   .proj-h {
     margin-top: 6px;
@@ -268,24 +269,25 @@
     border-bottom: 2px solid transparent;
   }
   .tab.on {
-    color: oklch(0.95 0 0);
+    color: var(--bright);
     border-bottom-color: var(--primary);
   }
   .tab span {
     font-size: 11px;
   }
+  /* The Thread tab's status dot: working, or waiting for you. */
   .busy {
     width: 7px;
     height: 7px;
-    background: var(--primary);
+    background: var(--status-working);
   }
   .busy.amber {
-    background: var(--amber);
+    background: var(--status-attention);
   }
   .count {
     padding: 0 4px;
     font-size: 10px;
-    color: #fff;
+    color: var(--primary-fg);
     background: var(--primary);
   }
   .pane {
@@ -327,7 +329,7 @@
     gap: 10px;
     padding: 7px 16px;
     font-size: 12px;
-    background: oklch(0.233 0 0 / 0.5);
+    background: color-mix(in srgb, var(--card) 50%, transparent);
     border-bottom: 1px solid var(--border);
   }
   .draft-h b {
@@ -346,7 +348,7 @@
   }
   .dt {
     margin: 18px 0 6px;
-    color: oklch(0.835 0 0 / 0.8);
+    color: color-mix(in srgb, var(--fg) 80%, transparent);
   }
   .dp {
     max-width: 56ch;
@@ -406,12 +408,13 @@
       opacity: 0;
     }
   }
+  /* Send and Start: outlined in brand green, as in the app. */
   .qb {
-    color: oklch(0.65 0.17 254.624);
-    border-color: oklch(0.541 0.181 254.624 / 0.6);
+    color: var(--primary);
+    border-color: color-mix(in srgb, var(--primary) 60%, transparent);
   }
   .startb {
-    color: oklch(0.65 0.17 254.624);
+    color: var(--primary);
     border-color: var(--primary);
   }
 </style>

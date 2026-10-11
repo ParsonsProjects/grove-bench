@@ -73,8 +73,8 @@
     z-index: 100;
     padding: 8px 12px;
     font-size: 14px;
-    color: #fff;
-    background: var(--blue);
+    color: var(--on-primary);
+    background: var(--primary);
   }
   .skip:focus {
     top: 8px;

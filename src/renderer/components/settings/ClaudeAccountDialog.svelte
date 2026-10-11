@@ -6,6 +6,7 @@
   import { Button } from '$lib/components/ui/button/index.js';
   import { Input } from '$lib/components/ui/input/index.js';
   import { Label } from '$lib/components/ui/label/index.js';
+  import { Notice } from '$lib/components/ui/notice/index.js';
   import { stripIpcErrorPrefix } from '$lib/mcp-errors.js';
   import type { ClaudeAccountPreview } from '../../../shared/types.js';
 
@@ -103,7 +104,7 @@
         </p>
       </div>
       {#if addError}
-        <div class="text-xs text-destructive bg-destructive/10 px-3 py-2 whitespace-pre-wrap" role="alert">{addError}</div>
+        <Notice tone="danger"><p class="whitespace-pre-wrap">{addError}</p></Notice>
       {/if}
       <Dialog.Footer>
         <Button type="button" variant="secondary" onclick={close}>Cancel</Button>

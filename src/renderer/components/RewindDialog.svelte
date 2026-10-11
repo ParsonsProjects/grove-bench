@@ -103,7 +103,7 @@
       <div class="max-h-64 overflow-y-auto -mx-1 px-1 space-y-1">
         {#each rewindPoints as point, i}
           <button
-            class="w-full text-left px-3 py-2 rounded-md text-sm transition-colors
+            class="w-full text-left px-3 py-2 text-sm transition-colors
               {selectedId === point.uuid
                 ? 'bg-accent text-accent-foreground'
                 : 'hover:bg-muted'}"
@@ -119,7 +119,7 @@
       </div>
 
       {#if selectedId && (loadingDiff || diffPreview)}
-        <div class="mt-3 border rounded-md p-2 text-xs font-mono bg-muted/50 max-h-32 overflow-y-auto">
+        <div class="mt-3 border p-2 text-xs font-mono bg-muted/50 max-h-32 overflow-y-auto">
           {#if loadingDiff}
             <span class="text-muted-foreground">Loading diff preview…</span>
           {:else if diffPreview}
@@ -143,7 +143,7 @@
     {/if}
 
     <Dialog.Footer>
-      <Button variant="outline" onclick={() => handleOpenChange(false)}>
+      <Button variant="subtle" onclick={() => handleOpenChange(false)}>
         Cancel
       </Button>
       <Button

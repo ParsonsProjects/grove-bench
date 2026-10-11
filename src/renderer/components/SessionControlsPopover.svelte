@@ -20,6 +20,11 @@
   import UsageSection from './UsageSection.svelte';
   import { stripIpcErrorPrefix } from '../lib/mcp-errors.js';
   import AlphaBadge from './AlphaBadge.svelte';
+  import { Button } from '$lib/components/ui/button/index.js';
+  import { Kbd } from '$lib/components/ui/kbd/index.js';
+  import { SectionLabel } from '$lib/components/ui/section-label/index.js';
+  import { menuItem, menuPanel } from '$lib/components/ui/menu/index.js';
+  import { cn } from '$lib/utils.js';
 
   export interface ModelOption { value: string; label: string; contextWindow?: number }
 
@@ -148,16 +153,16 @@
 
   {#if open}
     <div
-      class="absolute bottom-full left-0 mb-2 bg-popover border border-border shadow-xl p-3 text-xs z-50"
+      class="{menuPanel({ padding: 'content' })} absolute bottom-full left-0 mb-2 z-50"
       role="dialog"
       aria-label="Agent settings"
     >
       <div class="flex items-center justify-between mb-2">
         <span class="font-medium text-foreground">Agent settings</span>
-        <span class="text-muted-foreground/60 text-[10px]">
+        <span class="text-muted-foreground text-micro">
           {#each Object.entries(CONTROL_SHORTCUTS) as [id, key] (id)}
             {@const label = (controls.find((c) => c.id === id) ?? controls.find((c) => c.role === id))?.label}
-            {#if label}<kbd class="text-foreground/70">{key}</kbd> {label.toLowerCase()}&nbsp;&nbsp;{/if}
+            {#if label}<Kbd variant="key">{key}</Kbd> {label.toLowerCase()}&nbsp;&nbsp;{/if}
           {/each}
         </span>
       </div>
@@ -165,13 +170,16 @@
       <div class="flex gap-3 overflow-x-auto max-w-[80vw]">
         <!-- Agent + plan usage -->
         <div class="min-w-44">
-          <div class="text-[10px] uppercase tracking-wide text-muted-foreground/60 mb-1">Agent</div>
+          <SectionLabel class="mb-1">Agent</SectionLabel>
           {#each agentChoices.length > 0 ? agentChoices : [{ id: agentType, displayName: agentName, stage: undefined }] as a (a.id)}
             {@const current = a.id === agentType}
             <button
               onclick={() => { if (!current) switchTo = { id: a.id, displayName: a.displayName }; }}
-              class="w-full text-left px-2 py-1 border-l-2 transition-colors group/agent flex items-center justify-between gap-2
-                {current ? 'border-primary text-foreground bg-accent/50 cursor-default' : switchTo?.id === a.id ? 'border-primary/50 text-foreground bg-accent' : 'border-transparent text-muted-foreground hover:bg-accent hover:text-foreground'}"
+              class={cn(
+                menuItem({ selected: current }),
+                'group/agent justify-between',
+                current ? 'cursor-default' : switchTo?.id === a.id && 'border-primary/50 bg-accent text-foreground',
+              )}
               title={current ? 'This thread\'s agent' : `Switch this thread to ${a.displayName}, or start a new one with it`}
               aria-current={current ? 'true' : undefined}
             >
@@ -179,7 +187,7 @@
                 {a.displayName}
                 {#if a.stage === 'alpha'}<AlphaBadge class="ml-1.5 align-middle" />{/if}
               </span>
-              {#if !current}<span class="text-[10px] text-muted-foreground/50 group-hover/agent:text-primary">switch…</span>{/if}
+              {#if !current}<span class="text-micro text-muted-foreground group-hover/agent:text-primary">switch…</span>{/if}
             </button>
           {/each}
 
@@ -188,19 +196,18 @@
 
         <!-- Model -->
         <div class="min-w-32">
-          <div class="text-[10px] uppercase tracking-wide text-muted-foreground/60 mb-1">Model</div>
+          <SectionLabel class="mb-1">Model</SectionLabel>
           {#each modelOptions as opt (opt.value)}
             {@const current = opt.value === model}
             <button
               onclick={() => switchModel(opt.value)}
-              class="w-full text-left px-2 py-1 border-l-2 transition-colors hover:bg-accent hover:text-accent-foreground
-                {current ? 'border-primary text-foreground bg-accent/50' : 'border-transparent text-muted-foreground'}"
+              class={menuItem({ selected: current })}
               title={opt.contextWindow ? `${Math.round(opt.contextWindow / 1000)}k context` : undefined}
             >
               {opt.label}
             </button>
           {:else}
-            <div class="px-2 py-1 text-muted-foreground/50">{model || 'Provider default'}</div>
+            <div class="px-2 py-1 text-muted-foreground">{model || 'Provider default'}</div>
           {/each}
         </div>
 
@@ -208,23 +215,22 @@
         {#each controls as ctl (ctl.id)}
           {@const value = messageStore.getControlValue(sessionId, ctl.id)}
           <div class="min-w-32">
-            <div class="text-[10px] uppercase tracking-wide text-muted-foreground/60 mb-1">
+            <SectionLabel class="mb-1">
               {ctl.label}
-              {#if controlShortcut(ctl)}<span class="normal-case tracking-normal text-muted-foreground/40">{controlShortcut(ctl)}</span>{/if}
-            </div>
+              {#if controlShortcut(ctl)}<Kbd keys={controlShortcut(ctl)} class="normal-case tracking-normal" />{/if}
+            </SectionLabel>
             {#each ctl.options as opt, i (opt.value)}
               {@const current = opt.value === value}
               {#if opt.group && opt.group !== ctl.options[i - 1]?.group}
                 <!-- Options from another source (e.g. Grove's own modes) sit
                      below a divider with their source as the heading. -->
-                <div class="mt-1.5 pt-1.5 border-t border-border/60 px-2 text-[10px] uppercase tracking-wide text-muted-foreground/60" title="Not a {agentName} option">
+                <SectionLabel class="mt-1.5 pt-1.5 border-t border-border/60 px-2" title="Not a {agentName} option">
                   {opt.group}
-                </div>
+                </SectionLabel>
               {/if}
               <button
                 onclick={() => choose(ctl.id, opt.value)}
-                class="w-full text-left px-2 py-1 border-l-2 transition-colors hover:bg-accent
-                  {current ? `bg-accent/50 ${toneClass(opt.tone).split(' ')[0]} border-current` : 'border-transparent text-muted-foreground'}"
+                class={cn(menuItem({ selected: current }), current && `${toneClass(opt.tone).split(' ')[0]} border-current`)}
                 onmouseenter={() => hovered = opt}
                 onmouseleave={() => hovered = null}
                 onfocus={() => hovered = opt}
@@ -243,18 +249,18 @@
              the user picks the transcript button, which says so. -->
         <div class="mt-3 pt-2 border-t border-border max-w-[36rem] flex flex-col gap-2" role="group" aria-label="Switch agent">
           <p class="text-foreground">Switch this thread to {target.displayName}?</p>
-          <p class="text-[11px] text-muted-foreground">
+          <p class="text-caption text-muted-foreground">
             {target.displayName} starts its own session in the same worktree; the thread, files and checkpoints stay.
             To carry on where {agentName} left off, it can get a short transcript with your next message: your messages,
             {agentName}'s replies and the list of files changed, without tool output. That transcript goes to {target.displayName}'s provider.
             {#if running}The turn that is running now stops.{/if}
           </p>
-          {#if switchError}<p class="text-[11px] text-destructive" role="alert">{switchError}</p>{/if}
+          {#if switchError}<p class="text-caption text-destructive" role="alert">{switchError}</p>{/if}
           <div class="flex flex-wrap items-center gap-2">
-            <button type="button" class="px-2 py-1 bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50" disabled={switching} onclick={() => switchAgent(target.id, true)}>Switch and send the transcript</button>
-            <button type="button" class="px-2 py-1 border border-border hover:bg-accent disabled:opacity-50" disabled={switching} onclick={() => switchAgent(target.id, false)}>Switch without it</button>
-            <button type="button" class="px-2 py-1 text-primary hover:underline" onclick={() => startWithAgent(target.id)}>New thread instead ↗</button>
-            <button type="button" class="px-2 py-1 text-muted-foreground hover:text-foreground" onclick={() => { switchTo = null; switchError = ''; }}>Cancel</button>
+            <Button size="xs" disabled={switching} onclick={() => switchAgent(target.id, true)}>Switch and send the transcript</Button>
+            <Button variant="subtle" size="xs" disabled={switching} onclick={() => switchAgent(target.id, false)}>Switch without it</Button>
+            <Button variant="link" size="xs" onclick={() => startWithAgent(target.id)}>New thread instead ↗</Button>
+            <Button variant="quiet" size="xs" onclick={() => { switchTo = null; switchError = ''; }}>Cancel</Button>
           </div>
         </div>
       {/if}
@@ -264,7 +270,7 @@
            push the columns up under the pointer (the popover grows upward). -->
       {#if hint}
         <div class="mt-3 pt-2 border-t border-border">
-          <p class="text-[11px] min-h-[2lh] text-muted-foreground" aria-live="polite">
+          <p class="text-caption min-h-[2lh] text-muted-foreground" aria-live="polite">
             <span class="text-foreground">{hint.label}:</span> {hint.description}
           </p>
         </div>

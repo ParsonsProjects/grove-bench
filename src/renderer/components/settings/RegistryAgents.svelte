@@ -9,6 +9,8 @@
   import type { RegistryAgentSummary } from '../../../shared/types.js';
   import { settingsStore } from '../../stores/settings.svelte.js';
   import { Input } from '$lib/components/ui/input/index.js';
+  import { Badge } from '$lib/components/ui/badge/index.js';
+  import { Button } from '$lib/components/ui/button/index.js';
   import CommandLine from '../CommandLine.svelte';
 
   let { onUse }: { onUse: (agent: { name: string; command: string; args: string[] }) => void } = $props();
@@ -54,12 +56,12 @@
 </script>
 
 <div class="flex flex-col gap-2" data-testid="registry-agents">
-  <div class="flex items-center gap-2">
-    <p class="text-xs font-medium text-foreground flex-1">From the ACP Registry</p>
+  <div class="flex items-center gap-2 text-xs">
+    <p class="font-medium text-foreground flex-1">From the ACP Registry</p>
     {#if settingsStore.current.onlineCatalogs}
-      <button type="button" class="text-xs text-primary hover:underline disabled:opacity-50" disabled={refreshing} onclick={refresh}>
+      <Button variant="link" size="inline" disabled={refreshing} onclick={refresh}>
         {refreshing ? 'Checking…' : 'Check for new agents'}
-      </button>
+      </Button>
     {/if}
   </div>
   {#if !loaded}
@@ -91,8 +93,8 @@
               aria-hidden="true"
             ></span>
             <span class="text-foreground">{agent.name}</span>
-            <span class="text-muted-foreground/60">{agent.version}</span>
-            {#if agent.builtIn}<span class="text-[10px] uppercase tracking-wide text-muted-foreground/60">built in</span>{/if}
+            <span class="text-muted-foreground">{agent.version}</span>
+            {#if agent.builtIn}<Badge tone="muted" class="uppercase tracking-wide">built in</Badge>{/if}
             <span class="flex-1 min-w-0 truncate text-muted-foreground">{agent.description ?? ''}</span>
           </button>
           {#if open === agent.id}
@@ -103,21 +105,21 @@
                 <CommandLine command={agent.install.command} label="Install {agent.name}" />
               {:else if agent.install && 'download' in agent.install}
                 {@const url = agent.install.download}
-                <button type="button" class="self-start text-primary hover:underline" onclick={() => window.groveBench.openExternal(url)}>Download {agent.name} for this computer</button>
+                <Button variant="external" size="inline" class="self-start" onclick={() => window.groveBench.openExternal(url)}>Download {agent.name} for this computer</Button>
               {/if}
               <div class="flex items-center gap-3">
                 {#if agent.builtIn}
                   <span class="text-muted-foreground">Already in Grove Bench under its own name.</span>
                 {:else if agent.launch}
                   {@const launch = agent.launch}
-                  <button type="button" class="text-primary hover:underline" onclick={() => onUse({ name: agent.name, command: launch.command, args: launch.args })}>Use</button>
-                  <span class="text-muted-foreground/70">Fills in the form below with <code>{[launch.command, ...launch.args].join(' ')}</code>, which downloads the package the first time it starts.</span>
+                  <Button variant="link" size="inline" onclick={() => onUse({ name: agent.name, command: launch.command, args: launch.args })}>Use</Button>
+                  <span class="text-muted-foreground">Fills in the form below with <code>{[launch.command, ...launch.args].join(' ')}</code>, which downloads the package the first time it starts.</span>
                 {:else}
-                  <span class="text-muted-foreground/70">After downloading, add it below with the path to the program.</span>
+                  <span class="text-muted-foreground">After downloading, add it below with the path to the program.</span>
                 {/if}
                 {#if agent.website}
                   {@const site = agent.website}
-                  <button type="button" class="text-primary hover:underline" onclick={() => window.groveBench.openExternal(site)}>Website</button>
+                  <Button variant="external" size="inline" onclick={() => window.groveBench.openExternal(site)}>Website</Button>
                 {/if}
               </div>
             </div>

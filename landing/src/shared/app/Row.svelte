@@ -42,7 +42,7 @@
     background: oklch(1 0 0 / 0.03);
   }
   .row.selected {
-    background: oklch(0.26 0 0);
+    background: var(--selected);
   }
   .who {
     padding-top: 2px;
@@ -72,7 +72,7 @@
     min-width: 0;
     overflow: hidden;
     font-size: 13.5px;
-    color: oklch(0.92 0 0);
+    color: var(--bright);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -105,8 +105,13 @@
   .line.t-muted {
     color: var(--faint-fg);
   }
-  .line.t-blue {
-    color: oklch(0.62 0.17 254.624);
+  /* What the agent is doing, in its status colour (Sidebar.svelte's
+     SUBTITLE_TONE_CLASS). */
+  .line.t-working {
+    color: color-mix(in srgb, var(--status-working) 80%, transparent);
+  }
+  .line.t-attention {
+    color: var(--status-attention);
   }
   .badge {
     flex: none;

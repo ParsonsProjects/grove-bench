@@ -122,20 +122,20 @@
   <!-- The Projects heading comes next, so this one sticks just above it. -->
   <SidebarSection panel="groupsSection" label="Groups" count={groupStore.groups.length} counts={countsFor(grouped)} below={1}>
     {#snippet actions()}
-      <button
-        type="button"
+      <Button
+        variant="quiet"
+        size="icon-2xs"
         onclick={() => { groupStore.nameRequest = { kind: 'new' }; }}
-        class="w-5 h-5 shrink-0 flex items-center justify-center text-muted-foreground/70 hover:text-primary hover:bg-sidebar-accent transition-colors"
         title="New group: threads in different projects that belong to one piece of work"
         aria-label="New group"
       >
         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
-      </button>
+      </Button>
     {/snippet}
 
     <div class="pt-1 pb-2">
       {#if groupStore.groups.length === 0}
-        <p class="text-xs text-muted-foreground/50 pl-4 py-1">Right-click a thread to start a group</p>
+        <p class="text-xs text-muted-foreground pl-4 py-1">Right-click a thread to start a group</p>
       {/if}
       {#each groupStore.groups as group (group.id)}
         {@const members = groupStore.members(group.id)}
@@ -154,35 +154,36 @@
               class="flex items-center gap-1.5 min-w-0 flex-1 text-left hover:text-foreground transition-colors"
               title={isCollapsed ? 'Expand group' : 'Collapse group'}
             >
-              <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 text-muted-foreground/60 transition-transform" style={isCollapsed ? 'transform: rotate(-90deg)' : ''} aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+              <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 text-muted-foreground transition-transform" style={isCollapsed ? 'transform: rotate(-90deg)' : ''} aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
               <span class="text-xs font-medium text-muted-foreground truncate" title={group.name}>{group.name}</span>
               <!-- The rows shown, like a project header's count. -->
               {#if shown.length}
-                <span class="text-xs text-muted-foreground/40 shrink-0">{shown.length}</span>
+                <span class="text-xs text-muted-foreground shrink-0">{shown.length}</span>
               {/if}
               <AttentionCounts counts={countsFor(members)} />
             </button>
             <div class="flex items-center gap-0.5">
               <!-- Ungroup keeps the conversations, so it's not a bin, and not an ✕ either:
                    a row's ✕ just below closes its conversation. -->
-              <button
-                type="button"
+              <Button
+                variant="quiet"
+                size="icon-2xs"
                 onclick={() => groupStore.ungroup(group.id)}
-                class="w-5 h-5 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-sidebar-accent transition-all opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+                class="opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
                 title="Ungroup (the threads stay)"
                 aria-label="Ungroup {group.name}"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="8" height="6" x="5" y="4" rx="1"/><rect width="8" height="6" x="11" y="14" rx="1"/></svg>
-              </button>
-              <button
-                type="button"
+              </Button>
+              <Button
+                variant="quiet"
+                size="icon-2xs"
                 onclick={() => newConversationIn(group.id)}
-                class="w-5 h-5 flex items-center justify-center text-muted-foreground/70 hover:text-primary hover:bg-sidebar-accent transition-colors"
                 title="New thread in {group.name}"
                 aria-label="New thread in {group.name}"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
-              </button>
+              </Button>
             </div>
           </div>
 
@@ -192,7 +193,7 @@
               {@render row(session, true, null, false)}
             {/each}
             {#if shown.length === 0}
-              <p class="text-xs text-muted-foreground/40 pl-4 py-1">
+              <p class="text-xs text-muted-foreground pl-4 py-1">
                 {#if members.length === 0}
                   Its threads are in projects that didn't load
                 {:else}

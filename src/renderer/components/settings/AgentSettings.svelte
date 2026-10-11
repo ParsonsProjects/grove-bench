@@ -21,6 +21,8 @@
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import { Input } from '$lib/components/ui/input/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
+  import { Notice } from '$lib/components/ui/notice/index.js';
+  import XIcon from '@lucide/svelte/icons/x';
   import PlusIcon from '@lucide/svelte/icons/plus';
 
   // ── Per-agent defaults ──
@@ -230,13 +232,13 @@
     {#snippet actions()}
       {#if agent.addsAccounts}
         <span data-setting="claude-accounts">
-          <Button variant="outline" size="sm" class="text-xs" onclick={() => (addingAccount = true)}>
-            <PlusIcon class="size-3.5" aria-hidden="true" />
+          <Button variant="subtle" size="xs" onclick={() => (addingAccount = true)}>
+            <PlusIcon aria-hidden="true" />
             Add account
           </Button>
         </span>
       {:else if agent.account}
-        <Button variant="ghost" size="sm" class="text-xs text-muted-foreground hover:text-destructive" aria-label="Remove the {agent.account.name} account" onclick={() => { removeError = null; removingAccount = agent; }}>
+        <Button variant="quiet-destructive" size="xs" aria-label="Remove the {agent.account.name} account" onclick={() => { removeError = null; removingAccount = agent; }}>
           Remove
         </Button>
       {/if}
@@ -392,7 +394,7 @@
         </Dialog.Description>
       </Dialog.Header>
       {#if removeError}
-        <div class="text-xs text-destructive bg-destructive/10 px-3 py-2" role="alert">{removeError}</div>
+        <Notice tone="danger"><p>{removeError}</p></Notice>
       {/if}
       <Dialog.Footer>
         <Button variant="secondary" onclick={() => (removingAccount = null)}>Cancel</Button>
@@ -476,14 +478,14 @@
         {#each settingsStore.draft.acpAgents as agent, i (i)}
           <li class="flex items-center justify-between gap-1 pl-2 text-xs min-w-0 bg-muted">
             <span class="truncate"><span class="text-foreground">{agent.name}</span> <code class="text-muted-foreground">{[agent.command, ...agent.args].join(' ')}</code></span>
-            <button
-              type="button"
+            <Button
+              size="icon-xs"
+              variant="quiet-destructive"
               onclick={() => settingsStore.removeAcpAgent(i)}
-              class="size-6 shrink-0 inline-flex items-center justify-center text-muted-foreground hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               aria-label="Remove agent {agent.name}"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
-            </button>
+              <XIcon aria-hidden="true" />
+            </Button>
           </li>
         {/each}
       </ul>

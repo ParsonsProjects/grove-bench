@@ -1,29 +1,39 @@
 /* The Grove Bench window's own look (src/renderer/styles/globals.css), scoped
-   to .gb so it can sit inside the pixel-night pages. */
+   to .gb so it can sit inside the pixel-night pages. It is the app's dark
+   theme, the default: the brand's NIGHT neutrals, leaf green as primary and
+   each thread status in its dark colour (lib/brand.js sets the --night-*,
+   palette and --status-* variables from src/shared/brand.ts). Other
+   hues are Tailwind's, as the app uses them. */
 
 .gb {
-  --bg: oklch(0.208 0 0);
-  --fg: oklch(0.835 0 0);
-  --card: oklch(0.233 0 0);
-  --side: oklch(0.176 0 0);
-  --muted: oklch(0.279 0 0);
-  --muted-fg: oklch(0.66 0 0);
-  --faint-fg: oklch(0.52 0 0);
-  --border: oklch(0.26 0 0);
-  --primary: oklch(0.541 0.181 254.624);
-  --primary-soft: oklch(0.541 0.181 254.624 / 0.08);
-  --accent: oklch(0.31 0.065 245);
-  --amber: oklch(0.769 0.188 70.08);
-  --green: oklch(0.792 0.209 151.711);
-  --red: oklch(0.637 0.237 25.331);
-  --destructive: oklch(0.608 0.22 22);
-  --blue: oklch(0.707 0.165 254.624);
-  --cyan: oklch(0.789 0.154 211.53);
-  --purple: oklch(0.714 0.203 305.504);
-  --yellow: oklch(0.852 0.199 91.936);
+  --bg: var(--night-background);
+  --fg: var(--night-foreground);
+  --bright: var(--night-bright);
+  --card: var(--night-card);
+  --side: var(--night-sidebar);
+  --muted: var(--night-muted);
+  --muted-fg: var(--night-muted-foreground);
+  /* text-muted-foreground/60: ages, key hints, the project name */
+  --faint-fg: color-mix(in srgb, var(--night-muted-foreground) 60%, var(--night-background));
+  --border: var(--night-border);
+  --input: var(--night-input);
+  /* A selected row or file: --sidebar-accent */
+  --selected: var(--night-border);
+  --primary: var(--leaf);
+  --primary-fg: var(--canopy);
+  --primary-soft: color-mix(in srgb, var(--leaf) 8%, transparent);
+  --accent: var(--night-accent);
+  --destructive: var(--ember);
+  --amber: oklch(0.769 0.188 70.08); /* amber-500: permission prompts */
+  --green: oklch(0.792 0.209 151.711); /* green-400: allowed, added, context */
+  --red: oklch(0.637 0.237 25.331); /* red-500 */
+  --blue: oklch(0.707 0.165 254.624); /* blue-400: Read, PR links, Ask */
+  --cyan: oklch(0.789 0.154 211.53); /* cyan-400 */
+  --purple: oklch(0.714 0.203 305.504); /* purple-400 */
+  --yellow: oklch(0.852 0.199 91.936); /* yellow-400 */
   color: var(--fg);
   background: var(--bg);
-  font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  font-family: var(--font-mono);
   font-size: 13px;
   line-height: 1.5;
   text-align: left;
@@ -50,7 +60,7 @@
   color: var(--blue);
 }
 .gb .t-primary {
-  color: oklch(0.65 0.17 254.624);
+  color: var(--primary);
 }
 .gb .t-amber {
   color: var(--amber);
@@ -86,14 +96,14 @@
 }
 .gb .gb-btn.allow {
   color: var(--green);
-  border-color: oklch(0.792 0.209 151.711 / 0.6);
+  border-color: color-mix(in srgb, var(--green) 60%, transparent);
 }
 .gb .gb-btn.deny {
   color: var(--destructive);
-  border-color: oklch(0.608 0.22 22 / 0.7);
+  border-color: color-mix(in srgb, var(--destructive) 70%, transparent);
 }
 .gb .gb-btn.primary {
-  color: #fff;
+  color: var(--primary-fg);
   background: var(--primary);
   border-color: var(--primary);
 }
@@ -101,6 +111,6 @@
   filter: brightness(1.2);
 }
 .gb :focus-visible {
-  outline: 1px solid var(--blue);
+  outline: 1px solid var(--primary);
   outline-offset: 1px;
 }

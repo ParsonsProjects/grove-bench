@@ -8,6 +8,10 @@
   import { prStore } from '../stores/pr.svelte.js';
   import type { PrAlert } from '../stores/pr.svelte.js';
   import { Checkbox } from '$lib/components/ui/checkbox/index.js';
+  import { badgeVariants } from '$lib/components/ui/badge/index.js';
+  import { Button } from '$lib/components/ui/button/index.js';
+  import { SectionLabel } from '$lib/components/ui/section-label/index.js';
+  import XIcon from '@lucide/svelte/icons/x';
   import { prHealth } from '../lib/pr-state.js';
   import type { PrInfo } from '../../shared/types.js';
   import StatusBarPopover from './StatusBarPopover.svelte';
@@ -109,6 +113,10 @@
     }
   }
 
+  /** The "new" chips: amber, as a caution, and a button, since a click
+   *  clears them. */
+  const newChip = badgeVariants({ tone: 'warning', variant: 'soft', class: 'hover:bg-current/20 transition-colors' });
+
   let prColor = $derived(
     prInfo.state === 'MERGED' ? 'text-purple-400 hover:text-purple-300'
     : prInfo.state === 'CLOSED' ? 'text-red-400 hover:text-red-300'
@@ -117,7 +125,7 @@
   );
 </script>
 
-<StatusBarPopover bind:open={prPopoverOpen} anchored={false} animate panelClass="bg-popover border border-border shadow-xl p-3 text-xs w-96">
+<StatusBarPopover bind:open={prPopoverOpen} anchored={false} animate panelClass="w-96">
   {#snippet trigger()}
     <button
       onclick={() => { prPopoverOpen = !prPopoverOpen; if (prPopoverOpen) { addressReviewsNotice = null; fixCiNotice = null; } }}
@@ -130,7 +138,7 @@
       <span class="w-1.5 h-1.5 {prHealthInfo.bgClass} {prAlerts.length > 0 ? 'animate-pulse' : ''} {prFetchFailed ? 'opacity-50' : ''}"></span>
       PR #{prInfo.number}
       {#if otherPrs.length > 0}
-        <span class="text-muted-foreground/60">+{otherPrs.length}</span>
+        <span class="text-muted-foreground">+{otherPrs.length}</span>
       {/if}
     </button>
   {/snippet}
@@ -141,19 +149,20 @@
     <span class="font-medium text-foreground truncate" title={prInfo.title}>
       PR #{prInfo.number}{prInfo.title ? ` — ${prInfo.title}` : ''}
     </span>
-    <button
+    <Button
+      variant="external"
+      size="inline"
       onclick={() => window.groveBench.openExternal(prInfo.url)}
-      class="text-blue-400 hover:text-blue-300 hover:underline shrink-0"
       title="Open on GitHub"
     >
       Open ↗
-    </button>
+    </Button>
   </div>
-  <div class="text-muted-foreground/70 mt-0.5 truncate" title={prInfo.headRefName ? `${prInfo.headRefName} → ${prInfo.baseRefName ?? '?'}` : undefined}>
+  <div class="text-muted-foreground mt-0.5 truncate" title={prInfo.headRefName ? `${prInfo.headRefName} → ${prInfo.baseRefName ?? '?'}` : undefined}>
     {prInfo.isDraft ? 'draft' : (prInfo.state ?? 'open').toLowerCase()}{#if prInfo.headRefName}{' · '}{prInfo.headRefName} → {prInfo.baseRefName ?? '?'}{/if}
   </div>
   {#if prFetchFailed}
-    <div class="text-orange-400/80 mt-0.5" title="The last gh fetch failed — check network and gh auth status">
+    <div class="text-amber-500 mt-0.5" title="The last gh fetch failed — check network and gh auth status">
       may be stale — the last GitHub fetch failed
     </div>
   {/if}
@@ -168,22 +177,26 @@
       >
         <span class="text-muted-foreground w-14 shrink-0">New PR</span>
         <span class="flex-1"></span>
-        <button
+        <Button
+          variant="link"
+          size="inline"
           onclick={() => { prPopoverOpen = false; oncreatepr('agent'); }}
           disabled={!canAgentCreatePr || preparingPrTurn}
-          class="text-blue-400 hover:text-blue-300 hover:underline shrink-0 disabled:opacity-40 disabled:no-underline disabled:cursor-not-allowed"
+          class="disabled:no-underline disabled:cursor-not-allowed"
           title={canAgentCreatePr ? 'Send a turn asking the agent to commit, push, and open a new PR' : 'The agent must be idle and running'}
         >
           with agent →
-        </button>
-        <button
+        </Button>
+        <Button
+          variant="link"
+          size="inline"
           onclick={() => { prPopoverOpen = false; oncreatepr('manual'); }}
           disabled={isRunning}
-          class="text-blue-400 hover:text-blue-300 hover:underline shrink-0 disabled:opacity-40 disabled:no-underline disabled:cursor-not-allowed"
+          class="disabled:no-underline disabled:cursor-not-allowed"
           title={isRunning ? 'Create a pull request once the agent finishes its turn' : 'Open the PR dialog: title and description prefilled from the branch\'s commits'}
         >
           manually…
-        </button>
+        </Button>
       </div>
     </div>
   {/if}
@@ -201,7 +214,7 @@
             {@const ci = ciAlert}
             <button
               onclick={() => prStore.dismissAlert(sessionId, ci.id)}
-              class="px-1 text-[10px] leading-4 whitespace-nowrap bg-yellow-400/15 text-yellow-400 border border-yellow-400/30 hover:bg-yellow-400/25 transition-colors"
+              class={newChip}
               title="Failed since you last looked — click to clear"
             >
               new
@@ -209,23 +222,25 @@
           {/if}
         </span>
         {#if c.failed > 0 && prOpen}
-          <button
+          <Button
+            variant="link"
+            size="inline"
             onclick={fixCi}
             disabled={!canAgentCreatePr}
-            class="text-blue-400 hover:text-blue-300 hover:underline shrink-0 disabled:opacity-40 disabled:no-underline disabled:cursor-not-allowed"
+            class="disabled:no-underline disabled:cursor-not-allowed"
             title={canAgentCreatePr ? 'Send a turn asking the agent to read the CI logs and fix the failures' : 'The agent must be idle and running'}
           >
             fix with agent →
-          </button>
+          </Button>
         {/if}
       </div>
       {#if prInfo.failingChecks && prInfo.failingChecks.length > 0}
-        <div class="text-muted-foreground/60 pl-16 truncate" title={prInfo.failingChecks.join(', ')}>
+        <div class="text-muted-foreground pl-16 truncate" title={prInfo.failingChecks.join(', ')}>
           {prInfo.failingChecks.join(', ')}
         </div>
       {/if}
       {#if fixCiNotice}
-        <div class="text-orange-400/80 pl-16 truncate" title={fixCiNotice}>
+        <div class="text-amber-500 pl-16 truncate" title={fixCiNotice}>
           {fixCiNotice}
         </div>
       {/if}
@@ -238,17 +253,17 @@
           {#if prInfo.reviewDecision === 'APPROVED'}
             <span class="text-green-400 whitespace-nowrap">approved</span>
           {:else if prInfo.reviewDecision === 'CHANGES_REQUESTED'}
-            <span class="text-orange-400 whitespace-nowrap" title="Changes requested">changes</span>
+            <span class="text-amber-500 whitespace-nowrap" title="Changes requested">changes</span>
           {:else if reviewRequired}
-            <span class="text-muted-foreground/70 whitespace-nowrap" title="Review required: the base branch needs an approving review before this PR can merge">required</span>
+            <span class="text-muted-foreground whitespace-nowrap" title="Review required: the base branch needs an approving review before this PR can merge">required</span>
           {:else}
-            <span class="text-muted-foreground/70">commented</span>
+            <span class="text-muted-foreground">commented</span>
           {/if}
           {#if commentsAlert}
             {@const ca = commentsAlert}
             <button
               onclick={() => prStore.dismissAlert(sessionId, ca.id)}
-              class="px-1 text-[10px] leading-4 whitespace-nowrap bg-yellow-400/15 text-yellow-400 border border-yellow-400/30 hover:bg-yellow-400/25 transition-colors"
+              class={newChip}
               title="{ca.count} new comment{ca.count > 1 ? 's' : ''} since you last looked — click to clear"
             >
               {ca.count} new
@@ -256,18 +271,20 @@
           {/if}
         </span>
         {#if prInfo.state === 'OPEN' && (prInfo.reviewDecision === 'CHANGES_REQUESTED' || commentsAlert)}
-          <button
+          <Button
+            variant="link"
+            size="inline"
             onclick={addressReviews}
             disabled={!canAgentCreatePr || addressingReviews}
-            class="text-blue-400 hover:text-blue-300 hover:underline shrink-0 disabled:opacity-40 disabled:no-underline disabled:cursor-not-allowed"
+            class="disabled:no-underline disabled:cursor-not-allowed"
             title={canAgentCreatePr ? 'Fetch the review comments and send a turn asking the agent to address them' : 'The agent must be idle and running'}
           >
             {addressingReviews ? 'fetching…' : 'address with agent →'}
-          </button>
+          </Button>
         {/if}
       </div>
       {#if addressReviewsNotice}
-        <div class="text-orange-400/80 pl-16 truncate" title={addressReviewsNotice}>
+        <div class="text-amber-500 pl-16 truncate" title={addressReviewsNotice}>
           {addressReviewsNotice}
         </div>
       {/if}
@@ -275,16 +292,18 @@
 
     {#if humanAlert}
       {@const ha = humanAlert}
-      <div class="flex items-center gap-2 px-1.5 py-0.5 -mx-1.5 hover:bg-accent/40 transition-colors text-orange-400">
+      <div class="flex items-center gap-2 px-1.5 py-0.5 -mx-1.5 hover:bg-accent/40 transition-colors text-amber-500">
         <span class="w-1.5 h-1.5 bg-current shrink-0"></span>
         <span class="flex-1" title={ha.reason}>{ha.reason}</span>
-        <button
+        <Button
+          variant="quiet"
+          size="icon-2xs"
           onclick={() => prStore.dismissAlert(sessionId, ha.id)}
-          class="text-muted-foreground/40 hover:text-foreground transition-colors shrink-0"
           title="Dismiss"
+          aria-label="Dismiss"
         >
-          &times;
-        </button>
+          <XIcon />
+        </Button>
       </div>
     {/if}
   </div>
@@ -294,7 +313,7 @@
        second branch. Only the primary is watched; "watch" swaps it. -->
   {#if otherPrs.length > 0}
     <div class="border-t border-border pt-2 mt-2 space-y-0.5">
-      <div class="text-muted-foreground px-1.5 -mx-1.5 mb-1">Other PRs in this thread</div>
+      <SectionLabel class="mb-1">Other PRs in this thread</SectionLabel>
       {#each otherPrs as other (other.number)}
         {@const otherHealth = prHealth(other)}
         <!-- Same colours as the pill, so a PR reads the same in both places. -->
@@ -305,26 +324,28 @@
             title="{other.title ? `${other.title} — ` : ''}{other.headRefName ?? '?'} → {other.baseRefName ?? '?'} ({otherHealth.label})"
           >
             <span class="text-foreground">#{other.number}</span>
-            <span class="text-muted-foreground/70">{other.isDraft ? 'draft' : (other.state ?? 'open').toLowerCase()}</span>
+            <span class="text-muted-foreground">{other.isDraft ? 'draft' : (other.state ?? 'open').toLowerCase()}</span>
             {#if other.title}<span class="text-muted-foreground"> — {other.title}</span>{/if}
           </span>
-          <button
+          <Button
+            variant="link"
+            size="inline"
             onclick={() => prStore.setPrimary(sessionId, other.number)}
-            class="text-blue-400 hover:text-blue-300 hover:underline shrink-0"
             title="Follow this PR instead: the pill, alerts, and auto turns switch to it"
           >
             watch
-          </button>
-          <button
+          </Button>
+          <Button
+            variant="external"
+            size="inline"
             onclick={() => window.groveBench.openExternal(other.url)}
-            class="text-blue-400 hover:text-blue-300 hover:underline shrink-0"
             title="Open on GitHub"
           >
             ↗
-          </button>
+          </Button>
         </div>
       {/each}
-      <p class="text-[10px] text-muted-foreground/60 mt-1.5">
+      <p class="text-micro text-muted-foreground mt-1.5">
         Alerts and auto turns follow one PR at a time.
       </p>
     </div>
@@ -358,7 +379,7 @@
         address reviews
       </label>
     </div>
-    <p class="text-[10px] text-muted-foreground/60 mt-1.5">
+    <p class="text-micro text-muted-foreground mt-1.5">
       Auto turns run only while the thread is idle; git push / gh may need to be allowed.
     </p>
   </div>

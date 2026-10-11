@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { checkpointStore, FULL_THREAD_UUID } from '../stores/checkpoints.svelte.js';
+  import { checkpointStore, FULL_THREAD_UUID, type CheckpointDiffMode } from '../stores/checkpoints.svelte.js';
   import { messageStore } from '../stores/messages.svelte.js';
   import { store as sessionStore } from '../stores/sessions.svelte.js';
   import ReviewDiffPanel from './ReviewDiffPanel.svelte';
@@ -9,6 +9,12 @@
   import { panelStore } from '../stores/panels.svelte.js';
   import PanelToggle from './PanelToggle.svelte';
   import type { DiffStats, GitStatusEntry } from '../../shared/types.js';
+  import { Badge } from '$lib/components/ui/badge/index.js';
+  import { Button } from '$lib/components/ui/button/index.js';
+  import { Notice } from '$lib/components/ui/notice/index.js';
+  import { PanelHeader } from '$lib/components/ui/panel-header/index.js';
+  import { SectionLabel } from '$lib/components/ui/section-label/index.js';
+  import * as Segmented from '$lib/components/ui/segmented/index.js';
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -89,7 +95,7 @@
 
 {#snippet statsBadge(stats: DiffStats | undefined)}
   {#if stats && stats.filesChanged > 0}
-    <span class="shrink-0 text-[10px] tabular-nums flex items-center gap-1 leading-none mt-0.5">
+    <span class="shrink-0 text-micro tabular-nums flex items-center gap-1 leading-none mt-0.5">
       {#if stats.additions}<span class="text-green-400">+{stats.additions}</span>{/if}
       {#if stats.deletions}<span class="text-red-400">−{stats.deletions}</span>{/if}
     </span>
@@ -104,7 +110,7 @@
   <div class="pixel-bg flex-1 flex items-center justify-center text-muted-foreground text-xs relative overflow-hidden">
     {#if groveAgent}
       <GroveEmptyState variant="agent" agent={groveAgent} tab="checkpoints">
-        <p class="text-sm mt-5 mb-2 text-foreground/80">No checkpoints yet</p>
+        <p class="font-pixel text-base mt-5 mb-2 text-foreground/90">No checkpoints yet</p>
         <p class="text-xs text-muted-foreground max-w-md">Each message you send saves one before the agent acts on it, so you can see what that turn changed and rewind to it.</p>
       </GroveEmptyState>
     {:else}
@@ -138,7 +144,7 @@
             {/if}
             <button
               onclick={() => checkpointStore.selectCheckpoint(sessionId, cp.uuid)}
-              class="w-full h-7 flex items-center justify-center text-[10px] font-mono border-b border-border/50 border-l-2 transition-colors
+              class="w-full h-7 flex items-center justify-center text-micro font-mono border-b border-border/50 border-l-2 transition-colors
                 {cp.uuid === selectedUuid ? 'bg-sidebar-accent border-l-primary text-foreground' : 'border-l-transparent hover:bg-accent/30 text-muted-foreground'}
                 {cp.beforeClear && cp.uuid !== selectedUuid ? 'opacity-60' : ''}"
               title="#{cp.turn}: {getMessageText(cp.uuid)}"
@@ -176,21 +182,19 @@
             {@const text = getMessageText(cp.uuid)}
             {@const stats = statsByUuid.get(cp.uuid)}
             {#if i === firstBeforeClearIdx}
-              <div
-                class="px-3 py-1 text-[10px] uppercase tracking-wide text-muted-foreground/70 bg-muted/30 border-b border-border/50"
+              <SectionLabel
+                class="px-3 py-1 bg-muted/30 border-b border-border/50"
                 title="Turns from a thread that was cleared with /clear. Their files can still be restored."
               >
                 Before /clear
-              </div>
+              </SectionLabel>
             {/if}
             <button
               onclick={() => checkpointStore.selectCheckpoint(sessionId, cp.uuid)}
               class="w-full flex items-start gap-2 px-3 py-2 text-left text-xs border-b border-border/50 transition-colors
                 {isSelected ? 'bg-sidebar-accent border-l-2 border-l-primary' : 'hover:bg-accent/30'}"
             >
-              <span class="shrink-0 bg-muted text-muted-foreground px-1.5 py-0.5 text-[10px] font-mono leading-none mt-0.5">
-                #{cp.turn}
-              </span>
+              <Badge variant="solid" tone="muted" class="font-mono mt-0.5">#{cp.turn}</Badge>
               <span class="flex-1 min-w-0 truncate leading-tight {cp.beforeClear ? 'text-muted-foreground' : 'text-foreground/80'}">
                 {text.length > 80 ? text.slice(0, 80) + '...' : text}
               </span>
@@ -207,7 +211,7 @@
         <div class="flex-1 flex items-center justify-center text-muted-foreground text-xs">
           {#if groveAgent}
             <GroveEmptyState variant="agent" agent={groveAgent} tab="checkpoints">
-              <p class="text-sm mt-5 mb-2 text-foreground/80">Select a checkpoint to view changes</p>
+              <p class="font-pixel text-base mt-5 mb-2 text-foreground/90">Select a checkpoint to view changes</p>
               <p class="text-xs text-muted-foreground max-w-md">Pick a turn on the left to see what it changed, or All turns for the whole thread.</p>
             </GroveEmptyState>
           {:else}
@@ -216,81 +220,72 @@
         </div>
       {:else}
         <!-- Header -->
-        <div class="border-b border-border px-4 py-2 shrink-0 flex items-center justify-between gap-2">
-          <div class="flex items-center gap-2 min-w-0">
-            {#if isFullThread}
-              <span class="text-xs text-foreground truncate font-medium">Full thread diff</span>
-              {#if hasAnyChanges}
-                <span class="text-[10px] text-muted-foreground shrink-0">
-                  {history.total.filesChanged} file{history.total.filesChanged !== 1 ? 's' : ''}
-                </span>
-                {@render statsBadge(history.total)}
-              {/if}
-            {:else}
-              <span class="bg-muted text-muted-foreground px-1.5 py-0.5 text-[10px] font-mono leading-none shrink-0">
-                #{selectedCheckpoint?.turn}
+        <PanelHeader>
+          {#if isFullThread}
+            <span class="text-xs text-foreground truncate font-medium">Full thread diff</span>
+            {#if hasAnyChanges}
+              <span class="text-micro text-muted-foreground shrink-0">
+                {history.total.filesChanged} file{history.total.filesChanged !== 1 ? 's' : ''}
               </span>
-              <span class="text-xs text-foreground truncate">
-                {getMessageText(selectedUuid)}
-              </span>
+              {@render statsBadge(history.total)}
             {/if}
-          </div>
-          <div class="flex items-center gap-1 shrink-0">
+          {:else}
+            <Badge variant="solid" tone="muted" class="font-mono">#{selectedCheckpoint?.turn}</Badge>
+            <span class="text-xs text-foreground truncate">
+              {getMessageText(selectedUuid)}
+            </span>
+          {/if}
+          {#snippet actions()}
             {#if !isFullThread}
               <!-- Diff mode toggle -->
-              <div class="flex items-center border border-border mr-1" role="group" aria-label="Diff mode">
-                <button
-                  onclick={() => checkpointStore.setDiffMode(sessionId, 'turn')}
-                  class="px-2 py-1 text-[10px] transition-colors {diffMode === 'turn' ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground'}"
-                  title="Show what this turn changed"
-                >
-                  This turn
-                </button>
-                <button
-                  onclick={() => checkpointStore.setDiffMode(sessionId, 'since')}
-                  class="px-2 py-1 text-[10px] transition-colors {diffMode === 'since' ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground'}"
-                  title="Show everything changed since this checkpoint (what a rewind would undo)"
-                >
+              <Segmented.Root
+                bind:value={() => diffMode, (v) => checkpointStore.setDiffMode(sessionId, v as CheckpointDiffMode)}
+                class="mr-1"
+                aria-label="Diff mode"
+              >
+                <Segmented.Item value="turn" title="Show what this turn changed">This turn</Segmented.Item>
+                <Segmented.Item value="since" title="Show everything changed since this checkpoint (what a rewind would undo)">
                   Since here
-                </button>
-              </div>
+                </Segmented.Item>
+              </Segmented.Root>
               {#if selectedBeforeClear}
                 <!-- The conversation this turn belonged to was cleared; only the
                      files can come back. -->
-                <button
+                <Button
+                  size="xs"
                   onclick={() => handleRewind('files')}
                   disabled={rewinding}
-                  class="px-2 py-1 text-[10px] bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
                   title="Restore files to this checkpoint. The thread was cleared, so it is left as is."
                 >
                   {rewinding ? 'Restoring...' : 'Restore files'}
-                </button>
+                </Button>
               {:else}
-                <button
+                <Button
+                  size="xs"
                   onclick={() => handleRewind('all')}
                   disabled={rewinding}
-                  class="px-2 py-1 text-[10px] bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
                   title="Restore files and rewind thread to this point"
                 >
                   {rewinding ? 'Rewinding...' : 'Rewind all'}
-                </button>
-                <button
+                </Button>
+                <Button
+                  size="xs"
+                  variant="secondary"
                   onclick={() => handleRewind('conversation')}
                   disabled={rewinding}
-                  class="px-2 py-1 text-[10px] bg-muted text-muted-foreground hover:text-foreground disabled:opacity-50 transition-colors"
                   title="Only rewind thread, keep current files"
                 >
                   Thread only
-                </button>
+                </Button>
               {/if}
             {/if}
-          </div>
-        </div>
+          {/snippet}
+        </PanelHeader>
 
         {#if error}
-          <div class="px-4 py-2 text-xs text-destructive bg-destructive/10 border-b border-border">
-            {error}
-          </div>
+          <Notice tone="danger" class="shrink-0 border-b border-b-border">
+            <p>{error}</p>
+          </Notice>
         {/if}
 
         <!-- Diff content: the shared review panel (file sidebar + diff) -->

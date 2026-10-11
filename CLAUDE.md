@@ -62,7 +62,9 @@ src/
     styles/            # CSS
   shared/
     types.ts           # Shared types between main/renderer
-docs/                  # Design docs, user stories
+    brand.ts           # Brand palette, status colours, fonts (app, landing, window)
+docs/                  # Design docs, user stories, ui-kit.md, brand/ (logo files)
+BRAND.md               # Brand: logo, palette, type, voice
 DESIGN.md              # Architecture & design document
 TODO.md                # Gap analysis vs competitors
 ```
@@ -114,12 +116,25 @@ Use the user-facing words in any new UI text, help page or doc. See `docs/projec
 - Adapters describe tool calls with a provider-neutral `ToolView`
   (`src/shared/tool-view.ts`); the UI and Read-safe mode read that, never a
   provider's tool names. Events without one are read as Claude Code tools
-- Colours come from the theme tokens in `src/renderer/styles/globals.css`
-  (dark: VS Code Dark Modern, light: Light Modern). Light applies under
-  `prefers-color-scheme: light`, which main sets from the Theme setting
-  (`nativeTheme.themeSource`). Status colours use Tailwind's palette
-  (`text-green-400`); light mode swaps those shades for darker ones, and
-  `light-theme.test.ts` fails if a component uses one with no light value
+- Colours come from the theme tokens in `src/renderer/styles/globals.css`,
+  built from the brand palette in `src/shared/brand.ts` (dark: Night,
+  light: Paper; BRAND.md). Light applies under `prefers-color-scheme: light`,
+  which main sets from the Theme setting (`nativeTheme.themeSource`). Thread
+  status uses the `status-*` tokens (`bg-status-working`), never `bg-primary`:
+  blue is in progress, green done, amber needs you, red failed. Other
+  colours use Tailwind's palette (`text-green-400`) in seven hues (red,
+  amber, yellow, green, cyan, blue, purple); light mode swaps those shades
+  for darker ones, and `light-theme.test.ts` fails if a component uses one
+  with no light value or another hue. `brand.test.ts` fails if
+  `globals.css` drifts from `brand.ts`
+- UI is built from the kit in `src/renderer/lib/components/ui` (docs/ui-kit.md,
+  drawn live at `/ui-kit.html` on the dev server): `Button` sizes `2xs`/`xs`
+  for the app's dense rows (variants include `quiet-destructive` for delete
+  icons and `external` for links that leave the app: green acts, blue goes),
+  `Badge`, `Kbd`, `Tabs`, `Segmented`, `Notice`,
+  `SectionLabel`, `PanelHeader`, `Pulse`, `Logo`. Font sizes come from the
+  scale (`text-micro` 10px, `text-caption` 11px, then Tailwind's), never
+  `text-[10px]`. Import `tv` from `$lib/utils.js`, which knows those sizes
 - Panels, dialogs and tabs that open on demand load on first use via
   `lazyComponent` (`src/renderer/lib/lazy-component.ts`), keeping their code
   (and libraries only they use, such as xterm) out of the startup bundle
