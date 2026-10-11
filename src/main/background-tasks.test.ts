@@ -16,7 +16,7 @@ vi.mock('./worktree-manager.js', () => ({
   worktreeManager: { getAdapterType: vi.fn(), list: vi.fn() },
 }));
 
-import { agentForProject, backgroundModelFor, newestAgent, recordedAgent } from './background-tasks.js';
+import { agentForProject, backgroundAgentFor, backgroundModelFor, newestAgent, recordedAgent } from './background-tasks.js';
 import { worktreeManager } from './worktree-manager.js';
 
 const conversation = (id: string, agentType: string | undefined, lastActiveAt?: number, createdAt = 0) =>
@@ -59,6 +59,23 @@ describe('recordedAgent()', () => {
     expect((await recordedAgent('gone')).id).toBe('claude-code');
     vi.mocked(worktreeManager.getAdapterType).mockResolvedValue('removed-agent');
     expect((await recordedAgent('s2')).id).toBe('claude-code');
+  });
+
+  it("refuses a Claude account that was removed, rather than send its work to another account", async () => {
+    vi.mocked(worktreeManager.getAdapterType).mockResolvedValue('claude-account-work');
+    await expect(recordedAgent('s3')).rejects.toThrow(/Claude account that has been removed \(work\)/);
+    // Still registered (removed this run): its threads keep it.
+    adapters['claude-account-work'] = { id: 'claude-account-work' };
+    expect((await recordedAgent('s3')).id).toBe('claude-account-work');
+  });
+});
+
+describe('backgroundAgentFor()', () => {
+  it('gives no agent for a removed Claude account, and the default for anything else unknown', () => {
+    expect(backgroundAgentFor('claude-account-work')).toBeNull();
+    expect(backgroundAgentFor('removed-agent')?.id).toBe('claude-code');
+    expect(backgroundAgentFor(undefined)?.id).toBe('claude-code');
+    expect(backgroundAgentFor('codex')?.id).toBe('codex');
   });
 });
 

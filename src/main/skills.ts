@@ -16,10 +16,16 @@ import path from 'node:path';
 import type { SkillDefinition, SkillInfo } from '../shared/types.js';
 
 /** Where an agent keeps skills, relative to the project and to the user's
- *  home directory (often the same, e.g. `.claude/skills`). */
+ *  home directory (often the same, e.g. `.claude/skills`). `user` may be an
+ *  absolute path instead, such as a Claude account's own folder. */
 export interface SkillDirs {
   project: string;
   user: string;
+}
+
+/** The user-level skills folder of `dirs`. */
+function userSkillsDir(dirs: SkillDirs): string {
+  return path.isAbsolute(dirs.user) ? dirs.user : path.join(os.homedir(), dirs.user);
 }
 
 /** Claude Code's skill folders. */
@@ -88,7 +94,7 @@ export function scanSkillsDir(dir: string, source: SkillInfo['source']): SkillIn
  */
 export function listSkills(worktreePath: string, dirs: SkillDirs = CLAUDE_SKILL_DIRS): SkillInfo[] {
   const project = scanSkillsDir(path.join(worktreePath, dirs.project), 'project');
-  const user = scanSkillsDir(path.join(os.homedir(), dirs.user), 'user');
+  const user = scanSkillsDir(userSkillsDir(dirs), 'user');
   const byName = new Map<string, SkillInfo>();
   for (const skill of [...user, ...project]) {
     byName.set(skill.name, skill); // project entries overwrite user entries
@@ -134,7 +140,7 @@ export function writeSkill(worktreePath: string, def: SkillDefinition, dirs: Ski
   if (!def.description.trim()) throw new Error('Skill description is required');
   if (!def.instructions.trim()) throw new Error('Skill instructions are required');
 
-  const root = def.scope === 'project' ? path.join(worktreePath, dirs.project) : path.join(os.homedir(), dirs.user);
+  const root = def.scope === 'project' ? path.join(worktreePath, dirs.project) : userSkillsDir(dirs);
   const skillDir = path.join(root, def.name);
   const manifestPath = path.join(skillDir, 'SKILL.md');
   if (fs.existsSync(manifestPath)) {

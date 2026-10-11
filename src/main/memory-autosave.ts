@@ -3,8 +3,7 @@ import * as memory from './memory.js';
 import * as memoryCompact from './memory-compact.js';
 import * as settings from './settings.js';
 import { subagentParent, type AgentEvent } from '../shared/types.js';
-import { adapterRegistry } from './adapters/index.js';
-import { backgroundModelFor } from './background-tasks.js';
+import { backgroundAgentFor, backgroundModelFor } from './background-tasks.js';
 import { eventsSinceAgentChange } from './agent-handoff.js';
 
 // ─── Types ───
@@ -242,7 +241,11 @@ async function runExtraction(
   sessionId: string,
   adapterType?: string,
 ): Promise<ExtractionResult | null> {
-  const adapter = adapterType ? (adapterRegistry.get(adapterType) ?? adapterRegistry.getDefault()) : adapterRegistry.getDefault();
+  const adapter = backgroundAgentFor(adapterType);
+  if (!adapter) {
+    logger.info(`[memory-autosave] The Claude account "${adapterType}" was removed, so extraction is skipped`);
+    return null;
+  }
 
   // If the adapter doesn't support text generation, skip extraction
   if (!adapter.generateText) {

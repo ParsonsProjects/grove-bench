@@ -16,6 +16,7 @@
  */
 import crypto from 'node:crypto';
 import type { AcpAgentSetting } from '../../../shared/types.js';
+import { slugify } from '../../../shared/slug.js';
 import type { AcpAgentDefinition } from './acp-adapter.js';
 import { openCodeEnv, verifyOpenRouterKey } from './opencode.js';
 import { verifyGeminiKey } from './gemini.js';
@@ -89,10 +90,6 @@ export const ACP_PRESETS: AcpAgentDefinition[] = [
 /** Adapter ids of the user's own ACP agents carry this prefix, so they can't
  *  take a built-in id. */
 export const CUSTOM_ACP_PREFIX = 'acp-';
-
-function slugify(text: string | undefined): string {
-  return (text ?? '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
-}
 
 /** Definitions for the user's own agents. Entries without a command, or that
  *  repeat an id, are skipped. The id comes from the first of id, name and
