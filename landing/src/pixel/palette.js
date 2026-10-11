@@ -1,11 +1,11 @@
 // Colour helpers and the grove palette.
 //
-// Every colour here is derived from the brand: the tree greens and trunk
-// browns of the pixel logo, the blue primary, the status colours and the
-// neutral greys of the app theme. Sky palettes are interpolations between the
-// primary blue and the permission amber in OKLab.
+// Every colour here is derived from the brand (src/renderer/lib/brand.ts):
+// the tree greens and trunk browns of the pixel logo, brand green, the sky
+// and sun, the status colours and the app theme's warm neutrals. Sky palettes
+// are interpolations between the deep sky blue and the sun in OKLab.
 
-import { treeGreens, statusColors } from '../lib/brand.js';
+import { PALETTE, NIGHT, PAPER, statusColors } from '../lib/brand.js';
 
 // ---------------------------------------------------------------------------
 // Conversions (sRGB <-> OKLab / OKLCH)
@@ -86,22 +86,34 @@ export function rgba(hex, alpha) {
 // ---------------------------------------------------------------------------
 // Brand base colours
 
-const PRIMARY_HUE = 254.624;
-export const primary = oklch(0.541, 0.181, PRIMARY_HUE); // statusColors.working
-export const amber = statusColors.permission;
-export const green = statusColors.ready;
+/** OKLCH hue of a hex colour, in degrees. */
+function hueOf(hex) {
+  const [, a, b] = rgbToOklab(hexToRgb(hex));
+  return ((Math.atan2(b, a) * 180) / Math.PI + 360) % 360;
+}
 
-const leafFills = [...new Set(treeGreens.filter((p) => p.y < 15).map((p) => p.fill))];
-// ['#6ec87a', '#5ab868', '#4aaa58', '#3a9a48'] light to dark
-export const leaves = leafFills;
-export const woodLight = '#8a6a4a';
-export const woodDark = '#6a5040';
+// Brand green is the accent: forest on the light page (white text reads on
+// it), leaf on dark ground and in the app's dark windows.
+export const primary = PALETTE.forest;
+export const primaryOnDark = PALETTE.leaf;
+// The sky's blue: the light theme's deep sky, the hue of every sky band.
+const SKY_HUE = hueOf(PALETTE.skyDeep);
+export const sky = PALETTE.sky;
+export const amber = statusColors.attention; // the sun: needs you
+// Brand green as a status: work happening, the grove growing.
+export const green = statusColors.working;
+
+// The logo's leaves, light to dark (PIXEL_TREE), and its trunk and roots.
+export const leaves = [PALETTE.sprout, PALETTE.leaf, PALETTE.moss, PALETTE.fern];
+export const woodLight = PALETTE.bark;
+export const woodDark = PALETTE.root;
 
 export const C = {
   primary,
-  primaryLight: oklch(0.7, 0.14, PRIMARY_HUE),
-  primaryPale: oklch(0.87, 0.07, PRIMARY_HUE),
-  screen: oklch(0.78, 0.11, PRIMARY_HUE - 20),
+  primaryLight: primaryOnDark,
+  primaryPale: PAPER.accent,
+  screen: adjust(sky, 0.06),
+  sky,
   amber,
   amberLight: mix(amber, '#ffffff', 0.45),
   green,
@@ -115,43 +127,41 @@ export const C = {
   woodDeep: mix(woodDark, '#141010', 0.45),
   woodPale: mix(woodLight, '#ffffff', 0.3),
   cream: mix(woodLight, '#ffffff', 0.84),
-  ink: '#111111',
-  // Stone greys are the app's neutral greys nudged toward the primary hue.
-  stoneLight: mix('#a8a8a8', primary, 0.08),
-  stone: mix('#797979', primary, 0.08),
-  stoneDark: mix('#4a4a4a', primary, 0.1),
-  stoneDeep: mix('#2a2a2a', primary, 0.12),
-  moss: mix(leaves[3], '#797979', 0.35),
+  ink: NIGHT.sidebar,
+  // Stone greys are the app theme's warm neutrals (NIGHT, PAPER).
+  stoneLight: NIGHT.mutedForeground,
+  stone: PAPER.subtle,
+  stoneDark: mix(NIGHT.input, PAPER.subtle, 0.35),
+  stoneDeep: NIGHT.muted,
+  moss: mix(leaves[3], PAPER.subtle, 0.35),
   // Meadow and path.
   grassTop: leaves[1],
   grass: leaves[2],
   grassDark: leaves[3],
   meadow: mix(leaves[3], '#16241c', 0.45),
   meadowDeep: mix(leaves[3], '#0c120f', 0.72),
-  path: mix(woodLight, '#c9c9c9', 0.35),
-  pathDark: mix(woodDark, '#797979', 0.3),
-  pathEdge: mix(woodDark, '#2a2a2a', 0.2),
+  path: mix(woodLight, PAPER.input, 0.35),
+  pathDark: mix(woodDark, PAPER.subtle, 0.3),
+  pathEdge: mix(woodDark, NIGHT.muted, 0.2),
   skin: mix(mix(woodLight, amber, 0.2), '#ffffff', 0.45),
   skinShade: mix(mix(woodLight, amber, 0.2), '#ffffff', 0.2),
-  laptop: mix('#a8a8a8', primary, 0.12),
-  laptopEdge: mix('#5a5a5a', primary, 0.15),
-  pants: mix('#2a2a2a', primary, 0.25),
-  shoes: '#1e1e1e',
+  laptop: NIGHT.mutedForeground,
+  laptopEdge: mix(NIGHT.input, PAPER.subtle, 0.5),
+  // Denim: the dark neutral with some deep sky in it.
+  pants: mix(NIGHT.muted, PALETTE.skyDeep, 0.25),
+  shoes: NIGHT.sidebar,
 };
 
-export const statusHex = {
-  working: primary,
-  permission: amber,
-  ready: green,
-};
+/** Thread status colours, in the app windows' (dark) theme. */
+export const statusHex = { ...statusColors };
 
 // Agent looks: hoodie + hair. Hoodies use brand colours.
 export const looks = [
-  { hoodie: primary, hair: mix(woodDark, '#111111', 0.5) },
-  { hoodie: leaves[2], hair: '#1e1e1e' },
+  { hoodie: sky, hair: mix(woodDark, NIGHT.sidebar, 0.5) },
+  { hoodie: leaves[2], hair: NIGHT.sidebar },
   { hoodie: woodLight, hair: mix(woodLight, amber, 0.55) },
-  { hoodie: mix(primary, leaves[2], 0.5), hair: mix(woodDark, '#111111', 0.2), beanie: amber },
-  { hoodie: '#797979', hair: mix(amber, '#ffffff', 0.5) },
+  { hoodie: mix(sky, leaves[2], 0.5), hair: mix(woodDark, NIGHT.sidebar, 0.2), beanie: amber },
+  { hoodie: PAPER.subtle, hair: mix(amber, '#ffffff', 0.5) },
 ];
 
 /** Per-tree leaf palette with a small hue/lightness variation. */
@@ -177,8 +187,8 @@ export const oldTreePalette = (() => {
     hi: mix(lv[0], '#dfe8ff', 0.3),
     seam: adjust(C.leafSeam, -0.08, 12),
     deep: adjust(C.leafDeep, -0.06, 12),
-    trunk: mix(woodDark, '#797979', 0.2),
-    trunkHi: mix(woodLight, '#797979', 0.3),
+    trunk: mix(woodDark, PAPER.subtle, 0.2),
+    trunkHi: mix(woodLight, PAPER.subtle, 0.3),
     trunkLo: C.woodDeep,
     root: C.woodDeep,
     rootLo: mix(C.woodDeep, '#000000', 0.3),
@@ -197,11 +207,11 @@ const SKY_NIGHT = [
   oklch(0.175, 0.054, 260),
   oklch(0.19, 0.06, 258),
   oklch(0.21, 0.066, 256),
-  oklch(0.235, 0.07, PRIMARY_HUE),
+  oklch(0.235, 0.07, SKY_HUE),
   oklch(0.265, 0.074, 252),
 ].map(lab);
 
-// Blue primary to permission amber, the long way round through violet.
+// Deep sky blue to the sun, the long way round through violet.
 const SKY_DAWN = [
   oklch(0.3, 0.085, 262),
   oklch(0.35, 0.09, 276),
@@ -214,7 +224,7 @@ const SKY_DAWN = [
 ].map(lab);
 
 const SKY_DAY = [
-  oklch(0.6, 0.12, PRIMARY_HUE - 2),
+  oklch(0.6, 0.12, SKY_HUE - 2),
   oklch(0.64, 0.115, 250),
   oklch(0.68, 0.105, 247),
   oklch(0.72, 0.095, 244),

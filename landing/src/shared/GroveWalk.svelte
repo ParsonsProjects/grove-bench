@@ -4,7 +4,7 @@
     AGENT_SPRITES, SIDE_WALK_MAPS, SIDE_WALK_W, SIDE_WALK_H, SPRITE_W, SPRITE_H, toRuns, agentColors,
     WALK_BACK, WALK_FRONT, WALK_VIEW_W, WALK_VIEW_H, WALK_GROUND_Y, WALK_FRAME_SECONDS,
     WAKE_PATH_HEAD_START_SECONDS, WAKE_AWAKE_AT_MS, WAKE_WALK_AT_MS,
-    BENCH_PATH_OFFSET, ARRIVE_PATH_FROM, ARRIVE_SIT_AT_MS, ARRIVE_TYPE_AT_MS, wakePhase, arrivePhase,
+    BENCH_PATH_OFFSET, ARRIVE_PATH_FROM, ARRIVE_SIT_AT_MS, ARRIVE_TYPE_AT_MS, wakePhase, arrivePhase, PALETTE,
   } from './app-art.js';
   import { stateColor } from './colors.js';
 
@@ -80,7 +80,7 @@
       </g>
     {/each}
   {/key}
-  <rect x="0" y={WALK_GROUND_Y} width={WALK_VIEW_W} height="1" fill="#3a9a48" opacity="0.45" />
+  <rect x="0" y={WALK_GROUND_Y} width={WALK_VIEW_W} height="1" fill={PALETTE.fern} opacity="0.45" />
   {#if !seated}
     <svg x={agentX} y={agentY} width={SIDE_WALK_W} height={SIDE_WALK_H} viewBox="0 0 {SIDE_WALK_W} {SIDE_WALK_H}" style="color: {color}; --frame: {WALK_FRAME_SECONDS}s; --frame-w: {SIDE_WALK_W}px">
       <g class="strip">

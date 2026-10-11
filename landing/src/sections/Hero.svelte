@@ -75,7 +75,7 @@
       p.resolved = choice === 'deny' ? 'denied' : 'allowed';
       c.state = 'working';
       c.line = choice === 'deny' ? 'Working…' : 'Bash: npm test';
-      c.lineTone = 'blue';
+      c.lineTone = 'working';
       if (choice !== 'deny') c.items.push({ kind: 'bash', cmd: 'npm test', running: true });
       setTimeout(() => {
         const bash = c.items.findLast((i) => i.kind === 'bash');
@@ -214,7 +214,7 @@
     position: relative;
     z-index: 1;
     overflow: hidden;
-    background: oklch(0.176 0 0);
+    background: var(--side);
     box-shadow:
       0 0 0 1px rgb(58 42 28 / 0.2),
       0 24px 40px -20px rgb(58 42 28 / 0.45);
@@ -227,8 +227,8 @@
     flex-direction: column;
     gap: 10px;
     padding: 14px 12px 16px;
-    background: oklch(0.208 0 0);
-    border-top: 1px solid oklch(0.26 0 0);
+    background: var(--bg);
+    border-top: 1px solid var(--border);
   }
   /* What the pointed-at conversation is doing, like a sidebar row. */
   .caption {

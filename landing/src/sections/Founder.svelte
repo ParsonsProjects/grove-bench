@@ -45,7 +45,7 @@
   }
   .tabs {
     display: flex;
-    background: oklch(0.176 0 0);
+    background: var(--side);
     border-bottom: 1px solid var(--border);
   }
   .tabs span {
@@ -79,7 +79,7 @@
     font-size: clamp(17px, 0.8vw + 12px, 21px);
     font-weight: 700;
     line-height: 1.35;
-    color: #fff;
+    color: var(--bright);
   }
   .screen > p:last-child {
     margin-top: 1.1em;
@@ -94,7 +94,7 @@
   .links a {
     display: inline-block;
     padding-block: 6px;
-    color: var(--blue-ink);
+    color: var(--link);
   }
   @media (max-width: 760px) {
     .screen {
