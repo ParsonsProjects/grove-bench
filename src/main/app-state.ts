@@ -67,6 +67,16 @@ export interface AppState {
   projects?: string[];
   /** Conversation groups from the sidebar. Absent until the first one. */
   groups?: ConversationGroup[];
+  /** Estimated spend so far on `day` (local YYYY-MM-DD) across threads, for
+   *  the daily spend limit, and where the limit stands once the user chose
+   *  to continue past it that day. */
+  dailySpend?: DailySpend;
+}
+
+export interface DailySpend {
+  day: string;
+  usd: number;
+  allowanceUsd?: number;
 }
 
 const DEFAULT_STATE: AppState = {
@@ -163,6 +173,11 @@ const appStateSchema = z.object({
   })).optional().catch(undefined),
   projects: z.array(z.string()).optional().catch(undefined),
   groups: groupsSchema.optional().catch(undefined),
+  dailySpend: z.object({
+    day: z.string(),
+    usd: z.number().finite().nonnegative(),
+    allowanceUsd: z.number().finite().nonnegative().optional(),
+  }).optional().catch(undefined),
 }) satisfies z.ZodType<AppState, unknown>;
 
 /** Normalize a raw object into a valid AppState. Never throws. */
@@ -267,6 +282,7 @@ const collapsedPanelsWriter = debouncedWriter<CollapsedPanels>((s, v) => { s.col
 const unreadWriter = debouncedWriter<string[]>((s, v) => { s.unreadSessionIds = v; });
 const groupsWriter = debouncedWriter<ConversationGroup[]>((s, v) => { s.groups = v; });
 const usageWriter = debouncedWriter<Record<string, ProviderUsage>>((s, v) => { s.usageSnapshots = v; });
+const dailySpendWriter = debouncedWriter<DailySpend>((s, v) => { s.dailySpend = v; });
 
 export function saveOpenTabs(ids: string[]): void {
   openTabsWriter.save(ids);
@@ -377,6 +393,26 @@ export function saveUsageSnapshot(adapterId: string, usage: ProviderUsage): void
   usageSnapshots ??= { ...(loadAppState().usageSnapshots ?? {}) };
   usageSnapshots = { ...usageSnapshots, [adapterId]: usage };
   usageWriter.save(usageSnapshots);
+}
+
+/** In memory once read, like usageSnapshots: every turn's result adds to it. */
+let dailySpend: DailySpend | null | undefined;
+
+/** Today's spend record as last saved (any day; the caller checks it). */
+export function loadDailySpend(): DailySpend | null {
+  if (dailySpend === undefined) dailySpend = loadAppState().dailySpend ?? null;
+  return dailySpend;
+}
+
+/** Debounced: a turn ends in every thread that is running. */
+export function saveDailySpend(spend: DailySpend): void {
+  dailySpend = spend;
+  dailySpendWriter.save(spend);
+}
+
+/** Test hook: forget the cached daily spend. */
+export function resetDailySpendCache(): void {
+  dailySpend = undefined;
 }
 
 /** The saved groups, or null when the file exists but can't be read right

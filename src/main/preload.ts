@@ -69,6 +69,10 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.AGENT_PERMISSION, sessionId, decision),
   respondToElicitation: (sessionId: string, requestId: string, response: import('../shared/types.js').McpElicitationResponse) =>
     ipcRenderer.invoke(IPC.AGENT_ELICITATION, sessionId, requestId, response),
+  respondToLimit: (sessionId: string, requestId: string, decision: 'continue' | 'stop') =>
+    ipcRenderer.invoke(IPC.AGENT_LIMIT, sessionId, requestId, decision) as Promise<boolean>,
+  getDailySpend: () =>
+    ipcRenderer.invoke(IPC.LIMITS_DAILY_SPEND) as Promise<number>,
   onAgentEvent: (sessionId: string, callback: (event: import('../shared/types.js').AgentEvent) => void) => {
     const channel = `${IPC.AGENT_EVENT}:${sessionId}`;
     const handler = (_event: Electron.IpcRendererEvent, data: import('../shared/types.js').AgentEvent) =>

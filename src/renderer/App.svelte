@@ -20,6 +20,7 @@
   import WorkspacePane from './components/WorkspacePane.svelte';
   import ErrorToast from './components/ErrorToast.svelte';
   import MemoryToast from './components/MemoryToast.svelte';
+  import PlanUsageToast from './components/PlanUsageToast.svelte';
   import { memoryStore } from './stores/memory.svelte.js';
   import { prerequisitesStore } from './stores/prerequisites.svelte.js';
   import { lazyComponent } from './lib/lazy-component.js';
@@ -591,6 +592,7 @@
 
 <ErrorToast />
 <MemoryToast />
+<PlanUsageToast />
 
 <BookmarksDrawer />
 <!-- Mounted from its first opening on, so closing plays its transition.

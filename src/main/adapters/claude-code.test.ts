@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import path from 'node:path';
 import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS, thinkingConfigFor, parseMcpListOutput, mcpServerManager, claudeMcpOrigin, mcpToolServerKey, mcpContextCostByServer, toMcpElicitationRequest, withMcpjsonApproval, mcpjsonApprovalsFrom, buildMcpAddArgs, quoteArg, validatePluginId, validateConfigScope, capToolResult, claudeControlsFor, supportsAdaptiveThinking, supportsFastMode, supportsAutoMode, claudeModelCaps, effortFor, reasoningOptionsFor, toSdkPermissionMode, fromSdkSyncMode, stripAnsi, mapClaudeUsage, thinkingDisplayFor, TEXT_GENERATION_OPTIONS, missingConversationError } from './claude-code.js';
 import type { AgentEvent } from '../../shared/types.js';
+import { RunningCost } from './running-cost.js';
+import { limitHook, LIMIT_STOP_REASON } from './claude-code.js';
 
 // ─── isPathInside (sandbox allowWrite containment) ───
 
@@ -1034,10 +1036,23 @@ describe('transformMessage()', () => {
         type: 'result',
         subtype: 'success',
         totalCostUsd: 0.05,
+        sessionCostUsd: 0.05,
         durationMs: 3000,
         isError: false,
         numTurns: 3,
       });
+    });
+
+    it('reports each turn\'s cost from the SDK\'s running total', () => {
+      const ctx = { ...makeCtx(), cost: new RunningCost() };
+      const result = (total: number) => transformMessage(
+        { type: 'result', subtype: 'success', total_cost_usd: total, duration_ms: 1, is_error: false, num_turns: 1 } as any,
+        ctx,
+      )[0];
+      expect(result(0.05)).toMatchObject({ totalCostUsd: 0.05, sessionCostUsd: 0.05 });
+      const second = result(0.08) as Extract<AgentEvent, { type: 'result' }>;
+      expect(second.totalCostUsd).toBeCloseTo(0.03);
+      expect(second.sessionCostUsd).toBe(0.08);
     });
   });
 
@@ -1095,5 +1110,31 @@ describe('TEXT_GENERATION_OPTIONS', () => {
 
   it('stays out of plan mode, whose reminder sends the model exploring', () => {
     expect(TEXT_GENERATION_OPTIONS.permissionMode).toBe('dontAsk');
+  });
+});
+
+// ─── limitHook (Grove's limits, before each tool call) ───
+
+describe('limitHook()', () => {
+  const input = { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: {}, tool_use_id: 'tu_1', session_id: 's', transcript_path: '', cwd: '' } as any;
+  const signal = new AbortController().signal;
+
+  it('lets the call go ahead with no decision while no limit is reached', async () => {
+    const before = vi.fn().mockResolvedValue('continue');
+    await expect(limitHook(before)(input, 'tu_1', { signal })).resolves.toEqual({});
+    expect(before).toHaveBeenCalledWith({ toolName: 'Bash', toolUseId: 'tu_1' });
+  });
+
+  it('denies the call when the user stops at a limit', async () => {
+    const out = await limitHook(vi.fn().mockResolvedValue('stop'))(input, 'tu_1', { signal });
+    expect(out).toEqual({
+      hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: LIMIT_STOP_REASON },
+    });
+  });
+
+  it('ignores other hook events', async () => {
+    const before = vi.fn();
+    await expect(limitHook(before)({ ...input, hook_event_name: 'PostToolUse' }, 'tu_1', { signal })).resolves.toEqual({});
+    expect(before).not.toHaveBeenCalled();
   });
 });

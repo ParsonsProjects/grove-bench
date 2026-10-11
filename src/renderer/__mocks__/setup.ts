@@ -25,6 +25,8 @@ const mockGroveBench = {
   offAgentEvent: vi.fn(),
   respondToPermission: vi.fn().mockResolvedValue(true),
   respondToElicitation: vi.fn().mockResolvedValue(true),
+  respondToLimit: vi.fn().mockResolvedValue(true),
+  getDailySpend: vi.fn().mockResolvedValue(0),
   setMode: vi.fn().mockResolvedValue(undefined),
   getControls: vi.fn().mockResolvedValue({ descriptors: [], values: {} }),
   setControl: vi.fn().mockResolvedValue(undefined),

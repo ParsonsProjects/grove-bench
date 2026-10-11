@@ -859,6 +859,63 @@ describe('AgentSessionManager event processing', () => {
   });
 });
 
+describe('AgentSessionManager limits', () => {
+  // As the settings mock at the top of this file returns them.
+  const baseSettings = () => ({ defaultSystemPromptAppend: null, toolAllowRules: [], toolDenyRules: [], cavemanMode: 'off' });
+  afterEach(() => {
+    settingsMock.getSettings.mockImplementation(baseSettings);
+  });
+
+  it('pauses before a tool call past the limit and stops the turn when the user stops', async () => {
+    settingsMock.getSettings.mockImplementation(() => ({ ...baseSettings(), turnToolCallLimit: 1 }));
+    const win = makeMockWindow();
+    await sessionManager.createSession({ id: 'test-limit', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock' });
+    await vi.waitFor(() => expect(mockAdapter.lastConfig?.beforeToolUse).toBeDefined());
+    const before = mockAdapter.lastConfig!.beforeToolUse!;
+
+    await sessionManager.sendMessage('test-limit', 'go');
+    await expect(before({ toolName: 'Bash', toolUseId: 'tu_1' })).resolves.toBe('continue');
+    const second = before({ toolName: 'Bash', toolUseId: 'tu_2' });
+
+    const request = sessionManager.getEventHistory('test-limit').find((e) => e.type === 'limit_request');
+    expect(request).toMatchObject({ type: 'limit_request', limit: 'turnToolCalls', used: 1, reachedAt: 1 });
+    expect(sessionManager.respondToLimit('test-limit', (request as { requestId: string }).requestId, 'stop')).toBe(true);
+    await expect(second).resolves.toBe('stop');
+    await vi.waitFor(() => expect(mockAdapter.lastHandle!.interrupt).toHaveBeenCalled());
+    expect(sessionManager.getEventHistory('test-limit').find((e) => e.type === 'limit_resolved')).toMatchObject({ decision: 'stop' });
+
+    await sessionManager.destroySession('test-limit');
+  });
+
+  it('adds what each turn cost to the thread\'s spend', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({ id: 'test-spend', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock' });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false, totalCostUsd: 0.4, sessionCostUsd: 0.4 });
+    mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false, totalCostUsd: 0.1, sessionCostUsd: 0.5 });
+    await vi.waitFor(() => expect(sessionManager.getSession('test-spend')!.limits.threadSpendUsd).toBeCloseTo(0.5));
+
+    await sessionManager.destroySession('test-spend');
+  });
+
+  it('settles a limit question when the user clicks Stop', async () => {
+    settingsMock.getSettings.mockImplementation(() => ({ ...baseSettings(), turnToolCallLimit: 1 }));
+    const win = makeMockWindow();
+    await sessionManager.createSession({ id: 'test-limit-stop', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock' });
+    await vi.waitFor(() => expect(mockAdapter.lastConfig?.beforeToolUse).toBeDefined());
+    const before = mockAdapter.lastConfig!.beforeToolUse!;
+    await sessionManager.sendMessage('test-limit-stop', 'go');
+    await before({ toolName: 'Bash', toolUseId: 'tu_1' });
+    const waiting = before({ toolName: 'Bash', toolUseId: 'tu_2' });
+
+    await sessionManager.interruptQuery('test-limit-stop');
+    await expect(waiting).resolves.toBe('stop');
+    expect(sessionManager.getSession('test-limit-stop')!.limits.pending).toBeNull();
+
+    await sessionManager.destroySession('test-limit-stop');
+  });
+});
+
 describe('AgentSessionManager.respondToPermission()', () => {
   it('returns false for non-existent session', () => {
     const result = sessionManager.respondToPermission('nonexistent', {

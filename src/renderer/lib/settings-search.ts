@@ -8,6 +8,7 @@ export const SETTINGS_SECTIONS = [
   { id: 'permissions', grove: 'The gate', label: 'Permissions', description: 'What agents may do without asking you first.' },
   { id: 'git', grove: 'Branches & roots', label: 'Git & worktrees', description: 'How new threads get their branch and worktree.' },
   { id: 'notifications', grove: 'Bells', label: 'Notifications', description: 'Desktop notifications and taskbar alerts.' },
+  { id: 'limits', grove: 'Fences', label: 'Limits & alerts', description: 'Plan usage alerts, and limits on spend and long turns that pause a thread to ask you.' },
   { id: 'background', grove: 'Tending', label: 'Background work', description: 'Project memory, skill suggestions, thread goals and sleeping idle threads.' },
   { id: 'mcp', grove: 'Tool shed', label: 'MCP servers', description: 'Servers that give agents extra tools.' },
   { id: 'plugins', grove: 'Seed packets', label: 'Plugins', description: 'Add and manage plugins.' },
@@ -58,11 +59,18 @@ export const SETTINGS_INDEX: readonly SettingsEntry[] = [
   { id: 'auto-install-deps', section: 'git', label: 'Auto-install dependencies', keywords: 'npm install' },
 
   { id: 'notify-turn-complete', section: 'notifications', label: 'Agent finishes a turn', keywords: 'done' },
-  { id: 'notify-permission', section: 'notifications', label: 'Agent is waiting on a permission or question', keywords: 'needs you' },
+  { id: 'notify-permission', section: 'notifications', label: 'Agent is waiting on a permission, question or limit', keywords: 'needs you paused' },
   { id: 'notify-pr-alert', section: 'notifications', label: 'PR activity', keywords: 'pull request ci review comments' },
+  { id: 'notify-plan-usage', section: 'notifications', label: 'Plan usage reaches your alert level', keywords: 'rate limit 5-hour weekly warning' },
   { id: 'notify-test', section: 'notifications', label: 'Send a test notification', keywords: 'check working focus assist do not disturb' },
   { id: 'taskbar-flash', section: 'notifications', label: 'Flash the taskbar button' },
   { id: 'taskbar-badge', section: 'notifications', label: 'Badge the taskbar icon', keywords: 'count' },
+
+  { id: 'plan-usage-alert', section: 'limits', label: 'Plan usage alert', keywords: 'rate limit 5-hour weekly percent warning runway' },
+  { id: 'thread-spend-limit', section: 'limits', label: 'Spend limit per thread', keywords: 'cost budget dollars money cap pause' },
+  { id: 'daily-spend-limit', section: 'limits', label: 'Daily spend limit', keywords: 'cost budget dollars money cap day today pause' },
+  { id: 'turn-tool-call-limit', section: 'limits', label: 'Tool calls per turn', keywords: 'runaway steps cap pause' },
+  { id: 'turn-minutes-limit', section: 'limits', label: 'Minutes per turn', keywords: 'time runaway cap long pause' },
 
   { id: 'memory-auto-save', section: 'background', label: 'Auto-save project memory' },
   { id: 'memory-auto-compact', section: 'background', label: 'Auto-compact project memory' },

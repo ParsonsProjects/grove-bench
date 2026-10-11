@@ -2,7 +2,7 @@
  * Claude Code adapter — wraps the @anthropic-ai/claude-agent-sdk.
  */
 import type { ControlDescriptor, ControlOption, McpServerInfo, McpConfiguredServer, McpAddServerOpts, McpConfigScope, McpElicitationRequest, McpServerContextCost, McpServerManager, McpSupport, ImageMediaType, PermissionMode, ProviderUsage, SkillDefinition, ThinkingLevel, ToolCategory, UsageWindow } from '../../shared/types.js';
-import { CONTROL_IDS, THINKING_LEVELS } from '../../shared/types.js';
+import { CONTROL_IDS, PERMISSION_TIMEOUT_MINUTES, THINKING_LEVELS } from '../../shared/types.js';
 import type {
   AgentAdapter,
   AgentCapabilities,
@@ -27,6 +27,7 @@ import { createMemoryMcpServer, GROVE_MEMORY_TOOL_NAMES } from './memory-mcp-ser
 import { createPreviewMcpServer, GROVE_PREVIEW_READ_TOOL_NAMES } from './preview-mcp-server.js';
 import * as skillsModule from '../skills.js';
 import { logger } from '../logger.js';
+import { RunningCost } from './running-cost.js';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import * as path from 'node:path';
@@ -45,6 +46,7 @@ type SDKUserMessage = Extract<SDKMessage, { type: 'user' }>;
 type SpawnOptions = import('@anthropic-ai/claude-agent-sdk').SpawnOptions;
 type SpawnedProcess = import('@anthropic-ai/claude-agent-sdk').SpawnedProcess;
 type SdkElicitationRequest = import('@anthropic-ai/claude-agent-sdk').ElicitationRequest;
+type HookCallback = import('@anthropic-ai/claude-agent-sdk').HookCallback;
 
 /**
  * Custom spawn used for the SDK's `spawnClaudeCodeProcess` hook.
@@ -168,6 +170,9 @@ interface MessageContext {
    *  SDK runs in 'acceptEdits' while Grove is in 'readSafe', so SDK-reported
    *  'acceptEdits' mode_syncs are translated back to 'readSafe'. */
   groveMode?: PermissionMode;
+  /** Turns the query's running cost total into each turn's cost. Without
+   *  one, each result is read as the first of a new conversation. */
+  cost?: RunningCost;
 }
 
 /** Strip ANSI escape sequences from provider-authored text before it is
@@ -175,6 +180,33 @@ interface MessageContext {
 const ANSI_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
 export function stripAnsi(text: string): string {
   return text.replace(ANSI_RE, '');
+}
+
+/** Told to the model when a tool call is refused because the user stopped
+ *  at a limit; the turn is being stopped too. */
+export const LIMIT_STOP_REASON = 'The user stopped this turn at a limit they set in Grove Bench (spend, tool calls or time). Do not retry.';
+
+/**
+ * A PreToolUse hook for Grove's limits (AdapterConfig.beforeToolUse).
+ * PreToolUse fires on every tool call, ahead of the permission flow
+ * (https://code.claude.com/docs/en/hooks), unlike canUseTool, which only
+ * hears about the calls that need asking. Holds the call while a reached
+ * limit is put to the user and refuses it if they stop. Returning no
+ * decision leaves the call to the normal permission flow.
+ */
+export function limitHook(beforeToolUse: NonNullable<AdapterConfig['beforeToolUse']>): HookCallback {
+  return async (input, toolUseID) => {
+    if (input.hook_event_name !== 'PreToolUse') return {};
+    const decision = await beforeToolUse({ toolName: input.tool_name, toolUseId: input.tool_use_id || toolUseID || '' });
+    if (decision === 'continue') return {};
+    return {
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'deny',
+        permissionDecisionReason: LIMIT_STOP_REASON,
+      },
+    };
+  };
 }
 
 /** Map Grove Bench permission modes to what the SDK understands. 'readSafe'
@@ -502,12 +534,19 @@ export function transformMessage(
           }, undefined)
         : undefined;
       const contextWindow = mainUsage?.contextWindow;
+      // total_cost_usd is the query's running total, not this turn's.
+      const runningCost = typeof message.total_cost_usd === 'number' && Number.isFinite(message.total_cost_usd)
+        ? message.total_cost_usd
+        : undefined;
       events.push({
         type: 'result',
         subtype: message.subtype,
         result: 'result' in message ? (message as any).result : undefined,
         structured_output: 'structured_output' in message ? (message as any).structured_output : undefined,
-        totalCostUsd: message.total_cost_usd,
+        ...(runningCost !== undefined ? {
+          totalCostUsd: (ctx.cost ?? new RunningCost()).turnCost(runningCost, message.is_error),
+          sessionCostUsd: runningCost,
+        } : {}),
         durationMs: message.duration_ms,
         isError: message.is_error,
         errors: 'errors' in message ? (message as any).errors : undefined,
@@ -1752,6 +1791,16 @@ export class ClaudeCodeAdapter implements AgentAdapter {
           ? { resumeSessionAt: config.resumeAtUuid, forkSession: true }
           : {}),
         canUseTool: canUseTool as any,
+        ...(config.beforeToolUse ? {
+          hooks: {
+            PreToolUse: [{
+              hooks: [limitHook(config.beforeToolUse)],
+              // Seconds. Longer than Grove waits for an answer to a limit
+              // (PERMISSION_TIMEOUT_MINUTES), so Grove settles it first.
+              timeout: PERMISSION_TIMEOUT_MINUTES * 60 + 60,
+            }],
+          },
+        } : {}),
         // Without a handler the SDK declines every elicitation.
         ...(config.onElicitation ? {
           onElicitation: async (request: SdkElicitationRequest, { signal }: { signal: AbortSignal }) => {
@@ -1782,6 +1831,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     const ctx: MessageContext = {
       toolUseMap: new Map(),
       groveMode: config.permissionMode,
+      cost: new RunningCost(config.resumeSessionId ? (config.priorCostUsd ?? null) : null),
     };
 
     // Create the async event generator

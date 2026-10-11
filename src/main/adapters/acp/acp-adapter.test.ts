@@ -94,8 +94,9 @@ describe('AcpAdapter', () => {
     handle.sendMessage({ text: 'cost' });
     const second = await until(handle, 'result');
 
-    expect(first.at(-1)).toMatchObject({ type: 'result', totalCostUsd: 0.01 });
+    expect(first.at(-1)).toMatchObject({ type: 'result', totalCostUsd: 0.01, sessionCostUsd: 0.01 });
     expect((second.at(-1) as { totalCostUsd: number }).totalCostUsd).toBeCloseTo(0.01, 10);
+    expect((second.at(-1) as { sessionCostUsd: number }).sessionCostUsd).toBeCloseTo(0.02, 10);
     expect(first.filter((e) => e.type === 'usage').at(-1)).toEqual({ type: 'usage', inputTokens: 900, outputTokens: 40 });
     handle.close();
   });
@@ -199,6 +200,37 @@ describe('AcpAdapter', () => {
     const turn = await until(handle, 'result');
     expect(onPermissionRequest).not.toHaveBeenCalled();
     expect(turn.find((e) => e.type === 'tool_result' && e.toolUseId === 't1')).toMatchObject({ isError: true, content: 'Rejected' });
+    handle.close();
+  });
+
+  it('holds a call it asks about while a limit is put to the user, and turns it down on stop', async () => {
+    const adapter = new AcpAdapter(def());
+    const onPermissionRequest = vi.fn(async (): Promise<PermissionResponse> => ({ behavior: 'allow', updatedInput: {} }));
+    let stop!: () => void;
+    const beforeToolUse = vi.fn(() => new Promise<'continue' | 'stop'>((resolve) => { stop = () => resolve('stop'); }));
+    const handle = await adapter.start(config({ onPermissionRequest, beforeToolUse }));
+    await until(handle, 'system_init');
+    handle.sendMessage({ text: 'write a file' });
+    await until(handle, 'assistant_tool_use');
+    await vi.waitFor(() => expect(beforeToolUse).toHaveBeenCalledWith({ toolName: expect.any(String), toolUseId: 't1' }));
+    stop();
+    const turn = await until(handle, 'result');
+    expect(onPermissionRequest).not.toHaveBeenCalled();
+    expect(turn.find((e) => e.type === 'tool_result' && e.toolUseId === 't1')).toMatchObject({ isError: true });
+    handle.close();
+  });
+
+  it('asks about a call once the limits let it go on', async () => {
+    const adapter = new AcpAdapter(def());
+    const onPermissionRequest = vi.fn(async (): Promise<PermissionResponse> => ({ behavior: 'allow', updatedInput: {} }));
+    const beforeToolUse = vi.fn(async () => 'continue' as const);
+    const handle = await adapter.start(config({ onPermissionRequest, beforeToolUse }));
+    await until(handle, 'system_init');
+    handle.sendMessage({ text: 'write a file' });
+    const turn = await until(handle, 'result');
+    expect(beforeToolUse).toHaveBeenCalledOnce();
+    expect(onPermissionRequest).toHaveBeenCalledOnce();
+    expect(turn.find((e) => e.type === 'tool_result' && e.toolUseId === 't1')).toMatchObject({ isError: false });
     handle.close();
   });
 

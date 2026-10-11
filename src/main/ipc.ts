@@ -3,6 +3,7 @@ import { runProcess } from './process-host.js';
 import { IPC, PERMISSION_MODES } from '../shared/types.js';
 import type { BranchSwitchResult, BranchSyncResult, ConversationGoal, CreateSessionOpts, OpenPrSummary, PermissionMode, PrerequisiteStatus, PermissionDecision, RegistryAgentSummary, SessionInfo, SkillDefinition, WorktreeInfo } from '../shared/types.js';
 import { sessionManager } from './agent-session.js';
+import { todaySpend } from './session-limits.js';
 import { searchEvents, findEventIndexByUuid, extractSessionPreview, firstUserPrompt } from './event-search.js';
 import { decideAutoName } from './session-auto-name.js';
 import { cleanUserGoal, generateGoal, goalInputFromEvents, type GoalInput } from './session-goal.js';
@@ -1000,6 +1001,13 @@ export function registerHandlers() {
   ipcMain.handle(IPC.AGENT_ELICITATION, (_event, sessionId: string, requestId: string, response: import('../shared/types.js').McpElicitationResponse) => {
     return sessionManager.respondToElicitation(sessionId, requestId, response);
   });
+
+  ipcMain.handle(IPC.AGENT_LIMIT, (_event, sessionId: string, requestId: string, decision: unknown) => {
+    if (decision !== 'continue' && decision !== 'stop') return false;
+    return sessionManager.respondToLimit(sessionId, requestId, decision);
+  });
+
+  ipcMain.handle(IPC.LIMITS_DAILY_SPEND, () => todaySpend().usd);
 
   ipcMain.handle(IPC.AGENT_HISTORY, (_event, sessionId: string) => {
     const prelaunch = prelaunchEvents.get(sessionId) ?? [];

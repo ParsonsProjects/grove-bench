@@ -14,7 +14,7 @@ With **Show grove characters** on, a small pixel agent shows the state instead, 
 
 | Color | Animation | State | Description |
 |-------|-----------|-------|-------------|
-| 🟠 Amber | Pulsing | **Waiting for you** | The agent is waiting for you to approve an action or answer a question |
+| 🟠 Amber | Pulsing | **Waiting for you** | The agent is waiting for you to approve an action, answer a question, or say whether to go on past a limit |
 | 🔵 Blue | Pulsing | **Working** | The agent is processing, reading files, or generating a response |
 | 🔵 Blue | Pulsing | **Starting** | Thread is initializing |
 | 🔵 Blue | Pulsing | **Installing** | Dependencies are being installed |

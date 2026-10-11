@@ -64,6 +64,14 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   notifyOnPrAlert: true,
   notifyTaskbarFlash: true,
   notifyTaskbarBadge: true,
+  notifyOnPlanUsage: true,
+
+  // Limits and alerts (0 = off)
+  planUsageAlertPercent: 80,
+  threadSpendLimitUsd: 0,
+  dailySpendLimitUsd: 0,
+  turnToolCallLimit: 0,
+  turnMinutesLimit: 0,
 
   // Privacy
   analyticsEnabled: false,
@@ -262,6 +270,13 @@ const settingsSchema = z.object({
   notifyOnPrAlert: z.boolean().catch(DEFAULT_SETTINGS.notifyOnPrAlert),
   notifyTaskbarFlash: z.boolean().catch(DEFAULT_SETTINGS.notifyTaskbarFlash),
   notifyTaskbarBadge: z.boolean().catch(DEFAULT_SETTINGS.notifyTaskbarBadge),
+  notifyOnPlanUsage: z.boolean().catch(DEFAULT_SETTINGS.notifyOnPlanUsage),
+
+  planUsageAlertPercent: z.number().finite().min(0).max(100).catch(DEFAULT_SETTINGS.planUsageAlertPercent),
+  threadSpendLimitUsd: z.number().finite().nonnegative().catch(DEFAULT_SETTINGS.threadSpendLimitUsd),
+  dailySpendLimitUsd: z.number().finite().nonnegative().catch(DEFAULT_SETTINGS.dailySpendLimitUsd),
+  turnToolCallLimit: z.number().int().nonnegative().catch(DEFAULT_SETTINGS.turnToolCallLimit),
+  turnMinutesLimit: z.number().finite().nonnegative().catch(DEFAULT_SETTINGS.turnMinutesLimit),
 
   analyticsEnabled: z.boolean().catch(DEFAULT_SETTINGS.analyticsEnabled),
   analyticsPrompted: z.boolean().catch(DEFAULT_SETTINGS.analyticsPrompted),
