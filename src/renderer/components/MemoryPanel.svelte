@@ -8,6 +8,11 @@
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import * as Select from '$lib/components/ui/select/index.js';
   import { Label } from '$lib/components/ui/label/index.js';
+  import { Badge } from '$lib/components/ui/badge/index.js';
+  import { Pulse } from '$lib/components/ui/pulse/index.js';
+  import { SectionLabel } from '$lib/components/ui/section-label/index.js';
+  import * as Segmented from '$lib/components/ui/segmented/index.js';
+  import PlusIcon from '@lucide/svelte/icons/plus';
 
   interface Props {
     open: boolean;
@@ -142,6 +147,8 @@
   }
 
   const pruneDaysNum = $derived(Math.max(0, Math.floor(Number(pruneDays)) || 0));
+  /** The preset matching the typed days, if any, for the preset buttons. */
+  const prunePreset = $derived(pruneDayPresets.includes(pruneDaysNum) ? String(pruneDaysNum) : '');
   const prunableNotes = $derived(memoryStore.sessionNotesOlderThan(pruneDaysNum));
   const pruneSelectedPaths = $derived(prunableNotes.map(n => n.relativePath).filter(p => pruneSelection[p]));
 
@@ -226,14 +233,14 @@
             {/if}
           </span>
           {#if memoryStore.stats.lastCompactedAt}
-            <span class="text-muted-foreground/70">
+            <span class="text-muted-foreground">
               Last compacted {relativeTime(memoryStore.stats.lastCompactedAt)}{memoryStore.stats.lastAuto ? ' (auto)' : ''}
             </span>
           {/if}
         </div>
-        <div class="h-1.5 w-full bg-border overflow-hidden rounded-full">
+        <div class="h-1.5 w-full bg-border overflow-hidden">
           <div
-            class="h-full rounded-full transition-all {budgetPct >= 100 ? 'bg-destructive' : budgetWarn ? 'bg-amber-500' : 'bg-primary'}"
+            class="h-full transition-all {budgetPct >= 100 ? 'bg-destructive' : budgetWarn ? 'bg-amber-500' : 'bg-primary'}"
             style="width: {budgetPct}%"
           ></div>
         </div>
@@ -244,20 +251,22 @@
       <!-- File tree sidebar -->
       <div class="w-48 shrink-0 overflow-auto border-r border-border pr-3">
         <div class="flex items-center justify-between mb-2">
-          <span class="text-xs text-muted-foreground uppercase tracking-wide">Files</span>
-          <button
+          <SectionLabel>Files</SectionLabel>
+          <Button
+            size="icon-2xs"
+            variant="quiet"
             onclick={openNewFile}
-            class="text-xs text-muted-foreground hover:text-primary"
             title="New memory file"
+            aria-label="New memory file"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
-          </button>
+            <PlusIcon />
+          </Button>
         </div>
 
         {#if memoryStore.loading && memoryStore.files.length === 0}
-          <p class="text-xs text-muted-foreground/50">Loading...</p>
+          <p class="text-xs text-muted-foreground">Loading...</p>
         {:else if memoryStore.files.length === 0}
-          <p class="text-xs text-muted-foreground/50">No memory files yet. Click + to create one.</p>
+          <p class="text-xs text-muted-foreground">No memory files yet. Click + to create one.</p>
         {:else}
           {#each memoryStore.folders as folder}
             <div class="mb-2">
@@ -292,7 +301,7 @@
                 </Button>
               {:else}
                 <Button size="sm" variant="ghost" onclick={startEdit}>Edit</Button>
-                <Button size="sm" variant="ghost" class="text-destructive" onclick={() => confirmDeletePath = memoryStore.selectedFile!.path}>
+                <Button size="sm" variant="outline-destructive" onclick={() => confirmDeletePath = memoryStore.selectedFile!.path}>
                   Delete
                 </Button>
               {/if}
@@ -310,7 +319,7 @@
           {/if}
         {:else}
           <div class="flex-1 flex items-center justify-center">
-            <p class="text-sm text-muted-foreground/50">Select a memory file to view or edit</p>
+            <p class="text-sm text-muted-foreground">Select a memory file to view or edit</p>
           </div>
         {/if}
       </div>
@@ -320,20 +329,21 @@
       <p class="text-xs text-destructive mt-2">{memoryStore.error}</p>
     {:else if memoryStore.compacting}
       <div class="mt-2 flex items-center gap-3">
-        <span class="w-1.5 h-1.5 bg-primary animate-pulse shrink-0"></span>
+        <Pulse tone="primary" size="xs" />
         <p class="text-xs text-muted-foreground flex-1">
           {compactStageLabel} — {formatElapsed(memoryStore.compactElapsedSeconds)} elapsed
-          <span class="text-muted-foreground/60">(times out at {formatElapsed(compactTimeoutSeconds)})</span>
+          <span class="text-muted-foreground">(times out at {formatElapsed(compactTimeoutSeconds)})</span>
         </p>
-        <button
+        <Button
+          size="2xs"
+          variant="outline-destructive"
           onclick={() => memoryStore.cancelCompact()}
-          class="text-xs text-destructive hover:underline underline-offset-2 shrink-0"
           title="Abort this compaction pass — nothing has been changed yet"
         >
           Cancel
-        </button>
+        </Button>
       </div>
-      <p class="text-xs text-muted-foreground/60 mt-1 ml-4.5">
+      <p class="text-xs text-muted-foreground mt-1 ml-4.5">
         You can close this panel — compaction continues in the background and the summary will appear when it finishes.
       </p>
     {:else if memoryStore.compactMessage}
@@ -425,9 +435,9 @@
           {#each memoryStore.lastCompaction.changes as change (change.path)}
             <div class="px-2 py-1.5 bg-card border border-border">
               <div class="flex items-center gap-2 text-sm">
-                <span class="text-xs uppercase tracking-wide shrink-0 {change.action === 'delete' ? 'text-destructive' : 'text-primary'}">
+                <Badge tone={change.action === 'delete' ? 'danger' : 'primary'} class="uppercase tracking-wide">
                   {change.action === 'delete' ? 'removed' : 'rewritten'}
-                </span>
+                </Badge>
                 <span class="text-foreground truncate" title={change.path}>{change.path}</span>
               </div>
               {#if change.reason}
@@ -463,7 +473,7 @@
         </Dialog.Description>
       </Dialog.Header>
       {#if memoryStore.backups.length === 0}
-        <p class="text-sm text-muted-foreground/50 py-2">No backups yet. One is created automatically before each compaction.</p>
+        <p class="text-sm text-muted-foreground py-2">No backups yet. One is created automatically before each compaction.</p>
       {:else}
         <div class="flex flex-col gap-1 max-h-72 overflow-auto">
           {#each memoryStore.backups as backup (backup.id)}
@@ -491,7 +501,7 @@
                         {memoryStore.backupPreviewFile?.path === file.path ? 'text-primary' : 'text-muted-foreground hover:text-foreground'}"
                     >
                       <span class="truncate">{file.path}</span>
-                      <span class="shrink-0 ml-2 text-muted-foreground/60">{(file.bytes / 1024).toFixed(1)} KB</span>
+                      <span class="shrink-0 ml-2 text-muted-foreground">{(file.bytes / 1024).toFixed(1)} KB</span>
                     </button>
                   {/each}
                   {#if memoryStore.backupPreviewFile}
@@ -530,21 +540,20 @@
           class="w-16 text-sm bg-card border border-border px-2 py-1 text-foreground focus:outline-none focus:border-primary"
         />
         <span class="text-xs text-muted-foreground">days</span>
-        <div class="flex gap-1 ml-1">
+        <Segmented.Root
+          value={prunePreset}
+          onValueChange={(v) => { if (v) pruneDays = v; }}
+          aria-label="Older than (days)"
+          class="ml-1"
+        >
           {#each pruneDayPresets as d}
-            <button
-              onclick={() => pruneDays = String(d)}
-              class="text-xs px-1.5 py-0.5 border transition-colors
-                {pruneDaysNum === d ? 'border-primary text-primary' : 'border-border text-muted-foreground hover:text-foreground'}"
-            >
-              {d}
-            </button>
+            <Segmented.Item value={String(d)}>{d}</Segmented.Item>
           {/each}
-        </div>
+        </Segmented.Root>
       </div>
 
       {#if prunableNotes.length === 0}
-        <p class="text-sm text-muted-foreground/50 py-2">No thread notes older than {pruneDays} days.</p>
+        <p class="text-sm text-muted-foreground py-2">No thread notes older than {pruneDays} days.</p>
       {:else}
         <div class="flex flex-col gap-1 max-h-64 overflow-auto">
           {#each prunableNotes as note (note.relativePath)}

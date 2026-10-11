@@ -1,11 +1,13 @@
 <script lang="ts">
-  import { Tabs } from 'bits-ui';
+  import * as Tabs from '$lib/components/ui/tabs/index.js';
   import Fuse from 'fuse.js';
   import { pluginStore } from '../../stores/plugins.svelte.js';
   import { agentsStore } from '../../stores/agents.svelte.js';
   import PluginCard from '../PluginCard.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Input } from '$lib/components/ui/input/index.js';
+  import { Notice } from '$lib/components/ui/notice/index.js';
+  import { Pulse } from '$lib/components/ui/pulse/index.js';
 
   let search = $state('');
   let view = $state('installed');
@@ -36,8 +38,6 @@
   const agentNote = $derived(
     agentsStore.list.length > 1 && defaultAgent ? `These plugins are for ${defaultAgent.displayName} threads.` : '',
   );
-
-  const triggerClass = 'px-3 py-1 text-xs transition-colors text-muted-foreground hover:text-foreground data-[state=active]:bg-accent data-[state=active]:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
 </script>
 
 <div data-setting="plugins" class="flex flex-col gap-3">
@@ -45,17 +45,17 @@
     <p class="text-xs text-muted-foreground">{agentNote}</p>
   {/if}
   {#if pluginStore.error}
-    <div class="text-xs text-destructive bg-destructive/10 px-3 py-2" role="alert">{pluginStore.error}</div>
+    <Notice tone="danger"><p>{pluginStore.error}</p></Notice>
   {/if}
 
   <Tabs.Root bind:value={view} class="flex flex-col gap-3">
-    <div class="flex items-center gap-2">
-      <Tabs.List class="inline-flex border border-border" aria-label="Plugins">
-        <Tabs.Trigger value="installed" class={triggerClass}>Installed ({pluginStore.installed.length})</Tabs.Trigger>
-        <Tabs.Trigger value="discover" class={triggerClass}>Discover</Tabs.Trigger>
+    <div class="flex items-end gap-2 border-b border-border">
+      <Tabs.List class="border-b-0" aria-label="Plugins">
+        <Tabs.Trigger value="installed">Installed ({pluginStore.installed.length})</Tabs.Trigger>
+        <Tabs.Trigger value="discover">Discover</Tabs.Trigger>
       </Tabs.List>
       <div class="flex-1"></div>
-      <Button variant="ghost" size="sm" onclick={() => pluginStore.refresh()} disabled={pluginStore.loading} class="text-xs">
+      <Button variant="ghost" size="xs" class="mb-1" onclick={() => pluginStore.refresh()} disabled={pluginStore.loading}>
         Refresh
       </Button>
     </div>
@@ -64,7 +64,7 @@
 
     {#if pluginStore.loading}
       <div class="flex items-center justify-center py-8 text-muted-foreground">
-        <span class="w-3 h-3 bg-primary animate-pulse mr-2"></span>
+        <Pulse tone="primary" class="mr-2" />
         <span class="text-sm">Loading plugins...</span>
       </div>
     {:else}
@@ -75,7 +75,7 @@
               No matching installed plugins.
             {:else}
               No plugins installed yet. Find some under
-              <button type="button" class="text-primary hover:underline" onclick={() => (view = 'discover')}>Discover</button>.
+              <Button variant="link" size="inline" onclick={() => (view = 'discover')}>Discover</Button>.
             {/if}
           </p>
         {:else}

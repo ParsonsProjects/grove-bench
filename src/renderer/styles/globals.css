@@ -344,6 +344,7 @@
   --color-status-attention: var(--status-attention);
   --color-status-unread: var(--status-unread);
   --color-status-error: var(--status-error);
+  --color-link: var(--link);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);

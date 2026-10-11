@@ -32,7 +32,7 @@
   /** Theme tokens as the current theme draws them. */
   const tokens = ['background', 'card', 'muted', 'accent', 'border', 'input', 'primary', 'destructive', 'foreground', 'muted-foreground'];
 
-  const buttonVariants = ['default', 'secondary', 'outline', 'ghost', 'subtle', 'quiet', 'quiet-destructive', 'outline-primary', 'outline-success', 'outline-destructive', 'destructive', 'link'] as const;
+  const buttonVariants = ['default', 'secondary', 'outline', 'ghost', 'subtle', 'quiet', 'quiet-destructive', 'outline-primary', 'outline-success', 'outline-destructive', 'destructive', 'link', 'external'] as const;
   const buttonSizes = ['2xs', 'xs', 'sm', 'default'] as const;
   const badgeTones = ['neutral', 'muted', 'primary', 'info', 'success', 'warning', 'danger', 'accent', 'highlight'] as const;
   const noticeTones = ['info', 'success', 'warning', 'danger', 'neutral'] as const;
@@ -169,7 +169,7 @@
               <tr>
                 <td class="pr-4 text-caption text-muted-foreground">{variant}</td>
                 {#each buttonSizes as size (size)}
-                  <td class="px-3 py-1.5"><Button {variant} {size}>{variant === 'link' ? 'Try again' : 'Create PR'}</Button></td>
+                  <td class="px-3 py-1.5"><Button {variant} {size}>{variant === 'link' ? 'Try again' : variant === 'external' ? 'Open on GitHub' : 'Create PR'}</Button></td>
                 {/each}
               </tr>
             {/each}

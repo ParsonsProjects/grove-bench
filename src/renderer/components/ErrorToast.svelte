@@ -1,6 +1,8 @@
 <script lang="ts">
   import { store } from '../stores/sessions.svelte.js';
   import { Button } from '$lib/components/ui/button/index.js';
+  import { Notice } from '$lib/components/ui/notice/index.js';
+  import XIcon from '@lucide/svelte/icons/x';
 
   $effect(() => {
     if (store.error) {
@@ -12,17 +14,15 @@
 
 {#if store.error}
   <div class="fixed bottom-4 right-4 z-50 max-w-md animate-in">
-    <div class="bg-destructive/90 border border-destructive p-4 shadow-xl backdrop-blur-sm">
-      <div class="flex items-start gap-3">
-        <span class="text-destructive-foreground/80 shrink-0 mt-0.5">!</span>
-        <p class="text-sm text-destructive-foreground flex-1">{store.error}</p>
-        <button
-          onclick={() => store.clearError()}
-          class="text-destructive-foreground/80 hover:text-destructive-foreground shrink-0"
-        >
-          &times;
-        </button>
-      </div>
+    <div class="bg-popover border border-border shadow-xl">
+      <Notice tone="danger">
+        {#snippet actions()}
+          <Button size="icon-2xs" variant="quiet" aria-label="Dismiss" onclick={() => store.clearError()}>
+            <XIcon />
+          </Button>
+        {/snippet}
+        <p>{store.error}</p>
+      </Notice>
     </div>
   </div>
 {/if}

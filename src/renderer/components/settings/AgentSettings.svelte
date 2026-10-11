@@ -19,6 +19,7 @@
   import AlphaBadge from '../AlphaBadge.svelte';
   import { Input } from '$lib/components/ui/input/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
+  import XIcon from '@lucide/svelte/icons/x';
 
   // ── Per-agent defaults ──
   // One group per registered agent: its credentials, its default model and
@@ -388,14 +389,14 @@
         {#each settingsStore.draft.acpAgents as agent, i (i)}
           <li class="flex items-center justify-between gap-1 pl-2 text-xs min-w-0 bg-muted">
             <span class="truncate"><span class="text-foreground">{agent.name}</span> <code class="text-muted-foreground">{[agent.command, ...agent.args].join(' ')}</code></span>
-            <button
-              type="button"
+            <Button
+              size="icon-xs"
+              variant="quiet-destructive"
               onclick={() => settingsStore.removeAcpAgent(i)}
-              class="size-6 shrink-0 inline-flex items-center justify-center text-muted-foreground hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               aria-label="Remove agent {agent.name}"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
-            </button>
+              <XIcon aria-hidden="true" />
+            </Button>
           </li>
         {/each}
       </ul>

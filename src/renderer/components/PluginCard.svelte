@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Badge } from '$lib/components/ui/badge/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import type { InstalledPlugin, AvailablePlugin } from '../../shared/types.js';
 
@@ -36,12 +37,12 @@
     <div class="min-w-0">
       <div class="flex items-center gap-2">
         <span class="text-sm font-medium text-foreground truncate">{name}</span>
-        <span class="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 shrink-0">v{version}</span>
+        <Badge tone="muted" variant="solid">v{version}</Badge>
         {#if scope}
-          <span class="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 shrink-0">{scope}</span>
+          <Badge tone="muted" variant="solid">{scope}</Badge>
         {/if}
         {#if installed && !enabled}
-          <span class="text-xs text-amber-500 bg-amber-500/10 px-1.5 py-0.5 shrink-0">disabled</span>
+          <Badge tone="warning" variant="soft">disabled</Badge>
         {/if}
       </div>
       {#if description}
@@ -62,49 +63,43 @@
         <span class="text-xs text-foreground">Remove {name}?</span>
         <Button
           variant="destructive"
-          size="sm"
+          size="xs"
           disabled={busy}
           onclick={() => { confirmingRemove = false; onuninstall?.(installed!.id); }}
-          class="text-xs h-7 px-2"
         >Remove</Button>
         <Button
           variant="ghost"
-          size="sm"
+          size="xs"
           onclick={() => (confirmingRemove = false)}
-          class="text-xs h-7 px-2"
         >Cancel</Button>
       {:else if installed}
         {#if enabled}
           <Button
             variant="ghost"
-            size="sm"
+            size="xs"
             disabled={busy}
             onclick={() => ondisable?.(installed!.id)}
-            class="text-xs h-7 px-2"
           >Disable</Button>
         {:else}
           <Button
             variant="ghost"
-            size="sm"
+            size="xs"
             disabled={busy}
             onclick={() => onenable?.(installed!.id)}
-            class="text-xs h-7 px-2"
           >Enable</Button>
         {/if}
         <Button
-          variant="ghost"
-          size="sm"
+          variant="outline-destructive"
+          size="xs"
           disabled={busy}
           onclick={() => (confirmingRemove = true)}
-          class="text-xs h-7 px-2 text-destructive hover:text-destructive"
         >Remove</Button>
       {:else if available}
         <Button
           variant="secondary"
-          size="sm"
+          size="xs"
           disabled={busy}
           onclick={() => oninstall?.(available!.pluginId)}
-          class="text-xs h-7 px-3"
         >Install</Button>
       {/if}
     </div>

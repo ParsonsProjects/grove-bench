@@ -15,6 +15,8 @@
 				secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/80",
 				ghost: "hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50 disabled:hover:bg-transparent",
 				link: "text-primary underline-offset-4 hover:underline disabled:hover:no-underline",
+				// A link that opens a web page or another app: blue goes, green acts.
+				external: "text-link underline-offset-4 hover:underline disabled:hover:no-underline",
 				// Grove's own (docs/ui-kit.md). subtle: the bordered toolbar
 				// button; quiet: an icon or text that only brightens on hover.
 				subtle: "border border-border text-muted-foreground hover:text-foreground hover:bg-accent disabled:hover:text-muted-foreground disabled:hover:bg-transparent",

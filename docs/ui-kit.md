@@ -24,7 +24,7 @@ All defined in `src/renderer/styles/globals.css`, built from `src/shared/brand.t
 | `--primary-foreground` | `text-primary-foreground` | Text on a primary fill (dark in the dark theme) |
 | `--destructive` | `bg-destructive`, `text-destructive` | Errors, actions that destroy something |
 | `--destructive-foreground` | `text-destructive-foreground` | Text on a destructive fill |
-| `--link` | `var(--link)` | Links that leave the app |
+| `--link` | `text-link` | Links that leave the app |
 | `--ring` | `ring-ring` | Focus rings |
 
 ### Status
@@ -105,6 +105,7 @@ All in `src/renderer/lib/components/ui/`. Import from the folder's `index.js`:
 | `outline-success` | Allowing or approving what the agent asked for |
 | `outline-destructive`, `destructive` | Actions that delete or discard. Use the filled one only in a confirmation. |
 | `link` | An action inside a sentence ("Try again") |
+| `external` | A link that opens a web page or another app, in the blue `--link` colour (green acts, blue goes) |
 
 | Size | Height | Use |
 |---|---|---|
