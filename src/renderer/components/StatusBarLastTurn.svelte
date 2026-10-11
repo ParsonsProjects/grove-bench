@@ -62,7 +62,7 @@
     {#if lastTurnCost}
       <span>{lastTurnCost}</span>
     {/if}
-    <span class="text-caption text-muted-foreground/70">
+    <span class="text-caption text-muted-foreground">
       last turn{#if lastResult?.durationMs !== undefined}&nbsp;{(lastResult.durationMs / 1000).toFixed(1)}s{/if}
     </span>
   </div>

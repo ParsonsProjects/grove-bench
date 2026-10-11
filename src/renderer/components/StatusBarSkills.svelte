@@ -12,6 +12,12 @@
   import { buildCreateSkillPrompt } from '../lib/skill-prompt.js';
   import { lazyComponent } from '../lib/lazy-component.js';
   import type { SkillInfo, SkillSuggestion } from '../../shared/types.js';
+  import { Badge } from '$lib/components/ui/badge/index.js';
+  import { Button } from '$lib/components/ui/button/index.js';
+  import { Notice } from '$lib/components/ui/notice/index.js';
+  import { SectionLabel } from '$lib/components/ui/section-label/index.js';
+  import XIcon from '@lucide/svelte/icons/x';
+  import PlusIcon from '@lucide/svelte/icons/plus';
   import StatusBarPopover from './StatusBarPopover.svelte';
 
   let { sessionId, count = $bindable(0) }: { sessionId: string; count?: number } = $props();
@@ -130,7 +136,7 @@
 </script>
 
 {#if allSkills.length > 0}
-  <StatusBarPopover bind:open={skillsExpanded} anchored={false} panelClass="bg-popover border border-border shadow-xl p-3 text-xs w-96">
+  <StatusBarPopover bind:open={skillsExpanded} anchored={false} panelClass="w-96">
     {#snippet trigger()}
       <button
         onclick={toggleSkillsPopover}
@@ -151,33 +157,35 @@
     <div class="flex items-center justify-between mb-2">
       <span class="font-medium text-foreground">Skills</span>
       <div class="flex items-center gap-2.5">
-        <button
+        <Button
+          variant="link"
+          size="inline"
           onclick={analyzeSuggestions}
           disabled={analyzingSuggestions}
-          class="text-blue-400/80 hover:text-blue-300 transition-colors disabled:opacity-50"
           title="Mine this project's thread history for recurring workflows and suggest skills"
         >
           {analyzingSuggestions ? 'Scanning…' : 'Suggest'}
-        </button>
-        <button
+        </Button>
+        <Button
+          variant="quiet"
+          size="inline"
           onclick={refreshSkills}
-          class="text-muted-foreground/60 hover:text-foreground transition-colors"
           title="Re-scan skill directories"
         >
           Refresh
-        </button>
+        </Button>
       </div>
     </div>
 
     {#if settingsStore.error}
-      <div class="text-destructive mb-2 break-words">{settingsStore.error}</div>
+      <Notice tone="danger" class="mb-2 break-words">{settingsStore.error}</Notice>
     {/if}
 
     {#if suggestions.length > 0}
       <div class="mb-2 pb-2 border-b border-border">
-        <div class="text-micro uppercase tracking-wide text-blue-400/80 mb-1.5">
+        <SectionLabel class="mb-1.5">
           Suggested from your threads
-        </div>
+        </SectionLabel>
         <div class="space-y-1.5">
           {#each suggestions as suggestion (suggestion.id)}
             <div>
@@ -186,32 +194,36 @@
                 <span class="font-mono truncate text-foreground flex-1 min-w-0" title={suggestion.description}>
                   {suggestion.name}
                 </span>
-                <button
+                <Button
+                  variant="outline-success"
+                  size="2xs"
                   onclick={() => createFromSuggestion(suggestion)}
-                  class="px-1.5 py-0.5 border border-border text-green-400 hover:bg-green-400/10 transition-colors shrink-0"
                   title="Open the Add Skill dialog prefilled with this suggestion"
                 >
                   Create
-                </button>
-                <button
+                </Button>
+                <Button
+                  variant="subtle"
+                  size="2xs"
                   onclick={() => askAgentFromSuggestion(suggestion)}
                   disabled={!canAskAgent}
-                  class="px-1.5 py-0.5 border border-border text-muted-foreground hover:text-foreground hover:bg-accent transition-colors shrink-0 disabled:opacity-50"
                   title={canAskAgent
                     ? 'Ask the agent to write this skill, with the mined evidence as notes'
                     : 'Needs a running, idle thread'}
                 >
                   Agent
-                </button>
-                <button
+                </Button>
+                <Button
+                  variant="subtle"
+                  size="icon-2xs"
                   onclick={() => dismissSkillSuggestion(suggestion.id)}
-                  class="px-1.5 py-0.5 border border-border text-muted-foreground/60 hover:text-destructive hover:bg-destructive/10 transition-colors shrink-0"
                   title="Dismiss — this suggestion won't come back"
+                  aria-label="Dismiss suggestion"
                 >
-                  ✕
-                </button>
+                  <XIcon />
+                </Button>
               </div>
-              <div class="text-muted-foreground/60 text-micro truncate ml-3" title={suggestion.evidence.join('\n')}>
+              <div class="text-muted-foreground text-micro truncate ml-3" title={suggestion.evidence.join('\n')}>
                 {suggestion.rationale}
               </div>
             </div>
@@ -230,50 +242,54 @@
               <span class="font-mono truncate {disabled ? 'text-muted-foreground line-through' : 'text-foreground'}" title={skill.path ?? skill.name}>
                 {skill.name}
               </span>
-              <span class="text-micro px-1 border border-border text-muted-foreground/60 shrink-0">
+              <Badge tone="muted">
                 {skillSourceLabels[skill.source]}
-              </span>
+              </Badge>
             </div>
             {#if skill.description}
-              <div class="text-muted-foreground/60 text-micro truncate" title={skill.description}>
+              <div class="text-muted-foreground text-micro truncate" title={skill.description}>
                 {skill.description}
               </div>
             {/if}
           </div>
           {#if disabled}
-            <button
+            <Button
+              variant="outline-success"
+              size="2xs"
               onclick={() => setSkillEnabled(skill.name, true)}
               disabled={skillsBusy[skill.name]}
-              class="px-1.5 py-0.5 border border-border text-green-400 hover:bg-green-400/10 transition-colors shrink-0 disabled:opacity-50"
               title="Re-enable this skill"
             >
               Enable
-            </button>
+            </Button>
           {:else}
-            <button
+            <Button
+              variant="outline-destructive"
+              size="2xs"
               onclick={() => setSkillEnabled(skill.name, false)}
               disabled={skillsBusy[skill.name]}
-              class="px-1.5 py-0.5 border border-border text-destructive hover:bg-destructive/10 transition-colors shrink-0 disabled:opacity-50"
               title="Hide this skill from agents"
             >
               Disable
-            </button>
+            </Button>
           {/if}
         </div>
       {/each}
     </div>
 
     <div class="flex items-center gap-2 mt-2 pt-2 border-t border-border">
-      <span class="text-muted-foreground/50 text-micro flex-1">
+      <span class="text-muted-foreground text-micro flex-1">
         Applies to all projects, when a thread's agent (re)starts. Running turns keep their current skills.
       </span>
-      <button
+      <Button
+        variant="subtle"
+        size="2xs"
         onclick={() => { skillsExpanded = false; addSkillOpen = true; }}
-        class="px-1.5 py-0.5 border border-border text-muted-foreground hover:text-foreground hover:bg-accent transition-colors shrink-0"
         title="Author a new skill — write it yourself or hand it to the agent"
       >
-        + Add skill
-      </button>
+        <PlusIcon />
+        Add skill
+      </Button>
     </div>
   </StatusBarPopover>
 {/if}

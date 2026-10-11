@@ -16,6 +16,8 @@
    */
   import { onDestroy, type Snippet } from 'svelte';
   import { fly } from 'svelte/transition';
+  import { cn } from '$lib/utils.js';
+  import { menuPanel } from '$lib/components/ui/menu/index.js';
   import { keepInViewport } from '../lib/keep-in-viewport.js';
 
   let {
@@ -25,7 +27,8 @@
     align = 'left',
     anchored = true,
     animate = false,
-    panelClass = 'bg-popover border border-border shadow-xl p-3 text-xs w-80',
+    surface = 'content',
+    panelClass = 'w-80',
     class: className = '',
     testid,
     label,
@@ -43,7 +46,12 @@
     anchored?: boolean;
     /** Slide in (the PR popover and the branch picker do). */
     animate?: boolean;
-    /** The panel's look; replaces the default box. */
+    /** The panel's box, from the kit's menuPanel so every popover here
+     *  looks the same: 'content' (padded, the default), 'list' (rows edge to
+     *  edge, as a menu), or 'none' when what is inside draws its own box
+     *  (BranchPicker). */
+    surface?: 'content' | 'list' | 'none';
+    /** Added to the box: its width, and a height limit where it needs one. */
     panelClass?: string;
     class?: string;
     testid?: string;
@@ -85,7 +93,12 @@
   // whitespace-normal: a panel inside a no-wrap row must still wrap its text.
   onDestroy(() => { open = false; });
 
-  let placement = $derived(`absolute bottom-full mb-2 z-50 whitespace-normal ${align === 'right' ? 'right-0' : 'left-0'}`);
+  let placement = $derived(cn(
+    'absolute bottom-full mb-2 z-50 whitespace-normal',
+    align === 'right' ? 'right-0' : 'left-0',
+    surface !== 'none' && menuPanel({ padding: surface }),
+    panelClass,
+  ));
 </script>
 
 <div bind:this={root} class="{anchored ? 'relative' : ''} {className}">
@@ -93,11 +106,11 @@
   <!-- One block, not an {#if animate} inside {#if open}: a transition is
        local, so it only plays when its own block opens or closes. -->
   {#if open && animate}
-    <div transition:fly={{ y: 6, duration: 140 }} use:keepInViewport class="{placement} {panelClass}" data-testid={testid} {id} role={label ? 'dialog' : undefined} aria-label={label}>
+    <div transition:fly={{ y: 6, duration: 140 }} use:keepInViewport class={placement} data-testid={testid} {id} role={label ? 'dialog' : undefined} aria-label={label}>
       {@render children()}
     </div>
   {:else if open}
-    <div use:keepInViewport class="{placement} {panelClass}" data-testid={testid} {id} role={label ? 'dialog' : undefined} aria-label={label}>
+    <div use:keepInViewport class={placement} data-testid={testid} {id} role={label ? 'dialog' : undefined} aria-label={label}>
       {@render children()}
     </div>
   {/if}
