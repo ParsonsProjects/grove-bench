@@ -17,7 +17,7 @@ export const links = {
 /**
  * Thread status colours (STATUS), as the page's app windows show them. Those
  * windows are the app in its dark theme, the default, so each status wears its
- * dark-theme colour: green working, amber needs you, blue finished a turn, red
+ * dark-theme colour: blue working, amber needs you, green finished a turn, red
  * error. Quiet states (ready, sleeping, closed) are grey.
  */
 export const statusColors = Object.fromEntries(Object.entries(STATUS).map(([tone, s]) => [tone, s.dark]));

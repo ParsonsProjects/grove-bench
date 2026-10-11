@@ -119,10 +119,12 @@ Use the user-facing words in any new UI text, help page or doc. See `docs/projec
   built from the brand palette in `src/shared/brand.ts` (dark: Night,
   light: Paper; BRAND.md). Light applies under `prefers-color-scheme: light`,
   which main sets from the Theme setting (`nativeTheme.themeSource`). Thread
-  status uses the `status-*` tokens (`bg-status-working`), never `bg-primary`.
-  Other colours use Tailwind's palette (`text-green-400`); light mode swaps
-  those shades for darker ones, and `light-theme.test.ts` fails if a
-  component uses one with no light value. `brand.test.ts` fails if
+  status uses the `status-*` tokens (`bg-status-working`), never `bg-primary`:
+  blue is in progress, green done, amber needs you, red failed. Other
+  colours use Tailwind's palette (`text-green-400`) in seven hues (red,
+  amber, yellow, green, cyan, blue, purple); light mode swaps those shades
+  for darker ones, and `light-theme.test.ts` fails if a component uses one
+  with no light value or another hue. `brand.test.ts` fails if
   `globals.css` drifts from `brand.ts`
 - UI is built from the kit in `src/renderer/lib/components/ui` (docs/ui-kit.md,
   drawn live at `/ui-kit.html` on the dev server): `Button` sizes `2xs`/`xs`

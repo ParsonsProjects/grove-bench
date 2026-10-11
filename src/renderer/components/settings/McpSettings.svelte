@@ -73,7 +73,7 @@
 
   function statusDot(status: string): string {
     return status === 'connected' ? 'bg-green-500'
-      : status === 'pending' ? 'bg-amber-400 animate-pulse'
+      : status === 'pending' ? 'bg-status-working animate-pulse'
       : status === 'needs-auth' || status === 'needs-approval' ? 'bg-amber-500'
       : status === 'disabled' || status === 'rejected' ? 'bg-muted-foreground'
       : 'bg-red-500';
@@ -160,7 +160,7 @@
 
     {#if mcpConfigStore.loading}
       <div class="flex items-center justify-center py-6 text-muted-foreground">
-        <Pulse tone="primary" class="mr-2" />
+        <Pulse class="mr-2" />
         <span class="text-sm">Checking MCP server health. This can take a few seconds...</span>
       </div>
     {:else if mcpConfigStore.servers.length === 0}

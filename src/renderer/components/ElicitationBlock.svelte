@@ -86,9 +86,9 @@
   }
 </script>
 
-<div class="py-1 my-1 border-l-4 {resolved ? 'border-border' : 'border-violet-400'} pl-3">
+<div class="py-1 my-1 border-l-4 {resolved ? 'border-border' : 'border-status-attention'} pl-3">
   <div class="flex items-center gap-2 text-xs">
-    <span class="{resolved ? 'text-muted-foreground' : 'text-violet-400'} font-bold">mcp input</span>
+    <span class="{resolved ? 'text-muted-foreground' : 'text-status-attention'} font-bold">mcp input</span>
     <span class="text-foreground font-medium font-mono">{request.serverName}</span>
     {#if request.title}
       <span class="text-muted-foreground truncate">{request.title}</span>
@@ -110,7 +110,7 @@
         <div class="text-destructive mt-1">{openError}</div>
       {/if}
       <div class="flex gap-2 mt-2">
-        <Button variant="subtle" size="sm" onclick={openPage} disabled={busy || !request.url} class="text-violet-400 border-violet-600 hover:bg-violet-900/30">
+        <Button variant="subtle" size="sm" onclick={openPage} disabled={busy || !request.url}>
           Open page
         </Button>
         <Button variant="quiet" size="sm" onclick={() => respond({ action: 'decline' })} disabled={busy}>Decline</Button>
@@ -191,7 +191,7 @@
         Your answers go to {request.serverName}. Don't enter passwords or API keys here.
       </p>
       <div class="flex gap-2">
-        <Button variant="subtle" size="sm" onclick={submit} disabled={busy} class="text-violet-400 border-violet-600 hover:bg-violet-900/30">
+        <Button variant="outline-success" size="sm" onclick={submit} disabled={busy}>
           Submit
         </Button>
         <Button variant="quiet" size="sm" onclick={() => respond({ action: 'decline' })} disabled={busy}>Decline</Button>

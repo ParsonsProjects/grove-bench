@@ -243,7 +243,7 @@
                 {#if !settingsStore.loaded && s.id !== 'mcp' && s.id !== 'plugins' && s.id !== 'diagnostics'}
                   {#if settingsStore.loading}
                     <div class="flex items-center justify-center py-8 text-muted-foreground">
-                      <Pulse tone="primary" class="mr-2" />
+                      <Pulse class="mr-2" />
                       <span class="text-sm">Loading settings...</span>
                     </div>
                   {:else}

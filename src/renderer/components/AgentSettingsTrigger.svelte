@@ -41,7 +41,7 @@
   aria-haspopup="dialog"
   aria-expanded={open}
 >
-  <span class="w-1.5 h-1.5 shrink-0 bg-primary" aria-hidden="true"></span>
+  <span class="w-1.5 h-1.5 shrink-0 bg-muted-foreground/50" aria-hidden="true"></span>
   <span class="flex flex-col gap-px leading-snug min-w-0">
     <span class="flex items-center min-w-0 text-foreground font-medium" data-testid="agent-settings-headline">
       <span class="truncate max-w-32 @3xl:max-w-48">{model}</span>

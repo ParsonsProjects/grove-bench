@@ -68,7 +68,7 @@
 </script>
 
 {#snippet pendingTool(task: PendingTool)}
-  <span class="w-1.5 h-1.5 bg-yellow-400 animate-pulse shrink-0"></span>
+  <Pulse size="xs" />
   <span class="text-yellow-400 font-medium shrink-0">{task.toolName}</span>
   <span class="text-muted-foreground truncate flex-1">{task.summary}</span>
   {#if task.inSubagent}
@@ -90,12 +90,9 @@
       <Pulse tone="attention" size="xs" />
       <span class="text-status-attention">waiting for you</span>
     {:else if isRunning}
-      <!-- Thinking keeps its own purple square: Pulse has no tone for it. -->
-      {#if activity.activity === 'thinking'}
-        <span class="w-1.5 h-1.5 bg-purple-400 animate-pulse"></span>
-      {:else}
-        <Pulse size="xs" />
-      {/if}
+      <!-- The square is blue whatever the agent is doing (in progress);
+           the word after it carries the kind of work, as in the Thread tab. -->
+      <Pulse size="xs" />
       {#if activity.activity === 'thinking'}
         <span class="text-purple-400">thinking</span>
       {:else if activity.activity === 'tool_starting'}
@@ -137,7 +134,7 @@
               title="Pending tools — click for details"
               aria-expanded={tasksExpanded}
             >
-              <Pulse tone="current" size="xs" />
+              <Pulse size="xs" />
               {pendingTools.length} {onlySubagentTools ? 'subagent ' : ''}tool{pendingTools.length > 1 ? 's' : ''}
             </button>
           {/snippet}
@@ -174,14 +171,14 @@
           {#snippet trigger()}
             <button
               onclick={() => bgTasksExpanded = !bgTasksExpanded}
-              class="flex items-center gap-1 whitespace-nowrap text-blue-400 hover:text-blue-300 transition-colors"
+              class="flex items-center gap-1 whitespace-nowrap {runningBgTasks.length > 0 ? 'text-status-working' : 'text-muted-foreground'} hover:text-foreground transition-colors"
               title="Background tasks — click for details"
               aria-expanded={bgTasksExpanded}
             >
               {#if runningBgTasks.length > 0}
                 <Pulse tone="current" size="xs" />
               {:else}
-                <span class="w-1.5 h-1.5 bg-blue-400/50"></span>
+                <span class="w-1.5 h-1.5 bg-muted-foreground/50"></span>
               {/if}
               {runningBgTasks.length > 0
                 ? `${runningBgTasks.length} bg task${runningBgTasks.length > 1 ? 's' : ''}`
@@ -198,7 +195,7 @@
               <div class="border border-border/50 p-2">
                 <div class="flex items-center gap-2 mb-1">
                   {#if task.status === 'running'}
-                    <span class="w-1.5 h-1.5 bg-blue-400 animate-pulse shrink-0"></span>
+                    <span class="w-1.5 h-1.5 bg-status-working animate-pulse shrink-0"></span>
                   {:else if task.status === 'completed'}
                     <span class="w-1.5 h-1.5 bg-green-500 shrink-0"></span>
                   {:else}
@@ -269,7 +266,7 @@
       {#if memoryCompacting}
         <button
           onclick={() => memoryStore.panelOpen = true}
-          class="flex items-center gap-1 whitespace-nowrap text-teal-400 hover:text-teal-300 transition-colors"
+          class="flex items-center gap-1 whitespace-nowrap text-status-working hover:text-foreground transition-colors"
           title="Project memory is being compacted — click to open the memory panel"
         >
           <Pulse tone="current" size="xs" />

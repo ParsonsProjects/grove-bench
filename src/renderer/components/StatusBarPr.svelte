@@ -162,7 +162,7 @@
     {prInfo.isDraft ? 'draft' : (prInfo.state ?? 'open').toLowerCase()}{#if prInfo.headRefName}{' · '}{prInfo.headRefName} → {prInfo.baseRefName ?? '?'}{/if}
   </div>
   {#if prFetchFailed}
-    <div class="text-orange-400 mt-0.5" title="The last gh fetch failed — check network and gh auth status">
+    <div class="text-amber-500 mt-0.5" title="The last gh fetch failed — check network and gh auth status">
       may be stale — the last GitHub fetch failed
     </div>
   {/if}
@@ -240,7 +240,7 @@
         </div>
       {/if}
       {#if fixCiNotice}
-        <div class="text-orange-400 pl-16 truncate" title={fixCiNotice}>
+        <div class="text-amber-500 pl-16 truncate" title={fixCiNotice}>
           {fixCiNotice}
         </div>
       {/if}
@@ -253,7 +253,7 @@
           {#if prInfo.reviewDecision === 'APPROVED'}
             <span class="text-green-400 whitespace-nowrap">approved</span>
           {:else if prInfo.reviewDecision === 'CHANGES_REQUESTED'}
-            <span class="text-orange-400 whitespace-nowrap" title="Changes requested">changes</span>
+            <span class="text-amber-500 whitespace-nowrap" title="Changes requested">changes</span>
           {:else if reviewRequired}
             <span class="text-muted-foreground whitespace-nowrap" title="Review required: the base branch needs an approving review before this PR can merge">required</span>
           {:else}
@@ -284,7 +284,7 @@
         {/if}
       </div>
       {#if addressReviewsNotice}
-        <div class="text-orange-400 pl-16 truncate" title={addressReviewsNotice}>
+        <div class="text-amber-500 pl-16 truncate" title={addressReviewsNotice}>
           {addressReviewsNotice}
         </div>
       {/if}
@@ -292,7 +292,7 @@
 
     {#if humanAlert}
       {@const ha = humanAlert}
-      <div class="flex items-center gap-2 px-1.5 py-0.5 -mx-1.5 hover:bg-accent/40 transition-colors text-orange-400">
+      <div class="flex items-center gap-2 px-1.5 py-0.5 -mx-1.5 hover:bg-accent/40 transition-colors text-amber-500">
         <span class="w-1.5 h-1.5 bg-current shrink-0"></span>
         <span class="flex-1" title={ha.reason}>{ha.reason}</span>
         <Button

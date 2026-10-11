@@ -244,14 +244,14 @@
         onclick={toggleMcpPopover}
         class="flex items-center gap-1 whitespace-nowrap transition-colors
           {mcpHealth === 'down' ? 'text-red-400 hover:text-red-300'
-            : mcpHealth === 'partial' ? 'text-orange-400 hover:text-orange-300'
+            : mcpHealth === 'partial' ? 'text-amber-500 hover:text-amber-400'
             : 'text-muted-foreground hover:text-foreground'}"
         title="MCP servers — click to manage connections{mcpDownCount > 0 ? ` (${mcpDownCount} down)` : ''}"
         aria-expanded={mcpExpanded}
       >
         <span class="w-1.5 h-1.5
           {mcpHealth === 'down' ? 'bg-red-500'
-            : mcpHealth === 'partial' ? 'bg-orange-400'
+            : mcpHealth === 'partial' ? 'bg-amber-500'
             : 'bg-green-500'}"></span>
         MCP {mcpRows.length}
       </button>
@@ -287,7 +287,7 @@
         <div class="group">
           <div class="flex items-center gap-2">
             {#if status === 'pending'}
-              <Pulse tone="attention" size="xs" />
+              <Pulse size="xs" />
             {:else}
               <span class="w-1.5 h-1.5 shrink-0
                 {status === 'connected' ? 'bg-green-500'

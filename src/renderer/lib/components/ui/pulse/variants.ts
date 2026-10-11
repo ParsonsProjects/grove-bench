@@ -2,8 +2,9 @@ import { tv } from "$lib/utils.js";
 import type { VariantProps } from "tailwind-variants";
 
 /**
- * A small square that shows something is happening: a tool running, a
- * thread working. Square, not a round spinner, to match the pixel art.
+ * A small square that shows something is in progress: a tool running, a
+ * thread working, a panel loading. Blue (the working status) unless told
+ * otherwise. Square, not a round spinner, to match the pixel art.
  * Both motions stop when the system asks for reduced motion (globals.css);
  * the colour still carries the meaning.
  */
@@ -15,7 +16,6 @@ export const pulseVariants = tv({
 			attention: "bg-status-attention",
 			unread: "bg-status-unread",
 			error: "bg-status-error",
-			primary: "bg-primary",
 			muted: "bg-muted-foreground",
 			// The text colour around it: inside a filled button, for example.
 			current: "bg-current",

@@ -191,7 +191,7 @@
   let borderColor = $derived(
     isResolved
       ? (effectiveDecision === 'allow' ? 'border-green-400' : 'border-destructive')
-      : 'border-amber-500'
+      : 'border-status-attention'
   );
 
   // Grove character: waits with a "?" until answered, then sits still with the outcome.
@@ -202,7 +202,7 @@
   let labelColor = $derived(
     isResolved
       ? (effectiveDecision === 'allow' ? 'text-green-400' : 'text-destructive')
-      : 'text-amber-500'
+      : 'text-status-attention'
   );
 </script>
 
@@ -319,7 +319,7 @@
           <Button variant="subtle" size="sm" onclick={() => confirmFresh = false} disabled={submitting}>
             Cancel
           </Button>
-          <Button variant="subtle" size="sm" onclick={clearAndExecute} disabled={submitting} class="text-blue-400 border-blue-600 hover:bg-blue-900/30">
+          <Button variant="outline-success" size="sm" onclick={clearAndExecute} disabled={submitting}>
             Clear and start
           </Button>
         {:else}
@@ -328,7 +328,7 @@
             Approve
           </Button>
           {#if planText}
-            <Button variant="subtle" size="sm" onclick={() => confirmFresh = true} disabled={submitting} title="Clear this thread's messages and send the plan as a new first message, so the agent starts with a clean context. Asks first." class="text-blue-400 border-blue-600 hover:bg-blue-900/30">
+            <Button variant="subtle" size="sm" onclick={() => confirmFresh = true} disabled={submitting} title="Clear this thread's messages and send the plan as a new first message, so the agent starts with a clean context. Asks first.">
               Approve and start fresh…
             </Button>
           {/if}

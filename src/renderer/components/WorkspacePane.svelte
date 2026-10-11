@@ -360,7 +360,7 @@
       {#if previewUnseen}
         <span class="inline-block w-2 h-2 bg-primary" title="The agent used the browser"></span>
       {:else if previewLoading}
-        <Pulse tone="primary" size="sm" />
+        <Pulse size="sm" />
       {/if}
       <Kbd keys="Alt+5" class={TAB_HINT_CLASS} />
     </button>

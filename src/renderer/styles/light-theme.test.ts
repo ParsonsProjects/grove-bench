@@ -74,6 +74,22 @@ describe('light theme', () => {
     expect([...missing]).toEqual([]);
   });
 
+  it('uses only the palette hues the brand gives a meaning', () => {
+    // BRAND.md: red fails, amber needs you, yellow and purple and cyan are
+    // categories, green acts or is done, blue is in progress or leaves the
+    // app. Orange, teal and violet were merged into these; a new hue needs a
+    // meaning of its own first.
+    const allowed = new Set(['red', 'amber', 'yellow', 'green', 'cyan', 'blue', 'purple']);
+    const pattern = new RegExp(`\\b[a-z]+(?:-[a-z]+)*-(${HUES})-\\d{2,3}\\b`, 'g');
+    const strays = new Set<string>();
+    for (const file of sourceFiles(RENDERER)) {
+      for (const m of readFileSync(file, 'utf8').matchAll(pattern)) {
+        if (!allowed.has(m[1])) strays.add(`${m[0]} (${path.relative(RENDERER, file)})`);
+      }
+    }
+    expect([...strays]).toEqual([]);
+  });
+
   it('keeps text colours at 4.5:1 on the light panels', () => {
     const vars = lightVars();
     const panel = vars.get('--card')!;

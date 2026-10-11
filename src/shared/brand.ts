@@ -71,12 +71,13 @@ export type ThemeName = 'dark' | 'light';
 /**
  * What each thread status colour means, and its colour in each theme. The
  * sidebar's filter chips, the status dots and the grove characters all wear
- * these. Brand green means work is happening: the grove growing.
+ * these. Blue is in progress (and moves); green is done, as it is for a
+ * passing check or a copied tick, and is also the colour of an action.
  */
 export const STATUS = {
-  working: { label: 'Working', dark: PALETTE.leaf, light: PALETTE.forest },
+  working: { label: 'Working', dark: PALETTE.sky, light: PALETTE.skyDeep },
   attention: { label: 'Needs you', dark: PALETTE.sun, light: PALETTE.sunDeep },
-  unread: { label: 'Finished a turn', dark: PALETTE.sky, light: PALETTE.skyDeep },
+  unread: { label: 'Finished a turn', dark: PALETTE.leaf, light: PALETTE.forest },
   error: { label: 'Error', dark: PALETTE.ember, light: PALETTE.emberDeep },
 } as const;
 

@@ -329,7 +329,7 @@
       <p class="text-xs text-destructive mt-2">{memoryStore.error}</p>
     {:else if memoryStore.compacting}
       <div class="mt-2 flex items-center gap-3">
-        <Pulse tone="primary" size="xs" />
+        <Pulse size="xs" />
         <p class="text-xs text-muted-foreground flex-1">
           {compactStageLabel} — {formatElapsed(memoryStore.compactElapsedSeconds)} elapsed
           <span class="text-muted-foreground">(times out at {formatElapsed(compactTimeoutSeconds)})</span>

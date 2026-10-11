@@ -568,7 +568,7 @@
                   <button type="button" class="absolute inset-0 z-30 cursor-default" aria-label="Skip the wake-up" onclick={() => wakeScene.end()}></button>
                 {/if}
               {:else}
-                <Pulse tone="primary" class="size-4 relative z-10" />
+                <Pulse class="size-4 relative z-10" />
                 <span class="ml-3 text-sm relative z-10">Starting agent...</span>
               {/if}
             </div>

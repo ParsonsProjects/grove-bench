@@ -100,8 +100,8 @@ export const primaryOnDark = PALETTE.leaf;
 const SKY_HUE = hueOf(PALETTE.skyDeep);
 export const sky = PALETTE.sky;
 export const amber = statusColors.attention; // the sun: needs you
-// Brand green as a status: work happening, the grove growing.
-export const green = statusColors.working;
+// Green as a status: done (a thread that finished a turn).
+export const green = statusColors.unread;
 
 // The logo's leaves, light to dark (PIXEL_TREE), and its trunk and roots.
 export const leaves = [PALETTE.sprout, PALETTE.leaf, PALETTE.moss, PALETTE.fern];

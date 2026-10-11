@@ -8,7 +8,7 @@ import { AGENT_SPRITES, PALETTE, NIGHT } from './app-art.js';
 import { statusColors } from '../lib/brand.js';
 
 const CLASS_COLOR = {
-  // Thread status (STATUS): green working, amber needs you, blue finished a
+  // Thread status (STATUS): blue working, amber needs you, green finished a
   // turn, red error.
   'text-status-working': statusColors.working,
   'text-status-attention': statusColors.attention,
@@ -21,8 +21,6 @@ const CLASS_COLOR = {
   // Tailwind's palette.
   'text-green-400': 'oklch(0.792 0.209 151.711)',
   'text-neutral-500': 'oklch(0.556 0 0)',
-  'text-cyan-400': 'oklch(0.789 0.154 211.53)',
-  'text-blue-400': 'oklch(0.707 0.165 254.624)',
 };
 
 /** The colour a character wears in this state, as in the app's sidebar. */

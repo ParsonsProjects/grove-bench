@@ -64,7 +64,7 @@
 
     {#if pluginStore.loading}
       <div class="flex items-center justify-center py-8 text-muted-foreground">
-        <Pulse tone="primary" class="mr-2" />
+        <Pulse class="mr-2" />
         <span class="text-sm">Loading plugins...</span>
       </div>
     {:else}

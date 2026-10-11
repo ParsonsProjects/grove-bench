@@ -17,14 +17,14 @@ export function usageTone(percent: number): UsageTone {
 const TEXT: Record<UsageTone, string> = {
   ok: 'text-green-400',
   filling: 'text-yellow-400',
-  low: 'text-orange-400',
+  low: 'text-amber-500',
   full: 'text-red-400',
 };
 
 const BAR: Record<UsageTone, string> = {
   ok: 'bg-green-500',
   filling: 'bg-yellow-400',
-  low: 'bg-orange-400',
+  low: 'bg-amber-500',
   full: 'bg-red-400',
 };
 

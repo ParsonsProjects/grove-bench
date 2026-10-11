@@ -93,19 +93,25 @@ Colour is for meaning, not decoration. Each colour has one job:
 
 | Colour | Means | Token |
 |---|---|---|
-| Brand green | An action you can take (primary buttons, focus, the current choice), and an agent working: the grove growing | `--primary`, `--status-working` |
-| Amber (sun) | Needs you: a permission prompt or a question | `--status-attention` |
-| Blue (sky) | A thread finished a turn you haven't seen. Also links that leave the app | `--status-unread`, `--link` |
+| Brand green | An action you can take (primary buttons, focus, the current choice), or done: a thread that finished a turn, a passing check, a copied tick | `--primary`, `--status-unread`, `text-green-400` |
+| Blue (sky) | In progress: an agent working, a background task, something loading. Also links that leave the app | `--status-working`, `--link` |
+| Amber (sun) | Needs you: a permission prompt, a question, an MCP form. Also warnings: context running low, changes requested | `--status-attention`, `text-amber-500` |
 | Red (ember) | Something failed, or an action that destroys something | `--status-error`, `--destructive` |
-| Grey | Quiet: ready, sleeping, closed | `--muted-foreground` |
+| Grey | Quiet: ready, sleeping, closed, answered | `--muted-foreground` |
+| Yellow, purple, cyan | Categories, not states: tool names and pending checks (yellow), thinking and merged pull requests (purple), code such as diff hunk headers (cyan) | Tailwind's palette |
+
+Those seven hues are the whole set; `light-theme.test.ts` fails if a component uses another. Orange, teal and violet were merged into amber, blue and amber: they sat too close to their neighbours to mean anything different.
 
 Rules that follow from that:
 
-- **Green acts, blue goes.** A link-style button that does something in the app is primary green. A link that opens a web page or another app is blue.
+- **Green acts and finishes, blue is in progress or goes.** A button or link-style button that does something in the app is green, and so is anything that is done. Something still happening is blue; so is a link that opens a web page or another app.
+- **Motion says it's live.** A blue square pulses while work is in progress and an amber one while something waits for you; a still square is a settled state. When the system asks for reduced motion the pulses stop and colour carries the meaning alone, which is why "working" and "done" must differ in colour, not only in motion ([WCAG 1.4.1, Use of Color](https://www.w3.org/WAI/WCAG22/Understanding/use-of-color.html)).
+- **The square is the state, the word is the kind.** In the status bar and the Thread tab the moving square is always blue while the agent works; the word after it is coloured by what it is doing (yellow for a tool, purple for thinking).
 - **Status colours only through the status tokens** (`bg-status-working`, `text-status-attention`, and so on), never `bg-primary` or a palette colour. Changing what a status looks like is then a one-line edit in `globals.css`.
-- **Success and diffs keep Tailwind's green** (`text-green-400`): a copied tick, added lines, a passing check. They mean "done", which brand green doesn't.
+- **One colour per wait.** A permission, a question and an MCP form all wait for you, so they are all amber, in the sidebar and in the Thread tab. Once answered they go grey; an allowed permission keeps its green and a denied one its red.
 - **Dark fills carry dark text.** In the dark theme, primary and destructive fills are bright, so their text is dark (canopy, cinder). White on leaf would be 2.5:1.
 - **Text keeps 4.5:1** (WCAG AA) against its background in both themes. The tests check the theme tokens. Fading text with opacity (`text-muted-foreground/50`) usually breaks this, so don't do it for anything people need to read.
+- **Paper's yellow is a mustard** (hue 95), not Tailwind's yellow-700, which has turned orange and is hard to tell from amber on a light background.
 
 ## Type
 

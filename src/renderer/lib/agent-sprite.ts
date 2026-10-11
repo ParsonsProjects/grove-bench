@@ -223,8 +223,8 @@ function sprite(label: string, colorClass: string, maps: string[][], opts: Parti
 
 /**
  * The sidebar's status colours follow its filter chips, so a colour always
- * means the same thing (STATUS in brand.ts): amber needs you, green is working
- * (starting up included), blue finished a turn you haven't seen, red is an
+ * means the same thing (STATUS in brand.ts): amber needs you, blue is working
+ * (starting up included), green finished a turn you haven't seen, red is an
  * error. Every quiet state is grey, told apart by pose: sitting (ready) or
  * asleep (sleeping, closed).
  */
@@ -245,8 +245,8 @@ export const AGENT_SPRITES: Record<AgentSpriteState, AgentSprite> = {
   removing: sprite('Removing', 'text-muted-foreground', [ASLEEP], { fade: true }),
   allowed: sprite('Allowed', 'text-green-400', [withSymbol(SIT, CHECK)]),
   denied: sprite('Denied', 'text-destructive', [withSymbol(SIT, CROSS)]),
-  asking: sprite('Asking you a question', 'text-cyan-400', [withSymbol(SIT, QUESTION)], { pulseSymbol: true }),
-  answered: sprite('Answered', 'text-blue-400', [withSymbol(SIT, BUBBLE)]),
+  asking: sprite('Asking you a question', 'text-status-attention', [withSymbol(SIT, QUESTION)], { pulseSymbol: true }),
+  answered: sprite('Answered', 'text-muted-foreground', [withSymbol(SIT, BUBBLE)]),
 };
 
 /** Exported for tests: every pose map, so their sizes can be checked. */
