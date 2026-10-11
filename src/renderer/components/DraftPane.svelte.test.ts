@@ -88,7 +88,9 @@ describe('DraftPane', () => {
     await fireEvent.input(box, { target: { value: 'Fix API-12 login crash' } });
     await fireEvent.keyDown(box, { key: 'Enter' });
     await waitFor(() => expect(createSessionMock()).toHaveBeenCalled());
-    await waitFor(() => expect(mockGroveBench.sendMessage).toHaveBeenCalledWith('new1', 'Fix API-12 login crash'));
+    // The thread's id is picked by the draft store and sent with the create.
+    const { id } = createSessionMock().mock.calls[0][0];
+    await waitFor(() => expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(id, 'Fix API-12 login crash'));
   });
 
   it('keeps Shift+Enter as a new line', async () => {

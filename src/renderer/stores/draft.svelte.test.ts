@@ -28,8 +28,10 @@ const settle = () => new Promise((r) => setTimeout(r, 0));
 beforeEach(() => {
   vi.clearAllMocks();
   draftStore.discard();
-  // Starting with a message begins the new conversation's arrival scene;
-  // the mocked createSession always returns 'new1'.
+  // The store picks the new conversation's id; pin it to 'new1', the id the
+  // mocked createSession returns. Starting with a message begins its
+  // arrival scene.
+  vi.spyOn(crypto, 'randomUUID').mockReturnValue('new1' as ReturnType<typeof crypto.randomUUID>);
   arrivalScene.end('new1');
   store.repos = ['/repo/one', '/repo/two'];
   store.sessions = [];
@@ -47,6 +49,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.mocked(crypto.randomUUID).mockRestore();
   draftStore.discard();
   groupStore.groups = [];
   store.repos = [];
@@ -244,7 +247,34 @@ describe('draftStore.start', () => {
     expect(createSessionMock()).toHaveBeenCalledWith(expect.objectContaining({ baseBranch: 'trunk' }));
   });
 
-  it('keeps the draft and shows the error when creation fails', async () => {
+  it('shows the row and the message before main replies, and sends once main has the thread', async () => {
+    const addUserMessage = vi.spyOn(messageStore, 'addUserMessage');
+    let finish!: (v: unknown) => void;
+    createSessionMock().mockReturnValueOnce(new Promise((r) => { finish = r; }));
+    draftStore.open('/repo/one');
+    await settle();
+    draftStore.setText('Fix API-12 login crash');
+
+    const started = draftStore.start();
+    expect(store.sessions.find((s) => s.id === 'new1')).toMatchObject({
+      status: 'starting', branch: 'grove/new1', repoPath: '/repo/one', agentType: 'claude-code',
+    });
+    expect(store.activeSessionId).toBe('new1');
+    expect(draftStore.draft).toBeNull();
+    expect(addUserMessage).toHaveBeenCalledWith('new1', 'Fix API-12 login crash');
+    expect(createSessionMock()).toHaveBeenCalledWith(expect.objectContaining({ id: 'new1' }));
+    // Main has nowhere to put the prompt until it knows the thread.
+    expect(mockGroveBench.sendMessage).not.toHaveBeenCalled();
+
+    finish({ id: 'new1', branch: 'grove/new1', agentType: 'codex' });
+    expect(await started).toBe(true);
+    expect(store.sessions.find((s) => s.id === 'new1')?.agentType).toBe('codex');
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith('new1', 'Fix API-12 login crash');
+    addUserMessage.mockRestore();
+    arrivalScene.end('new1');
+  });
+
+  it('takes the row away and brings the draft back with the error when main refuses', async () => {
     createSessionMock().mockRejectedValue(new Error('Branch "feat/x" already exists'));
     draftStore.open('/repo/one');
     await settle();
@@ -252,6 +282,74 @@ describe('draftStore.start', () => {
     expect(await draftStore.start()).toBe(false);
     expect(draftStore.error).toContain('already exists');
     expect(draftStore.draft?.text).toBe('hello');
+    expect(store.sessions.find((s) => s.id === 'new1')).toBeUndefined();
+    expect(draftStore.visible).toBe(true);
+    expect(arrivalScene.for('new1')).toBeNull();
+    // The draft says what went wrong; no toast as well.
+    expect(store.error).toBeNull();
+  });
+
+  it('lets a thread closed before main replied go: no draft back, no message sent', async () => {
+    let finish!: (v: unknown) => void;
+    createSessionMock().mockReturnValueOnce(new Promise((r) => { finish = r; }));
+    draftStore.open('/repo/one');
+    await settle();
+    draftStore.setText('hello');
+    const started = draftStore.start();
+    store.updateStatus('new1', 'stopped');
+    finish({ id: 'new1', branch: 'grove/new1', agentType: 'claude-code' });
+    expect(await started).toBe(true);
+    expect(mockGroveBench.sendMessage).not.toHaveBeenCalled();
+
+    arrivalScene.end('new1');
+
+    // Deleted while main checked: main stops, and that isn't an error to show.
+    vi.mocked(crypto.randomUUID).mockReturnValueOnce('new2' as ReturnType<typeof crypto.randomUUID>);
+    let fail!: (e: Error) => void;
+    createSessionMock().mockReturnValueOnce(new Promise((_r, reject) => { fail = reject; }));
+    draftStore.open('/repo/one');
+    await settle();
+    draftStore.setText('again');
+    const second = draftStore.start();
+    store.updateStatus('new2', 'stopped');
+    fail(new Error('This operation was aborted'));
+    expect(await second).toBe(false);
+    expect(draftStore.draft).toBeNull();
+    expect(store.error).toBeNull();
+    expect(store.sessions.find((s) => s.id === 'new2')).toBeUndefined();
+    arrivalScene.end('new2');
+  });
+
+  it('drops a thread closed before main heard of it', async () => {
+    draftStore.open('/repo/one');
+    await settle();
+    // No base branch yet, so starting looks it up first.
+    draftStore.setStart({ kind: 'new', branchName: '', baseBranch: '' });
+    let base!: (b: string) => void;
+    mockGroveBench.getDefaultBranch.mockReturnValueOnce(new Promise((r) => { base = r; }));
+    const started = draftStore.start();
+    store.updateStatus('new1', 'stopped');
+    base('main');
+    expect(await started).toBe(false);
+    expect(createSessionMock()).not.toHaveBeenCalled();
+    expect(store.sessions.find((s) => s.id === 'new1')).toBeUndefined();
+  });
+
+  it('keeps a draft with a message opened meanwhile, and says what failed in a toast', async () => {
+    let fail!: (e: Error) => void;
+    createSessionMock().mockReturnValueOnce(new Promise((_r, reject) => { fail = reject; }));
+    draftStore.open('/repo/one');
+    await settle();
+    draftStore.setText('first');
+    const started = draftStore.start();
+    draftStore.open('/repo/two');
+    draftStore.setText('second');
+
+    fail(new Error('Branch "feat/x" already exists'));
+    expect(await started).toBe(false);
+    expect(draftStore.draft?.text).toBe('second');
+    expect(store.error).toContain('already exists');
+    store.clearError();
   });
 
   it('will not start an existing-branch draft with no branch', async () => {
@@ -301,12 +399,12 @@ describe('draftStore in a folder project without git', () => {
   });
 
   it('creates a conversation in the folder and marks it as having no git', async () => {
-    createSessionMock().mockResolvedValue({ id: 'n1', branch: '', agentType: 'claude-code', noGit: true });
+    createSessionMock().mockResolvedValue({ id: 'new1', branch: '', agentType: 'claude-code', noGit: true });
     draftStore.open('/repo/two');
     await settle();
     expect(await draftStore.start()).toBe(true);
     expect(createSessionMock()).toHaveBeenCalledWith(expect.objectContaining({ repoPath: '/repo/two', branchName: '', direct: true }));
-    expect(store.sessions.find((s) => s.id === 'n1')).toMatchObject({ direct: true, noGit: true, status: 'running' });
+    expect(store.sessions.find((s) => s.id === 'new1')).toMatchObject({ direct: true, noGit: true, status: 'running' });
   });
 
   it('goes back to a new branch when the folder has become a git repository since launch', async () => {
@@ -317,13 +415,26 @@ describe('draftStore in a folder project without git', () => {
     expect(draftStore.draft?.start).toMatchObject({ kind: 'new', baseBranch: 'main' });
   });
 
+  it('keeps a status main sent before it replied', async () => {
+    let finish!: (v: unknown) => void;
+    createSessionMock().mockReturnValueOnce(new Promise((r) => { finish = r; }));
+    draftStore.open('/repo/two');
+    await settle();
+    const started = draftStore.start();
+    expect(store.sessions.find((s) => s.id === 'new1')).toMatchObject({ direct: true, status: 'starting' });
+    store.updateStatus('new1', 'error');
+    finish({ id: 'new1', branch: '', agentType: 'claude-code', noGit: true });
+    await started;
+    expect(store.sessions.find((s) => s.id === 'new1')?.status).toBe('error');
+  });
+
   it('trusts main over its own flag when marking the new conversation', async () => {
     // Main found a repository after all, so the conversation runs with git.
-    createSessionMock().mockResolvedValue({ id: 'g1', branch: 'main', agentType: 'claude-code' });
+    createSessionMock().mockResolvedValue({ id: 'new1', branch: 'main', agentType: 'claude-code' });
     draftStore.open('/repo/two');
     await settle();
     expect(await draftStore.start()).toBe(true);
-    expect(store.sessions.find((s) => s.id === 'g1')?.noGit).toBeUndefined();
+    expect(store.sessions.find((s) => s.id === 'new1')?.noGit).toBeUndefined();
   });
 });
 });

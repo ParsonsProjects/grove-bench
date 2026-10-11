@@ -72,7 +72,7 @@
 
   const start = $derived(draft?.start);
   const canStart = $derived(
-    !!draft && credentials === 'ready' && !draftStore.starting
+    !!draft && credentials === 'ready'
       && (start?.kind !== 'existing' || !!start.branch),
   );
 
@@ -102,7 +102,7 @@
 
   /** Why Start is off, in words, for its tooltip and for Enter. */
   const startBlocker = $derived.by(() => {
-    if (!draft || draftStore.starting) return null;
+    if (!draft) return null;
     if (credentials === 'missing') return 'Add credentials above to start.';
     if (credentials === 'checking') return 'Checking credentials…';
     if (credentials === 'no-agent') return 'No agent is available to start this thread.';
@@ -348,7 +348,7 @@
         title={startBlocker ?? `Start the thread${draft.text.trim() ? ' and send this message' : ''}`}
         class="text-primary border-primary hover:bg-primary/10 h-auto"
       >
-        {draftStore.starting ? 'Starting…' : 'Start'}
+        Start
       </Button>
     </div>
     {#if nudged && startBlocker}
