@@ -31,7 +31,7 @@ npm run build     # builds into landing/dist
   at full size.
 - `src/shared/app-art.js`: the app's own sprite code from `src/renderer/lib`,
   so every pose, colour, look and scene is what the app draws, and its brand
-  (`brand.ts`: PALETTE, NIGHT, PAPER, STATUS, FONTS). The deploy workflow
+  (`src/shared/brand.ts`: PALETTE, NIGHT, PAPER, STATUS, FONTS). The deploy workflow
   also runs when those files change.
 - `src/lib/brand.js`: the brand for the page. `applyBrand()` (run by
   `main.js` before the page mounts) sets its colours and fonts as CSS

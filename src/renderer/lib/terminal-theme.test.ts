@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { terminalColors, prefersLight, onColorSchemeChange } from './terminal-theme.js';
-import { NIGHT, PAPER } from './brand.js';
+import { NIGHT, PAPER } from '../../shared/brand.js';
 
 /** A matchMedia whose light/dark answer the test can flip. */
 function fakeMatchMedia(light: boolean) {

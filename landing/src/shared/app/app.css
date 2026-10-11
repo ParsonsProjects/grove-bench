@@ -2,7 +2,7 @@
    to .gb so it can sit inside the pixel-night pages. It is the app's dark
    theme, the default: the brand's NIGHT neutrals, leaf green as primary and
    each thread status in its dark colour (lib/brand.js sets the --night-*,
-   palette and --status-* variables from src/renderer/lib/brand.ts). Other
+   palette and --status-* variables from src/shared/brand.ts). Other
    hues are Tailwind's, as the app uses them. */
 
 .gb {

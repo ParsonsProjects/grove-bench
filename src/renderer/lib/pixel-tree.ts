@@ -1,4 +1,4 @@
-import { PALETTE } from './brand.js';
+import { PALETTE } from '../../shared/brand.js';
 
 /**
  * The Grove Bench pixel tree, the logo (BRAND.md): 2px pixels with 1px gaps

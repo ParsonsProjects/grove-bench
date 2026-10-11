@@ -6,7 +6,7 @@ Where things live:
 
 | What | Where |
 |---|---|
-| Brand colours, status colours, fonts (the source of truth) | `src/renderer/lib/brand.ts` |
+| Brand colours, status colours, fonts (the source of truth) | `src/shared/brand.ts` |
 | Theme tokens built from them | `src/renderer/styles/globals.css` |
 | Logo pixel data | `src/renderer/lib/pixel-tree.ts` |
 | Logo files | `docs/brand/` |

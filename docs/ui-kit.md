@@ -6,7 +6,7 @@ The shared tokens and components every Grove Bench screen is built from, and the
 
 ## Tokens
 
-All defined in `src/renderer/styles/globals.css`, built from `src/renderer/lib/brand.ts`. Use them through Tailwind classes; never write a hex value in a component.
+All defined in `src/renderer/styles/globals.css`, built from `src/shared/brand.ts`. Use them through Tailwind classes; never write a hex value in a component.
 
 ### Colour
 

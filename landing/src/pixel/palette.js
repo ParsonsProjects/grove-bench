@@ -1,6 +1,6 @@
 // Colour helpers and the grove palette.
 //
-// Every colour here is derived from the brand (src/renderer/lib/brand.ts):
+// Every colour here is derived from the brand (src/shared/brand.ts):
 // the tree greens and trunk browns of the pixel logo, brand green, the sky
 // and sun, the status colours and the app theme's warm neutrals. Sky palettes
 // are interpolations between the deep sky blue and the sun in OKLab.

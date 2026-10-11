@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { FONTS, NIGHT, PALETTE, PAPER, STATUS } from '../lib/brand.js';
+import { FONTS, NIGHT, PALETTE, PAPER, STATUS } from '../../shared/brand.js';
 
 // CI's Windows checkout can give the file CRLF line endings
 const css = readFileSync(path.join(__dirname, 'globals.css'), 'utf8').replace(/\r\n/g, '\n');

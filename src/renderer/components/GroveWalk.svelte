@@ -8,7 +8,7 @@
     wakePhase, arrivePhase, type WakePhase, type ArrivePhase,
   } from '../lib/grove-walk.js';
   import { prefersReducedMotion } from '../lib/utils.js';
-  import { PALETTE } from '../lib/brand.js';
+  import { PALETTE } from '../../shared/brand.js';
   import type { WakeScene } from '../stores/wakeScene.svelte.js';
 
   /**

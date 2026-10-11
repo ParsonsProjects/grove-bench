@@ -3,6 +3,8 @@ import List from "./tabs-list.svelte";
 import Trigger from "./tabs-trigger.svelte";
 import Content from "./tabs-content.svelte";
 
+export { tabTrigger, TAB_TRIGGER_BASE } from "./variants.js";
+
 export {
 	Root,
 	List,

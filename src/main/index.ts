@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, powerMonitor, screen } from 'electron';
+import { app, BrowserWindow, ipcMain, nativeTheme, powerMonitor, screen } from 'electron';
 import path from 'node:path';
 import { registerHandlers, appEvents } from './ipc.js';
 import { sessionManager } from './agent-session.js';
@@ -92,6 +92,10 @@ function createWindow() {
   // Apply persisted settings on startup, the theme before the page loads so
   // it doesn't open dark and then switch
   settings.applyImmediateEffects(mainWindow, settings.loadSettings());
+  // With the theme on System, Windows can switch it while the app runs
+  nativeTheme.on('updated', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setBackgroundColor(settings.windowBackground());
+  });
 
   // Spell checker setup (the renderer draws the suggestion menu)
   installSpellcheckMenu(mainWindow.webContents);

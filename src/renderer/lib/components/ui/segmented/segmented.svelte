@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { RadioGroup as RadioGroupPrimitive } from "bits-ui";
 	import { cn } from "$lib/utils.js";
+	import { segmentedRoot } from "./variants.js";
 
 	/**
 	 * Pick one of a few views or modes, side by side ("Unified | Split").
@@ -21,6 +22,6 @@
 	bind:value
 	{orientation}
 	data-slot="segmented"
-	class={cn("inline-flex items-stretch border border-border", className)}
+	class={cn(segmentedRoot, className)}
 	{...restProps}
 />

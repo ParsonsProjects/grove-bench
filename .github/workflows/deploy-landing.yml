@@ -9,7 +9,7 @@ on:
       # takes its colours and fonts from the app's brand.
       - 'src/renderer/lib/agent-sprite.ts'
       - 'src/renderer/lib/pixel-tree.ts'
-      - 'src/renderer/lib/brand.ts'
+      - 'src/shared/brand.ts'
       - 'src/renderer/lib/grove-walk.ts'
       - 'src/renderer/lib/context-grove.ts'
       - 'src/renderer/lib/usage-tone.ts'

@@ -11,6 +11,8 @@ import { PanelHeader } from './panel-header/index.js';
 import { Pulse } from './pulse/index.js';
 import { Logo } from './logo/index.js';
 import { menuItem, menuPanel } from './menu/index.js';
+import { tabTrigger } from './tabs/index.js';
+import { segmentedItem } from './segmented/index.js';
 import KitFixture from './kit-fixture.svelte';
 
 const text = (t: string) => createRawSnippet(() => ({ render: () => `<span>${t}</span>` }));
@@ -22,6 +24,11 @@ describe('Button', () => {
     expect(button).toHaveClass('h-5', 'text-micro', 'border-border');
     // The base's text-sm gives way to the size's text-micro
     expect(button).not.toHaveClass('text-sm');
+  });
+
+  it('keeps hover events when disabled, so its tooltip can say why', () => {
+    render(Button, { disabled: true, title: 'Nothing to commit', children: text('Commit') });
+    expect(screen.getByRole('button', { name: 'Commit' })).not.toHaveClass('disabled:pointer-events-none');
   });
 
   it('keeps a text size passed in alongside a colour', () => {
@@ -107,6 +114,14 @@ describe('Logo', () => {
     const svg = container.querySelector('svg')!;
     expect(svg).toHaveAttribute('width', '21');
     expect(svg).toHaveAttribute('height', '24');
+  });
+});
+
+describe('class recipes for hand-built controls', () => {
+  it('match the components', () => {
+    expect(tabTrigger({ active: true })).toContain('border-primary');
+    expect(tabTrigger()).toContain('border-transparent');
+    expect(segmentedItem({ selected: true })).toContain('bg-accent');
   });
 });
 

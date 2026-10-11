@@ -1,5 +1,5 @@
 import type { ITheme } from '@xterm/xterm';
-import { NIGHT, PALETTE, PAPER } from './brand.js';
+import { NIGHT, PALETTE, PAPER } from '../../shared/brand.js';
 
 /**
  * Terminal tab colours. The background, text, cursor and selection are the

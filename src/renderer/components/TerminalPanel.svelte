@@ -8,7 +8,7 @@
   import { collectTailLines, formatTerminalContext, DEFAULT_TAIL_LINES } from '$lib/terminal-context.js';
   import { openLink } from '$lib/preview-links.js';
   import { terminalColors, prefersLight, onColorSchemeChange } from '$lib/terminal-theme.js';
-  import { FONTS } from '$lib/brand.js';
+  import { FONTS } from '../../shared/brand.js';
 
   let { sessionId }: { sessionId: string } = $props();
 

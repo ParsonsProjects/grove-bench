@@ -61,6 +61,7 @@ src/
     styles/            # CSS
   shared/
     types.ts           # Shared types between main/renderer
+    brand.ts           # Brand palette, status colours, fonts (app, landing, window)
 docs/                  # Design docs, user stories, ui-kit.md, brand/ (logo files)
 BRAND.md               # Brand: logo, palette, type, voice
 DESIGN.md              # Architecture & design document
@@ -115,7 +116,7 @@ Use the user-facing words in any new UI text, help page or doc. See `docs/projec
   (`src/shared/tool-view.ts`); the UI and Read-safe mode read that, never a
   provider's tool names. Events without one are read as Claude Code tools
 - Colours come from the theme tokens in `src/renderer/styles/globals.css`,
-  built from the brand palette in `src/renderer/lib/brand.ts` (dark: Night,
+  built from the brand palette in `src/shared/brand.ts` (dark: Night,
   light: Paper; BRAND.md). Light applies under `prefers-color-scheme: light`,
   which main sets from the Theme setting (`nativeTheme.themeSource`). Thread
   status uses the `status-*` tokens (`bg-status-working`), never `bg-primary`.

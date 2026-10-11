@@ -21,7 +21,8 @@ vi.mock('./logger.js', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-import { loadSettings, saveSettings, getSettings, applyImmediateEffects, upgradeSettings, validateSettings, resetSettingsCache, SETTINGS_SCHEMA_VERSION } from './settings.js';
+import { loadSettings, saveSettings, getSettings, applyImmediateEffects, windowBackground, upgradeSettings, validateSettings, resetSettingsCache, SETTINGS_SCHEMA_VERSION } from './settings.js';
+import { NIGHT, PAPER } from '../shared/brand.js';
 import { nativeTheme } from 'electron';
 import type { GroveBenchSettings } from '../shared/types.js';
 
@@ -160,7 +161,7 @@ describe('saveSettings', () => {
 
 describe('applyImmediateEffects', () => {
   it('sets alwaysOnTop on the window', () => {
-    const win = { isDestroyed: vi.fn(() => false), setAlwaysOnTop: vi.fn() } as any;
+    const win = { isDestroyed: vi.fn(() => false), setAlwaysOnTop: vi.fn(), setBackgroundColor: vi.fn() } as any;
     const s = loadSettings();
     s.alwaysOnTop = true;
     applyImmediateEffects(win, s);
@@ -168,7 +169,7 @@ describe('applyImmediateEffects', () => {
   });
 
   it('applies the theme to nativeTheme, which sets prefers-color-scheme', () => {
-    const win = { isDestroyed: vi.fn(() => false), setAlwaysOnTop: vi.fn() } as any;
+    const win = { isDestroyed: vi.fn(() => false), setAlwaysOnTop: vi.fn(), setBackgroundColor: vi.fn() } as any;
     nativeTheme.themeSource = 'system';
     const s = loadSettings();
     for (const theme of ['light', 'dark', 'system'] as const) {
@@ -176,6 +177,20 @@ describe('applyImmediateEffects', () => {
       applyImmediateEffects(win, s);
       expect(nativeTheme.themeSource).toBe(theme);
     }
+  });
+
+  it('paints the window behind the page in the theme\'s background', () => {
+    const win = { isDestroyed: vi.fn(() => false), setAlwaysOnTop: vi.fn(), setBackgroundColor: vi.fn() } as any;
+    const s = loadSettings();
+    // Read-only in Electron's types; a plain field on the mock
+    const theme = nativeTheme as { shouldUseDarkColors: boolean };
+    theme.shouldUseDarkColors = true;
+    applyImmediateEffects(win, s);
+    expect(win.setBackgroundColor).toHaveBeenLastCalledWith(NIGHT.background);
+    theme.shouldUseDarkColors = false;
+    applyImmediateEffects(win, s);
+    expect(win.setBackgroundColor).toHaveBeenLastCalledWith(PAPER.background);
+    expect(windowBackground()).toBe(PAPER.background);
   });
 
   it('applies the theme even without a window', () => {

@@ -1,6 +1,6 @@
 // The app colours its characters with Tailwind text classes (currentColor).
 // These are the same colours as plain CSS values: the app theme's tokens,
-// from the brand (src/renderer/lib/brand.ts), and Tailwind v4's palette for
+// from the brand (src/shared/brand.ts), and Tailwind v4's palette for
 // the rest. The page's app windows show the app's dark theme, so these are
 // the dark-theme values.
 

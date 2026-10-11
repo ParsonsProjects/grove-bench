@@ -9,7 +9,7 @@
     type AgentSpriteState, type GroveTab,
   } from '../lib/agent-sprite.js';
   import { PIXEL_TREE } from '../lib/pixel-tree.js';
-  import { PALETTE } from '../lib/brand.js';
+  import { PALETTE } from '../../shared/brand.js';
 
   /**
    * Grove character versions of the main area's empty states.

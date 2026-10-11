@@ -26,7 +26,7 @@ export {
   toRuns,
 } from '../../../src/renderer/lib/agent-sprite.ts';
 export { PIXEL_TREE, PIXEL_TREE_W, PIXEL_TREE_H } from '../../../src/renderer/lib/pixel-tree.ts';
-export { PALETTE, NIGHT, PAPER, STATUS, FONTS } from '../../../src/renderer/lib/brand.ts';
+export { PALETTE, NIGHT, PAPER, STATUS, FONTS } from '../../../src/shared/brand.ts';
 export {
   WALK_BACK,
   WALK_FRONT,

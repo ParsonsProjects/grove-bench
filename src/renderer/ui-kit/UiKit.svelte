@@ -5,7 +5,7 @@
    * when to use each; this page shows what they look like. Open
    * /ui-kit.html on the dev server.
    */
-  import { NIGHT, PALETTE, PAPER, STATUS } from '$lib/brand.js';
+  import { NIGHT, PALETTE, PAPER, STATUS } from '../../shared/brand.js';
   import { Badge } from '$lib/components/ui/badge/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Checkbox } from '$lib/components/ui/checkbox/index.js';

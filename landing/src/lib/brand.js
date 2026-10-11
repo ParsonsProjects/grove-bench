@@ -1,5 +1,5 @@
 // Shared brand data for the landing page. The colours and fonts are the app's
-// own (src/renderer/lib/brand.ts, through shared/app-art.js), so the page and
+// own (src/shared/brand.ts, through shared/app-art.js), so the page and
 // the app share one palette; the logo is PIXEL_TREE from the same place.
 
 import { PALETTE, NIGHT, PAPER, STATUS, FONTS } from '../shared/app-art.js';

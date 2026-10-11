@@ -4,7 +4,7 @@
    JetBrains Mono, branch names); the grove is the illustration.
 
    Brand colours and fonts are CSS variables set from the app's brand
-   (src/renderer/lib/brand.ts) by lib/brand.js: --leaf, --forest, --sky-deep,
+   (src/shared/brand.ts) by lib/brand.js: --leaf, --forest, --sky-deep,
    --paper-ink, --night-card and so on. */
 
 .day {

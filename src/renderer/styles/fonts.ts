@@ -1,4 +1,4 @@
-// The brand's typefaces (FONTS in lib/brand.ts), bundled so the app looks the
+// The brand's typefaces (FONTS in shared/brand.ts), bundled so the app looks the
 // same on every machine instead of falling back to whatever monospace font is
 // installed. SIL Open Font License. Variable fonts: one woff2 per character
 // set covers every weight, about 200 KB in all. Every character set ships,
