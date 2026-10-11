@@ -2,8 +2,11 @@ import type { AgentSummary } from '../../shared/types.js';
 import { DEFAULT_GROVE_WRITTEN } from '../lib/unsaved-files.js';
 
 /** Whether new conversations may use `agent`: any agent that isn't in
- *  alpha, and alpha agents the user turned on (enabledAlphaAgents). */
-export function offeredForNew(agent: Pick<AgentSummary, 'id' | 'stage'>, enabledAlpha: readonly string[]): boolean {
+ *  alpha, and alpha agents the user turned on (enabledAlphaAgents). Not a
+ *  Claude account taken out of Settings, which stays registered only for the
+ *  threads already on it. */
+export function offeredForNew(agent: Pick<AgentSummary, 'id' | 'stage' | 'account'>, enabledAlpha: readonly string[]): boolean {
+  if (agent.account?.removed) return false;
   return agent.stage !== 'alpha' || enabledAlpha.includes(agent.id);
 }
 

@@ -102,6 +102,7 @@
     credentials: () => Object.values(store.prerequisites?.agents ?? {}).some((a) => a.apiKey || a.cliSignIn || a.installCommand),
     'thinking-summaries': () => agentsStore.list.some((a) => a.capabilities.thinkingSummaries),
     'alpha-agents': () => agentsStore.list.some((a) => a.stage === 'alpha'),
+    'claude-accounts': () => agentsStore.list.some((a) => a.capabilities.accounts && !a.account),
     'project-colors': () => store.repos.length > 0,
   };
   const results = $derived(

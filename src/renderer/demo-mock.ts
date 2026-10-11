@@ -45,6 +45,7 @@ const SETTINGS = {
   workingDirectories: [],
   defaultSystemPromptAppend: '',
   acpAgents: [],
+  claudeAccounts: [],
   enabledAlphaAgents: [],
   memoryAutoSave: true,
   memoryAutoCompact: false,
@@ -432,6 +433,10 @@ const api: Record<string, unknown> = {
   }, {
     id: 'codex', displayName: 'Codex', capabilities: { permissionModes: true },
   }],
+  previewClaudeAccount: async ({ name }: { name: string }) => name.trim()
+    ? { ok: true as const, configDir: `C:\\Users\\demo\\.claude-${name.trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-')}` }
+    : { ok: false as const, error: 'Enter a name for the account, such as Work.' },
+  addClaudeAccount: async (): Promise<never> => { throw new Error('Adding accounts is not available in the demo.'); },
   getAdapterControls: async (adapterType?: string) => adapterType === 'codex' ? [
     { id: 'permissionMode', label: 'Mode', default: 'default', options: [
       { value: 'default', label: 'Ask', tone: 'info' }, { value: 'acceptEdits', label: 'Auto edit', tone: 'accent' },

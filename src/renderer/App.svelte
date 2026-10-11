@@ -85,15 +85,18 @@
   let openTabs = $derived(store.sessions.filter((s) => store.isOpenTab(s)));
 
   async function restoreApp() {
-    await restoreWorktrees();
+    const restoredIds = await restoreWorktrees();
 
     // Previously-open tabs come back in the Conversations list
     const persistedOpenTabs = await window.groveBench.getOpenTabs();
     const openSet = new Set(persistedOpenTabs);
 
     // Close sessions that the main process still considers live (running or
-    // asleep) but that were closed before reload.
+    // asleep) but that were closed before reload. Only restored ones: a
+    // thread started while the restore ran isn't in the saved tabs yet, and
+    // closing it here dropped it from the Threads list.
     for (const session of store.sessions) {
+      if (!restoredIds.has(session.id)) continue;
       if ((session.status === 'running' || session.status === 'sleeping') && !openSet.has(session.id)) {
         store.updateStatus(session.id, 'stopped');
         window.groveBench.closeSession(session.id).catch(() => {});

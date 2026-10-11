@@ -49,6 +49,10 @@ export interface WorktreeRepoConfig {
 // ─── Session ───
 
 export interface CreateSessionOpts {
+  /** Id picked by the renderer (8 hex characters), so the thread's row can
+   *  show before main's checks and setup are done. Main refuses one that is
+   *  malformed or already in use. */
+  id?: string;
   repoPath: string;
   branchName: string;
   baseBranch?: string;
@@ -128,7 +132,14 @@ export interface AgentSummary {
   mcp?: McpSupport;
   /** Untracked files Grove writes into the agent's worktrees for it. */
   generatedFiles?: string[];
+  /** Set for one of the user's other Claude accounts. `removed`: taken out of
+   *  Settings this run, so it isn't offered any more; threads already on it
+   *  keep it until Grove Bench restarts. */
+  account?: { name: string; configDir: string; removed?: boolean };
 }
+
+/** The folder an account being added would use, or why it can't be added. */
+export type ClaudeAccountPreview = { ok: true; configDir: string } | { ok: false; error: string };
 
 /** One agent's install and sign-in state. */
 export interface AgentPrerequisiteStatus {
@@ -1380,6 +1391,13 @@ export interface GroveBenchAPI {
   /** Registered agents, in registration order. `isDefault` marks the one new
    *  conversations use unless another is picked. */
   listAdapters(): Promise<AgentSummary[]>;
+  /** Check a Claude account the user is typing in (name and optional
+   *  folder) without adding it. */
+  previewClaudeAccount(input: { name: string; configDir: string }): Promise<ClaudeAccountPreview>;
+  /** Register another Claude account as its own agent, straight away.
+   *  Returns the entry for the caller to save in settings.claudeAccounts and
+   *  the new agent's id. Rejects with a user-facing message. */
+  addClaudeAccount(input: { name: string; configDir: string }): Promise<{ setting: ClaudeAccountSetting; adapterId: string }>;
   /** Agents in the ACP Registry, from the last copy Grove downloaded. */
   listRegistryAgents(): Promise<RegistryAgentSummary[]>;
   /** A registry agent's icon as an SVG data URL, or null. */
@@ -1466,6 +1484,17 @@ export interface AcpAgentSetting {
   args: string[];
 }
 
+/** Another Claude account, such as work next to personal. Claude Code keeps
+ *  each account's sign-in, history and settings in its own folder
+ *  (CLAUDE_CONFIG_DIR); the default account keeps `~/.claude`. */
+export interface ClaudeAccountSetting {
+  /** Stable id (the adapter id is `claude-account-<id>`); defaults from the name. */
+  id: string;
+  name: string;
+  /** The account's Claude Code folder. Empty for `~/.claude-<id>`. */
+  configDir: string;
+}
+
 export interface GroveBenchSettings {
   // Permission & Security
   toolAllowRules: ToolRule[];
@@ -1503,6 +1532,9 @@ export interface GroveBenchSettings {
   defaultSystemPromptAppend: string;
   /** The user's own ACP agents. Read at launch, so a change applies after a restart. */
   acpAgents: AcpAgentSetting[];
+  /** Claude accounts besides the default one, each offered as its own agent.
+   *  Read at launch, so a change applies after a restart. */
+  claudeAccounts: ClaudeAccountSetting[];
   /** Ids of alpha agents (AgentSummary.stage) the user turned on. Others
    *  stay out of the agent picker; their existing conversations still work. */
   enabledAlphaAgents: string[];
@@ -1961,6 +1993,8 @@ export const IPC = {
   AGENT_CHECKPOINT_FILE_DIFF: 'agent:checkpointFileDiff',
   AGENT_CHECKPOINT_FILE_LINES: 'agent:checkpointFileLines',
   AGENT_LIST_ADAPTERS: 'agent:listAdapters',
+  CLAUDE_ACCOUNT_PREVIEW: 'claudeAccount:preview',
+  CLAUDE_ACCOUNT_ADD: 'claudeAccount:add',
   CATALOGS_REGISTRY: 'catalogs:registry',
   CATALOGS_ICON: 'catalogs:icon',
   CATALOGS_REFRESH: 'catalogs:refresh',

@@ -326,8 +326,8 @@ export class WorktreeManager {
    * (Older manifests may hold "attached" direct sessions that ran in another
    * session's worktree; they carry a stored `path`, read back on restart.)
    */
-  async registerDirect(repoPath: string, branch: string, opts: { noGit?: boolean } = {}): Promise<WorktreeInfo> {
-    const id = crypto.randomUUID().slice(0, 8);
+  async registerDirect(repoPath: string, branch: string, opts: { noGit?: boolean; id?: string } = {}): Promise<WorktreeInfo> {
+    const id = opts.id ?? crypto.randomUUID().slice(0, 8);
 
     const info: WorktreeInfo = {
       id,

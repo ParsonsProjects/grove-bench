@@ -46,6 +46,7 @@ src/
       types.ts         # Adapter interfaces
       registry.ts      # Adapter registry
       claude-code.ts   # Claude Code adapter implementation
+      claude-accounts.ts # Other Claude accounts: one adapter each, with its own CLAUDE_CONFIG_DIR
       acp/             # Agent Client Protocol adapter (Gemini CLI, Copilot CLI, OpenCode, custom agents)
       grove-tools.ts   # Grove's memory and Preview tools, defined once
       grove-mcp-http.ts # Those tools over MCP HTTP, for agents other than Claude Code

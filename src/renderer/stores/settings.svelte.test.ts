@@ -17,6 +17,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   workingDirectories: [],
   defaultSystemPromptAppend: '',
   acpAgents: [],
+  claudeAccounts: [],
   enabledAlphaAgents: [],
   memoryAutoSave: true,
   memoryAutoCompact: false,
@@ -57,6 +58,19 @@ beforeEach(async () => {
   settingsStore.saving = false;
   settingsStore.savedAt = null;
   settingsStore.error = null;
+});
+
+describe('Claude accounts', () => {
+  it('adds an entry main checked, and removes one by its agent id, also an older entry saved without an id', () => {
+    settingsStore.draft = { ...DEFAULT_SETTINGS, claudeAccounts: [{ id: '', name: 'Work', configDir: '' }] };
+    settingsStore.addClaudeAccount({ id: 'client-a', name: 'Client A', configDir: 'D:\\claude' });
+    expect(settingsStore.draft.claudeAccounts.map((a) => a.name)).toEqual(['Work', 'Client A']);
+
+    settingsStore.removeClaudeAccount('claude-account-work');
+    expect(settingsStore.draft.claudeAccounts).toEqual([{ id: 'client-a', name: 'Client A', configDir: 'D:\\claude' }]);
+    settingsStore.removeClaudeAccount('claude-account-client-a');
+    expect(settingsStore.draft.claudeAccounts).toEqual([]);
+  });
 });
 
 describe('dirty', () => {
