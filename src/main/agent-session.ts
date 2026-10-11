@@ -825,6 +825,11 @@ class AgentSessionManager {
     });
   }
 
+  /** Whether a setup for `id` is still in flight (see trackPendingSetup). */
+  hasPendingSetup(id: string): boolean {
+    return this.pendingSetups.has(id);
+  }
+
   /**
    * Resolve once the session has a live query handle. If none is installed
    * but a new query is being initialized (e.g. right after stop), waits for it

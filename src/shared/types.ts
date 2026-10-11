@@ -49,6 +49,10 @@ export interface WorktreeRepoConfig {
 // ─── Session ───
 
 export interface CreateSessionOpts {
+  /** Id picked by the renderer (8 hex characters), so the thread's row can
+   *  show before main's checks and setup are done. Main refuses one that is
+   *  malformed or already in use. */
+  id?: string;
   repoPath: string;
   branchName: string;
   baseBranch?: string;

@@ -10,8 +10,12 @@ import { store } from '../stores/sessions.svelte.js';
  *
  * Repos are restored in parallel: each one costs a couple of git subprocess
  * calls, and running them serially made startup scale with repo count.
+ *
+ * Returns the ids of the sessions it added. The UI is usable while this runs,
+ * so the store can also hold threads the user started meanwhile.
  */
-export async function restoreWorktrees() {
+export async function restoreWorktrees(): Promise<Set<string>> {
+  const restored = new Set<string>();
   const runningSessions = await window.groveBench.listSessions();
   // Sessions main still holds: running, or asleep (open, agent shut down).
   const runningMap = new Map(runningSessions
@@ -50,6 +54,7 @@ export async function restoreWorktrees() {
           createdAt: wt.createdAt,
           lastActiveAt: wt.lastActiveAt,
         }, false);
+        restored.add(wt.id);
 
         if (isRunning) {
           window.groveBench.resumeSession(wt.id, repo).catch((e: any) => {
@@ -61,4 +66,5 @@ export async function restoreWorktrees() {
       console.error(`Failed to restore worktrees for ${repo}:`, e);
     }
   }));
+  return restored;
 }

@@ -15,7 +15,7 @@ const m = vi.hoisted(() => {
     Object.fromEntries(names.map((n) => [n, vi.fn()])) as Record<T, Mock<(...args: any[]) => any>>;
   return {
     sessionManager: fns(
-      'getSessionsByRepo', 'createSession', 'getSession', 'reattachWindow', 'trackPendingSetup', 'interruptQuery',
+      'getSessionsByRepo', 'createSession', 'getSession', 'reattachWindow', 'trackPendingSetup', 'hasPendingSetup', 'interruptQuery',
       'closeSession', 'sleepSession', 'wakeSession', 'stopTask', 'destroySession', 'listSessions', 'renameSession',
       'setBranch', 'isMidTurn', 'getEventHistory', 'getEventHistoryPage', 'getEventHistoryCount', 'searchEventHistory',
       'beginSearch', 'clearEventHistory', 'sendMessage', 'setMode', 'setModel', 'getControls', 'getUsage', 'setControl',
@@ -268,7 +268,35 @@ describe('SESSION_CREATE', () => {
     await expect(create({ branchName: 'gone', useExisting: true })).rejects.toThrow('does not exist');
 
     expect(m.worktreeManager.create).not.toHaveBeenCalled();
-    expect(m.sessionManager.trackPendingSetup).not.toHaveBeenCalled();
+    // Each was tracked as setting up only while its checks ran: all settled,
+    // so a close or delete waiting on one goes on.
+    expect(m.sessionManager.trackPendingSetup).toHaveBeenCalledTimes(3);
+    await Promise.all(m.sessionManager.trackPendingSetup.mock.calls.map(([, promise]) => promise));
+  });
+
+  it('makes nothing for a thread deleted while its checks run', async () => {
+    let checked!: (exists: boolean) => void;
+    vi.mocked(git.branchExists).mockReturnValueOnce(new Promise((r) => { checked = r; }));
+    const created = create({ id: 'abc12345', branchName: 'feat' });
+    await vi.waitFor(() => expect(m.sessionManager.trackPendingSetup).toHaveBeenCalled());
+    const checks = lastSetup();
+    expect(checks.id).toBe('abc12345');
+    // What deleting the thread does (sessionManager.destroySession).
+    checks.abort!.abort();
+    checked(false);
+    await expect(created).rejects.toThrow();
+    await checks.promise;
+    expect(m.worktreeManager.create).not.toHaveBeenCalled();
+
+    // A direct thread stops before it is registered.
+    let headRead!: (out: string) => void;
+    vi.mocked(git.git).mockReturnValueOnce(new Promise((r) => { headRead = r; }));
+    const direct = create({ id: 'def67890', direct: true });
+    await vi.waitFor(() => expect(lastSetup().id).toBe('def67890'));
+    lastSetup().abort!.abort();
+    headRead('main\n');
+    await expect(direct).rejects.toThrow();
+    expect(m.worktreeManager.registerDirect).not.toHaveBeenCalled();
   });
 
   it('names the picked agent for a worktree conversation before its setup finishes', async () => {
@@ -414,8 +442,35 @@ describe('SESSION_CREATE', () => {
     m.worktreeManager.registerDirect.mockResolvedValue({ id: 'd1', branch: 'main', path: '/repo' });
 
     expect(await create({ direct: true })).toEqual({ id: 'd1', branch: 'main', agentType: 'claude' });
-    expect(m.worktreeManager.registerDirect).toHaveBeenCalledWith('/repo', 'main', { noGit: false });
+    expect(m.worktreeManager.registerDirect).toHaveBeenCalledWith('/repo', 'main', { noGit: false, id: expect.stringMatching(/^[0-9a-f]{8}$/) });
     expect(m.sessionManager.createSession).toHaveBeenCalledWith(expect.objectContaining({ id: 'd1', cwd: '/repo' }));
+  });
+
+  it('sets up under the id the renderer picked, which its row already has', async () => {
+    const result = await create({ id: 'abc12345' });
+    expect(result).toMatchObject({ id: 'abc12345', branch: 'grove/abc12345' });
+    await lastSetup().promise;
+    expect(m.worktreeManager.create).toHaveBeenCalledWith(expect.objectContaining({ id: 'abc12345' }));
+
+    vi.mocked(git.git).mockResolvedValue('main\n');
+    m.worktreeManager.registerDirect.mockImplementation(async (_repo: string, branch: string, o: { id: string }) => ({ id: o.id, branch, path: '/repo' }));
+    expect(await create({ id: 'def67890', direct: true })).toMatchObject({ id: 'def67890' });
+  });
+
+  it('refuses a malformed id, or one in use, before any setup starts', async () => {
+    // The id names the worktree folder and the event log.
+    await expect(create({ id: '../../x' })).rejects.toThrow('not valid');
+    // Being set up already: refused before it is tracked again.
+    m.sessionManager.hasPendingSetup.mockReturnValueOnce(true);
+    await expect(create({ id: 'abc12345', direct: true })).rejects.toThrow('already in use');
+    expect(m.sessionManager.trackPendingSetup).not.toHaveBeenCalled();
+    // A stopped thread's id, found in the manifest.
+    m.worktreeManager.getWorktreeOrManifest.mockResolvedValueOnce(wtInfo());
+    await expect(create({ id: 'abc12345' })).rejects.toThrow('already in use');
+    await lastSetup().promise;
+
+    expect(m.worktreeManager.create).not.toHaveBeenCalled();
+    expect(m.worktreeManager.registerDirect).not.toHaveBeenCalled();
   });
 });
 
