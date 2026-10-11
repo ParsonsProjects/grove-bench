@@ -35,6 +35,8 @@ const mockGroveBench = {
   switchAgent: vi.fn().mockResolvedValue(undefined),
   stopBackgroundTask: vi.fn().mockResolvedValue(undefined),
   listAdapters: vi.fn().mockResolvedValue([]),
+  previewClaudeAccount: vi.fn().mockResolvedValue({ ok: false, error: 'Enter a name for the account, such as Work.' }),
+  addClaudeAccount: vi.fn(),
   listRegistryAgents: vi.fn().mockResolvedValue([]),
   getRegistryIcon: vi.fn().mockResolvedValue(null),
   refreshCatalogs: vi.fn().mockResolvedValue({ fetchedAt: null }),

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import path from 'node:path';
-import { accountEnv, accountSignInCommand, claudeAccounts, CLAUDE_ACCOUNT_PREFIX, INHERITED_SIGN_IN_ENV } from './claude-accounts.js';
+import { accountEnv, accountSignInCommand, claudeAccounts, CLAUDE_ACCOUNT_PREFIX, INHERITED_SIGN_IN_ENV, isClaudeAccountId, newClaudeAccount, removedAccountMessage } from './claude-accounts.js';
 
 const home = path.resolve('/home/me');
 
@@ -52,8 +52,8 @@ describe('accountEnv()', () => {
     expect(env).toEqual({ PATH: '/bin', CLAUDE_CONFIG_DIR: '/home/me/.claude-work' });
   });
 
-  it('covers the env credentials and provider switches above /login', () => {
-    for (const name of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY']) {
+  it('covers the env credentials and provider switches above /login, and a gateway address', () => {
+    for (const name of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY', 'ANTHROPIC_BASE_URL']) {
       expect(INHERITED_SIGN_IN_ENV).toContain(name);
     }
   });
@@ -71,11 +71,62 @@ describe('accountEnv()', () => {
 });
 
 describe('accountSignInCommand()', () => {
-  it("runs Claude Code's own sign-in with the account's folder, in PowerShell", () => {
-    expect(accountSignInCommand('C:\\Users\\me\\.claude-work')).toBe("$env:CLAUDE_CONFIG_DIR = 'C:\\Users\\me\\.claude-work'; claude auth login");
+  it("runs Claude Code's own sign-in with the account's folder, in PowerShell, then clears it", () => {
+    expect(accountSignInCommand('C:\\Users\\me\\.claude-work'))
+      .toBe("$env:CLAUDE_CONFIG_DIR = 'C:\\Users\\me\\.claude-work'; claude auth login; Remove-Item Env:CLAUDE_CONFIG_DIR");
   });
 
-  it('keeps a quote in the folder name inside the string', () => {
-    expect(accountSignInCommand("C:\\Users\\o'neil\\.claude-work")).toBe("$env:CLAUDE_CONFIG_DIR = 'C:\\Users\\o''neil\\.claude-work'; claude auth login");
+  it('keeps a quote in the folder name inside the string, typographic ones too', () => {
+    expect(accountSignInCommand("C:\\Users\\o'neil\\.claude-work")).toContain("'C:\\Users\\o''neil\\.claude-work'");
+    // PowerShell also ends a single-quoted string at these (CharTraits.IsSingleQuote).
+    for (const q of ['\u2018', '\u2019', '\u201A', '\u201B']) {
+      expect(accountSignInCommand(`C:\\Users\\O${q}Neil\\.claude-work`)).toContain(`'C:\\Users\\O${q}${q}Neil\\.claude-work'`);
+    }
+  });
+});
+
+describe('newClaudeAccount()', () => {
+  const opts = { home, env: { USERPROFILE: home, DATA: path.resolve('/data') } };
+
+  it('fixes the id from the name, so a later rename keeps the agent and its folder', () => {
+    const { account, setting } = newClaudeAccount({ name: ' Work ', configDir: '' }, [], opts);
+    expect(account).toEqual({ id: 'claude-account-work', name: 'Work', configDir: path.join(home, '.claude-work') });
+    expect(setting).toEqual({ id: 'work', name: 'Work', configDir: '' });
+    expect(claudeAccounts([{ ...setting, name: 'Day job' }], home)[0]).toMatchObject({ id: 'claude-account-work', configDir: path.join(home, '.claude-work') });
+  });
+
+  it('saves a typed folder as the absolute path it resolves to', () => {
+    expect(newClaudeAccount({ name: 'A', configDir: '"%DATA%/claude-a"' }, [], opts).setting.configDir).toBe(path.join(path.resolve('/data'), 'claude-a'));
+    expect(newClaudeAccount({ name: 'B', configDir: "'~/.claude-b'" }, [], opts).setting.configDir).toBe(path.join(home, '.claude-b'));
+    expect(newClaudeAccount({ name: 'C', configDir: '%userprofile%/c' }, [], opts).setting.configDir).toBe(path.join(home, 'c'));
+  });
+
+  it('turns away names and folders that would clash or misplace the sign-in', () => {
+    const saved = [{ id: 'work', name: 'Work', configDir: '' }];
+    const reason = (name: string, configDir = '') => {
+      try { newClaudeAccount({ name, configDir }, saved, opts); return null; } catch (e) { return (e as Error).message; }
+    };
+    expect(reason('  ')).toMatch(/Enter a name/);
+    expect(reason('x'.repeat(41))).toMatch(/40 characters/);
+    expect(reason('work!')).toBe('You already have an account called "Work". Pick another name.');
+    expect(reason('Other', '~/.claude-work')).toBe('"Work" already uses that folder.');
+    expect(reason('Other', '~')).toMatch(/not your home folder/);
+    expect(reason('Other', '~/.claude')).toMatch(/your first account's/);
+    expect(reason('Other', '%NOPE%/x')).toBe("%NOPE% isn't set on this computer.");
+    expect(reason('Other')).toBeNull();
+  });
+
+  it("takes the first account's folder from CLAUDE_CONFIG_DIR when that is set", () => {
+    const env = { CLAUDE_CONFIG_DIR: path.join(home, 'claude-main') };
+    expect(() => newClaudeAccount({ name: 'X', configDir: '~/claude-main' }, [], { home, env })).toThrow(/your first account's/);
+  });
+});
+
+describe('removed accounts', () => {
+  it('knows an account agent by its id and says why its work stays put', () => {
+    expect(isClaudeAccountId('claude-account-work')).toBe(true);
+    expect(isClaudeAccountId('claude-code')).toBe(false);
+    expect(isClaudeAccountId(undefined)).toBe(false);
+    expect(removedAccountMessage('claude-account-work')).toContain('(work)');
   });
 });

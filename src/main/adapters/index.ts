@@ -22,7 +22,7 @@ export { AcpAdapter } from './acp/acp-adapter.js';
 import type { AcpAgentSetting, ClaudeAccountSetting } from '../../shared/types.js';
 import { adapterRegistry } from './registry.js';
 import { ClaudeCodeAdapter } from './claude-code.js';
-import { claudeAccounts } from './claude-accounts.js';
+import { claudeAccounts, type ClaudeAccount } from './claude-accounts.js';
 import { AcpAdapter } from './acp/acp-adapter.js';
 import { ACP_PRESETS, customAcpAgents } from './acp/presets.js';
 
@@ -35,10 +35,17 @@ export function initAdapters(
 ): void {
   if (adapterRegistry.list().length > 0) return; // already initialized
   adapterRegistry.register(new ClaudeCodeAdapter());
-  for (const account of claudeAccounts(accounts)) {
-    adapterRegistry.register(new ClaudeCodeAdapter(undefined, account));
-  }
+  for (const account of claudeAccounts(accounts)) registerClaudeAccount(account);
   for (const def of [...ACP_PRESETS, ...customAcpAgents(acpAgents)]) {
     adapterRegistry.register(new AcpAdapter(def));
   }
+}
+
+/** Register one of the user's other Claude accounts as its own agent, at
+ *  launch or when it is added. One added again in the same run replaces the
+ *  earlier agent; threads still running on that one keep it. */
+export function registerClaudeAccount(account: ClaudeAccount): ClaudeCodeAdapter {
+  const adapter = new ClaudeCodeAdapter(undefined, account);
+  adapterRegistry.register(adapter);
+  return adapter;
 }

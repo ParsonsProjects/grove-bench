@@ -393,7 +393,7 @@ describe('SettingsPanel sections and search', () => {
 
   it('has a row for every searchable setting', async () => {
     agentsStore.list = [
-      { ...claude, capabilities: { thinkingSummaries: true, mcpConfig: true, plugins: true } },
+      { ...claude, capabilities: { thinkingSummaries: true, mcpConfig: true, plugins: true, accounts: true } },
       { id: 'opencode', displayName: 'OpenCode', capabilities: {}, stage: 'alpha' },
     ];
     store.repos = ['C:/dev/grove-bench'];
@@ -470,25 +470,71 @@ describe('SettingsPanel project colors', () => {
 });
 
 describe('SettingsPanel Claude accounts', () => {
-  it('adds an account with an optional folder, and removes it', async () => {
+  const claudeWithAccounts: AgentSummary = { ...claude, capabilities: { accounts: true } };
+  const work: AgentSummary = {
+    id: 'claude-account-work', displayName: 'Claude Agent (Work)', capabilities: { accounts: true },
+    account: { name: 'Work', configDir: 'C:\\Users\\me\\.claude-work' },
+  };
+
+  it('adds an account from the Claude agent\'s group, ready to sign in without a restart', async () => {
+    agentsStore.list = [claudeWithAccounts];
+    mockGroveBench.previewClaudeAccount.mockResolvedValue({ ok: true, configDir: 'C:\\Users\\me\\.claude-work' });
+    mockGroveBench.addClaudeAccount.mockResolvedValue({ setting: { id: 'work', name: 'Work', configDir: '' }, adapterId: 'claude-account-work' });
+    mockGroveBench.listAdapters.mockResolvedValue([claudeWithAccounts, work]);
     await openAgentSection();
-    const name = await screen.findByRole('textbox', { name: 'Account name' });
-    const folder = screen.getByRole('textbox', { name: 'Account folder' });
-    const group = name.closest('[data-setting="claude-accounts"]') as HTMLElement;
 
-    // A name is needed.
-    await fireEvent.click(within(group).getByRole('button', { name: 'Add' }));
-    expect(settingsStore.draft.claudeAccounts).toEqual([]);
+    await fireEvent.click(await screen.findByRole('button', { name: 'Add account' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Add a Claude account' });
+    const submit = within(dialog).getByRole('button', { name: 'Add account' });
+    expect(submit).toBeDisabled();
 
-    await fireEvent.input(name, { target: { value: ' Work ' } });
-    await fireEvent.input(folder, { target: { value: 'D:\\claude-work' } });
-    await fireEvent.click(within(group).getByRole('button', { name: 'Add' }));
-    await waitFor(() => expect(lastSaved().claudeAccounts).toEqual([{ id: '', name: 'Work', configDir: 'D:\\claude-work' }]));
-    expect(within(group).getByRole('list', { name: 'Claude accounts' })).toHaveTextContent('Work D:\\claude-work');
-    expect(name).toHaveValue('');
+    await fireEvent.input(within(dialog).getByRole('textbox', { name: 'Name' }), { target: { value: 'Work' } });
+    await waitFor(() => expect(within(dialog).getByTestId('claude-account-folder-help')).toHaveTextContent('Uses C:\\Users\\me\\.claude-work'));
+    await fireEvent.click(submit);
 
-    await fireEvent.click(within(group).getByRole('button', { name: 'Remove account Work' }));
+    await waitFor(() => expect(lastSaved().claudeAccounts).toEqual([{ id: 'work', name: 'Work', configDir: '' }]));
+    expect(mockGroveBench.addClaudeAccount).toHaveBeenCalledWith({ name: 'Work', configDir: '' });
+    // Its own group shows up straight away, with its folder.
+    const group = (await screen.findByRole('button', { name: 'Remove the Work account' })).closest('section')!;
+    expect(group).toHaveTextContent('Claude Agent (Work)');
+    expect(group).toHaveTextContent('Claude Code folder: C:\\Users\\me\\.claude-work');
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add a Claude account' })).not.toBeInTheDocument());
+  });
+
+  it('says why an account can\'t be added, and doesn\'t add it', async () => {
+    agentsStore.list = [claudeWithAccounts];
+    mockGroveBench.previewClaudeAccount.mockResolvedValue({ ok: false, error: 'You already have an account called "Work". Pick another name.' });
+    await openAgentSection();
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Add account' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Add a Claude account' });
+    await fireEvent.input(within(dialog).getByRole('textbox', { name: 'Name' }), { target: { value: 'work' } });
+
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('You already have an account called "Work"');
+    expect(within(dialog).getByRole('button', { name: 'Add account' })).toBeDisabled();
+    expect(mockGroveBench.addClaudeAccount).not.toHaveBeenCalled();
+  });
+
+  it('removes an account after asking, and stops showing it', async () => {
+    agentsStore.list = [claudeWithAccounts, work];
+    mockGroveBench.getSettings.mockResolvedValue({ ...settings(), claudeAccounts: [{ id: 'work', name: 'Work', configDir: '' }] });
+    mockGroveBench.listAdapters.mockResolvedValue([claudeWithAccounts, { ...work, account: { ...work.account!, removed: true } }]);
+    await openAgentSection();
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Remove the Work account' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Remove the Work account?' });
+    expect(dialog).toHaveTextContent('keep working until Grove Bench restarts');
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Remove account' }));
+
     await waitFor(() => expect(lastSaved().claudeAccounts).toEqual([]));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Remove the Work account' })).not.toBeInTheDocument());
+  });
+
+  it('offers Add account only on the agent that can add accounts', async () => {
+    agentsStore.list = [claude];
+    await openAgentSection();
+    await screen.findByRole('button', { name: 'Claude Agent default model' });
+    expect(screen.queryByRole('button', { name: 'Add account' })).not.toBeInTheDocument();
   });
 });
 

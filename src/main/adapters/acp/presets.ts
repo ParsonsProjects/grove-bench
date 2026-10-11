@@ -16,7 +16,7 @@
  */
 import crypto from 'node:crypto';
 import type { AcpAgentSetting } from '../../../shared/types.js';
-import { slugify } from '../../agent-utils.js';
+import { slugify } from '../../../shared/slug.js';
 import type { AcpAgentDefinition } from './acp-adapter.js';
 import { openCodeEnv, verifyOpenRouterKey } from './opencode.js';
 import { verifyGeminiKey } from './gemini.js';

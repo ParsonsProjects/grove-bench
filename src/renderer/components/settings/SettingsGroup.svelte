@@ -5,16 +5,19 @@
 
   /** Related settings under a heading. `card` boxes them, for groups that
    *  repeat, such as one per agent. `titleAside` sits beside the title, for a
-   *  label such as Alpha. `collapse` lets a titled group fold down to its
-   *  heading: `key` names it, `open` is how it starts, and once toggled it
-   *  stays as left (settingsStore.folds). Folded settings stay in the page,
-   *  so Settings search can still find and unfold them. */
-  let { title, description, card = false, collapse, titleAside, children }: {
+   *  label such as Alpha. `actions` sits at the heading's right, for buttons
+   *  that act on the whole group; it is outside the fold's heading, so
+   *  clicking one doesn't fold the group. `collapse` lets a titled group
+   *  fold down to its heading: `key` names it, `open` is how it starts, and
+   *  once toggled it stays as left (settingsStore.folds). Folded settings
+   *  stay in the page, so Settings search can still find and unfold them. */
+  let { title, description, card = false, collapse, titleAside, actions, children }: {
     title?: string;
     description?: string;
     card?: boolean;
     collapse?: { key: string; open: boolean };
     titleAside?: Snippet;
+    actions?: Snippet;
     children: Snippet;
   } = $props();
 
@@ -31,14 +34,14 @@
 {/snippet}
 
 {#if collapse && title}
-  <section class={card ? 'border border-border bg-card/40' : ''}>
+  <section class="relative {card ? 'border border-border bg-card/40' : ''}">
     <details
       bind:open
       ontoggle={(e) => { if (collapse) settingsStore.folds.set(collapse.key, e.currentTarget.open); }}
       class="group/fold"
     >
       <summary
-        class="flex items-start gap-2 cursor-pointer select-none hover:bg-accent/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring {card ? 'p-4' : 'py-1'}"
+        class="flex items-start gap-2 cursor-pointer select-none hover:bg-accent/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring {card ? 'p-4' : 'py-1'} {actions ? 'pr-40' : ''}"
       >
         <ChevronRightIcon class="size-4 mt-0.5 shrink-0 text-muted-foreground transition-transform group-open/fold:rotate-90" aria-hidden="true" />
         {@render heading()}
@@ -47,11 +50,17 @@
         {@render children()}
       </div>
     </details>
+    {#if actions}
+      <div class="absolute flex items-center gap-1 {card ? 'top-3 right-3' : 'top-0 right-0'}">{@render actions()}</div>
+    {/if}
   </section>
 {:else}
   <section class="flex flex-col gap-5 {card ? 'border border-border bg-card/40 p-4' : ''}">
     {#if title}
-      {@render heading()}
+      <div class="flex items-start justify-between gap-2">
+        {@render heading()}
+        {#if actions}<div class="flex items-center gap-1 shrink-0">{@render actions()}</div>{/if}
+      </div>
     {/if}
     {@render children()}
   </section>

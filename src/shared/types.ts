@@ -128,7 +128,14 @@ export interface AgentSummary {
   mcp?: McpSupport;
   /** Untracked files Grove writes into the agent's worktrees for it. */
   generatedFiles?: string[];
+  /** Set for one of the user's other Claude accounts. `removed`: taken out of
+   *  Settings this run, so it isn't offered any more; threads already on it
+   *  keep it until Grove Bench restarts. */
+  account?: { name: string; configDir: string; removed?: boolean };
 }
+
+/** The folder an account being added would use, or why it can't be added. */
+export type ClaudeAccountPreview = { ok: true; configDir: string } | { ok: false; error: string };
 
 /** One agent's install and sign-in state. */
 export interface AgentPrerequisiteStatus {
@@ -1380,6 +1387,13 @@ export interface GroveBenchAPI {
   /** Registered agents, in registration order. `isDefault` marks the one new
    *  conversations use unless another is picked. */
   listAdapters(): Promise<AgentSummary[]>;
+  /** Check a Claude account the user is typing in (name and optional
+   *  folder) without adding it. */
+  previewClaudeAccount(input: { name: string; configDir: string }): Promise<ClaudeAccountPreview>;
+  /** Register another Claude account as its own agent, straight away.
+   *  Returns the entry for the caller to save in settings.claudeAccounts and
+   *  the new agent's id. Rejects with a user-facing message. */
+  addClaudeAccount(input: { name: string; configDir: string }): Promise<{ setting: ClaudeAccountSetting; adapterId: string }>;
   /** Agents in the ACP Registry, from the last copy Grove downloaded. */
   listRegistryAgents(): Promise<RegistryAgentSummary[]>;
   /** A registry agent's icon as an SVG data URL, or null. */
@@ -1975,6 +1989,8 @@ export const IPC = {
   AGENT_CHECKPOINT_FILE_DIFF: 'agent:checkpointFileDiff',
   AGENT_CHECKPOINT_FILE_LINES: 'agent:checkpointFileLines',
   AGENT_LIST_ADAPTERS: 'agent:listAdapters',
+  CLAUDE_ACCOUNT_PREVIEW: 'claudeAccount:preview',
+  CLAUDE_ACCOUNT_ADD: 'claudeAccount:add',
   CATALOGS_REGISTRY: 'catalogs:registry',
   CATALOGS_ICON: 'catalogs:icon',
   CATALOGS_REFRESH: 'catalogs:refresh',

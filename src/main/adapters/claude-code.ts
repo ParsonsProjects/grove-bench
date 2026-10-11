@@ -1423,6 +1423,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     imageAttachments: true,
     structuredOutput: true,
     sandbox: true,
+    accounts: true,
   };
 
   /** Skill folders: the user level is in the account's folder for an
@@ -1433,7 +1434,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
    *  run with its own Claude Code folder. Omit for the default account. */
   constructor(
     private readonly modelStore: ModelCatalogStore = appStateModelStore,
-    private readonly account?: ClaudeAccount,
+    readonly account?: ClaudeAccount,
   ) {
     // The Agent SDK branding guidelines rule out "Claude Code" as a label in
     // our UI and suggest "Claude Agent" for menus
@@ -1454,7 +1455,9 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   }
 
   verifyApiKey(key: string): Promise<boolean | null> {
-    return verifyAnthropicKey(key);
+    // An account agent doesn't take ANTHROPIC_BASE_URL from Grove's
+    // environment, so its key is checked with Anthropic itself.
+    return verifyAnthropicKey(key, this.account ? { env: accountEnv(process.env, this.account.configDir) } : {});
   }
 
   // ─── Models ───

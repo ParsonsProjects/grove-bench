@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { untrack } from 'svelte';
+  import { tick, untrack } from 'svelte';
   import { settingsStore } from '../../stores/settings.svelte.js';
   import { store } from '../../stores/sessions.svelte.js';
   import { agentsStore } from '../../stores/agents.svelte.js';
@@ -17,8 +17,11 @@
   import ListSetting from './ListSetting.svelte';
   import SettingsGroup from './SettingsGroup.svelte';
   import AlphaBadge from '../AlphaBadge.svelte';
+  import ClaudeAccountDialog from './ClaudeAccountDialog.svelte';
+  import * as Dialog from '$lib/components/ui/dialog/index.js';
   import { Input } from '$lib/components/ui/input/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
+  import PlusIcon from '@lucide/svelte/icons/plus';
 
   // ── Per-agent defaults ──
   // One group per registered agent: its credentials, its default model and
@@ -38,6 +41,10 @@
     backgroundModel?: string;
     /** Offers the Show thinking summaries setting. */
     thinkingSummaries: boolean;
+    /** Other accounts with this provider can be added (Add account). */
+    addsAccounts: boolean;
+    /** Set for one of the user's other Claude accounts. */
+    account?: { name: string; configDir: string };
   }
   /** Why the last Check sign-in didn't sign an agent in, by agent id. */
   let signInErrors = $state<Record<string, string>>({});
@@ -62,7 +69,10 @@
     agentGroupsLoading = true;
     try {
       await agentsStore.load();
-      const groups = await Promise.all(agentsStore.list.map(async (a): Promise<AgentGroup> => {
+      // An account taken out this run stays registered for its threads, but
+      // has no settings to show.
+      const listed = agentsStore.list.filter((a) => !a.account?.removed);
+      const groups = await Promise.all(listed.map(async (a): Promise<AgentGroup> => {
         const [models, controls] = await Promise.all([
           window.groveBench.getModels(a.id).catch(() => []),
           window.groveBench.getAdapterControls(a.id, defaultModels[a.id] || null).catch(() => [] as ControlDescriptor[]),
@@ -75,6 +85,8 @@
           controls,
           backgroundModel: a.backgroundModel,
           thinkingSummaries: !!a.capabilities.thinkingSummaries,
+          addsAccounts: !!a.capabilities.accounts && !a.account,
+          ...(a.account ? { account: { name: a.account.name, configDir: a.account.configDir } } : {}),
         };
       }));
       if (request === agentGroupsRequest) agentGroups = groups;
@@ -138,15 +150,35 @@
   /** Thinking summaries is one setting, offered only by some agents. */
   const summaryAgents = $derived(agentGroups.filter((a) => a.thinkingSummaries));
 
-  // The user's other Claude accounts (read at launch).
-  let accountName = $state('');
-  let accountFolder = $state('');
-  function addClaudeAccount() {
-    const name = accountName.trim();
-    if (!name) return;
-    settingsStore.addClaudeAccount({ name, configDir: accountFolder.trim() });
-    accountName = '';
-    accountFolder = '';
+  // Other Claude accounts: added from the Claude agent's group (a dialog
+  // checks and registers the account straight away), removed from their own.
+  let addingAccount = $state(false);
+  let removingAccount = $state<AgentGroup | null>(null);
+  let removeError = $state<string | null>(null);
+
+  /** Show the agent groups again after an account came or went, and bring a
+   *  new account's group into view, open, to sign in. */
+  async function reloadGroups(openId?: string) {
+    if (openId) settingsStore.folds.set(`agent:${openId}`, true);
+    await loadAgentGroups(JSON.parse(defaultModelsKey) as Record<string, string>);
+    if (!openId) return;
+    await tick();
+    document.querySelector(`[data-agent-group="${openId}"]`)?.firstElementChild?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  }
+
+  async function removeAccount() {
+    const account = removingAccount;
+    if (!account) return;
+    removeError = null;
+    settingsStore.removeClaudeAccount(account.id);
+    await settingsStore.save();
+    if (settingsStore.error) {
+      removeError = settingsStore.error;
+      return;
+    }
+    removingAccount = null;
+    await agentsStore.refresh();
+    await reloadGroups();
   }
 
   // The user's own ACP agents (read at launch).
@@ -181,14 +213,33 @@
   {@const currentBackground = settingsStore.backgroundModel(agent.id)}
   {@const backgroundChoices = defaultModelChoices(agent.models, currentBackground, agent.backgroundModel ?? null)}
   {@const selectedBackground = currentBackground || DEFAULT_MODEL_VALUE}
+  <!-- display: contents, so the group stays a direct item of the section;
+       the attribute lets a new account's group be scrolled to. -->
+  <div class="contents" data-agent-group={agent.id}>
   <SettingsGroup
     title={agent.displayName}
-    description={agent.stage === 'alpha' ? `Grove Bench's support for ${agent.displayName} is still being tested, so expect rough edges.` : undefined}
+    description={agent.stage === 'alpha'
+      ? `Grove Bench's support for ${agent.displayName} is still being tested, so expect rough edges.`
+      : agent.account ? `Claude Code folder: ${agent.account.configDir}` : undefined}
     card
     collapse={{ key: `agent:${agent.id}`, open: agent.id === agentsStore.defaultId }}
   >
     {#snippet titleAside()}
       {#if agent.stage === 'alpha'}<AlphaBadge />{/if}
+    {/snippet}
+    {#snippet actions()}
+      {#if agent.addsAccounts}
+        <span data-setting="claude-accounts">
+          <Button variant="outline" size="sm" class="text-xs" onclick={() => (addingAccount = true)}>
+            <PlusIcon class="size-3.5" aria-hidden="true" />
+            Add account
+          </Button>
+        </span>
+      {:else if agent.account}
+        <Button variant="ghost" size="sm" class="text-xs text-muted-foreground hover:text-destructive" aria-label="Remove the {agent.account.name} account" onclick={() => { removeError = null; removingAccount = agent; }}>
+          Remove
+        </Button>
+      {/if}
     {/snippet}
     {#if agent.stage === 'alpha'}
       <CheckboxSetting
@@ -323,7 +374,33 @@
       {/if}
     {/if}
   </SettingsGroup>
+  </div>
 {/each}
+
+{#if addingAccount}
+  <ClaudeAccountDialog onclose={() => (addingAccount = false)} onadded={(id) => reloadGroups(id)} />
+{/if}
+
+{#if removingAccount?.account}
+  {@const account = removingAccount.account}
+  <Dialog.Root open onOpenChange={(o) => { if (!o) removingAccount = null; }}>
+    <Dialog.Content class="sm:max-w-md">
+      <Dialog.Header>
+        <Dialog.Title>Remove the {account.name} account?</Dialog.Title>
+        <Dialog.Description>
+          It won't be offered for new threads. Threads already on it keep working until Grove Bench restarts, then can't start again until you add it back. Its folder stays on this computer with its sign-in and history, so adding an account with the same name and folder brings them back.
+        </Dialog.Description>
+      </Dialog.Header>
+      {#if removeError}
+        <div class="text-xs text-destructive bg-destructive/10 px-3 py-2" role="alert">{removeError}</div>
+      {/if}
+      <Dialog.Footer>
+        <Button variant="secondary" onclick={() => (removingAccount = null)}>Cancel</Button>
+        <Button variant="destructive" onclick={removeAccount}>Remove account</Button>
+      </Dialog.Footer>
+    </Dialog.Content>
+  </Dialog.Root>
+{/if}
 
 <SettingsGroup title="All agents" description="These apply to every agent's threads." card collapse={{ key: 'all-agents', open: true }}>
   <SettingRow
@@ -385,45 +462,6 @@
     description="Gives the agent its own page in the Preview tab to open, screenshot, read, click and type in. Local addresses only. Applies to agents started after the change."
     bind:checked={settingsStore.draft.previewAgentTools}
   />
-</SettingsGroup>
-
-<SettingsGroup
-  title="Claude accounts"
-  description="Use more than one Claude account, such as work and personal. Each gets its own Claude Code folder, with its own sign-in, thread history, MCP servers and plugins, and shows up as its own agent for new threads. With no folder, it uses .claude-<name> in your home folder. Restart Grove Bench after a change, then sign in from the account's own group above."
-  card
-  collapse={{ key: 'claude-accounts', open: false }}
->
-  <div data-setting="claude-accounts" class="flex flex-col gap-2">
-    {#if settingsStore.draft.claudeAccounts.length > 0}
-      <ul class="flex flex-col gap-1" aria-label="Claude accounts">
-        {#each settingsStore.draft.claudeAccounts as account, i (i)}
-          <li class="flex items-center justify-between gap-1 pl-2 text-xs min-w-0 bg-muted">
-            <span class="truncate"><span class="text-foreground">{account.name}</span> <code class="text-muted-foreground">{account.configDir || 'default folder'}</code></span>
-            <button
-              type="button"
-              onclick={() => settingsStore.removeClaudeAccount(i)}
-              class="size-6 shrink-0 inline-flex items-center justify-center text-muted-foreground hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              aria-label="Remove account {account.name}"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
-            </button>
-          </li>
-        {/each}
-      </ul>
-    {/if}
-    <div class="flex items-center gap-2 max-w-2xl">
-      <Input type="text" bind:value={accountName} placeholder="Name, e.g. Work" aria-label="Account name" class="w-40" />
-      <Input
-        type="text"
-        bind:value={accountFolder}
-        placeholder="Folder (optional)"
-        aria-label="Account folder"
-        onkeydown={(e) => { if (e.key === 'Enter') addClaudeAccount(); }}
-        class="flex-1"
-      />
-      <Button variant="secondary" onclick={addClaudeAccount}>Add</Button>
-    </div>
-  </div>
 </SettingsGroup>
 
 <SettingsGroup

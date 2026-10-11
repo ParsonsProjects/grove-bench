@@ -16,6 +16,7 @@ vi.mock('../logger.js', () => ({
 
 import { ClaudeCodeAdapter, CLAUDE_AUTH_ERROR_MESSAGE, envAuthMethod, transformMessage, verifyAnthropicKey } from './claude-code.js';
 import { getApiKey } from '../credentials.js';
+import { net } from 'electron';
 
 type ExecResult = { stdout: string } | Error;
 
@@ -191,6 +192,9 @@ describe('ClaudeCodeAdapter for another Claude account', () => {
   const account = { id: 'claude-account-work', name: 'Work', configDir: '/home/me/.claude-work' };
   const adapter = new ClaudeCodeAdapter(undefined, account);
 
+  // Some tests here give the account a saved key; later tests start without one.
+  afterEach(() => { vi.mocked(getApiKey).mockReturnValue(null); });
+
   it('is its own agent, named after the account', () => {
     expect(adapter.id).toBe('claude-account-work');
     expect(adapter.displayName).toBe('Claude Agent (Work)');
@@ -198,7 +202,7 @@ describe('ClaudeCodeAdapter for another Claude account', () => {
   });
 
   it("signs in with Claude Code's own command, pointed at the account's folder", () => {
-    expect(adapter.cliSignIn.command).toBe("$env:CLAUDE_CONFIG_DIR = '/home/me/.claude-work'; claude auth login");
+    expect(adapter.cliSignIn.command).toBe("$env:CLAUDE_CONFIG_DIR = '/home/me/.claude-work'; claude auth login; Remove-Item Env:CLAUDE_CONFIG_DIR");
     expect(adapter.authErrorMessage).toContain('Work');
     expect(adapter.authErrorMessage).not.toContain('run "claude"');
   });
@@ -236,6 +240,18 @@ describe('ClaudeCodeAdapter for another Claude account', () => {
     execFileAnswers({ stdout: '' });
     await adapter.listConfiguredMcpServers('/repo');
     expect((execFileMock.mock.calls[0][2] as { env: Record<string, string> }).env.CLAUDE_CONFIG_DIR).toBe('/home/me/.claude-work');
+  });
+
+  it("checks a pasted key with Anthropic even when Grove's environment points elsewhere", async () => {
+    process.env.ANTHROPIC_BASE_URL = 'https://gateway.example';
+    try {
+      vi.mocked(net.fetch).mockResolvedValueOnce({ ok: true, status: 200 } as Response);
+      expect(await adapter.verifyApiKey('sk-work')).toBe(true);
+      // The default account sends its requests to that address, so it can't tell.
+      expect(await new ClaudeCodeAdapter().verifyApiKey('sk-default')).toBeNull();
+    } finally {
+      delete process.env.ANTHROPIC_BASE_URL;
+    }
   });
 
   it("doesn't look for its threads' titles in the default folder", async () => {

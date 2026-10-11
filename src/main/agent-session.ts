@@ -15,6 +15,7 @@ import * as settings from './settings.js';
 import * as memory from './memory.js';
 import * as memoryAutosave from './memory-autosave.js';
 import { adapterRegistry } from './adapters/index.js';
+import { isClaudeAccountId, removedAccountMessage } from './adapters/claude-accounts.js';
 import type { AgentAdapter, AgentQueryHandle, UserMessage } from './adapters/types.js';
 import { ResumeNotFoundError } from './adapters/types.js';
 import { getGitIdentity } from './git.js';
@@ -165,7 +166,9 @@ class AgentSessionManager {
     // Look up the adapter (fall back to the registry default)
     const adapterType = opts.adapterType ?? adapterRegistry.getDefault().id;
     const adapter = adapterRegistry.get(adapterType);
-    if (!adapter) throw new Error(`Unknown agent adapter: ${adapterType}`);
+    if (!adapter) {
+      throw new Error(isClaudeAccountId(adapterType) ? removedAccountMessage(adapterType) : `Unknown agent adapter: ${adapterType}`);
+    }
     // Record the agent so a restart resumes this conversation on it and its
     // background tasks (memory notes, commit messages) use it.
     worktreeManager.saveAdapterType(id, adapterType).catch((e) => {

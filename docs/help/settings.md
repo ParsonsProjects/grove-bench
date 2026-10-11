@@ -45,13 +45,15 @@ If a thread starts on a model that doesn't offer the saved mode, it starts in Co
 
 ### Claude accounts
 
-Use more than one Claude account, such as a work plan next to a personal one. Add an account with a name and, if you like, a folder. Each account gets its own Claude Code folder (`.claude-<name>` in your home folder unless you pick one), which holds its sign-in, thread history, settings, MCP servers and plugins. Your first account keeps `~/.claude` and works as before. Restart Grove Bench after adding or removing one.
+Use more than one Claude account, such as a work plan next to a personal one. Click **Add account** in the **Claude Agent** group, give the account a name and, if you like, a folder, and click **Add account**. Each account has its own Claude Code folder (`.claude-<name>` in your home folder unless you pick one), which holds its sign-in, thread history, settings, MCP servers and plugins. The dialog shows the folder it will use, and says so when the name or folder is already taken. You can paste a path straight from Explorer's **Copy as path**, and use `%USERPROFILE%`-style variables or `~`. Your first account keeps `~/.claude` and works as before.
 
-After the restart, each account shows up as its own agent, **Claude Agent (Name)**, in the agent picker for new threads, with its own group above. Sign in from that group: copy the sign-in command into PowerShell (it runs Claude Code's own `claude auth login` with the account's folder), or save an API key for that account. A thread stays on the account it started on.
+The account shows up straight away as its own agent, **Claude Agent (Name)**, in the agent picker for new threads, with its own group under Claude Agent showing its folder. Sign in from that group: copy the sign-in command into PowerShell (it runs Claude Code's own `claude auth login` with the account's folder, then clears that setting again), or save an API key for that account. A thread stays on the account it started on.
+
+To remove an account, click **Remove** in its group. It stops being offered for new threads at once. Threads already on it keep working until Grove Bench restarts; after that they can't start, and their memory notes and other background work are skipped rather than sent to another account. The folder stays on this computer, so adding an account with the same name and folder brings back its sign-in and history.
 
 Good to know:
 
-- An account ignores Claude credentials set in your environment (`ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, the Bedrock and Vertex switches), so a key in your shell can't stand in for it. Your first account still uses them
+- An account ignores Claude credentials set in your environment (`ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, the Bedrock and Vertex switches) and `ANTHROPIC_BASE_URL`, so a key or gateway set in your shell can't stand in for it. Your first account still uses them. To send an account through a gateway, set it in that account folder's `settings.json`
 - **MCP servers** can be managed for any account: pick it under **Agent**. The **Plugins** section manages your first account only; for another account, run `claude plugin` in PowerShell after the `$env:CLAUDE_CONFIG_DIR` part of its sign-in command
 - Threads on another account are named by Grove Bench rather than by Claude
 - Claude Code has been reported to read some files, such as your personal `CLAUDE.md`, from `~/.claude` for every account ([anthropics/claude-code#30230](https://github.com/anthropics/claude-code/issues/30230))

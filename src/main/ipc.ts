@@ -1,7 +1,7 @@
 import { ipcMain, BrowserWindow, dialog, shell } from 'electron';
 import { runProcess } from './process-host.js';
 import { IPC, PERMISSION_MODES } from '../shared/types.js';
-import type { BranchSwitchResult, BranchSyncResult, ConversationGoal, CreateSessionOpts, OpenPrSummary, PermissionMode, PrerequisiteStatus, PermissionDecision, RegistryAgentSummary, SessionInfo, SkillDefinition, WorktreeInfo } from '../shared/types.js';
+import type { BranchSwitchResult, ClaudeAccountPreview, ClaudeAccountSetting, BranchSyncResult, ConversationGoal, CreateSessionOpts, OpenPrSummary, PermissionMode, PrerequisiteStatus, PermissionDecision, RegistryAgentSummary, SessionInfo, SkillDefinition, WorktreeInfo } from '../shared/types.js';
 import { sessionManager } from './agent-session.js';
 import { searchEvents, findEventIndexByUuid, extractSessionPreview, firstUserPrompt } from './event-search.js';
 import { decideAutoName } from './session-auto-name.js';
@@ -10,7 +10,8 @@ import { launchEditor } from './editor-launch.js';
 import { worktreeManager } from './worktree-manager.js';
 import { apiKeyState, checkCorePrerequisites, checkGh } from './prerequisites.js';
 import { canStoreApiKey, clearApiKey, parseApiKey, saveApiKey } from './credentials.js';
-import { adapterRegistry } from './adapters/index.js';
+import { adapterRegistry, registerClaudeAccount } from './adapters/index.js';
+import { claudeAccounts, isClaudeAccountId, newClaudeAccount } from './adapters/claude-accounts.js';
 import type { AgentAdapter } from './adapters/types.js';
 import { agentForProject, recordedAgent } from './background-tasks.js';
 import { validateBranchName, branchExists, branchExistsAnywhere, worktreeBranches, listBranches, getDefaultBranch, git, fileDiff, fileDiffAgainst, resolveMergeBase, indexFileContent, hashWorkingFiles, listProjectFiles, revertFile, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, logCommits, rebaseOnto, cherryPick, squashSince, currentBranch, recentCheckouts, getGitIdentity, gitVersion } from './git.js';
@@ -1663,13 +1664,34 @@ export function registerHandlers() {
   // An agent's model list can change at run time (the Claude adapter reads
   // the SDK's list when a conversation starts). Tell every window so pickers
   // and the status bar refetch.
-  for (const adapter of adapterRegistry.list()) {
+  function forwardModelChanges(adapter: AgentAdapter): void {
     adapter.onModelsChanged?.(() => {
       for (const w of BrowserWindow.getAllWindows()) {
         if (!w.isDestroyed()) w.webContents.send(IPC.AGENT_MODELS_CHANGED, adapter.id);
       }
     });
   }
+  for (const adapter of adapterRegistry.list()) forwardModelChanges(adapter);
+
+  // ─── Other Claude accounts (claude-accounts.ts) ───
+  // Checked against the saved accounts here; the renderer saves the entry
+  // add returns, as it does every other setting.
+
+  ipcMain.handle(IPC.CLAUDE_ACCOUNT_PREVIEW, (_event, input: unknown): ClaudeAccountPreview => {
+    try {
+      const { account } = newClaudeAccount(accountInput(input), settings.getSettings().claudeAccounts);
+      return { ok: true, configDir: account.configDir };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  });
+
+  ipcMain.handle(IPC.CLAUDE_ACCOUNT_ADD, (_event, input: unknown): { setting: ClaudeAccountSetting; adapterId: string } => {
+    const { account, setting } = newClaudeAccount(accountInput(input), settings.getSettings().claudeAccounts);
+    forwardModelChanges(registerClaudeAccount(account));
+    logger.info(`[claude-accounts] Added ${account.id} (${account.configDir})`);
+    return { setting, adapterId: account.id };
+  });
 
   // ─── ACP Registry and models.dev (catalogs.ts) ───
 
@@ -1700,7 +1722,15 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.AGENT_LIST_ADAPTERS, () => {
     const defaultId = adapterRegistry.getDefault().id;
-    return adapterRegistry.list().map(a => ({
+    // Other Claude accounts go right after the Claude agent, also ones added
+    // after launch, which the registry lists last.
+    const all = adapterRegistry.list();
+    const ordered = all.filter((a) => !isClaudeAccountId(a.id));
+    ordered.splice(ordered.findIndex((a) => a.id === defaultId) + 1, 0, ...all.filter((a) => isClaudeAccountId(a.id)));
+    // An account taken out of Settings stays registered for threads already
+    // on it until a restart; it is marked so it isn't offered.
+    const saved = new Set(claudeAccounts(settings.getSettings().claudeAccounts).map((a) => a.id));
+    return ordered.map(a => ({
       id: a.id,
       displayName: a.displayName,
       // mcpConfig: the adapter can list and edit configured MCP servers (the
@@ -1712,6 +1742,7 @@ export function registerHandlers() {
       ...(a.backgroundModel ? { backgroundModel: a.backgroundModel } : {}),
       ...(a.mcp ? { mcp: a.mcp } : {}),
       ...(a.generatedFiles?.length ? { generatedFiles: [...a.generatedFiles] } : {}),
+      ...(a.account ? { account: { name: a.account.name, configDir: a.account.configDir, ...(saved.has(a.id) ? {} : { removed: true }) } } : {}),
     }));
   });
 
@@ -2015,4 +2046,10 @@ export function registerHandlers() {
   ipcMain.handle(IPC.UPDATE_CHECK, () => checkForUpdate());
   ipcMain.handle(IPC.UPDATE_DOWNLOAD, () => downloadUpdate());
   ipcMain.handle(IPC.UPDATE_RESTART, () => restartToUpdate());
+}
+
+/** The name and folder sent from the Add account dialog. */
+function accountInput(input: unknown): { name: unknown; configDir: unknown } {
+  const o = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>;
+  return { name: o.name, configDir: o.configDir };
 }
