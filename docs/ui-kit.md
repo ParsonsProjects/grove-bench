@@ -99,6 +99,7 @@ All in `src/renderer/lib/components/ui/`. Import from the folder's `index.js`:
 | `outline` | A neutral bordered action |
 | `subtle` | Toolbar and status-bar actions: bordered, muted text |
 | `quiet` | Icon buttons and text that only brightens on hover |
+| `quiet-destructive` | Icon buttons that delete or stop something: quiet until hovered, then red |
 | `ghost` | Like quiet, with a hover fill |
 | `outline-primary` | A secondary action that should still stand out |
 | `outline-success` | Allowing or approving what the agent asked for |

@@ -181,7 +181,7 @@
     <p class="text-sm mt-4 text-muted-foreground">{phase === 'walking' ? 'Starting agent...' : 'Waking up...'}</p>
   {/if}
   {#if wake}
-    <p class="text-xs mt-1 text-muted-foreground/60">Click or press any key to skip</p>
+    <p class="text-xs mt-1 text-muted-foreground">Click or press any key to skip</p>
   {/if}
 </div>
 

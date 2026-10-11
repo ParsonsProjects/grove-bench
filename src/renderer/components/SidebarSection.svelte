@@ -17,6 +17,7 @@
   import { panelStore } from '../stores/panels.svelte.js';
   import { prefersReducedMotion } from '$lib/utils.js';
   import AttentionCounts from './AttentionCounts.svelte';
+  import { SectionLabel } from '$lib/components/ui/section-label/index.js';
   import type { TriageCounts } from '../lib/session-triage.js';
   import type { CollapsiblePanel } from '../../shared/types.js';
 
@@ -86,13 +87,14 @@
     type="button"
     onclick={toggle}
     aria-expanded={!collapsed}
-    class="flex items-center gap-1.5 min-w-0 flex-1 h-full text-left text-muted-foreground hover:text-foreground transition-colors"
+    class="group/heading flex items-center gap-1.5 min-w-0 flex-1 h-full text-left text-muted-foreground hover:text-foreground transition-colors"
     title={collapsed ? `Expand ${label}` : `Collapse ${label}`}
   >
-    <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 opacity-60 transition-transform" style={collapsed ? 'transform: rotate(-90deg)' : ''} aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
-    <span class="text-xs uppercase tracking-wide truncate">{label}</span>
+    <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 transition-transform" style={collapsed ? 'transform: rotate(-90deg)' : ''} aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+    <!-- Brightens with the rest of the heading on hover. -->
+    <SectionLabel as="span" class="truncate transition-colors group-hover/heading:text-foreground">{label}</SectionLabel>
     {#if count}
-      <span class="text-xs text-muted-foreground/40 shrink-0">{count}</span>
+      <span class="text-micro shrink-0">{count}</span>
     {/if}
     <!-- Folded, the heading is all there is to see of the section. -->
     {#if collapsed}

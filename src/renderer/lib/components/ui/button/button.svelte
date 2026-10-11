@@ -19,6 +19,8 @@
 				// button; quiet: an icon or text that only brightens on hover.
 				subtle: "border border-border text-muted-foreground hover:text-foreground hover:bg-accent",
 				quiet: "text-muted-foreground hover:text-foreground",
+				// An icon that deletes, closes for good or stops: quiet until hovered.
+				"quiet-destructive": "text-muted-foreground hover:text-destructive hover:bg-destructive/10",
 				"outline-primary": "border border-primary/60 text-primary hover:bg-primary/10",
 				"outline-destructive": "border border-destructive/60 text-destructive hover:bg-destructive/10",
 				// Allowing something the agent asked for: done-green, not brand green.

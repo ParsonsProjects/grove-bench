@@ -3,6 +3,8 @@
   import { store } from '../stores/sessions.svelte.js';
   import { messageStore } from '../stores/messages.svelte.js';
   import { releaseNotesUrl } from '../lib/release-notes.js';
+  import { Button } from '$lib/components/ui/button/index.js';
+  import { Badge } from '$lib/components/ui/badge/index.js';
 
   let status = $state<UpdateStatus | null>(null);
   let restarting = $state(false);
@@ -37,70 +39,57 @@
   }
 </script>
 
-<div class="ml-2 flex items-center gap-1.5">
+<!-- Inside the title bar's drag region: clicks need it switched off here. -->
+<div class="update-notification ml-2 flex items-center gap-1.5">
   {#if status?.state === 'available'}
-    <button
-      class="update-pill bg-primary/15 text-primary hover:bg-primary/25"
+    <Button
+      variant="outline-primary"
+      size="2xs"
       onclick={() => window.groveBench.downloadUpdate()}
       title="Download version {status.info.version}"
     >
       Update v{status.info.version} available
-    </button>
+    </Button>
   {:else if status?.state === 'downloading' && status.manual}
-    <span class="update-pill bg-primary/10 text-primary cursor-default">
+    <Badge tone="primary" variant="soft">
       Downloading v{status.info.version} {Math.round(status.percent)}%
-    </span>
+    </Badge>
   {:else if status?.state === 'downloaded'}
     {@const version = status.info.version}
-    <button
-      class="update-pill bg-primary/20 text-primary hover:bg-primary/30 font-medium"
+    <Button
+      variant="default"
+      size="2xs"
       onclick={restart}
       disabled={restarting}
       title="Version {version} is ready. Restart now to install it, or it installs when you next quit."
     >
       {restarting ? 'Restarting...' : 'Restart to update'}
-    </button>
-    <button
-      class="update-link text-muted-foreground hover:text-foreground"
+    </Button>
+    <!-- Opens the release notes page. -->
+    <Button
+      variant="quiet"
+      size="2xs"
+      class="underline"
       onclick={() => window.groveBench.openExternal(releaseNotesUrl(version))}
     >
       What's new
-    </button>
+    </Button>
   {:else if status?.state === 'error' && (status.manual || status.during === 'download')}
     <!-- Background checks stay out of the title bar, but a failed download
          shows: an update exists and isn't arriving. -->
-    <button
-      class="update-pill bg-destructive/15 text-destructive hover:bg-destructive/25"
+    <Button
+      variant="outline-destructive"
+      size="2xs"
       onclick={() => window.groveBench.checkForUpdate()}
       title={status.message}
     >
       Update failed, retry
-    </button>
+    </Button>
   {/if}
 </div>
 
 <style>
-  .update-pill,
-  .update-link {
+  .update-notification {
     -webkit-app-region: no-drag;
-    display: inline-flex;
-    align-items: center;
-    font-size: 10px;
-    border: none;
-    cursor: pointer;
-  }
-  .update-pill {
-    padding: 1px 8px;
-    border-radius: 9999px;
-    transition: background-color 0.15s;
-  }
-  .update-pill:disabled {
-    cursor: default;
-    opacity: 0.7;
-  }
-  .update-link {
-    background: none;
-    padding: 1px 2px;
-    text-decoration: underline;
   }
 </style>

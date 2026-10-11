@@ -14,6 +14,10 @@
   import SidebarSection from './SidebarSection.svelte';
   import AttentionCounts from './AttentionCounts.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
+  import { Badge } from '$lib/components/ui/badge/index.js';
+  import { Kbd } from '$lib/components/ui/kbd/index.js';
+  import { SectionLabel } from '$lib/components/ui/section-label/index.js';
+  import * as Segmented from '$lib/components/ui/segmented/index.js';
   import { Checkbox } from '$lib/components/ui/checkbox/index.js';
   import { resolveBaseBranch } from '../lib/base-branch.js';
   import { unsavedFileCount } from '../lib/unsaved-files.js';
@@ -125,9 +129,9 @@
   }
 
   const SUBTITLE_TONE_CLASS: Record<SessionSubtitle['tone'], string> = {
-    working: 'text-status-working/80',
+    working: 'text-status-working',
     waiting: 'text-status-attention',
-    context: 'text-muted-foreground/60',
+    context: 'text-muted-foreground',
   };
 
   function toggleRepoCollapsed(repo: string) {
@@ -266,6 +270,8 @@
     return Number.isFinite(n) ? Math.max(0, n) : null;
   });
   const cleanupCandidates = $derived(cleanupDaysNum === null ? [] : store.stoppedSessionsOlderThan(cleanupDaysNum));
+  /** The preset the field matches, for the preset picker ('' when none does). */
+  const cleanupPresetValue = $derived(cleanupDaysNum !== null && cleanupDayPresets.includes(cleanupDaysNum) ? String(cleanupDaysNum) : '');
   /** Identity of the candidate set. The check effect keys off this rather
    *  than the array, so an unrelated store update (another session's status
    *  changing, a rename) doesn't reset the user's ticks or re-run the checks. */
@@ -866,7 +872,7 @@
           {#if ts}
             <!-- Invisible, not hidden, while the quick action sits over it, so the name doesn't reflow. -->
             <span
-              class="shrink-0 text-micro text-muted-foreground/50 {isDestroying ? '' : 'group-hover/session:invisible group-has-[:focus-visible]/session:invisible'}"
+              class="shrink-0 text-micro text-muted-foreground {isDestroying ? '' : 'group-hover/session:invisible group-has-[:focus-visible]/session:invisible'}"
               title="{session.lastActiveAt ? 'Last active' : 'Created'} {new Date(ts).toLocaleString()}"
             >{formatAge(ts)}</span>
           {/if}
@@ -877,13 +883,15 @@
               {#if group}<span class="text-foreground/60" title="Group: {group.name}" data-row-group>{group.name}</span>{#if showProject || subtitle}<span class="text-muted-foreground/40">{' · '}</span>{/if}{/if}
               {#if showProject}
                 <!-- A grove character carries the project colour on its laptop, so the square is only needed with the plain dot. -->
-                {#if repoColor && !settingsStore.current.groveCharacters}<span class="inline-block w-1.5 h-1.5 align-middle mr-1" style="background-color: {repoColor}"></span>{/if}<span class="text-muted-foreground/70">{store.repoDisplayName(session.repoPath)}</span>{#if subtitle}<span class="text-muted-foreground/40">{' · '}</span>{/if}{/if}{#if subtitle}<span class={SUBTITLE_TONE_CLASS[subtitle.tone]}>{subtitle.text}</span>{/if}
+                {#if repoColor && !settingsStore.current.groveCharacters}<span class="inline-block w-1.5 h-1.5 align-middle mr-1" style="background-color: {repoColor}"></span>{/if}<span class="text-muted-foreground">{store.repoDisplayName(session.repoPath)}</span>{#if subtitle}<span class="text-muted-foreground/40">{' · '}</span>{/if}{/if}{#if subtitle}<span class={SUBTITLE_TONE_CLASS[subtitle.tone]}>{subtitle.text}</span>{/if}
             </span>
             {#if changedCount > 0}
-              <span
-                class="ml-auto shrink-0 text-micro text-muted-foreground/60 border border-border/60 px-1 leading-4"
+              <Badge
+                tone="muted"
+                count
+                class="ml-auto"
                 title="{changedCount} changed file{changedCount === 1 ? '' : 's'} in the worktree"
-              >±{changedCount}</span>
+              >±{changedCount}</Badge>
             {/if}
           </div>
         {/if}
@@ -891,31 +899,31 @@
       {#if !isDestroying}
         {#if !store.isOpenTab(session)}
           <!-- Closed session: delete (removes the worktree, after asking). -->
-          <button
-            type="button"
+          <Button
+            variant="quiet-destructive"
+            size="icon-2xs"
             title="Delete thread"
             aria-label="Delete thread {label}"
             onclick={() => requestDestroy(session.id)}
-            class="absolute top-1.5 right-2 w-5 h-5 flex items-center justify-center text-muted-foreground transition-colors
-              hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover/session:opacity-100 group-has-[:focus-visible]/session:opacity-100"
+            class="absolute top-1.5 right-2 opacity-0 group-hover/session:opacity-100 group-has-[:focus-visible]/session:opacity-100"
           >
             <!-- A bin, not an ✕: ✕ reads as "close", and this deletes. -->
             <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
-          </button>
+          </Button>
         {:else}
           <!-- Open session (live, or restored and waiting to reconnect, like the
                context menu): close it (stops the agent but keeps it resumable). -->
-          <button
-            type="button"
+          <Button
+            variant="quiet"
+            size="icon-2xs"
             title={`Close thread\n${CLOSE_HINT}`}
             aria-label="Close thread {label}"
             aria-describedby="close-conversation-hint"
             onclick={() => requestClose([session.id])}
-            class="absolute top-1.5 right-2 w-5 h-5 flex items-center justify-center text-muted-foreground transition-colors
-              hover:text-foreground hover:bg-sidebar-accent opacity-0 group-hover/session:opacity-100 group-has-[:focus-visible]/session:opacity-100"
+            class="absolute top-1.5 right-2 opacity-0 group-hover/session:opacity-100 group-has-[:focus-visible]/session:opacity-100"
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
-          </button>
+          </Button>
         {/if}
       {/if}
     </div>
@@ -928,8 +936,7 @@
     <button
       type="button"
       onclick={() => setSort(key)}
-      class="flex items-center gap-0.5 px-1.5 py-0.5 text-micro uppercase tracking-wide transition-colors
-        {active ? 'text-foreground' : 'text-muted-foreground/40 hover:text-muted-foreground'}"
+      class={Segmented.segmentedItem({ selected: active })}
       title="Sort by {label.toLowerCase()}{active ? (sort.dir === 'asc' ? ' (ascending)' : ' (descending)') : ''}"
     >
       {label}
@@ -955,14 +962,15 @@
     <!-- Rail: expand, search, the open conversations, the footer's buttons -->
     <div class="flex flex-col items-center gap-1 pt-3 pb-2 shrink-0 border-b border-sidebar-border" data-rail>
       <PanelToggle panel="sidebar" label="sidebar" />
-      <button
+      <Button
+        variant="quiet"
+        size="icon-xs"
         onclick={() => store.finderOpen = true}
-        class="p-1.5 text-muted-foreground/70 hover:text-foreground hover:bg-sidebar-accent transition-colors"
         title="Search threads (Ctrl+R)"
         aria-label="Search threads"
       >
         <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-      </button>
+      </Button>
     </div>
     <div class="flex-1 overflow-y-auto overflow-x-hidden py-2">
       <button
@@ -1011,12 +1019,12 @@
   <div class="px-3 pt-3 {collapsed ? 'hidden' : 'flex'} items-center gap-1">
     <button
       onclick={() => store.finderOpen = true}
-      class="flex-1 min-w-0 flex items-center gap-2 px-2 py-1.5 bg-sidebar-accent/40 border border-sidebar-border text-muted-foreground/70 hover:text-foreground hover:bg-sidebar-accent transition-colors"
+      class="flex-1 min-w-0 flex items-center gap-2 px-2 py-1.5 bg-sidebar-accent/40 border border-sidebar-border text-muted-foreground hover:text-foreground hover:bg-sidebar-accent transition-colors"
       title="Search threads (Ctrl+R)"
     >
       <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
       <span class="text-xs truncate">Search threads…</span>
-      <span class="ml-auto text-micro text-muted-foreground/40 shrink-0">Ctrl+R</span>
+      <Kbd keys="Ctrl+R" class="ml-auto shrink-0" />
     </button>
     <PanelToggle panel="sidebar" label="sidebar" class="-mr-1" />
   </div>
@@ -1038,14 +1046,14 @@
             aria-pressed={active}
             aria-label="{TRIAGE_FILTER_LABELS[f]} {n}"
             class="flex items-center gap-1 px-1.5 py-0.5 text-micro border transition-colors
-              {active ? 'border-border bg-sidebar-accent text-foreground' : 'border-transparent text-muted-foreground/60 hover:text-foreground hover:bg-sidebar-accent/50'}
+              {active ? 'border-border bg-sidebar-accent text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-sidebar-accent/50'}
               {n === 0 ? 'opacity-50' : ''}"
             title="{TRIAGE_FILTER_LABELS[f]}: {n}{active ? '. Click again to show all' : ''}"
           >
             <span class="w-1.5 h-1.5 shrink-0 {TRIAGE_DOT[f]}"></span>
             <!-- Narrow sidebar: dot and count only, the label is in the tooltip. -->
             {#if !compact}{TRIAGE_FILTER_LABELS[f]}{/if}
-            <span class="text-muted-foreground/50">{n}</span>
+            <span class="text-muted-foreground">{n}</span>
           </button>
         {/each}
       </div>
@@ -1054,9 +1062,9 @@
       <!-- CONVERSATIONS: the live working set, always visible at the top. The sort
            applies to the Projects tree too. -->
       <div class="flex items-center justify-between mb-1 px-1">
-        <span class="text-xs text-muted-foreground uppercase tracking-wide">Threads</span>
+        <SectionLabel as="span">Threads</SectionLabel>
         {#if store.sessions.length > 0}
-          <div class="flex items-center" role="group" aria-label="Sort threads">
+          <div class={Segmented.segmentedRoot} role="group" aria-label="Sort threads">
             {@render sortButton('name', 'Name')}
             {@render sortButton('age', 'Age')}
           </div>
@@ -1077,10 +1085,10 @@
           <span class="w-full flex items-center gap-2 min-w-0">
             <span class="w-2 h-2 shrink-0 border border-dashed border-muted-foreground"></span>
             <span class="text-sm truncate min-w-0 flex-1 italic text-muted-foreground">{draft.text.trim() ? draft.text.trim().split('\n')[0] : 'New thread'}</span>
-            <span class="text-micro text-muted-foreground/50 shrink-0">draft</span>
+            <span class="text-micro text-muted-foreground shrink-0">draft</span>
           </span>
           {#if store.repos.length > 1 || draftGroup}
-            <span class="pl-4 mt-0.5 text-caption text-muted-foreground/70 truncate">{#if draftGroup}<span class="text-foreground/60">{draftGroup}</span>{#if store.repos.length > 1}<span class="text-muted-foreground/40">{' · '}</span>{/if}{/if}{#if store.repos.length > 1}{store.repoDisplayName(draft.repoPath)}{/if}</span>
+            <span class="pl-4 mt-0.5 text-caption text-muted-foreground truncate">{#if draftGroup}<span class="text-foreground/60">{draftGroup}</span>{#if store.repos.length > 1}<span class="text-muted-foreground/40">{' · '}</span>{/if}{/if}{#if store.repos.length > 1}{store.repoDisplayName(draft.repoPath)}{/if}</span>
           {/if}
         </button>
       {:else}
@@ -1098,7 +1106,7 @@
         >
           <svg class="shrink-0 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
           <span class="text-sm truncate min-w-0 flex-1 italic text-muted-foreground">New thread</span>
-          <span class="text-micro text-muted-foreground/50 shrink-0">Ctrl+N</span>
+          <Kbd keys="Ctrl+N" class="shrink-0" />
         </button>
       {/if}
       {#each activeSessions as session (session.id)}
@@ -1107,7 +1115,7 @@
       {/each}
       <!-- With no filter the draft row is enough; a filter says why the list is short. -->
       {#if activeSessions.length === 0 && triageFilter !== 'all'}
-        <p class="text-xs text-muted-foreground/50 pl-4 py-1">No threads match "{TRIAGE_FILTER_LABELS[triageFilter]}"</p>
+        <p class="text-xs text-muted-foreground pl-4 py-1">No threads match "{TRIAGE_FILTER_LABELS[triageFilter]}"</p>
       {/if}
     </div>
 
@@ -1128,17 +1136,17 @@
     <SidebarSection panel="projectsSection" label="Projects" count={store.repos.length} {counts}>
       {#snippet actions()}
         {#if closedCount}
-          <span class="text-micro text-muted-foreground/50 shrink-0">{closedCount} closed</span>
+          <span class="text-micro text-muted-foreground shrink-0">{closedCount} closed</span>
         {/if}
-        <button
-          type="button"
+        <Button
+          variant="quiet"
+          size="icon-2xs"
           onclick={addProject}
-          class="w-5 h-5 shrink-0 flex items-center justify-center text-muted-foreground/70 hover:text-primary hover:bg-sidebar-accent transition-colors"
           title="Add a project"
           aria-label="Add a project"
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
-        </button>
+        </Button>
       {/snippet}
 
       <div class="pt-1 pb-2">
@@ -1157,7 +1165,7 @@
                 class="flex items-center gap-1.5 min-w-0 flex-1 text-left hover:text-foreground transition-colors"
                 title={repoCollapsed ? 'Expand project' : 'Collapse project'}
               >
-                <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 text-muted-foreground/60 transition-transform" style={repoCollapsed ? 'transform: rotate(-90deg)' : ''}><path d="m6 9 6 6 6-6"/></svg>
+                <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 text-muted-foreground transition-transform" style={repoCollapsed ? 'transform: rotate(-90deg)' : ''}><path d="m6 9 6 6 6-6"/></svg>
                 {#if repoColor}
                   <span class="w-2 h-2 shrink-0" style="background-color: {repoColor}"></span>
                 {/if}
@@ -1165,7 +1173,7 @@
                   {store.repoDisplayName(repo)}
                 </span>
                 {#if rowCount}
-                  <span class="text-xs text-muted-foreground/40 shrink-0">{rowCount}</span>
+                  <span class="text-xs text-muted-foreground shrink-0">{rowCount}</span>
                 {/if}
                 <!-- Per-repo attention counts, same dots as the filter chips -->
                 <AttentionCounts counts={repoCounts(repo)} />
@@ -1173,23 +1181,26 @@
               <div class="flex items-center gap-0.5">
                 <!-- A bin, like a conversation's delete: removing a project deletes its conversations too (it asks first).
                      Before the +: it only shows on hover, and on the outside it left a gap at the row's edge. -->
-                <button
+                <Button
+                  variant="quiet-destructive"
+                  size="icon-2xs"
                   onclick={() => requestRemoveRepo(repo)}
-                  class="w-5 h-5 flex items-center justify-center text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-all opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+                  class="opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
                   title="Remove project"
                   aria-label="Remove project {store.repoDisplayName(repo)}"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
-                </button>
+                </Button>
                 <!-- Always shown: this is the main way to start a conversation in a project. -->
-                <button
+                <Button
+                  variant="quiet"
+                  size="icon-2xs"
                   onclick={() => openNewAgent(repo)}
-                  class="w-5 h-5 flex items-center justify-center text-muted-foreground/70 hover:text-primary hover:bg-sidebar-accent transition-colors"
                   title="New thread in {store.repoDisplayName(repo)}"
                   aria-label="New thread in {store.repoDisplayName(repo)}"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
-                </button>
+                </Button>
               </div>
             </div>
 
@@ -1205,11 +1216,11 @@
                       type="button"
                       onclick={() => toggleBranchCollapsed(repo, branch)}
                       aria-expanded={!branchCollapsed}
-                      class="w-full flex items-center gap-1.5 px-1 py-0.5 text-left text-xs text-muted-foreground/70 hover:text-foreground transition-colors"
+                      class="w-full flex items-center gap-1.5 px-1 py-0.5 text-left text-xs text-muted-foreground hover:text-foreground transition-colors"
                     >
                       <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 transition-transform" style={branchCollapsed ? 'transform: rotate(-90deg)' : ''} aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
                       <span class="truncate" title={branch}>{branch}</span>
-                      <span class="text-muted-foreground/40">({sessions.length})</span>
+                      <span>({sessions.length})</span>
                     </button>
                     {#if !branchCollapsed}
                       {#each sessions as session, i (session.id)}
@@ -1221,14 +1232,14 @@
               {/each}
 
               {#if branchGroups.length === 0}
-                <p class="text-xs text-muted-foreground/40 pl-4 py-1">{triageFilter === 'all' ? 'No threads in this project' : `No threads match "${TRIAGE_FILTER_LABELS[triageFilter]}"`}</p>
+                <p class="text-xs text-muted-foreground pl-4 py-1">{triageFilter === 'all' ? 'No threads in this project' : `No threads match "${TRIAGE_FILTER_LABELS[triageFilter]}"`}</p>
               {/if}
             {/if}
           </div>
         {/each}
 
         {#if store.repos.length === 0}
-          <p class="text-xs text-muted-foreground/50 mt-2">Add a project to get started.</p>
+          <p class="text-xs text-muted-foreground mt-2">Add a project to get started.</p>
         {/if}
       </div>
     </SidebarSection>
@@ -1316,45 +1327,47 @@
           class="w-16 text-sm bg-card border border-border px-2 py-1 text-foreground focus:outline-none focus:border-primary"
         />
         <span class="text-xs text-muted-foreground">days</span>
-        <div class="flex gap-1 ml-1">
+        <Segmented.Root
+          value={cleanupPresetValue}
+          onValueChange={(v) => cleanupDays = v}
+          aria-label="Inactive for"
+          class="ml-1"
+        >
           {#each cleanupDayPresets as d}
-            <button
-              onclick={() => cleanupDays = String(d)}
-              class="text-xs px-1.5 py-0.5 border transition-colors
-                {cleanupDaysNum === d ? 'border-primary text-primary' : 'border-border text-muted-foreground hover:text-foreground'}"
-            >
-              {d}
-            </button>
+            <Segmented.Item value={String(d)}>{d}</Segmented.Item>
           {/each}
-        </div>
+        </Segmented.Root>
       </div>
 
       {#if cleanupCandidates.length === 0}
-        <p class="text-sm text-muted-foreground/50 py-2">No closed threads inactive for {cleanupDaysNum} days.</p>
+        <p class="text-sm text-muted-foreground py-2">No closed threads inactive for {cleanupDaysNum} days.</p>
       {:else}
         <div class="flex items-center justify-between text-xs text-muted-foreground">
           <span>{cleanupSelectedIds.length} of {cleanupCandidates.length} selected</span>
           <span class="flex items-center gap-2">
-            <button
-              type="button"
+            <Button
+              variant="quiet"
+              size="inline"
               onclick={cleanupSelectAllClean}
-              class="hover:text-foreground hover:underline"
+              class="hover:underline"
               title="Tick every listed thread without uncommitted changes"
             >
               <!-- Says what it leaves out, so "all" never means less than all. -->
               {cleanupDirtyCount > 0 ? `Select all except ${cleanupDirtyCount} with changes` : 'Select all'}
-            </button>
+            </Button>
             {#if cleanupGhAvailable}
               <span class="text-muted-foreground/40" aria-hidden="true">·</span>
-              <button
-                type="button"
+              <!-- Purple, as merged pull requests are everywhere. -->
+              <Button
+                variant="link"
+                size="inline"
                 onclick={cleanupSelectMerged}
                 disabled={cleanupMergedCount === 0}
-                class="text-purple-400 hover:text-purple-300 hover:underline disabled:opacity-50 disabled:no-underline"
+                class="text-purple-400 hover:text-purple-300 disabled:no-underline"
                 title="Tick only threads whose pull request has been merged (and that have no uncommitted changes)"
               >
                 Select merged ({cleanupMergedCount})
-              </button>
+              </Button>
             {/if}
           </span>
         </div>
@@ -1377,9 +1390,9 @@
                   {#if pr && prFlag}
                     <span class="{prFlag.colorClass} font-medium" title={pr.title ? `${pr.title} (${pr.url})` : pr.url} data-testid="cleanup-pr-{session.id}">· PR #{pr.number} {prFlag.label}</span>
                   {:else if cleanupPr[session.id] === null}
-                    <span class="text-muted-foreground/60" data-testid="cleanup-pr-{session.id}">· no PR</span>
+                    <span data-testid="cleanup-pr-{session.id}">· no PR</span>
                   {:else if cleanupPr[session.id] === 'unknown'}
-                    <span class="text-muted-foreground/60" title="The GitHub CLI could not look up this branch's pull request (offline or not logged in)" data-testid="cleanup-pr-{session.id}">· PR unknown</span>
+                    <span title="The GitHub CLI could not look up this branch's pull request (offline or not logged in)" data-testid="cleanup-pr-{session.id}">· PR unknown</span>
                   {/if}
                   {#if cleanupStatusUnknown[session.id]}
                     <span class="text-amber-500 font-medium" title="Git couldn't read this worktree's status, so it may have uncommitted changes">· changes unknown</span>
@@ -1484,7 +1497,7 @@
       </Dialog.Header>
       {#if !session?.direct}
         {#if destroyUncommitted}
-          <p class="text-xs text-yellow-500 mt-3" role="alert">
+          <p class="text-xs text-amber-500 mt-3" role="alert">
             {destroyUncommitted} {destroyUncommitted === 1 ? 'file has' : 'files have'} uncommitted changes that will be lost.
           </p>
         {/if}
@@ -1493,7 +1506,7 @@
           Also delete the branch
         </label>
         {#if deleteBranchOnDestroy && destroyUnmerged?.count}
-          <p class="text-xs text-yellow-500 mt-2" role="alert">
+          <p class="text-xs text-amber-500 mt-2" role="alert">
             {destroyUnmerged.count} {destroyUnmerged.count === 1 ? 'commit' : 'commits'} on {branch}
             {destroyUnmerged.count === 1 ? "isn't" : "aren't"} on {destroyUnmerged.base} yet. Unless you've pushed
             {destroyUnmerged.count === 1 ? 'it' : 'them'}, deleting the branch can lose {destroyUnmerged.count === 1 ? 'it' : 'them'}.
@@ -1535,12 +1548,12 @@
         <p class="text-xs text-muted-foreground mt-3">New threads started in this project, so it checked again.</p>
       {/if}
       {#if running.length}
-        <p class="text-xs text-yellow-500 mt-3" role="alert">
+        <p class="text-xs text-amber-500 mt-3" role="alert">
           {running.length} {running.length === 1 ? 'thread is' : 'threads are'} running and will be stopped{midTurn ? `, ${midTurn} in the middle of a turn` : ''}.
         </p>
       {/if}
       {#if removeRepoDirty}
-        <p class="text-xs text-yellow-500 mt-3" role="alert">
+        <p class="text-xs text-amber-500 mt-3" role="alert">
           {removeRepoDirty} {removeRepoDirty === 1 ? 'thread has' : 'threads have'} uncommitted changes that will be lost.
         </p>
       {/if}
@@ -1550,7 +1563,7 @@
           Also delete their branches
         </label>
         {#if removeRepoDeleteBranches && removeRepoUnmerged?.count}
-          <p class="text-xs text-yellow-500 mt-2" role="alert">
+          <p class="text-xs text-amber-500 mt-2" role="alert">
             {removeRepoUnmerged.count} {removeRepoUnmerged.count === 1 ? "branch has commits that aren't" : "branches have commits that aren't"} on {removeRepoUnmerged.base} yet.
             Unless you've pushed them, deleting the branches can lose them.
           </p>

@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import { menuPanel, menuItem, menuSeparator } from '$lib/components/ui/menu/index.js';
+  import { cn } from '$lib/utils.js';
 
   interface ContextMenuItem {
     label: string;
@@ -132,7 +134,7 @@
   role="menu"
   tabindex="-1"
   aria-label={label}
-  class="fixed z-[100] pointer-events-auto min-w-[160px] border border-border bg-popover text-popover-foreground shadow-md py-1"
+  class={menuPanel({ padding: 'list', class: 'fixed z-[100] pointer-events-auto min-w-[160px]' })}
   style="left: {adjustedX}px; top: {adjustedY}px;"
   onmousedown={(e) => e.preventDefault()}
   onpointerdown={(e) => e.stopPropagation()}
@@ -140,7 +142,7 @@
 >
   {#each items as item, i}
     {#if item.separator}
-      <div class="border-t border-border my-1" role="separator"></div>
+      <div class={menuSeparator} role="separator"></div>
     {/if}
     <button
       role="menuitem"
@@ -149,10 +151,12 @@
       aria-disabled={item.disabled || undefined}
       onclick={() => choose(item)}
       onmouseenter={() => activeIndex = item.disabled ? -1 : i}
-      class="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left transition-colors
-        {item.disabled ? 'text-muted-foreground cursor-default' : ''}
-        {item.variant === 'destructive' ? 'text-destructive' : ''}
-        {i === activeIndex ? (item.variant === 'destructive' ? 'bg-accent' : 'bg-accent text-accent-foreground') : ''}"
+      class={cn(
+        menuItem({ tone: item.variant === 'destructive' ? 'destructive' : 'default' }),
+        item.disabled && 'cursor-default',
+        // The highlighted row (hover or arrow keys) looks like a hovered one.
+        i === activeIndex && (item.variant === 'destructive' ? 'bg-destructive/10' : 'bg-accent text-accent-foreground'),
+      )}
     >
       {#if item.icon === 'add'}
         <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>

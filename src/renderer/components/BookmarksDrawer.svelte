@@ -5,6 +5,9 @@
   import { settingsStore } from '../stores/settings.svelte.js';
   import { getRepoColor } from '../lib/repo-colors.js';
   import CopyButton from './CopyButton.svelte';
+  import { Button } from '$lib/components/ui/button/index.js';
+  import { PanelHeader } from '$lib/components/ui/panel-header/index.js';
+  import XIcon from '@lucide/svelte/icons/x';
   import type { Bookmark } from '../../shared/types.js';
 
   let groups = $derived(bookmarkStore.grouped);
@@ -55,21 +58,25 @@
   ></button>
 
   <aside class="fixed top-0 right-0 z-50 h-full w-96 max-w-[90vw] bg-card border-l border-border shadow-xl flex flex-col">
-    <header class="flex items-center justify-between px-4 py-3 border-b border-border">
-      <h2 class="text-sm font-semibold flex items-center gap-2">
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></svg>
+    <PanelHeader>
+      <h2 class="flex items-center gap-2 font-medium text-foreground">
+        <svg class="size-3" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></svg>
         Bookmarks
       </h2>
-      <button
-        onclick={() => bookmarkStore.toggleDrawer(false)}
-        class="text-muted-foreground hover:text-foreground px-1"
-        title="Close"
-      >&times;</button>
-    </header>
+      {#snippet actions()}
+        <Button
+          variant="quiet"
+          size="icon-2xs"
+          onclick={() => bookmarkStore.toggleDrawer(false)}
+          title="Close"
+          aria-label="Close"
+        ><XIcon /></Button>
+      {/snippet}
+    </PanelHeader>
 
     <div class="flex-1 overflow-y-auto px-3 py-2">
       {#if groups.length === 0}
-        <p class="text-xs text-muted-foreground/60 mt-4 text-center">
+        <p class="text-xs text-muted-foreground mt-4 text-center">
           No bookmarks yet. Select text in the activity thread and click <em>Bookmark</em>.
         </p>
       {/if}
@@ -79,14 +86,14 @@
         <div class="mt-3 first:mt-0">
           <div class="flex items-center gap-2 text-xs font-medium text-muted-foreground mb-1">
             {#if color}
-              <span class="inline-block w-2 h-2 rounded-full shrink-0" style="background-color: {color}"></span>
+              <span class="inline-block w-2 h-2 shrink-0" style="background-color: {color}"></span>
             {/if}
             <span class="truncate">{store.repoDisplayName(repo.repoPath)}</span>
           </div>
 
           {#each repo.sessions as session (session.sessionId)}
             <div class="ml-1 pl-2 border-l border-border/60">
-              <div class="text-caption text-muted-foreground/70 mb-1 truncate">{session.sessionLabel}</div>
+              <div class="text-caption text-muted-foreground mb-1 truncate">{session.sessionLabel}</div>
 
               {#each session.bookmarks as b (b.id)}
                 <div class="group mb-2 border border-border bg-card/80 p-2">
@@ -109,24 +116,28 @@
                   {/if}
 
                   <div class="mt-1 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button
+                    <Button
+                      variant="subtle"
+                      size="2xs"
                       onclick={() => jump(b)}
-                      class="text-caption px-1.5 py-0.5 border border-border text-muted-foreground hover:text-foreground hover:border-primary transition-colors"
                       title="Jump to source"
-                    >Jump</button>
+                    >Jump</Button>
                     {#if editingId !== b.id && !b.note}
-                      <button
+                      <Button
+                        variant="subtle"
+                        size="2xs"
                         onclick={() => startEdit(b)}
-                        class="text-caption px-1.5 py-0.5 border border-border text-muted-foreground hover:text-foreground transition-colors"
                         title="Add note"
-                      >Note</button>
+                      >Note</Button>
                     {/if}
                     <CopyButton text={b.selectedText} class="size-5" />
-                    <button
+                    <Button
+                      variant="quiet-destructive"
+                      size="2xs"
                       onclick={() => bookmarkStore.remove(b.id)}
-                      class="ml-auto text-caption px-1.5 py-0.5 text-muted-foreground hover:text-destructive transition-colors"
+                      class="ml-auto"
                       title="Delete bookmark"
-                    >Delete</button>
+                    >Delete</Button>
                   </div>
                 </div>
               {/each}
