@@ -50,7 +50,7 @@
         <span class="shrink-0 px-1 text-muted-foreground/40 font-normal">{' · '}</span><span class="shrink-0 {mode.tone ? toneText(mode.tone) : ''}">{mode.label}</span>
       {/if}
     </span>
-    <span class="truncate max-w-40 @3xl:max-w-56 text-muted-foreground/80 text-[11px]" data-testid="agent-settings-detail">
+    <span class="truncate max-w-40 @3xl:max-w-56 text-muted-foreground/80 text-caption" data-testid="agent-settings-detail">
       {agentName}{#each details as item (item.id)}<span class="text-muted-foreground/40">{' · '}</span>{item.label}{/each}
     </span>
   </span>

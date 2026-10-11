@@ -183,7 +183,7 @@
           <div class="px-2 py-4 text-muted-foreground text-center">{query ? 'Nothing matches' : 'No branches available'}</div>
         {:else}
           {#if filteredPrs.length > 0}
-            <div class="px-2 pt-1 pb-0.5 text-[10px] uppercase tracking-wide text-muted-foreground/70">Open pull requests</div>
+            <div class="px-2 pt-1 pb-0.5 text-micro uppercase tracking-wide text-muted-foreground/70">Open pull requests</div>
             {#each filteredPrs as pr (pr.number)}
               <button
                 type="button"
@@ -192,12 +192,12 @@
                 class="w-full text-left px-2 py-1.5 hover:bg-accent flex flex-col {isPr(pr) ? 'bg-accent' : ''}"
               >
                 <span class="truncate text-foreground"><span class="text-muted-foreground">#{pr.number}</span> {pr.title}</span>
-                <span class="truncate text-[11px] text-muted-foreground">{pr.headRefName}{pr.author ? ` · ${pr.author}` : ''}{pr.isDraft ? ' · draft' : ''}</span>
+                <span class="truncate text-caption text-muted-foreground">{pr.headRefName}{pr.author ? ` · ${pr.author}` : ''}{pr.isDraft ? ' · draft' : ''}</span>
               </button>
             {/each}
           {/if}
           {#if filteredBranches.length > 0}
-            <div class="px-2 pt-2 pb-0.5 text-[10px] uppercase tracking-wide text-muted-foreground/70">Branches</div>
+            <div class="px-2 pt-2 pb-0.5 text-micro uppercase tracking-wide text-muted-foreground/70">Branches</div>
             {#each filteredBranches as name (name)}
               <button
                 type="button"

@@ -8,6 +8,7 @@
   import { collectTailLines, formatTerminalContext, DEFAULT_TAIL_LINES } from '$lib/terminal-context.js';
   import { openLink } from '$lib/preview-links.js';
   import { terminalColors, prefersLight, onColorSchemeChange } from '$lib/terminal-theme.js';
+  import { FONTS } from '$lib/brand.js';
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -34,7 +35,9 @@
       cursorBlink: true,
       cursorStyle: 'block',
       fontSize: 13,
-      fontFamily: "'JetBrains Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace",
+      // The app's own face, bundled (styles/fonts.ts). The window is drawn
+      // in it before any terminal opens, so xterm measures the loaded font.
+      fontFamily: FONTS.mono,
       ...colors,
       allowProposedApi: true,
       scrollback: 10000,
@@ -142,7 +145,7 @@
 <div class="flex flex-col h-full">
   <!-- Terminal toolbar -->
   <div class="border-b border-border flex items-center gap-2 px-3 py-1 shrink-0 bg-card/50">
-    <span class="text-[10px] text-muted-foreground flex items-center gap-1.5">
+    <span class="text-micro text-muted-foreground flex items-center gap-1.5">
       {#if isAlive}
         <span class="inline-block w-1.5 h-1.5 bg-green-500"></span>
         Running
@@ -154,7 +157,7 @@
     <div class="flex-1"></div>
     <button
       onclick={handleAttachToPrompt}
-      class="text-[10px] px-2 py-0.5 border border-border text-muted-foreground hover:text-foreground hover:border-muted-foreground/50 transition-colors"
+      class="text-micro px-2 py-0.5 border border-border text-muted-foreground hover:text-foreground hover:border-muted-foreground/50 transition-colors"
       title="Attach the selected text (or the last {DEFAULT_TAIL_LINES} lines of output) to the next message"
     >
       To prompt
@@ -162,7 +165,7 @@
     {#if isAlive}
       <button
         onclick={handleKill}
-        class="text-[10px] px-2 py-0.5 border border-destructive text-destructive hover:bg-destructive/10 transition-colors"
+        class="text-micro px-2 py-0.5 border border-destructive text-destructive hover:bg-destructive/10 transition-colors"
         title="Kill terminal process"
       >
         Kill
@@ -170,14 +173,14 @@
     {/if}
     <button
       onclick={handleRestart}
-      class="text-[10px] px-2 py-0.5 border border-border text-muted-foreground hover:text-foreground hover:border-muted-foreground/50 transition-colors"
+      class="text-micro px-2 py-0.5 border border-border text-muted-foreground hover:text-foreground hover:border-muted-foreground/50 transition-colors"
       title="Restart terminal"
     >
       Restart
     </button>
     <button
       onclick={handleClear}
-      class="text-[10px] px-2 py-0.5 border border-border text-muted-foreground hover:text-foreground hover:border-muted-foreground/50 transition-colors"
+      class="text-micro px-2 py-0.5 border border-border text-muted-foreground hover:text-foreground hover:border-muted-foreground/50 transition-colors"
       title="Clear terminal output"
     >
       Clear

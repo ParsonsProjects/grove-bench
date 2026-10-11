@@ -34,7 +34,7 @@
     {@const src = srcOf(img)}
     {#if failed[src]}
       <div
-        class="h-16 w-24 flex items-center justify-center px-1 text-center text-[10px] text-muted-foreground border border-border/60"
+        class="h-16 w-24 flex items-center justify-center px-1 text-center text-micro text-muted-foreground border border-border/60"
         title={labelOf(img)}
       >
         Image not available

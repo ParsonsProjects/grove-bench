@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { terminalColors, prefersLight, onColorSchemeChange } from './terminal-theme.js';
+import { NIGHT, PAPER } from './brand.js';
 
 /** A matchMedia whose light/dark answer the test can flip. */
 function fakeMatchMedia(light: boolean) {
@@ -22,9 +23,9 @@ function fakeMatchMedia(light: boolean) {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('terminal theme', () => {
-  it('raises contrast in light only, and keeps the dark colours as they were', () => {
-    expect(terminalColors(true)).toMatchObject({ minimumContrastRatio: 4.5, theme: { background: '#ffffff' } });
-    expect(terminalColors(false)).toMatchObject({ minimumContrastRatio: 1, theme: { background: '#1f1f1f' } });
+  it('raises contrast in light only, on the app theme\'s own background', () => {
+    expect(terminalColors(true)).toMatchObject({ minimumContrastRatio: 4.5, theme: { background: PAPER.background } });
+    expect(terminalColors(false)).toMatchObject({ minimumContrastRatio: 1, theme: { background: NIGHT.background } });
   });
 
   it('reads the colour scheme, and assumes dark without matchMedia', () => {

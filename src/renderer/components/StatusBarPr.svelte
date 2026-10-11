@@ -201,7 +201,7 @@
             {@const ci = ciAlert}
             <button
               onclick={() => prStore.dismissAlert(sessionId, ci.id)}
-              class="px-1 text-[10px] leading-4 whitespace-nowrap bg-yellow-400/15 text-yellow-400 border border-yellow-400/30 hover:bg-yellow-400/25 transition-colors"
+              class="px-1 text-micro leading-4 whitespace-nowrap bg-yellow-400/15 text-yellow-400 border border-yellow-400/30 hover:bg-yellow-400/25 transition-colors"
               title="Failed since you last looked — click to clear"
             >
               new
@@ -248,7 +248,7 @@
             {@const ca = commentsAlert}
             <button
               onclick={() => prStore.dismissAlert(sessionId, ca.id)}
-              class="px-1 text-[10px] leading-4 whitespace-nowrap bg-yellow-400/15 text-yellow-400 border border-yellow-400/30 hover:bg-yellow-400/25 transition-colors"
+              class="px-1 text-micro leading-4 whitespace-nowrap bg-yellow-400/15 text-yellow-400 border border-yellow-400/30 hover:bg-yellow-400/25 transition-colors"
               title="{ca.count} new comment{ca.count > 1 ? 's' : ''} since you last looked — click to clear"
             >
               {ca.count} new
@@ -324,7 +324,7 @@
           </button>
         </div>
       {/each}
-      <p class="text-[10px] text-muted-foreground/60 mt-1.5">
+      <p class="text-micro text-muted-foreground/60 mt-1.5">
         Alerts and auto turns follow one PR at a time.
       </p>
     </div>
@@ -358,7 +358,7 @@
         address reviews
       </label>
     </div>
-    <p class="text-[10px] text-muted-foreground/60 mt-1.5">
+    <p class="text-micro text-muted-foreground/60 mt-1.5">
       Auto turns run only while the thread is idle; git push / gh may need to be allowed.
     </p>
   </div>

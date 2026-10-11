@@ -125,8 +125,8 @@
   }
 
   const SUBTITLE_TONE_CLASS: Record<SessionSubtitle['tone'], string> = {
-    working: 'text-primary/80',
-    waiting: 'text-amber-500',
+    working: 'text-status-working/80',
+    waiting: 'text-status-attention',
     context: 'text-muted-foreground/60',
   };
 
@@ -704,9 +704,9 @@
   }
 
   const TRIAGE_DOT: Record<Exclude<TriageFilter, 'all'>, string> = {
-    'needs-you': 'bg-amber-500',
-    working: 'bg-primary',
-    unread: 'bg-green-400',
+    'needs-you': 'bg-status-attention',
+    working: 'bg-status-working',
+    unread: 'bg-status-unread',
   };
 
   /** Branch groups folded in the Projects tree, by project and branch. Kept
@@ -866,14 +866,14 @@
           {#if ts}
             <!-- Invisible, not hidden, while the quick action sits over it, so the name doesn't reflow. -->
             <span
-              class="shrink-0 text-[10px] text-muted-foreground/50 {isDestroying ? '' : 'group-hover/session:invisible group-has-[:focus-visible]/session:invisible'}"
+              class="shrink-0 text-micro text-muted-foreground/50 {isDestroying ? '' : 'group-hover/session:invisible group-has-[:focus-visible]/session:invisible'}"
               title="{session.lastActiveAt ? 'Last active' : 'Created'} {new Date(ts).toLocaleString()}"
             >{formatAge(ts)}</span>
           {/if}
         </div>
         {#if group || showProject || subtitle || changedCount > 0}
           <div class="w-full flex items-center gap-1.5 pl-4 pr-1 mt-0.5 min-w-0">
-            <span class="text-[11px] truncate min-w-0">
+            <span class="text-caption truncate min-w-0">
               {#if group}<span class="text-foreground/60" title="Group: {group.name}" data-row-group>{group.name}</span>{#if showProject || subtitle}<span class="text-muted-foreground/40">{' · '}</span>{/if}{/if}
               {#if showProject}
                 <!-- A grove character carries the project colour on its laptop, so the square is only needed with the plain dot. -->
@@ -881,7 +881,7 @@
             </span>
             {#if changedCount > 0}
               <span
-                class="ml-auto shrink-0 text-[10px] text-muted-foreground/60 border border-border/60 px-1 leading-4"
+                class="ml-auto shrink-0 text-micro text-muted-foreground/60 border border-border/60 px-1 leading-4"
                 title="{changedCount} changed file{changedCount === 1 ? '' : 's'} in the worktree"
               >±{changedCount}</span>
             {/if}
@@ -928,7 +928,7 @@
     <button
       type="button"
       onclick={() => setSort(key)}
-      class="flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] uppercase tracking-wide transition-colors
+      class="flex items-center gap-0.5 px-1.5 py-0.5 text-micro uppercase tracking-wide transition-colors
         {active ? 'text-foreground' : 'text-muted-foreground/40 hover:text-muted-foreground'}"
       title="Sort by {label.toLowerCase()}{active ? (sort.dir === 'asc' ? ' (ascending)' : ' (descending)') : ''}"
     >
@@ -1016,7 +1016,7 @@
     >
       <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
       <span class="text-xs truncate">Search threads…</span>
-      <span class="ml-auto text-[10px] text-muted-foreground/40 shrink-0">Ctrl+R</span>
+      <span class="ml-auto text-micro text-muted-foreground/40 shrink-0">Ctrl+R</span>
     </button>
     <PanelToggle panel="sidebar" label="sidebar" class="-mr-1" />
   </div>
@@ -1037,7 +1037,7 @@
             onclick={() => toggleFilter(f)}
             aria-pressed={active}
             aria-label="{TRIAGE_FILTER_LABELS[f]} {n}"
-            class="flex items-center gap-1 px-1.5 py-0.5 text-[10px] border transition-colors
+            class="flex items-center gap-1 px-1.5 py-0.5 text-micro border transition-colors
               {active ? 'border-border bg-sidebar-accent text-foreground' : 'border-transparent text-muted-foreground/60 hover:text-foreground hover:bg-sidebar-accent/50'}
               {n === 0 ? 'opacity-50' : ''}"
             title="{TRIAGE_FILTER_LABELS[f]}: {n}{active ? '. Click again to show all' : ''}"
@@ -1077,10 +1077,10 @@
           <span class="w-full flex items-center gap-2 min-w-0">
             <span class="w-2 h-2 shrink-0 border border-dashed border-muted-foreground"></span>
             <span class="text-sm truncate min-w-0 flex-1 italic text-muted-foreground">{draft.text.trim() ? draft.text.trim().split('\n')[0] : 'New thread'}</span>
-            <span class="text-[10px] text-muted-foreground/50 shrink-0">draft</span>
+            <span class="text-micro text-muted-foreground/50 shrink-0">draft</span>
           </span>
           {#if store.repos.length > 1 || draftGroup}
-            <span class="pl-4 mt-0.5 text-[11px] text-muted-foreground/70 truncate">{#if draftGroup}<span class="text-foreground/60">{draftGroup}</span>{#if store.repos.length > 1}<span class="text-muted-foreground/40">{' · '}</span>{/if}{/if}{#if store.repos.length > 1}{store.repoDisplayName(draft.repoPath)}{/if}</span>
+            <span class="pl-4 mt-0.5 text-caption text-muted-foreground/70 truncate">{#if draftGroup}<span class="text-foreground/60">{draftGroup}</span>{#if store.repos.length > 1}<span class="text-muted-foreground/40">{' · '}</span>{/if}{/if}{#if store.repos.length > 1}{store.repoDisplayName(draft.repoPath)}{/if}</span>
           {/if}
         </button>
       {:else}
@@ -1098,7 +1098,7 @@
         >
           <svg class="shrink-0 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
           <span class="text-sm truncate min-w-0 flex-1 italic text-muted-foreground">New thread</span>
-          <span class="text-[10px] text-muted-foreground/50 shrink-0">Ctrl+N</span>
+          <span class="text-micro text-muted-foreground/50 shrink-0">Ctrl+N</span>
         </button>
       {/if}
       {#each activeSessions as session (session.id)}
@@ -1128,7 +1128,7 @@
     <SidebarSection panel="projectsSection" label="Projects" count={store.repos.length} {counts}>
       {#snippet actions()}
         {#if closedCount}
-          <span class="text-[10px] text-muted-foreground/50 shrink-0">{closedCount} closed</span>
+          <span class="text-micro text-muted-foreground/50 shrink-0">{closedCount} closed</span>
         {/if}
         <button
           type="button"

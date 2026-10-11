@@ -63,7 +63,7 @@
           <!-- Full-width lines: the item centres its last span's children. -->
           <span class="flex flex-col gap-0.5">
             <span class="w-full text-foreground">{VIEW_MODE_LABELS[mode]}</span>
-            <span class="w-full text-[11px] text-muted-foreground whitespace-normal">{VIEW_MODE_DESCRIPTIONS[mode]}</span>
+            <span class="w-full text-caption text-muted-foreground whitespace-normal">{VIEW_MODE_DESCRIPTIONS[mode]}</span>
           </span>
         {/snippet}
       </Select.Item>

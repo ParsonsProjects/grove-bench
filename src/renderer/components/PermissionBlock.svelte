@@ -216,7 +216,7 @@
     {#if isExitPlanMode && planText}
       <button
         onclick={() => markdownPreviewStore.show(planText, 'Proposed plan')}
-        class="flex items-center gap-1 text-[11px] px-1.5 py-0.5 border border-border text-muted-foreground hover:text-foreground hover:border-primary transition-colors shrink-0"
+        class="flex items-center gap-1 text-caption px-1.5 py-0.5 border border-border text-muted-foreground hover:text-foreground hover:border-primary transition-colors shrink-0"
         title="Read the plan full-width"
       >
         <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>
@@ -251,7 +251,7 @@
     <pre class="text-xs text-foreground bg-card/80 border border-border px-3 py-2 mt-1 overflow-x-auto max-h-32 overflow-y-auto font-mono whitespace-pre-wrap break-all">{bashCommand}</pre>
   {:else if describedCommand}
     <pre class="text-xs text-foreground bg-card/80 border border-border px-3 py-2 mt-1 overflow-x-auto max-h-32 overflow-y-auto font-mono whitespace-pre-wrap break-all">{describedCommand}</pre>
-    <div class="text-[11px] text-muted-foreground mt-0.5">As the agent describes it. It didn't send the exact command.</div>
+    <div class="text-caption text-muted-foreground mt-0.5">As the agent describes it. It didn't send the exact command.</div>
   {/if}
 
   <!-- URL preview for WebFetch -->

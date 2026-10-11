@@ -554,7 +554,7 @@
     </div>
   {:else if isRunning && (!streamingThinking || viewMode === 'focus')}
     <div class="py-2 flex items-center gap-2 text-xs text-muted-foreground">
-      <span class="inline-block w-2.5 h-2.5 bg-primary animate-fidget"></span>
+      <span class="inline-block w-2.5 h-2.5 bg-status-working animate-fidget"></span>
       {@render activityLabel()}
     </div>
   {/if}
@@ -567,7 +567,7 @@
         Running {activity.toolName ?? 'tool'}{#if activity.toolSummary}&nbsp;<span class="text-muted-foreground">{activity.toolSummary}</span>{/if}{#if activity.elapsedSeconds && activity.elapsedSeconds > 0}&nbsp;({Math.round(activity.elapsedSeconds)}s){/if}
       </span>
     {:else if activity.activity === 'generating'}
-      <span class="text-primary">Writing...</span>
+      <span class="text-status-working">Writing...</span>
     {:else}
       <span>Working...</span>
     {/if}

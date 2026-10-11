@@ -44,7 +44,7 @@
         title="Open in editor"
       >{filePath}</button>
       {#if pending}
-        <span class="w-2.5 h-2.5 bg-primary animate-pulse shrink-0"></span>
+        <span class="w-2.5 h-2.5 bg-status-working animate-pulse shrink-0"></span>
       {:else if isError}
         <span class="text-destructive">error</span>
       {/if}
@@ -62,7 +62,7 @@
       >{filePath}</button>
       <CopyButton text={filePath} class="opacity-0 group-hover/diff-hdr:opacity-100 shrink-0" />
       {#if pending}
-        <span class="w-2.5 h-2.5 bg-primary animate-pulse shrink-0"></span>
+        <span class="w-2.5 h-2.5 bg-status-working animate-pulse shrink-0"></span>
       {:else if isError}
         <span class="text-destructive">error</span>
       {:else if diffLines.length > 0}

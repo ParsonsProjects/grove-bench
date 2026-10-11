@@ -165,7 +165,7 @@
     {/if}
   </div>
 
-  <div class="px-2 py-1.5 border-t border-border text-[10px]">
+  <div class="px-2 py-1.5 border-t border-border text-micro">
     {#if switching}
       <span class="text-muted-foreground">Switching…</span>
     {:else if fetching}

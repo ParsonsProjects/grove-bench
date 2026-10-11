@@ -234,7 +234,7 @@
 {#snippet userEmptyText()}
   <p class="text-xs mb-4">Open a local dev server, any web address, or an HTML file in this worktree. Links to localhost in the thread open here too; Ctrl+click opens them in your system browser.</p>
   {#if detected.length > 0}
-    <p class="text-[10px] uppercase tracking-wide mb-2">Seen in this thread</p>
+    <p class="text-micro uppercase tracking-wide mb-2">Seen in this thread</p>
     <div class="flex flex-col gap-1 items-stretch">
       {#each [...detected].reverse() as url (url)}
         <button onclick={() => go('user', url)} class="px-3 py-1 text-xs font-mono border border-border bg-card hover:border-primary/60 hover:text-foreground truncate">
@@ -256,7 +256,7 @@
     <p class="text-xs mb-4">The agent's browser tools are turned off in Settings → Agents (Grovekeepers), so the agent can't open pages here.</p>
   {/if}
   {#if detected.length > 0}
-    <p class="text-[10px] uppercase tracking-wide mb-2">Open for the agent</p>
+    <p class="text-micro uppercase tracking-wide mb-2">Open for the agent</p>
     <div class="flex flex-col gap-1 items-stretch">
       {#each [...detected].reverse() as url (url)}
         <button onclick={() => openForAgent(url)} class="px-3 py-1 text-xs font-mono border border-border bg-card hover:border-primary/60 hover:text-foreground truncate">
@@ -431,7 +431,7 @@
               <span class="text-xs text-muted-foreground">Loading…</span>
             {/if}
           </div>
-          <div class="flex items-center gap-2 px-3 py-1 border-t border-border text-[11px] text-muted-foreground shrink-0">
+          <div class="flex items-center gap-2 px-3 py-1 border-t border-border text-caption text-muted-foreground shrink-0">
             <BotIcon class="w-3 h-3 shrink-0" />
             {#if agent.size}<span class="tabular-nums shrink-0">{agent.size.width}×{agent.size.height}</span>{/if}
             {#if agent.lastAction}

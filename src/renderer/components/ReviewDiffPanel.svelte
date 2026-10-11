@@ -596,7 +596,7 @@
 
 {#snippet diffStat(entry: GitStatusEntry)}
   {#if entry.additions !== undefined || entry.deletions !== undefined}
-    <span class="shrink-0 text-[10px] tabular-nums flex items-center gap-1">
+    <span class="shrink-0 text-micro tabular-nums flex items-center gap-1">
       {#if entry.additions}<span class="text-green-400">+{entry.additions}</span>{/if}
       {#if entry.deletions}<span class="text-red-400">−{entry.deletions}</span>{/if}
     </span>
@@ -623,17 +623,17 @@
     <div class="min-w-0 flex-1">
       <div class="truncate">{fileName(entry.filePath)}</div>
       {#if dirPath(entry.filePath)}
-        <div class="truncate text-[10px] text-muted-foreground/60">{dirPath(entry.filePath)}</div>
+        <div class="truncate text-micro text-muted-foreground/60">{dirPath(entry.filePath)}</div>
       {/if}
     </div>
     {#if nComments > 0}
-      <span class="shrink-0 text-[10px] text-primary flex items-center gap-0.5" title="{nComments} review comment{nComments === 1 ? '' : 's'}">
+      <span class="shrink-0 text-micro text-primary flex items-center gap-0.5" title="{nComments} review comment{nComments === 1 ? '' : 's'}">
         <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h8m-8 4h5m-9 6l3-3h11a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v14z"/></svg>{nComments}
       </span>
     {/if}
     {@render diffStat(entry)}
     {#if entry.staged}
-      <span class="text-[10px] text-green-400 shrink-0">S</span>
+      <span class="text-micro text-green-400 shrink-0">S</span>
     {/if}
     {#if changed}
       <span class="shrink-0 w-1.5 h-1.5 bg-yellow-400" title="Changed since you viewed it"></span>
@@ -657,9 +657,9 @@
         <span class="text-muted-foreground/60">{count}</span>
       </button>
       {#if mode === 'stage' && onStageAll}
-        <button onclick={() => onStageAll(entries)} class="px-2 py-1 text-[10px] text-muted-foreground hover:text-green-400 shrink-0 opacity-0 group-hover/sec:opacity-100">stage all</button>
+        <button onclick={() => onStageAll(entries)} class="px-2 py-1 text-micro text-muted-foreground hover:text-green-400 shrink-0 opacity-0 group-hover/sec:opacity-100">stage all</button>
       {:else if mode === 'unstage' && onUnstageAll}
-        <button onclick={() => onUnstageAll(entries)} class="px-2 py-1 text-[10px] text-muted-foreground hover:text-yellow-400 shrink-0 opacity-0 group-hover/sec:opacity-100">unstage all</button>
+        <button onclick={() => onUnstageAll(entries)} class="px-2 py-1 text-micro text-muted-foreground hover:text-yellow-400 shrink-0 opacity-0 group-hover/sec:opacity-100">unstage all</button>
       {/if}
     </div>
   {/if}
@@ -683,7 +683,7 @@
     {#snippet emptyDetails()}
       {#if hint}
         <span class="text-xs text-muted-foreground/60 flex items-center gap-1.5">
-          <span class="w-1.5 h-1.5 bg-primary animate-pulse"></span>
+          <span class="w-1.5 h-1.5 bg-status-working animate-pulse"></span>
           {hint}
         </span>
       {/if}
@@ -718,7 +718,7 @@
       <!-- Rail: expand button, file count, one status letter per file -->
       <div class="border-b border-border py-1.5 shrink-0 flex flex-col items-center gap-1">
         <PanelToggle {panel} label="file list" />
-        <span class="text-[10px] text-muted-foreground tabular-nums" title="{entries.length} change{entries.length !== 1 ? 's' : ''}">{entries.length}</span>
+        <span class="text-micro text-muted-foreground tabular-nums" title="{entries.length} change{entries.length !== 1 ? 's' : ''}">{entries.length}</span>
       </div>
       <div class="flex-1 overflow-y-auto">
         {#each railEntries as entry (fileKey(entry))}
@@ -785,7 +785,7 @@
                       <span class="text-muted-foreground">{dirPath(entry.filePath)}</span><span class="text-foreground">{fileName(entry.filePath)}</span>
                     </span>
                     {#if entry.staged}
-                      <span class="ml-auto text-[10px] text-green-400 shrink-0">staged</span>
+                      <span class="ml-auto text-micro text-green-400 shrink-0">staged</span>
                     {/if}
                   </button>
                 {/each}
@@ -795,14 +795,14 @@
           <PanelToggle {panel} label="file list" class="-mr-1.5" />
         </div>
         {#if searchQuery && filteredTotal !== entries.length && !showDropdown}
-          <div class="text-[10px] text-muted-foreground mt-1">
+          <div class="text-micro text-muted-foreground mt-1">
             {filteredTotal} of {entries.length} files
           </div>
         {/if}
         {#if sidebarTop}
           <div class="mt-1.5 flex items-center gap-2">{@render sidebarTop()}</div>
         {/if}
-        <div class="text-[10px] text-muted-foreground mt-1.5 flex items-center gap-2 whitespace-nowrap">
+        <div class="text-micro text-muted-foreground mt-1.5 flex items-center gap-2 whitespace-nowrap">
           {#if sidebarSummaryExtra}{@render sidebarSummaryExtra()}{/if}
           <span>{entries.length} change{entries.length !== 1 ? 's' : ''}</span>
           {#if stagedEntries.length > 0}
@@ -816,7 +816,7 @@
           {/if}
         </div>
         {#if viewedCount > 0}
-          <div class="text-[10px] text-green-400/80 mt-1 flex items-center gap-1" title="Files marked viewed (press x on the selected file)">
+          <div class="text-micro text-green-400/80 mt-1 flex items-center gap-1" title="Files marked viewed (press x on the selected file)">
             <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
             {viewedCount} of {entries.length} viewed
           </div>
@@ -915,7 +915,7 @@
             <input type="checkbox" checked={isViewed(selectedEntry)} onchange={() => toggleViewed(selectedEntry)} class="accent-green-500" />
             Viewed
             {#if changedSinceViewed(selectedEntry)}
-              <span class="text-[10px] text-yellow-400">· changed since</span>
+              <span class="text-micro text-yellow-400">· changed since</span>
             {/if}
           </label>
           {#if !hasStaging}
@@ -997,7 +997,7 @@
               {@const editDiffLines = computeDiffLines(toolViewOf(edit), selectedEntry.filePath)}
               {#if editDiffLines.length > 0}
                 <div class="mb-2 {idx > 0 ? 'border-t border-border/30 pt-2' : ''}">
-                  <div class="text-[10px] text-muted-foreground/60 mb-1">
+                  <div class="text-micro text-muted-foreground/60 mb-1">
                     {edit.toolName} #{idx + 1}
                   </div>
                   <DiffView lines={editDiffLines} sideBySide={false} maxHeight="300px" filePath={selectedEntry.filePath} />

@@ -82,10 +82,10 @@
       <!-- Blocked on a permission prompt or a question: the one state that
            needs you, so it wins over what the agent was doing. Amber, like
            the Thread tab's dot for the same thing. -->
-      <span class="w-1.5 h-1.5 bg-amber-500 animate-pulse"></span>
-      <span class="text-amber-400">waiting for you</span>
+      <span class="w-1.5 h-1.5 bg-status-attention animate-pulse"></span>
+      <span class="text-status-attention">waiting for you</span>
     {:else if isRunning}
-      <span class="w-1.5 h-1.5 {activity.activity === 'thinking' ? 'bg-purple-400' : 'bg-primary'} animate-pulse"></span>
+      <span class="w-1.5 h-1.5 {activity.activity === 'thinking' ? 'bg-purple-400' : 'bg-status-working'} animate-pulse"></span>
       {#if activity.activity === 'thinking'}
         <span class="text-purple-400">thinking</span>
       {:else if activity.activity === 'tool_starting'}
@@ -93,9 +93,9 @@
           {activity.toolName ?? 'tool'}{#if activity.elapsedSeconds && activity.elapsedSeconds > 0}&nbsp;({Math.round(activity.elapsedSeconds)}s){/if}
         </span>
       {:else if activity.activity === 'generating'}
-        <span class="text-primary">writing</span>
+        <span class="text-status-working">writing</span>
       {:else}
-        <span class="text-primary">running</span>
+        <span class="text-status-working">running</span>
       {/if}
     {:else}
       <span class="w-1.5 h-1.5 bg-muted-foreground/60"></span>
@@ -104,9 +104,9 @@
   </span>
 
   {#if showRateLimit || pendingTools.length > 0 || backgroundTasks.length > 0 || memoryCompacting}
-    <div class="flex items-center gap-3 text-[11px]">
+    <div class="flex items-center gap-3 text-caption">
       {#if rateLimit && showRateLimit}
-        <span class="flex items-center gap-1 text-[11px] whitespace-nowrap {rateLimit.status === 'rejected' ? 'text-red-400' : 'text-yellow-400'}" data-testid="rate-limit">
+        <span class="flex items-center gap-1 text-caption whitespace-nowrap {rateLimit.status === 'rejected' ? 'text-red-400' : 'text-yellow-400'}" data-testid="rate-limit">
           <span class="w-1.5 h-1.5 {rateLimit.status === 'rejected' ? 'bg-red-400' : 'bg-yellow-400'} animate-pulse"></span>
           {rateLimit.status === 'rejected' ? 'rate limited' : 'rate warning'}
           {#if rateLimit.utilization}({Math.round(rateLimit.utilization * 100)}%){/if}
@@ -177,7 +177,7 @@
 
           <div class="font-medium text-foreground mb-2">Background Tasks</div>
           {#if bgTaskStopError}
-            <p class="text-red-400 text-[10px] mb-2">Could not stop task: {bgTaskStopError}</p>
+            <p class="text-red-400 text-micro mb-2">Could not stop task: {bgTaskStopError}</p>
           {/if}
           <div class="space-y-2 max-h-64 overflow-y-auto">
             {#each backgroundTasks as task}
@@ -226,9 +226,9 @@
                   {/if}
                 </div>
                 {#if task.summary}
-                  <p class="text-muted-foreground text-[10px] mb-1 line-clamp-2">{task.summary}</p>
+                  <p class="text-muted-foreground text-micro mb-1 line-clamp-2">{task.summary}</p>
                 {/if}
-                <div class="flex items-center gap-3 text-[10px] text-muted-foreground/60">
+                <div class="flex items-center gap-3 text-micro text-muted-foreground/60">
                   {#if task.lastToolName}
                     <span class="text-yellow-400">{task.lastToolName}</span>
                   {/if}

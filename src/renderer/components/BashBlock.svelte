@@ -83,7 +83,7 @@
     <code class="text-xs text-foreground flex-1 break-all">{command}</code>
     <CopyButton text={command} class="opacity-0 group-hover/cmd:opacity-100 shrink-0" />
     {#if pending}
-      <span class="w-2.5 h-2.5 bg-primary animate-pulse shrink-0"></span>
+      <span class="w-2.5 h-2.5 bg-status-working animate-pulse shrink-0"></span>
     {:else if isError}
       <span class="text-xs text-destructive">error</span>
       {#if summaryMode && result !== undefined}

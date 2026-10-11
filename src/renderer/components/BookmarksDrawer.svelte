@@ -86,7 +86,7 @@
 
           {#each repo.sessions as session (session.sessionId)}
             <div class="ml-1 pl-2 border-l border-border/60">
-              <div class="text-[11px] text-muted-foreground/70 mb-1 truncate">{session.sessionLabel}</div>
+              <div class="text-caption text-muted-foreground/70 mb-1 truncate">{session.sessionLabel}</div>
 
               {#each session.bookmarks as b (b.id)}
                 <div class="group mb-2 border border-border bg-card/80 p-2">
@@ -103,7 +103,7 @@
                       onblur={() => saveNote(b)}
                     />
                   {:else if b.note}
-                    <button class="mt-1 text-[11px] text-muted-foreground italic text-left w-full hover:text-foreground" onclick={() => startEdit(b)}>
+                    <button class="mt-1 text-caption text-muted-foreground italic text-left w-full hover:text-foreground" onclick={() => startEdit(b)}>
                       {b.note}
                     </button>
                   {/if}
@@ -111,20 +111,20 @@
                   <div class="mt-1 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                     <button
                       onclick={() => jump(b)}
-                      class="text-[11px] px-1.5 py-0.5 border border-border text-muted-foreground hover:text-foreground hover:border-primary transition-colors"
+                      class="text-caption px-1.5 py-0.5 border border-border text-muted-foreground hover:text-foreground hover:border-primary transition-colors"
                       title="Jump to source"
                     >Jump</button>
                     {#if editingId !== b.id && !b.note}
                       <button
                         onclick={() => startEdit(b)}
-                        class="text-[11px] px-1.5 py-0.5 border border-border text-muted-foreground hover:text-foreground transition-colors"
+                        class="text-caption px-1.5 py-0.5 border border-border text-muted-foreground hover:text-foreground transition-colors"
                         title="Add note"
                       >Note</button>
                     {/if}
                     <CopyButton text={b.selectedText} class="size-5" />
                     <button
                       onclick={() => bookmarkStore.remove(b.id)}
-                      class="ml-auto text-[11px] px-1.5 py-0.5 text-muted-foreground hover:text-destructive transition-colors"
+                      class="ml-auto text-caption px-1.5 py-0.5 text-muted-foreground hover:text-destructive transition-colors"
                       title="Delete bookmark"
                     >Delete</button>
                   </div>

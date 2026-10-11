@@ -9,6 +9,7 @@
     type AgentSpriteState, type GroveTab,
   } from '../lib/agent-sprite.js';
   import { PIXEL_TREE } from '../lib/pixel-tree.js';
+  import { PALETTE } from '../lib/brand.js';
 
   /**
    * Grove character versions of the main area's empty states.
@@ -99,7 +100,7 @@
           {/each}
         </g>
       {/each}
-      <rect x="0" y={GROUND_Y} width="56" height="1" fill="#3a9a48" opacity="0.45" />
+      <rect x="0" y={GROUND_Y} width="56" height="1" fill={PALETTE.fern} opacity="0.45" />
     </svg>
     {#if variant === 'agent' && agent}
       <!-- In front of the bench, so the bench sits behind its legs. -->
@@ -119,10 +120,10 @@
 {:else}
   <div class="relative z-10 flex flex-col items-center text-center px-6 py-6 max-h-full overflow-y-auto">
     {#if picks.length === 0}
-      <p class="text-sm mb-2 text-foreground/80">No open threads</p>
+      <p class="font-pixel text-base mb-2 text-foreground/90">No open threads</p>
       <p class="text-xs text-muted-foreground">Pick one under Projects in the sidebar to open it again.</p>
     {:else}
-      <p class="text-sm mb-6 text-foreground/80">Pick a thread</p>
+      <p class="font-pixel text-base mb-6 text-foreground/90">Pick a thread</p>
       <div class="flex flex-wrap justify-center gap-x-6 gap-y-5 max-w-4xl">
         {#each picks as s (s.id)}
           {@const name = s.displayName || s.branch || 'New thread'}

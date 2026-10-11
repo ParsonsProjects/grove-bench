@@ -111,7 +111,7 @@
           <span>Subagent{input.agentType ? ` · ${input.agentType}` : ''}</span>
           <span class="text-muted-foreground/40" aria-hidden="true">·</span>
           {#if running}
-            <span class="inline-block w-2 h-2 bg-primary animate-pulse"></span>
+            <span class="inline-block w-2 h-2 bg-status-working animate-pulse"></span>
           {/if}
           <span class={status === 'error' ? 'text-destructive' : ''}>{status}</span>
           {#if callCount > 0}
@@ -159,7 +159,7 @@
 
       {#if running}
         <div class="py-2 flex items-center gap-2 text-xs text-muted-foreground">
-          <span class="inline-block w-2.5 h-2.5 bg-primary animate-fidget shrink-0"></span>
+          <span class="inline-block w-2.5 h-2.5 bg-status-working animate-fidget shrink-0"></span>
           <span class="shrink-0">Working...</span>
           {#if hiddenRunningCall}
             <span class="text-yellow-400 shrink-0">{hiddenRunningCall.toolName}</span>

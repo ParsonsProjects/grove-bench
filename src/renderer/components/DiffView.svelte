@@ -207,7 +207,7 @@
 
 {#snippet expander(gap: ContextGap)}
   {@const n = gap.toNew - gap.fromNew + 1}
-  <div data-expander class="flex items-center gap-1 text-[10px] text-cyan-300/80 bg-cyan-950/10 border-y border-cyan-900/20 px-2 py-0.5 select-none">
+  <div data-expander class="flex items-center gap-1 text-micro text-cyan-300/80 bg-cyan-950/10 border-y border-cyan-900/20 px-2 py-0.5 select-none">
     {#if n <= EXPAND_STEP}
       <button onclick={() => onExpand?.(gap, 'all')} class="flex items-center gap-1 hover:text-cyan-200 px-1" title="Show {n} hidden lines">
         <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l4-4 4 4m0 6l-4 4-4-4"/></svg>
@@ -231,7 +231,7 @@
     <button
       onclick={(e) => onAddComment?.({ side, lineNum, text, shiftKey: e.shiftKey })}
       data-side={side}
-      class="diff-add-comment absolute left-0 top-0 h-full w-4 flex items-center justify-center bg-primary text-primary-foreground text-[11px] leading-none opacity-0 group-hover/line:opacity-100 focus:opacity-100"
+      class="diff-add-comment absolute left-0 top-0 h-full w-4 flex items-center justify-center bg-primary text-primary-foreground text-caption leading-none opacity-0 group-hover/line:opacity-100 focus:opacity-100"
       title="Add a review comment on this line (shift-click to extend the open comment's range)"
       aria-label="Add comment on line {lineNum}"
     >+</button>
@@ -241,7 +241,7 @@
 {#snippet commentCards(side: 'old' | 'new', lineNum: number | undefined)}
   {#each commentsAt(side, lineNum) as c (c.id)}
     <div data-review-comment class="my-1 mx-2 border border-primary/30 bg-card/80 text-xs font-sans">
-      <div class="flex items-center gap-2 px-2 py-1 border-b border-border/40 text-[10px] text-muted-foreground">
+      <div class="flex items-center gap-2 px-2 py-1 border-b border-border/40 text-micro text-muted-foreground">
         <span>Line {c.startLine === c.endLine ? c.startLine : `${c.startLine}–${c.endLine}`}{c.side === 'old' ? ' (removed)' : ''}</span>
         <span class="ml-auto flex items-center gap-2">
           <button onclick={() => startEdit(c)} class="hover:text-foreground">edit</button>
@@ -266,7 +266,7 @@
 {#snippet composerBox(side: 'old' | 'new', lineNum: number | undefined)}
   {#if composerAt(side, lineNum) && composer}
     <div data-review-composer class="my-1 mx-2 border border-primary/50 bg-card text-xs font-sans p-2 space-y-1">
-      <div class="text-[10px] text-muted-foreground">
+      <div class="text-micro text-muted-foreground">
         Comment on line {composer.startLine === composer.endLine ? composer.startLine : `${composer.startLine}–${composer.endLine}`}
         <span class="text-muted-foreground/60">· shift-click another line's + to extend</span>
       </div>
@@ -280,7 +280,7 @@
         class="w-full text-xs bg-background/60 border border-border/50 px-2 py-1 placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50 resize-y"
       ></textarea>
       <div class="flex items-center gap-1 justify-end">
-        <span class="text-[10px] text-muted-foreground/60 mr-auto">Ctrl+Enter to add</span>
+        <span class="text-micro text-muted-foreground/60 mr-auto">Ctrl+Enter to add</span>
         <button onclick={() => onCancelComment?.()} class="px-2 py-0.5 border border-border text-muted-foreground hover:text-foreground">Cancel</button>
         <button onclick={submitDraft} disabled={!draft.trim()} class="px-2 py-0.5 bg-primary/90 text-primary-foreground hover:bg-primary disabled:opacity-40">Add comment</button>
       </div>

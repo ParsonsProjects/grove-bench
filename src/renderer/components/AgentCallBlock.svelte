@@ -53,7 +53,7 @@
       <span class="text-muted-foreground/70 shrink-0">{callCount} {callCount === 1 ? 'call' : 'calls'}</span>
     {/if}
     {#if running}
-      <span class="w-2.5 h-2.5 bg-primary animate-pulse shrink-0"></span>
+      <span class="w-2.5 h-2.5 bg-status-working animate-pulse shrink-0"></span>
       <span class="sr-only">running</span>
     {:else if isError}
       <span class="text-destructive">error</span>

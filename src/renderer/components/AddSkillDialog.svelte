@@ -136,7 +136,7 @@
         </div>
       </div>
       {#if name.trim() && !nameValid}
-        <p class="text-[10px] text-destructive -mt-2">Use kebab-case: lowercase letters, digits, and dashes.</p>
+        <p class="text-micro text-destructive -mt-2">Use kebab-case: lowercase letters, digits, and dashes.</p>
       {/if}
 
       <div>
@@ -158,7 +158,7 @@
           placeholder="Markdown instruction body — or rough notes, if you hand it to the agent below…"
           class="w-full text-sm bg-background border border-input px-3 py-2 text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-ring resize-y font-mono"
         ></textarea>
-        <p class="text-[10px] text-muted-foreground mt-1">
+        <p class="text-micro text-muted-foreground mt-1">
           {scope === 'project'
             ? 'Project skills are written into the worktree and show up in the Changes tab.'
             : 'User skills apply to every project on this machine.'}

@@ -92,7 +92,7 @@
             ></span>
             <span class="text-foreground">{agent.name}</span>
             <span class="text-muted-foreground/60">{agent.version}</span>
-            {#if agent.builtIn}<span class="text-[10px] uppercase tracking-wide text-muted-foreground/60">built in</span>{/if}
+            {#if agent.builtIn}<span class="text-micro uppercase tracking-wide text-muted-foreground/60">built in</span>{/if}
             <span class="flex-1 min-w-0 truncate text-muted-foreground">{agent.description ?? ''}</span>
           </button>
           {#if open === agent.id}

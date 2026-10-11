@@ -121,7 +121,7 @@
           onmouseenter={() => (selected = i)}
           class="w-full text-left flex items-baseline gap-2 px-3 py-1.5 border-b border-border/50 last:border-b-0 transition-colors {i === selected ? 'bg-primary/10' : 'hover:bg-muted/40'}"
         >
-          <span class="text-[10px] uppercase font-semibold shrink-0 w-16 {KIND_COLORS[hit.kind] ?? 'text-muted-foreground'}">{hit.kind}</span>
+          <span class="text-micro uppercase font-semibold shrink-0 w-16 {KIND_COLORS[hit.kind] ?? 'text-muted-foreground'}">{hit.kind}</span>
           <span class="text-xs text-muted-foreground truncate"><HighlightedText text={hit.snippet} {query} /></span>
         </button>
       {/each}

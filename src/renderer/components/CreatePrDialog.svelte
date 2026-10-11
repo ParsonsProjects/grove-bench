@@ -119,7 +119,7 @@
           class="w-full text-sm bg-background border border-input px-3 py-2 text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-ring resize-y"
         ></textarea>
         {#if prefilled}
-          <p class="text-[10px] text-muted-foreground mt-1">Pre-filled from the branch's commits.</p>
+          <p class="text-micro text-muted-foreground mt-1">Pre-filled from the branch's commits.</p>
         {/if}
       </div>
 

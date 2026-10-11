@@ -76,12 +76,12 @@
     >
       <div class="flex items-center justify-between gap-6 mb-2">
         <span class="font-medium text-foreground">Agent settings</span>
-        <span class="text-muted-foreground/60 text-[10px]">You can switch agent later from the status bar</span>
+        <span class="text-muted-foreground/60 text-micro">You can switch agent later from the status bar</span>
       </div>
 
       <div class="flex gap-3 overflow-x-auto max-w-[80vw]">
         <div class="min-w-36">
-          <div class="text-[10px] uppercase tracking-wide text-muted-foreground/60 mb-1">Agent</div>
+          <div class="text-micro uppercase tracking-wide text-muted-foreground/60 mb-1">Agent</div>
           {#each offered.length > 0 ? offered : [{ id: draft.agentId, displayName: agentName, stage: undefined }] as a (a.id)}
             {@const current = a.id === draft.agentId}
             <button
@@ -99,7 +99,7 @@
         </div>
 
         <div class="min-w-32">
-          <div class="text-[10px] uppercase tracking-wide text-muted-foreground/60 mb-1">Model</div>
+          <div class="text-micro uppercase tracking-wide text-muted-foreground/60 mb-1">Model</div>
           {#each draftStore.models as opt (opt.value)}
             {@const current = opt.value === model}
             <button
@@ -118,11 +118,11 @@
         {#each draftStore.descriptors as ctl (ctl.id)}
           {@const value = draftStore.controlValue(ctl.id)}
           <div class="min-w-32">
-            <div class="text-[10px] uppercase tracking-wide text-muted-foreground/60 mb-1">{ctl.label}</div>
+            <div class="text-micro uppercase tracking-wide text-muted-foreground/60 mb-1">{ctl.label}</div>
             {#each ctl.options as opt, i (opt.value)}
               {@const current = opt.value === value}
               {#if opt.group && opt.group !== ctl.options[i - 1]?.group}
-                <div class="mt-1.5 pt-1.5 border-t border-border/60 px-2 text-[10px] uppercase tracking-wide text-muted-foreground/60">
+                <div class="mt-1.5 pt-1.5 border-t border-border/60 px-2 text-micro uppercase tracking-wide text-muted-foreground/60">
                   {opt.group}
                 </div>
               {/if}
@@ -147,7 +147,7 @@
            click, and the hint keeps the full width with two lines reserved. -->
       {#if hint}
         <div class="mt-3 pt-2 border-t border-border">
-          <p class="text-[11px] min-h-[2lh] text-muted-foreground" aria-live="polite">
+          <p class="text-caption min-h-[2lh] text-muted-foreground" aria-live="polite">
             <span class="text-foreground">{hint.label}:</span> {hint.description}
           </p>
         </div>

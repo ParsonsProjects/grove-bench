@@ -29,13 +29,13 @@
           : 'bg-popover border-border'}"
     >
       <span class="shrink-0 mt-0.5
-        {toast.kind === 'error' ? 'text-white/80'
+        {toast.kind === 'error' ? 'text-destructive-foreground/80'
           : toast.kind === 'success' ? 'text-primary'
           : 'text-muted-foreground'}"
       >
         {toast.kind === 'error' ? '!' : toast.kind === 'success' ? '✓' : 'i'}
       </span>
-      <p class="text-sm flex-1 {toast.kind === 'error' ? 'text-white' : 'text-foreground'}">
+      <p class="text-sm flex-1 {toast.kind === 'error' ? 'text-destructive-foreground' : 'text-foreground'}">
         {toast.message}
       </p>
       {#if toast.showView}

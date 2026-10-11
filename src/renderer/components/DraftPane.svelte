@@ -299,7 +299,7 @@
       </div>
     {:else if settingsStore.current.groveCharacters}
       <GroveEmptyState variant="draft">
-        <p class="text-sm mt-5 mb-2 text-foreground/80">New thread in {store.repoDisplayName(draft.repoPath)}</p>
+        <p class="font-pixel text-base mt-5 mb-2 text-foreground/90">New thread in {store.repoDisplayName(draft.repoPath)}</p>
         <p class="text-xs text-muted-foreground max-w-md">{plan}</p>
         {#if modeHint}
           <p class="text-xs text-muted-foreground max-w-md mt-1">Mode: <span class="text-foreground/80">{modeHint.label}</span>. {modeHint.description}.</p>

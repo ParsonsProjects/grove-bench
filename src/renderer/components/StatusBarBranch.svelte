@@ -178,7 +178,7 @@
     {/if}
 
     {#if gitSync.ahead > 0 || gitSync.behind > 0 || pushError || prInfo || showCreatePr}
-      <div class="flex items-center gap-2 text-[11px] whitespace-nowrap">
+      <div class="flex items-center gap-2 text-caption whitespace-nowrap">
         {#if gitSync.ahead > 0}
           <button
             onclick={doPush}
@@ -213,7 +213,7 @@
               <span class="font-medium text-foreground">Push failed</span>
               <CopyButton text={shownPushError} class="size-5 shrink-0" />
             </div>
-            <pre class="font-mono text-[11px] text-red-400/90 whitespace-pre-wrap break-words max-h-40 overflow-y-auto mb-3">{shownPushError}</pre>
+            <pre class="font-mono text-caption text-red-400/90 whitespace-pre-wrap break-words max-h-40 overflow-y-auto mb-3">{shownPushError}</pre>
             <div class="flex justify-end gap-2">
               <button
                 onclick={() => prStore.dismissPushError(sessionId)}

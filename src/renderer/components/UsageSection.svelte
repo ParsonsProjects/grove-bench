@@ -39,7 +39,7 @@
 </script>
 
 <div class="mt-3 pt-2 border-t border-border/60" data-testid="usage">
-  <div class="flex items-center justify-between text-[10px] uppercase tracking-wide text-muted-foreground/60 mb-1">
+  <div class="flex items-center justify-between text-micro uppercase tracking-wide text-muted-foreground/60 mb-1">
     <span>Usage</span>
     {#if usage?.plan}<span class="normal-case tracking-normal text-muted-foreground/40">{usage.plan} plan</span>{/if}
   </div>
@@ -69,12 +69,12 @@
           data-testid="usage-bar-{w.id}"
         />
         {#if w.resetsAt && !reset}
-          <div class="text-[10px] text-muted-foreground/60 mt-0.5">resets {formatResetTime(w.resetsAt)}</div>
+          <div class="text-micro text-muted-foreground/60 mt-0.5">resets {formatResetTime(w.resetsAt)}</div>
         {/if}
       </div>
     {/each}
     {#if stale}
-      <div class="text-[10px] text-muted-foreground/50 mt-1" data-testid="usage-updated">Last updated {clock(updatedAt)}</div>
+      <div class="text-micro text-muted-foreground/50 mt-1" data-testid="usage-updated">Last updated {clock(updatedAt)}</div>
     {/if}
   {:else if usage && !usage.available}
     <div class="py-1 text-muted-foreground/50">Plan usage isn't reported for this sign-in (API key or third-party provider).</div>

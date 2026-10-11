@@ -1,7 +1,7 @@
 <script lang="ts" module>
-	import { cn, type WithElementRef } from "$lib/utils.js";
+	import { cn, tv, type WithElementRef } from "$lib/utils.js";
 	import type { HTMLAnchorAttributes, HTMLButtonAttributes } from "svelte/elements";
-	import { type VariantProps, tv } from "tailwind-variants";
+	import type { VariantProps } from "tailwind-variants";
 
 	export const buttonVariants = tv({
 		base: "focus-visible:border-ring focus-visible:ring-ring/50 aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive inline-flex shrink-0 items-center justify-center gap-2 text-sm font-medium whitespace-nowrap transition-all outline-none focus-visible:ring-[3px] disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
@@ -9,12 +9,18 @@
 			variant: {
 				default: "bg-primary text-primary-foreground hover:bg-primary/90 shadow-xs",
 				destructive:
-					"bg-destructive hover:bg-destructive/90 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 dark:bg-destructive/60 text-white shadow-xs",
+					"bg-destructive hover:bg-destructive/90 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 dark:bg-destructive/60 text-destructive-foreground shadow-xs",
 				outline:
 					"bg-background hover:bg-accent hover:text-accent-foreground dark:bg-input/30 dark:border-input dark:hover:bg-input/50 border shadow-xs",
 				secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/80 shadow-xs",
 				ghost: "hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50",
 				link: "text-primary underline-offset-4 hover:underline",
+				// Grove's own (docs/ui-kit.md). subtle: the bordered toolbar
+				// button; quiet: an icon or text that only brightens on hover.
+				subtle: "border border-border text-muted-foreground hover:text-foreground hover:bg-accent",
+				quiet: "text-muted-foreground hover:text-foreground",
+				"outline-primary": "border border-primary/60 text-primary hover:bg-primary/10",
+				"outline-destructive": "border border-destructive/60 text-destructive hover:bg-destructive/10",
 			},
 			size: {
 				default: "h-9 px-4 py-2 has-[>svg]:px-3",
@@ -23,6 +29,14 @@
 				icon: "size-9",
 				"icon-sm": "size-8",
 				"icon-lg": "size-10",
+				// The app's dense sizes: xs (24px) for toolbars and dialogs'
+				// secondary actions, 2xs (20px) for status-bar and inline actions.
+				xs: "h-6 gap-1 px-2 text-xs font-normal has-[>svg]:px-1.5 [&_svg:not([class*='size-'])]:size-3.5",
+				"2xs": "h-5 gap-1 px-1.5 text-micro font-normal [&_svg:not([class*='size-'])]:size-3",
+				"icon-xs": "size-6 [&_svg:not([class*='size-'])]:size-3.5",
+				"icon-2xs": "size-5 [&_svg:not([class*='size-'])]:size-3",
+				// Sits in a line of text: no box, the text's own size.
+				inline: "h-auto gap-1 p-0 text-[length:inherit] font-normal [&_svg:not([class*='size-'])]:size-3",
 			},
 		},
 		defaultVariants: {

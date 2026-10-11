@@ -103,7 +103,7 @@
         {whereLabel}
       </button>
     </span>
-    <span class="text-[11px] text-muted-foreground/60 truncate max-w-80">{whereDetail}</span>
+    <span class="text-caption text-muted-foreground/60 truncate max-w-80">{whereDetail}</span>
 
     {#if pickerOpen}
       <div transition:fly={{ y: 6, duration: 140 }} class="absolute bottom-full left-0 mb-2 z-50">
@@ -130,7 +130,7 @@
 
   {#if groupName}
     <span class="w-px self-stretch bg-border"></span>
-    <span class="flex items-center gap-1 min-w-0 text-[11px]" title={newGroup ? `Starts the group ${groupName}` : `Joins the group ${groupName} when it starts`}>
+    <span class="flex items-center gap-1 min-w-0 text-caption" title={newGroup ? `Starts the group ${groupName}` : `Joins the group ${groupName} when it starts`}>
       <span class="text-muted-foreground/60 shrink-0">{newGroup ? 'New group' : 'Group'}</span>
       <span class="text-foreground/80 truncate max-w-32">{groupName}</span>
       <button
@@ -145,6 +145,6 @@
     </span>
   {/if}
 
-  <span class="ml-auto text-[11px] text-muted-foreground/50 text-right">Nothing is created until you send</span>
+  <span class="ml-auto text-caption text-muted-foreground/50 text-right">Nothing is created until you send</span>
 </div>
 {/if}

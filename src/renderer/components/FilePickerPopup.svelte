@@ -151,7 +151,7 @@
     {:else}
       {#each results.items as item, i (item.entry.path)}
         {#if item.group && item.group !== results.items[i - 1]?.group}
-          <div role="presentation" class="px-3 pt-1.5 pb-0.5 text-[10px] uppercase tracking-wide text-muted-foreground/70">
+          <div role="presentation" class="px-3 pt-1.5 pb-0.5 text-micro uppercase tracking-wide text-muted-foreground/70">
             {item.group === 'Changed' ? 'Changed files' : 'Project'}
           </div>
         {/if}
@@ -175,7 +175,7 @@
     {/if}
   </div>
   {#if !loading && results.more > 0}
-    <div class="px-3 py-1 border-t border-border text-[10px] text-muted-foreground">
+    <div class="px-3 py-1 border-t border-border text-micro text-muted-foreground">
       +{results.more}{results.moreIsLowerBound ? '+' : ''} more, keep typing to narrow
     </div>
   {/if}

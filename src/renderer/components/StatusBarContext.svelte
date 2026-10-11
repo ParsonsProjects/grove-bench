@@ -67,7 +67,7 @@
     <PixelMeter percent={usedPercent} cells={20} fillClass={usedBarClass} class="w-full h-3 mb-1" />
 
     <!-- Percentage labels under bar -->
-    <div class="flex justify-between text-[10px] text-muted-foreground/60 mb-3">
+    <div class="flex justify-between text-micro text-muted-foreground/60 mb-3">
       <span>0%</span>
       <span>25%</span>
       <span>50%</span>
@@ -97,18 +97,18 @@
         <span>Used (total input)</span>
         <span class="font-medium {usedTextClass}">{formatTokens(usedTokens)}</span>
       </div>
-      <div class="flex justify-between text-[10px] pl-2">
+      <div class="flex justify-between text-micro pl-2">
         <span>Non-cached</span>
         <span class="text-foreground">{formatTokens(usage.inputTokens)}</span>
       </div>
       {#if usage.cacheReadTokens > 0}
-        <div class="flex justify-between text-[10px] pl-2">
+        <div class="flex justify-between text-micro pl-2">
           <span>Cache read</span>
           <span class="text-blue-400">{formatTokens(usage.cacheReadTokens)}</span>
         </div>
       {/if}
       {#if usage.cacheCreationTokens > 0}
-        <div class="flex justify-between text-[10px] pl-2">
+        <div class="flex justify-between text-micro pl-2">
           <span>Cache write</span>
           <span class="text-foreground">{formatTokens(usage.cacheCreationTokens)}</span>
         </div>
@@ -176,7 +176,7 @@
         </summary>
         <div class="mt-1.5 max-h-32 overflow-y-auto space-y-0.5 text-muted-foreground">
           {#each systemInfo.tools as tool}
-            <div class="font-mono text-[10px] truncate">{tool}</div>
+            <div class="font-mono text-micro truncate">{tool}</div>
           {/each}
         </div>
       </details>

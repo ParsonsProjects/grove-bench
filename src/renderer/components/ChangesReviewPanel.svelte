@@ -164,7 +164,7 @@
 </script>
 
 {#snippet scopeToggle()}
-  <div class="inline-flex border border-border/60 text-[10px]" role="group" aria-label="Diff scope">
+  <div class="inline-flex border border-border/60 text-micro" role="group" aria-label="Diff scope">
     <button
       onclick={() => setScope('working')}
       disabled={switchingScope}
@@ -183,7 +183,7 @@
 {#snippet sidebarTop()}
   {@render scopeToggle()}
   {#if isBranchScope && gitStatus.baseRef}
-    <span class="text-[10px] text-muted-foreground truncate" title="Compared against the merge base with {gitStatus.baseRef}">vs {gitStatus.baseRef}</span>
+    <span class="text-micro text-muted-foreground truncate" title="Compared against the merge base with {gitStatus.baseRef}">vs {gitStatus.baseRef}</span>
   {/if}
 {/snippet}
 
@@ -224,7 +224,7 @@
         </button>
       </div>
       {#if commitError}
-        <div class="text-[10px] text-destructive">{commitError}</div>
+        <div class="text-micro text-destructive">{commitError}</div>
       {/if}
       <div class="flex gap-1.5">
         <button

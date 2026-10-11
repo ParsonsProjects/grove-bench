@@ -292,10 +292,10 @@
               <div class="flex items-center gap-1.5 min-w-0">
                 <span class="font-mono truncate text-foreground" title={server.name}>{server.name}</span>
                 {#if source}
-                  <span class="shrink-0 text-[9px] text-muted-foreground border border-border/60 px-1 leading-tight">{source}</span>
+                  <span class="shrink-0 text-micro text-muted-foreground border border-border/60 px-1 leading-tight">{source}</span>
                 {/if}
               </div>
-              <div class="text-muted-foreground/60 text-[10px] flex items-center gap-1 flex-wrap">
+              <div class="text-muted-foreground/60 text-micro flex items-center gap-1 flex-wrap">
                 <span>{status}</span>
                 {#if server.toolCount !== undefined}
                   <span>·</span>
@@ -380,7 +380,7 @@
           </div>
 
           {#if server.error}
-            <div class="mt-1 ml-3.5 flex items-start gap-1 text-[10px] text-red-400/90">
+            <div class="mt-1 ml-3.5 flex items-start gap-1 text-micro text-red-400/90">
               <span class="flex-1 min-w-0 break-words line-clamp-3 font-mono" title={server.error}>{server.error}</span>
               <CopyButton text={server.error} class="size-5 shrink-0" />
             </div>
@@ -389,12 +389,12 @@
           {#if mcpToolsOpen[server.name] && tools.length > 0}
             <ul class="mt-1 ml-3.5 space-y-0.5 max-h-40 overflow-y-auto border-l border-border/60 pl-2">
               {#each tools as tool (tool.name)}
-                <li class="text-[10px] flex items-center gap-1 min-w-0" title={tool.description || tool.name}>
+                <li class="text-micro flex items-center gap-1 min-w-0" title={tool.description || tool.name}>
                   <span class="font-mono truncate text-foreground/90">{tool.name}</span>
                   {#if tool.destructive}
-                    <span class="shrink-0 text-[9px] text-red-400 border border-red-400/40 px-1 leading-tight">destructive</span>
+                    <span class="shrink-0 text-micro text-red-400 border border-red-400/40 px-1 leading-tight">destructive</span>
                   {:else if tool.readOnly}
-                    <span class="shrink-0 text-[9px] text-muted-foreground border border-border/60 px-1 leading-tight">read-only</span>
+                    <span class="shrink-0 text-micro text-muted-foreground border border-border/60 px-1 leading-tight">read-only</span>
                   {/if}
                 </li>
               {/each}

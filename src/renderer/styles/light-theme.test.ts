@@ -78,7 +78,8 @@ describe('light theme', () => {
     const vars = lightVars();
     const panel = vars.get('--card')!;
     const text = [...vars.keys()].filter((k) => /^--color-[a-z]+-(400|500)$/.test(k));
-    text.push('--foreground', '--body-foreground', '--muted-foreground', '--primary', '--destructive', '--link', '--quote-foreground', '--ok');
+    text.push('--foreground', '--body-foreground', '--muted-foreground', '--primary', '--destructive', '--link', '--quote-foreground', '--ok',
+      '--status-working', '--status-attention', '--status-unread', '--status-error');
     for (const name of text) {
       expect({ name, ok: contrast(vars.get(name)!, panel) >= 4.5 }).toEqual({ name, ok: true });
     }

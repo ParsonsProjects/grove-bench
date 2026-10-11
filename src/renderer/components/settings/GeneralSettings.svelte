@@ -32,7 +32,7 @@
 </script>
 
 {#snippet diffExample(mode: 'unified' | 'side-by-side')}
-  <div class="font-mono text-[10px] leading-4 border border-border/60 bg-background overflow-hidden" aria-hidden="true">
+  <div class="font-mono text-micro leading-4 border border-border/60 bg-background overflow-hidden" aria-hidden="true">
     {#if mode === 'unified'}
       <div class="flex px-1.5 text-muted-foreground"><span class="w-4 shrink-0">1</span><span class="w-2.5 shrink-0"></span><span class="truncate">{EXAMPLE.before[0].text}</span></div>
       <div class="flex px-1.5 bg-red-950/30 text-red-300"><span class="w-4 shrink-0">2</span><span class="w-2.5 shrink-0">-</span><span class="truncate">{EXAMPLE.before[1].text}</span></div>

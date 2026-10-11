@@ -175,7 +175,7 @@
 
     {#if suggestions.length > 0}
       <div class="mb-2 pb-2 border-b border-border">
-        <div class="text-[10px] uppercase tracking-wide text-blue-400/80 mb-1.5">
+        <div class="text-micro uppercase tracking-wide text-blue-400/80 mb-1.5">
           Suggested from your threads
         </div>
         <div class="space-y-1.5">
@@ -211,7 +211,7 @@
                   ✕
                 </button>
               </div>
-              <div class="text-muted-foreground/60 text-[10px] truncate ml-3" title={suggestion.evidence.join('\n')}>
+              <div class="text-muted-foreground/60 text-micro truncate ml-3" title={suggestion.evidence.join('\n')}>
                 {suggestion.rationale}
               </div>
             </div>
@@ -230,12 +230,12 @@
               <span class="font-mono truncate {disabled ? 'text-muted-foreground line-through' : 'text-foreground'}" title={skill.path ?? skill.name}>
                 {skill.name}
               </span>
-              <span class="text-[10px] px-1 border border-border text-muted-foreground/60 shrink-0">
+              <span class="text-micro px-1 border border-border text-muted-foreground/60 shrink-0">
                 {skillSourceLabels[skill.source]}
               </span>
             </div>
             {#if skill.description}
-              <div class="text-muted-foreground/60 text-[10px] truncate" title={skill.description}>
+              <div class="text-muted-foreground/60 text-micro truncate" title={skill.description}>
                 {skill.description}
               </div>
             {/if}
@@ -264,7 +264,7 @@
     </div>
 
     <div class="flex items-center gap-2 mt-2 pt-2 border-t border-border">
-      <span class="text-muted-foreground/50 text-[10px] flex-1">
+      <span class="text-muted-foreground/50 text-micro flex-1">
         Applies to all projects, when a thread's agent (re)starts. Running turns keep their current skills.
       </span>
       <button

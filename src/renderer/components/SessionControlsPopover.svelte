@@ -154,7 +154,7 @@
     >
       <div class="flex items-center justify-between mb-2">
         <span class="font-medium text-foreground">Agent settings</span>
-        <span class="text-muted-foreground/60 text-[10px]">
+        <span class="text-muted-foreground/60 text-micro">
           {#each Object.entries(CONTROL_SHORTCUTS) as [id, key] (id)}
             {@const label = (controls.find((c) => c.id === id) ?? controls.find((c) => c.role === id))?.label}
             {#if label}<kbd class="text-foreground/70">{key}</kbd> {label.toLowerCase()}&nbsp;&nbsp;{/if}
@@ -165,7 +165,7 @@
       <div class="flex gap-3 overflow-x-auto max-w-[80vw]">
         <!-- Agent + plan usage -->
         <div class="min-w-44">
-          <div class="text-[10px] uppercase tracking-wide text-muted-foreground/60 mb-1">Agent</div>
+          <div class="text-micro uppercase tracking-wide text-muted-foreground/60 mb-1">Agent</div>
           {#each agentChoices.length > 0 ? agentChoices : [{ id: agentType, displayName: agentName, stage: undefined }] as a (a.id)}
             {@const current = a.id === agentType}
             <button
@@ -179,7 +179,7 @@
                 {a.displayName}
                 {#if a.stage === 'alpha'}<AlphaBadge class="ml-1.5 align-middle" />{/if}
               </span>
-              {#if !current}<span class="text-[10px] text-muted-foreground/50 group-hover/agent:text-primary">switch…</span>{/if}
+              {#if !current}<span class="text-micro text-muted-foreground/50 group-hover/agent:text-primary">switch…</span>{/if}
             </button>
           {/each}
 
@@ -188,7 +188,7 @@
 
         <!-- Model -->
         <div class="min-w-32">
-          <div class="text-[10px] uppercase tracking-wide text-muted-foreground/60 mb-1">Model</div>
+          <div class="text-micro uppercase tracking-wide text-muted-foreground/60 mb-1">Model</div>
           {#each modelOptions as opt (opt.value)}
             {@const current = opt.value === model}
             <button
@@ -208,7 +208,7 @@
         {#each controls as ctl (ctl.id)}
           {@const value = messageStore.getControlValue(sessionId, ctl.id)}
           <div class="min-w-32">
-            <div class="text-[10px] uppercase tracking-wide text-muted-foreground/60 mb-1">
+            <div class="text-micro uppercase tracking-wide text-muted-foreground/60 mb-1">
               {ctl.label}
               {#if controlShortcut(ctl)}<span class="normal-case tracking-normal text-muted-foreground/40">{controlShortcut(ctl)}</span>{/if}
             </div>
@@ -217,7 +217,7 @@
               {#if opt.group && opt.group !== ctl.options[i - 1]?.group}
                 <!-- Options from another source (e.g. Grove's own modes) sit
                      below a divider with their source as the heading. -->
-                <div class="mt-1.5 pt-1.5 border-t border-border/60 px-2 text-[10px] uppercase tracking-wide text-muted-foreground/60" title="Not a {agentName} option">
+                <div class="mt-1.5 pt-1.5 border-t border-border/60 px-2 text-micro uppercase tracking-wide text-muted-foreground/60" title="Not a {agentName} option">
                   {opt.group}
                 </div>
               {/if}
@@ -243,13 +243,13 @@
              the user picks the transcript button, which says so. -->
         <div class="mt-3 pt-2 border-t border-border max-w-[36rem] flex flex-col gap-2" role="group" aria-label="Switch agent">
           <p class="text-foreground">Switch this thread to {target.displayName}?</p>
-          <p class="text-[11px] text-muted-foreground">
+          <p class="text-caption text-muted-foreground">
             {target.displayName} starts its own session in the same worktree; the thread, files and checkpoints stay.
             To carry on where {agentName} left off, it can get a short transcript with your next message: your messages,
             {agentName}'s replies and the list of files changed, without tool output. That transcript goes to {target.displayName}'s provider.
             {#if running}The turn that is running now stops.{/if}
           </p>
-          {#if switchError}<p class="text-[11px] text-destructive" role="alert">{switchError}</p>{/if}
+          {#if switchError}<p class="text-caption text-destructive" role="alert">{switchError}</p>{/if}
           <div class="flex flex-wrap items-center gap-2">
             <button type="button" class="px-2 py-1 bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50" disabled={switching} onclick={() => switchAgent(target.id, true)}>Switch and send the transcript</button>
             <button type="button" class="px-2 py-1 border border-border hover:bg-accent disabled:opacity-50" disabled={switching} onclick={() => switchAgent(target.id, false)}>Switch without it</button>
@@ -264,7 +264,7 @@
            push the columns up under the pointer (the popover grows upward). -->
       {#if hint}
         <div class="mt-3 pt-2 border-t border-border">
-          <p class="text-[11px] min-h-[2lh] text-muted-foreground" aria-live="polite">
+          <p class="text-caption min-h-[2lh] text-muted-foreground" aria-live="polite">
             <span class="text-foreground">{hint.label}:</span> {hint.description}
           </p>
         </div>

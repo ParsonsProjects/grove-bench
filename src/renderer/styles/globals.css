@@ -11,86 +11,92 @@
 @custom-variant dark (&:is(.dark *));
 
 /*
-  VS Code "Dark Modern" theme.
-  Colors derived from the VS Code Dark Modern color palette.
-  The light theme overrides these further down.
+  Grove Bench theme. Dark ("the bench at night") is the default; the light
+  theme ("paper") overrides it further down. Every colour is a named brand
+  colour from lib/brand.ts (PALETTE, NIGHT, PAPER, STATUS), named in the
+  comments; brand.test.ts fails if the two drift. BRAND.md and
+  docs/ui-kit.md say when to use each token.
 */
 :root {
-  font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  font-family: var(--font-mono);
 
-  /* Square design: no border-radius */
+  /* Square design: no border-radius. Square corners match the pixel art. */
   --radius: 0rem;
 
-  /* Editor background: #1f1f1f */
-  --background: oklch(0.208 0 0);
-  --foreground: oklch(0.835 0 0);        /* #cccccc */
+  --background: #191815;               /* NIGHT.background */
+  --foreground: #d3d1cc;               /* NIGHT.foreground */
 
-  /* Card/panel: #252526 */
-  --card: oklch(0.233 0 0);
-  --card-foreground: oklch(0.835 0 0);
-  --popover: oklch(0.233 0 0);
-  --popover-foreground: oklch(0.835 0 0);
+  --card: #201e1b;                     /* NIGHT.card */
+  --card-foreground: #d3d1cc;
+  --popover: #201e1b;
+  --popover-foreground: #d3d1cc;
 
-  /* Primary: #0078d4 (VS Code blue) */
-  --primary: oklch(0.541 0.181 254.624);
-  --primary-foreground: oklch(1 0 0);
+  /* Brand green. Dark text on it, not white: white on leaf is only 2.5:1 */
+  --primary: #5ab868;                  /* PALETTE.leaf */
+  --primary-foreground: #091a0d;       /* PALETTE.canopy */
 
-  /* Secondary: #313131 (input/dropdown bg) */
-  --secondary: oklch(0.279 0 0);
-  --secondary-foreground: oklch(0.835 0 0);
+  --secondary: #2b2825;                /* NIGHT.muted */
+  --secondary-foreground: #d3d1cc;
 
-  /* Muted: #313131 bg. Muted text is lighter than VS Code's #858585 so it
-     keeps 4.5:1 contrast (WCAG AA) on the background, cards and muted bg. */
-  --muted: oklch(0.279 0 0);
-  --muted-foreground: oklch(0.66 0 0);
+  /* Muted text keeps 4.5:1 (WCAG AA) on the background, cards and muted bg */
+  --muted: #2b2825;                    /* NIGHT.muted */
+  --muted-foreground: #9f9b95;         /* NIGHT.mutedForeground */
 
-  /* Accent: #04395e (selection highlight) */
-  --accent: oklch(0.310 0.065 245);
-  --accent-foreground: oklch(0.835 0 0);
+  /* Hover and selection: a moss tint */
+  --accent: #233323;                   /* NIGHT.accent */
+  --accent-foreground: #d3d1cc;
 
-  /* Destructive: #f14c4c (error red) */
-  --destructive: oklch(0.608 0.220 22);
+  --destructive: #f14c4c;              /* PALETTE.ember */
+  /* Text on a destructive fill, dark as on primary (5.1:1) */
+  --destructive-foreground: #250e0d;   /* PALETTE.cinder */
 
-  /* Borders: #2b2b2b (subtle), input uses #3c3c3c */
-  --border: oklch(0.260 0 0);
-  --input: oklch(0.320 0 0);
+  --border: #272522;                   /* NIGHT.border */
+  --input: #383531;                    /* NIGHT.input */
 
-  /* Ring: #0078d4 */
-  --ring: oklch(0.541 0.181 254.624);
+  --ring: #5ab868;                     /* PALETTE.leaf */
 
-  /* Chart colors from VS Code terminal palette */
-  --chart-1: oklch(0.541 0.181 254.624);  /* blue */
-  --chart-2: oklch(0.696 0.17 162.48);    /* green */
-  --chart-3: oklch(0.769 0.188 70.08);    /* yellow */
-  --chart-4: oklch(0.627 0.265 303.9);    /* purple */
-  --chart-5: oklch(0.608 0.220 22);       /* red */
+  /* Charts: the grove's colours in order of importance */
+  --chart-1: #5ab868;                  /* leaf */
+  --chart-2: #52adef;                  /* sky */
+  --chart-3: #f59e0b;                  /* sun */
+  --chart-4: oklch(0.627 0.265 303.9); /* purple */
+  --chart-5: #f14c4c;                  /* ember */
 
-  /* Sidebar: #181818 (activity bar bg) */
-  --sidebar: oklch(0.176 0 0);
-  --sidebar-foreground: oklch(0.576 0 0);
-  --sidebar-primary: oklch(0.541 0.181 254.624);
-  --sidebar-primary-foreground: oklch(1 0 0);
-  --sidebar-accent: oklch(0.260 0 0);
-  --sidebar-accent-foreground: oklch(0.835 0 0);
-  --sidebar-border: oklch(0.233 0 0);
-  --sidebar-ring: oklch(0.576 0 0);
+  --sidebar: #13110f;                  /* NIGHT.sidebar */
+  --sidebar-foreground: #898680;       /* NIGHT.subtle */
+  --sidebar-primary: #5ab868;
+  --sidebar-primary-foreground: #091a0d;
+  --sidebar-accent: #272522;           /* NIGHT.border */
+  --sidebar-accent-foreground: #d3d1cc;
+  --sidebar-border: #201e1b;           /* NIGHT.card */
+  --sidebar-ring: #898680;
+
+  /*
+    Thread status (STATUS in lib/brand.ts). Status dots, the sidebar's
+    filter chips and the grove characters use these through bg-status-*
+    and text-status-*, never bg-primary or a palette colour, so a status
+    keeps one colour everywhere and changing one is a one-line edit.
+  */
+  --status-working: #5ab868;           /* leaf: the grove growing */
+  --status-attention: #f59e0b;         /* sun: needs you */
+  --status-unread: #52adef;            /* sky: finished a turn */
+  --status-error: #f14c4c;             /* ember */
 
   /* Text that inherits the body's colour: dialogs, which render outside
-     the app root. Brighter than --foreground in dark, as it was when
-     index.html set text-neutral-100 on the body. */
-  --body-foreground: oklch(97% 0 0);
+     the app root. Brighter than --foreground in dark. */
+  --body-foreground: #f6f5f2;          /* NIGHT.bright */
 
   /* Search match highlight (yellow-400 at 80%, neutral-950 text) */
   --highlight: oklch(85.2% 0.199 91.936 / 0.8);
   --highlight-foreground: oklch(14.5% 0 0);
 
   /* Rendered markdown and tool output (MarkdownBlock, BashBlock) */
-  --code-inline: #1e1e1e;
-  --code-block: #1a1a1a;
-  --code-border: #333333;
-  --quote-border: #444444;
-  --quote-foreground: #999999;
-  --link: #60a5fa;
+  --code-inline: #2b2825;              /* NIGHT.muted */
+  --code-block: #201e1b;               /* NIGHT.card */
+  --code-border: #383531;              /* NIGHT.input */
+  --quote-border: #4a4641;
+  --quote-foreground: #9f9b95;         /* NIGHT.mutedForeground */
+  --link: #52adef;                     /* PALETTE.sky */
   --copy-button: #666666;
   --copy-button-hover: #cccccc;
   /* Localhost links and the "copied" tick */
@@ -98,96 +104,101 @@
   --ok-hover: #86efac;
 
   /* Checkerboard behind images, so transparent areas show */
-  --checker-a: #222222;
-  --checker-b: #1a1a1a;
+  --checker-a: #272522;
+  --checker-b: #191815;
 
   /* Faint pixels in the title bar. .pixel-bg (the empty states) draws the
      same pixels from SVG data URIs, which can't read a variable, so it has
      its own light copy below. */
   --pixel-ink: #ffffff;
 
-  --scrollbar-thumb: oklch(0.320 0 0);
-  --scrollbar-thumb-hover: oklch(0.400 0 0);
+  --scrollbar-thumb: #383531;          /* NIGHT.input */
+  --scrollbar-thumb-hover: #4a4641;
   --tooltip-shadow: oklch(0 0 0 / 0.4);
 }
 
 /*
-  Light theme: VS Code "Light Modern".
-  Values from microsoft/vscode extensions/theme-defaults/themes/light_modern.json
-  (key names in the comments). It applies when prefers-color-scheme is light,
-  which main sets from the Theme setting (nativeTheme.themeSource), so
+  Light theme: paper in daylight. It applies when prefers-color-scheme is
+  light, which main sets from the Theme setting (nativeTheme.themeSource), so
   "System" follows Windows with no code here.
 */
 @media (prefers-color-scheme: light) {
   :root {
-    --background: #ffffff;               /* editor.background */
-    --foreground: #3b3b3b;               /* foreground */
+    --background: #fefdfa;               /* PAPER.background */
+    --foreground: #393530;               /* PAPER.foreground */
 
-    --card: #f8f8f8;                     /* editorWidget.background, panel.background */
-    --card-foreground: #3b3b3b;
-    --popover: #f8f8f8;                  /* quickInput.background */
-    --popover-foreground: #3b3b3b;
+    --card: #f9f8f4;                     /* PAPER.card */
+    --card-foreground: #393530;
+    --popover: #f9f8f4;
+    --popover-foreground: #393530;
 
-    --primary: #005fb8;                  /* button.background */
-    --primary-foreground: #ffffff;       /* button.foreground */
+    /* Leaf is too pale for text on paper (2.5:1), so light uses forest */
+    --primary: #257635;                  /* PALETTE.forest */
+    --primary-foreground: #ffffff;
 
-    --secondary: #e5e5e5;                /* button.secondaryBackground */
-    --secondary-foreground: #3b3b3b;     /* button.secondaryForeground */
+    --secondary: #eae8e3;                /* PAPER.muted */
+    --secondary-foreground: #393530;
 
-    /* Muted text keeps 4.5:1 on the background (6.2), cards (5.8) and
+    /* Muted text keeps 4.5:1 on the background (5.9), cards (5.7) and
        the muted bg (4.9) */
-    --muted: #e5e5e5;
-    --muted-foreground: #616161;         /* tab.inactiveForeground */
+    --muted: #eae8e3;                    /* PAPER.muted */
+    --muted-foreground: #68625b;         /* PAPER.mutedForeground */
 
-    --accent: #bed6ed;                   /* inputOption.activeBackground */
-    --accent-foreground: #3b3b3b;
+    --accent: #d3edd3;                   /* PAPER.accent */
+    --accent-foreground: #393530;
 
-    /* statusBarItem.errorBackground: errorForeground (#f85149) is only
-       3.2:1 on the panels, too faint for error text */
-    --destructive: #c72e0f;
+    /* Ember's dark-theme red is only 3.2:1 on the panels, too faint for
+       error text */
+    --destructive: #c72e0f;              /* PALETTE.emberDeep */
+    --destructive-foreground: #ffffff;
 
-    --border: #e5e5e5;                   /* panel.border, widget.border */
-    --input: #cecece;                    /* input.border */
+    --border: #e5e3de;                   /* PAPER.border */
+    --input: #cdcac4;                    /* PAPER.input */
 
-    --ring: #005fb8;                     /* focusBorder */
+    --ring: #257635;                     /* PALETTE.forest */
 
-    --chart-1: #005fb8;
-    --chart-2: oklch(52.7% 0.154 150.069);  /* green-700 */
-    --chart-3: oklch(55.4% 0.135 66.442);   /* yellow-700 */
+    --chart-1: #257635;                  /* forest */
+    --chart-2: #1469bc;                  /* sky, deep */
+    --chart-3: #b45309;                  /* sun, deep */
     --chart-4: oklch(55.8% 0.288 302.321);  /* purple-600 */
-    --chart-5: #c72e0f;
+    --chart-5: #c72e0f;                  /* ember, deep */
 
-    --sidebar: #f8f8f8;                  /* sideBar.background */
-    --sidebar-foreground: #616161;       /* activityBar.inactiveForeground */
-    --sidebar-primary: #005fb8;
+    --sidebar: #f9f8f4;                  /* PAPER.card */
+    --sidebar-foreground: #68625b;       /* PAPER.mutedForeground */
+    --sidebar-primary: #257635;
     --sidebar-primary-foreground: #ffffff;
-    --sidebar-accent: #e8e8e8;           /* list.activeSelectionBackground */
-    --sidebar-accent-foreground: #1f1f1f; /* activityBar.foreground */
-    --sidebar-border: #e5e5e5;           /* sideBar.border */
-    --sidebar-ring: #616161;
+    --sidebar-accent: #eae8e3;           /* PAPER.muted */
+    --sidebar-accent-foreground: #221e1a; /* PAPER.ink */
+    --sidebar-border: #e5e3de;           /* PAPER.border */
+    --sidebar-ring: #68625b;
 
-    --body-foreground: #3b3b3b;
+    --status-working: #257635;           /* forest */
+    --status-attention: #b45309;         /* sun, deep */
+    --status-unread: #1469bc;            /* sky, deep */
+    --status-error: #c72e0f;             /* ember, deep */
+
+    --body-foreground: #393530;
 
     --highlight: oklch(94.5% 0.129 101.54);  /* yellow-200 */
 
-    --code-inline: #0000001f;            /* textPreformat.background */
-    --code-block: #f8f8f8;               /* textCodeBlock.background */
-    --code-border: #e5e5e5;
-    --quote-border: #cecece;             /* a step stronger than the table borders, as in dark */
-    --quote-foreground: #616161;
-    --link: #005fb8;                     /* textLink.foreground */
-    --copy-button: #767676;              /* input.placeholderForeground */
-    --copy-button-hover: #3b3b3b;
+    --code-inline: #0000001a;
+    --code-block: #f9f8f4;               /* PAPER.card */
+    --code-border: #e5e3de;
+    --quote-border: #cdcac4;             /* a step stronger than the table borders, as in dark */
+    --quote-foreground: #68625b;
+    --link: #1469bc;                     /* PALETTE.skyDeep */
+    --copy-button: #76706a;              /* PAPER.subtle */
+    --copy-button-hover: #393530;
     --ok: oklch(52.7% 0.154 150.069);       /* green-700 */
     --ok-hover: oklch(44.8% 0.119 151.328); /* green-800 */
 
-    --checker-a: #ffffff;
-    --checker-b: #e5e5e5;
+    --checker-a: #fefdfa;
+    --checker-b: #e5e3de;
 
     --pixel-ink: #000000;
 
-    --scrollbar-thumb: #cecece;
-    --scrollbar-thumb-hover: #8b949e;    /* titleBar.inactiveForeground */
+    --scrollbar-thumb: #cdcac4;          /* PAPER.input */
+    --scrollbar-thumb-hover: #76706a;    /* PAPER.subtle */
     --tooltip-shadow: oklch(0 0 0 / 0.12);
 
     /*
@@ -274,40 +285,62 @@
 
 /* Keep .dark block for shadcn component compatibility (values same as :root) */
 .dark {
-  --background: oklch(0.208 0 0);
-  --foreground: oklch(0.835 0 0);
-  --card: oklch(0.233 0 0);
-  --card-foreground: oklch(0.835 0 0);
-  --popover: oklch(0.233 0 0);
-  --popover-foreground: oklch(0.835 0 0);
-  --primary: oklch(0.541 0.181 254.624);
-  --primary-foreground: oklch(1 0 0);
-  --secondary: oklch(0.279 0 0);
-  --secondary-foreground: oklch(0.835 0 0);
-  --muted: oklch(0.279 0 0);
-  --muted-foreground: oklch(0.66 0 0);
-  --accent: oklch(0.310 0.065 245);
-  --accent-foreground: oklch(0.835 0 0);
-  --destructive: oklch(0.608 0.220 22);
-  --border: oklch(0.260 0 0);
-  --input: oklch(0.320 0 0);
-  --ring: oklch(0.541 0.181 254.624);
-  --chart-1: oklch(0.541 0.181 254.624);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
+  --background: #191815;
+  --foreground: #d3d1cc;
+  --card: #201e1b;
+  --card-foreground: #d3d1cc;
+  --popover: #201e1b;
+  --popover-foreground: #d3d1cc;
+  --primary: #5ab868;
+  --primary-foreground: #091a0d;
+  --secondary: #2b2825;
+  --secondary-foreground: #d3d1cc;
+  --muted: #2b2825;
+  --muted-foreground: #9f9b95;
+  --accent: #233323;
+  --accent-foreground: #d3d1cc;
+  --destructive: #f14c4c;
+  --destructive-foreground: #250e0d;
+  --border: #272522;
+  --input: #383531;
+  --ring: #5ab868;
+  --chart-1: #5ab868;
+  --chart-2: #52adef;
+  --chart-3: #f59e0b;
   --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.608 0.220 22);
-  --sidebar: oklch(0.176 0 0);
-  --sidebar-foreground: oklch(0.576 0 0);
-  --sidebar-primary: oklch(0.541 0.181 254.624);
-  --sidebar-primary-foreground: oklch(1 0 0);
-  --sidebar-accent: oklch(0.260 0 0);
-  --sidebar-accent-foreground: oklch(0.835 0 0);
-  --sidebar-border: oklch(0.233 0 0);
-  --sidebar-ring: oklch(0.576 0 0);
+  --chart-5: #f14c4c;
+  --sidebar: #13110f;
+  --sidebar-foreground: #898680;
+  --sidebar-primary: #5ab868;
+  --sidebar-primary-foreground: #091a0d;
+  --sidebar-accent: #272522;
+  --sidebar-accent-foreground: #d3d1cc;
+  --sidebar-border: #201e1b;
+  --sidebar-ring: #898680;
+  --status-working: #5ab868;
+  --status-attention: #f59e0b;
+  --status-unread: #52adef;
+  --status-error: #f14c4c;
+}
+
+/*
+  Type and font tokens (FONTS in lib/brand.ts). The UI is dense, so two
+  sizes sit below Tailwind's text-xs (12px): text-caption (11px) for
+  secondary details and text-micro (10px) for counts, badges and key hints.
+  Neither sets a line height, so they size text the way text-[10px] did.
+*/
+@theme {
+  --font-mono: 'JetBrains Mono Variable', 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+  --font-pixel: 'Pixelify Sans Variable', 'Pixelify Sans', monospace;
+  --text-micro: 0.625rem;
+  --text-caption: 0.6875rem;
 }
 
 @theme inline {
+  --color-status-working: var(--status-working);
+  --color-status-attention: var(--status-attention);
+  --color-status-unread: var(--status-unread);
+  --color-status-error: var(--status-error);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -327,6 +360,7 @@
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
@@ -450,8 +484,10 @@
     animation: none;
   }
   /* The pulsing status dots: their colour carries the state, the pulse is
-     only emphasis. Tailwind's animate-pulse has no reduced-motion check. */
-  .animate-pulse {
+     only emphasis. Tailwind's animate-pulse has no reduced-motion check.
+     The same goes for the turning square (animate-fidget). */
+  .animate-pulse,
+  .animate-fidget {
     animation: none;
   }
 }

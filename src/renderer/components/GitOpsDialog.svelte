@@ -177,7 +177,7 @@
         <div>
           <Label for="gitops-onto" class="mb-1 block">Rebase onto</Label>
           <Input id="gitops-onto" type="text" bind:value={rebaseOnto} placeholder={baseBranch || 'main'} list="gitops-branches" />
-          <p class="text-[10px] text-muted-foreground mt-1">
+          <p class="text-micro text-muted-foreground mt-1">
             Replays this branch's commits on top of the target. Pick the base branch to catch up, or another
             thread's branch to build on its work.
           </p>
@@ -188,7 +188,7 @@
           <Input id="gitops-squash-base" type="text" bind:value={squashBase} placeholder={baseBranch || 'main'} list="gitops-branches" />
         </div>
         <div>
-          <div class="text-[10px] text-muted-foreground mb-1">
+          <div class="text-micro text-muted-foreground mb-1">
             {#if squashLoading}
               Loading commits…
             {:else if squashCommits.length === 0}
@@ -222,7 +222,7 @@
           <Input id="gitops-source" type="text" bind:value={pickSource} placeholder="another thread's branch" list="gitops-branches" />
         </div>
         <div>
-          <div class="text-[10px] text-muted-foreground mb-1">
+          <div class="text-micro text-muted-foreground mb-1">
             {#if pickLoading}
               Loading commits…
             {:else if !pickSource.trim()}

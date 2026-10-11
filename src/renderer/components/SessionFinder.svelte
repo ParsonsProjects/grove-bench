@@ -216,7 +216,7 @@
         <div class="px-3 py-4 text-xs text-muted-foreground text-center">No matches found</div>
       {:else}
         {#if sessionResults.length > 0}
-          <div class="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wide text-muted-foreground/50">Threads</div>
+          <div class="px-3 pt-2 pb-1 text-micro uppercase tracking-wide text-muted-foreground/50">Threads</div>
           {#each sessionResults as entry, i}
             {@const isActive = store.activeSessionId === entry.id}
             <button
@@ -231,7 +231,7 @@
                 <span class="text-muted-foreground/40 shrink-0">/</span>
                 <span class="font-medium truncate min-w-0"><HighlightedText text={entry.label} {query} words /></span>
                 {#if isActive}
-                  <span class="ml-auto text-muted-foreground/40 text-[10px]">active</span>
+                  <span class="ml-auto text-muted-foreground/40 text-micro">active</span>
                 {/if}
               </div>
               {#if entry.firstPrompt}
@@ -242,7 +242,7 @@
         {/if}
 
         {#if query.trim().length >= 2 && (contentHits.length > 0 || contentLoading)}
-          <div class="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wide text-muted-foreground/50 border-t border-border/50 flex items-center gap-2">
+          <div class="px-3 pt-2 pb-1 text-micro uppercase tracking-wide text-muted-foreground/50 border-t border-border/50 flex items-center gap-2">
             In messages
             {#if contentLoading}
               <span class="normal-case tracking-normal text-muted-foreground/40">searching…</span>
@@ -258,7 +258,7 @@
               onmouseenter={() => selectedIndex = i}
             >
               <div class="flex items-center gap-2 min-w-0">
-                <span class="text-[10px] uppercase font-semibold shrink-0 {KIND_COLORS[hit.kind] ?? 'text-muted-foreground'}">{hit.kind}</span>
+                <span class="text-micro uppercase font-semibold shrink-0 {KIND_COLORS[hit.kind] ?? 'text-muted-foreground'}">{hit.kind}</span>
                 <span class="text-muted-foreground shrink-0">{src.repoName}</span>
                 <span class="text-muted-foreground/40 shrink-0">/</span>
                 <span class="font-medium truncate min-w-0">{src.label}</span>
@@ -270,7 +270,7 @@
       {/if}
     </div>
 
-    <div class="px-3 py-1.5 border-t border-border text-[10px] text-muted-foreground/40 flex gap-3">
+    <div class="px-3 py-1.5 border-t border-border text-micro text-muted-foreground/40 flex gap-3">
       <span>↑↓ navigate</span>
       <span>↵ open</span>
       <span>esc close</span>

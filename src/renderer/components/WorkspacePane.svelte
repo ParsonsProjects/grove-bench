@@ -251,7 +251,7 @@
       <!-- The conversation's agent on its bench, as in the sidebar: typing
            while it edits your files in place, sitting when it's idle. -->
       <GroveEmptyState variant="agent" {agent} tab={scene}>
-        <p class="text-sm mt-5 mb-2 text-foreground/80">{tab} needs git</p>
+        <p class="font-pixel text-base mt-5 mb-2 text-foreground/90">{tab} needs git</p>
         <p class="text-xs text-muted-foreground max-w-md">This thread runs without git, so {why}</p>
       </GroveEmptyState>
     {:else}
@@ -282,9 +282,9 @@
         <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 24 24" class="shrink-0"><path d="M4 4h16v2H4ZM2 6h2v16H2Zm18 0h2v10h-2ZM8 16h12v2H8Zm-2 2h2v2H6Zm-2 2h2v2H4ZM6 8h12v2H6Zm0 4h8v2H6Z"/></svg>
         <span class={tabLabelClass('activity')}>Thread</span>
         {#if hasPendingPermission}
-          <span class="inline-block w-2 h-2 bg-amber-500 animate-pulse"></span>
+          <span class="inline-block w-2 h-2 bg-status-attention animate-pulse"></span>
         {:else if isRunning}
-          <span class="inline-block w-2 h-2 bg-primary animate-pulse"></span>
+          <span class="inline-block w-2 h-2 bg-status-working animate-pulse"></span>
         {/if}
         <span class="{TAB_HINT_CLASS} ml-1">Alt+1</span>
       </button>
@@ -313,7 +313,7 @@
       <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 24 24" class="shrink-0"><path d="M16 19h2v2H4v-2h10v-2h2v2ZM6 15h8v2H4v2H2v-4h2V5h2v10ZM20 5h2v6h-2v8h-2V5H6V3h14v2Z"/></svg>
       <span class={tabLabelClass('changes')}>Changes</span>
       {#if hasChanges}
-        <span class="bg-primary text-primary-foreground text-[10px] px-1.5 py-0.5 leading-none font-bold">
+        <span class="bg-primary text-primary-foreground text-micro px-1.5 py-0.5 leading-none font-bold">
           {gitStatus.entries.length}
         </span>
       {/if}
@@ -329,7 +329,7 @@
       <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" class="shrink-0"><circle cx="12" cy="12" r="10"/><polyline points="12,6 12,12 16,14"/></svg>
       <span class={tabLabelClass('checkpoints')}>Checkpoints</span>
       {#if checkpointCount > 0}
-        <span class="bg-muted text-muted-foreground text-[10px] px-1.5 py-0.5 leading-none font-bold">
+        <span class="bg-muted text-muted-foreground text-micro px-1.5 py-0.5 leading-none font-bold">
           {checkpointCount}
         </span>
       {/if}
