@@ -78,7 +78,7 @@ Control how the agent handles actions that need approval. The mode new threads s
 
 - **Desktop notifications**: Native OS notifications, shown only while the window is unfocused: when an agent finishes a turn, when it's waiting on a permission or question, and on PR activity (new CI failures, review comments). Clicking a notification jumps to the thread
 - **Flash the taskbar button**: The taskbar button also flashes; it stops as soon as the window regains focus
-- **Badge the taskbar icon**: Show how many threads need you on the taskbar icon
+- **Badge the taskbar icon**: Show how many threads need you as a count on an amber square over the taskbar icon
 - **Send a test notification**: Shows one straight away, even with the Grove Bench window in front. If it doesn't appear, Windows is holding it back: check **Settings > System > Notifications** in Windows, where Grove Bench needs to be allowed and **Do not disturb** (Focus assist on Windows 10) turned off
 
 ## Tending (Background work)

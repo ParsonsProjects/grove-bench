@@ -87,6 +87,7 @@ All in `src/renderer/lib/components/ui/`. Import from the folder's `index.js`:
 | `Pulse` | A square that shows something is happening: a tool running, a thread working | `w-2.5 h-2.5 bg-primary animate-pulse` spans |
 | `Logo` | The pixel tree, with or without the wordmark | Copies of the tree SVG |
 | `menuPanel`, `menuItem`, `menuLabel`, `menuSeparator` | Class recipes for hand-built popovers and menus, so they match | Copied popover and row classes |
+| `tabTrigger`, `segmentedItem`, `segmentedRoot` | Class recipes for a tab strip or segmented control that can't use the component (the workspace tabs, whose shortcuts and panels live elsewhere). Prefer `Tabs` and `Segmented`, which bring the right roles and arrow keys. | Copied tab and option classes |
 | `Dialog`, `Select`, `Command`, `Checkbox`, `Input`, `Textarea`, `Label`, `Separator` | As before (shadcn-svelte on bits-ui) | |
 
 ### Button
@@ -100,6 +101,7 @@ All in `src/renderer/lib/components/ui/`. Import from the folder's `index.js`:
 | `quiet` | Icon buttons and text that only brightens on hover |
 | `ghost` | Like quiet, with a hover fill |
 | `outline-primary` | A secondary action that should still stand out |
+| `outline-success` | Allowing or approving what the agent asked for |
 | `outline-destructive`, `destructive` | Actions that delete or discard. Use the filled one only in a confirmation. |
 | `link` | An action inside a sentence ("Try again") |
 
@@ -111,6 +113,8 @@ All in `src/renderer/lib/components/ui/`. Import from the folder's `index.js`:
 | `default` | 36px | Forms and first-run screens |
 | `icon-2xs`, `icon-xs`, `icon-sm`, `icon` | 20, 24, 32, 36px square | Icon-only buttons. Give them an `aria-label`. |
 | `inline` | Text height | A button in a line of text |
+
+A disabled `Button` still gets hover events, so its `title` tooltip can say why it is disabled.
 
 ### Badge
 

@@ -32,7 +32,7 @@
   /** Theme tokens as the current theme draws them. */
   const tokens = ['background', 'card', 'muted', 'accent', 'border', 'input', 'primary', 'destructive', 'foreground', 'muted-foreground'];
 
-  const buttonVariants = ['default', 'secondary', 'outline', 'ghost', 'subtle', 'quiet', 'outline-primary', 'outline-destructive', 'destructive', 'link'] as const;
+  const buttonVariants = ['default', 'secondary', 'outline', 'ghost', 'subtle', 'quiet', 'outline-primary', 'outline-success', 'outline-destructive', 'destructive', 'link'] as const;
   const buttonSizes = ['2xs', 'xs', 'sm', 'default'] as const;
   const badgeTones = ['neutral', 'muted', 'primary', 'info', 'success', 'warning', 'danger', 'accent', 'highlight'] as const;
   const noticeTones = ['info', 'success', 'warning', 'danger', 'neutral'] as const;

@@ -1,4 +1,9 @@
-# Grove Bench
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/grove-lockup-on-dark.png">
+    <img src="docs/brand/grove-lockup-on-light.png" alt="Grove Bench" width="260">
+  </picture>
+</h1>
 
 Multi-agent git worktree orchestrator for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). A Windows-native Electron desktop app that manages concurrent AI coding threads, each in an isolated git worktree with a dedicated PTY terminal.
 
