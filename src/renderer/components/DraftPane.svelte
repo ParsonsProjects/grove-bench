@@ -342,7 +342,7 @@
           placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-1 focus:ring-ring font-mono"
       ></textarea>
       <Button
-        variant="outline-primary"
+        variant="default"
         onclick={() => draftStore.start()}
         disabled={!canStart}
         title={startBlocker ?? `Start the thread${draft.text.trim() ? ' and send this message' : ''}`}

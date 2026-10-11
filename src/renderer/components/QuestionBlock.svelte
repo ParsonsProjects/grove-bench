@@ -163,7 +163,7 @@
         class="flex-1 text-xs bg-card border border-border px-2 py-1 text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary"
       />
       <Button
-        variant="outline"
+        variant="subtle"
         size="sm"
         onclick={submit}
         disabled={!canSubmit}

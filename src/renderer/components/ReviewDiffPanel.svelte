@@ -1014,7 +1014,7 @@
           <span class="text-muted-foreground">across {new Set(comments.map(c => c.filePath)).size} file{new Set(comments.map(c => c.filePath)).size === 1 ? '' : 's'}</span>
           <div class="ml-auto flex items-center gap-1.5">
             <Button size="2xs" variant="outline-destructive" onclick={() => { if (confirm('Discard all review comments?')) { reviewStore.clearComments(sessionId); composer = null; } }}>Discard</Button>
-            <Button size="2xs" variant="outline" onclick={reviewToPrompt} title="Put the batched comments into the prompt so you can edit before sending">To prompt</Button>
+            <Button size="2xs" variant="subtle" onclick={reviewToPrompt} title="Put the batched comments into the prompt so you can edit before sending">To prompt</Button>
             <Button size="2xs" onclick={sendReview} disabled={sendingReview} title="Send all comments to the agent as one prompt (queued if it is busy)">
               Send to agent
             </Button>

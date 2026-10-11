@@ -55,7 +55,7 @@
         <Tabs.Trigger value="discover">Discover</Tabs.Trigger>
       </Tabs.List>
       <div class="flex-1"></div>
-      <Button variant="ghost" size="xs" class="mb-1" onclick={() => pluginStore.refresh()} disabled={pluginStore.loading}>
+      <Button variant="quiet" size="xs" class="mb-1" onclick={() => pluginStore.refresh()} disabled={pluginStore.loading}>
         Refresh
       </Button>
     </div>

@@ -316,10 +316,10 @@
           <p class="basis-full text-xs text-foreground" role="alert">
             Clear this thread's messages and start again with only the plan? Your files stay as they are.
           </p>
-          <Button variant="outline" size="sm" onclick={() => confirmFresh = false} disabled={submitting}>
+          <Button variant="subtle" size="sm" onclick={() => confirmFresh = false} disabled={submitting}>
             Cancel
           </Button>
-          <Button variant="outline" size="sm" onclick={clearAndExecute} disabled={submitting} class="text-blue-400 border-blue-600 hover:bg-blue-900/30">
+          <Button variant="subtle" size="sm" onclick={clearAndExecute} disabled={submitting} class="text-blue-400 border-blue-600 hover:bg-blue-900/30">
             Clear and start
           </Button>
         {:else}
@@ -328,7 +328,7 @@
             Approve
           </Button>
           {#if planText}
-            <Button variant="outline" size="sm" onclick={() => confirmFresh = true} disabled={submitting} title="Clear this thread's messages and send the plan as a new first message, so the agent starts with a clean context. Asks first." class="text-blue-400 border-blue-600 hover:bg-blue-900/30">
+            <Button variant="subtle" size="sm" onclick={() => confirmFresh = true} disabled={submitting} title="Clear this thread's messages and send the plan as a new first message, so the agent starts with a clean context. Asks first." class="text-blue-400 border-blue-600 hover:bg-blue-900/30">
               Approve and start fresh…
             </Button>
           {/if}
@@ -346,7 +346,7 @@
           class="flex-1 text-xs bg-card border border-border px-2 py-1 text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary"
         />
         <Button
-          variant="outline-primary"
+          variant="subtle"
           size="sm"
           onclick={sendReply}
           disabled={!replyText.trim()}

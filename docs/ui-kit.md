@@ -94,14 +94,11 @@ All in `src/renderer/lib/components/ui/`. Import from the folder's `index.js`:
 
 | Variant | Use |
 |---|---|
-| `default` | The main action in a dialog or panel. One per view. |
+| `default` | The main action in a view: Send, Start, Restart to update. One per view. |
 | `secondary` | Other actions next to it |
-| `outline` | A neutral bordered action |
-| `subtle` | Toolbar and status-bar actions: bordered, muted text |
-| `quiet` | Icon buttons and text that only brightens on hover |
+| `subtle` | Any other bordered action: toolbars, the status bar, Cancel in a dialog |
+| `quiet` | Icon buttons, and text actions that only brighten on hover |
 | `quiet-destructive` | Icon buttons that delete or stop something: quiet until hovered, then red |
-| `ghost` | Like quiet, with a hover fill |
-| `outline-primary` | A secondary action that should still stand out |
 | `outline-success` | Allowing or approving what the agent asked for |
 | `outline-destructive`, `destructive` | Actions that delete or discard. Use the filled one only in a confirmation. |
 | `link` | An action inside a sentence ("Try again") |
@@ -113,8 +110,10 @@ All in `src/renderer/lib/components/ui/`. Import from the folder's `index.js`:
 | `xs` | 24px | Toolbars, panel headers, secondary dialog actions |
 | `sm` | 32px | Dialog footers |
 | `default` | 36px | Forms and first-run screens |
-| `icon-2xs`, `icon-xs`, `icon-sm`, `icon` | 20, 24, 32, 36px square | Icon-only buttons. Give them an `aria-label`. |
+| `icon-2xs`, `icon-xs` | 20, 24px square | Icon-only buttons. Give them an `aria-label`. |
 | `inline` | Text height | A button in a line of text |
+
+That is the whole set: ten variants and seven sizes. Before adding one, check whether an existing variant fits; the kit had three more (`ghost`, `outline`, `outline-primary`) that overlapped with these and were merged away.
 
 A disabled `Button` still gets hover events, so its `title` tooltip can say why it is disabled.
 

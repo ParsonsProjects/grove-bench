@@ -246,7 +246,7 @@
         </Button>
         <Button
           size="xs"
-          variant="outline"
+          variant="subtle"
           onclick={() => doCommit(true)}
           disabled={!commitMessage.trim() || committing}
           class="disabled:cursor-not-allowed"
@@ -307,7 +307,7 @@
           </Dialog.Description>
         </Dialog.Header>
         <Dialog.Footer>
-          <Button variant="outline" onclick={() => confirmEntry = null}>Cancel</Button>
+          <Button variant="subtle" onclick={() => confirmEntry = null}>Cancel</Button>
           <Button variant="destructive" onclick={confirmRevert}>{isUntracked || isNewStaged ? 'Discard' : 'Revert'}</Button>
         </Dialog.Footer>
       {/if}

@@ -258,7 +258,7 @@
           {#if switchError}<p class="text-caption text-destructive" role="alert">{switchError}</p>{/if}
           <div class="flex flex-wrap items-center gap-2">
             <Button size="xs" disabled={switching} onclick={() => switchAgent(target.id, true)}>Switch and send the transcript</Button>
-            <Button variant="outline" size="xs" disabled={switching} onclick={() => switchAgent(target.id, false)}>Switch without it</Button>
+            <Button variant="subtle" size="xs" disabled={switching} onclick={() => switchAgent(target.id, false)}>Switch without it</Button>
             <Button variant="link" size="xs" onclick={() => startWithAgent(target.id)}>New thread instead ↗</Button>
             <Button variant="quiet" size="xs" onclick={() => { switchTo = null; switchError = ''; }}>Cancel</Button>
           </div>

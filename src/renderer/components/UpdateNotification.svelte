@@ -43,7 +43,7 @@
 <div class="update-notification ml-2 flex items-center gap-1.5">
   {#if status?.state === 'available'}
     <Button
-      variant="outline-primary"
+      variant="default"
       size="2xs"
       onclick={() => window.groveBench.downloadUpdate()}
       title="Download version {status.info.version}"

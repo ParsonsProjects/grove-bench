@@ -110,10 +110,10 @@
         <div class="text-destructive mt-1">{openError}</div>
       {/if}
       <div class="flex gap-2 mt-2">
-        <Button variant="outline" size="sm" onclick={openPage} disabled={busy || !request.url} class="text-violet-400 border-violet-600 hover:bg-violet-900/30">
+        <Button variant="subtle" size="sm" onclick={openPage} disabled={busy || !request.url} class="text-violet-400 border-violet-600 hover:bg-violet-900/30">
           Open page
         </Button>
-        <Button variant="ghost" size="sm" onclick={() => respond({ action: 'decline' })} disabled={busy}>Decline</Button>
+        <Button variant="quiet" size="sm" onclick={() => respond({ action: 'decline' })} disabled={busy}>Decline</Button>
       </div>
     </div>
   {:else}
@@ -191,11 +191,11 @@
         Your answers go to {request.serverName}. Don't enter passwords or API keys here.
       </p>
       <div class="flex gap-2">
-        <Button variant="outline" size="sm" onclick={submit} disabled={busy} class="text-violet-400 border-violet-600 hover:bg-violet-900/30">
+        <Button variant="subtle" size="sm" onclick={submit} disabled={busy} class="text-violet-400 border-violet-600 hover:bg-violet-900/30">
           Submit
         </Button>
-        <Button variant="ghost" size="sm" onclick={() => respond({ action: 'decline' })} disabled={busy}>Decline</Button>
-        <Button variant="ghost" size="sm" onclick={() => respond({ action: 'cancel' })} disabled={busy} class="text-muted-foreground">Cancel</Button>
+        <Button variant="quiet" size="sm" onclick={() => respond({ action: 'decline' })} disabled={busy}>Decline</Button>
+        <Button variant="quiet" size="sm" onclick={() => respond({ action: 'cancel' })} disabled={busy} class="text-muted-foreground">Cancel</Button>
       </div>
     </div>
   {/if}

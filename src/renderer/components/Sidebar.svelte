@@ -783,7 +783,7 @@
   {#snippet footerTools()}
     <Button
       onclick={() => bookmarkStore.toggleDrawer()}
-      variant="ghost"
+      variant="quiet"
       size="sm"
       class="px-2 shrink-0"
       title="Bookmarks (Ctrl+B)"
@@ -792,7 +792,7 @@
     </Button>
     <Button
       onclick={() => memoryStore.panelOpen = true}
-      variant="ghost"
+      variant="quiet"
       size="sm"
       class="px-2 shrink-0"
       title="Project Memory"
@@ -801,7 +801,7 @@
     </Button>
     <Button
       onclick={openCleanup}
-      variant="ghost"
+      variant="quiet"
       size="sm"
       class="px-2 shrink-0"
       title="Clean up old threads"
@@ -810,7 +810,7 @@
     </Button>
     <Button
       onclick={() => settingsStore.panelOpen = true}
-      variant="ghost"
+      variant="quiet"
       size="sm"
       class="px-2 shrink-0"
       title="Settings (Ctrl+,)"

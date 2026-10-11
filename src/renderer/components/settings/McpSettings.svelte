@@ -103,11 +103,11 @@
         </p>
       </div>
       <div class="flex items-center gap-1 shrink-0">
-        <Button variant="ghost" size="xs" onclick={() => mcpConfigStore.refresh()} disabled={mcpConfigStore.loading}>
+        <Button variant="quiet" size="xs" onclick={() => mcpConfigStore.refresh()} disabled={mcpConfigStore.loading}>
           Refresh
         </Button>
         <span data-setting="mcp-add">
-          <Button variant="outline" size="xs" onclick={() => (adding = true)}>
+          <Button variant="subtle" size="xs" onclick={() => (adding = true)}>
             <PlusIcon class="size-3.5" aria-hidden="true" />
             Add server
           </Button>
@@ -203,13 +203,13 @@
               >
                 Remove
               </Button>
-              <Button variant="ghost" size="xs" onclick={() => (confirmingRemove = null)}>
+              <Button variant="quiet" size="xs" onclick={() => (confirmingRemove = null)}>
                 Cancel
               </Button>
             {:else}
               {#if unapproved && mcpConfigStore.cwd && rules?.approvalHint}
                 <Button
-                  variant="outline"
+                  variant="subtle"
                   size="xs"
                   disabled={mcpConfigStore.actionInProgress !== null}
                   onclick={() => mcpConfigStore.approve(server.name)}

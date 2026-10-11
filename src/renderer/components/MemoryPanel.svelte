@@ -295,12 +295,12 @@
             </span>
             <div class="flex items-center gap-1 shrink-0">
               {#if isEditing}
-                <Button size="sm" variant="ghost" onclick={cancelEdit}>Cancel</Button>
+                <Button size="sm" variant="quiet" onclick={cancelEdit}>Cancel</Button>
                 <Button size="sm" onclick={saveEdit} disabled={memoryStore.saving}>
                   {memoryStore.saving ? 'Saving...' : 'Save'}
                 </Button>
               {:else}
-                <Button size="sm" variant="ghost" onclick={startEdit}>Edit</Button>
+                <Button size="sm" variant="quiet" onclick={startEdit}>Edit</Button>
                 <Button size="sm" variant="outline-destructive" onclick={() => confirmDeletePath = memoryStore.selectedFile!.path}>
                   Delete
                 </Button>
@@ -362,11 +362,11 @@
           <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
           {memoryStore.compacting ? 'Compacting…' : 'Compact'}
         </Button>
-        <Button size="sm" variant="ghost" onclick={openBackups} title="View and restore snapshots taken before each compaction">
+        <Button size="sm" variant="quiet" onclick={openBackups} title="View and restore snapshots taken before each compaction">
           <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>
           Backups
         </Button>
-        <Button size="sm" variant="ghost" onclick={() => showPrune = true} title="Review and delete old thread notes (memory files only, never your actual threads)">
+        <Button size="sm" variant="quiet" onclick={() => showPrune = true} title="Review and delete old thread notes (memory files only, never your actual threads)">
           <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m13 11 9-9"/><path d="M14.6 12.6c.8.8.9 2.1.2 3L10 22l-8-8 6.4-4.8c.9-.7 2.2-.6 3 .2Z"/><path d="m6.8 10.4 6.8 6.8"/><path d="m5 17 1.4-1.4"/></svg>
           Clean up notes
         </Button>
@@ -484,10 +484,10 @@
                   <div class="text-xs text-muted-foreground">{backup.fileCount} {backup.fileCount === 1 ? 'file' : 'files'}</div>
                 </div>
                 <div class="flex items-center gap-1 shrink-0">
-                  <Button size="sm" variant="ghost" onclick={() => memoryStore.previewBackup(backup.id)}>
+                  <Button size="sm" variant="quiet" onclick={() => memoryStore.previewBackup(backup.id)}>
                     {memoryStore.backupPreviewId === backup.id ? 'Hide' : 'View'}
                   </Button>
-                  <Button size="sm" variant="ghost" onclick={() => confirmRestoreId = backup.id}>
+                  <Button size="sm" variant="quiet" onclick={() => confirmRestoreId = backup.id}>
                     Restore
                   </Button>
                 </div>

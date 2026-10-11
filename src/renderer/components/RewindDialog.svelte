@@ -143,7 +143,7 @@
     {/if}
 
     <Dialog.Footer>
-      <Button variant="outline" onclick={() => handleOpenChange(false)}>
+      <Button variant="subtle" onclick={() => handleOpenChange(false)}>
         Cancel
       </Button>
       <Button

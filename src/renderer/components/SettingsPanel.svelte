@@ -293,7 +293,7 @@
           <span class="text-muted-foreground">All changes saved</span>
         {/if}
       </div>
-      <Button variant="ghost" size="sm" onclick={openHelp}>Help</Button>
+      <Button variant="quiet" size="sm" onclick={openHelp}>Help</Button>
       <Button variant="secondary" size="sm" onclick={onclose}>Close</Button>
     </div>
   </Dialog.Content>

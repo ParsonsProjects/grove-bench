@@ -655,7 +655,7 @@
     ></textarea>
 
     <Button
-      variant="outline-primary"
+      variant="default"
       onclick={handleSubmit}
       disabled={!value.trim()}
       title={willQueue ? 'Add to the queue; sent once the agent is free' : 'Send now'}

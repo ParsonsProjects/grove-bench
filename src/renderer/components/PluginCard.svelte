@@ -68,21 +68,21 @@
           onclick={() => { confirmingRemove = false; onuninstall?.(installed!.id); }}
         >Remove</Button>
         <Button
-          variant="ghost"
+          variant="quiet"
           size="xs"
           onclick={() => (confirmingRemove = false)}
         >Cancel</Button>
       {:else if installed}
         {#if enabled}
           <Button
-            variant="ghost"
+            variant="quiet"
             size="xs"
             disabled={busy}
             onclick={() => ondisable?.(installed!.id)}
           >Disable</Button>
         {:else}
           <Button
-            variant="ghost"
+            variant="quiet"
             size="xs"
             disabled={busy}
             onclick={() => onenable?.(installed!.id)}
