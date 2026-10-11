@@ -126,7 +126,9 @@ Use the user-facing words in any new UI text, help page or doc. See `docs/projec
   `globals.css` drifts from `brand.ts`
 - UI is built from the kit in `src/renderer/lib/components/ui` (docs/ui-kit.md,
   drawn live at `/ui-kit.html` on the dev server): `Button` sizes `2xs`/`xs`
-  for the app's dense rows, `Badge`, `Kbd`, `Tabs`, `Segmented`, `Notice`,
+  for the app's dense rows (variants include `quiet-destructive` for delete
+  icons and `external` for links that leave the app: green acts, blue goes),
+  `Badge`, `Kbd`, `Tabs`, `Segmented`, `Notice`,
   `SectionLabel`, `PanelHeader`, `Pulse`, `Logo`. Font sizes come from the
   scale (`text-micro` 10px, `text-caption` 11px, then Tailwind's), never
   `text-[10px]`. Import `tv` from `$lib/utils.js`, which knows those sizes

@@ -50,9 +50,9 @@
     {label}
     {#if hiddenText}
       <!-- Dropped first when the tab strip is narrow; the tooltip keeps it. -->
-      <span class="hidden @3xl:inline text-muted-foreground/70 font-normal">{hiddenText}</span>
+      <span class="hidden @3xl:inline text-muted-foreground font-normal">{hiddenText}</span>
     {/if}
-    <svg class="w-3 h-3 shrink-0 opacity-60" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <svg class="w-3 h-3 shrink-0" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
       <path d="M4 6l4 4 4-4" />
     </svg>
   </SelectPrimitive.Trigger>

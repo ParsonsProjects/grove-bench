@@ -12,6 +12,7 @@
   import SystemBlock from './SystemBlock.svelte';
   import GitIdentityNotice from './GitIdentityNotice.svelte';
   import { settingsStore } from '../stores/settings.svelte.js';
+  import { Button } from '$lib/components/ui/button/index.js';
 
   let { sessionId, msg, summaryMode }: { sessionId: string; msg: ChatMessage; summaryMode: boolean } = $props();
 </script>
@@ -87,13 +88,14 @@
 {:else if msg.kind === 'error'}
   <SystemBlock text={msg.text} variant="error" />
   {#if msg.auth}
-    <button
-      type="button"
-      class="ml-4 mt-1 text-xs text-primary hover:underline"
+    <Button
+      variant="link"
+      size="inline"
+      class="ml-4 mt-1 text-xs"
       onclick={() => settingsStore.openAt('agents')}
     >
       Open Settings → Agents
-    </button>
+    </Button>
   {/if}
 
 {:else if msg.kind === 'git_identity_missing'}

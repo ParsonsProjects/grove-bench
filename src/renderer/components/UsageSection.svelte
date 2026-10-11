@@ -12,6 +12,7 @@
   import { usageTextClass, usageBarClass } from '../lib/usage-tone.js';
   import { usageUpdatedAt, windowHasReset } from '../../shared/usage.js';
   import PixelMeter from './PixelMeter.svelte';
+  import { SectionLabel } from '$lib/components/ui/section-label/index.js';
 
   /** Figures older than this say when they were last updated. */
   const STALE_MS = 10 * 60 * 1000;
@@ -39,12 +40,12 @@
 </script>
 
 <div class="mt-3 pt-2 border-t border-border/60" data-testid="usage">
-  <div class="flex items-center justify-between text-micro uppercase tracking-wide text-muted-foreground/60 mb-1">
+  <SectionLabel class="flex items-center justify-between mb-1">
     <span>Usage</span>
-    {#if usage?.plan}<span class="normal-case tracking-normal text-muted-foreground/40">{usage.plan} plan</span>{/if}
-  </div>
+    {#if usage?.plan}<span class="normal-case tracking-normal font-normal">{usage.plan} plan</span>{/if}
+  </SectionLabel>
   {#if !reports}
-    <div class="py-1 text-muted-foreground/50">{agentName} doesn't report plan usage.</div>
+    <div class="py-1 text-muted-foreground">{agentName} doesn't report plan usage.</div>
   {:else if usage && usage.available && usage.windows.length > 0}
     {#each usage.windows as w (w.id)}
       {@const reset = windowHasReset(w)}
@@ -55,7 +56,7 @@
         <div class="flex items-baseline justify-between gap-2">
           <span class="text-muted-foreground">{w.label}</span>
           {#if reset}
-            <span class="text-muted-foreground/60">reset</span>
+            <span class="text-muted-foreground">reset</span>
           {:else}
             <span class="font-medium {usageTextClass(w.utilization * 100)}">{Math.round(w.utilization * 100)}%</span>
           {/if}
@@ -69,18 +70,18 @@
           data-testid="usage-bar-{w.id}"
         />
         {#if w.resetsAt && !reset}
-          <div class="text-micro text-muted-foreground/60 mt-0.5">resets {formatResetTime(w.resetsAt)}</div>
+          <div class="text-micro text-muted-foreground mt-0.5">resets {formatResetTime(w.resetsAt)}</div>
         {/if}
       </div>
     {/each}
     {#if stale}
-      <div class="text-micro text-muted-foreground/50 mt-1" data-testid="usage-updated">Last updated {clock(updatedAt)}</div>
+      <div class="text-micro text-muted-foreground mt-1" data-testid="usage-updated">Last updated {clock(updatedAt)}</div>
     {/if}
   {:else if usage && !usage.available}
-    <div class="py-1 text-muted-foreground/50">Plan usage isn't reported for this sign-in (API key or third-party provider).</div>
+    <div class="py-1 text-muted-foreground">Plan usage isn't reported for this sign-in (API key or third-party provider).</div>
   {:else if loading}
-    <div class="py-1 text-muted-foreground/50">Loading usage…</div>
+    <div class="py-1 text-muted-foreground">Loading usage…</div>
   {:else}
-    <div class="py-1 text-muted-foreground/50">No usage reported yet. Available once the agent has connected.</div>
+    <div class="py-1 text-muted-foreground">No usage reported yet. Available once the agent has connected.</div>
   {/if}
 </div>

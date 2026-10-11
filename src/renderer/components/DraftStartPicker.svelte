@@ -9,6 +9,10 @@
   import { store } from '../stores/sessions.svelte.js';
   import { draftStore, type DraftStart } from '../stores/draft.svelte.js';
   import type { OpenPrSummary } from '../../shared/types.js';
+  import { SectionLabel } from '$lib/components/ui/section-label/index.js';
+  import { menuItem, menuPanel } from '$lib/components/ui/menu/index.js';
+  import { tabTrigger } from '$lib/components/ui/tabs/index.js';
+  import { cn } from '$lib/utils.js';
 
   let { onclose }: { onclose: () => void } = $props();
 
@@ -113,14 +117,14 @@
   const isBranch = (name: string) => start?.kind === 'existing' && !start.pr && start.branch === name;
 </script>
 
-<div class="w-96 bg-popover border border-border shadow-xl text-xs" role="dialog" aria-label="Where this thread runs">
+<div class={cn(menuPanel(), 'w-96 py-0')} role="dialog" aria-label="Where this thread runs">
   <div class="flex border-b border-border" role="group" aria-label="Where it runs">
     {#each tabs as [value, label] (value)}
       <button
         type="button"
         onclick={() => chooseTab(value as Tab)}
         aria-pressed={tab === value}
-        class="flex-1 px-3 py-2 border-b-2 transition-colors {tab === value ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'}"
+        class={cn(tabTrigger({ active: tab === value }), 'flex-1 justify-center')}
       >
         {label}
       </button>
@@ -154,14 +158,14 @@
           class="w-full bg-background border border-input px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
         />
         {#if baseListOpen && baseMatches.length > 0}
-          <div class="absolute z-10 top-full left-0 right-0 mt-1 max-h-40 overflow-y-auto bg-popover border border-border shadow-md p-1">
+          <div class="{menuPanel()} absolute z-10 top-full left-0 right-0 mt-1 max-h-40 overflow-y-auto">
             {#each baseMatches as b (b)}
               <button
                 type="button"
-                class="w-full text-left px-2 py-1 hover:bg-accent truncate {b === newStart?.baseBranch ? 'bg-accent' : ''}"
+                class={menuItem({ selected: b === newStart?.baseBranch })}
                 onmousedown={(e) => { e.preventDefault(); setNew({ baseBranch: b }); baseListOpen = false; }}
               >
-                {b}
+                <span class="truncate">{b}</span>
               </button>
             {/each}
           </div>
@@ -183,13 +187,13 @@
           <div class="px-2 py-4 text-muted-foreground text-center">{query ? 'Nothing matches' : 'No branches available'}</div>
         {:else}
           {#if filteredPrs.length > 0}
-            <div class="px-2 pt-1 pb-0.5 text-micro uppercase tracking-wide text-muted-foreground/70">Open pull requests</div>
+            <SectionLabel class="px-2 pt-1 pb-0.5">Open pull requests</SectionLabel>
             {#each filteredPrs as pr (pr.number)}
               <button
                 type="button"
                 onclick={() => pickPr(pr)}
                 aria-pressed={isPr(pr)}
-                class="w-full text-left px-2 py-1.5 hover:bg-accent flex flex-col {isPr(pr) ? 'bg-accent' : ''}"
+                class={cn(menuItem({ selected: isPr(pr) }), 'flex-col items-stretch gap-0 py-1.5')}
               >
                 <span class="truncate text-foreground"><span class="text-muted-foreground">#{pr.number}</span> {pr.title}</span>
                 <span class="truncate text-caption text-muted-foreground">{pr.headRefName}{pr.author ? ` · ${pr.author}` : ''}{pr.isDraft ? ' · draft' : ''}</span>
@@ -197,15 +201,15 @@
             {/each}
           {/if}
           {#if filteredBranches.length > 0}
-            <div class="px-2 pt-2 pb-0.5 text-micro uppercase tracking-wide text-muted-foreground/70">Branches</div>
+            <SectionLabel class="px-2 pt-2 pb-0.5">Branches</SectionLabel>
             {#each filteredBranches as name (name)}
               <button
                 type="button"
                 onclick={() => pickBranch(name)}
                 aria-pressed={isBranch(name)}
-                class="w-full text-left px-2 py-1 hover:bg-accent truncate {isBranch(name) ? 'bg-accent text-foreground' : 'text-muted-foreground'}"
+                class={menuItem({ selected: isBranch(name) })}
               >
-                {name}
+                <span class="truncate">{name}</span>
               </button>
             {/each}
           {/if}
@@ -223,7 +227,7 @@
       <p class="text-muted-foreground">
         This project is used without git, so threads run in the folder itself. The agent edits your files in place, and its edits can't be rewound.
       </p>
-      <p class="text-muted-foreground/70 mt-2">
+      <p class="text-muted-foreground mt-2">
         For a separate copy per thread and undo, run <code class="text-foreground">git init</code> in the folder, commit its files, then remove and add the project again.
       </p>
     {:else}

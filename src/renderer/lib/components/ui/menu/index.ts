@@ -22,7 +22,7 @@ export const menuPanel = tv({
 /** One row in a menu or picker. `selected` marks the current choice with
  *  the primary edge, as the agent and model pickers do. */
 export const menuItem = tv({
-	base: "flex w-full items-center gap-2 border-l-2 border-transparent px-2 py-1 text-left text-xs transition-colors outline-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent disabled:opacity-50 disabled:hover:bg-transparent [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-3.5",
+	base: "flex w-full items-center gap-2 border-l-2 border-transparent px-2 py-1 text-left text-xs transition-colors outline-none hover:bg-accent focus-visible:bg-accent disabled:opacity-50 disabled:hover:bg-transparent [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-3.5",
 	variants: {
 		selected: {
 			true: "border-primary bg-accent/50 text-foreground",
@@ -30,7 +30,7 @@ export const menuItem = tv({
 		},
 		tone: {
 			default: "",
-			destructive: "text-destructive hover:bg-destructive/10 hover:text-destructive",
+			destructive: "text-destructive hover:bg-destructive/10",
 		},
 	},
 	defaultVariants: { selected: false, tone: "default" },

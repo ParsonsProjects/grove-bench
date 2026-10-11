@@ -1,5 +1,7 @@
 <script lang="ts">
   import CopyButton from './CopyButton.svelte';
+  import { Button } from '$lib/components/ui/button/index.js';
+  import { Pulse } from '$lib/components/ui/pulse/index.js';
   import type { ToolView } from '../../shared/tool-view.js';
 
   let {
@@ -58,16 +60,18 @@
       <CopyButton text={filePath} class="opacity-0 group-hover/fop-hdr:opacity-100 shrink-0" />
     {/if}
     {#if pending}
-      <span class="w-2.5 h-2.5 bg-status-working animate-pulse shrink-0"></span>
+      <Pulse />
     {:else if isError}
       <span class="text-destructive">error</span>
     {:else if result !== undefined}
-      <button
+      <Button
+        variant="quiet"
+        size="inline"
         onclick={() => collapsed = !collapsed}
-        class="text-muted-foreground hover:text-foreground shrink-0"
+        class="shrink-0"
       >
         {collapsed ? 'show' : 'hide'} ({resultLines.length} lines)
-      </button>
+      </Button>
     {/if}
   </div>
 

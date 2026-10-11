@@ -153,24 +153,21 @@ A disabled `Button` still gets hover events, so its `title` tooltip can say why 
 
 ## Adoption
 
-The kit is new, and most of the app was built before it. What already uses it:
+Every screen is on the kit: the sidebar, title bar, thread finder, Thread tab, composer and pickers, the status bar and its popovers, the workspace tabs and their panels, Settings, Project Memory, Help, dialogs and toasts.
 
-- Theme tokens, status tokens, the type scale and the bundled fonts: everywhere.
-- `Button`: about 105 places, mostly dialogs and settings.
-
-Still to move over, by count (from a survey when the kit was made):
-
-| Pattern | About | Move to |
+| | Before the kit | Now |
 |---|---|---|
-| Raw `<button>` with hand-written classes | 275 | `Button` with a variant and size |
-| Popovers and menus built by hand | 9 implementations | `menuPanel` and `menuItem` now, a shared Popover component later |
-| Tab strips and segmented controls | 8 | `Tabs`, `Segmented` |
-| Inline error and warning boxes | 10 | `Notice` |
-| Uppercase section labels | 31 | `SectionLabel` |
-| Badges and count chips | 20 | `Badge` |
-| Key hints | 12 | `Kbd` |
-| "Working" squares | 10 | `Pulse` |
-| Faded text below muted (`/40` to `/60`) | many | `text-muted-foreground` |
-| The rounded update pill (`UpdateNotification`) | 1 | Square, as everything else |
+| `Button` | 105 | 268 |
+| Raw `<button>` | 275 | 106, on purpose: list and tree rows, tabs with shortcuts, chips that hold rich content, the title bar's window controls |
+| `Badge`, `Kbd`, `Notice`, `Pulse`, `SectionLabel` | 0 | 17, 18, 22, 34, 27 |
+| Popovers and menus on `menuPanel` / `menuItem` | 0 | 13 / 20 |
+| Tab strips and segmented controls on the kit | 0 | 3 `Tabs`, 7 `Segmented`, plus the workspace and draft tabs on `tabTrigger` |
+| Faded text below muted | many | 0 (only decorative `/` and `·` separators stay faded) |
+| `text-[10px]`-style sizes, rounded corners | 141, 15 | 0, 0 |
 
-Move a screen at a time, and check it on `/ui-kit.html` and in the app in both themes.
+Still open, for a later pass:
+
+- **One-off colour tones.** A few buttons keep a class override for a tone the kit has no variant for: blue ("Approve and start fresh"), violet (an MCP form's Submit) and cyan (Answer a question). Add variants if a third use turns up.
+- **A shared Popover component.** Popovers share one look through `menuPanel`, but each still handles opening, closing and positioning itself.
+- **Viewed files** in the Changes tab are dimmed with `opacity-60`, which takes their folder path below 4.5:1.
+- **A compact Notice** for one-line strips (the git notice along the top of a panel uses `Notice` with layout classes).

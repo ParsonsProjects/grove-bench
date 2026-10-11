@@ -1,5 +1,7 @@
 <script lang="ts">
   import CopyButton from './CopyButton.svelte';
+  import { Button } from '$lib/components/ui/button/index.js';
+  import { Pulse } from '$lib/components/ui/pulse/index.js';
   import DiffView, { computeDiffLines } from './DiffView.svelte';
   import type { ToolView } from '../../shared/tool-view.js';
 
@@ -44,7 +46,7 @@
         title="Open in editor"
       >{filePath}</button>
       {#if pending}
-        <span class="w-2.5 h-2.5 bg-status-working animate-pulse shrink-0"></span>
+        <Pulse />
       {:else if isError}
         <span class="text-destructive">error</span>
       {/if}
@@ -62,19 +64,21 @@
       >{filePath}</button>
       <CopyButton text={filePath} class="opacity-0 group-hover/diff-hdr:opacity-100 shrink-0" />
       {#if pending}
-        <span class="w-2.5 h-2.5 bg-status-working animate-pulse shrink-0"></span>
+        <Pulse />
       {:else if isError}
         <span class="text-destructive">error</span>
       {:else if diffLines.length > 0}
         <div class="ml-auto flex items-center gap-1">
           <CopyButton text={copyContent} class="opacity-0 group-hover/diff-hdr:opacity-100" />
           {#if !isWrite}
-            <button
+            <Button
+              variant="quiet"
+              size="inline"
               onclick={() => sideBySide = !sideBySide}
-              class="text-muted-foreground hover:text-foreground select-none"
+              class="select-none"
             >
               {sideBySide ? 'unified' : 'side-by-side'}
-            </button>
+            </Button>
           {/if}
         </div>
       {/if}

@@ -11,6 +11,7 @@
   import MessageQueue from './MessageQueue.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
   import * as Command from '$lib/components/ui/command/index.js';
+  import XIcon from '@lucide/svelte/icons/x';
   import {
     type AttachedFile,
     processFiles,
@@ -544,7 +545,7 @@
               >
                 <span class="font-mono text-primary">{cmd.name}</span>
                 {#if cmd.description}
-                  <Command.Shortcut class="text-muted-foreground text-xs truncate">{cmd.description}</Command.Shortcut>
+                  <span class="ms-auto truncate text-xs text-muted-foreground">{cmd.description}</span>
                 {/if}
               </Command.Item>
             {/each}
@@ -582,11 +583,14 @@
             </svg>
           {/if}
           {file.name}
-          <button
+          <Button
+            variant="quiet-destructive"
+            size="icon-2xs"
             onclick={() => removeAttachedFile(i)}
-            class="text-primary/50 hover:text-primary transition-colors ml-0.5"
+            class="-my-0.5 -mr-1"
             title="Remove"
-          >&times;</button>
+            aria-label="Remove {file.name}"
+          ><XIcon /></Button>
         </span>
       {/each}
     </div>
@@ -596,13 +600,15 @@
   {#if promptSuggestions.length > 0 && !isRunning}
     <div class="flex flex-wrap gap-1.5 px-4 pt-2">
       {#each promptSuggestions as suggestion}
-        <button
+        <Button
+          variant="subtle"
+          size="xs"
           onclick={() => useSuggestion(suggestion)}
-          class="text-xs px-2.5 py-1 border border-border text-muted-foreground hover:text-foreground hover:border-primary transition-colors truncate max-w-80"
+          class="max-w-80"
           title={suggestion}
         >
-          {suggestion}
-        </button>
+          <span class="truncate">{suggestion}</span>
+        </Button>
       {/each}
     </div>
   {/if}
@@ -621,15 +627,18 @@
       class="hidden"
     />
 
-    <button
+    <Button
+      variant="quiet"
+      size="icon-xs"
       onclick={openFilePicker}
       title="Attach files"
-      class="text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed p-1 self-center"
+      aria-label="Attach files"
+      class="self-center disabled:cursor-not-allowed"
     >
-      <svg class="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
         <path d="M10.5 4.5l-5 5a2.12 2.12 0 003 3l5.5-5.5a3.54 3.54 0 00-5-5L3.5 7.5a4.95 4.95 0 007 7L15 10" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
-    </button>
+    </Button>
 
     <textarea
       bind:this={textarea}
@@ -646,16 +655,16 @@
     ></textarea>
 
     <Button
-      variant="outline"
+      variant="outline-primary"
       onclick={handleSubmit}
       disabled={!value.trim()}
       title={willQueue ? 'Add to the queue; sent once the agent is free' : 'Send now'}
-      class="text-primary border-primary hover:bg-primary/10 h-auto"
+      class="h-auto"
     >
       {willQueue ? 'Queue' : 'Send'}
     </Button>
     {#if isRunning}
-      <Button variant="outline" onclick={handleStop} class="text-destructive border-destructive hover:bg-destructive/10 h-auto">
+      <Button variant="outline-destructive" onclick={handleStop} class="h-auto">
         Stop
       </Button>
     {/if}

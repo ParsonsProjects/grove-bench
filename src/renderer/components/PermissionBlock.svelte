@@ -214,14 +214,15 @@
     <span class="{labelColor} font-bold">{isExitPlanMode ? 'plan ready' : 'permission'}</span>
     <span class="text-foreground">{isExitPlanMode ? 'Agent wants to execute the plan' : toolLabel(toolName)}</span>
     {#if isExitPlanMode && planText}
-      <button
+      <Button
+        variant="subtle"
+        size="2xs"
         onclick={() => markdownPreviewStore.show(planText, 'Proposed plan')}
-        class="flex items-center gap-1 text-caption px-1.5 py-0.5 border border-border text-muted-foreground hover:text-foreground hover:border-primary transition-colors shrink-0"
         title="Read the plan full-width"
       >
-        <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>
+        <svg fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>
         Focus
-      </button>
+      </Button>
     {/if}
     {#if filePath}
       <button
@@ -233,12 +234,14 @@
       <span class="text-muted-foreground truncate flex-1">{summarizeInput(toolInput)}</span>
     {/if}
     {#if !isResolved && isEditTool && diffLines.length > 0 && !!view.edits?.length}
-      <button
+      <Button
+        variant="quiet"
+        size="inline"
         onclick={() => sideBySide = !sideBySide}
-        class="text-xs text-muted-foreground hover:text-foreground select-none shrink-0"
+        class="select-none"
       >
         {sideBySide ? 'unified' : 'side-by-side'}
-      </button>
+      </Button>
     {/if}
   </div>
 
@@ -267,12 +270,14 @@
   {/if}
 
   {#if isExitPlanMode && planText}
-    <button
+    <Button
+      variant="quiet"
+      size="inline"
       onclick={() => expanded = !expanded}
-      class="text-xs text-muted-foreground hover:text-foreground mt-1"
+      class="text-xs mt-1"
     >
       {expanded ? 'hide' : 'show'} plan
-    </button>
+    </Button>
 
     {#if expanded}
       <div class="mt-1 text-sm text-foreground bg-card/50 border border-border p-3 max-h-64 overflow-y-auto">
@@ -280,12 +285,14 @@
       </div>
     {/if}
   {:else if !isEditTool && !isBashTool && !isExitPlanMode}
-    <button
+    <Button
+      variant="quiet"
+      size="inline"
       onclick={() => expanded = !expanded}
-      class="text-xs text-muted-foreground hover:text-foreground mt-1"
+      class="text-xs mt-1"
     >
       {expanded ? 'hide' : 'show'} details
-    </button>
+    </Button>
 
     {#if expanded}
       <pre class="text-xs text-muted-foreground bg-card p-2 overflow-x-auto max-h-40 overflow-y-auto mt-1">{formatInput(toolInput)}</pre>
@@ -317,7 +324,7 @@
           </Button>
         {:else}
           <!-- Approving always switches to Edit mode (messageStore.resolvePermission). -->
-          <Button variant="outline" size="sm" onclick={approve} disabled={submitting} title="Approve the plan. The thread switches to Edit mode so the plan's file edits don't each ask; commands still ask." class="text-green-400 border-green-600 hover:bg-green-900/30">
+          <Button variant="outline-success" size="sm" onclick={approve} disabled={submitting} title="Approve the plan. The thread switches to Edit mode so the plan's file edits don't each ask; commands still ask.">
             Approve
           </Button>
           {#if planText}
@@ -325,7 +332,7 @@
               Approve and start fresh…
             </Button>
           {/if}
-          <Button variant="outline" size="sm" onclick={() => deny()} disabled={submitting} title="Don't start yet. Type below to say what to change in the plan." class="text-destructive border-destructive hover:bg-destructive/10">
+          <Button variant="outline-destructive" size="sm" onclick={() => deny()} disabled={submitting} title="Don't start yet. Type below to say what to change in the plan.">
             Keep planning
           </Button>
         {/if}
@@ -336,27 +343,26 @@
           bind:value={replyText}
           onkeydown={handleReplyKeydown}
           placeholder="Reply to continue planning..."
-          class="flex-1 text-xs bg-card border border-border px-2 py-1 text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary"
+          class="flex-1 text-xs bg-card border border-border px-2 py-1 text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary"
         />
         <Button
-          variant="outline"
+          variant="outline-primary"
           size="sm"
           onclick={sendReply}
           disabled={!replyText.trim()}
-          class="text-primary border-primary hover:bg-primary/10 disabled:text-muted-foreground disabled:border-border shrink-0"
         >
           Send
         </Button>
       </div>
     {:else}
       <div class="flex gap-2 mt-2">
-        <Button variant="outline" size="sm" onclick={approve} disabled={submitting} class="text-green-400 border-green-600 hover:bg-green-900/30">
+        <Button variant="outline-success" size="sm" onclick={approve} disabled={submitting}>
           Allow
         </Button>
-        <Button variant="outline" size="sm" onclick={approveAlways} disabled={submitting} title={alwaysAllow.title} class="text-green-400 border-green-600 hover:bg-green-900/30">
+        <Button variant="outline-success" size="sm" onclick={approveAlways} disabled={submitting} title={alwaysAllow.title}>
           {alwaysAllow.label}
         </Button>
-        <Button variant="outline" size="sm" onclick={() => deny()} disabled={submitting} class="text-destructive border-destructive hover:bg-destructive/10">
+        <Button variant="outline-destructive" size="sm" onclick={() => deny()} disabled={submitting}>
           Deny
         </Button>
       </div>

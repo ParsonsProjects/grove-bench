@@ -3,6 +3,9 @@
   import { messageStore } from '../stores/messages.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
   import { Button } from '$lib/components/ui/button/index.js';
+  import { Notice } from '$lib/components/ui/notice/index.js';
+  import { Pulse } from '$lib/components/ui/pulse/index.js';
+  import XIcon from '@lucide/svelte/icons/x';
   import MarkdownBlock from './MarkdownBlock.svelte';
   import ThreadMessage from './ThreadMessage.svelte';
   import MessageSearchBar from './MessageSearchBar.svelte';
@@ -467,39 +470,45 @@
   {#if messages.length === 0 && !streamingText && arrival === null}
     <div class="flex items-center justify-center h-full text-muted-foreground">
       <div class="text-center relative z-10">
-        <p class="text-sm mb-1 opacity-60">Waiting for input...</p>
-        <p class="text-xs opacity-40">Type a message below to start the thread.</p>
+        <p class="text-sm mb-1">Waiting for input...</p>
+        <p class="text-xs">Type a message below to start the thread.</p>
       </div>
     </div>
   {/if}
 
   {#if hasUnloadedEvents}
     <div class="flex items-center justify-center gap-2 py-2 relative z-10">
-      <button
+      <Button
+        variant="subtle"
+        size="xs"
         onclick={loadOlderEvents}
         disabled={isLoadingOlderEvents}
-        class="px-3 py-1 text-xs font-medium border border-border bg-card/80 text-muted-foreground hover:text-foreground hover:border-muted-foreground/50 transition-colors disabled:opacity-50"
+        class="bg-card/80"
       >
         {isLoadingOlderEvents ? 'Loading...' : `\u2191 Load ${unloadedEventCount} older events from history`}
-      </button>
+      </Button>
     </div>
   {/if}
 
   {#if hasOlderMessages}
     <div class="flex items-center justify-center gap-2 py-2 relative z-10">
-      <button
+      <Button
+        variant="subtle"
+        size="xs"
         onclick={loadOlderMessages}
-        class="px-3 py-1 text-xs font-medium border border-border bg-card/80 text-muted-foreground hover:text-foreground hover:border-muted-foreground/50 transition-colors"
+        class="bg-card/80"
       >
         &uarr; Load {Math.min(PAGE_SIZE, olderCount)} older messages
-      </button>
+      </Button>
       {#if olderCount > PAGE_SIZE}
-        <button
+        <Button
+          variant="subtle"
+          size="xs"
           onclick={showAllMessages}
-          class="px-3 py-1 text-xs font-medium border border-border bg-card/80 text-muted-foreground hover:text-foreground hover:border-muted-foreground/50 transition-colors"
+          class="bg-card/80"
         >
           Show all ({olderCount})
-        </button>
+        </Button>
       {/if}
     </div>
   {/if}
@@ -554,7 +563,7 @@
     </div>
   {:else if isRunning && (!streamingThinking || viewMode === 'focus')}
     <div class="py-2 flex items-center gap-2 text-xs text-muted-foreground">
-      <span class="inline-block w-2.5 h-2.5 bg-status-working animate-fidget"></span>
+      <Pulse motion="spin" />
       {@render activityLabel()}
     </div>
   {/if}
@@ -577,27 +586,32 @@
 </div>
 
 {#if !shouldAutoScroll}
-  <button
+  <Button
+    variant="subtle"
+    size="xs"
     onclick={scrollToBottom}
-    class="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 px-2 py-1 text-xs bg-card border border-border text-muted-foreground hover:text-foreground hover:border-primary transition-colors shadow-md"
+    class="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 bg-card shadow-xl"
     title="Scroll to bottom"
   >
     &darr; Bottom
-  </button>
+  </Button>
 {/if}
 
 <!-- Bookmark text fallback: shown when a jump can't locate the source message -->
 {#if fallbackBookmarkText}
-  <div class="absolute top-2 left-3 right-16 z-30 bg-card border border-yellow-500/40 shadow-md p-2 text-xs">
-    <div class="flex items-center justify-between mb-1">
-      <span class="text-yellow-500/90 font-medium">Bookmarked text — source no longer in history</span>
-      <button
-        onclick={() => fallbackBookmarkText = null}
-        class="text-muted-foreground hover:text-foreground px-1"
-        title="Dismiss"
-      >&times;</button>
-    </div>
-    <pre class="whitespace-pre-wrap break-words max-h-40 overflow-y-auto text-foreground/90">{fallbackBookmarkText}</pre>
+  <div class="absolute top-2 left-3 right-16 z-30 bg-popover border border-border shadow-xl">
+    <Notice tone="warning" title="Bookmarked text — source no longer in history">
+      {#snippet actions()}
+        <Button
+          variant="quiet"
+          size="icon-2xs"
+          onclick={() => fallbackBookmarkText = null}
+          title="Dismiss"
+          aria-label="Dismiss"
+        ><XIcon /></Button>
+      {/snippet}
+      <pre class="whitespace-pre-wrap break-words max-h-40 overflow-y-auto">{fallbackBookmarkText}</pre>
+    </Notice>
   </div>
 {/if}
 </div>

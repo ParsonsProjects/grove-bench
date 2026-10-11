@@ -50,12 +50,12 @@
         <span class="shrink-0 px-1 text-muted-foreground/40 font-normal">{' · '}</span><span class="shrink-0 {mode.tone ? toneText(mode.tone) : ''}">{mode.label}</span>
       {/if}
     </span>
-    <span class="truncate max-w-40 @3xl:max-w-56 text-muted-foreground/80 text-caption" data-testid="agent-settings-detail">
+    <span class="truncate max-w-40 @3xl:max-w-56 text-muted-foreground text-caption" data-testid="agent-settings-detail">
       {agentName}{#each details as item (item.id)}<span class="text-muted-foreground/40">{' · '}</span>{item.label}{/each}
     </span>
   </span>
   <svg
-    class="w-3 h-3 shrink-0 text-muted-foreground/60 transition-transform {open ? 'rotate-180' : ''}"
+    class="w-3 h-3 shrink-0 text-muted-foreground transition-transform {open ? 'rotate-180' : ''}"
     viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
     aria-hidden="true"
   >

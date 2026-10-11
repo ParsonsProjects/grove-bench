@@ -104,7 +104,7 @@
         <div class="text-muted-foreground">
           Opens <span class="text-foreground font-medium">{urlHost || request.url}</span> in your browser:
         </div>
-        <div class="font-mono text-caption text-muted-foreground/80 break-all mt-0.5">{request.url}</div>
+        <div class="font-mono text-caption text-muted-foreground break-all mt-0.5">{request.url}</div>
       {/if}
       {#if openError}
         <div class="text-destructive mt-1">{openError}</div>
@@ -174,7 +174,7 @@
             {/if}
           {/if}
           {#if field.description}
-            <p class="text-muted-foreground/70 mt-0.5">{field.description}</p>
+            <p class="text-muted-foreground mt-0.5">{field.description}</p>
           {/if}
           {#if errors[field.key]}
             <p class="text-destructive mt-0.5">{errors[field.key]}</p>
@@ -183,11 +183,11 @@
       {/each}
 
       {#if form.unsupported.length > 0}
-        <p class="text-xs text-yellow-500">
+        <p class="text-xs text-amber-500">
           This form asks for fields Grove Bench can't show ({form.unsupported.join(', ')}). Decline it if you can't answer without them.
         </p>
       {/if}
-      <p class="text-caption text-muted-foreground/70">
+      <p class="text-caption text-muted-foreground">
         Your answers go to {request.serverName}. Don't enter passwords or API keys here.
       </p>
       <div class="flex gap-2">

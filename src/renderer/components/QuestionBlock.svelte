@@ -117,7 +117,7 @@
               >
                 <span class="font-medium">{opt.label}</span>
                 {#if opt.description}
-                  <span class="ml-1 opacity-70">— {opt.description}</span>
+                  <span class="ml-1 text-muted-foreground">— {opt.description}</span>
                 {/if}
               </div>
             {:else}
@@ -131,14 +131,14 @@
               >
                 <span class="font-medium">{opt.label}</span>
                 {#if opt.description}
-                  <span class="ml-1 opacity-70">— {opt.description}</span>
+                  <span class="ml-1 text-muted-foreground">— {opt.description}</span>
                 {/if}
               </button>
             {/if}
           {/each}
         </div>
         {#if !resolved && q.multiSelect}
-          <p class="text-xs text-muted-foreground mt-1 opacity-60">Select one or more options</p>
+          <p class="text-xs text-muted-foreground mt-1">Select one or more options</p>
         {/if}
       {/if}
     </div>
@@ -160,7 +160,7 @@
         bind:value={freeformText}
         onkeydown={handleKeydown}
         placeholder="Or type a custom response..."
-        class="flex-1 text-xs bg-card border border-border px-2 py-1 text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary"
+        class="flex-1 text-xs bg-card border border-border px-2 py-1 text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary"
       />
       <Button
         variant="outline"
