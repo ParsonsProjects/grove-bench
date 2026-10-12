@@ -200,7 +200,17 @@ export interface AdapterConfig {
    *  keeps the turns before the rewind point and forgets everything after).
    *  Only meaningful together with resumeSessionId. */
   resumeAtUuid?: string | null;
+  /** When resuming: the running cost total the conversation last reached
+   *  (lastRunningCost), for an agent that reports cost that way, so the
+   *  first result after resuming isn't charged for the turns before it. */
+  priorCostUsd?: number | null;
   onPermissionRequest: PermissionHandler;
+  /** Called before a tool call runs, wherever the adapter can hold one:
+   *  every call for Claude Code (a PreToolUse hook), the calls the agent
+   *  asks about for ACP agents. It waits while a reached limit is put to the
+   *  user (session-limits.ts); 'stop' means refuse the call, as the turn is
+   *  being stopped. Without it every call goes ahead. */
+  beforeToolUse?: (call: { toolName: string; toolUseId: string }) => Promise<'continue' | 'stop'>;
   /** Answers MCP elicitations. Without it the adapter declines them. */
   onElicitation?: ElicitationHandler;
   toolAllowRules: ToolRule[];

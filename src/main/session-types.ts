@@ -6,6 +6,7 @@ import type { BrowserWindow } from 'electron';
 import type { AgentEvent, McpElicitationResponse, PermissionMode, SessionStatus } from '../shared/types.js';
 import type { AgentAdapter, AgentQueryHandle, PermissionResponse, UserMessage } from './adapters/types.js';
 import type { Checkpoints } from './no-git-checkpoints.js';
+import type { SessionLimits } from './session-limits.js';
 
 export type Emit = (event: AgentEvent) => void;
 
@@ -146,6 +147,9 @@ export interface ManagedSession {
    *  resumed, they went nowhere, and the new conversation started in its
    *  place gets them. Null for a fresh query, or once the query reports in. */
   promptsBeforeInit: { handle: AgentQueryHandle; prompts: UserMessage[] } | null;
+  /** Spend, tool calls and time measured for the limits that pause the
+   *  thread (session-limits.ts), and a limit question waiting on the user. */
+  limits: SessionLimits;
 }
 
 export interface SessionCompletionResult {

@@ -69,6 +69,12 @@ const SETTINGS = {
   notifyOnPrAlert: true,
   notifyTaskbarFlash: true,
   notifyTaskbarBadge: true,
+  notifyOnPlanUsage: true,
+  planUsageAlertPercent: 80,
+  threadSpendLimitUsd: 0,
+  dailySpendLimitUsd: 0,
+  turnToolCallLimit: 0,
+  turnMinutesLimit: 0,
   analyticsEnabled: false,
   analyticsPrompted: true,
   crashReportsEnabled: false,
@@ -475,6 +481,7 @@ const api: Record<string, unknown> = {
     ],
   }),
   getCachedUsage: async () => null,
+  getDailySpend: async () => 3.42,
   switchAgent: async () => {},
   // Mirrors the Claude Code adapter's declared controls (for Opus 5.5, the
   // default model) so the status bar

@@ -23,7 +23,7 @@ src/
     process-host*.ts   # Utility process git and gh launch from, so launches can't freeze the window (3rd Vite entry)
     worktree-manager.ts
     agent-session.ts   # Session lifecycle management
-    session-*.ts       # Session types, event log + history, permission prompts, skills, agent config
+    session-*.ts       # Session types, event log + history, permission prompts, limits, skills, agent config
     agent-utils.ts     # Agent helper utilities
     terminal.ts        # node-pty management
     app-state.ts       # Persistent app state

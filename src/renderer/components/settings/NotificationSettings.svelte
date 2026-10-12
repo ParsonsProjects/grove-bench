@@ -26,8 +26,9 @@
   description="Shown only while the Grove Bench window isn't focused. Clicking one opens the thread."
 >
   <CheckboxSetting setting="notify-turn-complete" label="Agent finishes a turn" bind:checked={settingsStore.draft.notifyOnTurnComplete} />
-  <CheckboxSetting setting="notify-permission" label="Agent is waiting on a permission or question" bind:checked={settingsStore.draft.notifyOnPermission} />
+  <CheckboxSetting setting="notify-permission" label="Agent is waiting on a permission, question or limit" bind:checked={settingsStore.draft.notifyOnPermission} />
   <CheckboxSetting setting="notify-pr-alert" label="PR activity: new CI failures and review comments" bind:checked={settingsStore.draft.notifyOnPrAlert} />
+  <CheckboxSetting setting="notify-plan-usage" label="Plan usage reaches your alert level (Limits & alerts)" bind:checked={settingsStore.draft.notifyOnPlanUsage} />
 
   <div data-setting="notify-test" class="flex flex-col gap-1.5">
     <Button variant="subtle" size="sm" class="self-start" onclick={sendTest} disabled={testing}>

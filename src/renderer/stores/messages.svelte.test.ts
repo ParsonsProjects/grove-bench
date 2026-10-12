@@ -980,6 +980,46 @@ describe('ingestEvent — stoppingSession suppresses late permission_request', (
   });
 });
 
+describe('ingestEvent — limits', () => {
+  const request = (requestId: string): AgentEvent => ({
+    type: 'limit_request', requestId, limit: 'turnToolCalls', used: 100, reachedAt: 100, nextAllowance: 200,
+  });
+
+  it('shows a reached limit as waiting on the user, and notifies', () => {
+    sessionStore.sessions = [{ id: SID, branch: 'b', repoPath: '/r', status: 'running' }] as any;
+    messageStore.ingestEvent(SID, request('lim-1'));
+    const msg = messageStore.getMessages(SID).find((m) => m.kind === 'limit');
+    expect(msg).toMatchObject({ kind: 'limit', requestId: 'lim-1', limit: 'turnToolCalls', used: 100, resolved: false });
+    expect(messageStore.needsInput(SID)).toBe(true);
+    expect(mockGroveBench.notify).toHaveBeenCalledWith(expect.objectContaining({ kind: 'permission_request', body: 'Paused at your tool call limit' }));
+  });
+
+  it('marks it continued, and the thread no longer waits', () => {
+    messageStore.ingestEvent(SID, request('lim-2'));
+    messageStore.ingestEvent(SID, { type: 'limit_resolved', requestId: 'lim-2', limit: 'turnToolCalls', decision: 'continue', allowance: 200 });
+    expect(messageStore.getMessages(SID).find((m) => m.kind === 'limit')).toMatchObject({ resolved: true, decision: 'continue' });
+    expect(messageStore.needsInput(SID)).toBe(false);
+  });
+
+  it('treats a stop at a limit like Stop: queued prompts wait for Resume', () => {
+    messageStore.setIsRunning(SID, true);
+    messageStore.queuedBySession = { [SID]: [{ id: 'q1', displayText: 'next', outgoing: 'next' }] };
+    messageStore.ingestEvent(SID, request('lim-3'));
+    messageStore.ingestEvent(SID, { type: 'limit_resolved', requestId: 'lim-3', limit: 'turnToolCalls', decision: 'stop', reason: 'timeout' });
+    expect(messageStore.getMessages(SID).find((m) => m.kind === 'limit')).toMatchObject({ resolved: true, decision: 'stop', timedOut: true });
+    expect(messageStore.getIsRunning(SID)).toBe(false);
+    expect(messageStore.isQueuePaused(SID)).toBe(true);
+  });
+
+  it('closes the question when main says it already ended', async () => {
+    messageStore.ingestEvent(SID, request('lim-4'));
+    mockGroveBench.respondToLimit.mockResolvedValueOnce(false);
+    await messageStore.respondToLimit(SID, 'lim-4', 'continue');
+    expect(mockGroveBench.respondToLimit).toHaveBeenCalledWith(SID, 'lim-4', 'continue');
+    expect(messageStore.getMessages(SID).find((m) => m.kind === 'limit')).toMatchObject({ resolved: true, decision: 'stop' });
+  });
+});
+
 describe('ingestEvent — permission_resolved', () => {
   it('marks matching permission as resolved', () => {
     messageStore.ingestEvent(SID, {

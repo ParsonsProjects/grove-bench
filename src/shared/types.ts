@@ -1,4 +1,5 @@
 import type { ToolView } from './tool-view.js';
+import type { LimitKind } from './limits.js';
 
 // ─── Worktree ───
 
@@ -241,7 +242,11 @@ export type AgentEvent =
    *  the fields present change. */
   | { type: 'tool_update'; toolUseId: string; toolName?: string; toolInput?: unknown; toolCategory?: ToolCategory; toolView?: ToolView }
   | { type: 'tool_result'; toolUseId: string; content: string; isError?: boolean; images?: StoredImage[]; parentToolUseId?: string }
-  | { type: 'result'; subtype: string; result?: string; structured_output?: unknown; totalCostUsd?: number; durationMs?: number; isError: boolean; errors?: string[]; numTurns?: number; contextWindow?: number }
+  /** `totalCostUsd`: what this turn cost, in USD as the agent estimates it
+   *  (absent when it doesn't say). `sessionCostUsd`: the conversation's
+   *  running total the agent reported with it, when it reports one; a turn
+   *  carrying it counts toward spend limits (older history has none). */
+  | { type: 'result'; subtype: string; result?: string; structured_output?: unknown; totalCostUsd?: number; sessionCostUsd?: number; durationMs?: number; isError: boolean; errors?: string[]; numTurns?: number; contextWindow?: number }
   | { type: 'permission_request'; toolName: string; toolInput: unknown; toolUseId: string; requestId: string; decisionReason?: string; suggestions?: unknown[]; isPlanExecution?: boolean; toolCategory?: ToolCategory; toolView?: ToolView; planText?: string }
   | { type: 'thinking'; thinking: string; uuid: string; parentToolUseId?: string }
   | { type: 'partial_text'; text: string }
@@ -309,6 +314,13 @@ export type AgentEvent =
        *  PERMISSION_TIMEOUT_MINUTES and was denied. */
       reason?: 'timeout';
     }
+  // A limit was reached (shared/limits.ts): the thread waits before its next
+  // tool call until the user continues or stops. `used` and `reachedAt` are
+  // in the limit's units (USD, tool calls, minutes).
+  | { type: 'limit_request'; requestId: string; limit: LimitKind; used: number; reachedAt: number; nextAllowance: number }
+  // How it ended. `allowance`: the new point to stop at after Continue, kept
+  // in the log so a thread's spend allowance survives a restart.
+  | { type: 'limit_resolved'; requestId: string; limit: LimitKind; decision: 'continue' | 'stop'; allowance?: number; reason?: 'timeout' }
   // Memory auto-save status
   | { type: 'memory_autosave'; status: 'started' | 'completed' | 'skipped'; filesWritten?: string[] }
   // Rewind checkpoint
@@ -884,7 +896,7 @@ export interface McpAddServerOpts {
 /** Renderer → main request to show a desktop notification. Main gates on
  *  window focus and the per-kind settings, so callers can fire unconditionally. */
 export interface OsNotificationRequest {
-  kind: 'turn_complete' | 'permission_request' | 'pr_alert';
+  kind: 'turn_complete' | 'permission_request' | 'pr_alert' | 'plan_usage';
   /** Session to focus when the notification is clicked. */
   sessionId: string;
   title: string;
@@ -1136,6 +1148,10 @@ export interface GroveBenchAPI {
   respondToPermission(sessionId: string, decision: PermissionDecision): Promise<boolean>;
   /** Answer an MCP elicitation. False when it already resolved or timed out. */
   respondToElicitation(sessionId: string, requestId: string, response: McpElicitationResponse): Promise<boolean>;
+  /** Continue past a limit or stop the turn. False when it already resolved. */
+  respondToLimit(sessionId: string, requestId: string, decision: 'continue' | 'stop'): Promise<boolean>;
+  /** Today's estimated spend across threads, in USD, as the daily limit counts it. */
+  getDailySpend(): Promise<number>;
   onAgentEvent(sessionId: string, callback: (event: AgentEvent) => void): () => void;
   offAgentEvent(sessionId: string): void;
   getEventHistory(sessionId: string): Promise<AgentEvent[]>;
@@ -1648,6 +1664,23 @@ export interface GroveBenchSettings {
   /** Overlay a badge on the taskbar icon with the number of sessions that
    *  need attention (blocked on input, or finished while unfocused). Default true. */
   notifyTaskbarBadge: boolean;
+  /** Notify when plan usage passes planUsageAlertPercent. Default true. */
+  notifyOnPlanUsage: boolean;
+
+  // Limits and alerts (shared/limits.ts). 0 turns each one off.
+  /** Alert when a plan usage window (5-hour, weekly) reaches this percent.
+   *  Only agents that report plan usage can raise it. Default 80. */
+  planUsageAlertPercent: number;
+  /** Pause a thread once its estimated spend reaches this many USD. Default 0. */
+  threadSpendLimitUsd: number;
+  /** Pause every thread once today's estimated spend, across threads,
+   *  reaches this many USD. The day starts at local midnight. Default 0. */
+  dailySpendLimitUsd: number;
+  /** Pause a turn after this many tool calls. Default 0. */
+  turnToolCallLimit: number;
+  /** Pause a turn after it has run this many minutes, not counting time
+   *  spent waiting on the user. Default 0. */
+  turnMinutesLimit: number;
 
   // Privacy
   /** Enable anonymous usage analytics (PostHog). Off by default. */
@@ -1939,6 +1972,8 @@ export const IPC = {
   AGENT_MCP_AUTHENTICATE: 'agent:mcpAuthenticate',
   AGENT_MCP_CONTEXT_COST: 'agent:mcpContextCost',
   AGENT_ELICITATION: 'agent:elicitation',
+  AGENT_LIMIT: 'agent:limit',
+  LIMITS_DAILY_SPEND: 'limits:dailySpend',
   MCP_CONFIG_LIST: 'mcpConfig:list',
   MCP_CONFIG_ADD: 'mcpConfig:add',
   MCP_CONFIG_REMOVE: 'mcpConfig:remove',

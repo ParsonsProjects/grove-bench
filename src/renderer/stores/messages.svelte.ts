@@ -17,6 +17,7 @@ import { approvalRequest } from '../lib/tool-names.js';
 import { changesFiles, toolViewOf, toolViewSummary, type ToolView } from '../../shared/tool-view.js';
 import { liveEventsMissingFrom } from '../../shared/live-events.js';
 import { agentCallInput, isAgentCall, subagentOf } from '../lib/message-view.js';
+import { limitName, type LimitKind } from '../../shared/limits.js';
 
 // ─── Chat message types ───
 
@@ -187,6 +188,21 @@ export interface ChatElicitationMessage {
   action?: McpElicitationResponse['action'];
 }
 
+/** The thread paused at a limit (shared/limits.ts) and asks whether to go on. */
+export interface ChatLimitMessage {
+  kind: 'limit';
+  id: string;
+  requestId: string;
+  limit: LimitKind;
+  /** In the limit's units: USD, tool calls or minutes. */
+  used: number;
+  reachedAt: number;
+  resolved: boolean;
+  decision?: 'continue' | 'stop';
+  /** Stopped because nobody answered in time. */
+  timedOut?: boolean;
+}
+
 export type ChatMessage =
   | ChatTextMessage
   | ChatToolCallMessage
@@ -198,7 +214,8 @@ export type ChatMessage =
   | ChatPermissionMessage
   | ChatThinkingMessage
   | ChatQuestionMessage
-  | ChatElicitationMessage;
+  | ChatElicitationMessage
+  | ChatLimitMessage;
 
 // ─── Store ───
 
@@ -482,6 +499,7 @@ class MessageStore {
       if (m.kind === 'permission' && !m.resolved) return { ...m, resolved: true as const, decision: 'deny' as const };
       if (m.kind === 'question' && !m.resolved) return { ...m, resolved: true as const };
       if (m.kind === 'elicitation' && !m.resolved) return { ...m, resolved: true as const, action: 'cancel' as const };
+      if (m.kind === 'limit' && !m.resolved) return { ...m, resolved: true as const, decision: 'stop' as const };
       return m;
     });
   }
@@ -658,7 +676,7 @@ class MessageStore {
       for (const m of msgs) {
         if (m.kind === 'permission') {
           if (!(m as ChatPermissionMessage).resolved) pending.permission = true;
-        } else if (m.kind === 'question' || m.kind === 'elicitation') {
+        } else if (m.kind === 'question' || m.kind === 'elicitation' || m.kind === 'limit') {
           if (!m.resolved) pending.question = true;
         }
         if (pending.permission && pending.question) break;
@@ -673,7 +691,8 @@ class MessageStore {
     return this.pendingInput(sessionId).permission;
   }
 
-  /** Whether the agent is blocked on an unanswered question or MCP elicitation */
+  /** Whether the agent is blocked on an unanswered question, MCP elicitation
+   *  or limit */
   hasPendingQuestion(sessionId: string): boolean {
     return this.pendingInput(sessionId).question;
   }
@@ -1340,6 +1359,10 @@ class MessageStore {
         changed = true;
         return { ...m, resolved: true, action: 'cancel' as const };
       }
+      if (m.kind === 'limit' && !m.resolved) {
+        changed = true;
+        return { ...m, resolved: true, decision: 'stop' as const };
+      }
       return m;
     });
     if (changed) {
@@ -1661,6 +1684,14 @@ class MessageStore {
         this.onElicitationRequest(sessionId, event);
         break;
 
+      case 'limit_request':
+        this.onLimitRequest(sessionId, event);
+        break;
+
+      case 'limit_resolved':
+        this.onLimitResolved(sessionId, event);
+        break;
+
       case 'elicitation_resolved':
         this.markElicitationResolved(sessionId, event.requestId, event.action);
         break;
@@ -1965,6 +1996,54 @@ class MessageStore {
       accepted = await window.groveBench.respondToElicitation(sessionId, requestId, response);
     } catch { /* treated as already resolved */ }
     if (!accepted) this.markElicitationResolved(sessionId, requestId, 'cancel');
+  }
+
+  private onLimitRequest(sessionId: string, event: Extract<AgentEvent, { type: 'limit_request' }>) {
+    if (this.stoppingSession[sessionId]) return;
+    if (this._replayBuffer === null) {
+      notifyOs('permission_request', sessionId, `Paused at your ${limitName(event.limit)}`);
+    }
+    this.flushStreamingText(sessionId);
+    this.pushMessage(sessionId, {
+      kind: 'limit',
+      id: nextId(),
+      requestId: event.requestId,
+      limit: event.limit,
+      used: event.used,
+      reachedAt: event.reachedAt,
+      resolved: false,
+    });
+  }
+
+  private markLimitResolved(sessionId: string, requestId: string, decision: 'continue' | 'stop', timedOut = false): boolean {
+    const msgs = this.getMessagesForMutation(sessionId);
+    const idx = msgs.findIndex((m) => m.kind === 'limit' && m.requestId === requestId && !m.resolved);
+    if (idx < 0) return false;
+    this.setMessagesForMutation(sessionId, [
+      ...msgs.slice(0, idx),
+      { ...(msgs[idx] as ChatLimitMessage), resolved: true, decision, ...(timedOut ? { timedOut: true } : {}) },
+      ...msgs.slice(idx + 1),
+    ]);
+    return true;
+  }
+
+  private onLimitResolved(sessionId: string, event: Extract<AgentEvent, { type: 'limit_resolved' }>) {
+    const changed = this.markLimitResolved(sessionId, event.requestId, event.decision, event.reason === 'timeout');
+    // Stopping at a limit is a stop like the Stop button's: hold queued
+    // prompts until the user resumes. Main is stopping the turn already.
+    if (changed && event.decision === 'stop' && this._replayBuffer === null && this.sideEffects) {
+      this.markSessionStopped(sessionId);
+    }
+  }
+
+  /** Continue past a limit or stop the turn. Main confirms with
+   *  limit_resolved; when the question already ended it is closed here. */
+  async respondToLimit(sessionId: string, requestId: string, decision: 'continue' | 'stop') {
+    let accepted = false;
+    try {
+      accepted = await window.groveBench.respondToLimit(sessionId, requestId, decision);
+    } catch { /* treated as already resolved */ }
+    if (!accepted) this.markLimitResolved(sessionId, requestId, 'stop');
   }
 
   private onPermissionResolved(sessionId: string, event: Extract<AgentEvent, { type: 'permission_resolved' }>) {
@@ -2564,6 +2643,10 @@ class MessageStore {
       if (m.kind === 'elicitation' && !m.resolved) {
         changed = true;
         return { ...m, resolved: true as const, action: 'cancel' as const };
+      }
+      if (m.kind === 'limit' && !m.resolved) {
+        changed = true;
+        return { ...m, resolved: true as const, decision: 'stop' as const };
       }
       if (m.kind === 'tool_call' && m.awaitingPermission) {
         changed = true;
