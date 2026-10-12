@@ -62,7 +62,9 @@ export function readActivityTarget(
   const table = isRenderedCopyButton(tableBtn) ? renderedTable(tableBtn) : null;
   if (table) target.table = table;
 
-  const href = el.closest('a[href]')?.getAttribute('href');
+  // A link to a worktree file keeps its path in data-local-href (MarkdownBlock).
+  const anchor = el.closest('a[href]');
+  const href = anchor?.getAttribute('data-local-href') ?? anchor?.getAttribute('href');
   if (href) target.link = href;
 
   const msgId = el.closest('[data-msg-id]')?.getAttribute('data-msg-id');

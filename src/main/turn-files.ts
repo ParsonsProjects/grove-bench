@@ -7,8 +7,8 @@
  * documents: madeFileKind) are reported, and the thread lists them.
  *
  * Files outside the worktree (a temp folder) aren't seen. Those that only an
- * install or a build would write (dependencies, caches, build output) are
- * skipped, so `npm run build` doesn't list every asset it copies.
+ * install or a compile would write (dependencies, caches, `dist`) are
+ * skipped, so `npm run build` doesn't list every asset it copies there.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -16,10 +16,12 @@ import type { MadeFileKind } from '../shared/types.js';
 import { madeFileKind } from '../shared/attachments.js';
 import { logger } from './logger.js';
 
-/** Folders of dependencies, caches and build output, skipped wherever they are. */
+/** Folders of dependencies, caches and compiled output, skipped wherever they
+ *  are. `out` and `build` are not: scripts save reports and screenshots there
+ *  as often as builds write to them. */
 const SKIPPED_DIRS: ReadonlySet<string> = new Set([
   '.git', 'node_modules', '.venv', 'venv', '__pycache__', '.pytest_cache', '.next', '.nuxt', '.svelte-kit',
-  '.turbo', '.cache', '.parcel-cache', '.vite', '.gradle', 'dist', 'build', 'out', 'target', 'bin', 'obj', 'coverage',
+  '.turbo', '.cache', '.parcel-cache', '.vite', '.gradle', 'dist', 'target', 'bin', 'obj', 'coverage',
 ]);
 
 /** How many changed paths a turn notes. A turn that churns more than this

@@ -37,10 +37,12 @@
   } = $props();
 
   let view = $derived(toolViewOf({ toolName, toolInput, toolView }));
-  // An image file the call wrote (an SVG, mostly: Write writes text), as it
-  // is in the worktree now.
+  // An image file the call wrote or edited (an SVG, mostly: Write writes
+  // text), as it is in the worktree now. Not one it deleted or moved; and
+  // left out if it won't load (gone since, or outside the worktree).
   let writtenImage = $derived(
-    view.kind === 'edit' && view.path && !pending && !isError && worktreeImageType(view.path)
+    view.kind === 'edit' && view.path && (view.write !== undefined || view.edits?.length) && !pending && !isError
+      && worktreeImageType(view.path)
       ? { name: view.path, url: worktreeFileUrl(sessionId, view.path) }
       : null,
   );
@@ -61,5 +63,5 @@
   <ImageAttachments {sessionId} {images} class="pl-4 mb-1" />
 {/if}
 {#if writtenImage}
-  <ImageAttachments {sessionId} images={[writtenImage]} class="pl-4 mb-1" />
+  <ImageAttachments {sessionId} images={[writtenImage]} hideUnavailable class="pl-4 mb-1" />
 {/if}

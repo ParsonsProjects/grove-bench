@@ -682,7 +682,7 @@ class AgentSessionManager {
         if (event.type === 'result') {
           if (session.turnHandle === handle) session.turnHandle = null;
           // The files the turn made go just ahead of its result.
-          await this.reportTurnFiles(session, emit);
+          await this.endTurnFiles(session, emit);
           // Adds the turn's cost to the thread's and today's spend.
           turnEnded(session.limits, event);
           this.runHeldMcpReconnects(session);
@@ -738,9 +738,9 @@ class AgentSessionManager {
     }
 
     if (session.turnHandle === handle) session.turnHandle = null;
-    // A turn cut short reports no files. Only this run's: a newer one (after
-    // a sleep) may be watching its own turn.
-    if (session.queryHandle === handle || session.destroying) this.stopWatchingTurnFiles(session);
+    // A turn cut short by an error reports no files. Only this run's: once
+    // stopped or put to sleep, a newer run may be watching its own turn.
+    if (session.queryHandle === handle || session.destroying) void this.endTurnFiles(session);
 
     // If the user clicked Stop, don't mark the session as stopped or fire
     // process_exit — stopQuery will restart the query loop.
@@ -808,17 +808,21 @@ class AgentSessionManager {
     session.turnFiles = new TurnFiles(session.worktreePath);
   }
 
-  private stopWatchingTurnFiles(session: ManagedSession): void {
-    session.turnFiles?.close();
-    session.turnFiles = null;
-  }
-
-  /** At the end of a turn: list the files it made in the thread, ahead of
-   *  its result. Never holds the result up for long, nor fails the turn. */
-  private async reportTurnFiles(session: ManagedSession, emit: Emit): Promise<void> {
+  /**
+   * The turn is over: stop watching the worktree for the files it made. With
+   * `emit`, list them in the thread first (a turn that ended, or one the user
+   * interrupted); without, drop them (a stop or rewind that restarts the
+   * agent, a sleep, a close). Every way a turn ends comes through here, so a
+   * watch never carries over into the next turn. Never fails the turn.
+   */
+  private async endTurnFiles(session: ManagedSession, emit?: Emit): Promise<void> {
     const turnFiles = session.turnFiles;
     session.turnFiles = null;
     if (!turnFiles) return;
+    if (!emit) {
+      turnFiles.close();
+      return;
+    }
     try {
       const { files, more } = await turnFiles.finish();
       if (files.length === 0) return;
@@ -1508,6 +1512,8 @@ class AgentSessionManager {
     }
     // The turn is over even if the agent never reports a result for it.
     if (session.turnHandle === handle) session.turnHandle = null;
+    // Its files too, unless its result (handled in runQuery) listed them already.
+    await this.endTurnFiles(session, emit);
     this.runHeldMcpReconnects(session);
 
     // Re-sync the renderer with the current permission mode (parity with
@@ -1589,6 +1595,9 @@ class AgentSessionManager {
     cancelElicitations(session);
     cancelLimit(session.limits);
     turnStopped(session.limits);
+    // The old run's loop can't drop the watch: the handle is no longer its.
+    // Nothing is listed: a rewind may be about to put the files back.
+    void this.endTurnFiles(session);
 
     // Create a deferred promise so sendMessage() can wait for the new
     // queryHandle. Keep one that's still pending (e.g. a wake's): messages
@@ -1635,7 +1644,7 @@ class AgentSessionManager {
     // the session's as retired, so the agent exiting below is neither an error
     // nor the end of the conversation.
     session.queryHandle = null;
-    this.stopWatchingTurnFiles(session);
+    void this.endTurnFiles(session);
     const abortController = session.abortController;
     session.abortController = new AbortController();
     if (!session.window.isDestroyed()) {
@@ -1813,7 +1822,7 @@ class AgentSessionManager {
       session.queryHandle?.close();
     } catch { /* may already be closed */ }
     // Before the worktree can be removed: on Windows a watch holds its folder.
-    this.stopWatchingTurnFiles(session);
+    void this.endTurnFiles(session);
 
     // Abort any remaining in-flight operations
     session.abortController.abort();

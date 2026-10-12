@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { activityMenuEntries } from './activity-menu.js';
+import { activityMenuEntries, readActivityTarget } from './activity-menu.js';
 import type { ChatMessage } from '../stores/messages.svelte.js';
 
 const labels = (entries: ReturnType<typeof activityMenuEntries>) => entries.map((e) => e.label);
@@ -91,5 +91,15 @@ describe('activityMenuEntries', () => {
     it('leaves out a copy whose text is missing', () => {
       expect(activityMenuEntries({ message: toolCall('Bash', {}) })).toEqual([]);
     });
+  });
+});
+
+describe('readActivityTarget links', () => {
+  it("copies a worktree file link's path as written, not the # that stands in for it", () => {
+    const container = document.createElement('div');
+    container.innerHTML = '<a href="#" data-local-href="C:\\wt\\report.pdf">report</a> <a href="https://example.com">site</a>';
+    const [local, web] = container.querySelectorAll('a');
+    expect(readActivityTarget(local, container, []).link).toBe('C:\\wt\\report.pdf');
+    expect(readActivityTarget(web, container, []).link).toBe('https://example.com');
   });
 });

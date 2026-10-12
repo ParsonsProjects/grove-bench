@@ -53,7 +53,7 @@ describe('isListable', () => {
     for (const p of ['shot.png', 'a/b/chart.SVG', 'report.pdf', 'index.html', 'demo.webm', 'data.csv', 'deck.pptx']) {
       expect(isListable(p)).toBe(true);
     }
-    for (const p of ['src/app.ts', 'notes.md', 'out.log', 'data.json', 'Makefile', 'macro.xlsm']) {
+    for (const p of ['src/app.ts', 'notes.md', 'out.log', 'data.json', 'Makefile', 'macro.xlsm', 'old.xls', 'notes.odt']) {
       expect(isListable(p)).toBe(false);
     }
   });
@@ -64,9 +64,15 @@ describe('isListable', () => {
     expect(isListable('dist/assets/logo.png')).toBe(false);
     expect(isListable(path.join('.git', 'x.png'))).toBe(false);
     expect(isListable('coverage/index.html')).toBe(false);
-    expect(isListable('Build/logo.png')).toBe(false);
+    expect(isListable('Dist/logo.png')).toBe(false);
+    expect(isListable('target/screenshots/home.png')).toBe(false);
     // A file named like one of those folders is fine.
     expect(isListable('screenshots/dist.png')).toBe(true);
+  });
+
+  it('keeps out/ and build/, where scripts save reports and screenshots too', () => {
+    expect(isListable('out/report.pdf')).toBe(true);
+    expect(isListable('build/screenshots/home.png')).toBe(true);
   });
 });
 

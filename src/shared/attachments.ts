@@ -22,6 +22,9 @@ export function worktreeFileUrl(sessionId: string, filePath: string): string {
   return `${ATTACHMENT_SCHEME}://worktree/${encodeURIComponent(sessionId)}/${encodeURIComponent(filePath)}`;
 }
 
+/** A file name's or path's extension, lower case: '' for none, and for a
+ *  name that only starts with a dot (`.env`). The one parser the helpers
+ *  below share, so a name is never read two ways. */
 function extOf(name: string): string {
   const base = name.slice(Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\')) + 1);
   const dot = base.lastIndexOf('.');
@@ -50,8 +53,9 @@ export function worktreeImageType(name: string): string {
 }
 
 /** The files a turn's "Files made" list picks out, by extension: output to
- *  look at, not source code. Office formats that can hold macros (.docm,
- *  .xlsm, the old .xls) are left out, since a click opens them. */
+ *  look at, not source code. Formats that can hold macros (.docm, .xlsm, the
+ *  old .xls, and OpenDocument's .odt/.ods/.odp) are left out, since a click
+ *  opens them. */
 const MADE_FILE_KINDS: Readonly<Record<string, MadeFileKind>> = {
   ...Object.fromEntries(Object.keys(WORKTREE_IMAGE_TYPES).filter((e) => e !== 'ico').map((e) => [e, 'image' as const])),
   pdf: 'pdf',
@@ -71,11 +75,8 @@ const MADE_FILE_KINDS: Readonly<Record<string, MadeFileKind>> = {
   csv: 'data',
   tsv: 'data',
   xlsx: 'data',
-  ods: 'data',
   docx: 'document',
   pptx: 'document',
-  odt: 'document',
-  odp: 'document',
 };
 
 /** The kind of a file a turn's "Files made" list shows, or null for one it
@@ -104,8 +105,7 @@ const MEDIA_TYPE_BY_EXT: Readonly<Record<string, string>> = {
 
 /** The MIME type for a file name's extension when it is one of those, else ''. */
 export function knownMediaType(name: string): string {
-  const dot = name.lastIndexOf('.');
-  const ext = dot >= 0 ? name.slice(dot + 1).toLowerCase() : '';
+  const ext = extOf(name);
   return Object.hasOwn(MEDIA_TYPE_BY_EXT, ext) ? MEDIA_TYPE_BY_EXT[ext] : '';
 }
 

@@ -693,6 +693,34 @@ describe('OutputPanel images from the agent', () => {
     expect(container.querySelector('[data-msg-id="a1"] img')).toHaveAttribute('src', `grove-attachment://image/${SID}/${SHOT.file}`);
   });
 
+  it('shows an image file the agent wrote under the Write, but not one it deleted or moved', async () => {
+    messageStore.messagesBySession = {
+      [SID]: [
+        { kind: 'tool_call', id: 'w1', toolName: 'Write', toolInput: { file_path: 'chart.svg', content: '<svg/>' }, toolUseId: 'tu1', uuid: 'u1', pending: false },
+        { kind: 'tool_call', id: 'd1', toolName: 'delete', toolInput: {}, toolView: { kind: 'edit', path: 'assets/logo.png' }, toolUseId: 'tu2', uuid: 'u2', pending: false },
+      ],
+    };
+    messageStore.setViewMode(SID, 'detailed');
+    const { container } = render(OutputPanel, { sessionId: SID });
+    await tick();
+
+    expect(container.querySelector('[data-msg-id="w1"] img')).toHaveAttribute('src', `grove-attachment://worktree/${SID}/chart.svg`);
+    expect(container.querySelector('[data-msg-id="d1"] img')).toBeNull();
+  });
+
+  it("leaves out a written image's preview when it won't load", async () => {
+    messageStore.messagesBySession = {
+      [SID]: [{ kind: 'tool_call', id: 'w1', toolName: 'Write', toolInput: { file_path: '/tmp/chart.svg', content: '<svg/>' }, toolUseId: 'tu1', uuid: 'u1', pending: false }],
+    };
+    messageStore.setViewMode(SID, 'detailed');
+    const { container } = render(OutputPanel, { sessionId: SID });
+    await tick();
+
+    await fireEvent.error(container.querySelector('[data-msg-id="w1"] img')!);
+    expect(container.querySelector('[data-msg-id="w1"] img')).toBeNull();
+    expect(container.querySelector('[data-msg-id="w1"]')!.textContent).not.toContain('Image not available');
+  });
+
   it('lists the files a turn made in every view', async () => {
     messageStore.messagesBySession = {
       [SID]: [{ kind: 'files_made', id: 'f1', files: [{ path: 'shots/home.png', kind: 'image', size: 70, image: SHOT }, { path: 'report.pdf', kind: 'pdf', size: 9 }] }],

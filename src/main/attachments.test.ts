@@ -330,7 +330,9 @@ describe('storeMadeFiles', () => {
     const [stored] = await storeMadeFiles('abc123', [shot]);
 
     expect(stored).toMatchObject({ path: 'shots/home.png', kind: 'image', size: shot.size });
-    expect(stored.image?.file).toMatch(/^[0-9a-f]{32}\.png$/);
+    // Named by a hash of its bytes, like an attached file.
+    const sha = crypto.createHash('sha256').update(Buffer.from(PNG, 'base64')).digest('hex').slice(0, 32);
+    expect(stored.image?.file).toBe(`${sha}.png`);
     // The copy stays when the agent writes the file again.
     fs.writeFileSync(shot.absPath, Buffer.from(GIF, 'base64'));
     expect(fs.readFileSync(path.join(folder('abc123'), stored.image!.file)).toString('base64')).toBe(PNG);
@@ -345,8 +347,13 @@ describe('storeMadeFiles', () => {
       { path: 'chart.svg', kind: 'image', size: svg.size },
       { path: 'report.pdf', kind: 'pdf', size: pdf.size },
     ]);
-    expect(fs.existsSync(folder('abc123'))).toBe(true);
-    expect(fs.readdirSync(folder('abc123'))).toEqual([]);
+    // Nothing to copy, so no folder either.
+    expect(fs.existsSync(folder('abc123'))).toBe(false);
+  });
+
+  it('lists an image over 5 MB without a copy', async () => {
+    const big = { ...made('big.png', Buffer.from(PNG, 'base64')), size: 5 * 1024 * 1024 + 1 };
+    expect(await storeMadeFiles('abc123', [big])).toEqual([{ path: 'big.png', kind: 'image', size: big.size }]);
   });
 
   it('lists an image that is gone by now without a copy', async () => {

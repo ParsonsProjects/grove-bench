@@ -4307,6 +4307,39 @@ describe('AgentSessionManager files a turn makes', () => {
     await sessionManager.destroySession('files-own-turn');
   });
 
+  it('lists the files of a turn the user interrupted, once', async () => {
+    const { win } = await startSession('files-interrupt');
+    turnFiles.found = [{ path: 'shots/half.png', absPath: '/repo/shots/half.png', kind: 'image', size: 70 }];
+    await sessionManager.sendMessage('files-interrupt', 'take screenshots');
+
+    await sessionManager.interruptQuery('files-interrupt');
+    expect(turnFiles.instances[0].finished).toBe(true);
+    // The agent's result for the interrupted turn lists nothing more.
+    mockAdapter.control!.emitEvent({ type: 'result', subtype: 'error_during_execution', isError: true });
+    await vi.waitFor(() => expect(eventsSent(win).some((e: AgentEvent) => e.type === 'result')).toBe(true));
+
+    expect(eventsSent(win).filter((e: AgentEvent) => e.type === 'files_made')).toHaveLength(1);
+    await sessionManager.destroySession('files-interrupt');
+  });
+
+  it('drops the watch on a stop, so the next turn starts its own', async () => {
+    const { win } = await startSession('files-stop');
+    turnFiles.found = [{ path: 'shots/old.png', absPath: '/repo/shots/old.png', kind: 'image', size: 70 }];
+    await sessionManager.sendMessage('files-stop', 'take screenshots');
+    const stopped = turnFiles.instances[0];
+
+    await sessionManager.stopQuery('files-stop');
+    expect(stopped.closed).toBe(true);
+    expect(stopped.finished).toBe(false);
+    expect(sessionManager.getSession('files-stop')!.turnFiles).toBeNull();
+
+    await vi.waitFor(() => expect(sessionManager.getSession('files-stop')?.queryHandle).toBeTruthy());
+    await sessionManager.sendMessage('files-stop', 'try again');
+    expect(turnFiles.instances).toHaveLength(2);
+    expect(eventsSent(win).some((e: AgentEvent) => e.type === 'files_made')).toBe(false);
+    await sessionManager.destroySession('files-stop');
+  });
+
   it('stops watching when the thread closes mid-turn', async () => {
     await startSession('files-closed');
     await sessionManager.sendMessage('files-closed', 'build it');

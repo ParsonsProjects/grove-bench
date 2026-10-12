@@ -225,26 +225,34 @@ export type WorktreeLookup = (sessionId: string) => string | undefined;
 const MADE_IMAGE_COPIES = 12;
 const MADE_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 
+/** The stored-image extension for a file a turn made, when its type is one
+ *  the attachments folder keeps (PNG, JPEG, GIF, WebP), else ''. */
+function copyableExt(filePath: string): string {
+  const mediaType = worktreeImageType(filePath);
+  return Object.hasOwn(EXT_BY_TYPE, mediaType) ? EXT_BY_TYPE[mediaType as ImageMediaType] : '';
+}
+
 /**
  * The files a turn made, as the files_made event records them: images of a
- * type the attachments folder keeps (PNG, JPEG, GIF, WebP) are copied there,
- * so the thread shows them as they were that turn even once the agent writes
- * them again or the worktree is gone. One that can't be copied is listed
- * without a copy.
+ * type the attachments folder keeps are copied there, so the thread shows
+ * them as they were that turn even once the agent writes them again or the
+ * worktree is gone. The copy is named by a hash of its bytes, taken off the
+ * main thread (fileHash), so a turn's screenshots don't hold the window up.
+ * One that can't be copied is listed without a copy.
  */
 export async function storeMadeFiles(sessionId: string, found: readonly FoundFile[]): Promise<MadeFile[]> {
-  let copies = 0;
-  const folder = found.some((f) => f.kind === 'image') ? await ensureFolder(sessionId) : null;
+  const toCopy = new Set(found.filter((f) => copyableExt(f.path) && f.size <= MADE_IMAGE_MAX_BYTES).slice(0, MADE_IMAGE_COPIES));
+  const folder = toCopy.size > 0 ? await ensureFolder(sessionId) : null;
   return Promise.all(found.map(async (f): Promise<MadeFile> => {
     const made: MadeFile = { path: f.path, kind: f.kind, size: f.size };
-    const mediaType = worktreeImageType(f.path);
-    if (!folder || !Object.hasOwn(EXT_BY_TYPE, mediaType) || f.size > MADE_IMAGE_MAX_BYTES || copies >= MADE_IMAGE_COPIES) return made;
-    copies++;
+    if (!folder || !toCopy.has(f)) return made;
     try {
-      const data = (await fs.promises.readFile(f.absPath)).toString('base64');
-      const image = await saveImage(sessionId, folder, { data, mediaType: mediaType as ImageMediaType });
-      return image ? { ...made, image } : made;
-    } catch {
+      const data = await fs.promises.readFile(f.absPath);
+      const file = `${await fileHash(data)}.${copyableExt(f.path)}`;
+      await writeOnce(folder, file, data);
+      return { ...made, image: { file } };
+    } catch (err) {
+      logger.debug(`[attachments] could not copy ${f.path} for ${sessionId}:`, err);
       return made;
     }
   }));

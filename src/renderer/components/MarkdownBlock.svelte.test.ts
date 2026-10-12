@@ -86,6 +86,34 @@ describe('MarkdownBlock links', () => {
     expect(open).toHaveBeenCalledWith('s1', 'out/test report.pdf');
   });
 
+  it('opens a link given as an absolute path or a file:// URL, which DOMPurify would drop', async () => {
+    const open = vi.mocked(window.groveBench.openWorktreeFile);
+    open.mockClear();
+    const { container } = render(MarkdownBlock, {
+      content: '[a](C:\\Users\\me\\wt\\report.pdf) and [b](file:///C:/wt/data.csv)',
+      sessionId: 's1',
+    });
+    const [a, b] = container.querySelectorAll('a');
+    expect(a.dataset.localHref).toBe('C:\\Users\\me\\wt\\report.pdf');
+    await fireEvent.click(a);
+    await fireEvent.click(b);
+    expect(open).toHaveBeenNthCalledWith(1, 's1', 'C:\\Users\\me\\wt\\report.pdf');
+    expect(open).toHaveBeenNthCalledWith(2, 's1', 'file:///C:/wt/data.csv');
+  });
+
+  it('opens a web page at the anchor the link names', async () => {
+    const open = vi.mocked(window.groveBench.openWorktreeFile);
+    open.mockClear().mockResolvedValueOnce({ kind: 'preview', url: 'file:///C:/wt/report.html' });
+    const { previewStore } = await import('../stores/preview.svelte.js');
+    const navigate = vi.spyOn(previewStore, 'navigate').mockResolvedValue();
+    const { container } = render(MarkdownBlock, { content: '[results](report.html#summary)', sessionId: 's1' });
+
+    await fireEvent.click(container.querySelector('a')!);
+    expect(open).toHaveBeenCalledWith('s1', 'report.html');
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith('s1', 'user', 'file:///C:/wt/report.html#summary'));
+    navigate.mockRestore();
+  });
+
   it('opens no file without a thread', async () => {
     const open = vi.mocked(window.groveBench.openWorktreeFile);
     open.mockClear();
@@ -134,6 +162,12 @@ describe('MarkdownBlock images from the worktree', () => {
     container.querySelector('img')!.dispatchEvent(new Event('error'));
     expect(container.querySelector('img')).toBeNull();
     expect(container.textContent).toContain('Image not found: shots/gone.png');
+  });
+
+  it('ignores a query on an image path', async () => {
+    const { container } = render(MarkdownBlock, { content: '![Home](shots/home.png?v=2)', sessionId: 's1' });
+    await tick();
+    expect(container.querySelector('img')?.getAttribute('src')).toBe('grove-attachment://worktree/s1/shots%2Fhome.png');
   });
 
   it('points images at the worktree while the reply streams too', async () => {

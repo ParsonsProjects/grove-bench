@@ -7,7 +7,7 @@
   import { writeRichText, encodeCopyText } from '$lib/clipboard.js';
   import { COPY_MARK, isRenderedCopyButton, renderedCode, renderedTable } from '$lib/copy-mark.js';
   import { HIGHLIGHT_MARK, highlightWhenVisible } from '$lib/code-highlight.js';
-  import { localFilePath, openWorktreeFile } from '$lib/worktree-files.js';
+  import { localFilePath, localFileTarget, openWorktreeFile } from '$lib/worktree-files.js';
   import { madeFileKind, worktreeFileUrl, worktreeImageType } from '../../shared/attachments.js';
 
   const COPY_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"></rect><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path></svg>`;
@@ -63,12 +63,24 @@
     },
   };
 
-  // One-time setup: configured marked instances with custom code, table and image renderers
+  /** Link renderer: a link to an output file in the worktree (madeFileKind)
+   *  keeps the path as written in `data-local-href`. DOMPurify would drop an
+   *  absolute one (`C:\\...`, `file:///...`) from `href`, which only holds `#`. */
+  const linkRenderer = {
+    link(this: Renderer, token: Tokens.Link) {
+      const local = localFilePath(token.href);
+      if (local === null || !madeFileKind(local)) return false;
+      const title = token.title ? ` title="${escapeAttr(token.title)}"` : '';
+      return `<a href="#" data-local-href="${escapeAttr(token.href)}"${title}>${this.parser.parseInline(token.tokens)}</a>`;
+    },
+  };
+
+  // One-time setup: configured marked instances with custom code, table, image and link renderers
   const markedInstance = new Marked({ gfm: true, breaks: true });
-  markedInstance.use({ renderer: { ...codeRenderer(true), ...tableRenderer, ...imageRenderer } });
+  markedInstance.use({ renderer: { ...codeRenderer(true), ...tableRenderer, ...imageRenderer, ...linkRenderer } });
 
   const markedStreaming = new Marked({ gfm: true, breaks: true });
-  markedStreaming.use({ renderer: { ...codeRenderer(false), ...tableRenderer, ...imageRenderer } });
+  markedStreaming.use({ renderer: { ...codeRenderer(false), ...tableRenderer, ...imageRenderer, ...linkRenderer } });
 
   export function renderMarkdown(content: string, opts: { highlight?: boolean } = {}): string {
     const instance = opts.highlight === false ? markedStreaming : markedInstance;
@@ -146,12 +158,12 @@
         openLink(href, e);
         return;
       }
-      const local = localFilePath(href);
-      if (local !== null && sessionId && madeFileKind(local)) {
+      const local = localFileTarget(anchor.dataset.localHref ?? href);
+      if (local !== null && sessionId && madeFileKind(local.path)) {
         const sid = sessionId;
-        openWorktreeFile(sid, local)
-          .then((found) => { if (!found) anchor.title = `${local} isn't in this thread's worktree`; })
-          .catch((err) => console.warn(`Could not open ${local}:`, err));
+        openWorktreeFile(sid, local.path, local.hash)
+          .then((found) => { if (!found) anchor.title = `${local.path} isn't in this thread's worktree`; })
+          .catch((err) => console.warn(`Could not open ${local.path}:`, err));
       }
     };
     // An image from the worktree that won't load (gone, or outside it) says so.
