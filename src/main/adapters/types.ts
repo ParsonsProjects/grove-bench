@@ -321,6 +321,9 @@ export interface CliSignInDescriptor {
   /** The command that signs in, or starts the CLI so it asks
    *  (e.g. `copilot login`, `claude`). Shown with a copy button. */
   command: string;
+  /** The shell `command` is written for, when it only works in one. Omit
+   *  for a command Command Prompt and PowerShell both run. */
+  shell?: 'PowerShell';
   /** The provider's install and setup page. */
   setupUrl: string;
 }
@@ -378,6 +381,10 @@ export interface AgentAdapter {
   /** Find out for real whether the agent is signed in, for agents whose
    *  prerequisite check can't tell (it starts the agent briefly). */
   checkSignIn?(): Promise<SignInCheck>;
+
+  /** Open a terminal window running the provider's own sign-in (Windows),
+   *  for the user to finish there. Grove sees nothing of the sign-in. */
+  openSignIn?(): Promise<void>;
 
   /** Cheap model for background tasks run on this agent: memory notes and
    *  compaction, commit messages, skill suggestions. Used unless the user

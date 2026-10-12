@@ -71,16 +71,29 @@ describe('accountEnv()', () => {
 });
 
 describe('accountSignInCommand()', () => {
-  it("runs Claude Code's own sign-in with the account's folder, in PowerShell, then clears it", () => {
-    expect(accountSignInCommand('C:\\Users\\me\\.claude-work'))
-      .toBe("$env:CLAUDE_CONFIG_DIR = 'C:\\Users\\me\\.claude-work'; claude auth login; Remove-Item Env:CLAUDE_CONFIG_DIR");
+  it("runs Claude Code's own sign-in with the account's folder in a child cmd, so Command Prompt and PowerShell both run it", () => {
+    expect(accountSignInCommand('C:\\Users\\alan_\\.claude-work'))
+      .toEqual({ command: 'cmd /c "set CLAUDE_CONFIG_DIR=C:\\Users\\alan_\\.claude-work&& claude auth login"' });
   });
 
-  it('keeps a quote in the folder name inside the string, typographic ones too', () => {
-    expect(accountSignInCommand("C:\\Users\\o'neil\\.claude-work")).toContain("'C:\\Users\\o''neil\\.claude-work'");
+  it('keeps spaces, quotes and cmd syntax characters in the folder name as they are', () => {
+    expect(accountSignInCommand("C:\\My Files\\o'neil\\.claude-work").command)
+      .toBe(`cmd /c "set CLAUDE_CONFIG_DIR=C:\\My Files\\o'neil\\.claude-work&& claude auth login"`);
+    expect(accountSignInCommand('D:\\R&D\\a|b<c>^d').command)
+      .toBe('cmd /c "set CLAUDE_CONFIG_DIR=D:\\R^&D\\a^|b^<c^>^^d&& claude auth login"');
+  });
+
+  it("falls back to a PowerShell line for a folder name one of the shells would change, and says so", () => {
+    for (const dir of ['C:\\100%\\x', 'C:\\a$b\\x', 'C:\\a`b\\x', 'C:\\a\u201Cb\\x']) {
+      expect(accountSignInCommand(dir).shell).toBe('PowerShell');
+    }
+    expect(accountSignInCommand("C:\\a$b\\o'neil")).toEqual({
+      command: "$env:CLAUDE_CONFIG_DIR = 'C:\\a$b\\o''neil'; claude auth login; Remove-Item Env:CLAUDE_CONFIG_DIR",
+      shell: 'PowerShell',
+    });
     // PowerShell also ends a single-quoted string at these (CharTraits.IsSingleQuote).
     for (const q of ['\u2018', '\u2019', '\u201A', '\u201B']) {
-      expect(accountSignInCommand(`C:\\Users\\O${q}Neil\\.claude-work`)).toContain(`'C:\\Users\\O${q}${q}Neil\\.claude-work'`);
+      expect(accountSignInCommand(`C:\\a$b\\O${q}Neil`).command).toContain(`'C:\\a$b\\O${q}${q}Neil'`);
     }
   });
 });

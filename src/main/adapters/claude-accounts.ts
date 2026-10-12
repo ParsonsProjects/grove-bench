@@ -67,13 +67,34 @@ export function accountEnv(env: Readonly<Record<string, string | undefined>>, co
  *  CharTraits.cs). Each is written twice to stand for itself. */
 const POWERSHELL_SINGLE_QUOTES = /['\u2018\u2019\u201A\u201B]/g;
 
-/** The PowerShell line that signs in to the account: Claude Code's own
- *  `claude auth login`, pointed at the account's folder. The variable is
- *  cleared afterwards, so a later `claude` in the same window uses the
- *  default account again. */
-export function accountSignInCommand(configDir: string): string {
+/** Characters cmd.exe reads as syntax outside quotes. A folder name can hold
+ *  them, so each is escaped with ^ (taken literally inside the quotes the
+ *  outer shell sees, then unescaped by the inner cmd). */
+const CMD_SPECIAL = /[&|<>^]/g;
+
+/** Characters one of the two shells would change inside the double-quoted
+ *  command: cmd expands %NAME% even in quotes; PowerShell expands $name,
+ *  reads ` as an escape, and ends the string at a straight or typographic
+ *  double quote. */
+const NOT_SHELL_NEUTRAL = /[%$`"\u201C\u201D\u201E]/;
+
+/**
+ * The line that signs in to the account by hand: Claude Code's own `claude
+ * auth login`, pointed at the account's folder. It runs in a child cmd, so it
+ * works pasted into Command Prompt or PowerShell, and the setting ends with
+ * that command. For a folder whose name one of the shells would change, it is
+ * a PowerShell line instead (`shell` says so), which clears the setting
+ * afterwards.
+ */
+export function accountSignInCommand(configDir: string): { command: string; shell?: 'PowerShell' } {
+  if (!NOT_SHELL_NEUTRAL.test(configDir)) {
+    return { command: `cmd /c "set CLAUDE_CONFIG_DIR=${configDir.replace(CMD_SPECIAL, '^$&')}&& claude auth login"` };
+  }
   const quoted = configDir.replace(POWERSHELL_SINGLE_QUOTES, '$&$&');
-  return `$env:CLAUDE_CONFIG_DIR = '${quoted}'; claude auth login; Remove-Item Env:CLAUDE_CONFIG_DIR`;
+  return {
+    command: `$env:CLAUDE_CONFIG_DIR = '${quoted}'; claude auth login; Remove-Item Env:CLAUDE_CONFIG_DIR`,
+    shell: 'PowerShell',
+  };
 }
 
 /** `name` in `env`, matched in any case as Windows does. */

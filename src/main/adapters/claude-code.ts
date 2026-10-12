@@ -38,6 +38,22 @@ const execFileAsync = promisify(execFile);
  *  Claude Code sign-in. */
 export const CLAUDE_AUTH_ERROR_MESSAGE = 'Claude couldn\'t sign in. Check or replace your Anthropic API key in Settings → Agents (Grovekeepers), or run "claude" in a terminal and sign in, then try again.';
 
+/** What cmd runs to open the sign-in window: `start` opens a console window
+ *  of its own (titled, in quotes, so the next part isn't taken as the title)
+ *  for Claude Code's `claude auth login`, which waits for a key at the end so
+ *  the result stays readable. Fixed text: the account's folder reaches it
+ *  through the environment, never this line. */
+export const SIGN_IN_WINDOW_COMMAND = 'start "Claude Code sign-in" cmd.exe /d /c "claude auth login & echo. & pause"';
+
+/** `env` with `dir` first on its PATH (matched in any case, as Windows does,
+ *  so it doesn't gain a second Path). Unchanged without a folder. */
+export function withPathDir(env: Record<string, string | undefined>, dir: string | null): Record<string, string | undefined> {
+  if (!dir) return env;
+  const key = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH';
+  const current = env[key];
+  return { ...env, [key]: current ? `${dir}${path.delimiter}${current}` : dir };
+}
+
 /** CLAUDE_AUTH_ERROR_MESSAGE for one of the user's other accounts, which
  *  signs in with its own command rather than plain "claude". */
 export function claudeAccountAuthErrorMessage(accountName: string): string {
@@ -1446,7 +1462,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       accountLabel: 'Claude plan',
       accountDetail: 'Pro, Max, Team or Enterprise',
       cliName: 'Claude Code',
-      command: account ? accountSignInCommand(account.configDir) : 'claude',
+      ...(account ? accountSignInCommand(account.configDir) : { command: 'claude' }),
       setupUrl: 'https://code.claude.com/docs/en/setup',
     };
     this.skillDirs = account
@@ -1587,6 +1603,9 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     // folder's sign-in counts.
     const envMethod = this.account ? null : envAuthMethod();
 
+    // The sign-in window looks for the CLI here too (openSignIn).
+    this.cliDir = claudePath ? path.dirname(claudePath) : null;
+
     if (!claudePath) {
       return {
         available: false,
@@ -1629,6 +1648,35 @@ export class ClaudeCodeAdapter implements AgentAdapter {
    *  The saved key is added after. */
   private agentEnv(env: Record<string, string | undefined>): Record<string, string | undefined> {
     return this.account ? accountEnv(env, this.account.configDir) : env;
+  }
+
+  /** Where checkPrerequisites last found the `claude` CLI. An app started
+   *  from the Start menu often has a PATH without it, so the sign-in window
+   *  gets this folder on its PATH. */
+  private cliDir: string | null = null;
+
+  /**
+   * Open a console window running Claude Code's own `claude auth login`, with
+   * the account's folder for an account agent (and without the sign-ins
+   * inherited from Grove's environment). The user finishes Anthropic's
+   * sign-in there; Grove sees nothing of it (DESIGN.md, "Authentication
+   * rules"). Windows only: `start` gives the command a console of its own.
+   */
+  async openSignIn(): Promise<void> {
+    if (process.platform !== 'win32') {
+      throw new Error('Grove Bench opens a sign-in window on Windows only. Run the sign-in command in a terminal instead.');
+    }
+    const env = withPathDir(this.agentEnv(cleanEnv()), this.cliDir);
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn('cmd.exe', ['/d', '/c', SIGN_IN_WINDOW_COMMAND], {
+        env,
+        stdio: 'ignore',
+        // The line is cmd syntax: Node's quoting for programs would break it.
+        windowsVerbatimArguments: true,
+      });
+      child.once('error', reject);
+      child.once('spawn', () => resolve());
+    });
   }
 
   /** Options for `claude` CLI commands (auth status, mcp, plugin): nothing

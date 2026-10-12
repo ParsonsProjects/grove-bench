@@ -830,6 +830,12 @@ export function registerHandlers() {
     return status;
   });
 
+  ipcMain.handle(IPC.AGENT_OPEN_SIGN_IN, async (_event, adapterId: unknown): Promise<void> => {
+    const adapter = typeof adapterId === 'string' ? adapterRegistry.get(adapterId) : undefined;
+    if (!adapter?.openSignIn) throw new Error('This agent can\'t open a sign-in window.');
+    await adapter.openSignIn();
+  });
+
   ipcMain.handle(IPC.PREREQUISITES_GH, async () => {
     const gh = await checkGh();
     const cached = loadPrerequisiteCache();

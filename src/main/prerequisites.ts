@@ -107,6 +107,8 @@ function buildAgentStatus(agentStatus: AdapterPrerequisiteStatus, adapter: Agent
     ...(!agentStatus.available && agentStatus.installCommand ? { installCommand: agentStatus.installCommand } : {}),
     ...(agentStatus.installRequired ? { installRequired: true } : {}),
     ...(adapter.checkSignIn ? { signInCheckable: true } : {}),
+    // The window is a Windows console (openSignIn).
+    ...(adapter.openSignIn && process.platform === 'win32' ? { signInOpenable: true } : {}),
     apiKey: apiKeyState(adapter),
     ...(adapter.cliSignIn ? { cliSignIn: { ...adapter.cliSignIn } } : {}),
   };

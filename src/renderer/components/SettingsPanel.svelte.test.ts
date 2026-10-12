@@ -530,6 +530,34 @@ describe('SettingsPanel Claude accounts', () => {
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Remove the Work account' })).not.toBeInTheDocument());
   });
 
+  it("opens an account's sign-in window and re-checks after", async () => {
+    agentsStore.list = [claudeWithAccounts, work];
+    settingsStore.folds.set('agent:claude-account-work', true);
+    store.prerequisites = {
+      git: { available: true },
+      agents: {
+        'claude-account-work': {
+          available: true, authenticated: false, signInOpenable: true,
+          cliSignIn: { accountLabel: 'Claude plan', cliName: 'Claude Code', command: 'cmd /c "set CLAUDE_CONFIG_DIR=C:\\Users\\me\\.claude-work&& claude auth login"', setupUrl: 'https://example.com' },
+        },
+      },
+    };
+    try {
+      await openAgentSection();
+      const group = (await screen.findByRole('button', { name: 'Remove the Work account' })).closest('section')!;
+      expect(group).toHaveTextContent("Opens a window that runs Claude Code's own sign-in. Then click Re-check.");
+      expect(group).toHaveTextContent('Or run this yourself:');
+      expect(within(group).getByRole('group', { name: 'Sign-in command' })).toHaveTextContent('cmd /c "set CLAUDE_CONFIG_DIR=');
+
+      await fireEvent.click(within(group).getByRole('button', { name: 'Sign in' }));
+      expect(mockGroveBench.openAgentSignIn).toHaveBeenCalledWith('claude-account-work');
+      await fireEvent.click(within(group).getByRole('button', { name: 'Re-check' }));
+      expect(mockGroveBench.checkPrerequisites).toHaveBeenCalled();
+    } finally {
+      store.prerequisites = null;
+    }
+  });
+
   it('offers Add account only on the agent that can add accounts', async () => {
     agentsStore.list = [claude];
     await openAgentSection();

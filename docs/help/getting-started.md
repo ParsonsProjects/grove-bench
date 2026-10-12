@@ -15,7 +15,7 @@ If [git](https://git-scm.com/downloads) isn't installed, the first screen and ea
 
 The first time you start a thread, it may ask for the agent's credentials. Claude Agent runs on Claude Code, so it signs in the same way. There are two ways in:
 
-- **Use your Claude plan** (Pro, Max, Team or Enterprise): install Claude Code (copy the install command shown, or **How to install Claude Code** opens Anthropic's setup page), run `claude` in a terminal and sign in when it asks, then click **Re-check**. Grove Bench never sees your sign-in; the agent reads it itself.
+- **Use your Claude plan** (Pro, Max, Team or Enterprise): install Claude Code (copy the install command shown, or **How to install Claude Code** opens Anthropic's setup page), click **Sign in** to open a window that runs Claude Code's own sign-in (or run `claude` in a terminal yourself), sign in when it asks, then click **Re-check**. Grove Bench never sees your sign-in; the agent reads it itself.
 - **Or use an API key**: paste an Anthropic API key (**Get a key** opens the Claude Console) and click **Save key**. Grove Bench checks the key with Anthropic before saving it, so a mistyped key is turned away there and then. If Anthropic can't be reached, the key is saved anyway and your first message shows whether it works. API usage is billed per use by Anthropic, separately from any Claude plan. The key is stored encrypted on this computer, and while saved it is used instead of a plan sign-in. You can change or remove it later in **Settings → Agents (Grovekeepers)**.
 
 If you already set `ANTHROPIC_API_KEY`, just click **Re-check**.

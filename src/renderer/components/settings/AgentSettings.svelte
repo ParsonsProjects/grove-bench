@@ -22,6 +22,7 @@
   import { Input } from '$lib/components/ui/input/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import PlusIcon from '@lucide/svelte/icons/plus';
+  import { stripIpcErrorPrefix } from '$lib/mcp-errors.js';
 
   // ── Per-agent defaults ──
   // One group per registered agent: its credentials, its default model and
@@ -57,6 +58,17 @@
       }
     } catch (e) {
       signInErrors = { ...signInErrors, [adapterId]: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
+  /** Open the agent's own sign-in in a terminal window. The user finishes
+   *  there, then clicks Re-check. */
+  async function openSignIn(adapterId: string) {
+    signInErrors = { ...signInErrors, [adapterId]: '' };
+    try {
+      await window.groveBench.openAgentSignIn(adapterId);
+    } catch (e) {
+      signInErrors = { ...signInErrors, [adapterId]: stripIpcErrorPrefix(e instanceof Error ? e.message : String(e)) };
     }
   }
 
@@ -276,6 +288,16 @@
             {/if}
           </p>
           {#if status.cliSignIn && status.available && !status.apiKey?.saved}
+            {#if status.signInOpenable}
+              <div class="flex flex-wrap items-center gap-2">
+                <Button size="sm" onclick={() => openSignIn(agent.id)}>Sign in</Button>
+                <Button variant="secondary" size="sm" disabled={prerequisitesStore.checking} onclick={() => prerequisitesStore.refresh()}>Re-check</Button>
+                <span class="text-xs text-muted-foreground">Opens a window that runs {status.cliSignIn.cliName}'s own sign-in. Then click Re-check.</span>
+              </div>
+              <p class="text-xs text-muted-foreground">Or run this yourself{status.cliSignIn.shell ? ` in ${status.cliSignIn.shell}` : ''}:</p>
+            {:else if status.cliSignIn.shell}
+              <p class="text-xs text-muted-foreground">Run this in {status.cliSignIn.shell}:</p>
+            {/if}
             <div class="flex items-center gap-2">
               <div class="flex-1 min-w-0"><CommandLine command={status.cliSignIn.command} label="Sign-in command" /></div>
               {#if status.signInCheckable}

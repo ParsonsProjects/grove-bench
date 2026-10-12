@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
-import { render, cleanup, screen, fireEvent, waitFor } from '@testing-library/svelte';
+import { render, cleanup, screen, fireEvent, waitFor, within } from '@testing-library/svelte';
 import { mockGroveBench } from '../__mocks__/setup.js';
 import DraftPane from './DraftPane.svelte';
 import { draftStore } from '../stores/draft.svelte.js';
@@ -206,6 +206,39 @@ describe('DraftPane sign-in choices', () => {
     const key = screen.getByRole('region', { name: 'Use an API key' });
     expect(key).toHaveTextContent('Or use an API key');
     expect(key).toHaveTextContent('Billed per use, separately from any plan. Stored encrypted');
+  });
+
+  it('opens a sign-in window when the agent can, keeping the command as a fallback', async () => {
+    const openable = withCli(true);
+    openable.agents['claude-code'] = { ...openable.agents['claude-code'], signInOpenable: true };
+    store.prerequisites = openable;
+    mockGroveBench.checkPrerequisites.mockResolvedValue(openable);
+    render(DraftPane);
+    const plan = await screen.findByRole('region', { name: 'Sign in with Claude Code' });
+    expect(plan).toHaveTextContent("Sign in opens a window that runs Claude Code's own sign-in");
+    expect(plan).toHaveTextContent('Or run this yourself:');
+    await fireEvent.click(within(plan).getByRole('button', { name: 'Sign in' }));
+    expect(mockGroveBench.openAgentSignIn).toHaveBeenCalledWith('claude-code');
+  });
+
+  it("shows why a sign-in window didn't open", async () => {
+    const openable = withCli(true);
+    openable.agents['claude-code'] = { ...openable.agents['claude-code'], signInOpenable: true };
+    store.prerequisites = openable;
+    mockGroveBench.checkPrerequisites.mockResolvedValue(openable);
+    mockGroveBench.openAgentSignIn.mockRejectedValueOnce(new Error("Error invoking remote method 'agent:openSignIn': Error: spawn cmd.exe ENOENT"));
+    render(DraftPane);
+    await fireEvent.click(await screen.findByRole('button', { name: 'Sign in' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/^spawn cmd.exe ENOENT$/);
+  });
+
+  it('names the shell for a command that only works in one', async () => {
+    const ps = withCli(true);
+    ps.agents['claude-code'] = { ...ps.agents['claude-code'], cliSignIn: { ...cliSignIn, command: "$env:CLAUDE_CONFIG_DIR = 'C:\\a$b'; claude auth login", shell: 'PowerShell' } };
+    store.prerequisites = ps;
+    mockGroveBench.checkPrerequisites.mockResolvedValue(ps);
+    render(DraftPane);
+    expect(await screen.findByRole('region', { name: 'Sign in with Claude Code' })).toHaveTextContent('in PowerShell and sign in when it asks');
   });
 
   it('links to the install guide when the CLI is not installed', async () => {

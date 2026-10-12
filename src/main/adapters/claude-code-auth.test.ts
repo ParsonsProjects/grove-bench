@@ -14,7 +14,9 @@ vi.mock('../logger.js', () => ({
   logger: { debug: vi.fn(), warn: vi.fn(), info: vi.fn(), error: vi.fn() },
 }));
 
-import { ClaudeCodeAdapter, CLAUDE_AUTH_ERROR_MESSAGE, envAuthMethod, transformMessage, verifyAnthropicKey } from './claude-code.js';
+import { ClaudeCodeAdapter, CLAUDE_AUTH_ERROR_MESSAGE, SIGN_IN_WINDOW_COMMAND, envAuthMethod, transformMessage, verifyAnthropicKey, withPathDir } from './claude-code.js';
+import path from 'node:path';
+import { spawn } from 'node:child_process';
 import { getApiKey } from '../credentials.js';
 import { net } from 'electron';
 
@@ -202,7 +204,8 @@ describe('ClaudeCodeAdapter for another Claude account', () => {
   });
 
   it("signs in with Claude Code's own command, pointed at the account's folder", () => {
-    expect(adapter.cliSignIn.command).toBe("$env:CLAUDE_CONFIG_DIR = '/home/me/.claude-work'; claude auth login; Remove-Item Env:CLAUDE_CONFIG_DIR");
+    expect(adapter.cliSignIn.command).toBe('cmd /c "set CLAUDE_CONFIG_DIR=/home/me/.claude-work&& claude auth login"');
+    expect(adapter.cliSignIn.shell).toBeUndefined();
     expect(adapter.authErrorMessage).toContain('Work');
     expect(adapter.authErrorMessage).not.toContain('run "claude"');
   });
@@ -256,5 +259,74 @@ describe('ClaudeCodeAdapter for another Claude account', () => {
 
   it("doesn't look for its threads' titles in the default folder", async () => {
     expect(await adapter.getConversationTitle('session-1', '/repo')).toBeNull();
+  });
+});
+
+describe('ClaudeCodeAdapter.openSignIn()', () => {
+  const realPlatform = process.platform;
+  const setPlatform = (value: string) => Object.defineProperty(process, 'platform', { value, configurable: true });
+  afterEach(() => setPlatform(realPlatform));
+
+  /** A spawned child that starts (or fails to). */
+  function child(fail?: Error) {
+    const handlers: Record<string, (arg?: unknown) => void> = {};
+    const c = { once: (event: string, fn: (arg?: unknown) => void) => { handlers[event] = fn; return c; } };
+    queueMicrotask(() => (fail ? handlers.error?.(fail) : handlers.spawn?.()));
+    return c;
+  }
+
+  it("opens a console window running Claude Code's own sign-in, with the account's folder and the CLI on its PATH", async () => {
+    setPlatform('win32');
+    vi.mocked(spawn).mockImplementation((() => child()) as never);
+    const adapter = new ClaudeCodeAdapter(undefined, { id: 'claude-account-work', name: 'Work', configDir: 'C:\\Users\\me\\.claude-work' });
+    // Where the prerequisite check found the CLI.
+    adapter['cliDir'] = 'C:\\Users\\me\\.local\\bin';
+    process.env.ANTHROPIC_API_KEY = 'sk-shell';
+
+    await adapter.openSignIn();
+
+    const [file, args, opts] = vi.mocked(spawn).mock.calls[0] as unknown as [string, string[], { env: Record<string, string>; windowsVerbatimArguments: boolean }];
+    expect(file).toBe('cmd.exe');
+    expect(args).toEqual(['/d', '/c', SIGN_IN_WINDOW_COMMAND]);
+    expect(SIGN_IN_WINDOW_COMMAND).toBe('start "Claude Code sign-in" cmd.exe /d /c "claude auth login & echo. & pause"');
+    expect(opts.windowsVerbatimArguments).toBe(true);
+    expect(opts.env.CLAUDE_CONFIG_DIR).toBe('C:\\Users\\me\\.claude-work');
+    expect(opts.env).not.toHaveProperty('ANTHROPIC_API_KEY');
+    const pathKey = Object.keys(opts.env).find((k) => k.toUpperCase() === 'PATH')!;
+    expect(opts.env[pathKey].startsWith(`C:\\Users\\me\\.local\\bin${path.delimiter}`)).toBe(true);
+  });
+
+  it('opens the default account without a folder of its own', async () => {
+    setPlatform('win32');
+    vi.mocked(spawn).mockImplementation((() => child()) as never);
+    const saved = process.env.CLAUDE_CONFIG_DIR;
+    delete process.env.CLAUDE_CONFIG_DIR;
+    try {
+      await new ClaudeCodeAdapter().openSignIn();
+      expect((vi.mocked(spawn).mock.calls[0][2] as { env: Record<string, string> }).env).not.toHaveProperty('CLAUDE_CONFIG_DIR');
+    } finally {
+      if (saved !== undefined) process.env.CLAUDE_CONFIG_DIR = saved;
+    }
+  });
+
+  it("says so when the window couldn't be opened", async () => {
+    setPlatform('win32');
+    vi.mocked(spawn).mockImplementation((() => child(new Error('spawn cmd.exe ENOENT'))) as never);
+    await expect(new ClaudeCodeAdapter().openSignIn()).rejects.toThrow('spawn cmd.exe ENOENT');
+  });
+
+  it('opens nothing outside Windows', async () => {
+    setPlatform('linux');
+    await expect(new ClaudeCodeAdapter().openSignIn()).rejects.toThrow(/Windows only/);
+    expect(spawn).not.toHaveBeenCalled();
+  });
+});
+
+describe('withPathDir()', () => {
+  it('puts the folder first on the PATH it finds in any case, without adding a second one', () => {
+    expect(withPathDir({ Path: 'C:\\Windows' }, 'C:\\bin')).toEqual({ Path: `C:\\bin${path.delimiter}C:\\Windows` });
+    expect(withPathDir({}, 'C:\\bin')).toEqual({ PATH: 'C:\\bin' });
+    const env = { PATH: '/usr/bin' };
+    expect(withPathDir(env, null)).toBe(env);
   });
 });

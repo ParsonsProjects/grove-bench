@@ -200,6 +200,23 @@ describe('checkCorePrerequisites()', () => {
     expect(otherCheck).toHaveBeenCalledTimes(1);
   });
 
+  it('offers a sign-in window for agents that can open one, on Windows only', async () => {
+    const realPlatform = process.platform;
+    const setPlatform = (value: string) => Object.defineProperty(process, 'platform', { value, configurable: true });
+    mockAdapters = [makeAdapter({ openSignIn: vi.fn() }), makeAdapter({ id: 'codex', displayName: 'Codex' })];
+    mockCheckPrerequisites.mockResolvedValue({ available: true, authenticated: false });
+    try {
+      setPlatform('win32');
+      const result = await checkCorePrerequisites();
+      expect(result.agents['claude-code'].signInOpenable).toBe(true);
+      expect(result.agents.codex).not.toHaveProperty('signInOpenable');
+      setPlatform('darwin');
+      expect((await checkCorePrerequisites()).agents['claude-code']).not.toHaveProperty('signInOpenable');
+    } finally {
+      setPlatform(realPlatform);
+    }
+  });
+
   it("keeps the other agents when one agent's check throws", async () => {
     const broken = vi.fn().mockRejectedValue(new Error('boom'));
     mockAdapters = [makeAdapter(), makeAdapter({ id: 'codex', displayName: 'Codex', checkPrerequisites: broken })];

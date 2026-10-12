@@ -1324,3 +1324,20 @@ describe('Claude accounts', () => {
     expect(m.registerClaudeAccount).not.toHaveBeenCalled();
   });
 });
+
+describe('AGENT_OPEN_SIGN_IN', () => {
+  it("opens the agent's own sign-in window", async () => {
+    const openSignIn = vi.fn().mockResolvedValue(undefined);
+    m.adapterRegistry.get.mockReturnValue({ id: 'claude-account-work', openSignIn });
+    await invoke(IPC.AGENT_OPEN_SIGN_IN, 'claude-account-work');
+    expect(m.adapterRegistry.get).toHaveBeenCalledWith('claude-account-work');
+    expect(openSignIn).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses an agent that can't, or one it doesn't know", async () => {
+    m.adapterRegistry.get.mockReturnValue({ id: 'codex' });
+    await expect(Promise.resolve().then(() => invoke(IPC.AGENT_OPEN_SIGN_IN, 'codex'))).rejects.toThrow(/can't open a sign-in window/);
+    m.adapterRegistry.get.mockReturnValue(undefined);
+    await expect(Promise.resolve().then(() => invoke(IPC.AGENT_OPEN_SIGN_IN, 42))).rejects.toThrow(/can't open a sign-in window/);
+  });
+});

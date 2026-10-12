@@ -121,6 +121,7 @@ const mockGroveBench = {
   getCachedPrerequisites: vi.fn(() => Promise.resolve(null as import('../../shared/types.js').PrerequisiteStatus | null)),
   checkGhPrerequisite: vi.fn(() => Promise.resolve({ available: false })),
   checkAgentSignIn: vi.fn(() => Promise.resolve({ git: { available: true }, agents: {} })),
+  openAgentSignIn: vi.fn(() => Promise.resolve()),
   setApiKey: vi.fn((adapterId: string, _key: string) => Promise.resolve({ git: { available: true, meetsMinimum: true }, agents: { [adapterId]: { available: true, authenticated: false, apiKey: { label: 'API key', helpUrl: 'https://example.com', saved: true, canStore: true } } } } as import('../../shared/types.js').PrerequisiteStatus)),
   clearApiKey: vi.fn((adapterId: string) => Promise.resolve({ git: { available: true, meetsMinimum: true }, agents: { [adapterId]: { available: true, authenticated: false, apiKey: { label: 'API key', helpUrl: 'https://example.com', saved: false, canStore: true } } } } as import('../../shared/types.js').PrerequisiteStatus)),
   notifyRestoreComplete: vi.fn(),

@@ -155,6 +155,9 @@ export interface AgentPrerequisiteStatus {
   authMessage?: string;
   /** The agent can be asked whether it is signed in (checkAgentSignIn). */
   signInCheckable?: boolean;
+  /** Grove can open the agent's own sign-in in a terminal window
+   *  (openAgentSignIn). */
+  signInOpenable?: boolean;
   /** When the agent isn't installed: the command that installs it, for the
    *  user to copy and run (Grove never runs it). */
   installCommand?: string;
@@ -186,6 +189,8 @@ export interface AgentPrerequisiteStatus {
     accountDetail?: string;
     cliName: string;
     command: string;
+    /** The shell `command` is written for, when it only works in one. */
+    shell?: 'PowerShell';
     setupUrl: string;
   };
 }
@@ -1144,6 +1149,9 @@ export interface GroveBenchAPI {
   /** Start an agent briefly to find out whether it is signed in
    *  (signInCheckable agents). Resolves with the updated status. */
   checkAgentSignIn(adapterId: string): Promise<PrerequisiteStatus>;
+  /** Open a terminal window running the agent's own sign-in
+   *  (signInOpenable agents). Resolves once the window has started. */
+  openAgentSignIn(adapterId: string): Promise<void>;
   /** Tell main that startup session restore has finished. */
   notifyRestoreComplete(): void;
 
@@ -1844,6 +1852,7 @@ export const IPC = {
   PREREQUISITES_CACHED: 'prerequisites:cached',
   PREREQUISITES_GH: 'prerequisites:gh',
   PREREQUISITES_CHECK_SIGN_IN: 'prerequisites:checkSignIn',
+  AGENT_OPEN_SIGN_IN: 'agent:openSignIn',
   CREDENTIALS_SET_API_KEY: 'credentials:setApiKey',
   CREDENTIALS_CLEAR_API_KEY: 'credentials:clearApiKey',
   /** Renderer → main: session restore finished; deferred background work may start. */

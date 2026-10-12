@@ -20,6 +20,7 @@
   import GitNotice from './GitNotice.svelte';
   import DraftStatusBar from './DraftStatusBar.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
+  import { stripIpcErrorPrefix } from '$lib/mcp-errors.js';
 
   let textEl = $state<HTMLTextAreaElement | null>(null);
 
@@ -51,6 +52,17 @@
       if (store.prerequisites?.agents[agentId]?.authenticated === false) signInError = `${agentName} still isn't signed in.`;
     } catch (e) {
       signInError = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  /** Open the agent's own sign-in in a terminal window; the user finishes
+   *  there, then clicks Re-check. */
+  async function openSignIn() {
+    signInError = '';
+    try {
+      await window.groveBench.openAgentSignIn(agentId);
+    } catch (e) {
+      signInError = stripIpcErrorPrefix(e instanceof Error ? e.message : String(e));
     }
   }
 
@@ -254,9 +266,16 @@
             <p class="text-xs font-medium text-foreground">
               Use your {cli.accountLabel}{#if cli.accountDetail}{' '}<span class="font-normal text-muted-foreground">({cli.accountDetail})</span>{/if}
             </p>
-            {#if installed}
+            {#if installed && agentStatus?.signInOpenable}
               <p class="text-xs text-muted-foreground">
-                Run <code class="text-foreground">{cli.command}</code> in a terminal and sign in when it asks. Then click <span class="text-foreground">{agentStatus?.signInCheckable ? 'Check sign-in' : 'Re-check'}</span>.
+                <span class="text-foreground">Sign in</span> opens a window that runs {cli.cliName}'s own sign-in. Sign in when it asks, then click <span class="text-foreground">Re-check</span>.
+              </p>
+              <Button size="sm" class="self-start" onclick={openSignIn}>Sign in</Button>
+              <p class="text-xs text-muted-foreground">Or run this yourself{cli.shell ? ` in ${cli.shell}` : ''}:</p>
+              <CommandLine command={cli.command} label="Sign-in command" />
+            {:else if installed}
+              <p class="text-xs text-muted-foreground">
+                Run <code class="text-foreground">{cli.command}</code> in {cli.shell ?? 'a terminal'} and sign in when it asks. Then click <span class="text-foreground">{agentStatus?.signInCheckable ? 'Check sign-in' : 'Re-check'}</span>.
               </p>
               <CommandLine command={cli.command} label="Sign-in command" />
             {:else}
