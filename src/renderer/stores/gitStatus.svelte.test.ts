@@ -7,6 +7,10 @@ import type { GitStatusResult } from '../../shared/types.js';
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Drop results a test queued but didn't use, so they can't reach the next
+  // test (CI runs them in a random order). Each keeps its default.
+  mockGroveBench.getGitStatus.mockReset();
+  mockGroveBench.getDefaultBranch.mockReset();
   gitStatusStore.statusBySession = {};
 });
 
@@ -93,6 +97,8 @@ describe('gitStatusStore — overlapping refreshes', () => {
     const slow = deferred<GitStatusResult>();
     mockGroveBench.getGitStatus.mockReturnValueOnce(slow.promise);
     const pending = gitStatusStore.refresh('gone');
+    // The default view looks up its base first: clear once the fetch is out.
+    await vi.waitFor(() => expect(mockGroveBench.getGitStatus).toHaveBeenCalledWith('gone', { scope: 'branch', base: 'main' }));
     gitStatusStore.clear('gone');
     slow.resolve(entry('x.ts'));
     await pending;

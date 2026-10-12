@@ -565,6 +565,8 @@ describe('ChangesReviewPanel — Branch view by default', () => {
   afterEach(() => gitStatusStore.clear(SID));
 
   it('opens on the Branch view, listed first, against the default base', async () => {
+    // Start fresh: a refresh from an earlier test would throttle this one's.
+    gitStatusStore.clear(SID);
     gitStatusStore.scopeBySession = {};
     store.sessions = [{ id: SID, branch: 'feat', repoPath: '/repo', status: 'running' }] as never;
     mockGroveBench.getDefaultBranch.mockResolvedValue('main');
