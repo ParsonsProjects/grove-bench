@@ -12,10 +12,14 @@
   import ThinkingBlock from './ThinkingBlock.svelte';
   import SystemBlock from './SystemBlock.svelte';
   import GitIdentityNotice from './GitIdentityNotice.svelte';
+  import ImageAttachments from './ImageAttachments.svelte';
+  import FilesMadeBlock from './FilesMadeBlock.svelte';
   import { settingsStore } from '../stores/settings.svelte.js';
   import { Button } from '$lib/components/ui/button/index.js';
+  import { focusImagesOnly, type MessageViewMode } from '$lib/message-view.js';
 
-  let { sessionId, msg, summaryMode }: { sessionId: string; msg: ChatMessage; summaryMode: boolean } = $props();
+  let { sessionId, msg, viewMode }: { sessionId: string; msg: ChatMessage; viewMode: MessageViewMode } = $props();
+  let summaryMode = $derived(viewMode !== 'detailed');
 </script>
 
 {#if msg.kind === 'user'}
@@ -29,7 +33,10 @@
   />
 
 {:else if msg.kind === 'text'}
-  <AssistantTextBlock content={msg.text} />
+  <AssistantTextBlock {sessionId} content={msg.text} />
+
+{:else if msg.kind === 'tool_call' && msg.images?.length && focusImagesOnly(msg, viewMode)}
+  <ImageAttachments {sessionId} images={msg.images} class="mb-1" />
 
 {:else if msg.kind === 'tool_call'}
   <ToolCallBlock
@@ -114,6 +121,9 @@
 
 {:else if msg.kind === 'git_identity_missing'}
   <GitIdentityNotice />
+
+{:else if msg.kind === 'files_made'}
+  <FilesMadeBlock {sessionId} files={msg.files} more={msg.more} />
 
 {:else if msg.kind === 'result'}
   <div class="py-1 border-t border-border mt-1">

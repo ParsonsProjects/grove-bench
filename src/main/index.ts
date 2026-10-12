@@ -135,7 +135,7 @@ app.whenReady().then(() => {
   // can't freeze the window (process-host.ts). First, before the window
   // starts asking for git status.
   startProcessHost();
-  handleAttachmentProtocol();
+  handleAttachmentProtocol((id) => worktreeManager.getWorktree(id)?.path);
   void removeDeletedFolders();
   createWindow();
 

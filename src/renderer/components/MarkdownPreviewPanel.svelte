@@ -54,7 +54,7 @@
       {/snippet}
     </PanelHeader>
     <div class="flex-1 overflow-y-auto px-6 py-4 text-sm" bind:this={contentEl}>
-      <MarkdownBlock content={markdownPreviewStore.content} />
+      <MarkdownBlock content={markdownPreviewStore.content} sessionId={markdownPreviewStore.sessionId} />
     </div>
   </aside>
 {/if}

@@ -1,4 +1,4 @@
-import type { AgentEvent, ControlDescriptor, FileAttachment, ImageAttachment, McpElicitationRequest, McpElicitationResponse, McpServerInfo, PermissionDecision, PermissionMode, SessionControls, StoredFile, StoredImage } from '../../shared/types.js';
+import type { AgentEvent, ControlDescriptor, FileAttachment, ImageAttachment, MadeFile, McpElicitationRequest, McpElicitationResponse, McpServerInfo, PermissionDecision, PermissionMode, SessionControls, StoredFile, StoredImage } from '../../shared/types.js';
 import { CONTROL_IDS, subagentParent } from '../../shared/types.js';
 import { attachedFilesFromSent, type SentBlock } from '../../shared/prompt-text.js';
 import { userMessageLabel } from '../lib/message-label.js';
@@ -67,8 +67,9 @@ export interface PendingTool {
 }
 
 /** An image shown in the thread: inline while the app still has its data
- *  (just sent), otherwise a file in the conversation's attachments folder. */
-export type ThreadImage = { name: string; dataUrl: string } | StoredImage;
+ *  (just sent), a file in the conversation's attachments folder, or (`url`)
+ *  one the agent saved in its worktree, loaded from there. */
+export type ThreadImage = { name: string; dataUrl: string } | { name: string; url: string } | StoredImage;
 
 /** Another file attached to a message (a PDF, audio, ...). `file` is its name
  *  in the attachments folder, once main has saved it. */
@@ -203,6 +204,15 @@ export interface ChatLimitMessage {
   timedOut?: boolean;
 }
 
+/** The files the agent made in a turn, listed just before its result
+ *  (FilesMadeBlock). `more`: how many others weren't listed. */
+export interface ChatFilesMadeMessage {
+  kind: 'files_made';
+  id: string;
+  files: MadeFile[];
+  more?: number;
+}
+
 export type ChatMessage =
   | ChatTextMessage
   | ChatToolCallMessage
@@ -215,7 +225,8 @@ export type ChatMessage =
   | ChatThinkingMessage
   | ChatQuestionMessage
   | ChatElicitationMessage
-  | ChatLimitMessage;
+  | ChatLimitMessage
+  | ChatFilesMadeMessage;
 
 // ─── Store ───
 
@@ -1497,6 +1508,16 @@ class MessageStore {
           kind: 'thinking',
           id: nextId(),
           thinking: event.thinking,
+        });
+        break;
+
+      case 'files_made':
+        this.flushStreamingText(sessionId);
+        this.pushMessage(sessionId, {
+          kind: 'files_made',
+          id: nextId(),
+          files: event.files,
+          ...(event.more ? { more: event.more } : {}),
         });
         break;
 

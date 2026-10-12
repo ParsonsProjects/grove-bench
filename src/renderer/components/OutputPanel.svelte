@@ -42,7 +42,6 @@
   let viewMode = $derived(messageStore.getViewMode(sessionId));
   // Subagents' messages are in their own threads (SubagentPanel).
   let filteredMessages = $derived(filterVisibleMessages(threadMessages(allMessages), viewMode));
-  let summaryMode = $derived(viewMode !== 'detailed');
 
   // ─── Lazy loading: only render recent messages, load older on demand ───
   const PAGE_SIZE = 50;
@@ -519,7 +518,7 @@
       data-msg-id={msg.id}
       class={isCurrent ? 'ring-1 ring-yellow-500/60 bg-yellow-500/10' : ''}
     >
-      <ThreadMessage {sessionId} {msg} {summaryMode} />
+      <ThreadMessage {sessionId} {msg} {viewMode} />
     </div>
 
   {/each}
@@ -537,7 +536,7 @@
   <!-- Streaming text (live) -->
   {#if streamingText}
     <div class="py-1 text-sm text-foreground">
-      {#if paneShown}<MarkdownBlock content={streamingText} streaming />{/if}
+      {#if paneShown}<MarkdownBlock content={streamingText} streaming {sessionId} />{/if}
       <span class="inline-block w-1.5 h-4 bg-muted-foreground animate-pulse ml-0.5 align-text-bottom"></span>
     </div>
   {:else if arrival !== null}

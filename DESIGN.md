@@ -211,6 +211,16 @@ Rules (`src/main/preview-policy.ts`, `src/main/preview.ts`):
 
 Keys pressed in your page are handled in `before-input-event` (`src/main/preview-keys.ts`): browser keys run on the page and Grove's window shortcuts (listed once in `src/shared/grove-shortcuts.ts`: `Alt+1..5`, `Alt+M/T/E`, `Ctrl+B`, `Ctrl+N`, `Ctrl+Shift+T`) and `Ctrl+L` are sent back to the renderer (`preview:key`), which replays them as a window `keydown`. The pages close on `session:close`, `session:destroy` and when the Grove window closes; the agent's page also closes on `session:sleep`, since nothing drives it while the agent is asleep (the agent's pages are windows, so leaving them open would stop `window-all-closed` from quitting the app). Events a closing page still fires are ignored.
 
+#### Images and files the agent makes
+
+The thread shows what the agent makes, not just what it says:
+
+- **Images a tool returns** (an MCP screenshot, Grove's `preview_screenshot`, `Read` on a .png) are saved to the thread's attachments folder (`src/main/attachments.ts`) and shown under the tool call, in every view: Focus shows the images alone. A subagent's show under its line in the thread too.
+- **Files made in a turn**: while a turn runs, `src/main/turn-files.ts` watches the worktree (`fs.watch`, recursive) and notes changed paths of kinds worth looking at (images, PDFs, web pages, video, audio, spreadsheets, Office documents). At the end of the turn, files still there and written since it began are sent as a `files_made` event just before the result. A turn the user interrupts still lists its files; a stop (which a rewind uses, about to put files back), a sleep or a close drops the watch, all through one `endTurnFiles`, so a watch never carries into the next turn. Dependency, cache and compiled-output folders (`node_modules`, `dist`, `target`, `coverage` and the like) are skipped, but not `out` or `build`, where scripts save reports too. A web page counts only when the turn created it and didn't `Edit` it, and the list stops at 24 files. Up to 12 PNG/JPEG/GIF/WebP images (5 MB each) are copied to the attachments folder, named by a hash taken off the main thread, so older turns keep showing the image as it was. Files outside the worktree (a temp folder) aren't seen.
+- **Images and links in a reply** that name a worktree file (`![home](shots/home.png)`, `[report](out/report.html)`): images load over `grove-attachment://worktree/<id>/<path>`, and links to the same kinds of file the turn list shows open it. Relative and absolute paths and `file://` URLs all work: the renderer keeps a local link's path in `data-local-href`, since DOMPurify drops an absolute one from `href`. A trailing `?query` is ignored and a `#anchor` carries over to the Preview tab. Links to other files (source code) do nothing, so a link the agent wrote can't open a script.
+
+`src/main/worktree-files.ts` checks every such path: it must resolve, symlinks followed, inside the worktree, and only image types are served. Opening one from the thread sends a web page to the Preview tab, opens PDFs, media, spreadsheets, Office files and raster images in their default app, and only shows anything else (scripts, SVGs, macro files) in its folder.
+
 ### 4.3 Renderer / UI
 
 Svelte 5 app with a simple layout:

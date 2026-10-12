@@ -3,6 +3,7 @@
  * manager (agent-session.ts) and the modules it delegates to.
  */
 import type { BrowserWindow } from 'electron';
+import type { TurnFiles } from './turn-files.js';
 import type { AgentEvent, McpElicitationResponse, PermissionMode, SessionStatus } from '../shared/types.js';
 import type { AgentAdapter, AgentQueryHandle, PermissionResponse, UserMessage } from './adapters/types.js';
 import type { Checkpoints } from './no-git-checkpoints.js';
@@ -160,6 +161,9 @@ export interface ManagedSession {
   /** Spend, tool calls and time measured for the limits that pause the
    *  thread (session-limits.ts), and a limit question waiting on the user. */
   limits: SessionLimits;
+  /** Watches the worktree while a turn runs, for the files it makes
+   *  (turn-files.ts). Null between turns. */
+  turnFiles?: TurnFiles | null;
 }
 
 export interface SessionCompletionResult {

@@ -16,7 +16,7 @@ export const VIEW_MODE_LABELS: Record<MessageViewMode, string> = {
 export const VIEW_MODE_DESCRIPTIONS: Record<MessageViewMode, string> = {
   detailed: 'Everything: thinking, every tool call, system notes',
   summary: 'Hides thinking and most tool calls (edits, writes, shell commands, images and subagents stay)',
-  focus: 'Agent responses, questions and your answers only (no tool calls or thinking; subagents show as one line)',
+  focus: 'Agent responses, questions and your answers only (no tool calls or thinking; images stay; subagents show as one line)',
 };
 
 /** Grove's own MCP servers (the Preview browser, project memory): local, and
@@ -106,7 +106,9 @@ export function isMessageVisible(msg: ChatMessage, mode: MessageViewMode): boole
   // Focus mode: only what the user must read or act on.
   switch (msg.kind) {
     case 'tool_call':
-      return isAgentCall(msg);
+      // A tool's images (a screenshot) are output to look at: they show on
+      // their own, without the tool call (focusImagesOnly).
+      return isAgentCall(msg) || !!msg.images?.length;
     case 'system':
       return false;
     case 'permission':
@@ -121,6 +123,12 @@ export function isMessageVisible(msg: ChatMessage, mode: MessageViewMode): boole
       // steps), so keeping only the last would hide the part that matters.
       return true;
   }
+}
+
+/** Whether a message shows only the images its tool returned: a tool call
+ *  Focus keeps for its images (isMessageVisible), which hides tool calls. */
+export function focusImagesOnly(msg: ChatMessage, mode: MessageViewMode): boolean {
+  return mode === 'focus' && msg.kind === 'tool_call' && !isAgentCall(msg) && !!msg.images?.length;
 }
 
 /** Filter a message list down to what's visible for the current view mode. */

@@ -592,6 +592,22 @@ describe('OS notification triggers', () => {
   });
 });
 
+describe('ingestEvent: files_made', () => {
+  it('lists the files a turn made after its reply, ahead of the result', () => {
+    messageStore.streamingText[SID] = 'Saved the screenshots.';
+    const files = [
+      { path: 'shots/home.png', kind: 'image' as const, size: 70, image: { file: 'c'.repeat(32) + '.png' } },
+      { path: 'report.pdf', kind: 'pdf' as const, size: 9 },
+    ];
+    messageStore.ingestEvent(SID, { type: 'files_made', files, more: 2 } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'result', subtype: 'success', isError: false } as AgentEvent);
+
+    const msgs = messageStore.getMessages(SID);
+    expect(msgs.map((m) => m.kind)).toEqual(['text', 'files_made', 'result']);
+    expect(msgs[1]).toMatchObject({ kind: 'files_made', files, more: 2 });
+  });
+});
+
 describe('ingestEvent — result', () => {
   it('marks session as not running and idle', () => {
     messageStore.setIsRunning(SID, true);
