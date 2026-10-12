@@ -208,7 +208,7 @@ function timestamp(iso: string): number {
 }
 
 /** Folder order, then newest first, then path, so the order is stable. */
-function byIndexOrder(a: MemoryEntry, b: MemoryEntry): number {
+export function byIndexOrder(a: MemoryEntry, b: MemoryEntry): number {
   return folderRank(a) - folderRank(b)
     || timestamp(b.updatedAt) - timestamp(a.updatedAt)
     || a.relativePath.localeCompare(b.relativePath);
@@ -219,7 +219,9 @@ function oneLine(text: string, max: number): string {
   return flat.length > max ? `${flat.slice(0, max - 1).trimEnd()}…` : flat;
 }
 
-function indexLine(entry: MemoryEntry): string {
+/** One line of the memory index: path, title, description and, for a thread
+ *  note, when it was updated. */
+export function indexLine(entry: MemoryEntry): string {
   const title = oneLine(entry.title, MAX_INDEX_DESCRIPTION_CHARS);
   let line = `- ${entry.relativePath}: ${title}`;
   if (entry.description) {

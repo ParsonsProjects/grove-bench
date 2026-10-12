@@ -18,7 +18,10 @@ const mockMemory = vi.hoisted(() => ({
   listMemoryFiles: vi.fn(() => []),
   readMemoryFile: vi.fn<(...args: unknown[]) => string | null>(() => null),
   writeMemoryFile: vi.fn(),
+  byIndexOrder: () => 0,
+  indexLine: (e: { relativePath: string }) => `- ${e.relativePath}`,
   SESSION_NOTE_MAX_AGE_DAYS: 30,
+  FULL_CONVENTIONS_BYTES: 6 * 1024,
 }));
 
 vi.mock('./settings.js', () => ({

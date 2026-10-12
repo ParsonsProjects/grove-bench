@@ -22,6 +22,10 @@ Memory is organized into four folders:
 - **architecture/** — Data flow, module relationships, and architectural decisions
 - **sessions/** — Thread notes: notes about one feature, task, bug or investigation, and plans. They expire (see below), so work-specific detail goes here rather than in architecture/
 
+## Auto-Save
+
+With **Auto-save project memory** on, a background model reads the recent part of a thread after its turns (at most every few minutes) and saves what's worth keeping. It doesn't get every memory file. It gets the full text of the ones that matter, up to 24 KB: files the thread read or wrote, the thread's own note, conventions/, then files whose title or description matches the conversation. The rest are listed in an index. It only rewrites files it was shown in full. For a file it only saw in the index, it can add a short section at the end under a dated heading ("## Added 2026-10-12"), which compaction later merges in.
+
 ## Thread Note Expiry
 
 Thread notes are archived when they haven't been updated for 30 days, and at most the 20 newest are kept. This happens after every memory auto-save and when a thread starts, whether or not auto-compact is on. A note's age comes from its `updatedAt` frontmatter, falling back to the file's modification time, so an actively-written note is never archived by mistake. Archived notes go to a hidden folder inside the memory directory (the last 50 are kept) rather than being destroyed outright.
