@@ -1536,6 +1536,10 @@ export interface GroveBenchSettings {
   defaultSystemPromptAppend: string;
   /** The user's own ACP agents. Read at launch, so a change applies after a restart. */
   acpAgents: AcpAgentSetting[];
+  /** Adapter id of the agent new threads start on (Set as default in
+   *  Settings > Agents). Empty, or an agent new threads can't use (an alpha
+   *  agent turned off, a removed account), means the Claude agent. */
+  defaultAgent: string;
   /** Claude accounts besides the default one, each offered as its own agent.
    *  Read at launch, so a change applies after a restart. */
   claudeAccounts: ClaudeAccountSetting[];

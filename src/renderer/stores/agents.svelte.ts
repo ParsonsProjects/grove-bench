@@ -67,6 +67,14 @@ class AgentsStore {
     return !agent || offeredForNew(agent, enabledAlpha);
   }
 
+  /** The agent a new conversation starts on: the user's pick
+   *  (settings.defaultAgent) when it is listed and offered, else the
+   *  registry's default (the Claude agent). */
+  defaultForNew(defaultAgent: string | null | undefined, enabledAlpha: readonly string[]): string | null {
+    const picked = this.get(defaultAgent);
+    return picked && offeredForNew(picked, enabledAlpha) ? picked.id : this.defaultId;
+  }
+
   /** The agents a new conversation can be started with. */
   offered(enabledAlpha: readonly string[]): AgentSummary[] {
     return this.list.filter((a) => this.isOffered(a.id, enabledAlpha));

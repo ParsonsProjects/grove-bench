@@ -30,6 +30,20 @@ describe('agentsStore', () => {
     expect(agentsStore.isOffered('later', [])).toBe(true);
   });
 
+  it("starts new threads on the user's pick when they can use it, else on the registry's default", () => {
+    const work = { id: 'claude-account-work', displayName: 'Claude Agent (Work)', capabilities: {}, account: { name: 'Work', configDir: 'C:\\w' } };
+    const opencode = { id: 'opencode', displayName: 'OpenCode', capabilities: {}, stage: 'alpha' as const };
+    agentsStore.list = [{ ...claude, isDefault: true }, work, opencode];
+    expect(agentsStore.defaultForNew('', [])).toBe('claude-code');
+    expect(agentsStore.defaultForNew('claude-account-work', [])).toBe('claude-account-work');
+    // An alpha agent turned off, a removed account, or one it doesn't know.
+    expect(agentsStore.defaultForNew('opencode', [])).toBe('claude-code');
+    expect(agentsStore.defaultForNew('opencode', ['opencode'])).toBe('opencode');
+    agentsStore.list = [{ ...claude, isDefault: true }, { ...work, account: { ...work.account, removed: true } }];
+    expect(agentsStore.defaultForNew('claude-account-work', [])).toBe('claude-code');
+    expect(agentsStore.defaultForNew('gone', [])).toBe('claude-code');
+  });
+
   it('uses the agent marked default, else the first', async () => {
     mockGroveBench.listAdapters.mockResolvedValue([claude, codex]);
     await agentsStore.load();

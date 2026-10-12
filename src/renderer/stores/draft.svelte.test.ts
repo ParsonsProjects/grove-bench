@@ -66,14 +66,48 @@ describe('draftStore.open', () => {
     expect(draftStore.models.map((m) => m.value)).toEqual(['opus', 'haiku']);
   });
 
-  it('defaults to the open conversation\'s project, agent and model', () => {
+  it("takes the open conversation's project, but always starts on the default agent", () => {
     store.sessions = [{ id: 's1', branch: 'feat/x', repoPath: '/repo/two', status: 'running', agentType: 'codex' }];
     store.activeSessionId = 's1';
     vi.spyOn(messageStore, 'getModel').mockReturnValue('o4');
     draftStore.open();
-    expect(draftStore.draft).toMatchObject({ repoPath: '/repo/two', agentId: 'codex', model: 'o4' });
+    expect(draftStore.draft).toMatchObject({ repoPath: '/repo/two', agentId: 'claude-code', model: '' });
     // Opening the draft takes over the main pane.
     expect(store.activeSessionId).toBeNull();
+  });
+
+  it("starts on the open conversation's model when that runs on the default agent", () => {
+    store.sessions = [{ id: 's1', branch: 'feat/x', repoPath: '/repo/two', status: 'running', agentType: 'claude-code' }];
+    store.activeSessionId = 's1';
+    vi.spyOn(messageStore, 'getModel').mockReturnValue('haiku');
+    draftStore.open();
+    expect(draftStore.draft).toMatchObject({ agentId: 'claude-code', model: 'haiku' });
+  });
+
+  describe('the default agent from Settings', () => {
+    afterEach(() => {
+      settingsStore.current = { ...settingsStore.current, defaultAgent: '' };
+    });
+
+    it('starts new threads on it, whatever thread is open', () => {
+      settingsStore.current = { ...settingsStore.current, defaultAgent: 'codex' };
+      store.sessions = [{ id: 's1', branch: 'b', repoPath: '/repo/one', status: 'running', agentType: 'claude-code' }];
+      store.activeSessionId = 's1';
+      draftStore.open();
+      expect(draftStore.draft?.agentId).toBe('codex');
+    });
+
+    it('still lets a thread be started on a chosen agent', () => {
+      settingsStore.current = { ...settingsStore.current, defaultAgent: 'codex' };
+      draftStore.open('/repo/one', { agentId: 'claude-code' });
+      expect(draftStore.draft?.agentId).toBe('claude-code');
+    });
+
+    it("falls back to the Claude agent when new threads can't use it", () => {
+      settingsStore.current = { ...settingsStore.current, defaultAgent: 'claude-account-gone' };
+      draftStore.open('/repo/one');
+      expect(draftStore.draft?.agentId).toBe('claude-code');
+    });
   });
 
   it('keeps the typed message when opened again in another project', () => {

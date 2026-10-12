@@ -75,6 +75,15 @@ describe('loadSettings', () => {
     expect(loadSettings().enabledAlphaAgents).toEqual([]);
   });
 
+  it('starts new threads on the Claude agent until another is picked, and drops a malformed pick', () => {
+    mockReadFileSync.mockImplementation(() => { throw enoent(); });
+    expect(loadSettings().defaultAgent).toBe('');
+    mockReadFileSync.mockReturnValue(JSON.stringify({ defaultAgent: 'claude-account-work' }));
+    expect(loadSettings().defaultAgent).toBe('claude-account-work');
+    mockReadFileSync.mockReturnValue(JSON.stringify({ defaultAgent: 42 }));
+    expect(loadSettings().defaultAgent).toBe('');
+  });
+
   it('starts with no other Claude accounts, fills a missing id or folder, and drops a malformed list', () => {
     mockReadFileSync.mockImplementation(() => { throw enoent(); });
     expect(loadSettings().claudeAccounts).toEqual([]);

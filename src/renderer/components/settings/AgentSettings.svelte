@@ -2,7 +2,7 @@
   import { tick, untrack } from 'svelte';
   import { settingsStore } from '../../stores/settings.svelte.js';
   import { store } from '../../stores/sessions.svelte.js';
-  import { agentsStore } from '../../stores/agents.svelte.js';
+  import { agentsStore, offeredForNew } from '../../stores/agents.svelte.js';
   import ApiKeyField from '../ApiKeyField.svelte';
   import CommandLine from '../CommandLine.svelte';
   import RegistryAgents from './RegistryAgents.svelte';
@@ -22,6 +22,7 @@
   import { Input } from '$lib/components/ui/input/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import PlusIcon from '@lucide/svelte/icons/plus';
+  import CheckIcon from '@lucide/svelte/icons/check';
   import { stripIpcErrorPrefix } from '$lib/mcp-errors.js';
 
   // ── Per-agent defaults ──
@@ -70,6 +71,15 @@
     } catch (e) {
       signInErrors = { ...signInErrors, [adapterId]: stripIpcErrorPrefix(e instanceof Error ? e.message : String(e)) };
     }
+  }
+
+  /** The agent new threads start on. Exactly one is: the user's pick when
+   *  new threads can use it, else the Claude agent. */
+  const defaultForNew = $derived(agentsStore.defaultForNew(settingsStore.draft.defaultAgent, settingsStore.draft.enabledAlphaAgents));
+
+  function makeDefault(adapterId: string) {
+    // The Claude agent is the default when none is picked.
+    settingsStore.setDefaultAgent(adapterId === agentsStore.defaultId ? '' : adapterId);
   }
 
   let agentGroups = $state<AgentGroup[]>([]);
@@ -234,12 +244,26 @@
       ? `Grove Bench's support for ${agent.displayName} is still being tested, so expect rough edges.`
       : agent.account ? `Claude Code folder: ${agent.account.configDir}` : undefined}
     card
-    collapse={{ key: `agent:${agent.id}`, open: agent.id === agentsStore.defaultId }}
+    collapse={{ key: `agent:${agent.id}`, open: agent.id === defaultForNew }}
   >
     {#snippet titleAside()}
       {#if agent.stage === 'alpha'}<AlphaBadge />{/if}
     {/snippet}
     {#snippet actions()}
+      {#if agent.id === defaultForNew}
+        <span data-setting="default-agent">
+          <Button variant="secondary" size="sm" class="text-xs" aria-pressed="true" aria-label="{agent.displayName} is the default for new threads" title="New threads start on this agent">
+            <CheckIcon class="size-3.5" aria-hidden="true" />
+            Default
+          </Button>
+        </span>
+      {:else if offeredForNew(agent, settingsStore.draft.enabledAlphaAgents)}
+        <span data-setting="default-agent">
+          <Button variant="ghost" size="sm" class="text-xs text-muted-foreground" aria-pressed="false" aria-label="Make {agent.displayName} the default for new threads" onclick={() => makeDefault(agent.id)}>
+            Set as default
+          </Button>
+        </span>
+      {/if}
       {#if agent.addsAccounts}
         <span data-setting="claude-accounts">
           <Button variant="outline" size="sm" class="text-xs" onclick={() => (addingAccount = true)}>

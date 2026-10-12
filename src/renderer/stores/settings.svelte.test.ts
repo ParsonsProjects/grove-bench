@@ -17,6 +17,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   workingDirectories: [],
   defaultSystemPromptAppend: '',
   acpAgents: [],
+  defaultAgent: '',
   claudeAccounts: [],
   enabledAlphaAgents: [],
   memoryAutoSave: true,
@@ -70,6 +71,14 @@ describe('Claude accounts', () => {
     expect(settingsStore.draft.claudeAccounts).toEqual([{ id: 'client-a', name: 'Client A', configDir: 'D:\\claude' }]);
     settingsStore.removeClaudeAccount('claude-account-client-a');
     expect(settingsStore.draft.claudeAccounts).toEqual([]);
+  });
+
+  it("stops being the default for new threads when it is removed", () => {
+    settingsStore.draft = { ...DEFAULT_SETTINGS, defaultAgent: 'claude-account-work', claudeAccounts: [{ id: 'work', name: 'Work', configDir: '' }] };
+    settingsStore.removeClaudeAccount('claude-account-other');
+    expect(settingsStore.draft.defaultAgent).toBe('claude-account-work');
+    settingsStore.removeClaudeAccount('claude-account-work');
+    expect(settingsStore.draft.defaultAgent).toBe('');
   });
 });
 

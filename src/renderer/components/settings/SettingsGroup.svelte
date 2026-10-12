@@ -41,7 +41,7 @@
       class="group/fold"
     >
       <summary
-        class="flex items-start gap-2 cursor-pointer select-none hover:bg-accent/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring {card ? 'p-4' : 'py-1'} {actions ? 'pr-40' : ''}"
+        class="flex items-start gap-2 cursor-pointer select-none hover:bg-accent/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring {card ? 'p-4' : 'py-1'} {actions ? 'pr-72' : ''}"
       >
         <ChevronRightIcon class="size-4 mt-0.5 shrink-0 text-muted-foreground transition-transform group-open/fold:rotate-90" aria-hidden="true" />
         {@render heading()}

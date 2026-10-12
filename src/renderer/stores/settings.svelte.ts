@@ -15,6 +15,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   workingDirectories: [],
   defaultSystemPromptAppend: '',
   acpAgents: [],
+  defaultAgent: '',
   claudeAccounts: [],
   enabledAlphaAgents: [],
   memoryAutoSave: true,
@@ -303,6 +304,12 @@ class SettingsStore {
   removeClaudeAccount(adapterId: string) {
     const id = adapterId.replace(/^claude-account-/, '');
     this.draft.claudeAccounts = this.draft.claudeAccounts.filter((a) => (slugify(a.id) || slugify(a.name)) !== id);
+    if (this.draft.defaultAgent === adapterId) this.draft.defaultAgent = '';
+  }
+
+  /** Make `adapterId` the agent new threads start on; '' for the Claude agent. */
+  setDefaultAgent(adapterId: string) {
+    this.draft.defaultAgent = adapterId;
   }
 
 }

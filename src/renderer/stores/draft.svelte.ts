@@ -94,8 +94,9 @@ class DraftStore {
   /**
    * Open the draft in `repoPath` (default: the open conversation's project,
    * then the first project) and show it. An existing draft keeps its message
-   * and moves to that project. A new one takes its agent and model from the
-   * open conversation, or `agentId` when given. With `group`, the
+   * and moves to that project. A new one starts on the default agent
+   * (settings.defaultAgent), or `agentId` when given, and on the open
+   * conversation's model when that runs on the same agent. With `group`, the
    * conversation joins that group (or starts it) when it starts. Opened for
    * a project without one (a project's +, a conversation's controls), an
    * existing draft leaves its group: it is no longer that group's work.
@@ -111,9 +112,9 @@ class DraftStore {
       if (repo !== this.draft.repoPath) this.setRepo(repo);
       if (opts.agentId && opts.agentId !== this.draft.agentId) this.setAgent(opts.agentId);
     } else {
-      // An alpha agent the user hasn't turned on isn't offered, even when the
-      // open conversation runs on it.
-      const agentId = this.offeredAgent(opts.agentId) || this.offeredAgent(active?.agentType) || agentsStore.defaultId || '';
+      // Always the default agent, not the open conversation's, so a project
+      // never quietly starts on another account.
+      const agentId = this.offeredAgent(opts.agentId) || this.defaultAgent();
       // Same agent as the open conversation: start on its model too.
       const model = active && active.agentType === agentId ? messageStore.getModel(active.id) : '';
       const groupId = opts.group && 'groupId' in opts.group ? opts.group.groupId : undefined;
@@ -213,6 +214,13 @@ class DraftStore {
     if ((group && 'groupId' in group) || hadGroupBranch) this.resetToNewBranch();
   }
 
+  /** The agent new conversations start on (agentsStore.defaultForNew), or ''
+   *  before the agent list has loaded. */
+  private defaultAgent(): string {
+    const { defaultAgent, enabledAlphaAgents } = settingsStore.current;
+    return agentsStore.defaultForNew(defaultAgent, enabledAlphaAgents) ?? '';
+  }
+
   /** `id` when new conversations may use it (agentsStore.isOffered), else ''. */
   private offeredAgent(id: string | null | undefined): string {
     return id && agentsStore.isOffered(id, settingsStore.current.enabledAlphaAgents) ? id : '';
@@ -286,7 +294,7 @@ class DraftStore {
     if (!this.draft) return;
     if (!this.draft.agentId) {
       await agentsStore.load();
-      if (this.draft && !this.draft.agentId) this.draft.agentId = agentsStore.defaultId ?? '';
+      if (this.draft && !this.draft.agentId) this.draft.agentId = this.defaultAgent();
     }
     const agentId = this.draft?.agentId;
     if (!agentId) return;

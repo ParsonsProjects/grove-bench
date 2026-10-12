@@ -45,6 +45,7 @@ const SETTINGS = {
   workingDirectories: [],
   defaultSystemPromptAppend: '',
   acpAgents: [],
+  defaultAgent: '',
   claudeAccounts: [],
   enabledAlphaAgents: [],
   memoryAutoSave: true,

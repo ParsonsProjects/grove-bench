@@ -29,7 +29,7 @@ const MODE: ControlDescriptor = {
 function settings(adapterDefaults: GroveBenchSettings['adapterDefaults'] = {}): GroveBenchSettings {
   return {
     toolAllowRules: [], toolDenyRules: [], disabledSkills: [], autoSkillSuggestions: false, showConversationGoal: true,
-    defaultModels: {}, adapterDefaults, showThinkingSummaries: true, cavemanMode: 'off', workingDirectories: [], defaultSystemPromptAppend: '', acpAgents: [], claudeAccounts: [], enabledAlphaAgents: [],
+    defaultModels: {}, adapterDefaults, showThinkingSummaries: true, cavemanMode: 'off', workingDirectories: [], defaultSystemPromptAppend: '', acpAgents: [], defaultAgent: '', claudeAccounts: [], enabledAlphaAgents: [],
     memoryAutoSave: true, memoryAutoCompact: false, memoryCompactTimeoutSeconds: 300, backgroundModels: {},
     autoInstallDeps: false, previewAgentTools: true, idleSleepMinutes: 30, defaultBaseBranch: '', branchNamingRule: '', theme: 'system', alwaysOnTop: false, autoDownloadUpdates: true,
     repoColors: {}, groveCharacters: true, diffViewMode: 'unified', defaultActivityView: 'summary', spellcheck: true,
@@ -558,6 +558,22 @@ describe('SettingsPanel Claude accounts', () => {
     }
   });
 
+  it('makes one agent at a time the default for new threads', async () => {
+    agentsStore.list = [claudeWithAccounts, work];
+    await openAgentSection();
+
+    // The Claude agent until another is picked.
+    expect(await screen.findByRole('button', { name: 'Claude Agent is the default for new threads' })).toHaveAttribute('aria-pressed', 'true');
+    await fireEvent.click(screen.getByRole('button', { name: 'Make Claude Agent (Work) the default for new threads' }));
+    await waitFor(() => expect(lastSaved().defaultAgent).toBe('claude-account-work'));
+    expect(await screen.findByRole('button', { name: 'Claude Agent (Work) is the default for new threads' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getAllByRole('button', { pressed: true })).toHaveLength(1);
+
+    // Back to the Claude agent: no pick is saved.
+    await fireEvent.click(screen.getByRole('button', { name: 'Make Claude Agent the default for new threads' }));
+    await waitFor(() => expect(lastSaved().defaultAgent).toBe(''));
+  });
+
   it('offers Add account only on the agent that can add accounts', async () => {
     agentsStore.list = [claude];
     await openAgentSection();
@@ -582,9 +598,13 @@ describe('SettingsPanel alpha agents', () => {
     // Other agents are not marked.
     expect(screen.getByRole('button', { name: 'Claude Agent default model' }).closest('section')).not.toHaveTextContent('Alpha');
 
+    // It can't be the default for new threads while it is off.
+    expect(screen.queryByRole('button', { name: 'Make OpenCode the default for new threads' })).not.toBeInTheDocument();
+
     await fireEvent.click(box);
     await waitFor(() => expect(lastSaved().enabledAlphaAgents).toEqual(['opencode']));
     expect(await screen.findByRole('button', { name: 'OpenCode default model' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Make OpenCode the default for new threads' })).toBeInTheDocument();
 
     await fireEvent.click(screen.getByRole('checkbox', { name: 'Enable OpenCode' }));
     await waitFor(() => expect(lastSaved().enabledAlphaAgents).toEqual([]));
