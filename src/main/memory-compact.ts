@@ -7,6 +7,8 @@ import * as settings from './settings.js';
 import { adapterRegistry } from './adapters/index.js';
 import { backgroundModelFor } from './background-tasks.js';
 import { effectiveCompactTimeoutSeconds } from '../shared/compact-timeout.js';
+import type { MemoryEntry } from '../shared/types.js';
+import type { AgentAdapter } from './adapters/types.js';
 
 // ─── Types ───
 
@@ -19,6 +21,17 @@ const CompactionFileSchema = z.object({
 
 const CompactionResultSchema = z.object({
   files: z.array(CompactionFileSchema),
+});
+
+const CompactionPlanSchema = z.object({
+  groups: z.array(z.object({
+    paths: z.array(z.string()),
+    reason: z.string().optional().default(''),
+  })).optional().default([]),
+  descriptions: z.array(z.object({
+    path: z.string(),
+    description: z.string(),
+  })).optional().default([]),
 });
 
 export type CompactionResult = z.infer<typeof CompactionResultSchema>;
@@ -42,12 +55,14 @@ export interface CompactionStatus {
   changes?: CompactionChange[];
   /** Snapshot taken before applying — pass to restoreBackup to undo. */
   backupId?: string;
+  /** Files that got a description from the planning step. */
+  descriptionsAdded?: number;
+  /** Merge groups planned but left for the next run. */
+  remainingGroups?: number;
 }
 
 export interface CompactionInfo {
   lastCompactedAt: string | null;
-  /** Whether the last pass was triggered automatically (vs the panel button). */
-  lastAuto?: boolean;
   lastFilesChanged?: number;
 }
 
@@ -72,32 +87,34 @@ export interface CompactOptions {
   cwd?: string;
   /** Which adapter to use for text generation (defaults to registry default). */
   adapterType?: string;
-  /** Skip the threshold + cooldown checks and compact unconditionally. */
-  force?: boolean;
-  /** Marks this pass as automatically triggered (recorded for the panel's trace line). */
-  auto?: boolean;
 }
 
 // ─── Constants ───
 
-/** Start compacting when non-session memory exceeds this fraction of the system prompt budget. */
-const COMPACT_THRESHOLD_RATIO = 0.75;
+/** Most merge groups one run works through; the rest wait for the next run,
+ *  so a run takes minutes, not an hour, and Undo covers one run. */
+const MAX_GROUPS_PER_RUN = 6;
 
-/** Or when this many non-session files have accumulated. */
-const MAX_FILES_BEFORE_COMPACT = 15;
+/** Full text one merge step reads, at most. */
+const MAX_GROUP_BYTES = 48 * 1024;
 
-/** Minimum time between LLM compaction passes per repo. */
-const COMPACT_COOLDOWN_MS = 6 * 60 * 60 * 1000; // 6 hours
+/** Opening text the planning step reads of each file, at most. */
+const PLAN_PREVIEW_CHARS = 300;
 
-/** The safety timeout for the LLM compaction call, from the
- *  memoryCompactTimeoutSeconds setting (default 5 minutes). Rewriting every
- *  memory file as JSON through a spawned CLI process is slow: 90s aborted
- *  real passes. */
+/** Rough cap on the planning step's input: previews shrink for large memory. */
+const PLAN_INPUT_BYTES = 64 * 1024;
+
+/** Descriptions one run adds, at most. */
+const MAX_DESCRIPTIONS_PER_RUN = 200;
+
+/** The safety timeout for each model call (planning, then each merge step),
+ *  from the memoryCompactTimeoutSeconds setting (default 5 minutes). */
 function compactTimeoutSeconds(): number {
   return effectiveCompactTimeoutSeconds(settings.getSettings().memoryCompactTimeoutSeconds);
 }
 
-/** Defensive hard cap applied to any single compacted file. */
+/** Largest file a merge may write; a bigger one rejects the step rather
+ *  than being cut off mid-sentence. */
 const MAX_COMPACTED_FILE_BYTES = 16 * 1024;
 
 /** Folders the compaction pass is allowed to touch. Session notes are pruned deterministically instead. */
@@ -117,37 +134,16 @@ const MAX_ARCHIVED_NOTES = 50;
 /** Compaction currently running, keyed by repo path. */
 const inProgress = new Set<string>();
 
-/** Last LLM compaction time per repo (also persisted to _compact.json). */
-const lastCompacted = new Map<string, number>();
-
-// ─── Cooldown persistence ───
+// ─── Last run ───
 
 function compactStatePath(repoPath: string): string {
   return path.join(memory.getMemoryDir(repoPath), '_compact.json');
 }
 
-function getLastCompactedAt(repoPath: string): number {
-  const cached = lastCompacted.get(repoPath);
-  if (cached !== undefined) return cached;
-  try {
-    const raw = JSON.parse(fs.readFileSync(compactStatePath(repoPath), 'utf-8'));
-    const ts = Date.parse(raw.lastCompactedAt);
-    if (!Number.isNaN(ts)) {
-      lastCompacted.set(repoPath, ts);
-      return ts;
-    }
-  } catch {
-    // No state yet
-  }
-  return 0;
-}
-
-function setLastCompactedAt(repoPath: string, ts: number, auto: boolean, filesChanged: number): void {
-  lastCompacted.set(repoPath, ts);
+function setLastCompactedAt(repoPath: string, ts: number, filesChanged: number): void {
   try {
     fs.writeFileSync(compactStatePath(repoPath), JSON.stringify({
       lastCompactedAt: new Date(ts).toISOString(),
-      lastAuto: auto,
       lastFilesChanged: filesChanged,
     }, null, 2));
   } catch (err) {
@@ -155,14 +151,13 @@ function setLastCompactedAt(repoPath: string, ts: number, auto: boolean, filesCh
   }
 }
 
-/** When and how the last compaction pass ran — the panel's trace line. */
+/** When the last compaction run changed something — the panel's trace line. */
 export function getCompactionInfo(repoPath: string): CompactionInfo {
   try {
     const raw = JSON.parse(fs.readFileSync(compactStatePath(repoPath), 'utf-8'));
     if (typeof raw.lastCompactedAt === 'string' && !Number.isNaN(Date.parse(raw.lastCompactedAt))) {
       return {
         lastCompactedAt: raw.lastCompactedAt,
-        lastAuto: raw.lastAuto === true,
         lastFilesChanged: typeof raw.lastFilesChanged === 'number' ? raw.lastFilesChanged : undefined,
       };
     }
@@ -196,20 +191,7 @@ function isAllowedCompactionPath(relativePath: string): boolean {
   return COMPACTABLE_FOLDERS.some(folder => normalized.startsWith(`${folder}/`)) && normalized.endsWith('.md');
 }
 
-// ─── Deterministic layer ───
-
-/**
- * Decide whether the LLM compaction pass is worth running.
- */
-export function needsCompaction(repoPath: string): { needed: boolean; totalBytes: number; fileCount: number } {
-  const contents = readNonSessionContents(repoPath);
-  const bytes = totalBytes(contents);
-  const fileCount = Object.keys(contents).length;
-  const needed =
-    bytes > memory.MAX_SYSTEM_PROMPT_BYTES * COMPACT_THRESHOLD_RATIO ||
-    fileCount > MAX_FILES_BEFORE_COMPACT;
-  return { needed, totalBytes: bytes, fileCount };
-}
+// ─── Thread notes ───
 
 /**
  * A note's effective age: frontmatter `updatedAt` when parseable, else the
@@ -469,28 +451,69 @@ export function restoreBackup(repoPath: string, backupId: string): RestoreStatus
   return { restored: true, filesChanged };
 }
 
-// ─── Compaction prompt ───
+// ─── Prompts ───
 
-function buildCompactionPrompt(contents: Record<string, string>): string {
+const FILE_RULES = `- Each kept file retains markdown with YAML frontmatter (title, description, updatedAt). The description is one line, under 100 characters, saying what the file covers: agents see only the title and description until they read the file, so keep it accurate when the content changes. Set updatedAt to the newest timestamp among its merged sources.`;
+
+/**
+ * The planning step: every file's path, size, title, description and opening
+ * text, so the model can find overlaps across all of memory without reading
+ * it in full, and describe files that have no description.
+ */
+function buildPlanPrompt(entries: MemoryEntry[], contents: Record<string, string>): string {
+  const perFile = Math.floor(PLAN_INPUT_BYTES / Math.max(1, entries.length)) - 200;
+  const previewChars = Math.max(0, Math.min(PLAN_PREVIEW_CHARS, perFile));
+  const files = entries.map((e) => {
+    const content = contents[e.relativePath];
+    const body = content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n*/, '').replace(/\s+/g, ' ').trim();
+    const kb = (Buffer.byteLength(content, 'utf-8') / 1024).toFixed(1);
+    const lines = [
+      `### ${e.relativePath} (${kb} KB${e.updatedAt ? `, updated ${e.updatedAt.slice(0, 10)}` : ''})`,
+      `title: ${e.title}`,
+      `description: ${e.description || '(none)'}`,
+    ];
+    if (previewChars > 0 && body) lines.push(`opening: ${body.slice(0, previewChars)}`);
+    return lines.join('\n');
+  });
+
+  return `You are planning a clean-up of a project's memory files. Each file below is shown by its path, size, title, description and opening text, not in full.
+
+## Files
+${files.join('\n\n')}
+
+## Instructions
+1. Find groups of files that overlap: the same topic, the same facts repeated, or one topic split across files. Each group is merged later by someone who reads its files in full. List the groups with the most overlap first. A file goes in at most one group, and a group's files add up to under ${MAX_GROUP_BYTES / 1024} KB. A group may be a single file whose content looks stale or contradictory. Leave out files that look fine.
+2. Write a description for every file whose description is "(none)": one line, under 100 characters, saying what the file covers, based only on its title and opening text.
+
+Respond with ONLY valid JSON matching this schema (no markdown fences):
+{
+  "groups": [{ "paths": ["folder/a.md", "folder/b.md"], "reason": "what they share" }],
+  "descriptions": [{ "path": "folder/a.md", "description": "one line" }]
+}`;
+}
+
+/** One merge step: a group of files in full, rewritten into fewer, coherent files. */
+function buildMergePrompt(contents: Record<string, string>, reason: string): string {
   const memorySection = Object.entries(contents)
     .map(([p, c]) => `### ${p}\n${c}`)
     .join('\n\n');
 
-  return `You are a memory compaction assistant. The project memory files below have grown over many sessions and now contain duplicated, stale, and possibly contradictory information. Your job is to consolidate them into a smaller, coherent set.
+  return `You are a memory compaction assistant. The project memory files below were picked for clean-up${reason ? ` (${reason})` : ''}. They may contain duplicated, stale, and contradictory information. Your job is to consolidate them into a smaller, coherent set.
 
-## Current Memory Files
+## Files
 ${memorySection}
 
 ## Instructions
-Rewrite the memory files so that:
+Rewrite these files so that:
 - Duplicated facts appear exactly once, in the single most appropriate file.
 - Contradictions are resolved, never kept side by side. When two statements conflict, keep the one from the file with the newer \`updatedAt\` frontmatter; within one file, keep the later statement. Explicit user corrections (e.g. "the user clarified/corrected...") always win over inferred facts.
+- Sections headed "## Added <date>" were appended after the rest of the file: fold them into the body where they belong, and let them win over older statements they contradict.
 - Stale, ephemeral, or session-specific details (old debugging notes, temporary state, completed one-off tasks) are dropped.
 - Files covering the same topic are merged; near-empty leftovers are deleted.
-- Each file stays concise and factual, under roughly 4 KB.
+- Each file stays concise and factual.
 - Nothing is invented: every retained statement must come from the files above. Prefer dropping a doubtful statement over rephrasing it into something new.
-- File organization is preserved: repo/ (overview, tech stack), conventions/ (naming, patterns), architecture/ (data flow, modules). Do not touch other folders.
-- Each kept file retains markdown with YAML frontmatter (title, description, updatedAt). The description is one line, under 100 characters, saying what the file covers: agents see only the title and description until they read the file, so keep it accurate when the content changes. Set updatedAt to the newest timestamp among its merged sources.
+- Only these files change: update or delete them, or create one new file in repo/, conventions/ or architecture/ for merged content. Never write to any other existing file.
+${FILE_RULES}
 
 Actions:
 - "update": replace the file's content with the compacted version (also used for a new merged file).
@@ -510,15 +533,89 @@ Respond with ONLY valid JSON matching this schema (no markdown fences):
 }`;
 }
 
+/** The JSON object in a model reply, tolerating fences and text around it. */
+function parseJson(text: string): unknown {
+  const cleaned = text.replace(/^```(?:json)?\s*/m, '').replace(/\s*```\s*$/m, '').trim();
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    const start = cleaned.indexOf('{');
+    const end = cleaned.lastIndexOf('}');
+    if (start === -1 || end <= start) throw new Error('no JSON object');
+    return JSON.parse(cleaned.slice(start, end + 1));
+  }
+}
+
+// ─── Plan ───
+
+export interface CompactionGroup {
+  paths: string[];
+  reason: string;
+}
+
+const APPENDED_SECTION = /^## Added \d{4}-\d{2}-\d{2}[ \t]*$/m;
+
+/**
+ * Turn the planning step's reply into groups Grove can run: known files only,
+ * each file in one group, each group under MAX_GROUP_BYTES. Files with
+ * sections auto-save appended are tidied even when the plan leaves them out.
+ * Descriptions are kept only for files that have none.
+ */
+export function resolvePlan(
+  plan: z.infer<typeof CompactionPlanSchema>,
+  entries: MemoryEntry[],
+  contents: Record<string, string>,
+): { groups: CompactionGroup[]; descriptions: Array<{ path: string; description: string }> } {
+  const sizeOf = (p: string) => Buffer.byteLength(contents[p], 'utf-8');
+  const used = new Set<string>();
+  const groups: CompactionGroup[] = [];
+
+  for (const g of plan.groups) {
+    const paths: string[] = [];
+    let bytes = 0;
+    for (const p of g.paths) {
+      if (!(p in contents) || used.has(p) || paths.includes(p)) continue;
+      if (bytes + sizeOf(p) > MAX_GROUP_BYTES) continue;
+      paths.push(p);
+      bytes += sizeOf(p);
+    }
+    if (paths.length === 0) continue;
+    for (const p of paths) used.add(p);
+    groups.push({ paths, reason: g.reason });
+  }
+
+  for (const e of entries) {
+    const p = e.relativePath;
+    if (used.has(p) || !APPENDED_SECTION.test(contents[p]) || sizeOf(p) > MAX_GROUP_BYTES) continue;
+    used.add(p);
+    groups.push({ paths: [p], reason: 'fold in sections added by auto-save' });
+  }
+
+  const lacking = new Set(entries.filter(e => !e.description).map(e => e.relativePath));
+  const descriptions: Array<{ path: string; description: string }> = [];
+  for (const d of plan.descriptions) {
+    const description = d.description.replace(/\s+/g, ' ').trim();
+    if (!description || !lacking.has(d.path)) continue;
+    lacking.delete(d.path);
+    descriptions.push({ path: d.path, description });
+    if (descriptions.length >= MAX_DESCRIPTIONS_PER_RUN) break;
+  }
+
+  return { groups, descriptions };
+}
+
 // ─── Result validation & application ───
 
 /**
  * Sanity checks against a destructive or hallucinated compaction result.
+ * `original` is what the model was shown; `elsewhere` holds the other files
+ * in memory, which the model never saw and so must not overwrite.
  * Returns an error string, or null when the result is safe to apply.
  */
 export function validateCompactionResult(
   result: CompactionResult,
   original: Record<string, string>,
+  elsewhere: ReadonlySet<string> = new Set(),
 ): string | null {
   if (result.files.length === 0) return 'empty result';
 
@@ -535,6 +632,12 @@ export function validateCompactionResult(
     }
     if (file.action === 'update' && !file.content.trim()) {
       return `update with empty content: ${file.path}`;
+    }
+    if (file.action === 'update' && !originalPaths.has(file.path) && elsewhere.has(file.path)) {
+      return `update of a file it was not shown: ${file.path}`;
+    }
+    if (file.action === 'update' && Buffer.byteLength(file.content, 'utf-8') > MAX_COMPACTED_FILE_BYTES) {
+      return `file too large: ${file.path}`;
     }
     if (originalPaths.has(file.path)) touchesExisting = true;
 
@@ -569,11 +672,7 @@ function applyCompaction(repoPath: string, result: CompactionResult): string[] {
       if (file.action === 'delete') {
         if (memory.deleteMemoryFile(repoPath, file.path)) changed.push(file.path);
       } else {
-        let content = file.content;
-        if (Buffer.byteLength(content, 'utf-8') > MAX_COMPACTED_FILE_BYTES) {
-          content = content.slice(0, MAX_COMPACTED_FILE_BYTES);
-        }
-        memory.writeMemoryFile(repoPath, file.path, content);
+        memory.writeMemoryFile(repoPath, file.path, file.content);
         changed.push(file.path);
       }
       logger.info(`[memory-compact] ${file.action}: ${file.path} — ${file.reason}`);
@@ -587,11 +686,11 @@ function applyCompaction(repoPath: string, result: CompactionResult): string[] {
 
 // ─── Progress events & cancellation ───
 
-export type CompactionStage = 'pruning' | 'generating' | 'validating' | 'applying';
+export type CompactionStage = 'pruning' | 'planning' | 'merging';
 
 export type CompactionEvent =
-  | { kind: 'stage'; repoPath: string; auto: boolean; stage: CompactionStage }
-  | { kind: 'done'; repoPath: string; auto: boolean; status: CompactionStatus };
+  | { kind: 'stage'; repoPath: string; stage: CompactionStage; step?: number; total?: number }
+  | { kind: 'done'; repoPath: string; status: CompactionStatus };
 
 const eventListeners = new Set<(event: CompactionEvent) => void>();
 
@@ -622,16 +721,57 @@ export function cancelCompaction(repoPath: string): boolean {
   return true;
 }
 
+// ─── Model calls ───
+
+type CallOutcome = { text: string } | { timedOut: true } | { cancelled: true };
+
+/** One model call with its own timeout, which the run's Cancel also aborts. */
+async function callModel(
+  adapter: AgentAdapter,
+  systemPrompt: string,
+  userMessage: string,
+  cwd: string,
+  run: AbortController,
+): Promise<CallOutcome> {
+  if (run.signal.aborted) return { cancelled: true };
+  const call = new AbortController();
+  const onCancel = () => call.abort();
+  run.signal.addEventListener('abort', onCancel);
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    call.abort();
+  }, compactTimeoutSeconds() * 1000);
+
+  try {
+    // runCompaction checks generateText before any call
+    const text = await adapter.generateText!(systemPrompt, userMessage, {
+      cwd,
+      abortSignal: call.signal,
+      model: backgroundModelFor(adapter),
+    });
+    if (run.signal.aborted) return { cancelled: true };
+    return { text };
+  } catch (err) {
+    if (timedOut) return { timedOut: true };
+    if (run.signal.aborted) return { cancelled: true };
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+    run.signal.removeEventListener('abort', onCancel);
+  }
+}
+
 // ─── Public API ───
 
 /**
- * Run a full compaction pass: prune old session notes, then (when over threshold
- * and past the cooldown, or forced) ask the adapter to dedupe, resolve
- * contradictions, and condense the non-session memory files.
+ * Compact one project's memory: archive expired thread notes, plan from every
+ * file's index line and opening text, add missing descriptions, then merge up
+ * to MAX_GROUPS_PER_RUN groups of overlapping files, one model call each.
+ * Runs only when asked (the Memory panel's Compact button).
  */
 export async function compactMemory(opts: CompactOptions): Promise<CompactionStatus> {
   const { repoPath } = opts;
-  const auto = opts.auto === true;
 
   if (inProgress.has(repoPath)) {
     return { compacted: false, skippedReason: 'already in progress', filesChanged: [] };
@@ -641,13 +781,8 @@ export async function compactMemory(opts: CompactOptions): Promise<CompactionSta
   const abortController = new AbortController();
   activeControllers.set(repoPath, abortController);
 
-  // Auto passes stay silent until real work starts (the LLM stage) — the
-  // frequent below-threshold skips must not flash progress UI in the renderer.
-  let emittedAny = false;
-  const emitStage = (stage: CompactionStage) => {
-    if (auto && stage === 'pruning') return;
-    emittedAny = true;
-    emitEvent({ kind: 'stage', repoPath, auto, stage });
+  const emitStage = (stage: CompactionStage, step?: number, total?: number) => {
+    emitEvent({ kind: 'stage', repoPath, stage, ...(step !== undefined ? { step, total } : {}) });
   };
 
   let status: CompactionStatus;
@@ -661,128 +796,154 @@ export async function compactMemory(opts: CompactOptions): Promise<CompactionSta
     activeControllers.delete(repoPath);
   }
 
-  if (!auto || emittedAny) {
-    emitEvent({ kind: 'done', repoPath, auto, status });
-  }
+  emitEvent({ kind: 'done', repoPath, status });
   return status;
 }
 
 async function runCompaction(
   opts: CompactOptions,
-  abortController: AbortController,
-  emitStage: (stage: CompactionStage) => void,
+  run: AbortController,
+  emitStage: (stage: CompactionStage, step?: number, total?: number) => void,
 ): Promise<CompactionStatus> {
-  const { repoPath, adapterType, force } = opts;
+  const { repoPath, adapterType } = opts;
+  const cwd = opts.cwd ?? repoPath;
 
   emitStage('pruning');
   const filesChanged = expireSessionNotes(repoPath);
 
-  if (!force) {
-    const { needed } = needsCompaction(repoPath);
-    if (!needed) {
-      return { compacted: false, skippedReason: 'below threshold', filesChanged };
-    }
-    if (Date.now() - getLastCompactedAt(repoPath) < COMPACT_COOLDOWN_MS) {
-      return { compacted: false, skippedReason: 'cooldown', filesChanged };
-    }
-  }
-
   const adapter = adapterType
     ? (adapterRegistry.get(adapterType) ?? adapterRegistry.getDefault())
     : adapterRegistry.getDefault();
-
   if (!adapter.generateText) {
     logger.info(`[memory-compact] Adapter "${adapter.id}" does not support generateText — skipping LLM compaction`);
     return { compacted: false, skippedReason: 'adapter cannot generate text', filesChanged };
   }
 
-  const contents = readNonSessionContents(repoPath);
-  if (Object.keys(contents).length === 0) {
+  const entries = memory.listMemoryFiles(repoPath)
+    .filter(e => isAllowedCompactionPath(e.relativePath))
+    .sort(memory.byIndexOrder);
+  const contents: Record<string, string> = {};
+  for (const e of entries) {
+    const content = memory.readMemoryFile(repoPath, e.relativePath);
+    if (content) contents[e.relativePath] = content;
+  }
+  const planned = entries.filter(e => e.relativePath in contents);
+  if (planned.length === 0) {
     return { compacted: false, skippedReason: 'no memory files', filesChanged };
   }
 
-  logger.info(`[memory-compact] Running compaction for ${repoPath} (${Object.keys(contents).length} files, ${totalBytes(contents)} bytes)`);
-
-  emitStage('generating');
   const timeoutSeconds = compactTimeoutSeconds();
-  let timedOut = false;
-  const timeout = setTimeout(() => {
-    timedOut = true;
-    abortController.abort();
-  }, timeoutSeconds * 1000);
+  logger.info(`[memory-compact] Planning compaction for ${repoPath} (${planned.length} files, ${totalBytes(contents)} bytes)`);
 
-  let resultText: string;
+  emitStage('planning');
+  const planReply = await callModel(adapter, buildPlanPrompt(planned, contents), 'Plan the clean-up. Respond with JSON only.', cwd, run);
+  if ('cancelled' in planReply) return { compacted: false, skippedReason: 'cancelled', filesChanged };
+  if ('timedOut' in planReply) {
+    logger.warn(`[memory-compact] Planning timed out after ${timeoutSeconds}s for ${repoPath}`);
+    return { compacted: false, error: `planning timed out after ${timeoutSeconds}s`, filesChanged };
+  }
+
+  let plan: z.infer<typeof CompactionPlanSchema>;
   try {
-    resultText = await adapter.generateText(
-      buildCompactionPrompt(contents),
-      'Compact the memory files above. Respond with JSON only.',
-      {
-        cwd: opts.cwd ?? repoPath,
-        abortSignal: abortController.signal,
-        model: backgroundModelFor(adapter),
-      },
-    );
+    plan = CompactionPlanSchema.parse(parseJson(planReply.text));
   } catch (err) {
-    if (timedOut) {
-      logger.warn(`[memory-compact] Compaction timed out after ${timeoutSeconds}s for ${repoPath}`);
-      return { compacted: false, error: `compaction timed out after ${timeoutSeconds}s`, filesChanged };
-    }
-    if (abortController.signal.aborted) {
-      logger.info(`[memory-compact] Compaction cancelled for ${repoPath}`);
-      return { compacted: false, skippedReason: 'cancelled', filesChanged };
-    }
-    throw err;
-  } finally {
-    clearTimeout(timeout);
+    logger.warn(`[memory-compact] Could not parse compaction plan: ${err}`);
+    return { compacted: false, skippedReason: 'unparseable plan', filesChanged };
+  }
+  const { groups, descriptions } = resolvePlan(plan, planned, contents);
+  if (groups.length === 0 && descriptions.length === 0) {
+    return { compacted: false, skippedReason: 'nothing to merge or describe', filesChanged };
   }
 
-  emitStage('validating');
-  const cleaned = resultText
-    .replace(/^```(?:json)?\s*/m, '')
-    .replace(/\s*```\s*$/m, '')
-    .trim();
-
-  let result: CompactionResult;
-  try {
-    result = CompactionResultSchema.parse(JSON.parse(cleaned));
-  } catch (err) {
-    logger.warn(`[memory-compact] Could not parse compaction result: ${err}`);
-    return { compacted: false, skippedReason: 'unparseable result', filesChanged };
-  }
-
-  const invalid = validateCompactionResult(result, contents);
-  if (invalid) {
-    logger.warn(`[memory-compact] Rejected compaction result: ${invalid}`);
-    return { compacted: false, skippedReason: invalid, filesChanged };
-  }
-
-  emitStage('applying');
-  const backupId = backupMemory(repoPath, contents) ?? undefined;
-  const compactedFiles = applyCompaction(repoPath, result);
-  setLastCompactedAt(repoPath, Date.now(), opts.auto === true, compactedFiles.length);
-
-  const changes: CompactionChange[] = result.files
-    .filter((f): f is typeof f & { action: 'update' | 'delete' } => f.action !== 'keep')
-    .map(f => ({ action: f.action, path: f.path, reason: f.reason }));
-
-  logger.info(`[memory-compact] Compacted ${repoPath}: ${compactedFiles.length} files changed`);
-  return {
-    compacted: compactedFiles.length > 0,
-    filesChanged: [...filesChanged, ...compactedFiles],
-    changes,
-    backupId,
+  // One snapshot before the first write, so Undo reverts the whole run.
+  let backupId: string | undefined;
+  let backedUp = false;
+  const backUp = () => {
+    if (backedUp) return;
+    backedUp = true;
+    backupId = backupMemory(repoPath, contents) ?? undefined;
   };
-}
 
-/**
- * Fire-and-forget compaction hook for the auto-save pipeline. Respects the
- * memoryAutoCompact setting, thresholds, and cooldown; never throws.
- */
-export function maybeCompact(opts: Omit<CompactOptions, 'force'>): void {
-  const appSettings = settings.getSettings();
-  if (appSettings.memoryAutoCompact === false) return;
+  const changed = new Set<string>();
+  const changes: CompactionChange[] = [];
 
-  compactMemory({ ...opts, auto: true }).catch(err => {
-    logger.error(`[memory-compact] Background compaction failed: ${err}`);
-  });
+  let descriptionsAdded = 0;
+  const titles = new Map(planned.map(e => [e.relativePath, e.title]));
+  for (const { path: p, description } of descriptions) {
+    const next = memory.withDescription(contents[p], description, titles.get(p) ?? p);
+    if (next === contents[p]) continue;
+    backUp();
+    try {
+      memory.writeMemoryFile(repoPath, p, next);
+      contents[p] = next;
+      changed.add(p);
+      descriptionsAdded++;
+    } catch (err) {
+      logger.warn(`[memory-compact] Failed to add a description to ${p}: ${err}`);
+    }
+  }
+
+  const toRun = groups.slice(0, MAX_GROUPS_PER_RUN);
+  let finished = 0;
+  let rejected = 0;
+  let error: string | undefined;
+  let cancelled = false;
+
+  for (const [i, group] of toRun.entries()) {
+    emitStage('merging', i + 1, toRun.length);
+    const shown = Object.fromEntries(group.paths.map(p => [p, contents[p]]));
+    const reply = await callModel(adapter, buildMergePrompt(shown, group.reason), 'Compact the memory files above. Respond with JSON only.', cwd, run);
+    if ('cancelled' in reply) {
+      cancelled = true;
+      break;
+    }
+    if ('timedOut' in reply) {
+      logger.warn(`[memory-compact] Merge step ${i + 1} timed out after ${timeoutSeconds}s for ${repoPath}`);
+      error = `merge step ${i + 1} timed out after ${timeoutSeconds}s`;
+      break;
+    }
+    finished++;
+
+    let result: CompactionResult;
+    try {
+      result = CompactionResultSchema.parse(parseJson(reply.text));
+    } catch (err) {
+      logger.warn(`[memory-compact] Could not parse merge step ${i + 1}: ${err}`);
+      rejected++;
+      continue;
+    }
+    const elsewhere = new Set(
+      memory.listMemoryFiles(repoPath).map(e => e.relativePath).filter(p => !(p in shown)),
+    );
+    const invalid = validateCompactionResult(result, shown, elsewhere);
+    if (invalid) {
+      logger.warn(`[memory-compact] Rejected merge step ${i + 1}: ${invalid}`);
+      rejected++;
+      continue;
+    }
+
+    backUp();
+    for (const p of applyCompaction(repoPath, result)) changed.add(p);
+    for (const f of result.files) {
+      if (f.action === 'keep') continue;
+      changes.push({ action: f.action, path: f.path, reason: f.reason });
+    }
+  }
+
+  const remainingGroups = groups.length - finished;
+  if (changed.size > 0) setLastCompactedAt(repoPath, Date.now(), changed.size);
+  logger.info(`[memory-compact] Compacted ${repoPath}: ${changed.size} files changed, ${descriptionsAdded} descriptions added, ${finished} of ${groups.length} groups merged, ${rejected} rejected`);
+
+  const status: CompactionStatus = {
+    compacted: changed.size > 0,
+    filesChanged: [...filesChanged, ...changed],
+    changes,
+    descriptionsAdded,
+    remainingGroups,
+    backupId: changed.size > 0 ? backupId : undefined,
+  };
+  if (error) status.error = error;
+  if (cancelled) status.skippedReason = 'cancelled';
+  else if (changed.size === 0 && rejected > 0) status.skippedReason = `${rejected} merge ${rejected === 1 ? 'result was' : 'results were'} rejected`;
+  return status;
 }

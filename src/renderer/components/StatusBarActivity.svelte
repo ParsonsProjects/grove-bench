@@ -27,12 +27,11 @@
   let onlySubagentTools = $derived(pendingTools.length > 0 && pendingTools.every((t) => t.inSubagent));
   let rateLimit = $derived(rateLimitStore.get(sessionId));
   let showRateLimit = $derived(!!rateLimit && rateLimit.status !== 'allowed');
-  /** Memory compaction (manual or automatic) running for this session's repo. */
+  /** Memory compaction running for this session's repo. */
   let memoryCompacting = $derived.by(() => {
     const repo = store.sessions.find((s) => s.id === sessionId)?.repoPath;
     if (!repo) return false;
-    return (memoryStore.compacting && memoryStore.compactingRepo === repo)
-      || memoryStore.autoCompactingRepo === repo;
+    return memoryStore.compacting && memoryStore.compactingRepo === repo;
   });
   let backgroundTasks = $derived(backgroundTaskStore.get(sessionId));
   /** The Agent calls in the conversation, so a background subagent's task

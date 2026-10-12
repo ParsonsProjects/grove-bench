@@ -44,10 +44,10 @@ class MemoryStore {
   panelOpen = $state(false);
   /** Current stage of the running compaction pass, from main-process events. */
   compactStage = $state<MemoryCompactionStage | null>(null);
+  /** Which merge step of how many is running, while compactStage is 'merging'. */
+  compactStep = $state<{ step: number; total: number } | null>(null);
   /** Seconds since the manual compaction started — the panel's "still alive" ticker. */
   compactElapsedSeconds = $state(0);
-  /** Repo path of a running automatic (background) compaction, for the status-bar indicator. */
-  autoCompactingRepo = $state<string | null>(null);
   /** Transient notification shown by MemoryToast — survives the panel being closed. */
   toast = $state<MemoryToast | null>(null);
 
@@ -63,32 +63,10 @@ class MemoryStore {
   }
 
   private handleCompactionEvent(e: MemoryCompactionEvent) {
-    if (e.kind === 'stage') {
-      if (e.auto) {
-        this.autoCompactingRepo = e.repoPath;
-      } else if (e.repoPath === this.compactingRepo) {
-        this.compactStage = e.stage;
-      }
-      return;
-    }
-    // done
-    if (e.auto) {
-      this.autoCompactingRepo = null;
-      if (e.status.compacted) {
-        const n = e.status.filesChanged.length;
-        this.toast = {
-          kind: 'success',
-          message: `Memory auto-compacted — ${n} ${n === 1 ? 'file' : 'files'} changed`,
-          showView: true,
-        };
-        // Keep an open panel in sync with what the background pass just rewrote
-        if (e.repoPath === this.activeRepo) {
-          window.groveBench.memoryList(e.repoPath).then((files) => { this.files = files; });
-          this.loadStats();
-        }
-      }
-    }
-    // Manual passes are finalized by the compact() promise itself.
+    // A run is finalized by the compact() promise itself.
+    if (e.kind !== 'stage' || e.repoPath !== this.compactingRepo) return;
+    this.compactStage = e.stage;
+    this.compactStep = e.step !== undefined && e.total !== undefined ? { step: e.step, total: e.total } : null;
   }
 
   private startElapsedTimer() {
@@ -106,6 +84,7 @@ class MemoryStore {
     this.elapsedTimer = null;
     this.compactStartedAt = null;
     this.compactStage = null;
+    this.compactStep = null;
   }
 
   /** Group files by folder for tree display */

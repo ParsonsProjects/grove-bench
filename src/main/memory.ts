@@ -82,6 +82,24 @@ function parseFrontmatter(content: string): { title: string; description: string
   return { title, description, updatedAt };
 }
 
+/**
+ * The file with `description` added to its frontmatter, right after the
+ * title, leaving everything else as it was. A file that already has one is
+ * returned unchanged; a file without frontmatter gets one.
+ */
+export function withDescription(content: string, description: string, fallbackTitle: string): string {
+  const quote = (text: string) => `"${oneLine(text, MAX_INDEX_DESCRIPTION_CHARS).replace(/"/g, "'")}"`;
+  const match = content.match(/^---(\r?\n)([\s\S]*?)\r?\n---/);
+  if (!match) {
+    return `---\ntitle: ${quote(fallbackTitle)}\ndescription: ${quote(description)}\n---\n\n${content.trimStart()}`;
+  }
+  const [frontmatter, newline, block] = match;
+  const lines = block.split(/\r?\n/);
+  if (lines.some(l => /^description:/.test(l))) return content;
+  lines.splice(lines.findIndex(l => /^title:/.test(l)) + 1, 0, `description: ${quote(description)}`);
+  return `---${newline}${lines.join(newline)}${newline}---${content.slice(frontmatter.length)}`;
+}
+
 function stripFrontmatter(content: string): string {
   return content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n*/, '').trim();
 }

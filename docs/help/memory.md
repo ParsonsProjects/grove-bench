@@ -28,25 +28,26 @@ With **Auto-save project memory** on, a background model reads the recent part o
 
 ## Thread Note Expiry
 
-Thread notes are archived when they haven't been updated for 30 days, and at most the 20 newest are kept. This happens after every memory auto-save and when a thread starts, whether or not auto-compact is on. A note's age comes from its `updatedAt` frontmatter, falling back to the file's modification time, so an actively-written note is never archived by mistake. Archived notes go to a hidden folder inside the memory directory (the last 50 are kept) rather than being destroyed outright.
+Thread notes are archived when they haven't been updated for 30 days, and at most the 20 newest are kept. This happens after every memory auto-save, when a thread starts and when you compact. A note's age comes from its `updatedAt` frontmatter, falling back to the file's modification time, so an actively-written note is never archived by mistake. Archived notes go to a hidden folder inside the memory directory (the last 50 are kept) rather than being destroyed outright.
 
-## Auto-Compaction
+## Compaction
 
-Memory grows as the agent saves notes across threads, and over time it accumulates duplicates, stale details, and statements that contradict newer discoveries. When **Auto-compact project memory** is turned on, Grove Bench compacts memory automatically:
+Memory grows as the agent saves notes across threads, and over time it collects duplicates, stale details, and statements that contradict newer discoveries. The **Compact** button cleans up the project selected in the panel. It only runs when you press it, and only on that project.
 
-- **Thread note expiry**: each pass also archives expired thread notes, as above.
-- **Dedupe & merge** — when memory grows past its budget, an AI pass merges files covering the same topic and removes repeated facts.
-- **Contradiction resolution** — when two notes conflict, the more recently updated one wins; explicit user corrections always take priority over inferred facts.
+A run works in steps, each one model call:
 
-Before a compaction pass rewrites anything, the previous contents are saved as a timestamped snapshot inside the memory folder (the 5 most recent snapshots are kept), and a result that would destroy most of the stored knowledge is rejected outright. Compaction runs at most once every few hours, only when the notes outside sessions/ grow past 12 KB or 15 files.
+1. **Planning.** The model reads every file's path, size, title, description and opening text (not the full text). It picks groups of files that overlap, and writes a one-line description for each file that has none. Grove adds those descriptions to the files' frontmatter without changing anything else.
+2. **Merging**, up to 6 groups a run, largest overlaps first. Each step reads one group in full (under 48 KB) and merges it: repeated facts appear once, contradictions are resolved (the newer note wins, and your corrections always win), stale details are dropped, and sections auto-save added under "## Added" headings are folded in. Files with such sections are tidied even if the plan doesn't pick them. A step may only change its own files, or add one new file for merged content.
 
-The Memory panel shows a budget meter (**Agent prompt budget**): how much of the 16 KB memory budget the conventions and the index take in the agent's system prompt, and when the last compaction ran (and whether it was automatic). If the index outgrows the budget, the meter says how many files were left out of it. The agent can still find those with `memory_list`, but won't know to look, so compact or clean up when you see it.
+If more groups are left, the summary says so: press **Compact** again to continue. Each step has its own timeout (**Compaction timeout** in Settings). **Cancel** stops the run; steps already finished stay applied.
 
-You can also compact on demand with the **Compact** button. After a pass, a summary lists every file that was rewritten or removed with the reason, and **Undo** restores the pre-compaction snapshot in one click. **Backups** lists all snapshots — use **View** to inspect a snapshot's files before restoring it; restoring takes a snapshot of the current state first so the restore itself can be undone.
+Before a run changes anything, the previous contents are saved as a timestamped snapshot inside the memory folder (the 5 most recent snapshots are kept). A step whose result would destroy most of its files, or write a file over 16 KB, is rejected and the rest of the run carries on. After a run, a summary lists every file that was rewritten or removed with the reason, and **Undo** restores the snapshot, reverting the whole run in one click. **Backups** lists all snapshots: use **View** to inspect a snapshot's files before restoring it. Restoring takes a snapshot of the current state first, so the restore itself can be undone.
+
+The Memory panel shows a budget meter (**Agent prompt budget**): how much of the 16 KB memory budget the conventions and the index take in the agent's system prompt, and when the last compaction changed something. If the index outgrows the budget, the meter says how many files were left out of it. The agent can still find those with `memory_list`, but won't know to look, so compact or clean up when you see it.
 
 **Clean up notes** lists thread notes older than a chosen cutoff (any number of days) so you can review exactly what will be removed before deleting it. This deletes memory files only — your actual threads in the sidebar are never touched. Notes without a readable date are surfaced at the top as "unknown date" rather than deleted silently. Unlike compaction, thread-note deletion is permanent — thread notes are not included in backups. (To remove old *threads* themselves, use **Clean up old threads** in the sidebar.)
 
-**Auto-save project memory** (on by default) and **Auto-compact project memory** (off by default) are both in **Settings → Background work (Tending)**.
+**Auto-save project memory** (on by default) and **Compaction timeout** are in **Settings → Background work (Tending)**.
 
 ## Managing Memory
 

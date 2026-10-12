@@ -691,13 +691,8 @@ async function runAutoSave(opts: AutoSaveOptions): Promise<void> {
 
     const written = applyExtraction(repoPath, extraction, sessionId, branchName);
 
-    // Auto-saves add thread notes; archive the expired ones whether or not
-    // auto-compact is on.
+    // Auto-saves add thread notes; archive the expired ones.
     memoryCompact.expireSessionNotes(repoPath);
-
-    // Auto-saves grow memory; opportunistically compact it back down
-    // (deduped, contradictions resolved).
-    memoryCompact.maybeCompact({ repoPath, cwd, adapterType });
 
     if (written.length > 0) {
       logger.info(`[memory-autosave] Session ${sessionId}: wrote ${written.length} files: ${written.join(', ')}`);

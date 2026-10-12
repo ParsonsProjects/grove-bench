@@ -19,7 +19,6 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   acpAgents: [],
   enabledAlphaAgents: [],
   memoryAutoSave: true,
-  memoryAutoCompact: false,
   memoryCompactTimeoutSeconds: 300,
   backgroundModels: {},
   autoInstallDeps: false,

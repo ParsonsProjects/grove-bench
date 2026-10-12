@@ -1756,7 +1756,7 @@ export function registerHandlers() {
     // Manual compaction belongs to no one conversation: run it on the agent the
     // project was most recently used with.
     const adapter = await agentForProject(repoPath);
-    return memoryCompact.compactMemory({ repoPath, force: true, adapterType: adapter.id });
+    return memoryCompact.compactMemory({ repoPath, adapterType: adapter.id });
   });
 
   ipcMain.handle(IPC.MEMORY_COMPACT_CANCEL, (_event, repoPath: string) => {

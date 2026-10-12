@@ -47,7 +47,6 @@ const SETTINGS = {
   acpAgents: [],
   enabledAlphaAgents: [],
   memoryAutoSave: true,
-  memoryAutoCompact: false,
   memoryCompactTimeoutSeconds: 300,
   backgroundModels: {},
   autoInstallDeps: false,
@@ -225,23 +224,25 @@ const api: Record<string, unknown> = {
     // Simulate a real pass: staged progress events, cancellable, then the merge
     compactCancelled = false;
     const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
-    const stage = (s: string) => compactListeners.forEach(l => l({ kind: 'stage', repoPath, auto: false, stage: s }));
+    const stage = (s: string, step?: number, total?: number) =>
+      compactListeners.forEach(l => l({ kind: 'stage', repoPath, stage: s, ...(step ? { step, total } : {}) }));
     const finish = (status: Record<string, unknown>) => {
-      compactListeners.forEach(l => l({ kind: 'done', repoPath, auto: false, status }));
+      compactListeners.forEach(l => l({ kind: 'done', repoPath, status }));
       return status;
     };
 
     stage('pruning');
     await sleep(600);
-    stage('generating');
-    for (let i = 0; i < 8; i++) {
+    stage('planning');
+    for (let i = 0; i < 4; i++) {
       await sleep(500);
       if (compactCancelled) return finish({ compacted: false, skippedReason: 'cancelled', filesChanged: [] });
     }
-    stage('validating');
-    await sleep(500);
-    stage('applying');
-    await sleep(400);
+    stage('merging', 1, 1);
+    for (let i = 0; i < 4; i++) {
+      await sleep(500);
+      if (compactCancelled) return finish({ compacted: false, skippedReason: 'cancelled', filesChanged: [] });
+    }
 
     // Merge the duplicated tech-stack file into the overview
     memoryFiles = memoryFiles.filter(f => f.relativePath !== 'repo/tech-stack.md');
@@ -279,7 +280,6 @@ const api: Record<string, unknown> = {
       fullFiles: conventions.map(f => f.relativePath),
       unlistedFiles: [],
       lastCompactedAt: new Date(now - 7 * 60 * min).toISOString(),
-      lastAuto: true,
       lastFilesChanged: 2,
     };
   },

@@ -19,7 +19,7 @@ vi.mock('./adapters/index.js', () => ({
 }));
 
 vi.mock('./settings.js', () => ({
-  getSettings: vi.fn(() => ({ memoryAutoSave: true, memoryAutoCompact: true })),
+  getSettings: vi.fn(() => ({ memoryAutoSave: true })),
 }));
 
 vi.mock('./logger.js', () => ({
@@ -29,7 +29,6 @@ vi.mock('./logger.js', () => ({
 import * as memory from './memory.js';
 import * as settings from './settings.js';
 import {
-  needsCompaction,
   pruneSessionNotes,
   expireSessionNotes,
   compactMemory,
@@ -41,6 +40,7 @@ import {
   previewBackup,
   readBackupFile,
   getCompactionInfo,
+  resolvePlan,
   type CompactionEvent,
 } from './memory-compact.js';
 
@@ -65,7 +65,7 @@ beforeEach(() => {
   vi.mocked(app.getPath).mockReturnValue(tmpDir);
   mockAdapter.generateText.mockReset();
   vi.mocked(settings.getSettings).mockImplementation(() => (
-    { memoryAutoSave: true, memoryAutoCompact: true } as ReturnType<typeof settings.getSettings>
+    { memoryAutoSave: true } as ReturnType<typeof settings.getSettings>
   ));
 });
 
@@ -166,34 +166,6 @@ describe('memory prompt', () => {
   it('reads the description from frontmatter for memory_list', () => {
     writeWithDescription('repo/overview.md', 'Overview', 'Tech stack and layout', 'x');
     expect(memory.listMemoryFiles(REPO)[0].description).toBe('Tech stack and layout');
-  });
-});
-
-// ─── needsCompaction ───
-
-describe('needsCompaction', () => {
-  it('is false for small memory', () => {
-    writeMemory('repo/overview.md', 'Overview', 'A small note.');
-    const result = needsCompaction(REPO);
-    expect(result.needed).toBe(false);
-    expect(result.fileCount).toBe(1);
-  });
-
-  it('is true when total bytes exceed the threshold', () => {
-    writeMemory('repo/overview.md', 'Overview', 'x'.repeat(13 * 1024));
-    expect(needsCompaction(REPO).needed).toBe(true);
-  });
-
-  it('is true when too many files accumulate', () => {
-    for (let i = 0; i < 16; i++) {
-      writeMemory(`conventions/note-${i}.md`, `Note ${i}`, 'A convention.');
-    }
-    expect(needsCompaction(REPO).needed).toBe(true);
-  });
-
-  it('ignores session notes', () => {
-    writeMemory('sessions/big.md', 'Big session', 'x'.repeat(20 * 1024));
-    expect(needsCompaction(REPO).needed).toBe(false);
   });
 });
 
@@ -345,6 +317,17 @@ describe('validateCompactionResult', () => {
     expect(validateCompactionResult(result, original)).toContain('too destructive');
   });
 
+  it('rejects an update to an existing file it was not shown', () => {
+    const result = { files: [{ action: 'update' as const, path: 'repo/other.md', content: 'overwritten', reason: '' }] };
+    const elsewhere = new Set(['repo/other.md']);
+    expect(validateCompactionResult(result, original, elsewhere)).toContain('not shown');
+  });
+
+  it('rejects a file too large to keep, rather than cutting it off', () => {
+    const result = { files: [{ action: 'update' as const, path: 'repo/overview.md', content: 'z'.repeat(17 * 1024), reason: '' }] };
+    expect(validateCompactionResult(result, original)).toContain('too large');
+  });
+
   it('rejects an update with empty content', () => {
     const result = {
       files: [{ action: 'update' as const, path: 'repo/overview.md', content: '   ', reason: '' }],
@@ -355,20 +338,125 @@ describe('validateCompactionResult', () => {
 
 // ─── compactMemory ───
 
+// ─── Plans ───
+
+describe('resolvePlan', () => {
+  const entry = (relativePath: string, description = '') =>
+    ({ relativePath, title: relativePath, description, updatedAt: '', folder: relativePath.split('/')[0] });
+
+  it('keeps known files, one group each, under 48 KB a group', () => {
+    const contents = {
+      'repo/a.md': 'a'.repeat(20 * 1024),
+      'repo/b.md': 'b'.repeat(20 * 1024),
+      'repo/c.md': 'c'.repeat(20 * 1024),
+      'repo/d.md': 'd',
+    };
+    const entries = Object.keys(contents).map(p => entry(p));
+
+    const { groups } = resolvePlan({
+      groups: [
+        { paths: ['repo/a.md', 'repo/b.md', 'repo/c.md', 'repo/d.md'], reason: 'one' },
+        { paths: ['repo/a.md', 'repo/unknown.md'], reason: 'two' },
+        { paths: ['repo/c.md'], reason: 'three' },
+      ],
+      descriptions: [],
+    }, entries, contents);
+
+    expect(groups).toEqual([
+      { paths: ['repo/a.md', 'repo/b.md', 'repo/d.md'], reason: 'one' },
+      { paths: ['repo/c.md'], reason: 'three' },
+    ]);
+  });
+
+  it('adds files with auto-save sections the plan left out, and descriptions only where missing', () => {
+    const contents = {
+      'repo/appended.md': 'Body\n\n## Added 2026-10-12\n\n- fact\n',
+      'repo/plain.md': 'Body',
+      'repo/described.md': 'Body',
+    };
+    const entries = [entry('repo/appended.md'), entry('repo/plain.md'), entry('repo/described.md', 'Has one')];
+
+    const { groups, descriptions } = resolvePlan({
+      groups: [],
+      descriptions: [
+        { path: 'repo/plain.md', description: '  What   plain covers ' },
+        { path: 'repo/described.md', description: 'Replacement' },
+        { path: 'repo/missing.md', description: 'Unknown' },
+      ],
+    }, entries, contents);
+
+    expect(groups).toEqual([{ paths: ['repo/appended.md'], reason: 'fold in sections added by auto-save' }]);
+    expect(descriptions).toEqual([{ path: 'repo/plain.md', description: 'What plain covers' }]);
+  });
+});
+
+describe('withDescription', () => {
+  it('adds the description after the title and changes nothing else', () => {
+    const content = '---\r\ntitle: "Flow"\r\nupdatedAt: "2026-01-01"\r\n---\r\n\r\nBody\r\n';
+    expect(memory.withDescription(content, 'Says "what" it covers', 'Flow'))
+      .toBe('---\r\ntitle: "Flow"\r\ndescription: "Says \'what\' it covers"\r\nupdatedAt: "2026-01-01"\r\n---\r\n\r\nBody\r\n');
+  });
+
+  it('leaves a file that already has a description alone, and gives one without frontmatter a header', () => {
+    const described = '---\ntitle: "A"\ndescription: "Old"\n---\n\nBody\n';
+    expect(memory.withDescription(described, 'New', 'A')).toBe(described);
+    expect(memory.withDescription('Body\n', 'New', 'Plain')).toBe('---\ntitle: "Plain"\ndescription: "New"\n---\n\nBody\n');
+  });
+});
+
+// ─── compactMemory ───
+
+/** The planning reply, then one reply per merge step, in order. */
+function replies(plan: unknown, ...merges: unknown[]): void {
+  mockAdapter.generateText.mockReset();
+  mockAdapter.generateText.mockResolvedValueOnce(JSON.stringify(plan));
+  for (const m of merges) {
+    mockAdapter.generateText.mockResolvedValueOnce(typeof m === 'string' ? m : JSON.stringify(m));
+  }
+}
+
+const groupOf = (...paths: string[]) => ({ groups: [{ paths, reason: 'overlap' }], descriptions: [] });
+
+/** A generateText that hangs until its abort signal fires, like a slow model. */
+function hang(_sys: string, _user: string, opts?: unknown): Promise<string> {
+  const signal = (opts as { abortSignal: AbortSignal }).abortSignal;
+  return new Promise((_resolve, reject) => {
+    signal.addEventListener('abort', () => reject(new Error('Operation aborted')));
+  });
+}
+
 describe('compactMemory', () => {
-  it('skips below threshold when not forced', async () => {
-    writeMemory('repo/overview.md', 'Overview', 'small');
+  it('plans from each file\'s index line and opening, not its full text', async () => {
+    writeMemory('architecture/flow.md', 'Flow', `${'opening '.repeat(10)}${'z'.repeat(5000)}THE END`);
+    replies({ groups: [], descriptions: [] });
+
     const status = await compactMemory({ repoPath: REPO });
+
+    const plan = mockAdapter.generateText.mock.calls[0][0];
+    expect(plan).toContain('### architecture/flow.md (');
+    expect(plan).toContain('title: Flow');
+    expect(plan).toContain('description: (none)');
+    expect(plan).toContain('opening: opening opening');
+    expect(plan).not.toContain('THE END');
     expect(status.compacted).toBe(false);
-    expect(status.skippedReason).toBe('below threshold');
-    expect(mockAdapter.generateText).not.toHaveBeenCalled();
+    expect(status.skippedReason).toBe('nothing to merge or describe');
+    expect(mockAdapter.generateText).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs every time it is asked, however small memory is', async () => {
+    writeMemory('repo/overview.md', 'Overview', 'small');
+    replies({ groups: [], descriptions: [] });
+    await compactMemory({ repoPath: REPO });
+    replies({ groups: [], descriptions: [] });
+    await compactMemory({ repoPath: REPO });
+    expect(mockAdapter.generateText).toHaveBeenCalledTimes(1); // reset by the second replies()
   });
 
   it('merges duplicates, resolves contradictions, and backs up originals', async () => {
     writeMemory('repo/overview.md', 'Overview', 'The project uses Vite.\nThe project uses Webpack.', '2024-01-01T00:00:00Z');
     writeMemory('repo/build.md', 'Build', 'The project uses Vite.', '2026-01-01T00:00:00Z');
 
-    mockAdapter.generateText.mockResolvedValue(JSON.stringify({
+    replies(groupOf('repo/overview.md', 'repo/build.md'), {
       files: [
         {
           action: 'update',
@@ -378,12 +466,18 @@ describe('compactMemory', () => {
         },
         { action: 'delete', path: 'repo/build.md', content: '', reason: 'merged into overview' },
       ],
-    }));
+    });
 
-    const status = await compactMemory({ repoPath: REPO, force: true });
+    const status = await compactMemory({ repoPath: REPO });
+
+    // The merge step got both files in full
+    const merge = mockAdapter.generateText.mock.calls[1][0];
+    expect(merge).toContain('### repo/overview.md');
+    expect(merge).toContain('The project uses Webpack.');
 
     expect(status.compacted).toBe(true);
     expect(status.filesChanged).toEqual(expect.arrayContaining(['repo/overview.md', 'repo/build.md']));
+    expect(status.remainingGroups).toBe(0);
     expect(memory.readMemoryFile(REPO, 'repo/build.md')).toBeNull();
     expect(memory.readMemoryFile(REPO, 'repo/overview.md')).toContain('Vite');
     expect(memory.readMemoryFile(REPO, 'repo/overview.md')).not.toContain('Webpack');
@@ -400,17 +494,79 @@ describe('compactMemory', () => {
     expect(listed.some(p => p.includes('_compact-backup'))).toBe(false);
   });
 
+  it('adds missing descriptions from the plan without rewriting the files', async () => {
+    writeMemory('architecture/flow.md', 'Flow', 'BODY STAYS');
+    replies({ groups: [], descriptions: [{ path: 'architecture/flow.md', description: 'How data moves' }] });
+
+    const status = await compactMemory({ repoPath: REPO });
+
+    expect(status.compacted).toBe(true);
+    expect(status.descriptionsAdded).toBe(1);
+    expect(status.backupId).toBeTruthy();
+    const written = memory.readMemoryFile(REPO, 'architecture/flow.md')!;
+    expect(written).toContain('description: "How data moves"');
+    expect(written).toContain('BODY STAYS');
+    expect(memory.listMemoryFiles(REPO)[0].description).toBe('How data moves');
+  });
+
+  it('merges at most 6 groups a run and reports the rest', async () => {
+    const plan = { groups: [] as Array<{ paths: string[]; reason: string }>, descriptions: [] };
+    const merges: unknown[] = [];
+    for (let i = 0; i < 8; i++) {
+      writeMemory(`architecture/n-${i}.md`, `N${i}`, `note ${i}`);
+      plan.groups.push({ paths: [`architecture/n-${i}.md`], reason: 'stale' });
+      merges.push({ files: [{ action: 'update', path: `architecture/n-${i}.md`, content: `tidied ${i}`, reason: '' }] });
+    }
+    replies(plan, ...merges);
+
+    const status = await compactMemory({ repoPath: REPO });
+
+    expect(mockAdapter.generateText).toHaveBeenCalledTimes(7); // the plan + 6 merges
+    expect(status.remainingGroups).toBe(2);
+    expect(memory.readMemoryFile(REPO, 'architecture/n-5.md')).toBe('tidied 5');
+    expect(memory.readMemoryFile(REPO, 'architecture/n-6.md')).toContain('note 6');
+  });
+
+  it('never lets a merge write to a file outside its group', async () => {
+    writeMemory('repo/a.md', 'A', 'a body');
+    writeMemory('repo/b.md', 'B', 'b body KEEP');
+    replies(groupOf('repo/a.md'), {
+      files: [
+        { action: 'update', path: 'repo/a.md', content: 'a merged', reason: '' },
+        { action: 'update', path: 'repo/b.md', content: 'clobbered', reason: '' },
+      ],
+    });
+
+    const status = await compactMemory({ repoPath: REPO });
+
+    expect(status.compacted).toBe(false);
+    expect(status.skippedReason).toBe('1 merge result was rejected');
+    expect(memory.readMemoryFile(REPO, 'repo/a.md')).toContain('a body');
+    expect(memory.readMemoryFile(REPO, 'repo/b.md')).toContain('b body KEEP');
+  });
+
+  it('tidies a file with auto-save sections even when the plan leaves it out', async () => {
+    memory.writeMemoryFile(REPO, 'architecture/flow.md', '---\ntitle: "Flow"\n---\n\nOld\n\n## Added 2026-10-12\n\n- New\n');
+    replies({ groups: [], descriptions: [] }, {
+      files: [{ action: 'update', path: 'architecture/flow.md', content: '---\ntitle: "Flow"\n---\n\nNew\n', reason: 'folded in' }],
+    });
+
+    const status = await compactMemory({ repoPath: REPO });
+
+    expect(mockAdapter.generateText.mock.calls[1][0]).toContain('## Added 2026-10-12');
+    expect(status.compacted).toBe(true);
+    expect(memory.readMemoryFile(REPO, 'architecture/flow.md')).not.toContain('## Added');
+  });
+
   describe('background model', () => {
     const settingsWith = (backgroundModels: Record<string, string>) => ({
-      memoryAutoSave: true, memoryAutoCompact: true, backgroundModels,
+      memoryAutoSave: true, backgroundModels,
     }) as unknown as ReturnType<typeof settings.getSettings>;
 
     async function modelUsed(): Promise<unknown> {
       writeMemory('repo/overview.md', 'Overview', 'fact');
-      mockAdapter.generateText.mockResolvedValue(JSON.stringify({
-        files: [{ action: 'keep', path: 'repo/overview.md', content: '', reason: '' }],
-      }));
-      await compactMemory({ repoPath: REPO, force: true });
+      replies({ groups: [], descriptions: [] });
+      await compactMemory({ repoPath: REPO });
       return (mockAdapter.generateText.mock.calls[0][2] as { model?: string }).model;
     }
 
@@ -434,41 +590,70 @@ describe('compactMemory', () => {
     });
   });
 
-  it('leaves files untouched when the adapter returns invalid JSON', async () => {
+  it('leaves files untouched when the plan is not JSON', async () => {
     writeMemory('repo/overview.md', 'Overview', 'important fact');
     mockAdapter.generateText.mockResolvedValue('not json at all');
 
-    const status = await compactMemory({ repoPath: REPO, force: true });
+    const status = await compactMemory({ repoPath: REPO });
 
     expect(status.compacted).toBe(false);
-    expect(status.skippedReason).toBe('unparseable result');
+    expect(status.skippedReason).toBe('unparseable plan');
     expect(memory.readMemoryFile(REPO, 'repo/overview.md')).toContain('important fact');
+  });
+
+  it('skips a merge step whose reply is not JSON and runs the next', async () => {
+    writeMemory('repo/a.md', 'A', 'a body');
+    writeMemory('repo/b.md', 'B', 'b body');
+    replies(
+      { groups: [{ paths: ['repo/a.md'], reason: '' }, { paths: ['repo/b.md'], reason: '' }], descriptions: [] },
+      'Sorry, no.',
+      { files: [{ action: 'update', path: 'repo/b.md', content: 'b tidied', reason: 'tidied' }] },
+    );
+
+    const status = await compactMemory({ repoPath: REPO });
+
+    expect(status.compacted).toBe(true);
+    expect(status.changes).toEqual([{ action: 'update', path: 'repo/b.md', reason: 'tidied' }]);
+    expect(memory.readMemoryFile(REPO, 'repo/a.md')).toContain('a body');
   });
 
   it('rejects and does not apply a destructive result', async () => {
     writeMemory('repo/overview.md', 'Overview', 'x'.repeat(3000));
     writeMemory('repo/details.md', 'Details', 'y'.repeat(3000));
 
-    mockAdapter.generateText.mockResolvedValue(JSON.stringify({
+    replies(groupOf('repo/overview.md', 'repo/details.md'), {
       files: [
         { action: 'delete', path: 'repo/overview.md', content: '', reason: '' },
         { action: 'update', path: 'repo/details.md', content: 'gone', reason: '' },
       ],
-    }));
+    });
 
-    const status = await compactMemory({ repoPath: REPO, force: true });
+    const status = await compactMemory({ repoPath: REPO });
 
     expect(status.compacted).toBe(false);
-    expect(status.skippedReason).toContain('too destructive');
+    expect(status.skippedReason).toBe('1 merge result was rejected');
     expect(memory.readMemoryFile(REPO, 'repo/overview.md')).not.toBeNull();
   });
 
-  it('prunes session notes even when LLM compaction is skipped', async () => {
+  it('rejects a merged file too large to keep instead of cutting it off', async () => {
+    writeMemory('repo/overview.md', 'Overview', 'x'.repeat(3000));
+    replies(groupOf('repo/overview.md'), {
+      files: [{ action: 'update', path: 'repo/overview.md', content: 'z'.repeat(64 * 1024), reason: '' }],
+    });
+
+    const status = await compactMemory({ repoPath: REPO });
+
+    expect(status.compacted).toBe(false);
+    expect(memory.readMemoryFile(REPO, 'repo/overview.md')).toContain('x'.repeat(3000));
+  });
+
+  it('archives expired thread notes even when nothing is merged', async () => {
     for (let i = 0; i < 25; i++) {
       // Within the last day, so only the cap applies, not the age limit
       writeMemory(`sessions/s-${String(i).padStart(2, '0')}.md`, `S${i}`, 'note', new Date(Date.now() - (25 - i) * 60_000).toISOString());
     }
     writeMemory('repo/overview.md', 'Overview', 'small');
+    replies({ groups: [], descriptions: [] });
 
     const status = await compactMemory({ repoPath: REPO });
 
@@ -478,36 +663,13 @@ describe('compactMemory', () => {
     expect(remaining).toHaveLength(20);
   });
 
-  it('respects the cooldown between LLM passes', async () => {
-    writeMemory('repo/overview.md', 'Overview', 'x'.repeat(13 * 1024));
-
-    mockAdapter.generateText.mockResolvedValue(JSON.stringify({
-      files: [
-        { action: 'update', path: 'repo/overview.md', content: 'x'.repeat(8 * 1024), reason: 'condensed' },
-      ],
-    }));
-
-    const first = await compactMemory({ repoPath: REPO });
-    expect(first.compacted).toBe(true);
-
-    // Still over threshold, but within cooldown
-    writeMemory('repo/more.md', 'More', 'y'.repeat(13 * 1024));
-    const second = await compactMemory({ repoPath: REPO });
-    expect(second.compacted).toBe(false);
-    expect(second.skippedReason).toBe('cooldown');
-    expect(mockAdapter.generateText).toHaveBeenCalledTimes(1);
-  });
-
   it('restore round-trips a compaction, snapshotting the pre-restore state', async () => {
     writeMemory('repo/overview.md', 'Overview', 'Uses Webpack');
+    replies(groupOf('repo/overview.md'), {
+      files: [{ action: 'update', path: 'repo/overview.md', content: '---\ntitle: "Overview"\n---\n\nUses Vite\n', reason: 'corrected' }],
+    });
 
-    mockAdapter.generateText.mockResolvedValue(JSON.stringify({
-      files: [
-        { action: 'update', path: 'repo/overview.md', content: '---\ntitle: "Overview"\n---\n\nUses Vite\n', reason: 'corrected' },
-      ],
-    }));
-
-    await compactMemory({ repoPath: REPO, force: true });
+    await compactMemory({ repoPath: REPO });
     expect(memory.readMemoryFile(REPO, 'repo/overview.md')).toContain('Vite');
 
     const backups = listBackups(REPO);
@@ -524,15 +686,14 @@ describe('compactMemory', () => {
 
   it('restore removes files the snapshot does not contain', async () => {
     writeMemory('repo/overview.md', 'Overview', 'original');
-
-    mockAdapter.generateText.mockResolvedValue(JSON.stringify({
+    replies(groupOf('repo/overview.md'), {
       files: [
         { action: 'update', path: 'repo/overview.md', content: 'rewritten', reason: '' },
         { action: 'update', path: 'repo/merged.md', content: 'new merged file', reason: '' },
       ],
-    }));
+    });
 
-    await compactMemory({ repoPath: REPO, force: true });
+    await compactMemory({ repoPath: REPO });
     expect(memory.readMemoryFile(REPO, 'repo/merged.md')).not.toBeNull();
 
     const backups = listBackups(REPO);
@@ -551,14 +712,11 @@ describe('compactMemory', () => {
 
   it('reports per-file changes and the undo backupId, and records compaction info', async () => {
     writeMemory('repo/overview.md', 'Overview', 'Uses Webpack');
+    replies(groupOf('repo/overview.md'), {
+      files: [{ action: 'update', path: 'repo/overview.md', content: 'Uses Vite', reason: 'kept the newer claim' }],
+    });
 
-    mockAdapter.generateText.mockResolvedValue(JSON.stringify({
-      files: [
-        { action: 'update', path: 'repo/overview.md', content: 'Uses Vite', reason: 'kept the newer claim' },
-      ],
-    }));
-
-    const status = await compactMemory({ repoPath: REPO, force: true });
+    const status = await compactMemory({ repoPath: REPO });
 
     expect(status.changes).toEqual([
       { action: 'update', path: 'repo/overview.md', reason: 'kept the newer claim' },
@@ -572,28 +730,16 @@ describe('compactMemory', () => {
 
     const info = getCompactionInfo(REPO);
     expect(info.lastCompactedAt).toBeTruthy();
-    expect(info.lastAuto).toBe(false);
     expect(info.lastFilesChanged).toBe(1);
-  });
-
-  it('marks auto-triggered passes in the compaction info', async () => {
-    writeMemory('repo/overview.md', 'Overview', 'x'.repeat(13 * 1024));
-    mockAdapter.generateText.mockResolvedValue(JSON.stringify({
-      files: [{ action: 'update', path: 'repo/overview.md', content: 'condensed '.repeat(200), reason: '' }],
-    }));
-
-    await compactMemory({ repoPath: REPO, auto: true });
-
-    expect(getCompactionInfo(REPO).lastAuto).toBe(true);
   });
 
   it('previews snapshot contents and reads single files without touching live memory', async () => {
     writeMemory('repo/overview.md', 'Overview', 'original body');
-    mockAdapter.generateText.mockResolvedValue(JSON.stringify({
+    replies(groupOf('repo/overview.md'), {
       files: [{ action: 'update', path: 'repo/overview.md', content: 'rewritten', reason: '' }],
-    }));
+    });
 
-    const status = await compactMemory({ repoPath: REPO, force: true });
+    const status = await compactMemory({ repoPath: REPO });
     const files = previewBackup(REPO, status.backupId!);
 
     expect(files).toEqual([{ path: 'repo/overview.md', bytes: expect.any(Number) }]);
@@ -607,10 +753,10 @@ describe('compactMemory', () => {
     writeMemory('repo/overview.md', 'Overview', 'v0');
 
     for (let i = 1; i <= 7; i++) {
-      mockAdapter.generateText.mockResolvedValue(JSON.stringify({
+      replies(groupOf('repo/overview.md'), {
         files: [{ action: 'update', path: 'repo/overview.md', content: `version ${i}`, reason: '' }],
-      }));
-      await compactMemory({ repoPath: REPO, force: true });
+      });
+      await compactMemory({ repoPath: REPO });
     }
 
     expect(listBackups(REPO)).toHaveLength(5);
@@ -620,7 +766,7 @@ describe('compactMemory', () => {
     writeMemory('repo/overview.md', 'Overview', 'important fact');
     mockAdapter.generateText.mockRejectedValue(new Error('Operation aborted'));
 
-    const status = await compactMemory({ repoPath: REPO, force: true });
+    const status = await compactMemory({ repoPath: REPO });
 
     expect(status.compacted).toBe(false);
     expect(status.error).toContain('Operation aborted');
@@ -628,25 +774,18 @@ describe('compactMemory', () => {
     expect(memory.readMemoryFile(REPO, 'repo/overview.md')).toContain('important fact');
   });
 
-  it('aborts a hung generation after the timeout and reports a timeout error', async () => {
+  it('aborts a hung planning step after the timeout and reports a timeout error', async () => {
     vi.useFakeTimers();
     try {
       writeMemory('repo/overview.md', 'Overview', 'important fact');
+      mockAdapter.generateText.mockImplementation(hang);
 
-      // Hangs until the abort signal fires, like a real long-running generation
-      mockAdapter.generateText.mockImplementation((_sys, _user, opts) => {
-        const signal = (opts as { abortSignal: AbortSignal }).abortSignal;
-        return new Promise((_resolve, reject) => {
-          signal.addEventListener('abort', () => reject(new Error('Operation aborted')));
-        });
-      });
-
-      const pending = compactMemory({ repoPath: REPO, force: true });
+      const pending = compactMemory({ repoPath: REPO });
       await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
       const status = await pending;
 
       expect(status.compacted).toBe(false);
-      expect(status.error).toContain('timed out');
+      expect(status.error).toBe('planning timed out after 300s');
       expect(status.skippedReason).toBeUndefined();
       expect(memory.readMemoryFile(REPO, 'repo/overview.md')).toContain('important fact');
     } finally {
@@ -658,18 +797,12 @@ describe('compactMemory', () => {
     vi.useFakeTimers();
     try {
       writeMemory('repo/overview.md', 'Overview', 'important fact');
-      vi.mocked(settings.getSettings).mockReturnValueOnce({
-        memoryAutoSave: true, memoryAutoCompact: true, memoryCompactTimeoutSeconds: 10, // below floor → 30s
+      vi.mocked(settings.getSettings).mockReturnValue({
+        memoryAutoSave: true, memoryCompactTimeoutSeconds: 10, // below floor → 30s
       } as ReturnType<typeof settings.getSettings>);
+      mockAdapter.generateText.mockImplementation(hang);
 
-      mockAdapter.generateText.mockImplementation((_sys, _user, opts) => {
-        const signal = (opts as { abortSignal: AbortSignal }).abortSignal;
-        return new Promise((_resolve, reject) => {
-          signal.addEventListener('abort', () => reject(new Error('Operation aborted')));
-        });
-      });
-
-      const pending = compactMemory({ repoPath: REPO, force: true });
+      const pending = compactMemory({ repoPath: REPO });
       await vi.advanceTimersByTimeAsync(30 * 1000);
       const status = await pending;
 
@@ -680,18 +813,38 @@ describe('compactMemory', () => {
     }
   });
 
+  it('keeps finished merge steps when a later one times out', async () => {
+    vi.useFakeTimers();
+    try {
+      writeMemory('repo/a.md', 'A', 'a body');
+      writeMemory('repo/b.md', 'B', 'b body');
+      replies(
+        { groups: [{ paths: ['repo/a.md'], reason: '' }, { paths: ['repo/b.md'], reason: '' }], descriptions: [] },
+        { files: [{ action: 'update', path: 'repo/a.md', content: 'a tidied', reason: '' }] },
+      );
+      mockAdapter.generateText.mockImplementationOnce(hang);
+
+      const pending = compactMemory({ repoPath: REPO });
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+      const status = await pending;
+
+      expect(status.compacted).toBe(true);
+      expect(status.error).toBe('merge step 2 timed out after 300s');
+      expect(status.remainingGroups).toBe(1);
+      expect(status.backupId).toBeTruthy();
+      expect(memory.readMemoryFile(REPO, 'repo/a.md')).toBe('a tidied');
+      expect(memory.readMemoryFile(REPO, 'repo/b.md')).toContain('b body');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('cancelCompaction aborts a running pass, reported as cancelled with memory untouched', async () => {
     writeMemory('repo/overview.md', 'Overview', 'important fact');
+    mockAdapter.generateText.mockImplementation(hang);
 
-    mockAdapter.generateText.mockImplementation((_sys, _user, opts) => {
-      const signal = (opts as { abortSignal: AbortSignal }).abortSignal;
-      return new Promise((_resolve, reject) => {
-        signal.addEventListener('abort', () => reject(new Error('Operation aborted')));
-      });
-    });
-
-    const pending = compactMemory({ repoPath: REPO, force: true });
-    // Give the pass a beat to reach the generate stage, then cancel
+    const pending = compactMemory({ repoPath: REPO });
+    // Give the pass a beat to reach the planning step, then cancel
     await new Promise(r => setTimeout(r, 10));
     expect(cancelCompaction(REPO)).toBe(true);
     const status = await pending;
@@ -704,53 +857,47 @@ describe('compactMemory', () => {
     expect(cancelCompaction(REPO)).toBe(false);
   });
 
-  it('emits stage and done events for a manual pass', async () => {
-    writeMemory('repo/overview.md', 'Overview', 'fact');
-    mockAdapter.generateText.mockResolvedValue(JSON.stringify({
-      files: [{ action: 'update', path: 'repo/overview.md', content: 'condensed fact', reason: '' }],
-    }));
+  it('keeps finished merge steps when cancelled during a later one', async () => {
+    writeMemory('repo/a.md', 'A', 'a body');
+    writeMemory('repo/b.md', 'B', 'b body');
+    replies(
+      { groups: [{ paths: ['repo/a.md'], reason: '' }, { paths: ['repo/b.md'], reason: '' }], descriptions: [] },
+      { files: [{ action: 'update', path: 'repo/a.md', content: 'a tidied', reason: '' }] },
+    );
+    mockAdapter.generateText.mockImplementationOnce(hang);
 
-    const events: CompactionEvent[] = [];
-    const unsubscribe = onCompactionEvent(e => events.push(e));
-    try {
-      await compactMemory({ repoPath: REPO, force: true });
-    } finally {
-      unsubscribe();
-    }
+    const pending = compactMemory({ repoPath: REPO });
+    await vi.waitFor(() => expect(mockAdapter.generateText).toHaveBeenCalledTimes(3));
+    cancelCompaction(REPO);
+    const status = await pending;
 
-    const stages = events.filter(e => e.kind === 'stage').map(e => (e as Extract<CompactionEvent, { kind: 'stage' }>).stage);
-    expect(stages).toEqual(['pruning', 'generating', 'validating', 'applying']);
-    const done = events.find(e => e.kind === 'done') as Extract<CompactionEvent, { kind: 'done' }>;
-    expect(done.auto).toBe(false);
-    expect(done.status.compacted).toBe(true);
-  });
-
-  it('emits no events for an auto pass that skips below threshold', async () => {
-    writeMemory('repo/overview.md', 'Overview', 'small');
-
-    const events: CompactionEvent[] = [];
-    const unsubscribe = onCompactionEvent(e => events.push(e));
-    try {
-      await compactMemory({ repoPath: REPO, auto: true });
-    } finally {
-      unsubscribe();
-    }
-
-    expect(events).toEqual([]);
-  });
-
-  it('hard-truncates an oversized compacted file', async () => {
-    writeMemory('repo/overview.md', 'Overview', 'x'.repeat(3000));
-
-    mockAdapter.generateText.mockResolvedValue(JSON.stringify({
-      files: [
-        { action: 'update', path: 'repo/overview.md', content: 'z'.repeat(64 * 1024), reason: '' },
-      ],
-    }));
-
-    const status = await compactMemory({ repoPath: REPO, force: true });
     expect(status.compacted).toBe(true);
-    const written = memory.readMemoryFile(REPO, 'repo/overview.md')!;
-    expect(Buffer.byteLength(written, 'utf-8')).toBeLessThanOrEqual(16 * 1024);
+    expect(status.skippedReason).toBe('cancelled');
+    expect(memory.readMemoryFile(REPO, 'repo/a.md')).toBe('a tidied');
+    expect(memory.readMemoryFile(REPO, 'repo/b.md')).toContain('b body');
+  });
+
+  it('emits stage events with merge steps, then done', async () => {
+    writeMemory('repo/overview.md', 'Overview', 'fact');
+    replies(groupOf('repo/overview.md'), {
+      files: [{ action: 'update', path: 'repo/overview.md', content: 'condensed fact', reason: '' }],
+    });
+
+    const events: CompactionEvent[] = [];
+    const unsubscribe = onCompactionEvent(e => events.push(e));
+    try {
+      await compactMemory({ repoPath: REPO });
+    } finally {
+      unsubscribe();
+    }
+
+    const stages = events.filter(e => e.kind === 'stage');
+    expect(stages).toEqual([
+      { kind: 'stage', repoPath: REPO, stage: 'pruning' },
+      { kind: 'stage', repoPath: REPO, stage: 'planning' },
+      { kind: 'stage', repoPath: REPO, stage: 'merging', step: 1, total: 1 },
+    ]);
+    const done = events.find(e => e.kind === 'done') as Extract<CompactionEvent, { kind: 'done' }>;
+    expect(done.status.compacted).toBe(true);
   });
 });

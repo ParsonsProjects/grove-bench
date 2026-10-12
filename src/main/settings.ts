@@ -27,7 +27,6 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
 
   // Memory
   memoryAutoSave: true,
-  memoryAutoCompact: false,
   memoryCompactTimeoutSeconds: 300,
   backgroundModels: {},
 
@@ -231,7 +230,6 @@ const settingsSchema = z.object({
   enabledAlphaAgents: z.array(z.string()).catch(DEFAULT_SETTINGS.enabledAlphaAgents),
 
   memoryAutoSave: z.boolean().catch(DEFAULT_SETTINGS.memoryAutoSave),
-  memoryAutoCompact: z.boolean().catch(DEFAULT_SETTINGS.memoryAutoCompact),
   // Stored as compaction will use it, so Settings shows the value in use.
   memoryCompactTimeoutSeconds: z.number().transform(effectiveCompactTimeoutSeconds)
     .catch(DEFAULT_SETTINGS.memoryCompactTimeoutSeconds),

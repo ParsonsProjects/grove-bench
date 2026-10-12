@@ -38,13 +38,13 @@
   const pruneDayPresets = [7, 30, 90, 180];
 
   const compactStageLabels: Record<string, string> = {
-    pruning: 'Pruning old thread notes',
-    generating: 'Asking the agent to consolidate memory',
-    validating: 'Validating the result',
-    applying: 'Applying changes',
+    pruning: 'Archiving expired thread notes',
+    planning: 'Planning: reading every file\'s title and opening',
   };
   let compactStageLabel = $derived(
-    compactStageLabels[memoryStore.compactStage ?? ''] ?? `Compacting ${memoryStore.stats?.fileCount ?? ''} memory files`
+    memoryStore.compactStage === 'merging' && memoryStore.compactStep
+      ? `Merging group ${memoryStore.compactStep.step} of ${memoryStore.compactStep.total}`
+      : compactStageLabels[memoryStore.compactStage ?? ''] ?? `Compacting ${memoryStore.stats?.fileCount ?? ''} memory files`
   );
   let compactTimeoutSeconds = $derived(effectiveCompactTimeoutSeconds(settingsStore.current.memoryCompactTimeoutSeconds));
 
@@ -234,7 +234,7 @@
           </span>
           {#if memoryStore.stats.lastCompactedAt}
             <span class="text-muted-foreground/70">
-              Last compacted {relativeTime(memoryStore.stats.lastCompactedAt)}{memoryStore.stats.lastAuto ? ' (auto)' : ''}
+              Last compacted {relativeTime(memoryStore.stats.lastCompactedAt)}
             </span>
           {/if}
         </div>
@@ -329,13 +329,13 @@
       <div class="mt-2 flex items-center gap-3">
         <span class="w-1.5 h-1.5 bg-primary animate-pulse shrink-0"></span>
         <p class="text-xs text-muted-foreground flex-1">
-          {compactStageLabel} — {formatElapsed(memoryStore.compactElapsedSeconds)} elapsed
-          <span class="text-muted-foreground/60">(times out at {formatElapsed(compactTimeoutSeconds)})</span>
+          {compactStageLabel}: {formatElapsed(memoryStore.compactElapsedSeconds)} elapsed
+          <span class="text-muted-foreground/60">(each step times out after {formatElapsed(compactTimeoutSeconds)})</span>
         </p>
         <button
           onclick={() => memoryStore.cancelCompact()}
           class="text-xs text-destructive hover:underline underline-offset-2 shrink-0"
-          title="Abort this compaction pass — nothing has been changed yet"
+          title="Stop now. Steps already finished stay applied, and Undo reverts them."
         >
           Cancel
         </button>
@@ -354,7 +354,7 @@
           variant="secondary"
           onclick={() => memoryStore.compact()}
           disabled={memoryStore.compacting || memoryStore.files.length === 0}
-          title="Merge duplicate notes, resolve contradictions, and drop stale details. Shows a summary you can undo."
+          title="Merge overlapping notes, resolve contradictions, and describe files that have no description. Each run merges up to 6 groups; press again to continue. Shows a summary you can undo."
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
           {memoryStore.compacting ? 'Compacting…' : 'Compact'}
@@ -423,13 +423,22 @@
       <Dialog.Header>
         <Dialog.Title>Memory Compacted</Dialog.Title>
         <Dialog.Description>
-          {memoryStore.lastCompaction.filesChanged.length} {memoryStore.lastCompaction.filesChanged.length === 1 ? 'file' : 'files'} changed. A snapshot of the previous state was saved — Undo restores it.
+          {memoryStore.lastCompaction.filesChanged.length} {memoryStore.lastCompaction.filesChanged.length === 1 ? 'file' : 'files'} changed{#if memoryStore.lastCompaction.descriptionsAdded}, including {memoryStore.lastCompaction.descriptionsAdded} {memoryStore.lastCompaction.descriptionsAdded === 1 ? 'file' : 'files'} given a description{/if}. A snapshot of the previous state was saved: Undo restores it.
         </Dialog.Description>
       </Dialog.Header>
 
+      {#if memoryStore.lastCompaction.error || memoryStore.lastCompaction.skippedReason === 'cancelled'}
+        <p class="text-xs text-destructive">Stopped early: {memoryStore.lastCompaction.error ?? 'cancelled'}.</p>
+      {/if}
+      {#if memoryStore.lastCompaction.remainingGroups}
+        <p class="text-xs text-muted-foreground">
+          {memoryStore.lastCompaction.remainingGroups} more {memoryStore.lastCompaction.remainingGroups === 1 ? 'group' : 'groups'} of overlapping files left. Press Compact again to continue.
+        </p>
+      {/if}
+
       {#if memoryStore.lastCompaction.changes?.length}
         <div class="flex flex-col gap-1 max-h-64 overflow-auto">
-          {#each memoryStore.lastCompaction.changes as change (change.path)}
+          {#each memoryStore.lastCompaction.changes as change, i (`${i}:${change.path}`)}
             <div class="px-2 py-1.5 bg-card border border-border">
               <div class="flex items-center gap-2 text-sm">
                 <span class="text-xs uppercase tracking-wide shrink-0 {change.action === 'delete' ? 'text-destructive' : 'text-primary'}">

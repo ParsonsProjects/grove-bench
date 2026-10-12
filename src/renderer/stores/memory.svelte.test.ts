@@ -27,7 +27,6 @@ beforeEach(() => {
   memoryStore.backupPreviewFile = null;
   memoryStore.panelOpen = true;
   memoryStore.toast = null;
-  memoryStore.autoCompactingRepo = null;
 });
 
 describe('sessionNotesOlderThan', () => {
@@ -194,10 +193,10 @@ describe('compact result and undo', () => {
 
     it('shows its progress only for that project', async () => {
       const { running, finish } = startOnA();
-      (memoryStore as any).handleCompactionEvent({ kind: 'stage', repoPath: '/repo-a', auto: false, stage: 'generating' });
-      expect(memoryStore.compactStage).toBe('generating');
+      (memoryStore as any).handleCompactionEvent({ kind: 'stage', repoPath: '/repo-a', stage: 'planning' });
+      expect(memoryStore.compactStage).toBe('planning');
       expect(memoryStore.compactingRepo).toBe('/repo-a');
-      finish({ compacted: false, skippedReason: 'below threshold', filesChanged: [] });
+      finish({ compacted: false, skippedReason: 'nothing to merge or describe', filesChanged: [] });
       await running;
       expect(memoryStore.compactingRepo).toBeNull();
     });
@@ -222,42 +221,20 @@ describe('compact result and undo', () => {
     expect(mockGroveBench.memoryCompactCancel).not.toHaveBeenCalled();
   });
 
-  it('surfaces an auto-compaction completion as a success toast with a View action', () => {
-    (memoryStore as any).handleCompactionEvent({
-      kind: 'stage', repoPath: '/repo', auto: true, stage: 'generating',
-    });
-    expect(memoryStore.autoCompactingRepo).toBe('/repo');
-
-    (memoryStore as any).handleCompactionEvent({
-      kind: 'done', repoPath: '/repo', auto: true,
-      status: { compacted: true, filesChanged: ['repo/a.md', 'repo/b.md'] },
-    });
-    expect(memoryStore.autoCompactingRepo).toBeNull();
-    expect(memoryStore.toast?.kind).toBe('success');
-    expect(memoryStore.toast?.message).toContain('2 files');
-    expect(memoryStore.toast?.showView).toBe(true);
-  });
-
-  it('stays silent when an auto pass finishes without compacting', () => {
-    (memoryStore as any).handleCompactionEvent({
-      kind: 'done', repoPath: '/repo', auto: true,
-      status: { compacted: false, skippedReason: 'cooldown', filesChanged: [] },
-    });
-    expect(memoryStore.toast).toBeNull();
-  });
-
-  it('tracks manual compaction stages for the project being compacted', () => {
+  it('tracks compaction stages and merge steps for the project being compacted', () => {
     memoryStore.compactingRepo = '/repo';
-    (memoryStore as any).handleCompactionEvent({
-      kind: 'stage', repoPath: '/repo', auto: false, stage: 'generating',
-    });
-    expect(memoryStore.compactStage).toBe('generating');
+    (memoryStore as any).handleCompactionEvent({ kind: 'stage', repoPath: '/repo', stage: 'planning' });
+    expect(memoryStore.compactStage).toBe('planning');
+    expect(memoryStore.compactStep).toBeNull();
+
+    (memoryStore as any).handleCompactionEvent({ kind: 'stage', repoPath: '/repo', stage: 'merging', step: 2, total: 5 });
+    expect(memoryStore.compactStage).toBe('merging');
+    expect(memoryStore.compactStep).toEqual({ step: 2, total: 5 });
     memoryStore.compactStage = null;
+    memoryStore.compactStep = null;
 
     // Stage events for a different repo are ignored
-    (memoryStore as any).handleCompactionEvent({
-      kind: 'stage', repoPath: '/other', auto: false, stage: 'applying',
-    });
+    (memoryStore as any).handleCompactionEvent({ kind: 'stage', repoPath: '/other', stage: 'merging', step: 1, total: 1 });
     expect(memoryStore.compactStage).toBeNull();
     memoryStore.compactingRepo = null;
   });

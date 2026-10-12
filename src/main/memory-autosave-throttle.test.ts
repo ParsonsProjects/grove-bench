@@ -25,10 +25,10 @@ const mockMemory = vi.hoisted(() => ({
 }));
 
 vi.mock('./settings.js', () => ({
-  getSettings: () => ({ memoryAutoSave: true, memoryAutoCompact: false, backgroundModels: {} }),
+  getSettings: () => ({ memoryAutoSave: true, backgroundModels: {} }),
 }));
 vi.mock('./memory.js', () => mockMemory);
-vi.mock('./memory-compact.js', () => ({ maybeCompact: vi.fn(), expireSessionNotes: vi.fn(() => []) }));
+vi.mock('./memory-compact.js', () => ({ expireSessionNotes: vi.fn(() => []) }));
 vi.mock('./logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
