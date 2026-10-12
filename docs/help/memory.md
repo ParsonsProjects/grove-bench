@@ -28,7 +28,7 @@ With **Auto-save project memory** on, a background model reads the recent part o
 
 ## Thread Note Expiry
 
-Thread notes are archived when they haven't been updated for 30 days, and at most the 20 newest are kept. This happens after every memory auto-save, when a thread starts and when you compact. A note's age comes from its `updatedAt` frontmatter, falling back to the file's modification time, so an actively-written note is never archived by mistake. Archived notes go to a hidden folder inside the memory directory (the last 50 are kept) rather than being destroyed outright.
+Thread notes are archived when they haven't been updated for 30 days, and at most the 20 newest are kept. This happens after every memory auto-save, when a thread starts and when you compact. A note's age is the later of its `updatedAt` frontmatter and the file's modification time, so a note that was just written is never archived by mistake. Archived notes go to a hidden folder inside the memory directory (`_pruned-sessions`), where they stay until you delete them.
 
 ## Compaction
 
@@ -37,9 +37,9 @@ Memory grows as the agent saves notes across threads, and over time it collects 
 A run works in steps, each one model call:
 
 1. **Planning.** The model reads every file's path, size, title, description and opening text (not the full text). It picks groups of files that overlap, and writes a one-line description for each file that has none. Grove adds those descriptions to the files' frontmatter without changing anything else.
-2. **Merging**, up to 6 groups a run, largest overlaps first. Each step reads one group in full (under 48 KB) and merges it: repeated facts appear once, contradictions are resolved (the newer note wins, and your corrections always win), stale details are dropped, and sections auto-save added under "## Added" headings are folded in. Files with such sections are tidied even if the plan doesn't pick them. A step may only change its own files, or add one new file for merged content.
+2. **Merging**, up to 6 groups a run, largest overlaps first. Each step reads one group in full (under 48 KB) and merges it: repeated facts appear once, contradictions are resolved (the newer note wins, and your corrections always win), stale details are dropped, and sections auto-save added under "## Added" headings are folded in. Files with such sections are tidied first, even if the plan doesn't pick them. A step may only change its own files, or add new files for merged content, and each file must stay under 16 KB. A step whose files changed on disk while it ran (an auto-save in another thread, say) is skipped rather than overwriting that change.
 
-If more groups are left, the summary says so: press **Compact** again to continue. Each step has its own timeout (**Compaction timeout** in Settings). **Cancel** stops the run; steps already finished stay applied.
+If more groups are left, the summary says so: press **Compact** again to continue. Each step has its own timeout (**Compaction timeout** in Settings). If a step times out or fails, or you press **Cancel**, the run stops there; steps already finished stay applied and Undo still reverts them.
 
 Before a run changes anything, the previous contents are saved as a timestamped snapshot inside the memory folder (the 5 most recent snapshots are kept). A step whose result would destroy most of its files, or write a file over 16 KB, is rejected and the rest of the run carries on. After a run, a summary lists every file that was rewritten or removed with the reason, and **Undo** restores the snapshot, reverting the whole run in one click. **Backups** lists all snapshots: use **View** to inspect a snapshot's files before restoring it. Restoring takes a snapshot of the current state first, so the restore itself can be undone.
 

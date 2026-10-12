@@ -6,6 +6,7 @@ import * as memory from './memory.js';
 import * as settings from './settings.js';
 import { backgroundAgentFor, backgroundModelFor } from './background-tasks.js';
 import { effectiveCompactTimeoutSeconds } from '../shared/compact-timeout.js';
+import { extractJsonObject } from './extract-json.js';
 import type { MemoryEntry } from '../shared/types.js';
 import type { AgentAdapter } from './adapters/types.js';
 
@@ -124,11 +125,9 @@ const BACKUP_DIR = '_compact-backup';
 /** Timestamped backup snapshots kept before rotation. */
 const MAX_BACKUPS = 5;
 
-/** Hidden folder where auto-pruned session notes are archived instead of destroyed. */
+/** Hidden folder where expired and pruned session notes are archived
+ *  instead of destroyed. Nothing is ever deleted from it automatically. */
 const PRUNED_ARCHIVE_DIR = '_pruned-sessions';
-
-/** Archived pruned notes kept before the oldest are dropped for real. */
-const MAX_ARCHIVED_NOTES = 50;
 
 /** Compaction currently running, keyed by repo path. */
 const inProgress = new Set<string>();
@@ -208,22 +207,35 @@ function noteTimestamp(repoPath: string, entry: { relativePath: string; updatedA
 }
 
 /**
- * Move a pruned note into the hidden archive folder (a safety net — automatic
- * pruning must never be the only copy's destruction). Oldest archived notes
- * beyond the cap are dropped for real.
+ * When a note was last touched: the later of its frontmatter `updatedAt` and
+ * the file's mtime, so a note just rewritten with an old or copied date never
+ * looks expired.
+ */
+function lastTouched(repoPath: string, entry: { relativePath: string; updatedAt: string }): number {
+  const parsed = Date.parse(entry.updatedAt);
+  let mtime = 0;
+  try {
+    mtime = fs.statSync(path.join(memory.getMemoryDir(repoPath), entry.relativePath)).mtimeMs;
+  } catch {
+    // Gone already
+  }
+  return Math.max(Number.isNaN(parsed) ? 0 : parsed, mtime);
+}
+
+/**
+ * Move a pruned note into the hidden archive folder (a safety net: automatic
+ * pruning must never destroy the only copy). The archive is never trimmed.
  */
 function archivePrunedNote(repoPath: string, relativePath: string, content: string): void {
   const archiveDir = path.join(memory.getMemoryDir(repoPath), PRUNED_ARCHIVE_DIR);
   try {
     fs.mkdirSync(archiveDir, { recursive: true });
-    // Prefix with a timestamp so re-pruned same-named notes never overwrite each other
-    const name = `${Date.now()}-${path.basename(relativePath)}`;
+    // Timestamp plus the note's whole path, so same-named notes in different
+    // folders, or re-pruned ones, never overwrite each other.
+    const base = `${Date.now()}-${relativePath.replace(/[\\/]/g, '__')}`;
+    let name = base;
+    for (let n = 2; fs.existsSync(path.join(archiveDir, name)); n++) name = `${base}-${n}`;
     fs.writeFileSync(path.join(archiveDir, name), content);
-
-    const archived = fs.readdirSync(archiveDir).sort(); // timestamp prefix → chronological
-    for (const stale of archived.slice(0, Math.max(0, archived.length - MAX_ARCHIVED_NOTES))) {
-      fs.rmSync(path.join(archiveDir, stale), { force: true });
-    }
   } catch (err) {
     logger.warn(`[memory-compact] Failed to archive pruned note ${relativePath}: ${err}`);
   }
@@ -236,9 +248,7 @@ function archivePrunedNote(repoPath: string, relativePath: string, content: stri
  * _pruned-sessions folder before removal. Returns the paths of pruned notes.
  */
 export function pruneSessionNotes(repoPath: string, keep: number = memory.MAX_SESSION_NOTES): string[] {
-  const sessionEntries = memory
-    .listMemoryFiles(repoPath)
-    .filter(e => e.folder.startsWith('sessions'));
+  const sessionEntries = memory.listMemoryFiles(repoPath, 'sessions');
 
   if (sessionEntries.length <= keep) return [];
 
@@ -271,9 +281,8 @@ export function pruneSessionNotes(repoPath: string, keep: number = memory.MAX_SE
 export function expireSessionNotes(repoPath: string, now: number = Date.now()): string[] {
   const cutoff = now - memory.SESSION_NOTE_MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
   const expired: string[] = [];
-  for (const entry of memory.listMemoryFiles(repoPath)) {
-    if (!entry.folder.startsWith('sessions')) continue;
-    if (noteTimestamp(repoPath, entry) >= cutoff) continue;
+  for (const entry of memory.listMemoryFiles(repoPath, 'sessions')) {
+    if (lastTouched(repoPath, entry) >= cutoff) continue;
     const content = memory.readMemoryFile(repoPath, entry.relativePath);
     if (content) archivePrunedNote(repoPath, entry.relativePath, content);
     if (memory.deleteMemoryFile(repoPath, entry.relativePath)) {
@@ -464,7 +473,7 @@ function buildPlanPrompt(entries: MemoryEntry[], contents: Record<string, string
   const previewChars = Math.max(0, Math.min(PLAN_PREVIEW_CHARS, perFile));
   const files = entries.map((e) => {
     const content = contents[e.relativePath];
-    const body = content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n*/, '').replace(/\s+/g, ' ').trim();
+    const body = memory.stripFrontmatter(content).replace(/\s+/g, ' ');
     const kb = (Buffer.byteLength(content, 'utf-8') / 1024).toFixed(1);
     const lines = [
       `### ${e.relativePath} (${kb} KB${e.updatedAt ? `, updated ${e.updatedAt.slice(0, 10)}` : ''})`,
@@ -509,9 +518,9 @@ Rewrite these files so that:
 - Sections headed "## Added <date>" were appended after the rest of the file: fold them into the body where they belong, and let them win over older statements they contradict.
 - Stale, ephemeral, or session-specific details (old debugging notes, temporary state, completed one-off tasks) are dropped.
 - Files covering the same topic are merged; near-empty leftovers are deleted.
-- Each file stays concise and factual.
+- Each file stays concise and factual, and under ${MAX_COMPACTED_FILE_BYTES / 1024} KB: a larger file is rejected. Split a big topic across files rather than going over.
 - Nothing is invented: every retained statement must come from the files above. Prefer dropping a doubtful statement over rephrasing it into something new.
-- Only these files change: update or delete them, or create one new file in repo/, conventions/ or architecture/ for merged content. Never write to any other existing file.
+- Only these files change: update or delete them, or create new files in repo/, conventions/ or architecture/ for merged content. Never write to any other existing file.
 ${FILE_RULES}
 
 Actions:
@@ -534,15 +543,9 @@ Respond with ONLY valid JSON matching this schema (no markdown fences):
 
 /** The JSON object in a model reply, tolerating fences and text around it. */
 function parseJson(text: string): unknown {
-  const cleaned = text.replace(/^```(?:json)?\s*/m, '').replace(/\s*```\s*$/m, '').trim();
-  try {
-    return JSON.parse(cleaned);
-  } catch {
-    const start = cleaned.indexOf('{');
-    const end = cleaned.lastIndexOf('}');
-    if (start === -1 || end <= start) throw new Error('no JSON object');
-    return JSON.parse(cleaned.slice(start, end + 1));
-  }
+  const json = extractJsonObject(text);
+  if (json === null) throw new Error('no JSON object');
+  return JSON.parse(json);
 }
 
 // ─── Plan ───
@@ -557,14 +560,17 @@ const APPENDED_SECTION = /^## Added \d{4}-\d{2}-\d{2}[ \t]*$/m;
 /**
  * Turn the planning step's reply into groups Grove can run: known files only,
  * each file in one group, each group under MAX_GROUP_BYTES. Files with
- * sections auto-save appended are tidied even when the plan leaves them out.
- * Descriptions are kept only for files that have none.
+ * sections auto-save appended come first, as one-file groups, unless the plan
+ * already put them in a group. Descriptions are kept only for files that have
+ * none.
  */
 export function resolvePlan(
   plan: z.infer<typeof CompactionPlanSchema>,
   entries: MemoryEntry[],
   contents: Record<string, string>,
 ): { groups: CompactionGroup[]; descriptions: Array<{ path: string; description: string }> } {
+  // The plan's paths come from the model: 'constructor' must not count as known.
+  const known = (p: string) => Object.hasOwn(contents, p);
   const sizeOf = (p: string) => Buffer.byteLength(contents[p], 'utf-8');
   const used = new Set<string>();
   const groups: CompactionGroup[] = [];
@@ -573,7 +579,7 @@ export function resolvePlan(
     const paths: string[] = [];
     let bytes = 0;
     for (const p of g.paths) {
-      if (!(p in contents) || used.has(p) || paths.includes(p)) continue;
+      if (!known(p) || used.has(p) || paths.includes(p)) continue;
       if (bytes + sizeOf(p) > MAX_GROUP_BYTES) continue;
       paths.push(p);
       bytes += sizeOf(p);
@@ -583,12 +589,14 @@ export function resolvePlan(
     groups.push({ paths, reason: g.reason });
   }
 
+  const foldIns: CompactionGroup[] = [];
   for (const e of entries) {
     const p = e.relativePath;
-    if (used.has(p) || !APPENDED_SECTION.test(contents[p]) || sizeOf(p) > MAX_GROUP_BYTES) continue;
+    if (!known(p) || used.has(p) || !APPENDED_SECTION.test(contents[p]) || sizeOf(p) > MAX_GROUP_BYTES) continue;
     used.add(p);
-    groups.push({ paths: [p], reason: 'fold in sections added by auto-save' });
+    foldIns.push({ paths: [p], reason: 'fold in sections added by auto-save' });
   }
+  groups.unshift(...foldIns);
 
   const lacking = new Set(entries.filter(e => !e.description).map(e => e.relativePath));
   const descriptions: Array<{ path: string; description: string }> = [];
@@ -608,7 +616,8 @@ export function resolvePlan(
 /**
  * Sanity checks against a destructive or hallucinated compaction result.
  * `original` is what the model was shown; `elsewhere` holds the other files
- * in memory, which the model never saw and so must not overwrite.
+ * in memory, which the model never saw and so must not overwrite. Paths are
+ * compared by memoryPathKey, so "./a.md" or "A.md" still means a.md.
  * Returns an error string, or null when the result is safe to apply.
  */
 export function validateCompactionResult(
@@ -618,36 +627,39 @@ export function validateCompactionResult(
 ): string | null {
   if (result.files.length === 0) return 'empty result';
 
-  const originalPaths = new Set(Object.keys(original));
+  const key = memory.memoryPathKey;
+  const originalByKey = new Map(Object.entries(original).map(([p, c]) => [key(p), c]));
+  const elsewhereKeys = new Set([...elsewhere].map(key));
   let survivingBytes = 0;
   let touchesExisting = false;
 
   for (const file of result.files) {
+    const k = key(file.path);
     if (!isAllowedCompactionPath(file.path)) {
       return `disallowed path: ${file.path}`;
     }
-    if ((file.action === 'delete' || file.action === 'keep') && !originalPaths.has(file.path)) {
+    if ((file.action === 'delete' || file.action === 'keep') && !originalByKey.has(k)) {
       return `${file.action} of unknown file: ${file.path}`;
     }
     if (file.action === 'update' && !file.content.trim()) {
       return `update with empty content: ${file.path}`;
     }
-    if (file.action === 'update' && !originalPaths.has(file.path) && elsewhere.has(file.path)) {
+    if (file.action === 'update' && !originalByKey.has(k) && elsewhereKeys.has(k)) {
       return `update of a file it was not shown: ${file.path}`;
     }
     if (file.action === 'update' && Buffer.byteLength(file.content, 'utf-8') > MAX_COMPACTED_FILE_BYTES) {
       return `file too large: ${file.path}`;
     }
-    if (originalPaths.has(file.path)) touchesExisting = true;
+    if (originalByKey.has(k)) touchesExisting = true;
 
     if (file.action === 'update') survivingBytes += Buffer.byteLength(file.content, 'utf-8');
-    if (file.action === 'keep') survivingBytes += Buffer.byteLength(original[file.path] ?? '', 'utf-8');
+    if (file.action === 'keep') survivingBytes += Buffer.byteLength(originalByKey.get(k) ?? '', 'utf-8');
   }
 
   // Untouched original files survive as-is
-  const mentioned = new Set(result.files.map(f => f.path));
-  for (const [p, c] of Object.entries(original)) {
-    if (!mentioned.has(p)) survivingBytes += Buffer.byteLength(c, 'utf-8');
+  const mentioned = new Set(result.files.map(f => key(f.path)));
+  for (const [k, c] of originalByKey) {
+    if (!mentioned.has(k)) survivingBytes += Buffer.byteLength(c, 'utf-8');
   }
 
   if (!touchesExisting) return 'result does not reference any existing file';
@@ -722,7 +734,7 @@ export function cancelCompaction(repoPath: string): boolean {
 
 // ─── Model calls ───
 
-type CallOutcome = { text: string } | { timedOut: true } | { cancelled: true };
+type CallOutcome = { text: string } | { timedOut: true } | { cancelled: true } | { failed: string };
 
 /** One model call with its own timeout, which the run's Cancel also aborts. */
 async function callModel(
@@ -754,7 +766,7 @@ async function callModel(
   } catch (err) {
     if (timedOut) return { timedOut: true };
     if (run.signal.aborted) return { cancelled: true };
-    throw err;
+    return { failed: err instanceof Error ? err.message : String(err) };
   } finally {
     clearTimeout(timeout);
     run.signal.removeEventListener('abort', onCancel);
@@ -844,6 +856,10 @@ async function runCompaction(
     logger.warn(`[memory-compact] Planning timed out after ${timeoutSeconds}s for ${repoPath}`);
     return { compacted: false, error: `planning timed out after ${timeoutSeconds}s`, filesChanged };
   }
+  if ('failed' in planReply) {
+    logger.error(`[memory-compact] Planning failed for ${repoPath}: ${planReply.failed}`);
+    return { compacted: false, error: planReply.failed, filesChanged };
+  }
 
   let plan: z.infer<typeof CompactionPlanSchema>;
   try {
@@ -857,13 +873,22 @@ async function runCompaction(
     return { compacted: false, skippedReason: 'nothing to merge or describe', filesChanged };
   }
 
-  // One snapshot before the first write, so Undo reverts the whole run.
+  // The model calls take minutes, and other threads' auto-saves keep writing
+  // meanwhile, so every write starts from the file as it is on disk now, and
+  // the snapshot Undo restores is taken just before the first write.
+  const read = (p: string) => memory.readMemoryFile(repoPath, p);
   let backupId: string | undefined;
   let backedUp = false;
   const backUp = () => {
     if (backedUp) return;
     backedUp = true;
-    backupId = backupMemory(repoPath, contents) ?? undefined;
+    const current: Record<string, string> = {};
+    for (const e of memory.listMemoryFiles(repoPath)) {
+      if (!isAllowedCompactionPath(e.relativePath)) continue;
+      const content = read(e.relativePath);
+      if (content) current[e.relativePath] = content;
+    }
+    backupId = backupMemory(repoPath, current) ?? undefined;
   };
 
   const changed = new Set<string>();
@@ -872,12 +897,13 @@ async function runCompaction(
   let descriptionsAdded = 0;
   const titles = new Map(planned.map(e => [e.relativePath, e.title]));
   for (const { path: p, description } of descriptions) {
-    const next = memory.withDescription(contents[p], description, titles.get(p) ?? p);
-    if (next === contents[p]) continue;
+    const current = read(p);
+    if (current === null) continue;
+    const next = memory.withDescription(current, description, titles.get(p) ?? p);
+    if (next === current) continue;
     backUp();
     try {
       memory.writeMemoryFile(repoPath, p, next);
-      contents[p] = next;
       changed.add(p);
       descriptionsAdded++;
     } catch (err) {
@@ -893,7 +919,15 @@ async function runCompaction(
 
   for (const [i, group] of toRun.entries()) {
     emitStage('merging', i + 1, toRun.length);
-    const shown = Object.fromEntries(group.paths.map(p => [p, contents[p]]));
+    const shown: Record<string, string> = {};
+    for (const p of group.paths) {
+      const content = read(p);
+      if (content !== null) shown[p] = content;
+    }
+    if (Object.keys(shown).length === 0) {
+      finished++;
+      continue;
+    }
     const reply = await callModel(adapter, buildMergePrompt(shown, group.reason), 'Compact the memory files above. Respond with JSON only.', cwd, run);
     if ('cancelled' in reply) {
       cancelled = true;
@@ -902,6 +936,11 @@ async function runCompaction(
     if ('timedOut' in reply) {
       logger.warn(`[memory-compact] Merge step ${i + 1} timed out after ${timeoutSeconds}s for ${repoPath}`);
       error = `merge step ${i + 1} timed out after ${timeoutSeconds}s`;
+      break;
+    }
+    if ('failed' in reply) {
+      logger.error(`[memory-compact] Merge step ${i + 1} failed for ${repoPath}: ${reply.failed}`);
+      error = `merge step ${i + 1} failed: ${reply.failed}`;
       break;
     }
     finished++;
@@ -917,7 +956,9 @@ async function runCompaction(
     const elsewhere = new Set(
       memory.listMemoryFiles(repoPath).map(e => e.relativePath).filter(p => !(p in shown)),
     );
-    const invalid = validateCompactionResult(result, shown, elsewhere);
+    // A file changed while the model worked: its merge would undo that change.
+    const moved = Object.keys(shown).find(p => read(p) !== shown[p]);
+    const invalid = moved ? `${moved} changed during the step` : validateCompactionResult(result, shown, elsewhere);
     if (invalid) {
       logger.warn(`[memory-compact] Rejected merge step ${i + 1}: ${invalid}`);
       rejected++;

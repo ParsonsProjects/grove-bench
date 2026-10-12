@@ -98,6 +98,24 @@ describe('selectExtractionContext', () => {
     expect(JSON.stringify(context)).not.toContain('sessions/other.md');
   });
 
+  it('shows the thread\'s own note before the files it touched', () => {
+    write('sessions/feat.md', 'Feat', 'n'.repeat(6 * 1024));
+    for (let i = 0; i < 5; i++) write(`architecture/t-${i}.md`, `T${i}`, 't'.repeat(4 * 1024));
+
+    const context = selectExtractionContext(
+      REPO, '', [0, 1, 2, 3, 4].map(i => `architecture/t-${i}.md`), 'sessions/feat.md',
+    );
+
+    expect(Object.keys(context.full)).toContain('sessions/feat.md');
+    expect(context.sessionNoteExists).toBe(true);
+  });
+
+  it('loads conventions in subfolders', () => {
+    write('conventions/frontend/naming.md', 'Frontend naming', 'RULE');
+    const context = selectExtractionContext(REPO, '', [], 'sessions/feat.md');
+    expect(Object.keys(context.full)).toEqual(['conventions/frontend/naming.md']);
+  });
+
   it('keeps the full text within its budget however large memory is', () => {
     for (let i = 0; i < 100; i++) {
       write(`architecture/topic-${i}.md`, `Upload topic ${i}`, 'x'.repeat(4 * 1024));
@@ -181,6 +199,31 @@ describe('applying an extraction', () => {
     expect(appended).toContain('APPEND HERE');
     expect(appended).toMatch(/## Added \d{4}-\d{2}-\d{2}\n\n- one more fact\n$/);
     expect(memory.readMemoryFile(REPO, 'architecture/new-topic.md')).toBe('NEW');
+  });
+
+  it('adds to a thread note too long to show instead of replacing it', async () => {
+    write('sessions/feat.md', 'Feat', `EARLY DECISIONS ${'n'.repeat(30 * 1024)}`);
+    adapter.generateText.mockResolvedValue(JSON.stringify({
+      files: [], sessionNote: { shouldSave: true, content: '---\ntitle: "Feat"\n---\n\n- latest step' },
+    }));
+
+    await triggerAutoSaveImmediate({ sessionId: 's1', repoPath: REPO, cwd: REPO, events: events(), branchName: 'feat' });
+
+    expect(adapter.generateText.mock.calls[0][0]).toContain('It exists but is too long to show here');
+    const note = memory.readMemoryFile(REPO, 'sessions/feat.md')!;
+    expect(note).toContain('EARLY DECISIONS');
+    expect(note).toMatch(/## Added \d{4}-\d{2}-\d{2}\n\n- latest step\n$/);
+  });
+
+  it('tells the model today\'s date for updatedAt', async () => {
+    const prompt = await save([]);
+    expect(prompt).toContain(`Today is ${new Date().toISOString().slice(0, 10)}.`);
+  });
+
+  it('accepts another spelling of a file it was shown', async () => {
+    write('architecture/payments.md', 'Payments page', 'PAYMENTS');
+    await save([{ action: 'update', path: './architecture/payments.md', content: 'PAYMENTS v2', reason: '' }]);
+    expect(memory.readMemoryFile(REPO, 'architecture/payments.md')).toBe('PAYMENTS v2');
   });
 
   it('sends a fraction of a large memory', async () => {

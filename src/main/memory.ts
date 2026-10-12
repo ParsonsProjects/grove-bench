@@ -83,9 +83,10 @@ function parseFrontmatter(content: string): { title: string; description: string
 }
 
 /**
- * The file with `description` added to its frontmatter, right after the
- * title, leaving everything else as it was. A file that already has one is
- * returned unchanged; a file without frontmatter gets one.
+ * The file with `description` set in its frontmatter, right after the title
+ * (or in place of an empty one), leaving everything else as it was. A file
+ * that already has a description is returned unchanged; a file without
+ * frontmatter gets one.
  */
 export function withDescription(content: string, description: string, fallbackTitle: string): string {
   const quote = (text: string) => `"${oneLine(text, MAX_INDEX_DESCRIPTION_CHARS).replace(/"/g, "'")}"`;
@@ -95,12 +96,27 @@ export function withDescription(content: string, description: string, fallbackTi
   }
   const [frontmatter, newline, block] = match;
   const lines = block.split(/\r?\n/);
-  if (lines.some(l => /^description:/.test(l))) return content;
-  lines.splice(lines.findIndex(l => /^title:/.test(l)) + 1, 0, `description: ${quote(description)}`);
+  const line = `description: ${quote(description)}`;
+  const existing = lines.findIndex(l => /^description:/.test(l));
+  if (existing !== -1) {
+    if (lines[existing].replace(/^description:[\s"']*/, '').trim()) return content;
+    lines[existing] = line;
+  } else {
+    lines.splice(lines.findIndex(l => /^title:/.test(l)) + 1, 0, line);
+  }
   return `---${newline}${lines.join(newline)}${newline}---${content.slice(frontmatter.length)}`;
 }
 
-function stripFrontmatter(content: string): string {
+/** The same memory path however it's spelled: ./ prefix, backslashes, or
+ *  letter case (Windows paths ignore case). For comparing, not for writing. */
+export function memoryPathKey(relativePath: string): string {
+  return path.posix.normalize(relativePath.replace(/\\/g, '/')).toLowerCase();
+}
+
+/** Whether an entry is in conventions/ or a folder under it. */
+export const isConventions = (e: MemoryEntry) => e.folder.split('/')[0] === 'conventions';
+
+export function stripFrontmatter(content: string): string {
   return content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n*/, '').trim();
 }
 
@@ -119,9 +135,12 @@ export function ensureRepoMemory(repoPath: string): void {
   fs.writeFileSync(path.join(dir, '_index.json'), JSON.stringify(index, null, 2));
 }
 
-export function listMemoryFiles(repoPath: string): MemoryEntry[] {
+/** Every memory file, or only those under `folder` (e.g. 'sessions'), which
+ *  reads just that folder. */
+export function listMemoryFiles(repoPath: string, folder?: string): MemoryEntry[] {
   const dir = getMemoryDir(repoPath);
-  if (!fs.existsSync(dir)) return [];
+  const root = folder ? path.join(dir, folder) : dir;
+  if (!fs.existsSync(root)) return [];
 
   const entries: MemoryEntry[] = [];
 
@@ -157,7 +176,7 @@ export function listMemoryFiles(repoPath: string): MemoryEntry[] {
     }
   }
 
-  walk(dir, '');
+  walk(root, folder ?? '');
   return entries;
 }
 
@@ -258,7 +277,7 @@ export function planMemoryPrompt(repoPath: string, files: MemoryEntry[] = listMe
   const toIndex: MemoryEntry[] = [];
   let fullBytes = 0;
   for (const entry of entries) {
-    if (entry.folder !== 'conventions') {
+    if (!isConventions(entry)) {
       toIndex.push(entry);
       continue;
     }

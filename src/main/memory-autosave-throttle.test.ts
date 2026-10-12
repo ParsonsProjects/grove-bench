@@ -20,6 +20,9 @@ const mockMemory = vi.hoisted(() => ({
   writeMemoryFile: vi.fn(),
   byIndexOrder: () => 0,
   indexLine: (e: { relativePath: string }) => `- ${e.relativePath}`,
+  memoryPathKey: (p: string) => p,
+  isConventions: () => false,
+  stripFrontmatter: (c: string) => c,
   SESSION_NOTE_MAX_AGE_DAYS: 30,
   FULL_CONVENTIONS_BYTES: 6 * 1024,
 }));

@@ -163,6 +163,21 @@ describe('memory prompt', () => {
     expect(memory.getMemoryForSystemPrompt(REPO)).toBe('');
   });
 
+  it('loads conventions in subfolders in full too', () => {
+    writeMemory('conventions/frontend/naming.md', 'Frontend naming', 'NESTED RULE');
+    expect(memory.getMemoryForSystemPrompt(REPO)).toContain('NESTED RULE');
+  });
+
+  it('lists one folder on its own', () => {
+    writeMemory('repo/overview.md', 'Overview', 'x');
+    writeMemory('sessions/a.md', 'A', 'x');
+    writeMemory('sessions/deep/b.md', 'B', 'x');
+    expect(memory.listMemoryFiles(REPO, 'sessions').map(e => [e.relativePath, e.folder]).sort()).toEqual([
+      ['sessions/a.md', 'sessions'], ['sessions/deep/b.md', 'sessions/deep'],
+    ]);
+    expect(memory.listMemoryFiles(REPO, 'missing')).toEqual([]);
+  });
+
   it('reads the description from frontmatter for memory_list', () => {
     writeWithDescription('repo/overview.md', 'Overview', 'Tech stack and layout', 'x');
     expect(memory.listMemoryFiles(REPO)[0].description).toBe('Tech stack and layout');
@@ -238,10 +253,18 @@ describe('expireSessionNotes', () => {
   const DAY = 24 * 60 * 60 * 1000;
   const NOW = Date.parse('2026-10-12T12:00:00Z');
 
+  function age(relPath: string, days: number): void {
+    const when = new Date(NOW - days * DAY);
+    fs.utimesSync(path.join(memoryDir(), relPath), when, when);
+  }
+
   it('archives thread notes older than 30 days and keeps newer ones', () => {
     writeMemory('sessions/old.md', 'Old', 'old work', new Date(NOW - 31 * DAY).toISOString());
+    age('sessions/old.md', 31);
     writeMemory('sessions/recent.md', 'Recent', 'note', new Date(NOW - 29 * DAY).toISOString());
+    age('sessions/recent.md', 29);
     writeMemory('architecture/old.md', 'Lasting', 'note', new Date(NOW - 400 * DAY).toISOString());
+    age('architecture/old.md', 400);
 
     const expired = expireSessionNotes(REPO, NOW);
 
@@ -251,6 +274,31 @@ describe('expireSessionNotes', () => {
     expect(memory.readMemoryFile(REPO, 'architecture/old.md')).not.toBeNull();
     const archived = fs.readdirSync(path.join(memoryDir(), '_pruned-sessions'));
     expect(archived.some(name => name.endsWith('old.md'))).toBe(true);
+  });
+
+  it('keeps a note just written with an old updatedAt', () => {
+    writeMemory('sessions/fresh.md', 'Fresh', 'just saved', new Date(NOW - 90 * DAY).toISOString());
+    age('sessions/fresh.md', 0);
+
+    expect(expireSessionNotes(REPO, NOW)).toEqual([]);
+    expect(memory.readMemoryFile(REPO, 'sessions/fresh.md')).not.toBeNull();
+  });
+
+  it('never trims the archive, and keeps same-named notes from different folders apart', () => {
+    for (let i = 0; i < 55; i++) {
+      writeMemory(`sessions/n-${i}.md`, `N${i}`, `note ${i}`, new Date(NOW - 60 * DAY).toISOString());
+      age(`sessions/n-${i}.md`, 60);
+    }
+    writeMemory('sessions/a/plan.md', 'A plan', 'from a', new Date(NOW - 60 * DAY).toISOString());
+    age('sessions/a/plan.md', 60);
+    writeMemory('sessions/b/plan.md', 'B plan', 'from b', new Date(NOW - 60 * DAY).toISOString());
+    age('sessions/b/plan.md', 60);
+
+    expect(expireSessionNotes(REPO, NOW)).toHaveLength(57);
+
+    const archived = fs.readdirSync(path.join(memoryDir(), '_pruned-sessions'));
+    expect(archived).toHaveLength(57);
+    expect(archived.filter(n => n.endsWith('plan.md'))).toHaveLength(2);
   });
 
   it('then keeps at most 20 notes', () => {
@@ -323,6 +371,14 @@ describe('validateCompactionResult', () => {
     expect(validateCompactionResult(result, original, elsewhere)).toContain('not shown');
   });
 
+  it('rejects other spellings of a file it was not shown', () => {
+    const elsewhere = new Set(['repo/other.md']);
+    for (const spelling of ['./repo/other.md', 'repo\\other.md', 'repo/Other.md', 'repo/x/../other.md']) {
+      const result = { files: [{ action: 'update' as const, path: spelling, content: 'overwritten', reason: '' }] };
+      expect(validateCompactionResult(result, original, elsewhere)).toContain('not shown');
+    }
+  });
+
   it('rejects a file too large to keep, rather than cutting it off', () => {
     const result = { files: [{ action: 'update' as const, path: 'repo/overview.md', content: 'z'.repeat(17 * 1024), reason: '' }] };
     expect(validateCompactionResult(result, original)).toContain('too large');
@@ -368,6 +424,21 @@ describe('resolvePlan', () => {
     ]);
   });
 
+  it('puts files with auto-save sections first and ignores paths like constructor', () => {
+    const contents = { 'repo/plain.md': 'Body', 'repo/appended.md': 'Body\n\n## Added 2026-10-12\n\n- fact\n' };
+    const entries = [entry('repo/plain.md'), entry('repo/appended.md')];
+
+    const { groups } = resolvePlan({
+      groups: [{ paths: ['constructor', '__proto__', 'repo/plain.md'], reason: 'overlap' }],
+      descriptions: [{ path: 'toString', description: 'x' }],
+    }, entries, contents);
+
+    expect(groups).toEqual([
+      { paths: ['repo/appended.md'], reason: 'fold in sections added by auto-save' },
+      { paths: ['repo/plain.md'], reason: 'overlap' },
+    ]);
+  });
+
   it('adds files with auto-save sections the plan left out, and descriptions only where missing', () => {
     const contents = {
       'repo/appended.md': 'Body\n\n## Added 2026-10-12\n\n- fact\n',
@@ -395,6 +466,11 @@ describe('withDescription', () => {
     const content = '---\r\ntitle: "Flow"\r\nupdatedAt: "2026-01-01"\r\n---\r\n\r\nBody\r\n';
     expect(memory.withDescription(content, 'Says "what" it covers', 'Flow'))
       .toBe('---\r\ntitle: "Flow"\r\ndescription: "Says \'what\' it covers"\r\nupdatedAt: "2026-01-01"\r\n---\r\n\r\nBody\r\n');
+  });
+
+  it('fills in an empty description', () => {
+    expect(memory.withDescription('---\ntitle: "A"\ndescription: ""\n---\n\nBody\n', 'New', 'A'))
+      .toBe('---\ntitle: "A"\ndescription: "New"\n---\n\nBody\n');
   });
 
   it('leaves a file that already has a description alone, and gives one without frontmatter a header', () => {
@@ -507,6 +583,73 @@ describe('compactMemory', () => {
     expect(written).toContain('description: "How data moves"');
     expect(written).toContain('BODY STAYS');
     expect(memory.listMemoryFiles(REPO)[0].description).toBe('How data moves');
+  });
+
+  it('tells each merge step the 16 KB file limit', async () => {
+    writeMemory('repo/a.md', 'A', 'a');
+    replies(groupOf('repo/a.md'), { files: [{ action: 'keep', path: 'repo/a.md', content: '', reason: '' }] });
+    await compactMemory({ repoPath: REPO });
+    expect(mockAdapter.generateText.mock.calls[1][0]).toContain('under 16 KB');
+  });
+
+  it('reads a plan with commentary after it', async () => {
+    writeMemory('architecture/flow.md', 'Flow', 'BODY');
+    mockAdapter.generateText.mockResolvedValueOnce(
+      '{"groups":[],"descriptions":[{"path":"architecture/flow.md","description":"Data flow"}]}\nNote: kept {x} as is.',
+    );
+
+    const status = await compactMemory({ repoPath: REPO });
+
+    expect(status.descriptionsAdded).toBe(1);
+  });
+
+  it('adds descriptions to the file as it is after planning, not before', async () => {
+    writeMemory('architecture/flow.md', 'Flow', 'BEFORE');
+    mockAdapter.generateText.mockImplementationOnce(async () => {
+      // Another thread's auto-save writes while the plan is being made
+      writeMemory('architecture/flow.md', 'Flow', 'WRITTEN DURING PLANNING');
+      return JSON.stringify({ groups: [], descriptions: [{ path: 'architecture/flow.md', description: 'Data flow' }] });
+    });
+
+    await compactMemory({ repoPath: REPO });
+
+    const written = memory.readMemoryFile(REPO, 'architecture/flow.md')!;
+    expect(written).toContain('WRITTEN DURING PLANNING');
+    expect(written).toContain('description: "Data flow"');
+  });
+
+  it('skips a merge step whose files changed while the model worked', async () => {
+    writeMemory('repo/a.md', 'A', 'original');
+    mockAdapter.generateText.mockResolvedValueOnce(JSON.stringify(groupOf('repo/a.md')));
+    mockAdapter.generateText.mockImplementationOnce(async () => {
+      writeMemory('repo/a.md', 'A', 'CHANGED BY AUTO-SAVE');
+      return JSON.stringify({ files: [{ action: 'update', path: 'repo/a.md', content: 'merged from stale text', reason: '' }] });
+    });
+
+    const status = await compactMemory({ repoPath: REPO });
+
+    expect(status.compacted).toBe(false);
+    expect(status.skippedReason).toBe('1 merge result was rejected');
+    expect(memory.readMemoryFile(REPO, 'repo/a.md')).toContain('CHANGED BY AUTO-SAVE');
+  });
+
+  it('keeps finished merge steps, the summary and Undo when a later step fails', async () => {
+    writeMemory('repo/a.md', 'A', 'a body');
+    writeMemory('repo/b.md', 'B', 'b body');
+    replies(
+      { groups: [{ paths: ['repo/a.md'], reason: '' }, { paths: ['repo/b.md'], reason: '' }], descriptions: [] },
+      { files: [{ action: 'update', path: 'repo/a.md', content: 'a tidied', reason: 'tidied' }] },
+    );
+    mockAdapter.generateText.mockRejectedValueOnce(new Error('CLI exited with code 1'));
+
+    const status = await compactMemory({ repoPath: REPO });
+
+    expect(status.compacted).toBe(true);
+    expect(status.error).toBe('merge step 2 failed: CLI exited with code 1');
+    expect(status.changes).toEqual([{ action: 'update', path: 'repo/a.md', reason: 'tidied' }]);
+    expect(status.backupId).toBeTruthy();
+    expect(status.remainingGroups).toBe(1);
+    expect(memory.readMemoryFile(REPO, 'repo/a.md')).toBe('a tidied');
   });
 
   it('merges at most 6 groups a run and reports the rest', async () => {

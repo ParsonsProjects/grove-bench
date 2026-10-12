@@ -5,6 +5,9 @@ import * as settings from './settings.js';
 import { subagentParent, type AgentEvent, type MemoryEntry } from '../shared/types.js';
 import { backgroundAgentFor, backgroundModelFor } from './background-tasks.js';
 import { eventsSinceAgentChange } from './agent-handoff.js';
+import { extractJsonObject } from './extract-json.js';
+
+export { extractJsonObject };
 
 // ─── Types ───
 
@@ -67,44 +70,6 @@ export function _resetForTests(): void {
 // ─── Helpers ───
 
 /**
- * Pull the first complete JSON object out of a model response. Models often
- * wrap the JSON in fences or append a sentence after it; `JSON.parse` on the
- * raw text then fails with "Unexpected non-whitespace character after JSON".
- * Walks the text tracking string/escape state so braces inside strings don't
- * confuse the match. Returns null when no balanced object is found.
- */
-export function extractJsonObject(text: string): string | null {
-  const start = text.indexOf('{');
-  if (start === -1) return null;
-
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-  for (let i = start; i < text.length; i++) {
-    const ch = text[i];
-    if (inString) {
-      if (escaped) {
-        escaped = false;
-      } else if (ch === '\\') {
-        escaped = true;
-      } else if (ch === '"') {
-        inString = false;
-      }
-      continue;
-    }
-    if (ch === '"') {
-      inString = true;
-    } else if (ch === '{') {
-      depth++;
-    } else if (ch === '}') {
-      depth--;
-      if (depth === 0) return text.slice(start, i + 1);
-    }
-  }
-  return null;
-}
-
-/**
  * Memory files the agent read or wrote with Grove's memory tools in these
  * events, most recently used first. ACP agents may fill a call's input in
  * later (tool_update), so the last input seen for a call counts.
@@ -155,12 +120,15 @@ export interface ExtractionContext {
   indexLines: string[];
   /** Files past the index budget, not shown at all. */
   unlisted: number;
+  /** Whether the thread's own note exists (shown in full or not). */
+  sessionNoteExists: boolean;
 }
 
 /**
  * Pick what the extraction sees of existing memory. In full, up to
- * EXTRACTION_FULL_BYTES, in this order: files the thread read or wrote, the
- * thread's own note, conventions/ (up to what reaches the agent), then files
+ * EXTRACTION_FULL_BYTES, in this order: the thread's own note (its update
+ * replaces it), files the thread read or wrote, conventions/ (up to what
+ * reaches the agent), then files
  * whose title, description or path share words with the conversation. Every
  * other file outside sessions/ is an index line.
  */
@@ -190,9 +158,9 @@ export function selectExtractionContext(
     }
   };
 
-  take(touched.map(p => byPath.get(p)));
   take([byPath.get(sessionNotePath)]);
-  take(lasting.filter(e => e.folder === 'conventions'), memory.FULL_CONVENTIONS_BYTES);
+  take(touched.map(p => byPath.get(p)));
+  take(lasting.filter(memory.isConventions), memory.FULL_CONVENTIONS_BYTES);
 
   const said = topicWords(conversation);
   const matches = lasting
@@ -222,7 +190,7 @@ export function selectExtractionContext(
     }
   }
 
-  return { full, indexLines, unlisted };
+  return { full, indexLines, unlisted, sessionNoteExists: byPath.has(sessionNotePath) };
 }
 
 /**
@@ -231,7 +199,7 @@ export function selectExtractionContext(
  * in the addition is dropped and it is cut to MAX_APPEND_CHARS.
  */
 export function appendSection(existing: string, addition: string, now = new Date()): string {
-  const body = addition.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n*/, '').trim().slice(0, MAX_APPEND_CHARS);
+  const body = memory.stripFrontmatter(addition).slice(0, MAX_APPEND_CHARS);
   // Only inside the frontmatter: the body may have its own "updatedAt:" text.
   const frontmatter = existing.match(/^---\r?\n[\s\S]*?\r?\n---/)?.[0];
   const stamped = frontmatter
@@ -314,7 +282,7 @@ export function generateSessionFilename(sessionId: string, branchName?: string):
 
 // ─── Extraction prompt ───
 
-function buildExtractionPrompt(conversationSummary: string, context: ExtractionContext, sessionNotePath: string): string {
+function buildExtractionPrompt(conversationSummary: string, context: ExtractionContext, sessionNotePath: string, now = new Date()): string {
   const shown = Object.entries(context.full);
   const fullSection = shown.length > 0
     ? shown.map(([p, c]) => `### ${p}\n${c}`).join('\n\n')
@@ -323,7 +291,9 @@ function buildExtractionPrompt(conversationSummary: string, context: ExtractionC
   if (context.unlisted > 0) indexSection += `\n(${context.unlisted} more not listed)`;
   const noteState = sessionNotePath in context.full
     ? `Its current text is shown above: keep what still matters, since the session note you return replaces it.`
-    : 'It does not exist yet.';
+    : context.sessionNoteExists
+      ? 'It exists but is too long to show here: the session note you return is added to its end, so write only what is new.'
+      : 'It does not exist yet.';
 
   return `You are a memory extraction assistant. Your job is to analyze a conversation and decide what project knowledge should be saved to persistent memory.
 
@@ -339,6 +309,8 @@ ${conversationSummary}
 
 ## Session Note
 This thread's session note is ${sessionNotePath}. ${noteState}
+
+Today is ${now.toISOString().slice(0, 10)}. Set updatedAt to ${now.toISOString()} on every file you write.
 
 ## Instructions
 Analyze the conversation above and extract information worth persisting. Consider:
@@ -380,7 +352,8 @@ Respond with ONLY valid JSON matching this schema (no markdown fences):
 
 // ─── Core extraction ───
 
-/** What the model returned, and which existing files it was shown in full. */
+/** What the model returned, and which existing files it was shown in full
+ *  (as memoryPathKey, so another spelling of a path still matches). */
 interface Extraction {
   result: ExtractionResult;
   shown: Set<string>;
@@ -441,7 +414,7 @@ async function runExtraction(
       return null;
     }
 
-    return { result: parsed, shown: new Set(Object.keys(context.full)) };
+    return { result: parsed, shown: new Set(Object.keys(context.full).map(memory.memoryPathKey)) };
   } catch (err) {
     logger.error(`[memory-autosave] Extraction failed: ${err}`);
     return null;
@@ -470,7 +443,7 @@ function applyExtraction(repoPath: string, { result: extraction, shown }: Extrac
         memory.writeMemoryFile(repoPath, file.path, appendSection(existing, file.content));
       } else {
         // A file the model only saw in the index would lose what it couldn't see.
-        if (existing !== null && !shown.has(file.path)) {
+        if (existing !== null && !shown.has(memory.memoryPathKey(file.path))) {
           logger.warn(`[memory-autosave] Skipped ${file.action} of ${file.path}: its text was not shown to the model`);
           continue;
         }
@@ -486,7 +459,12 @@ function applyExtraction(repoPath: string, { result: extraction, shown }: Extrac
   if (extraction.sessionNote.shouldSave && extraction.sessionNote.content) {
     const sessionPath = generateSessionFilename(sessionId, branchName);
     try {
-      memory.writeMemoryFile(repoPath, sessionPath, extraction.sessionNote.content);
+      // A note too long to show is added to, never replaced from a partial view.
+      const existing = memory.readMemoryFile(repoPath, sessionPath);
+      const content = existing !== null && !shown.has(memory.memoryPathKey(sessionPath))
+        ? appendSection(existing, extraction.sessionNote.content)
+        : extraction.sessionNote.content;
+      memory.writeMemoryFile(repoPath, sessionPath, content);
       written.push(sessionPath);
       logger.info(`[memory-autosave] Saved session note: ${sessionPath}`);
     } catch (err) {
