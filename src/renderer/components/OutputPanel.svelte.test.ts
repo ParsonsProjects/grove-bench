@@ -21,6 +21,8 @@ const SID = 'panel-session';
 beforeEach(() => {
   messageStore.messagesBySession = { [SID]: [] };
   messageStore.paginationBySession = {};
+  // A view mode a test set (Focus hides status lines) would carry into the next.
+  messageStore.viewModeBySession = {};
   store.sessions = [];
   // jsdom's focus() collapses the selection onto the focused element (the
   // Ctrl+F test focuses the search box) and leaves it there, and addRange()
