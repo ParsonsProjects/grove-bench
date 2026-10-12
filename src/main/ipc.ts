@@ -20,6 +20,7 @@ import { inspectProjectFolder, projectKind } from './project-path.js';
 import { prsForBranches, prCreate, prReviewComments, ghLogin, isNetworkError, isRateLimitError, openPrs, GH_OFFLINE_COOLDOWN_MS, GH_OFFLINE_MESSAGE, GH_RATE_LIMITED_MESSAGE } from './gh.js';
 import { tempBranchName, isTempBranch, generateBranchName } from './branch-name.js';
 import { displayTextFromSent } from '../shared/prompt-text.js';
+import { EMPTY_THREAD_ITEMS, threadItems } from '../shared/thread-items.js';
 import { openAttachedFile, removeAttachments } from './attachments.js';
 import { openWorktreeFile } from './worktree-files.js';
 import { generateCommitMessage } from './commit-message.js';
@@ -1098,6 +1099,11 @@ export function registerHandlers() {
     const prelaunch = prelaunchEvents.get(sessionId) ?? [];
     return sessionManager.getEventHistoryCount(sessionId) + prelaunch.length;
   });
+
+  // Over the whole history, in the index space the renderer pages over, so
+  // a task or file can jump to its message like a search hit.
+  ipcMain.handle(IPC.AGENT_THREAD_ITEMS, (_event, sessionId: unknown) =>
+    typeof sessionId === 'string' ? threadItems(prelaunchPrefixedEvents(sessionId)) : EMPTY_THREAD_ITEMS);
 
   ipcMain.handle(IPC.AGENT_HISTORY_SEARCH, (_event, sessionId: string, query: string, limit?: number) => {
     // Search in the same prelaunch-prefixed index space the renderer pages over, so

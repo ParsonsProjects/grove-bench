@@ -1,5 +1,5 @@
 <script lang="ts">
-  import * as Dialog from '$lib/components/ui/dialog/index.js';
+  import ImageLightbox from './ImageLightbox.svelte';
   import { attachmentImageUrl } from '../../shared/attachments.js';
   import type { ThreadImage } from '../stores/messages.svelte.js';
 
@@ -71,16 +71,8 @@
   {/each}
 </div>
 
-<Dialog.Root open={openImage !== undefined} onOpenChange={(open) => { if (!open) openIndex = null; }}>
-  <Dialog.Content class="w-auto max-w-[90vw] sm:max-w-[90vw] p-3 gap-2">
-    {#if openImage}
-      <Dialog.Title class="text-xs font-normal text-muted-foreground truncate pr-8">{labelOf(openImage)}</Dialog.Title>
-      <img
-        src={srcOf(openImage)}
-        alt={labelOf(openImage)}
-        class="max-w-full max-h-[80vh] object-contain mx-auto
-          bg-[repeating-conic-gradient(var(--checker-a)_0_25%,var(--checker-b)_0_50%)] bg-[length:16px_16px]"
-      />
-    {/if}
-  </Dialog.Content>
-</Dialog.Root>
+<ImageLightbox
+  src={openImage ? srcOf(openImage) : null}
+  label={openImage ? labelOf(openImage) : ''}
+  onclose={() => (openIndex = null)}
+/>

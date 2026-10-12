@@ -847,6 +847,20 @@ describe('history', () => {
     expect(m.sessionManager.getEventHistoryPage).toHaveBeenCalledWith('s1', 1, 9);
   });
 
+  it("gives the thread's tasks and files from its whole history", () => {
+    m.sessionManager.getEventHistory.mockReturnValue([
+      ev(0),
+      { type: 'assistant_tool_use', toolName: 'TodoWrite', toolInput: { todos: [{ content: 'Ship', status: 'pending' }] }, toolUseId: 't', uuid: 'u' },
+      { type: 'files_made', files: [{ path: 'a.pdf', kind: 'pdf', size: 1 }] },
+    ] as AgentEvent[]);
+    expect(invoke(IPC.AGENT_THREAD_ITEMS, 's1')).toEqual({
+      tasks: [{ id: '0', content: 'Ship', status: 'pending' }],
+      tasksEventIndex: 1,
+      files: [{ kind: 'made', made: { path: 'a.pdf', kind: 'pdf', size: 1 }, eventIndex: 2 }],
+    });
+    expect(invoke(IPC.AGENT_THREAD_ITEMS, 42)).toEqual({ tasks: [], tasksEventIndex: null, files: [] });
+  });
+
   it('pages over setup status and history as one list while setup runs', async () => {
     m.settings.getSettings.mockReturnValue({ autoInstallDeps: true });
     const withPkg = fs.mkdtempSync(path.join(tmp, 'pkg-'));

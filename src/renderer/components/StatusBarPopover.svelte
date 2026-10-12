@@ -2,7 +2,9 @@
   /**
    * A status-bar popover: its trigger, and a panel that opens above it. The
    * owner keeps `open` and decides what opening does; this closes it on a
-   * click outside and on Escape, and keeps the panel inside the window.
+   * click outside and on Escape, keeps the panel inside the window, and
+   * lifts it clear of the bar's top edge (a chip low in the bar would
+   * otherwise open it over the bar, a two-line stack right on its edge).
    *
    * Escape closes it while it is on screen (every conversation's pane stays
    * mounted, and one left open in a hidden pane must not react to Escape
@@ -18,7 +20,7 @@
   import { fly } from 'svelte/transition';
   import { cn } from '$lib/utils.js';
   import { menuPanel } from '$lib/components/ui/menu/index.js';
-  import { keepInViewport } from '../lib/keep-in-viewport.js';
+  import { aboveBar, keepInViewport } from '../lib/keep-in-viewport.js';
 
   let {
     open = $bindable(false),
@@ -106,11 +108,11 @@
   <!-- One block, not an {#if animate} inside {#if open}: a transition is
        local, so it only plays when its own block opens or closes. -->
   {#if open && animate}
-    <div transition:fly={{ y: 6, duration: 140 }} use:keepInViewport class={placement} data-testid={testid} {id} role={label ? 'dialog' : undefined} aria-label={label}>
+    <div transition:fly={{ y: 6, duration: 140 }} use:keepInViewport use:aboveBar class={placement} data-testid={testid} {id} role={label ? 'dialog' : undefined} aria-label={label}>
       {@render children()}
     </div>
   {:else if open}
-    <div use:keepInViewport class={placement} data-testid={testid} {id} role={label ? 'dialog' : undefined} aria-label={label}>
+    <div use:keepInViewport use:aboveBar class={placement} data-testid={testid} {id} role={label ? 'dialog' : undefined} aria-label={label}>
       {@render children()}
     </div>
   {/if}

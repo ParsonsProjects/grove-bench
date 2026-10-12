@@ -6,6 +6,7 @@ import { gitStatusStore } from './gitStatus.svelte.js';
 import { notifyOs } from '../lib/os-notify.js';
 import { checkpointStore } from './checkpoints.svelte.js';
 import { backgroundTaskStore } from './backgroundTask.svelte.js';
+import { threadItemsStore } from './threadItems.svelte.js';
 import { rateLimitStore } from './rateLimit.svelte.js';
 import { usageStore } from './usage.svelte.js';
 import { store as sessionStore } from './sessions.svelte.js';
@@ -1201,9 +1202,12 @@ class MessageStore {
         const event = page.startIndex === eventIndex ? page.events[0] : undefined;
         const uuid = event && 'uuid' in event ? event.uuid : undefined;
         const toolUseId = event && 'toolUseId' in event ? event.toolUseId : undefined;
-        const match = (uuid || toolUseId)
+        // A turn's files carry neither: match the list by its first file.
+        const madePath = event?.type === 'files_made' ? event.files[0]?.path : undefined;
+        const match = (uuid || toolUseId || madePath)
           ? (this.messagesBySession[sessionId] ?? []).findLast((m) =>
-            (!!uuid && 'uuid' in m && m.uuid === uuid) || (!!toolUseId && 'toolUseId' in m && m.toolUseId === toolUseId))
+            (!!uuid && 'uuid' in m && m.uuid === uuid) || (!!toolUseId && 'toolUseId' in m && m.toolUseId === toolUseId)
+            || (!!madePath && m.kind === 'files_made' && m.files[0]?.path === madePath))
           : undefined;
         if (match) {
           let map = this.sourceIndexBySession.get(sessionId);
@@ -1409,6 +1413,9 @@ class MessageStore {
 
   /** Ingest a raw AgentEvent from the main process */
   ingestEvent(sessionId: string, event: AgentEvent) {
+    // Main holds the whole history the Tasks and Files chips are built
+    // from: a live event may change them; a replayed one is already in.
+    if (this.sideEffects && this._replayBuffer === null) threadItemsStore.noteEvent(sessionId, event);
     const parentToolUseId = subagentParent(event);
     if (event.type !== 'partial_text' && event.type !== 'partial_thinking') {
       this.settleStreamBuffer(sessionId, parentToolUseId ? null : event.type);
@@ -2554,6 +2561,7 @@ class MessageStore {
     // Extracted stores own their own per-session teardown.
     backgroundTaskStore.destroy(sessionId);
     rateLimitStore.destroy(sessionId);
+    threadItemsStore.destroy(sessionId);
   }
 
   /** destroySession for every conversation the store holds anything for.

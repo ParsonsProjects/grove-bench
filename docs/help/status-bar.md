@@ -2,7 +2,7 @@
 
 The status bar sits at the bottom of the workspace, just above the prompt, and shows live information about the open thread.
 
-In a narrow window the bar drops its extras so the agent settings, the activity, the branch and the context meter keep their room. As it narrows it drops, in order: the last turn's cost and duration, the project name (the branch's tooltip still names it), then **Keys** (the same list is under Keyboard Shortcuts in Help, `F1`) and the **MCP** and **Skills** badges. The MCP badge stays while a server is down.
+In a narrow window the bar drops its extras so the agent settings, the activity, the branch and the context meter keep their room. As it narrows it drops, in order: the last turn's cost and duration, the project name (the branch's tooltip still names it), then **Keys** (the same list is under Keyboard Shortcuts in Help, `F1`), the **MCP** and **Skills** badges, and **Tasks** and **Files**. The MCP badge stays while a server is down, and Tasks while a task is still to do.
 
 ## Agent Settings
 
@@ -35,6 +35,22 @@ The Mode, Effort, Thinking and Speed columns are declared by the agent provider 
 ## Activity
 
 Next to the agent settings, the bar says what the agent is doing: **idle**, **thinking**, **writing**, or the tool it is running and for how long. While it works a blue square pulses beside the word. **waiting for you** (amber) means a permission prompt, a question or an MCP form is waiting for your answer in the Thread tab; it shows over whatever the agent was doing. Underneath are any rate-limit warning, pending tools, background tasks and memory compaction. Click a pending tool or background task count for details. When every pending tool belongs to a subagent, the count says so (**1 subagent tool**), since the agent itself may be idle.
+
+## Tasks and Files
+
+Next to the activity, two lines show what the thread holds besides its messages. Each shows only once there is something in it.
+
+**Tasks** is the agent's to-do list, for example `Tasks 2/5`: how many are done out of the total (cancelled tasks don't count). A blue square pulses while the agent works on one. Click it to see the list: done tasks are ticked and struck through, and the one in progress is in bold. **Show in thread** opens the Thread tab at the message that last changed the list. The list comes from Claude Code's to-do and task tools, the plan an ACP agent sends, and OpenCode's to-do tool. It is always the latest one, so a list from an earlier turn stays until the agent changes it.
+
+**Files** counts the files that came into the thread. Click it for the list, newest first, in three groups:
+
+- **You attached**: images, text files and other files you added to your messages.
+- **Made by the agent**: what each turn's **Files made** list shows.
+- **From tools**: images a tool returned, such as a screenshot.
+
+Click a file to open it the way its chip in the thread does: an image full size, a text file in the Focus panel, a web page in the Preview tab, and PDFs, media and documents in their default app. The target button beside it opens the Thread tab at the message the file came with. If that message is hidden in Summary or Focus view, the thread switches to Detailed to show it. A file that is gone (a rewind took its message, or the agent deleted it) is greyed out once you try to open it.
+
+A file that came in more than once is listed once, at the latest message. A subagent's own to-do list and screenshots stay in its thread.
 
 ## Last turn
 

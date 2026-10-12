@@ -2604,6 +2604,21 @@ describe('findMessageForEvent', () => {
     expect(messageStore.getEventIndexForMessageId(id, target!.id)).toBe(7);
     messageStore.destroySession(id);
   });
+
+  it("finds a turn's files that arrived live by their first file", async () => {
+    const id = 'search-live-made';
+    const made = (path: string) => ({ type: 'files_made', files: [{ path, kind: 'pdf', size: 1 }] }) as AgentEvent;
+    messageStore.ingestEvent(id, made('one.pdf'));
+    messageStore.ingestEvent(id, { type: 'assistant_text', text: 'between', uuid: 'a1' } as AgentEvent);
+    messageStore.ingestEvent(id, made('two.pdf'));
+    mockGroveBench.getEventHistoryPage.mockResolvedValueOnce({ events: [made('one.pdf')], totalCount: 9, startIndex: 4 } as never);
+
+    const found = await messageStore.findMessageForEvent(id, 4);
+
+    const target = messageStore.getMessages(id).find((m) => m.kind === 'files_made' && m.files[0].path === 'one.pdf');
+    expect(found).toBe(target!.id);
+    messageStore.destroySession(id);
+  });
 });
 
 describe('/clear that never happened', () => {
