@@ -474,6 +474,14 @@
   /** The draft row's tooltip, before there is a draft. */
   let newConversationHint = $derived(store.canCreate ? 'New thread (Ctrl+N)' : 'Add a project to start a thread');
 
+  /** Rows start with a status column: a 20px character or an 8px dot. `lead`
+   *  holds the New thread and draft rows' marks in that column (over the
+   *  character's body, its left 12px, or centred on the dot); `indent` puts
+   *  line 2 past it and the gap, under the branch icon. */
+  let markColumn = $derived(settingsStore.current.groveCharacters
+    ? { lead: 'w-5', indent: 'pl-7' }
+    : { lead: 'w-2 justify-center', indent: 'pl-4' });
+
   /** What deleting the conversation in the confirm dialog would lose: files
    *  with uncommitted changes in its worktree, and commits on its branch
    *  that its base branch doesn't have. Null while unknown. */
@@ -913,7 +921,7 @@
           {/if}
         </div>
         {#if group || showProject || subtitle || changedCount > 0}
-          <div class="w-full flex items-center gap-1.5 pl-4 pr-1 mt-0.5 min-w-0">
+          <div class="w-full flex items-center gap-1.5 {markColumn.indent} mt-0.5 min-w-0">
             <span class="text-caption truncate min-w-0">
               {#if group}<span class="text-foreground/60" title="Group: {group.name}" data-row-group>{group.name}</span>{#if showProject || subtitle}<span class="text-muted-foreground/40">{' · '}</span>{/if}{/if}
               {#if showProject}
@@ -1118,12 +1126,12 @@
           data-draft-row
         >
           <span class="w-full flex items-center gap-2 min-w-0">
-            <span class="w-2 h-2 shrink-0 border border-dashed border-muted-foreground"></span>
+            <span class="{markColumn.lead} shrink-0 flex"><span class="w-2 h-2 shrink-0 border border-dashed border-muted-foreground"></span></span>
             <span class="text-sm truncate min-w-0 flex-1 italic text-muted-foreground">{draft.text.trim() ? draft.text.trim().split('\n')[0] : 'New thread'}</span>
             <span class="text-micro text-muted-foreground shrink-0">draft</span>
           </span>
           {#if store.repos.length > 1 || draftGroup}
-            <span class="pl-4 mt-0.5 text-caption text-muted-foreground truncate">{#if draftGroup}<span class="text-foreground/60">{draftGroup}</span>{#if store.repos.length > 1}<span class="text-muted-foreground/40">{' · '}</span>{/if}{/if}{#if store.repos.length > 1}{store.repoDisplayName(draft.repoPath)}{/if}</span>
+            <span class="{markColumn.indent} mt-0.5 text-caption text-muted-foreground truncate">{#if draftGroup}<span class="text-foreground/60">{draftGroup}</span>{#if store.repos.length > 1}<span class="text-muted-foreground/40">{' · '}</span>{/if}{/if}{#if store.repos.length > 1}{store.repoDisplayName(draft.repoPath)}{/if}</span>
           {/if}
         </button>
       {:else}
@@ -1139,7 +1147,7 @@
           aria-label="New thread"
           data-draft-row
         >
-          <svg class="shrink-0 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+          <span class="{markColumn.lead} shrink-0 flex"><svg class="shrink-0 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg></span>
           <span class="text-sm truncate min-w-0 flex-1 italic text-muted-foreground">New thread</span>
           <Kbd keys="Ctrl+N" class="shrink-0" />
         </button>
