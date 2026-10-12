@@ -170,6 +170,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [x] Skills (reusable prompt templates / workflows)
 - [ ] Recipes on top of skills — collections, a one-click "Run in new session", and a main-process scheduler for on-demand or scheduled runs
 - [x] MCP server connections (connect to external MCP servers)
+- [x] A thread's tasks and files in the status bar: **Tasks** shows the agent's current to-do list (Claude Code's TodoWrite or TaskCreate/TaskUpdate, an ACP plan, OpenCode's todowrite) and **Files** lists the files you attached, the agent made and tools returned. Built in main from the whole history (`shared/thread-items.ts`), so a list started before the loaded page still shows; each item can jump to its message
 
 ### Git & Workflow
 - [x] Branch → PR link (create PR from session branch)

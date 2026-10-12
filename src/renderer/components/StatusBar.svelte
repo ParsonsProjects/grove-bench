@@ -16,6 +16,7 @@
   import ContextGrove from './ContextGrove.svelte';
   import StatusBarActivity from './StatusBarActivity.svelte';
   import StatusBarLastTurn from './StatusBarLastTurn.svelte';
+  import StatusBarThreadItems from './StatusBarThreadItems.svelte';
   import StatusBarCapabilities from './StatusBarCapabilities.svelte';
   import StatusBarBranch from './StatusBarBranch.svelte';
   import StatusBarContext from './StatusBarContext.svelte';
@@ -87,9 +88,10 @@
 {/if}
 <!-- The window can be 800px wide with the sidebar open, which leaves this
      bar about 480px. Narrow, the extras drop out so the agent, activity,
-     branch and context keep their room: Keys (Help has the list) and MCP /
-     Skills below 672px (MCP stays while a server is down), the project name
-     below 768px, and the last turn's cost below 1024px. -->
+     branch and context keep their room: Keys (Help has the list), MCP /
+     Skills and Tasks / Files below 672px (MCP stays while a server is down,
+     Tasks while a task is still to do), the project name below 768px, and
+     the last turn's cost below 1024px. -->
 <div class="@container flex items-center gap-3 px-3 @3xl:gap-4 @3xl:px-4 py-1 bg-card border-t border-b border-border text-xs text-muted-foreground shrink-0">
   <SessionControlsPopover {sessionId} {modelOptions} />
 
@@ -99,6 +101,7 @@
 
   <span class="w-px self-stretch bg-border"></span>
 
+  <StatusBarThreadItems {sessionId} />
   <StatusBarLastTurn {sessionId} />
   <StatusBarCapabilities {sessionId} />
   <StatusBarBranch {sessionId} />

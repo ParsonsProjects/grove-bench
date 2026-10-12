@@ -1,5 +1,6 @@
 import type { ToolView } from './tool-view.js';
 import type { LimitKind } from './limits.js';
+import type { ThreadItems } from './thread-items.js';
 
 // ─── Worktree ───
 
@@ -1242,6 +1243,9 @@ export interface GroveBenchAPI {
   getEventHistoryPage(sessionId: string, limit: number, beforeIndex?: number): Promise<{ events: AgentEvent[]; totalCount: number; startIndex: number }>;
   /** Get the total number of persisted events for a session. */
   getEventHistoryCount(sessionId: string): Promise<number>;
+  /** The thread's to-do list and files, from its whole history
+   *  (shared/thread-items.ts). */
+  getThreadItems(sessionId: string): Promise<ThreadItems>;
   /** Search the full event history (main-process), newest match first. */
   searchEventHistory(sessionId: string, query: string, limit?: number): Promise<EventSearchHit[]>;
   /** Search every given session's full history (main-process), in the given
@@ -2016,6 +2020,7 @@ export const IPC = {
   AGENT_HISTORY: 'agent:history',
   AGENT_HISTORY_PAGE: 'agent:history-page',
   AGENT_HISTORY_COUNT: 'agent:history-count',
+  AGENT_THREAD_ITEMS: 'agent:thread-items',
   AGENT_HISTORY_SEARCH: 'agent:history-search',
   AGENT_HISTORY_SEARCH_ALL: 'agent:history-search-all',
   SESSION_PREVIEWS: 'session:previews',

@@ -1,5 +1,6 @@
 import { afterAll, vi } from 'vitest';
 import type { GroveBenchAPI, OpenWorktreeFileResult } from '../../shared/types.js';
+import type { ThreadItems } from '../../shared/thread-items.js';
 
 // A closed bits-ui dialog resets the page body's style on a timer (24ms by
 // default, see bits-ui's body-scroll-lock). One left over from a file's last
@@ -101,6 +102,7 @@ const mockGroveBench = {
   getCheckpointFileLines: vi.fn((_sessionId: string, _uuid: string, _scope: import('../../shared/types.js').CheckpointDiffScope, _filePath: string) => Promise.resolve(null as import('../../shared/types.js').FileLinesResult)),
   clearEventHistory: vi.fn(() => Promise.resolve()),
   getEventHistoryPage: vi.fn(() => Promise.resolve({ events: [], totalCount: 0, startIndex: 0 })),
+  getThreadItems: vi.fn((): Promise<ThreadItems> => Promise.resolve({ tasks: [], tasksEventIndex: null, files: [] })),
   searchEventHistory: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').EventSearchHit[])),
   searchAllEventHistory: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').CrossSessionSearchHit[])),
   getSessionPreviews: vi.fn(() => Promise.resolve({} as Record<string, import('../../shared/types.js').SessionPreview>)),

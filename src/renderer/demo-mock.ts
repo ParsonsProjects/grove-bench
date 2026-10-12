@@ -4,6 +4,8 @@
  * with representative sessions so the renderer can run in a plain browser.
  */
 
+import type { ThreadItems } from '../shared/thread-items.js';
+
 // Capture uncaught errors (a template error can kill Svelte's effect loop).
 const errs: string[] = [];
 (window as never as Record<string, unknown>).__demoErrs = errs;
@@ -84,6 +86,28 @@ const SETTINGS = {
 const GOALS: Record<string, string> = {
   's-sidebar': 'Redesign the sidebar so threads group by project and show their status at a glance',
   's-oauth': 'Fix the OAuth refresh flow so sessions stop dropping after one hour',
+};
+
+// The status bar's Tasks and Files for the working thread: a to-do list part
+// done, and files of each kind (no images: grove-attachment:// doesn't load
+// in a plain browser).
+const THREAD_ITEMS: Record<string, ThreadItems> = {
+  's-sidebar': {
+    tasks: [
+      { id: '0', content: 'Widen the sidebar and make room for a second line', status: 'completed' },
+      { id: '1', content: 'Show live context under each thread name', status: 'completed' },
+      { id: '2', content: 'Run the test suite', activeForm: 'Running the test suite', status: 'in_progress' },
+      { id: '3', content: 'Add search across threads', status: 'pending' },
+      { id: '4', content: 'Update the sidebar help page', status: 'pending' },
+    ],
+    tasksEventIndex: 12,
+    files: [
+      { kind: 'made', made: { path: 'out/sidebar-report.html', kind: 'html', size: 18_432 }, eventIndex: 14 },
+      { kind: 'made', made: { path: 'out/row-heights.csv', kind: 'data', size: 2_310 }, eventIndex: 14 },
+      { kind: 'file', file: { file: `${'a'.repeat(32)}.pdf`, name: 'sidebar-spec.pdf', mediaType: 'application/pdf', size: 248_000 }, eventIndex: 0 },
+      { kind: 'text', name: 'src/renderer/components/Sidebar.svelte', size: 41_200, eventIndex: 0 },
+    ],
+  },
 };
 
 const PREVIEWS: Record<string, { firstPrompt: string; lastText: string }> = {
@@ -365,6 +389,7 @@ const api: Record<string, unknown> = {
   setAttentionBadge: () => {},
   getEventHistoryPage: async () => ({ events: [], totalCount: 0, startIndex: 0 }),
   getEventHistoryCount: async () => 0,
+  getThreadItems: async (id: string) => THREAD_ITEMS[id] ?? { tasks: [], tasksEventIndex: null, files: [] },
   searchEventHistory: async () => [],
   searchAllEventHistory: async (_ids: string[], q: string) =>
     q.toLowerCase().includes('oauth') ? CONTENT_HITS : [],
