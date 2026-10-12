@@ -14,6 +14,7 @@ import { worktreeManager } from './worktree-manager.js';
 import * as settings from './settings.js';
 import * as memory from './memory.js';
 import * as memoryAutosave from './memory-autosave.js';
+import * as memoryCompact from './memory-compact.js';
 import { adapterRegistry } from './adapters/index.js';
 import type { AgentAdapter, AgentQueryHandle, UserMessage } from './adapters/types.js';
 import { ResumeNotFoundError } from './adapters/types.js';
@@ -181,6 +182,8 @@ class AgentSessionManager {
     const effectivePermissionMode = startingPermissionMode(
       adapter, initialModel, opts.permissionMode, appSettings.adapterDefaults?.[adapter.id]?.[CONTROL_IDS.permissionMode],
     );
+    // Archive expired thread notes first, so the memory index never lists them.
+    memoryCompact.expireSessionNotes(repoPath);
     // Path rules, project memory, caveman mode and the user's own addition.
     const effectiveAppendPrompt = appendedSystemPrompt({
       cwd,

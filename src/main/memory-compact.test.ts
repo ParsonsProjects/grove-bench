@@ -31,6 +31,7 @@ import * as settings from './settings.js';
 import {
   needsCompaction,
   pruneSessionNotes,
+  expireSessionNotes,
   compactMemory,
   cancelCompaction,
   onCompactionEvent,
@@ -72,32 +73,99 @@ afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-// ─── getMemoryStats ───
+// ─── What reaches the agent ───
 
-describe('getMemoryStats', () => {
-  it('counts non-session bytes and files, session notes separately', () => {
+function writeWithDescription(relPath: string, title: string, description: string, body: string, updatedAt = new Date().toISOString()): void {
+  memory.writeMemoryFile(REPO, relPath,
+    `---\ntitle: "${title}"\ndescription: "${description}"\nupdatedAt: "${updatedAt}"\n---\n\n${body}\n`);
+}
+
+describe('memory prompt', () => {
+  it('loads conventions in full and lists every other file in the index', () => {
+    writeWithDescription('repo/overview.md', 'Overview', 'Tech stack and layout', 'OVERVIEW BODY');
+    writeMemory('conventions/naming.md', 'Naming', 'NAMING BODY');
+    writeMemory('architecture/flow.md', 'Flow', 'FLOW BODY');
+    writeMemory('sessions/note.md', 'Note', 'NOTE BODY', '2026-10-01T00:00:00Z');
+
+    const prompt = memory.getMemoryForSystemPrompt(REPO);
+
+    expect(prompt).toContain('### Naming\nNAMING BODY');
+    expect(prompt).not.toContain('OVERVIEW BODY');
+    expect(prompt).not.toContain('FLOW BODY');
+    expect(prompt).not.toContain('NOTE BODY');
+    expect(prompt).toContain('- repo/overview.md: Overview. Tech stack and layout');
+    expect(prompt).toContain('- architecture/flow.md: Flow');
+    expect(prompt).toContain('- sessions/note.md: Note (updated 2026-10-01)');
+    // Conventions loaded in full aren't listed again
+    expect(prompt).not.toContain('- conventions/naming.md');
+  });
+
+  it('lists conventions past the full-load cap in the index', () => {
+    writeMemory('conventions/a.md', 'A', 'a'.repeat(4 * 1024), '2026-02-01T00:00:00Z');
+    writeMemory('conventions/b.md', 'B', 'b'.repeat(4 * 1024), '2026-01-01T00:00:00Z');
+
+    const plan = memory.planMemoryPrompt(REPO);
+
+    // Newest first: a fits, b would pass FULL_CONVENTIONS_BYTES
+    expect(plan.full.map(f => f.entry.relativePath)).toEqual(['conventions/a.md']);
+    expect(plan.indexed.map(i => i.entry.relativePath)).toEqual(['conventions/b.md']);
+  });
+
+  it('orders the index by folder, then newest first, with thread notes last', () => {
+    writeMemory('sessions/s.md', 'S', 'x');
+    writeMemory('architecture/old.md', 'Old', 'x', '2025-01-01T00:00:00Z');
+    writeMemory('architecture/new.md', 'New', 'x', '2026-01-01T00:00:00Z');
+    writeMemory('notes/other.md', 'Other', 'x');
+    writeMemory('repo/overview.md', 'Overview', 'x');
+
+    const order = memory.planMemoryPrompt(REPO).indexed.map(i => i.entry.relativePath);
+
+    expect(order).toEqual([
+      'repo/overview.md', 'architecture/new.md', 'architecture/old.md', 'notes/other.md', 'sessions/s.md',
+    ]);
+  });
+
+  it('leaves the end of the index out when it outgrows the budget, matching the stats', () => {
+    const longTitle = 'A long architecture note title '.repeat(3);
+    for (let i = 0; i < 200; i++) {
+      writeWithDescription(`architecture/note-${String(i).padStart(3, '0')}.md`, longTitle, 'd'.repeat(100), 'x');
+    }
+    writeMemory('sessions/s.md', 'S', 'x');
+
+    const stats = memory.getMemoryStats(REPO);
+    const prompt = memory.getMemoryForSystemPrompt(REPO);
+
+    expect(stats.unlistedFiles.length).toBeGreaterThan(0);
+    expect(stats.unlistedFiles).toContain('sessions/s.md');
+    expect(stats.promptBytes).toBeLessThanOrEqual(stats.budgetBytes);
+    expect(prompt).toContain(`${stats.unlistedFiles.length} more files are not listed here`);
+    for (const p of stats.unlistedFiles) expect(prompt).not.toContain(`- ${p}:`);
+  });
+
+  it('counts files and what the prompt holds', () => {
     writeMemory('repo/overview.md', 'Overview', 'x'.repeat(100));
     writeMemory('conventions/naming.md', 'Naming', 'y'.repeat(50));
     writeMemory('sessions/note.md', 'Note', 'z'.repeat(999));
 
     const stats = memory.getMemoryStats(REPO);
+    const plan = memory.planMemoryPrompt(REPO);
 
     expect(stats.fileCount).toBe(2);
     expect(stats.sessionNoteCount).toBe(1);
-    expect(stats.totalBytes).toBe(150);
+    expect(stats.fullFiles).toEqual(['conventions/naming.md']);
+    expect(stats.unlistedFiles).toEqual([]);
     expect(stats.budgetBytes).toBe(16 * 1024);
-    expect(stats.skippedFiles).toEqual([]);
+    const indexBytes = plan.indexed.reduce((sum, i) => sum + Buffer.byteLength(i.line) + 1, 0);
+    expect(stats.promptBytes).toBe(50 + indexBytes);
   });
 
-  it('marks files beyond the prompt budget as skipped, matching the prompt builder', () => {
-    writeMemory('repo/big-1.md', 'Big 1', 'a'.repeat(9 * 1024));
-    writeMemory('repo/big-2.md', 'Big 2', 'b'.repeat(9 * 1024));
+  it('adds nothing to the prompt for a project without memory files', () => {
+    expect(memory.getMemoryForSystemPrompt(REPO)).toBe('');
+  });
 
-    const stats = memory.getMemoryStats(REPO);
-
-    expect(stats.skippedFiles).toHaveLength(1);
-    // The same file the prompt builder reports as skipped
-    expect(memory.getMemoryForSystemPrompt(REPO)).toContain(stats.skippedFiles[0]);
+  it('reads the description from frontmatter for memory_list', () => {
+    writeWithDescription('repo/overview.md', 'Overview', 'Tech stack and layout', 'x');
+    expect(memory.listMemoryFiles(REPO)[0].description).toBe('Tech stack and layout');
   });
 });
 
@@ -189,6 +257,38 @@ describe('pruneSessionNotes', () => {
     // The archive is invisible to memory listing and the prompt
     const listed = memory.listMemoryFiles(REPO).map(e => e.relativePath);
     expect(listed.some(p => p.includes('_pruned-sessions'))).toBe(false);
+  });
+});
+
+// ─── expireSessionNotes ───
+
+describe('expireSessionNotes', () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  const NOW = Date.parse('2026-10-12T12:00:00Z');
+
+  it('archives thread notes older than 30 days and keeps newer ones', () => {
+    writeMemory('sessions/old.md', 'Old', 'old work', new Date(NOW - 31 * DAY).toISOString());
+    writeMemory('sessions/recent.md', 'Recent', 'note', new Date(NOW - 29 * DAY).toISOString());
+    writeMemory('architecture/old.md', 'Lasting', 'note', new Date(NOW - 400 * DAY).toISOString());
+
+    const expired = expireSessionNotes(REPO, NOW);
+
+    expect(expired).toEqual(['sessions/old.md']);
+    expect(memory.readMemoryFile(REPO, 'sessions/recent.md')).not.toBeNull();
+    // Other folders never expire
+    expect(memory.readMemoryFile(REPO, 'architecture/old.md')).not.toBeNull();
+    const archived = fs.readdirSync(path.join(memoryDir(), '_pruned-sessions'));
+    expect(archived.some(name => name.endsWith('old.md'))).toBe(true);
+  });
+
+  it('then keeps at most 20 notes', () => {
+    for (let i = 0; i < 22; i++) {
+      writeMemory(`sessions/s-${String(i).padStart(2, '0')}.md`, `S${i}`, 'note', new Date(NOW - i * 60_000).toISOString());
+    }
+
+    const expired = expireSessionNotes(REPO, NOW);
+
+    expect(expired.sort()).toEqual(['sessions/s-20.md', 'sessions/s-21.md']);
   });
 });
 
@@ -365,7 +465,8 @@ describe('compactMemory', () => {
 
   it('prunes session notes even when LLM compaction is skipped', async () => {
     for (let i = 0; i < 25; i++) {
-      writeMemory(`sessions/s-${String(i).padStart(2, '0')}.md`, `S${i}`, 'note', new Date(2026, 0, i + 1).toISOString());
+      // Within the last day, so only the cap applies, not the age limit
+      writeMemory(`sessions/s-${String(i).padStart(2, '0')}.md`, `S${i}`, 'note', new Date(Date.now() - (25 - i) * 60_000).toISOString());
     }
     writeMemory('repo/overview.md', 'Overview', 'small');
 

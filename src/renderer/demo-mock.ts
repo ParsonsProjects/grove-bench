@@ -267,13 +267,17 @@ const api: Record<string, unknown> = {
   memoryRestoreBackup: async () => ({ restored: true, filesChanged: ['repo/overview.md', 'repo/tech-stack.md'] }),
   memoryStats: async () => {
     const nonSession = memoryFiles.filter(f => !f.folder.startsWith('sessions'));
-    const totalBytes = nonSession.reduce((sum, f) => sum + f.content.length, 0) + 11.5 * 1024; // pad to a realistic fill level
+    const conventions = nonSession.filter(f => f.folder === 'conventions');
+    // Conventions in full plus an index line per other file, as main counts it
+    const promptBytes = conventions.reduce((sum, f) => sum + f.content.length, 0)
+      + (memoryFiles.length - conventions.length) * 90;
     return {
-      totalBytes,
+      promptBytes,
       budgetBytes: 16 * 1024,
       fileCount: nonSession.length,
       sessionNoteCount: memoryFiles.length - nonSession.length,
-      skippedFiles: [],
+      fullFiles: conventions.map(f => f.relativePath),
+      unlistedFiles: [],
       lastCompactedAt: new Date(now - 7 * 60 * min).toISOString(),
       lastAuto: true,
       lastFilesChanged: 2,

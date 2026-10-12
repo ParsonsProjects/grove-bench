@@ -1668,6 +1668,8 @@ export interface TimingReport {
 export interface MemoryEntry {
   relativePath: string;  // e.g. "repo/overview.md"
   title: string;         // from frontmatter
+  /** One line from frontmatter, shown in the agent's memory index. */
+  description?: string;
   updatedAt: string;     // ISO date from frontmatter
   folder: string;        // e.g. "repo", "conventions", "sessions"
 }
@@ -1691,11 +1693,12 @@ export type MemoryCompactionEvent =
   | { kind: 'done'; repoPath: string; auto: boolean; status: MemoryCompactionStatus };
 
 export interface MemoryStatsResult {
-  totalBytes: number;        // non-session memory bytes (frontmatter stripped)
+  promptBytes: number;       // what memory adds to the system prompt: conventions in full plus the index
   budgetBytes: number;       // system-prompt budget
   fileCount: number;         // non-session files
   sessionNoteCount: number;
-  skippedFiles: string[];    // files that no longer fit in the prompt budget
+  fullFiles: string[];       // conventions/ files loaded in full
+  unlistedFiles: string[];   // files past the budget, left out of the index
   lastCompactedAt: string | null;
   lastAuto?: boolean;        // last pass was automatic (vs the panel button)
   lastFilesChanged?: number;

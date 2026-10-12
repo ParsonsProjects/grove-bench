@@ -147,7 +147,7 @@
 
   // ─── Budget meter ───
   const budgetPct = $derived(memoryStore.stats
-    ? Math.min(100, Math.round((memoryStore.stats.totalBytes / memoryStore.stats.budgetBytes) * 100))
+    ? Math.min(100, Math.round((memoryStore.stats.promptBytes / memoryStore.stats.budgetBytes) * 100))
     : 0);
   const budgetWarn = $derived(budgetPct >= 75);
 
@@ -210,18 +210,25 @@
       </div>
     {/if}
 
-    <!-- Budget meter: how much of the agent's system-prompt budget memory uses -->
+    <!-- Budget meter: how much of the agent's system-prompt budget memory uses
+         (conventions in full plus one index line per file) -->
     {#if memoryStore.stats}
       <div class="mb-2">
         <div class="flex items-center justify-between text-xs mb-1">
-          <span class="text-muted-foreground">
+          <span
+            class="text-muted-foreground"
+            title={`The agent gets conventions/ in full and an index of every other file, which it reads when needed.${memoryStore.stats.fullFiles.length > 0 ? ` Loaded in full: ${memoryStore.stats.fullFiles.join(', ')}` : ''}`}
+          >
             Agent prompt budget:
             <span class={budgetWarn ? 'text-amber-500 font-medium' : 'text-foreground/80'}>
-              {formatKb(memoryStore.stats.totalBytes)} / {formatKb(memoryStore.stats.budgetBytes)}
+              {formatKb(memoryStore.stats.promptBytes)} / {formatKb(memoryStore.stats.budgetBytes)}
             </span>
-            {#if memoryStore.stats.skippedFiles.length > 0}
-              <span class="text-destructive font-medium" title={memoryStore.stats.skippedFiles.join(', ')}>
-                · {memoryStore.stats.skippedFiles.length} {memoryStore.stats.skippedFiles.length === 1 ? 'file' : 'files'} not reaching the agent
+            {#if memoryStore.stats.unlistedFiles.length > 0}
+              <span
+                class="text-amber-500 font-medium"
+                title={`Not in the agent's index, though it can still find them with memory_list: ${memoryStore.stats.unlistedFiles.join(', ')}`}
+              >
+                · {memoryStore.stats.unlistedFiles.length} {memoryStore.stats.unlistedFiles.length === 1 ? 'file' : 'files'} left out of the index
               </span>
             {/if}
           </span>
@@ -267,7 +274,7 @@
                   onclick={() => selectFile(file.relativePath)}
                   class="w-full text-left text-xs px-2 py-1 truncate transition-colors
                     {memoryStore.selectedFile?.path === file.relativePath ? 'bg-sidebar-accent text-foreground' : 'text-muted-foreground hover:bg-sidebar-accent/50'}"
-                  title={file.relativePath}
+                  title={file.description ? `${file.relativePath}\n${file.description}` : file.relativePath}
                 >
                   {file.title || file.relativePath.split('/').pop()?.replace('.md', '')}
                 </button>

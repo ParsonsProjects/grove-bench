@@ -86,9 +86,6 @@ const COMPACT_THRESHOLD_RATIO = 0.75;
 /** Or when this many non-session files have accumulated. */
 const MAX_FILES_BEFORE_COMPACT = 15;
 
-/** Session notes kept after pruning (newest first). */
-const MAX_SESSION_NOTES = 20;
-
 /** Minimum time between LLM compaction passes per repo. */
 const COMPACT_COOLDOWN_MS = 6 * 60 * 60 * 1000; // 6 hours
 
@@ -257,7 +254,7 @@ function archivePrunedNote(repoPath: string, relativePath: string, content: stri
  * notes without a parseable timestamp. Pruned notes are archived to the hidden
  * _pruned-sessions folder before removal. Returns the paths of pruned notes.
  */
-export function pruneSessionNotes(repoPath: string, keep: number = MAX_SESSION_NOTES): string[] {
+export function pruneSessionNotes(repoPath: string, keep: number = memory.MAX_SESSION_NOTES): string[] {
   const sessionEntries = memory
     .listMemoryFiles(repoPath)
     .filter(e => e.folder.startsWith('sessions'));
@@ -281,6 +278,32 @@ export function pruneSessionNotes(repoPath: string, keep: number = MAX_SESSION_N
     logger.info(`[memory-compact] Pruned ${deleted.length} old session notes (archived): ${deleted.join(', ')}`);
   }
   return deleted;
+}
+
+/**
+ * Archive thread notes not updated for SESSION_NOTE_MAX_AGE_DAYS, then keep at
+ * most MAX_SESSION_NOTES of the rest. Thread notes hold one piece of work, so
+ * they expire; lasting knowledge belongs in the other folders. Runs without an
+ * LLM after every memory auto-save and when a thread starts. Returns the paths
+ * of archived notes.
+ */
+export function expireSessionNotes(repoPath: string, now: number = Date.now()): string[] {
+  const cutoff = now - memory.SESSION_NOTE_MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
+  const expired: string[] = [];
+  for (const entry of memory.listMemoryFiles(repoPath)) {
+    if (!entry.folder.startsWith('sessions')) continue;
+    if (noteTimestamp(repoPath, entry) >= cutoff) continue;
+    const content = memory.readMemoryFile(repoPath, entry.relativePath);
+    if (content) archivePrunedNote(repoPath, entry.relativePath, content);
+    if (memory.deleteMemoryFile(repoPath, entry.relativePath)) {
+      expired.push(entry.relativePath);
+    }
+  }
+
+  if (expired.length > 0) {
+    logger.info(`[memory-compact] Archived ${expired.length} thread notes older than ${memory.SESSION_NOTE_MAX_AGE_DAYS} days: ${expired.join(', ')}`);
+  }
+  return [...expired, ...pruneSessionNotes(repoPath)];
 }
 
 // ─── Backups ───
@@ -467,7 +490,7 @@ Rewrite the memory files so that:
 - Each file stays concise and factual, under roughly 4 KB.
 - Nothing is invented: every retained statement must come from the files above. Prefer dropping a doubtful statement over rephrasing it into something new.
 - File organization is preserved: repo/ (overview, tech stack), conventions/ (naming, patterns), architecture/ (data flow, modules). Do not touch other folders.
-- Each kept file retains markdown with YAML frontmatter (title, updatedAt). Set updatedAt to the newest timestamp among its merged sources.
+- Each kept file retains markdown with YAML frontmatter (title, description, updatedAt). The description is one line, under 100 characters, saying what the file covers: agents see only the title and description until they read the file, so keep it accurate when the content changes. Set updatedAt to the newest timestamp among its merged sources.
 
 Actions:
 - "update": replace the file's content with the compacted version (also used for a new merged file).
@@ -652,7 +675,7 @@ async function runCompaction(
   const { repoPath, adapterType, force } = opts;
 
   emitStage('pruning');
-  const filesChanged = pruneSessionNotes(repoPath);
+  const filesChanged = expireSessionNotes(repoPath);
 
   if (!force) {
     const { needed } = needsCompaction(repoPath);

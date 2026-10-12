@@ -211,8 +211,9 @@ Rules:
 - When updating a file, rewrite it as a coherent whole: remove statements the new information contradicts or supersedes rather than appending both. If the user corrected something, the correction replaces the old claim.
 - Do NOT save ephemeral information (debugging steps, temporary state, conversation pleasantries).
 - Do NOT duplicate information already in existing memory files — merge instead.
-- Memory files use markdown with YAML frontmatter (title, updatedAt).
-- Organize into folders: repo/ (overview, tech stack), conventions/ (naming, patterns), architecture/ (data flow, modules).
+- Memory files use markdown with YAML frontmatter: title, description (one line, under 100 characters, saying what the file covers; agents see only the title and description until they read the file) and updatedAt.
+- Organize into folders: repo/ (overview, tech stack), conventions/ (naming, patterns, user corrections; loaded in full into every thread, so keep it short), architecture/ (data flow, modules and decisions that span features).
+- Only knowledge that stays true beyond this piece of work goes in those folders. Details of one feature, task, bug or investigation go in the session note instead: session notes are archived after ${memory.SESSION_NOTE_MAX_AGE_DAYS} days.
 - For the session note: only save if the conversation involved substantial work (multi-step implementation, important decisions, debugging sessions). Skip for simple Q&A.
 - Keep memory files concise and factual.
 
@@ -522,8 +523,12 @@ async function runAutoSave(opts: AutoSaveOptions): Promise<void> {
 
     const written = applyExtraction(repoPath, extraction, sessionId, branchName);
 
+    // Auto-saves add thread notes; archive the expired ones whether or not
+    // auto-compact is on.
+    memoryCompact.expireSessionNotes(repoPath);
+
     // Auto-saves grow memory; opportunistically compact it back down
-    // (deduped, contradictions resolved, old session notes pruned).
+    // (deduped, contradictions resolved).
     memoryCompact.maybeCompact({ repoPath, cwd, adapterType });
 
     if (written.length > 0) {

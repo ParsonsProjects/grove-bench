@@ -95,10 +95,11 @@ export function memoryServer(ops: MemoryOperations): GroveServer {
       },
       {
         name: 'memory_write',
-        description: 'Write or update a memory file',
+        description: 'Write or update a memory file. Notes about one feature, task or bug go in sessions/, which expire; '
+          + 'repo/, conventions/ and architecture/ are for knowledge that lasts.',
         shape: {
           path: z.string().describe('Relative path (must end in .md), e.g. "sessions/current-plan.md"'),
-          content: z.string().describe('Full file content including YAML frontmatter'),
+          content: z.string().describe('Full file content including YAML frontmatter: title, description (one line, shown in the memory index) and updatedAt'),
         },
         run: async ({ path, content }: { path: string; content: string }) => {
           ops.write(path, content);

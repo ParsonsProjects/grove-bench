@@ -6,7 +6,12 @@ Open the Memory panel from the brain icon in the sidebar bottom controls. Projec
 
 Memory files are markdown documents organized into folders. They are stored per project, so each project has its own set of notes.
 
-The agent automatically reads relevant memory files at the start of each thread and can create or update them as it learns about your project.
+When a thread starts, the agent gets:
+
+- **conventions/ in full**, up to 6 KB, newest first. These are the rules it should always follow.
+- **An index** of every other file: one line each with its path, title and description. The agent reads a file with `memory_read` when its topic matters to the task.
+
+The index is taken when the thread starts. Notes saved during the thread don't appear in it, but the agent can see them with `memory_list`. Each file's one-line `description` (in its frontmatter) is what the agent sees before it decides to read the file, so keep it accurate.
 
 ## Folders
 
@@ -15,19 +20,23 @@ Memory is organized into four folders:
 - **repo/** — Overview information about the repository (tech stack, structure, key files)
 - **conventions/** — Coding conventions, naming patterns, and style guidelines
 - **architecture/** — Data flow, module relationships, and architectural decisions
-- **sessions/** — Thread notes: what past threads did and learned
+- **sessions/** — Thread notes: notes about one feature, task, bug or investigation, and plans. They expire (see below), so work-specific detail goes here rather than in architecture/
+
+## Thread Note Expiry
+
+Thread notes are archived when they haven't been updated for 30 days, and at most the 20 newest are kept. This happens after every memory auto-save and when a thread starts, whether or not auto-compact is on. A note's age comes from its `updatedAt` frontmatter, falling back to the file's modification time, so an actively-written note is never archived by mistake. Archived notes go to a hidden folder inside the memory directory (the last 50 are kept) rather than being destroyed outright.
 
 ## Auto-Compaction
 
 Memory grows as the agent saves notes across threads, and over time it accumulates duplicates, stale details, and statements that contradict newer discoveries. When **Auto-compact project memory** is turned on, Grove Bench compacts memory automatically:
 
-- **Thread note pruning** — only the 20 most recent thread notes are kept. A note's age comes from its `updatedAt` frontmatter, falling back to the file's modification time, so an actively-written note is never pruned by mistake. Pruned notes are archived to a hidden folder inside the memory directory (the last 50 are kept) rather than destroyed outright.
+- **Thread note expiry**: each pass also archives expired thread notes, as above.
 - **Dedupe & merge** — when memory grows past its budget, an AI pass merges files covering the same topic and removes repeated facts.
 - **Contradiction resolution** — when two notes conflict, the more recently updated one wins; explicit user corrections always take priority over inferred facts.
 
-Before a compaction pass rewrites anything, the previous contents are saved as a timestamped snapshot inside the memory folder (the 5 most recent snapshots are kept), and a result that would destroy most of the stored knowledge is rejected outright. Compaction runs at most once every few hours, only when memory has actually outgrown the space injected into the agent's system prompt.
+Before a compaction pass rewrites anything, the previous contents are saved as a timestamped snapshot inside the memory folder (the 5 most recent snapshots are kept), and a result that would destroy most of the stored knowledge is rejected outright. Compaction runs at most once every few hours, only when the notes outside sessions/ grow past 12 KB or 15 files.
 
-The Memory panel shows a budget meter (**Agent prompt budget**) — how much of the agent's system-prompt budget your notes consume, when the last compaction ran (and whether it was automatic), and which files no longer fit in the prompt.
+The Memory panel shows a budget meter (**Agent prompt budget**): how much of the 16 KB memory budget the conventions and the index take in the agent's system prompt, and when the last compaction ran (and whether it was automatic). If the index outgrows the budget, the meter says how many files were left out of it. The agent can still find those with `memory_list`, but won't know to look, so compact or clean up when you see it.
 
 You can also compact on demand with the **Compact** button. After a pass, a summary lists every file that was rewritten or removed with the reason, and **Undo** restores the pre-compaction snapshot in one click. **Backups** lists all snapshots — use **View** to inspect a snapshot's files before restoring it; restoring takes a snapshot of the current state first so the restore itself can be undone.
 
