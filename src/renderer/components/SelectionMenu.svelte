@@ -3,6 +3,7 @@
   import { store } from '../stores/sessions.svelte.js';
   import { selectionIn } from '$lib/activity-menu.js';
   import { bookmarkSelection } from '$lib/bookmark-selection.js';
+  import { menuItem, menuPanel } from '$lib/components/ui/menu/index.js';
 
   // A floating "Bookmark / To prompt" menu shown when the user selects text
   // inside `container`. Works for any scroll container — the activity thread
@@ -120,12 +121,12 @@
   <div
     bind:this={selMenuEl}
     style="position: fixed; top: {selMenuPos.top}px; left: {selMenuPos.left}px;"
-    class="z-50 flex flex-col items-stretch text-xs bg-card border border-border shadow-md"
+    class="{menuPanel()} z-50 flex flex-col items-stretch"
     onmousedown={(e) => e.preventDefault()}
   >
     <button
       onclick={addBookmark}
-      class="flex items-center gap-1 px-2 py-1 text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+      class={menuItem()}
       title="Bookmark selection"
     >
       <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></svg>
@@ -133,7 +134,7 @@
     </button>
     <button
       onclick={copyToPrompt}
-      class="flex items-center gap-1 px-2 py-1 border-t border-border text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+      class={menuItem()}
       title="Copy selection to the prompt input"
     >
       <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 10 4 15 9 20"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></svg>

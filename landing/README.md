@@ -30,8 +30,13 @@ npm run build     # builds into landing/dist
   prompt. On phones the hero shows the sidebar and the open prompt instead,
   at full size.
 - `src/shared/app-art.js`: the app's own sprite code from `src/renderer/lib`,
-  so every pose, colour, look and scene is what the app draws. The deploy
-  workflow also runs when those files change.
+  so every pose, colour, look and scene is what the app draws, and its brand
+  (`src/shared/brand.ts`: PALETTE, NIGHT, PAPER, STATUS, FONTS). The deploy workflow
+  also runs when those files change.
+- `src/lib/brand.js`: the brand for the page. `applyBrand()` (run by
+  `main.js` before the page mounts) sets its colours and fonts as CSS
+  variables, so stylesheets use `var(--forest)`, `var(--night-card)` or
+  `var(--status-working)` rather than copies of the values.
 
 ## Share image
 
@@ -59,7 +64,7 @@ Type, buttons and labels come from the app, not from a generic product page:
 
 - Headings are plain sentence case in JetBrains Mono. The opening and
   closing lines are messages you send, with the Thread tab's prompt mark,
-  blue bar and a blinking caret.
+  brand green bar and a blinking caret.
 - Each section is labelled with a branch name (`Branch.svelte`): the trail is
   main and the sections branch off it.
 - Buttons are the app's: square, flat, 1px edge.
@@ -106,8 +111,11 @@ required (`src/main/prerequisites.ts`), and Claude Code is optional with an
 API key, so the page never lists either as a must. The founder note is
 signed Parsons Projects.
 
-The app window is dark because the app is dark-only; it sits on the light
-page as a product shot.
+The app window shows the app's dark theme, its default, as a product shot on
+the light page: NIGHT neutrals, leaf green as primary, and each thread status
+in its dark colour (green working, amber needs you, blue finished a turn).
+Around it the page follows the light theme: forest green buttons with white
+text, deep sky links. The dusk and night bands switch to leaf green.
 
 ## Checked
 

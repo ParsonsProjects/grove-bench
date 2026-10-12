@@ -1,16 +1,20 @@
 import type { ITheme } from '@xterm/xterm';
+import { NIGHT, PALETTE, PAPER } from '../../shared/brand.js';
 
 /**
- * Terminal tab colours, VS Code's own for each theme. The ANSI colours are
- * VS Code's defaults (ansiColorMap in
- * src/vs/workbench/contrib/terminal/common/terminalColorRegistry.ts).
- * DARK's other colours are the ones the terminal has always used.
+ * Terminal tab colours. The background, text, cursor and selection are the
+ * app theme's (brand.ts), so the terminal sits in the window like any other
+ * panel. The ANSI colours are VS Code's defaults (ansiColorMap in
+ * src/vs/workbench/contrib/terminal/common/terminalColorRegistry.ts), which
+ * programs' output is written for.
  */
 const DARK: ITheme = {
-  background: '#1f1f1f',
-  foreground: '#cccccc',
-  cursor: '#cccccc',
-  selectionBackground: '#04395e',
+  background: NIGHT.background,
+  foreground: NIGHT.foreground,
+  cursor: PALETTE.leaf,
+  cursorAccent: PALETTE.canopy,
+  // Leaf at a quarter strength
+  selectionBackground: `${PALETTE.leaf}40`,
   black: '#000000',
   red: '#cd3131',
   green: '#0dbc79',
@@ -30,14 +34,13 @@ const DARK: ITheme = {
 };
 
 const LIGHT: ITheme = {
-  background: '#ffffff',
-  // Light Modern's terminal.foreground and terminalCursor.foreground, and
-  // the light editor.selectionBackground default (editorColors.ts)
-  foreground: '#3b3b3b',
-  cursor: '#005fb8',
+  background: PAPER.background,
+  foreground: PAPER.foreground,
+  cursor: PALETTE.forest,
   // The character under the block cursor (xterm's default is black, 3.3:1)
   cursorAccent: '#ffffff',
-  selectionBackground: '#add6ff',
+  // Forest at a quarter strength
+  selectionBackground: `${PALETTE.forest}40`,
   black: '#000000',
   red: '#cd3131',
   green: '#107c10',

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { settingsStore } from '../../stores/settings.svelte.js';
+  import { Button } from '$lib/components/ui/button/index.js';
   import type { SettingsSectionId } from '$lib/settings-search.js';
   import { checkToolRulePattern } from '../../../shared/tool-rules.js';
   import ListSetting from './ListSetting.svelte';
@@ -16,7 +17,7 @@
      agent's other defaults. -->
 <p class="text-xs text-muted-foreground leading-relaxed">
   The permission mode new threads start in is set per agent, under
-  <button type="button" class="text-primary hover:underline" onclick={() => ongoto('agents')}>Grovekeepers (Agents)</button>.
+  <Button variant="link" size="inline" onclick={() => ongoto('agents')}>Grovekeepers (Agents)</Button>.
 </p>
 
 <SettingsGroup>
@@ -35,7 +36,7 @@
       Matching actions run without asking. Write a keyword that works for any agent
       (<code>shell</code>, <code>edit</code>, <code>read</code>, <code>web</code>, <code>mcp</code>, <code>agent</code>, <code>question</code>),
       or a provider's own tool name such as <code>Bash</code>, with an optional pattern in brackets.
-      <button type="button" class="text-primary hover:underline" onclick={onhelp}>How rules match</button>
+      <Button variant="link" size="inline" onclick={onhelp}>How rules match</Button>
     {/snippet}
   </ListSetting>
 

@@ -95,7 +95,7 @@
   .bash {
     padding: 6px 12px;
     font-size: 12px;
-    border-left: 2px solid oklch(0.4 0 0);
+    border-left: 2px solid var(--input);
   }
   .out {
     color: var(--green);
@@ -109,7 +109,7 @@
   .sq {
     width: 8px;
     height: 8px;
-    background: var(--primary);
+    background: var(--status-working);
     animation: gbpulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
   }
   @keyframes gbpulse {
@@ -122,7 +122,7 @@
     border-left: 4px solid var(--amber);
   }
   .perm.done {
-    border-left-color: oklch(0.4 0 0);
+    border-left-color: var(--input);
   }
   .phead {
     display: flex;
@@ -142,7 +142,7 @@
     font: inherit;
     font-size: 12px;
     color: var(--fg);
-    background: oklch(0.233 0 0 / 0.8);
+    background: color-mix(in srgb, var(--card) 80%, transparent);
     border: 1px solid var(--border);
     white-space: pre-wrap;
   }

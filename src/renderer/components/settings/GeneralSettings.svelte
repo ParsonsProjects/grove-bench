@@ -4,6 +4,7 @@
   import { DEFAULT_REPO_COLORS } from '../../lib/repo-colors.js';
   import * as Select from '$lib/components/ui/select/index.js';
   import { Label } from '$lib/components/ui/label/index.js';
+  import { Button } from '$lib/components/ui/button/index.js';
   import { VIEW_MODE_DESCRIPTIONS, VIEW_MODE_LABELS } from '$lib/message-view.js';
   import { ACTIVITY_VIEW_MODES, type ActivityViewMode, type GroveBenchSettings } from '../../../shared/types.js';
   import SettingRow from './SettingRow.svelte';
@@ -32,7 +33,7 @@
 </script>
 
 {#snippet diffExample(mode: 'unified' | 'side-by-side')}
-  <div class="font-mono text-[10px] leading-4 border border-border/60 bg-background overflow-hidden" aria-hidden="true">
+  <div class="font-mono text-micro leading-4 border border-border/60 bg-background overflow-hidden" aria-hidden="true">
     {#if mode === 'unified'}
       <div class="flex px-1.5 text-muted-foreground"><span class="w-4 shrink-0">1</span><span class="w-2.5 shrink-0"></span><span class="truncate">{EXAMPLE.before[0].text}</span></div>
       <div class="flex px-1.5 bg-red-950/30 text-red-300"><span class="w-4 shrink-0">2</span><span class="w-2.5 shrink-0">-</span><span class="truncate">{EXAMPLE.before[1].text}</span></div>
@@ -142,17 +143,18 @@
             </label>
             <span class="text-sm text-foreground truncate" title={repo}>{name}</span>
             {#if custom}
-              <button
-                type="button"
+              <Button
+                variant="link"
+                size="inline"
                 onclick={() => {
                   const { [repo]: _, ...rest } = settingsStore.draft.repoColors;
                   settingsStore.draft.repoColors = rest;
                 }}
-                class="text-xs text-primary hover:underline shrink-0"
+                class="text-xs"
                 aria-label="Use the default color for {name}"
               >
                 Use default
-              </button>
+              </Button>
             {/if}
           </li>
         {/each}

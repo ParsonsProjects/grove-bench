@@ -1,6 +1,7 @@
 // The grove art the app itself draws, straight from src/renderer/lib.
-// Characters, scenery, the logo tree, the grove walk and the context grove all
-// come from here, so the page never drifts from the app. Plain relative
+// Characters, scenery, the logo tree, the grove walk, the context grove and
+// the brand's colours and fonts all come from here, so the page never drifts
+// from the app. Plain relative
 // imports rather than an alias: the app's dev server scans every HTML file in
 // the repo, and an alias it doesn't know reads as a missing package there.
 
@@ -25,6 +26,7 @@ export {
   toRuns,
 } from '../../../src/renderer/lib/agent-sprite.ts';
 export { PIXEL_TREE, PIXEL_TREE_W, PIXEL_TREE_H } from '../../../src/renderer/lib/pixel-tree.ts';
+export { PALETTE, NIGHT, PAPER, STATUS, FONTS } from '../../../src/shared/brand.ts';
 export {
   WALK_BACK,
   WALK_FRONT,

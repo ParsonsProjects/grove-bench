@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Button } from '$lib/components/ui/button/index.js';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
+  import { SectionLabel } from '$lib/components/ui/section-label/index.js';
   import MarkdownBlock from './MarkdownBlock.svelte';
   import { topics, type HelpTopic } from '../help/index.js';
 
@@ -59,11 +60,11 @@
       <nav class="w-48 shrink-0 overflow-auto border-r border-border pr-3">
         {#each sections as [section, sectionTopics]}
           <div class="mb-3">
-            <span class="text-xs font-medium text-muted-foreground uppercase tracking-wide">{section}</span>
+            <SectionLabel>{section}</SectionLabel>
             {#each sectionTopics as topic}
               <button
                 onclick={() => selectedTopicId = topic.id}
-                class="w-full text-left text-xs px-2 py-1 rounded transition-colors
+                class="w-full text-left text-xs px-2 py-1 transition-colors
                   {selectedTopicId === topic.id ? 'bg-sidebar-accent text-foreground' : 'text-muted-foreground hover:bg-sidebar-accent/50'}"
               >
                 {topic.title}

@@ -43,6 +43,22 @@ If a thread starts on a model that doesn't offer the saved mode, it starts in Co
 - **Show thinking summaries** (shown when an agent offers it, such as Claude Agent): Show a short summary of the model's thinking in the thread. Newer Claude models send no thinking text unless asked, so with this off their thinking doesn't show. Some older models, such as Haiku 4.5, may still show theirs. It doesn't change how much the model thinks or what it costs. Applies to agents started after the change (on by default)
 - **Let the agent use the Preview browser**: Give the agent its own page in the [Preview tab](preview-tab.md#the-agents-browser) to open local pages, take screenshots, read, click and type in. Applies to agents started after the change (on by default)
 
+### Claude accounts
+
+Use more than one Claude account, such as a work plan next to a personal one. Click **Add account** in the **Claude Agent** group, give the account a name and, if you like, a folder, and click **Add account**. Each account has its own Claude Code folder (`.claude-<name>` in your home folder unless you pick one), which holds its sign-in, thread history, settings, MCP servers and plugins. The dialog shows the folder it will use, and says so when the name or folder is already taken. You can paste a path straight from Explorer's **Copy as path**, and use `%USERPROFILE%`-style variables or `~`. Your first account keeps `~/.claude` and works as before.
+
+The account shows up straight away as its own agent, **Claude Agent (Name)**, in the agent picker for new threads, with its own group under Claude Agent showing its folder. Sign in from that group: copy the sign-in command into PowerShell (it runs Claude Code's own `claude auth login` with the account's folder, then clears that setting again), or save an API key for that account. A thread stays on the account it started on.
+
+To remove an account, click **Remove** in its group. It stops being offered for new threads at once. Threads already on it keep working until Grove Bench restarts; after that they can't start, and their memory notes and other background work are skipped rather than sent to another account. The folder stays on this computer, so adding an account with the same name and folder brings back its sign-in and history.
+
+Good to know:
+
+- An account ignores Claude credentials set in your environment (`ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, the Bedrock and Vertex switches) and `ANTHROPIC_BASE_URL`, so a key or gateway set in your shell can't stand in for it. Your first account still uses them. To send an account through a gateway, set it in that account folder's `settings.json`
+- **MCP servers** can be managed for any account: pick it under **Agent**. The **Plugins** section manages your first account only; for another account, run `claude plugin` in PowerShell after the `$env:CLAUDE_CONFIG_DIR` part of its sign-in command
+- Threads on another account are named by Grove Bench rather than by Claude
+- Claude Code has been reported to read some files, such as your personal `CLAUDE.md`, from `~/.claude` for every account ([anthropics/claude-code#30230](https://github.com/anthropics/claude-code/issues/30230))
+- If your organisation's managed settings only allow its own Claude accounts on this computer, other accounts won't start here
+
 ### Other agents (ACP)
 
 Grove Bench can run any agent that speaks the [Agent Client Protocol](https://agentclientprotocol.com) (ACP) over stdio. Gemini CLI (`gemini --acp`) and GitHub Copilot CLI (`copilot --acp`) are built in: install one (`npm install -g @google/gemini-cli` or `npm install -g @github/copilot`), sign in (a Gemini API key, or `copilot login` in a terminal), and pick it as the agent for a new thread. Add others, such as Codex through `codex-acp`, with a name, the command (a name on PATH or a full path) and its arguments, or pick one under **From the ACP Registry**: each shows how to install it (a command to copy, or a download) and **Use** fills in the form with the registry's own command, which downloads the package the first time it starts. Nothing is installed or added until you do it. Restart Grove Bench after adding or removing one.
@@ -78,7 +94,7 @@ Control how the agent handles actions that need approval. The mode new threads s
 
 - **Desktop notifications**: Native OS notifications, shown only while the window is unfocused: when an agent finishes a turn, when it's waiting on a permission, a question or a limit, on PR activity (new CI failures, review comments), and when plan usage reaches your alert level (see **Fences (Limits & alerts)** below). Clicking a notification jumps to the thread
 - **Flash the taskbar button**: The taskbar button also flashes; it stops as soon as the window regains focus
-- **Badge the taskbar icon**: Show how many threads need you on the taskbar icon
+- **Badge the taskbar icon**: Show how many threads need you as a count on an amber square over the taskbar icon
 - **Send a test notification**: Shows one straight away, even with the Grove Bench window in front. If it doesn't appear, Windows is holding it back: check **Settings > System > Notifications** in Windows, where Grove Bench needs to be allowed and **Do not disturb** (Focus assist on Windows 10) turned off
 
 ## Fences (Limits & alerts)

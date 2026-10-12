@@ -4,7 +4,7 @@
   import Walker from '../shared/Walker.svelte';
   import Sprite from '../shared/Sprite.svelte';
   import Pixels from '../shared/Pixels.svelte';
-  import { LAMP, SCENERY_PALETTE } from '../shared/app-art.js';
+  import { LAMP, SCENERY_PALETTE, PALETTE } from '../shared/app-art.js';
   import Branch from './Branch.svelte';
   import Clock from './Clock.svelte';
   import { arrive } from './scroll.svelte.js';
@@ -30,7 +30,7 @@
                   <Tree scale={4} growth={grow(t, 0.2, 1.2)} />
                 {:else if i === 1}
                   <div class="pair">
-                    <Tree scale={3} growth={grow(t, 1.2, 0.8)} tint="#3b82f6" />
+                    <Tree scale={3} growth={grow(t, 1.2, 0.8)} tint={PALETTE.sky} />
                     {#if t > 3}<BenchSeat state="working" seed="a3f8b2c1" scale={3} label="" />{:else if t > 1.8}<span class="w" style="transform: translateX({(1 - grow(t, 1.8, 1.2)) * -60}px)"><Walker seed="a3f8b2c1" scale={3} /></span>{/if}
                   </div>
                 {:else}
@@ -47,7 +47,7 @@
               <span class="n">{i + 1}</span>
               <!-- The button you press for it, cut from the app. -->
               <span class="gb ui">
-                {#if i === 2}<span><span class="t-amber">↑1</span> <span class="t-primary">{s.ui}</span></span>{:else}<span class="gb-btn" class:primary={i === 1}>{s.ui}</span>{/if}
+                {#if i === 2}<span><span class="t-amber">↑1</span> <span class="t-blue">{s.ui}</span></span>{:else}<span class="gb-btn" class:primary={i === 1}>{s.ui}</span>{/if}
               </span>
               <h3>{s.title}</h3>
               <p>{s.text}</p>
@@ -113,8 +113,8 @@
     transition: background 0.3s;
   }
   .arch.open {
-    color: #12361a;
-    background: #6ec87a;
+    color: var(--canopy);
+    background: var(--sprout);
   }
   .n {
     position: absolute;
@@ -126,8 +126,8 @@
     height: 26px;
     font-family: var(--pixel);
     font-weight: 700;
-    color: #fff;
-    background: var(--green);
+    color: var(--on-primary);
+    background: var(--primary);
   }
   .ui {
     align-self: flex-start;

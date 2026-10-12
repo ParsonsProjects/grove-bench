@@ -15,6 +15,10 @@
   import ThreadMessage from './ThreadMessage.svelte';
   import ThreadViewSelect from './ThreadViewSelect.svelte';
   import MarkdownBlock from './MarkdownBlock.svelte';
+  import { Button } from '$lib/components/ui/button/index.js';
+  import { Pulse } from '$lib/components/ui/pulse/index.js';
+  import ChevronLeftIcon from '@lucide/svelte/icons/chevron-left';
+  import XIcon from '@lucide/svelte/icons/x';
 
   let sessionId = $derived(subagentPanelStore.sessionId);
   let toolUseId = $derived(subagentPanelStore.toolUseId);
@@ -96,14 +100,15 @@
     <div class="flex items-center gap-2 px-4 py-3 border-b border-border shrink-0">
       {#if call.parentToolUseId}
         {@const parentId = call.parentToolUseId}
-        <button
+        <Button
+          variant="quiet"
+          size="icon-2xs"
           onclick={() => subagentPanelStore.show(sessionId, parentId)}
-          class="text-muted-foreground hover:text-foreground transition-colors p-0.5"
           title="Back to the subagent that started this one"
           aria-label="Back"
         >
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg>
-        </button>
+          <ChevronLeftIcon />
+        </Button>
       {/if}
       <div class="flex-1 min-w-0">
         <div class="text-sm font-medium text-foreground truncate" title={title}>{title}</div>
@@ -111,7 +116,7 @@
           <span>Subagent{input.agentType ? ` · ${input.agentType}` : ''}</span>
           <span class="text-muted-foreground/40" aria-hidden="true">·</span>
           {#if running}
-            <span class="inline-block w-2 h-2 bg-primary animate-pulse"></span>
+            <Pulse size="sm" />
           {/if}
           <span class={status === 'error' ? 'text-destructive' : ''}>{status}</span>
           {#if callCount > 0}
@@ -121,14 +126,15 @@
         </div>
       </div>
       <ThreadViewSelect {sessionId} subagentOf={toolUseId} />
-      <button
+      <Button
+        variant="quiet"
+        size="icon-2xs"
         onclick={() => subagentPanelStore.close()}
-        class="text-muted-foreground hover:text-foreground transition-colors p-0.5"
         title="Close (Esc)"
         aria-label="Close subagent thread"
       >
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
-      </button>
+        <XIcon />
+      </Button>
     </div>
 
     <div class="flex-1 overflow-y-auto overflow-x-hidden px-4 py-3" bind:this={scroller} onscroll={handleScroll}>
@@ -141,11 +147,11 @@
           >
             <span class="text-muted-foreground font-bold">Prompt</span>
             {#if !promptOpen}
-              <span class="text-muted-foreground/70 truncate flex-1">{input.prompt}</span>
+              <span class="text-muted-foreground truncate flex-1">{input.prompt}</span>
             {:else}
               <span class="flex-1"></span>
             {/if}
-            <span class="text-muted-foreground/40 transition-transform {promptOpen ? 'rotate-90' : ''}">&rsaquo;</span>
+            <span class="text-muted-foreground transition-transform {promptOpen ? 'rotate-90' : ''}">&rsaquo;</span>
           </button>
           {#if promptOpen}
             <div class="mt-1 text-sm"><MarkdownBlock content={input.prompt} /></div>
@@ -159,7 +165,7 @@
 
       {#if running}
         <div class="py-2 flex items-center gap-2 text-xs text-muted-foreground">
-          <span class="inline-block w-2.5 h-2.5 bg-primary animate-fidget shrink-0"></span>
+          <Pulse motion="spin" />
           <span class="shrink-0">Working...</span>
           {#if hiddenRunningCall}
             <span class="text-yellow-400 shrink-0">{hiddenRunningCall.toolName}</span>

@@ -4,7 +4,7 @@
   import Tree from '../shared/Tree.svelte';
   import BenchSeat from '../shared/BenchSeat.svelte';
   import Pixels from '../shared/Pixels.svelte';
-  import { LAMP, SCENERY_PALETTE } from '../shared/app-art.js';
+  import { LAMP, SCENERY_PALETTE, PALETTE } from '../shared/app-art.js';
   import { scroll } from '../sections/scroll.svelte.js';
 
   /**
@@ -71,7 +71,7 @@
       if (spurs.some((sp) => Math.abs(sp.y - y) < 64)) continue;
       side = -side;
       const n = list.length;
-      list.push({ y, side, s: n % 4 === 1 ? 3 : 2, tint: ['#3b82f6', '#6ec87a', '#f59e0b', '#a78bfa', null, null][n % 6] });
+      list.push({ y, side, s: n % 4 === 1 ? 3 : 2, tint: [PALETTE.sky, PALETTE.sprout, PALETTE.sun, '#a78bfa', null, null][n % 6] });
     }
     trees = list;
     tufts = Array.from({ length: Math.floor(height / 46) }, (_, i) => ({ y: 60 + i * 46, side: i % 2 ? 1 : -1 })).filter(
@@ -80,7 +80,7 @@
   }
   let tufts = $state([]);
   const TUFT = ['g.g', '.g.'];
-  const TUFT_COLORS = { g: '#4aaa58' };
+  const TUFT_COLORS = { g: PALETTE.moss };
 
   // The page element arrives after this mounts (it's bound in the parent).
   $effect(() => {
@@ -177,8 +177,8 @@
     width: calc(var(--k) * 5);
     background: #a8845e;
     box-shadow:
-      inset calc(var(--k) * 0.7) 0 0 #8a6a4a,
-      inset calc(var(--k) * -0.7) 0 0 #8a6a4a;
+      inset calc(var(--k) * 0.7) 0 0 var(--bark),
+      inset calc(var(--k) * -0.7) 0 0 var(--bark);
     opacity: 0.85;
   }
   .spur {
@@ -188,8 +188,8 @@
     transform: translateY(-50%);
     background: #a8845e;
     box-shadow:
-      inset 0 calc(var(--k) * 0.6) 0 #8a6a4a,
-      inset 0 calc(var(--k) * -0.6) 0 #8a6a4a;
+      inset 0 calc(var(--k) * 0.6) 0 var(--bark),
+      inset 0 calc(var(--k) * -0.6) 0 var(--bark);
     opacity: 0.85;
   }
   /* A post where the side path ends. */

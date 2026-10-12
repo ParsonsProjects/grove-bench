@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { parseSkillFrontmatter, scanSkillsDir, computeSkillsFilter, validateSkillName, skillManifestContent, writeSkill } from './skills.js';
+import { parseSkillFrontmatter, scanSkillsDir, computeSkillsFilter, validateSkillName, skillManifestContent, writeSkill, listSkills, CLAUDE_SKILL_DIRS } from './skills.js';
 
 describe('parseSkillFrontmatter', () => {
   it('reads name and description from a frontmatter block', () => {
@@ -148,6 +148,15 @@ describe('writeSkill', () => {
     const info = writeSkill(worktree, { ...def, scope: 'user' });
     expect(info.path).toBe(path.join(fakeHome, '.claude', 'skills', 'release-notes', 'SKILL.md'));
     expect(info.source).toBe('user');
+  });
+
+  it("writes a user skill into a Claude account's own folder when given one", () => {
+    const accountSkills = path.join(fakeHome, '.claude-work', 'skills');
+    const dirs = { ...CLAUDE_SKILL_DIRS, user: accountSkills };
+    const info = writeSkill(worktree, { ...def, scope: 'user' }, dirs);
+    expect(info.path).toBe(path.join(accountSkills, 'release-notes', 'SKILL.md'));
+    expect(listSkills(worktree, dirs).map((s) => s.name)).toEqual(['release-notes']);
+    expect(listSkills(worktree).map((s) => s.name)).toEqual([]);
   });
 
   it('refuses to overwrite an existing skill at the same scope', () => {

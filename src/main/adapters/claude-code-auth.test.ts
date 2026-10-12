@@ -16,6 +16,7 @@ vi.mock('../logger.js', () => ({
 
 import { ClaudeCodeAdapter, CLAUDE_AUTH_ERROR_MESSAGE, envAuthMethod, transformMessage, verifyAnthropicKey } from './claude-code.js';
 import { getApiKey } from '../credentials.js';
+import { net } from 'electron';
 
 type ExecResult = { stdout: string } | Error;
 
@@ -184,5 +185,76 @@ describe('a refused sign-in mid-conversation', () => {
 
   it('points to the Agents settings by their plain name', () => {
     expect(CLAUDE_AUTH_ERROR_MESSAGE).toContain('Settings → Agents');
+  });
+});
+
+describe('ClaudeCodeAdapter for another Claude account', () => {
+  const account = { id: 'claude-account-work', name: 'Work', configDir: '/home/me/.claude-work' };
+  const adapter = new ClaudeCodeAdapter(undefined, account);
+
+  // Some tests here give the account a saved key; later tests start without one.
+  afterEach(() => { vi.mocked(getApiKey).mockReturnValue(null); });
+
+  it('is its own agent, named after the account', () => {
+    expect(adapter.id).toBe('claude-account-work');
+    expect(adapter.displayName).toBe('Claude Agent (Work)');
+    expect(new ClaudeCodeAdapter().id).toBe('claude-code');
+  });
+
+  it("signs in with Claude Code's own command, pointed at the account's folder", () => {
+    expect(adapter.cliSignIn.command).toBe("$env:CLAUDE_CONFIG_DIR = '/home/me/.claude-work'; claude auth login; Remove-Item Env:CLAUDE_CONFIG_DIR");
+    expect(adapter.authErrorMessage).toContain('Work');
+    expect(adapter.authErrorMessage).not.toContain('run "claude"');
+  });
+
+  it('reads the sign-in in its folder and ignores credentials in Grove\'s environment', async () => {
+    process.env.ANTHROPIC_API_KEY = 'sk-shell';
+    execFileAnswers({ stdout: '/usr/bin/claude\n' }, { stdout: '{"loggedIn":true,"authMethod":"claude.ai","email":"me@work.example"}' });
+    const status = await adapter.checkPrerequisites();
+    expect(status).toMatchObject({ available: true, authenticated: true, email: 'me@work.example' });
+    const env = (execFileMock.mock.calls[1][2] as { env: Record<string, string | undefined> }).env;
+    expect(env.CLAUDE_CONFIG_DIR).toBe('/home/me/.claude-work');
+    expect(env).not.toHaveProperty('ANTHROPIC_API_KEY');
+  });
+
+  it('is signed out without the CLI, even with a key in the environment', async () => {
+    process.env.ANTHROPIC_API_KEY = 'sk-shell';
+    execFileAnswers(new Error('not found'));
+    expect(await adapter.checkPrerequisites()).toMatchObject({ available: false, authenticated: false });
+  });
+
+  it('runs the agent with the folder and its own saved key, not the shell key', () => {
+    vi.mocked(getApiKey).mockReturnValue('sk-work');
+    const env = { ...adapter['agentEnv']({ ANTHROPIC_API_KEY: 'sk-shell', PATH: '/bin' }), ...adapter['savedKeyEnv']() };
+    expect(env).toEqual({ PATH: '/bin', CLAUDE_CONFIG_DIR: '/home/me/.claude-work', ANTHROPIC_API_KEY: 'sk-work' });
+    expect(getApiKey).toHaveBeenCalledWith('claude-account-work');
+  });
+
+  it("leaves the default account's environment as it is", () => {
+    const base = { ANTHROPIC_API_KEY: 'sk-shell', PATH: '/bin' };
+    expect(new ClaudeCodeAdapter()['agentEnv'](base)).toBe(base);
+    expect(new ClaudeCodeAdapter()['cliEnv']()).toEqual({});
+  });
+
+  it("edits the account's own MCP configuration", async () => {
+    execFileAnswers({ stdout: '' });
+    await adapter.listConfiguredMcpServers('/repo');
+    expect((execFileMock.mock.calls[0][2] as { env: Record<string, string> }).env.CLAUDE_CONFIG_DIR).toBe('/home/me/.claude-work');
+  });
+
+  it("checks a pasted key with Anthropic even when Grove's environment points elsewhere", async () => {
+    process.env.ANTHROPIC_BASE_URL = 'https://gateway.example';
+    try {
+      vi.mocked(net.fetch).mockResolvedValueOnce({ ok: true, status: 200 } as Response);
+      expect(await adapter.verifyApiKey('sk-work')).toBe(true);
+      // The default account sends its requests to that address, so it can't tell.
+      expect(await new ClaudeCodeAdapter().verifyApiKey('sk-default')).toBeNull();
+    } finally {
+      delete process.env.ANTHROPIC_BASE_URL;
+    }
+  });
+
+  it("doesn't look for its threads' titles in the default folder", async () => {
+    expect(await adapter.getConversationTitle('session-1', '/repo')).toBeNull();
   });
 });

@@ -31,7 +31,7 @@
   <CheckboxSetting setting="notify-plan-usage" label="Plan usage reaches your alert level (Limits & alerts)" bind:checked={settingsStore.draft.notifyOnPlanUsage} />
 
   <div data-setting="notify-test" class="flex flex-col gap-1.5">
-    <Button variant="outline" size="sm" class="self-start" onclick={sendTest} disabled={testing}>
+    <Button variant="subtle" size="sm" class="self-start" onclick={sendTest} disabled={testing}>
       {testing ? 'Sending...' : 'Send a test notification'}
     </Button>
     <p class="text-xs leading-relaxed {testResult === 'failed' ? 'text-destructive' : 'text-muted-foreground'}" aria-live="polite">

@@ -1,5 +1,7 @@
 <script lang="ts">
   import CopyButton from './CopyButton.svelte';
+  import { Button } from '$lib/components/ui/button/index.js';
+  import { Pulse } from '$lib/components/ui/pulse/index.js';
   import { linkifyLocalhost, hasLocalhostUrl } from '$lib/linkify.js';
   import { openLink } from '$lib/preview-links.js';
 
@@ -83,25 +85,29 @@
     <code class="text-xs text-foreground flex-1 break-all">{command}</code>
     <CopyButton text={command} class="opacity-0 group-hover/cmd:opacity-100 shrink-0" />
     {#if pending}
-      <span class="w-2.5 h-2.5 bg-primary animate-pulse shrink-0"></span>
+      <Pulse />
     {:else if isError}
       <span class="text-xs text-destructive">error</span>
       {#if summaryMode && result !== undefined}
-        <button
+        <Button
+          variant="quiet"
+          size="inline"
           onclick={() => summaryOutputExpanded = !summaryOutputExpanded}
-          class="text-xs text-muted-foreground hover:text-foreground shrink-0"
+          class="text-xs shrink-0"
         >
           {summaryOutputExpanded ? 'hide' : 'show'} ({lineCount} lines)
-        </button>
+        </Button>
       {/if}
     {:else if result !== undefined}
       {#if summaryMode}
-        <button
+        <Button
+          variant="quiet"
+          size="inline"
           onclick={() => summaryOutputExpanded = !summaryOutputExpanded}
-          class="text-xs text-muted-foreground hover:text-foreground shrink-0"
+          class="text-xs shrink-0"
         >
           {summaryOutputExpanded ? 'hide' : 'show'} ({lineCount} lines)
-        </button>
+        </Button>
       {:else}
         <span class="text-xs text-muted-foreground">done</span>
       {/if}
@@ -121,12 +127,14 @@
         {:else}
           <pre class="text-xs text-muted-foreground overflow-x-auto max-h-[300px] overflow-y-auto whitespace-pre-wrap {isError ? 'text-red-300' : ''}">{result}</pre>
         {/if}
-        <button
+        <Button
+          variant="link"
+          size="inline"
           onclick={() => summaryOutputExpanded = false}
-          class="text-xs text-primary hover:text-primary/80 mt-1"
+          class="text-xs mt-1"
         >
           hide
-        </button>
+        </Button>
       </div>
     {/if}
   {:else if result !== undefined}
@@ -140,12 +148,14 @@
         {:else}
           <pre class="text-xs text-muted-foreground overflow-x-auto max-h-[300px] overflow-y-auto whitespace-pre-wrap {isError ? 'text-red-300' : ''}">{preview}</pre>
         {/if}
-        <button
+        <Button
+          variant="link"
+          size="inline"
           onclick={() => collapsed = false}
-          class="text-xs text-primary hover:text-primary/80 mt-1"
+          class="text-xs mt-1"
         >
           Show all {lineCount} lines
-        </button>
+        </Button>
       {:else}
         {#if hasLinks}
           <pre class="text-xs text-muted-foreground overflow-x-auto max-h-[300px] overflow-y-auto whitespace-pre-wrap {isError ? 'text-red-300' : ''}">{@html linkifyOutput(result)}</pre>
@@ -153,12 +163,14 @@
           <pre class="text-xs text-muted-foreground overflow-x-auto max-h-[300px] overflow-y-auto whitespace-pre-wrap {isError ? 'text-red-300' : ''}">{result}</pre>
         {/if}
         {#if isLong}
-          <button
+          <Button
+            variant="link"
+            size="inline"
             onclick={() => collapsed = true}
-            class="text-xs text-primary hover:text-primary/80 mt-1"
+            class="text-xs mt-1"
           >
             Collapse
-          </button>
+          </Button>
         {/if}
       {/if}
     </div>

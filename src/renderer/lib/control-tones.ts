@@ -3,7 +3,7 @@ import type { ControlTone } from '../../shared/types.js';
 /** Theme colours for the tones adapters pick per control option, so no
  *  provider ships CSS classes. Text colour first, then border. */
 const TONE_CLASSES: Record<ControlTone, string> = {
-  muted: 'text-muted-foreground/50 border-muted-foreground/20',
+  muted: 'text-muted-foreground border-muted-foreground/20',
   neutral: 'text-foreground/80 border-border',
   info: 'text-blue-400 border-blue-400/40',
   warning: 'text-yellow-400 border-yellow-400/40',

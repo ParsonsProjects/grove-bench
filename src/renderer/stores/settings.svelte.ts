@@ -1,4 +1,5 @@
-import type { GroveBenchSettings, ToolRule } from '../../shared/types.js';
+import type { ClaudeAccountSetting, GroveBenchSettings, ToolRule } from '../../shared/types.js';
+import { slugify } from '../../shared/slug.js';
 import type { SettingsSectionId } from '../lib/settings-search.js';
 
 const DEFAULT_SETTINGS: GroveBenchSettings = {
@@ -14,6 +15,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   workingDirectories: [],
   defaultSystemPromptAppend: '',
   acpAgents: [],
+  claudeAccounts: [],
   enabledAlphaAgents: [],
   memoryAutoSave: true,
   memoryAutoCompact: false,
@@ -293,6 +295,20 @@ class SettingsStore {
 
   removeAcpAgent(index: number) {
     this.draft.acpAgents = this.draft.acpAgents.filter((_, i) => i !== index);
+  }
+
+  /** Save an account the main process has checked and registered
+   *  (window.groveBench.addClaudeAccount). */
+  addClaudeAccount(account: ClaudeAccountSetting) {
+    this.draft.claudeAccounts = [...this.draft.claudeAccounts, account];
+  }
+
+  /** Take an account out of the settings by its agent's id
+   *  (`claude-account-<id>`). An entry saved without an id is matched by the
+   *  slug of its name, as the main process makes its id. */
+  removeClaudeAccount(adapterId: string) {
+    const id = adapterId.replace(/^claude-account-/, '');
+    this.draft.claudeAccounts = this.draft.claudeAccounts.filter((a) => (slugify(a.id) || slugify(a.name)) !== id);
   }
 
 }

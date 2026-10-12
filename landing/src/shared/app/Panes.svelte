@@ -131,7 +131,7 @@
     font-size: 12px;
   }
   .file.on {
-    background: oklch(0.26 0 0);
+    background: var(--selected);
     box-shadow: inset 2px 0 var(--primary);
   }
   .fn {
@@ -173,7 +173,7 @@
   }
   .rv {
     color: var(--destructive);
-    border-color: oklch(0.608 0.22 22 / 0.6);
+    border-color: color-mix(in srgb, var(--destructive) 60%, transparent);
   }
   .diff pre {
     margin: 0;
@@ -210,7 +210,7 @@
   }
   .empty p {
     margin: 10px 0 0;
-    color: oklch(0.835 0 0 / 0.8);
+    color: color-mix(in srgb, var(--fg) 80%, transparent);
   }
   .empty small {
     max-width: 46ch;
@@ -241,7 +241,7 @@
     border: 1px solid transparent;
   }
   .cp.on {
-    background: oklch(0.26 0 0);
+    background: var(--selected);
     border-color: var(--border);
   }
   .cpt {
@@ -279,7 +279,7 @@
     font-size: 12px;
     line-height: 1.6;
     color: var(--fg);
-    background: oklch(0.17 0 0);
+    background: var(--side);
   }
   .caret {
     display: inline-block;

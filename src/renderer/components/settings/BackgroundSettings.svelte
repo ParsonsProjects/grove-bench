@@ -1,5 +1,6 @@
 <script lang="ts">
   import { settingsStore } from '../../stores/settings.svelte.js';
+  import { Button } from '$lib/components/ui/button/index.js';
   import { MEMORY_COMPACT_MAX_TIMEOUT_SECONDS, MEMORY_COMPACT_MIN_TIMEOUT_SECONDS } from '../../../shared/compact-timeout.js';
   import type { SettingsSectionId } from '$lib/settings-search.js';
   import CheckboxSetting from './CheckboxSetting.svelte';
@@ -11,7 +12,7 @@
 
 <p class="text-xs text-muted-foreground leading-relaxed">
   Memory, skill suggestions and thread goals run on each thread's own agent, using its background model, set under
-  <button type="button" class="text-primary hover:underline" onclick={() => ongoto('agents')}>Grovekeepers (Agents)</button>.
+  <Button variant="link" size="inline" onclick={() => ongoto('agents')}>Grovekeepers (Agents)</Button>.
 </p>
 
 <SettingsGroup title="Project memory">

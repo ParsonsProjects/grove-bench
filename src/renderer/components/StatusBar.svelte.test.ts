@@ -486,7 +486,7 @@ describe('StatusBar PR', () => {
       pr({ number: 70, title: 'Stacked', reviewDecision: 'CHANGES_REQUESTED', checks: null, baseRefName: 'release' }),
     ));
     const row = screen.getByText('#70').closest('div')!;
-    expect(row.querySelector('span')!.className).toContain('bg-orange-400');
+    expect(row.querySelector('span')!.className).toContain('bg-amber-500');
     expect(screen.getByText('Other PRs in this thread')).toBeTruthy();
   });
 

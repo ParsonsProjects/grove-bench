@@ -1,4 +1,6 @@
-/* Page base: reset, and the morning sky behind everything. */
+/* Page base: reset, and the morning sky behind everything. The background is
+   PAPER.background from the app's brand (src/shared/brand.ts), written
+   out here because it paints before the script sets the brand variables. */
 *,
 *::before,
 *::after {
@@ -7,13 +9,13 @@
   padding: 0;
 }
 html {
-  background: #fffdf7;
+  background: #fefdfa;
   scroll-behavior: auto;
   color-scheme: light;
 }
 body {
   min-height: 100vh;
-  background: #fffdf7;
+  background: #fefdfa;
   -webkit-font-smoothing: antialiased;
   overflow-x: clip;
 }

@@ -40,6 +40,9 @@ export interface AgentCapabilities {
   structuredOutput: boolean;
   /** Supports sandbox/restricted execution */
   sandbox: boolean;
+  /** The user can add other accounts with this provider, each run as its own
+   *  agent (Settings > Agents, claude-accounts.ts). */
+  accounts?: boolean;
 }
 
 // ─── Model Info ───
@@ -394,6 +397,10 @@ export interface AgentAdapter {
   /** 'alpha' while Grove Bench's support for the agent is still being
    *  tested: it is offered only once the user turns it on (AgentStage). */
   readonly stage?: AgentStage;
+
+  /** Set when the agent is one of the user's other accounts with this
+   *  provider (Settings > Agents), run with its own configuration folder. */
+  readonly account?: { readonly name: string; readonly configDir: string };
 
   /** Release any adapter-level resources (open connections, child processes).
    *  Called during app shutdown. Optional — stateless adapters can omit. */

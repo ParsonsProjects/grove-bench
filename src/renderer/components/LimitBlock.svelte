@@ -50,9 +50,9 @@
   }
 </script>
 
-<div class="py-1 my-1 border-l-4 {resolved ? 'border-border' : 'border-amber-400'} pl-3" data-testid="limit-block">
+<div class="py-1 my-1 border-l-4 {resolved ? 'border-border' : 'border-status-attention'} pl-3" data-testid="limit-block">
   <div class="flex items-center gap-2 text-xs">
-    <span class="{resolved ? 'text-muted-foreground' : 'text-amber-400'} font-bold">limit reached</span>
+    <span class="{resolved ? 'text-muted-foreground' : 'text-status-attention'} font-bold">limit reached</span>
   </div>
   <p class="text-sm text-foreground mt-1">{limitReachedText(limit, used, reachedAt)}</p>
   {#if spend && !resolved}
@@ -63,13 +63,11 @@
     <div class="text-xs mt-2 text-muted-foreground">{resolvedLabel}</div>
   {:else}
     <div class="flex flex-wrap items-center gap-2 mt-2">
-      <Button variant="outline" size="sm" onclick={() => respond('continue')} disabled={busy} class="text-amber-400 border-amber-400 hover:bg-amber-900/30">
+      <Button variant="outline-success" size="sm" onclick={() => respond('continue')} disabled={busy}>
         Continue for {grant}
       </Button>
-      <Button variant="ghost" size="sm" onclick={() => respond('stop')} disabled={busy}>Stop the turn</Button>
-      <button type="button" class="text-xs text-primary hover:underline" onclick={() => settingsStore.openAt('limits')}>
-        Change limits
-      </button>
+      <Button variant="quiet" size="sm" onclick={() => respond('stop')} disabled={busy}>Stop the turn</Button>
+      <Button variant="link" size="inline" class="text-xs" onclick={() => settingsStore.openAt('limits')}>Change limits</Button>
     </div>
   {/if}
 </div>

@@ -15,6 +15,9 @@
   import AgentSettingsTrigger from './AgentSettingsTrigger.svelte';
   import AlphaBadge from './AlphaBadge.svelte';
   import UsageSection from './UsageSection.svelte';
+  import { SectionLabel } from '$lib/components/ui/section-label/index.js';
+  import { menuItem, menuPanel } from '$lib/components/ui/menu/index.js';
+  import { cn } from '$lib/utils.js';
 
   let open = $state(false);
   /** Option under the pointer or focus, explained in the footer. Removing
@@ -70,24 +73,23 @@
 
   {#if open && draft}
     <div
-      class="absolute bottom-full left-0 mb-2 bg-popover border border-border shadow-xl p-3 text-xs z-50"
+      class="{menuPanel({ padding: 'content' })} absolute bottom-full left-0 mb-2 z-50"
       role="dialog"
       aria-label="Agent settings"
     >
       <div class="flex items-center justify-between gap-6 mb-2">
         <span class="font-medium text-foreground">Agent settings</span>
-        <span class="text-muted-foreground/60 text-[10px]">You can switch agent later from the status bar</span>
+        <span class="text-muted-foreground text-micro">You can switch agent later from the status bar</span>
       </div>
 
       <div class="flex gap-3 overflow-x-auto max-w-[80vw]">
         <div class="min-w-36">
-          <div class="text-[10px] uppercase tracking-wide text-muted-foreground/60 mb-1">Agent</div>
+          <SectionLabel class="mb-1">Agent</SectionLabel>
           {#each offered.length > 0 ? offered : [{ id: draft.agentId, displayName: agentName, stage: undefined }] as a (a.id)}
             {@const current = a.id === draft.agentId}
             <button
               onclick={() => draftStore.setAgent(a.id)}
-              class="w-full text-left px-2 py-1 border-l-2 transition-colors hover:bg-accent
-                {current ? 'border-primary text-foreground bg-accent/50' : 'border-transparent text-muted-foreground'}"
+              class={menuItem({ selected: current })}
               aria-pressed={current}
             >
               {a.displayName}
@@ -99,37 +101,35 @@
         </div>
 
         <div class="min-w-32">
-          <div class="text-[10px] uppercase tracking-wide text-muted-foreground/60 mb-1">Model</div>
+          <SectionLabel class="mb-1">Model</SectionLabel>
           {#each draftStore.models as opt (opt.value)}
             {@const current = opt.value === model}
             <button
               onclick={() => draftStore.setModel(opt.value)}
-              class="w-full text-left px-2 py-1 border-l-2 transition-colors hover:bg-accent hover:text-accent-foreground
-                {current ? 'border-primary text-foreground bg-accent/50' : 'border-transparent text-muted-foreground'}"
+              class={menuItem({ selected: current })}
               aria-pressed={current}
             >
               {opt.label}
             </button>
           {:else}
-            <div class="px-2 py-1 text-muted-foreground/50">{model || 'Provider default'}</div>
+            <div class="px-2 py-1 text-muted-foreground">{model || 'Provider default'}</div>
           {/each}
         </div>
 
         {#each draftStore.descriptors as ctl (ctl.id)}
           {@const value = draftStore.controlValue(ctl.id)}
           <div class="min-w-32">
-            <div class="text-[10px] uppercase tracking-wide text-muted-foreground/60 mb-1">{ctl.label}</div>
+            <SectionLabel class="mb-1">{ctl.label}</SectionLabel>
             {#each ctl.options as opt, i (opt.value)}
               {@const current = opt.value === value}
               {#if opt.group && opt.group !== ctl.options[i - 1]?.group}
-                <div class="mt-1.5 pt-1.5 border-t border-border/60 px-2 text-[10px] uppercase tracking-wide text-muted-foreground/60">
+                <SectionLabel class="mt-1.5 pt-1.5 border-t border-border/60 px-2">
                   {opt.group}
-                </div>
+                </SectionLabel>
               {/if}
               <button
                 onclick={() => draftStore.setControl(ctl.id, opt.value)}
-                class="w-full text-left px-2 py-1 border-l-2 transition-colors hover:bg-accent
-                  {current ? `bg-accent/50 ${toneText(opt.tone)} border-current` : 'border-transparent text-muted-foreground'}"
+                class={cn(menuItem({ selected: current }), current && `${toneText(opt.tone)} border-current`)}
                 onmouseenter={() => hovered = opt}
                 onmouseleave={() => hovered = null}
                 onfocus={() => hovered = opt}
@@ -147,7 +147,7 @@
            click, and the hint keeps the full width with two lines reserved. -->
       {#if hint}
         <div class="mt-3 pt-2 border-t border-border">
-          <p class="text-[11px] min-h-[2lh] text-muted-foreground" aria-live="polite">
+          <p class="text-caption min-h-[2lh] text-muted-foreground" aria-live="polite">
             <span class="text-foreground">{hint.label}:</span> {hint.description}
           </p>
         </div>

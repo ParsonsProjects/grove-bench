@@ -3,9 +3,12 @@
   import { mcpConfigStore } from '../../stores/mcpConfig.svelte.js';
   import { store } from '../../stores/sessions.svelte.js';
   import { agentsStore } from '../../stores/agents.svelte.js';
+  import { Badge } from '$lib/components/ui/badge/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Label } from '$lib/components/ui/label/index.js';
   import * as Select from '$lib/components/ui/select/index.js';
+  import { Notice } from '$lib/components/ui/notice/index.js';
+  import { Pulse } from '$lib/components/ui/pulse/index.js';
   import SettingsGroup from './SettingsGroup.svelte';
   import McpAddDialog from './McpAddDialog.svelte';
   import PlusIcon from '@lucide/svelte/icons/plus';
@@ -70,8 +73,8 @@
 
   function statusDot(status: string): string {
     return status === 'connected' ? 'bg-green-500'
-      : status === 'pending' ? 'bg-yellow-400 animate-pulse'
-      : status === 'needs-auth' || status === 'needs-approval' ? 'bg-yellow-500'
+      : status === 'pending' ? 'bg-status-working animate-pulse'
+      : status === 'needs-auth' || status === 'needs-approval' ? 'bg-amber-500'
       : status === 'disabled' || status === 'rejected' ? 'bg-muted-foreground'
       : 'bg-red-500';
   }
@@ -100,11 +103,11 @@
         </p>
       </div>
       <div class="flex items-center gap-1 shrink-0">
-        <Button variant="ghost" size="sm" onclick={() => mcpConfigStore.refresh()} disabled={mcpConfigStore.loading} class="text-xs">
+        <Button variant="quiet" size="xs" onclick={() => mcpConfigStore.refresh()} disabled={mcpConfigStore.loading}>
           Refresh
         </Button>
         <span data-setting="mcp-add">
-          <Button variant="outline" size="sm" onclick={() => (adding = true)} class="text-xs">
+          <Button variant="subtle" size="xs" onclick={() => (adding = true)}>
             <PlusIcon class="size-3.5" aria-hidden="true" />
             Add server
           </Button>
@@ -152,12 +155,12 @@
     </div>
 
     {#if listError}
-      <div class="text-xs text-destructive bg-destructive/10 px-3 py-2 whitespace-pre-wrap" role="alert">{listError}</div>
+      <Notice tone="danger"><p class="whitespace-pre-wrap">{listError}</p></Notice>
     {/if}
 
     {#if mcpConfigStore.loading}
       <div class="flex items-center justify-center py-6 text-muted-foreground">
-        <span class="w-3 h-3 bg-primary animate-pulse mr-2"></span>
+        <Pulse class="mr-2" />
         <span class="text-sm">Checking MCP server health. This can take a few seconds...</span>
       </div>
     {:else if mcpConfigStore.servers.length === 0}
@@ -189,29 +192,25 @@
             </div>
             {#if server.managedBy}
               <!-- Owned by something else (e.g. a plugin): the agent can't remove it -->
-              <span class="text-xs text-muted-foreground border border-border px-1.5 py-0.5 shrink-0">
-                {server.managedBy.label}
-              </span>
+              <Badge tone="muted">{server.managedBy.label}</Badge>
             {:else if confirmingRemove === server.name}
               <span class="text-xs text-foreground shrink-0">Remove {server.name}?</span>
               <Button
                 variant="destructive"
-                size="sm"
-                class="text-xs shrink-0"
+                size="xs"
                 disabled={mcpConfigStore.actionInProgress !== null}
                 onclick={() => { confirmingRemove = null; mcpConfigStore.remove(server.name); }}
               >
                 Remove
               </Button>
-              <Button variant="ghost" size="sm" class="text-xs shrink-0" onclick={() => (confirmingRemove = null)}>
+              <Button variant="quiet" size="xs" onclick={() => (confirmingRemove = null)}>
                 Cancel
               </Button>
             {:else}
               {#if unapproved && mcpConfigStore.cwd && rules?.approvalHint}
                 <Button
-                  variant="outline"
-                  size="sm"
-                  class="text-xs shrink-0"
+                  variant="subtle"
+                  size="xs"
                   disabled={mcpConfigStore.actionInProgress !== null}
                   onclick={() => mcpConfigStore.approve(server.name)}
                   title="Approve for this project and its threads"
@@ -220,9 +219,8 @@
                 </Button>
               {/if}
               <Button
-                variant="ghost"
-                size="sm"
-                class="text-destructive hover:bg-destructive/10 text-xs shrink-0"
+                variant="outline-destructive"
+                size="xs"
                 disabled={mcpConfigStore.actionInProgress !== null}
                 onclick={() => (confirmingRemove = server.name)}
               >

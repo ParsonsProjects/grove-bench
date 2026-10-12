@@ -465,6 +465,8 @@ const api: GroveBenchAPI = {
 
   // Agent adapters
   listAdapters: () => ipcRenderer.invoke(IPC.AGENT_LIST_ADAPTERS),
+  previewClaudeAccount: (input: { name: string; configDir: string }) => ipcRenderer.invoke(IPC.CLAUDE_ACCOUNT_PREVIEW, input),
+  addClaudeAccount: (input: { name: string; configDir: string }) => ipcRenderer.invoke(IPC.CLAUDE_ACCOUNT_ADD, input),
   listRegistryAgents: () => ipcRenderer.invoke(IPC.CATALOGS_REGISTRY),
   getRegistryIcon: (id: string) => ipcRenderer.invoke(IPC.CATALOGS_ICON, id),
   refreshCatalogs: () => ipcRenderer.invoke(IPC.CATALOGS_REFRESH),
