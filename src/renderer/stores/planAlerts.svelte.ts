@@ -3,11 +3,21 @@ import { windowsReaching } from '../../shared/usage.js';
 import { formatResetTime } from '../lib/reset-time.js';
 import { notifyOs } from '../lib/os-notify.js';
 import { settingsStore } from './settings.svelte.js';
+import { store as sessionStore } from './sessions.svelte.js';
+
+export interface PlanAlertWindow {
+  label: string;
+  /** Whole percent used. */
+  percent: number;
+  /** Epoch seconds. */
+  resetsAt?: number;
+}
 
 export interface PlanAlert {
   providerId: string;
-  /** What reached the alert level, e.g. "5-hour window at 82%, resets 3:40 PM". */
-  text: string;
+  /** The thread the figures came through. */
+  sessionId: string;
+  windows: PlanAlertWindow[];
 }
 
 /**
@@ -19,6 +29,9 @@ export interface PlanAlert {
  */
 class PlanAlertStore {
   alert = $state<PlanAlert | null>(null);
+  /** A thread whose agent settings should open at Usage (View usage). Its
+   *  popover opens itself and clears this. */
+  usageRequest = $state<string | null>(null);
   /** provider, window and reset time already alerted. */
   private alerted = new Set<string>();
 
@@ -30,11 +43,32 @@ class PlanAlertStore {
       .filter((w) => !this.alerted.has(`${providerId}:${w.id}:${w.resetsAt ?? ''}`));
     if (reached.length === 0) return;
     for (const w of reached) this.alerted.add(`${providerId}:${w.id}:${w.resetsAt ?? ''}`);
-    const text = reached
-      .map((w) => `${w.label} window at ${Math.round(w.utilization * 100)}%${w.resetsAt ? `, resets ${formatResetTime(w.resetsAt, now)}` : ''}`)
+    const windows = reached.map((w) => ({
+      label: w.label,
+      percent: Math.round(w.utilization * 100),
+      ...(w.resetsAt ? { resetsAt: w.resetsAt } : {}),
+    }));
+    this.alert = { providerId, sessionId, windows };
+    const body = windows
+      .map((w) => `${w.label} at ${w.percent}%${w.resetsAt ? `, resets ${formatResetTime(w.resetsAt, now)}` : ''}`)
       .join('; ');
-    this.alert = { providerId, text };
-    notifyOs('plan_usage', sessionId, `Plan usage: ${text}`);
+    notifyOs('plan_usage', sessionId, `Plan usage: ${body}`);
+  }
+
+  /** Open the usage figures behind the alert: the agent settings of the
+   *  thread in front, when it uses the same agent, else of the thread the
+   *  figures came through, switching to it. */
+  viewUsage(): void {
+    const alert = this.alert;
+    if (!alert) return;
+    this.alert = null;
+    const active = sessionStore.activeSessionId;
+    const activeAgent = sessionStore.sessions.find((s) => s.id === active)?.agentType;
+    const target = active && activeAgent === alert.providerId ? active : alert.sessionId;
+    if (!sessionStore.sessions.some((s) => s.id === target)) return;
+    sessionStore.activeSessionId = target;
+    // After this click has finished: the popover closes on clicks outside it.
+    setTimeout(() => { this.usageRequest = target; }, 0);
   }
 
   dismiss(): void {
@@ -44,6 +78,7 @@ class PlanAlertStore {
   /** Forget what was alerted (tests). */
   reset(): void {
     this.alert = null;
+    this.usageRequest = null;
     this.alerted.clear();
   }
 }

@@ -593,8 +593,12 @@
 {/if}
 
 <ErrorToast />
-<MemoryToast />
-<PlanUsageToast />
+<!-- Toasts share one stack above the status bar, so two at once sit one
+     above the other instead of on top of each other. -->
+<div class="fixed bottom-16 right-4 z-50 flex max-w-md flex-col items-end gap-2 pointer-events-none *:pointer-events-auto">
+  <PlanUsageToast />
+  <MemoryToast />
+</div>
 
 <BookmarksDrawer />
 <!-- Mounted from its first opening on, so closing plays its transition.

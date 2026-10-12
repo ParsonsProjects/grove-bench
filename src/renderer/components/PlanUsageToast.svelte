@@ -1,9 +1,14 @@
 <script lang="ts">
-  /** The plan usage alert in the app (stores/planAlerts). */
+  /** The plan usage alert in the app (stores/planAlerts), built like the
+   *  memory toast: a warning Notice on a floating panel. */
   import { fly } from 'svelte/transition';
   import { planAlertStore } from '../stores/planAlerts.svelte.js';
   import { agentsStore } from '../stores/agents.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
+  import { formatResetTime } from '../lib/reset-time.js';
+  import { Button } from '$lib/components/ui/button/index.js';
+  import { Notice } from '$lib/components/ui/notice/index.js';
+  import XIcon from '@lucide/svelte/icons/x';
 
   // Long enough to be read after looking away; it is once per window.
   $effect(() => {
@@ -13,24 +18,36 @@
     }
   });
 
+  const alert = $derived(planAlertStore.alert);
+  const title = $derived(alert?.windows.map((w) => `${w.label} usage at ${w.percent}%`).join(', ') ?? '');
+  // The agent, then when each window resets (named when there are several).
+  const detail = $derived.by(() => {
+    if (!alert) return '';
+    const resets = alert.windows
+      .filter((w) => w.resetsAt)
+      .map((w) => `${alert.windows.length > 1 ? `${w.label} resets` : 'resets'} ${formatResetTime(w.resetsAt!)}`);
+    return [agentsStore.get(alert.providerId)?.displayName ?? 'Your agent', ...resets].join(' · ');
+  });
+
   function openSettings() {
     planAlertStore.dismiss();
     settingsStore.openAt('limits');
   }
 </script>
 
-{#if planAlertStore.alert}
-  {@const alert = planAlertStore.alert}
-  <div class="fixed bottom-28 right-4 z-50 max-w-md" transition:fly={{ y: 8, duration: 140 }} role="status" data-testid="plan-usage-toast">
-    <div class="border border-amber-400 bg-popover p-3 shadow-xl backdrop-blur-sm flex items-start gap-3">
-      <span class="shrink-0 mt-0.5 text-amber-400">!</span>
-      <p class="text-sm flex-1 text-foreground">
-        {agentsStore.get(alert.providerId)?.displayName ?? 'Your agent'} plan usage: {alert.text}.
-      </p>
-      <button onclick={openSettings} class="text-sm shrink-0 text-primary underline-offset-2 hover:underline">Alert level</button>
-      <button onclick={() => planAlertStore.dismiss()} class="shrink-0 text-muted-foreground hover:text-foreground" aria-label="Dismiss">
-        &times;
-      </button>
+{#if alert}
+  <div transition:fly={{ y: 8, duration: 140 }} data-testid="plan-usage-toast">
+    <div class="bg-popover border border-border shadow-xl">
+      <Notice tone="warning" {title}>
+        {#snippet actions()}
+          <Button size="2xs" variant="subtle" onclick={() => planAlertStore.viewUsage()}>View usage</Button>
+          <Button size="2xs" variant="quiet" onclick={openSettings}>Alert level</Button>
+          <Button size="icon-2xs" variant="quiet" aria-label="Dismiss" onclick={() => planAlertStore.dismiss()}>
+            <XIcon />
+          </Button>
+        {/snippet}
+        <p class="text-muted-foreground">{detail}</p>
+      </Notice>
     </div>
   </div>
 {/if}
