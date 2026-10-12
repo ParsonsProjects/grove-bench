@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { app, protocol } from 'electron';
+import { app, protocol, shell } from 'electron';
 import type { AgentEvent } from '../shared/types.js';
 import { attachmentImageUrl } from '../shared/attachments.js';
 
@@ -12,12 +13,15 @@ vi.mock('./logger.js', () => ({
 
 import {
   attachmentResponse,
+  attachmentsFolder,
   getAttachmentsDir,
   handleAttachmentProtocol,
-  pruneImages,
+  openAttachedFile,
+  pruneAttachments,
   registerAttachmentScheme,
   removeDeletedFolders,
-  removeImages,
+  removeAttachments,
+  saveFiles,
   saveImages,
   storeToolImages,
 } from './attachments.js';
@@ -92,6 +96,131 @@ describe('saveImages', () => {
   });
 });
 
+describe('attachmentsFolder', () => {
+  it("is the conversation's folder, without creating it", () => {
+    expect(attachmentsFolder('abc123')).toBe(folder('abc123'));
+    expect(fs.existsSync(folder('abc123'))).toBe(false);
+  });
+
+  it('refuses a conversation id that could be a path', () => {
+    expect(attachmentsFolder('../escape')).toBeNull();
+  });
+});
+
+describe('saveFiles', () => {
+  const PDF = Buffer.from('%PDF-1.4 fake').toString('base64');
+
+  it('saves each file under a content-hash name that keeps its extension', async () => {
+    const [saved] = await saveFiles('abc123', [{ data: PDF, mediaType: 'application/pdf', name: 'Spec.PDF' }]);
+
+    expect(saved.stored).toEqual({ file: expect.stringMatching(/^[0-9a-f]{32}\.pdf$/), name: 'Spec.PDF', mediaType: 'application/pdf', size: 13 });
+    expect(saved.path).toBe(path.join(folder('abc123'), saved.stored.file));
+    expect(saved.data).toBe(PDF);
+    expect(fs.readFileSync(saved.path).toString()).toBe('%PDF-1.4 fake');
+  });
+
+  it('names a file by the SHA-256 of its bytes', async () => {
+    const [saved] = await saveFiles('abc123', [{ data: PDF, mediaType: 'application/pdf', name: 'a.pdf' }]);
+    const hash = crypto.createHash('sha256').update(Buffer.from(PDF, 'base64')).digest('hex').slice(0, 32);
+    expect(saved.stored.file).toBe(`${hash}.pdf`);
+  });
+
+  it('leaves a file out when an edited copy of it is locked and cannot be replaced', async () => {
+    const [first] = await saveFiles('abc123', [{ data: PDF, mediaType: 'application/pdf', name: 'a.pdf' }]);
+    fs.writeFileSync(first.path, 'edited by the agent');
+    const locked = Object.assign(new Error('locked'), { code: 'EPERM' });
+    const rename = vi.spyOn(fs.promises, 'rename').mockRejectedValue(locked);
+    try {
+      expect(await saveFiles('abc123', [{ data: PDF, mediaType: 'application/pdf', name: 'a.pdf' }])).toEqual([]);
+      // Retried before giving up.
+      expect(rename.mock.calls.length).toBeGreaterThan(1);
+    } finally {
+      rename.mockRestore();
+    }
+    expect(fs.readFileSync(first.path).toString()).toBe('edited by the agent');
+  });
+
+  it('drops an extension that is not plain letters and digits', async () => {
+    const [noExt, odd] = await saveFiles('abc123', [
+      { data: 'AAAA', mediaType: '', name: 'README' },
+      { data: 'BBBB', mediaType: '', name: 'notes.my file' },
+    ]);
+    expect(noExt.stored.file).toMatch(/^[0-9a-f]{32}$/);
+    expect(odd.stored.file).toMatch(/^[0-9a-f]{32}$/);
+  });
+
+  it('writes over a saved copy whose content changed, so a reattached file is the original', async () => {
+    const [first] = await saveFiles('abc123', [{ data: PDF, mediaType: 'application/pdf', name: 'a.pdf' }]);
+    fs.writeFileSync(first.path, 'edited by the agent');
+
+    const [again] = await saveFiles('abc123', [{ data: PDF, mediaType: 'application/pdf', name: 'a.pdf' }]);
+
+    expect(again.path).toBe(first.path);
+    expect(fs.readFileSync(again.path).toString()).toBe('%PDF-1.4 fake');
+  });
+
+  it('stores the same file once', async () => {
+    const [a, b] = await saveFiles('abc123', [
+      { data: PDF, mediaType: 'application/pdf', name: 'a.pdf' },
+      { data: PDF, mediaType: 'application/pdf', name: 'b.pdf' },
+    ]);
+    expect(b.stored.file).toBe(a.stored.file);
+    expect(fs.readdirSync(folder('abc123'))).toEqual([a.stored.file]);
+  });
+
+  it('leaves out a file it could not save and keeps the rest in order', async () => {
+    const saved = await saveFiles('abc123', [
+      { data: 'AAAA', mediaType: '', name: 'one.bin' },
+      { data: 42 as unknown as string, mediaType: '', name: 'broken.bin' },
+      { data: 'BBBB', mediaType: '', name: 'two.bin' },
+    ]);
+    expect(saved.map((f) => f.stored.name)).toEqual(['one.bin', 'two.bin']);
+  });
+
+  it('refuses a conversation id that could be a path', async () => {
+    expect(await saveFiles('../escape', [{ data: PDF, mediaType: 'application/pdf', name: 'a.pdf' }])).toEqual([]);
+  });
+});
+
+describe('openAttachedFile', () => {
+  beforeEach(() => {
+    vi.mocked(shell.openPath).mockClear().mockResolvedValue('');
+    vi.mocked(shell.showItemInFolder).mockClear();
+  });
+
+  it('opens a PDF or audio file in its default app', async () => {
+    const [pdf] = await saveFiles('abc123', [{ data: 'JVBERi0=', mediaType: 'application/pdf', name: 'a.pdf' }]);
+
+    expect(await openAttachedFile('abc123', pdf.stored.file)).toBe(true);
+    expect(shell.openPath).toHaveBeenCalledWith(pdf.path);
+    expect(shell.showItemInFolder).not.toHaveBeenCalled();
+  });
+
+  it('only shows other types in their folder, so a click never runs one', async () => {
+    const [exe] = await saveFiles('abc123', [{ data: 'TVqQ', mediaType: 'application/x-msdownload', name: 'setup.exe' }]);
+
+    expect(await openAttachedFile('abc123', exe.stored.file)).toBe(true);
+    expect(shell.openPath).not.toHaveBeenCalled();
+    expect(shell.showItemInFolder).toHaveBeenCalledWith(exe.path);
+  });
+
+  it('shows the file in its folder when no app opens it', async () => {
+    vi.mocked(shell.openPath).mockResolvedValue('No application is associated');
+    const [pdf] = await saveFiles('abc123', [{ data: 'JVBERi0=', mediaType: 'application/pdf', name: 'a.pdf' }]);
+
+    expect(await openAttachedFile('abc123', pdf.stored.file)).toBe(true);
+    expect(shell.showItemInFolder).toHaveBeenCalledWith(pdf.path);
+  });
+
+  it('is false for a missing file or a name that is not a stored one', async () => {
+    expect(await openAttachedFile('abc123', `${'0'.repeat(32)}.pdf`)).toBe(false);
+    expect(await openAttachedFile('abc123', '../../secrets.pdf')).toBe(false);
+    expect(await openAttachedFile('../x', `${'0'.repeat(32)}.pdf`)).toBe(false);
+    expect(shell.openPath).not.toHaveBeenCalled();
+    expect(shell.showItemInFolder).not.toHaveBeenCalled();
+  });
+});
+
 describe('storeToolImages', () => {
   it("swaps a tool result's image data for references to the saved images", async () => {
     const event = await storeToolImages('abc123', {
@@ -160,12 +289,12 @@ describe('protocol registration', () => {
   });
 });
 
-describe('removeImages', () => {
+describe('removeAttachments', () => {
   it("moves the conversation's folder aside at once, then deletes it", async () => {
     await saveImages('one', [{ data: PNG, mediaType: 'image/png' }]);
     const [other] = await saveImages('two', [{ data: PNG, mediaType: 'image/png' }]);
 
-    const done = removeImages('one');
+    const done = removeAttachments('one');
     // Gone before the delete finishes, so a new image lands in a fresh folder.
     expect(fs.existsSync(folder('one'))).toBe(false);
     await done;
@@ -175,7 +304,27 @@ describe('removeImages', () => {
   });
 
   it('does nothing for a conversation without images', async () => {
-    await expect(removeImages('none')).resolves.toBeUndefined();
+    await expect(removeAttachments('none')).resolves.toBeUndefined();
+  });
+
+  it("deletes what's in a folder it can't move, and nothing saved after", async () => {
+    const [old] = await saveFiles('busy', [{ data: 'AAAA', mediaType: '', name: 'old.bin' }]);
+    const rename = vi.spyOn(fs, 'renameSync').mockImplementationOnce(() => {
+      throw Object.assign(new Error('a file in it is open'), { code: 'EBUSY' });
+    });
+    try {
+      const done = removeAttachments('busy');
+      // The next message's file lands while the delete runs.
+      const [next] = await saveFiles('busy', [{ data: 'BBBB', mediaType: '', name: 'next.bin' }]);
+      await done;
+
+      expect(rename).toHaveBeenCalledTimes(1);
+      expect(fs.readdirSync(getAttachmentsDir())).toEqual(['busy']); // not moved aside
+      expect(fs.existsSync(old.path)).toBe(false);
+      expect(fs.existsSync(next.path)).toBe(true);
+    } finally {
+      rename.mockRestore();
+    }
   });
 
   it('finishes deletions a quit interrupted', async () => {
@@ -188,7 +337,16 @@ describe('removeImages', () => {
   });
 });
 
-describe('pruneImages', () => {
+describe('pruneAttachments', () => {
+  /** Make a saved file look like it was written a while ago. */
+  function age(filePath: string): void {
+    const then = new Date(Date.now() - 60_000);
+    fs.utimesSync(filePath, then, then);
+  }
+  const ageAll = (id: string) => {
+    for (const f of fs.readdirSync(folder(id))) age(path.join(folder(id), f));
+  };
+
   it('deletes the images no event refers to any more and keeps the rest', async () => {
     const [kept, dropped, fromTool] = await saveImages('abc123', [
       { data: PNG, mediaType: 'image/png', name: 'kept.png' },
@@ -199,18 +357,66 @@ describe('pruneImages', () => {
       { type: 'user_message', text: 'look', uuid: 'u1', images: [kept] },
       { type: 'tool_result', toolUseId: 't1', content: '', images: [{ file: fromTool.file }] },
     ];
+    ageAll('abc123');
 
-    await pruneImages('abc123', events);
+    await pruneAttachments('abc123', events);
 
     expect(fs.readdirSync(folder('abc123')).sort()).toEqual([kept.file, fromTool.file].sort());
     expect(fs.existsSync(path.join(folder('abc123'), dropped.file))).toBe(false);
+  });
+
+  it('keeps the files a message still refers to and deletes the rest', async () => {
+    const [kept, dropped] = await saveFiles('abc123', [
+      { data: 'AAAA', mediaType: 'application/pdf', name: 'kept.pdf' },
+      { data: 'BBBB', mediaType: 'application/zip', name: 'dropped.zip' },
+    ]);
+    const events: AgentEvent[] = [{ type: 'user_message', text: 'read this', uuid: 'u1', files: [kept.stored] }];
+    ageAll('abc123');
+
+    await pruneAttachments('abc123', events);
+
+    expect(fs.readdirSync(folder('abc123'))).toEqual([kept.stored.file]);
+    expect(fs.existsSync(dropped.path)).toBe(false);
+  });
+
+  it('keeps a file saved while it runs, whose message may not be in the history yet', async () => {
+    const [old] = await saveFiles('abc123', [{ data: 'AAAA', mediaType: '', name: 'old.bin' }]);
+    age(old.path);
+
+    const pruning = pruneAttachments('abc123', []);
+    const [justSaved] = await saveFiles('abc123', [{ data: 'CCCC', mediaType: '', name: 'new.bin' }]);
+    await pruning;
+
+    expect(fs.existsSync(old.path)).toBe(false);
+    expect(fs.existsSync(justSaved.path)).toBe(true);
+  });
+
+  it('counts a reattached copy as just saved', async () => {
+    const [first] = await saveFiles('abc123', [{ data: 'DDDD', mediaType: '', name: 'a.bin' }]);
+    age(first.path);
+    await saveFiles('abc123', [{ data: 'DDDD', mediaType: '', name: 'again.bin' }]);
+
+    await pruneAttachments('abc123', []);
+    expect(fs.existsSync(first.path)).toBe(true);
+  });
+
+  it('reads the history after listing the folder, so a message added meanwhile counts', async () => {
+    const [file] = await saveFiles('abc123', [{ data: 'EEEE', mediaType: '', name: 'a.bin' }]);
+    age(file.path);
+    const events: AgentEvent[] = [];
+
+    const pruning = pruneAttachments('abc123', events);
+    events.push({ type: 'user_message', text: 'x', files: [file.stored] });
+    await pruning;
+
+    expect(fs.existsSync(file.path)).toBe(true);
   });
 
   it('leaves files that are not stored images alone', async () => {
     fs.mkdirSync(folder('abc123'), { recursive: true });
     fs.writeFileSync(path.join(folder('abc123'), 'saving.png.1234.tmp'), '');
 
-    await pruneImages('abc123', []);
+    await pruneAttachments('abc123', []);
 
     expect(fs.readdirSync(folder('abc123'))).toEqual(['saving.png.1234.tmp']);
   });

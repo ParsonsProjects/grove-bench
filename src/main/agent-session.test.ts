@@ -112,12 +112,20 @@ vi.mock('./skill-suggestions.js', () => ({
   getCachedSuggestions: vi.fn(() => [{ id: 'cached' }]),
 }));
 
-// Images are saved by content hash in real use; here each gets a fixed name.
+// Images and files are saved by content hash in real use; here each gets a fixed name.
 const attachments = vi.hoisted(() => ({
   saveImages: vi.fn(async (_id: string, images: { name?: string }[]) =>
     images.map((img, i) => ({ file: `img${i}.png`, ...(img.name ? { name: img.name } : {}) }))),
-  removeImages: vi.fn(async () => {}),
-  pruneImages: vi.fn(async () => {}),
+  saveFiles: vi.fn(async (id: string, files: { name: string; mediaType: string; data: string }[]) =>
+    files.map((f, i) => ({
+      stored: { file: `file${i}`, name: f.name, mediaType: f.mediaType, size: 3 },
+      path: `/attachments/${id}/file${i}`,
+      data: f.data,
+    }))),
+  attachmentsFolder: vi.fn((id: string) => `/attachments/${id}`),
+  imagePath: vi.fn((id: string, file: string) => ({ path: `/attachments/${id}/${file}`, mediaType: 'image/png' })),
+  removeAttachments: vi.fn(async () => {}),
+  pruneAttachments: vi.fn(async () => {}),
   storeToolImages: vi.fn(async (_id: string, event: any) => {
     const { imageData, ...rest } = event;
     return { ...rest, images: imageData.map((_: unknown, i: number) => ({ file: `tool${i}.png` })) };
@@ -853,7 +861,7 @@ describe('AgentSessionManager event processing', () => {
     expect(session.checkpoints.markCleared).toHaveBeenCalledWith('test-clear-cp', expect.any(String));
     expect(session.checkpoints.cleanup).not.toHaveBeenCalled();
     // No event refers to the thread's images any more.
-    expect(attachments.removeImages).toHaveBeenCalledWith('test-clear-cp');
+    expect(attachments.removeAttachments).toHaveBeenCalledWith('test-clear-cp');
 
     await sessionManager.destroySession('test-clear-cp');
   });
@@ -2191,10 +2199,89 @@ describe('AgentSessionManager.sendMessage()', () => {
     expect(attachments.saveImages).toHaveBeenCalledWith('test-send-images', images);
     const userMsgs = sessionManager.getEventHistory('test-send-images').filter((e) => e.type === 'user_message');
     expect(userMsgs[0]).toMatchObject({ text: 'What is this?', images: [{ file: 'img0.png', name: 'shot.png' }] });
-    // The agent still gets the image data itself.
-    expect(mockAdapter.lastHandle!.sendMessage).toHaveBeenCalledWith({ text: 'What is this?', images });
+    // The agent still gets the image data itself, and the saved copy's path
+    // for an agent that can't take images.
+    expect(mockAdapter.lastHandle!.sendMessage).toHaveBeenCalledWith({
+      text: 'What is this?',
+      images: [{ ...images[0], path: '/attachments/test-send-images/img0.png' }],
+    });
 
     await sessionManager.destroySession('test-send-images');
+  });
+
+  it('saves attached files, records them on the message and gives the agent their paths and data', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-send-files', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    expect(mockAdapter.lastConfig?.attachmentsDir).toBe('/attachments/test-send-files');
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 's', model: 'm', tools: [] });
+    await new Promise((r) => setTimeout(r, 50));
+
+    const files = [{ data: 'JVBE', mediaType: 'application/pdf', name: 'spec.pdf' }];
+    expect(await sessionManager.sendMessage('test-send-files', 'Summarise', undefined, files)).toBe(true);
+
+    expect(attachments.saveFiles).toHaveBeenCalledWith('test-send-files', files);
+    const userMsgs = sessionManager.getEventHistory('test-send-files').filter((e) => e.type === 'user_message');
+    expect(userMsgs[0]).toMatchObject({
+      text: 'Summarise',
+      files: [{ file: 'file0', name: 'spec.pdf', mediaType: 'application/pdf', size: 3 }],
+    });
+    // A PDF goes by path, so it doesn't carry its data.
+    expect(mockAdapter.lastHandle!.sendMessage).toHaveBeenCalledWith({
+      text: 'Summarise',
+      images: undefined,
+      files: [{ name: 'spec.pdf', mediaType: 'application/pdf', size: 3, path: '/attachments/test-send-files/file0' }],
+    });
+    // The checkpoint is labelled as the chat shows the message.
+    const session = sessionManager.getSession('test-send-files')!;
+    expect(session.checkpoints.capture).toHaveBeenLastCalledWith('test-send-files', expect.any(String), expect.any(String), '[spec.pdf] Summarise');
+
+    await sessionManager.destroySession('test-send-files');
+  });
+
+  it('gives a clip that may go inline its data, and the audio already in the conversation', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-send-audio', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 's', model: 'm', tools: [] });
+    await new Promise((r) => setTimeout(r, 50));
+
+    const clip = [{ data: 'SUQz', mediaType: 'audio/mpeg', name: 'memo.mp3' }];
+    expect(await sessionManager.sendMessage('test-send-audio', 'first', undefined, clip)).toBe(true);
+    expect(mockAdapter.lastHandle!.sendMessage).toHaveBeenLastCalledWith({
+      text: 'first', images: undefined,
+      files: [{ name: 'memo.mp3', mediaType: 'audio/mpeg', size: 3, path: '/attachments/test-send-audio/file0', data: 'SUQz' }],
+    });
+
+    // The first clip is in the history now, and counts toward the inline budget.
+    expect(await sessionManager.sendMessage('test-send-audio', 'second', undefined, clip)).toBe(true);
+    expect(mockAdapter.lastHandle!.sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({ text: 'second', audioInHistory: 3 }));
+
+    await sessionManager.destroySession('test-send-audio');
+  });
+
+  it('says so when an attached file could not be saved, and sends the rest', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-lost-file', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 's', model: 'm', tools: [] });
+    await new Promise((r) => setTimeout(r, 50));
+    attachments.saveFiles.mockResolvedValueOnce([]);
+
+    expect(await sessionManager.sendMessage('test-lost-file', 'Read it', undefined, [{ data: 'AA', mediaType: '', name: 'a.bin' }])).toBe(true);
+
+    const history = sessionManager.getEventHistory('test-lost-file');
+    expect(history.some((e) => e.type === 'status' && /An attached file could not be saved/.test(e.message))).toBe(true);
+    expect(history.find((e) => e.type === 'user_message')).not.toHaveProperty('files');
+    expect(mockAdapter.lastHandle!.sendMessage).toHaveBeenCalledWith({ text: 'Read it', images: undefined });
+
+    await sessionManager.destroySession('test-lost-file');
   });
 
   it('leaves images out for an agent that can\'t take them, and says so', async () => {
@@ -2528,7 +2615,7 @@ describe('AgentSessionManager.rewindFiles()', () => {
     expect((remainingUserMsgs[0] as any).text).toBe('First message');
 
     // Images only the rewound turns showed are deleted: pruned against what's left.
-    const [prunedId, keptEvents] = attachments.pruneImages.mock.calls.at(-1) as unknown as [string, AgentEvent[]];
+    const [prunedId, keptEvents] = attachments.pruneAttachments.mock.calls.at(-1) as unknown as [string, AgentEvent[]];
     expect(prunedId).toBe('test-rewind-history');
     expect(keptEvents.filter((e) => e.type === 'user_message').map((e: any) => e.text)).toEqual(['First message']);
 
