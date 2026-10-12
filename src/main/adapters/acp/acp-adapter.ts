@@ -924,6 +924,7 @@ class AcpQuery {
       ...(this.contextSize ? { contextWindow: this.contextSize } : {}),
       // usage_update's cost covers the whole session: this turn's is the rise.
       ...(costBefore !== undefined && this.sessionCost !== undefined ? { totalCostUsd: Math.max(0, this.sessionCost - costBefore) } : {}),
+      ...(this.sessionCost !== undefined ? { sessionCostUsd: this.sessionCost } : {}),
     });
   }
 
@@ -1265,10 +1266,18 @@ class AcpQuery {
     const call = this.tools.get(req.toolCall.toolCallId)!;
     const d = this.describe(call);
     const decision = this.autoDecision(d);
-    if (decision !== 'ask') return answer(decision);
+    if (decision === 'deny') return answer(decision);
 
     const { toolName, toolInput, toolCategory, toolView } = d;
     const { config } = this;
+    // Grove's limits hold the call before it runs, approved or not. Only
+    // calls the agent asks about can be held.
+    if (config.beforeToolUse) {
+      const go = await this.unlessTurnEnds(config.beforeToolUse({ toolName, toolUseId: call.toolCallId }));
+      if (go !== 'continue') return go === 'stop' ? answer('deny') : go;
+    }
+    if (decision === 'allow') return answer(decision);
+
     const isPlan = call.kind === 'switch_mode';
     const asked = config.onPermissionRequest({
       requestId: '',
@@ -1279,14 +1288,17 @@ class AcpQuery {
       toolView,
       ...(isPlan ? { isPlanExecution: true, planText: firstText(call.content) ?? call.title ?? '' } : {}),
     });
+    return this.unlessTurnEnds(asked.then((res: PermissionResponse) => answer(res.behavior === 'allow' ? 'allow' : 'deny')));
+  }
+
+  /** `pending`, unless the turn ends first: an interrupt or shutdown
+   *  answers every waiting permission request "cancelled". */
+  private async unlessTurnEnds<T>(pending: Promise<T>): Promise<T | AcpPermissionOutcome> {
     let settle!: (outcome: AcpPermissionOutcome) => void;
     const cancelledByTurn = new Promise<AcpPermissionOutcome>((resolve) => { settle = resolve; });
     this.pendingPermissions.add(settle);
     try {
-      return await Promise.race([
-        asked.then((res: PermissionResponse) => answer(res.behavior === 'allow' ? 'allow' : 'deny')),
-        cancelledByTurn,
-      ]);
+      return await Promise.race([pending, cancelledByTurn]);
     } finally {
       this.pendingPermissions.delete(settle);
     }

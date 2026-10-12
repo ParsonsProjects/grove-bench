@@ -93,6 +93,8 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 ### Cost & Usage Dashboard
 - [x] Plan usage runway — `AgentQueryHandle.getUsage()` returns a neutral `ProviderUsage` (windows with 0–1 utilization and reset time); the Claude adapter maps the SDK's experimental `/usage` control and probes for it so a rename degrades to "no usage"; `usage.svelte.ts` keeps one snapshot per provider, refreshes on popover open and after turns (throttled), and folds live `rate_limit` events in; shown as bars under the agent in the Agent settings popover
 - [ ] Per-session and cumulative token/cost view — data is already captured per message (`adapters/claude-code.ts`) but only lands in memory notes
+- [x] Turn cost per turn: Claude Code's `total_cost_usd` is the query's running total, so `adapters/running-cost.ts` turns it into each turn's cost (`totalCostUsd`) and keeps the running total as `sessionCostUsd`; a resumed query starts from the total its history last reached
+- [x] Limits and alerts (Settings > Limits & alerts): plan usage alert at a chosen percent (in-app toast and desktop notification, once per window, `planAlerts.svelte.ts`); spend per thread and per day, tool calls and minutes per turn, each pausing the thread before its next tool call to ask Continue or Stop (`session-limits.ts`, a `PreToolUse` hook for Claude Code, permission requests for ACP agents)
 
 ### Session Export
 - [ ] Markdown transcript per session written to disk (`.grove-wt/<id>/thread.md` or under the repo's memory dir) with an "Open in editor" action — also the enabler for switching agents mid-conversation

@@ -20,6 +20,7 @@
   import WorkspacePane from './components/WorkspacePane.svelte';
   import ErrorToast from './components/ErrorToast.svelte';
   import MemoryToast from './components/MemoryToast.svelte';
+  import PlanUsageToast from './components/PlanUsageToast.svelte';
   import { memoryStore } from './stores/memory.svelte.js';
   import { prerequisitesStore } from './stores/prerequisites.svelte.js';
   import { lazyComponent } from './lib/lazy-component.js';
@@ -446,6 +447,13 @@
       }
     });
 
+    // A reconnect main ran in the background (a sign-in or Refresh in
+    // another thread) changed this thread's MCP servers.
+    const unsubMcp = window.groveBench.onMcpStatus((sessionId, servers) => {
+      // Not for a thread closed or deleted meanwhile.
+      if (store.sessions.some((s) => s.id === sessionId)) messageStore.updateMcpServers(sessionId, servers);
+    });
+
     // Put idle conversations to sleep to free their agent processes.
     const stopIdleManager = startIdleManager();
 
@@ -453,6 +461,7 @@
       unsub();
       unsubPower();
       unsubFocus();
+      unsubMcp();
       unsubAppError();
       uninstallErrors();
       uninstallTooltips();
@@ -592,7 +601,12 @@
 {/if}
 
 <ErrorToast />
-<MemoryToast />
+<!-- Toasts share one stack above the status bar, so two at once sit one
+     above the other instead of on top of each other. -->
+<div class="fixed bottom-16 right-4 z-50 flex max-w-md flex-col items-end gap-2 pointer-events-none *:pointer-events-auto">
+  <PlanUsageToast />
+  <MemoryToast />
+</div>
 
 <BookmarksDrawer />
 <!-- Mounted from its first opening on, so closing plays its transition.

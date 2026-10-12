@@ -91,6 +91,8 @@ When the agent has MCP servers configured, an **MCP** badge shows how many are c
 - An estimate of how much of the context window the server's tool definitions use, so you can see which servers are worth disconnecting. "loaded on demand" means the agent only loads the tools when it searches for them
 - A failed server shows its error, with a button to copy it
 - **Reconnect** restarts a connection. **Sign in** starts the browser sign-in for a server that needs it
+- Threads on the same agent share its sign-ins. Once a server connects after you sign in or reconnect it, your other open threads on that agent reconnect it too, in the background. A thread in the middle of a turn waits for the turn to end
+- **Refresh** reconnects every server that needs a sign-in or failed, in this thread and your other open threads on the same agent, then checks each server's status. Servers that are already connected are left alone, and so is one whose browser sign-in is still under way (for up to 3 minutes)
 - **Disconnect** turns a server off, and **Connect** turns it back on. How long a disconnect lasts depends on the agent: hover the button to see. With Claude Agent it applies to the whole project, not just this thread, so new threads in the project also start without it
 
 New servers are added from Settings → MCP servers (Tool shed).

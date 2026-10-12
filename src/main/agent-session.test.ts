@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { AgentAdapter, AgentQueryHandle, AdapterConfig, PermissionResponse } from './adapters/types.js';
-import { IPC, PERMISSION_TIMEOUT_MINUTES, type AgentEvent } from '../shared/types.js';
+import { IPC, PERMISSION_TIMEOUT_MINUTES, type AgentEvent, type McpServerInfo } from '../shared/types.js';
 import * as fs from 'node:fs';
 import { perfSteps } from './perf-steps.js';
 
@@ -864,6 +864,63 @@ describe('AgentSessionManager event processing', () => {
     expect(attachments.removeAttachments).toHaveBeenCalledWith('test-clear-cp');
 
     await sessionManager.destroySession('test-clear-cp');
+  });
+});
+
+describe('AgentSessionManager limits', () => {
+  // As the settings mock at the top of this file returns them.
+  const baseSettings = () => ({ defaultSystemPromptAppend: null, toolAllowRules: [], toolDenyRules: [], cavemanMode: 'off' });
+  afterEach(() => {
+    settingsMock.getSettings.mockImplementation(baseSettings);
+  });
+
+  it('pauses before a tool call past the limit and stops the turn when the user stops', async () => {
+    settingsMock.getSettings.mockImplementation(() => ({ ...baseSettings(), turnToolCallLimit: 1 }));
+    const win = makeMockWindow();
+    await sessionManager.createSession({ id: 'test-limit', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock' });
+    await vi.waitFor(() => expect(mockAdapter.lastConfig?.beforeToolUse).toBeDefined());
+    const before = mockAdapter.lastConfig!.beforeToolUse!;
+
+    await sessionManager.sendMessage('test-limit', 'go');
+    await expect(before({ toolName: 'Bash', toolUseId: 'tu_1' })).resolves.toBe('continue');
+    const second = before({ toolName: 'Bash', toolUseId: 'tu_2' });
+
+    const request = sessionManager.getEventHistory('test-limit').find((e) => e.type === 'limit_request');
+    expect(request).toMatchObject({ type: 'limit_request', limit: 'turnToolCalls', used: 1, reachedAt: 1 });
+    expect(sessionManager.respondToLimit('test-limit', (request as { requestId: string }).requestId, 'stop')).toBe(true);
+    await expect(second).resolves.toBe('stop');
+    await vi.waitFor(() => expect(mockAdapter.lastHandle!.interrupt).toHaveBeenCalled());
+    expect(sessionManager.getEventHistory('test-limit').find((e) => e.type === 'limit_resolved')).toMatchObject({ decision: 'stop' });
+
+    await sessionManager.destroySession('test-limit');
+  });
+
+  it('adds what each turn cost to the thread\'s spend', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({ id: 'test-spend', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock' });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false, totalCostUsd: 0.4, sessionCostUsd: 0.4 });
+    mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false, totalCostUsd: 0.1, sessionCostUsd: 0.5 });
+    await vi.waitFor(() => expect(sessionManager.getSession('test-spend')!.limits.threadSpendUsd).toBeCloseTo(0.5));
+
+    await sessionManager.destroySession('test-spend');
+  });
+
+  it('settles a limit question when the user clicks Stop', async () => {
+    settingsMock.getSettings.mockImplementation(() => ({ ...baseSettings(), turnToolCallLimit: 1 }));
+    const win = makeMockWindow();
+    await sessionManager.createSession({ id: 'test-limit-stop', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock' });
+    await vi.waitFor(() => expect(mockAdapter.lastConfig?.beforeToolUse).toBeDefined());
+    const before = mockAdapter.lastConfig!.beforeToolUse!;
+    await sessionManager.sendMessage('test-limit-stop', 'go');
+    await before({ toolName: 'Bash', toolUseId: 'tu_1' });
+    const waiting = before({ toolName: 'Bash', toolUseId: 'tu_2' });
+
+    await sessionManager.interruptQuery('test-limit-stop');
+    await expect(waiting).resolves.toBe('stop');
+    expect(sessionManager.getSession('test-limit-stop')!.limits.pending).toBeNull();
+
+    await sessionManager.destroySession('test-limit-stop');
   });
 });
 
@@ -3973,5 +4030,189 @@ describe('AgentSessionManager step timings', () => {
 
     expect(fail).toHaveBeenCalledWith('t-close', 'closed');
     expect(fail).toHaveBeenCalledWith('t-delete', 'deleted');
+  });
+});
+
+describe('AgentSessionManager.reconnectDownMcpServers', () => {
+  const MCP_SUPPORT = { controls: { list: true, reconnect: true, toggle: true, signIn: true, contextCost: true }, disconnectHint: '' };
+  beforeEach(() => { Object.assign(mockAdapter, { mcp: MCP_SUPPORT }); });
+
+  /** Start thread `id` on `adapterType`, whose agent reports `servers` and
+   *  connects any server it is asked to reconnect. */
+  async function startThread(id: string, servers: Record<string, McpServerInfo['status']>, adapterType = 'mock') {
+    const win = makeMockWindow();
+    await sessionManager.createSession({ id, branch: 'main', cwd: `/wt/${id}`, repoPath: '/repo', window: win, adapterType });
+    await vi.waitFor(() => expect(sessionManager.getSession(id)?.queryHandle).toBeTruthy());
+    const handle = sessionManager.getSession(id)!.queryHandle!;
+    const status = new Map(Object.entries(servers));
+    handle.listMcpServers = vi.fn(async () => [...status].map(([name, s]) => ({ name, status: s })));
+    handle.reconnectMcpServer = vi.fn(async (name: string) => { status.set(name, 'connected'); });
+    return { handle, status, send: win._send as ReturnType<typeof vi.fn> };
+  }
+
+  function otherAgent(): void {
+    const other = new MockAdapter();
+    Object.defineProperty(other, 'id', { value: 'other' });
+    Object.assign(other, { mcp: MCP_SUPPORT });
+    extraAdapters.other = other as unknown as AgentAdapter;
+  }
+
+  it('reconnects the servers that are down here and in the other threads on the same agent', async () => {
+    otherAgent();
+    const a = await startThread('mcp-a', { linear: 'needs-auth', docs: 'connected' });
+    const b = await startThread('mcp-b', { linear: 'failed', docs: 'connected' });
+    const c = await startThread('mcp-c', { linear: 'needs-auth' }, 'other');
+
+    await sessionManager.reconnectDownMcpServers('mcp-a');
+
+    expect(vi.mocked(a.handle.reconnectMcpServer!).mock.calls).toEqual([['linear']]);
+    await vi.waitFor(() => expect(b.send).toHaveBeenCalledWith(IPC.AGENT_MCP_STATUS, 'mcp-b', [
+      { name: 'linear', status: 'connected' }, { name: 'docs', status: 'connected' },
+    ]));
+    expect(vi.mocked(b.handle.reconnectMcpServer!).mock.calls).toEqual([['linear']]);
+    // Another agent has its own sign-ins.
+    expect(c.handle.reconnectMcpServer).not.toHaveBeenCalled();
+
+    for (const id of ['mcp-a', 'mcp-b', 'mcp-c']) await sessionManager.destroySession(id);
+  });
+
+  it('with a server name, reconnects only that server and only in the other threads', async () => {
+    const a = await startThread('mcp-name-a', { linear: 'connected' });
+    const b = await startThread('mcp-name-b', { linear: 'needs-auth', jira: 'failed' });
+
+    await sessionManager.reconnectDownMcpServers('mcp-name-a', 'linear');
+
+    await vi.waitFor(() => expect(b.handle.reconnectMcpServer).toHaveBeenCalledWith('linear'));
+    expect(b.handle.reconnectMcpServer).not.toHaveBeenCalledWith('jira');
+    expect(a.handle.listMcpServers).not.toHaveBeenCalled();
+
+    await sessionManager.destroySession('mcp-name-a');
+    await sessionManager.destroySession('mcp-name-b');
+  });
+
+  it('waits for a thread in the middle of a turn to finish it', async () => {
+    await startThread('mcp-idle', { linear: 'connected' });
+    const busy = await startThread('mcp-busy', { linear: 'needs-auth' });
+    await sessionManager.sendMessage('mcp-busy', 'Look up the ticket');
+    expect(sessionManager.isMidTurn('mcp-busy')).toBe(true);
+
+    await sessionManager.reconnectDownMcpServers('mcp-idle', 'linear');
+    await new Promise((r) => setTimeout(r, 20));
+    expect(busy.handle.reconnectMcpServer).not.toHaveBeenCalled();
+
+    mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false });
+    await vi.waitFor(() => expect(busy.handle.reconnectMcpServer).toHaveBeenCalledWith('linear'));
+
+    await sessionManager.destroySession('mcp-idle');
+    await sessionManager.destroySession('mcp-busy');
+  });
+
+  it('holds the rest when a turn starts partway through', async () => {
+    await startThread('mcp-mid-a', { linear: 'connected' });
+    const b = await startThread('mcp-mid-b', { linear: 'failed', jira: 'failed' });
+    vi.mocked(b.handle.reconnectMcpServer!).mockImplementationOnce(async (name) => {
+      b.status.set(name, 'connected');
+      // A queued message goes out while the first server reconnects.
+      await sessionManager.sendMessage('mcp-mid-b', 'Next one');
+    });
+
+    await sessionManager.reconnectDownMcpServers('mcp-mid-a');
+    await vi.waitFor(() => expect(b.handle.reconnectMcpServer).toHaveBeenCalledTimes(1));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(b.handle.reconnectMcpServer).not.toHaveBeenCalledWith('jira');
+
+    mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false });
+    await vi.waitFor(() => expect(b.handle.reconnectMcpServer).toHaveBeenCalledWith('jira'));
+
+    await sessionManager.destroySession('mcp-mid-a');
+    await sessionManager.destroySession('mcp-mid-b');
+  });
+
+  it('runs held reconnects when the turn is stopped without a result', async () => {
+    await startThread('mcp-stop-a', { linear: 'connected' });
+    const b = await startThread('mcp-stop-b', { linear: 'needs-auth' });
+    await sessionManager.sendMessage('mcp-stop-b', 'Look up the ticket');
+    await sessionManager.reconnectDownMcpServers('mcp-stop-a', 'linear');
+    await new Promise((r) => setTimeout(r, 20));
+    expect(b.handle.reconnectMcpServer).not.toHaveBeenCalled();
+
+    await sessionManager.interruptQuery('mcp-stop-b');
+
+    await vi.waitFor(() => expect(b.handle.reconnectMcpServer).toHaveBeenCalledWith('linear'));
+    await sessionManager.destroySession('mcp-stop-a');
+    await sessionManager.destroySession('mcp-stop-b');
+  });
+
+  it('holds a thread whose agent is still starting until its turn ends', async () => {
+    await startThread('mcp-start-a', { linear: 'connected' });
+    const b = await startThread('mcp-start-b', { linear: 'needs-auth' });
+    const session = sessionManager.getSession('mcp-start-b')!;
+    session.isStartingQuery = true;
+
+    await sessionManager.reconnectDownMcpServers('mcp-start-a', 'linear');
+    await new Promise((r) => setTimeout(r, 20));
+    expect(b.handle.reconnectMcpServer).not.toHaveBeenCalled();
+    expect(session.mcpReconnectsAfterTurn).toEqual(new Set(['linear']));
+
+    session.isStartingQuery = false;
+    mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false });
+    await vi.waitFor(() => expect(b.handle.reconnectMcpServer).toHaveBeenCalledWith('linear'));
+
+    await sessionManager.destroySession('mcp-start-a');
+    await sessionManager.destroySession('mcp-start-b');
+  });
+
+  it('never reconnects one server twice at once in a thread', async () => {
+    await startThread('mcp-queue-a', { linear: 'connected' });
+    const b = await startThread('mcp-queue-b', { linear: 'failed' });
+    let finish!: () => void;
+    vi.mocked(b.handle.reconnectMcpServer!).mockImplementationOnce(async (name) => {
+      await new Promise<void>((r) => { finish = r; });
+      b.status.set(name, 'connected');
+    });
+
+    const manual = sessionManager.reconnectMcpServer('mcp-queue-b', 'linear');
+    await sessionManager.reconnectDownMcpServers('mcp-queue-a');
+    await new Promise((r) => setTimeout(r, 20));
+    // The background one waits for the Reconnect click to finish...
+    expect(b.handle.listMcpServers).not.toHaveBeenCalled();
+
+    finish();
+    await manual;
+    // ...then finds the server connected and leaves it.
+    await vi.waitFor(() => expect(b.handle.listMcpServers).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 20));
+    expect(b.handle.reconnectMcpServer).toHaveBeenCalledTimes(1);
+
+    await sessionManager.destroySession('mcp-queue-a');
+    await sessionManager.destroySession('mcp-queue-b');
+  });
+
+  it('leaves a server alone while its browser sign-in is under way', async () => {
+    await startThread('mcp-oauth-a', { linear: 'connected' });
+    const b = await startThread('mcp-oauth-b', { linear: 'needs-auth', jira: 'failed' });
+    b.handle.authenticateMcpServer = vi.fn(async () => ({ authUrl: 'https://example.com/oauth', callbackExpected: true }));
+    await sessionManager.authenticateMcpServer('mcp-oauth-b', 'linear');
+
+    await sessionManager.reconnectDownMcpServers('mcp-oauth-a');
+
+    await vi.waitFor(() => expect(b.handle.reconnectMcpServer).toHaveBeenCalledWith('jira'));
+    expect(b.handle.reconnectMcpServer).not.toHaveBeenCalledWith('linear');
+    await sessionManager.destroySession('mcp-oauth-a');
+    await sessionManager.destroySession('mcp-oauth-b');
+  });
+
+  it('skips a thread whose agent has stopped', async () => {
+    await startThread('mcp-gone-a', { linear: 'connected' });
+    const b = await startThread('mcp-gone-b', { linear: 'needs-auth' });
+    mockAdapter.control!.finish();
+    await vi.waitFor(() => expect(sessionManager.getSession('mcp-gone-b')?.status).toBe('stopped'));
+
+    await sessionManager.reconnectDownMcpServers('mcp-gone-a', 'linear');
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(b.handle.listMcpServers).not.toHaveBeenCalled();
+    await sessionManager.destroySession('mcp-gone-a');
+    await sessionManager.destroySession('mcp-gone-b');
   });
 });

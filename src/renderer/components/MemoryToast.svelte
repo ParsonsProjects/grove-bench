@@ -24,7 +24,8 @@
 
 {#if memoryStore.toast}
   {@const toast = memoryStore.toast}
-  <div class="fixed bottom-16 right-4 z-50 max-w-md" transition:fly={{ y: 8, duration: 140 }}>
+  <!-- Placed by the toast stack in App.svelte. -->
+  <div transition:fly={{ y: 8, duration: 140 }}>
     <div class="bg-popover border border-border shadow-xl">
       <Notice tone={toast.kind === 'error' ? 'danger' : toast.kind === 'success' ? 'success' : 'info'}>
         {#snippet actions()}

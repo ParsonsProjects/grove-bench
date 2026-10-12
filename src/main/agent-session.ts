@@ -1,7 +1,7 @@
 import type { BrowserWindow } from 'electron';
 import { IPC } from '../shared/types.js';
 import type { SessionInfo, SessionStatus, AgentEvent, PermissionDecision, PermissionMode, McpServerInfo, McpAuthStartResult, McpElicitationResponse, McpServerContextCost, ProviderUsage, SessionControls } from '../shared/types.js';
-import { CONTROL_IDS, PERMISSION_MODES, subagentParent } from '../shared/types.js';
+import { CONTROL_IDS, MCP_SIGN_IN_TIMEOUT_MS, PERMISSION_MODES, isMcpServerDown, subagentParent } from '../shared/types.js';
 import { userEventText } from '../shared/prompt-text.js';
 import { applyRateLimit } from '../shared/usage.js';
 import { loadUsageSnapshot, saveUsageSnapshot } from './app-state.js';
@@ -19,6 +19,7 @@ import { isClaudeAccountId, removedAccountMessage } from './adapters/claude-acco
 import type { AgentAdapter, AgentQueryHandle, UserMessage } from './adapters/types.js';
 import { audioSentInline, inlineAudioType } from './adapters/file-attachments.js';
 import { ResumeNotFoundError } from './adapters/types.js';
+import { lastRunningCost } from './adapters/running-cost.js';
 import { getGitIdentity } from './git.js';
 import { findRewindForkPoint, isAuthFailure, lastTurnUuid } from './agent-utils.js';
 import { hasApiKey, isApiKeyRejected, markApiKeyRejected } from './credentials.js';
@@ -34,6 +35,11 @@ import {
   awaitElicitation, respondToElicitation as answerElicitation, cancelElicitations,
 } from './session-permissions.js';
 import { SessionSkills } from './session-skills.js';
+import {
+  beforeToolUse, cancelLimit, limitsFromHistory, promptSent, respondToLimit as answerLimit,
+  toolCallSeen, turnActive, turnEnded, turnStopped, whileWaiting,
+  type LimitDecision, type LimitGateContext,
+} from './session-limits.js';
 import {
   readSafeWarning, readSafeSandbox, hasSandboxWarning, startingPermissionMode,
   initialControls, normalizeModelId, appendedSystemPrompt,
@@ -199,6 +205,9 @@ class AgentSessionManager {
     // A folder project isn't a git repository: no checkpoints, no commits.
     const gitBacked = !opts.noGit;
 
+    // Copy: the cached array must not be mutated by the live session.
+    const eventHistory = [...this.events.load(id)];
+
     const session: ManagedSession = {
       id,
       branch,
@@ -217,8 +226,7 @@ class AgentSessionManager {
       pendingResumeAt: null,
       model: initialModel,
       window: win,
-      // Copy: the cached array must not be mutated by the live session.
-      eventHistory: [...this.events.load(id)],
+      eventHistory,
       logBuffer: [],
       logBufferBytes: 0,
       logFlushTimer: null,
@@ -249,6 +257,7 @@ class AgentSessionManager {
       sleepSettled: null,
       turnHandle: null,
       promptsBeforeInit: null,
+      limits: limitsFromHistory(eventHistory),
     };
 
     this.sessions.set(id, session);
@@ -453,11 +462,14 @@ class AgentSessionManager {
       // thread still shows the earlier turns from Grove's own event log.
       resumeSessionId: caps.resume ? session.providerSessionId : null,
       resumeAtUuid: caps.resume && caps.rewind ? resumeAtUuid : null,
+      priorCostUsd: caps.resume && session.providerSessionId ? lastRunningCost(session.eventHistory) : null,
       toolAllowRules: currentSettings.toolAllowRules,
       toolDenyRules: currentSettings.toolDenyRules,
       alwaysAllowedTools: session.alwaysAllowedTools,
-      onElicitation: (request, signal) => awaitElicitation(session, request, signal),
-      onPermissionRequest: (request) => requestPermission(session, request, emit),
+      // Time spent waiting on the user doesn't count toward a turn's minutes.
+      onElicitation: (request, signal) => whileWaiting(session.limits, awaitElicitation(session, request, signal)),
+      onPermissionRequest: (request) => whileWaiting(session.limits, requestPermission(session, request, emit)),
+      beforeToolUse: ({ toolUseId }) => beforeToolUse(this.limitGate(session), toolUseId),
     });
 
     } catch (startErr) {
@@ -580,7 +592,9 @@ class AgentSessionManager {
         if ((event.type === 'assistant_text' || event.type === 'assistant_tool_use'
           || event.type === 'thinking' || event.type === 'partial_text') && !subagentParent(event)) {
           session.turnHandle = handle;
+          turnActive(session.limits);
         }
+        if (event.type === 'assistant_tool_use') toolCallSeen(session.limits, event.toolUseId);
 
         // Intercept system_init to capture provider session ID and update status
         if (event.type === 'system_init') {
@@ -660,6 +674,9 @@ class AgentSessionManager {
         // Track result for completion callback
         if (event.type === 'result') {
           if (session.turnHandle === handle) session.turnHandle = null;
+          // Adds the turn's cost to the thread's and today's spend.
+          turnEnded(session.limits, event);
+          this.runHeldMcpReconnects(session);
           session.lastResult = {
             isError: event.isError,
             totalCostUsd: event.totalCostUsd,
@@ -962,6 +979,7 @@ class AgentSessionManager {
     logger.debug(`[sendMessage] session=${id} sending to adapter, providerSessionId=${sessionId || '(not yet initialized)'}${images?.length ? ` with ${images.length} image(s)` : ''}${savedFiles.length ? ` with ${savedFiles.length} file(s)` : ''}`);
     try {
       session.turnHandle = queryHandle;
+      promptSent(session.limits);
       // Once per query: a second message before the reply doesn't repeat it,
       // but a query that failed to start and was replaced gets it again.
       const withNote = handoffNote !== null && session.handoffSentTo !== queryHandle;
@@ -1011,6 +1029,26 @@ class AgentSessionManager {
   respondToElicitation(id: string, requestId: string, response: McpElicitationResponse): boolean {
     const session = this.sessions.get(id);
     return !!session && answerElicitation(session, requestId, response);
+  }
+
+  /** Continue past a reached limit, or stop the turn. False when the
+   *  question already ended (answered, stopped or timed out). */
+  respondToLimit(id: string, requestId: string, decision: LimitDecision): boolean {
+    const session = this.sessions.get(id);
+    return !!session && answerLimit(session.limits, requestId, decision);
+  }
+
+  /** What the limit gate needs for a tool call in `session`. Settings are
+   *  read each time, so a changed limit applies to the next tool call. */
+  private limitGate(session: ManagedSession): LimitGateContext {
+    return {
+      limits: session.limits,
+      settings: settings.getSettings(),
+      emit: session.emit ?? this.createEmitter(session),
+      stopTurn: () => {
+        this.interruptQuery(session.id).catch((e) => logger.warn(`[limits] could not stop ${session.id}:`, e));
+      },
+    };
   }
 
   setMode(id: string, mode: string): void {
@@ -1235,8 +1273,9 @@ class AgentSessionManager {
     if (!session?.queryHandle?.reconnectMcpServer) {
       throw new Error('MCP server control is not available for this thread');
     }
+    const handle = session.queryHandle;
     try {
-      await session.queryHandle.reconnectMcpServer(serverName);
+      await this.inMcpReconnectQueue(session, () => handle.reconnectMcpServer!(serverName));
     } catch (e) {
       logger.warn(`Failed to reconnect MCP server "${serverName}" for session ${id}:`, e);
       throw e;
@@ -1249,7 +1288,11 @@ class AgentSessionManager {
       throw new Error('MCP sign-in is not available for this thread');
     }
     try {
-      return await session.queryHandle.authenticateMcpServer(serverName);
+      const result = await session.queryHandle.authenticateMcpServer(serverName);
+      if (result.authUrl && result.callbackExpected) {
+        (session.mcpSignInsStarted ??= new Map()).set(serverName, Date.now());
+      }
+      return result;
     } catch (e) {
       logger.warn(`Failed to start sign-in for MCP server "${serverName}" in session ${id}:`, e);
       throw e;
@@ -1267,6 +1310,95 @@ class AgentSessionManager {
       logger.warn(`Failed to ${enabled ? 'enable' : 'disable'} MCP server "${serverName}" for session ${id}:`, e);
       throw e;
     }
+  }
+
+  /**
+   * Reconnect the MCP servers that are down (needs-auth or failed) in every
+   * live thread on the same agent as thread `id`. Threads on one agent share
+   * its sign-ins, so a server signed in to in one thread can come back in the
+   * others without restarting them. With `serverName`, only that server, and
+   * only in the other threads: it was just brought back in this one.
+   *
+   * Resolves once thread `id` is done. The other threads go on in the
+   * background, one at a time, and send their new status with
+   * AGENT_MCP_STATUS. A thread in the middle of a turn, or starting up,
+   * waits for the turn to end, so its tools don't change under it. A server
+   * with a browser sign-in under way is left alone. Failures are logged, not
+   * thrown: a server that still can't connect just stays down.
+   */
+  async reconnectDownMcpServers(id: string, serverName?: string): Promise<void> {
+    const origin = this.sessions.get(id);
+    if (!origin) return;
+    const only = serverName === undefined ? 'all' : new Set([serverName]);
+    if (only === 'all') await this.reconnectDownMcpServersIn(origin, only);
+    const others = [...this.sessions.values()].filter((s) => s !== origin && s.adapter.id === origin.adapter.id);
+    void (async () => {
+      for (const session of others) await this.reconnectDownMcpServersIn(session, only);
+    })();
+  }
+
+  /** Reconnect `session`'s down servers out of `only`, or hold them until its
+   *  turn ends. Never throws. */
+  private async reconnectDownMcpServersIn(session: ManagedSession, only: Set<string> | 'all'): Promise<void> {
+    // Closing, or no agent running (its handle may still be set).
+    if (session.destroying || this.sessions.get(session.id) !== session) return;
+    if (session.status === 'stopped' || session.status === 'error') return;
+    // A thread starting up counts as mid-turn: its agent may have tried its
+    // servers before the sign-in was saved.
+    if (this.isMidTurn(session.id)) {
+      if (session.adapter.mcp?.controls.reconnect) this.holdMcpReconnects(session, only);
+      return;
+    }
+    const handle = session.queryHandle;
+    if (!handle?.listMcpServers || !handle.reconnectMcpServer) return;
+    await this.inMcpReconnectQueue(session, async () => {
+      try {
+        const now = Date.now();
+        const down = (await handle.listMcpServers!()).filter((s) =>
+          isMcpServerDown(s.status) && (only === 'all' || only.has(s.name))
+          // A reconnect could cancel a browser sign-in still under way.
+          && now - (session.mcpSignInsStarted?.get(s.name) ?? 0) >= MCP_SIGN_IN_TIMEOUT_MS);
+        if (down.length === 0) return;
+        for (const [i, server] of down.entries()) {
+          if (session.destroying || session.queryHandle !== handle) return;
+          // A turn started meanwhile: the rest wait for it to end.
+          if (this.isMidTurn(session.id)) {
+            this.holdMcpReconnects(session, new Set(down.slice(i).map((s) => s.name)));
+            return;
+          }
+          await handle.reconnectMcpServer!(server.name).catch((e) => {
+            logger.debug(`MCP server "${server.name}" is still down in session ${session.id}:`, e);
+          });
+        }
+        if (session.destroying || session.queryHandle !== handle) return;
+        const servers = await handle.listMcpServers!();
+        if (!session.window.isDestroyed()) session.window.webContents.send(IPC.AGENT_MCP_STATUS, session.id, servers);
+      } catch (e) {
+        logger.warn(`Failed to reconnect MCP servers for session ${session.id}:`, e);
+      }
+    });
+  }
+
+  /** Add `only` to the reconnects `session` runs once its turn ends. */
+  private holdMcpReconnects(session: ManagedSession, only: Set<string> | 'all'): void {
+    const held = session.mcpReconnectsAfterTurn;
+    session.mcpReconnectsAfterTurn = held === 'all' || only === 'all' ? 'all' : new Set([...(held ?? []), ...only]);
+  }
+
+  /** Run the reconnects held back while a turn ran, now that it has ended. */
+  private runHeldMcpReconnects(session: ManagedSession): void {
+    const held = session.mcpReconnectsAfterTurn;
+    if (!held || this.isMidTurn(session.id)) return;
+    session.mcpReconnectsAfterTurn = undefined;
+    void this.reconnectDownMcpServersIn(session, held);
+  }
+
+  /** Run `work` after the session's earlier MCP reconnects, so two never
+   *  reconnect the same server at once. */
+  private inMcpReconnectQueue<T>(session: ManagedSession, work: () => Promise<T>): Promise<T> {
+    const run = (session.mcpReconnectQueue ?? Promise.resolve()).then(work);
+    session.mcpReconnectQueue = run.then(() => {}, () => {});
+    return run;
   }
 
   /** Whether the agent is in the middle of a turn (a message sent or a reply
@@ -1318,6 +1450,8 @@ class AgentSessionManager {
     // before resolving and trips "ProcessTransport is not ready for writing").
     denyPendingPermissions(session, 'Query stopped by user', emit);
     cancelElicitations(session);
+    cancelLimit(session.limits);
+    turnStopped(session.limits);
 
     // Interrupt the current turn.  The event loop in runQuery stays parked on
     // handle.events and simply waits for the next user message — no respawn.
@@ -1333,6 +1467,7 @@ class AgentSessionManager {
     }
     // The turn is over even if the agent never reports a result for it.
     if (session.turnHandle === handle) session.turnHandle = null;
+    this.runHeldMcpReconnects(session);
 
     // Re-sync the renderer with the current permission mode (parity with
     // stopQuery) — this also clears the renderer's stoppingSession guard so
@@ -1411,6 +1546,8 @@ class AgentSessionManager {
     // so the permission_resolved events reach the renderer.
     denyPendingPermissions(session, 'Query stopped by user', emit);
     cancelElicitations(session);
+    cancelLimit(session.limits);
+    turnStopped(session.limits);
 
     // Create a deferred promise so sendMessage() can wait for the new
     // queryHandle. Keep one that's still pending (e.g. a wake's): messages
@@ -1447,7 +1584,7 @@ class AgentSessionManager {
     if (!session || session.destroying) return false;
     if (session.status !== 'running' && session.status !== 'starting') return false;
     const handle = session.queryHandle;
-    if (!handle || session.isStartingQuery || session.pendingPermissions.size > 0 || session.pendingElicitations.size > 0) return false;
+    if (!handle || session.isStartingQuery || session.pendingPermissions.size > 0 || session.pendingElicitations.size > 0 || session.limits.pending) return false;
     if (session.turnHandle === handle) return false;
 
     perfSteps.fail(id, 'put to sleep');
@@ -1640,6 +1777,7 @@ class AgentSessionManager {
     // Resolve any pending permissions as denied
     denyPendingPermissions(session, reason, session.emit);
     cancelElicitations(session);
+    cancelLimit(session.limits);
 
     // Clean up completion callback and event listeners
     this.completionCallbacks.delete(id);

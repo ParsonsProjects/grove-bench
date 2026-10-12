@@ -19,6 +19,7 @@
   import PermissionSettings from './settings/PermissionSettings.svelte';
   import GitSettings from './settings/GitSettings.svelte';
   import NotificationSettings from './settings/NotificationSettings.svelte';
+  import LimitSettings from './settings/LimitSettings.svelte';
   import BackgroundSettings from './settings/BackgroundSettings.svelte';
   import McpSettings from './settings/McpSettings.svelte';
   import PluginSettings from './settings/PluginSettings.svelte';
@@ -265,6 +266,8 @@
                   <GitSettings />
                 {:else if s.id === 'notifications'}
                   <NotificationSettings />
+                {:else if s.id === 'limits'}
+                  <LimitSettings />
                 {:else if s.id === 'background'}
                   <BackgroundSettings ongoto={(id) => (section = id)} />
                 {:else if s.id === 'mcp'}

@@ -733,8 +733,41 @@
   /** Counts for the filter chips, over active and stopped sessions alike. */
   let counts = $derived(triageCounts(store.sessions.map(triageOf)));
 
+  /** Threads that match the active chip right now. Empty for all. */
+  let matchingIds = $derived(
+    triageFilter === 'all'
+      ? new Set<string>()
+      : new Set(store.sessions.filter((s) => matchesTriageFilter(triageFilter, triageOf(s))).map((s) => s.id)),
+  );
+
+  /** The focused thread, kept on the list under the chip it was listed under
+   *  after it stops matching (opened and read, prompt answered, turn ended),
+   *  so the row doesn't vanish on click. It goes once another thread is
+   *  focused or the chip changes. */
+  let keptRowId = $state<string | null>(null);
+  // As of the last check. Focusing a thread clears its unread flag in the
+  // same step, so it has to be caught from what matched just before.
+  let matchedBefore = new Set<string>();
+  let filterBefore: TriageFilter = 'all';
+
+  // Pre, so the list never renders a frame without the row.
+  $effect.pre(() => {
+    const id = store.activeSessionId;
+    const filter = triageFilter;
+    const matching = matchingIds;
+    untrack(() => {
+      const keep = !!id && filter !== 'all' && (
+        matching.has(id)
+        || (filter === filterBefore && (matchedBefore.has(id) || keptRowId === id))
+      );
+      keptRowId = keep ? id : null;
+      matchedBefore = matching;
+      filterBefore = filter;
+    });
+  });
+
   function rowVisible(session: { id: string; status: string }): boolean {
-    return matchesTriageFilter(triageFilter, triageOf(session));
+    return triageFilter === 'all' || matchingIds.has(session.id) || session.id === keptRowId;
   }
 
   /** Open tabs (live sessions, plus restored tabs waiting to reconnect) that pass the filter, ordered by the
