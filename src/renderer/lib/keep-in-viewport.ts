@@ -27,3 +27,31 @@ export function keepInViewport(node: HTMLElement, margin = 8) {
     },
   };
 }
+
+/** The bottom margin that puts a popover `gap` px above the bar it opens
+ *  from. It opens above its anchor (bottom: 100%), which sits some way down
+ *  inside the bar, so the margin makes up the difference. */
+export function marginAboveBar(anchorTop: number, barTop: number, gap = 8): number {
+  return Math.max(0, anchorTop - barTop) + gap;
+}
+
+/** Svelte action for a popover that opens above the status bar (marked
+ *  data-status-bar): lifts it `gap` px clear of the bar's top edge, however
+ *  tall the chip it opens from. Measured from its anchor, so a transition on
+ *  the popover itself doesn't skew it. Left alone outside such a bar. */
+export function aboveBar(node: HTMLElement, gap = 8) {
+  const place = () => {
+    const bar = node.closest<HTMLElement>('[data-status-bar]');
+    const anchor = node.offsetParent;
+    if (!bar || !anchor || !bar.contains(anchor)) return;
+    const margin = marginAboveBar(anchor.getBoundingClientRect().top, bar.getBoundingClientRect().top, gap);
+    node.style.marginBottom = `${margin}px`;
+  };
+  place();
+  window.addEventListener('resize', place);
+  return {
+    destroy() {
+      window.removeEventListener('resize', place);
+    },
+  };
+}

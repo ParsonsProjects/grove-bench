@@ -92,7 +92,7 @@
      Skills and Tasks / Files below 672px (MCP stays while a server is down,
      Tasks while a task is still to do), the project name below 768px, and
      the last turn's cost below 1024px. -->
-<div class="@container flex items-center gap-3 px-3 @3xl:gap-4 @3xl:px-4 py-1 bg-card border-t border-b border-border text-xs text-muted-foreground shrink-0">
+<div data-status-bar class="@container flex items-center gap-3 px-3 @3xl:gap-4 @3xl:px-4 py-1 bg-card border-t border-b border-border text-xs text-muted-foreground shrink-0">
   <SessionControlsPopover {sessionId} {modelOptions} />
 
   <span class="w-px self-stretch bg-border"></span>
