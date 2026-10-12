@@ -446,6 +446,12 @@
       }
     });
 
+    // A reconnect main ran in the background (a sign-in or Refresh in
+    // another thread) changed this thread's MCP servers.
+    const unsubMcp = window.groveBench.onMcpStatus((sessionId, servers) => {
+      messageStore.updateMcpServers(sessionId, servers);
+    });
+
     // Put idle conversations to sleep to free their agent processes.
     const stopIdleManager = startIdleManager();
 
@@ -453,6 +459,7 @@
       unsub();
       unsubPower();
       unsubFocus();
+      unsubMcp();
       unsubAppError();
       uninstallErrors();
       uninstallTooltips();

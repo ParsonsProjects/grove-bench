@@ -1199,6 +1199,14 @@ export interface GroveBenchAPI {
   setMcpServerEnabled(sessionId: string, serverName: string, enabled: boolean): Promise<void>;
   /** Start OAuth sign-in for a `needs-auth` server and open the auth URL in the browser. */
   authenticateMcpServer(sessionId: string, serverName: string): Promise<McpAuthStartResult>;
+  /** Reconnect the MCP servers that are down (needs-auth or failed) in every
+   *  live thread on this thread's agent, which share its sign-ins. With
+   *  `serverName`, only that server and only in the other threads. Resolves
+   *  once this thread is done; the others carry on in the background and
+   *  report through onMcpStatus. A thread mid-turn waits for the turn to end. */
+  reconnectDownMcpServers(sessionId: string, serverName?: string): Promise<void>;
+  /** A thread's live MCP status, sent after a background reconnect. */
+  onMcpStatus(callback: (sessionId: string, servers: McpServerInfo[]) => void): () => void;
 
   // File operations (for @ file picker)
   listFiles(sessionId: string): Promise<string[]>;
@@ -1908,6 +1916,9 @@ export const IPC = {
   AGENT_MCP_TOGGLE: 'agent:mcpToggle',
   AGENT_MCP_AUTHENTICATE: 'agent:mcpAuthenticate',
   AGENT_MCP_CONTEXT_COST: 'agent:mcpContextCost',
+  AGENT_MCP_RECONNECT_DOWN: 'agent:mcpReconnectDown',
+  /** main → renderer: a thread's live MCP status after a background reconnect. */
+  AGENT_MCP_STATUS: 'agent:mcpStatus',
   AGENT_ELICITATION: 'agent:elicitation',
   MCP_CONFIG_LIST: 'mcpConfig:list',
   MCP_CONFIG_ADD: 'mcpConfig:add',

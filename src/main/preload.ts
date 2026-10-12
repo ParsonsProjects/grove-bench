@@ -137,6 +137,16 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.AGENT_MCP_TOGGLE, sessionId, serverName, enabled),
   authenticateMcpServer: (sessionId: string, serverName: string) =>
     ipcRenderer.invoke(IPC.AGENT_MCP_AUTHENTICATE, sessionId, serverName),
+  reconnectDownMcpServers: (sessionId: string, serverName?: string) =>
+    ipcRenderer.invoke(IPC.AGENT_MCP_RECONNECT_DOWN, sessionId, serverName),
+  onMcpStatus: (callback: (sessionId: string, servers: import('../shared/types.js').McpServerInfo[]) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, sessionId: string, servers: import('../shared/types.js').McpServerInfo[]) =>
+      callback(sessionId, servers);
+    ipcRenderer.on(IPC.AGENT_MCP_STATUS, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC.AGENT_MCP_STATUS, handler);
+    };
+  },
 
   // Skills
   listSkills: (sessionId: string, fallbackPath: string) =>

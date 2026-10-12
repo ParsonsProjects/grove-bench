@@ -122,10 +122,17 @@ describe('StatusBar MCP controls follow the agent', () => {
     store.activeSessionId = ID;
   }
 
+  beforeEach(() => {
+    vi.mocked(window.groveBench.reconnectMcpServer).mockClear();
+    vi.mocked(window.groveBench.reconnectDownMcpServers).mockClear();
+  });
+
   afterEach(() => {
     agentsStore.list = [];
     agentsStore.loaded = false;
     delete messageStore.systemInfoBySession[ID];
+    delete messageStore.mcpLiveBySession[ID];
+    vi.mocked(window.groveBench.listMcpServers).mockResolvedValue([]);
   });
 
   it('offers no controls for an agent without MCP support', async () => {
@@ -203,6 +210,76 @@ describe('StatusBar MCP controls follow the agent', () => {
     expect(screen.getByRole('button', { name: 'Refreshing...' })).toBeDisabled();
     answer([{ name: 'docs', status: 'connected' }]);
     await screen.findByRole('button', { name: 'Refresh' });
+  });
+
+  it('Refresh reconnects the servers that are down before checking again', async () => {
+    useAgent({ controls: { ...NONE, list: true, reconnect: true }, disconnectHint: '' });
+    messageStore.systemInfoBySession[ID] = { tools: [], agents: [], skills: [], slashCommands: [], mcpServers: [{ name: 'linear', status: 'needs-auth' }] };
+    render(StatusBar, { props: { sessionId: ID } });
+    await fireEvent.click(screen.getByRole('button', { name: /MCP 1/ }));
+    vi.mocked(window.groveBench.listMcpServers).mockClear();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+
+    await waitFor(() => expect(window.groveBench.listMcpServers).toHaveBeenCalled());
+    expect(window.groveBench.reconnectDownMcpServers).toHaveBeenCalledWith(ID);
+    expect(vi.mocked(window.groveBench.reconnectDownMcpServers).mock.invocationCallOrder[0])
+      .toBeLessThan(vi.mocked(window.groveBench.listMcpServers).mock.invocationCallOrder[0]);
+  });
+
+  it('Refresh only checks again when the agent cannot reconnect', async () => {
+    useAgent({ controls: { ...NONE, list: true }, disconnectHint: '' });
+    messageStore.systemInfoBySession[ID] = { tools: [], agents: [], skills: [], slashCommands: [], mcpServers: [{ name: 'linear', status: 'failed' }] };
+    render(StatusBar, { props: { sessionId: ID } });
+    await fireEvent.click(screen.getByRole('button', { name: /MCP 1/ }));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+
+    await screen.findByRole('button', { name: 'Refresh' });
+    expect(window.groveBench.reconnectDownMcpServers).not.toHaveBeenCalled();
+  });
+
+  it('reconnects a server in the other threads once a sign-in connects it here', async () => {
+    useAgent({ controls: { ...NONE, list: true, reconnect: true, signIn: true }, disconnectHint: '' });
+    messageStore.systemInfoBySession[ID] = { tools: [], agents: [], skills: [], slashCommands: [], mcpServers: [{ name: 'claude.ai Linear', status: 'needs-auth' }] };
+    vi.mocked(window.groveBench.authenticateMcpServer).mockResolvedValueOnce({ authUrl: 'https://claude.ai/connect', callbackExpected: false });
+    render(StatusBar, { props: { sessionId: ID } });
+    await fireEvent.click(screen.getByRole('button', { name: /MCP 1/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    await screen.findByText(/then click Reconnect/);
+    expect(window.groveBench.reconnectDownMcpServers).not.toHaveBeenCalled();
+
+    vi.mocked(window.groveBench.listMcpServers).mockResolvedValue([{ name: 'claude.ai Linear', status: 'connected' }]);
+    await fireEvent.click(screen.getByRole('button', { name: 'Reconnect' }));
+
+    await waitFor(() => expect(window.groveBench.reconnectDownMcpServers).toHaveBeenCalledWith(ID, 'claude.ai Linear'));
+  });
+
+  it('leaves the other threads alone when the server is still down here', async () => {
+    useAgent({ controls: { ...NONE, list: true, reconnect: true }, disconnectHint: '' });
+    messageStore.systemInfoBySession[ID] = { tools: [], agents: [], skills: [], slashCommands: [], mcpServers: [{ name: 'linear', status: 'failed' }] };
+    vi.mocked(window.groveBench.listMcpServers).mockResolvedValue([{ name: 'linear', status: 'failed' }]);
+    render(StatusBar, { props: { sessionId: ID } });
+    await fireEvent.click(screen.getByRole('button', { name: /MCP 1/ }));
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Reconnect' }));
+
+    await waitFor(() => expect(window.groveBench.reconnectMcpServer).toHaveBeenCalledWith(ID, 'linear'));
+    await screen.findByRole('button', { name: 'Reconnect' });
+    expect(window.groveBench.reconnectDownMcpServers).not.toHaveBeenCalled();
+  });
+
+  it('shows the status a reconnect in another thread sent for this one', async () => {
+    useAgent({ controls: { ...NONE, list: true, reconnect: true }, disconnectHint: '' });
+    messageStore.systemInfoBySession[ID] = { tools: [], agents: [], skills: [], slashCommands: [], mcpServers: [{ name: 'linear', status: 'needs-auth' }] };
+    render(StatusBar, { props: { sessionId: ID } });
+    await fireEvent.click(screen.getByRole('button', { name: /MCP 1/ }));
+    await screen.findByText('needs-auth');
+
+    messageStore.updateMcpServers(ID, [{ name: 'linear', status: 'connected', toolCount: 2, tools: [{ name: 'a' }, { name: 'b' }] }]);
+
+    await screen.findByText('connected');
+    expect(screen.getByRole('button', { name: '2 tools' })).toBeTruthy();
   });
 
   // A narrow bar drops MCP and Skills to keep the branch in view, but not

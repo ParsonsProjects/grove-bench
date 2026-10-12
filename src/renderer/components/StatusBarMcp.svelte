@@ -35,7 +35,9 @@
   let systemInfo = $derived(messageStore.getSystemInfo(sessionId));
   let mcpExpanded = $state(false);
 
-  let mcpServers = $state<McpServerInfo[]>([]);
+  /** Live status, kept in the store so a reconnect main runs in the
+   *  background (from another thread) shows here too. */
+  let mcpServers = $derived(messageStore.getLiveMcpServers(sessionId));
   let mcpBusy = $state<Record<string, boolean>>({});
   let mcpError = $state<string | null>(null);
   /** Non-error guidance shown in the popup (e.g. "finish signing in in your browser"). */
@@ -83,24 +85,37 @@
     try {
       const servers = await window.groveBench.listMcpServers(sessionId);
       if (servers.length > 0) {
-        mcpServers = servers;
         messageStore.updateMcpServers(sessionId, servers);
         return;
       }
     } catch {
       // fall through to the last known snapshot
     }
-    // Live status unavailable (e.g. session stopped) — show the init snapshot
-    mcpServers = mcpKnown.map((s) => ({ name: s.name, status: s.status as McpServerInfo['status'] }));
+    // Live status unavailable (e.g. session stopped) — show the last known one
+    messageStore.clearLiveMcpServers(sessionId);
   }
 
+  /** Refresh also reconnects the servers that are down, here and in the
+   *  other threads on this agent (in the background), so a sign-in finished
+   *  anywhere reaches every thread without a restart. */
   async function refreshFromButton() {
     mcpRefreshing = true;
+    mcpError = null;
     try {
+      if (mcpControls.reconnect) await window.groveBench.reconnectDownMcpServers(sessionId).catch(() => {});
       await refreshMcpServers();
     } finally {
       mcpRefreshing = false;
     }
+  }
+
+  /** Once `name` is connected here after a sign-in or Reconnect, reconnect it
+   *  in the other threads on this agent where it is still down. They share
+   *  the sign-in but don't pick it up by themselves. */
+  function reconnectElsewhere(name: string) {
+    if (!mcpControls.reconnect) return;
+    if (mcpStatuses.find((s) => s.name === name)?.status !== 'connected') return;
+    window.groveBench.reconnectDownMcpServers(sessionId, name).catch(() => {});
   }
 
   async function refreshMcpCost() {
@@ -153,6 +168,7 @@
       mcpBusy = { ...mcpBusy, [name]: false };
       await refreshMcpServers();
     }
+    if (action === 'reconnect') reconnectElsewhere(name);
   }
 
   /** Poll interval / budget while waiting for a browser sign-in to land. */
@@ -171,11 +187,13 @@
     mcpBusy = { ...mcpBusy, [name]: true };
     mcpError = null;
     mcpNotice = null;
+    let reconnected = false;
     try {
       const result = await window.groveBench.authenticateMcpServer(sessionId, name);
       if (!result.authUrl) {
         mcpNotice = `${name} did not need a browser sign-in. Reconnecting...`;
         await window.groveBench.reconnectMcpServer(sessionId, name).catch(() => {});
+        reconnected = true;
         return;
       }
       mcpSignInOpened = { ...mcpSignInOpened, [name]: true };
@@ -190,6 +208,7 @@
     } finally {
       mcpBusy = { ...mcpBusy, [name]: false };
       await refreshMcpServers();
+      if (reconnected) reconnectElsewhere(name);
     }
   }
 
@@ -209,7 +228,10 @@
           const { [pending]: _, ...rest } = mcpSigningIn;
           mcpSigningIn = rest;
           mcpSignInDeadlines.delete(pending);
-          if (status === 'connected') mcpNotice = `${pending} signed in and connected.`;
+          if (status === 'connected') {
+            mcpNotice = `${pending} signed in and connected.`;
+            reconnectElsewhere(pending);
+          }
         } else if (timedOut) {
           const { [pending]: _, ...rest } = mcpSigningIn;
           mcpSigningIn = rest;
@@ -234,7 +256,12 @@
     agentsStore.load();
   });
 
-  onDestroy(stopSignInPoll);
+  onDestroy(() => {
+    stopSignInPoll();
+    // The pane goes when the agent stops: its live status goes with it, so
+    // a resumed thread doesn't show the old agent's.
+    messageStore.clearLiveMcpServers(sessionId);
+  });
 </script>
 
 {#if mcpRows.length > 0}
@@ -265,7 +292,7 @@
           size="inline"
           onclick={refreshFromButton}
           disabled={mcpRefreshing}
-          title="Check each server's status again (does not reconnect)"
+          title="Reconnect servers that are down, here and in your other threads on this agent, then check each server's status"
         >
           {mcpRefreshing ? 'Refreshing...' : 'Refresh'}
         </Button>

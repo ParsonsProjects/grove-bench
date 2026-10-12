@@ -995,6 +995,10 @@ export function registerHandlers() {
     return sessionManager.setMcpServerEnabled(sessionId, serverName, enabled);
   });
 
+  ipcMain.handle(IPC.AGENT_MCP_RECONNECT_DOWN, (_event, sessionId: string, serverName?: string) => {
+    return sessionManager.reconnectDownMcpServers(sessionId, serverName);
+  });
+
   ipcMain.handle(IPC.AGENT_MCP_AUTHENTICATE, async (_event, sessionId: string, serverName: string) => {
     const result = await sessionManager.authenticateMcpServer(sessionId, serverName);
     if (result.authUrl) {

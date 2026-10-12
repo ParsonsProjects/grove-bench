@@ -146,6 +146,10 @@ export interface ManagedSession {
    *  resumed, they went nowhere, and the new conversation started in its
    *  place gets them. Null for a fresh query, or once the query reports in. */
   promptsBeforeInit: { handle: AgentQueryHandle; prompts: UserMessage[] } | null;
+  /** MCP servers to reconnect once the turn in progress ends, if they are
+   *  still down: the names, or 'all' for every server that is down. Set when
+   *  a reconnect across threads finds this one mid-turn. */
+  mcpReconnectsAfterTurn?: Set<string> | 'all';
 }
 
 export interface SessionCompletionResult {

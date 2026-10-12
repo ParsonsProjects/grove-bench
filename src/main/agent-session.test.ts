@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { AgentAdapter, AgentQueryHandle, AdapterConfig, PermissionResponse } from './adapters/types.js';
-import { IPC, PERMISSION_TIMEOUT_MINUTES, type AgentEvent } from '../shared/types.js';
+import { IPC, PERMISSION_TIMEOUT_MINUTES, type AgentEvent, type McpServerInfo } from '../shared/types.js';
 import * as fs from 'node:fs';
 import { perfSteps } from './perf-steps.js';
 
@@ -3886,5 +3886,76 @@ describe('AgentSessionManager step timings', () => {
 
     expect(fail).toHaveBeenCalledWith('t-close', 'closed');
     expect(fail).toHaveBeenCalledWith('t-delete', 'deleted');
+  });
+});
+
+describe('AgentSessionManager.reconnectDownMcpServers', () => {
+  /** Start thread `id` on `adapterType`, whose agent reports `servers` and
+   *  connects any server it is asked to reconnect. */
+  async function startThread(id: string, servers: Record<string, McpServerInfo['status']>, adapterType = 'mock') {
+    const win = makeMockWindow();
+    await sessionManager.createSession({ id, branch: 'main', cwd: `/wt/${id}`, repoPath: '/repo', window: win, adapterType });
+    await vi.waitFor(() => expect(sessionManager.getSession(id)?.queryHandle).toBeTruthy());
+    const handle = sessionManager.getSession(id)!.queryHandle!;
+    const status = new Map(Object.entries(servers));
+    handle.listMcpServers = vi.fn(async () => [...status].map(([name, s]) => ({ name, status: s })));
+    handle.reconnectMcpServer = vi.fn(async (name: string) => { status.set(name, 'connected'); });
+    return { handle, send: win._send as ReturnType<typeof vi.fn> };
+  }
+
+  function otherAgent(): void {
+    const other = new MockAdapter();
+    Object.defineProperty(other, 'id', { value: 'other' });
+    extraAdapters.other = other as unknown as AgentAdapter;
+  }
+
+  it('reconnects the servers that are down here and in the other threads on the same agent', async () => {
+    otherAgent();
+    const a = await startThread('mcp-a', { linear: 'needs-auth', docs: 'connected' });
+    const b = await startThread('mcp-b', { linear: 'failed', docs: 'connected' });
+    const c = await startThread('mcp-c', { linear: 'needs-auth' }, 'other');
+
+    await sessionManager.reconnectDownMcpServers('mcp-a');
+
+    expect(vi.mocked(a.handle.reconnectMcpServer!).mock.calls).toEqual([['linear']]);
+    await vi.waitFor(() => expect(b.send).toHaveBeenCalledWith(IPC.AGENT_MCP_STATUS, 'mcp-b', [
+      { name: 'linear', status: 'connected' }, { name: 'docs', status: 'connected' },
+    ]));
+    expect(vi.mocked(b.handle.reconnectMcpServer!).mock.calls).toEqual([['linear']]);
+    // Another agent has its own sign-ins.
+    expect(c.handle.reconnectMcpServer).not.toHaveBeenCalled();
+
+    for (const id of ['mcp-a', 'mcp-b', 'mcp-c']) await sessionManager.destroySession(id);
+  });
+
+  it('with a server name, reconnects only that server and only in the other threads', async () => {
+    const a = await startThread('mcp-name-a', { linear: 'connected' });
+    const b = await startThread('mcp-name-b', { linear: 'needs-auth', jira: 'failed' });
+
+    await sessionManager.reconnectDownMcpServers('mcp-name-a', 'linear');
+
+    await vi.waitFor(() => expect(b.handle.reconnectMcpServer).toHaveBeenCalledWith('linear'));
+    expect(b.handle.reconnectMcpServer).not.toHaveBeenCalledWith('jira');
+    expect(a.handle.listMcpServers).not.toHaveBeenCalled();
+
+    await sessionManager.destroySession('mcp-name-a');
+    await sessionManager.destroySession('mcp-name-b');
+  });
+
+  it('waits for a thread in the middle of a turn to finish it', async () => {
+    await startThread('mcp-idle', { linear: 'connected' });
+    const busy = await startThread('mcp-busy', { linear: 'needs-auth' });
+    await sessionManager.sendMessage('mcp-busy', 'Look up the ticket');
+    expect(sessionManager.isMidTurn('mcp-busy')).toBe(true);
+
+    await sessionManager.reconnectDownMcpServers('mcp-idle', 'linear');
+    await new Promise((r) => setTimeout(r, 20));
+    expect(busy.handle.reconnectMcpServer).not.toHaveBeenCalled();
+
+    mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false });
+    await vi.waitFor(() => expect(busy.handle.reconnectMcpServer).toHaveBeenCalledWith('linear'));
+
+    await sessionManager.destroySession('mcp-idle');
+    await sessionManager.destroySession('mcp-busy');
   });
 });

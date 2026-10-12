@@ -1586,6 +1586,16 @@ describe('updateMcpServers', () => {
       mcpServers: [{ name: 'docs', status: 'connected' }],
     });
   });
+
+  it('keeps the full live list until it is cleared, leaving the last known status', () => {
+    const live = [{ name: 'search', status: 'connected' as const, toolCount: 1, tools: [{ name: 'find' }] }];
+    messageStore.updateMcpServers(SID, live);
+    expect(messageStore.getLiveMcpServers(SID)).toEqual(live);
+
+    messageStore.clearLiveMcpServers(SID);
+    expect(messageStore.getLiveMcpServers(SID)).toEqual([]);
+    expect(messageStore.getSystemInfo(SID).mcpServers).toEqual([{ name: 'search', status: 'connected' }]);
+  });
 });
 
 describe('ingestEvent — user_message UUID stamping', () => {

@@ -513,6 +513,8 @@ class AgentSessionManager {
     perfSteps.finish(id, 'agent start');
     session.queryHandle = handle;
     session.isStartingQuery = false;
+    // A new agent process connects every server afresh.
+    session.mcpReconnectsAfterTurn = undefined;
     // Only a resumed conversation can turn out to be missing.
     session.promptsBeforeInit = resumingProviderSession ? { handle, prompts: [] } : null;
     // Before resolving queryReady below, so they go ahead of sends waiting on it.
@@ -658,6 +660,12 @@ class AgentSessionManager {
         // Track result for completion callback
         if (event.type === 'result') {
           if (session.turnHandle === handle) session.turnHandle = null;
+          // Reconnects held back while the turn ran (reconnectDownMcpServers).
+          const heldReconnects = session.mcpReconnectsAfterTurn;
+          if (heldReconnects && !this.isMidTurn(id)) {
+            session.mcpReconnectsAfterTurn = undefined;
+            void this.reconnectDownMcpServersIn(session, heldReconnects);
+          }
           session.lastResult = {
             isError: event.isError,
             totalCostUsd: event.totalCostUsd,
@@ -1234,6 +1242,58 @@ class AgentSessionManager {
     } catch (e) {
       logger.warn(`Failed to ${enabled ? 'enable' : 'disable'} MCP server "${serverName}" for session ${id}:`, e);
       throw e;
+    }
+  }
+
+  /**
+   * Reconnect the MCP servers that are down (needs-auth or failed) in every
+   * live thread on the same agent as thread `id`. Threads on one agent share
+   * its sign-ins, so a server signed in to in one thread can come back in the
+   * others without restarting them. With `serverName`, only that server, and
+   * only in the other threads: it was just brought back in this one.
+   *
+   * Resolves once thread `id` is done. The other threads go on in the
+   * background, one at a time, and send their new status with
+   * AGENT_MCP_STATUS. A thread in the middle of a turn waits for the turn to
+   * end, so its tools don't change under it. Failures are logged, not
+   * thrown: a server that still can't connect just stays down.
+   */
+  async reconnectDownMcpServers(id: string, serverName?: string): Promise<void> {
+    const origin = this.sessions.get(id);
+    if (!origin) return;
+    const only = serverName === undefined ? 'all' : new Set([serverName]);
+    if (only === 'all') await this.reconnectDownMcpServersIn(origin, only);
+    const others = [...this.sessions.values()].filter((s) => s !== origin && s.adapter.id === origin.adapter.id);
+    void (async () => {
+      for (const session of others) await this.reconnectDownMcpServersIn(session, only);
+    })();
+  }
+
+  /** Reconnect `session`'s down servers out of `only`, or hold them until its
+   *  turn ends. Never throws. */
+  private async reconnectDownMcpServersIn(session: ManagedSession, only: Set<string> | 'all'): Promise<void> {
+    const handle = session.queryHandle;
+    if (!handle?.listMcpServers || !handle.reconnectMcpServer) return;
+    if (this.isMidTurn(session.id)) {
+      const held = session.mcpReconnectsAfterTurn;
+      session.mcpReconnectsAfterTurn = held === 'all' || only === 'all' ? 'all' : new Set([...(held ?? []), ...only]);
+      return;
+    }
+    try {
+      const down = (await handle.listMcpServers()).filter((s) =>
+        (s.status === 'needs-auth' || s.status === 'failed') && (only === 'all' || only.has(s.name)));
+      if (down.length === 0) return;
+      for (const server of down) {
+        if (session.queryHandle !== handle) return;
+        await handle.reconnectMcpServer(server.name).catch((e) => {
+          logger.debug(`MCP server "${server.name}" is still down in session ${session.id}:`, e);
+        });
+      }
+      if (session.queryHandle !== handle) return;
+      const servers = await handle.listMcpServers();
+      if (!session.window.isDestroyed()) session.window.webContents.send(IPC.AGENT_MCP_STATUS, session.id, servers);
+    } catch (e) {
+      logger.warn(`Failed to reconnect MCP servers for session ${session.id}:`, e);
     }
   }
 
