@@ -766,6 +766,12 @@ export interface McpServerInfo {
   tools?: McpToolInfo[];
 }
 
+/** A server that is down: it needs a sign-in, or it failed to connect. The
+ *  MCP badge counts these, and a reconnect across threads retries them. */
+export function isMcpServerDown(status: string): boolean {
+  return status === 'needs-auth' || status === 'failed';
+}
+
 export interface McpToolInfo {
   name: string;
   description?: string;
@@ -803,6 +809,11 @@ export interface McpServerContextCost {
   /** Tokens of tool definitions held back until the agent searches for them. */
   deferredTokens: number;
 }
+
+/** How long a browser sign-in the agent finishes by itself is waited on.
+ *  A reconnect across threads leaves the server alone meanwhile, as a
+ *  reconnect could cancel the sign-in. */
+export const MCP_SIGN_IN_TIMEOUT_MS = 3 * 60 * 1000;
 
 /** Result of kicking off an OAuth sign-in for an MCP server. */
 export interface McpAuthStartResult {
@@ -1244,6 +1255,14 @@ export interface GroveBenchAPI {
   setMcpServerEnabled(sessionId: string, serverName: string, enabled: boolean): Promise<void>;
   /** Start OAuth sign-in for a `needs-auth` server and open the auth URL in the browser. */
   authenticateMcpServer(sessionId: string, serverName: string): Promise<McpAuthStartResult>;
+  /** Reconnect the MCP servers that are down (needs-auth or failed) in every
+   *  live thread on this thread's agent, which share its sign-ins. With
+   *  `serverName`, only that server and only in the other threads. Resolves
+   *  once this thread is done; the others carry on in the background and
+   *  report through onMcpStatus. A thread mid-turn waits for the turn to end. */
+  reconnectDownMcpServers(sessionId: string, serverName?: string): Promise<void>;
+  /** A thread's live MCP status, sent after a background reconnect. */
+  onMcpStatus(callback: (sessionId: string, servers: McpServerInfo[]) => void): () => void;
 
   // File operations (for @ file picker)
   listFiles(sessionId: string): Promise<string[]>;
@@ -1971,6 +1990,9 @@ export const IPC = {
   AGENT_MCP_TOGGLE: 'agent:mcpToggle',
   AGENT_MCP_AUTHENTICATE: 'agent:mcpAuthenticate',
   AGENT_MCP_CONTEXT_COST: 'agent:mcpContextCost',
+  AGENT_MCP_RECONNECT_DOWN: 'agent:mcpReconnectDown',
+  /** main → renderer: a thread's live MCP status after a background reconnect. */
+  AGENT_MCP_STATUS: 'agent:mcpStatus',
   AGENT_ELICITATION: 'agent:elicitation',
   AGENT_LIMIT: 'agent:limit',
   LIMITS_DAILY_SPEND: 'limits:dailySpend',

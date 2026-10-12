@@ -19,7 +19,7 @@ const m = vi.hoisted(() => {
       'closeSession', 'sleepSession', 'wakeSession', 'stopTask', 'destroySession', 'listSessions', 'renameSession',
       'setBranch', 'isMidTurn', 'getEventHistory', 'getEventHistoryPage', 'getEventHistoryCount', 'searchEventHistory',
       'beginSearch', 'clearEventHistory', 'sendMessage', 'setMode', 'setModel', 'getControls', 'getUsage', 'setControl',
-      'listMcpServers', 'getMcpContextCost', 'reconnectMcpServer', 'setMcpServerEnabled', 'authenticateMcpServer',
+      'listMcpServers', 'getMcpContextCost', 'reconnectMcpServer', 'setMcpServerEnabled', 'authenticateMcpServer', 'reconnectDownMcpServers',
       'getSessionAdapter', 'getWorktreePath', 'analyzeSkillSuggestionsForRepo', 'respondToPermission',
       'respondToElicitation', 'rewindFiles', 'getCheckpointDiff', 'listCheckpoints', 'getDiffHistory', 'getTurnDiff',
       'getFullThreadDiff', 'getCheckpointFiles', 'getCheckpointFileDiff', 'getCheckpointFileLines',

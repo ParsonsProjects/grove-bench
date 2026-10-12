@@ -319,6 +319,10 @@ class MessageStore {
     mcpServers: { name: string; status: string }[];
   }>>({});
 
+  /** Live MCP status per session (listMcpServers, or a background reconnect
+   *  in main), with tools and errors. Absent until fetched. */
+  mcpLiveBySession = $state<Record<string, McpServerInfo[]>>({});
+
   /** Context window size per session (from result's modelUsage, or default 200k) */
   contextWindowBySession = $state<Record<string, number>>({});
 
@@ -799,6 +803,17 @@ class MessageStore {
       ...info,
       mcpServers: servers.map((s) => ({ name: s.name, status: s.status })),
     };
+    this.mcpLiveBySession[sessionId] = servers;
+  }
+
+  /** The last live MCP status, or empty when there is none. */
+  getLiveMcpServers(sessionId: string): McpServerInfo[] {
+    return this.mcpLiveBySession[sessionId] ?? [];
+  }
+
+  /** Forget the live status (the agent stopped), leaving the last known one. */
+  clearLiveMcpServers(sessionId: string) {
+    delete this.mcpLiveBySession[sessionId];
   }
 
   getContextWindow(sessionId: string): number {
@@ -2537,7 +2552,7 @@ class MessageStore {
       this.isRunning, this.pendingClear, this.activityBySession,
       this.toolProgressBySession, this.isReady, this.historyLoaded, this.modelBySession,
       this.modeBySession, this.controlsBySession, this.usageBySession,
-      this.systemInfoBySession, this.contextWindowBySession, this.turnsBySession,
+      this.systemInfoBySession, this.mcpLiveBySession, this.contextWindowBySession, this.turnsBySession,
       this.promptSuggestionsBySession,
       this.activeTabBySession, this.viewModeBySession,
       this.draftBySession, this.attachmentsBySession, this.preservedEditHistory, this.paginationBySession,
