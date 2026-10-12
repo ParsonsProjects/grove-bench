@@ -1,7 +1,7 @@
 /**
- * Images shown in the Activity thread: ones the user attached to a message
- * and ones a tool returned (a preview screenshot, an image file the agent
- * read). Each conversation keeps its images in its own folder, named by
+ * Images shown in the Activity thread: ones the user attached to a message,
+ * ones a tool returned (a preview screenshot, an image file the agent read),
+ * and copies of ones the agent made in a turn (turn-files.ts). Each conversation keeps its images in its own folder, named by
  * content hash so an image read twice is stored once. Events refer to them by
  * file name (StoredImage) so the event log stays small, and the app window
  * loads them over the grove-attachment scheme.
@@ -14,11 +14,13 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { app, protocol, shell } from 'electron';
-import type { AgentEvent, FileAttachment, ImageMediaType, StoredFile, StoredImage } from '../shared/types.js';
-import { ATTACHMENT_SCHEME, knownMediaType } from '../shared/attachments.js';
+import type { AgentEvent, FileAttachment, ImageMediaType, MadeFile, StoredFile, StoredImage } from '../shared/types.js';
+import { ATTACHMENT_SCHEME, knownMediaType, worktreeImageType } from '../shared/attachments.js';
 import type { AdapterEvent } from './adapters/types.js';
+import type { FoundFile } from './turn-files.js';
 import { withLockRetry } from './fs-utils.js';
 import { logger } from './logger.js';
+import { worktreeImageResponse } from './worktree-files.js';
 
 const EXT_BY_TYPE: Record<ImageMediaType, string> = {
   'image/png': 'png',
@@ -215,14 +217,59 @@ export async function storeToolImages(
   return images.length > 0 ? { ...rest, images } : rest;
 }
 
-/** The response for a grove-attachment://image/<id>/<file> request. */
-export async function attachmentResponse(url: string): Promise<Response> {
+/** A conversation's worktree folder, if it has one. */
+export type WorktreeLookup = (sessionId: string) => string | undefined;
+
+/** How many of a turn's images are copied, and how large each may be. The
+ *  rest load from the worktree, as they are now. */
+const MADE_IMAGE_COPIES = 12;
+const MADE_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+
+/** The stored-image extension for a file a turn made, when its type is one
+ *  the attachments folder keeps (PNG, JPEG, GIF, WebP), else ''. */
+function copyableExt(filePath: string): string {
+  const mediaType = worktreeImageType(filePath);
+  return Object.hasOwn(EXT_BY_TYPE, mediaType) ? EXT_BY_TYPE[mediaType as ImageMediaType] : '';
+}
+
+/**
+ * The files a turn made, as the files_made event records them: images of a
+ * type the attachments folder keeps are copied there, so the thread shows
+ * them as they were that turn even once the agent writes them again or the
+ * worktree is gone. The copy is named by a hash of its bytes, taken off the
+ * main thread (fileHash), so a turn's screenshots don't hold the window up.
+ * One that can't be copied is listed without a copy.
+ */
+export async function storeMadeFiles(sessionId: string, found: readonly FoundFile[]): Promise<MadeFile[]> {
+  const toCopy = new Set(found.filter((f) => copyableExt(f.path) && f.size <= MADE_IMAGE_MAX_BYTES).slice(0, MADE_IMAGE_COPIES));
+  const folder = toCopy.size > 0 ? await ensureFolder(sessionId) : null;
+  return Promise.all(found.map(async (f): Promise<MadeFile> => {
+    const made: MadeFile = { path: f.path, kind: f.kind, size: f.size };
+    if (!folder || !toCopy.has(f)) return made;
+    try {
+      const data = await fs.promises.readFile(f.absPath);
+      const file = `${await fileHash(data)}.${copyableExt(f.path)}`;
+      await writeOnce(folder, file, data);
+      return { ...made, image: { file } };
+    } catch (err) {
+      logger.debug(`[attachments] could not copy ${f.path} for ${sessionId}:`, err);
+      return made;
+    }
+  }));
+}
+
+/** The response for a grove-attachment://image/<id>/<file> request, or a
+ *  grove-attachment://worktree/<id>/<path> one (an image in the worktree). */
+export async function attachmentResponse(url: string, worktreeOf?: WorktreeLookup): Promise<Response> {
   let found: ReturnType<typeof imagePath> = null;
   try {
     const { host, pathname } = new URL(url);
     const [, id, file, ...rest] = pathname.split('/');
     if (host === 'image' && id && file && rest.length === 0) {
       found = imagePath(decodeURIComponent(id), decodeURIComponent(file));
+    } else if (host === 'worktree' && id && file && rest.length === 0 && worktreeOf) {
+      const worktree = worktreeOf(decodeURIComponent(id));
+      if (worktree) return await worktreeImageResponse(worktree, decodeURIComponent(file));
     }
   } catch { /* malformed URL */ }
   if (!found) return new Response(null, { status: 404 });
@@ -242,10 +289,11 @@ export function registerAttachmentScheme(): void {
   protocol.registerSchemesAsPrivileged([{ scheme: ATTACHMENT_SCHEME, privileges: { standard: true, secure: true } }]);
 }
 
-/** Serve stored images on the default session. Preview pages run in their
- *  own partitions, so the pages being previewed can't load them. */
-export function handleAttachmentProtocol(): void {
-  protocol.handle(ATTACHMENT_SCHEME, (request) => attachmentResponse(request.url));
+/** Serve stored images, and images in each conversation's worktree, on the
+ *  default session. Preview pages run in their own partitions, so the pages
+ *  being previewed can't load them. */
+export function handleAttachmentProtocol(worktreeOf: WorktreeLookup): void {
+  protocol.handle(ATTACHMENT_SCHEME, (request) => attachmentResponse(request.url, worktreeOf));
 }
 
 /** Delete these entries of `folder`, and nothing saved there since. */
@@ -314,6 +362,9 @@ function referencedNames(events: readonly AgentEvent[]): Set<string> {
     }
     if (e.type === 'user_message' && e.files) {
       for (const f of e.files) keep.add(f.file);
+    }
+    if (e.type === 'files_made') {
+      for (const f of e.files) if (f.image) keep.add(f.image.file);
     }
   }
   return keep;

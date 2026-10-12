@@ -5,6 +5,7 @@ import {
   hasAgentReply,
   threadMessages,
   agentCallInput,
+  focusImagesOnly,
   VIEW_MODE_LABELS,
   VIEW_MODE_DESCRIPTIONS,
 } from './message-view.js';
@@ -87,7 +88,17 @@ describe('isMessageVisible', () => {
     const images = [{ file: `${'a'.repeat(32)}.png` }];
     expect(isMessageVisible(tool({ id: '1', toolName: 'mcp__grove-preview__screenshot', images }), 'summary')).toBe(true);
     expect(isMessageVisible(tool({ id: '2', toolName: 'Read', images }), 'summary')).toBe(true);
-    expect(isMessageVisible(tool({ id: '3', toolName: 'Read', images }), 'focus')).toBe(false);
+  });
+
+  it('in focus mode keeps a tool call that returned images, drawn as the images alone', () => {
+    const images = [{ file: `${'a'.repeat(32)}.png` }];
+    const shot = tool({ id: '1', toolName: 'mcp__playwright__browser_take_screenshot', images });
+    expect(isMessageVisible(shot, 'focus')).toBe(true);
+    expect(focusImagesOnly(shot, 'focus')).toBe(true);
+    expect(focusImagesOnly(shot, 'summary')).toBe(false);
+    expect(focusImagesOnly(tool({ id: '2', toolName: 'Read' }), 'focus')).toBe(false);
+    // A subagent's line is drawn as itself.
+    expect(focusImagesOnly(tool({ id: '3', toolName: 'Agent', toolInput: { description: 'x' }, images }), 'focus')).toBe(false);
   });
 
   it('shows user/text/system messages in summary mode', () => {

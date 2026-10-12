@@ -41,6 +41,9 @@ src/
     git-status-parser.ts
     preview.ts         # Preview tab: your page (WebContentsView) + the agent's (offscreen)
     preview-*.ts       # Preview URL rules, console log, in-page scripts, keys
+    attachments.ts     # Attached files and images tools return, served over grove-attachment://
+    worktree-files.ts  # Worktree files the thread shows or opens (agent's images, links, files made)
+    turn-files.ts      # Watches the worktree during a turn for the files it makes ("Files made")
     adapters/          # Agent adapter pattern
       index.ts         # Adapter exports
       types.ts         # Adapter interfaces

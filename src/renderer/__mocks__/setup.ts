@@ -1,5 +1,5 @@
 import { afterAll, vi } from 'vitest';
-import type { GroveBenchAPI } from '../../shared/types.js';
+import type { GroveBenchAPI, OpenWorktreeFileResult } from '../../shared/types.js';
 
 // A closed bits-ui dialog resets the page body's style on a timer (24ms by
 // default, see bits-ui's body-scroll-lock). One left over from a file's last
@@ -118,6 +118,7 @@ const mockGroveBench = {
   getFileLines: vi.fn((_sessionId: string, _filePath: string, _staged?: boolean) => Promise.resolve(null as import('../../shared/types.js').FileLinesResult)),
   sendMessage: vi.fn(),
   openAttachedFile: vi.fn(() => Promise.resolve(true)),
+  openWorktreeFile: vi.fn((): Promise<OpenWorktreeFileResult> => Promise.resolve({ kind: 'opened' })),
   notify: vi.fn(),
   testNotification: vi.fn().mockResolvedValue('sent'),
   getSettings: vi.fn(),

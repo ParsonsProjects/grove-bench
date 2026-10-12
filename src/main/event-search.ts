@@ -69,6 +69,8 @@ export function searchableEventText(event: AgentEvent): string {
       return event.message;
     case 'compact_boundary':
       return `Context compacted (${event.trigger})`;
+    case 'files_made':
+      return event.files.map((f) => f.path).join(' ');
     default:
       return '';
   }

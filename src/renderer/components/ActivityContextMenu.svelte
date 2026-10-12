@@ -60,7 +60,7 @@
         messageStore.openRewindDialog(sessionId, action.uuid);
         break;
       case 'focus':
-        markdownPreviewStore.show(action.content, 'Agent response');
+        markdownPreviewStore.show(action.content, 'Agent response', sessionId);
         break;
     }
   }

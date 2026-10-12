@@ -21,9 +21,10 @@ import { prsForBranches, prCreate, prReviewComments, ghLogin, isNetworkError, is
 import { tempBranchName, isTempBranch, generateBranchName } from './branch-name.js';
 import { displayTextFromSent } from '../shared/prompt-text.js';
 import { openAttachedFile, removeAttachments } from './attachments.js';
+import { openWorktreeFile } from './worktree-files.js';
 import { generateCommitMessage } from './commit-message.js';
 import type { PreviewBounds, PreviewCommand, PreviewPageKind } from '../shared/types.js';
-import type { CheckpointDiffScope, FileDiffResult, FileLinesResult, GitStatusOptions, GitStatusResult, GitStatusEntry, ImageDiffContent, PrCreateOpts, PrReviewSubmitResult } from '../shared/types.js';
+import type { CheckpointDiffScope, FileDiffResult, FileLinesResult, GitStatusOptions, GitStatusResult, GitStatusEntry, ImageDiffContent, OpenWorktreeFileResult, PrCreateOpts, PrReviewSubmitResult } from '../shared/types.js';
 import { parsePrReviewSubmit, submitPrReview } from './pr-review.js';
 import { showOsNotification, showTestNotification } from './notifications.js';
 import { parseGitStatusPorcelain, parseNumstat, parseNameStatus, parseHashObjectOutput } from './git-status-parser.js';
@@ -962,6 +963,12 @@ export function registerHandlers() {
   // reach outside the conversation's attachments folder.
   ipcMain.handle(IPC.ATTACHMENT_OPEN, (_event, sessionId: unknown, file: unknown) =>
     typeof sessionId === 'string' && typeof file === 'string' ? openAttachedFile(sessionId, file) : false);
+
+  ipcMain.handle(IPC.WORKTREE_FILE_OPEN, async (_event, sessionId: unknown, filePath: unknown): Promise<OpenWorktreeFileResult> => {
+    const worktree = typeof sessionId === 'string' ? worktreeManager.getWorktree(sessionId) : undefined;
+    if (!worktree || typeof filePath !== 'string') return { kind: 'missing' };
+    return openWorktreeFile(worktree.path, filePath);
+  });
 
   ipcMain.handle(IPC.AGENT_SET_MODE, (_event, sessionId: string, mode: string) => {
     sessionManager.setMode(sessionId, mode);

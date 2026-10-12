@@ -160,7 +160,7 @@
       {/if}
 
       {#each visible as msg (msg.id)}
-        <ThreadMessage {sessionId} {msg} summaryMode={viewMode !== 'detailed'} />
+        <ThreadMessage {sessionId} {msg} {viewMode} />
       {/each}
 
       {#if running}
@@ -176,7 +176,7 @@
         <!-- Recorded before Grove kept subagents' threads, or it said nothing. -->
         {#if call.result}
           <div class="text-xs text-muted-foreground mb-1">Result</div>
-          <div class="text-sm"><MarkdownBlock content={call.result} /></div>
+          <div class="text-sm"><MarkdownBlock content={call.result} {sessionId} /></div>
         {:else}
           <p class="text-xs text-muted-foreground">Nothing was recorded for this subagent.</p>
         {/if}

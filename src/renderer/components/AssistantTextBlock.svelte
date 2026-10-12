@@ -4,7 +4,8 @@
   import { isPreviewableMarkdown } from '../lib/markdown-detect.js';
   import { markdownPreviewStore } from '../stores/markdownPreview.svelte.js';
 
-  let { content }: { content: string } = $props();
+  /** `sessionId`: the thread, so images and links to its worktree's files work. */
+  let { content, sessionId }: { content: string; sessionId?: string } = $props();
 
   // Only document-like responses (plans, reports, audits) earn the affordance.
   let previewable = $derived(isPreviewableMarkdown(content));
@@ -15,7 +16,7 @@
     <Button
       variant="subtle"
       size="2xs"
-      onclick={() => markdownPreviewStore.show(content, 'Agent response')}
+      onclick={() => markdownPreviewStore.show(content, 'Agent response', sessionId)}
       class="absolute right-0 top-1 z-10 bg-card opacity-0 group-hover/atb:opacity-100"
       title="Read this response full-width"
     >
@@ -23,5 +24,5 @@
       Focus
     </Button>
   {/if}
-  <MarkdownBlock {content} />
+  <MarkdownBlock {content} {sessionId} />
 </div>

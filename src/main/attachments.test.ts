@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { app, protocol, shell } from 'electron';
 import type { AgentEvent } from '../shared/types.js';
-import { attachmentImageUrl } from '../shared/attachments.js';
+import { attachmentImageUrl, worktreeFileUrl } from '../shared/attachments.js';
 
 vi.mock('./logger.js', () => ({
   logger: { debug: vi.fn(), warn: vi.fn(), info: vi.fn(), error: vi.fn() },
@@ -23,6 +23,7 @@ import {
   removeAttachments,
   saveFiles,
   saveImages,
+  storeMadeFiles,
   storeToolImages,
 } from './attachments.js';
 
@@ -280,12 +281,93 @@ describe('protocol registration', () => {
       { scheme: 'grove-attachment', privileges: { standard: true, secure: true } },
     ]);
 
-    handleAttachmentProtocol();
+    handleAttachmentProtocol(() => undefined);
     const [scheme, handler] = vi.mocked(protocol.handle).mock.calls.at(-1)!;
     expect(scheme).toBe('grove-attachment');
     const [stored] = await saveImages('abc123', [{ data: PNG, mediaType: 'image/png' }]);
     const res = await handler(new Request(attachmentImageUrl('abc123', stored.file)));
     expect(res.status).toBe(200);
+  });
+
+  it("serves an image from a conversation's worktree, looked up by its id", async () => {
+    const worktree = fs.mkdtempSync(path.join(os.tmpdir(), 'grove-wt-'));
+    try {
+      fs.mkdirSync(path.join(worktree, 'shots'));
+      fs.writeFileSync(path.join(worktree, 'shots', 'home.png'), Buffer.from(PNG, 'base64'));
+      handleAttachmentProtocol((id) => (id === 'abc123' ? worktree : undefined));
+      const [, handler] = vi.mocked(protocol.handle).mock.calls.at(-1)!;
+
+      const res = await handler(new Request(worktreeFileUrl('abc123', 'shots/home.png')));
+      expect(res.status).toBe(200);
+      expect(res.headers.get('Content-Type')).toBe('image/png');
+      expect(Buffer.from(await res.arrayBuffer()).toString('base64')).toBe(PNG);
+      // Another conversation has no such worktree.
+      expect((await handler(new Request(worktreeFileUrl('other', 'shots/home.png')))).status).toBe(404);
+    } finally {
+      fs.rmSync(worktree, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('storeMadeFiles', () => {
+  let worktree: string;
+  beforeEach(() => {
+    worktree = fs.mkdtempSync(path.join(os.tmpdir(), 'grove-wt-'));
+  });
+  afterEach(() => {
+    fs.rmSync(worktree, { recursive: true, force: true });
+  });
+
+  function made(rel: string, data: Buffer) {
+    const absPath = path.join(worktree, rel);
+    fs.mkdirSync(path.dirname(absPath), { recursive: true });
+    fs.writeFileSync(absPath, data);
+    return { path: rel, absPath, kind: rel.endsWith('.pdf') ? 'pdf' as const : 'image' as const, size: data.length };
+  }
+
+  it('copies the PNG, JPEG, GIF and WebP images, so the thread shows them as they were', async () => {
+    const shot = made('shots/home.png', Buffer.from(PNG, 'base64'));
+    const [stored] = await storeMadeFiles('abc123', [shot]);
+
+    expect(stored).toMatchObject({ path: 'shots/home.png', kind: 'image', size: shot.size });
+    // Named by a hash of its bytes, like an attached file.
+    const sha = crypto.createHash('sha256').update(Buffer.from(PNG, 'base64')).digest('hex').slice(0, 32);
+    expect(stored.image?.file).toBe(`${sha}.png`);
+    // The copy stays when the agent writes the file again.
+    fs.writeFileSync(shot.absPath, Buffer.from(GIF, 'base64'));
+    expect(fs.readFileSync(path.join(folder('abc123'), stored.image!.file)).toString('base64')).toBe(PNG);
+  });
+
+  it('lists an SVG and other files without a copy', async () => {
+    const svg = made('chart.svg', Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>'));
+    const pdf = made('report.pdf', Buffer.from('%PDF-1.4'));
+    const stored = await storeMadeFiles('abc123', [svg, pdf]);
+
+    expect(stored).toEqual([
+      { path: 'chart.svg', kind: 'image', size: svg.size },
+      { path: 'report.pdf', kind: 'pdf', size: pdf.size },
+    ]);
+    // Nothing to copy, so no folder either.
+    expect(fs.existsSync(folder('abc123'))).toBe(false);
+  });
+
+  it('lists an image over 5 MB without a copy', async () => {
+    const big = { ...made('big.png', Buffer.from(PNG, 'base64')), size: 5 * 1024 * 1024 + 1 };
+    expect(await storeMadeFiles('abc123', [big])).toEqual([{ path: 'big.png', kind: 'image', size: big.size }]);
+  });
+
+  it('lists an image that is gone by now without a copy', async () => {
+    const shot = made('gone.png', Buffer.from(PNG, 'base64'));
+    fs.rmSync(shot.absPath);
+    expect(await storeMadeFiles('abc123', [shot])).toEqual([{ path: 'gone.png', kind: 'image', size: shot.size }]);
+  });
+
+  it('copies at most twelve images a turn', async () => {
+    // Each a different image, so none is stored as another's copy.
+    const shots = Array.from({ length: 14 }, (_, i) => made(`s${i}.png`, Buffer.concat([Buffer.from(PNG, 'base64'), Buffer.from([i])])));
+    const stored = await storeMadeFiles('abc123', shots);
+    expect(stored.filter((s) => s.image)).toHaveLength(12);
+    expect(stored.map((s) => s.path)).toEqual(shots.map((s) => s.path));
   });
 });
 
@@ -362,6 +444,22 @@ describe('pruneAttachments', () => {
     await pruneAttachments('abc123', events);
 
     expect(fs.readdirSync(folder('abc123')).sort()).toEqual([kept.file, fromTool.file].sort());
+    expect(fs.existsSync(path.join(folder('abc123'), dropped.file))).toBe(false);
+  });
+
+  it("keeps the copies of images a turn made that its list still shows", async () => {
+    const [kept, dropped] = await saveImages('abc123', [
+      { data: PNG, mediaType: 'image/png' },
+      { data: GIF, mediaType: 'image/gif' },
+    ]);
+    const events: AgentEvent[] = [
+      { type: 'files_made', files: [{ path: 'shot.png', kind: 'image', size: 70, image: kept }, { path: 'r.pdf', kind: 'pdf', size: 8 }] },
+    ];
+    ageAll('abc123');
+
+    await pruneAttachments('abc123', events);
+
+    expect(fs.readdirSync(folder('abc123'))).toEqual([kept.file]);
     expect(fs.existsSync(path.join(folder('abc123'), dropped.file))).toBe(false);
   });
 
