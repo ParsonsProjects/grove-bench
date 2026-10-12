@@ -6,7 +6,7 @@ Each thread displays a colored dot in the sidebar indicating its current state. 
 - **Blue**: working (starting up counts)
 - **Green**: finished a turn you haven't looked at yet
 - **Red**: something went wrong
-- **Gray**: quiet, nothing to do
+- **Gray**: quiet, nothing to do. The **Idle** chip lists the open ones, ready or sleeping. Closed and red threads come under no chip
 
 With **Show grove characters** on, a small pixel agent shows the state instead, wearing the same color. Its pose tells the gray states apart: sitting when ready, asleep when sleeping or closed. The plain dot does the same with a hollow square for sleeping and closed. Hover either one to see the state's name.
 
