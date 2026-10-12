@@ -11,7 +11,7 @@
   import { agentsStore } from '../stores/agents.svelte.js';
   import { formatMcpActionError, mcpNeedsAuthHint } from '../lib/mcp-errors.js';
   import { formatTokens } from '../lib/context-usage.js';
-  import type { McpServerContextCost, McpServerInfo } from '../../shared/types.js';
+  import { MCP_SIGN_IN_TIMEOUT_MS, isMcpServerDown, type McpServerContextCost, type McpServerInfo } from '../../shared/types.js';
   import { Badge } from '$lib/components/ui/badge/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Notice } from '$lib/components/ui/notice/index.js';
@@ -72,7 +72,7 @@
       : mcpKnown.map((s) => ({ name: s.name, status: s.status as McpServerInfo['status'] })),
   );
   let mcpStatuses = $derived(mcpServers.length > 0 ? mcpServers : mcpKnown);
-  let mcpDownCount = $derived(mcpStatuses.filter((s) => s.status === 'failed' || s.status === 'needs-auth').length);
+  let mcpDownCount = $derived(mcpStatuses.filter((s) => isMcpServerDown(s.status)).length);
   let mcpConnectedCount = $derived(mcpStatuses.filter((s) => s.status === 'connected').length);
   /** ok = nothing down, partial = mixed up/down (orange), down = nothing connected (red). */
   let mcpHealth = $derived<McpHealth>(
@@ -111,10 +111,11 @@
 
   /** Once `name` is connected here after a sign-in or Reconnect, reconnect it
    *  in the other threads on this agent where it is still down. They share
-   *  the sign-in but don't pick it up by themselves. */
+   *  the sign-in but don't pick it up by themselves. Only live status counts:
+   *  the last known one may be from before. */
   function reconnectElsewhere(name: string) {
     if (!mcpControls.reconnect) return;
-    if (mcpStatuses.find((s) => s.name === name)?.status !== 'connected') return;
+    if (mcpServers.find((s) => s.name === name)?.status !== 'connected') return;
     window.groveBench.reconnectDownMcpServers(sessionId, name).catch(() => {});
   }
 
@@ -171,9 +172,9 @@
     if (action === 'reconnect') reconnectElsewhere(name);
   }
 
-  /** Poll interval / budget while waiting for a browser sign-in to land. */
+  /** Poll interval while waiting for a browser sign-in to land (for up to
+   *  MCP_SIGN_IN_TIMEOUT_MS). */
   const MCP_SIGN_IN_POLL_MS = 2000;
-  const MCP_SIGN_IN_TIMEOUT_MS = 3 * 60 * 1000;
 
   /**
    * Kick off OAuth for a `needs-auth` server. The main process opens the auth

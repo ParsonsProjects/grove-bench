@@ -754,6 +754,12 @@ export interface McpServerInfo {
   tools?: McpToolInfo[];
 }
 
+/** A server that is down: it needs a sign-in, or it failed to connect. The
+ *  MCP badge counts these, and a reconnect across threads retries them. */
+export function isMcpServerDown(status: string): boolean {
+  return status === 'needs-auth' || status === 'failed';
+}
+
 export interface McpToolInfo {
   name: string;
   description?: string;
@@ -791,6 +797,11 @@ export interface McpServerContextCost {
   /** Tokens of tool definitions held back until the agent searches for them. */
   deferredTokens: number;
 }
+
+/** How long a browser sign-in the agent finishes by itself is waited on.
+ *  A reconnect across threads leaves the server alone meanwhile, as a
+ *  reconnect could cancel the sign-in. */
+export const MCP_SIGN_IN_TIMEOUT_MS = 3 * 60 * 1000;
 
 /** Result of kicking off an OAuth sign-in for an MCP server. */
 export interface McpAuthStartResult {

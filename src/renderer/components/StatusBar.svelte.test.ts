@@ -269,6 +269,20 @@ describe('StatusBar MCP controls follow the agent', () => {
     expect(window.groveBench.reconnectDownMcpServers).not.toHaveBeenCalled();
   });
 
+  it('does not reach the other threads when it cannot read the live status', async () => {
+    useAgent({ controls: { ...NONE, list: true, reconnect: true }, disconnectHint: '' });
+    // Only the last known status says connected; the live list can't be read.
+    messageStore.systemInfoBySession[ID] = { tools: [], agents: [], skills: [], slashCommands: [], mcpServers: [{ name: 'linear', status: 'connected' }] };
+    render(StatusBar, { props: { sessionId: ID } });
+    await fireEvent.click(screen.getByRole('button', { name: /MCP 1/ }));
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Reconnect' }));
+
+    await waitFor(() => expect(window.groveBench.reconnectMcpServer).toHaveBeenCalledWith(ID, 'linear'));
+    await screen.findByRole('button', { name: 'Reconnect' });
+    expect(window.groveBench.reconnectDownMcpServers).not.toHaveBeenCalled();
+  });
+
   it('shows the status a reconnect in another thread sent for this one', async () => {
     useAgent({ controls: { ...NONE, list: true, reconnect: true }, disconnectHint: '' });
     messageStore.systemInfoBySession[ID] = { tools: [], agents: [], skills: [], slashCommands: [], mcpServers: [{ name: 'linear', status: 'needs-auth' }] };
