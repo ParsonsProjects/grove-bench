@@ -2,11 +2,11 @@ import type { BrowserWindow } from 'electron';
 import { IPC } from '../shared/types.js';
 import type { SessionInfo, SessionStatus, AgentEvent, PermissionDecision, PermissionMode, McpServerInfo, McpAuthStartResult, McpElicitationResponse, McpServerContextCost, ProviderUsage, SessionControls } from '../shared/types.js';
 import { CONTROL_IDS, PERMISSION_MODES, subagentParent } from '../shared/types.js';
-import { displayTextFromSent } from '../shared/prompt-text.js';
+import { userEventText } from '../shared/prompt-text.js';
 import { applyRateLimit } from '../shared/usage.js';
 import { loadUsageSnapshot, saveUsageSnapshot } from './app-state.js';
 import { handoffTranscript, isSlashCommand, lastAgentChange, pendingHandoff } from './agent-handoff.js';
-import { pruneImages, removeImages, saveImages, storeToolImages } from './attachments.js';
+import { attachmentsFolder, imagePath, pruneAttachments, removeAttachments, saveFiles, saveImages, storeToolImages } from './attachments.js';
 import { logger } from './logger.js';
 import { perfSteps } from './perf-steps.js';
 import { perfLine } from './perf-log.js';
@@ -17,6 +17,7 @@ import * as memoryAutosave from './memory-autosave.js';
 import { adapterRegistry } from './adapters/index.js';
 import { isClaudeAccountId, removedAccountMessage } from './adapters/claude-accounts.js';
 import type { AgentAdapter, AgentQueryHandle, UserMessage } from './adapters/types.js';
+import { audioSentInline, inlineAudioType } from './adapters/file-attachments.js';
 import { ResumeNotFoundError } from './adapters/types.js';
 import { lastRunningCost } from './adapters/running-cost.js';
 import { getGitIdentity } from './git.js';
@@ -428,6 +429,7 @@ class AgentSessionManager {
     try {
     handle = await session.adapter.start({
       cwd: session.worktreePath,
+      attachmentsDir: attachmentsFolder(id),
       // session.model is the source of truth — it survives stop/restart and
       // resume cycles, so the user's selected model isn't lost when the query
       // is torn down and recreated.
@@ -882,7 +884,12 @@ class AgentSessionManager {
     return true;
   }
 
-  async sendMessage(id: string, content: string, images?: import('../shared/types.js').ImageAttachment[]): Promise<boolean> {
+  async sendMessage(
+    id: string,
+    content: string,
+    images?: import('../shared/types.js').ImageAttachment[],
+    files?: import('../shared/types.js').FileAttachment[],
+  ): Promise<boolean> {
     let session = this.sessions.get(id);
 
     // The session object is created at the end of setup; a prompt that
@@ -910,8 +917,9 @@ class AgentSessionManager {
 
     // Record in event history with UUID for checkpoint tracking.
     // Use emit() which handles eventHistory, disk persistence, and renderer notification.
-    // Attached images are saved to disk and the event refers to them, so the
-    // thread can show them again when the conversation is reopened.
+    // Attached images and files are saved to disk and the event refers to
+    // them, so the thread can show them again when the conversation is
+    // reopened, and an agent can be given a file's path.
     const uuid = crypto.randomUUID();
     // The composer only offers attachments to agents that take images; this
     // catches any that arrive anyway (a paste racing an agent switch).
@@ -920,15 +928,23 @@ class AgentSessionManager {
       images = undefined;
     }
     const storedImages = images?.length ? await saveImages(id, images) : [];
+    const savedFiles = files?.length ? await saveFiles(id, files) : [];
+    if (files && savedFiles.length < files.length) {
+      const lost = files.length - savedFiles.length;
+      session.emit?.({ type: 'status', level: 'warning', message: `${lost === 1 ? 'An attached file' : `${lost} attached files`} could not be saved, so ${lost === 1 ? 'it was' : 'they were'} left out. See the log for details.` });
+    }
     // After a switch the user wanted a transcript for, messages carry it
     // ahead of what they typed until the new agent replies; the thread shows
     // only theirs. A slash command is left alone (it must lead the text) and
     // the transcript waits for the next message.
     const handoff = isSlashCommand(content) ? null : pendingHandoff(session.eventHistory);
-    const handoffNote = handoff ? handoffTranscript(session.eventHistory.slice(0, handoff.index), handoff.event) : null;
-    const userEvent: AgentEvent = {
+    const handoffNote = handoff ? handoffTranscript(session.eventHistory.slice(0, handoff.index), handoff.event, attachmentsFolder(id)) : null;
+    // Read before this message joins the history.
+    const audioInHistory = savedFiles.length > 0 ? audioSentInline(session.eventHistory) : 0;
+    const userEvent: Extract<AgentEvent, { type: 'user_message' }> = {
       type: 'user_message', text: content, uuid,
       ...(storedImages.length > 0 && { images: storedImages }),
+      ...(savedFiles.length > 0 && { files: savedFiles.map((f) => f.stored) }),
     };
     session.emit?.(userEvent);
 
@@ -939,7 +955,7 @@ class AgentSessionManager {
     // throws; a false result means there is no checkpoint for this message,
     // which the thread shows so a later rewind attempt is not a surprise.
     // Label the checkpoint with what the chat shows, not attached file content.
-    const captured = await session.checkpoints.capture(id, session.worktreePath, uuid, displayTextFromSent(content, images));
+    const captured = await session.checkpoints.capture(id, session.worktreePath, uuid, userEventText(userEvent));
     // Without git there are no checkpoints to capture, so nothing failed.
     if (captured) {
       session.checkpointFailing = false;
@@ -959,14 +975,30 @@ class AgentSessionManager {
     const queryHandle = session.queryHandle!;
 
     const sessionId = session.providerSessionId ?? '';
-    logger.debug(`[sendMessage] session=${id} sending to adapter, providerSessionId=${sessionId || '(not yet initialized)'}${images?.length ? ` with ${images.length} image(s)` : ''}`);
+    logger.debug(`[sendMessage] session=${id} sending to adapter, providerSessionId=${sessionId || '(not yet initialized)'}${images?.length ? ` with ${images.length} image(s)` : ''}${savedFiles.length ? ` with ${savedFiles.length} file(s)` : ''}`);
     try {
       session.turnHandle = queryHandle;
       promptSent(session.limits);
       // Once per query: a second message before the reply doesn't repeat it,
       // but a query that failed to start and was replaced gets it again.
       const withNote = handoffNote !== null && session.handoffSentTo !== queryHandle;
-      const message: UserMessage = { text: withNote ? `${handoffNote}\n${content}` : content, images };
+      const message: UserMessage = {
+        text: withNote ? `${handoffNote}\n${content}` : content,
+        // With the path of each saved copy when every one was saved (so the
+        // lists line up), for an agent that can't take images.
+        images: images?.map((img, i) => {
+          const saved = storedImages.length === images!.length ? imagePath(id, storedImages[i].file) : null;
+          return saved ? { ...img, path: saved.path } : img;
+        }),
+        // Only a clip that may go inline carries its data; the rest go by path.
+        ...(savedFiles.length > 0 && {
+          files: savedFiles.map(({ stored, path, data }) => ({
+            name: stored.name, mediaType: stored.mediaType, size: stored.size, path,
+            ...(inlineAudioType(stored) ? { data } : {}),
+          })),
+          ...(audioInHistory > 0 && { audioInHistory }),
+        }),
+      };
       if (withNote) session.handoffSentTo = queryHandle;
       queryHandle.sendMessage(message);
       if (session.promptsBeforeInit?.handle === queryHandle) session.promptsBeforeInit.prompts.push(message);
@@ -1943,8 +1975,8 @@ class AgentSessionManager {
     await this.stopQuery(id);
 
     // After the stop, so a tool result from the old query can't save an image
-    // after the check. The rewound turns' images are no longer shown.
-    void pruneImages(id, session.eventHistory);
+    // after the check. The rewound turns' images and files are no longer shown.
+    void pruneAttachments(id, session.eventHistory);
   }
 
   /** Dry-run rewind to get the diff of what would change. */
@@ -2063,8 +2095,8 @@ class AgentSessionManager {
       // Session not running — clear disk log directly
       this.events.clearStored(id);
     }
-    // No event refers to the thread's images any more.
-    void removeImages(id);
+    // No event refers to the thread's images or files any more.
+    void removeAttachments(id);
   }
 
   /** Session ids that were running when the system suspended. Captured on

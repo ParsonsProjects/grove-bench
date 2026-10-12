@@ -24,6 +24,7 @@
     text={msg.text}
     files={msg.files}
     images={msg.images}
+    attachments={msg.attachments}
     onRewind={msg.uuid ? () => messageStore.openRewindDialog(sessionId, msg.uuid) : undefined}
   />
 

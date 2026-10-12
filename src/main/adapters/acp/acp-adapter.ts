@@ -21,6 +21,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { app } from 'electron';
 import { execa, type ResultPromise } from 'execa';
 import type {
@@ -36,6 +37,7 @@ import { logger } from '../../logger.js';
 import { isReadOnlyToolCall } from '../../read-only-tools.js';
 import { loadAgentSignIn, loadModelCatalog, saveAgentSignIn, saveModelCatalog } from '../../app-state.js';
 import { catalogs, installFor } from '../../catalogs.js';
+import { AUDIO_INLINE_BUDGET_BYTES, inlineAudioType } from '../file-attachments.js';
 import { memoryServer, previewServer, type GroveServer } from '../grove-tools.js';
 import { startGroveMcpHttp, type GroveMcpHttp } from '../grove-mcp-http.js';
 import { stdioBridgeLaunch } from '../mcp-bridge/launch.js';
@@ -866,7 +868,7 @@ class AcpQuery {
   }
 
   private async runTurn(message: UserMessage): Promise<void> {
-    if (message.text.trim() === '/clear' && !message.images?.length) {
+    if (message.text.trim() === '/clear' && !message.images?.length && !message.files?.length) {
       await this.clear();
       return;
     }
@@ -933,12 +935,29 @@ class AcpQuery {
       this.pendingInstructions = null;
     }
     blocks.push({ type: 'text', text: message.text });
-    const takesImages = this.init?.agentCapabilities?.promptCapabilities?.image === true;
+    // Every agent takes a link to a file (the protocol's baseline); images
+    // and audio go inline only when it says it takes them.
+    const caps = this.init?.agentCapabilities?.promptCapabilities;
+    const link = (filePath: string, name: string, mimeType: string, size: number) =>
+      ({ type: 'resource_link', uri: pathToFileURL(filePath).href, name, ...(mimeType ? { mimeType } : {}), size });
+    let leftOut = 0;
     for (const img of message.images ?? []) {
-      if (takesImages && IMAGE_MEDIA.has(img.mediaType)) blocks.push({ type: 'image', data: img.data, mimeType: img.mediaType });
+      if (caps?.image === true && IMAGE_MEDIA.has(img.mediaType)) blocks.push({ type: 'image', data: img.data, mimeType: img.mediaType });
+      else if (img.path) blocks.push(link(img.path, img.name, img.mediaType, Buffer.byteLength(img.data, 'base64')));
+      else leftOut++;
     }
-    if (!takesImages && message.images?.length) {
-      this.emit({ type: 'status', level: 'warning', message: `${this.def.displayName} can't take images, so the attached image${message.images.length > 1 ? 's were' : ' was'} left out.` });
+    if (leftOut > 0) {
+      this.emit({ type: 'status', level: 'warning', message: `${this.def.displayName} can't take images, so the attached image${leftOut > 1 ? 's were' : ' was'} left out.` });
+    }
+    let audioBytes = message.audioInHistory ?? 0;
+    for (const file of message.files ?? []) {
+      const audioType = caps?.audio === true && file.data ? inlineAudioType(file) : null;
+      if (audioType && audioBytes + file.size <= AUDIO_INLINE_BUDGET_BYTES) {
+        audioBytes += file.size;
+        blocks.push({ type: 'audio', data: file.data, mimeType: audioType });
+      } else {
+        blocks.push(link(file.path, file.name, file.mediaType, file.size));
+      }
     }
     return blocks;
   }

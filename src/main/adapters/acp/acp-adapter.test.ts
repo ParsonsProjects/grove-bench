@@ -2,9 +2,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { AcpAdapter, type AcpAgentDefinition } from './acp-adapter.js';
-import type { AdapterConfig, AdapterEvent, AgentQueryHandle, PermissionRequest, PermissionResponse } from '../types.js';
+import { AUDIO_INLINE_BUDGET_BYTES, AUDIO_INLINE_MAX_BYTES } from '../file-attachments.js';
+import type { AdapterConfig, AdapterEvent, AgentQueryHandle, MessageFile, PermissionRequest, PermissionResponse } from '../types.js';
 
 vi.mock('../../logger.js', () => ({ logger: { warn: vi.fn(), info: vi.fn(), debug: vi.fn(), error: vi.fn() } }));
 const savedKeys = vi.hoisted(() => new Map<string, string>());
@@ -266,6 +267,71 @@ describe('AcpAdapter', () => {
     const text = (turn.find((e) => e.type === 'assistant_text') as { text: string }).text;
     expect(JSON.parse(text)).toEqual([{ type: 'http', name: 'grove-memory', auth: true }]);
     handle.close();
+  });
+
+  describe('attached files', () => {
+    const dir = path.join(os.tmpdir(), 'att');
+    const pdf: MessageFile = { name: 'spec.pdf', mediaType: 'application/pdf', data: 'JVBE', path: path.join(dir, 'a.pdf'), size: 3 };
+    const mp3: MessageFile = { name: 'memo.mp3', mediaType: 'audio/mpeg', data: 'SUQz', path: path.join(dir, 'b.mp3'), size: 3 };
+    const zip: MessageFile = { name: 'logs.zip', mediaType: 'application/zip', data: 'UEsD', path: path.join(dir, 'c.zip'), size: 3 };
+    const link = (f: MessageFile) => ({ type: 'resource_link', uri: pathToFileURL(f.path).href, name: f.name, mimeType: f.mediaType, size: f.size });
+
+    /** The blocks after the text of each message, as the fake agent saw them. */
+    async function sentBlocks(scenario: string, ...messages: Parameters<AgentQueryHandle['sendMessage']>[0][]): Promise<unknown[][]> {
+      const handle = await new AcpAdapter(def(scenario)).start(config());
+      await until(handle, 'system_init');
+      const seen: unknown[][] = [];
+      for (const m of messages) {
+        handle.sendMessage(m);
+        const turn = await until(handle, 'result');
+        seen.push(JSON.parse((turn.find((e) => e.type === 'assistant_text') as { text: string }).text));
+      }
+      handle.close();
+      return seen;
+    }
+
+    it('links every file when the agent takes nothing more than the baseline', async () => {
+      const [blocks] = await sentBlocks('default', { text: 'blocks', files: [pdf, mp3, zip] });
+      expect(blocks).toEqual([link(pdf), link(mp3), link(zip)]);
+    });
+
+    it('sends audio inline to an agent that takes it, and still links a PDF', async () => {
+      const [blocks] = await sentBlocks('media', { text: 'blocks', files: [pdf, mp3, zip] });
+      expect(blocks).toEqual([link(pdf), { type: 'audio', data: 'SUQz', mimeType: 'audio/mpeg' }, link(zip)]);
+    });
+
+    it('links audio over the size cap, and past the total already in the conversation', async () => {
+      const big = { ...mp3, name: 'big.mp3', size: AUDIO_INLINE_MAX_BYTES + 1 };
+      const half = { ...mp3, name: 'half.mp3', size: AUDIO_INLINE_BUDGET_BYTES / 2 };
+      const [first, second] = await sentBlocks('media',
+        { text: 'blocks', files: [big, half, half] },
+        { text: 'blocks', files: [mp3], audioInHistory: AUDIO_INLINE_BUDGET_BYTES });
+      expect(first).toEqual([link(big), { type: 'audio', data: 'SUQz', mimeType: 'audio/mpeg' }, { type: 'audio', data: 'SUQz', mimeType: 'audio/mpeg' }]);
+      expect(second).toEqual([link(mp3)]);
+    });
+
+    it('sends a browser alias as the listed type, and links a type that is not listed or has no data', async () => {
+      const wav = { ...mp3, name: 'a.wav', mediaType: 'audio/x-wav' };
+      const wma = { ...mp3, name: 'a.wma', mediaType: 'audio/x-ms-wma' };
+      const noData = { ...mp3, name: 'b.mp3', data: undefined };
+      const [blocks] = await sentBlocks('media', { text: 'blocks', files: [wav, wma, noData] });
+      expect(blocks).toEqual([{ type: 'audio', data: 'SUQz', mimeType: 'audio/wav' }, link(wma), link(noData)]);
+    });
+
+    it('links an image by its saved copy for an agent that can\'t take images', async () => {
+      const shot = { data: 'iVBORw==', mediaType: 'image/png' as const, name: 'shot.png', path: path.join(dir, 'd.png') };
+      const [blocks] = await sentBlocks('noimage', { text: 'blocks', images: [shot] });
+      expect(blocks).toEqual([{ type: 'resource_link', uri: pathToFileURL(shot.path).href, name: 'shot.png', mimeType: 'image/png', size: 4 }]);
+    });
+
+    it('says so when an image with no saved copy is left out', async () => {
+      const handle = await new AcpAdapter(def('noimage')).start(config());
+      await until(handle, 'system_init');
+      handle.sendMessage({ text: 'blocks', images: [{ data: 'iVBOR', mediaType: 'image/png', name: 'shot.png' }] });
+      const turn = await until(handle, 'result');
+      handle.close();
+      expect(turn.some((e) => e.type === 'status' && /can't take images, so the attached image was left out/.test(e.message))).toBe(true);
+    });
   });
 
   it('sends Grove\'s instructions ahead of the first prompt of a new session', async () => {
