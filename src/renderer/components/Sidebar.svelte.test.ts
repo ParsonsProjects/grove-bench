@@ -364,6 +364,58 @@ describe('Sidebar attention triage', () => {
     expect(screen.getByRole('button', { name: 'Unread 1' })).toHaveAttribute('aria-pressed', 'false');
   });
 
+  it('keeps an unread thread listed after opening it, until another thread is focused', async () => {
+    render(Sidebar);
+    await fireEvent.click(screen.getByTitle('Unread: 1'));
+
+    await fireEvent.click(screen.getByText('Finished one'));
+    expect(store.needsAttention['finished']).toBeUndefined();
+    expect(screen.getByText('Finished one')).toBeInTheDocument();
+    // The count is still honest: it has been read.
+    expect(screen.getByRole('button', { name: 'Unread 0', pressed: true })).toBeInTheDocument();
+
+    store.activeSessionId = 'quiet';
+    await tick();
+    expect(screen.queryByText('Finished one')).not.toBeInTheDocument();
+  });
+
+  it('keeps a thread listed under Needs you after its prompt is answered, until another thread is focused', async () => {
+    render(Sidebar);
+    await fireEvent.click(screen.getByTitle('Needs you: 1'));
+    await fireEvent.click(screen.getByText('Blocked one'));
+
+    messageStore.messagesBySession['blocked'] = [
+      { kind: 'permission', id: 'p1', requestId: 'r1', toolName: 'Write', toolInput: {}, toolUseId: 't1', resolved: true },
+    ];
+    await tick();
+    expect(screen.getByText('Blocked one')).toBeInTheDocument();
+
+    store.activeSessionId = 'quiet';
+    await tick();
+    expect(screen.queryByText('Blocked one')).not.toBeInTheDocument();
+  });
+
+  it('keeps an unread thread opened from outside the sidebar, such as the finder', async () => {
+    render(Sidebar);
+    await fireEvent.click(screen.getByTitle('Unread: 1'));
+
+    store.activeSessionId = 'finished';
+    store.clearNeedsAttention('finished');
+    await tick();
+    expect(screen.getByText('Finished one')).toBeInTheDocument();
+  });
+
+  it('drops the kept thread when the chip changes', async () => {
+    render(Sidebar);
+    await fireEvent.click(screen.getByTitle('Unread: 1'));
+    await fireEvent.click(screen.getByText('Finished one'));
+
+    await fireEvent.click(screen.getByTitle('Needs you: 1'));
+    expect(screen.queryByText('Finished one')).not.toBeInTheDocument();
+    await fireEvent.click(screen.getByTitle('Unread: 0'));
+    expect(screen.queryByText('Finished one')).not.toBeInTheDocument();
+  });
+
   it('counts a conversation that is starting up as working, matching its colour', async () => {
     store.sessions = [...store.sessions, { id: 'booting', branch: 'feat-e', repoPath: '/repo-b', status: 'starting', displayName: 'Booting one' }] as any;
     render(Sidebar);
