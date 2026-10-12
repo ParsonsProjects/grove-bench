@@ -31,7 +31,9 @@ function trySymlink(target: string, at: string): boolean {
 }
 
 beforeEach(() => {
-  base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'grove-wtf-')));
+  // .native, like the fs.promises.realpath the code uses: on Windows it also
+  // expands short names (RUNNER~1) that the JS realpathSync keeps.
+  base = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'grove-wtf-')));
   worktree = path.join(base, 'wt');
   outside = path.join(base, 'elsewhere');
   fs.mkdirSync(worktree);
@@ -82,8 +84,10 @@ describe('normalizeAgentPath', () => {
   });
 
   it('turns a file:// URL into a path, and refuses a bad one or an empty path', () => {
-    expect(normalizeAgentPath(pathToFileURL('/tmp/a b.png').href, 'linux')).toBe('/tmp/a b.png');
-    expect(normalizeAgentPath('file://server', 'linux')).toBeNull();
+    const abs = path.resolve('a b.png');
+    expect(normalizeAgentPath(pathToFileURL(abs).href, 'linux')).toBe(abs);
+    // An encoded slash can't be a path on any OS.
+    expect(normalizeAgentPath('file:///a%2Fb.png', 'linux')).toBeNull();
     expect(normalizeAgentPath('   ', 'linux')).toBeNull();
   });
 });
