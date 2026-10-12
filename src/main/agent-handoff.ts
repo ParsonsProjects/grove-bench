@@ -10,6 +10,7 @@
  * which says so. Background tasks read only what came after the last switch
  * (eventsSinceAgentChange).
  */
+import path from 'node:path';
 import type { AgentEvent } from '../shared/types.js';
 import { subagentParent } from '../shared/types.js';
 import { changesFiles, toolViewOf } from '../shared/tool-view.js';
@@ -71,16 +72,20 @@ function clip(text: string, max: number): string {
 
 /**
  * The note that leads the new agent's first message: who had the
- * conversation, what was said (newest kept when it is long) and which files
- * changed. `events` is the log up to the switch.
+ * conversation, what was said (newest kept when it is long), the files the
+ * user attached and which files changed. `events` is the log up to the
+ * switch; `attachmentsDir` is where attached files are saved, so the note
+ * can give their paths.
  */
-export function handoffTranscript(events: readonly AgentEvent[], switched: AgentChanged): string {
+export function handoffTranscript(events: readonly AgentEvent[], switched: AgentChanged, attachmentsDir?: string | null): string {
   // Who answered each turn: the agent before the first switch, then each
   // switch's new agent.
   const firstSwitch = events.find((e): e is AgentChanged => e.type === 'agent_changed');
   let speaker = firstSwitch?.fromName ?? switched.fromName;
   const lines: string[] = [];
   const files = new Set<string>();
+  /** Attached files and images, as "name: path", in the order sent. */
+  const attached: string[] = [];
   let reply = '';
   const flush = () => {
     if (reply.trim()) lines.push(`${speaker}: ${clip(reply, MESSAGE_MAX_CHARS)}`);
@@ -93,6 +98,11 @@ export function handoffTranscript(events: readonly AgentEvent[], switched: Agent
     } else if (e.type === 'user_message') {
       flush();
       lines.push(`User: ${clip(e.text, MESSAGE_MAX_CHARS)}`);
+      if (attachmentsDir) {
+        for (const a of [...(e.images ?? []), ...(e.files ?? [])]) {
+          if (a.name) attached.push(`${a.name}: ${path.join(attachmentsDir, a.file)}`);
+        }
+      }
     } else if (e.type === 'assistant_text' && !subagentParent(e)) {
       reply += (reply ? '\n' : '') + e.text;
     } else if (e.type === 'assistant_tool_use') {
@@ -121,6 +131,11 @@ export function handoffTranscript(events: readonly AgentEvent[], switched: Agent
     '<transcript>',
     kept.length > 0 ? kept.join('\n\n') : '(no messages yet)',
     '</transcript>',
+    ...(attached.length > 0 ? [
+      '',
+      'Files the user attached, saved outside the project (open them by the absolute path given):',
+      ...attached.slice(-50).map((a) => `- ${a}`),
+    ] : []),
     ...(fileList.length > 0 ? ['', `Files changed so far: ${fileList.slice(0, 50).join(', ')}${fileList.length > 50 ? `, and ${fileList.length - 50} more` : ''}`] : []),
     '',
     'The user\'s next message follows.',

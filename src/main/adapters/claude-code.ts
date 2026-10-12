@@ -23,6 +23,7 @@ import { getApiKey } from '../credentials.js';
 import { loadModelCatalog, saveModelCatalog } from '../app-state.js';
 import { z } from 'zod';
 import { asarUnpackedPath, cleanEnv, isPathInside, checkToolRules, toolCallSpecifier, readableStreamToAsyncIterable } from '../agent-utils.js';
+import { attachedFilesNote } from './file-attachments.js';
 import { createMemoryMcpServer, GROVE_MEMORY_TOOL_NAMES } from './memory-mcp-server.js';
 import { createPreviewMcpServer, GROVE_PREVIEW_READ_TOOL_NAMES } from './preview-mcp-server.js';
 import * as skillsModule from '../skills.js';
@@ -203,6 +204,41 @@ export function fromSdkSyncMode(mode: PermissionMode, ctx: MessageContext): Perm
 }
 
 const IMAGE_MEDIA_TYPES = new Set<string>(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
+
+/**
+ * A user message as the SDK takes it: attached images as content blocks
+ * ahead of the text, and a note with the path of every other attached file
+ * (PDFs included), which Claude reads with its own tools.
+ */
+export function userMessageContent(message: UserMessage): string | Array<Record<string, unknown>> {
+  const files = message.files ?? [];
+  const text = files.length > 0 ? `${attachedFilesNote(files)}\n\n${message.text}` : message.text;
+  if (!message.images?.length) return text;
+  return [
+    ...message.images.map((img) => ({ type: 'image', source: { type: 'base64', media_type: img.mediaType, data: img.data } })),
+    { type: 'text', text },
+  ];
+}
+
+/** Claude's read tools and the input field naming what each reads. */
+const READ_TOOL_PATH_FIELD: Readonly<Record<string, string>> = { Read: 'file_path', Glob: 'path', Grep: 'path', LS: 'path' };
+
+/**
+ * Whether a call only reads inside the attachments folder, where the files
+ * the user attached are saved. Those reads are allowed without a prompt.
+ * Only reads: the folder isn't a working directory, so Claude can't edit
+ * the saved copies without asking.
+ */
+export function readsAttachedFile(
+  toolName: string,
+  input: Record<string, unknown>,
+  cwd: string,
+  attachmentsDir: string | null | undefined,
+): boolean {
+  const field = Object.hasOwn(READ_TOOL_PATH_FIELD, toolName) ? READ_TOOL_PATH_FIELD[toolName] : null;
+  const target = field ? input[field] : undefined;
+  return !!attachmentsDir && typeof target === 'string' && isPathInside(attachmentsDir, path.resolve(cwd, target));
+}
 
 /** The base64 images in a tool result's content: API image blocks (Read on an
  *  image file) or MCP ones (`data` + `mimeType`), in case they arrive unconverted. */
@@ -1704,6 +1740,12 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         return { behavior: 'allow' as const, updatedInput: input };
       }
 
+      // The files the user attached are saved outside the checkout, and the
+      // message gives Claude their paths: reading them needs no prompt.
+      if (readsAttachedFile(toolName, input, config.cwd, config.attachmentsDir)) {
+        return { behavior: 'allow' as const, updatedInput: input };
+      }
+
       // Sandbox auto-approve Bash — only when the sandbox config opts in,
       // matching SDK semantics. Read-safe mode's sandbox deliberately does
       // NOT opt in: there the sandbox is an enforcement backstop and Bash
@@ -1863,23 +1905,10 @@ export class ClaudeCodeAdapter implements AgentAdapter {
           return;
         }
 
-        let messageContent: string | Array<Record<string, unknown>> = message.text;
-        if (message.images && message.images.length > 0) {
-          const blocks: Array<Record<string, unknown>> = [];
-          for (const img of message.images) {
-            blocks.push({
-              type: 'image',
-              source: { type: 'base64', media_type: img.mediaType, data: img.data },
-            });
-          }
-          blocks.push({ type: 'text', text: message.text });
-          messageContent = blocks;
-        }
-
         inputController.enqueue({
           type: 'user',
           session_id: sessionId ?? '',
-          message: { role: 'user', content: messageContent },
+          message: { role: 'user', content: userMessageContent(message) },
           parent_tool_use_id: null,
         } as SDKUserMessage);
       },

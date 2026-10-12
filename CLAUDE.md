@@ -48,6 +48,7 @@ src/
       claude-code.ts   # Claude Code adapter implementation
       claude-accounts.ts # Other Claude accounts: one adapter each, with its own CLAUDE_CONFIG_DIR
       acp/             # Agent Client Protocol adapter (Gemini CLI, Copilot CLI, OpenCode, custom agents)
+      file-attachments.ts # How attached files reach each agent (by path; audio inline for ACP agents that take it)
       grove-tools.ts   # Grove's memory and Preview tools, defined once
       grove-mcp-http.ts # Those tools over MCP HTTP, for agents other than Claude Code
       mcp-bridge/      # stdio bridge to that server, for agents without HTTP MCP (2nd Vite entry)

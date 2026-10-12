@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import path from 'node:path';
-import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS, thinkingConfigFor, parseMcpListOutput, mcpServerManager, claudeMcpOrigin, mcpToolServerKey, mcpContextCostByServer, toMcpElicitationRequest, withMcpjsonApproval, mcpjsonApprovalsFrom, buildMcpAddArgs, quoteArg, validatePluginId, validateConfigScope, capToolResult, claudeControlsFor, supportsAdaptiveThinking, supportsFastMode, supportsAutoMode, claudeModelCaps, effortFor, reasoningOptionsFor, toSdkPermissionMode, fromSdkSyncMode, stripAnsi, mapClaudeUsage, thinkingDisplayFor, TEXT_GENERATION_OPTIONS, missingConversationError } from './claude-code.js';
+import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS, thinkingConfigFor, parseMcpListOutput, mcpServerManager, claudeMcpOrigin, mcpToolServerKey, mcpContextCostByServer, toMcpElicitationRequest, withMcpjsonApproval, mcpjsonApprovalsFrom, buildMcpAddArgs, quoteArg, validatePluginId, validateConfigScope, capToolResult, claudeControlsFor, supportsAdaptiveThinking, supportsFastMode, supportsAutoMode, claudeModelCaps, effortFor, reasoningOptionsFor, toSdkPermissionMode, fromSdkSyncMode, stripAnsi, mapClaudeUsage, thinkingDisplayFor, TEXT_GENERATION_OPTIONS, missingConversationError, userMessageContent, readsAttachedFile } from './claude-code.js';
 import type { AgentEvent } from '../../shared/types.js';
+import type { MessageFile } from './types.js';
 
 // ─── isPathInside (sandbox allowWrite containment) ───
 
@@ -1095,5 +1096,74 @@ describe('TEXT_GENERATION_OPTIONS', () => {
 
   it('stays out of plan mode, whose reminder sends the model exploring', () => {
     expect(TEXT_GENERATION_OPTIONS.permissionMode).toBe('dontAsk');
+  });
+});
+
+// ─── userMessageContent (what the SDK is sent for a prompt) ───
+
+describe('userMessageContent()', () => {
+  function file(over: Partial<MessageFile> = {}): MessageFile {
+    return { name: 'logs.zip', mediaType: 'application/zip', data: 'UEsD', path: 'C:\\att\\b.zip', size: 10, ...over };
+  }
+
+  it('is the plain text when nothing is attached', () => {
+    expect(userMessageContent({ text: 'hello' })).toBe('hello');
+  });
+
+  it('puts images ahead of the text', () => {
+    expect(userMessageContent({ text: 'look', images: [{ data: 'iVBOR', mediaType: 'image/png', name: 'a.png' }] })).toEqual([
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'iVBOR' } },
+      { type: 'text', text: 'look' },
+    ]);
+  });
+
+  it('gives other files by path in a note ahead of the text', () => {
+    const content = userMessageContent({ text: 'what failed?', files: [file()] });
+    expect(typeof content).toBe('string');
+    expect(content).toMatch(/^<attached_files>\n/);
+    expect(content).toContain('<file name="logs.zip" type="application/zip" size="10" path="C:\\att\\b.zip" />');
+    expect(content).toMatch(/<\/attached_files>\n\nwhat failed\?$/);
+  });
+
+  it('gives a PDF by path too, never as a document block', () => {
+    const content = userMessageContent({ text: 'summarise', files: [file({ name: 'spec.pdf', mediaType: 'application/pdf' })] });
+    expect(typeof content).toBe('string');
+    expect(content).toContain('<file name="spec.pdf" type="application/pdf"');
+  });
+
+  it('puts the note in the text block when images are attached too', () => {
+    const content = userMessageContent({
+      text: 'go',
+      images: [{ data: 'iVBOR', mediaType: 'image/png', name: 'a.png' }],
+      files: [file({ name: 'a.mp3', mediaType: 'audio/mpeg' })],
+    }) as Array<Record<string, unknown>>;
+    expect(content.map((b) => b.type)).toEqual(['image', 'text']);
+    expect(content[1].text).toContain('<file name="a.mp3" type="audio/mpeg"');
+    expect(content[1].text).toMatch(/\n\ngo$/);
+  });
+});
+
+// ─── readsAttachedFile (reads of attached files need no prompt) ───
+
+describe('readsAttachedFile()', () => {
+  const att = path.resolve('/data/attachments/s1');
+  const cwd = path.resolve('/wt/abc');
+
+  it('is true for a read tool inside the attachments folder', () => {
+    expect(readsAttachedFile('Read', { file_path: path.join(att, 'a.pdf') }, cwd, att)).toBe(true);
+    expect(readsAttachedFile('Grep', { path: att, pattern: 'x' }, cwd, att)).toBe(true);
+  });
+
+  it('is false outside it, for a path that climbs out, or for a tool that writes', () => {
+    expect(readsAttachedFile('Read', { file_path: path.join(cwd, 'a.ts') }, cwd, att)).toBe(false);
+    expect(readsAttachedFile('Read', { file_path: path.join(att, '..', 's2', 'a.pdf') }, cwd, att)).toBe(false);
+    expect(readsAttachedFile('Write', { file_path: path.join(att, 'a.pdf') }, cwd, att)).toBe(false);
+    expect(readsAttachedFile('Edit', { file_path: path.join(att, 'a.pdf') }, cwd, att)).toBe(false);
+  });
+
+  it('is false without a folder or a path, and for Object.prototype names', () => {
+    expect(readsAttachedFile('Read', { file_path: path.join(att, 'a.pdf') }, cwd, null)).toBe(false);
+    expect(readsAttachedFile('Glob', { pattern: '*' }, cwd, att)).toBe(false);
+    expect(readsAttachedFile('constructor', { file_path: path.join(att, 'a.pdf') }, cwd, att)).toBe(false);
   });
 });

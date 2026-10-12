@@ -64,6 +64,8 @@ export const dialog = {
 
 export const shell = {
   openExternal: vi.fn(),
+  openPath: vi.fn(async () => ''),
+  showItemInFolder: vi.fn(),
 };
 
 export const protocol = {
