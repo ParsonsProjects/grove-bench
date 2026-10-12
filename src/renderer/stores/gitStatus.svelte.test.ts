@@ -17,7 +17,7 @@ describe('gitStatusStore — per-session refresh suppression', () => {
 
     // A different session is unaffected by A's suppression.
     await gitStatusStore.refresh('B');
-    expect(mockGroveBench.getGitStatus).toHaveBeenCalledWith('B');
+    expect(mockGroveBench.getGitStatus).toHaveBeenCalledWith('B', { scope: 'branch', base: 'main' });
     expect(mockGroveBench.getGitStatus).toHaveBeenCalledTimes(1);
   });
 
@@ -36,7 +36,7 @@ describe('gitStatusStore — per-session refresh suppression', () => {
     gitStatusStore.unsuppressRefresh('C');
 
     await gitStatusStore.refresh('C');
-    expect(mockGroveBench.getGitStatus).toHaveBeenCalledWith('C');
+    expect(mockGroveBench.getGitStatus).toHaveBeenCalledWith('C', { scope: 'branch', base: 'main' });
   });
 
   it('concurrent suppression of one session does not leak to another', async () => {
@@ -50,7 +50,7 @@ describe('gitStatusStore — per-session refresh suppression', () => {
     expect(mockGroveBench.getGitStatus).not.toHaveBeenCalled(); // E still suppressed
 
     await gitStatusStore.refresh('D');
-    expect(mockGroveBench.getGitStatus).toHaveBeenCalledWith('D');
+    expect(mockGroveBench.getGitStatus).toHaveBeenCalledWith('D', { scope: 'branch', base: 'main' });
   });
 
   it('clear() drops a session from the suppression set', async () => {
@@ -58,7 +58,7 @@ describe('gitStatusStore — per-session refresh suppression', () => {
     gitStatusStore.clear('F');
 
     await gitStatusStore.refresh('F');
-    expect(mockGroveBench.getGitStatus).toHaveBeenCalledWith('F');
+    expect(mockGroveBench.getGitStatus).toHaveBeenCalledWith('F', { scope: 'branch', base: 'main' });
   });
 });
 
@@ -96,5 +96,43 @@ describe('gitStatusStore — overlapping refreshes', () => {
     await pending;
     expect(gitStatusStore.statusBySession).not.toHaveProperty('gone');
     expect(gitStatusStore.loadingBySession).not.toHaveProperty('gone');
+  });
+});
+
+describe('gitStatusStore — default branch view', () => {
+  function deferred<T>() {
+    let resolve!: (v: T) => void;
+    const promise = new Promise<T>((r) => { resolve = r; });
+    return { promise, resolve };
+  }
+
+  it('opens on the branch view, looking up the base once for overlapping refreshes', async () => {
+    const lookup = deferred<string>();
+    mockGroveBench.getDefaultBranch.mockReturnValueOnce(lookup.promise);
+    const first = gitStatusStore.refresh('fresh');
+    gitStatusStore.scheduleRefresh('fresh', 0);
+    await new Promise((r) => setTimeout(r, 5));
+    lookup.resolve('develop');
+    await first;
+    await new Promise((r) => setTimeout(r, 5));
+
+    expect(mockGroveBench.getDefaultBranch).toHaveBeenCalledTimes(1);
+    expect(mockGroveBench.getGitStatus).toHaveBeenCalledWith('fresh', { scope: 'branch', base: 'develop' });
+    expect(gitStatusStore.getScope('fresh')).toEqual({ scope: 'branch', base: 'develop' });
+    gitStatusStore.clear('fresh');
+  });
+
+  it('keeps a scope chosen while the base was being looked up', async () => {
+    const lookup = deferred<string>();
+    mockGroveBench.getDefaultBranch.mockReturnValueOnce(lookup.promise);
+    const first = gitStatusStore.refresh('picked');
+    await gitStatusStore.setScope('picked', 'working');
+    lookup.resolve('main');
+    await first;
+
+    expect(gitStatusStore.getScope('picked').scope).toBe('working');
+    expect(mockGroveBench.getGitStatus).toHaveBeenCalledTimes(1);
+    expect(mockGroveBench.getGitStatus).toHaveBeenCalledWith('picked');
+    gitStatusStore.clear('picked');
   });
 });

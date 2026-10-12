@@ -1,5 +1,6 @@
 import type { DiffScope, GitStatusResult } from '../../shared/types.js';
 import { store as sessionStore } from './sessions.svelte.js';
+import { resolveBaseBranch } from '../lib/base-branch.js';
 
 export interface ScopeState { scope: DiffScope; base?: string }
 
@@ -8,8 +9,9 @@ const THROTTLE_MS = 500;
 class GitStatusStore {
   statusBySession = $state<Record<string, GitStatusResult>>({});
   loadingBySession = $state<Record<string, boolean>>({});
-  /** What each session's Changes tab compares against (default: the
-   *  uncommitted working tree). The branch scope needs a base branch name. */
+  /** What each session's Changes tab compares against (default: the whole
+   *  branch since its base). The branch scope needs a base branch name; the
+   *  default one is looked up on the first refresh. */
   scopeBySession = $state<Record<string, ScopeState>>({});
 
   /** Sessions whose refreshes are currently suppressed (e.g. during history
@@ -22,6 +24,8 @@ class GitStatusStore {
    *  scope, or a conversation deleted meanwhile) is dropped. */
   private requestSeq = new Map<string, number>();
   private pendingTimeout = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Base branch lookups in flight, so refreshes that overlap share one. */
+  private baseLookups = new Map<string, Promise<string>>();
 
   /** Suppress refresh triggers for a session (call before replaying its history). */
   suppressRefresh(sessionId: string): void {
@@ -38,7 +42,27 @@ class GitStatusStore {
   }
 
   getScope(sessionId: string): ScopeState {
-    return this.scopeBySession[sessionId] ?? { scope: 'working' };
+    return this.scopeBySession[sessionId] ?? { scope: 'branch' };
+  }
+
+  /** The default scope's base branch: the user's setting, else the repo's
+   *  default branch. Kept once found, unless the scope was set meanwhile. */
+  private async defaultBase(sessionId: string): Promise<string> {
+    let lookup = this.baseLookups.get(sessionId);
+    if (!lookup) {
+      const repoPath = sessionStore.sessions.find((s) => s.id === sessionId)?.repoPath ?? '';
+      lookup = resolveBaseBranch(repoPath);
+      this.baseLookups.set(sessionId, lookup);
+    }
+    try {
+      const base = await lookup;
+      if (!this.scopeBySession[sessionId] && this.baseLookups.get(sessionId) === lookup) {
+        this.scopeBySession = { ...this.scopeBySession, [sessionId]: { scope: 'branch', base } };
+      }
+      return base;
+    } finally {
+      if (this.baseLookups.get(sessionId) === lookup) this.baseLookups.delete(sessionId);
+    }
   }
 
   /** Switch scope and refetch right away (bypassing the throttle). */
@@ -68,7 +92,11 @@ class GitStatusStore {
     void sessionStore.syncBranch(sessionId);
 
     try {
-      const { scope, base } = this.getScope(sessionId);
+      let { scope, base } = this.getScope(sessionId);
+      if (scope === 'branch' && !base) {
+        base = await this.defaultBase(sessionId);
+        if (this.requestSeq.get(sessionId) !== seq) return;
+      }
       const result = scope === 'branch'
         ? await window.groveBench.getGitStatus(sessionId, { scope, base })
         : await window.groveBench.getGitStatus(sessionId);
@@ -133,6 +161,7 @@ class GitStatusStore {
     this.pendingTimeout.delete(sessionId);
     this.lastFetch.delete(sessionId);
     this.requestSeq.delete(sessionId);
+    this.baseLookups.delete(sessionId);
     this.suppressedSessions.delete(sessionId);
     const { [sessionId]: _s, ...restStatus } = this.statusBySession;
     this.statusBySession = restStatus;

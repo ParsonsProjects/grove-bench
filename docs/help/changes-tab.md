@@ -6,6 +6,13 @@ In a thread that runs without git there is nothing to compare against, so the ta
 
 If git isn't installed, or is older than 2.17, a warning at the top of this tab says so, with **Download Git** and **Re-check**. Grove Bench doesn't warn about it anywhere else: without git, projects are plain folders.
 
+## Branch and Uncommitted
+
+The toggle at the top of the file list picks what the tab compares:
+
+- **Branch** (the default): everything changed on the thread's branch since it left the base branch, committed or not, like a pull request. The line under the toggle names the base (for example **vs main**). The base is the one in Settings, or your project's default branch.
+- **Uncommitted**: only what isn't committed yet. This is where you stage files and commit.
+
 ## File Categories
 
 Files are organized into three groups:
@@ -32,6 +39,20 @@ Click the panel button next to **Filter files** to fold the file list down to a 
 ## Edit History
 
 When viewing a file that was modified by the agent during the current turn, an edit count (for example **3 edits**) appears in the diff header. Click it to expand the edit history for that file, showing each individual change the agent made.
+
+## Reviewing the PR
+
+When the thread has an open pull request, the Branch view shows **Review changes…** under the file list. It opens a dialog where you write a summary and pick:
+
+- **Comment**: feedback without approving
+- **Approve**: you're happy for it to merge
+- **Request changes**: it needs changes before it can merge
+
+Comment and Request changes need a summary. The review is posted to GitHub with your `gh` account.
+
+Line comments you wrote in the Branch view go with the review, each on its line in the PR. GitHub only takes comments on lines in the PR's diff, so a comment is quoted in the summary instead when its line isn't in the diff, or when the file differs from what's pushed. Once posted, those comments leave the Changes tab. With line comments waiting, **Post to PR #…** in the comment bar opens the same dialog.
+
+GitHub doesn't let you approve or request changes on your own PR, so for a PR your `gh` account opened, only **Comment** is offered.
 
 ## Reverting Changes
 

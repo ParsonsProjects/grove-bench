@@ -54,7 +54,9 @@
     panel,
     sidebarTop,
     sidebarSummaryExtra,
+    sidebarSummaryNote,
     sidebarFooter,
+    reviewBarActions,
     headerActions,
     dialogs,
   }: {
@@ -91,7 +93,11 @@
     panel: CollapsiblePanel;
     sidebarTop?: Snippet;
     sidebarSummaryExtra?: Snippet;
+    /** Right after the change count ("12 changes vs main"). */
+    sidebarSummaryNote?: Snippet;
     sidebarFooter?: Snippet;
+    /** More ways to send the batched comments, before Discard. */
+    reviewBarActions?: Snippet;
     headerActions?: Snippet<[GitStatusEntry]>;
     dialogs?: Snippet;
   } = $props();
@@ -811,6 +817,7 @@
         <div class="text-micro text-muted-foreground mt-1.5 flex items-center gap-2 whitespace-nowrap">
           {#if sidebarSummaryExtra}{@render sidebarSummaryExtra()}{/if}
           <span>{entries.length} change{entries.length !== 1 ? 's' : ''}</span>
+          {#if sidebarSummaryNote}{@render sidebarSummaryNote()}{/if}
           {#if stagedEntries.length > 0}
             <span class="text-green-400">{stagedEntries.length}S</span>
           {/if}
@@ -1013,6 +1020,7 @@
           <span class="text-foreground/80">{comments.length} review comment{comments.length === 1 ? '' : 's'}</span>
           <span class="text-muted-foreground">across {new Set(comments.map(c => c.filePath)).size} file{new Set(comments.map(c => c.filePath)).size === 1 ? '' : 's'}</span>
           <div class="ml-auto flex items-center gap-1.5">
+            {#if reviewBarActions}{@render reviewBarActions()}{/if}
             <Button size="2xs" variant="outline-destructive" onclick={() => { if (confirm('Discard all review comments?')) { reviewStore.clearComments(sessionId); composer = null; } }}>Discard</Button>
             <Button size="2xs" variant="subtle" onclick={reviewToPrompt} title="Put the batched comments into the prompt so you can edit before sending">To prompt</Button>
             <Button size="2xs" onclick={sendReview} disabled={sendingReview} title="Send all comments to the agent as one prompt (queued if it is busy)">

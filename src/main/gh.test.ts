@@ -100,7 +100,7 @@ describe('prStatus()', () => {
     const result = await prStatus('/repo', 'feat/x');
     expect(mockExeca).toHaveBeenCalledWith(
       'gh',
-      ['pr', 'view', 'feat/x', '--json', 'number,url,state,isDraft,title,reviewDecision,statusCheckRollup,headRefOid,comments,reviews,headRefName,baseRefName'],
+      ['pr', 'view', 'feat/x', '--json', 'number,url,state,isDraft,title,reviewDecision,statusCheckRollup,headRefOid,comments,reviews,headRefName,baseRefName,author'],
       { cwd: '/repo', timeout: GH_TIMEOUT_MS },
     );
     expect(result).toEqual({
@@ -163,7 +163,7 @@ describe('prStatus()', () => {
 });
 
 describe('prList()', () => {
-  const FIELDS = 'number,url,state,isDraft,title,reviewDecision,statusCheckRollup,headRefOid,comments,reviews,headRefName,baseRefName';
+  const FIELDS = 'number,url,state,isDraft,title,reviewDecision,statusCheckRollup,headRefOid,comments,reviews,headRefName,baseRefName,author';
 
   it('lists every PR for the head branch, in any state, with head and base names', async () => {
     mockExeca.mockResolvedValue({
@@ -188,6 +188,17 @@ describe('prList()', () => {
   it('returns an empty list when the branch has no PRs', async () => {
     mockExeca.mockResolvedValue({ stdout: '[]' } as any);
     expect(await prList('/repo', 'feat/x')).toEqual([]);
+  });
+
+  it('says whether the gh account opened each PR, only when its login is known', async () => {
+    mockExeca.mockResolvedValue({
+      stdout: JSON.stringify([
+        { number: 2, url: 'u2', author: { login: 'alan' } },
+        { number: 3, url: 'u3', author: { login: 'grace' } },
+      ]),
+    } as any);
+    expect((await prList('/repo', 'feat/x', 'alan')).map((pr) => pr.viewerIsAuthor)).toEqual([true, false]);
+    expect((await prList('/repo', 'feat/x', null)).map((pr) => pr.viewerIsAuthor)).toEqual([undefined, undefined]);
   });
 
   it('drops entries that are not PRs and tolerates malformed output', async () => {

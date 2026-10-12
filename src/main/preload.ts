@@ -228,6 +228,8 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.PR_CREATE, sessionId, opts),
   getPrReviewComments: (sessionId: string, prNumber: number) =>
     ipcRenderer.invoke(IPC.PR_REVIEW_COMMENTS, sessionId, prNumber),
+  submitPrReview: (sessionId: string, review: import('../shared/types.js').PrReviewSubmit) =>
+    ipcRenderer.invoke(IPC.PR_SUBMIT_REVIEW, sessionId, review),
 
   // External links
   openExternal: (url: string) => ipcRenderer.invoke(IPC.OPEN_EXTERNAL, url),

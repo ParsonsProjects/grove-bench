@@ -1,4 +1,4 @@
-import type { PrInfo, GitSyncStatus, PrCreateOpts } from '../../shared/types.js';
+import type { PrInfo, GitSyncStatus, PrCreateOpts, PrReviewSubmit, PrReviewSubmitResult } from '../../shared/types.js';
 import { messageStore } from './messages.svelte.js';
 import { store as sessionStore } from './sessions.svelte.js';
 import { buildFixCiPrompt, buildAddressReviewsPrompt } from '../lib/pr-prompt.js';
@@ -358,6 +358,19 @@ class PrStore {
     this.primaryBySession = restPrimary;
     this.refresh(sessionId, true);
     return pr;
+  }
+
+  /** Post a review on one of the session's PRs, then refetch so the review
+   *  decision shows. Throws GitHub's reason when it refuses. */
+  async submitReview(sessionId: string, review: PrReviewSubmit): Promise<PrReviewSubmitResult> {
+    let result: PrReviewSubmitResult;
+    try {
+      result = await window.groveBench.submitPrReview(sessionId, review);
+    } catch (e) {
+      throw new Error(stripIpcErrorPrefix(e instanceof Error ? e.message : String(e ?? '')) || 'Review failed');
+    }
+    void this.refresh(sessionId, true);
+    return result;
   }
 
   // ── Agent actions ──
