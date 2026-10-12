@@ -3,10 +3,13 @@ class MarkdownPreviewStore {
   open = $state(false);
   title = $state('');
   content = $state('');
+  /** The thread the text came from, so images in its worktree show. */
+  sessionId = $state<string | undefined>(undefined);
 
-  show(content: string, title = 'Preview'): void {
+  show(content: string, title = 'Preview', sessionId?: string): void {
     this.content = content;
     this.title = title;
+    this.sessionId = sessionId;
     this.open = true;
   }
 

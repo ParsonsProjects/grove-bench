@@ -17,9 +17,12 @@
   let failed = $state<Record<string, true>>({});
   let openIndex = $state<number | null>(null);
 
-  /** Inline data while the app still has it (just sent), otherwise the saved file. */
+  /** Inline data while the app still has it (just sent), a worktree file's
+   *  URL, otherwise the saved file. */
   function srcOf(img: ThreadImage): string {
-    return 'dataUrl' in img ? img.dataUrl : attachmentImageUrl(sessionId, img.file);
+    if ('dataUrl' in img) return img.dataUrl;
+    if ('url' in img) return img.url;
+    return attachmentImageUrl(sessionId, img.file);
   }
 
   function labelOf(img: ThreadImage): string {

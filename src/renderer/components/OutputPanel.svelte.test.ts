@@ -659,3 +659,50 @@ describe('OutputPanel: selection popup', () => {
     insertSpy.mockRestore();
   });
 });
+
+describe('OutputPanel images from the agent', () => {
+  const SHOT = { file: `${'a'.repeat(32)}.png` };
+
+  it('keeps a screenshot a tool returned in Focus, without the tool call', async () => {
+    messageStore.messagesBySession = {
+      [SID]: [
+        { kind: 'tool_call', id: 't1', toolName: 'mcp__playwright__browser_take_screenshot', toolInput: {}, toolUseId: 'tu1', uuid: 'u1', pending: false, images: [SHOT] },
+        { kind: 'tool_call', id: 't2', toolName: 'Grep', toolInput: { pattern: 'needle' }, toolUseId: 'tu2', uuid: 'u2', pending: false },
+      ],
+    };
+    messageStore.setViewMode(SID, 'focus');
+    const { container } = render(OutputPanel, { sessionId: SID });
+    await tick();
+
+    expect(container.querySelector('[data-msg-id="t1"] img')).toHaveAttribute('src', `grove-attachment://image/${SID}/${SHOT.file}`);
+    expect(container.querySelector('[data-msg-id="t1"]')!.textContent).not.toContain('browser_take_screenshot');
+    expect(container.querySelector('[data-msg-id="t2"]')).toBeNull();
+  });
+
+  it("shows a subagent's screenshots under its line in the thread", async () => {
+    messageStore.messagesBySession = {
+      [SID]: [
+        { kind: 'tool_call', id: 'a1', toolName: 'Agent', toolInput: { description: 'Check the UI', subagent_type: 'general-purpose' }, toolUseId: 'tu-agent', uuid: 'u1', pending: false, result: 'Looks fine' },
+        { kind: 'tool_call', id: 's1', toolName: 'mcp__playwright__browser_take_screenshot', toolInput: {}, toolUseId: 'tu-sub', uuid: 'u2', pending: false, images: [SHOT], parentToolUseId: 'tu-agent' },
+      ],
+    };
+    messageStore.setViewMode(SID, 'summary');
+    const { container } = render(OutputPanel, { sessionId: SID });
+    await tick();
+
+    expect(container.querySelector('[data-msg-id="a1"] img')).toHaveAttribute('src', `grove-attachment://image/${SID}/${SHOT.file}`);
+  });
+
+  it('lists the files a turn made in every view', async () => {
+    messageStore.messagesBySession = {
+      [SID]: [{ kind: 'files_made', id: 'f1', files: [{ path: 'shots/home.png', kind: 'image', size: 70, image: SHOT }, { path: 'report.pdf', kind: 'pdf', size: 9 }] }],
+    };
+    for (const mode of ['detailed', 'summary', 'focus'] as const) {
+      messageStore.setViewMode(SID, mode);
+      const { container, unmount } = render(OutputPanel, { sessionId: SID });
+      await tick();
+      expect(container.querySelector('[data-msg-id="f1"]')!.textContent).toContain('report.pdf');
+      unmount();
+    }
+  });
+});

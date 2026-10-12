@@ -2,13 +2,15 @@
   /**
    * A call that started a subagent: one line in every thread view, saying
    * how far it has got. Clicking it opens the subagent's own thread in a
-   * slide-out (SubagentPanel).
+   * slide-out (SubagentPanel). Images its tools returned (screenshots)
+   * show under the line too, so they aren't hidden in the subagent's thread.
    */
   import { messageStore } from '../stores/messages.svelte.js';
   import { backgroundTaskStore } from '../stores/backgroundTask.svelte.js';
   import { subagentPanelStore } from '../stores/subagentPanel.svelte.js';
   import { agentCallInput, threadMessages } from '../lib/message-view.js';
   import { Pulse } from '$lib/components/ui/pulse/index.js';
+  import ImageAttachments from './ImageAttachments.svelte';
 
   let {
     sessionId,
@@ -33,6 +35,7 @@
 
   let thread = $derived(threadMessages(messageStore.getMessages(sessionId), toolUseId));
   let callCount = $derived(thread.reduce((n, m) => n + (m.kind === 'tool_call' ? 1 : 0), 0));
+  let images = $derived(thread.flatMap((m) => (m.kind === 'tool_call' && m.images) || []));
   // A background subagent's call returns at once; its task says it's still at work.
   let running = $derived(pending || backgroundTaskStore.isRunningFor(sessionId, toolUseId));
   let agentType = $derived(agentCallInput(toolInput).agentType);
@@ -63,4 +66,7 @@
     {/if}
     <span class="text-muted-foreground">&rsaquo;</span>
   </button>
+  {#if images.length}
+    <ImageAttachments {sessionId} {images} class="mt-1" />
+  {/if}
 </div>

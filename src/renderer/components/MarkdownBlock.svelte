@@ -7,6 +7,8 @@
   import { writeRichText, encodeCopyText } from '$lib/clipboard.js';
   import { COPY_MARK, isRenderedCopyButton, renderedCode, renderedTable } from '$lib/copy-mark.js';
   import { HIGHLIGHT_MARK, highlightWhenVisible } from '$lib/code-highlight.js';
+  import { localFilePath, openWorktreeFile } from '$lib/worktree-files.js';
+  import { madeFileKind, worktreeFileUrl, worktreeImageType } from '../../shared/attachments.js';
 
   const COPY_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"></rect><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path></svg>`;
 
@@ -43,12 +45,30 @@
     },
   };
 
-  // One-time setup: configured marked instances with custom code and table renderers
+  function escapeAttr(text: string): string {
+    return escapeHtml(text).replace(/"/g, '&quot;');
+  }
+
+  /** Image renderer: an image the agent saved in its worktree (`![shot](shots/home.png)`)
+   *  is written with its path in `data-local-src` and no `src`, so nothing
+   *  loads it against the app's own address. The component points it at the
+   *  thread's worktree once it's on screen. Web images render as usual. */
+  const imageRenderer = {
+    image(this: Renderer, token: Tokens.Image) {
+      const local = localFilePath(token.href);
+      if (local === null || !worktreeImageType(local)) return false;
+      const alt = token.tokens ? this.parser.parseInline(token.tokens, this.parser.textRenderer) : token.text;
+      const title = token.title ? ` title="${escapeAttr(token.title)}"` : '';
+      return `<img data-local-src="${escapeAttr(local)}" alt="${escapeAttr(alt)}"${title}>`;
+    },
+  };
+
+  // One-time setup: configured marked instances with custom code, table and image renderers
   const markedInstance = new Marked({ gfm: true, breaks: true });
-  markedInstance.use({ renderer: { ...codeRenderer(true), ...tableRenderer } });
+  markedInstance.use({ renderer: { ...codeRenderer(true), ...tableRenderer, ...imageRenderer } });
 
   const markedStreaming = new Marked({ gfm: true, breaks: true });
-  markedStreaming.use({ renderer: { ...codeRenderer(false), ...tableRenderer } });
+  markedStreaming.use({ renderer: { ...codeRenderer(false), ...tableRenderer, ...imageRenderer } });
 
   export function renderMarkdown(content: string, opts: { highlight?: boolean } = {}): string {
     const instance = opts.highlight === false ? markedStreaming : markedInstance;
@@ -66,8 +86,10 @@
   /** `streaming`: the content is a live preview that re-renders on every
    *  flush, so skip syntax highlighting; the finalized message gets it. It
    *  is also rendered a block at a time: blocks that are done keep their
-   *  HTML, and each flush re-parses only the block still growing. */
-  let { content, streaming = false }: { content: string; streaming?: boolean } = $props();
+   *  HTML, and each flush re-parses only the block still growing.
+   *  `sessionId`: the thread the text is in. Images and links that name a
+   *  file in its worktree show and open it; without one they do nothing. */
+  let { content, streaming = false, sessionId }: { content: string; streaming?: boolean; sessionId?: string } = $props();
 
   let html = $derived(streaming ? '' : renderMarkdown(content));
   let streamParts = $derived(streaming ? splitStreamingMarkdown(content) : null);
@@ -111,16 +133,55 @@
         return;
       }
       // Links: localhost opens in the Preview tab, the rest in the system
-      // browser. Every other link (relative, `?x`, `#x`, mailto:) does
-      // nothing: followed, it would navigate or reload the app window.
+      // browser. An output file in the thread's worktree (a web page, PDF,
+      // image, video, spreadsheet: madeFileKind) opens from there, a web page
+      // in the Preview tab. Every other link (source files, `?x`, `#x`,
+      // mailto:) does nothing: followed, it would navigate or reload the app
+      // window, and a link the agent wrote shouldn't open a script.
       const anchor = target.closest('a');
       if (!anchor) return;
       e.preventDefault();
       const href = anchor.getAttribute('href');
-      if (href && /^https?:\/\//i.test(href)) openLink(href, e);
+      if (href && /^https?:\/\//i.test(href)) {
+        openLink(href, e);
+        return;
+      }
+      const local = localFilePath(href);
+      if (local !== null && sessionId && madeFileKind(local)) {
+        const sid = sessionId;
+        openWorktreeFile(sid, local)
+          .then((found) => { if (!found) anchor.title = `${local} isn't in this thread's worktree`; })
+          .catch((err) => console.warn(`Could not open ${local}:`, err));
+      }
+    };
+    // An image from the worktree that won't load (gone, or outside it) says so.
+    // Load errors don't bubble, so this listens as they go down.
+    const onError = (e: Event) => {
+      const img = e.target;
+      if (!(img instanceof HTMLImageElement) || img.dataset.localSrc === undefined) return;
+      const note = document.createElement('span');
+      note.className = 'local-image-missing';
+      note.textContent = `Image not found: ${img.dataset.localSrc}`;
+      img.replaceWith(note);
     };
     container.addEventListener('click', onClick);
-    return () => container.removeEventListener('click', onClick);
+    container.addEventListener('error', onError, true);
+    return () => {
+      container.removeEventListener('click', onClick);
+      container.removeEventListener('error', onError, true);
+    };
+  });
+
+  // Point images the agent saved in its worktree at it (imageRenderer), each
+  // time the HTML is drawn again. Without a thread they stay unloaded.
+  $effect(() => {
+    void html;
+    void streamParts;
+    const sid = sessionId;
+    if (!container || !sid) return;
+    for (const img of container.querySelectorAll<HTMLImageElement>('img[data-local-src]:not([src])')) {
+      img.src = worktreeFileUrl(sid, img.dataset.localSrc ?? '');
+    }
   });
 
   // Colour the code blocks once they are on screen (lib/code-highlight), not
@@ -187,6 +248,14 @@
     background: none;
     padding: 0;
     font-size: 0.85em;
+  }
+  .markdown-content :global(img) {
+    max-width: 100%;
+    max-height: 32rem;
+  }
+  .markdown-content :global(.local-image-missing) {
+    font-size: 0.85em;
+    color: var(--muted-foreground);
   }
   .markdown-content :global(blockquote) {
     border-left: 3px solid var(--quote-border);

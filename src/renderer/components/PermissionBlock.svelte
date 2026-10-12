@@ -217,7 +217,7 @@
       <Button
         variant="subtle"
         size="2xs"
-        onclick={() => markdownPreviewStore.show(planText, 'Proposed plan')}
+        onclick={() => markdownPreviewStore.show(planText, 'Proposed plan', sessionId)}
         title="Read the plan full-width"
       >
         <svg fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>
@@ -281,7 +281,7 @@
 
     {#if expanded}
       <div class="mt-1 text-sm text-foreground bg-card/50 border border-border p-3 max-h-64 overflow-y-auto">
-        <MarkdownBlock content={planText} />
+        <MarkdownBlock content={planText} {sessionId} />
       </div>
     {/if}
   {:else if !isEditTool && !isBashTool && !isExitPlanMode}

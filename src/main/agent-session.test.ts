@@ -130,8 +130,27 @@ const attachments = vi.hoisted(() => ({
     const { imageData, ...rest } = event;
     return { ...rest, images: imageData.map((_: unknown, i: number) => ({ file: `tool${i}.png` })) };
   }),
+  storeMadeFiles: vi.fn(async (_id: string, found: { path: string; kind: string; size: number }[]) =>
+    found.map(({ path, kind, size }) => ({ path, kind, size }))),
 }));
 vi.mock('./attachments.js', () => attachments);
+
+// The worktree watch for the files a turn makes: each test sets what a turn finds.
+const turnFiles = vi.hoisted(() => ({
+  found: [] as { path: string; absPath: string; kind: string; size: number }[],
+  instances: [] as { root: string; closed: boolean; finished: boolean; edited: string[] }[],
+}));
+vi.mock('./turn-files.js', () => ({
+  TurnFiles: class {
+    closed = false;
+    finished = false;
+    edited: string[] = [];
+    constructor(public root: string) { turnFiles.instances.push(this); }
+    noteEdited(p: string) { this.edited.push(p); }
+    close() { this.closed = true; }
+    async finish() { this.finished = true; this.close(); return { files: turnFiles.found, more: 0 }; }
+  },
+}));
 vi.mock('./credentials.js', () => ({ markApiKeyRejected: vi.fn() }));
 
 // ─── Mock Adapter ───
@@ -303,6 +322,8 @@ beforeEach(() => {
   mockAdapter = new MockAdapter();
   extraAdapters = {};
   vi.clearAllMocks();
+  turnFiles.found = [];
+  turnFiles.instances = [];
 });
 
 describe('AgentSessionManager.createSession()', () => {
@@ -4214,5 +4235,85 @@ describe('AgentSessionManager.reconnectDownMcpServers', () => {
     expect(b.handle.listMcpServers).not.toHaveBeenCalled();
     await sessionManager.destroySession('mcp-gone-a');
     await sessionManager.destroySession('mcp-gone-b');
+  });
+});
+
+describe('AgentSessionManager files a turn makes', () => {
+  async function startSession(id: string) {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id, branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(sessionManager.getSession(id)?.queryHandle).toBeTruthy());
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 'provider-1', model: 'mock-model', tools: [] });
+    await vi.waitFor(() => expect(sessionManager.getSession(id)?.status).toBe('running'));
+    return { win, session: sessionManager.getSession(id)! };
+  }
+
+  const eventsSent = (win: ReturnType<typeof makeMockWindow>) =>
+    win._send.mock.calls.map(([, event]: [string, AgentEvent | undefined]) => event).filter((e: unknown): e is AgentEvent => !!e && typeof e === 'object' && 'type' in e);
+
+  it('watches the worktree from the prompt and lists what it made just before the result', async () => {
+    const { win, session } = await startSession('files-made');
+    turnFiles.found = [{ path: 'shots/home.png', absPath: '/repo/shots/home.png', kind: 'image', size: 70 }];
+
+    await sessionManager.sendMessage('files-made', 'take a screenshot');
+    expect(turnFiles.instances).toHaveLength(1);
+    expect(turnFiles.instances[0].root).toBe(session.worktreePath);
+    // A second message in the same turn keeps the same watch.
+    await sessionManager.sendMessage('files-made', 'and the settings page');
+    expect(turnFiles.instances).toHaveLength(1);
+
+    mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false });
+    await vi.waitFor(() => expect(eventsSent(win).some((e: AgentEvent) => e.type === 'result')).toBe(true));
+
+    const types = eventsSent(win).map((e: AgentEvent) => e.type);
+    expect(types.indexOf('files_made')).toBe(types.indexOf('result') - 1);
+    expect(eventsSent(win).find((e: AgentEvent) => e.type === 'files_made')).toEqual({
+      type: 'files_made', files: [{ path: 'shots/home.png', kind: 'image', size: 70 }],
+    });
+    expect(attachments.storeMadeFiles).toHaveBeenCalledWith('files-made', turnFiles.found);
+    expect(turnFiles.instances[0].finished).toBe(true);
+    expect(session.turnFiles).toBeNull();
+    // Kept with the history, so it shows again after a restart.
+    expect(sessionManager.getEventHistory('files-made').some((e) => e.type === 'files_made')).toBe(true);
+
+    await sessionManager.destroySession('files-made');
+  });
+
+  it('sends nothing for a turn that made no files', async () => {
+    const { win } = await startSession('files-none');
+    await sessionManager.sendMessage('files-none', 'explain the code');
+    mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false });
+    await vi.waitFor(() => expect(eventsSent(win).some((e: AgentEvent) => e.type === 'result')).toBe(true));
+
+    expect(eventsSent(win).some((e: AgentEvent) => e.type === 'files_made')).toBe(false);
+    await sessionManager.destroySession('files-none');
+  });
+
+  it('watches a turn the agent starts itself, and notes files it edited in place', async () => {
+    await startSession('files-own-turn');
+    mockAdapter.control!.emitEvent({ type: 'assistant_text', text: 'A background task finished.', uuid: 'u1' });
+    mockAdapter.control!.emitEvent({
+      type: 'assistant_tool_use', toolName: 'Edit', toolUseId: 'tu1', uuid: 'u2',
+      toolInput: { file_path: '/repo/index.html', old_string: 'a', new_string: 'b' },
+    });
+    mockAdapter.control!.emitEvent({
+      type: 'assistant_tool_use', toolName: 'Write', toolUseId: 'tu2', uuid: 'u3',
+      toolInput: { file_path: '/repo/report.html', content: '<h1>hi</h1>' },
+    });
+    await vi.waitFor(() => expect(turnFiles.instances[0]?.edited).toEqual(['/repo/index.html']));
+
+    await sessionManager.destroySession('files-own-turn');
+  });
+
+  it('stops watching when the thread closes mid-turn', async () => {
+    await startSession('files-closed');
+    await sessionManager.sendMessage('files-closed', 'build it');
+    const watch = turnFiles.instances[0];
+
+    await sessionManager.destroySession('files-closed');
+    expect(watch.closed).toBe(true);
+    expect(watch.finished).toBe(false);
   });
 });

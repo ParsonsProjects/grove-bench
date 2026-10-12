@@ -7,6 +7,7 @@
   import ImageAttachments from './ImageAttachments.svelte';
   import type { StoredImage } from '../../shared/types.js';
   import { toolViewOf, type ToolView } from '../../shared/tool-view.js';
+  import { worktreeFileUrl, worktreeImageType } from '../../shared/attachments.js';
 
   let {
     sessionId,
@@ -36,6 +37,13 @@
   } = $props();
 
   let view = $derived(toolViewOf({ toolName, toolInput, toolView }));
+  // An image file the call wrote (an SVG, mostly: Write writes text), as it
+  // is in the worktree now.
+  let writtenImage = $derived(
+    view.kind === 'edit' && view.path && !pending && !isError && worktreeImageType(view.path)
+      ? { name: view.path, url: worktreeFileUrl(sessionId, view.path) }
+      : null,
+  );
 </script>
 
 {#if view.kind === 'shell'}
@@ -51,4 +59,7 @@
 {/if}
 {#if images?.length}
   <ImageAttachments {sessionId} {images} class="pl-4 mb-1" />
+{/if}
+{#if writtenImage}
+  <ImageAttachments {sessionId} images={[writtenImage]} class="pl-4 mb-1" />
 {/if}

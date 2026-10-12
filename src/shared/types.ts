@@ -242,6 +242,9 @@ export type AgentEvent =
    *  the fields present change. */
   | { type: 'tool_update'; toolUseId: string; toolName?: string; toolInput?: unknown; toolCategory?: ToolCategory; toolView?: ToolView }
   | { type: 'tool_result'; toolUseId: string; content: string; isError?: boolean; images?: StoredImage[]; parentToolUseId?: string }
+  /** Files the agent made during the turn, sent just before its result.
+   *  `more`: how many others were left off the list. */
+  | { type: 'files_made'; files: MadeFile[]; more?: number }
   /** `totalCostUsd`: what this turn cost, in USD as the agent estimates it
    *  (absent when it doesn't say). `sessionCostUsd`: the conversation's
    *  running total the agent reported with it, when it reports one; a turn
@@ -950,6 +953,33 @@ export interface StoredImage {
   name?: string;
 }
 
+// ─── Files the agent made ───
+
+/** What kind of file the agent made in a turn, which decides how the thread
+ *  shows it: images as thumbnails, the rest as chips that open them. */
+export type MadeFileKind = 'image' | 'pdf' | 'html' | 'video' | 'audio' | 'data' | 'document';
+
+/** A file the agent created or changed in its worktree during a turn, by any
+ *  route: a script it ran, an MCP tool, Write (main/turn-files.ts). */
+export interface MadeFile {
+  /** Path relative to the worktree, with forward slashes. */
+  path: string;
+  kind: MadeFileKind;
+  size: number;
+  /** A copy of an image, saved like a tool's images, so the thread shows it
+   *  as it was that turn. Images without one load from the worktree. */
+  image?: StoredImage;
+}
+
+/** What opening a worktree file did: opened it in its default app, showed it
+ *  in its folder, or (a web page) handed back the URL to open in the Preview
+ *  tab. `missing` when it's gone or outside the worktree. */
+export type OpenWorktreeFileResult =
+  | { kind: 'opened' }
+  | { kind: 'shown' }
+  | { kind: 'preview'; url: string }
+  | { kind: 'missing' };
+
 // ─── File Attachment ───
 
 /** A file attached to a message that goes neither as text nor as an image:
@@ -1156,6 +1186,9 @@ export interface GroveBenchAPI {
   /** Open a file attached to a message (PDFs and audio in their default app),
    *  or show it in its folder for other types. False when it's gone. */
   openAttachedFile(sessionId: string, file: string): Promise<boolean>;
+  /** Open a file in the conversation's worktree that the agent made or
+   *  linked to (main/worktree-files.ts). */
+  openWorktreeFile(sessionId: string, filePath: string): Promise<OpenWorktreeFileResult>;
   respondToPermission(sessionId: string, decision: PermissionDecision): Promise<boolean>;
   /** Answer an MCP elicitation. False when it already resolved or timed out. */
   respondToElicitation(sessionId: string, requestId: string, response: McpElicitationResponse): Promise<boolean>;
@@ -1936,6 +1969,7 @@ export const IPC = {
   AGENT_EVENT: 'agent:event',          // agent:event:{sessionId}
   AGENT_SEND: 'agent:send',
   ATTACHMENT_OPEN: 'attachment:open',
+  WORKTREE_FILE_OPEN: 'worktree:openFile',
   AGENT_PERMISSION: 'agent:permission',
   AGENT_HISTORY: 'agent:history',
   AGENT_HISTORY_PAGE: 'agent:history-page',

@@ -73,6 +73,74 @@ describe('MarkdownBlock links', () => {
     const { container } = render(MarkdownBlock, { content: '<form action="?x"><button>Go</button></form>' });
     expect(container.querySelector('form')).toBeNull();
   });
+
+  it("opens a link to a file in the thread's worktree from there", async () => {
+    const open = vi.mocked(window.groveBench.openWorktreeFile);
+    open.mockClear();
+    const { container } = render(MarkdownBlock, {
+      content: '[report](<out/test report.pdf>) and [anchor](#top) and [mail](mailto:a@b.c) and [code](src/app.ts) and [script](run.bat)',
+      sessionId: 's1',
+    });
+    for (const a of container.querySelectorAll('a')) await fireEvent.click(a);
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(open).toHaveBeenCalledWith('s1', 'out/test report.pdf');
+  });
+
+  it('opens no file without a thread', async () => {
+    const open = vi.mocked(window.groveBench.openWorktreeFile);
+    open.mockClear();
+    const { container } = render(MarkdownBlock, { content: '[report](out/report.pdf)' });
+    await fireEvent.click(container.querySelector('a')!);
+    expect(open).not.toHaveBeenCalled();
+  });
+});
+
+describe('MarkdownBlock images from the worktree', () => {
+  it("loads an image the agent saved from the thread's worktree", async () => {
+    const { container } = render(MarkdownBlock, {
+      content: '![Home page](shots/home.png "After") and ![chart](C:\\wt\\chart.svg)',
+      sessionId: 's1',
+    });
+    await tick();
+    const [home, chart] = container.querySelectorAll('img');
+    expect(home.getAttribute('src')).toBe('grove-attachment://worktree/s1/shots%2Fhome.png');
+    expect(home.getAttribute('alt')).toBe('Home page');
+    expect(home.getAttribute('title')).toBe('After');
+    expect(chart.getAttribute('src')).toBe(`grove-attachment://worktree/s1/${encodeURIComponent('C:\\wt\\chart.svg')}`);
+  });
+
+  it('leaves it unloaded without a thread, rather than loading it against the app', async () => {
+    const { container } = render(MarkdownBlock, { content: '![Home](shots/home.png)' });
+    await tick();
+    const img = container.querySelector('img')!;
+    expect(img.hasAttribute('src')).toBe(false);
+    expect(img.dataset.localSrc).toBe('shots/home.png');
+  });
+
+  it('renders web images and local files that are not images as before', async () => {
+    const { container } = render(MarkdownBlock, {
+      content: '![logo](https://example.com/logo.png) ![doc](report.pdf)',
+      sessionId: 's1',
+    });
+    await tick();
+    const [web, doc] = container.querySelectorAll('img');
+    expect(web.getAttribute('src')).toBe('https://example.com/logo.png');
+    expect(doc.getAttribute('src')).toBe('report.pdf');
+  });
+
+  it("says so when the image isn't there", async () => {
+    const { container } = render(MarkdownBlock, { content: '![Home](shots/gone.png)', sessionId: 's1' });
+    await tick();
+    container.querySelector('img')!.dispatchEvent(new Event('error'));
+    expect(container.querySelector('img')).toBeNull();
+    expect(container.textContent).toContain('Image not found: shots/gone.png');
+  });
+
+  it('points images at the worktree while the reply streams too', async () => {
+    const { container } = render(MarkdownBlock, { content: 'Done.\n\n![Home](shots/home.png)', sessionId: 's1', streaming: true });
+    await tick();
+    expect(container.querySelector('img')?.getAttribute('src')).toBe('grove-attachment://worktree/s1/shots%2Fhome.png');
+  });
 });
 
 describe('MarkdownBlock while streaming', () => {

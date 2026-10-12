@@ -6,7 +6,9 @@ import { userEventText } from '../shared/prompt-text.js';
 import { applyRateLimit } from '../shared/usage.js';
 import { loadUsageSnapshot, saveUsageSnapshot } from './app-state.js';
 import { handoffTranscript, isSlashCommand, lastAgentChange, pendingHandoff } from './agent-handoff.js';
-import { attachmentsFolder, imagePath, pruneAttachments, removeAttachments, saveFiles, saveImages, storeToolImages } from './attachments.js';
+import { attachmentsFolder, imagePath, pruneAttachments, removeAttachments, saveFiles, saveImages, storeMadeFiles, storeToolImages } from './attachments.js';
+import { TurnFiles } from './turn-files.js';
+import { toolViewOf } from '../shared/tool-view.js';
 import { logger } from './logger.js';
 import { perfSteps } from './perf-steps.js';
 import { perfLine } from './perf-log.js';
@@ -593,8 +595,13 @@ class AgentSessionManager {
           || event.type === 'thinking' || event.type === 'partial_text') && !subagentParent(event)) {
           session.turnHandle = handle;
           turnActive(session.limits);
+          this.watchTurnFiles(session);
         }
-        if (event.type === 'assistant_tool_use') toolCallSeen(session.limits, event.toolUseId);
+        if (event.type === 'assistant_tool_use') {
+          toolCallSeen(session.limits, event.toolUseId);
+          const view = toolViewOf(event);
+          if (view.kind === 'edit' && view.edits?.length && view.path) session.turnFiles?.noteEdited(view.path);
+        }
 
         // Intercept system_init to capture provider session ID and update status
         if (event.type === 'system_init') {
@@ -674,6 +681,8 @@ class AgentSessionManager {
         // Track result for completion callback
         if (event.type === 'result') {
           if (session.turnHandle === handle) session.turnHandle = null;
+          // The files the turn made go just ahead of its result.
+          await this.reportTurnFiles(session, emit);
           // Adds the turn's cost to the thread's and today's spend.
           turnEnded(session.limits, event);
           this.runHeldMcpReconnects(session);
@@ -729,6 +738,9 @@ class AgentSessionManager {
     }
 
     if (session.turnHandle === handle) session.turnHandle = null;
+    // A turn cut short reports no files. Only this run's: a newer one (after
+    // a sleep) may be watching its own turn.
+    if (session.queryHandle === handle || session.destroying) this.stopWatchingTurnFiles(session);
 
     // If the user clicked Stop, don't mark the session as stopped or fire
     // process_exit — stopQuery will restart the query loop.
@@ -787,6 +799,34 @@ class AgentSessionManager {
     }).catch(err => {
       logger.warn(`[memory-autosave] Auto-save failed for session ${id}: ${err}`);
     });
+  }
+
+  /** Watch the worktree for the files this turn makes, unless a watch for
+   *  it is already running (a second message mid-turn). */
+  private watchTurnFiles(session: ManagedSession): void {
+    if (session.turnFiles || session.destroying || !session.worktreePath) return;
+    session.turnFiles = new TurnFiles(session.worktreePath);
+  }
+
+  private stopWatchingTurnFiles(session: ManagedSession): void {
+    session.turnFiles?.close();
+    session.turnFiles = null;
+  }
+
+  /** At the end of a turn: list the files it made in the thread, ahead of
+   *  its result. Never holds the result up for long, nor fails the turn. */
+  private async reportTurnFiles(session: ManagedSession, emit: Emit): Promise<void> {
+    const turnFiles = session.turnFiles;
+    session.turnFiles = null;
+    if (!turnFiles) return;
+    try {
+      const { files, more } = await turnFiles.finish();
+      if (files.length === 0) return;
+      const made = await storeMadeFiles(session.id, files);
+      emit({ type: 'files_made', files: made, ...(more > 0 && { more }) });
+    } catch (err) {
+      logger.warn(`[turn-files] session=${session.id} could not list the turn's files:`, err);
+    }
   }
 
   /**
@@ -980,6 +1020,7 @@ class AgentSessionManager {
     try {
       session.turnHandle = queryHandle;
       promptSent(session.limits);
+      this.watchTurnFiles(session);
       // Once per query: a second message before the reply doesn't repeat it,
       // but a query that failed to start and was replaced gets it again.
       const withNote = handoffNote !== null && session.handoffSentTo !== queryHandle;
@@ -1594,6 +1635,7 @@ class AgentSessionManager {
     // the session's as retired, so the agent exiting below is neither an error
     // nor the end of the conversation.
     session.queryHandle = null;
+    this.stopWatchingTurnFiles(session);
     const abortController = session.abortController;
     session.abortController = new AbortController();
     if (!session.window.isDestroyed()) {
@@ -1770,6 +1812,8 @@ class AgentSessionManager {
     try {
       session.queryHandle?.close();
     } catch { /* may already be closed */ }
+    // Before the worktree can be removed: on Windows a watch holds its folder.
+    this.stopWatchingTurnFiles(session);
 
     // Abort any remaining in-flight operations
     session.abortController.abort();

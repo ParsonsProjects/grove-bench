@@ -71,6 +71,8 @@ const api: GroveBenchAPI = {
   ) => ipcRenderer.send(IPC.AGENT_SEND, sessionId, content, images, files),
   openAttachedFile: (sessionId: string, file: string) =>
     ipcRenderer.invoke(IPC.ATTACHMENT_OPEN, sessionId, file),
+  openWorktreeFile: (sessionId: string, filePath: string) =>
+    ipcRenderer.invoke(IPC.WORKTREE_FILE_OPEN, sessionId, filePath),
   respondToPermission: (sessionId: string, decision: PermissionDecision) =>
     ipcRenderer.invoke(IPC.AGENT_PERMISSION, sessionId, decision),
   respondToElicitation: (sessionId: string, requestId: string, response: import('../shared/types.js').McpElicitationResponse) =>
