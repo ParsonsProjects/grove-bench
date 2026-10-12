@@ -814,7 +814,7 @@ describe('Sidebar clean-up dialog', () => {
     expect(screen.queryByLabelText(/Recent one/)).not.toBeInTheDocument();
     await fireEvent.click(screen.getByLabelText(/Open one/));
 
-    await fireEvent.click(screen.getByRole('button', { name: '7' }));
+    await fireEvent.click(screen.getByRole('radio', { name: '7' }));
 
     // The new candidate is checked and preselected; the earlier untick survives.
     await waitFor(() => expect(screen.getByLabelText(/Recent one/)).toBeChecked());
@@ -832,7 +832,7 @@ describe('Sidebar clean-up dialog', () => {
 
     await openDialog();
     await waitFor(() => expect(mockGroveBench.getPrs).toHaveBeenCalled());
-    await fireEvent.click(screen.getByRole('button', { name: '7' }));
+    await fireEvent.click(screen.getByRole('radio', { name: '7' }));
     await waitFor(() => expect(screen.getByLabelText(/New 3/)).toBeInTheDocument());
     await tick();
     // None has finished, so every call so far is still running.

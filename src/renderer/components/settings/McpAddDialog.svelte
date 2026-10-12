@@ -9,6 +9,8 @@
   import { Textarea } from '$lib/components/ui/textarea/index.js';
   import { Label } from '$lib/components/ui/label/index.js';
   import * as Select from '$lib/components/ui/select/index.js';
+  import * as Segmented from '$lib/components/ui/segmented/index.js';
+  import { Notice } from '$lib/components/ui/notice/index.js';
   import { parseMcpJson } from '$lib/mcp-json.js';
   import type { McpConfigScope } from '../../../shared/types.js';
 
@@ -150,20 +152,15 @@
     </Dialog.Header>
 
     <div class="flex flex-col gap-4 min-h-0 overflow-y-auto -mx-1 px-1">
-      <div class="flex items-center border border-border text-xs self-start" role="group" aria-label="How to add">
-        <button
-          type="button"
-          aria-pressed={addMode === 'form'}
-          onclick={() => (addMode = 'form')}
-          class="px-2.5 py-1 transition-colors {addMode === 'form' ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground'}"
-        >Form</button>
-        <button
-          type="button"
-          aria-pressed={addMode === 'json'}
-          onclick={() => (addMode = 'json')}
-          class="px-2.5 py-1 transition-colors {addMode === 'json' ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground'}"
-        >Paste JSON</button>
-      </div>
+      <Segmented.Root
+        value={addMode}
+        onValueChange={(v) => { if (v === 'form' || v === 'json') addMode = v; }}
+        aria-label="How to add"
+        class="self-start"
+      >
+        <Segmented.Item value="form">Form</Segmented.Item>
+        <Segmented.Item value="json">Paste JSON</Segmented.Item>
+      </Segmented.Root>
 
       {#if addMode === 'form'}
         <div class="grid grid-cols-2 gap-3">
@@ -301,7 +298,7 @@
       </div>
 
       {#if addError}
-        <div class="text-xs text-destructive bg-destructive/10 px-3 py-2 whitespace-pre-wrap" role="alert">{addError}</div>
+        <Notice tone="danger"><p class="whitespace-pre-wrap">{addError}</p></Notice>
       {/if}
     </div>
 

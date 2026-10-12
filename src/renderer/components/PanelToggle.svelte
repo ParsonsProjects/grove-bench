@@ -3,6 +3,7 @@
   import PanelLeftOpenIcon from '@lucide/svelte/icons/panel-left-open';
   import type { CollapsiblePanel } from '../../shared/types.js';
   import { panelStore } from '../stores/panels.svelte.js';
+  import { Button } from '$lib/components/ui/button/index.js';
 
   /** Folds a sidebar down to its rail, or opens it again. */
   let { panel, label, class: className = '' }: {
@@ -16,18 +17,19 @@
   let action = $derived(`${collapsed ? 'Expand' : 'Collapse'} ${label}`);
 </script>
 
-<button
-  type="button"
+<Button
+  variant="quiet"
+  size="icon-xs"
   onclick={() => panelStore.toggle(panel)}
   aria-expanded={!collapsed}
   aria-label={action}
   title={action}
   data-panel-toggle={panel}
-  class="shrink-0 p-1 text-muted-foreground/70 hover:text-foreground hover:bg-accent/40 transition-colors {className}"
+  class={className}
 >
   {#if collapsed}
-    <PanelLeftOpenIcon class="w-3.5 h-3.5" aria-hidden="true" />
+    <PanelLeftOpenIcon aria-hidden="true" />
   {:else}
-    <PanelLeftCloseIcon class="w-3.5 h-3.5" aria-hidden="true" />
+    <PanelLeftCloseIcon aria-hidden="true" />
   {/if}
-</button>
+</Button>

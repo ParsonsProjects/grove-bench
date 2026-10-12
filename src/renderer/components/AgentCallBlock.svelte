@@ -8,6 +8,7 @@
   import { backgroundTaskStore } from '../stores/backgroundTask.svelte.js';
   import { subagentPanelStore } from '../stores/subagentPanel.svelte.js';
   import { agentCallInput, threadMessages } from '../lib/message-view.js';
+  import { Pulse } from '$lib/components/ui/pulse/index.js';
 
   let {
     sessionId,
@@ -48,18 +49,18 @@
     {#if agentType}
       <span class="text-muted-foreground shrink-0">{agentType}</span>
     {/if}
-    <span class="text-muted-foreground/70 truncate flex-1">{summary ?? ''}</span>
+    <span class="text-muted-foreground truncate flex-1">{summary ?? ''}</span>
     {#if callCount > 0}
-      <span class="text-muted-foreground/70 shrink-0">{callCount} {callCount === 1 ? 'call' : 'calls'}</span>
+      <span class="text-muted-foreground shrink-0">{callCount} {callCount === 1 ? 'call' : 'calls'}</span>
     {/if}
     {#if running}
-      <span class="w-2.5 h-2.5 bg-primary animate-pulse shrink-0"></span>
+      <Pulse />
       <span class="sr-only">running</span>
     {:else if isError}
       <span class="text-destructive">error</span>
     {:else if result !== undefined}
       <span class="text-muted-foreground">done</span>
     {/if}
-    <span class="text-muted-foreground/40">&rsaquo;</span>
+    <span class="text-muted-foreground">&rsaquo;</span>
   </button>
 </div>

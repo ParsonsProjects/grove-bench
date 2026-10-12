@@ -10,6 +10,9 @@
   import type { AgentSpriteState } from '../lib/agent-sprite.js';
   import HighlightedText from './HighlightedText.svelte';
   import StatusDot from './StatusDot.svelte';
+  import { Kbd } from '$lib/components/ui/kbd/index.js';
+  import { SectionLabel } from '$lib/components/ui/section-label/index.js';
+  import { menuPanel } from '$lib/components/ui/menu/index.js';
   import type { CrossSessionSearchHit } from '../../shared/types.js';
 
   let { onclose }: { onclose: (selectedId?: string) => void } = $props();
@@ -200,7 +203,7 @@
   onmousedown={handleBackdropClick}
   onkeydown={handleKeydown}
 >
-  <div class="w-full max-w-lg h-fit bg-popover border border-border shadow-2xl flex flex-col">
+  <div class={menuPanel({ class: 'w-full max-w-lg h-fit py-0 flex flex-col' })}>
     <div class="px-3 py-2 border-b border-border">
       <input
         bind:this={inputEl}
@@ -216,7 +219,7 @@
         <div class="px-3 py-4 text-xs text-muted-foreground text-center">No matches found</div>
       {:else}
         {#if sessionResults.length > 0}
-          <div class="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wide text-muted-foreground/50">Threads</div>
+          <SectionLabel class="px-3 pt-2 pb-1">Threads</SectionLabel>
           {#each sessionResults as entry, i}
             {@const isActive = store.activeSessionId === entry.id}
             <button
@@ -231,7 +234,7 @@
                 <span class="text-muted-foreground/40 shrink-0">/</span>
                 <span class="font-medium truncate min-w-0"><HighlightedText text={entry.label} {query} words /></span>
                 {#if isActive}
-                  <span class="ml-auto text-muted-foreground/40 text-[10px]">active</span>
+                  <span class="ml-auto text-muted-foreground text-micro">active</span>
                 {/if}
               </div>
               {#if entry.firstPrompt}
@@ -242,12 +245,12 @@
         {/if}
 
         {#if query.trim().length >= 2 && (contentHits.length > 0 || contentLoading)}
-          <div class="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wide text-muted-foreground/50 border-t border-border/50 flex items-center gap-2">
+          <SectionLabel class="px-3 pt-2 pb-1 border-t border-border/50 flex items-center gap-2">
             In messages
             {#if contentLoading}
-              <span class="normal-case tracking-normal text-muted-foreground/40">searching…</span>
+              <span class="normal-case tracking-normal font-normal">searching…</span>
             {/if}
-          </div>
+          </SectionLabel>
           {#each contentHits as hit, j (hit.sessionId + ':' + hit.eventIndex)}
             {@const i = sessionResults.length + j}
             {@const src = sessionLabelFor(hit.sessionId)}
@@ -258,7 +261,7 @@
               onmouseenter={() => selectedIndex = i}
             >
               <div class="flex items-center gap-2 min-w-0">
-                <span class="text-[10px] uppercase font-semibold shrink-0 {KIND_COLORS[hit.kind] ?? 'text-muted-foreground'}">{hit.kind}</span>
+                <span class="text-micro uppercase font-semibold shrink-0 {KIND_COLORS[hit.kind] ?? 'text-muted-foreground'}">{hit.kind}</span>
                 <span class="text-muted-foreground shrink-0">{src.repoName}</span>
                 <span class="text-muted-foreground/40 shrink-0">/</span>
                 <span class="font-medium truncate min-w-0">{src.label}</span>
@@ -270,10 +273,10 @@
       {/if}
     </div>
 
-    <div class="px-3 py-1.5 border-t border-border text-[10px] text-muted-foreground/40 flex gap-3">
-      <span>↑↓ navigate</span>
-      <span>↵ open</span>
-      <span>esc close</span>
+    <div class="px-3 py-1.5 border-t border-border text-micro text-muted-foreground flex gap-3">
+      <span class="flex items-center gap-1"><Kbd variant="key">↑</Kbd><Kbd variant="key">↓</Kbd> navigate</span>
+      <span class="flex items-center gap-1"><Kbd variant="key">↵</Kbd> open</span>
+      <span class="flex items-center gap-1"><Kbd variant="key">esc</Kbd> close</span>
     </div>
   </div>
 </div>

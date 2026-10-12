@@ -1,7 +1,10 @@
 // The moment the hero screenshot shows: four conversations on one project,
 // one of them waiting for permission. Shapes match shared/app/Window.svelte.
 
-const COLOR = '#6ec87a';
+import { PALETTE } from '../lib/brand.js';
+
+// The project's colour (the laptop logos and the project square).
+const COLOR = PALETTE.sprout;
 
 const diff = (lines) => ({ add: lines.filter((l) => l[0] === '+').length, del: lines.filter((l) => l[0] === '-').length });
 const file = (path, status, lines) => ({ path, status, diff: lines, ...diff(lines) });
@@ -53,7 +56,7 @@ export function heroWorld() {
         name: 'feat/API-142-jwt-auth',
         state: 'working',
         line: 'Bash: npm test',
-        lineTone: 'blue',
+        lineTone: 'working',
         age: '2m ago',
         model: 'Opus 5.5',
         mode: 'Auto',
@@ -73,7 +76,7 @@ export function heroWorld() {
         name: 'fix/BUG-77-early-logout',
         state: 'permission',
         line: 'Wants to run a command',
-        lineTone: 'amber',
+        lineTone: 'attention',
         age: '4m ago',
         model: 'Sonnet 4.6',
         mode: 'Ask',

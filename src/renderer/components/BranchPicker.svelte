@@ -4,6 +4,11 @@
   import { messageStore } from '../stores/messages.svelte.js';
   import { prStore } from '../stores/pr.svelte.js';
   import { branchPickerRows } from '../lib/branch-picker.js';
+  import { Kbd } from '$lib/components/ui/kbd/index.js';
+  import { menuItem, menuPanel } from '$lib/components/ui/menu/index.js';
+  import { cn } from '$lib/utils.js';
+  import CheckIcon from '@lucide/svelte/icons/check';
+  import PlusIcon from '@lucide/svelte/icons/plus';
 
   let { sessionId, repoPath, currentBranch, direct = false, onclose }: {
     sessionId: string;
@@ -105,7 +110,7 @@
 </script>
 
 <!-- Positioned (and animated) by the parent popover wrapper. -->
-<div class="bg-popover border border-border shadow-xl text-xs w-80">
+<div class={cn(menuPanel(), 'w-80 py-0')}>
   <div class="p-2 border-b border-border">
     <input
       bind:this={inputEl}
@@ -120,7 +125,7 @@
   </div>
 
   {#if direct}
-    <div class="px-2 py-1.5 border-b border-border text-orange-400/80">
+    <div class="px-2 py-1.5 border-b border-border text-amber-500">
       This thread runs in your project folder. Switching changes the branch there too, for your editor and any other thread using that folder.
     </div>
   {/if}
@@ -141,16 +146,16 @@
           onclick={() => switchTo(opt.name, opt.create)}
           onmouseenter={() => highlighted = i}
           disabled={switching}
-          class="w-full text-left px-2 py-1 flex items-center gap-2 transition-colors disabled:opacity-50 {i === active ? 'bg-accent text-foreground' : 'text-muted-foreground'}"
+          class={cn(menuItem(), i === active && 'bg-accent text-accent-foreground')}
           title={opt.create
             ? 'Create this branch from the current commit and switch to it. Uncommitted changes come along.'
             : opt.name}
         >
           <span class="w-3 shrink-0 flex justify-center">
             {#if opt.create}
-              +
+              <PlusIcon class="size-3" aria-hidden="true" />
             {:else if opt.name === currentBranch}
-              <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+              <CheckIcon class="size-3" aria-hidden="true" />
             {/if}
           </span>
           {#if opt.create}
@@ -165,13 +170,13 @@
     {/if}
   </div>
 
-  <div class="px-2 py-1.5 border-t border-border text-[10px]">
+  <div class="flex min-h-7 items-center px-2 py-1.5 border-t border-border text-micro">
     {#if switching}
       <span class="text-muted-foreground">Switching…</span>
     {:else if fetching}
-      <span class="text-muted-foreground/60">Fetching remote branches…</span>
+      <span class="text-muted-foreground">Fetching remote branches…</span>
     {:else}
-      <span class="text-muted-foreground/60">↑↓ to pick, Enter to switch, Esc to close</span>
+      <span class="flex flex-wrap items-center gap-1 text-muted-foreground"><Kbd variant="key">↑</Kbd><Kbd variant="key">↓</Kbd> to pick, <Kbd variant="key">Enter</Kbd> to switch, <Kbd variant="key">Esc</Kbd> to close</span>
     {/if}
   </div>
 </div>

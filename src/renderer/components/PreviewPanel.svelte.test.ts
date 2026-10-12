@@ -75,12 +75,12 @@ describe('PreviewPanel', () => {
     previewStore.applyState('s1', 'agent', page({ url: 'http://localhost:5173/login', size: { width: 1280, height: 800 }, lastAction: { text: 'Clicked <button> "sign in"', at: Date.now() } }));
     render(PreviewPanel, { sessionId: 's1', active: true });
     // The agent's first action switched the tab to its page.
-    expect(screen.getByRole('button', { name: /Agent's/ })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('radio', { name: /Agent's/ })).toHaveAttribute('aria-checked', 'true');
     expect(screen.getByText('1280×800')).toBeInTheDocument();
     expect(screen.getByText(/Clicked <button> "sign in"/)).toBeInTheDocument();
     await fireEvent.click(screen.getByRole('button', { name: /Open in yours/ }));
     expect(mockGroveBench.previewNavigate).toHaveBeenCalledWith('s1', 'user', 'http://localhost:5173/login');
-    await waitFor(() => expect(screen.getByRole('button', { name: /Yours/ })).toHaveAttribute('aria-pressed', 'true'));
+    await waitFor(() => expect(screen.getByRole('radio', { name: /Yours/ })).toHaveAttribute('aria-checked', 'true'));
   });
 
   it("explains the agent's empty page and lets you open a seen URL for it", async () => {

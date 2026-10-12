@@ -41,6 +41,9 @@
   import { isTempBranch } from '../shared/temp-branch.js';
   import { draftStore } from './stores/draft.svelte.js';
   import DraftPane from './components/DraftPane.svelte';
+  import { Button } from '$lib/components/ui/button/index.js';
+  import { Notice } from '$lib/components/ui/notice/index.js';
+  import { Pulse } from '$lib/components/ui/pulse/index.js';
 
   let showAnalyticsConsent = $state(false);
   // Loaded the first time it opens (Ctrl+R or the search button).
@@ -82,15 +85,18 @@
   let openTabs = $derived(store.sessions.filter((s) => store.isOpenTab(s)));
 
   async function restoreApp() {
-    await restoreWorktrees();
+    const restoredIds = await restoreWorktrees();
 
     // Previously-open tabs come back in the Conversations list
     const persistedOpenTabs = await window.groveBench.getOpenTabs();
     const openSet = new Set(persistedOpenTabs);
 
     // Close sessions that the main process still considers live (running or
-    // asleep) but that were closed before reload.
+    // asleep) but that were closed before reload. Only restored ones: a
+    // thread started while the restore ran isn't in the saved tabs yet, and
+    // closing it here dropped it from the Threads list.
     for (const session of store.sessions) {
+      if (!restoredIds.has(session.id)) continue;
       if ((session.status === 'running' || session.status === 'sleeping') && !openSet.has(session.id)) {
         store.updateStatus(session.id, 'stopped');
         window.groveBench.closeSession(session.id).catch(() => {});
@@ -461,16 +467,12 @@
 
 {#snippet crashed(what: string, error: unknown, reset: () => void)}
   <div class="flex-1 h-full flex items-center justify-center p-6 text-center">
-    <div class="max-w-md border border-destructive/60 bg-destructive/10 p-4">
-      <p class="text-sm text-foreground mb-1">{what} hit an error.</p>
-      <p class="text-xs text-muted-foreground mb-3 break-words">{error instanceof Error ? error.message : String(error)}</p>
-      <button
-        onclick={reset}
-        class="text-xs px-3 py-1.5 bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
-      >
-        Reload view
-      </button>
-    </div>
+    <Notice tone="danger" title="{what} hit an error." class="max-w-md text-left">
+      {#snippet actions()}
+        <Button size="xs" onclick={reset}>Reload view</Button>
+      {/snippet}
+      <p class="break-words">{error instanceof Error ? error.message : String(error)}</p>
+    </Notice>
   </div>
 {/snippet}
 
@@ -569,7 +571,7 @@
                   <button type="button" class="absolute inset-0 z-30 cursor-default" aria-label="Skip the wake-up" onclick={() => wakeScene.end()}></button>
                 {/if}
               {:else}
-                <div class="w-4 h-4 bg-primary animate-pulse relative z-10"></div>
+                <Pulse class="size-4 relative z-10" />
                 <span class="ml-3 text-sm relative z-10">Starting agent...</span>
               {/if}
             </div>

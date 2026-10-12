@@ -67,7 +67,8 @@
     return (hash(a, b) % 10000) / 10000;
   }
 
-  // Blue pixels — snapped to the same 6px grid, dissolve left to right
+  // Sky pixels (the palette's sky: the title bar is the sky over the
+  // grove), snapped to the same 6px grid, dissolve left to right
   const bluePixels: { left: number; top: number; opacity: number; delay: number }[] = [];
   for (let i = 0; i < 40; i++) {
     const raw = (i / 40);
@@ -102,7 +103,7 @@
       }
 
       const isBlue = rand(x * 3, y * 7) > 0.75;
-      const color = isBlue ? '#6888aa' : 'var(--pixel-ink)';
+      const color = isBlue ? 'var(--pixel-sky)' : 'var(--pixel-ink)';
       const opacity = isBlue ? 0.02 : 0.025;
 
       greyPixels.push({
@@ -123,7 +124,7 @@
       left,
       top,
       opacity: isBlue ? 0.015 : 0.02,
-      color: isBlue ? '#6888aa' : 'var(--pixel-ink)',
+      color: isBlue ? 'var(--pixel-sky)' : 'var(--pixel-ink)',
     });
   }
 </script>
@@ -145,6 +146,7 @@
         width: 4px; height: 4px;
         left: {p.left}px;
         top: {p.top}px;
+        background: var(--pixel-sky);
         --peak-opacity: {p.opacity};
         animation-delay: {p.delay}s;
       "
@@ -221,9 +223,15 @@
     -webkit-app-region: no-drag;
   }
   .titlebar-pixel {
-    background: #4a7aaa;
     opacity: 0;
     animation: titlebar-glow 5s ease-in-out infinite;
+  }
+  /* Still, at half their peak, when the system asks for less motion. */
+  @media (prefers-reduced-motion: reduce) {
+    .titlebar-pixel {
+      animation: none;
+      opacity: calc(var(--peak-opacity, 0.1) / 2);
+    }
   }
   @keyframes titlebar-glow {
     0%, 100% { opacity: 0; }

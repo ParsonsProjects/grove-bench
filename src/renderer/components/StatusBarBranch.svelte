@@ -12,6 +12,8 @@
   import { buildCreatePrPrompt } from '../lib/pr-prompt.js';
   import { resolveBaseBranch } from '../lib/base-branch.js';
   import { lazyComponent } from '../lib/lazy-component.js';
+  import { Button } from '$lib/components/ui/button/index.js';
+  import { menuItem } from '$lib/components/ui/menu/index.js';
   import BranchPicker from './BranchPicker.svelte';
   import CopyButton from './CopyButton.svelte';
   import StatusBarPopover from './StatusBarPopover.svelte';
@@ -144,17 +146,17 @@
     {#if sessionBranch}
       <div class="flex items-center gap-1 min-w-0">
         {#if sessionRepoPath}
-          <span class="hidden @3xl:inline text-muted-foreground/50 truncate max-w-28" title={sessionRepoPath}>
+          <span class="hidden @3xl:inline text-muted-foreground truncate max-w-28" title={sessionRepoPath}>
             {store.repoDisplayName(sessionRepoPath)}
           </span>
           <span class="hidden @3xl:inline text-muted-foreground/30 shrink-0">/</span>
         {/if}
-        <StatusBarPopover bind:open={branchPickerOpen} anchored={false} animate panelClass="" class="flex min-w-0">
+        <StatusBarPopover bind:open={branchPickerOpen} anchored={false} animate surface="none" panelClass="" class="flex min-w-0">
           {#snippet trigger()}
             <button
               onclick={() => branchPickerOpen = !branchPickerOpen}
               disabled={isRunning}
-              class="text-muted-foreground/70 hover:text-foreground truncate max-w-40 transition-colors border-b border-dashed border-muted-foreground/40 disabled:border-transparent disabled:hover:text-muted-foreground/70"
+              class="text-muted-foreground hover:text-foreground truncate max-w-40 transition-colors border-b border-dashed border-muted-foreground/40 disabled:border-transparent disabled:hover:text-muted-foreground"
               title={`${sessionRepoPath ? `${store.repoDisplayName(sessionRepoPath)} / ` : ''}${sessionBranch}${isRunning
                 ? ' (switch branches once the agent finishes its turn)'
                 : ': click to switch branch'}`}
@@ -178,12 +180,12 @@
     {/if}
 
     {#if gitSync.ahead > 0 || gitSync.behind > 0 || pushError || prInfo || showCreatePr}
-      <div class="flex items-center gap-2 text-[11px] whitespace-nowrap">
+      <div class="flex items-center gap-2 text-caption whitespace-nowrap">
         {#if gitSync.ahead > 0}
           <button
             onclick={doPush}
             disabled={pushing}
-            class="flex items-center gap-1 text-yellow-400 hover:text-yellow-300 transition-colors disabled:opacity-50"
+            class="flex items-center gap-1 text-amber-500 hover:text-amber-400 transition-colors disabled:opacity-50"
             title={pushing ? 'Pushing…' : `${gitSync.ahead} unpushed commit${gitSync.ahead > 1 ? 's' : ''} — click to push`}
           >
             {pushing ? 'pushing…' : `↑${gitSync.ahead}`}
@@ -191,13 +193,13 @@
         {/if}
 
         {#if gitSync.behind > 0}
-          <span class="text-muted-foreground/70" title="{gitSync.behind} commit{gitSync.behind > 1 ? 's' : ''} behind upstream (as of last fetch)">
+          <span class="text-muted-foreground" title="{gitSync.behind} commit{gitSync.behind > 1 ? 's' : ''} behind upstream (as of last fetch)">
             ↓{gitSync.behind}
           </span>
         {/if}
 
         {#if pushError || retrying}
-          <StatusBarPopover bind:open={pushErrorOpen} anchored={false} panelClass="bg-popover border border-border shadow-xl p-3 text-xs w-96" testid="push-error">
+          <StatusBarPopover bind:open={pushErrorOpen} anchored={false} panelClass="w-96" testid="push-error">
             {#snippet trigger()}
               <button
                 onclick={() => pushErrorOpen = !pushErrorOpen}
@@ -213,22 +215,25 @@
               <span class="font-medium text-foreground">Push failed</span>
               <CopyButton text={shownPushError} class="size-5 shrink-0" />
             </div>
-            <pre class="font-mono text-[11px] text-red-400/90 whitespace-pre-wrap break-words max-h-40 overflow-y-auto mb-3">{shownPushError}</pre>
+            <pre class="font-mono text-caption text-red-400 whitespace-pre-wrap break-words max-h-40 overflow-y-auto mb-3">{shownPushError}</pre>
             <div class="flex justify-end gap-2">
-              <button
+              <Button
+                variant="subtle"
+                size="xs"
                 onclick={() => prStore.dismissPushError(sessionId)}
                 disabled={retrying}
-                class="px-2 py-1 border border-border hover:bg-accent hover:text-accent-foreground transition-colors disabled:opacity-50"
               >
                 Dismiss
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="subtle"
+                size="xs"
                 onclick={retryPush}
                 disabled={retrying || pushing}
-                class="px-2 py-1 border border-border text-foreground hover:bg-accent transition-colors disabled:opacity-50 disabled:cursor-wait"
+                class="disabled:cursor-wait"
               >
                 {retrying ? 'Pushing…' : 'Retry'}
-              </button>
+              </Button>
             </div>
           </StatusBarPopover>
         {/if}
@@ -245,13 +250,15 @@
             oncreatepr={createPr}
           />
         {:else if showCreatePr}
-          <StatusBarPopover bind:open={createPrMenuOpen} anchored={false} panelClass="bg-popover border border-border shadow-xl py-1 text-xs w-48">
+          <StatusBarPopover bind:open={createPrMenuOpen} anchored={false} surface="list" panelClass="w-48">
             {#snippet trigger()}
               <span class="flex items-center">
-                <button
+                <Button
+                  variant="link"
+                  size="inline"
                   onclick={startCreatePr}
                   disabled={isRunning || preparingPrTurn}
-                  class="text-blue-400 hover:text-blue-300 hover:underline transition-colors disabled:opacity-50 disabled:no-underline"
+                  class="disabled:no-underline"
                   title={isRunning
                     ? 'Create a pull request once the agent finishes its turn'
                     : canAgentCreatePr
@@ -259,11 +266,13 @@
                       : 'Push this branch and create a pull request'}
                 >
                   Create PR
-                </button>
-                <button
+                </Button>
+                <Button
+                  variant="link"
+                  size="inline"
                   data-popover-trigger
                   onclick={() => createPrMenuOpen = !createPrMenuOpen}
-                  class="ml-0.5 text-blue-400/70 hover:text-blue-300 transition-colors"
+                  class="ml-0.5"
                   title="Create PR options"
                   aria-label="Create PR options"
                   aria-expanded={createPrMenuOpen}
@@ -271,14 +280,14 @@
                   <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="m18 15-6-6-6 6" />
                   </svg>
-                </button>
+                </Button>
               </span>
             {/snippet}
 
             <button
               onclick={() => createPr('agent')}
               disabled={!canAgentCreatePr}
-              class="w-full text-left px-3 py-1.5 hover:bg-accent hover:text-accent-foreground transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              class={menuItem({ class: 'disabled:cursor-not-allowed' })}
               title={canAgentCreatePr ? 'Send a turn asking the agent to commit, push, and open the PR' : 'The agent must be idle and running to take this turn'}
             >
               Create with agent
@@ -288,7 +297,7 @@
             <button
               onclick={() => createPr('manual')}
               disabled={isRunning}
-              class="w-full text-left px-3 py-1.5 hover:bg-accent hover:text-accent-foreground transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              class={menuItem({ class: 'disabled:cursor-not-allowed' })}
               title={isRunning
                 ? 'Create a pull request once the agent finishes its turn'
                 : 'Open the PR dialog — title and description prefilled from the branch\'s commits'}

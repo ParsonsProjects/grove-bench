@@ -41,8 +41,8 @@ async function typeQuery(input: HTMLInputElement, value: string) {
 }
 
 function resultButtons() {
-  // Result rows are buttons that aren't the close (✕) button.
-  return screen.getAllByRole('button').filter((b) => b.textContent !== '✕');
+  // Result rows are buttons that aren't the close button.
+  return screen.getAllByRole('button').filter((b) => b.getAttribute('aria-label') !== 'Close search');
 }
 
 describe('MessageSearchBar (dropdown)', () => {

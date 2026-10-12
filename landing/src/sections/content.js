@@ -20,6 +20,18 @@ export const FOUNDER = {
   name: 'Parsons Projects',
 };
 
+// Said plainly, straight after the founder note, so nobody is surprised later.
+export const HONEST = {
+  title: 'A hobby project, vibe coded.',
+  lede: 'Grove Bench is something I build on the side, in my spare time. It’s vibe coded: AI agents write the code while I steer. You should know that before you install it.',
+  points: [
+    { title: 'Bugs are likely.', text: 'Some will be small, some may get in your way.' },
+    { title: 'Things change.', text: 'Features, settings and names may change or disappear between releases.' },
+    { title: 'Help comes when I have time.', text: 'It’s one person, not a company with a support team.' },
+    { title: 'Keep your work safe.', text: 'Commit or back up anything you can’t lose before you point agents at it.' },
+  ],
+};
+
 // `where` is where each one lives in the app (docs/help).
 export const FEATURES = [
   {

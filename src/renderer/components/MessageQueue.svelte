@@ -1,5 +1,7 @@
 <script lang="ts">
   import { messageStore } from '../stores/messages.svelte.js';
+  import { Button } from '$lib/components/ui/button/index.js';
+  import XIcon from '@lucide/svelte/icons/x';
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -19,24 +21,26 @@
       <span>
         {queue.length} queued
         {#if paused}
-          <span class="text-yellow-500/90">· paused</span>
+          <span class="text-amber-500">· paused</span>
         {:else if isRunning}
           · sends when the agent is free
         {/if}
       </span>
       <span class="flex-1"></span>
       {#if paused}
-        <button
+        <Button
+          variant="link"
+          size="inline"
           onclick={() => messageStore.resumeQueue(sessionId)}
-          class="text-primary hover:underline"
           title="Resume sending queued messages"
-        >Resume</button>
+        >Resume</Button>
       {/if}
-      <button
+      <Button
+        variant="quiet"
+        size="inline"
         onclick={() => messageStore.clearQueue(sessionId)}
-        class="hover:text-foreground"
         title="Remove all queued messages"
-      >Clear all</button>
+      >Clear all</Button>
     </div>
     <ul class="flex flex-col gap-1 max-h-32 overflow-y-auto">
       {#each queue as item, i (item.id)}
@@ -51,17 +55,20 @@
           {#if item.files?.length}
             <span class="text-muted-foreground shrink-0">{item.files.length} file{item.files.length === 1 ? '' : 's'}</span>
           {/if}
-          <button
+          <Button
+            variant="quiet"
+            size="inline"
             onclick={() => messageStore.editQueuedMessage(sessionId, item.id)}
-            class="text-muted-foreground hover:text-foreground shrink-0"
             title="Move back to the input for editing"
-          >Edit</button>
-          <button
+          >Edit</Button>
+          <Button
+            variant="quiet-destructive"
+            size="icon-2xs"
             onclick={() => messageStore.removeQueuedMessage(sessionId, item.id)}
-            class="text-muted-foreground hover:text-destructive shrink-0 px-1"
+            class="-my-0.5"
             title="Remove from queue"
             aria-label="Remove queued message"
-          >&times;</button>
+          ><XIcon /></Button>
         </li>
       {/each}
     </ul>

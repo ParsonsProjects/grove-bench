@@ -1,11 +1,16 @@
 /* Day into night: a light, open page that turns to dusk and night as you
    scroll down. Each band's colours run into the next, so the page reads as
    one sky. Type, buttons and labels come from the app itself (square, flat,
-   JetBrains Mono, branch names); the grove is the illustration. */
+   JetBrains Mono, branch names); the grove is the illustration.
+
+   Brand colours and fonts are CSS variables set from the app's brand
+   (src/shared/brand.ts) by lib/brand.js: --leaf, --forest, --sky-deep,
+   --paper-ink, --night-card and so on. */
 
 .day {
-  /* The sky, top to bottom. Keep in step with BANDS in sky.js. */
-  --c0: #fffdf7;
+  /* The sky, top to bottom. Keep in step with BANDS in sky.js. It starts
+     from the app's light theme background (PAPER.background). */
+  --c0: var(--paper-background);
   --c1: #fdf7ea;
   --c2: #faefd9;
   --c3: #f7e3c4;
@@ -16,22 +21,26 @@
   --c8: #0c1224;
   --c9: #090e1c;
 
-  /* Day text. */
-  --ink: #1b140d;
+  /* Day text: the app's strongest text, then two warm browns, darker than
+     the app's greys so they still read on the sunset bands. */
+  --ink: var(--paper-ink);
   --soft: #5b4a39;
   --faint: #8a7660;
   --line: rgb(58 42 28 / 0.12);
 
-  /* Accents, from the logo and the app. */
-  --blue: oklch(0.541 0.181 254.624);
-  --blue-ink: oklch(0.47 0.18 254.624);
-  --green: #3a9a48;
-  --green-ink: #2a7a36;
+  /* Accents, as in the app's light theme: brand green for buttons, the
+     prompt bar and focus (forest, white text on it), the logo's fern for
+     icons and rules, and deep sky for links. The dusk and night bands
+     switch to the dark theme's below. */
+  --primary: var(--forest);
+  --on-primary: #fff;
+  --green: var(--fern);
+  --green-ink: var(--forest);
+  --link: var(--sky-deep);
   --gold: #f2b84b;
-  --amber: oklch(0.769 0.188 70.08);
 
-  --head: 'JetBrains Mono', 'Cascadia Code', 'Consolas', monospace;
-  --pixel: 'Pixelify Sans', 'JetBrains Mono', monospace;
+  --head: var(--font-mono);
+  --pixel: var(--font-pixel);
 
   color: var(--ink);
   background: var(--c0);
@@ -43,7 +52,7 @@
   background: #ffe7a8;
 }
 .day :focus-visible {
-  outline: 2px dashed var(--blue);
+  outline: 2px dashed var(--primary);
   outline-offset: 3px;
 }
 
@@ -56,6 +65,9 @@
 }
 .b-founder {
   background: linear-gradient(var(--c1), var(--c2));
+}
+.b-honest {
+  background: var(--c2);
 }
 .b-features {
   background: linear-gradient(var(--c2), var(--c3));
@@ -82,6 +94,11 @@
   --soft: #c9c3e6;
   --faint: #8f89b3;
   --line: rgb(201 195 230 / 0.16);
+  /* The app's dark theme: leaf green with dark text on it. */
+  --primary: var(--leaf);
+  --on-primary: var(--canopy);
+  --green: var(--sprout);
+  --link: var(--sky);
   color: var(--ink);
 }
 
@@ -113,27 +130,18 @@
 }
 
 /* A message you send the agent, as the app's Thread tab shows it: a prompt
-   mark and a blue bar. Used for the opening and closing lines. */
+   mark and a bar in brand green. Used for the opening and closing lines. */
 .prompt {
   position: relative;
   padding: 0.1em 0 0.15em 1.35em;
-  border-left: 4px solid var(--blue);
-  background: linear-gradient(90deg, oklch(0.541 0.181 254.624 / 0.08), transparent 75%);
+  border-left: 4px solid var(--primary);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--primary) 8%, transparent), transparent 75%);
 }
 /* The prompt mark hangs, so wrapped lines line up after it. */
 .prompt .gt {
   position: absolute;
   left: 0.4em;
-  color: var(--blue);
-}
-.b-dusk .prompt,
-.b-night .prompt {
-  border-left-color: #8db4ff;
-  background: linear-gradient(90deg, rgb(141 180 255 / 0.1), transparent 75%);
-}
-.b-dusk .prompt .gt,
-.b-night .prompt .gt {
-  color: #8db4ff;
+  color: var(--primary);
 }
 /* The input caret, blinking after the line. */
 .caret {
@@ -179,9 +187,9 @@
   font-size: 14px;
   font-weight: 600;
   text-decoration: none;
-  color: #fff;
-  background: var(--blue);
-  border: 1px solid var(--blue);
+  color: var(--on-primary);
+  background: var(--primary);
+  border: 1px solid var(--primary);
   cursor: pointer;
   transition: filter 0.15s;
 }

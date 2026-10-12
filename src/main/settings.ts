@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { app, BrowserWindow, nativeTheme } from 'electron';
+import { NIGHT, PAPER } from '../shared/brand.js';
 import { z } from 'zod';
 import type { GroveBenchSettings } from '../shared/types.js';
 import { effectiveCompactTimeoutSeconds } from '../shared/compact-timeout.js';
@@ -23,6 +24,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   workingDirectories: [],
   defaultSystemPromptAppend: '',
   acpAgents: [],
+  claudeAccounts: [],
   enabledAlphaAgents: [],
 
   // Memory
@@ -228,6 +230,11 @@ const settingsSchema = z.object({
     command: z.string(),
     args: z.array(z.string()).catch([]),
   })).catch(DEFAULT_SETTINGS.acpAgents),
+  claudeAccounts: z.array(z.object({
+    id: z.string().catch(''),
+    name: z.string(),
+    configDir: z.string().catch(''),
+  })).catch(DEFAULT_SETTINGS.claudeAccounts),
   enabledAlphaAgents: z.array(z.string()).catch(DEFAULT_SETTINGS.enabledAlphaAgents),
 
   memoryAutoSave: z.boolean().catch(DEFAULT_SETTINGS.memoryAutoSave),
@@ -348,10 +355,18 @@ export function resetSettingsCache(): void {
 }
 
 export function applyImmediateEffects(win: BrowserWindow | null, settings: GroveBenchSettings): void {
-  if (win && !win.isDestroyed()) {
-    win.setAlwaysOnTop(settings.alwaysOnTop);
-  }
   // Sets prefers-color-scheme, which picks the renderer's palette
   // (globals.css), along with native menus and Preview pages.
   nativeTheme.themeSource = settings.theme;
+  if (win && !win.isDestroyed()) {
+    win.setAlwaysOnTop(settings.alwaysOnTop);
+    win.setBackgroundColor(windowBackground());
+  }
+}
+
+/** The theme's background (brand.ts), for the window behind the page: what
+ *  shows while it first paints or a resize uncovers new space, which would
+ *  otherwise flash white in the dark theme. */
+export function windowBackground(): string {
+  return nativeTheme.shouldUseDarkColors ? NIGHT.background : PAPER.background;
 }

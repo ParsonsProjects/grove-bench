@@ -1,6 +1,7 @@
 <script>
   import { trackLandingEvent } from '../lib/analytics.js';
-  import { treeGreens } from '../lib/brand.js';
+  import { PAPER } from '../lib/brand.js';
+  import { PIXEL_TREE } from '../shared/app-art.js';
   import { DownloadIcon } from '../lib/icons.js';
   import { onMount } from 'svelte';
   import { mix, hexToRgb, rgbToOklab } from '../pixel/palette.js';
@@ -32,7 +33,7 @@
   const bg = $derived.by(() => {
     const y = scroll.y + 31;
     const b = bands.find((x) => y >= x.y0 && y < x.y1);
-    if (!b) return scroll.progress > 0.5 ? '#090e1c' : '#fffdf7';
+    if (!b) return scroll.progress > 0.5 ? '#090e1c' : PAPER.background;
     return mix(b.top, b.bottom, (y - b.y0) / Math.max(1, b.y1 - b.y0));
   });
   const evening = $derived(rgbToOklab(hexToRgb(bg))[0] < 0.6);
@@ -45,7 +46,7 @@
   <div class="inner bar">
     <a class="brand" href="#top">
       <svg width="18" height="20" viewBox="0 0 21 24" aria-hidden="true" style="image-rendering: pixelated">
-        {#each treeGreens as p}<rect x={p.x} y={p.y} width="2" height="2" fill={p.fill} />{/each}
+        {#each PIXEL_TREE as p}<rect x={p.x} y={p.y} width="2" height="2" fill={p.fill} />{/each}
       </svg>
       <span>grove bench</span>
     </a>
@@ -79,9 +80,12 @@
     border-bottom: 1px solid rgb(58 42 28 / 0.08);
     transition: color 0.3s;
   }
+  /* Over dark sky the bar takes the dark bands' text and accent (day.css). */
   .nav.evening {
     --ink: #f4f1ff;
     --soft: #c9c3e6;
+    --primary: var(--leaf);
+    --on-primary: var(--canopy);
     color: #f4f1ff;
     border-bottom-color: rgb(201 195 230 / 0.14);
   }

@@ -35,6 +35,6 @@
 {#if store.prerequisites && !gitReady(store.prerequisites)}
   <div class="mt-4 w-full max-w-md text-left"><GitNotice boxed /></div>
 {/if}
-<button type="button" class="mt-3 text-xs text-primary hover:underline" onclick={() => helpStore.show('getting-started')}>
+<Button variant="link" size="inline" class="mt-3 text-xs" onclick={() => helpStore.show('getting-started')}>
   New here? Read Getting Started (F1)
-</button>
+</Button>

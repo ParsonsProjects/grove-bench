@@ -1,7 +1,7 @@
 import { ipcMain, BrowserWindow, dialog, shell } from 'electron';
 import { runProcess } from './process-host.js';
 import { IPC, PERMISSION_MODES } from '../shared/types.js';
-import type { BranchSwitchResult, BranchSyncResult, ConversationGoal, CreateSessionOpts, OpenPrSummary, PermissionMode, PrerequisiteStatus, PermissionDecision, RegistryAgentSummary, SessionInfo, SkillDefinition, WorktreeInfo } from '../shared/types.js';
+import type { BranchSwitchResult, ClaudeAccountPreview, ClaudeAccountSetting, BranchSyncResult, ConversationGoal, CreateSessionOpts, OpenPrSummary, PermissionMode, PrerequisiteStatus, PermissionDecision, RegistryAgentSummary, SessionInfo, SkillDefinition, WorktreeInfo } from '../shared/types.js';
 import { sessionManager } from './agent-session.js';
 import { searchEvents, findEventIndexByUuid, extractSessionPreview, firstUserPrompt } from './event-search.js';
 import { decideAutoName } from './session-auto-name.js';
@@ -10,7 +10,8 @@ import { launchEditor } from './editor-launch.js';
 import { worktreeManager } from './worktree-manager.js';
 import { apiKeyState, checkCorePrerequisites, checkGh } from './prerequisites.js';
 import { canStoreApiKey, clearApiKey, parseApiKey, saveApiKey } from './credentials.js';
-import { adapterRegistry } from './adapters/index.js';
+import { adapterRegistry, registerClaudeAccount } from './adapters/index.js';
+import { claudeAccounts, isClaudeAccountId, newClaudeAccount } from './adapters/claude-accounts.js';
 import type { AgentAdapter } from './adapters/types.js';
 import { agentForProject, recordedAgent } from './background-tasks.js';
 import { validateBranchName, branchExists, branchExistsAnywhere, worktreeBranches, listBranches, getDefaultBranch, git, fileDiff, fileDiffAgainst, resolveMergeBase, indexFileContent, hashWorkingFiles, listProjectFiles, revertFile, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, logCommits, rebaseOnto, cherryPick, squashSince, currentBranch, recentCheckouts, getGitIdentity, gitVersion } from './git.js';
@@ -187,6 +188,24 @@ async function attachContentHashes(cwd: string, entries: GitStatusEntry[]): Prom
   } catch { /* hashes are best-effort */ }
 }
 
+const ID_IN_USE = 'The new thread\'s id is already in use. Try starting it again.';
+
+/** The id for a new thread: the one the renderer picked (its row is already
+ *  in the sidebar under it), or a fresh one. The id names the worktree
+ *  folder and the event log, so only the shape main makes itself is taken,
+ *  and not one live or being set up. No await, so the caller can track it
+ *  before another request can look; a stopped thread's id is checked after. */
+function newSessionId(requested: unknown): string {
+  if (requested === undefined) return crypto.randomUUID().slice(0, 8);
+  if (typeof requested !== 'string' || !/^[0-9a-f]{8}$/.test(requested)) {
+    throw new Error('The new thread\'s id is not valid. Try starting it again.');
+  }
+  if (sessionManager.getSession(requested) || sessionManager.hasPendingSetup(requested)) {
+    throw new Error(ID_IN_USE);
+  }
+  return requested;
+}
+
 export function registerHandlers() {
   // ─── Repo ───
 
@@ -256,13 +275,38 @@ export function registerHandlers() {
   // ─── Sessions ───
 
   ipcMain.handle(IPC.SESSION_CREATE, async (event, opts: CreateSessionOpts) => {
-    // Step timings (perf-steps.ts) start here; the id comes later.
+    // Step timings (perf-steps.ts) start here; they begin under the id once
+    // the checks pass.
     const startedAt = performance.now();
+    // Usually picked by the renderer, which shows the thread's row from the
+    // moment the user sends, so main counts the thread as being set up from
+    // here, before any await: closing it while the checks run waits for
+    // them, and deleting it stops them before anything is made. A check that
+    // fails takes the row away again.
+    const id = newSessionId(opts.id);
+    const checksAbort = new AbortController();
+    let checksDone!: () => void;
+    sessionManager.trackPendingSetup(id, new Promise<void>((resolve) => { checksDone = resolve; }), checksAbort);
+    try {
+      return await startNewSession(event, opts, id, startedAt, checksAbort.signal);
+    } finally {
+      checksDone();
+    }
+  });
+
+  /** SESSION_CREATE once the id is settled: the checks, then the setup (in
+   *  the background for a new worktree). `deleted` fires when the thread is
+   *  deleted during the checks. */
+  async function startNewSession(
+    event: Electron.IpcMainInvokeEvent, opts: CreateSessionOpts, id: string, startedAt: number, deleted: AbortSignal,
+  ) {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win) throw new Error('No window found');
     const permissionMode = isPermissionMode(opts.permissionMode) ? opts.permissionMode : undefined;
     const model = typeof opts.model === 'string' && opts.model ? opts.model : undefined;
     const controls = sanitizeControls(opts.controls);
+    // A stopped thread keeps its id in the manifest.
+    if (opts.id !== undefined && await worktreeManager.getWorktreeOrManifest(id)) throw new Error(ID_IN_USE);
 
     // A folder project (not a repository, or git isn't installed) can only
     // run in the folder.
@@ -282,7 +326,8 @@ export function registerHandlers() {
         : opts.branchName || (await git(['rev-parse', '--abbrev-ref', 'HEAD'], opts.repoPath)).trim();
       logger.info(`Creating direct session: branch=${branch || '(no git)'}, repo=${opts.repoPath}`);
 
-      const entry = await worktreeManager.registerDirect(opts.repoPath, branch, { noGit });
+      deleted.throwIfAborted();
+      const entry = await worktreeManager.registerDirect(opts.repoPath, branch, { noGit, id });
       perfSteps.begin(entry.id, 'new conversation', startedAt);
       perfSteps.step(entry.id, 'checks');
 
@@ -308,10 +353,6 @@ export function registerHandlers() {
       logger.info(`Direct session created: id=${session.id}`);
       return { id: session.id, branch: session.branch, agentType: session.agentType, ...(noGit ? { noGit: true } : {}) };
     }
-
-    // Generate a stable ID up front so the renderer can open a tab immediately.
-    // It also names the placeholder branch when no name was given.
-    const id = crypto.randomUUID().slice(0, 8);
 
     // A conversation joining a group on the group's branch continues that
     // branch where the project has it already. Git allows a branch in one
@@ -351,6 +392,7 @@ export function registerHandlers() {
       }
     }
 
+    deleted.throwIfAborted();
     logger.info(`Creating session: branch=${branch}, repo=${opts.repoPath}, useExisting=${useExisting}`);
     perfSteps.begin(id, 'new conversation', startedAt);
     perfSteps.step(id, 'checks');
@@ -475,7 +517,7 @@ export function registerHandlers() {
     // the conversation under the default agent (its models, controls, usage)
     // until the app restarts.
     return { id, branch, agentType: opts.adapterType ?? adapterRegistry.getDefault().id };
-  });
+  }
 
   ipcMain.handle(IPC.SESSION_RESUME, async (event, id: string, repoPath: string) => {
     const startedAt = performance.now();
@@ -1674,13 +1716,34 @@ export function registerHandlers() {
   // An agent's model list can change at run time (the Claude adapter reads
   // the SDK's list when a conversation starts). Tell every window so pickers
   // and the status bar refetch.
-  for (const adapter of adapterRegistry.list()) {
+  function forwardModelChanges(adapter: AgentAdapter): void {
     adapter.onModelsChanged?.(() => {
       for (const w of BrowserWindow.getAllWindows()) {
         if (!w.isDestroyed()) w.webContents.send(IPC.AGENT_MODELS_CHANGED, adapter.id);
       }
     });
   }
+  for (const adapter of adapterRegistry.list()) forwardModelChanges(adapter);
+
+  // ─── Other Claude accounts (claude-accounts.ts) ───
+  // Checked against the saved accounts here; the renderer saves the entry
+  // add returns, as it does every other setting.
+
+  ipcMain.handle(IPC.CLAUDE_ACCOUNT_PREVIEW, (_event, input: unknown): ClaudeAccountPreview => {
+    try {
+      const { account } = newClaudeAccount(accountInput(input), settings.getSettings().claudeAccounts);
+      return { ok: true, configDir: account.configDir };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  });
+
+  ipcMain.handle(IPC.CLAUDE_ACCOUNT_ADD, (_event, input: unknown): { setting: ClaudeAccountSetting; adapterId: string } => {
+    const { account, setting } = newClaudeAccount(accountInput(input), settings.getSettings().claudeAccounts);
+    forwardModelChanges(registerClaudeAccount(account));
+    logger.info(`[claude-accounts] Added ${account.id} (${account.configDir})`);
+    return { setting, adapterId: account.id };
+  });
 
   // ─── ACP Registry and models.dev (catalogs.ts) ───
 
@@ -1711,7 +1774,15 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.AGENT_LIST_ADAPTERS, () => {
     const defaultId = adapterRegistry.getDefault().id;
-    return adapterRegistry.list().map(a => ({
+    // Other Claude accounts go right after the Claude agent, also ones added
+    // after launch, which the registry lists last.
+    const all = adapterRegistry.list();
+    const ordered = all.filter((a) => !isClaudeAccountId(a.id));
+    ordered.splice(ordered.findIndex((a) => a.id === defaultId) + 1, 0, ...all.filter((a) => isClaudeAccountId(a.id)));
+    // An account taken out of Settings stays registered for threads already
+    // on it until a restart; it is marked so it isn't offered.
+    const saved = new Set(claudeAccounts(settings.getSettings().claudeAccounts).map((a) => a.id));
+    return ordered.map(a => ({
       id: a.id,
       displayName: a.displayName,
       // mcpConfig: the adapter can list and edit configured MCP servers (the
@@ -1723,6 +1794,7 @@ export function registerHandlers() {
       ...(a.backgroundModel ? { backgroundModel: a.backgroundModel } : {}),
       ...(a.mcp ? { mcp: a.mcp } : {}),
       ...(a.generatedFiles?.length ? { generatedFiles: [...a.generatedFiles] } : {}),
+      ...(a.account ? { account: { name: a.account.name, configDir: a.account.configDir, ...(saved.has(a.id) ? {} : { removed: true }) } } : {}),
     }));
   });
 
@@ -2026,4 +2098,10 @@ export function registerHandlers() {
   ipcMain.handle(IPC.UPDATE_CHECK, () => checkForUpdate());
   ipcMain.handle(IPC.UPDATE_DOWNLOAD, () => downloadUpdate());
   ipcMain.handle(IPC.UPDATE_RESTART, () => restartToUpdate());
+}
+
+/** The name and folder sent from the Add account dialog. */
+function accountInput(input: unknown): { name: unknown; configDir: unknown } {
+  const o = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>;
+  return { name: o.name, configDir: o.configDir };
 }

@@ -1,5 +1,7 @@
 // Pixel sun and moon for the day-into-night pages.
 
+import { PAPER } from '../lib/brand.js';
+
 export const SUN = [
   '...yyyyy...',
   '..yhhyyyy..',
@@ -31,12 +33,14 @@ export const MOON = [
 export const MOON_COLORS = { m: '#f4f1ff', s: '#d9d3f3', d: '#c9c2ec' };
 
 /**
- * The sky behind each band, top and bottom (the same colours as day.css).
- * The nav reads this to match whatever is behind it.
+ * The sky behind each band, top and bottom (the same colours as day.css,
+ * starting from the app's paper). The nav reads this to match whatever is
+ * behind it.
  */
 export const BANDS = [
-  ['b-hero', '#fffdf7', '#fdf7ea'],
+  ['b-hero', PAPER.background, '#fdf7ea'],
   ['b-founder', '#fdf7ea', '#faefd9'],
+  ['b-honest', '#faefd9', '#faefd9'],
   ['b-features', '#faefd9', '#f7e3c4'],
   ['b-steps', '#f7e3c4', '#f3cda5'],
   ['b-free', '#f3cda5', '#eaa682'],

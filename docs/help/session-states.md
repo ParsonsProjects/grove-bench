@@ -25,7 +25,9 @@ With **Show grove characters** on, a small pixel agent shows the state instead, 
 | ⚫ Gray, hollow | None | **Closed** | You closed the thread |
 | ⚫ Muted | Pulsing | **Deleting** | Thread is being removed |
 
-If your system is set to reduce motion, the dots stay still.
+If your system is set to reduce motion, the dots stay still; the colour still tells you the state.
+
+The same colours carry through the app: blue is always something in progress, green something done (or a button that acts), amber something waiting for you. In the Thread tab, a permission, a question and an MCP form that wait for an answer are all amber, and turn grey once answered (an allowed permission turns green, a denied one red).
 
 ## What to Do
 

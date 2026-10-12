@@ -12,6 +12,7 @@
   import ThreadItem from '../shared/app/ThreadItem.svelte';
   import '../shared/app/app.css';
   import { FLAG } from '../shared/app-art.js';
+  import { PALETTE } from '../lib/brand.js';
   import Branch from './Branch.svelte';
   import Clock from './Clock.svelte';
   import { arrive } from './scroll.svelte.js';
@@ -23,10 +24,11 @@
    * scene once it scrolls into view, then rests on its last frame. The two
    * that show the app use its own sidebar and prompt.
    */
+  // Each branch's tree washed towards one of the grove's colours.
   const AGENTS = [
-    { id: 'a3f8b2c1', tint: '#3b82f6', branch: 'feat/auth' },
-    { id: 'e52b9a73', tint: '#6ec87a', branch: 'fix/login' },
-    { id: '9b0e27f5', tint: '#f59e0b', branch: 'docs/readme' },
+    { id: 'a3f8b2c1', tint: PALETTE.sky, branch: 'feat/auth' },
+    { id: 'e52b9a73', tint: PALETTE.sprout, branch: 'fix/login' },
+    { id: '9b0e27f5', tint: PALETTE.sun, branch: 'docs/readme' },
   ];
   const grow = (t, at, d = 0.9) => Math.min(1, Math.max(0, (t - at) / d));
 
@@ -36,11 +38,11 @@
     { id: 'e52b9a73', name: 'fix/login-bug', age: '4m ago', at: [[0, 'working', 'Read: auth/session.ts'], [1.8, 'permission', 'Wants to run a command']] },
     { id: '9b0e27f5', name: 'docs/readme', age: '40m ago', at: [[0, 'ready', 'README covers the API.'], [5, 'sleeping', 'README covers the API.']] },
   ];
-  const TONE = { permission: 'amber', working: 'blue' };
+  const TONE = { permission: 'attention', working: 'working' };
   const rowsAt = (t) =>
     ROWS.map((r) => {
       const [, state, line] = r.at.findLast(([at]) => t >= at);
-      return { id: r.id, name: r.name, age: r.age, state, line, lineTone: TONE[state] ?? 'muted', projectColor: '#6ec87a' };
+      return { id: r.id, name: r.name, age: r.age, state, line, lineTone: TONE[state] ?? 'muted', projectColor: PALETTE.sprout };
     });
 </script>
 
@@ -237,11 +239,11 @@
     font-size: 12px;
   }
   .press :global([data-target='allow']) {
-    background: oklch(0.792 0.209 151.711 / 0.22);
+    background: color-mix(in srgb, var(--green) 22%, transparent);
   }
   .side {
     padding: 8px 0;
-    background: oklch(0.176 0 0);
+    background: var(--side);
   }
   .side .chips {
     padding: 2px 12px 6px;
@@ -255,8 +257,8 @@
     right: 0;
     bottom: 34px;
     height: 12px;
-    background: linear-gradient(180deg, #5ab868 0 3px, #4aaa58 3px);
-    box-shadow: 0 3px 0 #3d8f4a;
+    background: linear-gradient(180deg, var(--leaf) 0 3px, var(--moss) 3px);
+    box-shadow: 0 3px 0 var(--fern);
   }
   .row-trees {
     position: absolute;
@@ -330,9 +332,9 @@
     right: 10px;
     padding: 2px 10px;
     font-size: 12px;
-    color: oklch(0.835 0 0);
-    background: oklch(0.233 0 0);
-    border: 1px solid oklch(0.32 0 0);
+    color: var(--night-foreground);
+    background: var(--night-card);
+    border: 1px solid var(--night-input);
   }
   .center {
     position: absolute;
@@ -369,9 +371,10 @@
     justify-content: space-between;
     padding: 7px 10px;
     font-size: 11px;
-    color: oklch(0.835 0 0);
-    background: oklch(0.176 0 0);
+    color: var(--night-foreground);
+    background: var(--night-sidebar);
   }
+  /* green-400: the context meter's colour while there's room */
   .ctx-bar b {
     color: oklch(0.792 0.209 151.711);
     font-weight: 400;

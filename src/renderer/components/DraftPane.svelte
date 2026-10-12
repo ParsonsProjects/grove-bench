@@ -20,6 +20,9 @@
   import GitNotice from './GitNotice.svelte';
   import DraftStatusBar from './DraftStatusBar.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
+  import { Notice } from '$lib/components/ui/notice/index.js';
+  import { PanelHeader } from '$lib/components/ui/panel-header/index.js';
+  import { Pulse } from '$lib/components/ui/pulse/index.js';
 
   let textEl = $state<HTMLTextAreaElement | null>(null);
 
@@ -72,7 +75,7 @@
 
   const start = $derived(draft?.start);
   const canStart = $derived(
-    !!draft && credentials === 'ready' && !draftStore.starting
+    !!draft && credentials === 'ready'
       && (start?.kind !== 'existing' || !!start.branch),
   );
 
@@ -102,7 +105,7 @@
 
   /** Why Start is off, in words, for its tooltip and for Enter. */
   const startBlocker = $derived.by(() => {
-    if (!draft || draftStore.starting) return null;
+    if (!draft) return null;
     if (credentials === 'missing') return 'Add credentials above to start.';
     if (credentials === 'checking') return 'Checking credentials…';
     if (credentials === 'no-agent') return 'No agent is available to start this thread.';
@@ -190,23 +193,19 @@
 
 {#if draft}
 <div class="flex flex-col h-full bg-background">
-  <div class="flex items-center gap-2 border-b border-border bg-card/50 shrink-0 px-4 py-1.5 text-xs">
-    <span class="font-medium text-foreground">New thread</span>
-    <span class="text-muted-foreground/60">in {store.repoDisplayName(draft.repoPath)}{agentName ? ` · ${agentName}` : ''}</span>
-    <button
-      type="button"
-      onclick={() => draftStore.discard()}
-      class="ml-auto text-muted-foreground hover:text-foreground transition-colors"
-      title="Discard this draft"
-    >
-      Discard
-    </button>
-  </div>
+  <PanelHeader title="New thread">
+    <span class="truncate text-muted-foreground">in {store.repoDisplayName(draft.repoPath)}{agentName ? ` · ${agentName}` : ''}</span>
+    {#snippet actions()}
+      <Button variant="quiet" size="xs" onclick={() => draftStore.discard()} title="Discard this draft">
+        Discard
+      </Button>
+    {/snippet}
+  </PanelHeader>
 
   <div class="pixel-bg flex-1 min-h-0 flex items-center justify-center text-muted-foreground relative overflow-y-auto px-6">
     {#if credentials === 'checking'}
       <div class="flex items-center gap-2 text-sm relative z-10">
-        <span class="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin"></span>
+        <Pulse motion="spin" tone="muted" size="sm" />
         Checking credentials…
       </div>
     {:else if credentials === 'no-agent'}
@@ -263,13 +262,14 @@
               <p class="text-xs text-muted-foreground">
                 Install {cli.cliName}, run <code class="text-foreground">{cli.command}</code> in a terminal and sign in when it asks. Then click <span class="text-foreground">Re-check</span>.
               </p>
-              <button
-                type="button"
-                class="self-start text-xs text-primary hover:underline"
+              <Button
+                variant="external"
+                size="inline"
+                class="self-start text-xs"
                 onclick={() => window.groveBench.openExternal(cli.setupUrl)}
               >
                 How to install {cli.cliName}
-              </button>
+              </Button>
             {/if}
           </section>
         {/if}
@@ -299,12 +299,12 @@
       </div>
     {:else if settingsStore.current.groveCharacters}
       <GroveEmptyState variant="draft">
-        <p class="text-sm mt-5 mb-2 text-foreground/80">New thread in {store.repoDisplayName(draft.repoPath)}</p>
+        <p class="font-pixel text-base mt-5 mb-2 text-foreground/90">New thread in {store.repoDisplayName(draft.repoPath)}</p>
         <p class="text-xs text-muted-foreground max-w-md">{plan}</p>
         {#if modeHint}
           <p class="text-xs text-muted-foreground max-w-md mt-1">Mode: <span class="text-foreground/80">{modeHint.label}</span>. {modeHint.description}.</p>
         {/if}
-        <p class="text-xs text-muted-foreground/70 mt-2 max-w-md">{folderProject ? 'Change the agent, model or mode' : 'Change the agent, model, mode or branch'} in the bar below before you send.</p>
+        <p class="text-xs text-muted-foreground mt-2 max-w-md">{folderProject ? 'Change the agent, model or mode' : 'Change the agent, model, mode or branch'} in the bar below before you send.</p>
         {@render notices()}
       </GroveEmptyState>
     {:else}
@@ -320,9 +320,9 @@
   </div>
 
   {#if draftStore.error}
-    <div class="bg-destructive/10 border-t border-destructive/50 px-4 py-2 text-xs text-destructive shrink-0" role="alert">
-      {draftStore.error}
-    </div>
+    <Notice tone="danger" class="shrink-0">
+      <p>{draftStore.error}</p>
+    </Notice>
   {/if}
 
   <DraftStatusBar />
@@ -342,13 +342,13 @@
           placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-1 focus:ring-ring font-mono"
       ></textarea>
       <Button
-        variant="outline"
+        variant="default"
         onclick={() => draftStore.start()}
         disabled={!canStart}
         title={startBlocker ?? `Start the thread${draft.text.trim() ? ' and send this message' : ''}`}
-        class="text-primary border-primary hover:bg-primary/10 h-auto"
+        class="h-auto"
       >
-        {draftStore.starting ? 'Starting…' : 'Start'}
+        Start
       </Button>
     </div>
     {#if nudged && startBlocker}

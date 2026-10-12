@@ -4,6 +4,7 @@
   import ImageAttachments from './ImageAttachments.svelte';
   import AttachmentIcon from './AttachmentIcon.svelte';
   import { formatFileSize } from '$lib/file-attachments.js';
+  import { Button } from '$lib/components/ui/button/index.js';
   import type { SentBlock } from '../../shared/prompt-text.js';
   import type { ThreadFile, ThreadImage } from '../stores/messages.svelte.js';
 
@@ -96,18 +97,18 @@
     {/if}
   </div>
   {#if onRewind}
-    <button
-      type="button"
+    <Button
+      variant="quiet"
+      size="icon-xs"
       onclick={onRewind}
-      class="shrink-0 ml-2 -my-0.5 p-1 text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100
-        hover:text-foreground hover:bg-card/80 transition-colors"
+      class="ml-2 -my-0.5 opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
       title="Rewind to this message"
       aria-label="Rewind to this message"
     >
-      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
+      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
         <path stroke-linecap="round" stroke-linejoin="round" d="M3 12a9 9 0 1 0 3-6.7M3 4v5h5" />
       </svg>
-    </button>
+    </Button>
   {/if}
 </div>
 
