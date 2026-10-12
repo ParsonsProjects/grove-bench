@@ -245,21 +245,26 @@ const api: Record<string, unknown> = {
       await sleep(500);
       if (compactCancelled) return finish({ compacted: false, skippedReason: 'cancelled', filesChanged: [] });
     }
-    stage('merging', 1, 1);
-    for (let i = 0; i < 4; i++) {
-      await sleep(500);
-      if (compactCancelled) return finish({ compacted: false, skippedReason: 'cancelled', filesChanged: [] });
+    // A bounded run: 3 merge steps, with more groups left for the next run
+    for (let step = 1; step <= 3; step++) {
+      stage('merging', step, 3);
+      for (let i = 0; i < 4; i++) {
+        await sleep(500);
+        if (compactCancelled) return finish({ compacted: false, skippedReason: 'cancelled', filesChanged: [] });
+      }
     }
 
     // Merge the duplicated tech-stack file into the overview
     memoryFiles = memoryFiles.filter(f => f.relativePath !== 'repo/tech-stack.md');
     return finish({
       compacted: true,
-      filesChanged: ['repo/overview.md', 'repo/tech-stack.md'],
+      filesChanged: ['repo/overview.md', 'repo/tech-stack.md', 'conventions/naming.md', 'architecture/ipc-flow.md'],
       changes: [
         { action: 'update', path: 'repo/overview.md', reason: 'Merged the tech stack details in; dropped the duplicated Electron/Svelte facts' },
         { action: 'delete', path: 'repo/tech-stack.md', reason: 'Fully covered by repo/overview.md after the merge' },
       ],
+      descriptionsAdded: 2,
+      remainingGroups: 2,
       backupId: memoryBackups[0].id,
     });
   },

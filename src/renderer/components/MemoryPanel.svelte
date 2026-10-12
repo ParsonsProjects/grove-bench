@@ -338,7 +338,7 @@
       <div class="mt-2 flex items-center gap-3">
         <Pulse size="xs" />
         <p class="text-xs text-muted-foreground flex-1">
-          {compactStageLabel}: {formatElapsed(memoryStore.compactElapsedSeconds)} elapsed
+          {compactStageLabel} · {formatElapsed(memoryStore.compactElapsedSeconds)} elapsed
           <span class="text-muted-foreground">(each step times out after {formatElapsed(compactTimeoutSeconds)})</span>
         </p>
         <Button
