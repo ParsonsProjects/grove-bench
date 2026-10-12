@@ -30,7 +30,7 @@ function settings(adapterDefaults: GroveBenchSettings['adapterDefaults'] = {}): 
   return {
     toolAllowRules: [], toolDenyRules: [], disabledSkills: [], autoSkillSuggestions: false, showConversationGoal: true,
     defaultModels: {}, adapterDefaults, showThinkingSummaries: true, cavemanMode: 'off', workingDirectories: [], defaultSystemPromptAppend: '', acpAgents: [], claudeAccounts: [], enabledAlphaAgents: [],
-    memoryAutoSave: true, memoryAutoCompact: false, memoryCompactTimeoutSeconds: 300, backgroundModels: {},
+    memoryAutoSave: true, memoryCompactTimeoutSeconds: 300, backgroundModels: {},
     autoInstallDeps: false, previewAgentTools: true, idleSleepMinutes: 30, defaultBaseBranch: '', branchNamingRule: '', theme: 'system', alwaysOnTop: false, autoDownloadUpdates: true,
     repoColors: {}, groveCharacters: true, diffViewMode: 'unified', defaultActivityView: 'summary', spellcheck: true,
     notifyOnTurnComplete: true, notifyOnPermission: true, notifyOnPrAlert: true, notifyTaskbarFlash: true, notifyTaskbarBadge: true, notifyOnPlanUsage: true,

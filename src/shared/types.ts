@@ -1681,12 +1681,9 @@ export interface GroveBenchSettings {
   // Memory
   /** Enable auto-save of memories at end of session / compaction. Default true. */
   memoryAutoSave: boolean;
-  /** Enable automatic memory compaction (dedupe, contradiction resolution,
-   *  session-note pruning) when memory grows past its budget. Default false —
-   *  it costs an LLM call; the panel's manual Compact button always works. */
-  memoryAutoCompact: boolean;
-  /** Abort a memory compaction pass after this many seconds. 30 to 3600,
-   *  default 300 (5 minutes); see shared/compact-timeout.ts. */
+  /** Abort each model call of a memory compaction (planning, each merge
+   *  step) after this many seconds. 30 to 3600, default 300 (5 minutes);
+   *  see shared/compact-timeout.ts. */
   memoryCompactTimeoutSeconds: number;
   /** Model for background tasks (memory notes and compaction, commit
    *  messages, skill suggestions), keyed by adapter id. Missing or empty
@@ -1856,6 +1853,8 @@ export interface TimingReport {
 export interface MemoryEntry {
   relativePath: string;  // e.g. "repo/overview.md"
   title: string;         // from frontmatter
+  /** One line from frontmatter, shown in the agent's memory index. */
+  description?: string;
   updatedAt: string;     // ISO date from frontmatter
   folder: string;        // e.g. "repo", "conventions", "sessions"
 }
@@ -1869,23 +1868,28 @@ export interface MemoryCompactionStatus {
   changes?: Array<{ action: 'update' | 'delete'; path: string; reason: string }>;
   /** Snapshot taken before applying — restore it to undo the compaction. */
   backupId?: string;
+  /** Files that got a description from the planning step. */
+  descriptionsAdded?: number;
+  /** Merge groups planned but left for the next run. */
+  remainingGroups?: number;
 }
 
-export type MemoryCompactionStage = 'pruning' | 'generating' | 'validating' | 'applying';
+export type MemoryCompactionStage = 'pruning' | 'planning' | 'merging';
 
-/** Pushed from main over MEMORY_COMPACT_EVENT while a compaction pass runs. */
+/** Pushed from main over MEMORY_COMPACT_EVENT while a compaction pass runs.
+ *  A merging stage says which step of how many it is. */
 export type MemoryCompactionEvent =
-  | { kind: 'stage'; repoPath: string; auto: boolean; stage: MemoryCompactionStage }
-  | { kind: 'done'; repoPath: string; auto: boolean; status: MemoryCompactionStatus };
+  | { kind: 'stage'; repoPath: string; stage: MemoryCompactionStage; step?: number; total?: number }
+  | { kind: 'done'; repoPath: string; status: MemoryCompactionStatus };
 
 export interface MemoryStatsResult {
-  totalBytes: number;        // non-session memory bytes (frontmatter stripped)
+  promptBytes: number;       // what memory adds to the system prompt: conventions in full plus the index
   budgetBytes: number;       // system-prompt budget
   fileCount: number;         // non-session files
   sessionNoteCount: number;
-  skippedFiles: string[];    // files that no longer fit in the prompt budget
+  fullFiles: string[];       // conventions/ files loaded in full
+  unlistedFiles: string[];   // files past the budget, left out of the index
   lastCompactedAt: string | null;
-  lastAuto?: boolean;        // last pass was automatic (vs the panel button)
   lastFilesChanged?: number;
 }
 

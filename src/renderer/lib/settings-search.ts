@@ -74,7 +74,6 @@ export const SETTINGS_INDEX: readonly SettingsEntry[] = [
   { id: 'turn-minutes-limit', section: 'limits', label: 'Minutes per turn', keywords: 'time runaway cap long pause' },
 
   { id: 'memory-auto-save', section: 'background', label: 'Auto-save project memory' },
-  { id: 'memory-auto-compact', section: 'background', label: 'Auto-compact project memory' },
   { id: 'memory-compact-timeout', section: 'background', label: 'Compaction timeout', keywords: 'memory seconds' },
   { id: 'skill-suggestions', section: 'background', label: 'Suggest skills automatically' },
   { id: 'conversation-goal', section: 'background', label: 'Show the thread goal', keywords: 'summary thread pinned conversation' },

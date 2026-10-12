@@ -43,13 +43,13 @@
   const pruneDayPresets = [7, 30, 90, 180];
 
   const compactStageLabels: Record<string, string> = {
-    pruning: 'Pruning old thread notes',
-    generating: 'Asking the agent to consolidate memory',
-    validating: 'Validating the result',
-    applying: 'Applying changes',
+    pruning: 'Archiving expired thread notes',
+    planning: 'Planning: reading every file\'s title and opening',
   };
   let compactStageLabel = $derived(
-    compactStageLabels[memoryStore.compactStage ?? ''] ?? `Compacting ${memoryStore.stats?.fileCount ?? ''} memory files`
+    memoryStore.compactStage === 'merging' && memoryStore.compactStep
+      ? `Merging group ${memoryStore.compactStep.step} of ${memoryStore.compactStep.total}`
+      : compactStageLabels[memoryStore.compactStage ?? ''] ?? `Compacting ${memoryStore.stats?.fileCount ?? ''} memory files`
   );
   let compactTimeoutSeconds = $derived(effectiveCompactTimeoutSeconds(settingsStore.current.memoryCompactTimeoutSeconds));
 
@@ -154,7 +154,7 @@
 
   // ─── Budget meter ───
   const budgetPct = $derived(memoryStore.stats
-    ? Math.min(100, Math.round((memoryStore.stats.totalBytes / memoryStore.stats.budgetBytes) * 100))
+    ? Math.min(100, Math.round((memoryStore.stats.promptBytes / memoryStore.stats.budgetBytes) * 100))
     : 0);
   const budgetWarn = $derived(budgetPct >= 75);
 
@@ -217,24 +217,31 @@
       </div>
     {/if}
 
-    <!-- Budget meter: how much of the agent's system-prompt budget memory uses -->
+    <!-- Budget meter: how much of the agent's system-prompt budget memory uses
+         (conventions in full plus one index line per file) -->
     {#if memoryStore.stats}
       <div class="mb-2">
         <div class="flex items-center justify-between text-xs mb-1">
-          <span class="text-muted-foreground">
+          <span
+            class="text-muted-foreground"
+            title={`The agent gets conventions/ in full and an index of every other file, which it reads when needed.${memoryStore.stats.fullFiles.length > 0 ? ` Loaded in full: ${memoryStore.stats.fullFiles.join(', ')}` : ''}`}
+          >
             Agent prompt budget:
             <span class={budgetWarn ? 'text-amber-500 font-medium' : 'text-foreground/80'}>
-              {formatKb(memoryStore.stats.totalBytes)} / {formatKb(memoryStore.stats.budgetBytes)}
+              {formatKb(memoryStore.stats.promptBytes)} / {formatKb(memoryStore.stats.budgetBytes)}
             </span>
-            {#if memoryStore.stats.skippedFiles.length > 0}
-              <span class="text-destructive font-medium" title={memoryStore.stats.skippedFiles.join(', ')}>
-                · {memoryStore.stats.skippedFiles.length} {memoryStore.stats.skippedFiles.length === 1 ? 'file' : 'files'} not reaching the agent
+            {#if memoryStore.stats.unlistedFiles.length > 0}
+              <span
+                class="text-amber-500 font-medium"
+                title={`Not in the agent's index, though it can still find them with memory_list: ${memoryStore.stats.unlistedFiles.join(', ')}`}
+              >
+                · {memoryStore.stats.unlistedFiles.length} {memoryStore.stats.unlistedFiles.length === 1 ? 'file' : 'files'} left out of the index
               </span>
             {/if}
           </span>
           {#if memoryStore.stats.lastCompactedAt}
             <span class="text-muted-foreground">
-              Last compacted {relativeTime(memoryStore.stats.lastCompactedAt)}{memoryStore.stats.lastAuto ? ' (auto)' : ''}
+              Last compacted {relativeTime(memoryStore.stats.lastCompactedAt)}
             </span>
           {/if}
         </div>
@@ -276,7 +283,7 @@
                   onclick={() => selectFile(file.relativePath)}
                   class="w-full text-left text-xs px-2 py-1 truncate transition-colors
                     {memoryStore.selectedFile?.path === file.relativePath ? 'bg-sidebar-accent text-foreground' : 'text-muted-foreground hover:bg-sidebar-accent/50'}"
-                  title={file.relativePath}
+                  title={file.description ? `${file.relativePath}\n${file.description}` : file.relativePath}
                 >
                   {file.title || file.relativePath.split('/').pop()?.replace('.md', '')}
                 </button>
@@ -331,14 +338,14 @@
       <div class="mt-2 flex items-center gap-3">
         <Pulse size="xs" />
         <p class="text-xs text-muted-foreground flex-1">
-          {compactStageLabel} — {formatElapsed(memoryStore.compactElapsedSeconds)} elapsed
-          <span class="text-muted-foreground">(times out at {formatElapsed(compactTimeoutSeconds)})</span>
+          {compactStageLabel} · {formatElapsed(memoryStore.compactElapsedSeconds)} elapsed
+          <span class="text-muted-foreground">(each step times out after {formatElapsed(compactTimeoutSeconds)})</span>
         </p>
         <Button
           size="2xs"
           variant="outline-destructive"
           onclick={() => memoryStore.cancelCompact()}
-          title="Abort this compaction pass — nothing has been changed yet"
+          title="Stop now. Steps already finished stay applied, and Undo reverts them."
         >
           Cancel
         </Button>
@@ -357,7 +364,7 @@
           variant="secondary"
           onclick={() => memoryStore.compact()}
           disabled={memoryStore.compacting || memoryStore.files.length === 0}
-          title="Merge duplicate notes, resolve contradictions, and drop stale details. Shows a summary you can undo."
+          title="Merge overlapping notes, resolve contradictions, and describe files that have no description. Each run merges up to 6 groups; press again to continue. Shows a summary you can undo."
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
           {memoryStore.compacting ? 'Compacting…' : 'Compact'}
@@ -426,13 +433,22 @@
       <Dialog.Header>
         <Dialog.Title>Memory Compacted</Dialog.Title>
         <Dialog.Description>
-          {memoryStore.lastCompaction.filesChanged.length} {memoryStore.lastCompaction.filesChanged.length === 1 ? 'file' : 'files'} changed. A snapshot of the previous state was saved — Undo restores it.
+          {memoryStore.lastCompaction.filesChanged.length} {memoryStore.lastCompaction.filesChanged.length === 1 ? 'file' : 'files'} changed{#if memoryStore.lastCompaction.descriptionsAdded}, including {memoryStore.lastCompaction.descriptionsAdded} {memoryStore.lastCompaction.descriptionsAdded === 1 ? 'file' : 'files'} given a description{/if}. A snapshot of the previous state was saved: Undo restores it.
         </Dialog.Description>
       </Dialog.Header>
 
+      {#if memoryStore.lastCompaction.error || memoryStore.lastCompaction.skippedReason === 'cancelled'}
+        <p class="text-xs text-destructive">Stopped early: {memoryStore.lastCompaction.error ?? 'cancelled'}.</p>
+      {/if}
+      {#if memoryStore.lastCompaction.remainingGroups}
+        <p class="text-xs text-muted-foreground">
+          {memoryStore.lastCompaction.remainingGroups} more {memoryStore.lastCompaction.remainingGroups === 1 ? 'group' : 'groups'} of overlapping files left. Press Compact again to continue.
+        </p>
+      {/if}
+
       {#if memoryStore.lastCompaction.changes?.length}
         <div class="flex flex-col gap-1 max-h-64 overflow-auto">
-          {#each memoryStore.lastCompaction.changes as change (change.path)}
+          {#each memoryStore.lastCompaction.changes as change, i (`${i}:${change.path}`)}
             <div class="px-2 py-1.5 bg-card border border-border">
               <div class="flex items-center gap-2 text-sm">
                 <Badge tone={change.action === 'delete' ? 'danger' : 'primary'} class="uppercase tracking-wide">

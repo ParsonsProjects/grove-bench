@@ -20,7 +20,6 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   claudeAccounts: [],
   enabledAlphaAgents: [],
   memoryAutoSave: true,
-  memoryAutoCompact: false,
   memoryCompactTimeoutSeconds: 300,
   backgroundModels: {},
   autoInstallDeps: false,

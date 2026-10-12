@@ -18,13 +18,20 @@ const mockMemory = vi.hoisted(() => ({
   listMemoryFiles: vi.fn(() => []),
   readMemoryFile: vi.fn<(...args: unknown[]) => string | null>(() => null),
   writeMemoryFile: vi.fn(),
+  byIndexOrder: () => 0,
+  indexLine: (e: { relativePath: string }) => `- ${e.relativePath}`,
+  memoryPathKey: (p: string) => p,
+  isConventions: () => false,
+  stripFrontmatter: (c: string) => c,
+  SESSION_NOTE_MAX_AGE_DAYS: 30,
+  FULL_CONVENTIONS_BYTES: 6 * 1024,
 }));
 
 vi.mock('./settings.js', () => ({
-  getSettings: () => ({ memoryAutoSave: true, memoryAutoCompact: false, backgroundModels: {} }),
+  getSettings: () => ({ memoryAutoSave: true, backgroundModels: {} }),
 }));
 vi.mock('./memory.js', () => mockMemory);
-vi.mock('./memory-compact.js', () => ({ maybeCompact: vi.fn() }));
+vi.mock('./memory-compact.js', () => ({ expireSessionNotes: vi.fn(() => []) }));
 vi.mock('./logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));

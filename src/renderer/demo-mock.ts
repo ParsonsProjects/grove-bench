@@ -48,7 +48,6 @@ const SETTINGS = {
   claudeAccounts: [],
   enabledAlphaAgents: [],
   memoryAutoSave: true,
-  memoryAutoCompact: false,
   memoryCompactTimeoutSeconds: 300,
   backgroundModels: {},
   autoInstallDeps: false,
@@ -232,33 +231,40 @@ const api: Record<string, unknown> = {
     // Simulate a real pass: staged progress events, cancellable, then the merge
     compactCancelled = false;
     const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
-    const stage = (s: string) => compactListeners.forEach(l => l({ kind: 'stage', repoPath, auto: false, stage: s }));
+    const stage = (s: string, step?: number, total?: number) =>
+      compactListeners.forEach(l => l({ kind: 'stage', repoPath, stage: s, ...(step ? { step, total } : {}) }));
     const finish = (status: Record<string, unknown>) => {
-      compactListeners.forEach(l => l({ kind: 'done', repoPath, auto: false, status }));
+      compactListeners.forEach(l => l({ kind: 'done', repoPath, status }));
       return status;
     };
 
     stage('pruning');
     await sleep(600);
-    stage('generating');
-    for (let i = 0; i < 8; i++) {
+    stage('planning');
+    for (let i = 0; i < 4; i++) {
       await sleep(500);
       if (compactCancelled) return finish({ compacted: false, skippedReason: 'cancelled', filesChanged: [] });
     }
-    stage('validating');
-    await sleep(500);
-    stage('applying');
-    await sleep(400);
+    // A bounded run: 3 merge steps, with more groups left for the next run
+    for (let step = 1; step <= 3; step++) {
+      stage('merging', step, 3);
+      for (let i = 0; i < 4; i++) {
+        await sleep(500);
+        if (compactCancelled) return finish({ compacted: false, skippedReason: 'cancelled', filesChanged: [] });
+      }
+    }
 
     // Merge the duplicated tech-stack file into the overview
     memoryFiles = memoryFiles.filter(f => f.relativePath !== 'repo/tech-stack.md');
     return finish({
       compacted: true,
-      filesChanged: ['repo/overview.md', 'repo/tech-stack.md'],
+      filesChanged: ['repo/overview.md', 'repo/tech-stack.md', 'conventions/naming.md', 'architecture/ipc-flow.md'],
       changes: [
         { action: 'update', path: 'repo/overview.md', reason: 'Merged the tech stack details in; dropped the duplicated Electron/Svelte facts' },
         { action: 'delete', path: 'repo/tech-stack.md', reason: 'Fully covered by repo/overview.md after the merge' },
       ],
+      descriptionsAdded: 2,
+      remainingGroups: 2,
       backupId: memoryBackups[0].id,
     });
   },
@@ -274,15 +280,18 @@ const api: Record<string, unknown> = {
   memoryRestoreBackup: async () => ({ restored: true, filesChanged: ['repo/overview.md', 'repo/tech-stack.md'] }),
   memoryStats: async () => {
     const nonSession = memoryFiles.filter(f => !f.folder.startsWith('sessions'));
-    const totalBytes = nonSession.reduce((sum, f) => sum + f.content.length, 0) + 11.5 * 1024; // pad to a realistic fill level
+    const conventions = nonSession.filter(f => f.folder === 'conventions');
+    // Conventions in full plus an index line per other file, as main counts it
+    const promptBytes = conventions.reduce((sum, f) => sum + f.content.length, 0)
+      + (memoryFiles.length - conventions.length) * 90;
     return {
-      totalBytes,
+      promptBytes,
       budgetBytes: 16 * 1024,
       fileCount: nonSession.length,
       sessionNoteCount: memoryFiles.length - nonSession.length,
-      skippedFiles: [],
+      fullFiles: conventions.map(f => f.relativePath),
+      unlistedFiles: [],
       lastCompactedAt: new Date(now - 7 * 60 * min).toISOString(),
-      lastAuto: true,
       lastFilesChanged: 2,
     };
   },

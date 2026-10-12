@@ -65,6 +65,9 @@ vi.mock('./memory.js', () => ({
   ensureRepoMemory: vi.fn(),
   listMemoryFiles: vi.fn(() => []),
 }));
+vi.mock('./memory-compact.js', () => ({
+  expireSessionNotes: vi.fn(() => []),
+}));
 vi.mock('./memory-autosave.js', () => ({
   triggerAutoSave: vi.fn(),
   triggerAutoSaveImmediate: vi.fn().mockResolvedValue(undefined),
@@ -1664,6 +1667,25 @@ describe('AgentSessionManager.destroySession()', () => {
     await sessionManager.destroySession('test-destroy-perm');
 
     expect(permResolved).toMatchObject({ behavior: 'deny', message: 'Session destroyed' });
+  });
+});
+
+describe('AgentSessionManager.createSession() memory', () => {
+  it('archives expired thread notes before building the memory prompt', async () => {
+    const compact = await import('./memory-compact.js');
+    const mem = await import('./memory.js');
+    vi.mocked(compact.expireSessionNotes).mockClear();
+    vi.mocked(mem.getMemoryForSystemPrompt).mockClear();
+
+    await sessionManager.createSession({
+      id: 'test-expire-notes', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+    });
+
+    expect(compact.expireSessionNotes).toHaveBeenCalledWith('/repo');
+    const expiredAt = vi.mocked(compact.expireSessionNotes).mock.invocationCallOrder[0];
+    const promptAt = vi.mocked(mem.getMemoryForSystemPrompt).mock.invocationCallOrder[0];
+    expect(expiredAt).toBeLessThan(promptAt);
+    await sessionManager.destroySession('test-expire-notes');
   });
 });
 
