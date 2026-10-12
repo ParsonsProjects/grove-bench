@@ -1,5 +1,5 @@
 import { runProcess } from './process-host.js';
-import type { OpenPrSummary, PrChecksSummary, PrCreateOpts, PrInfo, PrReviewComment } from '../shared/types.js';
+import type { OpenPrSummary, PrChecksSummary, PrCreateOpts, PrInfo, PrReviewComment, PrReviewEvent } from '../shared/types.js';
 
 /** gh can sit forever on a stalled connection or an interactive prompt. The
  *  renderer polls PR status for every session in sequence, so one hung call
@@ -7,8 +7,9 @@ import type { OpenPrSummary, PrChecksSummary, PrCreateOpts, PrInfo, PrReviewComm
  *  the next sweep retries. */
 export const GH_TIMEOUT_MS = 30_000;
 
-export async function gh(args: string[], cwd?: string): Promise<string> {
-  const result = await runProcess('gh', args, { ...(cwd ? { cwd } : {}), timeout: GH_TIMEOUT_MS });
+/** `input` goes to gh's stdin (for `gh api --input -`). */
+export async function gh(args: string[], cwd?: string, input?: string): Promise<string> {
+  const result = await runProcess('gh', args, { ...(cwd ? { cwd } : {}), timeout: GH_TIMEOUT_MS, ...(input !== undefined ? { input } : {}) });
   return result.stdout;
 }
 
@@ -86,13 +87,13 @@ export function resetGhOfflineCooldownForTests(): void {
  *  bypassCooldown is for user-initiated calls: someone clicking a button has
  *  usually just noticed (and maybe fixed) the connection, so they always get
  *  a real attempt. */
-async function ghOnline(args: string[], cwd?: string, opts?: { bypassCooldown?: boolean }): Promise<string> {
+async function ghOnline(args: string[], cwd?: string, opts?: { bypassCooldown?: boolean; input?: string }): Promise<string> {
   if (!opts?.bypassCooldown) {
     if (ghOffline()) throw new Error(GH_OFFLINE_MESSAGE);
     if (ghRateLimited()) throw new Error(GH_RATE_LIMITED_MESSAGE);
   }
   try {
-    const out = await gh(args, cwd);
+    const out = await gh(args, cwd, opts?.input);
     offlineUntil = 0;
     rateLimitedUntil = 0;
     rateLimitStrikes = 0;
@@ -156,7 +157,7 @@ export function resetGhLoginCacheForTests(): void {
   cachedLogin = null;
 }
 
-const PR_VIEW_FIELDS = 'number,url,state,isDraft,title,reviewDecision,statusCheckRollup,headRefOid,comments,reviews,headRefName,baseRefName';
+const PR_VIEW_FIELDS = 'number,url,state,isDraft,title,reviewDecision,statusCheckRollup,headRefOid,comments,reviews,headRefName,baseRefName,author';
 /** Upper bound on PRs read per head branch. A branch rarely has more than a
  *  handful (GitHub allows one open PR per head+base pair); the rest are history. */
 const PR_LIST_LIMIT = 20;
@@ -228,6 +229,9 @@ function parsePr(data: Record<string, any>, selfLogin?: string | null): PrInfo |
     commentSignature: commentSignature(data.comments, data.reviews, selfLogin),
     ...(typeof data.headRefName === 'string' && data.headRefName ? { headRefName: data.headRefName } : {}),
     ...(typeof data.baseRefName === 'string' && data.baseRefName ? { baseRefName: data.baseRefName } : {}),
+    // Only when both logins are known: an unknown answer must not hide the
+    // review options for a PR someone else opened.
+    ...(selfLogin && typeof data.author?.login === 'string' ? { viewerIsAuthor: data.author.login === selfLogin } : {}),
   };
 }
 
@@ -412,5 +416,120 @@ export async function prCreate(repoPath: string, branch: string, opts: PrCreateO
     throw new Error(`PR was created but could not be read back — check GitHub (${e?.message ?? e})`);
   }
   if (!created) throw new Error('PR was created but could not be read back — check GitHub');
-  return created;
+  // Opened with the gh account just now, so it's the viewer's own.
+  return { ...created, viewerIsAuthor: true };
+}
+
+/** A readable reason from a failed `gh api` call. gh prints GitHub's JSON
+ *  error to stdout, and its `errors` list says what was wrong (for example
+ *  "Can not approve your own pull request"); stderr only has the status. */
+export function ghApiErrorMessage(e: unknown): string {
+  const err = e as { stdout?: unknown; stderr?: unknown; message?: unknown } | null;
+  if (typeof err?.stdout === 'string' && err.stdout.trim()) {
+    try {
+      const data = JSON.parse(err.stdout) as { message?: unknown; errors?: unknown };
+      const details = Array.isArray(data.errors)
+        ? data.errors
+          .map((x) => (typeof x === 'string' ? x : typeof x?.message === 'string' ? x.message : ''))
+          .filter(Boolean)
+        : [];
+      if (details.length > 0) return details.join('; ');
+      if (typeof data.message === 'string' && data.message) return data.message;
+    } catch { /* not JSON: fall through */ }
+  }
+  if (typeof err?.stderr === 'string' && err.stderr.trim()) return err.stderr.trim();
+  return typeof err?.message === 'string' && err.message ? err.message : String(e);
+}
+
+/** The PR's head commit, read fresh. Throws a readable error. */
+export async function prHeadSha(repoPath: string, prNumber: number): Promise<string> {
+  let stdout: string;
+  try {
+    stdout = await ghOnline(['pr', 'view', String(prNumber), '--json', 'headRefOid'], repoPath, { bypassCooldown: true });
+  } catch (e) {
+    throw new Error(`Could not read PR #${prNumber}: ${ghApiErrorMessage(e)}`);
+  }
+  const sha = (JSON.parse(stdout) as { headRefOid?: unknown }).headRefOid;
+  if (typeof sha !== 'string' || !sha) throw new Error(`Could not read PR #${prNumber}`);
+  return sha;
+}
+
+/** GitHub lists at most 3000 files for a PR, 100 per page. */
+const PR_FILES_PER_PAGE = 100;
+const PR_FILES_MAX_PAGES = 30;
+
+/** Each changed file's patch in the PR, by path. A file GitHub sends no patch
+ *  for (binary, or too large) maps to null. Pages are read one gh call at a
+ *  time rather than with --paginate, whose output for arrays isn't one JSON
+ *  document. */
+export async function prFilePatches(repoPath: string, prNumber: number): Promise<Map<string, string | null>> {
+  const patches = new Map<string, string | null>();
+  for (let page = 1; page <= PR_FILES_MAX_PAGES; page++) {
+    let stdout: string;
+    try {
+      stdout = await ghOnline(
+        ['api', `repos/{owner}/{repo}/pulls/${prNumber}/files?per_page=${PR_FILES_PER_PAGE}&page=${page}`],
+        repoPath,
+        { bypassCooldown: true },
+      );
+    } catch (e) {
+      throw new Error(`Could not read PR #${prNumber}'s files: ${ghApiErrorMessage(e)}`);
+    }
+    const data = JSON.parse(stdout) as unknown;
+    if (!Array.isArray(data)) break;
+    for (const f of data as Array<Record<string, unknown>>) {
+      if (typeof f.filename !== 'string') continue;
+      patches.set(f.filename, typeof f.patch === 'string' ? f.patch : null);
+    }
+    if (data.length < PR_FILES_PER_PAGE) break;
+  }
+  return patches;
+}
+
+/** One inline comment in GitHub's review payload: `line` is the last line,
+ *  and a range adds `start_line`. */
+export interface GhReviewComment {
+  path: string;
+  body: string;
+  line: number;
+  side: 'LEFT' | 'RIGHT';
+  start_line?: number;
+  start_side?: 'LEFT' | 'RIGHT';
+}
+
+/** Submit a review on a PR in one call, inline comments included. Pinned to
+ *  `commitId` when given, so comments land on the lines that were checked
+ *  against it. Returns the review's page on GitHub. */
+export async function prSubmitReview(
+  repoPath: string,
+  prNumber: number,
+  review: { event: PrReviewEvent; body: string; commitId?: string; comments: GhReviewComment[] },
+): Promise<{ url: string | null }> {
+  const payload = {
+    event: review.event,
+    ...(review.body ? { body: review.body } : {}),
+    ...(review.commitId ? { commit_id: review.commitId } : {}),
+    ...(review.comments.length > 0 ? { comments: review.comments } : {}),
+  };
+  let stdout: string;
+  try {
+    stdout = await ghOnline(
+      ['api', '-X', 'POST', `repos/{owner}/{repo}/pulls/${prNumber}/reviews`, '--input', '-'],
+      repoPath,
+      { bypassCooldown: true, input: JSON.stringify(payload) },
+    );
+  } catch (e) {
+    // A post that timed out may still have reached GitHub. Posting again
+    // would add a second review, so say to look first.
+    if ((e as { timedOut?: unknown } | null)?.timedOut === true) {
+      throw new Error('GitHub didn\'t answer in time. The review may still have been posted, so check the PR before submitting again.');
+    }
+    throw new Error(ghApiErrorMessage(e));
+  }
+  try {
+    const url = (JSON.parse(stdout) as { html_url?: unknown }).html_url;
+    return { url: typeof url === 'string' ? url : null };
+  } catch {
+    return { url: null };
+  }
 }

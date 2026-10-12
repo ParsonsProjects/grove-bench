@@ -24,7 +24,8 @@ import { openAttachedFile, removeAttachments } from './attachments.js';
 import { openWorktreeFile } from './worktree-files.js';
 import { generateCommitMessage } from './commit-message.js';
 import type { PreviewBounds, PreviewCommand, PreviewPageKind } from '../shared/types.js';
-import type { CheckpointDiffScope, FileDiffResult, FileLinesResult, GitStatusOptions, GitStatusResult, GitStatusEntry, ImageDiffContent, OpenWorktreeFileResult, PrCreateOpts } from '../shared/types.js';
+import type { CheckpointDiffScope, FileDiffResult, FileLinesResult, GitStatusOptions, GitStatusResult, GitStatusEntry, ImageDiffContent, OpenWorktreeFileResult, PrCreateOpts, PrReviewSubmitResult } from '../shared/types.js';
+import { parsePrReviewSubmit, submitPrReview } from './pr-review.js';
 import { showOsNotification, showTestNotification } from './notifications.js';
 import { parseGitStatusPorcelain, parseNumstat, parseNameStatus, parseHashObjectOutput } from './git-status-parser.js';
 import { logger } from './logger.js';
@@ -1525,7 +1526,7 @@ export function registerHandlers() {
         const tracked = parseNameStatus(await git(['diff', '--name-status', '-z', mb.mergeBase], cwd));
         const status = parseGitStatusPorcelain(await git(['status', '--porcelain=v1', '-z', '--untracked-files=all'], cwd));
         const untracked = status.entries.filter(e => e.status === 'untracked');
-        result = { entries: [...tracked, ...untracked], baseRef: mb.ref };
+        result = { entries: [...tracked, ...untracked], baseRef: mb.ref, uncommitted: status.entries.length };
       } else {
         const raw = await git(['status', '--porcelain=v1', '-z', '--untracked-files=all'], cwd);
         result = parseGitStatusPorcelain(raw);
@@ -1612,6 +1613,12 @@ export function registerHandlers() {
     } catch (e) {
       rethrowGhFailure(e);
     }
+  });
+
+  ipcMain.handle(IPC.PR_SUBMIT_REVIEW, async (_event, sessionId: string, review: unknown): Promise<PrReviewSubmitResult> => {
+    const worktree = worktreeManager.getWorktree(sessionId);
+    if (!worktree || worktree.noGit) throw new Error(`Worktree not found for session ${sessionId}`);
+    return submitPrReview(worktree.path, worktree.repoPath, parsePrReviewSubmit(review));
   });
 
   ipcMain.handle(IPC.PR_CREATE, async (_event, sessionId: string, opts: PrCreateOpts) => {

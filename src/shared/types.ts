@@ -410,6 +410,9 @@ export interface GitStatusResult {
   baseRef?: string;
   /** Set when the branch scope could not find a merge base with `base`. */
   scopeError?: string;
+  /** Branch scope: how many entries the uncommitted view would list, so
+   *  places that mean "changed in the worktree" can still say so. */
+  uncommitted?: number;
   /** Set when git could not read the status: `entries` being empty then
    *  does not mean the tree is clean. */
   error?: string;
@@ -525,6 +528,42 @@ export interface PrInfo {
   headRefName?: string;
   /** Branch the PR merges into. Two open PRs from one head differ only here. */
   baseRefName?: string;
+  /** Whether the gh account opened this PR. GitHub doesn't let an author
+   *  approve or request changes on their own PR. Absent when either login
+   *  is unknown. */
+  viewerIsAuthor?: boolean;
+}
+
+export type PrReviewEvent = 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT';
+
+/** A line comment from the Changes tab, to post with a PR review. Lines are
+ *  numbered as in the Branch view's diff: `old` is the base side. */
+export interface PrReviewLineComment {
+  filePath: string;
+  side: 'old' | 'new';
+  startLine: number;
+  endLine: number;
+  /** The commented lines' text, quoted when the comment can't go on its lines. */
+  snippet: string;
+  body: string;
+}
+
+export interface PrReviewSubmit {
+  prNumber: number;
+  event: PrReviewEvent;
+  /** The review summary (Markdown). GitHub needs one to comment or request changes. */
+  body: string;
+  comments: PrReviewLineComment[];
+}
+
+export interface PrReviewSubmitResult {
+  /** The review on GitHub, when it said. */
+  url: string | null;
+  /** Comments posted on their lines. */
+  inline: number;
+  /** Comments quoted in the summary instead: their lines aren't in the PR's
+   *  diff, or read differently there than when the comment was written. */
+  quoted: number;
 }
 
 /** A review comment or review body on a PR (flattened for prompts/UI). */
@@ -1349,6 +1388,9 @@ export interface GroveBenchAPI {
   listOpenPrs(repoPath: string): Promise<OpenPrSummary[]>;
   createPr(sessionId: string, opts: PrCreateOpts): Promise<PrInfo>;
   getPrReviewComments(sessionId: string, prNumber: number): Promise<PrReviewComment[]>;
+  /** Post a review (approve, request changes or comment) on one of the
+   *  session's PRs, with line comments placed inline where GitHub can take them. */
+  submitPrReview(sessionId: string, review: PrReviewSubmit): Promise<PrReviewSubmitResult>;
 
   // External links
   openExternal(url: string): Promise<void>;
@@ -2008,6 +2050,7 @@ export const IPC = {
   PR_LIST_OPEN: 'pr:listOpen',
   PR_CREATE: 'pr:create',
   PR_REVIEW_COMMENTS: 'pr:reviewComments',
+  PR_SUBMIT_REVIEW: 'pr:submitReview',
   AGENT_SET_MODEL: 'agent:setModel',
   AGENT_SET_CONTROL: 'agent:setControl',
   AGENT_GET_CONTROLS: 'agent:getControls',

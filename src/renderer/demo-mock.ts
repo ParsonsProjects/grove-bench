@@ -402,7 +402,34 @@ const api: Record<string, unknown> = {
   gitRebase: async () => ({ success: true }),
   gitCherryPick: async () => ({ success: false, conflicts: ['src/auth/session.ts'] }),
   gitSquash: async () => ({ success: true }),
-  getGitStatus: async (id: string) => GIT_STATUS[id] ?? { entries: [] },
+  // The Branch view (the default) names its base; Uncommitted doesn't.
+  getGitStatus: async (id: string, opts?: { scope?: string }) => ({
+    ...(GIT_STATUS[id] ?? { entries: [] }),
+    ...(opts?.scope === 'branch' ? { baseRef: 'main' } : {}),
+  }),
+  getFileDiff: async (_id: string, filePath: string) => ({
+    kind: 'text',
+    patch: [
+      `--- a/${filePath}`,
+      `+++ b/${filePath}`,
+      '@@ -10,6 +10,8 @@ export async function refreshToken(session: Session) {',
+      '   const stored = await tokenStore.get(session.id);',
+      '   if (!stored) return null;',
+      '-  const fresh = await oauth.refresh(stored.refreshToken);',
+      '-  await tokenStore.set(session.id, fresh);',
+      '+  // Rotate once per request: a second rotation invalidates the first.',
+      '+  const fresh = await refreshOnce(session.id, () => oauth.refresh(stored.refreshToken));',
+      '+  await tokenStore.set(session.id, fresh, { expiresIn: fresh.expiresIn });',
+      '+  metrics.increment(\'oauth.refresh\');',
+      '   return fresh;',
+      ' }',
+    ].join('\n'),
+  }),
+  submitPrReview: async (_id: string, review: { comments: unknown[] }) => ({
+    url: 'https://github.com/example/api-service/pull/42#pullrequestreview-1',
+    inline: review.comments.length,
+    quoted: 0,
+  }),
   // Branch stack states: s-oauth has an open PR with a failing check plus an
   // earlier, merged PR on the same branch; the others show the "Create PR"
   // link (s-sidebar with unpushed commits).

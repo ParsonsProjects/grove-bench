@@ -136,11 +136,11 @@ describe('WorkspacePane tabs', () => {
     gitStatusStore.statusBySession = { [SID]: { entries: [] } };
     messageStore.messagesBySession = { [SID]: [] };
     render(WorkspacePane, { sessionId: SID });
-    expect(screen.queryByText('Working tree clean')).toBeNull();
+    expect(screen.queryByText(/No changes on this branch/)).toBeNull();
 
     messageStore.setActiveTab(SID, 'changes');
 
-    expect(await screen.findByText('Working tree clean')).toBeInTheDocument();
+    expect(await screen.findByText(/No changes on this branch/)).toBeInTheDocument();
   });
 });
 

@@ -16,6 +16,7 @@ import { AGENT_SPRITES } from '../lib/agent-sprite.js';
 import { agentsStore } from '../stores/agents.svelte.js';
 import { groupStore } from '../stores/groups.svelte.js';
 import { draftStore } from '../stores/draft.svelte.js';
+import { gitStatusStore } from '../stores/gitStatus.svelte.js';
 
 beforeEach(() => {
   // Call counts start from zero in every test, whatever ran before it.
@@ -56,6 +57,18 @@ describe('Sidebar session rows', () => {
     };
     render(Sidebar);
     expect(await screen.findByText('Bash: npm test')).toBeInTheDocument();
+  });
+
+  it('counts the files changed in the worktree, not everything on the branch', async () => {
+    const entry = (filePath: string) => ({ filePath, status: 'modified' as const, staged: false });
+    // The Changes tab lists 3 files changed on the branch; 1 isn't committed yet.
+    gitStatusStore.statusBySession = { s1: { entries: [entry('a.ts'), entry('b.ts'), entry('c.ts')], baseRef: 'main', uncommitted: 1 } };
+    try {
+      render(Sidebar);
+      expect(await screen.findByTitle('1 changed file in the worktree')).toHaveTextContent('±1');
+    } finally {
+      gitStatusStore.statusBySession = {};
+    }
   });
 
   it('shows the last conversation text when the agent is idle', async () => {

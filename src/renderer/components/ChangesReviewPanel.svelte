@@ -4,19 +4,22 @@
   import { prStore } from '../stores/pr.svelte.js';
   import { resolveBaseBranch } from '../lib/base-branch.js';
   import { store as sessionStore } from '../stores/sessions.svelte.js';
-  import type { GitStatusEntry, DiffScope } from '../../shared/types.js';
+  import { reviewStore } from '../stores/review.svelte.js';
+  import type { GitStatusEntry, DiffScope, PrReviewEvent, PrReviewSubmitResult } from '../../shared/types.js';
   import ReviewDiffPanel from './ReviewDiffPanel.svelte';
   import { lazyComponent } from '../lib/lazy-component.js';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import * as Segmented from '$lib/components/ui/segmented/index.js';
   import { Pulse } from '$lib/components/ui/pulse/index.js';
+  import { Notice } from '$lib/components/ui/notice/index.js';
 
   /**
-   * The Changes tab: git status (uncommitted working tree, or the whole
-   * branch since its base) fed into the shared review panel, plus the git
-   * client actions that only make sense here — stage/unstage, revert, commit,
-   * branch operations.
+   * The Changes tab: git status (the whole branch since its base, by
+   * default, or the uncommitted working tree) fed into the shared review
+   * panel, plus the git client actions that only make sense here:
+   * stage/unstage, revert, commit, branch operations, and reviewing the
+   * thread's PR on GitHub.
    */
   let { sessionId }: { sessionId: string } = $props();
 
@@ -49,6 +52,34 @@
     } finally {
       switchingScope = false;
     }
+  }
+
+  /** Where line comments were written, so each shows only on its comparison.
+   *  Named by the chosen base, not the resolved ref, which can move between
+   *  `main` and `origin/main` and would hide comments already written. */
+  let commentContext = $derived(isBranchScope ? `branch vs ${scopeState.base ?? gitStatus.baseRef ?? 'base'}` : undefined);
+
+  // ── PR review (Branch view only, for the PR of the branch it shows) ──
+  let reviewablePr = $derived(isBranchScope ? prStore.reviewablePr(sessionId) : null);
+  let reviewState = $derived(reviewStore.bySession[sessionId]);
+  let branchComments = $derived.by(() => {
+    reviewState;
+    if (!isBranchScope) return [];
+    return reviewStore.getComments(sessionId).filter((c) => (c.context ?? '') === (commentContext ?? ''));
+  });
+  let reviewOpen = $state(false);
+  const loadPrReviewDialog = lazyComponent(() => import('./PrReviewDialog.svelte'));
+  let posted = $state<{ prNumber: number; event: PrReviewEvent; result: PrReviewSubmitResult } | null>(null);
+
+  const POSTED_TEXT: Record<PrReviewEvent, string> = {
+    APPROVE: 'Approved',
+    REQUEST_CHANGES: 'Requested changes on',
+    COMMENT: 'Commented on',
+  };
+
+  function onReviewPosted(prNumber: number, p: { event: PrReviewEvent; result: PrReviewSubmitResult; commentIds: string[] }) {
+    reviewStore.removeComments(sessionId, p.commentIds);
+    posted = { prNumber, event: p.event, result: p.result };
   }
 
   let emptyTitle = $derived(
@@ -165,29 +196,31 @@
   }
 </script>
 
-{#snippet scopeToggle()}
+{#snippet sidebarTop()}
   <!-- Reads the scope from the store, so a switch that fails leaves the
-       toggle where it was. -->
+       toggle where it was. Spans the sidebar, each option taking half. -->
   <Segmented.Root
     bind:value={() => (isBranchScope ? 'branch' : 'working'), (v) => setScope(v as DiffScope)}
     disabled={switchingScope}
     aria-label="Diff scope"
+    class="flex-1 min-w-0"
   >
     <Segmented.Item
-      value="working"
-      title="Uncommitted changes in the working tree (staged, unstaged, untracked)"
-    >Uncommitted</Segmented.Item>
-    <Segmented.Item
       value="branch"
+      class="flex-1 justify-center"
       title="Everything changed on this branch since it left the base branch, committed or not (like a pull request)"
     >Branch</Segmented.Item>
+    <Segmented.Item
+      value="working"
+      class="flex-1 justify-center"
+      title="Uncommitted changes in the working tree (staged, unstaged, untracked)"
+    >Uncommitted</Segmented.Item>
   </Segmented.Root>
 {/snippet}
 
-{#snippet sidebarTop()}
-  {@render scopeToggle()}
+{#snippet sidebarSummaryNote()}
   {#if isBranchScope && gitStatus.baseRef}
-    <span class="text-micro text-muted-foreground truncate" title="Compared against the merge base with {gitStatus.baseRef}">vs {gitStatus.baseRef}</span>
+    <span class="truncate min-w-0" title="Compared against the merge base with {gitStatus.baseRef}">vs {gitStatus.baseRef}</span>
   {/if}
 {/snippet}
 
@@ -259,6 +292,68 @@
   {/if}
 {/snippet}
 
+{#snippet prReviewBox()}
+  {#if reviewablePr}
+    {@const reviewPr = reviewablePr}
+    <div class="border-t border-border p-2 shrink-0 space-y-1.5">
+      {#if posted && posted.prNumber === reviewPr.number}
+        {@const done = posted}
+        <Notice tone="success" class="px-2 py-1.5">
+          {#snippet actions()}
+            <Button size="icon-2xs" variant="quiet" onclick={() => posted = null} aria-label="Dismiss" title="Dismiss">
+              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+            </Button>
+          {/snippet}
+          <p>
+            {POSTED_TEXT[done.event]} PR #{reviewPr.number}.
+            {#if done.result.url}
+              <Button size="inline" variant="external" onclick={() => window.groveBench.openExternal(done.result.url!)}>View</Button>
+            {/if}
+          </p>
+          {#if done.result.inline + done.result.quoted > 0}
+            <p class="text-micro text-muted-foreground">
+              {done.result.inline} line comment{done.result.inline === 1 ? '' : 's'} on {done.result.inline === 1 ? 'its line' : 'their lines'}{#if done.result.quoted > 0}, {done.result.quoted} quoted in the summary{/if}
+            </p>
+          {/if}
+        </Notice>
+      {/if}
+      <div class="flex items-center gap-1.5 text-micro text-muted-foreground min-w-0">
+        <span class="shrink-0">PR #{reviewPr.number}</span>
+        {#if reviewPr.title}<span class="truncate" title={reviewPr.title}>{reviewPr.title}</span>{/if}
+        {#if reviewPr.reviewDecision === 'APPROVED'}
+          <span class="ml-auto shrink-0 text-green-400">approved</span>
+        {:else if reviewPr.reviewDecision === 'CHANGES_REQUESTED'}
+          <span class="ml-auto shrink-0 text-amber-500" title="Changes requested">changes</span>
+        {/if}
+      </div>
+      <Button
+        size="xs"
+        onclick={() => reviewOpen = true}
+        class="w-full"
+        title="Comment on, approve, or request changes on this PR on GitHub"
+      >
+        Review changes…
+        {#if branchComments.length > 0}
+          <span class="opacity-80">({branchComments.length} comment{branchComments.length === 1 ? '' : 's'})</span>
+        {/if}
+      </Button>
+    </div>
+  {/if}
+{/snippet}
+
+{#snippet sidebarFooter()}
+  {@render commitBox()}
+  {@render prReviewBox()}
+{/snippet}
+
+{#snippet reviewBarActions()}
+  {#if reviewablePr && branchComments.length > 0}
+    <Button size="2xs" variant="subtle" onclick={() => reviewOpen = true} title="Post these comments to PR #{reviewablePr.number} on GitHub, with a summary">
+      Post to PR #{reviewablePr.number}…
+    </Button>
+  {/if}
+{/snippet}
+
 {#snippet headerActions(entry: GitStatusEntry)}
   {#if !isBranchScope}
     {@const isUntracked = entry.status === 'untracked'}
@@ -319,6 +414,19 @@
       <GitOpsDialog {sessionId} onclose={() => gitOpsOpen = false} />
     {/await}
   {/if}
+
+  {#if reviewOpen && reviewablePr}
+    {@const reviewPr = reviewablePr}
+    {#await loadPrReviewDialog() then PrReviewDialog}
+      <PrReviewDialog
+        {sessionId}
+        pr={reviewPr}
+        comments={branchComments}
+        onclose={() => reviewOpen = false}
+        onposted={(p) => onReviewPosted(reviewPr.number, p)}
+      />
+    {/await}
+  {/if}
 {/snippet}
 
 <ReviewDiffPanel
@@ -335,14 +443,16 @@
   onUnstage={isBranchScope ? undefined : unstageEntry}
   onStageAll={isBranchScope ? undefined : stageAll}
   onUnstageAll={isBranchScope ? undefined : unstageAll}
-  commentContext={isBranchScope ? `branch vs ${gitStatus.baseRef ?? scopeState.base ?? 'base'}` : undefined}
+  {commentContext}
   {emptyTitle}
   emptyHint={isRunning ? 'Edits show up here as the agent makes them' : undefined}
   emptyScene="changes"
   panel="changesFiles"
   {sidebarTop}
   {sidebarSummaryExtra}
-  sidebarFooter={commitBox}
+  {sidebarSummaryNote}
+  {sidebarFooter}
+  {reviewBarActions}
   {headerActions}
   {dialogs}
 />
