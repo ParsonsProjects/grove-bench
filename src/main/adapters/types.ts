@@ -40,6 +40,9 @@ export interface AgentCapabilities {
   structuredOutput: boolean;
   /** Supports sandbox/restricted execution */
   sandbox: boolean;
+  /** The user can add other accounts with this provider, each run as its own
+   *  agent (Settings > Agents, claude-accounts.ts). */
+  accounts?: boolean;
 }
 
 // ─── Model Info ───
@@ -87,7 +90,32 @@ export type ElicitationHandler = (request: McpElicitationRequest, signal: AbortS
 
 export interface UserMessage {
   text: string;
-  images?: ImageAttachment[];
+  images?: MessageImage[];
+  /** Other files attached to the message, already saved to disk. See
+   *  file-attachments.ts for how each adapter passes them on. */
+  files?: MessageFile[];
+  /** Bytes of audio that may already be inline in the agent's conversation
+   *  (audioSentInline), so the inline budget holds across restarts. */
+  audioInHistory?: number;
+}
+
+/** An image attached to a message. `path` is its saved copy, for an agent
+ *  that can't take images but can be given a file's path. */
+export type MessageImage = ImageAttachment & { path?: string };
+
+/** A file attached to a message (shared FileAttachment) once the session
+ *  manager has saved it to the conversation's attachments folder. */
+export interface MessageFile {
+  name: string;
+  /** MIME type, or '' when unknown. */
+  mediaType: string;
+  /** base64-encoded content, only for a file that may go inline (audio of
+   *  a listed type and size); others go by path and don't carry it. */
+  data?: string;
+  /** Absolute path of the saved copy, for agents that open it themselves. */
+  path: string;
+  /** Size in bytes. */
+  size: number;
 }
 
 // ─── Memory Operations ───
@@ -136,6 +164,9 @@ export interface PreviewOperations {
 
 export interface AdapterConfig {
   cwd: string;
+  /** The folder files attached to this conversation's messages are saved in,
+   *  outside cwd. Claude Code lets the agent read there without a prompt. */
+  attachmentsDir?: string | null;
   permissionMode: PermissionMode;
   /** Model to start the session with. When unset, the provider's own default is used. */
   model?: string | null;
@@ -169,7 +200,17 @@ export interface AdapterConfig {
    *  keeps the turns before the rewind point and forgets everything after).
    *  Only meaningful together with resumeSessionId. */
   resumeAtUuid?: string | null;
+  /** When resuming: the running cost total the conversation last reached
+   *  (lastRunningCost), for an agent that reports cost that way, so the
+   *  first result after resuming isn't charged for the turns before it. */
+  priorCostUsd?: number | null;
   onPermissionRequest: PermissionHandler;
+  /** Called before a tool call runs, wherever the adapter can hold one:
+   *  every call for Claude Code (a PreToolUse hook), the calls the agent
+   *  asks about for ACP agents. It waits while a reached limit is put to the
+   *  user (session-limits.ts); 'stop' means refuse the call, as the turn is
+   *  being stopped. Without it every call goes ahead. */
+  beforeToolUse?: (call: { toolName: string; toolUseId: string }) => Promise<'continue' | 'stop'>;
   /** Answers MCP elicitations. Without it the adapter declines them. */
   onElicitation?: ElicitationHandler;
   toolAllowRules: ToolRule[];
@@ -384,6 +425,10 @@ export interface AgentAdapter {
   /** 'alpha' while Grove Bench's support for the agent is still being
    *  tested: it is offered only once the user turns it on (AgentStage). */
   readonly stage?: AgentStage;
+
+  /** Set when the agent is one of the user's other accounts with this
+   *  provider (Settings > Agents), run with its own configuration folder. */
+  readonly account?: { readonly name: string; readonly configDir: string };
 
   /** Release any adapter-level resources (open connections, child processes).
    *  Called during app shutdown. Optional — stateless adapters can omit. */

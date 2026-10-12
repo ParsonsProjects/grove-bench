@@ -21,6 +21,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { app } from 'electron';
 import { execa, type ResultPromise } from 'execa';
 import type {
@@ -36,6 +37,7 @@ import { logger } from '../../logger.js';
 import { isReadOnlyToolCall } from '../../read-only-tools.js';
 import { loadAgentSignIn, loadModelCatalog, saveAgentSignIn, saveModelCatalog } from '../../app-state.js';
 import { catalogs, installFor } from '../../catalogs.js';
+import { AUDIO_INLINE_BUDGET_BYTES, inlineAudioType } from '../file-attachments.js';
 import { memoryServer, previewServer, type GroveServer } from '../grove-tools.js';
 import { startGroveMcpHttp, type GroveMcpHttp } from '../grove-mcp-http.js';
 import { stdioBridgeLaunch } from '../mcp-bridge/launch.js';
@@ -866,7 +868,7 @@ class AcpQuery {
   }
 
   private async runTurn(message: UserMessage): Promise<void> {
-    if (message.text.trim() === '/clear' && !message.images?.length) {
+    if (message.text.trim() === '/clear' && !message.images?.length && !message.files?.length) {
       await this.clear();
       return;
     }
@@ -922,6 +924,7 @@ class AcpQuery {
       ...(this.contextSize ? { contextWindow: this.contextSize } : {}),
       // usage_update's cost covers the whole session: this turn's is the rise.
       ...(costBefore !== undefined && this.sessionCost !== undefined ? { totalCostUsd: Math.max(0, this.sessionCost - costBefore) } : {}),
+      ...(this.sessionCost !== undefined ? { sessionCostUsd: this.sessionCost } : {}),
     });
   }
 
@@ -932,12 +935,29 @@ class AcpQuery {
       this.pendingInstructions = null;
     }
     blocks.push({ type: 'text', text: message.text });
-    const takesImages = this.init?.agentCapabilities?.promptCapabilities?.image === true;
+    // Every agent takes a link to a file (the protocol's baseline); images
+    // and audio go inline only when it says it takes them.
+    const caps = this.init?.agentCapabilities?.promptCapabilities;
+    const link = (filePath: string, name: string, mimeType: string, size: number) =>
+      ({ type: 'resource_link', uri: pathToFileURL(filePath).href, name, ...(mimeType ? { mimeType } : {}), size });
+    let leftOut = 0;
     for (const img of message.images ?? []) {
-      if (takesImages && IMAGE_MEDIA.has(img.mediaType)) blocks.push({ type: 'image', data: img.data, mimeType: img.mediaType });
+      if (caps?.image === true && IMAGE_MEDIA.has(img.mediaType)) blocks.push({ type: 'image', data: img.data, mimeType: img.mediaType });
+      else if (img.path) blocks.push(link(img.path, img.name, img.mediaType, Buffer.byteLength(img.data, 'base64')));
+      else leftOut++;
     }
-    if (!takesImages && message.images?.length) {
-      this.emit({ type: 'status', level: 'warning', message: `${this.def.displayName} can't take images, so the attached image${message.images.length > 1 ? 's were' : ' was'} left out.` });
+    if (leftOut > 0) {
+      this.emit({ type: 'status', level: 'warning', message: `${this.def.displayName} can't take images, so the attached image${leftOut > 1 ? 's were' : ' was'} left out.` });
+    }
+    let audioBytes = message.audioInHistory ?? 0;
+    for (const file of message.files ?? []) {
+      const audioType = caps?.audio === true && file.data ? inlineAudioType(file) : null;
+      if (audioType && audioBytes + file.size <= AUDIO_INLINE_BUDGET_BYTES) {
+        audioBytes += file.size;
+        blocks.push({ type: 'audio', data: file.data, mimeType: audioType });
+      } else {
+        blocks.push(link(file.path, file.name, file.mediaType, file.size));
+      }
     }
     return blocks;
   }
@@ -1246,10 +1266,18 @@ class AcpQuery {
     const call = this.tools.get(req.toolCall.toolCallId)!;
     const d = this.describe(call);
     const decision = this.autoDecision(d);
-    if (decision !== 'ask') return answer(decision);
+    if (decision === 'deny') return answer(decision);
 
     const { toolName, toolInput, toolCategory, toolView } = d;
     const { config } = this;
+    // Grove's limits hold the call before it runs, approved or not. Only
+    // calls the agent asks about can be held.
+    if (config.beforeToolUse) {
+      const go = await this.unlessTurnEnds(config.beforeToolUse({ toolName, toolUseId: call.toolCallId }));
+      if (go !== 'continue') return go === 'stop' ? answer('deny') : go;
+    }
+    if (decision === 'allow') return answer(decision);
+
     const isPlan = call.kind === 'switch_mode';
     const asked = config.onPermissionRequest({
       requestId: '',
@@ -1260,14 +1288,17 @@ class AcpQuery {
       toolView,
       ...(isPlan ? { isPlanExecution: true, planText: firstText(call.content) ?? call.title ?? '' } : {}),
     });
+    return this.unlessTurnEnds(asked.then((res: PermissionResponse) => answer(res.behavior === 'allow' ? 'allow' : 'deny')));
+  }
+
+  /** `pending`, unless the turn ends first: an interrupt or shutdown
+   *  answers every waiting permission request "cancelled". */
+  private async unlessTurnEnds<T>(pending: Promise<T>): Promise<T | AcpPermissionOutcome> {
     let settle!: (outcome: AcpPermissionOutcome) => void;
     const cancelledByTurn = new Promise<AcpPermissionOutcome>((resolve) => { settle = resolve; });
     this.pendingPermissions.add(settle);
     try {
-      return await Promise.race([
-        asked.then((res: PermissionResponse) => answer(res.behavior === 'allow' ? 'allow' : 'deny')),
-        cancelledByTurn,
-      ]);
+      return await Promise.race([pending, cancelledByTurn]);
     } finally {
       this.pendingPermissions.delete(settle);
     }

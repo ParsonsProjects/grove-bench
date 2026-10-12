@@ -1,4 +1,5 @@
 import type { ToolView } from './tool-view.js';
+import type { LimitKind } from './limits.js';
 
 // ─── Worktree ───
 
@@ -49,6 +50,10 @@ export interface WorktreeRepoConfig {
 // ─── Session ───
 
 export interface CreateSessionOpts {
+  /** Id picked by the renderer (8 hex characters), so the thread's row can
+   *  show before main's checks and setup are done. Main refuses one that is
+   *  malformed or already in use. */
+  id?: string;
   repoPath: string;
   branchName: string;
   baseBranch?: string;
@@ -128,7 +133,14 @@ export interface AgentSummary {
   mcp?: McpSupport;
   /** Untracked files Grove writes into the agent's worktrees for it. */
   generatedFiles?: string[];
+  /** Set for one of the user's other Claude accounts. `removed`: taken out of
+   *  Settings this run, so it isn't offered any more; threads already on it
+   *  keep it until Grove Bench restarts. */
+  account?: { name: string; configDir: string; removed?: boolean };
 }
+
+/** The folder an account being added would use, or why it can't be added. */
+export type ClaudeAccountPreview = { ok: true; configDir: string } | { ok: false; error: string };
 
 /** One agent's install and sign-in state. */
 export interface AgentPrerequisiteStatus {
@@ -230,7 +242,14 @@ export type AgentEvent =
    *  the fields present change. */
   | { type: 'tool_update'; toolUseId: string; toolName?: string; toolInput?: unknown; toolCategory?: ToolCategory; toolView?: ToolView }
   | { type: 'tool_result'; toolUseId: string; content: string; isError?: boolean; images?: StoredImage[]; parentToolUseId?: string }
-  | { type: 'result'; subtype: string; result?: string; structured_output?: unknown; totalCostUsd?: number; durationMs?: number; isError: boolean; errors?: string[]; numTurns?: number; contextWindow?: number }
+  /** Files the agent made during the turn, sent just before its result.
+   *  `more`: how many others were left off the list. */
+  | { type: 'files_made'; files: MadeFile[]; more?: number }
+  /** `totalCostUsd`: what this turn cost, in USD as the agent estimates it
+   *  (absent when it doesn't say). `sessionCostUsd`: the conversation's
+   *  running total the agent reported with it, when it reports one; a turn
+   *  carrying it counts toward spend limits (older history has none). */
+  | { type: 'result'; subtype: string; result?: string; structured_output?: unknown; totalCostUsd?: number; sessionCostUsd?: number; durationMs?: number; isError: boolean; errors?: string[]; numTurns?: number; contextWindow?: number }
   | { type: 'permission_request'; toolName: string; toolInput: unknown; toolUseId: string; requestId: string; decisionReason?: string; suggestions?: unknown[]; isPlanExecution?: boolean; toolCategory?: ToolCategory; toolView?: ToolView; planText?: string }
   | { type: 'thinking'; thinking: string; uuid: string; parentToolUseId?: string }
   | { type: 'partial_text'; text: string }
@@ -239,7 +258,7 @@ export type AgentEvent =
   | { type: 'compact_boundary'; trigger: 'manual' | 'auto'; preTokens: number }
   | { type: 'tool_progress'; toolName: string; toolUseId: string; elapsedSeconds: number }
   | { type: 'activity'; activity: 'thinking' | 'tool_starting' | 'generating' | 'idle' ; toolName?: string }
-  | { type: 'user_message'; text: string; uuid?: string; images?: StoredImage[] }
+  | { type: 'user_message'; text: string; uuid?: string; images?: StoredImage[]; files?: StoredFile[] }
   /** `level: 'warning'` renders prominently (e.g. read-safe mode without a sandbox).
    *  `newConversation` marks where the agent started a new conversation: it
    *  doesn't remember the turns above, so a rewind can't fork from them. */
@@ -298,6 +317,13 @@ export type AgentEvent =
        *  PERMISSION_TIMEOUT_MINUTES and was denied. */
       reason?: 'timeout';
     }
+  // A limit was reached (shared/limits.ts): the thread waits before its next
+  // tool call until the user continues or stops. `used` and `reachedAt` are
+  // in the limit's units (USD, tool calls, minutes).
+  | { type: 'limit_request'; requestId: string; limit: LimitKind; used: number; reachedAt: number; nextAllowance: number }
+  // How it ended. `allowance`: the new point to stop at after Continue, kept
+  // in the log so a thread's spend allowance survives a restart.
+  | { type: 'limit_resolved'; requestId: string; limit: LimitKind; decision: 'continue' | 'stop'; allowance?: number; reason?: 'timeout' }
   // Memory auto-save status
   | { type: 'memory_autosave'; status: 'started' | 'completed' | 'skipped'; filesWritten?: string[] }
   // Rewind checkpoint
@@ -384,6 +410,9 @@ export interface GitStatusResult {
   baseRef?: string;
   /** Set when the branch scope could not find a merge base with `base`. */
   scopeError?: string;
+  /** Branch scope: how many entries the uncommitted view would list, so
+   *  places that mean "changed in the worktree" can still say so. */
+  uncommitted?: number;
   /** Set when git could not read the status: `entries` being empty then
    *  does not mean the tree is clean. */
   error?: string;
@@ -499,6 +528,42 @@ export interface PrInfo {
   headRefName?: string;
   /** Branch the PR merges into. Two open PRs from one head differ only here. */
   baseRefName?: string;
+  /** Whether the gh account opened this PR. GitHub doesn't let an author
+   *  approve or request changes on their own PR. Absent when either login
+   *  is unknown. */
+  viewerIsAuthor?: boolean;
+}
+
+export type PrReviewEvent = 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT';
+
+/** A line comment from the Changes tab, to post with a PR review. Lines are
+ *  numbered as in the Branch view's diff: `old` is the base side. */
+export interface PrReviewLineComment {
+  filePath: string;
+  side: 'old' | 'new';
+  startLine: number;
+  endLine: number;
+  /** The commented lines' text, quoted when the comment can't go on its lines. */
+  snippet: string;
+  body: string;
+}
+
+export interface PrReviewSubmit {
+  prNumber: number;
+  event: PrReviewEvent;
+  /** The review summary (Markdown). GitHub needs one to comment or request changes. */
+  body: string;
+  comments: PrReviewLineComment[];
+}
+
+export interface PrReviewSubmitResult {
+  /** The review on GitHub, when it said. */
+  url: string | null;
+  /** Comments posted on their lines. */
+  inline: number;
+  /** Comments quoted in the summary instead: their lines aren't in the PR's
+   *  diff, or read differently there than when the comment was written. */
+  quoted: number;
 }
 
 /** A review comment or review body on a PR (flattened for prompts/UI). */
@@ -743,6 +808,12 @@ export interface McpServerInfo {
   tools?: McpToolInfo[];
 }
 
+/** A server that is down: it needs a sign-in, or it failed to connect. The
+ *  MCP badge counts these, and a reconnect across threads retries them. */
+export function isMcpServerDown(status: string): boolean {
+  return status === 'needs-auth' || status === 'failed';
+}
+
 export interface McpToolInfo {
   name: string;
   description?: string;
@@ -780,6 +851,11 @@ export interface McpServerContextCost {
   /** Tokens of tool definitions held back until the agent searches for them. */
   deferredTokens: number;
 }
+
+/** How long a browser sign-in the agent finishes by itself is waited on.
+ *  A reconnect across threads leaves the server alone meanwhile, as a
+ *  reconnect could cancel the sign-in. */
+export const MCP_SIGN_IN_TIMEOUT_MS = 3 * 60 * 1000;
 
 /** Result of kicking off an OAuth sign-in for an MCP server. */
 export interface McpAuthStartResult {
@@ -873,7 +949,7 @@ export interface McpAddServerOpts {
 /** Renderer → main request to show a desktop notification. Main gates on
  *  window focus and the per-kind settings, so callers can fire unconditionally. */
 export interface OsNotificationRequest {
-  kind: 'turn_complete' | 'permission_request' | 'pr_alert';
+  kind: 'turn_complete' | 'permission_request' | 'pr_alert' | 'plan_usage';
   /** Session to focus when the notification is clicked. */
   sessionId: string;
   title: string;
@@ -914,6 +990,59 @@ export interface StoredImage {
   file: string;
   /** The name it was attached under. Absent for images a tool returned. */
   name?: string;
+}
+
+// ─── Files the agent made ───
+
+/** What kind of file the agent made in a turn, which decides how the thread
+ *  shows it: images as thumbnails, the rest as chips that open them. */
+export type MadeFileKind = 'image' | 'pdf' | 'html' | 'video' | 'audio' | 'data' | 'document';
+
+/** A file the agent created or changed in its worktree during a turn, by any
+ *  route: a script it ran, an MCP tool, Write (main/turn-files.ts). */
+export interface MadeFile {
+  /** Path relative to the worktree, with forward slashes. */
+  path: string;
+  kind: MadeFileKind;
+  size: number;
+  /** A copy of an image, saved like a tool's images, so the thread shows it
+   *  as it was that turn. Images without one load from the worktree. */
+  image?: StoredImage;
+}
+
+/** What opening a worktree file did: opened it in its default app, showed it
+ *  in its folder, or (a web page) handed back the URL to open in the Preview
+ *  tab. `missing` when it's gone or outside the worktree. */
+export type OpenWorktreeFileResult =
+  | { kind: 'opened' }
+  | { kind: 'shown' }
+  | { kind: 'preview'; url: string }
+  | { kind: 'missing' };
+
+// ─── File Attachment ───
+
+/** A file attached to a message that goes neither as text nor as an image:
+ *  a PDF, an audio clip, or any other file. Agents get it inline where they
+ *  can take that type, otherwise the path of the saved copy. */
+export interface FileAttachment {
+  /** base64-encoded file content (no data: prefix) */
+  data: string;
+  /** MIME type, or '' when unknown. */
+  mediaType: string;
+  name: string;
+}
+
+/** A file attachment saved in a conversation's attachments folder
+ *  (main/attachments.ts). Events carry this instead of the file's data. */
+export interface StoredFile {
+  /** File name in the attachments folder. */
+  file: string;
+  /** The name it was attached under. */
+  name: string;
+  /** MIME type, or '' when unknown. */
+  mediaType: string;
+  /** Size in bytes. */
+  size: number;
 }
 
 // ─── Plugins ───
@@ -1092,10 +1221,20 @@ export interface GroveBenchAPI {
   getCheckoutSharers(sessionId: string): Promise<string[]>;
 
   // Agent I/O (replaces terminal I/O)
-  sendMessage(sessionId: string, content: string, images?: ImageAttachment[]): void;
+  sendMessage(sessionId: string, content: string, images?: ImageAttachment[], files?: FileAttachment[]): void;
+  /** Open a file attached to a message (PDFs and audio in their default app),
+   *  or show it in its folder for other types. False when it's gone. */
+  openAttachedFile(sessionId: string, file: string): Promise<boolean>;
+  /** Open a file in the conversation's worktree that the agent made or
+   *  linked to (main/worktree-files.ts). */
+  openWorktreeFile(sessionId: string, filePath: string): Promise<OpenWorktreeFileResult>;
   respondToPermission(sessionId: string, decision: PermissionDecision): Promise<boolean>;
   /** Answer an MCP elicitation. False when it already resolved or timed out. */
   respondToElicitation(sessionId: string, requestId: string, response: McpElicitationResponse): Promise<boolean>;
+  /** Continue past a limit or stop the turn. False when it already resolved. */
+  respondToLimit(sessionId: string, requestId: string, decision: 'continue' | 'stop'): Promise<boolean>;
+  /** Today's estimated spend across threads, in USD, as the daily limit counts it. */
+  getDailySpend(): Promise<number>;
   onAgentEvent(sessionId: string, callback: (event: AgentEvent) => void): () => void;
   offAgentEvent(sessionId: string): void;
   getEventHistory(sessionId: string): Promise<AgentEvent[]>;
@@ -1188,6 +1327,14 @@ export interface GroveBenchAPI {
   setMcpServerEnabled(sessionId: string, serverName: string, enabled: boolean): Promise<void>;
   /** Start OAuth sign-in for a `needs-auth` server and open the auth URL in the browser. */
   authenticateMcpServer(sessionId: string, serverName: string): Promise<McpAuthStartResult>;
+  /** Reconnect the MCP servers that are down (needs-auth or failed) in every
+   *  live thread on this thread's agent, which share its sign-ins. With
+   *  `serverName`, only that server and only in the other threads. Resolves
+   *  once this thread is done; the others carry on in the background and
+   *  report through onMcpStatus. A thread mid-turn waits for the turn to end. */
+  reconnectDownMcpServers(sessionId: string, serverName?: string): Promise<void>;
+  /** A thread's live MCP status, sent after a background reconnect. */
+  onMcpStatus(callback: (sessionId: string, servers: McpServerInfo[]) => void): () => void;
 
   // File operations (for @ file picker)
   listFiles(sessionId: string): Promise<string[]>;
@@ -1241,6 +1388,9 @@ export interface GroveBenchAPI {
   listOpenPrs(repoPath: string): Promise<OpenPrSummary[]>;
   createPr(sessionId: string, opts: PrCreateOpts): Promise<PrInfo>;
   getPrReviewComments(sessionId: string, prNumber: number): Promise<PrReviewComment[]>;
+  /** Post a review (approve, request changes or comment) on one of the
+   *  session's PRs, with line comments placed inline where GitHub can take them. */
+  submitPrReview(sessionId: string, review: PrReviewSubmit): Promise<PrReviewSubmitResult>;
 
   // External links
   openExternal(url: string): Promise<void>;
@@ -1380,6 +1530,13 @@ export interface GroveBenchAPI {
   /** Registered agents, in registration order. `isDefault` marks the one new
    *  conversations use unless another is picked. */
   listAdapters(): Promise<AgentSummary[]>;
+  /** Check a Claude account the user is typing in (name and optional
+   *  folder) without adding it. */
+  previewClaudeAccount(input: { name: string; configDir: string }): Promise<ClaudeAccountPreview>;
+  /** Register another Claude account as its own agent, straight away.
+   *  Returns the entry for the caller to save in settings.claudeAccounts and
+   *  the new agent's id. Rejects with a user-facing message. */
+  addClaudeAccount(input: { name: string; configDir: string }): Promise<{ setting: ClaudeAccountSetting; adapterId: string }>;
   /** Agents in the ACP Registry, from the last copy Grove downloaded. */
   listRegistryAgents(): Promise<RegistryAgentSummary[]>;
   /** A registry agent's icon as an SVG data URL, or null. */
@@ -1466,6 +1623,17 @@ export interface AcpAgentSetting {
   args: string[];
 }
 
+/** Another Claude account, such as work next to personal. Claude Code keeps
+ *  each account's sign-in, history and settings in its own folder
+ *  (CLAUDE_CONFIG_DIR); the default account keeps `~/.claude`. */
+export interface ClaudeAccountSetting {
+  /** Stable id (the adapter id is `claude-account-<id>`); defaults from the name. */
+  id: string;
+  name: string;
+  /** The account's Claude Code folder. Empty for `~/.claude-<id>`. */
+  configDir: string;
+}
+
 export interface GroveBenchSettings {
   // Permission & Security
   toolAllowRules: ToolRule[];
@@ -1503,6 +1671,9 @@ export interface GroveBenchSettings {
   defaultSystemPromptAppend: string;
   /** The user's own ACP agents. Read at launch, so a change applies after a restart. */
   acpAgents: AcpAgentSetting[];
+  /** Claude accounts besides the default one, each offered as its own agent.
+   *  Read at launch, so a change applies after a restart. */
+  claudeAccounts: ClaudeAccountSetting[];
   /** Ids of alpha agents (AgentSummary.stage) the user turned on. Others
    *  stay out of the agent picker; their existing conversations still work. */
   enabledAlphaAgents: string[];
@@ -1584,6 +1755,23 @@ export interface GroveBenchSettings {
   /** Overlay a badge on the taskbar icon with the number of sessions that
    *  need attention (blocked on input, or finished while unfocused). Default true. */
   notifyTaskbarBadge: boolean;
+  /** Notify when plan usage passes planUsageAlertPercent. Default true. */
+  notifyOnPlanUsage: boolean;
+
+  // Limits and alerts (shared/limits.ts). 0 turns each one off.
+  /** Alert when a plan usage window (5-hour, weekly) reaches this percent.
+   *  Only agents that report plan usage can raise it. Default 80. */
+  planUsageAlertPercent: number;
+  /** Pause a thread once its estimated spend reaches this many USD. Default 0. */
+  threadSpendLimitUsd: number;
+  /** Pause every thread once today's estimated spend, across threads,
+   *  reaches this many USD. The day starts at local midnight. Default 0. */
+  dailySpendLimitUsd: number;
+  /** Pause a turn after this many tool calls. Default 0. */
+  turnToolCallLimit: number;
+  /** Pause a turn after it has run this many minutes, not counting time
+   *  spent waiting on the user. Default 0. */
+  turnMinutesLimit: number;
 
   // Privacy
   /** Enable anonymous usage analytics (PostHog). Off by default. */
@@ -1826,6 +2014,8 @@ export const IPC = {
   APP_RESTORE_COMPLETE: 'app:restoreComplete',
   AGENT_EVENT: 'agent:event',          // agent:event:{sessionId}
   AGENT_SEND: 'agent:send',
+  ATTACHMENT_OPEN: 'attachment:open',
+  WORKTREE_FILE_OPEN: 'worktree:openFile',
   AGENT_PERMISSION: 'agent:permission',
   AGENT_HISTORY: 'agent:history',
   AGENT_HISTORY_PAGE: 'agent:history-page',
@@ -1864,6 +2054,7 @@ export const IPC = {
   PR_LIST_OPEN: 'pr:listOpen',
   PR_CREATE: 'pr:create',
   PR_REVIEW_COMMENTS: 'pr:reviewComments',
+  PR_SUBMIT_REVIEW: 'pr:submitReview',
   AGENT_SET_MODEL: 'agent:setModel',
   AGENT_SET_CONTROL: 'agent:setControl',
   AGENT_GET_CONTROLS: 'agent:getControls',
@@ -1880,7 +2071,12 @@ export const IPC = {
   AGENT_MCP_TOGGLE: 'agent:mcpToggle',
   AGENT_MCP_AUTHENTICATE: 'agent:mcpAuthenticate',
   AGENT_MCP_CONTEXT_COST: 'agent:mcpContextCost',
+  AGENT_MCP_RECONNECT_DOWN: 'agent:mcpReconnectDown',
+  /** main → renderer: a thread's live MCP status after a background reconnect. */
+  AGENT_MCP_STATUS: 'agent:mcpStatus',
   AGENT_ELICITATION: 'agent:elicitation',
+  AGENT_LIMIT: 'agent:limit',
+  LIMITS_DAILY_SPEND: 'limits:dailySpend',
   MCP_CONFIG_LIST: 'mcpConfig:list',
   MCP_CONFIG_ADD: 'mcpConfig:add',
   MCP_CONFIG_REMOVE: 'mcpConfig:remove',
@@ -1965,6 +2161,8 @@ export const IPC = {
   AGENT_CHECKPOINT_FILE_DIFF: 'agent:checkpointFileDiff',
   AGENT_CHECKPOINT_FILE_LINES: 'agent:checkpointFileLines',
   AGENT_LIST_ADAPTERS: 'agent:listAdapters',
+  CLAUDE_ACCOUNT_PREVIEW: 'claudeAccount:preview',
+  CLAUDE_ACCOUNT_ADD: 'claudeAccount:add',
   CATALOGS_REGISTRY: 'catalogs:registry',
   CATALOGS_ICON: 'catalogs:icon',
   CATALOGS_REFRESH: 'catalogs:refresh',

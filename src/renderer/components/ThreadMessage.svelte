@@ -8,12 +8,18 @@
   import PermissionBlock from './PermissionBlock.svelte';
   import QuestionBlock from './QuestionBlock.svelte';
   import ElicitationBlock from './ElicitationBlock.svelte';
+  import LimitBlock from './LimitBlock.svelte';
   import ThinkingBlock from './ThinkingBlock.svelte';
   import SystemBlock from './SystemBlock.svelte';
   import GitIdentityNotice from './GitIdentityNotice.svelte';
+  import ImageAttachments from './ImageAttachments.svelte';
+  import FilesMadeBlock from './FilesMadeBlock.svelte';
   import { settingsStore } from '../stores/settings.svelte.js';
+  import { Button } from '$lib/components/ui/button/index.js';
+  import { focusImagesOnly, type MessageViewMode } from '$lib/message-view.js';
 
-  let { sessionId, msg, summaryMode }: { sessionId: string; msg: ChatMessage; summaryMode: boolean } = $props();
+  let { sessionId, msg, viewMode }: { sessionId: string; msg: ChatMessage; viewMode: MessageViewMode } = $props();
+  let summaryMode = $derived(viewMode !== 'detailed');
 </script>
 
 {#if msg.kind === 'user'}
@@ -22,11 +28,15 @@
     text={msg.text}
     files={msg.files}
     images={msg.images}
+    attachments={msg.attachments}
     onRewind={msg.uuid ? () => messageStore.openRewindDialog(sessionId, msg.uuid) : undefined}
   />
 
 {:else if msg.kind === 'text'}
-  <AssistantTextBlock content={msg.text} />
+  <AssistantTextBlock {sessionId} content={msg.text} />
+
+{:else if msg.kind === 'tool_call' && msg.images?.length && focusImagesOnly(msg, viewMode)}
+  <ImageAttachments {sessionId} images={msg.images} class="mb-1" />
 
 {:else if msg.kind === 'tool_call'}
   <ToolCallBlock
@@ -78,6 +88,18 @@
     action={msg.action}
   />
 
+{:else if msg.kind === 'limit'}
+  <LimitBlock
+    {sessionId}
+    requestId={msg.requestId}
+    limit={msg.limit}
+    used={msg.used}
+    reachedAt={msg.reachedAt}
+    resolved={msg.resolved}
+    decision={msg.decision}
+    timedOut={msg.timedOut}
+  />
+
 {:else if msg.kind === 'thinking'}
   <ThinkingBlock thinking={msg.thinking} />
 
@@ -87,17 +109,21 @@
 {:else if msg.kind === 'error'}
   <SystemBlock text={msg.text} variant="error" />
   {#if msg.auth}
-    <button
-      type="button"
-      class="ml-4 mt-1 text-xs text-primary hover:underline"
+    <Button
+      variant="link"
+      size="inline"
+      class="ml-4 mt-1 text-xs"
       onclick={() => settingsStore.openAt('agents')}
     >
       Open Settings → Agents
-    </button>
+    </Button>
   {/if}
 
 {:else if msg.kind === 'git_identity_missing'}
   <GitIdentityNotice />
+
+{:else if msg.kind === 'files_made'}
+  <FilesMadeBlock {sessionId} files={msg.files} more={msg.more} />
 
 {:else if msg.kind === 'result'}
   <div class="py-1 border-t border-border mt-1">

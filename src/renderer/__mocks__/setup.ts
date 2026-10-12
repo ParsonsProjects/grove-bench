@@ -1,5 +1,5 @@
 import { afterAll, vi } from 'vitest';
-import type { GroveBenchAPI } from '../../shared/types.js';
+import type { GroveBenchAPI, OpenWorktreeFileResult } from '../../shared/types.js';
 
 // A closed bits-ui dialog resets the page body's style on a timer (24ms by
 // default, see bits-ui's body-scroll-lock). One left over from a file's last
@@ -25,6 +25,8 @@ const mockGroveBench = {
   offAgentEvent: vi.fn(),
   respondToPermission: vi.fn().mockResolvedValue(true),
   respondToElicitation: vi.fn().mockResolvedValue(true),
+  respondToLimit: vi.fn().mockResolvedValue(true),
+  getDailySpend: vi.fn().mockResolvedValue(0),
   setMode: vi.fn().mockResolvedValue(undefined),
   getControls: vi.fn().mockResolvedValue({ descriptors: [], values: {} }),
   setControl: vi.fn().mockResolvedValue(undefined),
@@ -35,6 +37,8 @@ const mockGroveBench = {
   switchAgent: vi.fn().mockResolvedValue(undefined),
   stopBackgroundTask: vi.fn().mockResolvedValue(undefined),
   listAdapters: vi.fn().mockResolvedValue([]),
+  previewClaudeAccount: vi.fn().mockResolvedValue({ ok: false, error: 'Enter a name for the account, such as Work.' }),
+  addClaudeAccount: vi.fn(),
   listRegistryAgents: vi.fn().mockResolvedValue([]),
   getRegistryIcon: vi.fn().mockResolvedValue(null),
   refreshCatalogs: vi.fn().mockResolvedValue({ fetchedAt: null }),
@@ -45,6 +49,8 @@ const mockGroveBench = {
   reconnectMcpServer: vi.fn().mockResolvedValue(undefined),
   setMcpServerEnabled: vi.fn().mockResolvedValue(undefined),
   authenticateMcpServer: vi.fn().mockResolvedValue({ callbackExpected: false }),
+  reconnectDownMcpServers: vi.fn().mockResolvedValue(undefined),
+  onMcpStatus: vi.fn(() => () => {}),
   mcpConfigList: vi.fn().mockResolvedValue([]),
   mcpConfigAdd: vi.fn().mockResolvedValue(undefined),
   mcpConfigRemove: vi.fn().mockResolvedValue(undefined),
@@ -82,6 +88,8 @@ const mockGroveBench = {
   listOpenPrs: vi.fn((_repoPath: string) => Promise.resolve([] as import('../../shared/types.js').OpenPrSummary[])),
   createPr: vi.fn(() => Promise.resolve({ number: 1, url: 'https://example.com/pull/1' } as import('../../shared/types.js').PrInfo)),
   getPrReviewComments: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').PrReviewComment[])),
+  submitPrReview: vi.fn((_sessionId: string, _review: import('../../shared/types.js').PrReviewSubmit) =>
+    Promise.resolve({ url: null, inline: 0, quoted: 0 } as import('../../shared/types.js').PrReviewSubmitResult)),
   rewindSession: vi.fn(() => Promise.resolve()),
   getCheckpointDiff: vi.fn(() => Promise.resolve('')),
   listCheckpoints: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').CheckpointListItem[])),
@@ -109,6 +117,8 @@ const mockGroveBench = {
   openInEditor: vi.fn(() => Promise.resolve()),
   getFileLines: vi.fn((_sessionId: string, _filePath: string, _staged?: boolean) => Promise.resolve(null as import('../../shared/types.js').FileLinesResult)),
   sendMessage: vi.fn(),
+  openAttachedFile: vi.fn(() => Promise.resolve(true)),
+  openWorktreeFile: vi.fn((): Promise<OpenWorktreeFileResult> => Promise.resolve({ kind: 'opened' })),
   notify: vi.fn(),
   testNotification: vi.fn().mockResolvedValue('sent'),
   getSettings: vi.fn(),

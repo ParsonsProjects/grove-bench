@@ -21,7 +21,8 @@ vi.mock('./logger.js', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-import { loadSettings, saveSettings, getSettings, applyImmediateEffects, upgradeSettings, validateSettings, resetSettingsCache, SETTINGS_SCHEMA_VERSION } from './settings.js';
+import { loadSettings, saveSettings, getSettings, applyImmediateEffects, windowBackground, upgradeSettings, validateSettings, resetSettingsCache, SETTINGS_SCHEMA_VERSION } from './settings.js';
+import { NIGHT, PAPER } from '../shared/brand.js';
 import { nativeTheme } from 'electron';
 import type { GroveBenchSettings } from '../shared/types.js';
 
@@ -73,6 +74,15 @@ describe('loadSettings', () => {
     expect(loadSettings().enabledAlphaAgents).toEqual(['opencode']);
     mockReadFileSync.mockReturnValue(JSON.stringify({ enabledAlphaAgents: 'opencode' }));
     expect(loadSettings().enabledAlphaAgents).toEqual([]);
+  });
+
+  it('starts with no other Claude accounts, fills a missing id or folder, and drops a malformed list', () => {
+    mockReadFileSync.mockImplementation(() => { throw enoent(); });
+    expect(loadSettings().claudeAccounts).toEqual([]);
+    mockReadFileSync.mockReturnValue(JSON.stringify({ claudeAccounts: [{ name: 'Work' }] }));
+    expect(loadSettings().claudeAccounts).toEqual([{ id: '', name: 'Work', configDir: '' }]);
+    mockReadFileSync.mockReturnValue(JSON.stringify({ claudeAccounts: [{ configDir: 'C:\\x' }] }));
+    expect(loadSettings().claudeAccounts).toEqual([]);
   });
 
   it('handles corrupt JSON gracefully', () => {
@@ -160,7 +170,7 @@ describe('saveSettings', () => {
 
 describe('applyImmediateEffects', () => {
   it('sets alwaysOnTop on the window', () => {
-    const win = { isDestroyed: vi.fn(() => false), setAlwaysOnTop: vi.fn() } as any;
+    const win = { isDestroyed: vi.fn(() => false), setAlwaysOnTop: vi.fn(), setBackgroundColor: vi.fn() } as any;
     const s = loadSettings();
     s.alwaysOnTop = true;
     applyImmediateEffects(win, s);
@@ -168,7 +178,7 @@ describe('applyImmediateEffects', () => {
   });
 
   it('applies the theme to nativeTheme, which sets prefers-color-scheme', () => {
-    const win = { isDestroyed: vi.fn(() => false), setAlwaysOnTop: vi.fn() } as any;
+    const win = { isDestroyed: vi.fn(() => false), setAlwaysOnTop: vi.fn(), setBackgroundColor: vi.fn() } as any;
     nativeTheme.themeSource = 'system';
     const s = loadSettings();
     for (const theme of ['light', 'dark', 'system'] as const) {
@@ -176,6 +186,20 @@ describe('applyImmediateEffects', () => {
       applyImmediateEffects(win, s);
       expect(nativeTheme.themeSource).toBe(theme);
     }
+  });
+
+  it('paints the window behind the page in the theme\'s background', () => {
+    const win = { isDestroyed: vi.fn(() => false), setAlwaysOnTop: vi.fn(), setBackgroundColor: vi.fn() } as any;
+    const s = loadSettings();
+    // Read-only in Electron's types; a plain field on the mock
+    const theme = nativeTheme as { shouldUseDarkColors: boolean };
+    theme.shouldUseDarkColors = true;
+    applyImmediateEffects(win, s);
+    expect(win.setBackgroundColor).toHaveBeenLastCalledWith(NIGHT.background);
+    theme.shouldUseDarkColors = false;
+    applyImmediateEffects(win, s);
+    expect(win.setBackgroundColor).toHaveBeenLastCalledWith(PAPER.background);
+    expect(windowBackground()).toBe(PAPER.background);
   });
 
   it('applies the theme even without a window', () => {
@@ -365,6 +389,23 @@ describe('validateSettings', () => {
     expect(s.crashReportsEnabled).toBe(false);
     expect(s.notifyTaskbarBadge).toBe(true);
     expect(s.defaultActivityView).toBe('summary');
+  });
+
+  it('starts with the plan usage alert at 80% and every limit off', () => {
+    const s = validateSettings({});
+    expect(s.planUsageAlertPercent).toBe(80);
+    expect(s.notifyOnPlanUsage).toBe(true);
+    expect(s.threadSpendLimitUsd).toBe(0);
+    expect(s.dailySpendLimitUsd).toBe(0);
+    expect(s.turnToolCallLimit).toBe(0);
+    expect(s.turnMinutesLimit).toBe(0);
+  });
+
+  it('keeps valid limits and drops ones out of range', () => {
+    const kept = validateSettings({ planUsageAlertPercent: 90, threadSpendLimitUsd: 2.5, dailySpendLimitUsd: 20, turnToolCallLimit: 150, turnMinutesLimit: 45 });
+    expect(kept).toMatchObject({ planUsageAlertPercent: 90, threadSpendLimitUsd: 2.5, dailySpendLimitUsd: 20, turnToolCallLimit: 150, turnMinutesLimit: 45 });
+    const dropped = validateSettings({ planUsageAlertPercent: 150, threadSpendLimitUsd: -1, dailySpendLimitUsd: 'lots', turnToolCallLimit: 2.5, turnMinutesLimit: Infinity });
+    expect(dropped).toMatchObject({ planUsageAlertPercent: 80, threadSpendLimitUsd: 0, dailySpendLimitUsd: 0, turnToolCallLimit: 0, turnMinutesLimit: 0 });
   });
 
   it('shows thinking summaries unless turned off', () => {

@@ -15,11 +15,11 @@ const m = vi.hoisted(() => {
     Object.fromEntries(names.map((n) => [n, vi.fn()])) as Record<T, Mock<(...args: any[]) => any>>;
   return {
     sessionManager: fns(
-      'getSessionsByRepo', 'createSession', 'getSession', 'reattachWindow', 'trackPendingSetup', 'interruptQuery',
+      'getSessionsByRepo', 'createSession', 'getSession', 'reattachWindow', 'trackPendingSetup', 'hasPendingSetup', 'interruptQuery',
       'closeSession', 'sleepSession', 'wakeSession', 'stopTask', 'destroySession', 'listSessions', 'renameSession',
       'setBranch', 'isMidTurn', 'getEventHistory', 'getEventHistoryPage', 'getEventHistoryCount', 'searchEventHistory',
       'beginSearch', 'clearEventHistory', 'sendMessage', 'setMode', 'setModel', 'getControls', 'getUsage', 'setControl',
-      'listMcpServers', 'getMcpContextCost', 'reconnectMcpServer', 'setMcpServerEnabled', 'authenticateMcpServer',
+      'listMcpServers', 'getMcpContextCost', 'reconnectMcpServer', 'setMcpServerEnabled', 'authenticateMcpServer', 'reconnectDownMcpServers',
       'getSessionAdapter', 'getWorktreePath', 'analyzeSkillSuggestionsForRepo', 'respondToPermission',
       'respondToElicitation', 'rewindFiles', 'getCheckpointDiff', 'listCheckpoints', 'getDiffHistory', 'getTurnDiff',
       'getFullThreadDiff', 'getCheckpointFiles', 'getCheckpointFileDiff', 'getCheckpointFileLines',
@@ -34,6 +34,7 @@ const m = vi.hoisted(() => {
     terminalManager: fns('killAllForSession', 'spawnPty', 'write', 'resize', 'killPty', 'isAlive'),
     previewManager: fns('close', 'closeAgentPage', 'navigate', 'command', 'setViewport', 'snapshot', 'agentFrame', 'getStates'),
     adapterRegistry: fns('get', 'getDefault', 'list'),
+    registerClaudeAccount: vi.fn((account: { id: string }) => ({ id: account.id })),
     settings: fns('getSettings', 'saveSettings', 'applyImmediateEffects'),
     appState: fns(
       'listProjects', 'rememberProject', 'forgetProject', 'saveCollapsedPanels', 'loadConversationGroups', 'saveConversationGroups',
@@ -54,7 +55,7 @@ vi.mock('./agent-session.js', () => ({ sessionManager: m.sessionManager }));
 vi.mock('./worktree-manager.js', () => ({ worktreeManager: m.worktreeManager }));
 vi.mock('./terminal.js', () => ({ terminalManager: m.terminalManager }));
 vi.mock('./preview.js', () => ({ previewManager: m.previewManager }));
-vi.mock('./adapters/index.js', () => ({ adapterRegistry: m.adapterRegistry }));
+vi.mock('./adapters/index.js', () => ({ adapterRegistry: m.adapterRegistry, registerClaudeAccount: m.registerClaudeAccount }));
 vi.mock('./settings.js', () => m.settings);
 vi.mock('./app-state.js', () => m.appState);
 vi.mock('./project-path.js', () => m.projectPath);
@@ -227,6 +228,20 @@ describe('repos', () => {
 // ─── Creating a conversation ───
 
 describe('AGENT_LIST_ADAPTERS', () => {
+  it('lists other Claude accounts after the Claude agent, and marks ones taken out of Settings', async () => {
+    const claude = { id: 'claude-code', displayName: 'Claude Agent', capabilities: {} };
+    const gemini = { id: 'gemini-cli', displayName: 'Gemini CLI', capabilities: {} };
+    const account = (slug: string) => ({ id: `claude-account-${slug}`, displayName: slug, capabilities: {}, account: { name: slug, configDir: `/h/.claude-${slug}` } });
+    // Added after launch: the registry lists it last.
+    m.adapterRegistry.list.mockReturnValue([claude, account('work'), gemini, account('client'), account('old')]);
+    m.adapterRegistry.getDefault.mockReturnValue(claude);
+    m.settings.getSettings.mockReturnValueOnce({ claudeAccounts: [{ id: 'work', name: 'work', configDir: '' }, { id: 'client', name: 'client', configDir: '' }] });
+    const list = await invoke(IPC.AGENT_LIST_ADAPTERS);
+    expect(list.map((a: { id: string; account?: { removed?: boolean } }) => [a.id, !!a.account?.removed]))
+      .toEqual([['claude-code', false], ['claude-account-work', false], ['claude-account-client', false], ['claude-account-old', true], ['gemini-cli', false]]);
+    expect(list[1].account).toEqual({ name: 'work', configDir: '/h/.claude-work' });
+  });
+
   it('marks an alpha agent, and only that one', async () => {
     const claude = { id: 'claude-code', displayName: 'Claude Agent', capabilities: {} };
     const opencode = { id: 'opencode', displayName: 'OpenCode', capabilities: {}, stage: 'alpha' };
@@ -253,7 +268,35 @@ describe('SESSION_CREATE', () => {
     await expect(create({ branchName: 'gone', useExisting: true })).rejects.toThrow('does not exist');
 
     expect(m.worktreeManager.create).not.toHaveBeenCalled();
-    expect(m.sessionManager.trackPendingSetup).not.toHaveBeenCalled();
+    // Each was tracked as setting up only while its checks ran: all settled,
+    // so a close or delete waiting on one goes on.
+    expect(m.sessionManager.trackPendingSetup).toHaveBeenCalledTimes(3);
+    await Promise.all(m.sessionManager.trackPendingSetup.mock.calls.map(([, promise]) => promise));
+  });
+
+  it('makes nothing for a thread deleted while its checks run', async () => {
+    let checked!: (exists: boolean) => void;
+    vi.mocked(git.branchExists).mockReturnValueOnce(new Promise((r) => { checked = r; }));
+    const created = create({ id: 'abc12345', branchName: 'feat' });
+    await vi.waitFor(() => expect(m.sessionManager.trackPendingSetup).toHaveBeenCalled());
+    const checks = lastSetup();
+    expect(checks.id).toBe('abc12345');
+    // What deleting the thread does (sessionManager.destroySession).
+    checks.abort!.abort();
+    checked(false);
+    await expect(created).rejects.toThrow();
+    await checks.promise;
+    expect(m.worktreeManager.create).not.toHaveBeenCalled();
+
+    // A direct thread stops before it is registered.
+    let headRead!: (out: string) => void;
+    vi.mocked(git.git).mockReturnValueOnce(new Promise((r) => { headRead = r; }));
+    const direct = create({ id: 'def67890', direct: true });
+    await vi.waitFor(() => expect(lastSetup().id).toBe('def67890'));
+    lastSetup().abort!.abort();
+    headRead('main\n');
+    await expect(direct).rejects.toThrow();
+    expect(m.worktreeManager.registerDirect).not.toHaveBeenCalled();
   });
 
   it('names the picked agent for a worktree conversation before its setup finishes', async () => {
@@ -399,8 +442,35 @@ describe('SESSION_CREATE', () => {
     m.worktreeManager.registerDirect.mockResolvedValue({ id: 'd1', branch: 'main', path: '/repo' });
 
     expect(await create({ direct: true })).toEqual({ id: 'd1', branch: 'main', agentType: 'claude' });
-    expect(m.worktreeManager.registerDirect).toHaveBeenCalledWith('/repo', 'main', { noGit: false });
+    expect(m.worktreeManager.registerDirect).toHaveBeenCalledWith('/repo', 'main', { noGit: false, id: expect.stringMatching(/^[0-9a-f]{8}$/) });
     expect(m.sessionManager.createSession).toHaveBeenCalledWith(expect.objectContaining({ id: 'd1', cwd: '/repo' }));
+  });
+
+  it('sets up under the id the renderer picked, which its row already has', async () => {
+    const result = await create({ id: 'abc12345' });
+    expect(result).toMatchObject({ id: 'abc12345', branch: 'grove/abc12345' });
+    await lastSetup().promise;
+    expect(m.worktreeManager.create).toHaveBeenCalledWith(expect.objectContaining({ id: 'abc12345' }));
+
+    vi.mocked(git.git).mockResolvedValue('main\n');
+    m.worktreeManager.registerDirect.mockImplementation(async (_repo: string, branch: string, o: { id: string }) => ({ id: o.id, branch, path: '/repo' }));
+    expect(await create({ id: 'def67890', direct: true })).toMatchObject({ id: 'def67890' });
+  });
+
+  it('refuses a malformed id, or one in use, before any setup starts', async () => {
+    // The id names the worktree folder and the event log.
+    await expect(create({ id: '../../x' })).rejects.toThrow('not valid');
+    // Being set up already: refused before it is tracked again.
+    m.sessionManager.hasPendingSetup.mockReturnValueOnce(true);
+    await expect(create({ id: 'abc12345', direct: true })).rejects.toThrow('already in use');
+    expect(m.sessionManager.trackPendingSetup).not.toHaveBeenCalled();
+    // A stopped thread's id, found in the manifest.
+    m.worktreeManager.getWorktreeOrManifest.mockResolvedValueOnce(wtInfo());
+    await expect(create({ id: 'abc12345' })).rejects.toThrow('already in use');
+    await lastSetup().promise;
+
+    expect(m.worktreeManager.create).not.toHaveBeenCalled();
+    expect(m.worktreeManager.registerDirect).not.toHaveBeenCalled();
   });
 });
 
@@ -1281,5 +1351,31 @@ describe('SETTINGS_SAVE', () => {
     invoke(IPC.SETTINGS_SAVE, { theme: 'bogus', alwaysOnTop: false });
     expect(m.settings.saveSettings).toHaveBeenCalledWith({ theme: 'bogus', alwaysOnTop: false });
     expect(m.settings.applyImmediateEffects).toHaveBeenCalledWith(win, saved);
+  });
+});
+
+describe('Claude accounts', () => {
+  beforeEach(() => {
+    m.settings.getSettings.mockReturnValue({ claudeAccounts: [{ id: 'work', name: 'Work', configDir: '' }] });
+  });
+
+  it('previews the folder an account would use, or why it cannot be added', async () => {
+    const ok = await invoke(IPC.CLAUDE_ACCOUNT_PREVIEW, { name: 'Client', configDir: '' });
+    expect(ok).toMatchObject({ ok: true });
+    expect(ok.configDir).toMatch(/\.claude-client$/);
+    expect(await invoke(IPC.CLAUDE_ACCOUNT_PREVIEW, { name: 'work', configDir: '' }))
+      .toEqual({ ok: false, error: 'You already have an account called "Work". Pick another name.' });
+    expect(m.registerClaudeAccount).not.toHaveBeenCalled();
+  });
+
+  it('registers an added account straight away and returns the entry to save', async () => {
+    const result = await invoke(IPC.CLAUDE_ACCOUNT_ADD, { name: 'Client', configDir: '' });
+    expect(result).toEqual({ setting: { id: 'client', name: 'Client', configDir: '' }, adapterId: 'claude-account-client' });
+    expect(m.registerClaudeAccount).toHaveBeenCalledWith(expect.objectContaining({ id: 'claude-account-client', name: 'Client' }));
+  });
+
+  it('turns an account away without registering it', async () => {
+    await expect(Promise.resolve().then(() => invoke(IPC.CLAUDE_ACCOUNT_ADD, { name: 'Work', configDir: '' }))).rejects.toThrow(/already have an account/);
+    expect(m.registerClaudeAccount).not.toHaveBeenCalled();
   });
 });

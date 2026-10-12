@@ -1,4 +1,5 @@
 import { adapterRegistry } from './adapters/index.js';
+import { isClaudeAccountId, removedAccountMessage } from './adapters/claude-accounts.js';
 import type { AgentAdapter } from './adapters/types.js';
 import type { WorktreeInfo } from '../shared/types.js';
 import { getSettings } from './settings.js';
@@ -19,12 +20,24 @@ export function backgroundModelFor(adapter: AgentAdapter): string | undefined {
   return getSettings().backgroundModels?.[adapter.id] || adapter.backgroundModel || undefined;
 }
 
+/** The agent for background work on a conversation recorded as running on
+ *  `adapterType`: that agent, else the default one (an agent that is gone, or
+ *  an older conversation that recorded none). Null for one of the user's
+ *  other Claude accounts that has been removed, whose work must not go to a
+ *  different account. */
+export function backgroundAgentFor(adapterType: string | null | undefined): AgentAdapter | null {
+  const adapter = adapterType ? adapterRegistry.get(adapterType) : undefined;
+  if (adapter) return adapter;
+  return isClaudeAccountId(adapterType) ? null : adapterRegistry.getDefault();
+}
+
 /** The agent a conversation ran on, from the manifest, for a conversation
- *  that isn't running. Falls back to the default agent when the recorded one
- *  is unknown or no longer registered. */
+ *  that isn't running (backgroundAgentFor). Throws for a removed account. */
 export async function recordedAgent(sessionId: string): Promise<AgentAdapter> {
   const id = await worktreeManager.getAdapterType(sessionId);
-  return (id && adapterRegistry.get(id)) || adapterRegistry.getDefault();
+  const adapter = backgroundAgentFor(id);
+  if (!adapter) throw new Error(removedAccountMessage(id!));
+  return adapter;
 }
 
 /** The agent of the most recently active conversation in `conversations`

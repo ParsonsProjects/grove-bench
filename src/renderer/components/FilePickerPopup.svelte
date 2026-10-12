@@ -27,6 +27,11 @@
   import { searchFiles, initialItems, moveSelection, type PickerResults } from '$lib/file-picker.js';
   import { untrack } from 'svelte';
   import { gitStatusStore } from '../stores/gitStatus.svelte.js';
+  import { SectionLabel } from '$lib/components/ui/section-label/index.js';
+  import { menuItem, menuPanel } from '$lib/components/ui/menu/index.js';
+  import { cn } from '$lib/utils.js';
+  import FileIcon from '@lucide/svelte/icons/file';
+  import FolderIcon from '@lucide/svelte/icons/folder';
 
   let {
     sessionId,
@@ -136,7 +141,7 @@
   }
 </script>
 
-<div class="absolute bottom-full left-0 right-0 mb-1 bg-popover border border-border z-50 shadow-xl">
+<div class={cn(menuPanel(), 'absolute bottom-full left-0 right-0 mb-1 z-50 py-0')}>
   <div
     bind:this={listEl}
     id={listId}
@@ -151,9 +156,9 @@
     {:else}
       {#each results.items as item, i (item.entry.path)}
         {#if item.group && item.group !== results.items[i - 1]?.group}
-          <div role="presentation" class="px-3 pt-1.5 pb-0.5 text-[10px] uppercase tracking-wide text-muted-foreground/70">
+          <SectionLabel role="presentation" class="px-3 pt-1.5 pb-0.5">
             {item.group === 'Changed' ? 'Changed files' : 'Project'}
-          </div>
+          </SectionLabel>
         {/if}
         <div
           role="option"
@@ -162,12 +167,11 @@
           data-index={i}
           aria-selected={i === selectedIndex}
           title={item.entry.path}
-          class="flex items-baseline gap-1.5 min-w-0 px-3 py-1 text-xs cursor-pointer
-            {i === selectedIndex ? 'bg-accent text-accent-foreground' : 'text-popover-foreground/80'}"
+          class={cn(menuItem(), 'gap-1.5 min-w-0 px-3 cursor-pointer', i === selectedIndex && 'bg-accent text-accent-foreground')}
           onmousemove={() => { if (selectedIndex !== i) selectedIndex = i; }}
           onmousedown={(e) => { e.preventDefault(); onselect(item.entry.path); }}
         >
-          <span class="shrink-0 text-muted-foreground/60">{item.entry.isDir ? '\u{1F4C1}' : '\u{1F4C4}'}</span>
+          {#if item.entry.isDir}<FolderIcon class="size-3 text-muted-foreground" aria-hidden="true" />{:else}<FileIcon class="size-3 text-muted-foreground" aria-hidden="true" />{/if}
           <span class="shrink-0 text-foreground">{item.entry.filename}{item.entry.isDir ? '/' : ''}</span>
           <span class="min-w-0 truncate text-muted-foreground">{dirOf(item.entry)}</span>
         </div>
@@ -175,7 +179,7 @@
     {/if}
   </div>
   {#if !loading && results.more > 0}
-    <div class="px-3 py-1 border-t border-border text-[10px] text-muted-foreground">
+    <div class="px-3 py-1 border-t border-border text-micro text-muted-foreground">
       +{results.more}{results.moreIsLowerBound ? '+' : ''} more, keep typing to narrow
     </div>
   {/if}

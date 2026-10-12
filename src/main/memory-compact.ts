@@ -4,8 +4,7 @@ import { z } from 'zod';
 import { logger } from './logger.js';
 import * as memory from './memory.js';
 import * as settings from './settings.js';
-import { adapterRegistry } from './adapters/index.js';
-import { backgroundModelFor } from './background-tasks.js';
+import { backgroundAgentFor, backgroundModelFor } from './background-tasks.js';
 import { effectiveCompactTimeoutSeconds } from '../shared/compact-timeout.js';
 import type { MemoryEntry } from '../shared/types.js';
 import type { AgentAdapter } from './adapters/types.js';
@@ -811,9 +810,12 @@ async function runCompaction(
   emitStage('pruning');
   const filesChanged = expireSessionNotes(repoPath);
 
-  const adapter = adapterType
-    ? (adapterRegistry.get(adapterType) ?? adapterRegistry.getDefault())
-    : adapterRegistry.getDefault();
+  const adapter = backgroundAgentFor(adapterType);
+  if (!adapter) {
+    logger.info(`[memory-compact] The Claude account "${adapterType}" was removed, so LLM compaction is skipped`);
+    return { compacted: false, skippedReason: 'account removed', filesChanged };
+  }
+
   if (!adapter.generateText) {
     logger.info(`[memory-compact] Adapter "${adapter.id}" does not support generateText — skipping LLM compaction`);
     return { compacted: false, skippedReason: 'adapter cannot generate text', filesChanged };

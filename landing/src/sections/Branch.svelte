@@ -25,11 +25,8 @@
     font-size: 13px;
     color: var(--soft);
   }
+  /* The logo's fern by day, sprout on the dark bands (day.css). */
   svg {
     color: var(--green);
-  }
-  :global(.b-dusk) svg,
-  :global(.b-night) svg {
-    color: #6ec87a;
   }
 </style>

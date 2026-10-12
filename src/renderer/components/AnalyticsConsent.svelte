@@ -41,7 +41,7 @@
         You can change this anytime in Settings → Privacy (Hedges).
       </p>
       <div class="flex items-center gap-2 shrink-0">
-        <Button variant="ghost" size="sm" onclick={handleDecline}>Decline</Button>
+        <Button variant="quiet" size="sm" onclick={handleDecline}>Decline</Button>
         <Button size="sm" onclick={handleAccept}>Accept</Button>
       </div>
     </div>

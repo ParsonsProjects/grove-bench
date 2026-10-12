@@ -2,6 +2,8 @@
   import { onMount } from 'svelte';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
+  import { Notice } from '$lib/components/ui/notice/index.js';
+  import { Pulse } from '$lib/components/ui/pulse/index.js';
   import { Input } from '$lib/components/ui/input/index.js';
   import { Label } from '$lib/components/ui/label/index.js';
   import { Checkbox } from '$lib/components/ui/checkbox/index.js';
@@ -116,10 +118,10 @@
           bind:value={body}
           rows="6"
           placeholder="What changed and why…"
-          class="w-full text-sm bg-background border border-input px-3 py-2 text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-ring resize-y"
+          class="w-full text-sm bg-background border border-input px-3 py-2 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring resize-y"
         ></textarea>
         {#if prefilled}
-          <p class="text-[10px] text-muted-foreground mt-1">Pre-filled from the branch's commits.</p>
+          <p class="text-micro text-muted-foreground mt-1">Pre-filled from the branch's commits.</p>
         {/if}
       </div>
 
@@ -135,9 +137,9 @@
       </div>
 
       {#if dialogError}
-        <div class="bg-destructive/10 border border-destructive/50 p-2 text-xs text-destructive whitespace-pre-wrap">
-          {dialogError}
-        </div>
+        <Notice tone="danger">
+          <p class="whitespace-pre-wrap">{dialogError}</p>
+        </Notice>
       {/if}
 
       <Dialog.Footer>
@@ -147,7 +149,7 @@
         <Button onclick={handleCreate} disabled={!title.trim() || creating}>
           {#if creating}
             <span class="inline-flex items-center gap-1.5">
-              <span class="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin"></span>
+              <Pulse motion="spin" size="sm" tone="current" />
               Creating…
             </span>
           {:else}

@@ -1,3 +1,5 @@
+import { FONTS, PALETTE } from '../../shared/brand.js';
+
 /**
  * Taskbar badge: how many sessions need the user right now.
  *
@@ -29,7 +31,8 @@ export function badgeText(count: number): string {
 }
 
 /**
- * Draw the overlay bitmap (a red disc with the count) as a PNG data URL.
+ * Draw the overlay bitmap as a PNG data URL: the count on a square in the
+ * brand's "needs you" amber, square like the rest of the app (BRAND.md).
  * Returns null when canvas is unavailable (tests, headless), in which case
  * main falls back to a text badge where the platform has one.
  */
@@ -42,13 +45,12 @@ export function renderBadgeDataUrl(count: number, size = 32): string | null {
     const ctx = canvas.getContext('2d');
     if (!ctx) return null;
     ctx.clearRect(0, 0, size, size);
-    ctx.fillStyle = '#e5484d';
-    ctx.beginPath();
-    ctx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.fillStyle = PALETTE.sun;
+    ctx.fillRect(0, 0, size, size);
     const text = badgeText(count);
-    ctx.fillStyle = '#ffffff';
-    ctx.font = `bold ${text.length > 1 ? Math.round(size * 0.55) : Math.round(size * 0.7)}px sans-serif`;
+    // Dark text on amber: white would be 2.2:1
+    ctx.fillStyle = PALETTE.canopy;
+    ctx.font = `bold ${text.length > 1 ? Math.round(size * 0.55) : Math.round(size * 0.7)}px ${FONTS.mono}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(text, size / 2, size / 2 + size * 0.04);

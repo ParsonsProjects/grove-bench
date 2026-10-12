@@ -63,12 +63,24 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.BRANCH_AUTO_NAME, sessionId),
 
   // Agent I/O
-  sendMessage: (sessionId: string, content: string, images?: import('../shared/types.js').ImageAttachment[]) =>
-    ipcRenderer.send(IPC.AGENT_SEND, sessionId, content, images),
+  sendMessage: (
+    sessionId: string,
+    content: string,
+    images?: import('../shared/types.js').ImageAttachment[],
+    files?: import('../shared/types.js').FileAttachment[],
+  ) => ipcRenderer.send(IPC.AGENT_SEND, sessionId, content, images, files),
+  openAttachedFile: (sessionId: string, file: string) =>
+    ipcRenderer.invoke(IPC.ATTACHMENT_OPEN, sessionId, file),
+  openWorktreeFile: (sessionId: string, filePath: string) =>
+    ipcRenderer.invoke(IPC.WORKTREE_FILE_OPEN, sessionId, filePath),
   respondToPermission: (sessionId: string, decision: PermissionDecision) =>
     ipcRenderer.invoke(IPC.AGENT_PERMISSION, sessionId, decision),
   respondToElicitation: (sessionId: string, requestId: string, response: import('../shared/types.js').McpElicitationResponse) =>
     ipcRenderer.invoke(IPC.AGENT_ELICITATION, sessionId, requestId, response),
+  respondToLimit: (sessionId: string, requestId: string, decision: 'continue' | 'stop') =>
+    ipcRenderer.invoke(IPC.AGENT_LIMIT, sessionId, requestId, decision) as Promise<boolean>,
+  getDailySpend: () =>
+    ipcRenderer.invoke(IPC.LIMITS_DAILY_SPEND) as Promise<number>,
   onAgentEvent: (sessionId: string, callback: (event: import('../shared/types.js').AgentEvent) => void) => {
     const channel = `${IPC.AGENT_EVENT}:${sessionId}`;
     const handler = (_event: Electron.IpcRendererEvent, data: import('../shared/types.js').AgentEvent) =>
@@ -137,6 +149,16 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.AGENT_MCP_TOGGLE, sessionId, serverName, enabled),
   authenticateMcpServer: (sessionId: string, serverName: string) =>
     ipcRenderer.invoke(IPC.AGENT_MCP_AUTHENTICATE, sessionId, serverName),
+  reconnectDownMcpServers: (sessionId: string, serverName?: string) =>
+    ipcRenderer.invoke(IPC.AGENT_MCP_RECONNECT_DOWN, sessionId, serverName),
+  onMcpStatus: (callback: (sessionId: string, servers: import('../shared/types.js').McpServerInfo[]) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, sessionId: string, servers: import('../shared/types.js').McpServerInfo[]) =>
+      callback(sessionId, servers);
+    ipcRenderer.on(IPC.AGENT_MCP_STATUS, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC.AGENT_MCP_STATUS, handler);
+    };
+  },
 
   // Skills
   listSkills: (sessionId: string, fallbackPath: string) =>
@@ -222,6 +244,8 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.PR_CREATE, sessionId, opts),
   getPrReviewComments: (sessionId: string, prNumber: number) =>
     ipcRenderer.invoke(IPC.PR_REVIEW_COMMENTS, sessionId, prNumber),
+  submitPrReview: (sessionId: string, review: import('../shared/types.js').PrReviewSubmit) =>
+    ipcRenderer.invoke(IPC.PR_SUBMIT_REVIEW, sessionId, review),
 
   // External links
   openExternal: (url: string) => ipcRenderer.invoke(IPC.OPEN_EXTERNAL, url),
@@ -461,6 +485,8 @@ const api: GroveBenchAPI = {
 
   // Agent adapters
   listAdapters: () => ipcRenderer.invoke(IPC.AGENT_LIST_ADAPTERS),
+  previewClaudeAccount: (input: { name: string; configDir: string }) => ipcRenderer.invoke(IPC.CLAUDE_ACCOUNT_PREVIEW, input),
+  addClaudeAccount: (input: { name: string; configDir: string }) => ipcRenderer.invoke(IPC.CLAUDE_ACCOUNT_ADD, input),
   listRegistryAgents: () => ipcRenderer.invoke(IPC.CATALOGS_REGISTRY),
   getRegistryIcon: (id: string) => ipcRenderer.invoke(IPC.CATALOGS_ICON, id),
   refreshCatalogs: () => ipcRenderer.invoke(IPC.CATALOGS_REFRESH),

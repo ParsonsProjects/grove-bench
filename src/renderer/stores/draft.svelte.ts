@@ -1,6 +1,7 @@
 import type { ControlDescriptor, CreateSessionOpts } from '../../shared/types.js';
 import { CONTROL_IDS } from '../../shared/types.js';
 import { deriveSessionName } from '../../shared/session-name.js';
+import { tempBranchName } from '../../shared/temp-branch.js';
 import { store as sessionStore } from './sessions.svelte.js';
 import { groupStore } from './groups.svelte.js';
 import { messageStore } from './messages.svelte.js';
@@ -75,7 +76,6 @@ const defaultStart = (repo: string, groupId?: string): DraftStart =>
 
 class DraftStore {
   draft = $state<Draft | null>(null);
-  starting = $state(false);
   error = $state('');
   /** Models and controls the draft's agent offers (controls for the model
    *  the draft would start on). */
@@ -334,12 +334,15 @@ class DraftStore {
   }
 
   /** Create the conversation and send the draft's message as its first turn.
-   *  Returns whether it started; on failure the draft stays with the error. */
+   *  Its row is in the sidebar from the moment this is called, under an id
+   *  picked here, while main checks the branch and sets up. Returns whether
+   *  it started; if main refuses, the row goes and the draft comes back with
+   *  the error. */
   async start(): Promise<boolean> {
     const draft = this.draft;
-    if (!draft || this.starting) return false;
-    // A copy: the pickers stay usable while this awaits, and changes made
-    // meanwhile must not leak into the conversation being created.
+    if (!draft) return false;
+    // A copy: changes made to the draft object later must not leak into the
+    // conversation being created.
     const d = $state.snapshot(draft) as Draft;
     if (d.start.kind === 'existing' && !d.start.branch) return false;
     if (!sessionStore.repos.includes(d.repoPath)) {
@@ -352,16 +355,47 @@ class DraftStore {
       this.error = `${name} is turned off. Turn it on in Settings → Agents, or pick another agent in the bar below.`;
       return false;
     }
-    this.starting = true;
-    this.error = '';
     const text = d.text.trim();
+    const direct = d.start.kind === 'folder';
+    const id = crypto.randomUUID().slice(0, 8);
+    // Name the row from the message straight away; the automatic name
+    // replaces it after the first reply.
+    const placeholderName = text ? deriveSessionName(text) : null;
+    // The row replaces the draft's now, not once main's checks are done:
+    // they run git a few times, which takes a while on Windows. Every thread
+    // shows as starting until main says otherwise.
+    sessionStore.addSession({
+      id,
+      branch: provisionalBranch(d, id),
+      repoPath: d.repoPath,
+      status: 'starting',
+      ...(d.agentId ? { agentType: d.agentId } : {}),
+      createdAt: Date.now(),
+      ...(direct ? { direct: true } : {}),
+      // What the renderer knows of the project; main's reply settles it.
+      ...(direct && sessionStore.isFolderProject(d.repoPath) ? { noGit: true } : {}),
+      ...(placeholderName ? { displayName: placeholderName } : {}),
+    });
+    if (text) {
+      // The chat shows the agent walking to its bench until the first reply.
+      arrivalScene.begin(id);
+      messageStore.addUserMessage(id, text);
+      sessionStore.updateLastActive(id);
+    }
+    this.discard();
     try {
       // No base picked yet (still resolving, or cleared): use the project's
       // default rather than whatever the project folder has checked out.
       const baseBranch = d.start.kind === 'new'
         ? (d.start.baseBranch.trim() || await resolveBaseBranch(d.repoPath))
         : '';
-      const opts = this.buildOpts(d, baseBranch);
+      // Closed or deleted while the base branch was looked up: main never
+      // heard of it, so there is nothing to reopen.
+      if (!this.stillOpen(id)) {
+        dropRow(id);
+        return false;
+      }
+      const opts = { ...this.buildOpts(d, baseBranch), id };
       const result = await window.groveBench.createSession(opts);
       const mode = d.start.kind === 'folder' ? 'direct' : d.start.kind;
       trackEvent('session_created', {
@@ -371,44 +405,71 @@ class DraftStore {
         ...(d.start.kind === 'existing' ? { picked: d.start.pr ? 'pr' : 'branch' } : {}),
         ...(opts.permissionMode ? { startMode: opts.permissionMode } : {}),
       });
-      const direct = d.start.kind === 'folder';
-      // Name the row from the message straight away; the automatic name
-      // replaces it after the first reply.
-      const placeholderName = text ? deriveSessionName(text) : null;
-      sessionStore.addSession({
-        id: result.id,
+      // Main has the last word on the branch, the agent and git.
+      sessionStore.confirmSession(id, {
         branch: result.branch,
-        repoPath: d.repoPath,
-        // Direct sessions are ready immediately; worktree sessions go through
-        // starting → installing → running.
-        status: direct ? 'running' : 'starting',
         agentType: result.agentType,
-        createdAt: Date.now(),
-        ...(direct ? { direct: true } : {}),
-        ...(result.noGit ? { noGit: true } : {}),
-        ...(placeholderName ? { displayName: placeholderName } : {}),
+        noGit: !!result.noGit,
+        // A direct thread's agent is up by now; a worktree thread goes on
+        // through installing to running.
+        ...(direct ? { status: 'running' as const } : {}),
       });
       // A group ungrouped while this ran is gone, and add() does nothing.
-      if (d.groupId) groupStore.add(d.groupId, result.id);
-      else if (d.newGroupName) groupStore.create(d.newGroupName, [result.id]);
-      // Main holds a prompt sent during setup until the agent is ready.
-      if (text) {
-        // The chat shows the agent walking to its bench until the first reply.
-        arrivalScene.begin(result.id);
-        messageStore.addUserMessage(result.id, text);
-        window.groveBench.sendMessage(result.id, text);
-        sessionStore.updateLastActive(result.id);
-      }
-      // Discarded (and maybe replaced by a new draft) while this ran: leave
-      // the new one alone.
-      if (this.draft === draft) this.discard();
+      if (d.groupId) groupStore.add(d.groupId, id);
+      else if (d.newGroupName) groupStore.create(d.newGroupName, [id]);
+      // Main holds a prompt sent during setup until the agent is ready. Not
+      // for a thread closed or deleted meanwhile: main closes that one once
+      // it's up.
+      if (text && this.stillOpen(id)) window.groveBench.sendMessage(id, text);
       return true;
     } catch (e: any) {
-      this.error = e?.message || String(e);
+      const message = e?.message || String(e);
+      const onScreen = sessionStore.activeSessionId === id;
+      // Closed or deleted while main was checking: the user is done with it,
+      // so the draft stays gone and nothing is reported.
+      const dropped = !this.stillOpen(id);
+      dropRow(id);
+      if (dropped) return false;
+      // Back to the draft, message and all, unless one with a message has
+      // been opened since: that one is kept and the error goes in a toast.
+      if (!this.draft?.text.trim()) {
+        this.draft = draft;
+        this.error = message;
+        void this.loadAgentInfo();
+      }
+      if (this.draft !== draft || !onScreen) {
+        sessionStore.setError(`The thread couldn't start: ${message}`);
+      }
       return false;
-    } finally {
-      this.starting = false;
     }
+  }
+
+  /** Whether the thread's row is still in the Threads list: not closed
+   *  (stopped) or deleted. */
+  private stillOpen(id: string): boolean {
+    const row = sessionStore.sessions.find((s) => s.id === id);
+    return !!row && row.status !== 'stopped';
+  }
+}
+
+/** Take away the row start() added, and what the thread showed. */
+function dropRow(id: string): void {
+  sessionStore.removeSession(id);
+  messageStore.destroySession(id);
+  arrivalScene.end(id);
+}
+
+/** The branch the row shows until main replies: the one main will use, as
+ *  far as the renderer can tell. A folder thread's checked-out branch is
+ *  only known to main. */
+function provisionalBranch(d: Draft, id: string): string {
+  switch (d.start.kind) {
+    case 'folder':
+      return '';
+    case 'existing':
+      return d.start.branch;
+    case 'new':
+      return d.start.branchName.trim() || tempBranchName(id);
   }
 }
 

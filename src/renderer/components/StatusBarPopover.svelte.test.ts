@@ -71,6 +71,17 @@ describe('StatusBarPopover', () => {
     finder.remove();
   });
 
+  it("draws the kit's popover box, or none when what is inside draws its own", () => {
+    render(StatusBarPopover, { open: true, trigger, children, testid: 'boxed', panelClass: 'w-96' });
+    render(StatusBarPopover, { open: true, trigger, children, testid: 'list', surface: 'list' });
+    render(StatusBarPopover, { open: true, trigger, children, testid: 'bare', surface: 'none', panelClass: '' });
+
+    expect(screen.getByTestId('boxed')).toHaveClass('bg-popover', 'border-border', 'shadow-xl', 'p-3', 'w-96');
+    expect(screen.getByTestId('boxed')).not.toHaveClass('w-80');
+    expect(screen.getByTestId('list')).toHaveClass('bg-popover', 'py-1', 'w-80');
+    expect(screen.getByTestId('bare')).not.toHaveClass('bg-popover');
+  });
+
   it('slides in when asked to', async () => {
     const realAnimate = Element.prototype.animate;
     const animate = vi.fn(() => ({ onfinish: null, cancel() {}, currentTime: 0 }) as unknown as Animation);

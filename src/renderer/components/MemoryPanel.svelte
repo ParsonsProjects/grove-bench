@@ -8,6 +8,11 @@
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import * as Select from '$lib/components/ui/select/index.js';
   import { Label } from '$lib/components/ui/label/index.js';
+  import { Badge } from '$lib/components/ui/badge/index.js';
+  import { Pulse } from '$lib/components/ui/pulse/index.js';
+  import { SectionLabel } from '$lib/components/ui/section-label/index.js';
+  import * as Segmented from '$lib/components/ui/segmented/index.js';
+  import PlusIcon from '@lucide/svelte/icons/plus';
 
   interface Props {
     open: boolean;
@@ -142,6 +147,8 @@
   }
 
   const pruneDaysNum = $derived(Math.max(0, Math.floor(Number(pruneDays)) || 0));
+  /** The preset matching the typed days, if any, for the preset buttons. */
+  const prunePreset = $derived(pruneDayPresets.includes(pruneDaysNum) ? String(pruneDaysNum) : '');
   const prunableNotes = $derived(memoryStore.sessionNotesOlderThan(pruneDaysNum));
   const pruneSelectedPaths = $derived(prunableNotes.map(n => n.relativePath).filter(p => pruneSelection[p]));
 
@@ -233,14 +240,14 @@
             {/if}
           </span>
           {#if memoryStore.stats.lastCompactedAt}
-            <span class="text-muted-foreground/70">
+            <span class="text-muted-foreground">
               Last compacted {relativeTime(memoryStore.stats.lastCompactedAt)}
             </span>
           {/if}
         </div>
-        <div class="h-1.5 w-full bg-border overflow-hidden rounded-full">
+        <div class="h-1.5 w-full bg-border overflow-hidden">
           <div
-            class="h-full rounded-full transition-all {budgetPct >= 100 ? 'bg-destructive' : budgetWarn ? 'bg-amber-500' : 'bg-primary'}"
+            class="h-full transition-all {budgetPct >= 100 ? 'bg-destructive' : budgetWarn ? 'bg-amber-500' : 'bg-primary'}"
             style="width: {budgetPct}%"
           ></div>
         </div>
@@ -251,20 +258,22 @@
       <!-- File tree sidebar -->
       <div class="w-48 shrink-0 overflow-auto border-r border-border pr-3">
         <div class="flex items-center justify-between mb-2">
-          <span class="text-xs text-muted-foreground uppercase tracking-wide">Files</span>
-          <button
+          <SectionLabel>Files</SectionLabel>
+          <Button
+            size="icon-2xs"
+            variant="quiet"
             onclick={openNewFile}
-            class="text-xs text-muted-foreground hover:text-primary"
             title="New memory file"
+            aria-label="New memory file"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
-          </button>
+            <PlusIcon />
+          </Button>
         </div>
 
         {#if memoryStore.loading && memoryStore.files.length === 0}
-          <p class="text-xs text-muted-foreground/50">Loading...</p>
+          <p class="text-xs text-muted-foreground">Loading...</p>
         {:else if memoryStore.files.length === 0}
-          <p class="text-xs text-muted-foreground/50">No memory files yet. Click + to create one.</p>
+          <p class="text-xs text-muted-foreground">No memory files yet. Click + to create one.</p>
         {:else}
           {#each memoryStore.folders as folder}
             <div class="mb-2">
@@ -293,13 +302,13 @@
             </span>
             <div class="flex items-center gap-1 shrink-0">
               {#if isEditing}
-                <Button size="sm" variant="ghost" onclick={cancelEdit}>Cancel</Button>
+                <Button size="sm" variant="quiet" onclick={cancelEdit}>Cancel</Button>
                 <Button size="sm" onclick={saveEdit} disabled={memoryStore.saving}>
                   {memoryStore.saving ? 'Saving...' : 'Save'}
                 </Button>
               {:else}
-                <Button size="sm" variant="ghost" onclick={startEdit}>Edit</Button>
-                <Button size="sm" variant="ghost" class="text-destructive" onclick={() => confirmDeletePath = memoryStore.selectedFile!.path}>
+                <Button size="sm" variant="quiet" onclick={startEdit}>Edit</Button>
+                <Button size="sm" variant="outline-destructive" onclick={() => confirmDeletePath = memoryStore.selectedFile!.path}>
                   Delete
                 </Button>
               {/if}
@@ -317,7 +326,7 @@
           {/if}
         {:else}
           <div class="flex-1 flex items-center justify-center">
-            <p class="text-sm text-muted-foreground/50">Select a memory file to view or edit</p>
+            <p class="text-sm text-muted-foreground">Select a memory file to view or edit</p>
           </div>
         {/if}
       </div>
@@ -327,20 +336,21 @@
       <p class="text-xs text-destructive mt-2">{memoryStore.error}</p>
     {:else if memoryStore.compacting}
       <div class="mt-2 flex items-center gap-3">
-        <span class="w-1.5 h-1.5 bg-primary animate-pulse shrink-0"></span>
+        <Pulse size="xs" />
         <p class="text-xs text-muted-foreground flex-1">
           {compactStageLabel}: {formatElapsed(memoryStore.compactElapsedSeconds)} elapsed
-          <span class="text-muted-foreground/60">(each step times out after {formatElapsed(compactTimeoutSeconds)})</span>
+          <span class="text-muted-foreground">(each step times out after {formatElapsed(compactTimeoutSeconds)})</span>
         </p>
-        <button
+        <Button
+          size="2xs"
+          variant="outline-destructive"
           onclick={() => memoryStore.cancelCompact()}
-          class="text-xs text-destructive hover:underline underline-offset-2 shrink-0"
           title="Stop now. Steps already finished stay applied, and Undo reverts them."
         >
           Cancel
-        </button>
+        </Button>
       </div>
-      <p class="text-xs text-muted-foreground/60 mt-1 ml-4.5">
+      <p class="text-xs text-muted-foreground mt-1 ml-4.5">
         You can close this panel — compaction continues in the background and the summary will appear when it finishes.
       </p>
     {:else if memoryStore.compactMessage}
@@ -359,11 +369,11 @@
           <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
           {memoryStore.compacting ? 'Compacting…' : 'Compact'}
         </Button>
-        <Button size="sm" variant="ghost" onclick={openBackups} title="View and restore snapshots taken before each compaction">
+        <Button size="sm" variant="quiet" onclick={openBackups} title="View and restore snapshots taken before each compaction">
           <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>
           Backups
         </Button>
-        <Button size="sm" variant="ghost" onclick={() => showPrune = true} title="Review and delete old thread notes (memory files only, never your actual threads)">
+        <Button size="sm" variant="quiet" onclick={() => showPrune = true} title="Review and delete old thread notes (memory files only, never your actual threads)">
           <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m13 11 9-9"/><path d="M14.6 12.6c.8.8.9 2.1.2 3L10 22l-8-8 6.4-4.8c.9-.7 2.2-.6 3 .2Z"/><path d="m6.8 10.4 6.8 6.8"/><path d="m5 17 1.4-1.4"/></svg>
           Clean up notes
         </Button>
@@ -441,9 +451,9 @@
           {#each memoryStore.lastCompaction.changes as change, i (`${i}:${change.path}`)}
             <div class="px-2 py-1.5 bg-card border border-border">
               <div class="flex items-center gap-2 text-sm">
-                <span class="text-xs uppercase tracking-wide shrink-0 {change.action === 'delete' ? 'text-destructive' : 'text-primary'}">
+                <Badge tone={change.action === 'delete' ? 'danger' : 'primary'} class="uppercase tracking-wide">
                   {change.action === 'delete' ? 'removed' : 'rewritten'}
-                </span>
+                </Badge>
                 <span class="text-foreground truncate" title={change.path}>{change.path}</span>
               </div>
               {#if change.reason}
@@ -479,7 +489,7 @@
         </Dialog.Description>
       </Dialog.Header>
       {#if memoryStore.backups.length === 0}
-        <p class="text-sm text-muted-foreground/50 py-2">No backups yet. One is created automatically before each compaction.</p>
+        <p class="text-sm text-muted-foreground py-2">No backups yet. One is created automatically before each compaction.</p>
       {:else}
         <div class="flex flex-col gap-1 max-h-72 overflow-auto">
           {#each memoryStore.backups as backup (backup.id)}
@@ -490,10 +500,10 @@
                   <div class="text-xs text-muted-foreground">{backup.fileCount} {backup.fileCount === 1 ? 'file' : 'files'}</div>
                 </div>
                 <div class="flex items-center gap-1 shrink-0">
-                  <Button size="sm" variant="ghost" onclick={() => memoryStore.previewBackup(backup.id)}>
+                  <Button size="sm" variant="quiet" onclick={() => memoryStore.previewBackup(backup.id)}>
                     {memoryStore.backupPreviewId === backup.id ? 'Hide' : 'View'}
                   </Button>
-                  <Button size="sm" variant="ghost" onclick={() => confirmRestoreId = backup.id}>
+                  <Button size="sm" variant="quiet" onclick={() => confirmRestoreId = backup.id}>
                     Restore
                   </Button>
                 </div>
@@ -507,7 +517,7 @@
                         {memoryStore.backupPreviewFile?.path === file.path ? 'text-primary' : 'text-muted-foreground hover:text-foreground'}"
                     >
                       <span class="truncate">{file.path}</span>
-                      <span class="shrink-0 ml-2 text-muted-foreground/60">{(file.bytes / 1024).toFixed(1)} KB</span>
+                      <span class="shrink-0 ml-2 text-muted-foreground">{(file.bytes / 1024).toFixed(1)} KB</span>
                     </button>
                   {/each}
                   {#if memoryStore.backupPreviewFile}
@@ -546,21 +556,20 @@
           class="w-16 text-sm bg-card border border-border px-2 py-1 text-foreground focus:outline-none focus:border-primary"
         />
         <span class="text-xs text-muted-foreground">days</span>
-        <div class="flex gap-1 ml-1">
+        <Segmented.Root
+          value={prunePreset}
+          onValueChange={(v) => { if (v) pruneDays = v; }}
+          aria-label="Older than (days)"
+          class="ml-1"
+        >
           {#each pruneDayPresets as d}
-            <button
-              onclick={() => pruneDays = String(d)}
-              class="text-xs px-1.5 py-0.5 border transition-colors
-                {pruneDaysNum === d ? 'border-primary text-primary' : 'border-border text-muted-foreground hover:text-foreground'}"
-            >
-              {d}
-            </button>
+            <Segmented.Item value={String(d)}>{d}</Segmented.Item>
           {/each}
-        </div>
+        </Segmented.Root>
       </div>
 
       {#if prunableNotes.length === 0}
-        <p class="text-sm text-muted-foreground/50 py-2">No thread notes older than {pruneDays} days.</p>
+        <p class="text-sm text-muted-foreground py-2">No thread notes older than {pruneDays} days.</p>
       {:else}
         <div class="flex flex-col gap-1 max-h-64 overflow-auto">
           {#each prunableNotes as note (note.relativePath)}

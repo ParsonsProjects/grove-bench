@@ -9,6 +9,8 @@
   import { Button } from '$lib/components/ui/button/index.js';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import { Input } from '$lib/components/ui/input/index.js';
+  import { Notice } from '$lib/components/ui/notice/index.js';
+  import { Pulse } from '$lib/components/ui/pulse/index.js';
   import {
     SETTINGS_SECTIONS, searchSettings, type SettingsEntry, type SettingsSectionId,
   } from '$lib/settings-search.js';
@@ -17,6 +19,7 @@
   import PermissionSettings from './settings/PermissionSettings.svelte';
   import GitSettings from './settings/GitSettings.svelte';
   import NotificationSettings from './settings/NotificationSettings.svelte';
+  import LimitSettings from './settings/LimitSettings.svelte';
   import BackgroundSettings from './settings/BackgroundSettings.svelte';
   import McpSettings from './settings/McpSettings.svelte';
   import PluginSettings from './settings/PluginSettings.svelte';
@@ -100,6 +103,7 @@
     credentials: () => Object.values(store.prerequisites?.agents ?? {}).some((a) => a.apiKey || a.cliSignIn || a.installCommand),
     'thinking-summaries': () => agentsStore.list.some((a) => a.capabilities.thinkingSummaries),
     'alpha-agents': () => agentsStore.list.some((a) => a.stage === 'alpha'),
+    'claude-accounts': () => agentsStore.list.some((a) => a.capabilities.accounts && !a.account),
     'project-colors': () => store.repos.length > 0,
   };
   const results = $derived(
@@ -241,14 +245,16 @@
                 {#if !settingsStore.loaded && s.id !== 'mcp' && s.id !== 'plugins' && s.id !== 'diagnostics'}
                   {#if settingsStore.loading}
                     <div class="flex items-center justify-center py-8 text-muted-foreground">
-                      <span class="w-3 h-3 bg-primary animate-pulse mr-2"></span>
+                      <Pulse class="mr-2" />
                       <span class="text-sm">Loading settings...</span>
                     </div>
                   {:else}
-                    <div class="text-xs text-destructive bg-destructive/10 px-3 py-2" role="alert">
-                      Couldn't load settings{settingsStore.error ? `: ${settingsStore.error}` : '.'}
-                      <button type="button" class="ml-1 underline" onclick={() => settingsStore.load()}>Try again</button>
-                    </div>
+                    <Notice tone="danger">
+                      {#snippet actions()}
+                        <Button size="2xs" variant="subtle" onclick={() => settingsStore.load()}>Try again</Button>
+                      {/snippet}
+                      <p>Couldn't load settings{settingsStore.error ? `: ${settingsStore.error}` : '.'}</p>
+                    </Notice>
                   {/if}
                 {:else if s.id === 'general'}
                   <GeneralSettings />
@@ -260,6 +266,8 @@
                   <GitSettings />
                 {:else if s.id === 'notifications'}
                   <NotificationSettings />
+                {:else if s.id === 'limits'}
+                  <LimitSettings />
                 {:else if s.id === 'background'}
                   <BackgroundSettings ongoto={(id) => (section = id)} />
                 {:else if s.id === 'mcp'}
@@ -282,14 +290,14 @@
       <div class="flex-1 min-w-0 text-xs" aria-live="polite">
         {#if settingsStore.loaded && settingsStore.error}
           <span class="text-destructive">Couldn't save: {settingsStore.error}</span>
-          <button type="button" class="ml-1 text-primary hover:underline" onclick={() => settingsStore.save()}>Try again</button>
+          <Button variant="link" size="inline" class="ml-1" onclick={() => settingsStore.save()}>Try again</Button>
         {:else if settingsStore.saving || settingsStore.dirty}
           <span class="text-muted-foreground">Saving...</span>
         {:else if settingsStore.savedAt}
           <span class="text-muted-foreground">All changes saved</span>
         {/if}
       </div>
-      <Button variant="ghost" size="sm" onclick={openHelp}>Help</Button>
+      <Button variant="quiet" size="sm" onclick={openHelp}>Help</Button>
       <Button variant="secondary" size="sm" onclick={onclose}>Close</Button>
     </div>
   </Dialog.Content>

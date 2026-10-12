@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { app, BrowserWindow, nativeTheme } from 'electron';
+import { NIGHT, PAPER } from '../shared/brand.js';
 import { z } from 'zod';
 import type { GroveBenchSettings } from '../shared/types.js';
 import { effectiveCompactTimeoutSeconds } from '../shared/compact-timeout.js';
@@ -23,6 +24,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   workingDirectories: [],
   defaultSystemPromptAppend: '',
   acpAgents: [],
+  claudeAccounts: [],
   enabledAlphaAgents: [],
 
   // Memory
@@ -63,6 +65,14 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   notifyOnPrAlert: true,
   notifyTaskbarFlash: true,
   notifyTaskbarBadge: true,
+  notifyOnPlanUsage: true,
+
+  // Limits and alerts (0 = off)
+  planUsageAlertPercent: 80,
+  threadSpendLimitUsd: 0,
+  dailySpendLimitUsd: 0,
+  turnToolCallLimit: 0,
+  turnMinutesLimit: 0,
 
   // Privacy
   analyticsEnabled: false,
@@ -227,6 +237,11 @@ const settingsSchema = z.object({
     command: z.string(),
     args: z.array(z.string()).catch([]),
   })).catch(DEFAULT_SETTINGS.acpAgents),
+  claudeAccounts: z.array(z.object({
+    id: z.string().catch(''),
+    name: z.string(),
+    configDir: z.string().catch(''),
+  })).catch(DEFAULT_SETTINGS.claudeAccounts),
   enabledAlphaAgents: z.array(z.string()).catch(DEFAULT_SETTINGS.enabledAlphaAgents),
 
   memoryAutoSave: z.boolean().catch(DEFAULT_SETTINGS.memoryAutoSave),
@@ -260,6 +275,13 @@ const settingsSchema = z.object({
   notifyOnPrAlert: z.boolean().catch(DEFAULT_SETTINGS.notifyOnPrAlert),
   notifyTaskbarFlash: z.boolean().catch(DEFAULT_SETTINGS.notifyTaskbarFlash),
   notifyTaskbarBadge: z.boolean().catch(DEFAULT_SETTINGS.notifyTaskbarBadge),
+  notifyOnPlanUsage: z.boolean().catch(DEFAULT_SETTINGS.notifyOnPlanUsage),
+
+  planUsageAlertPercent: z.number().finite().min(0).max(100).catch(DEFAULT_SETTINGS.planUsageAlertPercent),
+  threadSpendLimitUsd: z.number().finite().nonnegative().catch(DEFAULT_SETTINGS.threadSpendLimitUsd),
+  dailySpendLimitUsd: z.number().finite().nonnegative().catch(DEFAULT_SETTINGS.dailySpendLimitUsd),
+  turnToolCallLimit: z.number().int().nonnegative().catch(DEFAULT_SETTINGS.turnToolCallLimit),
+  turnMinutesLimit: z.number().finite().nonnegative().catch(DEFAULT_SETTINGS.turnMinutesLimit),
 
   analyticsEnabled: z.boolean().catch(DEFAULT_SETTINGS.analyticsEnabled),
   analyticsPrompted: z.boolean().catch(DEFAULT_SETTINGS.analyticsPrompted),
@@ -346,10 +368,18 @@ export function resetSettingsCache(): void {
 }
 
 export function applyImmediateEffects(win: BrowserWindow | null, settings: GroveBenchSettings): void {
-  if (win && !win.isDestroyed()) {
-    win.setAlwaysOnTop(settings.alwaysOnTop);
-  }
   // Sets prefers-color-scheme, which picks the renderer's palette
   // (globals.css), along with native menus and Preview pages.
   nativeTheme.themeSource = settings.theme;
+  if (win && !win.isDestroyed()) {
+    win.setAlwaysOnTop(settings.alwaysOnTop);
+    win.setBackgroundColor(windowBackground());
+  }
+}
+
+/** The theme's background (brand.ts), for the window behind the page: what
+ *  shows while it first paints or a resize uncovers new space, which would
+ *  otherwise flash white in the dark theme. */
+export function windowBackground(): string {
+  return nativeTheme.shouldUseDarkColors ? NIGHT.background : PAPER.background;
 }

@@ -16,6 +16,7 @@ import { AGENT_SPRITES } from '../lib/agent-sprite.js';
 import { agentsStore } from '../stores/agents.svelte.js';
 import { groupStore } from '../stores/groups.svelte.js';
 import { draftStore } from '../stores/draft.svelte.js';
+import { gitStatusStore } from '../stores/gitStatus.svelte.js';
 
 beforeEach(() => {
   // Call counts start from zero in every test, whatever ran before it.
@@ -56,6 +57,18 @@ describe('Sidebar session rows', () => {
     };
     render(Sidebar);
     expect(await screen.findByText('Bash: npm test')).toBeInTheDocument();
+  });
+
+  it('counts the files changed in the worktree, not everything on the branch', async () => {
+    const entry = (filePath: string) => ({ filePath, status: 'modified' as const, staged: false });
+    // The Changes tab lists 3 files changed on the branch; 1 isn't committed yet.
+    gitStatusStore.statusBySession = { s1: { entries: [entry('a.ts'), entry('b.ts'), entry('c.ts')], baseRef: 'main', uncommitted: 1 } };
+    try {
+      render(Sidebar);
+      expect(await screen.findByTitle('1 changed file in the worktree')).toHaveTextContent('±1');
+    } finally {
+      gitStatusStore.statusBySession = {};
+    }
   });
 
   it('shows the last conversation text when the agent is idle', async () => {
@@ -342,6 +355,7 @@ describe('Sidebar attention triage', () => {
     expect(group).toHaveTextContent('Needs you 1');
     expect(group).toHaveTextContent('Working 1');
     expect(group).toHaveTextContent('Unread 1');
+    expect(group).toHaveTextContent('Idle 1');
   });
 
   it('filters the active list by the selected chip', async () => {
@@ -364,6 +378,58 @@ describe('Sidebar attention triage', () => {
     expect(screen.getByRole('button', { name: 'Unread 1' })).toHaveAttribute('aria-pressed', 'false');
   });
 
+  it('keeps an unread thread listed after opening it, until another thread is focused', async () => {
+    render(Sidebar);
+    await fireEvent.click(screen.getByTitle('Unread: 1'));
+
+    await fireEvent.click(screen.getByText('Finished one'));
+    expect(store.needsAttention['finished']).toBeUndefined();
+    expect(screen.getByText('Finished one')).toBeInTheDocument();
+    // The count is still honest: it has been read.
+    expect(screen.getByRole('button', { name: 'Unread 0', pressed: true })).toBeInTheDocument();
+
+    store.activeSessionId = 'quiet';
+    await tick();
+    expect(screen.queryByText('Finished one')).not.toBeInTheDocument();
+  });
+
+  it('keeps a thread listed under Needs you after its prompt is answered, until another thread is focused', async () => {
+    render(Sidebar);
+    await fireEvent.click(screen.getByTitle('Needs you: 1'));
+    await fireEvent.click(screen.getByText('Blocked one'));
+
+    messageStore.messagesBySession['blocked'] = [
+      { kind: 'permission', id: 'p1', requestId: 'r1', toolName: 'Write', toolInput: {}, toolUseId: 't1', resolved: true },
+    ];
+    await tick();
+    expect(screen.getByText('Blocked one')).toBeInTheDocument();
+
+    store.activeSessionId = 'quiet';
+    await tick();
+    expect(screen.queryByText('Blocked one')).not.toBeInTheDocument();
+  });
+
+  it('keeps an unread thread opened from outside the sidebar, such as the finder', async () => {
+    render(Sidebar);
+    await fireEvent.click(screen.getByTitle('Unread: 1'));
+
+    store.activeSessionId = 'finished';
+    store.clearNeedsAttention('finished');
+    await tick();
+    expect(screen.getByText('Finished one')).toBeInTheDocument();
+  });
+
+  it('drops the kept thread when the chip changes', async () => {
+    render(Sidebar);
+    await fireEvent.click(screen.getByTitle('Unread: 1'));
+    await fireEvent.click(screen.getByText('Finished one'));
+
+    await fireEvent.click(screen.getByTitle('Needs you: 1'));
+    expect(screen.queryByText('Finished one')).not.toBeInTheDocument();
+    await fireEvent.click(screen.getByTitle('Unread: 0'));
+    expect(screen.queryByText('Finished one')).not.toBeInTheDocument();
+  });
+
   it('counts a conversation that is starting up as working, matching its colour', async () => {
     store.sessions = [...store.sessions, { id: 'booting', branch: 'feat-e', repoPath: '/repo-b', status: 'starting', displayName: 'Booting one' }] as any;
     render(Sidebar);
@@ -378,6 +444,28 @@ describe('Sidebar attention triage', () => {
     // Red, not green: it isn't counted as unread.
     expect(screen.getByRole('img', { name: 'Error' })).toHaveClass(AGENT_SPRITES.error.colorClass);
     expect(screen.getByRole('group', { name: 'Filter threads' })).toHaveTextContent('Unread 1');
+  });
+
+  it('lists open, quiet threads under Idle, and leaves closed and errored ones out', async () => {
+    store.sessions = [
+      ...store.sessions,
+      { id: 'sleepy', branch: 'feat-e', repoPath: '/repo-b', status: 'sleeping', displayName: 'Sleepy one' },
+      { id: 'closed', branch: 'feat-f', repoPath: '/repo-b', status: 'stopped', displayName: 'Closed one' },
+      { id: 'broken', branch: 'feat-g', repoPath: '/repo-b', status: 'error', displayName: 'Broken one' },
+    ] as any;
+    mockGroveBench.getCollapsedRepos.mockResolvedValue({ '/repo-b': false });
+    render(Sidebar);
+    // Listed under the project until a chip is picked.
+    expect(await screen.findByText('Closed one')).toBeInTheDocument();
+    expect(screen.getAllByText('Broken one').length).toBeGreaterThan(0);
+
+    await fireEvent.click(screen.getByTitle('Idle: 2'));
+    expect(screen.getAllByText('Quiet one').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Sleepy one').length).toBeGreaterThan(0);
+    expect(screen.queryByText('Closed one')).not.toBeInTheDocument();
+    expect(screen.queryByText('Broken one')).not.toBeInTheDocument();
+    expect(screen.queryByText('Working one')).not.toBeInTheDocument();
+    expect(screen.queryByText('Finished one')).not.toBeInTheDocument();
   });
 
   it('shows only dots and counts on the chips when the sidebar is narrow', async () => {
@@ -814,7 +902,7 @@ describe('Sidebar clean-up dialog', () => {
     expect(screen.queryByLabelText(/Recent one/)).not.toBeInTheDocument();
     await fireEvent.click(screen.getByLabelText(/Open one/));
 
-    await fireEvent.click(screen.getByRole('button', { name: '7' }));
+    await fireEvent.click(screen.getByRole('radio', { name: '7' }));
 
     // The new candidate is checked and preselected; the earlier untick survives.
     await waitFor(() => expect(screen.getByLabelText(/Recent one/)).toBeChecked());
@@ -832,7 +920,7 @@ describe('Sidebar clean-up dialog', () => {
 
     await openDialog();
     await waitFor(() => expect(mockGroveBench.getPrs).toHaveBeenCalled());
-    await fireEvent.click(screen.getByRole('button', { name: '7' }));
+    await fireEvent.click(screen.getByRole('radio', { name: '7' }));
     await waitFor(() => expect(screen.getByLabelText(/New 3/)).toBeInTheDocument());
     await tick();
     // None has finished, so every call so far is still running.

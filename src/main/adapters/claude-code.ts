@@ -2,7 +2,7 @@
  * Claude Code adapter — wraps the @anthropic-ai/claude-agent-sdk.
  */
 import type { ControlDescriptor, ControlOption, McpServerInfo, McpConfiguredServer, McpAddServerOpts, McpConfigScope, McpElicitationRequest, McpServerContextCost, McpServerManager, McpSupport, ImageMediaType, PermissionMode, ProviderUsage, SkillDefinition, ThinkingLevel, ToolCategory, UsageWindow } from '../../shared/types.js';
-import { CONTROL_IDS, THINKING_LEVELS } from '../../shared/types.js';
+import { CONTROL_IDS, PERMISSION_TIMEOUT_MINUTES, THINKING_LEVELS } from '../../shared/types.js';
 import type {
   AgentAdapter,
   AgentCapabilities,
@@ -23,10 +23,13 @@ import { getApiKey } from '../credentials.js';
 import { loadModelCatalog, saveModelCatalog } from '../app-state.js';
 import { z } from 'zod';
 import { asarUnpackedPath, cleanEnv, isPathInside, checkToolRules, toolCallSpecifier, readableStreamToAsyncIterable } from '../agent-utils.js';
+import { attachedFilesNote } from './file-attachments.js';
 import { createMemoryMcpServer, GROVE_MEMORY_TOOL_NAMES } from './memory-mcp-server.js';
 import { createPreviewMcpServer, GROVE_PREVIEW_READ_TOOL_NAMES } from './preview-mcp-server.js';
 import * as skillsModule from '../skills.js';
+import { accountEnv, accountSignInCommand, type ClaudeAccount } from './claude-accounts.js';
 import { logger } from '../logger.js';
+import { RunningCost } from './running-cost.js';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import * as path from 'node:path';
@@ -37,6 +40,12 @@ const execFileAsync = promisify(execFile);
  *  Claude Code sign-in. */
 export const CLAUDE_AUTH_ERROR_MESSAGE = 'Claude couldn\'t sign in. Check or replace your Anthropic API key in Settings → Agents (Grovekeepers), or run "claude" in a terminal and sign in, then try again.';
 
+/** CLAUDE_AUTH_ERROR_MESSAGE for one of the user's other accounts, which
+ *  signs in with its own command rather than plain "claude". */
+export function claudeAccountAuthErrorMessage(accountName: string): string {
+  return `Claude couldn't sign in to your ${accountName} account. Check or replace its Anthropic API key in Settings → Agents (Grovekeepers), or run its sign-in command from there in a terminal, then try again.`;
+}
+
 // ─── SDK dynamic import (ESM-only module in a CJS Electron main process) ───
 
 type Query = import('@anthropic-ai/claude-agent-sdk').Query;
@@ -45,6 +54,7 @@ type SDKUserMessage = Extract<SDKMessage, { type: 'user' }>;
 type SpawnOptions = import('@anthropic-ai/claude-agent-sdk').SpawnOptions;
 type SpawnedProcess = import('@anthropic-ai/claude-agent-sdk').SpawnedProcess;
 type SdkElicitationRequest = import('@anthropic-ai/claude-agent-sdk').ElicitationRequest;
+type HookCallback = import('@anthropic-ai/claude-agent-sdk').HookCallback;
 
 /**
  * Custom spawn used for the SDK's `spawnClaudeCodeProcess` hook.
@@ -168,6 +178,12 @@ interface MessageContext {
    *  SDK runs in 'acceptEdits' while Grove is in 'readSafe', so SDK-reported
    *  'acceptEdits' mode_syncs are translated back to 'readSafe'. */
   groveMode?: PermissionMode;
+  /** Turns the query's running cost total into each turn's cost. Without
+   *  one, each result is read as the first of a new conversation. */
+  cost?: RunningCost;
+  /** Shown when the API refuses the sign-in. CLAUDE_AUTH_ERROR_MESSAGE when
+   *  unset; an account agent names its own. */
+  authErrorMessage?: string;
 }
 
 /** Strip ANSI escape sequences from provider-authored text before it is
@@ -175,6 +191,33 @@ interface MessageContext {
 const ANSI_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
 export function stripAnsi(text: string): string {
   return text.replace(ANSI_RE, '');
+}
+
+/** Told to the model when a tool call is refused because the user stopped
+ *  at a limit; the turn is being stopped too. */
+export const LIMIT_STOP_REASON = 'The user stopped this turn at a limit they set in Grove Bench (spend, tool calls or time). Do not retry.';
+
+/**
+ * A PreToolUse hook for Grove's limits (AdapterConfig.beforeToolUse).
+ * PreToolUse fires on every tool call, ahead of the permission flow
+ * (https://code.claude.com/docs/en/hooks), unlike canUseTool, which only
+ * hears about the calls that need asking. Holds the call while a reached
+ * limit is put to the user and refuses it if they stop. Returning no
+ * decision leaves the call to the normal permission flow.
+ */
+export function limitHook(beforeToolUse: NonNullable<AdapterConfig['beforeToolUse']>): HookCallback {
+  return async (input, toolUseID) => {
+    if (input.hook_event_name !== 'PreToolUse') return {};
+    const decision = await beforeToolUse({ toolName: input.tool_name, toolUseId: input.tool_use_id || toolUseID || '' });
+    if (decision === 'continue') return {};
+    return {
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'deny',
+        permissionDecisionReason: LIMIT_STOP_REASON,
+      },
+    };
+  };
 }
 
 /** Map Grove Bench permission modes to what the SDK understands. 'readSafe'
@@ -193,6 +236,41 @@ export function fromSdkSyncMode(mode: PermissionMode, ctx: MessageContext): Perm
 }
 
 const IMAGE_MEDIA_TYPES = new Set<string>(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
+
+/**
+ * A user message as the SDK takes it: attached images as content blocks
+ * ahead of the text, and a note with the path of every other attached file
+ * (PDFs included), which Claude reads with its own tools.
+ */
+export function userMessageContent(message: UserMessage): string | Array<Record<string, unknown>> {
+  const files = message.files ?? [];
+  const text = files.length > 0 ? `${attachedFilesNote(files)}\n\n${message.text}` : message.text;
+  if (!message.images?.length) return text;
+  return [
+    ...message.images.map((img) => ({ type: 'image', source: { type: 'base64', media_type: img.mediaType, data: img.data } })),
+    { type: 'text', text },
+  ];
+}
+
+/** Claude's read tools and the input field naming what each reads. */
+const READ_TOOL_PATH_FIELD: Readonly<Record<string, string>> = { Read: 'file_path', Glob: 'path', Grep: 'path', LS: 'path' };
+
+/**
+ * Whether a call only reads inside the attachments folder, where the files
+ * the user attached are saved. Those reads are allowed without a prompt.
+ * Only reads: the folder isn't a working directory, so Claude can't edit
+ * the saved copies without asking.
+ */
+export function readsAttachedFile(
+  toolName: string,
+  input: Record<string, unknown>,
+  cwd: string,
+  attachmentsDir: string | null | undefined,
+): boolean {
+  const field = Object.hasOwn(READ_TOOL_PATH_FIELD, toolName) ? READ_TOOL_PATH_FIELD[toolName] : null;
+  const target = field ? input[field] : undefined;
+  return !!attachmentsDir && typeof target === 'string' && isPathInside(attachmentsDir, path.resolve(cwd, target));
+}
 
 /** The base64 images in a tool result's content: API image blocks (Read on an
  *  image file) or MCP ones (`data` + `mimeType`), in case they arrive unconverted. */
@@ -405,7 +483,7 @@ export function transformMessage(
       // ("Invalid API key · Fix external API key"), which names nothing in
       // Grove, so say where to fix it instead.
       if ((message as { error?: string }).error === 'authentication_failed') {
-        events.push({ type: 'error', message: CLAUDE_AUTH_ERROR_MESSAGE, auth: true, keyRejected: true });
+        events.push({ type: 'error', message: ctx.authErrorMessage ?? CLAUDE_AUTH_ERROR_MESSAGE, auth: true, keyRejected: true });
         break;
       }
       // A subagent's messages carry the id of the Agent call that started it.
@@ -502,12 +580,19 @@ export function transformMessage(
           }, undefined)
         : undefined;
       const contextWindow = mainUsage?.contextWindow;
+      // total_cost_usd is the query's running total, not this turn's.
+      const runningCost = typeof message.total_cost_usd === 'number' && Number.isFinite(message.total_cost_usd)
+        ? message.total_cost_usd
+        : undefined;
       events.push({
         type: 'result',
         subtype: message.subtype,
         result: 'result' in message ? (message as any).result : undefined,
         structured_output: 'structured_output' in message ? (message as any).structured_output : undefined,
-        totalCostUsd: message.total_cost_usd,
+        ...(runningCost !== undefined ? {
+          totalCostUsd: (ctx.cost ?? new RunningCost()).turnCost(runningCost, message.is_error),
+          sessionCostUsd: runningCost,
+        } : {}),
         durationMs: message.duration_ms,
         isError: message.is_error,
         errors: 'errors' in message ? (message as any).errors : undefined,
@@ -1384,12 +1469,9 @@ export const TEXT_GENERATION_OPTIONS: Pick<
 // ─── Claude Code Adapter ───
 
 export class ClaudeCodeAdapter implements AgentAdapter {
-  readonly id = 'claude-code';
-  // The Agent SDK branding guidelines rule out "Claude Code" as a label in
-  // our UI and suggest "Claude Agent" for menus
-  // (https://code.claude.com/docs/en/agent-sdk/overview#branding-guidelines).
-  readonly displayName = 'Claude Agent';
-  readonly authErrorMessage = CLAUDE_AUTH_ERROR_MESSAGE;
+  readonly id: string;
+  readonly displayName: string;
+  readonly authErrorMessage: string;
   readonly apiKey: ApiKeyDescriptor = {
     envVar: 'ANTHROPIC_API_KEY',
     label: 'Anthropic API key',
@@ -1399,13 +1481,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   };
   // Anthropic's own sign-in in its own CLI; Grove only reads `claude auth
   // status` (DESIGN.md, "Allowed: the user's own Claude subscription").
-  readonly cliSignIn: CliSignInDescriptor = {
-    accountLabel: 'Claude plan',
-    accountDetail: 'Pro, Max, Team or Enterprise',
-    cliName: 'Claude Code',
-    command: 'claude',
-    setupUrl: 'https://code.claude.com/docs/en/setup',
-  };
+  readonly cliSignIn: CliSignInDescriptor;
   readonly mcp = CLAUDE_MCP_SUPPORT;
   readonly generatedFiles = ['.claude/settings.local.json'];
   readonly capabilities: AgentCapabilities = {
@@ -1422,12 +1498,41 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     imageAttachments: true,
     structuredOutput: true,
     sandbox: true,
+    accounts: true,
   };
 
-  constructor(private readonly modelStore: ModelCatalogStore = appStateModelStore) {}
+  /** Skill folders: the user level is in the account's folder for an
+   *  account agent. */
+  private readonly skillDirs: skillsModule.SkillDirs;
+
+  /** `account`: one of the user's other Claude accounts (claude-accounts.ts),
+   *  run with its own Claude Code folder. Omit for the default account. */
+  constructor(
+    private readonly modelStore: ModelCatalogStore = appStateModelStore,
+    readonly account?: ClaudeAccount,
+  ) {
+    // The Agent SDK branding guidelines rule out "Claude Code" as a label in
+    // our UI and suggest "Claude Agent" for menus
+    // (https://code.claude.com/docs/en/agent-sdk/overview#branding-guidelines).
+    this.id = account?.id ?? 'claude-code';
+    this.displayName = account ? `Claude Agent (${account.name})` : 'Claude Agent';
+    this.authErrorMessage = account ? claudeAccountAuthErrorMessage(account.name) : CLAUDE_AUTH_ERROR_MESSAGE;
+    this.cliSignIn = {
+      accountLabel: 'Claude plan',
+      accountDetail: 'Pro, Max, Team or Enterprise',
+      cliName: 'Claude Code',
+      command: account ? accountSignInCommand(account.configDir) : 'claude',
+      setupUrl: 'https://code.claude.com/docs/en/setup',
+    };
+    this.skillDirs = account
+      ? { ...skillsModule.CLAUDE_SKILL_DIRS, user: path.join(account.configDir, 'skills') }
+      : skillsModule.CLAUDE_SKILL_DIRS;
+  }
 
   verifyApiKey(key: string): Promise<boolean | null> {
-    return verifyAnthropicKey(key);
+    // An account agent doesn't take ANTHROPIC_BASE_URL from Grove's
+    // environment, so its key is checked with Anthropic itself.
+    return verifyAnthropicKey(key, this.account ? { env: accountEnv(process.env, this.account.configDir) } : {});
   }
 
   // ─── Models ───
@@ -1552,8 +1657,10 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
     // Conversations run on the SDK's bundled binary, not the installed CLI,
     // so credentials in the environment are enough on their own. The CLI is
-    // only needed to sign in and for MCP / plugin configuration.
-    const envMethod = envAuthMethod();
+    // only needed to sign in and for MCP / plugin configuration. An account
+    // agent doesn't get Grove's environment credentials (cliEnv), so only its
+    // folder's sign-in counts.
+    const envMethod = this.account ? null : envAuthMethod();
 
     if (!claudePath) {
       return {
@@ -1571,7 +1678,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     }
 
     try {
-      const { stdout: authJson } = await execFileAsync(claudePath, ['auth', 'status', '--json'], { shell: true, timeout: AUTH_STATUS_TIMEOUT_MS });
+      const { stdout: authJson } = await execFileAsync(claudePath, ['auth', 'status', '--json'], { shell: true, timeout: AUTH_STATUS_TIMEOUT_MS, ...this.cliEnv() });
       const auth = JSON.parse(authJson.trim());
       return {
         available: true,
@@ -1590,6 +1697,21 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   private savedKeyEnv(): Record<string, string> {
     const key = getApiKey(this.id);
     return key ? { [this.apiKey.envVar]: key } : {};
+  }
+
+  /** `env` for the agent process: for an account agent, without the sign-ins
+   *  inherited from Grove's environment and pointed at the account's folder.
+   *  The saved key is added after. */
+  private agentEnv(env: Record<string, string | undefined>): Record<string, string | undefined> {
+    return this.account ? accountEnv(env, this.account.configDir) : env;
+  }
+
+  /** Options for `claude` CLI commands (auth status, mcp, plugin): nothing
+   *  extra for the default account, which uses Grove's own environment; an
+   *  account agent's environment otherwise, without the saved key so `auth
+   *  status` reports the folder's own sign-in. */
+  private cliEnv(): { env?: NodeJS.ProcessEnv } {
+    return this.account ? { env: accountEnv(process.env, this.account.configDir) } : {};
   }
 
   async start(config: AdapterConfig): Promise<AgentQueryHandle> {
@@ -1654,6 +1776,12 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         return { behavior: 'deny' as const, message: `Denied by settings rule: ${ruleVerdict.pattern}` };
       }
       if (ruleVerdict?.behavior === 'allow') {
+        return { behavior: 'allow' as const, updatedInput: input };
+      }
+
+      // The files the user attached are saved outside the checkout, and the
+      // message gives Claude their paths: reading them needs no prompt.
+      if (readsAttachedFile(toolName, input, config.cwd, config.attachmentsDir)) {
         return { behavior: 'allow' as const, updatedInput: input };
       }
 
@@ -1752,6 +1880,16 @@ export class ClaudeCodeAdapter implements AgentAdapter {
           ? { resumeSessionAt: config.resumeAtUuid, forkSession: true }
           : {}),
         canUseTool: canUseTool as any,
+        ...(config.beforeToolUse ? {
+          hooks: {
+            PreToolUse: [{
+              hooks: [limitHook(config.beforeToolUse)],
+              // Seconds. Longer than Grove waits for an answer to a limit
+              // (PERMISSION_TIMEOUT_MINUTES), so Grove settles it first.
+              timeout: PERMISSION_TIMEOUT_MINUTES * 60 + 60,
+            }],
+          },
+        } : {}),
         // Without a handler the SDK declines every elicitation.
         ...(config.onElicitation ? {
           onElicitation: async (request: SdkElicitationRequest, { signal }: { signal: AbortSignal }) => {
@@ -1764,7 +1902,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
           return agentProcess;
         },
         env: {
-          ...cleanEnv(),
+          ...this.agentEnv(cleanEnv()),
           CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR: '1',
           ...this.savedKeyEnv(),
           ...(config.extraEnv ?? {}),
@@ -1782,6 +1920,8 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     const ctx: MessageContext = {
       toolUseMap: new Map(),
       groveMode: config.permissionMode,
+      cost: new RunningCost(config.resumeSessionId ? (config.priorCostUsd ?? null) : null),
+      authErrorMessage: this.authErrorMessage,
     };
 
     // Create the async event generator
@@ -1815,23 +1955,10 @@ export class ClaudeCodeAdapter implements AgentAdapter {
           return;
         }
 
-        let messageContent: string | Array<Record<string, unknown>> = message.text;
-        if (message.images && message.images.length > 0) {
-          const blocks: Array<Record<string, unknown>> = [];
-          for (const img of message.images) {
-            blocks.push({
-              type: 'image',
-              source: { type: 'base64', media_type: img.mediaType, data: img.data },
-            });
-          }
-          blocks.push({ type: 'text', text: message.text });
-          messageContent = blocks;
-        }
-
         inputController.enqueue({
           type: 'user',
           session_id: sessionId ?? '',
-          message: { role: 'user', content: messageContent },
+          message: { role: 'user', content: userMessageContent(message) },
           parent_tool_use_id: null,
         } as SDKUserMessage);
       },
@@ -1983,11 +2110,11 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   // ─── Skill management (native format: .claude/skills/<name>/SKILL.md) ───
 
   async listSkills(worktreePath: string) {
-    return skillsModule.listSkills(worktreePath, skillsModule.CLAUDE_SKILL_DIRS);
+    return skillsModule.listSkills(worktreePath, this.skillDirs);
   }
 
   async addSkill(worktreePath: string, def: SkillDefinition) {
-    return skillsModule.writeSkill(worktreePath, def, skillsModule.CLAUDE_SKILL_DIRS);
+    return skillsModule.writeSkill(worktreePath, def, this.skillDirs);
   }
 
   // ─── MCP server configuration (delegates to `claude mcp` CLI) ───
@@ -1998,6 +2125,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       shell: true,
       ...(cwd ? { cwd } : {}),
       timeout: 60_000,
+      ...this.cliEnv(),
     });
     return parseMcpListOutput(stdout);
   }
@@ -2008,6 +2136,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       shell: true,
       ...(opts.cwd ? { cwd: opts.cwd } : {}),
       timeout: 30_000,
+      ...this.cliEnv(),
     });
   }
 
@@ -2022,6 +2151,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       shell: true,
       ...(cwd ? { cwd } : {}),
       timeout: 30_000,
+      ...this.cliEnv(),
     });
   }
 
@@ -2029,7 +2159,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
   async listPlugins(): Promise<{ installed: Array<{ id: string; name?: string; enabled?: boolean }>; available: unknown[] }> {
     try {
-      const { stdout } = await execFileAsync('claude', ['plugin', 'list', '--json', '--available'], { shell: true });
+      const { stdout } = await execFileAsync('claude', ['plugin', 'list', '--json', '--available'], { shell: true, ...this.cliEnv() });
       return JSON.parse(stdout);
     } catch {
       return { installed: [], available: [] };
@@ -2037,19 +2167,19 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   }
 
   async installPlugin(pluginId: string, scope = 'user'): Promise<void> {
-    await execFileAsync('claude', ['plugin', 'install', validatePluginId(pluginId), '--scope', validateConfigScope(scope)], { shell: true });
+    await execFileAsync('claude', ['plugin', 'install', validatePluginId(pluginId), '--scope', validateConfigScope(scope)], { shell: true, ...this.cliEnv() });
   }
 
   async uninstallPlugin(pluginId: string): Promise<void> {
-    await execFileAsync('claude', ['plugin', 'uninstall', validatePluginId(pluginId)], { shell: true });
+    await execFileAsync('claude', ['plugin', 'uninstall', validatePluginId(pluginId)], { shell: true, ...this.cliEnv() });
   }
 
   async enablePlugin(pluginId: string): Promise<void> {
-    await execFileAsync('claude', ['plugin', 'enable', validatePluginId(pluginId)], { shell: true });
+    await execFileAsync('claude', ['plugin', 'enable', validatePluginId(pluginId)], { shell: true, ...this.cliEnv() });
   }
 
   async disablePlugin(pluginId: string): Promise<void> {
-    await execFileAsync('claude', ['plugin', 'disable', validatePluginId(pluginId)], { shell: true });
+    await execFileAsync('claude', ['plugin', 'disable', validatePluginId(pluginId)], { shell: true, ...this.cliEnv() });
   }
 
   // ─── Text generation (for memory extraction) ───
@@ -2077,6 +2207,11 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
     let resultText = '';
     const keyEnv = this.savedKeyEnv();
+    // `env` replaces the inherited environment rather than merging, so the
+    // default account passes it only when there is a saved key to add.
+    const env = this.account
+      ? { ...this.agentEnv(process.env), ...keyEnv }
+      : Object.keys(keyEnv).length > 0 ? { ...process.env, ...keyEnv } : undefined;
     const q = queryFn({
       prompt: readableStreamToAsyncIterable(inputStream),
       options: {
@@ -2085,9 +2220,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         systemPrompt,
         ...TEXT_GENERATION_OPTIONS,
         ...(options?.model ? { model: options.model } : {}),
-        // `env` replaces the inherited environment rather than merging, so
-        // only pass it when there is a saved key to add.
-        ...(Object.keys(keyEnv).length > 0 ? { env: { ...process.env, ...keyEnv } } : {}),
+        ...(env ? { env } : {}),
         spawnClaudeCodeProcess: (o: SpawnOptions) => spawnClaudeCodeProcess(o),
       },
     });
@@ -2111,6 +2244,10 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   // ─── Conversation title ───
 
   async getConversationTitle(providerSessionId: string, cwd: string): Promise<string | null> {
+    // The SDK reads transcripts in Grove's own process, from the folder in
+    // Grove's CLAUDE_CONFIG_DIR, and takes no folder of its own. An account's
+    // transcripts are elsewhere, so Grove names those threads itself.
+    if (this.account) return null;
     const sdk = await getSdk();
     const info = await sdk.getSessionInfo(providerSessionId, { dir: cwd });
     // customTitle is the transcript's own title: a /rename title, else the

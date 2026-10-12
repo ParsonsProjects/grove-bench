@@ -203,6 +203,21 @@ class SessionStore {
     );
   }
 
+  /** Fill in what main decided for a thread added before main replied
+   *  (draftStore.start): its branch, its agent and whether it has git.
+   *  `status` applies only while the row still shows 'starting', so a status
+   *  main sent meanwhile (an error, say) isn't overwritten. */
+  confirmSession(id: string, info: { branch: string; agentType: string; noGit: boolean; status?: SessionStatus }) {
+    this.sessions = this.sessions.map((s) => {
+      if (s.id !== id) return s;
+      const next: SessionEntry = { ...s, branch: info.branch, agentType: info.agentType };
+      if (info.noGit) next.noGit = true;
+      else delete next.noGit;
+      if (info.status && s.status === 'starting') next.status = info.status;
+      return next;
+    });
+  }
+
   updateBranch(id: string, branch: string) {
     this.sessions = this.sessions.map((s) =>
       s.id === id ? { ...s, branch } : s

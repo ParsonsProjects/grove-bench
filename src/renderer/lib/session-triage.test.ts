@@ -19,33 +19,40 @@ describe('triageForSprite', () => {
   });
 
   it('puts an errored conversation under no chip, even when it is also unread', () => {
-    expect(triage({ status: 'error', needsAttention: true })).toBe('idle');
+    expect(triage({ status: 'error', needsAttention: true })).toBe('none');
   });
 
-  it('puts quiet states under no chip', () => {
-    for (const status of ['stopped', 'sleeping']) expect(triage({ status })).toBe('idle');
-    expect(triage({ destroying: true, needsAttention: true })).toBe('idle');
+  it('counts an open, quiet conversation as idle: ready or asleep', () => {
+    expect(triage({ status: 'running' })).toBe('idle');
+    expect(triage({ status: 'sleeping' })).toBe('idle');
+  });
+
+  it('puts closed and removing conversations under no chip', () => {
+    expect(triage({ status: 'stopped' })).toBe('none');
+    expect(triage({ destroying: true, needsAttention: true })).toBe('none');
   });
 });
 
 describe('matchesTriageFilter', () => {
   it('"all" matches every state and the others match only themselves', () => {
-    for (const state of ['needs-you', 'working', 'unread', 'idle'] as const) {
+    for (const state of ['needs-you', 'working', 'unread', 'idle', 'none'] as const) {
       expect(matchesTriageFilter('all', state)).toBe(true);
     }
     expect(matchesTriageFilter('working', 'working')).toBe(true);
     expect(matchesTriageFilter('working', 'unread')).toBe(false);
     expect(matchesTriageFilter('unread', 'idle')).toBe(false);
+    expect(matchesTriageFilter('idle', 'idle')).toBe(true);
+    expect(matchesTriageFilter('idle', 'none')).toBe(false);
   });
 });
 
 describe('triageCounts', () => {
-  it('counts each state once and idle only in the total', () => {
-    const counts = triageCounts(['needs-you', 'working', 'working', 'unread', 'idle']);
-    expect(counts).toEqual({ all: 5, 'needs-you': 1, working: 2, unread: 1 });
+  it('counts each state once and no-chip states only in the total', () => {
+    const counts = triageCounts(['needs-you', 'working', 'working', 'unread', 'idle', 'idle', 'none']);
+    expect(counts).toEqual({ all: 7, 'needs-you': 1, working: 2, unread: 1, idle: 2 });
   });
 
   it('exposes filters in the sidebar order', () => {
-    expect(TRIAGE_FILTERS).toEqual(['all', 'needs-you', 'working', 'unread']);
+    expect(TRIAGE_FILTERS).toEqual(['all', 'needs-you', 'working', 'unread', 'idle']);
   });
 });

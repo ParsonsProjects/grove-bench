@@ -1,6 +1,6 @@
 <script>
   import { trackLandingEvent } from '../lib/analytics.js';
-  import { treeGreens } from '../lib/brand.js';
+  import { PIXEL_TREE } from '../shared/app-art.js';
   import { DownloadIcon } from '../lib/icons.js';
   import { FOOTER, links } from './content.js';
 </script>
@@ -9,7 +9,7 @@
   <div class="inner foot">
     <div class="brand">
       <span class="logo">
-        <svg width="18" height="20" viewBox="0 0 21 24" aria-hidden="true">{#each treeGreens as p}<rect x={p.x} y={p.y} width="2" height="2" fill={p.fill} />{/each}</svg>
+        <svg width="18" height="20" viewBox="0 0 21 24" aria-hidden="true">{#each PIXEL_TREE as p}<rect x={p.x} y={p.y} width="2" height="2" fill={p.fill} />{/each}</svg>
         grove bench
       </span>
       <p>run AI agents side by side, each on its own branch.</p>

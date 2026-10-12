@@ -14,7 +14,8 @@
   }
 </script>
 
-<!-- A bar in the app's own look: dark, square, 1px edges. -->
+<!-- A bar in the app's own look (its dark theme): dark, square, 1px edges,
+     a brand green button. -->
 {#if visible}
   <div class="consent" role="region" aria-label="Analytics consent">
     <div class="in">
@@ -34,11 +35,11 @@
     right: 0;
     bottom: 0;
     z-index: 100;
-    color: oklch(0.835 0 0);
-    background: oklch(0.233 0 0 / 0.96);
-    border-top: 1px solid oklch(0.26 0 0);
+    color: var(--night-foreground);
+    background: color-mix(in srgb, var(--night-card) 96%, transparent);
+    border-top: 1px solid var(--night-border);
     backdrop-filter: blur(6px);
-    font-family: 'JetBrains Mono', 'Cascadia Code', 'Consolas', monospace;
+    font-family: var(--font-mono);
   }
   .in {
     display: flex;
@@ -54,7 +55,7 @@
     flex: 1 1 320px;
     font-size: 12.5px;
     line-height: 1.5;
-    color: oklch(0.72 0 0);
+    color: var(--night-muted-foreground);
   }
   .btns {
     display: flex;
@@ -66,26 +67,26 @@
     font: inherit;
     font-size: 12.5px;
     cursor: pointer;
-    border: 1px solid oklch(0.32 0 0);
+    border: 1px solid var(--night-input);
   }
   .decline {
-    color: oklch(0.72 0 0);
+    color: var(--night-muted-foreground);
     background: transparent;
   }
   .decline:hover {
-    color: oklch(0.9 0 0);
+    color: var(--night-bright);
   }
   .accept {
     font-weight: 600;
-    color: #fff;
-    background: oklch(0.541 0.181 254.624);
-    border-color: oklch(0.541 0.181 254.624);
+    color: var(--canopy);
+    background: var(--leaf);
+    border-color: var(--leaf);
   }
   .accept:hover {
     filter: brightness(1.1);
   }
   button:focus-visible {
-    outline: 2px solid oklch(0.707 0.165 254.624);
+    outline: 2px solid var(--leaf);
     outline-offset: 2px;
   }
 </style>

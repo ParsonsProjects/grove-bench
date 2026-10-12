@@ -1,6 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import HighlightedText from './HighlightedText.svelte';
+  import { Button } from '$lib/components/ui/button/index.js';
+  import { menuItem, menuPanel } from '$lib/components/ui/menu/index.js';
+  import { cn } from '$lib/utils.js';
+  import XIcon from '@lucide/svelte/icons/x';
   import type { EventSearchHit } from '../../shared/types.js';
 
   let {
@@ -83,7 +87,7 @@
 </script>
 
 <div class="relative shrink-0">
-  <div class="flex items-center gap-2 px-3 py-1.5 bg-card border-b border-border text-xs">
+  <div class="flex min-h-8 items-center gap-2 px-3 py-1.5 bg-card/50 border-b border-border text-xs">
     <input
       bind:this={inputEl}
       bind:value={query}
@@ -105,23 +109,25 @@
       </span>
     {/if}
 
-    <button
+    <Button
+      variant="quiet"
+      size="icon-2xs"
       onclick={onclose}
-      class="text-muted-foreground hover:text-foreground px-1"
       title="Close (Esc)"
-    >✕</button>
+      aria-label="Close search"
+    ><XIcon /></Button>
   </div>
 
   {#if hits.length > 0}
-    <div class="absolute left-0 right-0 top-full z-40 max-h-72 overflow-y-auto bg-card border-b border-x border-border shadow-lg">
+    <div class={cn(menuPanel(), 'absolute left-0 right-0 top-full z-40 max-h-72 overflow-y-auto border-t-0 py-0')}>
       {#each hits as hit, i (hit.eventIndex)}
         <button
           type="button"
           onclick={() => jumpTo(i)}
           onmouseenter={() => (selected = i)}
-          class="w-full text-left flex items-baseline gap-2 px-3 py-1.5 border-b border-border/50 last:border-b-0 transition-colors {i === selected ? 'bg-primary/10' : 'hover:bg-muted/40'}"
+          class={cn(menuItem(), 'items-baseline px-3 py-1.5 border-b border-b-border/50 last:border-b-0', i === selected && 'bg-accent text-accent-foreground')}
         >
-          <span class="text-[10px] uppercase font-semibold shrink-0 w-16 {KIND_COLORS[hit.kind] ?? 'text-muted-foreground'}">{hit.kind}</span>
+          <span class="text-micro uppercase font-semibold shrink-0 w-16 {KIND_COLORS[hit.kind] ?? 'text-muted-foreground'}">{hit.kind}</span>
           <span class="text-xs text-muted-foreground truncate"><HighlightedText text={hit.snippet} {query} /></span>
         </button>
       {/each}

@@ -50,9 +50,9 @@
     {label}
     {#if hiddenText}
       <!-- Dropped first when the tab strip is narrow; the tooltip keeps it. -->
-      <span class="hidden @3xl:inline text-muted-foreground/70 font-normal">{hiddenText}</span>
+      <span class="hidden @3xl:inline text-muted-foreground font-normal">{hiddenText}</span>
     {/if}
-    <svg class="w-3 h-3 shrink-0 opacity-60" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <svg class="w-3 h-3 shrink-0" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
       <path d="M4 6l4 4 4-4" />
     </svg>
   </SelectPrimitive.Trigger>
@@ -63,7 +63,7 @@
           <!-- Full-width lines: the item centres its last span's children. -->
           <span class="flex flex-col gap-0.5">
             <span class="w-full text-foreground">{VIEW_MODE_LABELS[mode]}</span>
-            <span class="w-full text-[11px] text-muted-foreground whitespace-normal">{VIEW_MODE_DESCRIPTIONS[mode]}</span>
+            <span class="w-full text-caption text-muted-foreground whitespace-normal">{VIEW_MODE_DESCRIPTIONS[mode]}</span>
           </span>
         {/snippet}
       </Select.Item>

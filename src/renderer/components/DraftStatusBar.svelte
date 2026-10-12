@@ -11,6 +11,9 @@
   import { draftStore } from '../stores/draft.svelte.js';
   import DraftAgentControl from './DraftAgentControl.svelte';
   import DraftStartPicker from './DraftStartPicker.svelte';
+  import { Button } from '$lib/components/ui/button/index.js';
+  import { menuItem, menuPanel } from '$lib/components/ui/menu/index.js';
+  import XIcon from '@lucide/svelte/icons/x';
 
   let pickerOpen = $state(false);
   let projectMenuOpen = $state(false);
@@ -81,7 +84,7 @@
         <button
           type="button"
           onclick={() => { projectMenuOpen = !projectMenuOpen; pickerOpen = false; }}
-          class="text-muted-foreground/70 hover:text-foreground truncate max-w-32 transition-colors"
+          class="text-muted-foreground hover:text-foreground truncate max-w-32 transition-colors"
           title="Project: {draft.repoPath}. Click to change"
           aria-haspopup="menu"
           aria-expanded={projectMenuOpen}
@@ -89,7 +92,7 @@
           {store.repoDisplayName(draft.repoPath)}
         </button>
       {:else}
-        <span class="text-muted-foreground/50 truncate max-w-32" title={draft.repoPath}>{store.repoDisplayName(draft.repoPath)}</span>
+        <span class="text-muted-foreground truncate max-w-32" title={draft.repoPath}>{store.repoDisplayName(draft.repoPath)}</span>
       {/if}
       <span class="text-muted-foreground/30 shrink-0">/</span>
       <button
@@ -103,7 +106,7 @@
         {whereLabel}
       </button>
     </span>
-    <span class="text-[11px] text-muted-foreground/60 truncate max-w-80">{whereDetail}</span>
+    <span class="text-caption text-muted-foreground truncate max-w-80">{whereDetail}</span>
 
     {#if pickerOpen}
       <div transition:fly={{ y: 6, duration: 140 }} class="absolute bottom-full left-0 mb-2 z-50">
@@ -112,16 +115,16 @@
     {/if}
 
     {#if projectMenuOpen}
-      <div transition:fly={{ y: 6, duration: 140 }} class="absolute bottom-full left-0 mb-2 z-50 min-w-48 bg-popover border border-border shadow-xl p-1" role="menu" aria-label="Project">
+      <div transition:fly={{ y: 6, duration: 140 }} class="{menuPanel()} absolute bottom-full left-0 mb-2 z-50 min-w-48" role="menu" aria-label="Project">
         {#each store.repos as repo (repo)}
           <button
             type="button"
             role="menuitem"
             onclick={() => { draftStore.setRepo(repo); projectMenuOpen = false; }}
-            class="w-full text-left px-2 py-1 hover:bg-accent truncate {repo === draft.repoPath ? 'text-foreground bg-accent/50' : 'text-muted-foreground'}"
+            class={menuItem({ selected: repo === draft.repoPath })}
             title={repo}
           >
-            {store.repoDisplayName(repo)}
+            <span class="truncate">{store.repoDisplayName(repo)}</span>
           </button>
         {/each}
       </div>
@@ -130,21 +133,21 @@
 
   {#if groupName}
     <span class="w-px self-stretch bg-border"></span>
-    <span class="flex items-center gap-1 min-w-0 text-[11px]" title={newGroup ? `Starts the group ${groupName}` : `Joins the group ${groupName} when it starts`}>
-      <span class="text-muted-foreground/60 shrink-0">{newGroup ? 'New group' : 'Group'}</span>
+    <span class="flex items-center gap-1 min-w-0 text-caption" title={newGroup ? `Starts the group ${groupName}` : `Joins the group ${groupName} when it starts`}>
+      <span class="text-muted-foreground shrink-0">{newGroup ? 'New group' : 'Group'}</span>
       <span class="text-foreground/80 truncate max-w-32">{groupName}</span>
-      <button
-        type="button"
+      <Button
+        variant="quiet"
+        size="icon-2xs"
         onclick={() => draftStore.leaveGroup()}
-        class="w-4 h-4 flex items-center justify-center shrink-0 text-muted-foreground/60 hover:text-foreground hover:bg-accent transition-colors"
         title="Start it outside the group"
         aria-label="Don't add to {groupName}"
       >
-        <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
-      </button>
+        <XIcon />
+      </Button>
     </span>
   {/if}
 
-  <span class="ml-auto text-[11px] text-muted-foreground/50 text-right">Nothing is created until you send</span>
+  <span class="ml-auto text-caption text-muted-foreground text-right">Nothing is created until you send</span>
 </div>
 {/if}

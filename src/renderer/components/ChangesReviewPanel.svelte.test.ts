@@ -43,7 +43,7 @@ function diffText(container: HTMLElement): string {
 beforeEach(() => {
   vi.clearAllMocks();
   gitStatusStore.statusBySession = {};
-  gitStatusStore.scopeBySession = {};
+  gitStatusStore.scopeBySession = { [SID]: { scope: 'working' } };
   messageStore.messagesBySession = { [SID]: [] };
   messageStore.setIsRunning(SID, false);
   // The panel under test is on screen.
@@ -157,7 +157,7 @@ describe('ChangesReviewPanel — review features', () => {
     panelStore.collapsed = {};
     reviewStore.clear(SID);
     localStorage.clear();
-    gitStatusStore.scopeBySession = {};
+    gitStatusStore.scopeBySession = { [SID]: { scope: 'working' } };
     mockGroveBench.getFileDiff.mockResolvedValue({ kind: 'text', patch: hunkPatch() });
     mockGroveBench.getGitStatus.mockResolvedValue({ entries: [] });
     gitStatusStore.statusBySession = { [SID]: { entries: [entry('src/a.ts', { contentHash: 'h1' }), entry('src/b.ts', { contentHash: 'h2' })] } };
@@ -341,7 +341,7 @@ describe('ChangesReviewPanel — review features', () => {
 describe('ChangesReviewPanel — revert warnings', () => {
   async function openRevertFor(entries: GitStatusEntry[]) {
     mockGroveBench.getFileDiff.mockResolvedValue({ kind: 'text', patch: patch('x') });
-    gitStatusStore.scopeBySession = {}; // an earlier test leaves branch scope, which hides Revert
+    gitStatusStore.scopeBySession = { [SID]: { scope: 'working' } }; // branch scope hides Revert
     gitStatusStore.statusBySession = { [SID]: { entries } };
     const view = render(ChangesReviewPanel, { sessionId: SID });
     const button = await waitFor(() => {
@@ -369,7 +369,7 @@ describe('ChangesReviewPanel — diff cache', () => {
   beforeEach(() => {
     reviewStore.clear(SID);
     localStorage.clear();
-    gitStatusStore.scopeBySession = {};
+    gitStatusStore.scopeBySession = { [SID]: { scope: 'working' } };
   });
 
   it('refetches a file that changed while it was not selected', async () => {
@@ -429,7 +429,7 @@ describe('ChangesReviewPanel — rendering cost', () => {
   beforeEach(() => {
     reviewStore.clear(SID);
     localStorage.clear();
-    gitStatusStore.scopeBySession = {};
+    gitStatusStore.scopeBySession = { [SID]: { scope: 'working' } };
   });
 
   it('does not redraw the diff when a status refresh brings back the same patch', async () => {
@@ -470,7 +470,7 @@ describe('ChangesReviewPanel — rendering cost', () => {
 describe('ChangesReviewPanel with grove characters', () => {
   beforeEach(() => {
     store.sessions = [{ id: SID, branch: 'feat', repoPath: '/r', status: 'running' }] as any;
-    gitStatusStore.scopeBySession = {};
+    gitStatusStore.scopeBySession = { [SID]: { scope: 'working' } };
   });
 
   afterEach(() => {
@@ -558,5 +558,163 @@ describe('ChangesReviewPanel — commit and push errors', () => {
     await tick();
 
     expect(queryByText('pre-commit hook failed')).toBeNull();
+  });
+});
+
+describe('ChangesReviewPanel — Branch view by default', () => {
+  afterEach(() => gitStatusStore.clear(SID));
+
+  it('opens on the Branch view, listed first, against the default base', async () => {
+    // Start fresh: a refresh from an earlier test would throttle this one's.
+    gitStatusStore.clear(SID);
+    gitStatusStore.scopeBySession = {};
+    store.sessions = [{ id: SID, branch: 'feat', repoPath: '/repo', status: 'running' }] as never;
+    mockGroveBench.getDefaultBranch.mockResolvedValue('main');
+    mockGroveBench.getGitStatus.mockResolvedValue({ entries: [], baseRef: 'main' });
+    const { getAllByRole, findByText } = render(ChangesReviewPanel, { sessionId: SID });
+    void gitStatusStore.refresh(SID);
+
+    const options = getAllByRole('radio');
+    expect(options.map((o) => o.textContent?.trim())).toEqual(['Branch', 'Uncommitted']);
+    expect(options[0]).toHaveAttribute('data-state', 'checked');
+    expect(await findByText('No changes on this branch vs main')).toBeInTheDocument();
+    expect(mockGroveBench.getGitStatus).toHaveBeenCalledWith(SID, { scope: 'branch', base: 'main' });
+  });
+});
+
+describe('ChangesReviewPanel — reviewing the PR', () => {
+  const BRANCH_CONTEXT = 'branch vs main';
+
+  beforeEach(() => {
+    localStorage.clear();
+    reviewStore.clear(SID);
+    gitStatusStore.scopeBySession = { [SID]: { scope: 'branch', base: 'main' } };
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('src/a.ts')], baseRef: 'main' } };
+    mockGroveBench.getGitStatus.mockResolvedValue({ entries: [entry('src/a.ts')], baseRef: 'main' });
+    mockGroveBench.getFileDiff.mockResolvedValue({ kind: 'text', patch: patch('new') });
+    const pr = { number: 7, url: 'https://github.com/o/r/pull/7', state: 'OPEN' as const, title: 'Add a thing' };
+    prStore.prsBySession = { [SID]: [pr] };
+    // A posted review refetches the PR list.
+    mockGroveBench.getPrs.mockResolvedValue([pr]);
+  });
+
+  afterEach(() => {
+    mockGroveBench.getPrs.mockResolvedValue([]);
+    prStore.clear(SID);
+    reviewStore.clear(SID);
+    gitStatusStore.clear(SID);
+  });
+
+  function addComment(context: string | undefined, body: string) {
+    reviewStore.addComment(SID, { filePath: 'src/a.ts', side: 'new', startLine: 1, endLine: 1, snippet: 'new', body, context });
+  }
+
+  it('approves with the Branch view\'s comments, then drops them and says so', async () => {
+    addComment(BRANCH_CONTEXT, 'Rename this');
+    addComment(undefined, 'Written on the Uncommitted view');
+    mockGroveBench.submitPrReview.mockResolvedValueOnce({ url: 'https://github.com/o/r/pull/7#pullrequestreview-1', inline: 1, quoted: 0 });
+    const { getByRole, findByText } = render(ChangesReviewPanel, { sessionId: SID });
+
+    await fireEvent.click(getByRole('button', { name: /Review changes… \(1 comment\)/ }));
+    expect(await findByText('Review PR #7')).toBeInTheDocument();
+    await fireEvent.click(getByRole('radio', { name: 'Approve' }));
+    await fireEvent.click(getByRole('button', { name: 'Submit review' }));
+
+    await waitFor(() => expect(mockGroveBench.submitPrReview).toHaveBeenCalledWith(SID, {
+      prNumber: 7,
+      event: 'APPROVE',
+      body: '',
+      comments: [{ filePath: 'src/a.ts', side: 'new', startLine: 1, endLine: 1, snippet: 'new', body: 'Rename this' }],
+    }));
+    expect(await findByText(/Approved PR #7/)).toBeInTheDocument();
+    expect(await findByText('1 line comment on its line')).toBeInTheDocument();
+    expect(reviewStore.getComments(SID).map((c) => c.body)).toEqual(['Written on the Uncommitted view']);
+  });
+
+  it('only lets an author comment on their own PR, and a comment needs a summary', async () => {
+    prStore.prsBySession = { [SID]: [{ number: 7, url: 'u', state: 'OPEN', viewerIsAuthor: true }] };
+    const { getByRole, findByText, getByPlaceholderText } = render(ChangesReviewPanel, { sessionId: SID });
+
+    await fireEvent.click(getByRole('button', { name: /Review changes…/ }));
+    expect(await findByText(/This is your own PR/)).toBeInTheDocument();
+    expect(getByRole('radio', { name: 'Approve' })).toBeDisabled();
+    expect(getByRole('radio', { name: 'Request changes' })).toBeDisabled();
+
+    const submit = getByRole('button', { name: 'Submit review' });
+    expect(submit).toBeDisabled();
+    await fireEvent.input(getByPlaceholderText(/What should the author know/), { target: { value: 'Self-review notes' } });
+    expect(submit).toBeEnabled();
+  });
+
+  it('keeps the dialog open with GitHub\'s reason when it refuses', async () => {
+    mockGroveBench.submitPrReview.mockRejectedValueOnce(new Error("Error invoking remote method 'pr:submitReview': Error: Can not approve your own pull request"));
+    const { getByRole, findByText } = render(ChangesReviewPanel, { sessionId: SID });
+
+    await fireEvent.click(getByRole('button', { name: /Review changes…/ }));
+    await findByText('Review PR #7');
+    await fireEvent.click(getByRole('radio', { name: 'Approve' }));
+    await fireEvent.click(getByRole('button', { name: 'Submit review' }));
+
+    expect(await findByText('Can not approve your own pull request')).toBeInTheDocument();
+    expect(getByRole('button', { name: 'Submit review' })).toBeInTheDocument();
+  });
+
+  it('stays open, and can\'t be cancelled, until GitHub answers', async () => {
+    let answer!: (v: { url: null; inline: number; quoted: number }) => void;
+    mockGroveBench.submitPrReview.mockReturnValueOnce(new Promise((r) => { answer = r; }));
+    const { getByRole, findByText, queryByText } = render(ChangesReviewPanel, { sessionId: SID });
+
+    await fireEvent.click(getByRole('button', { name: /Review changes…/ }));
+    await findByText('Review PR #7');
+    await fireEvent.click(getByRole('radio', { name: 'Approve' }));
+    await fireEvent.click(getByRole('button', { name: 'Submit review' }));
+
+    expect(getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    await fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+    await tick();
+    expect(queryByText('Review PR #7')).not.toBeNull();
+
+    answer({ url: null, inline: 0, quoted: 0 });
+    await waitFor(() => expect(queryByText('Review PR #7')).toBeNull());
+    expect(await findByText(/Approved PR #7/)).toBeInTheDocument();
+  });
+
+  it('offers no review on the Uncommitted view or for a PR that is no longer open', async () => {
+    const { queryByRole, unmount } = render(ChangesReviewPanel, { sessionId: SID });
+    expect(queryByRole('button', { name: /Review changes…/ })).not.toBeNull();
+    unmount();
+
+    gitStatusStore.scopeBySession = { [SID]: { scope: 'working' } };
+    const working = render(ChangesReviewPanel, { sessionId: SID });
+    expect(working.queryByRole('button', { name: /Review changes…/ })).toBeNull();
+    working.unmount();
+
+    gitStatusStore.scopeBySession = { [SID]: { scope: 'branch', base: 'main' } };
+    prStore.prsBySession = { [SID]: [{ number: 7, url: 'u', state: 'MERGED' }] };
+    const merged = render(ChangesReviewPanel, { sessionId: SID });
+    expect(merged.queryByRole('button', { name: /Review changes…/ })).toBeNull();
+  });
+
+  it('offers no review for a PR from a branch other than the one checked out', async () => {
+    store.sessions = [{ id: SID, branch: 'feat/now', repoPath: '/repo', status: 'running' }] as never;
+    prStore.prsBySession = { [SID]: [{ number: 7, url: 'u', state: 'OPEN', headRefName: 'feat/earlier' }] };
+    const other = render(ChangesReviewPanel, { sessionId: SID });
+    expect(other.queryByRole('button', { name: /Review changes…/ })).toBeNull();
+    other.unmount();
+
+    prStore.prsBySession = { [SID]: [
+      { number: 7, url: 'u', state: 'OPEN', headRefName: 'feat/earlier' },
+      { number: 9, url: 'u', state: 'OPEN', headRefName: 'feat/now', title: 'The current one' },
+    ] };
+    const current = render(ChangesReviewPanel, { sessionId: SID });
+    expect(current.getByText('PR #9')).toBeInTheDocument();
+    store.sessions = [];
+  });
+
+  it('offers to post batched comments to the PR from the review bar', async () => {
+    addComment(BRANCH_CONTEXT, 'Rename this');
+    const { findByRole, findByText } = render(ChangesReviewPanel, { sessionId: SID });
+    await fireEvent.click(await findByRole('button', { name: 'Post to PR #7…' }));
+    expect(await findByText('Review PR #7')).toBeInTheDocument();
   });
 });

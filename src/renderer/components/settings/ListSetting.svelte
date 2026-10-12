@@ -3,6 +3,7 @@
   import { Input } from '$lib/components/ui/input/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Label } from '$lib/components/ui/label/index.js';
+  import XIcon from '@lucide/svelte/icons/x';
 
   type Issue = { error: string } | { hint: string } | null;
 
@@ -82,14 +83,14 @@
           {#if broken}
             <span class="sr-only">(never matches)</span>
           {/if}
-          <button
-            type="button"
+          <Button
+            size="icon-xs"
+            variant="quiet-destructive"
             onclick={() => onremove(i)}
-            class="size-6 shrink-0 inline-flex items-center justify-center text-muted-foreground hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             aria-label="{removeLabel} {item}"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
-          </button>
+            <XIcon aria-hidden="true" />
+          </Button>
         </li>
       {/each}
     </ul>
@@ -122,12 +123,12 @@
     <div class="flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
       <span class="mr-0.5">Examples:</span>
       {#each examples as example (example)}
-        <button
-          type="button"
+        <Button
+          variant="secondary"
+          size="xs"
           onclick={() => useExample(example)}
-          class="px-1.5 py-0.5 bg-muted text-foreground/80 hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           title="Start from this rule"
-        ><code>{example}</code></button>
+        ><code>{example}</code></Button>
       {/each}
     </div>
   {/if}

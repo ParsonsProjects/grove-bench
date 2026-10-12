@@ -52,7 +52,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [x] Overlay badge on the taskbar icon showing the count of sessions needing attention — renderer draws the count bitmap (`attention-badge.ts`), main applies it via `setOverlayIcon` (Windows) / dock badge (macOS) / `setBadgeCount` (Linux); toggle in Settings → Notifications
 
 ### Attention Triage
-- [x] Sidebar filter chips All / Needs you / Working / Unread with counts — `session-triage.ts` puts each session in exactly one state (needs-you = pending permission or question, working = turn in progress, unread = finished while unfocused)
+- [x] Sidebar filter chips All / Needs you / Working / Unread / Idle with counts — `session-triage.ts` puts each session in exactly one state (needs-you = pending permission or question, working = turn in progress, unread = finished while unfocused, idle = open and ready or sleeping; closed and errored threads come under no chip)
 - [x] Per-repo attention counts on each Projects header
 - [x] Mark Completed in the conversation context menu and the row's hover tick: stops the conversation (it was called Stop), which takes it off the Conversations list, and its state shows as Completed. A separate `completedAt` hide flag was dropped as it overlapped with Stop. Since renamed Close Conversation, with an ✕ in place of the tick, as it's used to set work aside as much as to finish it
 - [x] Sidebar sections renamed: Conversations (live working set) and Projects (each repo with all its sessions)
@@ -93,6 +93,8 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 ### Cost & Usage Dashboard
 - [x] Plan usage runway — `AgentQueryHandle.getUsage()` returns a neutral `ProviderUsage` (windows with 0–1 utilization and reset time); the Claude adapter maps the SDK's experimental `/usage` control and probes for it so a rename degrades to "no usage"; `usage.svelte.ts` keeps one snapshot per provider, refreshes on popover open and after turns (throttled), and folds live `rate_limit` events in; shown as bars under the agent in the Agent settings popover
 - [ ] Per-session and cumulative token/cost view — data is already captured per message (`adapters/claude-code.ts`) but only lands in memory notes
+- [x] Turn cost per turn: Claude Code's `total_cost_usd` is the query's running total, so `adapters/running-cost.ts` turns it into each turn's cost (`totalCostUsd`) and keeps the running total as `sessionCostUsd`; a resumed query starts from the total its history last reached
+- [x] Limits and alerts (Settings > Limits & alerts): plan usage alert at a chosen percent (in-app toast and desktop notification, once per window, `planAlerts.svelte.ts`); spend per thread and per day, tool calls and minutes per turn, each pausing the thread before its next tool call to ask Continue or Stop (`session-limits.ts`, a `PreToolUse` hook for Claude Code, permission requests for ACP agents)
 
 ### Session Export
 - [ ] Markdown transcript per session written to disk (`.grove-wt/<id>/thread.md` or under the repo's memory dir) with an "Open in editor" action — also the enabler for switching agents mid-conversation
@@ -153,6 +155,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [x] Context length indicator (token usage / remaining)
 - [x] Drag and drop (files, images into prompt)
 - [x] Image attachments in messages (paste/drop, up to 8 per turn, pass as base64)
+- [x] Any file as an attachment: saved with the thread and given by path (Claude Code: a note, and reads in that folder allowed without a prompt; ACP: `resource_link`). Only audio goes inline, to ACP agents that take it (listed formats, 5 MB a clip, 10 MB per conversation counted from the thread's history). PDFs go by path: inline ones stay in the history and count toward every later request's size and page limits. 50 MB per message
 
 ### Markdown Preview Panel
 - [x] Slide-out panel rendering markdown full-width (reuses the marked + highlight.js + DOMPurify pipeline; Esc / backdrop click to close, copy button)

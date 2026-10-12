@@ -1,15 +1,23 @@
 import type { DiffScope, GitStatusResult } from '../../shared/types.js';
 import { store as sessionStore } from './sessions.svelte.js';
+import { settingsStore } from './settings.svelte.js';
 
-export interface ScopeState { scope: DiffScope; base?: string }
+export interface ScopeState {
+  scope: DiffScope;
+  base?: string;
+  /** The default, not picked by the user: its base follows the open PR and
+   *  the settings, and it shows the uncommitted changes when there's no
+   *  branch view to draw (no commits yet, or no such base branch). */
+  auto?: boolean;
+}
 
 const THROTTLE_MS = 500;
 
 class GitStatusStore {
   statusBySession = $state<Record<string, GitStatusResult>>({});
   loadingBySession = $state<Record<string, boolean>>({});
-  /** What each session's Changes tab compares against (default: the
-   *  uncommitted working tree). The branch scope needs a base branch name. */
+  /** What each session's Changes tab compares against. By default the whole
+   *  branch since its base, worked out on each refresh (see autoBase). */
   scopeBySession = $state<Record<string, ScopeState>>({});
 
   /** Sessions whose refreshes are currently suppressed (e.g. during history
@@ -22,6 +30,10 @@ class GitStatusStore {
    *  scope, or a conversation deleted meanwhile) is dropped. */
   private requestSeq = new Map<string, number>();
   private pendingTimeout = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Each session's repo default branch, looked up once. */
+  private detectedBases = new Map<string, Promise<string>>();
+  /** The base of the session's open PR, if any (set by the PR store). */
+  private prBase: ((sessionId: string) => string | undefined) | null = null;
 
   /** Suppress refresh triggers for a session (call before replaying its history). */
   suppressRefresh(sessionId: string): void {
@@ -38,7 +50,41 @@ class GitStatusStore {
   }
 
   getScope(sessionId: string): ScopeState {
-    return this.scopeBySession[sessionId] ?? { scope: 'working' };
+    return this.scopeBySession[sessionId] ?? { scope: 'branch', auto: true };
+  }
+
+  /** Where the default branch view gets the open PR's base from. */
+  setPrBaseSource(source: (sessionId: string) => string | undefined): void {
+    this.prBase = source;
+  }
+
+  /** The session's open PR changed: a default view that has been shown
+   *  re-reads against the new base. */
+  prBaseChanged(sessionId: string): void {
+    if (this.getScope(sessionId).auto && sessionId in this.statusBySession) this.scheduleRefresh(sessionId);
+  }
+
+  /** The default view's base: the open PR's base branch (so the view is the
+   *  PR's diff), else the one in Settings, else the repo's default branch. */
+  private autoBase(sessionId: string): Promise<string> {
+    const chosen = this.prBase?.(sessionId) || settingsStore.current.defaultBaseBranch?.trim();
+    if (chosen) return Promise.resolve(chosen);
+    const repoPath = sessionStore.sessions.find((s) => s.id === sessionId)?.repoPath;
+    // Not listed yet: guess, and look it up properly next time.
+    if (!repoPath) return Promise.resolve('main');
+    let lookup = this.detectedBases.get(sessionId);
+    if (!lookup) {
+      lookup = window.groveBench.getDefaultBranch(repoPath).then((b) => b?.trim() || 'main', () => 'main');
+      this.detectedBases.set(sessionId, lookup);
+    }
+    return lookup;
+  }
+
+  /** Update the default view, unless the user has picked a scope meanwhile. */
+  private setAutoScope(sessionId: string, next: ScopeState): void {
+    const current = this.scopeBySession[sessionId];
+    if (current && (!current.auto || (current.scope === next.scope && current.base === next.base))) return;
+    this.scopeBySession = { ...this.scopeBySession, [sessionId]: { ...next, auto: true } };
   }
 
   /** Switch scope and refetch right away (bypassing the throttle). */
@@ -68,11 +114,30 @@ class GitStatusStore {
     void sessionStore.syncBranch(sessionId);
 
     try {
-      const { scope, base } = this.getScope(sessionId);
-      const result = scope === 'branch'
+      const state = this.getScope(sessionId);
+      let { scope, base } = state;
+      if (state.auto) {
+        const wanted = await this.autoBase(sessionId);
+        if (this.requestSeq.get(sessionId) !== seq) return;
+        // After falling back to the uncommitted view, try the branch view
+        // again only once there's a different base to try.
+        if (scope === 'branch' || wanted !== base) {
+          scope = 'branch';
+          base = wanted;
+          this.setAutoScope(sessionId, { scope, base });
+        }
+      }
+      let result = scope === 'branch'
         ? await window.groveBench.getGitStatus(sessionId, { scope, base })
         : await window.groveBench.getGitStatus(sessionId);
       if (this.requestSeq.get(sessionId) !== seq) return;
+      if (state.auto && scope === 'branch' && result.scopeError) {
+        // No branch view here: show the uncommitted changes rather than
+        // only an error, as the tab did before the branch view was default.
+        this.setAutoScope(sessionId, { scope: 'working', base });
+        result = await window.groveBench.getGitStatus(sessionId);
+        if (this.requestSeq.get(sessionId) !== seq) return;
+      }
       this.statusBySession = { ...this.statusBySession, [sessionId]: result };
     } catch (e) {
       console.error('Failed to fetch git status:', e);
@@ -133,6 +198,7 @@ class GitStatusStore {
     this.pendingTimeout.delete(sessionId);
     this.lastFetch.delete(sessionId);
     this.requestSeq.delete(sessionId);
+    this.detectedBases.delete(sessionId);
     this.suppressedSessions.delete(sessionId);
     const { [sessionId]: _s, ...restStatus } = this.statusBySession;
     this.statusBySession = restStatus;

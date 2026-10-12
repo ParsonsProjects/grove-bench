@@ -45,6 +45,7 @@ const SETTINGS = {
   workingDirectories: [],
   defaultSystemPromptAppend: '',
   acpAgents: [],
+  claudeAccounts: [],
   enabledAlphaAgents: [],
   memoryAutoSave: true,
   memoryCompactTimeoutSeconds: 300,
@@ -67,6 +68,12 @@ const SETTINGS = {
   notifyOnPrAlert: true,
   notifyTaskbarFlash: true,
   notifyTaskbarBadge: true,
+  notifyOnPlanUsage: true,
+  planUsageAlertPercent: 80,
+  threadSpendLimitUsd: 0,
+  dailySpendLimitUsd: 0,
+  turnToolCallLimit: 0,
+  turnMinutesLimit: 0,
   analyticsEnabled: false,
   analyticsPrompted: true,
   crashReportsEnabled: false,
@@ -399,7 +406,34 @@ const api: Record<string, unknown> = {
   gitRebase: async () => ({ success: true }),
   gitCherryPick: async () => ({ success: false, conflicts: ['src/auth/session.ts'] }),
   gitSquash: async () => ({ success: true }),
-  getGitStatus: async (id: string) => GIT_STATUS[id] ?? { entries: [] },
+  // The Branch view (the default) names its base; Uncommitted doesn't.
+  getGitStatus: async (id: string, opts?: { scope?: string }) => ({
+    ...(GIT_STATUS[id] ?? { entries: [] }),
+    ...(opts?.scope === 'branch' ? { baseRef: 'main' } : {}),
+  }),
+  getFileDiff: async (_id: string, filePath: string) => ({
+    kind: 'text',
+    patch: [
+      `--- a/${filePath}`,
+      `+++ b/${filePath}`,
+      '@@ -10,6 +10,8 @@ export async function refreshToken(session: Session) {',
+      '   const stored = await tokenStore.get(session.id);',
+      '   if (!stored) return null;',
+      '-  const fresh = await oauth.refresh(stored.refreshToken);',
+      '-  await tokenStore.set(session.id, fresh);',
+      '+  // Rotate once per request: a second rotation invalidates the first.',
+      '+  const fresh = await refreshOnce(session.id, () => oauth.refresh(stored.refreshToken));',
+      '+  await tokenStore.set(session.id, fresh, { expiresIn: fresh.expiresIn });',
+      '+  metrics.increment(\'oauth.refresh\');',
+      '   return fresh;',
+      ' }',
+    ].join('\n'),
+  }),
+  submitPrReview: async (_id: string, review: { comments: unknown[] }) => ({
+    url: 'https://github.com/example/api-service/pull/42#pullrequestreview-1',
+    inline: review.comments.length,
+    quoted: 0,
+  }),
   // Branch stack states: s-oauth has an open PR with a failing check plus an
   // earlier, merged PR on the same branch; the others show the "Create PR"
   // link (s-sidebar with unpushed commits).
@@ -436,6 +470,10 @@ const api: Record<string, unknown> = {
   }, {
     id: 'codex', displayName: 'Codex', capabilities: { permissionModes: true },
   }],
+  previewClaudeAccount: async ({ name }: { name: string }) => name.trim()
+    ? { ok: true as const, configDir: `C:\\Users\\demo\\.claude-${name.trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-')}` }
+    : { ok: false as const, error: 'Enter a name for the account, such as Work.' },
+  addClaudeAccount: async (): Promise<never> => { throw new Error('Adding accounts is not available in the demo.'); },
   getAdapterControls: async (adapterType?: string) => adapterType === 'codex' ? [
     { id: 'permissionMode', label: 'Mode', default: 'default', options: [
       { value: 'default', label: 'Ask', tone: 'info' }, { value: 'acceptEdits', label: 'Auto edit', tone: 'accent' },
@@ -474,6 +512,7 @@ const api: Record<string, unknown> = {
     ],
   }),
   getCachedUsage: async () => null,
+  getDailySpend: async () => 3.42,
   switchAgent: async () => {},
   // Mirrors the Claude Code adapter's declared controls (for Opus 5.5, the
   // default model) so the status bar

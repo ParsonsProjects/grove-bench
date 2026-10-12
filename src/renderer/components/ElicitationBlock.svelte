@@ -86,9 +86,9 @@
   }
 </script>
 
-<div class="py-1 my-1 border-l-4 {resolved ? 'border-border' : 'border-violet-400'} pl-3">
+<div class="py-1 my-1 border-l-4 {resolved ? 'border-border' : 'border-status-attention'} pl-3">
   <div class="flex items-center gap-2 text-xs">
-    <span class="{resolved ? 'text-muted-foreground' : 'text-violet-400'} font-bold">mcp input</span>
+    <span class="{resolved ? 'text-muted-foreground' : 'text-status-attention'} font-bold">mcp input</span>
     <span class="text-foreground font-medium font-mono">{request.serverName}</span>
     {#if request.title}
       <span class="text-muted-foreground truncate">{request.title}</span>
@@ -104,16 +104,16 @@
         <div class="text-muted-foreground">
           Opens <span class="text-foreground font-medium">{urlHost || request.url}</span> in your browser:
         </div>
-        <div class="font-mono text-[11px] text-muted-foreground/80 break-all mt-0.5">{request.url}</div>
+        <div class="font-mono text-caption text-muted-foreground break-all mt-0.5">{request.url}</div>
       {/if}
       {#if openError}
         <div class="text-destructive mt-1">{openError}</div>
       {/if}
       <div class="flex gap-2 mt-2">
-        <Button variant="outline" size="sm" onclick={openPage} disabled={busy || !request.url} class="text-violet-400 border-violet-600 hover:bg-violet-900/30">
+        <Button variant="subtle" size="sm" onclick={openPage} disabled={busy || !request.url}>
           Open page
         </Button>
-        <Button variant="ghost" size="sm" onclick={() => respond({ action: 'decline' })} disabled={busy}>Decline</Button>
+        <Button variant="quiet" size="sm" onclick={() => respond({ action: 'decline' })} disabled={busy}>Decline</Button>
       </div>
     </div>
   {:else}
@@ -174,7 +174,7 @@
             {/if}
           {/if}
           {#if field.description}
-            <p class="text-muted-foreground/70 mt-0.5">{field.description}</p>
+            <p class="text-muted-foreground mt-0.5">{field.description}</p>
           {/if}
           {#if errors[field.key]}
             <p class="text-destructive mt-0.5">{errors[field.key]}</p>
@@ -183,19 +183,19 @@
       {/each}
 
       {#if form.unsupported.length > 0}
-        <p class="text-xs text-yellow-500">
+        <p class="text-xs text-amber-500">
           This form asks for fields Grove Bench can't show ({form.unsupported.join(', ')}). Decline it if you can't answer without them.
         </p>
       {/if}
-      <p class="text-[11px] text-muted-foreground/70">
+      <p class="text-caption text-muted-foreground">
         Your answers go to {request.serverName}. Don't enter passwords or API keys here.
       </p>
       <div class="flex gap-2">
-        <Button variant="outline" size="sm" onclick={submit} disabled={busy} class="text-violet-400 border-violet-600 hover:bg-violet-900/30">
+        <Button variant="outline-success" size="sm" onclick={submit} disabled={busy}>
           Submit
         </Button>
-        <Button variant="ghost" size="sm" onclick={() => respond({ action: 'decline' })} disabled={busy}>Decline</Button>
-        <Button variant="ghost" size="sm" onclick={() => respond({ action: 'cancel' })} disabled={busy} class="text-muted-foreground">Cancel</Button>
+        <Button variant="quiet" size="sm" onclick={() => respond({ action: 'decline' })} disabled={busy}>Decline</Button>
+        <Button variant="quiet" size="sm" onclick={() => respond({ action: 'cancel' })} disabled={busy} class="text-muted-foreground">Cancel</Button>
       </div>
     </div>
   {/if}

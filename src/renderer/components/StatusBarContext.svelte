@@ -6,6 +6,7 @@
   import { messageStore } from '../stores/messages.svelte.js';
   import { contextUsage, formatTokens } from '../lib/context-usage.js';
   import { usageTextClass, usageBarClass } from '../lib/usage-tone.js';
+  import { Button } from '$lib/components/ui/button/index.js';
   import StatusBarPopover from './StatusBarPopover.svelte';
   import PixelMeter from './PixelMeter.svelte';
 
@@ -33,7 +34,7 @@
 </script>
 
 {#if showContext}
-  <StatusBarPopover bind:open={contextExpanded} align="right" class="ml-auto shrink-0" panelClass="bg-popover border border-border shadow-xl p-4 text-xs w-72">
+  <StatusBarPopover bind:open={contextExpanded} align="right" class="ml-auto shrink-0" panelClass="w-72">
     {#snippet trigger()}
       <button
         onclick={() => contextExpanded = !contextExpanded}
@@ -67,7 +68,7 @@
     <PixelMeter percent={usedPercent} cells={20} fillClass={usedBarClass} class="w-full h-3 mb-1" />
 
     <!-- Percentage labels under bar -->
-    <div class="flex justify-between text-[10px] text-muted-foreground/60 mb-3">
+    <div class="flex justify-between text-micro text-muted-foreground mb-3">
       <span>0%</span>
       <span>25%</span>
       <span>50%</span>
@@ -97,18 +98,18 @@
         <span>Used (total input)</span>
         <span class="font-medium {usedTextClass}">{formatTokens(usedTokens)}</span>
       </div>
-      <div class="flex justify-between text-[10px] pl-2">
+      <div class="flex justify-between text-micro pl-2">
         <span>Non-cached</span>
         <span class="text-foreground">{formatTokens(usage.inputTokens)}</span>
       </div>
       {#if usage.cacheReadTokens > 0}
-        <div class="flex justify-between text-[10px] pl-2">
+        <div class="flex justify-between text-micro pl-2">
           <span>Cache read</span>
           <span class="text-blue-400">{formatTokens(usage.cacheReadTokens)}</span>
         </div>
       {/if}
       {#if usage.cacheCreationTokens > 0}
-        <div class="flex justify-between text-[10px] pl-2">
+        <div class="flex justify-between text-micro pl-2">
           <span>Cache write</span>
           <span class="text-foreground">{formatTokens(usage.cacheCreationTokens)}</span>
         </div>
@@ -176,7 +177,7 @@
         </summary>
         <div class="mt-1.5 max-h-32 overflow-y-auto space-y-0.5 text-muted-foreground">
           {#each systemInfo.tools as tool}
-            <div class="font-mono text-[10px] truncate">{tool}</div>
+            <div class="font-mono text-micro truncate">{tool}</div>
           {/each}
         </div>
       </details>
@@ -192,39 +193,42 @@
           Clear this thread? Its messages, and the agent's memory of them, are removed. Your files stay as they are.
         </p>
         <div class="flex gap-2">
-          <button
-            onclick={() => confirmClear = false}
-            class="flex-1 px-2 py-1.5 text-xs border border-border hover:bg-accent hover:text-accent-foreground transition-colors"
-          >
+          <Button variant="subtle" size="xs" class="flex-1" onclick={() => confirmClear = false}>
             Cancel
-          </button>
-          <button
+          </Button>
+          <Button
+            variant="outline-destructive"
+            size="xs"
             onclick={() => { messageStore.sendCommand(sessionId, '/clear'); contextExpanded = false; }}
             disabled={isRunning}
-            class="flex-1 px-2 py-1.5 text-xs border border-destructive/60 text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            class="flex-1 disabled:cursor-not-allowed"
           >
             Clear
-          </button>
+          </Button>
         </div>
       {:else}
         <!-- Stacked: side by side, the labels wrapped onto two lines. -->
         <div class="flex flex-col gap-2">
-          <button
+          <Button
+            variant="subtle"
+            size="xs"
             onclick={() => { messageStore.sendCommand(sessionId, '/compact'); contextExpanded = false; }}
             disabled={isRunning}
-            class="w-full px-2 py-1.5 text-xs border border-border hover:bg-accent hover:text-accent-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            class="w-full disabled:cursor-not-allowed"
             title="Replace the earlier messages with a summary, so the agent has room to keep going. It keeps the gist, not every detail. (/compact)"
           >
             Summarise to free space
-          </button>
-          <button
+          </Button>
+          <Button
+            variant="subtle"
+            size="xs"
             onclick={() => confirmClear = true}
             disabled={isRunning}
-            class="w-full px-2 py-1.5 text-xs border border-border hover:bg-accent hover:text-accent-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            class="w-full disabled:cursor-not-allowed"
             title="Clear the thread and start again with an empty context. Asks first. (/clear)"
           >
             Start fresh…
-          </button>
+          </Button>
         </div>
       {/if}
     </div>

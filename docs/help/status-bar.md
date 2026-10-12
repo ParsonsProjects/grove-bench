@@ -34,7 +34,7 @@ The Mode, Effort, Thinking and Speed columns are declared by the agent provider 
 
 ## Activity
 
-Next to the agent settings, the bar says what the agent is doing: **idle**, **thinking**, **writing**, or the tool it is running and for how long. **waiting for you** (amber) means a permission prompt or a question is waiting for your answer in the Thread tab; it shows over whatever the agent was doing. Underneath are any rate-limit warning, pending tools, background tasks and memory compaction. Click a pending tool or background task count for details. When every pending tool belongs to a subagent, the count says so (**1 subagent tool**), since the agent itself may be idle.
+Next to the agent settings, the bar says what the agent is doing: **idle**, **thinking**, **writing**, or the tool it is running and for how long. While it works a blue square pulses beside the word. **waiting for you** (amber) means a permission prompt, a question or an MCP form is waiting for your answer in the Thread tab; it shows over whatever the agent was doing. Underneath are any rate-limit warning, pending tools, background tasks and memory compaction. Click a pending tool or background task count for details. When every pending tool belongs to a subagent, the count says so (**1 subagent tool**), since the agent itself may be idle.
 
 ## Last turn
 
@@ -80,17 +80,19 @@ On most models a **Thinking** control switches extended thinking **On** (the mod
 - Opus 5.5 and Fable 5 always think, so they show no Thinking control. Use a lower Effort to make them faster.
 - Haiku 4.5 has no Effort setting, so its Thinking control keeps fixed levels: **Off**, **Low**, **Medium**, and **High**.
 
-When thinking is active, a purple pulsing dot appears while the agent reasons.
+While the agent reasons, the status bar shows **thinking** in purple next to the blue working square.
 
 ## MCP Servers
 
-When the agent has MCP servers configured, an **MCP** badge shows how many are configured. The dot is green when every connection is healthy, orange when some are down but others are still connected, and red when none are connected. It refreshes when each turn ends. Click it to manage the servers without restarting the thread. The popover only offers the controls the thread's agent supports:
+When the agent has MCP servers configured, an **MCP** badge shows how many are configured. The dot is green when every connection is healthy, amber when some are down but others are still connected, and red when none are connected. It refreshes when each turn ends. Click it to manage the servers without restarting the thread. The popover only offers the controls the thread's agent supports:
 
 - Each server shows where it comes from (for example user, project, plugin or claude.ai), its status and its tool count
 - Click the tool count to list the server's tools. Tools the server marks as destructive or read-only are tagged
 - An estimate of how much of the context window the server's tool definitions use, so you can see which servers are worth disconnecting. "loaded on demand" means the agent only loads the tools when it searches for them
 - A failed server shows its error, with a button to copy it
 - **Reconnect** restarts a connection. **Sign in** starts the browser sign-in for a server that needs it
+- Threads on the same agent share its sign-ins. Once a server connects after you sign in or reconnect it, your other open threads on that agent reconnect it too, in the background. A thread in the middle of a turn waits for the turn to end
+- **Refresh** reconnects every server that needs a sign-in or failed, in this thread and your other open threads on the same agent, then checks each server's status. Servers that are already connected are left alone, and so is one whose browser sign-in is still under way (for up to 3 minutes)
 - **Disconnect** turns a server off, and **Connect** turns it back on. How long a disconnect lasts depends on the agent: hover the button to see. With Claude Agent it applies to the whole project, not just this thread, so new threads in the project also start without it
 
 New servers are added from Settings → MCP servers (Tool shed).
@@ -100,8 +102,8 @@ Each server in the popover shows a status dot:
 | Color | Meaning |
 |-------|---------|
 | Green | Connected |
-| Yellow pulsing | Connecting |
-| Yellow | Needs authentication |
+| Blue pulsing | Connecting |
+| Amber | Needs authentication |
 | Gray | Disabled (disconnected) |
 | Red | Failed |
 
@@ -113,7 +115,7 @@ Each server in the popover shows a status dot:
 |-------|-------|---------|
 | 0–40% | Green | Plenty of room |
 | 40–70% | Yellow | Getting full |
-| 70–85% | Orange | Running low |
+| 70–85% | Amber | Running low |
 | 85–100% | Red | Nearly full: the agent may start summarising older context |
 
 Every filled block takes the colour. Tokens served from the prompt cache take up room like any others, so they count toward the percentage; the popup lists how many were read from or written to the cache.
@@ -131,7 +133,7 @@ If the agent hits API rate limits, an indicator appears:
 
 | Color | Meaning |
 |-------|---------|
-| Yellow pulsing | Approaching rate limit |
+| Amber pulsing | Approaching rate limit |
 | Red pulsing | Rate limited — requests are being throttled |
 
 ## Background Tasks

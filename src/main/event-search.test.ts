@@ -25,6 +25,13 @@ describe('searchableEventText', () => {
     expect(searchableEventText({ type: 'tool_result', toolUseId: 't', content: 'match', parentToolUseId: 'tu1' })).toBe('');
   });
 
+  it("finds the files a turn made by their paths", () => {
+    expect(searchableEventText({
+      type: 'files_made',
+      files: [{ path: 'shots/home.png', kind: 'image', size: 70 }, { path: 'report.pdf', kind: 'pdf', size: 9 }],
+    })).toBe('shots/home.png report.pdf');
+  });
+
   it('includes plan text for permission requests', () => {
     const text = searchableEventText({
       type: 'permission_request', toolName: 'Bash', toolUseId: 't', requestId: 'r',

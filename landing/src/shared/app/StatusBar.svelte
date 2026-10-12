@@ -27,9 +27,9 @@
     <span class="two branch">
       <span class="t-faint">{c.project} / <span class="t-muted">{c.name}</span></span>
       {#if c.pr}
-        <span><span class="t-green">●</span> <span class="t-primary">PR #{c.pr}</span></span>
+        <span><span class="t-green">●</span> <span class="t-blue">PR #{c.pr}</span></span>
       {:else}
-        <button type="button" class="pr" data-target="create-pr" onclick={onpr}><span class="t-amber">↑{c.ahead ?? 1}</span> <span class="t-primary">Create PR</span></button>
+        <button type="button" class="pr" data-target="create-pr" onclick={onpr}><span class="t-amber">↑{c.ahead ?? 1}</span> <span class="t-blue">Create PR</span></button>
       {/if}
     </span>
     <span class="ctx">
@@ -115,7 +115,7 @@
     text-align: left;
     font-size: 11.5px;
   }
-  .pr:hover .t-primary {
+  .pr:hover .t-blue {
     text-decoration: underline;
   }
   .ctx {

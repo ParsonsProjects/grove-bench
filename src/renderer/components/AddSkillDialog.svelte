@@ -4,6 +4,9 @@
   import { Button } from '$lib/components/ui/button/index.js';
   import { Input } from '$lib/components/ui/input/index.js';
   import { Label } from '$lib/components/ui/label/index.js';
+  import { Notice } from '$lib/components/ui/notice/index.js';
+  import { Pulse } from '$lib/components/ui/pulse/index.js';
+  import * as Segmented from '$lib/components/ui/segmented/index.js';
   import { store } from '../stores/sessions.svelte.js';
   import { messageStore } from '../stores/messages.svelte.js';
   import { buildCreateSkillPrompt } from '../lib/skill-prompt.js';
@@ -115,28 +118,29 @@
         </div>
         <div>
           <Label class="mb-1 block">Scope</Label>
-          <div class="flex border border-input">
-            <button
-              type="button"
-              onclick={() => scope = 'project'}
-              class="px-2.5 py-1.5 text-xs transition-colors {scope === 'project' ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:text-foreground'}"
+          <Segmented.Root
+            value={scope}
+            onValueChange={(v) => { if (v === 'project' || v === 'user') scope = v; }}
+            aria-label="Scope"
+            class="h-9"
+          >
+            <Segmented.Item
+              value="project"
               title="Written into this thread's worktree, so it ships with the branch and gets code review"
             >
               Project
-            </button>
-            <button
-              type="button"
-              onclick={() => scope = 'user'}
-              class="px-2.5 py-1.5 text-xs transition-colors border-l border-input {scope === 'user' ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:text-foreground'}"
+            </Segmented.Item>
+            <Segmented.Item
+              value="user"
               title="Written to your user profile — applies to every project immediately"
             >
               User
-            </button>
-          </div>
+            </Segmented.Item>
+          </Segmented.Root>
         </div>
       </div>
       {#if name.trim() && !nameValid}
-        <p class="text-[10px] text-destructive -mt-2">Use kebab-case: lowercase letters, digits, and dashes.</p>
+        <p class="text-micro text-destructive -mt-2">Use kebab-case: lowercase letters, digits, and dashes.</p>
       {/if}
 
       <div>
@@ -156,9 +160,9 @@
           bind:value={instructions}
           rows="7"
           placeholder="Markdown instruction body — or rough notes, if you hand it to the agent below…"
-          class="w-full text-sm bg-background border border-input px-3 py-2 text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-ring resize-y font-mono"
+          class="w-full text-sm bg-background border border-input px-3 py-2 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring resize-y font-mono"
         ></textarea>
-        <p class="text-[10px] text-muted-foreground mt-1">
+        <p class="text-micro text-muted-foreground mt-1">
           {scope === 'project'
             ? 'Project skills are written into the worktree and show up in the Changes tab.'
             : 'User skills apply to every project on this machine.'}
@@ -166,9 +170,9 @@
       </div>
 
       {#if dialogError}
-        <div class="bg-destructive/10 border border-destructive/50 p-2 text-xs text-destructive whitespace-pre-wrap">
-          {dialogError}
-        </div>
+        <Notice tone="danger">
+          <p class="whitespace-pre-wrap">{dialogError}</p>
+        </Notice>
       {/if}
 
       <Dialog.Footer>
@@ -188,7 +192,7 @@
         <Button onclick={handleCreate} disabled={!canCreate || creating}>
           {#if creating}
             <span class="inline-flex items-center gap-1.5">
-              <span class="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin"></span>
+              <Pulse motion="spin" size="sm" tone="current" />
               Creating…
             </span>
           {:else}

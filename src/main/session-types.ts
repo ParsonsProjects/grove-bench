@@ -3,9 +3,11 @@
  * manager (agent-session.ts) and the modules it delegates to.
  */
 import type { BrowserWindow } from 'electron';
+import type { TurnFiles } from './turn-files.js';
 import type { AgentEvent, McpElicitationResponse, PermissionMode, SessionStatus } from '../shared/types.js';
 import type { AgentAdapter, AgentQueryHandle, PermissionResponse, UserMessage } from './adapters/types.js';
 import type { Checkpoints } from './no-git-checkpoints.js';
+import type { SessionLimits } from './session-limits.js';
 
 export type Emit = (event: AgentEvent) => void;
 
@@ -146,6 +148,22 @@ export interface ManagedSession {
    *  resumed, they went nowhere, and the new conversation started in its
    *  place gets them. Null for a fresh query, or once the query reports in. */
   promptsBeforeInit: { handle: AgentQueryHandle; prompts: UserMessage[] } | null;
+  /** MCP servers to reconnect once the turn in progress ends, if they are
+   *  still down: the names, or 'all' for every server that is down. Set when
+   *  a reconnect across threads finds this one mid-turn or starting up. */
+  mcpReconnectsAfterTurn?: Set<string> | 'all';
+  /** The last MCP reconnect queued for this session. Reconnects run one at a
+   *  time, so two never work on the same server at once. */
+  mcpReconnectQueue?: Promise<void>;
+  /** Servers whose browser sign-in started here and that the agent finishes
+   *  by itself, with when it started. */
+  mcpSignInsStarted?: Map<string, number>;
+  /** Spend, tool calls and time measured for the limits that pause the
+   *  thread (session-limits.ts), and a limit question waiting on the user. */
+  limits: SessionLimits;
+  /** Watches the worktree while a turn runs, for the files it makes
+   *  (turn-files.ts). Null between turns. */
+  turnFiles?: TurnFiles | null;
 }
 
 export interface SessionCompletionResult {

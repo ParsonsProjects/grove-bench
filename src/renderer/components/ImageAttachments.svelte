@@ -6,10 +6,15 @@
   let {
     sessionId,
     images,
+    hideUnavailable = false,
     class: className = '',
   }: {
     sessionId: string;
     images: ThreadImage[];
+    /** Leave out an image that won't load, instead of saying it's not
+     *  available: for a preview that may not apply (the file is gone, or
+     *  outside the worktree). */
+    hideUnavailable?: boolean;
     class?: string;
   } = $props();
 
@@ -17,9 +22,12 @@
   let failed = $state<Record<string, true>>({});
   let openIndex = $state<number | null>(null);
 
-  /** Inline data while the app still has it (just sent), otherwise the saved file. */
+  /** Inline data while the app still has it (just sent), a worktree file's
+   *  URL, otherwise the saved file. */
   function srcOf(img: ThreadImage): string {
-    return 'dataUrl' in img ? img.dataUrl : attachmentImageUrl(sessionId, img.file);
+    if ('dataUrl' in img) return img.dataUrl;
+    if ('url' in img) return img.url;
+    return attachmentImageUrl(sessionId, img.file);
   }
 
   function labelOf(img: ThreadImage): string {
@@ -32,9 +40,11 @@
 <div class="flex flex-wrap gap-2 {className}">
   {#each images as img, i (i)}
     {@const src = srcOf(img)}
-    {#if failed[src]}
+    {#if failed[src] && hideUnavailable}
+      <!-- Left out. -->
+    {:else if failed[src]}
       <div
-        class="h-16 w-24 flex items-center justify-center px-1 text-center text-[10px] text-muted-foreground border border-border/60"
+        class="h-16 w-24 flex items-center justify-center px-1 text-center text-micro text-muted-foreground border border-border/60"
         title={labelOf(img)}
       >
         Image not available

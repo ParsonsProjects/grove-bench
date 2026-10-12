@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { AgentAdapter, AgentQueryHandle, AdapterConfig, PermissionResponse } from './adapters/types.js';
-import { IPC, PERMISSION_TIMEOUT_MINUTES, type AgentEvent } from '../shared/types.js';
+import { IPC, PERMISSION_TIMEOUT_MINUTES, type AgentEvent, type McpServerInfo } from '../shared/types.js';
 import * as fs from 'node:fs';
 import { perfSteps } from './perf-steps.js';
 
@@ -115,18 +115,45 @@ vi.mock('./skill-suggestions.js', () => ({
   getCachedSuggestions: vi.fn(() => [{ id: 'cached' }]),
 }));
 
-// Images are saved by content hash in real use; here each gets a fixed name.
+// Images and files are saved by content hash in real use; here each gets a fixed name.
 const attachments = vi.hoisted(() => ({
   saveImages: vi.fn(async (_id: string, images: { name?: string }[]) =>
     images.map((img, i) => ({ file: `img${i}.png`, ...(img.name ? { name: img.name } : {}) }))),
-  removeImages: vi.fn(async () => {}),
-  pruneImages: vi.fn(async () => {}),
+  saveFiles: vi.fn(async (id: string, files: { name: string; mediaType: string; data: string }[]) =>
+    files.map((f, i) => ({
+      stored: { file: `file${i}`, name: f.name, mediaType: f.mediaType, size: 3 },
+      path: `/attachments/${id}/file${i}`,
+      data: f.data,
+    }))),
+  attachmentsFolder: vi.fn((id: string) => `/attachments/${id}`),
+  imagePath: vi.fn((id: string, file: string) => ({ path: `/attachments/${id}/${file}`, mediaType: 'image/png' })),
+  removeAttachments: vi.fn(async () => {}),
+  pruneAttachments: vi.fn(async () => {}),
   storeToolImages: vi.fn(async (_id: string, event: any) => {
     const { imageData, ...rest } = event;
     return { ...rest, images: imageData.map((_: unknown, i: number) => ({ file: `tool${i}.png` })) };
   }),
+  storeMadeFiles: vi.fn(async (_id: string, found: { path: string; kind: string; size: number }[]) =>
+    found.map(({ path, kind, size }) => ({ path, kind, size }))),
 }));
 vi.mock('./attachments.js', () => attachments);
+
+// The worktree watch for the files a turn makes: each test sets what a turn finds.
+const turnFiles = vi.hoisted(() => ({
+  found: [] as { path: string; absPath: string; kind: string; size: number }[],
+  instances: [] as { root: string; closed: boolean; finished: boolean; edited: string[] }[],
+}));
+vi.mock('./turn-files.js', () => ({
+  TurnFiles: class {
+    closed = false;
+    finished = false;
+    edited: string[] = [];
+    constructor(public root: string) { turnFiles.instances.push(this); }
+    noteEdited(p: string) { this.edited.push(p); }
+    close() { this.closed = true; }
+    async finish() { this.finished = true; this.close(); return { files: turnFiles.found, more: 0 }; }
+  },
+}));
 vi.mock('./credentials.js', () => ({ markApiKeyRejected: vi.fn() }));
 
 // ─── Mock Adapter ───
@@ -298,6 +325,8 @@ beforeEach(() => {
   mockAdapter = new MockAdapter();
   extraAdapters = {};
   vi.clearAllMocks();
+  turnFiles.found = [];
+  turnFiles.instances = [];
 });
 
 describe('AgentSessionManager.createSession()', () => {
@@ -856,9 +885,66 @@ describe('AgentSessionManager event processing', () => {
     expect(session.checkpoints.markCleared).toHaveBeenCalledWith('test-clear-cp', expect.any(String));
     expect(session.checkpoints.cleanup).not.toHaveBeenCalled();
     // No event refers to the thread's images any more.
-    expect(attachments.removeImages).toHaveBeenCalledWith('test-clear-cp');
+    expect(attachments.removeAttachments).toHaveBeenCalledWith('test-clear-cp');
 
     await sessionManager.destroySession('test-clear-cp');
+  });
+});
+
+describe('AgentSessionManager limits', () => {
+  // As the settings mock at the top of this file returns them.
+  const baseSettings = () => ({ defaultSystemPromptAppend: null, toolAllowRules: [], toolDenyRules: [], cavemanMode: 'off' });
+  afterEach(() => {
+    settingsMock.getSettings.mockImplementation(baseSettings);
+  });
+
+  it('pauses before a tool call past the limit and stops the turn when the user stops', async () => {
+    settingsMock.getSettings.mockImplementation(() => ({ ...baseSettings(), turnToolCallLimit: 1 }));
+    const win = makeMockWindow();
+    await sessionManager.createSession({ id: 'test-limit', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock' });
+    await vi.waitFor(() => expect(mockAdapter.lastConfig?.beforeToolUse).toBeDefined());
+    const before = mockAdapter.lastConfig!.beforeToolUse!;
+
+    await sessionManager.sendMessage('test-limit', 'go');
+    await expect(before({ toolName: 'Bash', toolUseId: 'tu_1' })).resolves.toBe('continue');
+    const second = before({ toolName: 'Bash', toolUseId: 'tu_2' });
+
+    const request = sessionManager.getEventHistory('test-limit').find((e) => e.type === 'limit_request');
+    expect(request).toMatchObject({ type: 'limit_request', limit: 'turnToolCalls', used: 1, reachedAt: 1 });
+    expect(sessionManager.respondToLimit('test-limit', (request as { requestId: string }).requestId, 'stop')).toBe(true);
+    await expect(second).resolves.toBe('stop');
+    await vi.waitFor(() => expect(mockAdapter.lastHandle!.interrupt).toHaveBeenCalled());
+    expect(sessionManager.getEventHistory('test-limit').find((e) => e.type === 'limit_resolved')).toMatchObject({ decision: 'stop' });
+
+    await sessionManager.destroySession('test-limit');
+  });
+
+  it('adds what each turn cost to the thread\'s spend', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({ id: 'test-spend', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock' });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false, totalCostUsd: 0.4, sessionCostUsd: 0.4 });
+    mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false, totalCostUsd: 0.1, sessionCostUsd: 0.5 });
+    await vi.waitFor(() => expect(sessionManager.getSession('test-spend')!.limits.threadSpendUsd).toBeCloseTo(0.5));
+
+    await sessionManager.destroySession('test-spend');
+  });
+
+  it('settles a limit question when the user clicks Stop', async () => {
+    settingsMock.getSettings.mockImplementation(() => ({ ...baseSettings(), turnToolCallLimit: 1 }));
+    const win = makeMockWindow();
+    await sessionManager.createSession({ id: 'test-limit-stop', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock' });
+    await vi.waitFor(() => expect(mockAdapter.lastConfig?.beforeToolUse).toBeDefined());
+    const before = mockAdapter.lastConfig!.beforeToolUse!;
+    await sessionManager.sendMessage('test-limit-stop', 'go');
+    await before({ toolName: 'Bash', toolUseId: 'tu_1' });
+    const waiting = before({ toolName: 'Bash', toolUseId: 'tu_2' });
+
+    await sessionManager.interruptQuery('test-limit-stop');
+    await expect(waiting).resolves.toBe('stop');
+    expect(sessionManager.getSession('test-limit-stop')!.limits.pending).toBeNull();
+
+    await sessionManager.destroySession('test-limit-stop');
   });
 });
 
@@ -2213,10 +2299,89 @@ describe('AgentSessionManager.sendMessage()', () => {
     expect(attachments.saveImages).toHaveBeenCalledWith('test-send-images', images);
     const userMsgs = sessionManager.getEventHistory('test-send-images').filter((e) => e.type === 'user_message');
     expect(userMsgs[0]).toMatchObject({ text: 'What is this?', images: [{ file: 'img0.png', name: 'shot.png' }] });
-    // The agent still gets the image data itself.
-    expect(mockAdapter.lastHandle!.sendMessage).toHaveBeenCalledWith({ text: 'What is this?', images });
+    // The agent still gets the image data itself, and the saved copy's path
+    // for an agent that can't take images.
+    expect(mockAdapter.lastHandle!.sendMessage).toHaveBeenCalledWith({
+      text: 'What is this?',
+      images: [{ ...images[0], path: '/attachments/test-send-images/img0.png' }],
+    });
 
     await sessionManager.destroySession('test-send-images');
+  });
+
+  it('saves attached files, records them on the message and gives the agent their paths and data', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-send-files', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    expect(mockAdapter.lastConfig?.attachmentsDir).toBe('/attachments/test-send-files');
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 's', model: 'm', tools: [] });
+    await new Promise((r) => setTimeout(r, 50));
+
+    const files = [{ data: 'JVBE', mediaType: 'application/pdf', name: 'spec.pdf' }];
+    expect(await sessionManager.sendMessage('test-send-files', 'Summarise', undefined, files)).toBe(true);
+
+    expect(attachments.saveFiles).toHaveBeenCalledWith('test-send-files', files);
+    const userMsgs = sessionManager.getEventHistory('test-send-files').filter((e) => e.type === 'user_message');
+    expect(userMsgs[0]).toMatchObject({
+      text: 'Summarise',
+      files: [{ file: 'file0', name: 'spec.pdf', mediaType: 'application/pdf', size: 3 }],
+    });
+    // A PDF goes by path, so it doesn't carry its data.
+    expect(mockAdapter.lastHandle!.sendMessage).toHaveBeenCalledWith({
+      text: 'Summarise',
+      images: undefined,
+      files: [{ name: 'spec.pdf', mediaType: 'application/pdf', size: 3, path: '/attachments/test-send-files/file0' }],
+    });
+    // The checkpoint is labelled as the chat shows the message.
+    const session = sessionManager.getSession('test-send-files')!;
+    expect(session.checkpoints.capture).toHaveBeenLastCalledWith('test-send-files', expect.any(String), expect.any(String), '[spec.pdf] Summarise');
+
+    await sessionManager.destroySession('test-send-files');
+  });
+
+  it('gives a clip that may go inline its data, and the audio already in the conversation', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-send-audio', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 's', model: 'm', tools: [] });
+    await new Promise((r) => setTimeout(r, 50));
+
+    const clip = [{ data: 'SUQz', mediaType: 'audio/mpeg', name: 'memo.mp3' }];
+    expect(await sessionManager.sendMessage('test-send-audio', 'first', undefined, clip)).toBe(true);
+    expect(mockAdapter.lastHandle!.sendMessage).toHaveBeenLastCalledWith({
+      text: 'first', images: undefined,
+      files: [{ name: 'memo.mp3', mediaType: 'audio/mpeg', size: 3, path: '/attachments/test-send-audio/file0', data: 'SUQz' }],
+    });
+
+    // The first clip is in the history now, and counts toward the inline budget.
+    expect(await sessionManager.sendMessage('test-send-audio', 'second', undefined, clip)).toBe(true);
+    expect(mockAdapter.lastHandle!.sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({ text: 'second', audioInHistory: 3 }));
+
+    await sessionManager.destroySession('test-send-audio');
+  });
+
+  it('says so when an attached file could not be saved, and sends the rest', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-lost-file', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 's', model: 'm', tools: [] });
+    await new Promise((r) => setTimeout(r, 50));
+    attachments.saveFiles.mockResolvedValueOnce([]);
+
+    expect(await sessionManager.sendMessage('test-lost-file', 'Read it', undefined, [{ data: 'AA', mediaType: '', name: 'a.bin' }])).toBe(true);
+
+    const history = sessionManager.getEventHistory('test-lost-file');
+    expect(history.some((e) => e.type === 'status' && /An attached file could not be saved/.test(e.message))).toBe(true);
+    expect(history.find((e) => e.type === 'user_message')).not.toHaveProperty('files');
+    expect(mockAdapter.lastHandle!.sendMessage).toHaveBeenCalledWith({ text: 'Read it', images: undefined });
+
+    await sessionManager.destroySession('test-lost-file');
   });
 
   it('leaves images out for an agent that can\'t take them, and says so', async () => {
@@ -2550,7 +2715,7 @@ describe('AgentSessionManager.rewindFiles()', () => {
     expect((remainingUserMsgs[0] as any).text).toBe('First message');
 
     // Images only the rewound turns showed are deleted: pruned against what's left.
-    const [prunedId, keptEvents] = attachments.pruneImages.mock.calls.at(-1) as unknown as [string, AgentEvent[]];
+    const [prunedId, keptEvents] = attachments.pruneAttachments.mock.calls.at(-1) as unknown as [string, AgentEvent[]];
     expect(prunedId).toBe('test-rewind-history');
     expect(keptEvents.filter((e) => e.type === 'user_message').map((e: any) => e.text)).toEqual(['First message']);
 
@@ -3908,5 +4073,302 @@ describe('AgentSessionManager step timings', () => {
 
     expect(fail).toHaveBeenCalledWith('t-close', 'closed');
     expect(fail).toHaveBeenCalledWith('t-delete', 'deleted');
+  });
+});
+
+describe('AgentSessionManager.reconnectDownMcpServers', () => {
+  const MCP_SUPPORT = { controls: { list: true, reconnect: true, toggle: true, signIn: true, contextCost: true }, disconnectHint: '' };
+  beforeEach(() => { Object.assign(mockAdapter, { mcp: MCP_SUPPORT }); });
+
+  /** Start thread `id` on `adapterType`, whose agent reports `servers` and
+   *  connects any server it is asked to reconnect. */
+  async function startThread(id: string, servers: Record<string, McpServerInfo['status']>, adapterType = 'mock') {
+    const win = makeMockWindow();
+    await sessionManager.createSession({ id, branch: 'main', cwd: `/wt/${id}`, repoPath: '/repo', window: win, adapterType });
+    await vi.waitFor(() => expect(sessionManager.getSession(id)?.queryHandle).toBeTruthy());
+    const handle = sessionManager.getSession(id)!.queryHandle!;
+    const status = new Map(Object.entries(servers));
+    handle.listMcpServers = vi.fn(async () => [...status].map(([name, s]) => ({ name, status: s })));
+    handle.reconnectMcpServer = vi.fn(async (name: string) => { status.set(name, 'connected'); });
+    return { handle, status, send: win._send as ReturnType<typeof vi.fn> };
+  }
+
+  function otherAgent(): void {
+    const other = new MockAdapter();
+    Object.defineProperty(other, 'id', { value: 'other' });
+    Object.assign(other, { mcp: MCP_SUPPORT });
+    extraAdapters.other = other as unknown as AgentAdapter;
+  }
+
+  it('reconnects the servers that are down here and in the other threads on the same agent', async () => {
+    otherAgent();
+    const a = await startThread('mcp-a', { linear: 'needs-auth', docs: 'connected' });
+    const b = await startThread('mcp-b', { linear: 'failed', docs: 'connected' });
+    const c = await startThread('mcp-c', { linear: 'needs-auth' }, 'other');
+
+    await sessionManager.reconnectDownMcpServers('mcp-a');
+
+    expect(vi.mocked(a.handle.reconnectMcpServer!).mock.calls).toEqual([['linear']]);
+    await vi.waitFor(() => expect(b.send).toHaveBeenCalledWith(IPC.AGENT_MCP_STATUS, 'mcp-b', [
+      { name: 'linear', status: 'connected' }, { name: 'docs', status: 'connected' },
+    ]));
+    expect(vi.mocked(b.handle.reconnectMcpServer!).mock.calls).toEqual([['linear']]);
+    // Another agent has its own sign-ins.
+    expect(c.handle.reconnectMcpServer).not.toHaveBeenCalled();
+
+    for (const id of ['mcp-a', 'mcp-b', 'mcp-c']) await sessionManager.destroySession(id);
+  });
+
+  it('with a server name, reconnects only that server and only in the other threads', async () => {
+    const a = await startThread('mcp-name-a', { linear: 'connected' });
+    const b = await startThread('mcp-name-b', { linear: 'needs-auth', jira: 'failed' });
+
+    await sessionManager.reconnectDownMcpServers('mcp-name-a', 'linear');
+
+    await vi.waitFor(() => expect(b.handle.reconnectMcpServer).toHaveBeenCalledWith('linear'));
+    expect(b.handle.reconnectMcpServer).not.toHaveBeenCalledWith('jira');
+    expect(a.handle.listMcpServers).not.toHaveBeenCalled();
+
+    await sessionManager.destroySession('mcp-name-a');
+    await sessionManager.destroySession('mcp-name-b');
+  });
+
+  it('waits for a thread in the middle of a turn to finish it', async () => {
+    await startThread('mcp-idle', { linear: 'connected' });
+    const busy = await startThread('mcp-busy', { linear: 'needs-auth' });
+    await sessionManager.sendMessage('mcp-busy', 'Look up the ticket');
+    expect(sessionManager.isMidTurn('mcp-busy')).toBe(true);
+
+    await sessionManager.reconnectDownMcpServers('mcp-idle', 'linear');
+    await new Promise((r) => setTimeout(r, 20));
+    expect(busy.handle.reconnectMcpServer).not.toHaveBeenCalled();
+
+    mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false });
+    await vi.waitFor(() => expect(busy.handle.reconnectMcpServer).toHaveBeenCalledWith('linear'));
+
+    await sessionManager.destroySession('mcp-idle');
+    await sessionManager.destroySession('mcp-busy');
+  });
+
+  it('holds the rest when a turn starts partway through', async () => {
+    await startThread('mcp-mid-a', { linear: 'connected' });
+    const b = await startThread('mcp-mid-b', { linear: 'failed', jira: 'failed' });
+    vi.mocked(b.handle.reconnectMcpServer!).mockImplementationOnce(async (name) => {
+      b.status.set(name, 'connected');
+      // A queued message goes out while the first server reconnects.
+      await sessionManager.sendMessage('mcp-mid-b', 'Next one');
+    });
+
+    await sessionManager.reconnectDownMcpServers('mcp-mid-a');
+    await vi.waitFor(() => expect(b.handle.reconnectMcpServer).toHaveBeenCalledTimes(1));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(b.handle.reconnectMcpServer).not.toHaveBeenCalledWith('jira');
+
+    mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false });
+    await vi.waitFor(() => expect(b.handle.reconnectMcpServer).toHaveBeenCalledWith('jira'));
+
+    await sessionManager.destroySession('mcp-mid-a');
+    await sessionManager.destroySession('mcp-mid-b');
+  });
+
+  it('runs held reconnects when the turn is stopped without a result', async () => {
+    await startThread('mcp-stop-a', { linear: 'connected' });
+    const b = await startThread('mcp-stop-b', { linear: 'needs-auth' });
+    await sessionManager.sendMessage('mcp-stop-b', 'Look up the ticket');
+    await sessionManager.reconnectDownMcpServers('mcp-stop-a', 'linear');
+    await new Promise((r) => setTimeout(r, 20));
+    expect(b.handle.reconnectMcpServer).not.toHaveBeenCalled();
+
+    await sessionManager.interruptQuery('mcp-stop-b');
+
+    await vi.waitFor(() => expect(b.handle.reconnectMcpServer).toHaveBeenCalledWith('linear'));
+    await sessionManager.destroySession('mcp-stop-a');
+    await sessionManager.destroySession('mcp-stop-b');
+  });
+
+  it('holds a thread whose agent is still starting until its turn ends', async () => {
+    await startThread('mcp-start-a', { linear: 'connected' });
+    const b = await startThread('mcp-start-b', { linear: 'needs-auth' });
+    const session = sessionManager.getSession('mcp-start-b')!;
+    session.isStartingQuery = true;
+
+    await sessionManager.reconnectDownMcpServers('mcp-start-a', 'linear');
+    await new Promise((r) => setTimeout(r, 20));
+    expect(b.handle.reconnectMcpServer).not.toHaveBeenCalled();
+    expect(session.mcpReconnectsAfterTurn).toEqual(new Set(['linear']));
+
+    session.isStartingQuery = false;
+    mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false });
+    await vi.waitFor(() => expect(b.handle.reconnectMcpServer).toHaveBeenCalledWith('linear'));
+
+    await sessionManager.destroySession('mcp-start-a');
+    await sessionManager.destroySession('mcp-start-b');
+  });
+
+  it('never reconnects one server twice at once in a thread', async () => {
+    await startThread('mcp-queue-a', { linear: 'connected' });
+    const b = await startThread('mcp-queue-b', { linear: 'failed' });
+    let finish!: () => void;
+    vi.mocked(b.handle.reconnectMcpServer!).mockImplementationOnce(async (name) => {
+      await new Promise<void>((r) => { finish = r; });
+      b.status.set(name, 'connected');
+    });
+
+    const manual = sessionManager.reconnectMcpServer('mcp-queue-b', 'linear');
+    await sessionManager.reconnectDownMcpServers('mcp-queue-a');
+    await new Promise((r) => setTimeout(r, 20));
+    // The background one waits for the Reconnect click to finish...
+    expect(b.handle.listMcpServers).not.toHaveBeenCalled();
+
+    finish();
+    await manual;
+    // ...then finds the server connected and leaves it.
+    await vi.waitFor(() => expect(b.handle.listMcpServers).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 20));
+    expect(b.handle.reconnectMcpServer).toHaveBeenCalledTimes(1);
+
+    await sessionManager.destroySession('mcp-queue-a');
+    await sessionManager.destroySession('mcp-queue-b');
+  });
+
+  it('leaves a server alone while its browser sign-in is under way', async () => {
+    await startThread('mcp-oauth-a', { linear: 'connected' });
+    const b = await startThread('mcp-oauth-b', { linear: 'needs-auth', jira: 'failed' });
+    b.handle.authenticateMcpServer = vi.fn(async () => ({ authUrl: 'https://example.com/oauth', callbackExpected: true }));
+    await sessionManager.authenticateMcpServer('mcp-oauth-b', 'linear');
+
+    await sessionManager.reconnectDownMcpServers('mcp-oauth-a');
+
+    await vi.waitFor(() => expect(b.handle.reconnectMcpServer).toHaveBeenCalledWith('jira'));
+    expect(b.handle.reconnectMcpServer).not.toHaveBeenCalledWith('linear');
+    await sessionManager.destroySession('mcp-oauth-a');
+    await sessionManager.destroySession('mcp-oauth-b');
+  });
+
+  it('skips a thread whose agent has stopped', async () => {
+    await startThread('mcp-gone-a', { linear: 'connected' });
+    const b = await startThread('mcp-gone-b', { linear: 'needs-auth' });
+    mockAdapter.control!.finish();
+    await vi.waitFor(() => expect(sessionManager.getSession('mcp-gone-b')?.status).toBe('stopped'));
+
+    await sessionManager.reconnectDownMcpServers('mcp-gone-a', 'linear');
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(b.handle.listMcpServers).not.toHaveBeenCalled();
+    await sessionManager.destroySession('mcp-gone-a');
+    await sessionManager.destroySession('mcp-gone-b');
+  });
+});
+
+describe('AgentSessionManager files a turn makes', () => {
+  async function startSession(id: string) {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id, branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(sessionManager.getSession(id)?.queryHandle).toBeTruthy());
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 'provider-1', model: 'mock-model', tools: [] });
+    await vi.waitFor(() => expect(sessionManager.getSession(id)?.status).toBe('running'));
+    return { win, session: sessionManager.getSession(id)! };
+  }
+
+  const eventsSent = (win: ReturnType<typeof makeMockWindow>) =>
+    win._send.mock.calls.map(([, event]: [string, AgentEvent | undefined]) => event).filter((e: unknown): e is AgentEvent => !!e && typeof e === 'object' && 'type' in e);
+
+  it('watches the worktree from the prompt and lists what it made just before the result', async () => {
+    const { win, session } = await startSession('files-made');
+    turnFiles.found = [{ path: 'shots/home.png', absPath: '/repo/shots/home.png', kind: 'image', size: 70 }];
+
+    await sessionManager.sendMessage('files-made', 'take a screenshot');
+    expect(turnFiles.instances).toHaveLength(1);
+    expect(turnFiles.instances[0].root).toBe(session.worktreePath);
+    // A second message in the same turn keeps the same watch.
+    await sessionManager.sendMessage('files-made', 'and the settings page');
+    expect(turnFiles.instances).toHaveLength(1);
+
+    mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false });
+    await vi.waitFor(() => expect(eventsSent(win).some((e: AgentEvent) => e.type === 'result')).toBe(true));
+
+    const types = eventsSent(win).map((e: AgentEvent) => e.type);
+    expect(types.indexOf('files_made')).toBe(types.indexOf('result') - 1);
+    expect(eventsSent(win).find((e: AgentEvent) => e.type === 'files_made')).toEqual({
+      type: 'files_made', files: [{ path: 'shots/home.png', kind: 'image', size: 70 }],
+    });
+    expect(attachments.storeMadeFiles).toHaveBeenCalledWith('files-made', turnFiles.found);
+    expect(turnFiles.instances[0].finished).toBe(true);
+    expect(session.turnFiles).toBeNull();
+    // Kept with the history, so it shows again after a restart.
+    expect(sessionManager.getEventHistory('files-made').some((e) => e.type === 'files_made')).toBe(true);
+
+    await sessionManager.destroySession('files-made');
+  });
+
+  it('sends nothing for a turn that made no files', async () => {
+    const { win } = await startSession('files-none');
+    await sessionManager.sendMessage('files-none', 'explain the code');
+    mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false });
+    await vi.waitFor(() => expect(eventsSent(win).some((e: AgentEvent) => e.type === 'result')).toBe(true));
+
+    expect(eventsSent(win).some((e: AgentEvent) => e.type === 'files_made')).toBe(false);
+    await sessionManager.destroySession('files-none');
+  });
+
+  it('watches a turn the agent starts itself, and notes files it edited in place', async () => {
+    await startSession('files-own-turn');
+    mockAdapter.control!.emitEvent({ type: 'assistant_text', text: 'A background task finished.', uuid: 'u1' });
+    mockAdapter.control!.emitEvent({
+      type: 'assistant_tool_use', toolName: 'Edit', toolUseId: 'tu1', uuid: 'u2',
+      toolInput: { file_path: '/repo/index.html', old_string: 'a', new_string: 'b' },
+    });
+    mockAdapter.control!.emitEvent({
+      type: 'assistant_tool_use', toolName: 'Write', toolUseId: 'tu2', uuid: 'u3',
+      toolInput: { file_path: '/repo/report.html', content: '<h1>hi</h1>' },
+    });
+    await vi.waitFor(() => expect(turnFiles.instances[0]?.edited).toEqual(['/repo/index.html']));
+
+    await sessionManager.destroySession('files-own-turn');
+  });
+
+  it('lists the files of a turn the user interrupted, once', async () => {
+    const { win } = await startSession('files-interrupt');
+    turnFiles.found = [{ path: 'shots/half.png', absPath: '/repo/shots/half.png', kind: 'image', size: 70 }];
+    await sessionManager.sendMessage('files-interrupt', 'take screenshots');
+
+    await sessionManager.interruptQuery('files-interrupt');
+    expect(turnFiles.instances[0].finished).toBe(true);
+    // The agent's result for the interrupted turn lists nothing more.
+    mockAdapter.control!.emitEvent({ type: 'result', subtype: 'error_during_execution', isError: true });
+    await vi.waitFor(() => expect(eventsSent(win).some((e: AgentEvent) => e.type === 'result')).toBe(true));
+
+    expect(eventsSent(win).filter((e: AgentEvent) => e.type === 'files_made')).toHaveLength(1);
+    await sessionManager.destroySession('files-interrupt');
+  });
+
+  it('drops the watch on a stop, so the next turn starts its own', async () => {
+    const { win } = await startSession('files-stop');
+    turnFiles.found = [{ path: 'shots/old.png', absPath: '/repo/shots/old.png', kind: 'image', size: 70 }];
+    await sessionManager.sendMessage('files-stop', 'take screenshots');
+    const stopped = turnFiles.instances[0];
+
+    await sessionManager.stopQuery('files-stop');
+    expect(stopped.closed).toBe(true);
+    expect(stopped.finished).toBe(false);
+    expect(sessionManager.getSession('files-stop')!.turnFiles).toBeNull();
+
+    await vi.waitFor(() => expect(sessionManager.getSession('files-stop')?.queryHandle).toBeTruthy());
+    await sessionManager.sendMessage('files-stop', 'try again');
+    expect(turnFiles.instances).toHaveLength(2);
+    expect(eventsSent(win).some((e: AgentEvent) => e.type === 'files_made')).toBe(false);
+    await sessionManager.destroySession('files-stop');
+  });
+
+  it('stops watching when the thread closes mid-turn', async () => {
+    await startSession('files-closed');
+    await sessionManager.sendMessage('files-closed', 'build it');
+    const watch = turnFiles.instances[0];
+
+    await sessionManager.destroySession('files-closed');
+    expect(watch.closed).toBe(true);
+    expect(watch.finished).toBe(false);
   });
 });

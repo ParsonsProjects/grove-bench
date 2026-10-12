@@ -82,7 +82,7 @@
     gap: 10px;
     padding: 18px;
   }
-  /* Each question is a message you sent: a prompt mark and a blue bar. */
+  /* Each question is a message you sent: a prompt mark and a green bar. */
   summary {
     display: flex;
     align-items: baseline;
@@ -99,7 +99,7 @@
     display: none;
   }
   summary:hover {
-    background: oklch(0.541 0.181 254.624 / 0.14);
+    background: color-mix(in srgb, var(--primary) 14%, transparent);
   }
   .gt {
     color: var(--primary);

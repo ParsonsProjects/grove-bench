@@ -54,6 +54,33 @@ describe('App startup', () => {
     expect(store.deferredResume).toEqual({ a: true, b: true });
     expect(mockGroveBench.resumeSession).not.toHaveBeenCalled();
   });
+
+  it('keeps a thread started while the restore runs', async () => {
+    const settings = JSON.parse(JSON.stringify(settingsStore.current));
+    mockGroveBench.getSettings.mockResolvedValue(settings);
+    mockGroveBench.listRepos.mockResolvedValue(['/repo']);
+    // Live in main but closed before the reload: the restore closes it.
+    mockGroveBench.listSessions.mockResolvedValueOnce([
+      { id: 'old', branch: 'feat-old', repoPath: '/repo', worktreePath: '/wt/old', status: 'running', agentType: 'claude-code', createdAt: 1 },
+    ]);
+    mockGroveBench.listWorktrees.mockResolvedValue([
+      { id: 'old', branch: 'feat-old', repoPath: '/repo', path: '/wt/old', createdAt: 1, lastActiveAt: 1 },
+    ]);
+    let openTabs!: (ids: string[]) => void;
+    getOpenTabs.mockReturnValueOnce(new Promise((r) => { openTabs = r; }));
+    mockGroveBench.closeSession.mockClear();
+
+    render(App);
+    await vi.waitFor(() => expect(getOpenTabs).toHaveBeenCalled(), { timeout: 5000 });
+    // Started from the draft while the restore was still running; not in the
+    // saved tabs yet.
+    store.addSession({ id: 'new1', branch: 'main', repoPath: '/repo', status: 'running', direct: true }, false);
+    openTabs([]);
+
+    await vi.waitFor(() => expect(mockGroveBench.closeSession).toHaveBeenCalledWith('old'));
+    expect(mockGroveBench.closeSession).not.toHaveBeenCalledWith('new1');
+    expect(store.sessions.find((s) => s.id === 'new1')?.status).toBe('running');
+  });
 });
 
 describe('App shortcuts', () => {

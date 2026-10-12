@@ -20,12 +20,15 @@ function snippet(text: string, maxLen = MAX_LEN): string | null {
   return plainSnippet(text, maxLen) || null;
 }
 
-/** The tool name of the most recent unresolved permission request, if any. */
+/** The tool name of the most recent unresolved permission request, if any:
+ *  'question' for a question or MCP elicitation, 'limit' for a thread
+ *  paused at a limit. */
 export function pendingPermissionTool(messages: ChatMessage[]): string | null {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
     if (m.kind === 'permission' && !m.resolved) return m.toolName;
     if ((m.kind === 'question' || m.kind === 'elicitation') && !m.resolved) return 'question';
+    if (m.kind === 'limit' && !m.resolved) return 'limit';
   }
   return null;
 }
@@ -36,7 +39,7 @@ export function pendingPermissionView(messages: ChatMessage[]): ToolView | undef
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
     if (m.kind === 'permission' && !m.resolved) return m.toolView;
-    if ((m.kind === 'question' || m.kind === 'elicitation') && !m.resolved) return undefined;
+    if ((m.kind === 'question' || m.kind === 'elicitation' || m.kind === 'limit') && !m.resolved) return undefined;
   }
   return undefined;
 }
@@ -88,7 +91,9 @@ export interface SubtitleInput {
 export function sessionSubtitle(input: SubtitleInput): SessionSubtitle | null {
   if (input.pendingTool) {
     return {
-      text: input.pendingTool === 'question' ? 'Waiting for your answer' : capitalise(approvalRequest(input.pendingTool, input.pendingToolView)),
+      text: input.pendingTool === 'question' ? 'Waiting for your answer'
+        : input.pendingTool === 'limit' ? 'Paused at a limit'
+          : capitalise(approvalRequest(input.pendingTool, input.pendingToolView)),
       tone: 'waiting',
     };
   }

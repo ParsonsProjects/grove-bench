@@ -17,6 +17,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   workingDirectories: [],
   defaultSystemPromptAppend: '',
   acpAgents: [],
+  claudeAccounts: [],
   enabledAlphaAgents: [],
   memoryAutoSave: true,
   memoryCompactTimeoutSeconds: 300,
@@ -39,6 +40,12 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   notifyOnPrAlert: true,
   notifyTaskbarFlash: true,
   notifyTaskbarBadge: true,
+  notifyOnPlanUsage: true,
+  planUsageAlertPercent: 80,
+  threadSpendLimitUsd: 0,
+  dailySpendLimitUsd: 0,
+  turnToolCallLimit: 0,
+  turnMinutesLimit: 0,
   analyticsEnabled: false,
   analyticsPrompted: false,
   crashReportsEnabled: false,
@@ -51,11 +58,27 @@ beforeEach(async () => {
   // Drop any save a previous test left waiting.
   await settingsStore.save();
   vi.clearAllMocks();
+  // clearAllMocks keeps implementations, so a test that makes saves fail
+  // (mockRejectedValue) would fail every save after it in a shuffled run.
+  mockGroveBench.saveSettings.mockReset();
   settingsStore.loading = false;
   settingsStore.loaded = false;
   settingsStore.saving = false;
   settingsStore.savedAt = null;
   settingsStore.error = null;
+});
+
+describe('Claude accounts', () => {
+  it('adds an entry main checked, and removes one by its agent id, also an older entry saved without an id', () => {
+    settingsStore.draft = { ...DEFAULT_SETTINGS, claudeAccounts: [{ id: '', name: 'Work', configDir: '' }] };
+    settingsStore.addClaudeAccount({ id: 'client-a', name: 'Client A', configDir: 'D:\\claude' });
+    expect(settingsStore.draft.claudeAccounts.map((a) => a.name)).toEqual(['Work', 'Client A']);
+
+    settingsStore.removeClaudeAccount('claude-account-work');
+    expect(settingsStore.draft.claudeAccounts).toEqual([{ id: 'client-a', name: 'Client A', configDir: 'D:\\claude' }]);
+    settingsStore.removeClaudeAccount('claude-account-client-a');
+    expect(settingsStore.draft.claudeAccounts).toEqual([]);
+  });
 });
 
 describe('dirty', () => {

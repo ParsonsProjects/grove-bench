@@ -115,6 +115,13 @@ class ReviewStore {
     this.set(sessionId, { ...r, comments: r.comments.filter(c => c.id !== id) });
   }
 
+  /** Drop several comments at once (those just posted to a PR). */
+  removeComments(sessionId: string, ids: readonly string[]): void {
+    const drop = new Set(ids);
+    const r = this.get(sessionId);
+    this.set(sessionId, { ...r, comments: r.comments.filter(c => !drop.has(c.id)) });
+  }
+
   clearComments(sessionId: string): void {
     const r = this.get(sessionId);
     this.set(sessionId, { ...r, comments: [] });

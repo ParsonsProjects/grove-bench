@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, powerMonitor, screen } from 'electron';
+import { app, BrowserWindow, ipcMain, nativeTheme, powerMonitor, screen } from 'electron';
 import path from 'node:path';
 import { registerHandlers, appEvents } from './ipc.js';
 import { sessionManager } from './agent-session.js';
@@ -40,8 +40,10 @@ app.setPath('userData', path.join(app.getPath('appData'), 'grove-bench'));
 app.setAppUserModelId('com.parsonsprojects.grove-bench');
 
 // Register agent adapters before anything else uses them. The user's own
-// ACP agents come from settings, so a change applies after a restart.
-initAdapters(settings.loadSettings().acpAgents);
+// ACP agents and other Claude accounts come from settings, so a change
+// applies after a restart.
+const launchSettings = settings.loadSettings();
+initAdapters(launchSettings.acpAgents, launchSettings.claudeAccounts);
 
 // Custom schemes can only be registered before the app is ready.
 registerAttachmentScheme();
@@ -92,6 +94,10 @@ function createWindow() {
   // Apply persisted settings on startup, the theme before the page loads so
   // it doesn't open dark and then switch
   settings.applyImmediateEffects(mainWindow, settings.loadSettings());
+  // With the theme on System, Windows can switch it while the app runs
+  nativeTheme.on('updated', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setBackgroundColor(settings.windowBackground());
+  });
 
   // Spell checker setup (the renderer draws the suggestion menu)
   installSpellcheckMenu(mainWindow.webContents);
@@ -129,7 +135,7 @@ app.whenReady().then(() => {
   // can't freeze the window (process-host.ts). First, before the window
   // starts asking for git status.
   startProcessHost();
-  handleAttachmentProtocol();
+  handleAttachmentProtocol((id) => worktreeManager.getWorktree(id)?.path);
   void removeDeletedFolders();
   createWindow();
 

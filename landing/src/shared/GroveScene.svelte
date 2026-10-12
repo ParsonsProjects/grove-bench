@@ -1,6 +1,6 @@
 <script>
   import Sprite from './Sprite.svelte';
-  import { PIXEL_TREE, BENCH, LAMP, SPROUT, WATERING_CAN, FLAG, EASEL, SCENERY_PALETTE, SPRITE_H, toRuns } from './app-art.js';
+  import { PIXEL_TREE, BENCH, LAMP, SPROUT, WATERING_CAN, FLAG, EASEL, SCENERY_PALETTE, SPRITE_H, toRuns, PALETTE } from './app-art.js';
 
   /**
    * The app's empty-state scene (GroveEmptyState.svelte), at the same art
@@ -52,7 +52,7 @@
         {/each}
       </g>
     {/each}
-    <rect x="0" y={GROUND_Y} width={W} height="1" fill="#3a9a48" opacity="0.45" />
+    <rect x="0" y={GROUND_Y} width={W} height="1" fill={PALETTE.fern} opacity="0.45" />
   </svg>
   {#if state}
     <span class="agent" style="left: {SEAT_X * scale}px; top: {SEAT_Y * scale}px">

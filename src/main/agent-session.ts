@@ -1,12 +1,14 @@
 import type { BrowserWindow } from 'electron';
 import { IPC } from '../shared/types.js';
 import type { SessionInfo, SessionStatus, AgentEvent, PermissionDecision, PermissionMode, McpServerInfo, McpAuthStartResult, McpElicitationResponse, McpServerContextCost, ProviderUsage, SessionControls } from '../shared/types.js';
-import { CONTROL_IDS, PERMISSION_MODES, subagentParent } from '../shared/types.js';
-import { displayTextFromSent } from '../shared/prompt-text.js';
+import { CONTROL_IDS, MCP_SIGN_IN_TIMEOUT_MS, PERMISSION_MODES, isMcpServerDown, subagentParent } from '../shared/types.js';
+import { userEventText } from '../shared/prompt-text.js';
 import { applyRateLimit } from '../shared/usage.js';
 import { loadUsageSnapshot, saveUsageSnapshot } from './app-state.js';
 import { handoffTranscript, isSlashCommand, lastAgentChange, pendingHandoff } from './agent-handoff.js';
-import { pruneImages, removeImages, saveImages, storeToolImages } from './attachments.js';
+import { attachmentsFolder, imagePath, pruneAttachments, removeAttachments, saveFiles, saveImages, storeMadeFiles, storeToolImages } from './attachments.js';
+import { TurnFiles } from './turn-files.js';
+import { toolViewOf } from '../shared/tool-view.js';
 import { logger } from './logger.js';
 import { perfSteps } from './perf-steps.js';
 import { perfLine } from './perf-log.js';
@@ -16,8 +18,11 @@ import * as memory from './memory.js';
 import * as memoryAutosave from './memory-autosave.js';
 import * as memoryCompact from './memory-compact.js';
 import { adapterRegistry } from './adapters/index.js';
+import { isClaudeAccountId, removedAccountMessage } from './adapters/claude-accounts.js';
 import type { AgentAdapter, AgentQueryHandle, UserMessage } from './adapters/types.js';
+import { audioSentInline, inlineAudioType } from './adapters/file-attachments.js';
 import { ResumeNotFoundError } from './adapters/types.js';
+import { lastRunningCost } from './adapters/running-cost.js';
 import { getGitIdentity } from './git.js';
 import { findRewindForkPoint, isAuthFailure, lastTurnUuid } from './agent-utils.js';
 import { hasApiKey, isApiKeyRejected, markApiKeyRejected } from './credentials.js';
@@ -33,6 +38,11 @@ import {
   awaitElicitation, respondToElicitation as answerElicitation, cancelElicitations,
 } from './session-permissions.js';
 import { SessionSkills } from './session-skills.js';
+import {
+  beforeToolUse, cancelLimit, limitsFromHistory, promptSent, respondToLimit as answerLimit,
+  toolCallSeen, turnActive, turnEnded, turnStopped, whileWaiting,
+  type LimitDecision, type LimitGateContext,
+} from './session-limits.js';
 import {
   readSafeWarning, readSafeSandbox, hasSandboxWarning, startingPermissionMode,
   initialControls, normalizeModelId, appendedSystemPrompt,
@@ -166,7 +176,9 @@ class AgentSessionManager {
     // Look up the adapter (fall back to the registry default)
     const adapterType = opts.adapterType ?? adapterRegistry.getDefault().id;
     const adapter = adapterRegistry.get(adapterType);
-    if (!adapter) throw new Error(`Unknown agent adapter: ${adapterType}`);
+    if (!adapter) {
+      throw new Error(isClaudeAccountId(adapterType) ? removedAccountMessage(adapterType) : `Unknown agent adapter: ${adapterType}`);
+    }
     // Record the agent so a restart resumes this conversation on it and its
     // background tasks (memory notes, commit messages) use it.
     worktreeManager.saveAdapterType(id, adapterType).catch((e) => {
@@ -198,6 +210,9 @@ class AgentSessionManager {
     // A folder project isn't a git repository: no checkpoints, no commits.
     const gitBacked = !opts.noGit;
 
+    // Copy: the cached array must not be mutated by the live session.
+    const eventHistory = [...this.events.load(id)];
+
     const session: ManagedSession = {
       id,
       branch,
@@ -216,8 +231,7 @@ class AgentSessionManager {
       pendingResumeAt: null,
       model: initialModel,
       window: win,
-      // Copy: the cached array must not be mutated by the live session.
-      eventHistory: [...this.events.load(id)],
+      eventHistory,
       logBuffer: [],
       logBufferBytes: 0,
       logFlushTimer: null,
@@ -248,6 +262,7 @@ class AgentSessionManager {
       sleepSettled: null,
       turnHandle: null,
       promptsBeforeInit: null,
+      limits: limitsFromHistory(eventHistory),
     };
 
     this.sessions.set(id, session);
@@ -419,6 +434,7 @@ class AgentSessionManager {
     try {
     handle = await session.adapter.start({
       cwd: session.worktreePath,
+      attachmentsDir: attachmentsFolder(id),
       // session.model is the source of truth — it survives stop/restart and
       // resume cycles, so the user's selected model isn't lost when the query
       // is torn down and recreated.
@@ -451,11 +467,14 @@ class AgentSessionManager {
       // thread still shows the earlier turns from Grove's own event log.
       resumeSessionId: caps.resume ? session.providerSessionId : null,
       resumeAtUuid: caps.resume && caps.rewind ? resumeAtUuid : null,
+      priorCostUsd: caps.resume && session.providerSessionId ? lastRunningCost(session.eventHistory) : null,
       toolAllowRules: currentSettings.toolAllowRules,
       toolDenyRules: currentSettings.toolDenyRules,
       alwaysAllowedTools: session.alwaysAllowedTools,
-      onElicitation: (request, signal) => awaitElicitation(session, request, signal),
-      onPermissionRequest: (request) => requestPermission(session, request, emit),
+      // Time spent waiting on the user doesn't count toward a turn's minutes.
+      onElicitation: (request, signal) => whileWaiting(session.limits, awaitElicitation(session, request, signal)),
+      onPermissionRequest: (request) => whileWaiting(session.limits, requestPermission(session, request, emit)),
+      beforeToolUse: ({ toolUseId }) => beforeToolUse(this.limitGate(session), toolUseId),
     });
 
     } catch (startErr) {
@@ -578,6 +597,13 @@ class AgentSessionManager {
         if ((event.type === 'assistant_text' || event.type === 'assistant_tool_use'
           || event.type === 'thinking' || event.type === 'partial_text') && !subagentParent(event)) {
           session.turnHandle = handle;
+          turnActive(session.limits);
+          this.watchTurnFiles(session);
+        }
+        if (event.type === 'assistant_tool_use') {
+          toolCallSeen(session.limits, event.toolUseId);
+          const view = toolViewOf(event);
+          if (view.kind === 'edit' && view.edits?.length && view.path) session.turnFiles?.noteEdited(view.path);
         }
 
         // Intercept system_init to capture provider session ID and update status
@@ -658,6 +684,11 @@ class AgentSessionManager {
         // Track result for completion callback
         if (event.type === 'result') {
           if (session.turnHandle === handle) session.turnHandle = null;
+          // The files the turn made go just ahead of its result.
+          await this.endTurnFiles(session, emit);
+          // Adds the turn's cost to the thread's and today's spend.
+          turnEnded(session.limits, event);
+          this.runHeldMcpReconnects(session);
           session.lastResult = {
             isError: event.isError,
             totalCostUsd: event.totalCostUsd,
@@ -710,6 +741,9 @@ class AgentSessionManager {
     }
 
     if (session.turnHandle === handle) session.turnHandle = null;
+    // A turn cut short by an error reports no files. Only this run's: once
+    // stopped or put to sleep, a newer run may be watching its own turn.
+    if (session.queryHandle === handle || session.destroying) void this.endTurnFiles(session);
 
     // If the user clicked Stop, don't mark the session as stopped or fire
     // process_exit — stopQuery will restart the query loop.
@@ -770,6 +804,38 @@ class AgentSessionManager {
     });
   }
 
+  /** Watch the worktree for the files this turn makes, unless a watch for
+   *  it is already running (a second message mid-turn). */
+  private watchTurnFiles(session: ManagedSession): void {
+    if (session.turnFiles || session.destroying || !session.worktreePath) return;
+    session.turnFiles = new TurnFiles(session.worktreePath);
+  }
+
+  /**
+   * The turn is over: stop watching the worktree for the files it made. With
+   * `emit`, list them in the thread first (a turn that ended, or one the user
+   * interrupted); without, drop them (a stop or rewind that restarts the
+   * agent, a sleep, a close). Every way a turn ends comes through here, so a
+   * watch never carries over into the next turn. Never fails the turn.
+   */
+  private async endTurnFiles(session: ManagedSession, emit?: Emit): Promise<void> {
+    const turnFiles = session.turnFiles;
+    session.turnFiles = null;
+    if (!turnFiles) return;
+    if (!emit) {
+      turnFiles.close();
+      return;
+    }
+    try {
+      const { files, more } = await turnFiles.finish();
+      if (files.length === 0) return;
+      const made = await storeMadeFiles(session.id, files);
+      emit({ type: 'files_made', files: made, ...(more > 0 && { more }) });
+    } catch (err) {
+      logger.warn(`[turn-files] session=${session.id} could not list the turn's files:`, err);
+    }
+  }
+
   /**
    * The conversation `handle` resumed is gone from the agent (its transcript
    * was deleted or moved). Forget it, or every restart would resume it and
@@ -825,6 +891,11 @@ class AgentSessionManager {
     });
   }
 
+  /** Whether a setup for `id` is still in flight (see trackPendingSetup). */
+  hasPendingSetup(id: string): boolean {
+    return this.pendingSetups.has(id);
+  }
+
   /**
    * Resolve once the session has a live query handle. If none is installed
    * but a new query is being initialized (e.g. right after stop), waits for it
@@ -861,7 +932,12 @@ class AgentSessionManager {
     return true;
   }
 
-  async sendMessage(id: string, content: string, images?: import('../shared/types.js').ImageAttachment[]): Promise<boolean> {
+  async sendMessage(
+    id: string,
+    content: string,
+    images?: import('../shared/types.js').ImageAttachment[],
+    files?: import('../shared/types.js').FileAttachment[],
+  ): Promise<boolean> {
     let session = this.sessions.get(id);
 
     // The session object is created at the end of setup; a prompt that
@@ -889,8 +965,9 @@ class AgentSessionManager {
 
     // Record in event history with UUID for checkpoint tracking.
     // Use emit() which handles eventHistory, disk persistence, and renderer notification.
-    // Attached images are saved to disk and the event refers to them, so the
-    // thread can show them again when the conversation is reopened.
+    // Attached images and files are saved to disk and the event refers to
+    // them, so the thread can show them again when the conversation is
+    // reopened, and an agent can be given a file's path.
     const uuid = crypto.randomUUID();
     // The composer only offers attachments to agents that take images; this
     // catches any that arrive anyway (a paste racing an agent switch).
@@ -899,15 +976,23 @@ class AgentSessionManager {
       images = undefined;
     }
     const storedImages = images?.length ? await saveImages(id, images) : [];
+    const savedFiles = files?.length ? await saveFiles(id, files) : [];
+    if (files && savedFiles.length < files.length) {
+      const lost = files.length - savedFiles.length;
+      session.emit?.({ type: 'status', level: 'warning', message: `${lost === 1 ? 'An attached file' : `${lost} attached files`} could not be saved, so ${lost === 1 ? 'it was' : 'they were'} left out. See the log for details.` });
+    }
     // After a switch the user wanted a transcript for, messages carry it
     // ahead of what they typed until the new agent replies; the thread shows
     // only theirs. A slash command is left alone (it must lead the text) and
     // the transcript waits for the next message.
     const handoff = isSlashCommand(content) ? null : pendingHandoff(session.eventHistory);
-    const handoffNote = handoff ? handoffTranscript(session.eventHistory.slice(0, handoff.index), handoff.event) : null;
-    const userEvent: AgentEvent = {
+    const handoffNote = handoff ? handoffTranscript(session.eventHistory.slice(0, handoff.index), handoff.event, attachmentsFolder(id)) : null;
+    // Read before this message joins the history.
+    const audioInHistory = savedFiles.length > 0 ? audioSentInline(session.eventHistory) : 0;
+    const userEvent: Extract<AgentEvent, { type: 'user_message' }> = {
       type: 'user_message', text: content, uuid,
       ...(storedImages.length > 0 && { images: storedImages }),
+      ...(savedFiles.length > 0 && { files: savedFiles.map((f) => f.stored) }),
     };
     session.emit?.(userEvent);
 
@@ -918,7 +1003,7 @@ class AgentSessionManager {
     // throws; a false result means there is no checkpoint for this message,
     // which the thread shows so a later rewind attempt is not a surprise.
     // Label the checkpoint with what the chat shows, not attached file content.
-    const captured = await session.checkpoints.capture(id, session.worktreePath, uuid, displayTextFromSent(content, images));
+    const captured = await session.checkpoints.capture(id, session.worktreePath, uuid, userEventText(userEvent));
     // Without git there are no checkpoints to capture, so nothing failed.
     if (captured) {
       session.checkpointFailing = false;
@@ -938,13 +1023,31 @@ class AgentSessionManager {
     const queryHandle = session.queryHandle!;
 
     const sessionId = session.providerSessionId ?? '';
-    logger.debug(`[sendMessage] session=${id} sending to adapter, providerSessionId=${sessionId || '(not yet initialized)'}${images?.length ? ` with ${images.length} image(s)` : ''}`);
+    logger.debug(`[sendMessage] session=${id} sending to adapter, providerSessionId=${sessionId || '(not yet initialized)'}${images?.length ? ` with ${images.length} image(s)` : ''}${savedFiles.length ? ` with ${savedFiles.length} file(s)` : ''}`);
     try {
       session.turnHandle = queryHandle;
+      promptSent(session.limits);
+      this.watchTurnFiles(session);
       // Once per query: a second message before the reply doesn't repeat it,
       // but a query that failed to start and was replaced gets it again.
       const withNote = handoffNote !== null && session.handoffSentTo !== queryHandle;
-      const message: UserMessage = { text: withNote ? `${handoffNote}\n${content}` : content, images };
+      const message: UserMessage = {
+        text: withNote ? `${handoffNote}\n${content}` : content,
+        // With the path of each saved copy when every one was saved (so the
+        // lists line up), for an agent that can't take images.
+        images: images?.map((img, i) => {
+          const saved = storedImages.length === images!.length ? imagePath(id, storedImages[i].file) : null;
+          return saved ? { ...img, path: saved.path } : img;
+        }),
+        // Only a clip that may go inline carries its data; the rest go by path.
+        ...(savedFiles.length > 0 && {
+          files: savedFiles.map(({ stored, path, data }) => ({
+            name: stored.name, mediaType: stored.mediaType, size: stored.size, path,
+            ...(inlineAudioType(stored) ? { data } : {}),
+          })),
+          ...(audioInHistory > 0 && { audioInHistory }),
+        }),
+      };
       if (withNote) session.handoffSentTo = queryHandle;
       queryHandle.sendMessage(message);
       if (session.promptsBeforeInit?.handle === queryHandle) session.promptsBeforeInit.prompts.push(message);
@@ -974,6 +1077,26 @@ class AgentSessionManager {
   respondToElicitation(id: string, requestId: string, response: McpElicitationResponse): boolean {
     const session = this.sessions.get(id);
     return !!session && answerElicitation(session, requestId, response);
+  }
+
+  /** Continue past a reached limit, or stop the turn. False when the
+   *  question already ended (answered, stopped or timed out). */
+  respondToLimit(id: string, requestId: string, decision: LimitDecision): boolean {
+    const session = this.sessions.get(id);
+    return !!session && answerLimit(session.limits, requestId, decision);
+  }
+
+  /** What the limit gate needs for a tool call in `session`. Settings are
+   *  read each time, so a changed limit applies to the next tool call. */
+  private limitGate(session: ManagedSession): LimitGateContext {
+    return {
+      limits: session.limits,
+      settings: settings.getSettings(),
+      emit: session.emit ?? this.createEmitter(session),
+      stopTurn: () => {
+        this.interruptQuery(session.id).catch((e) => logger.warn(`[limits] could not stop ${session.id}:`, e));
+      },
+    };
   }
 
   setMode(id: string, mode: string): void {
@@ -1198,8 +1321,9 @@ class AgentSessionManager {
     if (!session?.queryHandle?.reconnectMcpServer) {
       throw new Error('MCP server control is not available for this thread');
     }
+    const handle = session.queryHandle;
     try {
-      await session.queryHandle.reconnectMcpServer(serverName);
+      await this.inMcpReconnectQueue(session, () => handle.reconnectMcpServer!(serverName));
     } catch (e) {
       logger.warn(`Failed to reconnect MCP server "${serverName}" for session ${id}:`, e);
       throw e;
@@ -1212,7 +1336,11 @@ class AgentSessionManager {
       throw new Error('MCP sign-in is not available for this thread');
     }
     try {
-      return await session.queryHandle.authenticateMcpServer(serverName);
+      const result = await session.queryHandle.authenticateMcpServer(serverName);
+      if (result.authUrl && result.callbackExpected) {
+        (session.mcpSignInsStarted ??= new Map()).set(serverName, Date.now());
+      }
+      return result;
     } catch (e) {
       logger.warn(`Failed to start sign-in for MCP server "${serverName}" in session ${id}:`, e);
       throw e;
@@ -1230,6 +1358,95 @@ class AgentSessionManager {
       logger.warn(`Failed to ${enabled ? 'enable' : 'disable'} MCP server "${serverName}" for session ${id}:`, e);
       throw e;
     }
+  }
+
+  /**
+   * Reconnect the MCP servers that are down (needs-auth or failed) in every
+   * live thread on the same agent as thread `id`. Threads on one agent share
+   * its sign-ins, so a server signed in to in one thread can come back in the
+   * others without restarting them. With `serverName`, only that server, and
+   * only in the other threads: it was just brought back in this one.
+   *
+   * Resolves once thread `id` is done. The other threads go on in the
+   * background, one at a time, and send their new status with
+   * AGENT_MCP_STATUS. A thread in the middle of a turn, or starting up,
+   * waits for the turn to end, so its tools don't change under it. A server
+   * with a browser sign-in under way is left alone. Failures are logged, not
+   * thrown: a server that still can't connect just stays down.
+   */
+  async reconnectDownMcpServers(id: string, serverName?: string): Promise<void> {
+    const origin = this.sessions.get(id);
+    if (!origin) return;
+    const only = serverName === undefined ? 'all' : new Set([serverName]);
+    if (only === 'all') await this.reconnectDownMcpServersIn(origin, only);
+    const others = [...this.sessions.values()].filter((s) => s !== origin && s.adapter.id === origin.adapter.id);
+    void (async () => {
+      for (const session of others) await this.reconnectDownMcpServersIn(session, only);
+    })();
+  }
+
+  /** Reconnect `session`'s down servers out of `only`, or hold them until its
+   *  turn ends. Never throws. */
+  private async reconnectDownMcpServersIn(session: ManagedSession, only: Set<string> | 'all'): Promise<void> {
+    // Closing, or no agent running (its handle may still be set).
+    if (session.destroying || this.sessions.get(session.id) !== session) return;
+    if (session.status === 'stopped' || session.status === 'error') return;
+    // A thread starting up counts as mid-turn: its agent may have tried its
+    // servers before the sign-in was saved.
+    if (this.isMidTurn(session.id)) {
+      if (session.adapter.mcp?.controls.reconnect) this.holdMcpReconnects(session, only);
+      return;
+    }
+    const handle = session.queryHandle;
+    if (!handle?.listMcpServers || !handle.reconnectMcpServer) return;
+    await this.inMcpReconnectQueue(session, async () => {
+      try {
+        const now = Date.now();
+        const down = (await handle.listMcpServers!()).filter((s) =>
+          isMcpServerDown(s.status) && (only === 'all' || only.has(s.name))
+          // A reconnect could cancel a browser sign-in still under way.
+          && now - (session.mcpSignInsStarted?.get(s.name) ?? 0) >= MCP_SIGN_IN_TIMEOUT_MS);
+        if (down.length === 0) return;
+        for (const [i, server] of down.entries()) {
+          if (session.destroying || session.queryHandle !== handle) return;
+          // A turn started meanwhile: the rest wait for it to end.
+          if (this.isMidTurn(session.id)) {
+            this.holdMcpReconnects(session, new Set(down.slice(i).map((s) => s.name)));
+            return;
+          }
+          await handle.reconnectMcpServer!(server.name).catch((e) => {
+            logger.debug(`MCP server "${server.name}" is still down in session ${session.id}:`, e);
+          });
+        }
+        if (session.destroying || session.queryHandle !== handle) return;
+        const servers = await handle.listMcpServers!();
+        if (!session.window.isDestroyed()) session.window.webContents.send(IPC.AGENT_MCP_STATUS, session.id, servers);
+      } catch (e) {
+        logger.warn(`Failed to reconnect MCP servers for session ${session.id}:`, e);
+      }
+    });
+  }
+
+  /** Add `only` to the reconnects `session` runs once its turn ends. */
+  private holdMcpReconnects(session: ManagedSession, only: Set<string> | 'all'): void {
+    const held = session.mcpReconnectsAfterTurn;
+    session.mcpReconnectsAfterTurn = held === 'all' || only === 'all' ? 'all' : new Set([...(held ?? []), ...only]);
+  }
+
+  /** Run the reconnects held back while a turn ran, now that it has ended. */
+  private runHeldMcpReconnects(session: ManagedSession): void {
+    const held = session.mcpReconnectsAfterTurn;
+    if (!held || this.isMidTurn(session.id)) return;
+    session.mcpReconnectsAfterTurn = undefined;
+    void this.reconnectDownMcpServersIn(session, held);
+  }
+
+  /** Run `work` after the session's earlier MCP reconnects, so two never
+   *  reconnect the same server at once. */
+  private inMcpReconnectQueue<T>(session: ManagedSession, work: () => Promise<T>): Promise<T> {
+    const run = (session.mcpReconnectQueue ?? Promise.resolve()).then(work);
+    session.mcpReconnectQueue = run.then(() => {}, () => {});
+    return run;
   }
 
   /** Whether the agent is in the middle of a turn (a message sent or a reply
@@ -1281,6 +1498,8 @@ class AgentSessionManager {
     // before resolving and trips "ProcessTransport is not ready for writing").
     denyPendingPermissions(session, 'Query stopped by user', emit);
     cancelElicitations(session);
+    cancelLimit(session.limits);
+    turnStopped(session.limits);
 
     // Interrupt the current turn.  The event loop in runQuery stays parked on
     // handle.events and simply waits for the next user message — no respawn.
@@ -1296,6 +1515,9 @@ class AgentSessionManager {
     }
     // The turn is over even if the agent never reports a result for it.
     if (session.turnHandle === handle) session.turnHandle = null;
+    // Its files too, unless its result (handled in runQuery) listed them already.
+    await this.endTurnFiles(session, emit);
+    this.runHeldMcpReconnects(session);
 
     // Re-sync the renderer with the current permission mode (parity with
     // stopQuery) — this also clears the renderer's stoppingSession guard so
@@ -1374,6 +1596,11 @@ class AgentSessionManager {
     // so the permission_resolved events reach the renderer.
     denyPendingPermissions(session, 'Query stopped by user', emit);
     cancelElicitations(session);
+    cancelLimit(session.limits);
+    turnStopped(session.limits);
+    // The old run's loop can't drop the watch: the handle is no longer its.
+    // Nothing is listed: a rewind may be about to put the files back.
+    void this.endTurnFiles(session);
 
     // Create a deferred promise so sendMessage() can wait for the new
     // queryHandle. Keep one that's still pending (e.g. a wake's): messages
@@ -1410,7 +1637,7 @@ class AgentSessionManager {
     if (!session || session.destroying) return false;
     if (session.status !== 'running' && session.status !== 'starting') return false;
     const handle = session.queryHandle;
-    if (!handle || session.isStartingQuery || session.pendingPermissions.size > 0 || session.pendingElicitations.size > 0) return false;
+    if (!handle || session.isStartingQuery || session.pendingPermissions.size > 0 || session.pendingElicitations.size > 0 || session.limits.pending) return false;
     if (session.turnHandle === handle) return false;
 
     perfSteps.fail(id, 'put to sleep');
@@ -1420,6 +1647,7 @@ class AgentSessionManager {
     // the session's as retired, so the agent exiting below is neither an error
     // nor the end of the conversation.
     session.queryHandle = null;
+    void this.endTurnFiles(session);
     const abortController = session.abortController;
     session.abortController = new AbortController();
     if (!session.window.isDestroyed()) {
@@ -1596,6 +1824,8 @@ class AgentSessionManager {
     try {
       session.queryHandle?.close();
     } catch { /* may already be closed */ }
+    // Before the worktree can be removed: on Windows a watch holds its folder.
+    void this.endTurnFiles(session);
 
     // Abort any remaining in-flight operations
     session.abortController.abort();
@@ -1603,6 +1833,7 @@ class AgentSessionManager {
     // Resolve any pending permissions as denied
     denyPendingPermissions(session, reason, session.emit);
     cancelElicitations(session);
+    cancelLimit(session.limits);
 
     // Clean up completion callback and event listeners
     this.completionCallbacks.delete(id);
@@ -1896,8 +2127,8 @@ class AgentSessionManager {
     await this.stopQuery(id);
 
     // After the stop, so a tool result from the old query can't save an image
-    // after the check. The rewound turns' images are no longer shown.
-    void pruneImages(id, session.eventHistory);
+    // after the check. The rewound turns' images and files are no longer shown.
+    void pruneAttachments(id, session.eventHistory);
   }
 
   /** Dry-run rewind to get the diff of what would change. */
@@ -2016,8 +2247,8 @@ class AgentSessionManager {
       // Session not running — clear disk log directly
       this.events.clearStored(id);
     }
-    // No event refers to the thread's images any more.
-    void removeImages(id);
+    // No event refers to the thread's images or files any more.
+    void removeAttachments(id);
   }
 
   /** Session ids that were running when the system suspended. Captured on
