@@ -19,7 +19,6 @@
     sessionId,
     pr,
     comments,
-    base,
     onclose,
     onposted,
   }: {
@@ -27,8 +26,6 @@
     pr: PrInfo;
     /** Line comments written in the Branch view, posted with the review. */
     comments: ReviewComment[];
-    /** The branch the Branch view compares against. */
-    base?: string;
     onclose: () => void;
     onposted: (posted: { event: PrReviewEvent; result: PrReviewSubmitResult; commentIds: string[] }) => void;
   } = $props();
@@ -52,7 +49,10 @@
   // Taken when the dialog opens: comments added behind it aren't in the count.
   const sent = untrack(() => comments.map((c) => ({ ...c })));
 
+  // Closing doesn't stop a review on its way to GitHub, and its outcome
+  // would be lost with the dialog, so it stays open until GitHub answers.
   function close() {
+    if (submitting) return;
     open = false;
     onclose();
   }
@@ -66,7 +66,6 @@
         prNumber: pr.number,
         event,
         body: body.trim(),
-        base,
         comments: sent.map((c) => ({
           filePath: c.filePath,
           side: c.side,
@@ -77,17 +76,22 @@
         })),
       });
       onposted({ event, result, commentIds: sent.map((c) => c.id) });
+      submitting = false;
       close();
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
-    } finally {
       submitting = false;
     }
   }
 </script>
 
 <Dialog.Root bind:open onOpenChange={(v) => { if (!v) close(); }}>
-  <Dialog.Content class="max-w-lg">
+  <Dialog.Content
+    class="max-w-lg"
+    showCloseButton={!submitting}
+    escapeKeydownBehavior={submitting ? 'ignore' : 'close'}
+    interactOutsideBehavior={submitting ? 'ignore' : 'close'}
+  >
     <Dialog.Header>
       <Dialog.Title>Review PR #{pr.number}</Dialog.Title>
       {#if pr.title}
@@ -135,7 +139,7 @@
       {#if sent.length > 0}
         <p class="text-caption text-muted-foreground">
           {sent.length} line comment{sent.length === 1 ? '' : 's'} from the Branch view go{sent.length === 1 ? 'es' : ''} with it.
-          If GitHub can't put one on its line (the line isn't in the PR's diff, or the file differs from the PR's latest push), it's quoted in the summary instead.
+          If one can't go on its line (the line isn't in the PR's diff, or it reads differently there now), it's quoted in the summary instead.
         </p>
       {/if}
 
@@ -146,7 +150,7 @@
       {/if}
 
       <Dialog.Footer>
-        <Button variant="subtle" onclick={close}>Cancel</Button>
+        <Button variant="subtle" onclick={close} disabled={submitting}>Cancel</Button>
         <Button
           onclick={submit}
           disabled={!canSubmit}

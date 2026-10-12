@@ -839,7 +839,9 @@
     {@const repoColor = getRepoColor(store.repos, session.repoPath, settingsStore.current.repoColors)}
     {@const ts = session.lastActiveAt ?? session.createdAt}
     {@const subtitle = rowSubtitle(session)}
-    {@const changedCount = isStopped ? 0 : gitStatusStore.getStatus(session.id).entries.length}
+    <!-- Changed in the worktree: the Changes tab may be listing the whole branch. -->
+    {@const gitState = gitStatusStore.getStatus(session.id)}
+    {@const changedCount = isStopped ? 0 : (gitState.uncommitted ?? gitState.entries.length)}
     {@const label = labelOverride ?? sessionRowLabel(session)}
     {@const group = showGroup ? groupStore.groupOf(session.id) : null}
     <!-- PR data is only polled for open tabs; anything else would be stale, so it stays neutral. -->

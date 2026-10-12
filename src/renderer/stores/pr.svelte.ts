@@ -1,6 +1,7 @@
 import type { PrInfo, GitSyncStatus, PrCreateOpts, PrReviewSubmit, PrReviewSubmitResult } from '../../shared/types.js';
 import { messageStore } from './messages.svelte.js';
 import { store as sessionStore } from './sessions.svelte.js';
+import { gitStatusStore } from './gitStatus.svelte.js';
 import { buildFixCiPrompt, buildAddressReviewsPrompt } from '../lib/pr-prompt.js';
 import { notifyOs } from '../lib/os-notify.js';
 import { detectPrEvents, newPrWatchState, isTrustedAssociation } from '../lib/pr-watch.js';
@@ -137,6 +138,18 @@ class PrStore {
     return prs[0] ?? null;
   }
 
+  /** The open PR whose head is the branch checked out now: the one the
+   *  Changes tab's Branch view shows, and so the one it can review. A PR from
+   *  another branch the thread used isn't. The primary wins when it fits. */
+  reviewablePr(sessionId: string): PrInfo | null {
+    const branch = sessionStore.sessions.find((s) => s.id === sessionId)?.branch;
+    // PR data from before headRefName was read can't be checked: allow it.
+    const fits = (pr: PrInfo) => pr.state === 'OPEN' && (!pr.headRefName || pr.headRefName === branch);
+    const primary = this.getPr(sessionId);
+    if (primary && fits(primary)) return primary;
+    return this.getPrs(sessionId).find(fits) ?? null;
+  }
+
   /** Make one of the session's PRs the primary. Ignored for unknown numbers. */
   setPrimary(sessionId: string, prNumber: number): void {
     if (!this.getPrs(sessionId).some((pr) => pr.number === prNumber)) return;
@@ -234,7 +247,9 @@ class PrStore {
       if (pushErr && pushErr.afterFetch < fetchNo && sync.value.upstream && sync.value.ahead === 0) this.dismissPushError(sessionId);
     }
     if (pr.status === 'fulfilled') {
+      const baseBefore = this.reviewablePr(sessionId)?.baseRefName;
       this.prsBySession = { ...this.prsBySession, [sessionId]: pr.value };
+      if (this.reviewablePr(sessionId)?.baseRefName !== baseBefore) gitStatusStore.prBaseChanged(sessionId);
     }
     const failed = pr.status === 'rejected';
     if (failed !== (this.fetchFailedBySession[sessionId] ?? false)) {
@@ -356,6 +371,7 @@ class PrStore {
     this.prsBySession = { ...this.prsBySession, [sessionId]: [pr, ...rest] };
     const { [sessionId]: _chosen, ...restPrimary } = this.primaryBySession;
     this.primaryBySession = restPrimary;
+    gitStatusStore.prBaseChanged(sessionId);
     this.refresh(sessionId, true);
     return pr;
   }
@@ -564,3 +580,6 @@ function prAlertBody(alert: PrAlertInput): string {
 }
 
 export const prStore = new PrStore();
+
+// The Changes tab's default Branch view compares against the open PR's base.
+gitStatusStore.setPrBaseSource((sessionId) => prStore.reviewablePr(sessionId)?.baseRefName);

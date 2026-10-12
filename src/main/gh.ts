@@ -416,7 +416,8 @@ export async function prCreate(repoPath: string, branch: string, opts: PrCreateO
     throw new Error(`PR was created but could not be read back — check GitHub (${e?.message ?? e})`);
   }
   if (!created) throw new Error('PR was created but could not be read back — check GitHub');
-  return created;
+  // Opened with the gh account just now, so it's the viewer's own.
+  return { ...created, viewerIsAuthor: true };
 }
 
 /** A readable reason from a failed `gh api` call. gh prints GitHub's JSON
@@ -440,12 +441,17 @@ export function ghApiErrorMessage(e: unknown): string {
   return typeof err?.message === 'string' && err.message ? err.message : String(e);
 }
 
-/** The commits a PR's diff is drawn between: its head, and its base branch's tip. */
-export async function prHeadAndBase(repoPath: string, prNumber: number): Promise<{ headSha: string; baseSha: string }> {
-  const stdout = await ghOnline(['pr', 'view', String(prNumber), '--json', 'headRefOid,baseRefOid'], repoPath, { bypassCooldown: true });
-  const data = JSON.parse(stdout) as { headRefOid?: unknown; baseRefOid?: unknown };
-  if (typeof data.headRefOid !== 'string' || typeof data.baseRefOid !== 'string') throw new Error(`Could not read PR #${prNumber}`);
-  return { headSha: data.headRefOid, baseSha: data.baseRefOid };
+/** The PR's head commit, read fresh. Throws a readable error. */
+export async function prHeadSha(repoPath: string, prNumber: number): Promise<string> {
+  let stdout: string;
+  try {
+    stdout = await ghOnline(['pr', 'view', String(prNumber), '--json', 'headRefOid'], repoPath, { bypassCooldown: true });
+  } catch (e) {
+    throw new Error(`Could not read PR #${prNumber}: ${ghApiErrorMessage(e)}`);
+  }
+  const sha = (JSON.parse(stdout) as { headRefOid?: unknown }).headRefOid;
+  if (typeof sha !== 'string' || !sha) throw new Error(`Could not read PR #${prNumber}`);
+  return sha;
 }
 
 /** GitHub lists at most 3000 files for a PR, 100 per page. */
@@ -459,11 +465,16 @@ const PR_FILES_MAX_PAGES = 30;
 export async function prFilePatches(repoPath: string, prNumber: number): Promise<Map<string, string | null>> {
   const patches = new Map<string, string | null>();
   for (let page = 1; page <= PR_FILES_MAX_PAGES; page++) {
-    const stdout = await ghOnline(
-      ['api', `repos/{owner}/{repo}/pulls/${prNumber}/files?per_page=${PR_FILES_PER_PAGE}&page=${page}`],
-      repoPath,
-      { bypassCooldown: true },
-    );
+    let stdout: string;
+    try {
+      stdout = await ghOnline(
+        ['api', `repos/{owner}/{repo}/pulls/${prNumber}/files?per_page=${PR_FILES_PER_PAGE}&page=${page}`],
+        repoPath,
+        { bypassCooldown: true },
+      );
+    } catch (e) {
+      throw new Error(`Could not read PR #${prNumber}'s files: ${ghApiErrorMessage(e)}`);
+    }
     const data = JSON.parse(stdout) as unknown;
     if (!Array.isArray(data)) break;
     for (const f of data as Array<Record<string, unknown>>) {
@@ -508,6 +519,11 @@ export async function prSubmitReview(
       { bypassCooldown: true, input: JSON.stringify(payload) },
     );
   } catch (e) {
+    // A post that timed out may still have reached GitHub. Posting again
+    // would add a second review, so say to look first.
+    if ((e as { timedOut?: unknown } | null)?.timedOut === true) {
+      throw new Error('GitHub didn\'t answer in time. The review may still have been posted, so check the PR before submitting again.');
+    }
     throw new Error(ghApiErrorMessage(e));
   }
   try {

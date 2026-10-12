@@ -1,6 +1,8 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mockGroveBench } from '../__mocks__/setup.js';
 import { gitStatusStore } from './gitStatus.svelte.js';
+import { store as sessionStore } from './sessions.svelte.js';
+import { settingsStore } from './settings.svelte.js';
 import type { GitStatusResult } from '../../shared/types.js';
 
 beforeEach(() => {
@@ -105,8 +107,24 @@ describe('gitStatusStore — default branch view', () => {
     const promise = new Promise<T>((r) => { resolve = r; });
     return { promise, resolve };
   }
+  const listed = (...ids: string[]) => {
+    sessionStore.sessions = ids.map((id) => ({ id, branch: 'feat', repoPath: '/repo', status: 'running' })) as never;
+  };
+  let prBase: Record<string, string> = {};
 
-  it('opens on the branch view, looking up the base once for overlapping refreshes', async () => {
+  beforeEach(() => {
+    prBase = {};
+    gitStatusStore.setPrBaseSource((id) => prBase[id]);
+    settingsStore.current = { ...settingsStore.current, defaultBaseBranch: '' };
+  });
+
+  afterEach(() => {
+    sessionStore.sessions = [];
+    for (const id of ['fresh', 'picked', 'empty', 'pr', 'setting', 'chosen']) gitStatusStore.clear(id);
+  });
+
+  it('opens on the branch view, looking up the repo\'s default branch once', async () => {
+    listed('fresh');
     const lookup = deferred<string>();
     mockGroveBench.getDefaultBranch.mockReturnValueOnce(lookup.promise);
     const first = gitStatusStore.refresh('fresh');
@@ -117,12 +135,13 @@ describe('gitStatusStore — default branch view', () => {
     await new Promise((r) => setTimeout(r, 5));
 
     expect(mockGroveBench.getDefaultBranch).toHaveBeenCalledTimes(1);
+    expect(mockGroveBench.getDefaultBranch).toHaveBeenCalledWith('/repo');
     expect(mockGroveBench.getGitStatus).toHaveBeenCalledWith('fresh', { scope: 'branch', base: 'develop' });
-    expect(gitStatusStore.getScope('fresh')).toEqual({ scope: 'branch', base: 'develop' });
-    gitStatusStore.clear('fresh');
+    expect(gitStatusStore.getScope('fresh')).toEqual({ scope: 'branch', base: 'develop', auto: true });
   });
 
   it('keeps a scope chosen while the base was being looked up', async () => {
+    listed('picked');
     const lookup = deferred<string>();
     mockGroveBench.getDefaultBranch.mockReturnValueOnce(lookup.promise);
     const first = gitStatusStore.refresh('picked');
@@ -130,9 +149,56 @@ describe('gitStatusStore — default branch view', () => {
     lookup.resolve('main');
     await first;
 
-    expect(gitStatusStore.getScope('picked').scope).toBe('working');
+    expect(gitStatusStore.getScope('picked')).toEqual({ scope: 'working', base: undefined });
     expect(mockGroveBench.getGitStatus).toHaveBeenCalledTimes(1);
     expect(mockGroveBench.getGitStatus).toHaveBeenCalledWith('picked');
-    gitStatusStore.clear('picked');
+  });
+
+  it('shows the uncommitted changes when there is no branch view to draw', async () => {
+    mockGroveBench.getGitStatus
+      .mockResolvedValueOnce({ entries: [], scopeError: 'No merge base with main' })
+      .mockResolvedValueOnce({ entries: [{ filePath: 'new.ts', status: 'untracked', staged: false }] })
+      .mockResolvedValueOnce({ entries: [{ filePath: 'new.ts', status: 'untracked', staged: false }] });
+    await gitStatusStore.refresh('empty');
+
+    expect(gitStatusStore.getScope('empty')).toEqual({ scope: 'working', base: 'main', auto: true });
+    expect(gitStatusStore.getStatus('empty').entries.map((e) => e.filePath)).toEqual(['new.ts']);
+
+    // The same base again: it stays on the uncommitted view without retrying.
+    gitStatusStore.scheduleRefresh('empty', 0);
+    await new Promise((r) => setTimeout(r, 5));
+    expect(mockGroveBench.getGitStatus).toHaveBeenLastCalledWith('empty');
+  });
+
+  it('compares against the open PR\'s base, and follows it when it changes', async () => {
+    prBase.pr = 'release/1.2';
+    await gitStatusStore.refresh('pr');
+    expect(mockGroveBench.getGitStatus).toHaveBeenLastCalledWith('pr', { scope: 'branch', base: 'release/1.2' });
+
+    prBase.pr = 'main';
+    gitStatusStore.prBaseChanged('pr');
+    await new Promise((r) => setTimeout(r, 350));
+    expect(mockGroveBench.getGitStatus).toHaveBeenLastCalledWith('pr', { scope: 'branch', base: 'main' });
+  });
+
+  it('picks up a new default base from Settings', async () => {
+    await gitStatusStore.refresh('setting');
+    expect(mockGroveBench.getGitStatus).toHaveBeenLastCalledWith('setting', { scope: 'branch', base: 'main' });
+
+    settingsStore.current = { ...settingsStore.current, defaultBaseBranch: 'develop' };
+    gitStatusStore.scheduleRefresh('setting', 0);
+    await new Promise((r) => setTimeout(r, 5));
+    expect(mockGroveBench.getGitStatus).toHaveBeenLastCalledWith('setting', { scope: 'branch', base: 'develop' });
+  });
+
+  it('leaves a scope the user picked alone', async () => {
+    await gitStatusStore.setScope('chosen', 'branch', 'main');
+    prBase.chosen = 'release/1.2';
+    mockGroveBench.getGitStatus.mockResolvedValueOnce({ entries: [], scopeError: 'No merge base with main' });
+    gitStatusStore.scheduleRefresh('chosen', 0);
+    await new Promise((r) => setTimeout(r, 5));
+
+    expect(gitStatusStore.getScope('chosen')).toEqual({ scope: 'branch', base: 'main' });
+    expect(mockGroveBench.getGitStatus).toHaveBeenLastCalledWith('chosen', { scope: 'branch', base: 'main' });
   });
 });

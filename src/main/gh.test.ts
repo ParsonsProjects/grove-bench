@@ -496,6 +496,8 @@ describe('prCreate()', () => {
     );
     expect(result.number).toBe(7);
     expect(result.isDraft).toBe(true);
+    // Opened with the gh account, so its own: no approving it.
+    expect(result.viewerIsAuthor).toBe(true);
   });
 
   it('omits --base and --draft when not requested', async () => {

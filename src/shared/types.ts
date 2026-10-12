@@ -395,6 +395,9 @@ export interface GitStatusResult {
   baseRef?: string;
   /** Set when the branch scope could not find a merge base with `base`. */
   scopeError?: string;
+  /** Branch scope: how many entries the uncommitted view would list, so
+   *  places that mean "changed in the worktree" can still say so. */
+  uncommitted?: number;
   /** Set when git could not read the status: `entries` being empty then
    *  does not mean the tree is clean. */
   error?: string;
@@ -535,8 +538,6 @@ export interface PrReviewSubmit {
   event: PrReviewEvent;
   /** The review summary (Markdown). GitHub needs one to comment or request changes. */
   body: string;
-  /** The branch the Branch view compares against, for checking the base side's lines. */
-  base?: string;
   comments: PrReviewLineComment[];
 }
 
@@ -546,7 +547,7 @@ export interface PrReviewSubmitResult {
   /** Comments posted on their lines. */
   inline: number;
   /** Comments quoted in the summary instead: their lines aren't in the PR's
-   *  diff, or the file differs from the PR's latest commit. */
+   *  diff, or read differently there than when the comment was written. */
   quoted: number;
 }
 

@@ -54,12 +54,13 @@
     }
   }
 
-  /** Where line comments were written, so each shows only on its comparison. */
-  let commentContext = $derived(isBranchScope ? `branch vs ${gitStatus.baseRef ?? scopeState.base ?? 'base'}` : undefined);
+  /** Where line comments were written, so each shows only on its comparison.
+   *  Named by the chosen base, not the resolved ref, which can move between
+   *  `main` and `origin/main` and would hide comments already written. */
+  let commentContext = $derived(isBranchScope ? `branch vs ${scopeState.base ?? gitStatus.baseRef ?? 'base'}` : undefined);
 
-  // ── PR review (Branch view only: it matches what the PR shows) ──
-  let pr = $derived(prStore.getPr(sessionId));
-  let reviewablePr = $derived(isBranchScope && pr?.state === 'OPEN' ? pr : null);
+  // ── PR review (Branch view only, for the PR of the branch it shows) ──
+  let reviewablePr = $derived(isBranchScope ? prStore.reviewablePr(sessionId) : null);
   let reviewState = $derived(reviewStore.bySession[sessionId]);
   let branchComments = $derived.by(() => {
     reviewState;
@@ -421,7 +422,6 @@
         {sessionId}
         pr={reviewPr}
         comments={branchComments}
-        base={scopeState.base}
         onclose={() => reviewOpen = false}
         onposted={(p) => onReviewPosted(reviewPr.number, p)}
       />

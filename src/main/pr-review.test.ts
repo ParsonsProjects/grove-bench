@@ -35,15 +35,20 @@ function comment(over: Partial<PrReviewLineComment> = {}): PrReviewLineComment {
 }
 
 describe('commentableLines()', () => {
-  it('maps each side\'s lines to their hunk, context lines on both sides', () => {
+  it('maps each side\'s lines to their hunk and text, context lines on both sides', () => {
     const lines = commentableLines(PATCH);
-    expect([...lines.old.entries()]).toEqual([[1, 0], [2, 0], [3, 0], [20, 1], [21, 1]]);
-    expect([...lines.new.entries()]).toEqual([[1, 0], [2, 0], [3, 0], [4, 0], [21, 1], [22, 1], [23, 1]]);
+    expect([...lines.old.entries()].map(([n, l]) => [n, l.hunk, l.text])).toEqual([
+      [1, 0, 'one'], [2, 0, 'two'], [3, 0, 'four'], [20, 1, 'twenty'], [21, 1, 'twenty-one'],
+    ]);
+    expect([...lines.new.entries()].map(([n, l]) => [n, l.hunk, l.text])).toEqual([
+      [1, 0, 'one'], [2, 0, 'TWO'], [3, 0, 'three'], [4, 0, 'four'], [21, 1, 'twenty'], [22, 1, 'added'], [23, 1, 'twenty-one'],
+    ]);
   });
 
-  it('has nothing for an empty patch', () => {
+  it('has nothing for an empty patch, and reads CRLF lines without the carriage return', () => {
     const lines = commentableLines('');
     expect(lines.old.size + lines.new.size).toBe(0);
+    expect(commentableLines('@@ -1 +1 @@\r\n-a\r\n+b\r\n').new.get(1)?.text).toBe('b');
   });
 });
 
@@ -55,17 +60,24 @@ describe('inlineComment()', () => {
   });
 
   it('places a range inside one hunk, and a base-side line on the left', () => {
-    expect(inlineComment(comment({ startLine: 2, endLine: 4 }), lines))
+    expect(inlineComment(comment({ startLine: 2, endLine: 4, snippet: 'TWO\nthree\nfour' }), lines))
       .toMatchObject({ line: 4, side: 'RIGHT', start_line: 2, start_side: 'RIGHT' });
-    expect(inlineComment(comment({ side: 'old', startLine: 2, endLine: 2 }), lines))
+    expect(inlineComment(comment({ side: 'old', snippet: 'two' }), lines))
       .toMatchObject({ line: 2, side: 'LEFT' });
   });
 
   it('refuses lines outside the diff, and a range that crosses hunks', () => {
     expect(inlineComment(comment({ startLine: 10, endLine: 10 }), lines)).toBeNull();
-    expect(inlineComment(comment({ startLine: 4, endLine: 21 }), lines)).toBeNull();
+    expect(inlineComment(comment({ startLine: 4, endLine: 21, snippet: 'four' }), lines)).toBeNull();
     // Line 4 only exists on the new side.
-    expect(inlineComment(comment({ side: 'old', startLine: 4, endLine: 4 }), lines)).toBeNull();
+    expect(inlineComment(comment({ side: 'old', startLine: 4, endLine: 4, snippet: 'four' }), lines)).toBeNull();
+  });
+
+  it('refuses lines that read differently than when the comment was written', () => {
+    // Written on line 2 before the code moved down: line 2 is now other code.
+    expect(inlineComment(comment({ snippet: 'const x = 1;' }), lines)).toBeNull();
+    // A snippet missing lines of its range (some were hidden) can't be checked.
+    expect(inlineComment(comment({ startLine: 2, endLine: 3, snippet: 'TWO' }), lines)).toBeNull();
   });
 });
 
@@ -107,18 +119,16 @@ describe('parsePrReviewSubmit()', () => {
 
 describe('submitPrReview()', () => {
   /** A fake gh and git: the PR's head is HEAD1, its files are src/a.ts
-   *  (PATCH) and a binary with no patch, and both merge bases are MB. */
-  function fakeTools(opts: { localBlob?: string } = {}) {
+   *  (PATCH) and a binary with no patch, and the checkout is at `localHead`. */
+  function fakeTools(opts: { localHead?: string } = {}) {
     mockExeca.mockImplementation((async (file: string, args: string[]) => {
       const cmd = args.join(' ');
-      if (file === 'gh' && cmd.startsWith('pr view 7')) return { stdout: JSON.stringify({ headRefOid: 'HEAD1', baseRefOid: 'BASE1' }) };
+      if (file === 'gh' && cmd === 'pr view 7 --json headRefOid') return { stdout: JSON.stringify({ headRefOid: 'HEAD1aaaaaaa' }) };
       if (file === 'gh' && cmd.includes('/pulls/7/files')) {
         return { stdout: JSON.stringify([{ filename: 'src/a.ts', patch: PATCH }, { filename: 'logo.png' }]) };
       }
       if (file === 'gh' && cmd.includes('/pulls/7/reviews')) return { stdout: JSON.stringify({ html_url: 'https://github.com/o/r/pull/7#pullrequestreview-1' }) };
-      if (file === 'git' && cmd === 'rev-parse --verify --quiet HEAD1:src/a.ts') return { stdout: 'blobA\n' };
-      if (file === 'git' && cmd === 'hash-object -- src/a.ts') return { stdout: `${opts.localBlob ?? 'blobA'}\n`, exitCode: 0 };
-      if (file === 'git' && (cmd === 'merge-base main HEAD' || cmd === 'merge-base BASE1 HEAD1')) return { stdout: 'MB\n' };
+      if (file === 'git' && cmd === 'rev-parse HEAD') return { stdout: `${opts.localHead ?? 'HEAD1aaaaaaa'}\n` };
       throw Object.assign(new Error(`unexpected: ${file} ${cmd}`), { stderr: 'fatal' });
     }) as never);
   }
@@ -131,61 +141,83 @@ describe('submitPrReview()', () => {
     return JSON.parse(call![2].input ?? '');
   }
 
-  it('posts comments in the PR diff on their lines and quotes the rest', async () => {
+  it('posts comments on lines that still read the same in the PR, and quotes the rest', async () => {
     fakeTools();
     const result = await submitPrReview('/wt', '/repo', {
       prNumber: 7,
       event: 'REQUEST_CHANGES',
       body: 'A few things',
-      base: 'main',
       comments: [
         comment(),
-        comment({ side: 'old', startLine: 2, endLine: 2, snippet: 'two', body: 'Was this used?' }),
+        comment({ side: 'old', snippet: 'two', body: 'Was this used?' }),
         comment({ startLine: 10, endLine: 10, snippet: 'far away', body: 'Not in the diff' }),
+        comment({ snippet: 'moved since', body: 'Lines moved' }),
         comment({ filePath: 'logo.png', startLine: 1, endLine: 1, snippet: '', body: 'Binary' }),
       ],
     });
 
-    expect(result).toEqual({ url: 'https://github.com/o/r/pull/7#pullrequestreview-1', inline: 2, quoted: 2 });
+    expect(result).toEqual({ url: 'https://github.com/o/r/pull/7#pullrequestreview-1', inline: 2, quoted: 3 });
     const payload = postedPayload();
     expect(payload.event).toBe('REQUEST_CHANGES');
-    expect(payload.commit_id).toBe('HEAD1');
+    expect(payload.commit_id).toBe('HEAD1aaaaaaa');
     expect(payload.comments).toEqual([
       { path: 'src/a.ts', body: 'Why upper case?', line: 2, side: 'RIGHT' },
       { path: 'src/a.ts', body: 'Was this used?', line: 2, side: 'LEFT' },
     ]);
     expect(payload.body).toMatch(/^A few things\n\n---\n\nLine comments that couldn't go on their lines:/);
-    expect(payload.body).toContain('Not in the diff');
-    expect(payload.body).toContain('Binary');
+    for (const text of ['Not in the diff', 'Lines moved', 'Binary']) expect(payload.body).toContain(text);
+    // Nothing local is read unless approving.
+    expect(mockExeca.mock.calls.some(([file]) => file === 'git')).toBe(false);
   });
 
-  it('quotes comments on a file that differs from the PR\'s latest push', async () => {
-    fakeTools({ localBlob: 'blobLocal' });
-    const result = await submitPrReview('/wt', '/repo', { prNumber: 7, event: 'COMMENT', body: 'Notes', base: 'main', comments: [comment()] });
-    expect(result).toMatchObject({ inline: 0, quoted: 1 });
-    expect(postedPayload().comments).toBeUndefined();
-  });
-
-  it('approves without reading the PR when there are no line comments', async () => {
+  it('approves when the checkout is at the PR\'s head, pinned to that commit', async () => {
     fakeTools();
     await submitPrReview('/wt', '/repo', { prNumber: 7, event: 'APPROVE', body: '', comments: [] });
-    expect(mockExeca).toHaveBeenCalledTimes(1);
-    expect(postedPayload()).toEqual({ event: 'APPROVE' });
+    expect(postedPayload()).toEqual({ event: 'APPROVE', commit_id: 'HEAD1aaaaaaa' });
+    expect(mockExeca.mock.calls.some(([file, args]) => file === 'gh' && (args as string[]).includes('/files'))).toBe(false);
+  });
+
+  it('refuses to approve a head the checkout doesn\'t have', async () => {
+    fakeTools({ localHead: 'LOCAL2bbbbbb' });
+    await expect(submitPrReview('/wt', '/repo', { prNumber: 7, event: 'APPROVE', body: '', comments: [] }))
+      .rejects.toThrow('This checkout is at LOCAL2b but PR #7 is at HEAD1aa');
+    expect(mockExeca.mock.calls.some(([file, args]) => file === 'gh' && (args as string[]).includes('POST'))).toBe(false);
   });
 
   it('needs a summary to comment or request changes', async () => {
     fakeTools();
-    await expect(submitPrReview('/wt', '/repo', { prNumber: 7, event: 'COMMENT', body: '', comments: [] }))
+    await expect(submitPrReview('/wt', '/repo', { prNumber: 7, event: 'COMMENT', body: ' ', comments: [comment()] }))
       .rejects.toThrow('Write a summary to comment or request changes');
     expect(mockExeca).not.toHaveBeenCalled();
   });
 
   it('passes on GitHub\'s reason when it refuses', async () => {
-    mockExeca.mockRejectedValue(Object.assign(new Error('Command failed: gh api'), {
+    fakeTools();
+    const refuse = Object.assign(new Error('Command failed: gh api'), {
       stderr: 'gh: Unprocessable Entity (HTTP 422)',
       stdout: JSON.stringify({ message: 'Unprocessable Entity', errors: ['Can not approve your own pull request'] }),
-    }));
+    });
+    const fake = mockExeca.getMockImplementation() as unknown as (...a: unknown[]) => Promise<unknown>;
+    mockExeca.mockImplementation(((file: string, args: string[], o: unknown) =>
+      args.includes('POST') ? Promise.reject(refuse) : fake(file, args, o)) as never);
     await expect(submitPrReview('/wt', '/repo', { prNumber: 7, event: 'APPROVE', body: '', comments: [] }))
       .rejects.toThrow('Can not approve your own pull request');
+  });
+
+  it('says a timed-out post may have gone through, so it isn\'t posted twice', async () => {
+    fakeTools();
+    const fake = mockExeca.getMockImplementation() as unknown as (...a: unknown[]) => Promise<unknown>;
+    mockExeca.mockImplementation(((file: string, args: string[], o: unknown) =>
+      args.includes('POST')
+        ? Promise.reject(Object.assign(new Error('Command timed out'), { timedOut: true }))
+        : fake(file, args, o)) as never);
+    await expect(submitPrReview('/wt', '/repo', { prNumber: 7, event: 'COMMENT', body: 'Notes', comments: [] }))
+      .rejects.toThrow(/may still have been posted/);
+  });
+
+  it('says which PR it could not read', async () => {
+    mockExeca.mockRejectedValue(Object.assign(new Error('Command failed'), { stderr: 'no pull requests found' }));
+    await expect(submitPrReview('/wt', '/repo', { prNumber: 7, event: 'COMMENT', body: 'Notes', comments: [] }))
+      .rejects.toThrow('Could not read PR #7: no pull requests found');
   });
 });

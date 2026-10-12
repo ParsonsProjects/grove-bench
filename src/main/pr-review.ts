@@ -1,18 +1,21 @@
 import { z } from 'zod';
-import { runProcess } from './process-host.js';
-import { git, resolveMergeBase } from './git.js';
-import { prFilePatches, prHeadAndBase, prSubmitReview, type GhReviewComment } from './gh.js';
+import { git } from './git.js';
+import { prFilePatches, prHeadSha, prSubmitReview, type GhReviewComment } from './gh.js';
 import type { PrReviewLineComment, PrReviewSubmit, PrReviewSubmitResult } from '../shared/types.js';
 
 /**
  * Posting a review from the Changes tab's Branch view to the thread's PR.
  *
- * The line comments were written against the local branch, so before one is
- * placed on its line two things are checked: the file is the same as on the
- * PR's latest commit (base side: the same merge base), and the lines are in
- * the PR's diff, which is all GitHub accepts. A comment that fails either
- * check is quoted in the review summary instead, so it is never dropped and
- * never lands on the wrong line.
+ * Line comments were written against the local branch, and may be older than
+ * its latest commits. One goes on its line only when the PR's own diff has
+ * those lines in one hunk with the same text the comment was written on;
+ * GitHub only takes lines in its diff, and the text check stops a comment
+ * whose lines have moved since from landing on other code. Any other comment
+ * is quoted in the review summary, so it is never dropped and never lands on
+ * the wrong line.
+ *
+ * An approval is pinned to the PR's head commit, and only made when that is
+ * the commit checked out here: approving should cover what was reviewed.
  */
 
 const lineComment = z.object({
@@ -28,7 +31,6 @@ const reviewRequest = z.object({
   prNumber: z.number().int().positive(),
   event: z.enum(['APPROVE', 'REQUEST_CHANGES', 'COMMENT']),
   body: z.string(),
-  base: z.string().optional(),
   comments: z.array(lineComment),
 });
 
@@ -44,16 +46,26 @@ function isRepoRelative(p: string): boolean {
   return !norm.startsWith('/') && !/^[a-zA-Z]:/.test(norm) && !norm.split('/').includes('..');
 }
 
-/** The lines a comment can sit on in one file's patch, per side, each mapped
- *  to the hunk it's in (a range must stay inside one hunk). */
+/** One line of a patch a comment can sit on: the hunk it's in, and its text. */
+interface PatchLine {
+  hunk: number;
+  text: string;
+}
+
+/** The lines a comment can sit on in one file's patch, per side. */
 export interface CommentableLines {
-  old: Map<number, number>;
-  new: Map<number, number>;
+  old: Map<number, PatchLine>;
+  new: Map<number, PatchLine>;
+}
+
+/** Line text without a CRLF file's carriage return, so both sides compare alike. */
+function lineText(line: string): string {
+  return line.endsWith('\r') ? line.slice(0, -1) : line;
 }
 
 export function commentableLines(patch: string): CommentableLines {
-  const old = new Map<number, number>();
-  const neu = new Map<number, number>();
+  const old = new Map<number, PatchLine>();
+  const neu = new Map<number, PatchLine>();
   let hunk = -1;
   let o = 0;
   let n = 0;
@@ -67,27 +79,33 @@ export function commentableLines(patch: string): CommentableLines {
     }
     if (hunk < 0) continue;
     // "\ No newline at end of file" and blank trailing lines aren't lines.
-    if (line[0] === '+') neu.set(n++, hunk);
-    else if (line[0] === '-') old.set(o++, hunk);
+    const text = lineText(line.slice(1));
+    if (line[0] === '+') neu.set(n++, { hunk, text });
+    else if (line[0] === '-') old.set(o++, { hunk, text });
     else if (line[0] === ' ') {
-      old.set(o++, hunk);
-      neu.set(n++, hunk);
+      old.set(o++, { hunk, text });
+      neu.set(n++, { hunk, text });
     }
   }
   return { old, new: neu };
 }
 
 /** The comment as GitHub takes it, or null when its lines aren't all in one
- *  hunk of the PR's diff on that side. */
+ *  hunk of the PR's diff on that side, or don't read as they did when the
+ *  comment was written. */
 export function inlineComment(c: PrReviewLineComment, lines: CommentableLines): GhReviewComment | null {
   const onSide = lines[c.side];
   const start = Math.min(c.startLine, c.endLine);
   const end = Math.max(c.startLine, c.endLine);
-  const hunk = onSide.get(end);
-  if (hunk === undefined) return null;
-  // Within a hunk each side's line numbers run without gaps, so both ends in
-  // the same hunk means every line between is in it too.
-  if (start !== end && onSide.get(start) !== hunk) return null;
+  const wrote = c.snippet.split('\n').map(lineText);
+  if (wrote.length !== end - start + 1) return null;
+  let hunk: number | undefined;
+  for (let n = start; n <= end; n++) {
+    const line = onSide.get(n);
+    if (!line || line.text !== wrote[n - start]) return null;
+    if (hunk !== undefined && line.hunk !== hunk) return null;
+    hunk = line.hunk;
+  }
   const side = c.side === 'new' ? 'RIGHT' : 'LEFT';
   return {
     path: c.filePath,
@@ -123,92 +141,43 @@ export function buildReviewBody(summary: string, quoted: PrReviewLineComment[]):
   return parts.join('\n\n---\n\n');
 }
 
-/** The blob for `filePath` at `rev`, or null when it isn't there (or `rev`
- *  isn't in this clone). */
-async function blobAt(cwd: string, rev: string, filePath: string): Promise<string | null> {
-  try {
-    return (await git(['rev-parse', '--verify', '--quiet', `${rev}:${filePath}`], cwd)).trim() || null;
-  } catch {
-    return null;
-  }
-}
-
-/** The blob the working-tree file would be if committed (line endings
- *  normalised as git would), or null when it doesn't exist. */
-async function workingBlob(cwd: string, filePath: string): Promise<string | null> {
-  const result = await runProcess('git', ['hash-object', '--', filePath], { cwd, reject: false });
-  return result.exitCode === 0 ? result.stdout.trim() || null : null;
-}
-
-/** Whether each side of a file in the Branch view matches the PR's diff, so
- *  line numbers mean the same lines. Each answer is worked out once. */
-function contentChecker(cwd: string, pr: { headSha: string; baseSha: string }, base: string | undefined) {
-  const cache = new Map<string, Promise<boolean>>();
-  let mergeBases: Promise<{ ours: string | null; theirs: string | null }> | null = null;
-
-  function getMergeBases() {
-    mergeBases ??= Promise.all([
-      base ? resolveMergeBase(cwd, base).then((mb) => mb?.mergeBase ?? null).catch(() => null) : Promise.resolve(null),
-      git(['merge-base', pr.baseSha, pr.headSha], cwd).then((s) => s.trim() || null).catch(() => null),
-    ]).then(([ours, theirs]) => ({ ours, theirs }));
-    return mergeBases;
-  }
-
-  async function check(filePath: string, side: 'old' | 'new'): Promise<boolean> {
-    if (side === 'new') {
-      const [local, onPr] = await Promise.all([workingBlob(cwd, filePath), blobAt(cwd, pr.headSha, filePath)]);
-      return local !== null && local === onPr;
-    }
-    const { ours, theirs } = await getMergeBases();
-    if (!ours || !theirs) return false;
-    if (ours === theirs) return true;
-    const [a, b] = await Promise.all([blobAt(cwd, ours, filePath), blobAt(cwd, theirs, filePath)]);
-    return a !== null && a === b;
-  }
-
-  return (filePath: string, side: 'old' | 'new'): Promise<boolean> => {
-    const key = `${side}:${filePath}`;
-    let answer = cache.get(key);
-    if (!answer) {
-      answer = check(filePath, side);
-      cache.set(key, answer);
-    }
-    return answer;
-  };
-}
-
-/** Post the review. Comments go on their lines where the checks above allow,
+/** Post the review. Comments go on their lines where the PR's diff allows,
  *  and into the summary otherwise. */
 export async function submitPrReview(worktreePath: string, repoPath: string, req: PrReviewSubmit): Promise<PrReviewSubmitResult> {
+  // GitHub needs a body to comment or request changes.
+  if (req.event !== 'APPROVE' && !req.body.trim()) throw new Error('Write a summary to comment or request changes');
+  // Read fresh: the PR may have moved on since the last poll.
+  const [headSha, patches, localHead] = await Promise.all([
+    prHeadSha(repoPath, req.prNumber),
+    req.comments.length > 0 ? prFilePatches(repoPath, req.prNumber) : Promise.resolve(new Map<string, string | null>()),
+    req.event === 'APPROVE' ? git(['rev-parse', 'HEAD'], worktreePath).then((s) => s.trim()) : Promise.resolve(''),
+  ]);
+  if (req.event === 'APPROVE' && localHead !== headSha) {
+    throw new Error(
+      `This checkout is at ${localHead.slice(0, 7)} but PR #${req.prNumber} is at ${headSha.slice(0, 7)}. ` +
+      'Push or pull until they match, so the approval covers what you reviewed.',
+    );
+  }
+
   const inline: GhReviewComment[] = [];
   const quoted: PrReviewLineComment[] = [];
-  let commitId: string | undefined;
-
-  if (req.comments.length > 0) {
-    // Read fresh: the PR may have moved on since the last poll.
-    const pr = await prHeadAndBase(repoPath, req.prNumber);
-    commitId = pr.headSha;
-    const patches = await prFilePatches(repoPath, req.prNumber);
-    const sameContent = contentChecker(worktreePath, pr, req.base);
-    const linesByPath = new Map<string, CommentableLines>();
-    for (const c of req.comments) {
-      const patch = patches.get(c.filePath);
-      let placed: GhReviewComment | null = null;
-      if (patch && (await sameContent(c.filePath, c.side))) {
-        let lines = linesByPath.get(c.filePath);
-        if (!lines) {
-          lines = commentableLines(patch);
-          linesByPath.set(c.filePath, lines);
-        }
-        placed = inlineComment(c, lines);
+  const linesByPath = new Map<string, CommentableLines>();
+  for (const c of req.comments) {
+    const patch = patches.get(c.filePath);
+    let placed: GhReviewComment | null = null;
+    if (patch) {
+      let lines = linesByPath.get(c.filePath);
+      if (!lines) {
+        lines = commentableLines(patch);
+        linesByPath.set(c.filePath, lines);
       }
-      if (placed) inline.push(placed);
-      else quoted.push(c);
+      placed = inlineComment(c, lines);
     }
+    if (placed) inline.push(placed);
+    else quoted.push(c);
   }
 
   const body = buildReviewBody(req.body, quoted);
-  if (req.event !== 'APPROVE' && !body) throw new Error('Write a summary to comment or request changes');
-  const { url } = await prSubmitReview(repoPath, req.prNumber, { event: req.event, body, commitId, comments: inline });
+  const { url } = await prSubmitReview(repoPath, req.prNumber, { event: req.event, body, commitId: headSha, comments: inline });
   return { url, inline: inline.length, quoted: quoted.length };
 }

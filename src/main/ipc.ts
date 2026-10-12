@@ -1507,7 +1507,7 @@ export function registerHandlers() {
         const tracked = parseNameStatus(await git(['diff', '--name-status', '-z', mb.mergeBase], cwd));
         const status = parseGitStatusPorcelain(await git(['status', '--porcelain=v1', '-z', '--untracked-files=all'], cwd));
         const untracked = status.entries.filter(e => e.status === 'untracked');
-        result = { entries: [...tracked, ...untracked], baseRef: mb.ref };
+        result = { entries: [...tracked, ...untracked], baseRef: mb.ref, uncommitted: status.entries.length };
       } else {
         const raw = await git(['status', '--porcelain=v1', '-z', '--untracked-files=all'], cwd);
         result = parseGitStatusPorcelain(raw);

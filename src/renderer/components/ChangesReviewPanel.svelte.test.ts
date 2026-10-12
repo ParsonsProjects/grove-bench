@@ -622,7 +622,6 @@ describe('ChangesReviewPanel — reviewing the PR', () => {
       prNumber: 7,
       event: 'APPROVE',
       body: '',
-      base: 'main',
       comments: [{ filePath: 'src/a.ts', side: 'new', startLine: 1, endLine: 1, snippet: 'new', body: 'Rename this' }],
     }));
     expect(await findByText(/Approved PR #7/)).toBeInTheDocument();
@@ -658,6 +657,26 @@ describe('ChangesReviewPanel — reviewing the PR', () => {
     expect(getByRole('button', { name: 'Submit review' })).toBeInTheDocument();
   });
 
+  it('stays open, and can\'t be cancelled, until GitHub answers', async () => {
+    let answer!: (v: { url: null; inline: number; quoted: number }) => void;
+    mockGroveBench.submitPrReview.mockReturnValueOnce(new Promise((r) => { answer = r; }));
+    const { getByRole, findByText, queryByText } = render(ChangesReviewPanel, { sessionId: SID });
+
+    await fireEvent.click(getByRole('button', { name: /Review changes…/ }));
+    await findByText('Review PR #7');
+    await fireEvent.click(getByRole('radio', { name: 'Approve' }));
+    await fireEvent.click(getByRole('button', { name: 'Submit review' }));
+
+    expect(getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    await fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+    await tick();
+    expect(queryByText('Review PR #7')).not.toBeNull();
+
+    answer({ url: null, inline: 0, quoted: 0 });
+    await waitFor(() => expect(queryByText('Review PR #7')).toBeNull());
+    expect(await findByText(/Approved PR #7/)).toBeInTheDocument();
+  });
+
   it('offers no review on the Uncommitted view or for a PR that is no longer open', async () => {
     const { queryByRole, unmount } = render(ChangesReviewPanel, { sessionId: SID });
     expect(queryByRole('button', { name: /Review changes…/ })).not.toBeNull();
@@ -672,6 +691,22 @@ describe('ChangesReviewPanel — reviewing the PR', () => {
     prStore.prsBySession = { [SID]: [{ number: 7, url: 'u', state: 'MERGED' }] };
     const merged = render(ChangesReviewPanel, { sessionId: SID });
     expect(merged.queryByRole('button', { name: /Review changes…/ })).toBeNull();
+  });
+
+  it('offers no review for a PR from a branch other than the one checked out', async () => {
+    store.sessions = [{ id: SID, branch: 'feat/now', repoPath: '/repo', status: 'running' }] as never;
+    prStore.prsBySession = { [SID]: [{ number: 7, url: 'u', state: 'OPEN', headRefName: 'feat/earlier' }] };
+    const other = render(ChangesReviewPanel, { sessionId: SID });
+    expect(other.queryByRole('button', { name: /Review changes…/ })).toBeNull();
+    other.unmount();
+
+    prStore.prsBySession = { [SID]: [
+      { number: 7, url: 'u', state: 'OPEN', headRefName: 'feat/earlier' },
+      { number: 9, url: 'u', state: 'OPEN', headRefName: 'feat/now', title: 'The current one' },
+    ] };
+    const current = render(ChangesReviewPanel, { sessionId: SID });
+    expect(current.getByText('PR #9')).toBeInTheDocument();
+    store.sessions = [];
   });
 
   it('offers to post batched comments to the PR from the review bar', async () => {
