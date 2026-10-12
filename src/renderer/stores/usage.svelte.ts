@@ -1,6 +1,7 @@
 import type { AgentEvent, ProviderUsage } from '../../shared/types.js';
 import { applyRateLimit } from '../../shared/usage.js';
 import { store as sessionStore } from './sessions.svelte.js';
+import { planAlertStore } from './planAlerts.svelte.js';
 
 /** Don't re-fetch a provider's usage more often than this unless forced. */
 export const USAGE_REFRESH_MIN_AGE_MS = 60_000;
@@ -56,7 +57,10 @@ class UsageStore {
     const run = (async () => {
       try {
         const usage = await window.groveBench.getUsage(sessionId);
-        if (usage) this.byProvider[providerId] = usage;
+        if (usage) {
+          planAlertStore.check(providerId, sessionId, this.byProvider[providerId] ?? null, usage);
+          this.byProvider[providerId] = usage;
+        }
       } catch (e) {
         console.warn('[usage] refresh failed:', e);
       } finally {
@@ -95,7 +99,10 @@ class UsageStore {
     const providerId = this.providerFor(sessionId);
     const current = this.byProvider[providerId] ?? null;
     const next = applyRateLimit(current, event);
-    if (next && next !== current) this.byProvider[providerId] = next;
+    if (next && next !== current) {
+      planAlertStore.check(providerId, sessionId, current, next);
+      this.byProvider[providerId] = next;
+    }
   }
 }
 

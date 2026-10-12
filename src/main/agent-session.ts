@@ -19,6 +19,7 @@ import { isClaudeAccountId, removedAccountMessage } from './adapters/claude-acco
 import type { AgentAdapter, AgentQueryHandle, UserMessage } from './adapters/types.js';
 import { audioSentInline, inlineAudioType } from './adapters/file-attachments.js';
 import { ResumeNotFoundError } from './adapters/types.js';
+import { lastRunningCost } from './adapters/running-cost.js';
 import { getGitIdentity } from './git.js';
 import { findRewindForkPoint, isAuthFailure, lastTurnUuid } from './agent-utils.js';
 import { hasApiKey, isApiKeyRejected, markApiKeyRejected } from './credentials.js';
@@ -34,6 +35,11 @@ import {
   awaitElicitation, respondToElicitation as answerElicitation, cancelElicitations,
 } from './session-permissions.js';
 import { SessionSkills } from './session-skills.js';
+import {
+  beforeToolUse, cancelLimit, limitsFromHistory, promptSent, respondToLimit as answerLimit,
+  toolCallSeen, turnActive, turnEnded, turnStopped, whileWaiting,
+  type LimitDecision, type LimitGateContext,
+} from './session-limits.js';
 import {
   readSafeWarning, readSafeSandbox, hasSandboxWarning, startingPermissionMode,
   initialControls, normalizeModelId, appendedSystemPrompt,
@@ -199,6 +205,9 @@ class AgentSessionManager {
     // A folder project isn't a git repository: no checkpoints, no commits.
     const gitBacked = !opts.noGit;
 
+    // Copy: the cached array must not be mutated by the live session.
+    const eventHistory = [...this.events.load(id)];
+
     const session: ManagedSession = {
       id,
       branch,
@@ -217,8 +226,7 @@ class AgentSessionManager {
       pendingResumeAt: null,
       model: initialModel,
       window: win,
-      // Copy: the cached array must not be mutated by the live session.
-      eventHistory: [...this.events.load(id)],
+      eventHistory,
       logBuffer: [],
       logBufferBytes: 0,
       logFlushTimer: null,
@@ -249,6 +257,7 @@ class AgentSessionManager {
       sleepSettled: null,
       turnHandle: null,
       promptsBeforeInit: null,
+      limits: limitsFromHistory(eventHistory),
     };
 
     this.sessions.set(id, session);
@@ -453,11 +462,14 @@ class AgentSessionManager {
       // thread still shows the earlier turns from Grove's own event log.
       resumeSessionId: caps.resume ? session.providerSessionId : null,
       resumeAtUuid: caps.resume && caps.rewind ? resumeAtUuid : null,
+      priorCostUsd: caps.resume && session.providerSessionId ? lastRunningCost(session.eventHistory) : null,
       toolAllowRules: currentSettings.toolAllowRules,
       toolDenyRules: currentSettings.toolDenyRules,
       alwaysAllowedTools: session.alwaysAllowedTools,
-      onElicitation: (request, signal) => awaitElicitation(session, request, signal),
-      onPermissionRequest: (request) => requestPermission(session, request, emit),
+      // Time spent waiting on the user doesn't count toward a turn's minutes.
+      onElicitation: (request, signal) => whileWaiting(session.limits, awaitElicitation(session, request, signal)),
+      onPermissionRequest: (request) => whileWaiting(session.limits, requestPermission(session, request, emit)),
+      beforeToolUse: ({ toolUseId }) => beforeToolUse(this.limitGate(session), toolUseId),
     });
 
     } catch (startErr) {
@@ -580,7 +592,9 @@ class AgentSessionManager {
         if ((event.type === 'assistant_text' || event.type === 'assistant_tool_use'
           || event.type === 'thinking' || event.type === 'partial_text') && !subagentParent(event)) {
           session.turnHandle = handle;
+          turnActive(session.limits);
         }
+        if (event.type === 'assistant_tool_use') toolCallSeen(session.limits, event.toolUseId);
 
         // Intercept system_init to capture provider session ID and update status
         if (event.type === 'system_init') {
@@ -660,6 +674,8 @@ class AgentSessionManager {
         // Track result for completion callback
         if (event.type === 'result') {
           if (session.turnHandle === handle) session.turnHandle = null;
+          // Adds the turn's cost to the thread's and today's spend.
+          turnEnded(session.limits, event);
           this.runHeldMcpReconnects(session);
           session.lastResult = {
             isError: event.isError,
@@ -963,6 +979,7 @@ class AgentSessionManager {
     logger.debug(`[sendMessage] session=${id} sending to adapter, providerSessionId=${sessionId || '(not yet initialized)'}${images?.length ? ` with ${images.length} image(s)` : ''}${savedFiles.length ? ` with ${savedFiles.length} file(s)` : ''}`);
     try {
       session.turnHandle = queryHandle;
+      promptSent(session.limits);
       // Once per query: a second message before the reply doesn't repeat it,
       // but a query that failed to start and was replaced gets it again.
       const withNote = handoffNote !== null && session.handoffSentTo !== queryHandle;
@@ -1012,6 +1029,26 @@ class AgentSessionManager {
   respondToElicitation(id: string, requestId: string, response: McpElicitationResponse): boolean {
     const session = this.sessions.get(id);
     return !!session && answerElicitation(session, requestId, response);
+  }
+
+  /** Continue past a reached limit, or stop the turn. False when the
+   *  question already ended (answered, stopped or timed out). */
+  respondToLimit(id: string, requestId: string, decision: LimitDecision): boolean {
+    const session = this.sessions.get(id);
+    return !!session && answerLimit(session.limits, requestId, decision);
+  }
+
+  /** What the limit gate needs for a tool call in `session`. Settings are
+   *  read each time, so a changed limit applies to the next tool call. */
+  private limitGate(session: ManagedSession): LimitGateContext {
+    return {
+      limits: session.limits,
+      settings: settings.getSettings(),
+      emit: session.emit ?? this.createEmitter(session),
+      stopTurn: () => {
+        this.interruptQuery(session.id).catch((e) => logger.warn(`[limits] could not stop ${session.id}:`, e));
+      },
+    };
   }
 
   setMode(id: string, mode: string): void {
@@ -1413,6 +1450,8 @@ class AgentSessionManager {
     // before resolving and trips "ProcessTransport is not ready for writing").
     denyPendingPermissions(session, 'Query stopped by user', emit);
     cancelElicitations(session);
+    cancelLimit(session.limits);
+    turnStopped(session.limits);
 
     // Interrupt the current turn.  The event loop in runQuery stays parked on
     // handle.events and simply waits for the next user message — no respawn.
@@ -1507,6 +1546,8 @@ class AgentSessionManager {
     // so the permission_resolved events reach the renderer.
     denyPendingPermissions(session, 'Query stopped by user', emit);
     cancelElicitations(session);
+    cancelLimit(session.limits);
+    turnStopped(session.limits);
 
     // Create a deferred promise so sendMessage() can wait for the new
     // queryHandle. Keep one that's still pending (e.g. a wake's): messages
@@ -1543,7 +1584,7 @@ class AgentSessionManager {
     if (!session || session.destroying) return false;
     if (session.status !== 'running' && session.status !== 'starting') return false;
     const handle = session.queryHandle;
-    if (!handle || session.isStartingQuery || session.pendingPermissions.size > 0 || session.pendingElicitations.size > 0) return false;
+    if (!handle || session.isStartingQuery || session.pendingPermissions.size > 0 || session.pendingElicitations.size > 0 || session.limits.pending) return false;
     if (session.turnHandle === handle) return false;
 
     perfSteps.fail(id, 'put to sleep');
@@ -1736,6 +1777,7 @@ class AgentSessionManager {
     // Resolve any pending permissions as denied
     denyPendingPermissions(session, reason, session.emit);
     cancelElicitations(session);
+    cancelLimit(session.limits);
 
     // Clean up completion callback and event listeners
     this.completionCallbacks.delete(id);

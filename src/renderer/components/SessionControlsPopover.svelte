@@ -13,6 +13,7 @@
   import { offeredForNew } from '../stores/agents.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
   import { usageStore } from '../stores/usage.svelte.js';
+  import { planAlertStore } from '../stores/planAlerts.svelte.js';
   import { toneClass } from '../lib/control-tones.js';
   import { CONTROL_SHORTCUTS, controlShortcut, type AgentSummary, type ControlOption } from '../../shared/types.js';
   import { controlHint, controlSummary } from '../lib/control-hint.js';
@@ -61,6 +62,13 @@
   // they are only seconds old.
   $effect(() => {
     if (open) usageStore.refresh(sessionId, { providerId: agentType, minAgeMs: 15_000 }).catch(() => {});
+  });
+  // The plan usage alert's View usage asks this thread's popover to open.
+  $effect(() => {
+    if (planAlertStore.usageRequest === sessionId) {
+      planAlertStore.usageRequest = null;
+      open = true;
+    }
   });
 
 

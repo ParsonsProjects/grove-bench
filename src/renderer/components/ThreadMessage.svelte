@@ -8,6 +8,7 @@
   import PermissionBlock from './PermissionBlock.svelte';
   import QuestionBlock from './QuestionBlock.svelte';
   import ElicitationBlock from './ElicitationBlock.svelte';
+  import LimitBlock from './LimitBlock.svelte';
   import ThinkingBlock from './ThinkingBlock.svelte';
   import SystemBlock from './SystemBlock.svelte';
   import GitIdentityNotice from './GitIdentityNotice.svelte';
@@ -78,6 +79,18 @@
     request={msg.request}
     resolved={msg.resolved}
     action={msg.action}
+  />
+
+{:else if msg.kind === 'limit'}
+  <LimitBlock
+    {sessionId}
+    requestId={msg.requestId}
+    limit={msg.limit}
+    used={msg.used}
+    reachedAt={msg.reachedAt}
+    resolved={msg.resolved}
+    decision={msg.decision}
+    timedOut={msg.timedOut}
   />
 
 {:else if msg.kind === 'thinking'}

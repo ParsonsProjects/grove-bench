@@ -6,6 +6,7 @@ import type { BrowserWindow } from 'electron';
 import type { AgentEvent, McpElicitationResponse, PermissionMode, SessionStatus } from '../shared/types.js';
 import type { AgentAdapter, AgentQueryHandle, PermissionResponse, UserMessage } from './adapters/types.js';
 import type { Checkpoints } from './no-git-checkpoints.js';
+import type { SessionLimits } from './session-limits.js';
 
 export type Emit = (event: AgentEvent) => void;
 
@@ -156,6 +157,9 @@ export interface ManagedSession {
   /** Servers whose browser sign-in started here and that the agent finishes
    *  by itself, with when it started. */
   mcpSignInsStarted?: Map<string, number>;
+  /** Spend, tool calls and time measured for the limits that pause the
+   *  thread (session-limits.ts), and a limit question waiting on the user. */
+  limits: SessionLimits;
 }
 
 export interface SessionCompletionResult {

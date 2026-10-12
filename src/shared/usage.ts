@@ -50,3 +50,18 @@ export function usageUpdatedAt(usage: ProviderUsage): number {
 export function windowHasReset(window: UsageWindow, now = Date.now()): boolean {
   return window.resetsAt !== undefined && window.resetsAt * 1000 <= now;
 }
+
+/**
+ * The windows of `next` that reached `percent` since `prev`: at or over it
+ * now, and under it before, reset since, or not reported then. Empty when
+ * the alert is off (0). For the plan usage alert.
+ */
+export function windowsReaching(prev: ProviderUsage | null, next: ProviderUsage, percent: number, now = Date.now()): UsageWindow[] {
+  if (!(percent > 0) || !next.available) return [];
+  const level = percent / 100;
+  return next.windows.filter((w) => {
+    if (windowHasReset(w, now) || w.utilization < level) return false;
+    const before = prev?.windows.find((p) => p.id === w.id);
+    return !before || windowHasReset(before, now) || before.utilization < level;
+  });
+}

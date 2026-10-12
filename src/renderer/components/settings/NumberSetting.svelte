@@ -3,11 +3,11 @@
   import { Input } from '$lib/components/ui/input/index.js';
   import { Label } from '$lib/components/ui/label/index.js';
 
-  /** A whole-number setting. It saves when you leave the field or press
-   *  Enter, and only a valid number: a half-typed one never applies, and a
-   *  cleared field doesn't fall back to the default unseen. Only what you
-   *  type is checked, never the saved value. */
-  let { setting, label, unit, value, min = 0, max, description, onchange }: {
+  /** A whole-number setting (or dollars and cents, with `cents`). It saves
+   *  when you leave the field or press Enter, and only a valid number: a
+   *  half-typed one never applies, and a cleared field doesn't fall back to
+   *  the default unseen. Only what you type is checked, never the saved value. */
+  let { setting, label, unit, value, min = 0, max, cents = false, description, onchange }: {
     setting: string;
     label: string;
     /** Shown after the field, e.g. "minutes". */
@@ -15,6 +15,8 @@
     value: number;
     min?: number;
     max?: number;
+    /** Allow up to two decimal places (an amount of money). */
+    cents?: boolean;
     description?: string;
     onchange: (value: number) => void;
   } = $props();
@@ -34,7 +36,9 @@
   const range = $derived(max === undefined ? `${min} or more` : `from ${min} to ${max}`);
   const error = $derived.by(() => {
     const t = text.trim();
-    if (!/^\d+$/.test(t)) return `Enter a whole number, ${range}.`;
+    if (cents ? !/^\d+(\.\d{1,2})?$/.test(t) : !/^\d+$/.test(t)) {
+      return cents ? `Enter an amount, ${range}, with up to 2 decimal places.` : `Enter a whole number, ${range}.`;
+    }
     const n = Number(t);
     if (n < min || (max !== undefined && n > max)) return `Enter a number ${range}.`;
     return null;
@@ -58,7 +62,7 @@
     <Input
       id="{uid}-input"
       type="text"
-      inputmode="numeric"
+      inputmode={cents ? 'decimal' : 'numeric'}
       class="w-24"
       bind:value={text}
       aria-invalid={showError ? true : undefined}

@@ -391,6 +391,23 @@ describe('validateSettings', () => {
     expect(s.defaultActivityView).toBe('summary');
   });
 
+  it('starts with the plan usage alert at 80% and every limit off', () => {
+    const s = validateSettings({});
+    expect(s.planUsageAlertPercent).toBe(80);
+    expect(s.notifyOnPlanUsage).toBe(true);
+    expect(s.threadSpendLimitUsd).toBe(0);
+    expect(s.dailySpendLimitUsd).toBe(0);
+    expect(s.turnToolCallLimit).toBe(0);
+    expect(s.turnMinutesLimit).toBe(0);
+  });
+
+  it('keeps valid limits and drops ones out of range', () => {
+    const kept = validateSettings({ planUsageAlertPercent: 90, threadSpendLimitUsd: 2.5, dailySpendLimitUsd: 20, turnToolCallLimit: 150, turnMinutesLimit: 45 });
+    expect(kept).toMatchObject({ planUsageAlertPercent: 90, threadSpendLimitUsd: 2.5, dailySpendLimitUsd: 20, turnToolCallLimit: 150, turnMinutesLimit: 45 });
+    const dropped = validateSettings({ planUsageAlertPercent: 150, threadSpendLimitUsd: -1, dailySpendLimitUsd: 'lots', turnToolCallLimit: 2.5, turnMinutesLimit: Infinity });
+    expect(dropped).toMatchObject({ planUsageAlertPercent: 80, threadSpendLimitUsd: 0, dailySpendLimitUsd: 0, turnToolCallLimit: 0, turnMinutesLimit: 0 });
+  });
+
   it('shows thinking summaries unless turned off', () => {
     expect(validateSettings({}).showThinkingSummaries).toBe(true);
     expect(validateSettings({ showThinkingSummaries: false }).showThinkingSummaries).toBe(false);

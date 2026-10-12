@@ -92,10 +92,21 @@ Control how the agent handles actions that need approval. The mode new threads s
 
 ## Bells (Notifications)
 
-- **Desktop notifications**: Native OS notifications, shown only while the window is unfocused: when an agent finishes a turn, when it's waiting on a permission or question, and on PR activity (new CI failures, review comments). Clicking a notification jumps to the thread
+- **Desktop notifications**: Native OS notifications, shown only while the window is unfocused: when an agent finishes a turn, when it's waiting on a permission, a question or a limit, on PR activity (new CI failures, review comments), and when plan usage reaches your alert level (see **Fences (Limits & alerts)** below). Clicking a notification jumps to the thread
 - **Flash the taskbar button**: The taskbar button also flashes; it stops as soon as the window regains focus
 - **Badge the taskbar icon**: Show how many threads need you as a count on an amber square over the taskbar icon
 - **Send a test notification**: Shows one straight away, even with the Grove Bench window in front. If it doesn't appear, Windows is holding it back: check **Settings > System > Notifications** in Windows, where Grove Bench needs to be allowed and **Do not disturb** (Focus assist on Windows 10) turned off
+
+## Fences (Limits & alerts)
+
+- **Plan usage alert**: When a plan usage window (the 5-hour or weekly one) reaches this percent, say so in the app, and as a desktop notification while the window isn't focused. Once per window until it resets. Only agents that report plan usage can raise it: Claude Code, signed in with a plan. 0 turns it off. Default 80%
+- **Limits**: When one is reached, the thread pauses before its next tool call and shows **Limit reached** in the Thread tab, waiting for you like a permission prompt. **Continue** lets it go on for another round of the limit (another $5, another 100 tool calls); **Stop the turn** ends the turn and holds any queued prompts until you resume them. With no answer in 30 minutes the turn stops. Each limit is off at 0, the default
+  - **Pause a thread once it has spent**: The thread's spend over its whole life, in USD
+  - **Pause every thread once today's spend reaches**: Spend across all threads since midnight, your time
+  - **Pause a turn after ... tool calls**: Catches a turn that keeps going. Subagents' tool calls count toward their turn too
+  - **Pause a turn after ... minutes**: Time spent waiting on you (a permission, a question) doesn't count
+- Spend is the agent's own estimate, counted when each turn ends, so a turn already running finishes before a spend limit can pause it. For Claude Code signed in with a plan, it is the list price of what the turn used, not what you are billed. Agents that don't report a cost are never paused for spend. Background work (memory notes, commit messages) isn't counted
+- Claude Code is checked before every tool call. Other agents can only be paused before the calls they ask you about, so one set to act without asking runs on until it next asks
 
 ## Tending (Background work)
 

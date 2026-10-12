@@ -11,6 +11,7 @@ import type { AgentSummary } from '../../shared/types.js';
 import { draftStore } from '../stores/draft.svelte.js';
 import { settingsStore } from '../stores/settings.svelte.js';
 import { mockGroveBench } from '../__mocks__/setup.js';
+import { planAlertStore } from '../stores/planAlerts.svelte.js';
 
 const SID = 's1';
 
@@ -63,6 +64,18 @@ async function openPopover() {
 }
 
 describe('SessionControlsPopover', () => {
+  it('opens when the plan usage alert asks to show this thread\'s usage, and only for this thread', async () => {
+    render(SessionControlsPopover, { props: { sessionId: SID, modelOptions: MODELS } });
+    planAlertStore.usageRequest = 'another-thread';
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByRole('dialog', { name: 'Agent settings' })).not.toBeInTheDocument();
+
+    planAlertStore.usageRequest = SID;
+    expect(await screen.findByRole('dialog', { name: 'Agent settings' })).toBeInTheDocument();
+    expect(planAlertStore.usageRequest).toBeNull();
+    planAlertStore.reset();
+  });
+
   it('summarises agent, model, and mode on the trigger, hiding controls at their default', async () => {
     render(SessionControlsPopover, { props: { sessionId: SID, modelOptions: MODELS } });
     await new Promise((r) => setTimeout(r, 0));
