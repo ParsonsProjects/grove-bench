@@ -52,7 +52,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [x] Overlay badge on the taskbar icon showing the count of sessions needing attention — renderer draws the count bitmap (`attention-badge.ts`), main applies it via `setOverlayIcon` (Windows) / dock badge (macOS) / `setBadgeCount` (Linux); toggle in Settings → Notifications
 
 ### Attention Triage
-- [x] Sidebar filter chips All / Needs you / Working / Unread with counts — `session-triage.ts` puts each session in exactly one state (needs-you = pending permission or question, working = turn in progress, unread = finished while unfocused)
+- [x] Sidebar filter chips All / Needs you / Working / Unread / Idle with counts — `session-triage.ts` puts each session in exactly one state (needs-you = pending permission or question, working = turn in progress, unread = finished while unfocused, idle = open and ready or sleeping; closed and errored threads come under no chip)
 - [x] Per-repo attention counts on each Projects header
 - [x] Mark Completed in the conversation context menu and the row's hover tick: stops the conversation (it was called Stop), which takes it off the Conversations list, and its state shows as Completed. A separate `completedAt` hide flag was dropped as it overlapped with Stop. Since renamed Close Conversation, with an ✕ in place of the tick, as it's used to set work aside as much as to finish it
 - [x] Sidebar sections renamed: Conversations (live working set) and Projects (each repo with all its sessions)

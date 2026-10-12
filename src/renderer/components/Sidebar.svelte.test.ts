@@ -355,6 +355,7 @@ describe('Sidebar attention triage', () => {
     expect(group).toHaveTextContent('Needs you 1');
     expect(group).toHaveTextContent('Working 1');
     expect(group).toHaveTextContent('Unread 1');
+    expect(group).toHaveTextContent('Idle 1');
   });
 
   it('filters the active list by the selected chip', async () => {
@@ -443,6 +444,28 @@ describe('Sidebar attention triage', () => {
     // Red, not green: it isn't counted as unread.
     expect(screen.getByRole('img', { name: 'Error' })).toHaveClass(AGENT_SPRITES.error.colorClass);
     expect(screen.getByRole('group', { name: 'Filter threads' })).toHaveTextContent('Unread 1');
+  });
+
+  it('lists open, quiet threads under Idle, and leaves closed and errored ones out', async () => {
+    store.sessions = [
+      ...store.sessions,
+      { id: 'sleepy', branch: 'feat-e', repoPath: '/repo-b', status: 'sleeping', displayName: 'Sleepy one' },
+      { id: 'closed', branch: 'feat-f', repoPath: '/repo-b', status: 'stopped', displayName: 'Closed one' },
+      { id: 'broken', branch: 'feat-g', repoPath: '/repo-b', status: 'error', displayName: 'Broken one' },
+    ] as any;
+    mockGroveBench.getCollapsedRepos.mockResolvedValue({ '/repo-b': false });
+    render(Sidebar);
+    // Listed under the project until a chip is picked.
+    expect(await screen.findByText('Closed one')).toBeInTheDocument();
+    expect(screen.getAllByText('Broken one').length).toBeGreaterThan(0);
+
+    await fireEvent.click(screen.getByTitle('Idle: 2'));
+    expect(screen.getAllByText('Quiet one').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Sleepy one').length).toBeGreaterThan(0);
+    expect(screen.queryByText('Closed one')).not.toBeInTheDocument();
+    expect(screen.queryByText('Broken one')).not.toBeInTheDocument();
+    expect(screen.queryByText('Working one')).not.toBeInTheDocument();
+    expect(screen.queryByText('Finished one')).not.toBeInTheDocument();
   });
 
   it('shows only dots and counts on the chips when the sidebar is narrow', async () => {

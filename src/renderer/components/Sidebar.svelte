@@ -56,8 +56,9 @@
   const SIDEBAR_MIN = 240;
   const SIDEBAR_MAX = 480;
   const SIDEBAR_DEFAULT = 300;
-  // Below this width the filter chips' labels no longer fit on one line,
-  // so the chips show just their dot and count.
+  // Below this width the first three filter chips' labels no longer fit on
+  // one line, so the chips show just their dot and count. Idle wraps onto a
+  // second line until the sidebar is about 336px wide.
   const SIDEBAR_COMPACT_BELOW = 280;
   let sidebarWidth = $state(SIDEBAR_DEFAULT);
   let compact = $derived(sidebarWidth < SIDEBAR_COMPACT_BELOW);
@@ -702,7 +703,7 @@
   let triageFilter = $state<TriageFilter>('all');
 
   /** The chips shown. There is no "All" chip: clicking the active chip
-   *  again goes back to all, which keeps the row to one line. */
+   *  again goes back to all, which keeps the row short. */
   const CHIP_FILTERS = TRIAGE_FILTERS.filter((f): f is Exclude<TriageFilter, 'all'> => f !== 'all');
 
   function toggleFilter(f: TriageFilter) {
@@ -713,6 +714,8 @@
     'needs-you': 'bg-status-attention',
     working: 'bg-status-working',
     unread: 'bg-status-unread',
+    // A ready thread's grey (AGENT_SPRITES.ready).
+    idle: 'bg-foreground/60',
   };
 
   /** Branch groups folded in the Projects tree, by project and branch. Kept
@@ -1067,11 +1070,12 @@
   <!-- No bottom padding: a folded section's heading sits right on the footer. -->
   <div class="flex-1 overflow-auto px-3 pt-3 flex-col {collapsed ? 'hidden' : 'flex'}">
     <div class="shrink-0 pb-3">
-      <!-- Triage filter: what needs me, what is working, what finished while I was away.
-           Click a chip to show only those; click it again to show all. Hidden,
-           with the sort, until there is a conversation to filter. -->
+      <!-- Triage filter: what needs me, what is working, what finished while I was away,
+           what is open and quiet. Click a chip to show only those; click it again to
+           show all. Wraps when the sidebar is too narrow for all four. Hidden, with
+           the sort, until there is a conversation to filter. -->
       {#if store.sessions.length > 0}
-      <div class="flex items-center gap-1 mb-2 px-1" role="group" aria-label="Filter threads">
+      <div class="flex flex-wrap items-center gap-1 mb-2 px-1" role="group" aria-label="Filter threads">
         {#each CHIP_FILTERS as f (f)}
           {@const n = counts[f]}
           {@const active = triageFilter === f}
