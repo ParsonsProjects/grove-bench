@@ -9,6 +9,7 @@ import * as path from 'node:path';
 import type { AgentEvent } from '../shared/types.js';
 import { freezeLog } from './freeze-log.js';
 import { logger } from './logger.js';
+import { perfLine } from './perf-log.js';
 import { SearchIndexCache, type EventSearchIndex, type EventSearchHit } from './event-search.js';
 import type { ManagedSession } from './session-types.js';
 
@@ -18,6 +19,11 @@ export { TRANSIENT_EVENT_TYPES } from '../shared/live-events.js';
 /** Event-log batching: flush after this delay or once this many bytes queue. */
 const EVENT_LOG_FLUSH_MS = 250;
 const EVENT_LOG_FLUSH_BYTES = 64 * 1024;
+
+/** A log write this slow is noted in the performance log. Writes used to
+ *  run on the main process, where some of a few KB took up to 28 s on a PC
+ *  running an antivirus, with the window frozen all that time. */
+export const SLOW_EVENT_LOG_WRITE_MS = 1_000;
 
 /** Parsed on-disk histories for sessions that are not running, keyed by id.
  *  Bounded so old sessions don't pin memory forever. Search doesn't rely on
@@ -41,6 +47,9 @@ type LoggedSession = Pick<ManagedSession, 'id' | 'eventHistory' | 'eventLogPath'
 
 export class SessionEventStore {
   private historyCache = new Map<string, { mtimeMs: number; size: number; events: AgentEvent[] }>();
+  /** The last write queued for each log file. Writes to a file run one after
+   *  another, so a rewrite never lands under an earlier append. */
+  private writes = new Map<string, Promise<void>>();
   private searchIndexes = new SearchIndexCache(SEARCH_INDEX_BUDGET);
   /** Cross-conversation search sweeps in progress (see beginSearch). */
   private searchSweeps = 0;
@@ -58,48 +67,74 @@ export class SessionEventStore {
 
   /** Queue an event line for the on-disk JSONL log. Lines are appended in
    *  batches (every EVENT_LOG_FLUSH_MS or EVENT_LOG_FLUSH_BYTES) instead of
-   *  one synchronous open/write/close per event. flush() must be called
-   *  before the log file is rewritten or the session is dropped. */
+   *  one open/write/close per event. flush() must be called, and waited for,
+   *  before the session is dropped. */
   private queue(session: LoggedSession, event: AgentEvent): void {
     const line = JSON.stringify(event) + '\n';
     session.logBuffer.push(line);
     session.logBufferBytes += line.length;
     if (session.logBufferBytes >= EVENT_LOG_FLUSH_BYTES) {
-      this.flush(session);
+      void this.flush(session);
     } else if (!session.logFlushTimer) {
-      const timer = setTimeout(() => this.flush(session), EVENT_LOG_FLUSH_MS);
+      const timer = setTimeout(() => void this.flush(session), EVENT_LOG_FLUSH_MS);
       (timer as { unref?: () => void }).unref?.();
       session.logFlushTimer = timer;
     }
   }
 
-  /** Synchronously write any queued log lines. */
-  flush(session: LoggedSession): void {
-    if (session.logFlushTimer) {
-      clearTimeout(session.logFlushTimer);
-      session.logFlushTimer = null;
-    }
-    if (session.logBuffer.length === 0) return;
+  /** Write any queued log lines, after the writes already under way. Settles
+   *  (never rejects) once everything queued for the log so far is written. */
+  flush(session: LoggedSession): Promise<void> {
+    this.stopFlushTimer(session);
+    if (session.logBuffer.length === 0) return this.writes.get(session.eventLogPath) ?? Promise.resolve();
     const data = session.logBuffer.join('');
     session.logBuffer = [];
     session.logBufferBytes = 0;
-    try {
-      freezeLog.timeWork(`event log write, ${kb(Buffer.byteLength(data))}`, () => fs.appendFileSync(session.eventLogPath, data));
-    } catch { /* non-fatal */ }
+    return this.write(session.eventLogPath, `event log write, ${kb(Buffer.byteLength(data))}`, () =>
+      fs.promises.appendFile(session.eventLogPath, data));
   }
 
   /** Replace a live session's history (rewind, /clear) and rewrite its log
    *  to match. Queued appends are dropped: they are part of what is cut. */
-  replace(session: LoggedSession, events: AgentEvent[]): void {
+  replace(session: LoggedSession, events: AgentEvent[]): Promise<void> {
     session.eventHistory = events;
     this.searchIndexes.delete(session.id);
+    this.stopFlushTimer(session);
     session.logBuffer = [];
     session.logBufferBytes = 0;
-    this.flush(session);
-    try {
-      freezeLog.timeWork(`event log rewrite, ${events.length} events`, () =>
-        fs.writeFileSync(session.eventLogPath, events.length > 0 ? events.map((e) => JSON.stringify(e)).join('\n') + '\n' : ''));
-    } catch { /* non-fatal */ }
+    const data = events.length > 0 ? events.map((e) => JSON.stringify(e)).join('\n') + '\n' : '';
+    return this.write(session.eventLogPath, `event log rewrite, ${events.length} events`, () =>
+      fs.promises.writeFile(session.eventLogPath, data));
+  }
+
+  private stopFlushTimer(session: LoggedSession): void {
+    if (session.logFlushTimer) {
+      clearTimeout(session.logFlushTimer);
+      session.logFlushTimer = null;
+    }
+  }
+
+  /**
+   * Run `write` on `file` once the writes queued before it are done. Writes
+   * are off the main process, so a slow disk or an antivirus scan delays the
+   * log, not the window; one that took SLOW_EVENT_LOG_WRITE_MS or more is
+   * noted. A failed write is skipped, as before.
+   */
+  private write(file: string, label: string, write: () => Promise<void>): Promise<void> {
+    const run = async () => {
+      const start = performance.now();
+      try {
+        await write();
+      } catch { /* non-fatal */ }
+      const ms = performance.now() - start;
+      if (ms >= SLOW_EVENT_LOG_WRITE_MS) perfLine('events', `${label} took ${Math.round(ms)} ms (the window kept responding)`);
+    };
+    const next = (this.writes.get(file) ?? Promise.resolve()).then(run);
+    this.writes.set(file, next);
+    void next.then(() => {
+      if (this.writes.get(file) === next) this.writes.delete(file);
+    });
+    return next;
   }
 
   /** Empty a stopped conversation's log on disk. */

@@ -1,0 +1,157 @@
+import { describe, it, expect } from 'vitest';
+import { createSpawnRunner, HostedProcess, type ProcessCommand } from './process-host-spawn.js';
+import type { SpawnEvent } from './process-host-protocol.js';
+
+/** Let stream events (they come on the next tick) run. */
+const settle = () => new Promise((r) => setImmediate(r));
+
+describe('HostedProcess', () => {
+  it('holds input and stop requests until it is connected, then sends them in order', async () => {
+    const proc = new HostedProcess('claude.exe');
+    proc.stdin.write('one\n');
+    proc.kill('SIGTERM');
+    await settle();
+
+    const sent: ProcessCommand[] = [];
+    proc.connect((c) => sent.push(c));
+    proc.stdin.write('two\n');
+    await settle();
+
+    expect(sent).toEqual([
+      { type: 'stdin', data: 'one\n' },
+      { type: 'kill', signal: 'SIGTERM' },
+      { type: 'stdin', data: 'two\n' },
+    ]);
+  });
+
+  it('looks like a running ChildProcess until it exits', () => {
+    const proc = new HostedProcess('claude.exe');
+    proc.connect(() => {});
+    expect(proc.exitCode).toBeNull();
+    expect(proc.signalCode).toBeNull();
+    expect(proc.killed).toBe(false);
+
+    proc.receive({ type: 'exit', id: 1, code: 3, signal: null });
+    expect(proc.exitCode).toBe(3);
+    // Nothing left to stop.
+    expect(proc.kill('SIGTERM')).toBe(false);
+    expect(proc.killed).toBe(false);
+  });
+
+  it('ignores output after its stream ended, and a second exit or close', async () => {
+    const proc = new HostedProcess('claude.exe');
+    const seen: string[] = [];
+    proc.stdout.on('data', (d: Buffer) => seen.push(d.toString()));
+    proc.on('exit', () => seen.push('exit'));
+    proc.on('close', () => seen.push('close'));
+
+    proc.receive({ type: 'stdout', id: 1, data: 'a' });
+    proc.receive({ type: 'stdout-end', id: 1 });
+    proc.receive({ type: 'stdout', id: 1, data: 'late' });
+    proc.receive({ type: 'exit', id: 1, code: 0, signal: null });
+    proc.receive({ type: 'exit', id: 1, code: 1, signal: null });
+    proc.receive({ type: 'close', id: 1 });
+    proc.lost();
+    await settle();
+
+    expect(seen).toEqual(['exit', 'close', 'a']);
+    expect(proc.exitCode).toBe(0);
+  });
+
+  it('passes a failed start on as an error, with the fields the SDK reads', () => {
+    const proc = new HostedProcess('claude.exe');
+    const errors: Error[] = [];
+    proc.on('error', (e: Error) => errors.push(e));
+    proc.receive({ type: 'error', id: 1, error: { name: 'Error', message: 'spawn claude.exe ENOENT', code: 'ENOENT', syscall: 'spawn claude.exe', path: 'claude.exe' } });
+    expect(errors[0]).toBeInstanceOf(Error);
+    expect(errors[0]).toMatchObject({ code: 'ENOENT', syscall: 'spawn claude.exe' });
+  });
+
+  it("doesn't throw for an error nobody listens for", () => {
+    const proc = new HostedProcess('claude.exe');
+    expect(() => proc.receive({ type: 'error', id: 1, error: { name: 'Error', message: 'boom' } })).not.toThrow();
+  });
+
+  it('fails its input stream when writing to the process failed', async () => {
+    const proc = new HostedProcess('claude.exe');
+    const errors: unknown[] = [];
+    proc.stdin.on('error', (e) => errors.push(e));
+    proc.receive({ type: 'stdin-error', id: 1, error: { name: 'Error', message: 'write EPIPE', code: 'EPIPE' } });
+    await settle();
+    expect(errors).toHaveLength(1);
+    expect(proc.stdin.destroyed).toBe(true);
+  });
+
+  it('when lost, exits as stopped and ends its output', async () => {
+    const proc = new HostedProcess('claude.exe');
+    const seen: string[] = [];
+    proc.stdout.on('end', () => seen.push('end'));
+    proc.stdout.resume();
+    proc.on('exit', (code, signal) => seen.push(`exit ${code} ${signal}`));
+    proc.lost();
+    await settle();
+    expect(seen).toEqual(['exit null SIGKILL', 'end']);
+    expect(proc.signalCode).toBe('SIGKILL');
+  });
+});
+
+describe('createSpawnRunner', () => {
+  /** Run a request through a runner with real processes; resolve on close. */
+  function run(script: string, onSpawned?: (runner: ReturnType<typeof createSpawnRunner>) => void) {
+    const events: SpawnEvent[] = [];
+    return new Promise<SpawnEvent[]>((resolve) => {
+      const runner = createSpawnRunner((event) => {
+        events.push(event);
+        if (event.type === 'spawned') onSpawned?.(runner);
+        if (event.type === 'close') resolve(events);
+      });
+      runner.handle({ type: 'spawn', id: 5, file: process.execPath, args: ['-e', script], env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } });
+    });
+  }
+  const text = (events: SpawnEvent[], stream: 'stdout' | 'stderr') =>
+    events.filter((e): e is Extract<SpawnEvent, { type: 'stdout' | 'stderr' }> => e.type === stream).map((e) => e.data).join('');
+
+  it('starts a process, feeds it input and reports its output and exit', async () => {
+    const events = await run(
+      "process.stdin.on('data', (d) => process.stdout.write(String(d).toUpperCase())); process.stderr.write('note');",
+      (runner) => {
+        runner.handle({ type: 'stdin', id: 5, data: 'hello\n' });
+        runner.handle({ type: 'stdin-end', id: 5 });
+      },
+    );
+    expect(events[0]).toMatchObject({ type: 'spawned', id: 5, pid: expect.any(Number), launchMs: expect.any(Number) });
+    expect(text(events, 'stdout')).toBe('HELLO\n');
+    expect(text(events, 'stderr')).toBe('note');
+    expect(events).toContainEqual({ type: 'exit', id: 5, code: 0, signal: null });
+    expect(events.at(-1)).toEqual({ type: 'close', id: 5 });
+  });
+
+  it('keeps a character whole when the process writes it in two parts', async () => {
+    const events = await run('process.stdout.write(Buffer.from([0xe2, 0x82])); setTimeout(() => process.stdout.write(Buffer.from([0xac])), 50);');
+    expect(text(events, 'stdout')).toBe('€');
+  });
+
+  it('stops a process on request', async () => {
+    const events = await run('setInterval(() => {}, 1000);', (runner) => runner.handle({ type: 'kill', id: 5, signal: 'SIGTERM' }));
+    expect(events.find((e) => e.type === 'exit')).toMatchObject({ type: 'exit', id: 5 });
+  });
+
+  it('reports a file that is not there as a failed start, then closes', async () => {
+    const events: SpawnEvent[] = [];
+    await new Promise<void>((resolve) => {
+      const runner = createSpawnRunner((event) => {
+        events.push(event);
+        if (event.type === 'close') resolve();
+      });
+      runner.handle({ type: 'spawn', id: 9, file: '/no/such/claude', args: [] });
+    });
+    expect(events.find((e) => e.type === 'spawned')).toBeUndefined();
+    expect(events.find((e) => e.type === 'error')).toMatchObject({ error: { code: 'ENOENT', syscall: 'spawn /no/such/claude' } });
+  });
+
+  it('ignores input for a process it does not have', () => {
+    const runner = createSpawnRunner(() => {});
+    expect(() => runner.handle({ type: 'stdin', id: 404, data: 'x' })).not.toThrow();
+    expect(() => runner.handle({ type: 'kill', id: 404, signal: 'SIGTERM' })).not.toThrow();
+  });
+});

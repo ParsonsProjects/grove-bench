@@ -1,13 +1,17 @@
 /**
  * The process host's own process: an Electron utility process that runs git
  * and gh for the main process (process-host.ts) and posts back what they
- * printed. Built as its own entry (vite.main.config.mjs).
+ * printed, or (as the agent host) starts the agents' processes and streams
+ * their input and output. Built as its own entry (vite.main.config.mjs).
  *
- * Only execa and the protocol here. A utility process has no `app`, so the
- * main process's modules (the logger, settings) can't load in it.
+ * Only execa, Node and the protocol here. A utility process has no `app`, so
+ * the main process's modules (the logger, settings) can't load in it.
  */
 import { execa } from 'execa';
-import { HOST_READY, isHostRequest, runRequest, serializeError, type HostStarted } from './process-host-protocol.js';
+import {
+  HOST_READY, isHostRequest, isSpawnRequest, isStdioRequest, runRequest, serializeError, type HostStarted,
+} from './process-host-protocol.js';
+import { createSpawnRunner } from './process-host-spawn.js';
 
 interface ParentPort {
   on(event: 'message', listener: (event: { data: unknown }) => void): void;
@@ -18,7 +22,16 @@ const parentPort = (process as unknown as { parentPort?: ParentPort }).parentPor
 
 if (parentPort) {
   const port = parentPort;
+  const spawns = createSpawnRunner((event) => {
+    try {
+      port.postMessage(event);
+    } catch { /* the main process is going */ }
+  });
   port.on('message', ({ data }) => {
+    if (isSpawnRequest(data) || isStdioRequest(data)) {
+      spawns.handle(data);
+      return;
+    }
     if (!isHostRequest(data)) return;
     const started = (pid: number) => port.postMessage({ type: 'started', id: data.id, pid } satisfies HostStarted);
     void runRequest(data, (file, args, options) => execa(file, args, options), undefined, started).then((reply) => {

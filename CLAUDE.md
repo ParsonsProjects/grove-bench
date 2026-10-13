@@ -20,7 +20,7 @@ src/
     preload.ts         # Context bridge (IPC exposure)
     ipc.ts             # IPC handler registration
     git.ts             # Git CLI wrapper (execa, through the process host)
-    process-host*.ts   # Utility process git and gh launch from, so launches can't freeze the window (3rd Vite entry)
+    process-host*.ts   # Utility processes git, gh and the agent's claude binary launch from, so launches can't freeze the window (3rd Vite entry)
     worktree-manager.ts
     agent-session.ts   # Session lifecycle management
     session-*.ts       # Session types, event log + history, permission prompts, limits, skills, agent config
@@ -113,7 +113,9 @@ Use the user-facing words in any new UI text, help page or doc. See `docs/projec
 - IPC bridge via Electron contextBridge (preload.ts)
 - Git operations use `execa` calling `git` CLI directly (not simple-git), via
   `runProcess` (`src/main/process-host.ts`), which runs git and gh in a utility
-  process so launching them never blocks the main process
+  process so launching them never blocks the main process. The agent's
+  claude binary starts in a second one, the agent host (`spawnProcess`),
+  and streams its stdio through it
 - Multiple concurrent agent sessions per repository
 - Worktrees stored in a managed directory with short IDs (PATH_MAX safety)
 - Windows-only (no cross-platform support in v1)

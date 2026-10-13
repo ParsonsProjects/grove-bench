@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { execa } from 'execa';
 import {
-  isHostReply, isHostRequest, isHostStarted, reviveError, runRequest, serializeError, serializeResult,
-  type HostReply, type SerializedError,
+  isHostReply, isHostRequest, isHostStarted, isSpawnEvent, isSpawnRequest, isStdioRequest, reviveError, runRequest,
+  serializeError, serializeResult, type HostReply, type SerializedError,
 } from './process-host-protocol.js';
 
 /** A clock the fake exec moves by hand. */
@@ -83,6 +83,11 @@ describe('serializing', () => {
     expect(result).toEqual({ stdout: 'x', stderr: '', exitCode: 0, failed: false, timedOut: false });
   });
 
+  it("keeps a failed spawn's syscall, path and errno", () => {
+    const error = Object.assign(new Error('spawn claude.exe ENOENT'), { code: 'ENOENT', syscall: 'spawn claude.exe', path: 'claude.exe', errno: -4058 });
+    expect(serializeError(error)).toMatchObject({ code: 'ENOENT', syscall: 'spawn claude.exe', path: 'claude.exe', errno: -4058 });
+  });
+
   it('turns a thrown non-error into a message', () => {
     expect(serializeError('boom')).toEqual({ name: 'Error', message: 'boom' });
   });
@@ -103,6 +108,30 @@ describe('message checks', () => {
     expect(isHostRequest({ id: '1', file: 'git', args: [] })).toBe(false);
     expect(isHostRequest({ id: 1, file: 'git', args: [], options: null })).toBe(false);
     expect(isHostRequest(null)).toBe(false);
+    // A spawn request has the same fields, and a type.
+    expect(isHostRequest({ type: 'spawn', id: 1, file: 'claude.exe', args: [] })).toBe(false);
+  });
+
+  it('accepts a spawn request and rejects anything else', () => {
+    expect(isSpawnRequest({ type: 'spawn', id: 1, file: 'claude.exe', args: ['--x'] })).toBe(true);
+    expect(isSpawnRequest({ type: 'spawn', id: 1, file: 'claude.exe', args: [], cwd: '/w', env: { A: '1', B: undefined } })).toBe(true);
+    expect(isSpawnRequest({ type: 'spawn', id: 1, file: 'claude.exe', args: [], cwd: 3 })).toBe(false);
+    expect(isSpawnRequest({ type: 'spawn', id: 1, file: 'claude.exe', args: [], env: null })).toBe(false);
+    expect(isSpawnRequest({ id: 1, file: 'claude.exe', args: [] })).toBe(false);
+  });
+
+  it('accepts input and stop requests, and what a process did', () => {
+    expect(isStdioRequest({ type: 'stdin', id: 1, data: 'x' })).toBe(true);
+    expect(isStdioRequest({ type: 'stdin-end', id: 1 })).toBe(true);
+    expect(isStdioRequest({ type: 'kill', id: 1, signal: 'SIGTERM' })).toBe(true);
+    expect(isStdioRequest({ type: 'spawn', id: 1 })).toBe(false);
+    expect(isStdioRequest({ type: 'stdin', id: '1' })).toBe(false);
+
+    expect(isSpawnEvent({ type: 'stdout', id: 1, data: 'x' })).toBe(true);
+    expect(isSpawnEvent({ type: 'close', id: 1 })).toBe(true);
+    expect(isSpawnEvent({ type: 'started', id: 1, pid: 2 })).toBe(false);
+    expect(isSpawnEvent({ id: 1, ok: true, launchMs: 1 })).toBe(false);
+    expect(isSpawnEvent('grove-process-host-ready')).toBe(false);
   });
 
   it('accepts a started notice and rejects anything else', () => {

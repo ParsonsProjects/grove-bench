@@ -1,6 +1,11 @@
 /**
  * Process host: git and gh run from an Electron utility process
  * (process-host-child.ts), so starting them never blocks the main process.
+ * So does the agent's claude binary, which keeps running and streams its
+ * input and output through a second host of its own, the agent host
+ * (process-host-spawn.ts). Kept apart because the git host is restarted when
+ * a command goes unanswered (after system sleep, too), and a restart stops
+ * whatever the host started.
  *
  * Starting a process holds whichever process asks for it until the OS has
  * created it. On Windows that is execa's PATH search (cross-spawn stats every
@@ -16,7 +21,12 @@
  * When the host dies with commands in flight, their processes are stopped
  * (their execa timeouts died with the host), read-only ones run again here,
  * and the rest fail: they may have done their work, so they don't run twice.
- * At quit (stop) they all fail.
+ * At quit (stop) they all fail. A spawned process can't outlive the host
+ * either (its pipes were the host's): it is stopped and reported as exited.
+ *
+ * A process spawned while the host is starting waits for it, rather than
+ * starting here: at launch the open thread's agent starts within seconds,
+ * and that is the launch that froze the window.
  */
 import { utilityProcess } from 'electron';
 import { execa } from 'execa';
@@ -26,11 +36,19 @@ import { freezeLog, launchLabel } from './freeze-log.js';
 import { logger } from './logger.js';
 import { perfLine } from './perf-log.js';
 import {
-  HOST_READY, isHostReply, isHostStarted, reviveError,
-  type HostedOptions, type HostReply, type HostRequest, type ProcessResult,
+  HOST_READY, isHostReply, isHostStarted, isSpawnEvent, reviveError,
+  type HostedOptions, type HostReply, type HostRequest, type ProcessResult, type SpawnEvent, type SpawnRequest,
 } from './process-host-protocol.js';
+import { createSpawnRunner, HostedProcess, type SpawnRunner } from './process-host-spawn.js';
 
 export type { HostedOptions, ProcessResult } from './process-host-protocol.js';
+export type { HostedProcess } from './process-host-spawn.js';
+
+/** Where a spawned process runs and how it starts. */
+export interface SpawnProcessOptions {
+  cwd?: string;
+  env?: Record<string, string | undefined>;
+}
 
 /** The host's file name next to the main bundle (vite.main.config.mjs). */
 export const HOST_BUNDLE_NAME = 'process-host-child.js';
@@ -75,6 +93,8 @@ export interface ProcessHostDeps {
   fork: () => HostProcess;
   /** Run a command in this process. */
   runHere: (file: string, args: string[], options?: HostedOptions) => Promise<unknown>;
+  /** Start processes in this process, posting what they do. */
+  spawnHere?: (post: (event: SpawnEvent) => void) => SpawnRunner;
   /** Stop a process the host started, once the host is gone. */
   killPid?: (pid: number) => void;
   now?: () => number;
@@ -82,6 +102,9 @@ export interface ProcessHostDeps {
   clearTimer?: (timer: unknown) => void;
   /** Where slow launches and failures are noted. */
   note?: (line: string) => void;
+  /** What the notes call the host, and what it runs. */
+  name?: string;
+  runs?: string;
 }
 
 interface Pending {
@@ -106,6 +129,7 @@ export function createProcessHost(deps: ProcessHostDeps) {
   const clearTimer = deps.clearTimer ?? ((t) => clearTimeout(t as ReturnType<typeof setTimeout>));
   const killPid = deps.killPid ?? killQuietly;
   const note = deps.note ?? noteInLogs;
+  const name = deps.name ?? 'process host';
 
   let state: State = 'idle';
   let host: HostProcess | null = null;
@@ -115,6 +139,10 @@ export function createProcessHost(deps: ProcessHostDeps) {
   let startTimer: unknown = null;
   let restartTimer: unknown = null;
   const pending = new Map<number, Pending>();
+  /** Processes running in the host, by request id. */
+  const spawned = new Map<number, HostedProcess>();
+  /** Spawns waiting for a starting host: told whether it came up. */
+  const waitingForHost: ((ready: boolean) => void)[] = [];
 
   function start(): void {
     if (state !== 'idle') return;
@@ -147,6 +175,11 @@ export function createProcessHost(deps: ProcessHostDeps) {
         clearTimer(startTimer);
         state = 'ready';
         readyAt = now();
+        hostCameUp(true);
+        return;
+      }
+      if (isSpawnEvent(message)) {
+        received(message);
         return;
       }
       if (isHostStarted(message)) {
@@ -159,13 +192,14 @@ export function createProcessHost(deps: ProcessHostDeps) {
     // Electron sends 'exit' after this one; without a listener it would
     // throw in the main process.
     child.on('error', (type) => {
-      if (host === child) note(`process host hit a fatal error (${type})`);
+      if (host === child) note(`${name} hit a fatal error (${type})`);
     });
     child.on('exit', (code) => {
       if (host !== child) return;
       host = null;
       clearTimer(startTimer);
       abandonPending(true);
+      loseSpawned();
       if (state === 'stopped') return;
       failed(`exited with code ${code}`);
     });
@@ -176,13 +210,16 @@ export function createProcessHost(deps: ProcessHostDeps) {
     if (readyAt !== null && now() - readyAt >= HEALTHY_UPTIME_MS) failures = 0;
     readyAt = null;
     failures++;
+    // Spawns waiting on this start go ahead here, rather than wait through
+    // more restarts.
+    hostCameUp(false);
     if (failures >= MAX_FAILURES) {
       state = 'failed';
-      note(`process host ${reason}; git and gh run in the main process from now on`);
+      note(`${name} ${reason}; ${deps.runs ?? 'git and gh'} run in the main process from now on`);
       return;
     }
     state = 'idle';
-    note(`process host ${reason}; starting it again`);
+    note(`${name} ${reason}; starting it again`);
     const timer = setTimer(() => {
       restartTimer = null;
       if (state === 'idle') launch();
@@ -191,11 +228,38 @@ export function createProcessHost(deps: ProcessHostDeps) {
     restartTimer = timer;
   }
 
+  function hostCameUp(ready: boolean): void {
+    for (const go of waitingForHost.splice(0)) go(ready);
+  }
+
+  /** A spawned process did something: pass it on. */
+  function received(event: SpawnEvent): void {
+    const proc = spawned.get(event.id);
+    if (!proc) return;
+    if (event.type === 'spawned' && event.launchMs >= SLOW_HOSTED_LAUNCH_MS) {
+      note(`${proc.label} took ${Math.round(event.launchMs)} ms to start, in the ${name} (the window kept responding)`);
+    }
+    if (event.type === 'close') spawned.delete(event.id);
+    proc.receive(event);
+  }
+
+  /** The host is gone, and the processes it started can't go on without
+   *  their pipes: stop them, and end them here. */
+  function loseSpawned(): void {
+    const lost = [...spawned.values()];
+    spawned.clear();
+    for (const proc of lost) {
+      if (proc.pid !== undefined) killPid(proc.pid);
+      if (state !== 'stopped') note(`${proc.label} stopped with the ${name}`);
+      proc.lost();
+    }
+  }
+
   function settle(reply: HostReply): void {
     const waiting = take(reply.id);
     if (!waiting) return;
     if (reply.launchMs >= SLOW_HOSTED_LAUNCH_MS) {
-      note(`${waiting.label} took ${Math.round(reply.launchMs)} ms to start, in the process host (the window kept responding)`);
+      note(`${waiting.label} took ${Math.round(reply.launchMs)} ms to start, in the ${name} (the window kept responding)`);
     }
     if (reply.ok) waiting.resolve(reply.result);
     else waiting.reject(fromCaller(reviveError(reply.error), waiting.origin));
@@ -234,7 +298,7 @@ export function createProcessHost(deps: ProcessHostDeps) {
     waiting.reject(fromCaller(error, waiting.origin));
     const child = host;
     if (child && state === 'ready') {
-      note(`process host stopped answering (${waiting.label}); restarting it`);
+      note(`${name} stopped answering (${waiting.label}); restarting it`);
       child.kill();
     }
   }
@@ -265,6 +329,49 @@ export function createProcessHost(deps: ProcessHostDeps) {
     });
   }
 
+  /**
+   * Start a long-running process, in the host when it's up or starting.
+   * Returns at once, before the process exists: its input waits until then,
+   * and its pid, output and exit follow.
+   */
+  function spawn(file: string, args: string[], options: SpawnProcessOptions = {}): HostedProcess {
+    const proc = new HostedProcess(launchLabel(file, [file, ...args]));
+    const request: Omit<SpawnRequest, 'id'> = { type: 'spawn', file, args, ...options };
+    const launch = (inHost: boolean) => {
+      // Stopped before it started: there's nothing to start.
+      if (proc.killed) {
+        proc.lost();
+        return;
+      }
+      const child = host;
+      if (inHost && state === 'ready' && child) {
+        const id = ++nextId;
+        spawned.set(id, proc);
+        try {
+          child.postMessage({ ...request, id });
+        } catch {
+          // Never delivered, so it can't have started: start it here instead.
+          spawned.delete(id);
+          launch(false);
+          return;
+        }
+        proc.connect((command) => {
+          // A new host never had it; the old one's exit ended it here.
+          if (host !== child) return;
+          try { child.postMessage({ ...command, id }); } catch { /* the host is going */ }
+        });
+        return;
+      }
+      const runner = (deps.spawnHere ?? createSpawnRunner)((event) => proc.receive(event));
+      runner.handle({ ...request, id: 0 });
+      proc.connect((command) => runner.handle({ ...command, id: 0 }));
+    };
+    if (state === 'ready') launch(true);
+    else if (state === 'starting' || (state === 'idle' && restartTimer)) waitingForHost.push(launch);
+    else launch(false);
+    return proc;
+  }
+
   /** Stop the host for good (at quit). Commands in flight are stopped and
    *  fail: nothing is waiting for their answers any more. */
   function stop(): void {
@@ -274,6 +381,8 @@ export function createProcessHost(deps: ProcessHostDeps) {
     const child = host;
     host = null;
     abandonPending(false);
+    loseSpawned();
+    hostCameUp(false);
     child?.kill();
   }
 
@@ -281,6 +390,7 @@ export function createProcessHost(deps: ProcessHostDeps) {
     start,
     stop,
     run,
+    spawn,
     /** Whether commands go to the host right now. */
     get ready(): boolean { return state === 'ready'; },
   };
@@ -364,6 +474,14 @@ const processHost = createProcessHost({
   runHere: runInMain,
 });
 
+/** The same host script, for the agents' long-running processes only. */
+const agentHost = createProcessHost({
+  fork: () => utilityProcess.fork(hostScriptPath(), [], { serviceName: 'Grove agent host' }),
+  runHere: runInMain,
+  name: 'agent host',
+  runs: 'agents',
+});
+
 /**
  * Run `file` with `args` like execa, in the process host when it's up.
  * Resolves with execa's result fields, or rejects with an error that carries
@@ -375,12 +493,24 @@ export function runProcess(file: string, args: string[], options?: HostedOptions
   return processHost.run(file, args, options);
 }
 
-/** Start the process host. Electron allows it once the app is ready. */
-export function startProcessHost(): void {
-  processHost.start();
+/**
+ * Start `file` with `args` like Node's spawn (piped stdio, no console
+ * window), in the agent host when it's up or starting, so the window never
+ * waits for the OS (or an antivirus) to create it. Returns at once.
+ */
+export function spawnProcess(file: string, args: string[], options?: SpawnProcessOptions): HostedProcess {
+  return agentHost.spawn(file, args, options);
 }
 
-/** Stop the process host (at quit), so its exit isn't taken for a crash. */
+/** Start the process and agent hosts. Electron allows it once the app is ready. */
+export function startProcessHost(): void {
+  processHost.start();
+  agentHost.start();
+}
+
+/** Stop the process and agent hosts (at quit), so their exit isn't taken for
+ *  a crash. */
 export function stopProcessHost(): void {
   processHost.stop();
+  agentHost.stop();
 }

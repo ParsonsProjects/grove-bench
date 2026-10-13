@@ -44,6 +44,9 @@ export interface SerializedError extends Partial<ProcessResult<string | Uint8Arr
   originalMessage?: string;
   /** A Node error code, such as ENOENT when git isn't installed. */
   code?: string;
+  syscall?: string;
+  path?: string;
+  errno?: number;
 }
 
 export interface HostRequest {
@@ -69,12 +72,48 @@ export interface HostStarted {
 /** The first message the host posts, once it can take requests. */
 export const HOST_READY = 'grove-process-host-ready';
 
+/**
+ * Start a long-running process whose output streams back as it comes (the
+ * agent's claude binary), rather than a command that is waited for. Its
+ * input, and a request to stop it, follow as StdioRequests with the same id.
+ */
+export interface SpawnRequest {
+  type: 'spawn';
+  id: number;
+  file: string;
+  args: string[];
+  cwd?: string;
+  env?: Record<string, string | undefined>;
+}
+
+export type StdioRequest =
+  | { type: 'stdin'; id: number; data: string | Uint8Array }
+  | { type: 'stdin-end'; id: number }
+  | { type: 'kill'; id: number; signal: string };
+
+/** What a spawned process did, in the order it did it. Output is text:
+ *  the host decodes it as UTF-8, so no character is split between two
+ *  messages. `close` comes last, once the process has exited and its output
+ *  has ended. */
+export type SpawnEvent =
+  | { type: 'spawned'; id: number; pid: number; launchMs: number }
+  | { type: 'stdout' | 'stderr'; id: number; data: string }
+  | { type: 'stdout-end' | 'stderr-end'; id: number }
+  | { type: 'stdin-error' | 'error'; id: number; error: SerializedError }
+  | { type: 'exit'; id: number; code: number | null; signal: string | null }
+  | { type: 'close'; id: number };
+
+const SPAWN_EVENT_TYPES = new Set(['spawned', 'stdout', 'stderr', 'stdout-end', 'stderr-end', 'stdin-error', 'error', 'exit', 'close']);
+const STDIO_REQUEST_TYPES = new Set(['stdin', 'stdin-end', 'kill']);
+
 const RESULT_FIELDS = [
   'stdout', 'stderr', 'exitCode', 'failed', 'timedOut', 'isCanceled', 'isTerminated', 'isMaxBuffer',
   'signal', 'signalDescription', 'command', 'escapedCommand', 'cwd', 'durationMs',
 ] as const;
 
-const ERROR_FIELDS = ['name', 'message', 'stack', 'shortMessage', 'originalMessage', 'code'] as const;
+// syscall, path and errno: a failed spawn names the call and the file, and
+// the agent SDK reads `syscall` to tell a failed start from a crash.
+const ERROR_FIELDS = ['name', 'message', 'stack', 'shortMessage', 'originalMessage', 'code', 'syscall', 'path', 'errno'] as const;
 
 /** Copy the listed fields that hold a string, number, boolean or bytes. */
 function pick(source: Record<string, unknown>, fields: readonly string[]): Record<string, unknown> {
@@ -143,6 +182,8 @@ export async function runRequest(
 export function isHostRequest(value: unknown): value is HostRequest {
   const r = value as Partial<HostRequest> | null;
   return !!r && typeof r === 'object'
+    // Spawn and stdio requests carry a type; a command to run has none.
+    && !('type' in r)
     && typeof r.id === 'number'
     && typeof r.file === 'string'
     && Array.isArray(r.args) && r.args.every((a) => typeof a === 'string')
@@ -161,4 +202,27 @@ export function isHostReply(value: unknown): value is HostReply {
   if (!r || typeof r !== 'object' || typeof r.id !== 'number' || typeof r.launchMs !== 'number') return false;
   return r.ok === true ? typeof r.result === 'object' && r.result !== null
     : r.ok === false && typeof r.error === 'object' && r.error !== null;
+}
+
+/** Whether `value` asks the host to start a long-running process. */
+export function isSpawnRequest(value: unknown): value is SpawnRequest {
+  const r = value as Partial<SpawnRequest> | null;
+  return !!r && typeof r === 'object' && r.type === 'spawn'
+    && typeof r.id === 'number'
+    && typeof r.file === 'string'
+    && Array.isArray(r.args) && r.args.every((a) => typeof a === 'string')
+    && (r.cwd === undefined || typeof r.cwd === 'string')
+    && (r.env === undefined || (typeof r.env === 'object' && r.env !== null));
+}
+
+/** Whether `value` is input for, or a request to stop, a spawned process. */
+export function isStdioRequest(value: unknown): value is StdioRequest {
+  const r = value as { type?: unknown; id?: unknown } | null;
+  return !!r && typeof r === 'object' && typeof r.type === 'string' && STDIO_REQUEST_TYPES.has(r.type) && typeof r.id === 'number';
+}
+
+/** Whether `value` reports what a spawned process did. */
+export function isSpawnEvent(value: unknown): value is SpawnEvent {
+  const r = value as { type?: unknown; id?: unknown } | null;
+  return !!r && typeof r === 'object' && typeof r.type === 'string' && SPAWN_EVENT_TYPES.has(r.type) && typeof r.id === 'number';
 }

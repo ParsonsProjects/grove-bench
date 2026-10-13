@@ -1737,7 +1737,9 @@ class AgentSessionManager {
       } catch (err) {
         logger.warn(`Closing session ${id} failed:`, err);
       } finally {
-        this.events.flush(session);
+        // Written before the close settles: a resume waits on it, then reads
+        // the log back from disk.
+        await this.events.flush(session);
         this.events.forget(id);
         session.status = 'stopped';
         if (!session.window.isDestroyed()) {
@@ -1790,7 +1792,7 @@ class AgentSessionManager {
     // Wait for Windows file handles to release
     await new Promise((r) => setTimeout(r, 500));
 
-    this.events.flush(session);
+    await this.events.flush(session);
     this.events.forget(id);
     this.sessions.delete(id);
   }
