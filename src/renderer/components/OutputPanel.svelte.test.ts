@@ -11,7 +11,7 @@ vi.mock('dompurify', () => ({
 }));
 
 import OutputPanel from './OutputPanel.svelte';
-import { messageStore } from '../stores/messages.svelte.js';
+import { messageStore, type ChatMessage } from '../stores/messages.svelte.js';
 import { store } from '../stores/sessions.svelte.js';
 import { settingsStore } from '../stores/settings.svelte.js';
 import { arrivalScene } from '../stores/arrivalScene.svelte.js';
@@ -659,6 +659,41 @@ describe('OutputPanel: selection popup', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'To prompt' }));
     expect(insertSpy).toHaveBeenCalledWith(SID, 'pick these words', {});
     insertSpy.mockRestore();
+  });
+});
+
+describe('OutputPanel: notes while working', () => {
+  const turn = (): ChatMessage[] => [
+    { kind: 'user', id: 'u1', text: 'fix it' },
+    { kind: 'text', id: 'n1', text: 'Let me check the config', uuid: 'a1' },
+    { kind: 'tool_call', id: 't1', toolName: 'Read', toolInput: { file_path: 'a.ts' }, toolUseId: 'tu1', uuid: 'a2', pending: false },
+    { kind: 'text', id: 'n2', text: 'Now the tests', uuid: 'a3' },
+    { kind: 'tool_call', id: 't2', toolName: 'Grep', toolInput: { pattern: 'x' }, toolUseId: 'tu2', uuid: 'a4', pending: false },
+    { kind: 'text', id: 'ans', text: 'Fixed the null check', uuid: 'a5' },
+  ];
+
+  it('folds them into one closed line in Focus and keeps the answer open', async () => {
+    messageStore.messagesBySession = { [SID]: turn() };
+    messageStore.setViewMode(SID, 'focus');
+    const { container } = render(OutputPanel, { sessionId: SID });
+    await tick();
+
+    const fold = container.querySelector<HTMLDetailsElement>('details[data-notes]')!;
+    expect(fold.open).toBe(false);
+    expect(fold.querySelector('summary')).toHaveTextContent('2 notes while working');
+    expect(fold.querySelector('[data-msg-id="n1"]')).not.toBeNull();
+    expect(fold.querySelector('[data-msg-id="n2"]')).not.toBeNull();
+    expect(container.querySelector('[data-msg-id="ans"]')!.closest('details')).toBeNull();
+  });
+
+  it('leaves them in line in Summary', async () => {
+    messageStore.messagesBySession = { [SID]: turn() };
+    messageStore.setViewMode(SID, 'summary');
+    const { container } = render(OutputPanel, { sessionId: SID });
+    await tick();
+
+    expect(container.querySelector('details[data-notes]')).toBeNull();
+    expect(container.querySelector('[data-msg-id="n1"]')).not.toBeNull();
   });
 });
 

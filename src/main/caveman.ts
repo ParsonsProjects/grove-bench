@@ -37,14 +37,43 @@ Example: "fn broken. null check missing L42 -> add guard. proceed?"
 
 ${CORE_RULES}`;
 
+/**
+ * Brief keeps normal grammar and cuts whole sentences instead: the running
+ * commentary between tool calls and the recap at the end, where most of the
+ * padding is. Not a caveman level, but it shares the setting.
+ */
+const BRIEF_RULES = `# Response style: Brief
+Write in plain, complete sentences, and only what the user needs to read.
+
+## While working
+Call tools without commentary: no "Let me check...", "Now I'll...", "Looking at...", "Great, that worked". Write text mid-turn only to ask the user something, to flag a blocker, or to report a finding that changes the plan.
+
+## Final message
+- Open with the answer or the outcome.
+- Report what changed and anything the user must do. Leave out the steps you took and the files you read.
+- Don't restate the question. No pleasantries or sign-offs ("Let me know if...", "Hope this helps").
+- Drop filler and hedging. If something is uncertain, say so once, where it matters.
+- Use a short list when there are several items. Point to code as path:line rather than quoting it.
+- When the user asks for an explanation, give all of it. Brief means no padding, not missing content.
+
+## Boundaries
+- Keep normal grammar: articles, full sentences, no abbreviations.
+- Code blocks, commit messages and PR text: unaffected.
+- Error messages and stack traces: reproduce verbatim.
+- Security warnings and irreversible actions: explain in full.
+
+## Persistence
+Applies to every response, however long the thread.`;
+
 const PROMPTS: Record<Exclude<CavemanMode, 'off'>, string> = {
+  brief: BRIEF_RULES,
   lite: LITE_RULES,
   full: FULL_RULES,
   ultra: ULTRA_RULES,
 };
 
 /**
- * Returns the caveman system prompt for the given mode, or null if mode is 'off'.
+ * Returns the system prompt for the given response style, or null if mode is 'off'.
  */
 export function getCavemanPrompt(mode: CavemanMode): string | null {
   if (mode === 'off') return null;

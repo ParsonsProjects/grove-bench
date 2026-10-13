@@ -362,6 +362,13 @@ describe('validateSettings', () => {
     expect(timeout('soon')).toBe(300);
   });
 
+  it('keeps every response style and drops unknown ones', () => {
+    const style = (v: unknown) => validateSettings({ cavemanMode: v }).cavemanMode;
+    expect(style('brief')).toBe('brief');
+    expect(style('ultra')).toBe('ultra');
+    expect(style('grunt')).toBe('off');
+  });
+
   it('falls back per field on invalid values instead of discarding the file', () => {
     const s = validateSettings({
       theme: 'neon',

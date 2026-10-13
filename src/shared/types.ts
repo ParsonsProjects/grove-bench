@@ -1567,7 +1567,9 @@ export interface GroveBenchAPI {
 
 // ─── Caveman ───
 
-export type CavemanMode = 'off' | 'lite' | 'full' | 'ultra';
+/** The Response style setting. Brief keeps normal grammar; the caveman levels
+ *  compress it. Named for caveman, which came first. */
+export type CavemanMode = 'off' | 'brief' | 'lite' | 'full' | 'ultra';
 
 // ─── Settings ───
 
@@ -1669,7 +1671,7 @@ export interface GroveBenchSettings {
    *  readable summary of the model's thinking. Off asks for none. Applies
    *  when a conversation's agent next starts. Default true. */
   showThinkingSummaries: boolean;
-  /** Caveman mode — terse output to reduce token usage. Default 'off'. */
+  /** Response style: Brief or a caveman level, for shorter replies. Default 'off'. */
   cavemanMode: CavemanMode;
   workingDirectories: string[];
   defaultSystemPromptAppend: string;
