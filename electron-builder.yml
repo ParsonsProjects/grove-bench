@@ -42,10 +42,10 @@ win:
       arch:
         - x64
   icon: src/main/icon.ico
-  # Installers are unsigned, so Windows SmartScreen warns on first run.
-  # To sign, add azureSignOptions (Azure Trusted Signing) here and pass the
-  # AZURE_TENANT_ID / AZURE_CLIENT_ID / AZURE_CLIENT_SECRET secrets to the
-  # "Build installer" step in .github/workflows/package.yml.
+  # Installers are unsigned, so Windows SmartScreen warns on first run and
+  # antivirus tools can flag them. "Code signing" in docs/electron-install.md
+  # covers the options, how to add azureSignOptions here, and how to report
+  # a false positive.
 
 nsis:
   oneClick: false

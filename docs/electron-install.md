@@ -55,7 +55,25 @@ The Package workflow also runs on pull requests that touch packaging files, ever
 
 ### Code signing
 
-Installers are not signed, so SmartScreen warns on first run. To sign with Azure Trusted Signing, add `win.azureSignOptions` to `electron-builder.yml` and pass `AZURE_TENANT_ID`, `AZURE_CLIENT_ID` and `AZURE_CLIENT_SECRET` to the "Build installer" step in `.github/workflows/package.yml`.
+Installers are not signed. Windows SmartScreen warns on first run, and antivirus tools can flag the installer too: AVG did in October 2026. Signing was looked at then and left for later. The options for a UK developer:
+
+| Route | Who can use it | Notes |
+|---|---|---|
+| Azure Artifact Signing (was Trusted Signing) | Organisations in the UK, EU, US and some other countries; individual developers only in the US and Canada ([quickstart](https://learn.microsoft.com/en-us/azure/artifact-signing/quickstart), [Windows code signing options](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/code-signing-options)) | Signs in CI. electron-builder supports it as `win.azureSignOptions` ([electron-builder docs](https://www.electron.build/docs/features/code-signing/code-signing-win)) |
+| OV or individual-validated certificate from a certificate authority | Individuals, in the UK too | The key has to live on hardware or the authority's cloud service, so CI signs through that service (SSL.com's eSigner, for example: [SSL.com OV code signing](https://www.ssl.com/products/software-integrity/code-signing/ov/)) |
+| SignPath Foundation (free) | Projects under an OSI-approved licence ([conditions](https://signpath.org/terms)) | Not open to Grove: FSL-1.1-MIT is not OSI approved |
+
+Signing doesn't guarantee a clean first run: SmartScreen also weighs the file's own reputation, so a new signed installer can still get a warning ([Microsoft Tech Community](https://techcommunity.microsoft.com/discussions/microsoftthreatprotection/smartscreen-reputation-issue-for-ev-code-signed-windows-application/4537122/replies/4538443)).
+
+To add Azure signing later: add `win.azureSignOptions` (`publisherName`, `endpoint`, `certificateProfileName`, `codeSigningAccountName`) to `electron-builder.yml` and pass `AZURE_TENANT_ID`, `AZURE_CLIENT_ID` and `AZURE_CLIENT_SECRET` to the "Build installer" step in `.github/workflows/package.yml`. `publisherName` must match the certificate's subject exactly: it goes into `app-update.yml`, and from then on electron-updater installs only updates signed by that publisher. Installs made before signing have no publisher to check, so they take the first signed update (`docs/auto-update-plan.md`).
+
+### Antivirus false positives
+
+Until the installer is signed and has a reputation, check each release, and report any detection:
+
+1. Upload the installer to [VirusTotal](https://www.virustotal.com) to see which engines flag it, and keep the link.
+2. Report it on the vendor's false positive form with the installer (or its release link), the detection name, the VirusTotal link and the project page. Avast: `https://www.avast.com/false-positive-file-form.php`. AVG: `https://www.avg.com/en-us/false-positive-file-form`. These addresses come from third-party lists ([MajorGeeks](https://www.majorgeeks.com/content/page/how_to_help_small_authors_report_false_positives.html), [AV-Comparatives](https://av-comparatives.org/dealing-with-false-positives-reporting-issues-to-antivirus-vendors/)); check the form is still there.
+3. For SmartScreen and Microsoft Defender, submit it as a software developer at [microsoft.com/wdsi/filesubmission](https://www.microsoft.com/wdsi/filesubmission) ([submission guide](https://learn.microsoft.com/en-us/defender-xdr/submission-guide)).
 
 ---
 
