@@ -15,10 +15,11 @@
   import { bookmarkStore } from '../stores/bookmarks.svelte.js';
   import { arrivalScene } from '../stores/arrivalScene.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
-  import { filterVisibleMessages, hasAgentReply, threadMessages } from '$lib/message-view.js';
+  import { filterVisibleMessages, foldNarration, hasAgentReply, narrationIds, threadMessages } from '$lib/message-view.js';
   import { sessionRepoColor } from '$lib/session-repo-color.js';
   import { sessionSpriteState } from '$lib/session-sprite-state.js';
   import type { EventSearchHit } from '../../shared/types.js';
+  import type { ChatMessage } from '../stores/messages.svelte.js';
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -41,7 +42,12 @@
   // The toggle lives in the status bar; the default comes from settings.
   let viewMode = $derived(messageStore.getViewMode(sessionId));
   // Subagents' messages are in their own threads (SubagentPanel).
-  let filteredMessages = $derived(filterVisibleMessages(threadMessages(allMessages), viewMode));
+  let thread = $derived(threadMessages(allMessages));
+  let filteredMessages = $derived(filterVisibleMessages(thread, viewMode));
+  // Summary and Focus fold the agent's notes while working into one line per
+  // run. In Summary the edits and commands it keeps split the runs.
+  const NO_NOTES = new Set<string>();
+  let notes = $derived(viewMode === 'detailed' ? NO_NOTES : narrationIds(thread));
 
   // ─── Lazy loading: only render recent messages, load older on demand ───
   const PAGE_SIZE = 50;
@@ -99,6 +105,7 @@
       ? filteredMessages.slice(filteredMessages.length - renderedCount)
       : filteredMessages
   );
+  let rows = $derived(foldNarration(messages, notes));
   let olderCount = $derived(
     hasOlderMessages ? filteredMessages.length - visibleCount : 0
   );
@@ -211,6 +218,9 @@
     shouldAutoScroll = false;
     requestAnimationFrame(() => {
       const el = scrollContainer?.querySelector(`[data-msg-id="${id}"]`);
+      // A folded note: unfold it, or there is nothing to scroll to.
+      const fold = el?.closest<HTMLDetailsElement>('details[data-notes]');
+      if (fold) fold.open = true;
       el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     });
     return true;
@@ -512,15 +522,31 @@
     </div>
   {/if}
 
-  {#each messages as msg (msg.id)}
-    {@const isCurrent = currentMatchId === msg.id}
+  {#snippet messageRow(msg: ChatMessage)}
     <div
       data-msg-id={msg.id}
-      class={isCurrent ? 'ring-1 ring-yellow-500/60 bg-yellow-500/10' : ''}
+      class={currentMatchId === msg.id ? 'ring-1 ring-yellow-500/60 bg-yellow-500/10' : ''}
     >
       <ThreadMessage {sessionId} {msg} {viewMode} />
     </div>
+  {/snippet}
 
+  {#each rows as row (row.kind === 'message' ? row.msg.id : `notes-${row.msgs[0].id}`)}
+    {#if row.kind === 'message'}
+      {@render messageRow(row.msg)}
+    {:else}
+      <!-- Keyed by its first note, so it stays open as more notes join. -->
+      <details data-notes class="py-1 text-xs">
+        <summary class="cursor-pointer text-muted-foreground hover:text-foreground/60 italic select-none">
+          {row.msgs.length === 1 ? '1 note' : `${row.msgs.length} notes`} while working
+        </summary>
+        <div class="mt-1 pl-3 border-l-2 border-border">
+          {#each row.msgs as msg (msg.id)}
+            {@render messageRow(msg)}
+          {/each}
+        </div>
+      </details>
+    {/if}
   {/each}
 
   <!-- Streaming thinking (live) — suppressed in focus mode -->

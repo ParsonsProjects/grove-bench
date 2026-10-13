@@ -140,7 +140,7 @@
     return `Default ${control.id === CONTROL_IDS.permissionMode ? 'permission mode' : control.label.toLowerCase()}`;
   }
 
-  // Caveman mode trims the agent's wording to save output tokens.
+  // Caveman mode trims the agent's wording, so its replies are shorter.
   const responseStyles: { value: CavemanMode; label: string; description: string }[] = [
     { value: 'off', label: 'Normal', description: 'Full, normal wording' },
     { value: 'lite', label: 'Caveman lite', description: 'Drops filler and hedging, keeps articles' },
@@ -435,7 +435,7 @@
     setting="response-style"
     label="Response style"
     for="settings-response-style"
-    description="{responseStyle.description}.{settingsStore.draft.cavemanMode !== 'off' ? ' Uses about 65 to 75% fewer output tokens. Code blocks stay normal.' : ''}"
+    description="{responseStyle.description}.{settingsStore.draft.cavemanMode !== 'off' ? ' Applies to the agent\'s replies, not its thinking or tool calls. Code blocks stay normal.' : ''}"
   >
     <Select.Root type="single" value={settingsStore.draft.cavemanMode} onValueChange={(v) => { if (v) settingsStore.draft.cavemanMode = v as CavemanMode; }}>
       <Select.Trigger id="settings-response-style" class="w-48">

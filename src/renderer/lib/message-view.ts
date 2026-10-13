@@ -15,8 +15,8 @@ export const VIEW_MODE_LABELS: Record<MessageViewMode, string> = {
 /** Short description of what each mode shows, for pickers and hints. */
 export const VIEW_MODE_DESCRIPTIONS: Record<MessageViewMode, string> = {
   detailed: 'Everything: thinking, every tool call, system notes',
-  summary: 'Hides thinking and most tool calls (edits, writes, shell commands, images and subagents stay)',
-  focus: 'Agent responses, questions and your answers only (no tool calls or thinking; images stay; subagents show as one line)',
+  summary: 'Hides thinking and most tool calls (edits, writes, shell commands, images and subagents stay); notes while working fold into one line',
+  focus: 'Agent responses, questions and your answers only (no tool calls or thinking; notes while working fold into one line; images stay; subagents show as one line)',
 };
 
 /** Grove's own MCP servers (the Preview browser, project memory): local, and
@@ -121,6 +121,8 @@ export function isMessageVisible(msg: ChatMessage, mode: MessageViewMode): boole
       // user, text, error, git_identity_missing, result. Every assistant text block is kept: agents
       // routinely split one answer across several blocks (findings, then next
       // steps), so keeping only the last would hide the part that matters.
+      // The notes written while working fold into one line instead
+      // (narrationIds).
       return true;
   }
 }
@@ -134,6 +136,51 @@ export function focusImagesOnly(msg: ChatMessage, mode: MessageViewMode): boolea
 /** Filter a message list down to what's visible for the current view mode. */
 export function filterVisibleMessages(messages: ChatMessage[], mode: MessageViewMode): ChatMessage[] {
   return messages.filter((m) => isMessageVisible(m, mode));
+}
+
+/**
+ * The agent's notes while it works ("Let me check the config"), which Summary
+ * and Focus fold into one line: text followed by another tool call in the
+ * same turn.
+ * Text after a turn's last tool call is the answer, however many blocks it is
+ * split across. Text just before a question, or a permission prompt still
+ * waiting, explains what is being asked, so it stays too.
+ */
+export function narrationIds(thread: ChatMessage[]): Set<string> {
+  const asksUser = new Set<string>();
+  for (const m of thread) {
+    if (m.kind === 'question' || (m.kind === 'permission' && !m.resolved)) asksUser.add(m.toolUseId);
+  }
+  const ids = new Set<string>();
+  let notes: string[] = [];
+  for (const m of thread) {
+    if (m.kind === 'text') {
+      notes.push(m.id);
+    } else if (m.kind === 'tool_call') {
+      if (!asksUser.has(m.toolUseId) && toolViewOf(m).kind !== 'question') for (const id of notes) ids.add(id);
+      notes = [];
+    } else if (m.kind === 'user' || m.kind === 'result') {
+      notes = [];
+    }
+  }
+  return ids;
+}
+
+/** A row of the thread: one message, or a run of notes folded together. */
+export type ThreadRow =
+  | { kind: 'message'; msg: ChatMessage }
+  | { kind: 'notes'; msgs: ChatMessage[] };
+
+/** Visible messages as rows, each run of notes (narrationIds) in one row. */
+export function foldNarration(visible: ChatMessage[], notes: Set<string>): ThreadRow[] {
+  const rows: ThreadRow[] = [];
+  for (const msg of visible) {
+    const last = rows[rows.length - 1];
+    if (!notes.has(msg.id)) rows.push({ kind: 'message', msg });
+    else if (last?.kind === 'notes') last.msgs.push(msg);
+    else rows.push({ kind: 'notes', msgs: [msg] });
+  }
+  return rows;
 }
 
 /**

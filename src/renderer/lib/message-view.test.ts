@@ -6,6 +6,8 @@ import {
   threadMessages,
   agentCallInput,
   focusImagesOnly,
+  narrationIds,
+  foldNarration,
   VIEW_MODE_LABELS,
   VIEW_MODE_DESCRIPTIONS,
 } from './message-view.js';
@@ -196,6 +198,40 @@ describe('view mode tables', () => {
       expect(VIEW_MODE_LABELS[mode]).toBeTruthy();
       expect(VIEW_MODE_DESCRIPTIONS[mode]).toBeTruthy();
     }
+  });
+});
+
+describe('narrationIds', () => {
+  const user = (id: string): ChatMessage => ({ kind: 'user', id, text: 'go' });
+  const result = (id: string): ChatMessage => ({ kind: 'result', id, subtype: 'success', isError: false });
+
+  it('counts text before a later tool call in the turn, not the answer after the last one', () => {
+    const thread = [
+      user('u1'), text('a'), tool({ id: 't1' }), text('b'), text('c'), tool({ id: 't2' }),
+      text('d'), text('e'), result('r1'),
+    ];
+    expect([...narrationIds(thread)]).toEqual(['a', 'b', 'c']);
+  });
+
+  it('does not carry text across turns', () => {
+    const thread = [user('u1'), text('a'), result('r1'), user('u2'), tool({ id: 't1' }), text('b')];
+    expect(narrationIds(thread).size).toBe(0);
+  });
+
+  it('keeps text that leads into a question or a waiting permission prompt', () => {
+    const asked = [text('a'), tool({ id: 't1', toolName: 'AskUserQuestion', toolUseId: 'q' }), { ...question('q1', true), toolUseId: 'q' }];
+    expect(narrationIds(asked).size).toBe(0);
+    const waiting = [text('a'), tool({ id: 't1', toolName: 'Bash', toolUseId: 'p' }), { ...permission('p1', false), toolUseId: 'p' }];
+    expect(narrationIds(waiting).size).toBe(0);
+    const answered = [text('a'), tool({ id: 't1', toolName: 'Bash', toolUseId: 'p' }), { ...permission('p1', true), toolUseId: 'p' }];
+    expect([...narrationIds(answered)]).toEqual(['a']);
+  });
+});
+
+describe('foldNarration', () => {
+  it('puts each run of notes in one row and leaves other messages alone', () => {
+    const rows = foldNarration([text('a'), text('b'), text('x'), text('c'), text('y')], new Set(['a', 'b', 'c']));
+    expect(rows.map((r) => (r.kind === 'notes' ? r.msgs.map((m) => m.id) : r.msg.id))).toEqual([['a', 'b'], 'x', ['c'], 'y']);
   });
 });
 
