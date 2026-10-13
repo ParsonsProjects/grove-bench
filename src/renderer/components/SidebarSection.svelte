@@ -77,9 +77,11 @@
 
 <div bind:this={place} class="shrink-0" aria-hidden="true"></div>
 <!-- Opaque and full width, so rows scrolling under it don't show through. -->
+<!-- 11px, plus the 11px chevron and its 6px gap, puts the label 28px in:
+     over the rows' status column, in line with the Threads heading. -->
 <div
   bind:this={heading}
-  class="sticky z-10 shrink-0 -mx-3 h-7 pl-2 pr-4 flex items-center gap-1 bg-sidebar border-t border-sidebar-border"
+  class="sticky z-10 shrink-0 -mx-3 h-7 pl-2.75 pr-4 flex items-center gap-1 bg-sidebar border-t border-sidebar-border"
   style="bottom: {below * HEADING_REM}rem"
   data-section={panel}
 >

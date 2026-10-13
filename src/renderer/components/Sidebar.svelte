@@ -1083,7 +1083,9 @@
            show all. Wraps when the sidebar is too narrow for all four. Hidden, with
            the sort, until there is a conversation to filter. -->
       {#if store.sessions.length > 0}
-      <div class="flex flex-wrap items-center gap-1 mb-2 px-1" role="group" aria-label="Filter threads">
+      <!-- 9px, plus a chip's 1px border and 6px padding, puts the dots in line
+           with the rows' status column, like the Threads heading below. -->
+      <div class="flex flex-wrap items-center gap-1 mb-2 pl-2.25 pr-1" role="group" aria-label="Filter threads">
         {#each CHIP_FILTERS as f (f)}
           {@const n = counts[f]}
           {@const active = triageFilter === f}
@@ -1108,7 +1110,9 @@
 
       <!-- CONVERSATIONS: the live working set, always visible at the top. The sort
            applies to the Projects tree too. -->
-      <div class="flex items-center justify-between mb-1 px-1">
+      <!-- Inset like the rows: the label over their status column, the sort
+           over their times. -->
+      <div class="flex items-center justify-between mb-1 pl-4 pr-2">
         <SectionLabel as="span">Threads</SectionLabel>
         {#if store.sessions.length > 0}
           <div class={Segmented.segmentedRoot} role="group" aria-label="Sort threads">
