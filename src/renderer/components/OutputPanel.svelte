@@ -44,9 +44,10 @@
   // Subagents' messages are in their own threads (SubagentPanel).
   let thread = $derived(threadMessages(allMessages));
   let filteredMessages = $derived(filterVisibleMessages(thread, viewMode));
-  // Focus folds the agent's notes while working into one line per run.
+  // Summary and Focus fold the agent's notes while working into one line per
+  // run. In Summary the edits and commands it keeps split the runs.
   const NO_NOTES = new Set<string>();
-  let notes = $derived(viewMode === 'focus' ? narrationIds(thread) : NO_NOTES);
+  let notes = $derived(viewMode === 'detailed' ? NO_NOTES : narrationIds(thread));
 
   // ─── Lazy loading: only render recent messages, load older on demand ───
   const PAGE_SIZE = 50;
@@ -217,7 +218,7 @@
     shouldAutoScroll = false;
     requestAnimationFrame(() => {
       const el = scrollContainer?.querySelector(`[data-msg-id="${id}"]`);
-      // A note folded in Focus: unfold it, or there is nothing to scroll to.
+      // A folded note: unfold it, or there is nothing to scroll to.
       const fold = el?.closest<HTMLDetailsElement>('details[data-notes]');
       if (fold) fold.open = true;
       el?.scrollIntoView({ behavior: 'smooth', block: 'center' });

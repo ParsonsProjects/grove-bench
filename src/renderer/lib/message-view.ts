@@ -15,7 +15,7 @@ export const VIEW_MODE_LABELS: Record<MessageViewMode, string> = {
 /** Short description of what each mode shows, for pickers and hints. */
 export const VIEW_MODE_DESCRIPTIONS: Record<MessageViewMode, string> = {
   detailed: 'Everything: thinking, every tool call, system notes',
-  summary: 'Hides thinking and most tool calls (edits, writes, shell commands, images and subagents stay)',
+  summary: 'Hides thinking and most tool calls (edits, writes, shell commands, images and subagents stay); notes while working fold into one line',
   focus: 'Agent responses, questions and your answers only (no tool calls or thinking; notes while working fold into one line; images stay; subagents show as one line)',
 };
 
@@ -139,8 +139,9 @@ export function filterVisibleMessages(messages: ChatMessage[], mode: MessageView
 }
 
 /**
- * The agent's notes while it works ("Let me check the config"), which Focus
- * folds into one line: text followed by another tool call in the same turn.
+ * The agent's notes while it works ("Let me check the config"), which Summary
+ * and Focus fold into one line: text followed by another tool call in the
+ * same turn.
  * Text after a turn's last tool call is the answer, however many blocks it is
  * split across. Text just before a question, or a permission prompt still
  * waiting, explains what is being asked, so it stays too.

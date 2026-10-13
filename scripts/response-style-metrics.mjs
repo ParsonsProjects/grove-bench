@@ -4,7 +4,7 @@
  */
 
 /**
- * Splits a turn's text the way Focus folds it (narrationIds in
+ * Splits a turn's text the way Summary and Focus fold it (narrationIds in
  * src/renderer/lib/message-view.ts): text before a later tool call is a
  * note written while working, text after the last tool call is the answer.
  * @param {Array<{ type: 'text', text: string } | { type: 'tool_use', name: string }>} blocks

@@ -686,9 +686,23 @@ describe('OutputPanel: notes while working', () => {
     expect(container.querySelector('[data-msg-id="ans"]')!.closest('details')).toBeNull();
   });
 
-  it('leaves them in line in Summary', async () => {
-    messageStore.messagesBySession = { [SID]: turn() };
+  it('folds them in Summary too, with each edit it keeps starting a new fold', async () => {
+    const [user, n1, t1, n2, t2, ans] = turn();
+    const edit: ChatMessage = { kind: 'tool_call', id: 'e1', toolName: 'Edit', toolInput: { file_path: 'a.ts', old_string: 'a', new_string: 'b' }, toolUseId: 'tu-e1', uuid: 'a6', pending: false };
+    messageStore.messagesBySession = { [SID]: [user, n1, t1, edit, n2, t2, ans] };
     messageStore.setViewMode(SID, 'summary');
+    const { container } = render(OutputPanel, { sessionId: SID });
+    await tick();
+
+    const folds = [...container.querySelectorAll('details[data-notes]')];
+    expect(folds.map((f) => f.querySelector('summary')!.textContent!.trim())).toEqual(['1 note while working', '1 note while working']);
+    expect(container.querySelector('[data-msg-id="e1"]')!.closest('details')).toBeNull();
+    expect(container.querySelector('[data-msg-id="ans"]')!.closest('details')).toBeNull();
+  });
+
+  it('leaves them in line in Detailed', async () => {
+    messageStore.messagesBySession = { [SID]: turn() };
+    messageStore.setViewMode(SID, 'detailed');
     const { container } = render(OutputPanel, { sessionId: SID });
     await tick();
 
