@@ -80,6 +80,8 @@ Running multiple AI coding agents (starting with Claude Code) on the same reposi
 └─────────────────────────────────────────────────────────┘
 ```
 
+One copy of the app runs at a time (`app.requestSingleInstanceLock()` in `src/main/index.ts`). Every build, the installed app and `npm start` alike, keeps its data in `%APPDATA%\grove-bench`, and two copies would resume the same threads, start a second agent on each transcript and write the same event logs. A second launch hands over to the first, which comes to the front, and quits.
+
 ### 4.2 Key Components
 
 #### WorktreeManager
@@ -528,6 +530,10 @@ FitAddon.fit()     ──IPC──> pty.resize(cols,rows) (terminal resizes)
 We use `execa` to call the `git` CLI directly rather than `simple-git`. The reason: `simple-git` doesn't have native worktree methods, so every call would be `git.raw()` anyway. Direct `execa` calls are lighter, have fewer dependencies, and avoid native module rebuild issues.
 
 git and gh run from the **process host** (`process-host.ts`), an Electron utility process, not from the main process. Starting a process is synchronous: on Windows, execa's PATH search (cross-spawn stats every PATH folder for every PATHEXT extension) and CreateProcess together held the main process for tens of ms per call, and sometimes seconds, freezing the window. `runProcess()` takes execa's arguments and sends them to the host; before the app is ready, while the host starts, and after it has failed three times in a row, it runs execa in the main process as before. If the host dies, the commands it was running are stopped; read-only ones run again in the main process and the rest fail, since they may already have done their work.
+
+The agent's claude binary starts the same way, from a second utility process, the **agent host** (`spawnProcess()`, `process-host-spawn.ts`). The freeze log measured every claude.exe launch from the main process at 1 s or more, and up to 21 s on a PC running an antivirus. `spawnProcess()` returns at once with a stand-in for the ChildProcess the agent SDK expects (stdin, stdout, exit code, kill); the host starts the process and streams its input and output both ways, decoded as UTF-8 so no character is split. A spawn asked for while the host is starting waits for it, since the open thread's agent starts within seconds of launch. Agents get their own host because the git host is restarted when a command goes unanswered, and a restart stops whatever the host started: when the agent host dies, its agents are stopped and reported as exited.
+
+A command's deadline (its timeout plus a minute) only restarts the host when it fires on time. Windows counts system sleep in timers, so a deadline set before sleep fires the moment the computer wakes, before the host has had a chance to answer; on 9 Oct that restarted the host. A deadline that fires 30 s or more late gives the command its full time again instead (`LATE_DEADLINE_MS`).
 
 ```typescript
 import { runProcess } from './process-host.js';

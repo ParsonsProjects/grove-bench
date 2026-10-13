@@ -30,7 +30,8 @@ import * as skillsModule from '../skills.js';
 import { accountEnv, accountSignInCommand, type ClaudeAccount } from './claude-accounts.js';
 import { logger } from '../logger.js';
 import { RunningCost } from './running-cost.js';
-import { execFile, spawn } from 'node:child_process';
+import { execFile } from 'node:child_process';
+import { spawnProcess } from '../process-host.js';
 import { promisify } from 'node:util';
 import * as path from 'node:path';
 
@@ -58,6 +59,11 @@ type HookCallback = import('@anthropic-ai/claude-agent-sdk').HookCallback;
 
 /**
  * Custom spawn used for the SDK's `spawnClaudeCodeProcess` hook.
+ *
+ * The binary starts in the agent host (spawnProcess, process-host.ts), not
+ * here: on Windows, starting a process holds the main process until the OS
+ * has created it, which took 1 s or more per launch and up to 21 s on a PC
+ * running an antivirus, with the window frozen meanwhile.
  *
  * The SDK runs its native `claude` binary, which it finds next to its own
  * module. In the packaged app that path is inside app.asar: Electron can read
@@ -93,17 +99,23 @@ export function spawnClaudeCodeProcess(
   const env = isNode
     ? { ...opts.env, ELECTRON_RUN_AS_NODE: '1' }
     : opts.env;
-  const child = spawn(command, opts.args, {
-    cwd: opts.cwd,
-    env,
-    signal: opts.signal,
-    stdio: ['pipe', 'pipe', 'pipe'],
-    windowsHide: true,
-  });
-  if (onStderr) {
-    child.stderr?.on('data', (d: Buffer) => onStderr(d.toString()));
+  const child = spawnProcess(command, opts.args, { cwd: opts.cwd, env });
+  // What spawn()'s `signal` option did: stop the process when it aborts.
+  const signal = opts.signal as AbortSignal | undefined;
+  if (signal?.aborted) {
+    child.kill();
+  } else if (signal) {
+    const abort = () => child.kill();
+    signal.addEventListener('abort', abort, { once: true });
+    child.once('exit', () => signal.removeEventListener('abort', abort));
   }
-  return child as unknown as SpawnedProcess & { readonly pid?: number };
+  if (onStderr) {
+    child.stderr.on('data', (d: Buffer) => onStderr(d.toString()));
+  } else {
+    // Unread, it would pile up in memory for the life of the process.
+    child.stderr.resume();
+  }
+  return child;
 }
 
 const dynamicImport = new Function('specifier', 'return import(specifier)') as

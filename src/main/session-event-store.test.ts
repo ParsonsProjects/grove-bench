@@ -9,8 +9,10 @@ vi.mock('electron', () => ({ app: { getPath: () => userData } }));
 vi.mock('./logger.js', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
+const perf = vi.hoisted(() => ({ perfLine: vi.fn() }));
+vi.mock('./perf-log.js', () => perf);
 
-import { SessionEventStore, eventLogPath, getEventsDir } from './session-event-store.js';
+import { SessionEventStore, SLOW_EVENT_LOG_WRITE_MS, eventLogPath, getEventsDir } from './session-event-store.js';
 
 const text = (t: string): AgentEvent => ({ type: 'assistant_text', text: t } as AgentEvent);
 
@@ -33,11 +35,13 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
+  perf.perfLine.mockClear();
   fs.rmSync(userData, { recursive: true, force: true });
 });
 
 describe('SessionEventStore', () => {
-  it('batches appends and writes them on flush', () => {
+  it('batches appends and writes them on flush', async () => {
     const store = new SessionEventStore();
     store.ensureDir();
     const s = liveSession('a');
@@ -47,13 +51,26 @@ describe('SessionEventStore', () => {
     expect(s.eventHistory).toHaveLength(2);
     expect(fs.existsSync(s.eventLogPath)).toBe(false);
 
-    store.flush(s);
+    await store.flush(s);
     expect(logLines('a')).toEqual([text('one'), text('two')]);
     expect(s.logBuffer).toEqual([]);
     expect(s.logFlushTimer).toBeNull();
   });
 
-  it('flushes on its own after a short delay', () => {
+  it('writes off the main process: flush() returns before the lines are on disk', async () => {
+    const store = new SessionEventStore();
+    store.ensureDir();
+    const s = liveSession('async');
+    store.append(s, text('one'));
+
+    const written = store.flush(s);
+    expect(fs.existsSync(s.eventLogPath)).toBe(false);
+
+    await written;
+    expect(logLines('async')).toEqual([text('one')]);
+  });
+
+  it('flushes on its own after a short delay', async () => {
     vi.useFakeTimers();
     const store = new SessionEventStore();
     store.ensureDir();
@@ -61,26 +78,98 @@ describe('SessionEventStore', () => {
 
     store.append(s, text('later'));
     vi.advanceTimersByTime(1_000);
+    vi.useRealTimers();
+    // Nothing is queued any more: this waits for the write the timer started.
+    await store.flush(s);
 
     expect(logLines('b')).toEqual([text('later')]);
   });
 
-  it('replace() drops queued appends and rewrites the log to match', () => {
+  it('replace() drops queued appends and rewrites the log to match', async () => {
     const store = new SessionEventStore();
     store.ensureDir();
     const s = liveSession('c');
     store.append(s, text('keep'));
-    store.flush(s);
+    await store.flush(s);
     store.append(s, text('cut'));
 
-    store.replace(s, [text('keep')]);
+    await store.replace(s, [text('keep')]);
 
     expect(s.eventHistory).toEqual([text('keep')]);
     expect(logLines('c')).toEqual([text('keep')]);
     expect(s.logBuffer).toEqual([]);
 
-    store.replace(s, []);
+    await store.replace(s, []);
     expect(fs.readFileSync(s.eventLogPath, 'utf8')).toBe('');
+  });
+
+  it('writes to one log in the order they were asked for', async () => {
+    const store = new SessionEventStore();
+    store.ensureDir();
+    const s = liveSession('order');
+
+    store.append(s, text('cut'));
+    void store.flush(s);
+    void store.replace(s, [text('kept')]);
+    store.append(s, text('after'));
+    await store.flush(s);
+
+    expect(logLines('order')).toEqual([text('kept'), text('after')]);
+  });
+
+  it('flush() with nothing queued still waits for the write under way', async () => {
+    const store = new SessionEventStore();
+    store.ensureDir();
+    const s = liveSession('wait');
+    let release!: () => void;
+    const real = fs.promises.appendFile;
+    vi.spyOn(fs.promises, 'appendFile').mockImplementationOnce(async (...args: Parameters<typeof real>) => {
+      await new Promise<void>((r) => { release = r; });
+      return real(...args);
+    });
+
+    store.append(s, text('slow'));
+    void store.flush(s);
+    let settled = false;
+    const waiting = store.flush(s).then(() => { settled = true; });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(settled).toBe(false);
+
+    release();
+    await waiting;
+    expect(logLines('wait')).toEqual([text('slow')]);
+  });
+
+  it('a failed write is skipped and the next one still runs', async () => {
+    const store = new SessionEventStore();
+    const s = liveSession('fail');
+
+    // No events folder yet: the append fails, quietly.
+    store.append(s, text('lost'));
+    await expect(store.flush(s)).resolves.toBeUndefined();
+
+    store.ensureDir();
+    store.append(s, text('kept'));
+    await store.flush(s);
+    expect(logLines('fail')).toEqual([text('kept')]);
+  });
+
+  it('notes a slow write in the performance log', async () => {
+    const store = new SessionEventStore();
+    store.ensureDir();
+    const s = liveSession('slow');
+    let t = 0;
+    vi.spyOn(performance, 'now').mockImplementation(() => t);
+    const real = fs.promises.appendFile;
+    vi.spyOn(fs.promises, 'appendFile').mockImplementation(async (...args: Parameters<typeof real>) => {
+      t += SLOW_EVENT_LOG_WRITE_MS + 500;
+      return real(...args);
+    });
+
+    store.append(s, text('x'));
+    await store.flush(s);
+
+    expect(perf.perfLine).toHaveBeenCalledWith('events', expect.stringMatching(/^event log write, 0 KB took 1500 ms/));
   });
 
   it('load() skips corrupt lines and serves a cached copy until the log changes', () => {

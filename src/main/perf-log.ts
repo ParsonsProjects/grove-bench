@@ -11,7 +11,7 @@ import path from 'node:path';
 import { getLogDir } from './logger.js';
 import { createRotatingLog } from './rotating-log.js';
 
-export type PerfKind = 'freeze' | 'steps' | 'health' | 'trace' | 'host';
+export type PerfKind = 'freeze' | 'steps' | 'health' | 'trace' | 'host' | 'events';
 
 export function perfLogPath(): string {
   return path.join(getLogDir(), 'performance.log');

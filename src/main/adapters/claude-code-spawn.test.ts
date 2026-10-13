@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { HostedProcess } from '../process-host-spawn.js';
 
-const spawnMock = vi.fn(() => ({ stderr: null }));
-vi.mock('node:child_process', () => ({
-  execFile: vi.fn(),
-  spawn: (...args: unknown[]) => spawnMock(...(args as [])),
+const hosted = vi.hoisted(() => ({ spawnProcess: vi.fn() }));
+vi.mock('../process-host.js', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  spawnProcess: hosted.spawnProcess,
 }));
 vi.mock('../credentials.js', () => ({ getApiKey: vi.fn(() => null) }));
 vi.mock('../logger.js', () => ({
@@ -12,9 +13,12 @@ vi.mock('../logger.js', () => ({
 
 import { asarUnpackedPath, spawnClaudeCodeProcess } from './claude-code.js';
 
-const opts = (command: string) => ({ command, args: ['--x'], cwd: '/w', env: { A: '1' }, signal: new AbortController().signal });
+const opts = (command: string, signal = new AbortController().signal) => ({ command, args: ['--x'], cwd: '/w', env: { A: '1' }, signal });
 
-beforeEach(() => spawnMock.mockClear());
+beforeEach(() => {
+  hosted.spawnProcess.mockReset();
+  hosted.spawnProcess.mockImplementation((file: string) => new HostedProcess(file));
+});
 
 describe('asarUnpackedPath', () => {
   it('points a file inside app.asar at app.asar.unpacked', () => {
@@ -32,17 +36,46 @@ describe('asarUnpackedPath', () => {
 });
 
 describe('spawnClaudeCodeProcess', () => {
-  it('runs the SDK binary from app.asar.unpacked in a packaged app', () => {
+  it('starts the SDK binary in the agent host, from app.asar.unpacked in a packaged app', () => {
     spawnClaudeCodeProcess(opts('/opt/grove/resources/app.asar/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/claude'));
-    expect(spawnMock).toHaveBeenCalledWith(
+    expect(hosted.spawnProcess).toHaveBeenCalledWith(
       '/opt/grove/resources/app.asar.unpacked/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/claude',
       ['--x'],
-      expect.objectContaining({ cwd: '/w', env: { A: '1' } }),
+      { cwd: '/w', env: { A: '1' } },
     );
   });
 
   it('runs a node command with Electron as Node', () => {
     spawnClaudeCodeProcess(opts('node'));
-    expect(spawnMock).toHaveBeenCalledWith(process.execPath, ['--x'], expect.objectContaining({ env: { A: '1', ELECTRON_RUN_AS_NODE: '1' } }));
+    expect(hosted.spawnProcess).toHaveBeenCalledWith(process.execPath, ['--x'], { cwd: '/w', env: { A: '1', ELECTRON_RUN_AS_NODE: '1' } });
+  });
+
+  it('stops the process when the SDK aborts, as spawn()\'s signal option did', () => {
+    const controller = new AbortController();
+    const child = spawnClaudeCodeProcess(opts('claude', controller.signal)) as unknown as HostedProcess;
+    const kill = vi.spyOn(child, 'kill');
+    controller.abort();
+    expect(kill).toHaveBeenCalledTimes(1);
+
+    const aborted = new AbortController();
+    aborted.abort();
+    expect(spawnClaudeCodeProcess(opts('claude', aborted.signal)).killed).toBe(true);
+  });
+
+  it('stops listening for the abort once the process has exited', () => {
+    const controller = new AbortController();
+    const child = spawnClaudeCodeProcess(opts('claude', controller.signal)) as unknown as HostedProcess;
+    const kill = vi.spyOn(child, 'kill');
+    child.receive({ type: 'exit', id: 1, code: 0, signal: null });
+    controller.abort();
+    expect(kill).not.toHaveBeenCalled();
+  });
+
+  it('passes stderr to the callback', async () => {
+    const lines: string[] = [];
+    const child = spawnClaudeCodeProcess(opts('claude'), (d) => lines.push(d)) as unknown as HostedProcess;
+    child.receive({ type: 'stderr', id: 1, data: 'Warning: x\n' });
+    await new Promise((r) => setImmediate(r));
+    expect(lines).toEqual(['Warning: x\n']);
   });
 });

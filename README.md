@@ -21,7 +21,7 @@ Electron · Svelte 5 · Tailwind CSS v4 · TypeScript · node-pty · xterm.js
 
 ## Installing
 
-Download `Grove-Bench-Setup-<version>.exe` from [Releases](https://github.com/ParsonsProjects/grove-bench/releases). The installer is not code signed yet, so Windows SmartScreen shows "Windows protected your PC" on first run: choose **More info**, then **Run anyway**. After that, the app checks for new releases and offers the update in the title bar.
+Download `Grove-Bench-Setup-<version>.exe` from [Releases](https://github.com/ParsonsProjects/grove-bench/releases). The installer is not code signed yet, so Windows SmartScreen shows "Windows protected your PC" on first run: choose **More info**, then **Run anyway**. After that, the app checks for new releases and offers the update in the title bar. Some antivirus tools, AVG among them, may also flag a new unsigned release.
 
 ## Using Grove Bench
 
