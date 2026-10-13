@@ -120,7 +120,9 @@ export function renderReport(runs, meta) {
   lines.push('# Response style comparison', '');
   lines.push(`- Date: ${meta.date}`);
   lines.push(`- Commit: \`${meta.commit}\``);
-  lines.push(`- Model: ${meta.model ?? 'Claude Code default'}`);
+  // The models each run reported, when none was asked for.
+  const used = [...new Set(runs.flatMap((r) => r.models ?? []))];
+  lines.push(`- Model: ${meta.model ?? `Claude Code default${used.length ? ` (${used.join(', ')})` : ''}`}`);
   lines.push(`- Runs per task and style: ${meta.runs}`);
   lines.push(`- User settings loaded: ${meta.userSettings ? 'yes' : 'no'}`);
   lines.push('');

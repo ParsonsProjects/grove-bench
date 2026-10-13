@@ -196,6 +196,7 @@ async function runOne({ task, style, rep, stylePrompt, query }) {
     style,
     rep,
     resultSubtype: result?.subtype ?? null,
+    models: Object.keys(result?.modelUsage ?? {}),
     error,
     checkPassed,
     diffStat,

@@ -86,6 +86,11 @@ describe('renderReport', () => {
     expect(report).toContain('Short answer');
   });
 
+  it('names the models the runs used when none was asked for', () => {
+    const report = renderReport([run('a', 'off', 1, {}, { models: ['claude-sonnet-5', 'claude-haiku-5'] }), run('a', 'brief', 1, {}, { models: ['claude-sonnet-5'] })], meta);
+    expect(report).toContain('- Model: Claude Code default (claude-sonnet-5, claude-haiku-5)');
+  });
+
   it('shows the range when runs differ, and says which runs did not finish', () => {
     const report = renderReport([
       run('fix', 'off', 1, { outputTokens: 100 }),
