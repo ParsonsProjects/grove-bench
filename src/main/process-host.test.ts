@@ -306,6 +306,40 @@ describe('process host', () => {
     expect(hosts).toHaveLength(2);
   });
 
+  it('gives a command its time again when its deadline comes late, as after sleep', async () => {
+    const { host, hosts, notes, fire, advance, latest } = setup();
+    host.start();
+    latest().ready();
+    const first = latest();
+    const result = host.run('gh', ['pr', 'list'], { cwd: '/r', timeout: 30_000 });
+
+    // The computer slept 11 minutes; the timer runs the moment it wakes.
+    advance(11 * 60_000);
+    fire(30_000 + DEADLINE_MARGIN_MS);
+    expect(first.killed).toBe(false);
+    expect(notes).toEqual([]);
+
+    // The host answers soon after: execa's own timeout ran on waking too.
+    first.reply({ id: 1, ok: false, launchMs: 5, error: { name: 'ExecaError', message: 'Command timed out', timedOut: true } });
+    await expect(result).rejects.toMatchObject({ timedOut: true, message: 'Command timed out' });
+    expect(hosts).toHaveLength(1);
+  });
+
+  it('still restarts a host that stays silent through the second deadline', async () => {
+    const { host, notes, fire, advance, latest } = setup();
+    host.start();
+    latest().ready();
+    const result = host.run('gh', ['pr', 'list'], { cwd: '/r', timeout: 30_000 });
+    advance(11 * 60_000);
+    fire(30_000 + DEADLINE_MARGIN_MS);
+
+    advance(30_000 + DEADLINE_MARGIN_MS);
+    fire(30_000 + DEADLINE_MARGIN_MS);
+    await expect(result).rejects.toMatchObject({ timedOut: true });
+    expect(latest().killed).toBe(true);
+    expect(notes).toEqual(['process host stopped answering (gh pr); restarting it']);
+  });
+
   it('clears the deadline once the command is answered', async () => {
     const { host, notes, fire, latest } = setup();
     host.start();

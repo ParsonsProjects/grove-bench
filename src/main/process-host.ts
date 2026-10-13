@@ -4,8 +4,7 @@
  * So does the agent's claude binary, which keeps running and streams its
  * input and output through a second host of its own, the agent host
  * (process-host-spawn.ts). Kept apart because the git host is restarted when
- * a command goes unanswered (after system sleep, too), and a restart stops
- * whatever the host started.
+ * a command goes unanswered, and a restart stops whatever the host started.
  *
  * Starting a process holds whichever process asks for it until the OS has
  * created it. On Windows that is execa's PATH search (cross-spawn stats every
@@ -69,6 +68,12 @@ export const RESTART_DELAY_MS = 2_000;
  *  restarted. Generous, because a slow launch ahead of it in the host delays
  *  when its timeout starts. */
 export const DEADLINE_MARGIN_MS = 60_000;
+/** A deadline timer that runs this much later than it was set for ran late
+ *  because the computer slept (Windows counts the sleep), or this process
+ *  froze: the host had no time to answer, so the command gets its time again
+ *  rather than the host being taken for hung. On 9 Oct a `gh pr` deadline
+ *  fired the moment the computer woke and the host was restarted. */
+export const LATE_DEADLINE_MS = 30_000;
 /** A launch in the host this slow is noted in the logs: it would have
  *  frozen the window for that long. */
 export const SLOW_HOSTED_LAUNCH_MS = 1_000;
@@ -117,6 +122,8 @@ interface Pending {
   /** The command's process, once the host says it has started. */
   pid?: number;
   deadline?: unknown;
+  /** When the deadline was set (now()). */
+  deadlineSetAt?: number;
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
 }
@@ -288,10 +295,24 @@ export function createProcessHost(deps: ProcessHostDeps) {
     }
   }
 
+  /** Fail a command as timed out if it gets no answer long after its timeout. */
+  function setDeadline(id: number, waiting: Pending, timeout: number): void {
+    const timer = setTimer(() => overdue(id, timeout), timeout + DEADLINE_MARGIN_MS);
+    timer.unref?.();
+    waiting.deadline = timer;
+    waiting.deadlineSetAt = now();
+  }
+
   /** A command with a timeout got no answer long after it: the host has
    *  stopped answering. Fail the command as timed out and restart the host
-   *  (its exit handles the other commands). */
+   *  (its exit handles the other commands). Unless the deadline itself came
+   *  late (LATE_DEADLINE_MS): then the command waits its full time again. */
   function overdue(id: number, timeout: number): void {
+    const current = pending.get(id);
+    if (current?.deadlineSetAt !== undefined && now() - current.deadlineSetAt - (timeout + DEADLINE_MARGIN_MS) >= LATE_DEADLINE_MS) {
+      setDeadline(id, current, timeout);
+      return;
+    }
     const waiting = take(id);
     if (!waiting) return;
     const error = Object.assign(new Error(`${waiting.label} got no answer from the process host within ${Math.round((timeout + DEADLINE_MARGIN_MS) / 1000)} s`), { timedOut: true });
@@ -321,11 +342,7 @@ export function createProcessHost(deps: ProcessHostDeps) {
         return;
       }
       const timeout = options?.timeout;
-      if (timeout && timeout > 0) {
-        const timer = setTimer(() => overdue(id, timeout), timeout + DEADLINE_MARGIN_MS);
-        timer.unref?.();
-        waiting.deadline = timer;
-      }
+      if (timeout && timeout > 0) setDeadline(id, waiting, timeout);
     });
   }
 

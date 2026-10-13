@@ -35,6 +35,20 @@ freezeLog.timeProcessLaunches(ChildProcess.prototype);
 app.name = 'grove-bench';
 app.setPath('userData', path.join(app.getPath('appData'), 'grove-bench'));
 
+// One copy at a time. Every build uses the data folder above, so a second
+// copy (a second launch, or the installed app beside `npm start`) would
+// resume the same threads, start a second agent on each transcript and
+// write the same event logs. It hands over to the first, which shows its
+// window, and quits. Electron keys the lock on the data folder, so it is
+// taken after setPath.
+const isFirstCopy = app.requestSingleInstanceLock();
+if (!isFirstCopy) {
+  const message = 'Grove Bench is already running with this data folder; showing its window instead';
+  logger.info(message);
+  console.log(message);
+  app.quit();
+}
+
 // Set the App User Model ID so Windows can associate the pinned taskbar
 // shortcut with the running application (prevents icon from disappearing).
 app.setAppUserModelId('com.parsonsprojects.grove-bench');
@@ -130,7 +144,17 @@ function createWindow() {
   logger.info('Grove Bench started');
 }
 
+// A second copy was started: it quits, and this one comes to the front.
+app.on('second-instance', () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+});
+
 app.whenReady().then(() => {
+  // A second copy only hands over (above), and opens nothing.
+  if (!isFirstCopy) return;
   // git and gh launch from here on in a utility process, so a slow launch
   // can't freeze the window (process-host.ts). First, before the window
   // starts asking for git status.
