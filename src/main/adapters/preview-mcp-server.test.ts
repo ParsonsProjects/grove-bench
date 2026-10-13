@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { previewToolHandlers, GROVE_PREVIEW_READ_TOOL_NAMES, GROVE_PREVIEW_ACTION_TOOL_NAMES } from './preview-mcp-server.js';
+import { previewToolHandlers, claudePreviewServer, CLAUDE_PREVIEW_INSTRUCTIONS, GROVE_PREVIEW_READ_TOOL_NAMES, GROVE_PREVIEW_ACTION_TOOL_NAMES } from './preview-mcp-server.js';
+import { previewServer } from './grove-tools.js';
 import type { PreviewOperations } from './types.js';
 
 function fakeOps(overrides: Partial<PreviewOperations> = {}): PreviewOperations {
@@ -75,5 +76,20 @@ describe('tool names', () => {
     for (const name of GROVE_PREVIEW_ACTION_TOOL_NAMES) {
       expect(GROVE_PREVIEW_READ_TOOL_NAMES as readonly string[]).not.toContain(name);
     }
+  });
+});
+
+describe('claudePreviewServer', () => {
+  it('adds the Claude Code-only advice to the shared instructions', () => {
+    const shared = previewServer(fakeOps());
+    const claude = claudePreviewServer(fakeOps());
+    expect(claude.instructions).toBe(`${shared.instructions} ${CLAUDE_PREVIEW_INSTRUCTIONS}`);
+    expect(claude.tools.map((t) => t.name)).toEqual(shared.tools.map((t) => t.name));
+    expect(claude.alwaysLoad).toBe(true);
+  });
+
+  it('keeps Claude Code tool names out of what other agents are told', () => {
+    // previewServer is also served to ACP agents, which have no run skill or Artifact tool.
+    expect(previewServer(fakeOps()).instructions).not.toMatch(/run skill|Artifact/);
   });
 });
