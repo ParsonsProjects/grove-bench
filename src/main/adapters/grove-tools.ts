@@ -171,11 +171,11 @@ export function previewServer(ops: PreviewOperations): GroveServer {
     instructions: 'A browser for checking web UI work. It opens local pages only, in this conversation\'s Preview tab in '
       + 'Grove Bench, where the user can watch. After changing a web UI, start its dev server, open the URL with '
       + 'preview_open, then check it with preview_screenshot, preview_read and preview_logs, and try flows with '
-      + 'preview_click and preview_type. For local pages and .html files, use these tools rather than any other browser: '
-      + 'not other browser tools you may have (such as a Playwright or Chrome DevTools MCP server), and not a headless '
-      + 'browser run from the shell (a Playwright, Puppeteer or chromium-cli script, or npx playwright screenshot). '
-      + 'Those run a separate browser outside Grove Bench that the user can\'t see. The Artifact tool\'s preview action '
-      + 'is only for checking a page right before you publish it as an artifact.',
+      + 'preview_click and preview_type. To look at a local page or an .html file in this worktree, use these tools '
+      + 'rather than any other browser: not other browser tools you may have (such as a Playwright or Chrome DevTools '
+      + 'MCP server), and not a headless browser started from the shell (a Playwright or Puppeteer script, or npx '
+      + 'playwright screenshot). Those run a separate browser outside Grove Bench that the user can\'t see. Running the '
+      + 'project\'s own browser tests (such as npx playwright test) is still fine.',
     // Load the tools up front rather than behind tool search, so the agent
     // sees them next to any other browser tools the user has set up (a
     // Playwright MCP server, say) and doesn't reach for those first.
@@ -184,7 +184,7 @@ export function previewServer(ops: PreviewOperations): GroveServer {
       {
         name: 'preview_open',
         description: 'Open a page in your browser in this conversation\'s Preview tab in Grove Bench, to check UI work in the running app. '
-          + 'The user can watch it there. Use this for local pages, not other browser tools (such as Playwright\'s browser_navigate) '
+          + 'The user can watch it there. Use this to look at local pages, not other browser tools (such as Playwright\'s browser_navigate) '
           + 'or a headless browser script: those run a separate browser outside Grove Bench that the user can\'t see. '
           + 'Start the dev server first (for example as a background Bash command), then open its URL '
           + 'and use preview_screenshot, preview_read, preview_click, preview_type and preview_logs. '

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import path from 'node:path';
-import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS, thinkingConfigFor, parseMcpListOutput, mcpServerManager, claudeMcpOrigin, mcpToolServerKey, mcpContextCostByServer, toMcpElicitationRequest, withMcpjsonApproval, mcpjsonApprovalsFrom, buildMcpAddArgs, quoteArg, validatePluginId, validateConfigScope, capToolResult, claudeControlsFor, supportsAdaptiveThinking, supportsFastMode, supportsAutoMode, claudeModelCaps, effortFor, reasoningOptionsFor, toSdkPermissionMode, fromSdkSyncMode, stripAnsi, mapClaudeUsage, thinkingDisplayFor, TEXT_GENERATION_OPTIONS, missingConversationError, userMessageContent, readsAttachedFile, agentSettings } from './claude-code.js';
+import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS, thinkingConfigFor, parseMcpListOutput, mcpServerManager, claudeMcpOrigin, mcpToolServerKey, mcpContextCostByServer, toMcpElicitationRequest, withMcpjsonApproval, mcpjsonApprovalsFrom, buildMcpAddArgs, quoteArg, validatePluginId, validateConfigScope, capToolResult, claudeControlsFor, supportsAdaptiveThinking, supportsFastMode, supportsAutoMode, claudeModelCaps, effortFor, reasoningOptionsFor, toSdkPermissionMode, fromSdkSyncMode, stripAnsi, mapClaudeUsage, thinkingDisplayFor, TEXT_GENERATION_OPTIONS, missingConversationError, userMessageContent, readsAttachedFile } from './claude-code.js';
 import type { AgentEvent } from '../../shared/types.js';
 import { RunningCost } from './running-cost.js';
 import { limitHook, LIMIT_STOP_REASON } from './claude-code.js';
@@ -1111,26 +1111,6 @@ describe('TEXT_GENERATION_OPTIONS', () => {
 
   it('stays out of plan mode, whose reminder sends the model exploring', () => {
     expect(TEXT_GENERATION_OPTIONS.permissionMode).toBe('dontAsk');
-  });
-});
-
-// ─── agentSettings (flag settings for the agent process) ───
-
-describe('agentSettings()', () => {
-  it('sets nothing when there is nothing to set', () => {
-    expect(agentSettings({ fastMode: false, previewTools: false })).toBeUndefined();
-  });
-
-  it('turns on fast mode', () => {
-    expect(agentSettings({ fastMode: true, previewTools: false })).toEqual({ fastMode: true });
-  });
-
-  it('keeps the bundled run skill, which drives a headless browser, from the model while the Preview tools are on', () => {
-    expect(agentSettings({ fastMode: false, previewTools: true })).toEqual({ skillOverrides: { run: 'user-invocable-only' } });
-  });
-
-  it('sets both together', () => {
-    expect(agentSettings({ fastMode: true, previewTools: true })).toEqual({ fastMode: true, skillOverrides: { run: 'user-invocable-only' } });
   });
 });
 

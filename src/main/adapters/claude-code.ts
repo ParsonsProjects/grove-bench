@@ -1466,26 +1466,6 @@ export const TEXT_GENERATION_OPTIONS: Pick<
   maxTurns: 1,
 };
 
-/**
- * Bundled Claude Code skills the model doesn't get while Grove's Preview
- * tools are on. `run` checks a web app by driving a headless Chromium
- * (chromium-cli or a Playwright script) that the user never sees; the
- * Preview tools open the page in the thread's Preview tab instead. The user
- * can still type /run.
- */
-export const SKILLS_PREVIEW_REPLACES = ['run'] as const;
-
-/** Settings for the agent process, applied like `--settings`, above the
- *  user's own settings files. Undefined when there is nothing to set. */
-export function agentSettings(opts: { fastMode: boolean; previewTools: boolean }): import('@anthropic-ai/claude-agent-sdk').Settings | undefined {
-  const settings: import('@anthropic-ai/claude-agent-sdk').Settings = {};
-  if (opts.fastMode) settings.fastMode = true;
-  if (opts.previewTools) {
-    settings.skillOverrides = Object.fromEntries(SKILLS_PREVIEW_REPLACES.map((name) => [name, 'user-invocable-only' as const]));
-  }
-  return Object.keys(settings).length > 0 ? settings : undefined;
-}
-
 // ─── Claude Code Adapter ───
 
 export class ClaudeCodeAdapter implements AgentAdapter {
@@ -1865,7 +1845,6 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     const thinkingDisplay = thinkingDisplayFor(config.thinkingSummaries);
     const { thinking, effort } = reasoningOptionsFor(config.model, config.controls, learned, thinkingDisplay);
     const fastMode = config.controls?.[CONTROL_IDS.speed] === 'fast' && supportsFastMode(config.model, learned);
-    const settings = agentSettings({ fastMode, previewTools: !!config.previewOperations });
 
     const q: Query = queryFn({
       prompt: readableStreamToAsyncIterable(inputStream),
@@ -1890,7 +1869,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         ...(config.outputFormat ? { outputFormat: config.outputFormat } : {}),
         ...(thinking ? { thinking } : {}),
         ...(effort ? { effort } : {}),
-        ...(settings ? { settings } : {}),
+        ...(fastMode ? { settings: { fastMode: true } } : {}),
         ...(config.sandbox ? { sandbox: config.sandbox } : {}),
         ...(mcpServers ? { mcpServers } : {}),
         ...(config.resumeSessionId ? { resume: config.resumeSessionId } : {}),
