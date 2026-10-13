@@ -7,12 +7,12 @@
  *
  * Usage:
  *   node scripts/response-style-eval.mjs --dry-run          (the plan, no API calls)
- *   node scripts/response-style-eval.mjs                    (Normal vs Brief, 3 runs each)
- *   node scripts/response-style-eval.mjs --styles off,brief,lite --runs 5 --model claude-sonnet-5-5
+ *   node scripts/response-style-eval.mjs                    (Normal vs Caveman lite, 3 runs each)
+ *   node scripts/response-style-eval.mjs --styles off,lite,full --runs 5 --model claude-sonnet-5-5
  *   node scripts/response-style-eval.mjs --report out/response-style-eval/<stamp>/runs.jsonl
  *
  * Options:
- *   --styles       Styles to compare, first is the baseline (default off,brief)
+ *   --styles       Styles to compare, first is the baseline (default off,lite)
  *   --runs         Runs per task and style (default 3)
  *   --tasks        JSON file of tasks: [{ id, prompt, check? }] (default: the built-in ones)
  *   --only         Run just these task ids, comma-separated
@@ -75,7 +75,7 @@ const BASH_ALLOWED = [/^git (diff|status|log|show)\b/, /^ls\b/, /^npx vitest run
 
 const { values: args } = parseArgs({
   options: {
-    styles: { type: 'string', default: 'off,brief' },
+    styles: { type: 'string', default: 'off,lite' },
     runs: { type: 'string', default: '3' },
     tasks: { type: 'string' },
     only: { type: 'string' },

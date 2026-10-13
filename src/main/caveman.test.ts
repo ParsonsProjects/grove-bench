@@ -60,17 +60,6 @@ describe('getCavemanPrompt', () => {
     }
   });
 
-  it('brief mode keeps grammar and cuts commentary and recaps', () => {
-    const prompt = getCavemanPrompt('brief')!;
-    expect(prompt).toContain('Response style: Brief');
-    expect(prompt).toContain('Keep normal grammar');
-    expect(prompt).toContain('without commentary');
-    expect(prompt).toContain('Leave out the steps you took');
-    expect(prompt.toLowerCase()).toContain('code block');
-    expect(prompt).toMatch(/security|irreversible/i);
-    expect(prompt).not.toContain('Caveman');
-  });
-
   it('each level is progressively shorter or equal in description', () => {
     // Ultra should have more aggressive compression instructions
     const full = getCavemanPrompt('full')!;

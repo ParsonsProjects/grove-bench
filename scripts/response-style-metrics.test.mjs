@@ -60,34 +60,34 @@ function run(task, style, rep, metrics, extra = {}) {
 
 describe('summarize', () => {
   it('groups by task and style with the median, range, checks and unfinished runs', () => {
-    const [off, brief] = summarize([
+    const [off, lite] = summarize([
       run('a', 'off', 1, { outputTokens: 100 }, { checkPassed: true }),
       run('a', 'off', 2, { outputTokens: 300 }, { checkPassed: false }),
-      run('a', 'brief', 1, { outputTokens: 80 }, { resultSubtype: 'error_max_turns' }),
+      run('a', 'lite', 1, { outputTokens: 80 }, { resultSubtype: 'error_max_turns' }),
     ]);
     expect(off).toMatchObject({ task: 'a', style: 'off', count: 2, checks: { passed: 1, of: 2 }, failed: 0 });
     expect(off.stats.outputTokens).toEqual({ median: 200, range: [100, 300] });
-    expect(brief).toMatchObject({ style: 'brief', count: 1, checks: null, failed: 1 });
+    expect(lite).toMatchObject({ style: 'lite', count: 1, checks: null, failed: 1 });
   });
 });
 
 describe('renderReport', () => {
-  const meta = { date: '2026-10-13 09:00', commit: 'abc1234', model: null, runs: 1, styles: ['off', 'brief'], userSettings: false };
+  const meta = { date: '2026-10-13 09:00', commit: 'abc1234', model: null, runs: 1, styles: ['off', 'lite'], userSettings: false };
 
   it('tables each task, gives the change from the baseline, and lists every answer', () => {
     const report = renderReport([
       run('explain', 'off', 1, { outputTokens: 1000, noteWords: 40, answerWords: 200, answer: 'Long answer' }),
-      run('explain', 'brief', 1, { outputTokens: 800, noteWords: 0, answerWords: 150, answer: 'Short answer' }),
+      run('explain', 'lite', 1, { outputTokens: 800, noteWords: 0, answerWords: 150, answer: 'Short answer' }),
     ], meta);
     expect(report).toContain('## explain');
     expect(report).toContain('| Normal | 1 | 1,000 | 40 | 200 |');
-    expect(report).toContain('| Brief | -20% | -100% | -25% |');
-    expect(report).toContain('<details><summary>Brief, run 1 (150 words)</summary>');
+    expect(report).toContain('| Caveman lite | -20% | -100% | -25% |');
+    expect(report).toContain('<details><summary>Caveman lite, run 1 (150 words)</summary>');
     expect(report).toContain('Short answer');
   });
 
   it('names the models the runs used when none was asked for', () => {
-    const report = renderReport([run('a', 'off', 1, {}, { models: ['claude-sonnet-5', 'claude-haiku-5'] }), run('a', 'brief', 1, {}, { models: ['claude-sonnet-5'] })], meta);
+    const report = renderReport([run('a', 'off', 1, {}, { models: ['claude-sonnet-5', 'claude-haiku-5'] }), run('a', 'lite', 1, {}, { models: ['claude-sonnet-5'] })], meta);
     expect(report).toContain('- Model: Claude Code default (claude-sonnet-5, claude-haiku-5)');
   });
 

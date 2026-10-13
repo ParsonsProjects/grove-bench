@@ -87,7 +87,7 @@ export function percentChange(base, other) {
   return ((other - base) / base) * 100;
 }
 
-const STYLE_LABELS = { off: 'Normal', brief: 'Brief', lite: 'Caveman lite', full: 'Caveman full', ultra: 'Caveman ultra' };
+const STYLE_LABELS = { off: 'Normal', lite: 'Caveman lite', full: 'Caveman full', ultra: 'Caveman ultra' };
 const styleLabel = (s) => STYLE_LABELS[s] ?? s;
 
 function fmt(n, digits = 0) {
