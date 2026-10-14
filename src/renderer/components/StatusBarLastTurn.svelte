@@ -71,6 +71,8 @@
   let asking = 0;
   $effect(() => {
     if (!spendOpen) {
+      // Answers still on their way are for an open that has ended.
+      asking++;
       threadUsd = null;
       todayUsd = null;
       return;

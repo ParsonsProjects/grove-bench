@@ -83,35 +83,45 @@ beforeEach(() => {
   vi.mocked(getDefaultBranch).mockResolvedValue('main');
 });
 
-describe('saveThreadSpend / getThreadSpend', () => {
-  it('records what a thread has spent', async () => {
+describe('saveThreadLimits / getThreadLimits', () => {
+  it('records a thread\'s spend and allowance, and drops an allowance it no longer has', async () => {
     mockFs.readFile.mockResolvedValue(JSON.stringify({
-      'wt-1': { repoPath: '/repo', branch: 'feature', createdAt: 1000 },
+      'wt-1': { repoPath: '/repo', branch: 'feature', createdAt: 1000, threadAllowanceUsd: 9 },
     }));
 
-    await manager.saveThreadSpend('wt-1', 1.5);
+    await manager.saveThreadLimits('wt-1', { spendUsd: 1.5, allowanceUsd: 3 });
     expect(savedManifest).toEqual({
-      'wt-1': { repoPath: '/repo', branch: 'feature', createdAt: 1000, threadSpendUsd: 1.5 },
+      'wt-1': { repoPath: '/repo', branch: 'feature', createdAt: 1000, threadSpendUsd: 1.5, threadAllowanceUsd: 3 },
     });
 
-    // A thread no longer in the manifest isn't added back.
-    await manager.saveThreadSpend('gone', 2);
-    expect(savedManifest).not.toHaveProperty('gone');
+    await manager.saveThreadLimits('wt-1', { spendUsd: 2 });
+    expect(savedManifest).toEqual({
+      'wt-1': { repoPath: '/repo', branch: 'feature', createdAt: 1000, threadSpendUsd: 2 },
+    });
   });
 
-  it('reads it back, and nothing for a thread without one or a value that is not a sum', async () => {
+  it('writes nothing for a thread no longer in the manifest', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({ 'wt-1': { repoPath: '/repo', branch: 'a', createdAt: 1 } }));
+    await manager.saveThreadLimits('gone', { spendUsd: 2 });
+    expect(mockFs.writeFile).not.toHaveBeenCalled();
+  });
+
+  it('reads them back, and nothing for a thread without them or values that are not sums', async () => {
     mockFs.readFile.mockResolvedValue(JSON.stringify({
-      'wt-1': { repoPath: '/repo', branch: 'a', createdAt: 1, threadSpendUsd: 1.5 },
+      'wt-1': { repoPath: '/repo', branch: 'a', createdAt: 1, threadSpendUsd: 1.5, threadAllowanceUsd: 3 },
+      'wt-2': { repoPath: '/repo', branch: 'a2', createdAt: 1, threadSpendUsd: 1.5, threadAllowanceUsd: 'more' },
       'wt-old': { repoPath: '/repo', branch: 'b', createdAt: 2 },
       'wt-bad': { repoPath: '/repo', branch: 'c', createdAt: 3, threadSpendUsd: 'lots' },
       'wt-neg': { repoPath: '/repo', branch: 'd', createdAt: 4, threadSpendUsd: -1 },
     }));
 
-    expect(await manager.getThreadSpend('wt-1')).toBe(1.5);
-    expect(await manager.getThreadSpend('wt-old')).toBeUndefined();
-    expect(await manager.getThreadSpend('wt-bad')).toBeUndefined();
-    expect(await manager.getThreadSpend('wt-neg')).toBeUndefined();
-    expect(await manager.getThreadSpend('missing')).toBeUndefined();
+    expect(await manager.getThreadLimits('wt-1')).toEqual({ spendUsd: 1.5, allowanceUsd: 3 });
+    expect(await manager.getThreadLimits('wt-2')).toEqual({ spendUsd: 1.5 });
+    expect(await manager.getThreadLimits('wt-old')).toBeUndefined();
+    expect(await manager.getThreadLimits('wt-bad')).toBeUndefined();
+    expect(await manager.getThreadLimits('wt-neg')).toBeUndefined();
+    expect(await manager.getThreadLimits('missing')).toBeUndefined();
+    expect(mockFs.writeFile).not.toHaveBeenCalled();
   });
 });
 

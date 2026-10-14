@@ -862,6 +862,21 @@ describe('StatusBar last turn', () => {
       await waitFor(() => expect(row('This thread')).toHaveTextContent('unknown'));
     });
 
+    it('ignores an answer that arrives after the popover was closed', async () => {
+      let answer!: (usd: number) => void;
+      api().getThreadSpend.mockReturnValue(new Promise<number>((resolve) => { answer = resolve; }));
+      finishTurn(0.0423);
+      render(StatusBar, { props: { sessionId: ACTIVE } });
+      await fireEvent.click(screen.getByTestId('last-turn'));
+      await fireEvent.click(screen.getByTestId('last-turn'));
+      answer(9);
+      await Promise.resolve();
+
+      api().getThreadSpend.mockReturnValue(new Promise(() => {}));
+      await fireEvent.click(screen.getByTestId('last-turn'));
+      expect(row('This thread')).toHaveTextContent('…');
+    });
+
     it('asks afresh each time it opens, without showing the last answers meanwhile', async () => {
       finishTurn(0.0423);
       render(StatusBar, { props: { sessionId: ACTIVE } });

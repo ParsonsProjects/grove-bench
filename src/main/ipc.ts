@@ -559,7 +559,7 @@ export function registerHandlers() {
       // ...on the agent it ran with. A Codex conversation must not come back on Claude.
       const adapterType = await worktreeManager.getAdapterType(id);
       // ...and what it has spent, which its history may no longer add up to.
-      const threadSpendUsd = await worktreeManager.getThreadSpend(id);
+      const savedLimits = await worktreeManager.getThreadLimits(id);
       logger.info(`Resuming session: id=${id}, branch=${worktree.branch}, providerSession=${providerSessionId ?? 'none'}, model=${savedModel ?? 'default'}`);
       perfSteps.step(id, 'lookup');
 
@@ -573,7 +573,7 @@ export function registerHandlers() {
         model: savedModel,
         adapterType,
         noGit: !!worktree.noGit,
-        threadSpendUsd,
+        savedLimits,
       });
 
       logger.info(`Session resumed: id=${session.id}`);

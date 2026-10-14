@@ -8,6 +8,7 @@ import { removeDirectory, removeDirectoryWithRetry, pathExists, readFileWithRetr
 import type { BranchSwitchResult, BranchSyncResult, ConversationGoal, ConversationGoalSource, WorktreeConfig, WorktreeInfo, WorktreeRepoConfig } from '../shared/types.js';
 import { adapterRegistry } from './adapters/index.js';
 import type { AutoNameDecision, DisplayNameSource, DisplayNameState } from './session-auto-name.js';
+import type { SavedThreadLimits } from './session-limits.js';
 
 const CONFIG_FILE = 'config.json';
 const MANIFEST_FILE = 'manifest.json';
@@ -23,6 +24,11 @@ const LEGACY_AGENT_TYPE = 'claude-code';
 
 function agentTypeOf(entry: ManifestEntry): string {
   return entry.adapterType ?? LEGACY_AGENT_TYPE;
+}
+
+/** A dollar figure read back from the manifest, which is plain JSON. */
+function isUsd(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
 }
 
 interface ManifestEntry {
@@ -50,10 +56,12 @@ interface ManifestEntry {
   /** Who set displayName. Auto-naming never replaces a 'user' name. Absent
    *  on entries saved before this was tracked (see decideAutoName). */
   displayNameSource?: DisplayNameSource;
-  /** What the thread has spent over its life, as its agent estimated it
-   *  (session-limits.ts). Kept here because a rewind or /clear rewrites the
-   *  event log it would otherwise be added up from. */
+  /** What the thread has spent over its life, as its agent estimated it,
+   *  and how far the user let it go past its spend limit (session-limits.ts,
+   *  SavedThreadLimits). Kept here because a rewind or /clear rewrites the
+   *  event log they would otherwise be rebuilt from. */
   threadSpendUsd?: number;
+  threadAllowanceUsd?: number;
   /** One-line goal pinned at the top of the Thread tab (see session-goal). */
   goal?: string;
   /** Who wrote the goal. Absent until one is generated or typed, which is
@@ -414,18 +422,30 @@ export class WorktreeManager {
     });
   }
 
-  /** Record what a thread has spent so far (see ManifestEntry.threadSpendUsd). */
-  async saveThreadSpend(worktreeId: string, usd: number): Promise<void> {
+  /** Record a thread's spend and spend allowance (see ManifestEntry.threadSpendUsd). */
+  async saveThreadLimits(worktreeId: string, saved: SavedThreadLimits): Promise<void> {
     await this.withManifest((manifest) => {
-      if (manifest[worktreeId]) manifest[worktreeId].threadSpendUsd = usd;
-    });
+      const entry = manifest[worktreeId];
+      if (!entry) return false;
+      entry.threadSpendUsd = saved.spendUsd;
+      if (saved.allowanceUsd !== undefined) entry.threadAllowanceUsd = saved.allowanceUsd;
+      else delete entry.threadAllowanceUsd;
+      return true;
+    }, (written) => written);
   }
 
-  /** What a thread had spent when it last ran, or undefined when nothing was
-   *  recorded (an unknown thread, or one that hasn't run a turn since). */
-  async getThreadSpend(worktreeId: string): Promise<number | undefined> {
-    const usd = (await this.loadManifest())[worktreeId]?.threadSpendUsd;
-    return typeof usd === 'number' && Number.isFinite(usd) && usd >= 0 ? usd : undefined;
+  /** A thread's spend and allowance when last saved, or undefined when none
+   *  was (an unknown thread, or one that hasn't been saved since this was
+   *  kept). Read in turn with writes, so a save still queued is seen. */
+  async getThreadLimits(worktreeId: string): Promise<SavedThreadLimits | undefined> {
+    return this.withManifest((manifest) => {
+      const entry = manifest[worktreeId];
+      if (!entry || !isUsd(entry.threadSpendUsd)) return undefined;
+      return {
+        spendUsd: entry.threadSpendUsd,
+        ...(isUsd(entry.threadAllowanceUsd) ? { allowanceUsd: entry.threadAllowanceUsd } : {}),
+      };
+    }, () => false);
   }
 
   /** The agent a session runs, or undefined for an unknown session. */

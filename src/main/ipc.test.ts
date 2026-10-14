@@ -26,7 +26,7 @@ const m = vi.hoisted(() => {
     ),
     worktreeManager: fns(
       'validateRepo', 'cleanupOrphans', 'getWorktreeOrManifest', 'registerDirect', 'create', 'getRepoConfig',
-      'copyUntrackedFiles', 'getNpmCachePath', 'getProviderSessionId', 'getModel', 'getAdapterType', 'getThreadSpend', 'remove',
+      'copyUntrackedFiles', 'getNpmCachePath', 'getProviderSessionId', 'getModel', 'getAdapterType', 'getThreadLimits', 'remove',
       'saveDisplayName', 'getDisplayNameState', 'saveAutoDisplayName', 'renameBranch', 'switchBranch',
       'syncBranch', 'list', 'register', 'listRepos', 'getWorktree', 'assertRemovable', 'checkoutSharers',
       'getGoal', 'saveGoal', 'setGoalHidden',
@@ -508,7 +508,7 @@ describe('conversation lifecycle', () => {
     m.worktreeManager.getProviderSessionId.mockResolvedValue('prov-1');
     m.worktreeManager.getModel.mockResolvedValue('opus');
     m.worktreeManager.getAdapterType.mockResolvedValue('codex');
-    m.worktreeManager.getThreadSpend.mockResolvedValue(2.5);
+    m.worktreeManager.getThreadLimits.mockResolvedValue({ spendUsd: 2.5, allowanceUsd: 5 });
 
     const result = invoke(IPC.SESSION_RESUME, 's1', '/repo');
     // Prompts sent while it starts wait on the same promise.
@@ -516,7 +516,7 @@ describe('conversation lifecycle', () => {
     await result;
 
     expect(m.sessionManager.createSession).toHaveBeenCalledWith(expect.objectContaining({
-      id: 's1', cwd: wt, resumeSessionId: 'prov-1', model: 'opus', adapterType: 'codex', threadSpendUsd: 2.5,
+      id: 's1', cwd: wt, resumeSessionId: 'prov-1', model: 'opus', adapterType: 'codex', savedLimits: { spendUsd: 2.5, allowanceUsd: 5 },
     }));
   });
 
