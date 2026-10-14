@@ -1,5 +1,5 @@
 import type { AgentEvent, ControlDescriptor, FileAttachment, ImageAttachment, MadeFile, McpElicitationRequest, McpElicitationResponse, McpServerInfo, PermissionDecision, PermissionMode, SessionControls, StoredFile, StoredImage } from '../../shared/types.js';
-import { CONTROL_IDS, subagentParent } from '../../shared/types.js';
+import { CONTROL_IDS, DEFAULT_DENY_MESSAGE, subagentParent } from '../../shared/types.js';
 import { attachedFilesFromSent, type SentBlock } from '../../shared/prompt-text.js';
 import { userMessageLabel } from '../lib/message-label.js';
 import { gitStatusStore } from './gitStatus.svelte.js';
@@ -2451,7 +2451,7 @@ class MessageStore {
     const permDecision: PermissionDecision = {
       requestId,
       behavior: decision,
-      message: decision === 'deny' ? (opts?.message || 'User denied permission') : undefined,
+      message: decision === 'deny' ? (opts?.message || DEFAULT_DENY_MESSAGE) : undefined,
       updatedPermissions: opts?.updatedPermissions,
     };
 

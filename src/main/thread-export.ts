@@ -7,7 +7,7 @@
  * the conversation; the JSON has all of it, as the thread's saved events.
  */
 import type { AgentEvent } from '../shared/types.js';
-import { subagentParent } from '../shared/types.js';
+import { DEFAULT_DENY_MESSAGE, PLAN_RESTART_MESSAGE, subagentParent } from '../shared/types.js';
 import { toolViewOf, toolViewSummary } from '../shared/tool-view.js';
 import { localDay } from '../shared/limits.js';
 import { userEventParts } from '../shared/prompt-text.js';
@@ -39,34 +39,52 @@ function inlineCode(text: string): string {
 }
 
 /** `text` on one line, read as plain text rather than Markdown or HTML (a
- *  tool name can be an agent's title for the call). */
+ *  tool name can be an agent's title for the call). An underscore inside a
+ *  word is left as it is (run_shell_command): only one at a word's edge can
+ *  start emphasis. */
 function plain(text: string): string {
-  return text.replace(/\s+/g, ' ').trim().replace(/[\\`*[\]<>#~]/g, '\\$&');
+  return text.replace(/\s+/g, ' ').trim()
+    .replace(/[\\`*[\]<>#~&]/g, '\\$&')
+    .replace(/_(?![A-Za-z0-9])|(?<![A-Za-z0-9])_/g, '\\_');
+}
+
+/** A message's text without the blank lines around it. Its first line keeps
+ *  its indent, which can make it code. */
+function block(text: string): string {
+  return text.replace(/^(?:[ \t]*\r?\n)+/, '').trimEnd();
 }
 
 type ToolCall = Pick<Extract<AgentEvent, { type: 'assistant_tool_use' }>, 'toolName' | 'toolInput' | 'toolView'>;
 
-/** Each tool call as the thread shows it: with the updates applied that
- *  fill it in as it runs (ACP agents send its name and input that way). */
-function toolCalls(events: readonly AgentEvent[]): Map<string, ToolCall> {
-  const calls = new Map<string, ToolCall>();
+/** Each tool call as the thread shows it, by its event: with the updates
+ *  applied that fill it in as it runs (ACP agents send its name and input
+ *  that way). An update goes to the latest call with its id, as an agent
+ *  that restarts can use an id again. */
+function toolCalls(events: readonly AgentEvent[]): Map<AgentEvent, ToolCall> {
+  const byEvent = new Map<AgentEvent, ToolCall>();
+  const latest = new Map<string, ToolCall>();
   for (const e of events) {
     if (e.type === 'assistant_tool_use') {
-      calls.set(e.toolUseId, { toolName: e.toolName, toolInput: e.toolInput, toolView: e.toolView });
+      const call: ToolCall = { toolName: e.toolName, toolInput: e.toolInput, toolView: e.toolView };
+      byEvent.set(e, call);
+      latest.set(e.toolUseId, call);
     } else if (e.type === 'tool_update') {
-      const call = calls.get(e.toolUseId);
+      const call = latest.get(e.toolUseId);
       if (!call) continue;
       if (e.toolName !== undefined) call.toolName = e.toolName;
       if (e.toolInput !== undefined) call.toolInput = e.toolInput;
       if (e.toolView !== undefined) call.toolView = e.toolView;
     }
   }
-  return calls;
+  return byEvent;
 }
 
+/** Replies the app sends for the user when they typed none: not theirs. */
+const DEFAULT_REPLIES: ReadonlySet<string> = new Set([DEFAULT_DENY_MESSAGE, PLAN_RESTART_MESSAGE]);
+
 /** The thread as Markdown: a heading per speaker, the messages as written
- *  (they are Markdown already, and are left exactly as they are), and a
- *  line per tool call. */
+ *  (they are Markdown already, and are left as they are), and a line per
+ *  tool call. */
 export function threadMarkdown(events: readonly AgentEvent[], info: ThreadExportInfo, exportedAt: Date): string {
   const calls = toolCalls(events);
   // Who answered each turn: the agent before the first switch, then each
@@ -74,7 +92,9 @@ export function threadMarkdown(events: readonly AgentEvent[], info: ThreadExport
   const firstSwitch = events.find((e): e is AgentChanged => e.type === 'agent_changed');
   let agent = firstSwitch?.fromName ?? info.agent;
 
-  /** Paragraphs, joined with a blank line. Tool lines in a row make one list. */
+  /** Paragraphs, joined with a blank line. Tool lines in a row make one
+   *  paragraph of lines (not a list, which an agent's own list just above
+   *  would take them into). */
   const blocks: string[] = [[
     `# ${plain(info.title)}`,
     '',
@@ -82,27 +102,35 @@ export function threadMarkdown(events: readonly AgentEvent[], info: ThreadExport
     ...(info.branch ? [`Branch: ${plain(info.branch)}  `] : []),
     `Exported from Grove Bench on ${localDay(exportedAt.getTime())}`,
   ].join('\n')];
-  let inList = false;
-  const add = (block: string) => {
-    if (!block.trim()) return;
-    blocks.push(block);
-    inList = false;
-  };
-  const addListItem = (line: string) => {
-    if (inList) blocks[blocks.length - 1] += `\n${line}`;
-    else blocks.push(line);
-    inList = true;
-  };
+  let toolLines = false;
   /** Whose turn the blocks below belong to, so a speaker gets one heading per turn. */
   let section: string | null = null;
   const speak = (who: string) => {
     if (section === who) return;
     section = who;
-    add(`## ${plain(who)}`);
+    blocks.push(`## ${plain(who)}`);
+    toolLines = false;
   };
-  const error = (message: string) => {
+  /** A block from `who`, under their heading. Nothing for an empty one. */
+  const say = (who: string, text: string) => {
+    if (!text.trim()) return;
+    speak(who);
+    blocks.push(text);
+    toolLines = false;
+  };
+  const toolLine = (line: string) => {
     speak(agent);
-    add(`> Error: ${plain(message)}`);
+    if (toolLines) blocks[blocks.length - 1] += `  \n${line}`;
+    else blocks.push(line);
+    toolLines = true;
+  };
+  /** The last error said, so a turn's result doesn't say it again. */
+  let lastError = '';
+  const error = (message: string) => {
+    const text = plain(message);
+    if (!text || text === lastError) return;
+    lastError = text;
+    say(agent, `> Error: ${text}`);
   };
 
   for (const e of events) {
@@ -112,51 +140,49 @@ export function threadMarkdown(events: readonly AgentEvent[], info: ThreadExport
         // What was typed, without the contents of attached text files and
         // @-mentioned files, which are sent with it.
         const { typed, names } = userEventParts(e);
+        const attached = names.filter(Boolean);
         section = null;
         speak('You');
-        add(typed.trim());
-        if (names.length > 0) add(`Attached: ${names.map(inlineCode).join(', ')}`);
+        say('You', block(typed));
+        if (attached.length > 0) say('You', `Attached: ${attached.map(inlineCode).join(', ')}`);
         break;
       }
       case 'assistant_text':
-        speak(agent);
-        add(e.text.trim());
+        say(agent, block(e.text));
         break;
       case 'tool_use_summary':
-        speak(agent);
-        add(e.summary.trim());
+        say(agent, block(e.summary));
         break;
       case 'assistant_tool_use': {
-        const call = calls.get(e.toolUseId) ?? e;
+        const call = calls.get(e)!;
         const summary = toolViewSummary(toolViewOf(call));
-        speak(agent);
-        addListItem(`- ${plain(call.toolName)}${summary ? ` ${inlineCode(summary)}` : ''}`);
+        toolLine(`→ ${plain(call.toolName)}${summary ? ` ${inlineCode(summary)}` : ''}`);
         break;
       }
       case 'permission_request':
         if (e.planText?.trim()) {
-          speak(agent);
-          add('**Proposed plan:**');
-          add(e.planText.trim());
+          say(agent, '**Proposed plan:**');
+          say(agent, block(e.planText));
         }
         break;
       case 'permission_resolved':
-        // An answer to the agent's question, or why the user said no.
-        if (e.message?.trim()) {
-          speak('You');
-          add(e.message.trim());
-        }
+        // A reply the user typed: an answer to the agent's question, or what
+        // to change in a plan or why not to run a tool.
+        if (e.message && !DEFAULT_REPLIES.has(e.message)) say('You', block(e.message));
         break;
       case 'error':
         error(e.message);
         break;
       case 'result':
-        if (e.isError) error(e.errors?.length ? e.errors.join('; ') : `the turn ended with ${e.subtype}`);
+        // The reason, when the result has one (Claude Code puts an API error
+        // in its text); a failure already reported isn't repeated.
+        if (e.isError) error(e.errors?.length ? e.errors.join('; ') : e.result ?? '');
         break;
       case 'agent_changed':
         agent = e.toName;
         section = null;
-        add(`*Switched from ${plain(e.fromName)} to ${plain(e.toName)}.*`);
+        blocks.push(`*Switched from ${plain(e.fromName)} to ${plain(e.toName)}.*`);
+        toolLines = false;
         break;
     }
   }
@@ -177,7 +203,9 @@ export function threadJson(events: readonly AgentEvent[], info: ThreadExportInfo
  *  doesn't allow, kept short, and never a name Windows keeps for a device. */
 export function exportFileName(title: string, extension: 'md' | 'json'): string {
   const safe = title.replace(/[<>:"/\\|?*\u0000-\u001f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80).replace(/[. ]+$/, '');
-  // Windows keeps these for devices, with any extension too (AUX.ts is AUX).
-  const name = /^(con|prn|aux|nul|com\d|lpt\d|conin\$|conout\$)(\.|$)/i.test(safe) ? `Thread ${safe}` : safe;
+  // Windows keeps these for devices, with any extension too (AUX.ts is AUX),
+  // and reads the name before the extension without its trailing spaces.
+  const stem = safe.split('.')[0].trimEnd();
+  const name = /^(con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³]|conin\$|conout\$)$/i.test(stem) ? `Thread ${safe}` : safe;
   return `${name || 'Thread'}.${extension}`;
 }

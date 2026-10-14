@@ -227,6 +227,12 @@ export type ToolCategory = 'edit' | 'read' | 'bash' | 'question' | 'web_fetch' |
  *  so a query can't hang forever on a prompt nobody sees. */
 export const PERMISSION_TIMEOUT_MINUTES = 30;
 
+/** What a denied tool call tells the agent when the user typed no reply. */
+export const DEFAULT_DENY_MESSAGE = 'User denied permission';
+/** What "Approve and start fresh…" tells the agent as it declines the plan
+ *  prompt to clear the thread and start the plan afresh. */
+export const PLAN_RESTART_MESSAGE = 'Clearing and restarting with the plan.';
+
 // ─── Agent Events (renderer-side, serializable) ───
 
 /**

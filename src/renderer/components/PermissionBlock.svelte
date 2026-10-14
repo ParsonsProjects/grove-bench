@@ -9,7 +9,7 @@
   import AgentSprite from './AgentSprite.svelte';
   import { sessionRepoColor } from '../lib/session-repo-color.js';
   import { alwaysAllowLabel } from '../lib/always-allow.js';
-  import { PERMISSION_TIMEOUT_MINUTES } from '../../shared/types.js';
+  import { PERMISSION_TIMEOUT_MINUTES, PLAN_RESTART_MESSAGE } from '../../shared/types.js';
   import { toolViewOf, toolViewSummary, type ToolView } from '../../shared/tool-view.js';
 
   let {
@@ -105,7 +105,7 @@
     pendingDecision = 'deny';
     try {
       const prompt = `Execute the following plan:\n\n${planText}`;
-      await messageStore.resolvePermission(sessionId, requestId, 'deny', { message: 'Clearing and restarting with the plan.' });
+      await messageStore.resolvePermission(sessionId, requestId, 'deny', { message: PLAN_RESTART_MESSAGE });
       messageStore.clearAndSend(sessionId, prompt);
     } catch (e) {
       console.error('[PermissionBlock] clearAndExecute failed:', e);

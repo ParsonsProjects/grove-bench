@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { AgentEvent } from '../shared/types.js';
 import { THREAD_EXPORT_VERSION, exportFileName, threadJson, threadMarkdown, type ThreadExportInfo } from './thread-export.js';
 import { buildContentBlock } from '../shared/prompt-text.js';
+import { DEFAULT_DENY_MESSAGE, PLAN_RESTART_MESSAGE } from '../shared/types.js';
 
 const info: ThreadExportInfo = { id: 'abc12345', title: 'Fix the login', project: 'shop', branch: 'fix-login', agent: 'Claude Agent' };
 const when = new Date(2026, 9, 14, 12);
@@ -24,7 +25,7 @@ describe('threadMarkdown', () => {
       { type: 'assistant_text', text: 'The token expired.', uuid: 'a2' },
     ], info, when);
 
-    expect(md).toContain('## You\n\nWhy does login fail?\n\n## Claude Agent\n\nLet me look.\n\n- Read `src/login.ts`\n- Bash `npm test`\n\nThe token expired.\n');
+    expect(md).toContain('## You\n\nWhy does login fail?\n\n## Claude Agent\n\nLet me look.\n\n→ Read `src/login.ts`  \n→ Bash `npm test`\n\nThe token expired.\n');
     expect(md.match(/## Claude Agent/g)).toHaveLength(1);
   });
 
@@ -38,7 +39,7 @@ describe('threadMarkdown', () => {
       tool('Grep', { pattern: 'inner' }, { parentToolUseId: 't-Task' }),
     ], info, when);
 
-    expect(md).toContain('- Task');
+    expect(md).toContain('→ Task');
     expect(md).not.toContain('SECRET OUTPUT');
     expect(md).not.toContain('private musing');
     expect(md).not.toContain('subagent words');
@@ -90,8 +91,8 @@ describe('threadMarkdown', () => {
       tool('other', {}, { toolUseId: 'acp-1' }),
       { type: 'tool_update', toolUseId: 'acp-1', toolName: 'run_shell_command', toolView: { kind: 'shell', command: 'npm test' } },
     ], info, when);
-    expect(md).toContain('- run_shell_command `npm test`');
-    expect(md).not.toContain('- other');
+    expect(md).toContain('→ run_shell_command `npm test`');
+    expect(md).not.toContain('→ other');
   });
 
   it('keeps a message exactly as written, blank lines in its code included', () => {
@@ -119,7 +120,84 @@ describe('threadMarkdown', () => {
       { type: 'user_message', text: 'go' },
       tool('Write *notes*.md\n(Run)', { command: '\nnpm run build' }),
     ], info, when);
-    expect(md).toContain('- Write \\*notes\\*.md (Run) `npm run build`');
+    expect(md).toContain('→ Write \\*notes\\*.md (Run) `npm run build`');
+  });
+
+  it('gives each call its own updates when an agent uses an id again', () => {
+    const md = threadMarkdown([
+      { type: 'user_message', text: 'one' },
+      tool('other', {}, { toolUseId: 'call_1' }),
+      { type: 'tool_update', toolUseId: 'call_1', toolView: { kind: 'read', path: 'a.ts' } },
+      { type: 'user_message', text: 'two' },
+      tool('other', {}, { toolUseId: 'call_1' }),
+      { type: 'tool_update', toolUseId: 'call_1', toolView: { kind: 'shell', command: 'rm -rf build' } },
+    ], info, when);
+    expect(md).toContain('one\n\n## Claude Agent\n\n→ other `a.ts`');
+    expect(md).toContain('two\n\n## Claude Agent\n\n→ other `rm -rf build`');
+  });
+
+  it('leaves no heading over nothing', () => {
+    const md = threadMarkdown([
+      { type: 'user_message', text: 'hi' },
+      { type: 'assistant_text', text: '  \n', uuid: 'a' },
+      { type: 'tool_use_summary', summary: '', toolUseIds: [] },
+      { type: 'user_message', text: 'again' },
+    ], info, when);
+    expect(md).not.toContain('## Claude Agent');
+  });
+
+  it('keeps the indent that makes a message\'s first line code', () => {
+    const md = threadMarkdown([{ type: 'user_message', text: 'go' }, { type: 'assistant_text', text: '\n    indented code\n    more\n', uuid: 'a' }], info, when);
+    expect(md).toContain('\n\n    indented code\n    more\n');
+  });
+
+  it('escapes what would render in a name, and leaves underscores inside words', () => {
+    const md = threadMarkdown([
+      { type: 'user_message', text: 'go' },
+      tool('Edit src/pkg/__init__.py', {}),
+      tool('run_shell_command', {}),
+    ], { ...info, title: 'AT&amp;T fix' }, when);
+    expect(md).toContain('# AT\\&amp;T fix');
+    expect(md).toContain('→ Edit src/pkg/\\_\\_init\\_\\_.py');
+    expect(md).toContain('→ run_shell_command');
+  });
+
+  it('keeps tool lines out of a list the agent wrote just above them', () => {
+    const md = threadMarkdown([
+      { type: 'user_message', text: 'go' },
+      { type: 'assistant_text', text: 'I\'ll check:\n- a\n- b', uuid: 'a' },
+      tool('Read', { file_path: 'x.ts' }),
+    ], info, when);
+    expect(md).toContain('- b\n\n→ Read `x.ts`');
+  });
+
+  it('doesn\'t give the app\'s default replies as the user\'s words', () => {
+    const md = threadMarkdown([
+      { type: 'user_message', text: 'go' },
+      { type: 'permission_resolved', requestId: 'r1', toolUseId: 't1', decision: 'deny', message: DEFAULT_DENY_MESSAGE },
+      { type: 'permission_resolved', requestId: 'r2', toolUseId: 't2', decision: 'deny', message: PLAN_RESTART_MESSAGE },
+    ], info, when);
+    expect(md).not.toContain(DEFAULT_DENY_MESSAGE);
+    expect(md).not.toContain(PLAN_RESTART_MESSAGE);
+  });
+
+  it('gives a failed turn\'s own reason, once', () => {
+    const md = threadMarkdown([
+      { type: 'user_message', text: 'go' },
+      { type: 'result', subtype: 'success', isError: true, result: 'API Error: 529 overloaded' },
+      { type: 'user_message', text: 'again' },
+      { type: 'error', message: 'Sign in again.' },
+      { type: 'result', subtype: 'error_during_execution', isError: true, result: 'Sign in again.' },
+      { type: 'result', subtype: 'error_during_execution', isError: true },
+    ], info, when);
+    expect(md).toContain('> Error: API Error: 529 overloaded');
+    expect(md.match(/Sign in again\./g)).toHaveLength(1);
+    expect(md).not.toContain('ended with');
+  });
+
+  it('leaves out an attachment with no name', () => {
+    const md = threadMarkdown([{ type: 'user_message', text: 'see', files: [{ file: 'f', name: '' } as never] }], info, when);
+    expect(md).not.toContain('Attached');
   });
 
   it('leaves the branch out for a folder without git', () => {
@@ -131,7 +209,7 @@ describe('threadMarkdown', () => {
       { type: 'user_message', text: 'go' },
       tool('Bash', { command: 'echo `date`\necho done' }),
     ], info, when);
-    expect(md).toContain('- Bash ``echo `date` …``');
+    expect(md).toContain('→ Bash ``echo `date` …``');
   });
 });
 
@@ -157,6 +235,8 @@ describe('exportFileName', () => {
     expect(exportFileName('con', 'md')).toBe('Thread con.md');
     expect(exportFileName('aux.ts cleanup', 'md')).toBe('Thread aux.ts cleanup.md');
     expect(exportFileName('auxiliary', 'md')).toBe('auxiliary.md');
+    expect(exportFileName('CON .txt', 'md')).toBe('Thread CON .txt.md');
+    expect(exportFileName('com¹', 'md')).toBe('Thread com¹.md');
     expect(exportFileName('x'.repeat(200), 'md')).toBe(`${'x'.repeat(80)}.md`);
   });
 });

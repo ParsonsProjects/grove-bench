@@ -676,10 +676,6 @@ export function registerHandlers() {
     };
     const picked = win ? await dialog.showSaveDialog(win, options) : await dialog.showSaveDialog(options);
     if (picked.canceled || !picked.filePath) return null;
-    // Deleted while the dialog was open: its history is gone with it.
-    if (!(await worktreeManager.getWorktreeOrManifest(sessionId))) {
-      throw new Error('The thread was deleted before it was saved, so it wasn\'t exported.');
-    }
 
     const events = sessionManager.getEventHistory(sessionId);
     const now = new Date();
