@@ -472,6 +472,7 @@ const api: GroveBenchAPI = {
   winMaximize: () => ipcRenderer.send(IPC.WIN_MAXIMIZE),
   winClose: () => ipcRenderer.send(IPC.WIN_CLOSE),
   winIsMaximized: () => ipcRenderer.invoke(IPC.WIN_IS_MAXIMIZED),
+  isSafeMode: () => ipcRenderer.invoke(IPC.APP_SAFE_MODE),
 
   // Spell check
   onSpellcheckMenu: (callback: (req: import('../shared/types.js').SpellcheckMenuRequest) => void) => {

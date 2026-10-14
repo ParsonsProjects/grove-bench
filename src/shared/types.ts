@@ -1521,6 +1521,8 @@ export interface GroveBenchAPI {
   winMaximize(): void;
   winClose(): void;
   winIsMaximized(): Promise<boolean>;
+  /** Whether Grove was started with --safe-mode (main's safe-mode.ts). */
+  isSafeMode(): Promise<boolean>;
 
   // Spell check
   /** Fired when the user right-clicks a misspelled word. */
@@ -2095,6 +2097,7 @@ export const IPC = {
   WIN_MAXIMIZE: 'win:maximize',
   WIN_CLOSE: 'win:close',
   WIN_IS_MAXIMIZED: 'win:isMaximized',
+  APP_SAFE_MODE: 'app:safeMode',
   SETTINGS_GET: 'settings:get',
   SETTINGS_SAVE: 'settings:save',
   APP_STATE_GET_OPEN_TABS: 'appState:getOpenTabs',

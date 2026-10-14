@@ -99,7 +99,8 @@ function stopSchedule() {
   if (checkInterval) { clearInterval(checkInterval); checkInterval = null; }
 }
 
-export function initAutoUpdater(win: BrowserWindow, options: { shutdown: () => Promise<void> }) {
+/** `checkOnSchedule` false (safe mode) leaves only the user's own checks. */
+export function initAutoUpdater(win: BrowserWindow, options: { shutdown: () => Promise<void>; checkOnSchedule?: boolean }) {
   mainWindow = win;
   shutdown = options.shutdown;
   autoUpdater.autoDownload = getSettings().autoDownloadUpdates;
@@ -108,7 +109,7 @@ export function initAutoUpdater(win: BrowserWindow, options: { shutdown: () => P
   listen();
 
   stopSchedule();
-  if (app.isPackaged) {
+  if (app.isPackaged && options.checkOnSchedule !== false) {
     firstCheck = setTimeout(() => void runCheck(false), FIRST_CHECK_DELAY_MS);
     checkInterval = setInterval(() => void runCheck(false), CHECK_INTERVAL_MS);
   }

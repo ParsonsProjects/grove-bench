@@ -573,6 +573,7 @@ const api: Record<string, unknown> = {
   },
   ptyIsAlive: async () => false,
   winIsMaximized: async () => false,
+  isSafeMode: async () => false,
   // The MCP settings tab reads `.length` of this list.
   mcpConfigList: async () => [],
   testNotification: async () => 'sent',

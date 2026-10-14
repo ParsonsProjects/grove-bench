@@ -53,11 +53,11 @@ function nextCheck(events: Array<[string, unknown?]>) {
   });
 }
 
-async function init(opts: { packaged?: boolean; autoDownload?: boolean } = {}) {
+async function init(opts: { packaged?: boolean; autoDownload?: boolean; checkOnSchedule?: boolean } = {}) {
   appMock.isPackaged = opts.packaged ?? true;
   settings.autoDownloadUpdates = opts.autoDownload ?? true;
   mod = await import('./auto-updater.js');
-  mod.initAutoUpdater(win as unknown as BrowserWindow, { shutdown });
+  mod.initAutoUpdater(win as unknown as BrowserWindow, { shutdown, ...(opts.checkOnSchedule === undefined ? {} : { checkOnSchedule: opts.checkOnSchedule }) });
 }
 
 beforeEach(() => {
@@ -109,6 +109,16 @@ describe('auto-updater', () => {
     expect(updater.checkForUpdates).toHaveBeenCalledTimes(1);
     expect(sent()).toEqual([{ state: 'downloading', info: INFO, percent: 0, manual: false }]);
     await vi.advanceTimersByTimeAsync(5_000);
+  });
+
+  it('checks only when asked in safe mode (checkOnSchedule false)', async () => {
+    await init({ checkOnSchedule: false });
+    await vi.advanceTimersByTimeAsync(5 * 60 * 60 * 1000);
+    expect(updater.checkForUpdates).not.toHaveBeenCalled();
+
+    nextCheck([['checking-for-update'], ['update-not-available', RELEASE]]);
+    await expect(mod.checkForUpdate()).resolves.toEqual({ state: 'not-available', manual: true });
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(1);
   });
 
   it('reports a manual check as it goes and resolves to the result', async () => {

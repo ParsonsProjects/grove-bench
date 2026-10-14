@@ -32,6 +32,18 @@ describe('TitleBar', () => {
     await vi.advanceTimersByTimeAsync(150);
     expect(isMaximized).toHaveBeenCalledTimes(2);
   });
+
+  it('shows a Safe mode badge only when Grove was started with --safe-mode', async () => {
+    render(TitleBar);
+    await vi.waitFor(() => expect(mockGroveBench.isSafeMode).toHaveBeenCalled());
+    expect(screen.queryByText('Safe mode')).not.toBeInTheDocument();
+    cleanup();
+
+    mockGroveBench.isSafeMode.mockResolvedValueOnce(true);
+    render(TitleBar);
+    const badge = await screen.findByText('Safe mode');
+    expect(badge.getAttribute('title')).toMatch(/--safe-mode: GPU off/);
+  });
 });
 
 describe('Help', () => {

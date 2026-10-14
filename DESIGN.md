@@ -765,6 +765,10 @@ The app needs to surface errors clearly since things will go wrong (worktree cre
 
 All errors log to a file at `%APPDATA%/grove-bench/logs/`. Useful for debugging when things go wrong. Log rotation: keep last 5 files, max 10MB each.
 
+`startup.log`, in the same folder, is for a launch that freezes the whole computer, so that it only comes back by holding the power button. The app log and `performance.log` are buffered, and can lose their last lines with it. For the first 5 minutes of each launch, `startup-log.ts` notes the launch's steps, every process started (with its folder) and when it ended, IPC calls that took 2 s or more, the GPU and its driver, and every 5 s a heartbeat with free memory and whatever has been running for 2 s or more. Each line is flushed to the disk (fsync) as it is written, off the main thread so a stalled disk can't stall the window. The last 5 launches are kept: `startup.log.1` is the one before.
+
+Started with `--safe-mode` (`safe-mode.ts`), Grove draws the window without the GPU and leaves out the background work it does on its own around launch: the worktree and attachment cleanup, scheduled update checks and the catalog refresh. What the user does still works. The title bar shows a Safe mode badge until Grove is started without the flag.
+
 ## 14. v2 Considerations (Out of Scope, Documented for Later)
 
 - Support for Codex, Gemini CLI, Aider, and other agents (adapter pattern is in place)

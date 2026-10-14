@@ -3,6 +3,7 @@
   import UpdateNotification from './UpdateNotification.svelte';
   import { lazyComponent } from '../lib/lazy-component.js';
   import { helpStore } from '../stores/help.svelte.js';
+  import { Badge } from '$lib/components/ui/badge/index.js';
 
   // Help (with every help page) loads when first opened, then stays mounted.
   const loadHelpPanel = lazyComponent(() => import('./HelpPanel.svelte'));
@@ -21,6 +22,13 @@
   $effect(() => {
     window.addEventListener('keydown', onKeydown, true);
     return () => window.removeEventListener('keydown', onKeydown, true);
+  });
+
+  // Started with --safe-mode (main's safe-mode.ts): say so, since the app
+  // behaves differently until it's started without it.
+  let safeMode = $state(false);
+  $effect(() => {
+    window.groveBench.isSafeMode().then((on) => { safeMode = on; }, () => {});
   });
 
   let isMaximized = $state(false);
@@ -161,6 +169,13 @@
       {/each}
     </svg>
     <span class="text-xs text-muted-foreground">Grove Bench</span>
+    {#if safeMode}
+      <Badge
+        tone="warning"
+        class="no-drag ml-2 uppercase tracking-wide"
+        title="Started with --safe-mode: GPU off, no automatic cleanup, no update or catalog checks. Start Grove Bench without it to leave safe mode."
+      >Safe mode</Badge>
+    {/if}
     <UpdateNotification />
   </div>
   <div class="flex items-center h-full relative z-10">
@@ -219,7 +234,9 @@
   .app-drag {
     -webkit-app-region: drag;
   }
-  .win-btn {
+  /* The safe mode badge is a component: it takes the class, not the scope. */
+  .win-btn,
+  .app-drag :global(.no-drag) {
     -webkit-app-region: no-drag;
   }
   .titlebar-pixel {

@@ -38,6 +38,8 @@ src/
     rotating-log.ts    # Size-rotated log file (app log and performance.log share it)
     freeze-log.ts      # Main-process stalls, slow window frames (100 ms+), process launches, timed work, GC pauses
     perf-*.ts          # performance.log, step timings (new/resume/wake), health line, traces
+    startup-log.ts     # startup.log: each launch's first 5 min, flushed to disk line by line (survives a forced power-off)
+    safe-mode.ts       # --safe-mode: GPU off, no background cleanup, no scheduled update or catalog checks
     git-status-parser.ts
     preview.ts         # Preview tab: your page (WebContentsView) + the agent's (offscreen)
     preview-*.ts       # Preview URL rules, console log, in-page scripts, keys

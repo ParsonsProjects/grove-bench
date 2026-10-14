@@ -49,6 +49,7 @@ import { perfLogPath } from './perf-log.js';
 import { installDependencies } from './deps-install.js';
 import { applyAttentionBadge } from './attention-badge.js';
 import { replaceMisspelling, addWordToDictionary } from './spellcheck.js';
+import { safeMode } from './safe-mode.js';
 import crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
@@ -2094,6 +2095,8 @@ export function registerHandlers() {
   ipcMain.handle(IPC.WIN_IS_MAXIMIZED, (event) => {
     return BrowserWindow.fromWebContents(event.sender)?.isMaximized() ?? false;
   });
+
+  ipcMain.handle(IPC.APP_SAFE_MODE, () => safeMode);
 
   ipcMain.handle(IPC.FILE_READ, async (_event, sessionId: string, filePath: string) => {
     const worktree = worktreeManager.getWorktree(sessionId);

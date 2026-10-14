@@ -78,6 +78,7 @@ const mockGroveBench = {
   downloadUpdate: vi.fn(() => Promise.resolve()),
   restartToUpdate: vi.fn(() => Promise.resolve()),
   winIsMaximized: vi.fn(() => Promise.resolve(false)),
+  isSafeMode: vi.fn(() => Promise.resolve(false)),
   winMinimize: vi.fn(),
   winMaximize: vi.fn(),
   winClose: vi.fn(),

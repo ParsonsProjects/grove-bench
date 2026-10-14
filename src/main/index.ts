@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain, nativeTheme, powerMonitor, screen } from 'electron';
+import os from 'node:os';
 import path from 'node:path';
 import { registerHandlers, appEvents } from './ipc.js';
 import { sessionManager } from './agent-session.js';
@@ -7,7 +8,7 @@ import { keepOnScreen, loadWindowState, trackWindowState } from './window-state.
 import { flushPendingSaves } from './app-state.js';
 import * as settings from './settings.js';
 import { catalogs } from './catalogs.js';
-import { logger } from './logger.js';
+import { getLogDir, logger } from './logger.js';
 import { terminalManager } from './terminal.js';
 import { previewManager } from './preview.js';
 import { IPC } from '../shared/types.js';
@@ -22,11 +23,15 @@ import { freezeLog, startStallWatch } from './freeze-log.js';
 import { closePerfLog } from './perf-log.js';
 import { startHealthLog } from './perf-health.js';
 import { startProcessHost, stopProcessHost } from './process-host.js';
+import { describeGpuDevices, describeGpuFeatures, startupLog } from './startup-log.js';
+import { safeMode, SAFE_MODE_SUMMARY } from './safe-mode.js';
 import { ChildProcess } from 'node:child_process';
 
 // Time every process launch from the start: on Windows each one blocks the
 // main process until the OS has created it (freeze-log.ts).
 freezeLog.timeProcessLaunches(ChildProcess.prototype);
+// And note each one, with when it ended, in the startup log (startup-log.ts).
+startupLog.watchProcessLaunches(ChildProcess.prototype);
 
 // Keep userData path consistent across dev and packaged builds.
 // In dev mode Electron defaults to "Electron"; electron-builder uses productName
@@ -49,6 +54,16 @@ if (!isFirstCopy) {
   app.quit();
 }
 
+// The startup log is this copy's: a second one only hands over, and must
+// not move the running copy's file aside.
+if (isFirstCopy) {
+  startupLog.begin({ file: path.join(getLogDir(), 'startup.log'), header: launchHeader(), heartbeat: describeMemory });
+}
+
+// Safe mode (safe-mode.ts) draws the window without the GPU, which has to
+// be chosen before the app is ready.
+if (safeMode) app.disableHardwareAcceleration();
+
 // Set the App User Model ID so Windows can associate the pinned taskbar
 // shortcut with the running application (prevents icon from disappearing).
 app.setAppUserModelId('com.parsonsprojects.grove-bench');
@@ -58,6 +73,7 @@ app.setAppUserModelId('com.parsonsprojects.grove-bench');
 // applies after a restart.
 const launchSettings = settings.loadSettings();
 initAdapters(launchSettings.acpAgents, launchSettings.claudeAccounts);
+startupLog.step('settings read, agents registered');
 
 // Custom schemes can only be registered before the app is ready.
 registerAttachmentScheme();
@@ -65,6 +81,7 @@ registerAttachmentScheme();
 // Time IPC handlers before they are registered, so the freeze log can name
 // the calls that ran while the main process was blocked.
 freezeLog.timeIpcHandlers(ipcMain);
+startupLog.watchIpcHandlers(ipcMain);
 registerHandlers();
 
 let mainWindow: BrowserWindow | null = null;
@@ -97,6 +114,8 @@ function createWindow() {
     title: 'Grove Bench',
     show: false,
   });
+  startupLog.step('window created');
+  watchWindow(mainWindow);
 
   if (state.isMaximized) {
     mainWindow.maximize();
@@ -124,6 +143,7 @@ function createWindow() {
   }
 
   mainWindow.once('ready-to-show', () => {
+    startupLog.step('window shown');
     mainWindow?.show();
   });
 
@@ -132,7 +152,7 @@ function createWindow() {
     mainWindow?.flashFrame(false);
   });
 
-  initAutoUpdater(mainWindow, { shutdown });
+  initAutoUpdater(mainWindow, { shutdown, checkOnSchedule: !safeMode });
 
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -155,38 +175,47 @@ app.on('second-instance', () => {
 app.whenReady().then(() => {
   // A second copy only hands over (above), and opens nothing.
   if (!isFirstCopy) return;
+  startupLog.step('app ready');
+  logGpu();
   // git and gh launch from here on in a utility process, so a slow launch
   // can't freeze the window (process-host.ts). First, before the window
   // starts asking for git status.
   startProcessHost();
+  startupLog.step('process hosts starting');
   handleAttachmentProtocol((id) => worktreeManager.getWorktree(id)?.path);
-  void removeDeletedFolders();
+  if (!safeMode) void removeDeletedFolders();
   createWindow();
+  appEvents.once('restore-complete', () => startupLog.step('threads restored'));
 
-  // Background worktree sweep. The first run waits until the renderer has
-  // finished restoring sessions (disk and CPU are busiest then), with a
-  // 60s fallback if that signal never arrives; then every 15 minutes.
-  const runSweep = () => {
-    worktreeManager.sweepStaleWorktrees().catch((e) => {
-      logger.warn('Background worktree sweep failed:', e);
-    });
-  };
-  let firstSweepScheduled = false;
-  const scheduleFirstSweep = () => {
-    if (firstSweepScheduled) return;
-    firstSweepScheduled = true;
-    setTimeout(runSweep, 5_000);
-  };
-  appEvents.once('restore-complete', scheduleFirstSweep);
-  setTimeout(scheduleFirstSweep, 60_000);
+  // Safe mode leaves out the background work below (safe-mode.ts).
+  if (!safeMode) {
+    // Background worktree sweep. The first run waits until the renderer has
+    // finished restoring sessions (disk and CPU are busiest then), with a
+    // 60s fallback if that signal never arrives; then every 15 minutes.
+    const runSweep = () => {
+      const done = startupLog.track('worktree cleanup');
+      worktreeManager.sweepStaleWorktrees().then(() => done(), (e) => {
+        done('failed');
+        logger.warn('Background worktree sweep failed:', e);
+      });
+    };
+    let firstSweepScheduled = false;
+    const scheduleFirstSweep = () => {
+      if (firstSweepScheduled) return;
+      firstSweepScheduled = true;
+      setTimeout(runSweep, 5_000);
+    };
+    appEvents.once('restore-complete', scheduleFirstSweep);
+    setTimeout(scheduleFirstSweep, 60_000);
 
-  // The ACP Registry and models.dev (catalogs.ts): at most once a day, after
-  // the restore, and only while the user allows it (Settings > Privacy).
-  appEvents.once('restore-complete', () => setTimeout(() => {
-    if (settings.getSettings().onlineCatalogs) void catalogs.refresh();
-  }, 10_000));
-  const scheduleSweep = () => setTimeout(() => { runSweep(); scheduleSweep(); }, 15 * 60_000);
-  scheduleSweep();
+    // The ACP Registry and models.dev (catalogs.ts): at most once a day, after
+    // the restore, and only while the user allows it (Settings > Privacy).
+    appEvents.once('restore-complete', () => setTimeout(() => {
+      if (settings.getSettings().onlineCatalogs) void catalogs.refresh();
+    }, 10_000));
+    const scheduleSweep = () => setTimeout(() => { runSweep(); scheduleSweep(); }, 15 * 60_000);
+    scheduleSweep();
+  }
 
   // Note in the performance log whenever the main process stops
   // responding, and sum up how the app is doing every few minutes.
@@ -229,6 +258,7 @@ app.on('window-all-closed', () => {
 // After shutdown (before-quit waits for it), so the agents' last git calls
 // still had the host; stopping it first means its exit isn't taken for a crash.
 app.on('will-quit', () => {
+  startupLog.end('quitting');
   stopProcessHost();
   // A stall seen at the last tick waits for the next one, which won't come.
   freezeLog.flush();
@@ -261,6 +291,7 @@ function shutdown(): Promise<void> {
 }
 
 app.on('before-quit', (event) => {
+  startupLog.step('quit asked for');
   // Debounced app-state saves (open tabs, groups, …) still waiting to be written.
   flushPendingSaves();
   if (isQuitting) return;
@@ -278,3 +309,62 @@ app.on('before-quit', (event) => {
     app.quit();
   });
 });
+
+// A process of the app's own, such as the GPU process, crashed or was
+// killed. The process hosts note their own exits (process-host.ts), and the
+// window's renderer is watched in watchWindow.
+app.on('child-process-gone', (_event, details) => {
+  if (details.type === 'Utility') return;
+  const line = `${details.type} process${details.name ? ` (${details.name})` : ''} gone: ${details.reason}, exit code ${details.exitCode}`;
+  logger.warn(line);
+  startupLog.step(line);
+});
+
+/** Log the window's renderer crashing or hanging, in the app log and the
+ *  startup log. */
+function watchWindow(win: BrowserWindow): void {
+  win.webContents.once('did-finish-load', () => startupLog.step('window loaded'));
+  win.webContents.on('render-process-gone', (_event, details) => {
+    const line = `window's renderer gone: ${details.reason}, exit code ${details.exitCode}`;
+    logger.warn(line);
+    startupLog.step(line);
+  });
+  win.on('unresponsive', () => {
+    logger.warn('Window stopped responding');
+    startupLog.step('window stopped responding');
+  });
+  win.on('responsive', () => {
+    logger.info('Window responding again');
+    startupLog.step('window responding again');
+  });
+}
+
+function gb(bytes: number): string {
+  return (bytes / 1024 ** 3).toFixed(1);
+}
+
+/** The startup log's first lines: what is starting, on what. */
+function launchHeader(): string[] {
+  return [
+    `Grove Bench ${app.getVersion()} starting (pid ${process.pid}), Electron ${process.versions.electron}, ${os.version()} ${os.release()}`,
+    safeMode ? `safe mode: ${SAFE_MODE_SUMMARY}` : 'safe mode off',
+    `memory ${gb(os.totalmem())} GB, ${gb(os.freemem())} GB free; ${os.cpus().length} CPUs`,
+  ];
+}
+
+/** Free memory, and what Grove's processes use, for each heartbeat of the
+ *  startup log: running out of memory freezes the whole computer too. */
+function describeMemory(): string {
+  const groveKb = app.getAppMetrics().reduce((sum, m) => sum + m.memory.workingSetSize, 0);
+  return `memory free ${gb(os.freemem())} of ${gb(os.totalmem())} GB, Grove ${Math.round(groveKb / 1024)} MB`;
+}
+
+/** The graphics card, its driver and what Chromium uses it for, in the
+ *  startup log: a driver that hangs takes the screen with it. */
+function logGpu(): void {
+  startupLog.step(`GPU use: ${describeGpuFeatures(app.getGPUFeatureStatus())}`);
+  app.getGPUInfo('basic').then(
+    (info) => startupLog.step(`GPU: ${describeGpuDevices(info)}`),
+    (e: unknown) => startupLog.step(`GPU unknown: ${e instanceof Error ? e.message : String(e)}`),
+  );
+}

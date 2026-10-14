@@ -39,6 +39,7 @@ import {
   type HostedOptions, type HostReply, type HostRequest, type ProcessResult, type SpawnEvent, type SpawnRequest,
 } from './process-host-protocol.js';
 import { createSpawnRunner, HostedProcess, type SpawnRunner } from './process-host-spawn.js';
+import { describeProcess, exitOutcome, startupLog } from './startup-log.js';
 
 export type { HostedOptions, ProcessResult } from './process-host-protocol.js';
 export type { HostedProcess } from './process-host-spawn.js';
@@ -182,6 +183,7 @@ export function createProcessHost(deps: ProcessHostDeps) {
         clearTimer(startTimer);
         state = 'ready';
         readyAt = now();
+        startupLog.step(`${name} ready`);
         hostCameUp(true);
         return;
       }
@@ -472,6 +474,7 @@ function killQuietly(pid: number): void {
 function noteInLogs(line: string): void {
   perfLine('host', line);
   logger.info(`[process-host] ${line}`);
+  startupLog.step(line);
 }
 
 /** The host script. It's built next to the main bundle in dist/main. */
@@ -507,7 +510,13 @@ const agentHost = createProcessHost({
 export function runProcess(file: string, args: string[], options: HostedOptions & { encoding: 'buffer' }): Promise<ProcessResult<Uint8Array>>;
 export function runProcess(file: string, args: string[], options?: HostedOptions): Promise<ProcessResult>;
 export function runProcess(file: string, args: string[], options?: HostedOptions): Promise<unknown> {
-  return processHost.run(file, args, options);
+  // Until the host is up, the command runs in the main process, which logs
+  // its launch there (startupLog.watchProcessLaunches).
+  if (!processHost.ready) return processHost.run(file, args, options);
+  const done = startupLog.track(describeProcess(launchLabel(file, [file, ...args]), options?.cwd));
+  const result = processHost.run(file, args, options);
+  result.then(() => done(), () => done('failed'));
+  return result;
 }
 
 /**
@@ -516,7 +525,19 @@ export function runProcess(file: string, args: string[], options?: HostedOptions
  * waits for the OS (or an antivirus) to create it. Returns at once.
  */
 export function spawnProcess(file: string, args: string[], options?: SpawnProcessOptions): HostedProcess {
-  return agentHost.spawn(file, args, options);
+  const proc = agentHost.spawn(file, args, options);
+  if (startupLog.active) {
+    const label = describeProcess(proc.label, options?.cwd);
+    const started = startupLog.track(label);
+    // Started in the main process (the host has failed), it may be up already.
+    if (proc.pid !== undefined) started(`started (pid ${proc.pid})`);
+    else proc.once('spawn', () => started(`started (pid ${proc.pid})`));
+    proc.once('exit', (code: unknown, signal: unknown) => {
+      started('never started');
+      startupLog.step(`${exitOutcome(code, signal)}: ${label}`);
+    });
+  }
+  return proc;
 }
 
 /** Start the process and agent hosts. Electron allows it once the app is ready. */
