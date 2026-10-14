@@ -56,6 +56,17 @@ describe('spend', () => {
     expect(limitsFromHistory([], undefined).threadSpendUsd).toBe(0);
   });
 
+  it('adds up the tokens results report, and keeps saved ones a cut took from the history', () => {
+    const r = (input: number, output: number): AgentEvent => ({ type: 'result', subtype: 'success', isError: false, turnTokens: { input, output } });
+    expect(limitsFromHistory([r(100, 10), r(50, 5), result(0.1, 0.1)]).threadTokens).toEqual({ input: 150, output: 15 });
+    expect(limitsFromHistory([r(100, 10)], { spendUsd: 0, tokens: { input: 900, output: 40 } }).threadTokens).toEqual({ input: 900, output: 40 });
+
+    const limits = limitsFromHistory([]);
+    turnEnded(limits, r(70, 7));
+    expect(limits.threadTokens).toEqual({ input: 70, output: 7 });
+    expect(savedThreadLimits(limits)).toEqual({ spendUsd: 0, tokens: { input: 70, output: 7 } });
+  });
+
   it('keeps a saved allowance past the spend limit too', () => {
     expect(limitsFromHistory([], { spendUsd: 12, allowanceUsd: 22 }).threadAllowanceUsd).toBe(22);
     // A later Continue still in the history goes further.

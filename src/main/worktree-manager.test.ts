@@ -100,6 +100,14 @@ describe('saveThreadLimits / getThreadLimits', () => {
     });
   });
 
+  it('records the thread\'s tokens with its spend', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({ 'wt-1': { repoPath: '/repo', branch: 'feature', createdAt: 1000 } }));
+    await manager.saveThreadLimits('wt-1', { spendUsd: 0, tokens: { input: 1200, output: 80 } });
+    expect(savedManifest).toEqual({
+      'wt-1': { repoPath: '/repo', branch: 'feature', createdAt: 1000, threadSpendUsd: 0, threadInputTokens: 1200, threadOutputTokens: 80 },
+    });
+  });
+
   it('writes nothing for a thread no longer in the manifest', async () => {
     mockFs.readFile.mockResolvedValue(JSON.stringify({ 'wt-1': { repoPath: '/repo', branch: 'a', createdAt: 1 } }));
     await manager.saveThreadLimits('gone', { spendUsd: 2 });
@@ -113,6 +121,8 @@ describe('saveThreadLimits / getThreadLimits', () => {
       'wt-old': { repoPath: '/repo', branch: 'b', createdAt: 2 },
       'wt-bad': { repoPath: '/repo', branch: 'c', createdAt: 3, threadSpendUsd: 'lots' },
       'wt-neg': { repoPath: '/repo', branch: 'd', createdAt: 4, threadSpendUsd: -1 },
+      'wt-tok': { repoPath: '/repo', branch: 'e', createdAt: 5, threadSpendUsd: 0, threadInputTokens: 1200, threadOutputTokens: 80 },
+      'wt-half': { repoPath: '/repo', branch: 'f', createdAt: 6, threadSpendUsd: 0, threadInputTokens: 1200, threadOutputTokens: 'many' },
     }));
 
     expect(await manager.getThreadLimits('wt-1')).toEqual({ spendUsd: 1.5, allowanceUsd: 3 });
@@ -120,6 +130,8 @@ describe('saveThreadLimits / getThreadLimits', () => {
     expect(await manager.getThreadLimits('wt-old')).toBeUndefined();
     expect(await manager.getThreadLimits('wt-bad')).toBeUndefined();
     expect(await manager.getThreadLimits('wt-neg')).toBeUndefined();
+    expect(await manager.getThreadLimits('wt-tok')).toEqual({ spendUsd: 0, tokens: { input: 1200, output: 80 } });
+    expect(await manager.getThreadLimits('wt-half')).toEqual({ spendUsd: 0 });
     expect(await manager.getThreadLimits('missing')).toBeUndefined();
     expect(mockFs.writeFile).not.toHaveBeenCalled();
   });

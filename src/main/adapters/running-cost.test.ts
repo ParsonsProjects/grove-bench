@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { AgentEvent } from '../../shared/types.js';
-import { RunningCost, lastRunningCost } from './running-cost.js';
+import { RunningCost, RunningTokens, lastRunningCost, lastRunningTokens } from './running-cost.js';
 
 describe('RunningCost', () => {
   it('turns running totals into each turn\'s cost', () => {
@@ -67,6 +67,40 @@ describe('lastRunningCost', () => {
     expect(lastRunningCost([
       result({ totalCostUsd: 0.5, sessionCostUsd: 0.5 }),
       { type: 'status', message: 'Started a new conversation', newConversation: true },
+    ])).toBeNull();
+  });
+});
+
+describe('RunningTokens', () => {
+  it('turns running totals into each turn\'s tokens, input and output apart', () => {
+    const t = new RunningTokens();
+    expect(t.turnTokens({ input: 1000, output: 50 }, false)).toEqual({ input: 1000, output: 50 });
+    expect(t.turnTokens({ input: 2500, output: 80 }, false)).toEqual({ input: 1500, output: 30 });
+  });
+
+  it('starts a resumed conversation from the totals it had reached, and counts afresh after /clear', () => {
+    const t = new RunningTokens({ input: 1000, output: 50 });
+    expect(t.turnTokens({ input: 1200, output: 70 }, false)).toEqual({ input: 200, output: 20 });
+    expect(t.turnTokens({ input: 300, output: 10 }, false)).toEqual({ input: 300, output: 10 });
+  });
+});
+
+describe('lastRunningTokens', () => {
+  const result = (extra: Partial<Extract<AgentEvent, { type: 'result' }>>): AgentEvent => ({ type: 'result', subtype: 'success', isError: false, ...extra });
+
+  it('reads the last reported running totals, skipping results without them', () => {
+    expect(lastRunningTokens([
+      result({ sessionTokens: { input: 10, output: 1 } }),
+      result({ sessionTokens: { input: 30, output: 4 } }),
+      result({}),
+    ])).toEqual({ input: 30, output: 4 });
+  });
+
+  it('is null with nothing reported since the agent\'s conversation began', () => {
+    expect(lastRunningTokens([])).toBeNull();
+    expect(lastRunningTokens([
+      result({ sessionTokens: { input: 10, output: 1 } }),
+      { type: 'agent_changed', from: 'a', to: 'b', fromName: 'A', toName: 'B', transcript: false },
     ])).toBeNull();
   });
 });

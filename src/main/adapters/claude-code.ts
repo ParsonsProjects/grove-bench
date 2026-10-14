@@ -31,7 +31,7 @@ import { createPreviewMcpServer } from './preview-mcp-server.js';
 import * as skillsModule from '../skills.js';
 import { accountEnv, accountSignInCommand, type ClaudeAccount } from './claude-accounts.js';
 import { logger } from '../logger.js';
-import { RunningCost } from './running-cost.js';
+import { RunningCost, RunningTokens } from './running-cost.js';
 import { execFile } from 'node:child_process';
 import { spawnProcess } from '../process-host.js';
 import { promisify } from 'node:util';
@@ -183,6 +183,8 @@ interface MessageContext {
   /** Turns the query's running cost total into each turn's cost. Without
    *  one, each result is read as the first of a new conversation. */
   cost?: RunningCost;
+  /** The same for its running token totals. */
+  tokens?: RunningTokens;
   /** Shown when the API refuses the sign-in. CLAUDE_AUTH_ERROR_MESSAGE when
    *  unset; an account agent names its own. */
   authErrorMessage?: string;
@@ -565,6 +567,13 @@ export function transformMessage(
       const runningCost = typeof message.total_cost_usd === 'number' && Number.isFinite(message.total_cost_usd)
         ? message.total_cost_usd
         : undefined;
+      // modelUsage is a running total too (the SDK's field for token
+      // accounting), over every model the query used: subagents and
+      // compaction included. Input counts what the model read from cache.
+      const runningTokens = modelUsage ? Object.values(modelUsage).reduce((sum, u) => ({
+        input: sum.input + (u.inputTokens ?? 0) + (u.cacheReadInputTokens ?? 0) + (u.cacheCreationInputTokens ?? 0),
+        output: sum.output + (u.outputTokens ?? 0),
+      }), { input: 0, output: 0 }) : undefined;
       events.push({
         type: 'result',
         subtype: message.subtype,
@@ -573,6 +582,10 @@ export function transformMessage(
         ...(runningCost !== undefined ? {
           totalCostUsd: (ctx.cost ?? new RunningCost()).turnCost(runningCost, message.is_error),
           sessionCostUsd: runningCost,
+        } : {}),
+        ...(runningTokens ? {
+          turnTokens: (ctx.tokens ?? new RunningTokens()).turnTokens(runningTokens, message.is_error),
+          sessionTokens: runningTokens,
         } : {}),
         durationMs: message.duration_ms,
         isError: message.is_error,
@@ -1847,6 +1860,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       toolUseMap: new Map(),
       groveMode: config.permissionMode,
       cost: new RunningCost(config.resumeSessionId ? (config.priorCostUsd ?? null) : null),
+      tokens: new RunningTokens(config.resumeSessionId ? (config.priorTokens ?? null) : null),
       authErrorMessage: this.authErrorMessage,
     };
 

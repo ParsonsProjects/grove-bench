@@ -929,7 +929,7 @@ describe('AgentSessionManager limits', () => {
     mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false, totalCostUsd: 0.4, sessionCostUsd: 0.4 });
     mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false, totalCostUsd: 0.1, sessionCostUsd: 0.5 });
     await vi.waitFor(() => expect(sessionManager.getSession('test-spend')!.limits.threadSpendUsd).toBeCloseTo(0.5));
-    expect(await sessionManager.threadSpend('test-spend')).toBeCloseTo(0.5);
+    expect((await sessionManager.threadUsage('test-spend')).spendUsd).toBeCloseTo(0.5);
     // Saved after each turn, so a rewind or /clear can't lower it later.
     expect(worktreeManager.saveThreadLimits).toHaveBeenCalledWith('test-spend', { spendUsd: 0.4 });
     const last = vi.mocked(worktreeManager.saveThreadLimits).mock.calls.at(-1)!;
@@ -939,6 +939,52 @@ describe('AgentSessionManager limits', () => {
     await sessionManager.destroySession('test-spend');
   });
 
+  it('adds up each turn\'s tokens for the thread and saves them, even with no cost', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({ id: 'test-tokens', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock' });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    vi.mocked(worktreeManager.saveThreadLimits).mockClear();
+    mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false, turnTokens: { input: 1000, output: 50 } });
+    mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false, turnTokens: { input: 300, output: 20 } });
+    await vi.waitFor(() => expect(sessionManager.getSession('test-tokens')!.limits.threadTokens).toEqual({ input: 1300, output: 70 }));
+    expect(await sessionManager.threadUsage('test-tokens')).toEqual({ spendUsd: 0, tokens: { input: 1300, output: 70 } });
+    expect(worktreeManager.saveThreadLimits).toHaveBeenLastCalledWith('test-tokens', { spendUsd: 0, tokens: { input: 1300, output: 70 } });
+
+    await sessionManager.destroySession('test-tokens');
+  });
+
+  it('starts a resumed thread\'s tokens from what was saved', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-tokens-resumed', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock',
+      savedLimits: { spendUsd: 0, tokens: { input: 5000, output: 200 } },
+    });
+    expect(sessionManager.getSession('test-tokens-resumed')!.limits.threadTokens).toEqual({ input: 5000, output: 200 });
+
+    await sessionManager.destroySession('test-tokens-resumed');
+  });
+
+  it('tells a resumed conversation the running totals it had reached', async () => {
+    const id = 'test-tokens-restart';
+    const win = makeMockWindow();
+    await sessionManager.createSession({ id, branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock' });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 'mock-session-id', model: 'mock-model', tools: [] });
+    mockAdapter.control!.emitEvent({
+      type: 'result', subtype: 'success', isError: false,
+      totalCostUsd: 0.2, sessionCostUsd: 0.2, turnTokens: { input: 900, output: 40 }, sessionTokens: { input: 900, output: 40 },
+    });
+    await new Promise((r) => setTimeout(r, 20));
+
+    await sessionManager.stopQuery(id);
+    await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(2));
+    expect(mockAdapter.lastConfig?.resumeSessionId).toBe('mock-session-id');
+    expect(mockAdapter.lastConfig?.priorCostUsd).toBe(0.2);
+    expect(mockAdapter.lastConfig?.priorTokens).toEqual({ input: 900, output: 40 });
+
+    await sessionManager.destroySession(id);
+  });
+
   it('starts a resumed thread\'s spend and allowance from what was saved when it last ran', async () => {
     const win = makeMockWindow();
     await sessionManager.createSession({
@@ -946,7 +992,7 @@ describe('AgentSessionManager limits', () => {
       savedLimits: { spendUsd: 2.5, allowanceUsd: 5 },
     });
     expect(sessionManager.getSession('test-spend-resumed')!.limits).toMatchObject({ threadSpendUsd: 2.5, threadAllowanceUsd: 5 });
-    expect(await sessionManager.threadSpend('test-spend-resumed')).toBe(2.5);
+    expect((await sessionManager.threadUsage('test-spend-resumed')).spendUsd).toBe(2.5);
 
     await sessionManager.destroySession('test-spend-resumed');
   });
@@ -991,12 +1037,12 @@ describe('AgentSessionManager limits', () => {
 
   it('gives a thread that isn\'t loaded its saved total when its history adds up to less', async () => {
     vi.mocked(worktreeManager.getThreadLimits).mockResolvedValueOnce({ spendUsd: 2.5 });
-    expect(await sessionManager.threadSpend('test-spend-closed')).toBe(2.5);
+    expect((await sessionManager.threadUsage('test-spend-closed')).spendUsd).toBe(2.5);
   });
 
   it('falls back to the history when the saved total can\'t be read', async () => {
     vi.mocked(worktreeManager.getThreadLimits).mockRejectedValueOnce(new Error('EBUSY'));
-    expect(await sessionManager.threadSpend('test-spend-unreadable')).toBe(0);
+    expect((await sessionManager.threadUsage('test-spend-unreadable')).spendUsd).toBe(0);
   });
 
   it('adds up the spend of a thread that isn\'t loaded and has no saved total from its history', async () => {
@@ -1010,7 +1056,7 @@ describe('AgentSessionManager limits', () => {
     vi.mocked(fs.statSync).mockImplementation(() => ({ mtimeMs: 1, size: content.length }) as fs.Stats);
     vi.mocked(fs.readFileSync).mockImplementation(() => content);
     try {
-      expect(await sessionManager.threadSpend('test-spend-saved')).toBeCloseTo(0.75);
+      expect((await sessionManager.threadUsage('test-spend-saved')).spendUsd).toBeCloseTo(0.75);
     } finally {
       vi.mocked(fs.statSync).mockImplementation(() => { throw new Error('ENOENT'); });
       vi.mocked(fs.readFileSync).mockImplementation(() => { throw new Error('ENOENT'); });
@@ -1018,7 +1064,7 @@ describe('AgentSessionManager limits', () => {
   });
 
   it('gives no spend for a thread with no saved history', async () => {
-    expect(await sessionManager.threadSpend('test-spend-none')).toBe(0);
+    expect((await sessionManager.threadUsage('test-spend-none')).spendUsd).toBe(0);
   });
 
   it('settles a limit question when the user clicks Stop', async () => {

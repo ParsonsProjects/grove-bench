@@ -34,6 +34,28 @@
   /** "Start fresh" asks once before clearing; closing the popover cancels. */
   let confirmClear = $state(false);
   $effect(() => { if (!contextExpanded) confirmClear = false; });
+
+  /** The thread's output tokens, from main's per-turn figures, asked for
+   *  when the popover opens (null while asked). The per-reply usage events
+   *  can't be added up for this: their output count is a placeholder from
+   *  when the reply began, repeated on each message of it
+   *  (https://code.claude.com/docs/en/agent-sdk/cost-tracking). */
+  let threadOutput = $state<number | 'unknown' | null>(null);
+  $effect(() => {
+    if (!contextExpanded) {
+      threadOutput = null;
+      return;
+    }
+    let current = true;
+    window.groveBench.getThreadUsage(sessionId).then(
+      (u) => { if (current) threadOutput = u.tokens.output; },
+      () => { if (current) threadOutput = 'unknown'; },
+    );
+    return () => { current = false; };
+  });
+  let outputShown = $derived(
+    threadOutput === null ? '…' : threadOutput === 'unknown' ? 'unknown' : threadOutput > 0 ? formatTokens(threadOutput) : 'none reported',
+  );
 </script>
 
 {#if showContext}
@@ -119,8 +141,8 @@
         </div>
       {/if}
       <div class="flex justify-between">
-        <span>Output (cumulative)</span>
-        <span class="text-foreground">{formatTokens(usage.outputTokens)}</span>
+        <span>Output, this thread</span>
+        <span class="text-foreground">{outputShown}</span>
       </div>
       <div class="flex justify-between border-t border-border pt-1.5 mt-1.5">
         <span>Remaining</span>

@@ -898,6 +898,8 @@ class AcpQuery {
     let error: string | null = null;
     /** The error was already shown, as an error the UI offers a fix for. */
     let shown = false;
+    /** The tokens this turn used, when the agent reports them with its reply. */
+    let turnTokens: { input: number; output: number } | null = null;
     try {
       const res = await this.rpc!.request<AcpPromptResponse>('session/prompt', {
         sessionId: this.sessionId,
@@ -909,6 +911,10 @@ class AcpQuery {
       // Without a usage_update yet, the turn's own input count is the best
       // figure for the context; 0 would empty the context meter.
       const out = res?.usage?.outputTokens;
+      const turnInput = res?.usage?.inputTokens;
+      if (typeof out === 'number' || typeof turnInput === 'number') {
+        turnTokens = { input: typeof turnInput === 'number' ? turnInput : 0, output: typeof out === 'number' ? out : 0 };
+      }
       const input = this.contextUsed || (typeof res?.usage?.inputTokens === 'number' ? res.usage.inputTokens : 0);
       if (typeof out === 'number' && out > 0 && input > 0) this.emit({ type: 'usage', inputTokens: input, outputTokens: out });
     } catch (e) {
@@ -944,6 +950,7 @@ class AcpQuery {
       ...(this.sessionCost !== undefined
         ? { totalCostUsd: this.runningCost.turnCost(this.sessionCost, failed), sessionCostUsd: this.sessionCost }
         : {}),
+      ...(turnTokens ? { turnTokens } : {}),
     });
   }
 

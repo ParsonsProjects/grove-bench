@@ -11,7 +11,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { PERMISSION_TIMEOUT_MINUTES } from '../shared/types.js';
-import type { AgentEvent, GroveBenchSettings } from '../shared/types.js';
+import type { AgentEvent, GroveBenchSettings, TokenCounts } from '../shared/types.js';
 import { localDay, reachedLimit, type LimitKind, type LimitUsage, type ReachedLimit } from '../shared/limits.js';
 import { loadDailySpend, saveDailySpend } from './app-state.js';
 import type { Emit } from './session-types.js';
@@ -53,6 +53,9 @@ export interface SessionLimits {
   turn: TurnLimits | null;
   /** Estimated spend over the thread's life, from its results. */
   threadSpendUsd: number;
+  /** Tokens over the thread's life, from its results. Kept here with the
+   *  spend, though no limit counts them yet. */
+  threadTokens: TokenCounts;
   /** Where the thread spend limit stands after the user continued past it. */
   threadAllowanceUsd: number | null;
   pending: PendingLimit | null;
@@ -70,19 +73,29 @@ export function turnSpend(event: AgentEvent): number {
   return Number.isFinite(usd) && usd > 0 ? usd : 0;
 }
 
-/** A thread's spend and how far the user let it go past its spend limit,
- *  saved in the worktree manifest: a rewind or /clear rewrites the history
- *  these are otherwise rebuilt from. */
+/** The tokens a result says its turn used (none when it doesn't say). */
+export function turnTokens(event: AgentEvent): TokenCounts {
+  if (event.type !== 'result' || !event.turnTokens) return { input: 0, output: 0 };
+  const count = (n: number) => (Number.isFinite(n) && n > 0 ? n : 0);
+  return { input: count(event.turnTokens.input), output: count(event.turnTokens.output) };
+}
+
+/** A thread's spend and tokens, and how far the user let it go past its
+ *  spend limit, saved in the worktree manifest: a rewind or /clear rewrites
+ *  the history these are otherwise rebuilt from. */
 export interface SavedThreadLimits {
   spendUsd: number;
   allowanceUsd?: number;
+  tokens?: TokenCounts;
 }
 
 /** What to save of a live thread's limit state. */
 export function savedThreadLimits(limits: SessionLimits): SavedThreadLimits {
+  const { input, output } = limits.threadTokens;
   return {
     spendUsd: limits.threadSpendUsd,
     ...(limits.threadAllowanceUsd !== null ? { allowanceUsd: limits.threadAllowanceUsd } : {}),
+    ...(input > 0 || output > 0 ? { tokens: { input, output } } : {}),
   };
 }
 
@@ -92,16 +105,22 @@ export function savedThreadLimits(limits: SessionLimits): SavedThreadLimits {
  *  has since cut from the history. */
 export function limitsFromHistory(history: readonly AgentEvent[], saved?: SavedThreadLimits): SessionLimits {
   let threadSpendUsd = 0;
+  const threadTokens: TokenCounts = { input: 0, output: 0 };
   let threadAllowanceUsd: number | null = null;
   for (const e of history) {
     threadSpendUsd += turnSpend(e);
+    const tokens = turnTokens(e);
+    threadTokens.input += tokens.input;
+    threadTokens.output += tokens.output;
     if (e.type === 'limit_resolved' && e.limit === 'threadSpend' && e.decision === 'continue' && e.allowance !== undefined) {
       threadAllowanceUsd = e.allowance;
     }
   }
   threadSpendUsd = Math.max(threadSpendUsd, saved?.spendUsd ?? 0);
+  threadTokens.input = Math.max(threadTokens.input, saved?.tokens?.input ?? 0);
+  threadTokens.output = Math.max(threadTokens.output, saved?.tokens?.output ?? 0);
   if (saved?.allowanceUsd !== undefined) threadAllowanceUsd = Math.max(threadAllowanceUsd ?? 0, saved.allowanceUsd);
-  return { turn: null, threadSpendUsd, threadAllowanceUsd, pending: null, stopped: false };
+  return { turn: null, threadSpendUsd, threadTokens, threadAllowanceUsd, pending: null, stopped: false };
 }
 
 // ─── Daily spend ───
@@ -142,8 +161,11 @@ export function toolCallSeen(limits: SessionLimits, toolUseId: string): void {
 }
 
 /** The turn ended (its result arrived): add what it cost to the thread's
- *  and today's spend, and stop measuring it. */
+ *  and today's spend and its tokens to the thread's, and stop measuring it. */
 export function turnEnded(limits: SessionLimits, result: AgentEvent, now = Date.now()): void {
+  const tokens = turnTokens(result);
+  limits.threadTokens.input += tokens.input;
+  limits.threadTokens.output += tokens.output;
   const usd = turnSpend(result);
   if (usd > 0) {
     limits.threadSpendUsd += usd;

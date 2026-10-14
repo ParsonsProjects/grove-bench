@@ -14,7 +14,7 @@ import { backgroundTaskStore } from '../stores/backgroundTask.svelte.js';
 import { subagentPanelStore } from '../stores/subagentPanel.svelte.js';
 import { CONTROL_IDS } from '../../shared/types.js';
 import { TAB_BY_KEY, TAB_LABELS } from '../lib/keyboard-shortcuts.js';
-import type { PrInfo } from '../../shared/types.js';
+import type { PrInfo, ThreadUsage } from '../../shared/types.js';
 
 const ACTIVE = 's-active';
 const HIDDEN = 's-hidden';
@@ -401,6 +401,20 @@ describe('StatusBar context actions', () => {
     render(StatusBar, { props: { sessionId: ACTIVE } });
     await fireEvent.click(screen.getByRole('button', { name: 'Context 75% used. Click for details.' }));
   }
+
+  it('shows the thread\'s output from main\'s totals, not the per-reply usage events', async () => {
+    const getThreadUsage = window.groveBench.getThreadUsage as ReturnType<typeof vi.fn>;
+    getThreadUsage.mockResolvedValueOnce({ spendUsd: 0, tokens: { input: 90_000, output: 12_300 } });
+    await openContext();
+    expect(getThreadUsage).toHaveBeenCalledWith(ACTIVE);
+    await waitFor(() => expect(screen.getByText('Output, this thread').nextElementSibling).toHaveTextContent('12.3k'));
+  });
+
+  it('says when the thread\'s output could not be read', async () => {
+    (window.groveBench.getThreadUsage as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('gone'));
+    await openContext();
+    await waitFor(() => expect(screen.getByText('Output, this thread').nextElementSibling).toHaveTextContent('unknown'));
+  });
 
   it('labels the meter and says what context is', async () => {
     await openContext();
@@ -818,17 +832,18 @@ describe('StatusBar last turn', () => {
     expect(getByTestId('last-turn').textContent).toContain('<$0.01');
   });
 
-  describe('spend popover', () => {
-    const api = () => window.groveBench as unknown as { getThreadSpend: ReturnType<typeof vi.fn>; getDailySpend: ReturnType<typeof vi.fn> };
-    const row = (name: string) => within(screen.getByRole('dialog', { name: 'Spend' })).getByText(name).nextElementSibling;
+  describe('usage popover', () => {
+    const api = () => window.groveBench as unknown as { getThreadUsage: ReturnType<typeof vi.fn>; getDailySpend: ReturnType<typeof vi.fn> };
+    const usage = (spendUsd: number, input = 0, output = 0): ThreadUsage => ({ spendUsd, tokens: { input, output } });
+    const row = (name: string) => within(screen.getByRole('dialog', { name: 'Usage' })).getByText(name).nextElementSibling;
 
     beforeEach(() => {
       usageStore.byProvider = { 'claude-code': { available: false, windows: [], fetchedAt: Date.now() } };
-      api().getThreadSpend.mockResolvedValue(1.234);
+      api().getThreadUsage.mockResolvedValue(usage(1.234));
       api().getDailySpend.mockResolvedValue(6.3);
     });
     afterEach(() => {
-      api().getThreadSpend.mockReset().mockResolvedValue(0);
+      api().getThreadUsage.mockReset().mockResolvedValue(usage(0));
       api().getDailySpend.mockReset().mockResolvedValue(0);
     });
 
@@ -837,7 +852,7 @@ describe('StatusBar last turn', () => {
       render(StatusBar, { props: { sessionId: ACTIVE } });
       await fireEvent.click(screen.getByTestId('last-turn'));
 
-      expect(api().getThreadSpend).toHaveBeenCalledWith(ACTIVE);
+      expect(api().getThreadUsage).toHaveBeenCalledWith(ACTIVE);
       await waitFor(() => expect(row('This thread')).toHaveTextContent('$1.23'));
       expect(row('Today, all threads')).toHaveTextContent('$6.30');
       expect(row('Last turn')).toHaveTextContent('$0.04');
@@ -849,7 +864,7 @@ describe('StatusBar last turn', () => {
       await fireEvent.click(screen.getByTestId('last-turn'));
       await waitFor(() => expect(row('This thread')).toHaveTextContent('$1.23'));
 
-      api().getThreadSpend.mockResolvedValue(2);
+      api().getThreadUsage.mockResolvedValue(usage(2));
       messageStore.messagesBySession[ACTIVE] = [
         ...messageStore.messagesBySession[ACTIVE],
         { kind: 'result', id: 'r2', totalCostUsd: 0.5, durationMs: 1000 } as any,
@@ -859,7 +874,7 @@ describe('StatusBar last turn', () => {
     });
 
     it('says which total could not be read, and still shows the other', async () => {
-      api().getThreadSpend.mockRejectedValue(new Error('gone'));
+      api().getThreadUsage.mockRejectedValue(new Error('gone'));
       finishTurn(0.0423);
       render(StatusBar, { props: { sessionId: ACTIVE } });
       await fireEvent.click(screen.getByTestId('last-turn'));
@@ -873,7 +888,7 @@ describe('StatusBar last turn', () => {
       await fireEvent.click(screen.getByTestId('last-turn'));
       await waitFor(() => expect(row('This thread')).toHaveTextContent('$1.23'));
 
-      api().getThreadSpend.mockRejectedValue(new Error('gone'));
+      api().getThreadUsage.mockRejectedValue(new Error('gone'));
       messageStore.messagesBySession[ACTIVE] = [
         ...messageStore.messagesBySession[ACTIVE],
         { kind: 'result', id: 'r2', totalCostUsd: 0.5, durationMs: 1000 } as any,
@@ -882,16 +897,16 @@ describe('StatusBar last turn', () => {
     });
 
     it('ignores an answer that arrives after the popover was closed', async () => {
-      let answer!: (usd: number) => void;
-      api().getThreadSpend.mockReturnValue(new Promise<number>((resolve) => { answer = resolve; }));
+      let answer!: (usage: ThreadUsage) => void;
+      api().getThreadUsage.mockReturnValue(new Promise<ThreadUsage>((resolve) => { answer = resolve; }));
       finishTurn(0.0423);
       render(StatusBar, { props: { sessionId: ACTIVE } });
       await fireEvent.click(screen.getByTestId('last-turn'));
       await fireEvent.click(screen.getByTestId('last-turn'));
-      answer(9);
+      answer(usage(9));
       await Promise.resolve();
 
-      api().getThreadSpend.mockReturnValue(new Promise(() => {}));
+      api().getThreadUsage.mockReturnValue(new Promise(() => {}));
       await fireEvent.click(screen.getByTestId('last-turn'));
       expect(row('This thread')).toHaveTextContent('…');
     });
@@ -903,30 +918,55 @@ describe('StatusBar last turn', () => {
       await waitFor(() => expect(row('This thread')).toHaveTextContent('$1.23'));
       await fireEvent.click(screen.getByTestId('last-turn'));
 
-      api().getThreadSpend.mockReturnValue(new Promise(() => {}));
+      api().getThreadUsage.mockReturnValue(new Promise(() => {}));
       await fireEvent.click(screen.getByTestId('last-turn'));
       expect(row('This thread')).toHaveTextContent('…');
     });
 
-    it('links to the spend limits in Settings', async () => {
+    it('links to Limits & alerts in Settings', async () => {
       const openAt = vi.spyOn(settingsStore, 'openAt').mockImplementation(() => {});
       try {
         finishTurn(0.0423);
         render(StatusBar, { props: { sessionId: ACTIVE } });
         await fireEvent.click(screen.getByTestId('last-turn'));
-        await fireEvent.click(screen.getByRole('button', { name: 'Spend limits' }));
+        await fireEvent.click(screen.getByRole('button', { name: 'Limits & alerts' }));
         expect(openAt).toHaveBeenCalledWith('limits');
-        expect(screen.queryByRole('dialog', { name: 'Spend' })).toBeNull();
+        expect(screen.queryByRole('dialog', { name: 'Usage' })).toBeNull();
       } finally {
         openAt.mockRestore();
       }
     });
 
-    it('is not offered on a plan, where the cost is left out', () => {
-      usageStore.byProvider = { 'claude-code': { available: true, plan: 'max', windows: [], fetchedAt: Date.now() } };
+    it('shows the thread\'s tokens next to its spend', async () => {
+      api().getThreadUsage.mockResolvedValue(usage(1.234, 1_240_000, 45_300));
       finishTurn(0.0423);
       render(StatusBar, { props: { sessionId: ACTIVE } });
-      expect(screen.getByTestId('last-turn').tagName).not.toBe('BUTTON');
+      await fireEvent.click(screen.getByTestId('last-turn'));
+      await waitFor(() => expect(row('Tokens in, this thread')).toHaveTextContent('1.2M'));
+      expect(row('Tokens out, this thread')).toHaveTextContent('45.3k');
+    });
+
+    it('says when the thread\'s agent has reported no tokens', async () => {
+      finishTurn(0.0423);
+      render(StatusBar, { props: { sessionId: ACTIVE } });
+      await fireEvent.click(screen.getByTestId('last-turn'));
+      await waitFor(() => expect(row('Tokens, this thread')).toHaveTextContent('none reported'));
+      expect(screen.queryByText('Tokens in, this thread')).toBeNull();
+    });
+
+    it('shows tokens without dollars on a plan, where the cost is left out', async () => {
+      usageStore.byProvider = { 'claude-code': { available: true, plan: 'max', windows: [], fetchedAt: Date.now() } };
+      api().getThreadUsage.mockResolvedValue(usage(1.234, 5000, 700));
+      finishTurn(0.0423);
+      render(StatusBar, { props: { sessionId: ACTIVE } });
+      await fireEvent.click(screen.getByTestId('last-turn'));
+
+      await waitFor(() => expect(row('Tokens in, this thread')).toHaveTextContent('5.0k'));
+      expect(row('Tokens out, this thread')).toHaveTextContent('700');
+      const dialog = within(screen.getByRole('dialog', { name: 'Usage' }));
+      expect(dialog.queryByText('This thread')).toBeNull();
+      expect(dialog.queryByText(/\$/)).toBeNull();
+      expect(api().getDailySpend).not.toHaveBeenCalled();
     });
   });
 });

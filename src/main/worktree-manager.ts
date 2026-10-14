@@ -26,7 +26,8 @@ function agentTypeOf(entry: ManifestEntry): string {
   return entry.adapterType ?? LEGACY_AGENT_TYPE;
 }
 
-/** A dollar figure read back from the manifest, which is plain JSON. */
+/** A dollar figure or count read back from the manifest, which is plain
+ *  JSON: a finite number, not below 0. */
 function isUsd(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0;
 }
@@ -62,6 +63,9 @@ interface ManifestEntry {
    *  event log they would otherwise be rebuilt from. */
   threadSpendUsd?: number;
   threadAllowanceUsd?: number;
+  /** Tokens over the thread's life, kept with its spend. */
+  threadInputTokens?: number;
+  threadOutputTokens?: number;
   /** One-line goal pinned at the top of the Thread tab (see session-goal). */
   goal?: string;
   /** Who wrote the goal. Absent until one is generated or typed, which is
@@ -422,7 +426,9 @@ export class WorktreeManager {
     });
   }
 
-  /** Record a thread's spend and spend allowance (see ManifestEntry.threadSpendUsd). */
+  /** Record a thread's spend, spend allowance and tokens (see ManifestEntry.threadSpendUsd).
+   *  Tokens are left as they were when there are none to save: the thread's
+   *  count only grows. */
   async saveThreadLimits(worktreeId: string, saved: SavedThreadLimits): Promise<void> {
     await this.withManifest((manifest) => {
       const entry = manifest[worktreeId];
@@ -430,11 +436,15 @@ export class WorktreeManager {
       entry.threadSpendUsd = saved.spendUsd;
       if (saved.allowanceUsd !== undefined) entry.threadAllowanceUsd = saved.allowanceUsd;
       else delete entry.threadAllowanceUsd;
+      if (saved.tokens) {
+        entry.threadInputTokens = saved.tokens.input;
+        entry.threadOutputTokens = saved.tokens.output;
+      }
       return true;
     }, (written) => written);
   }
 
-  /** A thread's spend and allowance when last saved, or undefined when none
+  /** A thread's spend, allowance and tokens when last saved, or undefined when none
    *  was (an unknown thread, or one that hasn't been saved since this was
    *  kept). Read in turn with writes, so a save still queued is seen. */
   async getThreadLimits(worktreeId: string): Promise<SavedThreadLimits | undefined> {
@@ -444,6 +454,8 @@ export class WorktreeManager {
       return {
         spendUsd: entry.threadSpendUsd,
         ...(isUsd(entry.threadAllowanceUsd) ? { allowanceUsd: entry.threadAllowanceUsd } : {}),
+        ...(isUsd(entry.threadInputTokens) && isUsd(entry.threadOutputTokens)
+          ? { tokens: { input: entry.threadInputTokens, output: entry.threadOutputTokens } } : {}),
       };
     }, () => false);
   }

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import path from 'node:path';
 import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS, thinkingConfigFor, parseMcpListOutput, mcpServerManager, claudeMcpOrigin, mcpToolServerKey, mcpContextCostByServer, toMcpElicitationRequest, withMcpjsonApproval, mcpjsonApprovalsFrom, buildMcpAddArgs, quoteArg, validatePluginId, validateConfigScope, claudeControlsFor, supportsAdaptiveThinking, supportsFastMode, supportsAutoMode, claudeModelCaps, effortFor, reasoningOptionsFor, toSdkPermissionMode, fromSdkSyncMode, stripAnsi, mapClaudeUsage, thinkingDisplayFor, TEXT_GENERATION_OPTIONS, missingConversationError, userMessageContent, sandboxDecision } from './claude-code.js';
 import type { AgentEvent } from '../../shared/types.js';
-import { RunningCost } from './running-cost.js';
+import { RunningCost, RunningTokens } from './running-cost.js';
 import { limitHook, LIMIT_STOP_REASON } from './claude-code.js';
 import type { MessageFile } from './types.js';
 
@@ -1027,6 +1027,26 @@ describe('transformMessage()', () => {
       const second = result(0.08) as Extract<AgentEvent, { type: 'result' }>;
       expect(second.totalCostUsd).toBeCloseTo(0.03);
       expect(second.sessionCostUsd).toBe(0.08);
+    });
+
+    it('reports each turn\'s tokens from modelUsage\'s running totals, cache and every model included', () => {
+      const ctx = { ...makeCtx(), tokens: new RunningTokens() };
+      const usage = (input: number, output: number) => ({
+        'claude-opus-5-5': { inputTokens: input, outputTokens: output, cacheReadInputTokens: 1000, cacheCreationInputTokens: 100, contextWindow: 200_000 },
+        'claude-haiku-5-5': { inputTokens: 5, outputTokens: 1, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 },
+      });
+      const result = (input: number, output: number) => transformMessage(
+        { type: 'result', subtype: 'success', modelUsage: usage(input, output), duration_ms: 1, is_error: false, num_turns: 1 } as any,
+        ctx,
+      )[0] as Extract<AgentEvent, { type: 'result' }>;
+
+      expect(result(10, 20)).toMatchObject({ turnTokens: { input: 1115, output: 21 }, sessionTokens: { input: 1115, output: 21 } });
+      expect(result(40, 50)).toMatchObject({ turnTokens: { input: 30, output: 30 }, sessionTokens: { input: 1145, output: 51 } });
+    });
+
+    it('reports no tokens for a result without modelUsage', () => {
+      const event = transformMessage({ type: 'result', subtype: 'success', duration_ms: 1, is_error: false, num_turns: 1 } as any, makeCtx())[0];
+      expect(event).not.toHaveProperty('turnTokens');
     });
   });
 

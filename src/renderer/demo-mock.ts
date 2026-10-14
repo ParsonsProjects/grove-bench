@@ -544,7 +544,7 @@ const api: Record<string, unknown> = {
   }),
   getCachedUsage: async () => null,
   getDailySpend: async () => 3.42,
-  getThreadSpend: async () => 1.84,
+  getThreadUsage: async () => ({ spendUsd: 1.84, tokens: { input: 1_240_000, output: 45_300 } }),
   exportThread: async () => null,
   switchAgent: async () => {},
   // Mirrors the Claude Code adapter's declared controls (for Opus 5.5, the

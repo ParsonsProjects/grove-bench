@@ -1,6 +1,6 @@
 import type { BrowserWindow } from 'electron';
 import { IPC } from '../shared/types.js';
-import type { SessionInfo, SessionStatus, AgentEvent, PermissionDecision, PermissionMode, McpServerInfo, McpAuthStartResult, McpElicitationResponse, McpServerContextCost, ProviderUsage, SessionControls } from '../shared/types.js';
+import type { SessionInfo, SessionStatus, AgentEvent, ThreadUsage, PermissionDecision, PermissionMode, McpServerInfo, McpAuthStartResult, McpElicitationResponse, McpServerContextCost, ProviderUsage, SessionControls } from '../shared/types.js';
 import { CONTROL_IDS, MCP_SIGN_IN_TIMEOUT_MS, PERMISSION_MODES, isMcpServerDown, subagentParent } from '../shared/types.js';
 import { userEventText } from '../shared/prompt-text.js';
 import { applyRateLimit } from '../shared/usage.js';
@@ -22,7 +22,7 @@ import { isClaudeAccountId, removedAccountMessage } from './adapters/claude-acco
 import type { AgentAdapter, AgentQueryHandle, UserMessage } from './adapters/types.js';
 import { audioSentInline, inlineAudioType } from './adapters/file-attachments.js';
 import { ResumeNotFoundError } from './adapters/types.js';
-import { lastRunningCost } from './adapters/running-cost.js';
+import { lastRunningCost, lastRunningTokens } from './adapters/running-cost.js';
 import { getGitIdentity } from './git.js';
 import { capToolResult, findRewindForkPoint, isAuthFailure, lastTurnUuid } from './agent-utils.js';
 import { hasApiKey, isApiKeyRejected, markApiKeyRejected } from './credentials.js';
@@ -470,6 +470,7 @@ class AgentSessionManager {
       resumeSessionId: caps.resume ? session.providerSessionId : null,
       resumeAtUuid: caps.resume && caps.rewind ? resumeAtUuid : null,
       priorCostUsd: caps.resume && session.providerSessionId ? lastRunningCost(session.eventHistory) : null,
+      priorTokens: caps.resume && session.providerSessionId ? lastRunningTokens(session.eventHistory) : null,
       toolAllowRules: currentSettings.toolAllowRules,
       toolDenyRules: currentSettings.toolDenyRules,
       alwaysAllowedTools: session.alwaysAllowedTools,
@@ -695,11 +696,13 @@ class AgentSessionManager {
           if (session.turnHandle === handle) session.turnHandle = null;
           // The files the turn made go just ahead of its result.
           await this.endTurnFiles(session, emit);
-          // Adds the turn's cost to the thread's and today's spend, and saves
-          // the thread's, which its history won't keep through a rewind.
-          const spentBefore = session.limits.threadSpendUsd;
+          // Adds the turn's cost to the thread's and today's spend and its
+          // tokens to the thread's, and saves the thread's, which its history
+          // won't keep through a rewind.
+          const { threadSpendUsd: spent, threadTokens: { input, output } } = session.limits;
           turnEnded(session.limits, event);
-          if (session.limits.threadSpendUsd !== spentBefore) this.saveThreadLimits(session);
+          const { threadSpendUsd, threadTokens } = session.limits;
+          if (threadSpendUsd !== spent || threadTokens.input !== input || threadTokens.output !== output) this.saveThreadLimits(session);
           this.runHeldMcpReconnects(session);
           session.lastResult = {
             isError: event.isError,
@@ -1896,18 +1899,17 @@ class AgentSessionManager {
     return this.sessions.get(id);
   }
 
-  /** What a thread has spent over its life, as its agent estimated it: the
-   *  figure its spend limit counts (session-limits.ts). For a thread that
-   *  isn't loaded, the larger of the total saved when it last ran and its
-   *  history added up, as a resume would start from. */
-  async threadSpend(id: string): Promise<number> {
+  /** What a thread has used over its life, as its agent reported it: its
+   *  spend (the figure its spend limit counts, session-limits.ts) and its
+   *  tokens. For a thread that isn't loaded, the larger of what was saved
+   *  when it last ran and its history added up, as a resume would start from. */
+  async threadUsage(id: string): Promise<ThreadUsage> {
     const session = this.sessions.get(id);
-    if (session) return session.limits.threadSpendUsd;
-    const saved = await worktreeManager.getThreadLimits(id).catch((e) => {
-      logger.warn(`Could not read the saved spend of ${id}:`, e);
+    const limits = session?.limits ?? limitsFromHistory(this.events.load(id), await worktreeManager.getThreadLimits(id).catch((e) => {
+      logger.warn(`Could not read the saved usage of ${id}:`, e);
       return undefined;
-    });
-    return limitsFromHistory(this.events.load(id), saved).threadSpendUsd;
+    }));
+    return { spendUsd: limits.threadSpendUsd, tokens: { ...limits.threadTokens } };
   }
 
   /** Save a thread's spend and spend allowance, which its history may not
@@ -1921,7 +1923,8 @@ class AgentSessionManager {
    *  toward, for a thread that has some (one from before this was saved may
    *  not have been yet). */
   private saveThreadLimitsBeforeCut(session: ManagedSession): void {
-    if (session.limits.threadSpendUsd > 0 || session.limits.threadAllowanceUsd !== null) this.saveThreadLimits(session);
+    const { threadSpendUsd, threadAllowanceUsd, threadTokens } = session.limits;
+    if (threadSpendUsd > 0 || threadAllowanceUsd !== null || threadTokens.input > 0 || threadTokens.output > 0) this.saveThreadLimits(session);
   }
 
   /**

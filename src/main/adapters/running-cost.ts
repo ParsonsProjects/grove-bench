@@ -1,4 +1,4 @@
-import type { AgentEvent } from '../../shared/types.js';
+import type { AgentEvent, TokenCounts } from '../../shared/types.js';
 
 /**
  * Turns a running cost total back into each turn's cost.
@@ -59,6 +59,38 @@ export function lastRunningCost(history: readonly AgentEvent[]): number | null {
     if (e.type === 'result' && (e.sessionCostUsd !== undefined || e.totalCostUsd !== undefined)) {
       return e.sessionCostUsd ?? e.totalCostUsd ?? null;
     }
+  }
+  return null;
+}
+
+/**
+ * Turns Claude Code's running token totals (modelUsage, which shares
+ * total_cost_usd's lifecycle) back into each turn's tokens, by the same
+ * rules as RunningCost.
+ */
+export class RunningTokens {
+  private readonly input: RunningCost;
+  private readonly output: RunningCost;
+
+  constructor(resumedFrom: TokenCounts | null = null) {
+    this.input = new RunningCost(resumedFrom?.input ?? null);
+    this.output = new RunningCost(resumedFrom?.output ?? null);
+  }
+
+  /** The tokens of the turn a result with running totals `total` ends. */
+  turnTokens(total: TokenCounts, isError: boolean): TokenCounts {
+    return { input: this.input.turnCost(total.input, isError), output: this.output.turnCost(total.output, isError) };
+  }
+}
+
+/** The running token totals the conversation last reached, from its
+ *  history, for a query that resumes it (as lastRunningCost). */
+export function lastRunningTokens(history: readonly AgentEvent[]): TokenCounts | null {
+  for (let i = history.length - 1; i >= 0; i--) {
+    const e = history[i];
+    if (e.type === 'agent_changed') return null;
+    if (e.type === 'status' && e.newConversation) return null;
+    if (e.type === 'result' && e.sessionTokens) return e.sessionTokens;
   }
   return null;
 }

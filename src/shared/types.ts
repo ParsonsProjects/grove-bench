@@ -227,6 +227,19 @@ export type ToolCategory = 'edit' | 'read' | 'bash' | 'question' | 'web_fetch' |
  *  so a query can't hang forever on a prompt nobody sees. */
 export const PERMISSION_TIMEOUT_MINUTES = 30;
 
+/** Tokens the model read and wrote. `input` counts all it read, prompt
+ *  caching included (cache reads and writes). */
+export interface TokenCounts {
+  input: number;
+  output: number;
+}
+
+/** What a thread has used over its life, as its agent reported it. */
+export interface ThreadUsage {
+  spendUsd: number;
+  tokens: TokenCounts;
+}
+
 /** What a denied tool call tells the agent when the user typed no reply. */
 export const DEFAULT_DENY_MESSAGE = 'User denied permission';
 /** What "Approve and start fresh…" tells the agent as it declines the plan
@@ -257,8 +270,11 @@ export type AgentEvent =
   /** `totalCostUsd`: what this turn cost, in USD as the agent estimates it
    *  (absent when it doesn't say). `sessionCostUsd`: the conversation's
    *  running total the agent reported with it, when it reports one; a turn
-   *  carrying it counts toward spend limits (older history has none). */
-  | { type: 'result'; subtype: string; result?: string; structured_output?: unknown; totalCostUsd?: number; sessionCostUsd?: number; durationMs?: number; isError: boolean; errors?: string[]; numTurns?: number; contextWindow?: number }
+   *  carrying it counts toward spend limits (older history has none).
+   *  `turnTokens`: the tokens this turn used, when the agent says;
+   *  `sessionTokens`: the conversation's running total it came from (Claude
+   *  Code reports totals, which a resume starts from). */
+  | { type: 'result'; subtype: string; result?: string; structured_output?: unknown; totalCostUsd?: number; sessionCostUsd?: number; turnTokens?: TokenCounts; sessionTokens?: TokenCounts; durationMs?: number; isError: boolean; errors?: string[]; numTurns?: number; contextWindow?: number }
   | { type: 'permission_request'; toolName: string; toolInput: unknown; toolUseId: string; requestId: string; decisionReason?: string; suggestions?: unknown[]; isPlanExecution?: boolean; toolCategory?: ToolCategory; toolView?: ToolView; planText?: string }
   | { type: 'thinking'; thinking: string; uuid: string; parentToolUseId?: string }
   | { type: 'partial_text'; text: string }
@@ -1255,8 +1271,8 @@ export interface GroveBenchAPI {
   respondToLimit(sessionId: string, requestId: string, decision: 'continue' | 'stop'): Promise<boolean>;
   /** Today's estimated spend across threads, in USD, as the daily limit counts it. */
   getDailySpend(): Promise<number>;
-  /** What one thread has spent over its life, as its agent estimated it. */
-  getThreadSpend(sessionId: string): Promise<number>;
+  /** What one thread has used over its life: spend and tokens, as its agent reported them. */
+  getThreadUsage(sessionId: string): Promise<ThreadUsage>;
   onAgentEvent(sessionId: string, callback: (event: AgentEvent) => void): () => void;
   offAgentEvent(sessionId: string): void;
   getEventHistory(sessionId: string): Promise<AgentEvent[]>;
@@ -2112,7 +2128,7 @@ export const IPC = {
   AGENT_ELICITATION: 'agent:elicitation',
   AGENT_LIMIT: 'agent:limit',
   LIMITS_DAILY_SPEND: 'limits:dailySpend',
-  LIMITS_THREAD_SPEND: 'limits:threadSpend',
+  LIMITS_THREAD_USAGE: 'limits:threadUsage',
   MCP_CONFIG_LIST: 'mcpConfig:list',
   MCP_CONFIG_ADD: 'mcpConfig:add',
   MCP_CONFIG_REMOVE: 'mcpConfig:remove',

@@ -22,7 +22,7 @@ const m = vi.hoisted(() => {
       'listMcpServers', 'getMcpContextCost', 'reconnectMcpServer', 'setMcpServerEnabled', 'authenticateMcpServer', 'reconnectDownMcpServers',
       'getSessionAdapter', 'getWorktreePath', 'analyzeSkillSuggestionsForRepo', 'respondToPermission',
       'respondToElicitation', 'rewindFiles', 'getCheckpointDiff', 'listCheckpoints', 'getDiffHistory', 'getTurnDiff',
-      'getFullThreadDiff', 'getCheckpointFiles', 'getCheckpointFileDiff', 'getCheckpointFileLines', 'threadSpend',
+      'getFullThreadDiff', 'getCheckpointFiles', 'getCheckpointFileDiff', 'getCheckpointFileLines', 'threadUsage',
     ),
     worktreeManager: fns(
       'validateRepo', 'cleanupOrphans', 'getWorktreeOrManifest', 'registerDirect', 'create', 'getRepoConfig',
@@ -905,18 +905,20 @@ describe('SESSION_EXPORT', () => {
   });
 });
 
-describe('LIMITS_THREAD_SPEND', () => {
-  it('gives the thread\'s spend, and nothing for a malformed id', async () => {
-    m.sessionManager.threadSpend.mockReturnValue(1.25);
-    expect(await invoke(IPC.LIMITS_THREAD_SPEND, 's1')).toBe(1.25);
-    expect(m.sessionManager.threadSpend).toHaveBeenCalledWith('s1');
+describe('LIMITS_THREAD_USAGE', () => {
+  it('gives the thread\'s usage, and none for a malformed id', async () => {
+    const usage = { spendUsd: 1.25, tokens: { input: 900, output: 40 } };
+    const none = { spendUsd: 0, tokens: { input: 0, output: 0 } };
+    m.sessionManager.threadUsage.mockResolvedValue(usage);
+    expect(await invoke(IPC.LIMITS_THREAD_USAGE, 's1')).toEqual(usage);
+    expect(m.sessionManager.threadUsage).toHaveBeenCalledWith('s1');
 
-    m.sessionManager.threadSpend.mockClear();
-    expect(await invoke(IPC.LIMITS_THREAD_SPEND, { id: 's1' })).toBe(0);
+    m.sessionManager.threadUsage.mockClear();
+    expect(await invoke(IPC.LIMITS_THREAD_USAGE, { id: 's1' })).toEqual(none);
     // The id names a log file: nothing that could reach outside its folder.
-    expect(await invoke(IPC.LIMITS_THREAD_SPEND, '../../x')).toBe(0);
-    expect(await invoke(IPC.LIMITS_THREAD_SPEND, 'a/b')).toBe(0);
-    expect(m.sessionManager.threadSpend).not.toHaveBeenCalled();
+    expect(await invoke(IPC.LIMITS_THREAD_USAGE, '../../x')).toEqual(none);
+    expect(await invoke(IPC.LIMITS_THREAD_USAGE, 'a/b')).toEqual(none);
+    expect(m.sessionManager.threadUsage).not.toHaveBeenCalled();
   });
 });
 
