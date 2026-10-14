@@ -118,6 +118,15 @@
     if (!startBlocker) nudged = false;
   });
 
+  /** The nudge and a failed start show under the box, which a short window
+   *  may have scrolled out of view, so each is brought into view as it shows. */
+  let feedbackEl = $state<HTMLDivElement | null>(null);
+  $effect(() => {
+    void draftStore.error;
+    void nudged;
+    feedbackEl?.scrollIntoView?.({ block: 'nearest' });
+  });
+
   /** A project used without git: not a repository, or git isn't installed. */
   const folderProject = $derived(!!draft && store.isFolderProject(draft.repoPath));
 
@@ -324,13 +333,17 @@
           </Button>
         </div>
       </div>
-      {#if nudged && startBlocker}
-        <p class="-mt-2 text-xs text-amber-500" role="status">{startBlocker}</p>
-      {/if}
-      {#if draftStore.error}
-        <Notice tone="danger">
-          <p>{draftStore.error}</p>
-        </Notice>
+      {#if (nudged && startBlocker) || draftStore.error}
+        <div bind:this={feedbackEl} class="-mt-2 flex flex-col gap-2">
+          {#if nudged && startBlocker}
+            <p class="text-xs text-amber-500" role="status">{startBlocker}</p>
+          {/if}
+          {#if draftStore.error}
+            <Notice tone="danger">
+              <p>{draftStore.error}</p>
+            </Notice>
+          {/if}
+        </div>
       {/if}
 
       <!-- What sending will do, then what changed or still needs doing first. -->
@@ -340,7 +353,7 @@
           {#if modeHint}
             <p class="max-w-lg">Mode: <span class="text-foreground/80">{modeHint.label}</span>. {modeHint.description}.</p>
           {/if}
-          <p class="max-w-lg mt-1">{folderProject ? 'Change the agent, model or mode' : 'Change the agent, model, mode or branch'} under the message box. Nothing is created until you send.</p>
+          <p class="max-w-lg mt-1">{folderProject ? 'Change the agent, model or mode' : 'Change the agent, model, mode or branch'} at the bottom of the message box. Nothing is created until you send.</p>
           {#if credentialsNote}
             <p class="text-green-400 mt-2" role="status">✓ {credentialsNote}</p>
           {/if}

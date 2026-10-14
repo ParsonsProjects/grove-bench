@@ -245,10 +245,11 @@
   .markdown-content :global(ul ul) { list-style: circle; }
   .markdown-content :global(ul ul ul) { list-style: square; }
   .markdown-content :global(ol) { list-style: decimal; }
-  /* A task list item's checkbox is its marker. marked puts it first in the
-     item, or first in the item's paragraph when the list is loose. */
-  .markdown-content :global(li:has(> input[type='checkbox']:first-child)),
-  .markdown-content :global(li:has(> p:first-child > input[type='checkbox']:first-child)) {
+  /* A bulleted task list item's checkbox is its marker (a numbered one keeps
+     its number). marked puts it first in the item, or first in the item's
+     paragraph when the list is loose. */
+  .markdown-content :global(ul > li:has(> input[type='checkbox']:first-child)),
+  .markdown-content :global(ul > li:has(> p:first-child > input[type='checkbox']:first-child)) {
     list-style: none;
   }
   .markdown-content :global(li) {

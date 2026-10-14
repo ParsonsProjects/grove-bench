@@ -14,7 +14,7 @@ import { trackEvent } from '../lib/analytics.js';
 /**
  * A new conversation before its first message. Opening one creates nothing:
  * the choices that are fixed once a conversation starts (project, agent,
- * where it runs) sit under the draft's message box, and sending the first message
+ * where it runs) sit at the bottom of the draft's message box, and sending the first message
  * creates the worktree, starts the agent and sends the message.
  */
 
@@ -351,13 +351,13 @@ class DraftStore {
     const d = $state.snapshot(draft) as Draft;
     if (d.start.kind === 'existing' && !d.start.branch) return false;
     if (!sessionStore.repos.includes(d.repoPath)) {
-      this.error = 'This project was removed. Pick another project under the message box.';
+      this.error = 'This project was removed. Pick another project at the bottom of the message box.';
       return false;
     }
     // An alpha agent turned off in Settings while this draft was open.
     if (d.agentId && !this.offeredAgent(d.agentId)) {
       const name = agentsStore.get(d.agentId)?.displayName ?? d.agentId;
-      this.error = `${name} is turned off. Turn it on in Settings → Agents, or pick another agent under the message box.`;
+      this.error = `${name} is turned off. Turn it on in Settings → Agents, or pick another agent at the bottom of the message box.`;
       return false;
     }
     const text = d.text.trim();

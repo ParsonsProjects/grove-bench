@@ -57,17 +57,16 @@ export function aboveBar(node: HTMLElement, gap = 8) {
 }
 
 /** Whether a popover that opens below its anchor should open above it
- *  instead: it would run past the bottom of the area it shows in, and there
- *  is more room above the anchor than below. */
+ *  instead: it doesn't fit below but does fit above. Below is the safe side
+ *  when it fits neither: a pane scrolls down to what runs past its bottom,
+ *  but nothing scrolls up past its top. */
 export function opensAbove(
   height: number,
   anchor: { top: number; bottom: number },
   area: { top: number; bottom: number },
   gap = 8,
 ): boolean {
-  const below = area.bottom - anchor.bottom - gap;
-  const above = anchor.top - area.top - gap;
-  return height > below && above > below;
+  return height > area.bottom - anchor.bottom - gap && height <= anchor.top - area.top - gap;
 }
 
 /** The nearest ancestor that clips what overflows it. */
@@ -79,34 +78,55 @@ function clippingParent(node: HTMLElement): HTMLElement | null {
 }
 
 /** Svelte action for a popover that opens below its anchor (top: 100%,
- *  `gap` px clear of it) in the middle of a pane: opens it above instead
- *  when it wouldn't fit below and there is more room above (opensAbove).
- *  The area is the window, cut to the nearest ancestor that would clip it.
- *  Measured from its anchor and its layout height, so a transition on the
- *  popover itself doesn't skew it. */
-export function flipToFit(node: HTMLElement, gap = 8) {
+ *  `gap` px clear of it) in the middle of a scrolling pane. It opens above
+ *  instead when opensAbove says so, and moves back below if it later grows
+ *  too tall for that (a picker switching tabs, a list loading), where its
+ *  top would be cut off. It is kept inside the pane sideways too: no wider
+ *  than the pane, and nudged in from its edges. The pane is the nearest
+ *  ancestor that clips it, within the window. Placed from its anchor and
+ *  its layout size, so a transition on the popover doesn't skew it. */
+export function placeInPane(node: HTMLElement, gap = 8) {
+  const pane = clippingParent(node);
+  /** Which side it opened on, once it has. */
+  let above: boolean | null = null;
   const place = () => {
-    node.style.top = node.style.bottom = node.style.marginTop = node.style.marginBottom = '';
-    const anchor = node.offsetParent;
+    const style = node.style;
+    style.top = style.bottom = style.marginTop = style.marginBottom = style.marginLeft = style.maxWidth = '';
+    const anchor = node.offsetParent?.getBoundingClientRect();
     if (!anchor) return;
-    const area = { top: 0, bottom: window.innerHeight };
-    const clip = clippingParent(node)?.getBoundingClientRect();
+    const area = { top: 0, bottom: window.innerHeight, left: 0, right: window.innerWidth };
+    const clip = pane?.getBoundingClientRect();
     if (clip) {
       area.top = Math.max(area.top, clip.top);
       area.bottom = Math.min(area.bottom, clip.bottom);
+      area.left = Math.max(area.left, clip.left);
+      area.right = Math.min(area.right, clip.right);
     }
-    if (opensAbove(node.offsetHeight, anchor.getBoundingClientRect(), area, gap)) {
-      node.style.top = 'auto';
-      node.style.bottom = '100%';
-      node.style.marginTop = '0';
-      node.style.marginBottom = `${gap}px`;
+    const width = area.right - area.left;
+    style.maxWidth = `${width - 2 * gap}px`;
+    const rect = node.getBoundingClientRect();
+    const shift = viewportShiftX({ left: rect.left - area.left, right: rect.right - area.left }, width, gap);
+    if (shift !== 0) style.marginLeft = `${shift}px`;
+
+    const height = node.offsetHeight;
+    if (above === null) above = opensAbove(height, anchor, area, gap);
+    else if (above && height > anchor.top - area.top - gap) above = false;
+    if (above) {
+      style.top = 'auto';
+      style.bottom = '100%';
+      style.marginTop = '0';
+      style.marginBottom = `${gap}px`;
     }
   };
   place();
   window.addEventListener('resize', place);
+  // Its own size changes too, as its content does. Placing it only moves it.
+  const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(place);
+  observer?.observe(node);
   return {
     destroy() {
       window.removeEventListener('resize', place);
+      observer?.disconnect();
     },
   };
 }

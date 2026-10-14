@@ -107,6 +107,22 @@ describe('DraftPane', () => {
     expect(draftStore.draft).not.toBeNull();
   });
 
+  it('brings a failed start into view, under the box where it may be scrolled away', async () => {
+    // jsdom has no scrollIntoView.
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    try {
+      createSessionMock().mockRejectedValue(new Error('Branch "x" already exists'));
+      render(DraftPane);
+      await fireEvent.click(screen.getByRole('button', { name: 'Start' }));
+      const alert = await screen.findByRole('alert');
+      await waitFor(() => expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' }));
+      expect(scrollIntoView.mock.contexts.at(-1)).toContainElement(alert);
+    } finally {
+      delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+    }
+  });
+
   it('discards the draft', async () => {
     render(DraftPane);
     await fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
@@ -311,7 +327,7 @@ describe('DraftPane git identity heads-up', () => {
     await settle();
     expect(mockGroveBench.hasGitIdentity).not.toHaveBeenCalled();
     expect(screen.getByText(/project folder itself, without git, so its edits land in place/)).toBeInTheDocument();
-    expect(screen.getByText('Change the agent, model or mode under the message box. Nothing is created until you send.')).toBeInTheDocument();
+    expect(screen.getByText('Change the agent, model or mode at the bottom of the message box. Nothing is created until you send.')).toBeInTheDocument();
     store.setFolderProject('/repo/one', false);
     mockGroveBench.repoKind.mockResolvedValue('git');
   });
