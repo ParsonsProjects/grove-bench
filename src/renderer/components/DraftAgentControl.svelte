@@ -17,6 +17,7 @@
   import UsageSection from './UsageSection.svelte';
   import { SectionLabel } from '$lib/components/ui/section-label/index.js';
   import { menuItem, menuPanel } from '$lib/components/ui/menu/index.js';
+  import { flipToFit } from '../lib/keep-in-viewport.js';
   import { cn } from '$lib/utils.js';
 
   let open = $state(false);
@@ -73,7 +74,8 @@
 
   {#if open && draft}
     <div
-      class="{menuPanel({ padding: 'content' })} absolute bottom-full left-0 mb-2 z-50"
+      use:flipToFit
+      class="{menuPanel({ padding: 'content' })} absolute top-full left-0 mt-2 z-50"
       role="dialog"
       aria-label="Agent settings"
     >

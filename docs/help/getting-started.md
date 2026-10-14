@@ -41,9 +41,9 @@ A folder that isn't a git repository (or any folder, when git isn't installed) i
 
 Click **+** next to a project in the sidebar to start a thread in that project. **New thread**, always first under **Threads** in the sidebar, and `Ctrl+N` do the same in the project of the thread you have open.
 
-This opens a new thread as a draft: nothing is created until you send the first message. Type what the agent should work on and press `Enter` (`Shift+Enter` adds a new line), or click **Start**. The message is optional: you can also start empty and type in the thread. **Discard** throws the draft away. While a draft exists it takes the place of **New thread** at the top of **Threads** in the sidebar, so you can open another thread and come back to it.
+This opens a new thread as a draft: nothing is created until you send the first message. The draft's message box sits in the middle of the screen. Type what the agent should work on and press `Enter` (`Shift+Enter` adds a new line), or click **Start**. The message is optional: you can also start empty and type in the thread. **Discard** throws the draft away. While a draft exists it takes the place of **New thread** at the top of **Threads** in the sidebar, so you can open another thread and come back to it.
 
-Before you send, the draft's status bar lets you change the choices that are fixed once the thread starts:
+Before you send, the options under the message box let you change the choices that are fixed once the thread starts:
 
 - **Agent settings** (left) — Pick the agent, the model, the mode and the other controls the agent offers. A new draft uses the agent and model of the thread you had open, or your defaults. Once the thread starts, the model and controls can still change but the agent can't.
 - **Project / branch** (next to it) — Click the project name to move the draft to another project. Click the branch to choose where the agent works:

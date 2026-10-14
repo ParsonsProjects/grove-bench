@@ -55,3 +55,58 @@ export function aboveBar(node: HTMLElement, gap = 8) {
     },
   };
 }
+
+/** Whether a popover that opens below its anchor should open above it
+ *  instead: it would run past the bottom of the area it shows in, and there
+ *  is more room above the anchor than below. */
+export function opensAbove(
+  height: number,
+  anchor: { top: number; bottom: number },
+  area: { top: number; bottom: number },
+  gap = 8,
+): boolean {
+  const below = area.bottom - anchor.bottom - gap;
+  const above = anchor.top - area.top - gap;
+  return height > below && above > below;
+}
+
+/** The nearest ancestor that clips what overflows it. */
+function clippingParent(node: HTMLElement): HTMLElement | null {
+  for (let el = node.parentElement; el; el = el.parentElement) {
+    if (/^(auto|scroll|hidden|clip)$/.test(getComputedStyle(el).overflowY)) return el;
+  }
+  return null;
+}
+
+/** Svelte action for a popover that opens below its anchor (top: 100%,
+ *  `gap` px clear of it) in the middle of a pane: opens it above instead
+ *  when it wouldn't fit below and there is more room above (opensAbove).
+ *  The area is the window, cut to the nearest ancestor that would clip it.
+ *  Measured from its anchor and its layout height, so a transition on the
+ *  popover itself doesn't skew it. */
+export function flipToFit(node: HTMLElement, gap = 8) {
+  const place = () => {
+    node.style.top = node.style.bottom = node.style.marginTop = node.style.marginBottom = '';
+    const anchor = node.offsetParent;
+    if (!anchor) return;
+    const area = { top: 0, bottom: window.innerHeight };
+    const clip = clippingParent(node)?.getBoundingClientRect();
+    if (clip) {
+      area.top = Math.max(area.top, clip.top);
+      area.bottom = Math.min(area.bottom, clip.bottom);
+    }
+    if (opensAbove(node.offsetHeight, anchor.getBoundingClientRect(), area, gap)) {
+      node.style.top = 'auto';
+      node.style.bottom = '100%';
+      node.style.marginTop = '0';
+      node.style.marginBottom = `${gap}px`;
+    }
+  };
+  place();
+  window.addEventListener('resize', place);
+  return {
+    destroy() {
+      window.removeEventListener('resize', place);
+    },
+  };
+}

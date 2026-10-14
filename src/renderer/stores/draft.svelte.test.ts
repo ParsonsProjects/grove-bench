@@ -147,7 +147,7 @@ describe('draftStore.open', () => {
       settingsStore.current = { ...settingsStore.current, enabledAlphaAgents: [] };
       expect(await draftStore.start()).toBe(false);
       expect(createSessionMock()).not.toHaveBeenCalled();
-      expect(draftStore.error).toBe('OpenCode is turned off. Turn it on in Settings → Agents, or pick another agent in the bar below.');
+      expect(draftStore.error).toBe('OpenCode is turned off. Turn it on in Settings → Agents, or pick another agent under the message box.');
     });
   });
 

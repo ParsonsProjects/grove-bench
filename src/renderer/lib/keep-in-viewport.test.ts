@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { viewportShiftX, keepInViewport, marginAboveBar, aboveBar } from './keep-in-viewport.js';
+import { viewportShiftX, keepInViewport, marginAboveBar, aboveBar, opensAbove, flipToFit } from './keep-in-viewport.js';
 
 describe('viewportShiftX', () => {
   it('leaves an element that fits where it is', () => {
@@ -101,5 +101,73 @@ describe('aboveBar', () => {
     const { node } = popoverIn(748, 766, { marked: false });
     aboveBar(node).destroy();
     expect(node.style.marginBottom).toBe('');
+  });
+});
+
+describe('opensAbove', () => {
+  const area = { top: 64, bottom: 800 };
+
+  it('opens below when it fits there', () => {
+    expect(opensAbove(200, { top: 520, bottom: 560 }, area)).toBe(false);
+  });
+
+  it('opens above when it runs past the bottom and there is more room above', () => {
+    // 232px below the anchor, less the gap; 448px above it.
+    expect(opensAbove(260, { top: 520, bottom: 560 }, area)).toBe(true);
+  });
+
+  it('stays below when it fits nowhere but there is more room below', () => {
+    expect(opensAbove(600, { top: 200, bottom: 240 }, area)).toBe(false);
+  });
+});
+
+describe('flipToFit', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    document.body.innerHTML = '';
+  });
+
+  /** A popover of `height` in an anchor in a scrolling pane. jsdom has no
+   *  layout, so the rects, the popover's height and its offsetParent (its
+   *  anchor) are stubbed. */
+  function popoverIn(anchor: { top: number; bottom: number }, height: number) {
+    const pane = document.createElement('div');
+    pane.style.overflowY = 'auto';
+    const anchorEl = document.createElement('div');
+    const node = document.createElement('div');
+    anchorEl.append(node);
+    pane.append(anchorEl);
+    document.body.append(pane);
+    vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(800);
+    vi.spyOn(pane, 'getBoundingClientRect').mockImplementation(() => ({ top: 64, bottom: 800 }) as DOMRect);
+    vi.spyOn(anchorEl, 'getBoundingClientRect').mockImplementation(() => anchor as DOMRect);
+    Object.defineProperty(node, 'offsetParent', { get: () => anchorEl });
+    Object.defineProperty(node, 'offsetHeight', { get: () => height });
+    return { pane, node };
+  }
+
+  it('leaves a popover that fits below where it is', () => {
+    const { node } = popoverIn({ top: 520, bottom: 560 }, 200);
+    flipToFit(node).destroy();
+    expect(node.style.bottom).toBe('');
+  });
+
+  it('opens one that would run past the pane above its anchor', () => {
+    const { node } = popoverIn({ top: 520, bottom: 560 }, 260);
+    const action = flipToFit(node);
+    expect(node.style.bottom).toBe('100%');
+    expect(node.style.top).toBe('auto');
+    expect(node.style.marginBottom).toBe('8px');
+    action.destroy();
+  });
+
+  it('measures again when the window is resized', () => {
+    const { pane, node } = popoverIn({ top: 520, bottom: 560 }, 260);
+    const action = flipToFit(node);
+    vi.spyOn(pane, 'getBoundingClientRect').mockImplementation(() => ({ top: 64, bottom: 1000 }) as DOMRect);
+    vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(1000);
+    window.dispatchEvent(new Event('resize'));
+    expect(node.style.bottom).toBe('');
+    action.destroy();
   });
 });
