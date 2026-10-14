@@ -103,7 +103,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [ ] Session export/import between machines
 
 ### Security Hardening
-- [ ] Validate IPC inputs at the boundary with Zod (already a dependency, unused for IPC)
+- [ ] Validate IPC inputs at the boundary with Zod (a dependency, not used for IPC yet). This is robustness more than security: the renderer can already run any command through the terminal (`PTY_WRITE` in `ipc.ts`), so the CSP and the sandbox are what stop injected script, not argument checks. Most of the 184 handlers type their arguments without checking them at run time; a few check by hand (`typeof`). If done, start with the handlers that take objects, or pass paths and branch names on to git or the file system
 - [x] Electron sandbox for the app window: on by default since Electron 20 unless `nodeIntegration: true` or `sandbox: false` is set, and the main window sets neither (`src/main/index.ts`). The preload only uses `contextBridge` and `ipcRenderer`, which work sandboxed. The Preview pages set `sandbox: true` themselves
 - [x] Content-Security-Policy for the renderer: a `<meta>` tag added at build time by `scripts/vite-csp.mjs` (only the app's own scripts, no inline scripts or eval, local images only)
 
