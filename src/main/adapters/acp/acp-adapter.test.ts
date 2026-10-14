@@ -457,6 +457,25 @@ describe('AcpAdapter', () => {
     handle.close();
   });
 
+  it("runs Grove's memory tools and reads of attached files without asking, as for Claude Code", async () => {
+    const attachmentsDir = path.join(cwd, '..', 'attachments-s1');
+    const adapter = new AcpAdapter(def());
+    const onPermissionRequest = vi.fn(async (): Promise<PermissionResponse> => ({ behavior: 'deny', message: 'no' }));
+    const handle = await adapter.start(config({ attachmentsDir, onPermissionRequest }));
+    await until(handle, 'system_init');
+    for (const ask of ['ask-for grove-memory_memory_write', `ask-for read ${path.join(attachmentsDir, 'a.pdf')}`]) {
+      handle.sendMessage({ text: ask });
+      const turn = await until(handle, 'result');
+      expect(turn.find((e) => e.type === 'tool_result' && e.toolUseId === 'p1'), ask).toMatchObject({ isError: false });
+    }
+    expect(onPermissionRequest).not.toHaveBeenCalled();
+    // Another server's tool still asks.
+    handle.sendMessage({ text: 'ask-for notes_memory_write' });
+    await until(handle, 'result');
+    expect(onPermissionRequest).toHaveBeenCalledTimes(1);
+    handle.close();
+  });
+
   it('asks about a command the agent only titled, whatever the shell rules say', async () => {
     const adapter = new AcpAdapter(def());
     const asked: PermissionRequest[] = [];

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { previewToolHandlers, claudePreviewServer, CLAUDE_PREVIEW_INSTRUCTIONS, GROVE_PREVIEW_READ_TOOL_NAMES, GROVE_PREVIEW_ACTION_TOOL_NAMES } from './preview-mcp-server.js';
+import { previewToolHandlers, claudePreviewServer, CLAUDE_PREVIEW_INSTRUCTIONS } from './preview-mcp-server.js';
+import { isAutoAllowedGroveTool } from './grove-tools.js';
 import { previewServer } from './grove-tools.js';
 import type { PreviewOperations } from './types.js';
 
@@ -67,14 +68,11 @@ describe('previewToolHandlers', () => {
 
 describe('tool names', () => {
   it('auto-allows looking but not acting', () => {
-    expect(GROVE_PREVIEW_READ_TOOL_NAMES).toEqual([
-      'mcp__grove-preview__preview_open',
-      'mcp__grove-preview__preview_screenshot',
-      'mcp__grove-preview__preview_read',
-      'mcp__grove-preview__preview_logs',
-    ]);
-    for (const name of GROVE_PREVIEW_ACTION_TOOL_NAMES) {
-      expect(GROVE_PREVIEW_READ_TOOL_NAMES as readonly string[]).not.toContain(name);
+    for (const tool of ['preview_open', 'preview_screenshot', 'preview_read', 'preview_logs']) {
+      expect(isAutoAllowedGroveTool(`mcp__grove-preview__${tool}`), tool).toBe(true);
+    }
+    for (const tool of ['preview_click', 'preview_type']) {
+      expect(isAutoAllowedGroveTool(`mcp__grove-preview__${tool}`), tool).toBe(false);
     }
   });
 });

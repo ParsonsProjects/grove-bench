@@ -126,6 +126,21 @@ async function prompt(params) {
     update(sid, { sessionUpdate: 'tool_call_update', toolCallId: 'e1', status: answer.outcome.optionId === 'ok' ? 'completed' : 'failed' });
     return { stopReason: 'end_turn' };
   }
+  if (text.startsWith('ask-for ')) {
+    // Asks about one call, named like OpenCode names an MCP tool (its
+    // title), or a read of the path given.
+    const [, what, arg] = text.split(' ');
+    const toolCall = what === 'read'
+      ? { toolCallId: 'p1', kind: 'read', title: 'Read', locations: [{ path: arg }] }
+      : { toolCallId: 'p1', kind: 'other', title: what, rawInput: {} };
+    update(sid, { sessionUpdate: 'tool_call', status: 'pending', ...toolCall });
+    const answer = await request('session/request_permission', {
+      sessionId: sid, toolCall,
+      options: [{ optionId: 'ok', name: 'Allow', kind: 'allow_once' }, { optionId: 'no', name: 'Reject', kind: 'reject_once' }],
+    });
+    update(sid, { sessionUpdate: 'tool_call_update', toolCallId: 'p1', status: answer.outcome.optionId === 'ok' ? 'completed' : 'failed' });
+    return { stopReason: 'end_turn' };
+  }
   if (text === 'blocks') {
     // Every block after the text, as JSON, so a test can see what was sent.
     const rest = params.prompt.slice(params.prompt.findIndex((b) => b.type === 'text') + 1);

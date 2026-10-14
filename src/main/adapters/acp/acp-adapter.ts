@@ -30,7 +30,8 @@ import type {
 } from '../types.js';
 import type { AgentStage, ControlDescriptor, ControlOption, PermissionMode, ImageMediaType } from '../../../shared/types.js';
 import { CONTROL_IDS } from '../../../shared/types.js';
-import { checkToolRules, cleanEnv, isPathInside } from '../../agent-utils.js';
+import { cleanEnv } from '../../agent-utils.js';
+import { decideToolCall } from '../../tool-policy.js';
 import { getApiKey } from '../../credentials.js';
 import { killTree } from '../../process-tree.js';
 import { logger } from '../../logger.js';
@@ -1304,43 +1305,31 @@ class AcpQuery {
     }
   }
 
-  /** What Grove decides about a call without asking the user: the
-   *  conversation's allowed tools, the allow/deny rules, always-allow, then
-   *  the Edit and Read-safe modes, which approve edits inside the worktree. */
+  /** What Grove decides about a call without asking the user (tool-policy.ts):
+   *  the conversation's allowed tools, the allow/deny rules, the attached
+   *  files, Grove's own tools, always-allow, then the Edit and Read-safe
+   *  modes, which approve edits inside the worktree. Shell commands are
+   *  matched as both bash and PowerShell, since Grove can't tell which shell
+   *  the agent uses: a deny in either denies, an allow needs both. */
   private autoDecision({ toolName, toolCategory, toolView }: ReturnType<AcpQuery['describe']>): 'allow' | 'deny' | 'ask' {
     const { config } = this;
-    if (config.allowedTools && !config.allowedTools.has(toolName)) return 'deny';
-    const verdict = this.checkRules(toolName, toolCategory, toolView);
-    if (verdict) return verdict;
-    if (config.alwaysAllowedTools.has(toolName)) return 'allow';
-    if ((this.groveMode === 'acceptEdits' || this.groveMode === 'readSafe') && toolCategory === 'edit' && this.editsInsideWorktree(toolView)) {
-      return 'allow';
-    }
-    return 'ask';
-  }
-
-  /** Grove's allow/deny rules. Shell commands are matched as both bash and
-   *  PowerShell, since Grove can't tell which shell the agent uses: a deny
-   *  in either denies, an allow needs both. */
-  private checkRules(toolName: string, category: ReturnType<typeof categoryForKind>, view: ReturnType<typeof toolViewFor>): 'allow' | 'deny' | null {
-    const { toolAllowRules, toolDenyRules } = this.config;
     // Without a command (an agent that sends only a title) the specifier is
     // empty: rules with a glob can't match it, tool-wide ones still apply.
-    const specifier = specifierFor(view);
-    if (category !== 'bash') {
-      return checkToolRules(toolAllowRules, toolDenyRules, toolName, specifier, category)?.behavior ?? null;
-    }
-    const bash = checkToolRules(toolAllowRules, toolDenyRules, toolName, specifier, category, 'bash');
-    const ps = checkToolRules(toolAllowRules, toolDenyRules, toolName, specifier, category, 'powershell');
-    if (bash?.behavior === 'deny' || ps?.behavior === 'deny') return 'deny';
-    if (bash?.behavior === 'allow' && ps?.behavior === 'allow') return 'allow';
-    return null;
-  }
-
-  private editsInsideWorktree(view: ReturnType<typeof toolViewFor>): boolean {
-    const paths = [view.path, ...(view.morePaths ?? [])].filter((p): p is string => !!p);
-    const cwd = this.config.cwd;
-    return paths.length > 0 && paths.every((p) => isPathInside(cwd, path.resolve(cwd, p)));
+    return decideToolCall({
+      toolName,
+      category: toolCategory,
+      view: toolView,
+      specifier: specifierFor(toolView),
+      shells: ['bash', 'powershell'],
+    }, {
+      cwd: config.cwd,
+      attachmentsDir: config.attachmentsDir,
+      allowedTools: config.allowedTools,
+      toolAllowRules: config.toolAllowRules,
+      toolDenyRules: config.toolDenyRules,
+      alwaysAllowedTools: config.alwaysAllowedTools,
+      approveEditsInWorktree: this.groveMode === 'acceptEdits' || this.groveMode === 'readSafe',
+    }).behavior;
   }
 }
 

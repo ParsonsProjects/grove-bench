@@ -44,6 +44,36 @@ export interface GroveServer {
   tools: GroveTool[];
 }
 
+/** Grove's tools that run without a prompt in every mode: all of
+ *  grove-memory, and grove-preview's looking tools. Clicking and typing in
+ *  the page ask like other actions. */
+const AUTO_ALLOWED: Readonly<Record<GroveServerName, readonly string[]>> = {
+  'grove-memory': ['memory_list', 'memory_read', 'memory_write', 'memory_delete'],
+  'grove-preview': ['preview_open', 'preview_screenshot', 'preview_read', 'preview_logs'],
+};
+
+/**
+ * Which of Grove's tools a call is, from the name the agent gives it, in the
+ * forms that name Grove's server: Claude Code's `mcp__grove-memory__memory_read`,
+ * OpenCode's `grove-memory_memory_read`, and Gemini CLI's
+ * `memory_list (grove-memory MCP Server)`. Gemini CLI titles a call that has
+ * arguments `memory_read(path: …)`, without the server, so that can't be told
+ * from another server's tool of the same name and isn't matched.
+ */
+export function groveToolOf(name: string): { server: GroveServerName; tool: string } | null {
+  const trimmed = name.trim();
+  const named = /^(?:mcp__)?(grove-memory|grove-preview)(?:__|_)(\w+)$/.exec(trimmed);
+  if (named) return { server: named[1] as GroveServerName, tool: named[2] };
+  const titled = /^(\w+) \((grove-memory|grove-preview) MCP Server\)$/.exec(trimmed);
+  return titled ? { server: titled[2] as GroveServerName, tool: titled[1] } : null;
+}
+
+/** Whether a call is one of Grove's own tools that need no prompt (AUTO_ALLOWED). */
+export function isAutoAllowedGroveTool(name: string): boolean {
+  const tool = groveToolOf(name);
+  return !!tool && AUTO_ALLOWED[tool.server].includes(tool.tool);
+}
+
 function text(value: string): GroveToolResult {
   return { content: [{ type: 'text', text: value }] };
 }

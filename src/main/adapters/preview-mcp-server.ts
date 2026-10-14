@@ -12,20 +12,6 @@ import { toSdkMcpServer } from './sdk-mcp.js';
 
 export { previewToolHandlers };
 
-/** Tools that only look (or load a local page). Run without a prompt. */
-export const GROVE_PREVIEW_READ_TOOL_NAMES = [
-  'mcp__grove-preview__preview_open',
-  'mcp__grove-preview__preview_screenshot',
-  'mcp__grove-preview__preview_read',
-  'mcp__grove-preview__preview_logs',
-] as const;
-
-/** Tools that act on the page. They ask like any other action tool. */
-export const GROVE_PREVIEW_ACTION_TOOL_NAMES = [
-  'mcp__grove-preview__preview_click',
-  'mcp__grove-preview__preview_type',
-] as const;
-
 /**
  * Claude Code's own ways of looking at a page that run a hidden headless
  * browser: the bundled run skill (its web app recipe drives chromium-cli or a

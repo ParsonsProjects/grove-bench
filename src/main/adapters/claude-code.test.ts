@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import path from 'node:path';
-import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS, thinkingConfigFor, parseMcpListOutput, mcpServerManager, claudeMcpOrigin, mcpToolServerKey, mcpContextCostByServer, toMcpElicitationRequest, withMcpjsonApproval, mcpjsonApprovalsFrom, buildMcpAddArgs, quoteArg, validatePluginId, validateConfigScope, capToolResult, claudeControlsFor, supportsAdaptiveThinking, supportsFastMode, supportsAutoMode, claudeModelCaps, effortFor, reasoningOptionsFor, toSdkPermissionMode, fromSdkSyncMode, stripAnsi, mapClaudeUsage, thinkingDisplayFor, TEXT_GENERATION_OPTIONS, missingConversationError, userMessageContent, readsAttachedFile } from './claude-code.js';
+import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS, thinkingConfigFor, parseMcpListOutput, mcpServerManager, claudeMcpOrigin, mcpToolServerKey, mcpContextCostByServer, toMcpElicitationRequest, withMcpjsonApproval, mcpjsonApprovalsFrom, buildMcpAddArgs, quoteArg, validatePluginId, validateConfigScope, capToolResult, claudeControlsFor, supportsAdaptiveThinking, supportsFastMode, supportsAutoMode, claudeModelCaps, effortFor, reasoningOptionsFor, toSdkPermissionMode, fromSdkSyncMode, stripAnsi, mapClaudeUsage, thinkingDisplayFor, TEXT_GENERATION_OPTIONS, missingConversationError, userMessageContent, sandboxDecision } from './claude-code.js';
 import type { AgentEvent } from '../../shared/types.js';
 import { RunningCost } from './running-cost.js';
 import { limitHook, LIMIT_STOP_REASON } from './claude-code.js';
@@ -1184,27 +1184,26 @@ describe('userMessageContent()', () => {
   });
 });
 
-// ─── readsAttachedFile (reads of attached files need no prompt) ───
+// ─── sandboxDecision (Claude's checks in the shared tool policy) ───
 
-describe('readsAttachedFile()', () => {
-  const att = path.resolve('/data/attachments/s1');
+describe('sandboxDecision()', () => {
   const cwd = path.resolve('/wt/abc');
 
-  it('is true for a read tool inside the attachments folder', () => {
-    expect(readsAttachedFile('Read', { file_path: path.join(att, 'a.pdf') }, cwd, att)).toBe(true);
-    expect(readsAttachedFile('Grep', { path: att, pattern: 'x' }, cwd, att)).toBe(true);
+  it('has nothing to say without a sandbox', () => {
+    expect(sandboxDecision('Bash', { command: 'ls' }, { cwd, sandbox: null })).toBeNull();
+    expect(sandboxDecision('Write', { file_path: '/etc/x' }, { cwd, sandbox: null })).toBeNull();
   });
 
-  it('is false outside it, for a path that climbs out, or for a tool that writes', () => {
-    expect(readsAttachedFile('Read', { file_path: path.join(cwd, 'a.ts') }, cwd, att)).toBe(false);
-    expect(readsAttachedFile('Read', { file_path: path.join(att, '..', 's2', 'a.pdf') }, cwd, att)).toBe(false);
-    expect(readsAttachedFile('Write', { file_path: path.join(att, 'a.pdf') }, cwd, att)).toBe(false);
-    expect(readsAttachedFile('Edit', { file_path: path.join(att, 'a.pdf') }, cwd, att)).toBe(false);
+  it('runs Bash without a prompt only when the sandbox opts in', () => {
+    expect(sandboxDecision('Bash', { command: 'ls' }, { cwd, sandbox: { autoAllowBashIfSandboxed: true } })).toEqual({ behavior: 'allow' });
+    expect(sandboxDecision('Bash', { command: 'ls' }, { cwd, sandbox: { autoAllowBashIfSandboxed: false } })).toBeNull();
   });
 
-  it('is false without a folder or a path, and for Object.prototype names', () => {
-    expect(readsAttachedFile('Read', { file_path: path.join(att, 'a.pdf') }, cwd, null)).toBe(false);
-    expect(readsAttachedFile('Glob', { pattern: '*' }, cwd, att)).toBe(false);
-    expect(readsAttachedFile('constructor', { file_path: path.join(att, 'a.pdf') }, cwd, att)).toBe(false);
+  it('refuses a file write outside the allowed folders, notebooks included', () => {
+    const sandbox = { filesystem: { allowWrite: ['.'] } };
+    expect(sandboxDecision('Edit', { file_path: 'src/a.ts' }, { cwd, sandbox })).toBeNull();
+    expect(sandboxDecision('Write', { file_path: path.resolve('/elsewhere/a.ts') }, { cwd, sandbox })).toMatchObject({ behavior: 'deny', reason: 'guard' });
+    expect(sandboxDecision('NotebookEdit', { notebook_path: '../out.ipynb' }, { cwd, sandbox })).toMatchObject({ behavior: 'deny' });
+    expect(sandboxDecision('Read', { file_path: path.resolve('/elsewhere/a.ts') }, { cwd, sandbox })).toBeNull();
   });
 });
