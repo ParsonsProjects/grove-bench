@@ -93,7 +93,8 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 
 ### Cost & Usage Dashboard
 - [x] Plan usage runway — `AgentQueryHandle.getUsage()` returns a neutral `ProviderUsage` (windows with 0–1 utilization and reset time); the Claude adapter maps the SDK's experimental `/usage` control and probes for it so a rename degrades to "no usage"; `usage.svelte.ts` keeps one snapshot per provider, refreshes on popover open and after turns (throttled), and folds live `rate_limit` events in; shown as bars under the agent in the Agent settings popover
-- [ ] Per-session and cumulative token/cost view. The status bar shows only the last turn's cost (`StatusBarLastTurn.svelte`); each result event already carries the thread's running total (`sessionCostUsd`, see Turn cost below), but no view shows it
+- [x] Per-thread and daily cost: a click on the last turn's cost in the status bar opens what the thread and today (every thread since midnight) have cost so far (`StatusBarLastTurn.svelte`), from the figures the spend limits count (`threadSpend` in `agent-session.ts`, `todaySpend` in `session-limits.ts`), with a link to the limits. The thread's total and its allowance past the spend limit are saved in the worktree manifest (after a costed turn, on Continue, and before a rewind or /clear), so a rewind, /clear or restart doesn't lower the total or reset the thread's spend limit. Shown only where the last turn's cost is (API sign-ins, and agents that report cost but not plan usage)
+- [ ] Token counts per thread. The Claude Code adapter emits a `usage` event per reply (input, output and cache tokens; it drives the context meter), but nothing adds them up per thread
 - [x] Turn cost per turn: Claude Code's `total_cost_usd` is the query's running total, so `adapters/running-cost.ts` turns it into each turn's cost (`totalCostUsd`) and keeps the running total as `sessionCostUsd`; a resumed query starts from the total its history last reached
 - [x] Limits and alerts (Settings > Limits & alerts): plan usage alert at a chosen percent (in-app toast and desktop notification, once per window, `planAlerts.svelte.ts`); spend per thread and per day, tool calls and minutes per turn, each pausing the thread before its next tool call to ask Continue or Stop (`session-limits.ts`, a `PreToolUse` hook for Claude Code, permission requests for ACP agents)
 
@@ -103,7 +104,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [ ] Session export/import between machines
 
 ### Security Hardening
-- [ ] Validate IPC inputs at the boundary with Zod (already a dependency, unused for IPC)
+- [ ] Validate IPC inputs at the boundary with Zod (a dependency, not used for IPC yet). This is robustness more than security: the renderer can already run any command through the terminal (`PTY_WRITE` in `ipc.ts`), so the CSP and the sandbox are what stop injected script, not argument checks. Most of the 184 handlers type their arguments without checking them at run time; a few check by hand (`typeof`). If done, start with the handlers that take objects, or pass paths and branch names on to git or the file system
 - [x] Electron sandbox for the app window: on by default since Electron 20 unless `nodeIntegration: true` or `sandbox: false` is set, and the main window sets neither (`src/main/index.ts`). The preload only uses `contextBridge` and `ipcRenderer`, which work sandboxed. The Preview pages set `sandbox: true` themselves
 - [x] Content-Security-Policy for the renderer: a `<meta>` tag added at build time by `scripts/vite-csp.mjs` (only the app's own scripts, no inline scripts or eval, local images only)
 

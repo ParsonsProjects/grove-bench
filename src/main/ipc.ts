@@ -559,6 +559,8 @@ export function registerHandlers() {
       const savedModel = await worktreeManager.getModel(id);
       // ...on the agent it ran with. A Codex conversation must not come back on Claude.
       const adapterType = await worktreeManager.getAdapterType(id);
+      // ...and what it has spent, which its history may no longer add up to.
+      const savedLimits = await worktreeManager.getThreadLimits(id);
       logger.info(`Resuming session: id=${id}, branch=${worktree.branch}, providerSession=${providerSessionId ?? 'none'}, model=${savedModel ?? 'default'}`);
       perfSteps.step(id, 'lookup');
 
@@ -572,6 +574,7 @@ export function registerHandlers() {
         model: savedModel,
         adapterType,
         noGit: !!worktree.noGit,
+        savedLimits,
       });
 
       logger.info(`Session resumed: id=${session.id}`);
@@ -1088,6 +1091,10 @@ export function registerHandlers() {
   });
 
   ipcMain.handle(IPC.LIMITS_DAILY_SPEND, () => todaySpend().usd);
+
+  // The id names the thread's log file: a plain name only.
+  ipcMain.handle(IPC.LIMITS_THREAD_SPEND, (_event, sessionId: unknown) =>
+    typeof sessionId === 'string' && /^[\w-]+$/.test(sessionId) ? sessionManager.threadSpend(sessionId) : 0);
 
   ipcMain.handle(IPC.AGENT_HISTORY, (_event, sessionId: string) => {
     const prelaunch = prelaunchEvents.get(sessionId) ?? [];

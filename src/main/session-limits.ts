@@ -70,9 +70,27 @@ export function turnSpend(event: AgentEvent): number {
   return Number.isFinite(usd) && usd > 0 ? usd : 0;
 }
 
+/** A thread's spend and how far the user let it go past its spend limit,
+ *  saved in the worktree manifest: a rewind or /clear rewrites the history
+ *  these are otherwise rebuilt from. */
+export interface SavedThreadLimits {
+  spendUsd: number;
+  allowanceUsd?: number;
+}
+
+/** What to save of a live thread's limit state. */
+export function savedThreadLimits(limits: SessionLimits): SavedThreadLimits {
+  return {
+    spendUsd: limits.threadSpendUsd,
+    ...(limits.threadAllowanceUsd !== null ? { allowanceUsd: limits.threadAllowanceUsd } : {}),
+  };
+}
+
 /** A thread's limit state from its saved history: what it has spent, and
- *  how far the user last let it go past its spend limit. */
-export function limitsFromHistory(history: readonly AgentEvent[]): SessionLimits {
+ *  how far the user last let it go past its spend limit. `saved`: what was
+ *  recorded when it last ran, which still counts turns a rewind or /clear
+ *  has since cut from the history. */
+export function limitsFromHistory(history: readonly AgentEvent[], saved?: SavedThreadLimits): SessionLimits {
   let threadSpendUsd = 0;
   let threadAllowanceUsd: number | null = null;
   for (const e of history) {
@@ -81,6 +99,8 @@ export function limitsFromHistory(history: readonly AgentEvent[]): SessionLimits
       threadAllowanceUsd = e.allowance;
     }
   }
+  threadSpendUsd = Math.max(threadSpendUsd, saved?.spendUsd ?? 0);
+  if (saved?.allowanceUsd !== undefined) threadAllowanceUsd = Math.max(threadAllowanceUsd ?? 0, saved.allowanceUsd);
   return { turn: null, threadSpendUsd, threadAllowanceUsd, pending: null, stopped: false };
 }
 

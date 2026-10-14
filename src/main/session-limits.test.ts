@@ -9,7 +9,7 @@ vi.mock('./app-state.js', () => ({
 }));
 
 import {
-  beforeToolUse, cancelLimit, limitsFromHistory, promptSent, respondToLimit, todaySpend,
+  beforeToolUse, cancelLimit, limitsFromHistory, promptSent, respondToLimit, savedThreadLimits, todaySpend,
   turnActive, turnElapsedMs, turnEnded, turnSpend, whileWaiting, type LimitGateContext, type SessionLimits,
 } from './session-limits.js';
 
@@ -47,6 +47,28 @@ describe('spend', () => {
     // Before costs were per turn, Claude Code's figure was the running total.
     expect(turnSpend(result(3, null))).toBe(0);
     expect(turnSpend({ type: 'status', message: 'x' })).toBe(0);
+  });
+
+  it('keeps a saved total that turns cut from the history still count toward', () => {
+    expect(limitsFromHistory([result(0.5, 0.5)], { spendUsd: 3 }).threadSpendUsd).toBe(3);
+    // A save that missed the last turn doesn't lower it.
+    expect(limitsFromHistory([result(0.5, 0.5), result(0.25, 0.75)], { spendUsd: 0.5 }).threadSpendUsd).toBeCloseTo(0.75);
+    expect(limitsFromHistory([], undefined).threadSpendUsd).toBe(0);
+  });
+
+  it('keeps a saved allowance past the spend limit too', () => {
+    expect(limitsFromHistory([], { spendUsd: 12, allowanceUsd: 22 }).threadAllowanceUsd).toBe(22);
+    // A later Continue still in the history goes further.
+    const later: AgentEvent = { type: 'limit_resolved', requestId: 'a', limit: 'threadSpend', decision: 'continue', allowance: 30 };
+    expect(limitsFromHistory([later], { spendUsd: 12, allowanceUsd: 22 }).threadAllowanceUsd).toBe(30);
+    expect(limitsFromHistory([], { spendUsd: 12 }).threadAllowanceUsd).toBeNull();
+  });
+
+  it('saves a live thread\'s spend, and its allowance once it has one', () => {
+    const limits = limitsFromHistory([result(0.5, 0.5)]);
+    expect(savedThreadLimits(limits)).toEqual({ spendUsd: 0.5 });
+    limits.threadAllowanceUsd = 2;
+    expect(savedThreadLimits(limits)).toEqual({ spendUsd: 0.5, allowanceUsd: 2 });
   });
 
   it('rebuilds a thread\'s spend and allowance from its history', () => {

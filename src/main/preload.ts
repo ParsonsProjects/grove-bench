@@ -81,6 +81,8 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.AGENT_LIMIT, sessionId, requestId, decision) as Promise<boolean>,
   getDailySpend: () =>
     ipcRenderer.invoke(IPC.LIMITS_DAILY_SPEND) as Promise<number>,
+  getThreadSpend: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.LIMITS_THREAD_SPEND, sessionId) as Promise<number>,
   onAgentEvent: (sessionId: string, callback: (event: import('../shared/types.js').AgentEvent) => void) => {
     const channel = `${IPC.AGENT_EVENT}:${sessionId}`;
     const handler = (_event: Electron.IpcRendererEvent, data: import('../shared/types.js').AgentEvent) =>

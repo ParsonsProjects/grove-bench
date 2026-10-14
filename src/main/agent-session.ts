@@ -40,8 +40,8 @@ import {
 import { SessionSkills } from './session-skills.js';
 import {
   beforeToolUse, cancelLimit, limitsFromHistory, promptSent, respondToLimit as answerLimit,
-  toolCallSeen, turnActive, turnEnded, turnStopped, whileWaiting,
-  type LimitDecision, type LimitGateContext,
+  savedThreadLimits, toolCallSeen, turnActive, turnEnded, turnStopped, whileWaiting,
+  type LimitDecision, type LimitGateContext, type SavedThreadLimits,
 } from './session-limits.js';
 import {
   readSafeWarning, readSafeSandbox, hasSandboxWarning, startingPermissionMode,
@@ -166,6 +166,8 @@ class AgentSessionManager {
      *  the same tick the session becomes visible, so the caller can drop its
      *  own copy then and a history read never sees them twice. */
     adoptSetupEvents?: () => AgentEvent[];
+    /** The thread's spend and spend allowance when last saved (worktree manifest). */
+    savedLimits?: SavedThreadLimits;
   }): Promise<SessionInfo> {
     const { id, branch, cwd, repoPath, window: win } = opts;
 
@@ -262,7 +264,7 @@ class AgentSessionManager {
       sleepSettled: null,
       turnHandle: null,
       promptsBeforeInit: null,
-      limits: limitsFromHistory(eventHistory),
+      limits: limitsFromHistory(eventHistory, opts.savedLimits),
     };
 
     this.sessions.set(id, session);
@@ -693,8 +695,11 @@ class AgentSessionManager {
           if (session.turnHandle === handle) session.turnHandle = null;
           // The files the turn made go just ahead of its result.
           await this.endTurnFiles(session, emit);
-          // Adds the turn's cost to the thread's and today's spend.
+          // Adds the turn's cost to the thread's and today's spend, and saves
+          // the thread's, which its history won't keep through a rewind.
+          const spentBefore = session.limits.threadSpendUsd;
           turnEnded(session.limits, event);
+          if (session.limits.threadSpendUsd !== spentBefore) this.saveThreadLimits(session);
           this.runHeldMcpReconnects(session);
           session.lastResult = {
             isError: event.isError,
@@ -1096,10 +1101,17 @@ class AgentSessionManager {
   /** What the limit gate needs for a tool call in `session`. Settings are
    *  read each time, so a changed limit applies to the next tool call. */
   private limitGate(session: ManagedSession): LimitGateContext {
+    const emit = session.emit ?? this.createEmitter(session);
     return {
       limits: session.limits,
       settings: settings.getSettings(),
-      emit: session.emit ?? this.createEmitter(session),
+      emit: (event) => {
+        emit(event);
+        // Letting the thread past its spend limit is saved with its spend.
+        if (event.type === 'limit_resolved' && event.limit === 'threadSpend' && event.decision === 'continue') {
+          this.saveThreadLimits(session);
+        }
+      },
       stopTurn: () => {
         this.interruptQuery(session.id).catch((e) => logger.warn(`[limits] could not stop ${session.id}:`, e));
       },
@@ -1884,6 +1896,34 @@ class AgentSessionManager {
     return this.sessions.get(id);
   }
 
+  /** What a thread has spent over its life, as its agent estimated it: the
+   *  figure its spend limit counts (session-limits.ts). For a thread that
+   *  isn't loaded, the larger of the total saved when it last ran and its
+   *  history added up, as a resume would start from. */
+  async threadSpend(id: string): Promise<number> {
+    const session = this.sessions.get(id);
+    if (session) return session.limits.threadSpendUsd;
+    const saved = await worktreeManager.getThreadLimits(id).catch((e) => {
+      logger.warn(`Could not read the saved spend of ${id}:`, e);
+      return undefined;
+    });
+    return limitsFromHistory(this.events.load(id), saved).threadSpendUsd;
+  }
+
+  /** Save a thread's spend and spend allowance, which its history may not
+   *  keep (a rewind or /clear rewrites it). */
+  private saveThreadLimits(session: ManagedSession): void {
+    worktreeManager.saveThreadLimits(session.id, savedThreadLimits(session.limits))
+      .catch((e) => logger.warn(`Failed to save the spend of ${session.id}:`, e));
+  }
+
+  /** Before turns are cut from the history: save the limit state they count
+   *  toward, for a thread that has some (one from before this was saved may
+   *  not have been yet). */
+  private saveThreadLimitsBeforeCut(session: ManagedSession): void {
+    if (session.limits.threadSpendUsd > 0 || session.limits.threadAllowanceUsd !== null) this.saveThreadLimits(session);
+  }
+
   /**
    * Re-attach a new BrowserWindow to an existing running session.
    * Called after renderer reload so that IPC events flow to the new webContents.
@@ -2090,7 +2130,9 @@ class AgentSessionManager {
     const cutEvents = rewindIdx >= 0 ? session.eventHistory.slice(rewindIdx) : [];
     if (rewindIdx >= 0) {
       // Exclude the rewind target message — it gets placed back into the
-      // input. The disk log is rewritten to match.
+      // input. The disk log is rewritten to match, so save what the cut
+      // turns cost first.
+      this.saveThreadLimitsBeforeCut(session);
       this.events.replace(session, session.eventHistory.slice(0, rewindIdx));
     }
 
@@ -2245,6 +2287,7 @@ class AgentSessionManager {
           },
         });
       }
+      this.saveThreadLimitsBeforeCut(session);
       this.events.replace(session, []);
       // Keep the checkpoint refs — the user can still restore files to any
       // earlier turn — but capture a clear sentinel so the Checkpoints tab can

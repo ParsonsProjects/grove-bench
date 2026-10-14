@@ -22,11 +22,11 @@ const m = vi.hoisted(() => {
       'listMcpServers', 'getMcpContextCost', 'reconnectMcpServer', 'setMcpServerEnabled', 'authenticateMcpServer', 'reconnectDownMcpServers',
       'getSessionAdapter', 'getWorktreePath', 'analyzeSkillSuggestionsForRepo', 'respondToPermission',
       'respondToElicitation', 'rewindFiles', 'getCheckpointDiff', 'listCheckpoints', 'getDiffHistory', 'getTurnDiff',
-      'getFullThreadDiff', 'getCheckpointFiles', 'getCheckpointFileDiff', 'getCheckpointFileLines',
+      'getFullThreadDiff', 'getCheckpointFiles', 'getCheckpointFileDiff', 'getCheckpointFileLines', 'threadSpend',
     ),
     worktreeManager: fns(
       'validateRepo', 'cleanupOrphans', 'getWorktreeOrManifest', 'registerDirect', 'create', 'getRepoConfig',
-      'copyUntrackedFiles', 'getNpmCachePath', 'getProviderSessionId', 'getModel', 'getAdapterType', 'remove',
+      'copyUntrackedFiles', 'getNpmCachePath', 'getProviderSessionId', 'getModel', 'getAdapterType', 'getThreadLimits', 'remove',
       'saveDisplayName', 'getDisplayNameState', 'saveAutoDisplayName', 'renameBranch', 'switchBranch',
       'syncBranch', 'list', 'register', 'listRepos', 'getWorktree', 'assertRemovable', 'checkoutSharers',
       'getGoal', 'saveGoal', 'setGoalHidden',
@@ -521,6 +521,7 @@ describe('conversation lifecycle', () => {
     m.worktreeManager.getProviderSessionId.mockResolvedValue('prov-1');
     m.worktreeManager.getModel.mockResolvedValue('opus');
     m.worktreeManager.getAdapterType.mockResolvedValue('codex');
+    m.worktreeManager.getThreadLimits.mockResolvedValue({ spendUsd: 2.5, allowanceUsd: 5 });
 
     const result = invoke(IPC.SESSION_RESUME, 's1', '/repo');
     // Prompts sent while it starts wait on the same promise.
@@ -528,7 +529,7 @@ describe('conversation lifecycle', () => {
     await result;
 
     expect(m.sessionManager.createSession).toHaveBeenCalledWith(expect.objectContaining({
-      id: 's1', cwd: wt, resumeSessionId: 'prov-1', model: 'opus', adapterType: 'codex',
+      id: 's1', cwd: wt, resumeSessionId: 'prov-1', model: 'opus', adapterType: 'codex', savedLimits: { spendUsd: 2.5, allowanceUsd: 5 },
     }));
   });
 
@@ -843,6 +844,21 @@ describe('branch switching', () => {
 });
 
 // ─── Agent I/O and history ───
+
+describe('LIMITS_THREAD_SPEND', () => {
+  it('gives the thread\'s spend, and nothing for a malformed id', async () => {
+    m.sessionManager.threadSpend.mockReturnValue(1.25);
+    expect(await invoke(IPC.LIMITS_THREAD_SPEND, 's1')).toBe(1.25);
+    expect(m.sessionManager.threadSpend).toHaveBeenCalledWith('s1');
+
+    m.sessionManager.threadSpend.mockClear();
+    expect(await invoke(IPC.LIMITS_THREAD_SPEND, { id: 's1' })).toBe(0);
+    // The id names a log file: nothing that could reach outside its folder.
+    expect(await invoke(IPC.LIMITS_THREAD_SPEND, '../../x')).toBe(0);
+    expect(await invoke(IPC.LIMITS_THREAD_SPEND, 'a/b')).toBe(0);
+    expect(m.sessionManager.threadSpend).not.toHaveBeenCalled();
+  });
+});
 
 describe('agent I/O', () => {
   it('tells the tab when a message could not be delivered', async () => {
