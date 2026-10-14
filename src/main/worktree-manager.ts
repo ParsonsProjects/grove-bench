@@ -1375,14 +1375,17 @@ export class WorktreeManager {
   }
 
   private async generateAdapterSettings(wtPath: string, repoPath: string, adapterType?: string): Promise<void> {
-    const adapter = adapterType ? (adapterRegistry.get(adapterType) ?? adapterRegistry.getDefault()) : adapterRegistry.getDefault();
-    if (adapter.generateWorktreeSettings) {
+    const adapter = adapterType ? adapterRegistry.get(adapterType) : adapterRegistry.getDefault();
+    if (!adapter) {
+      // Another agent's files would be wrong here, and its thread can't start anyway.
+      logger.warn(`[WorktreeManager] Agent "${adapterType}" isn't registered, so no agent settings are written`);
+    } else if (adapter.generateWorktreeSettings) {
       await adapter.generateWorktreeSettings(wtPath, repoPath);
     } else {
       logger.debug(`[WorktreeManager] Adapter "${adapter.id}" has no worktree settings to generate`);
     }
     // Grove's own files, not the user's: keep them out of Changes and commits.
-    if (adapter.generatedFiles?.length) {
+    if (adapter?.generatedFiles?.length) {
       try {
         await excludeFromGit(wtPath, adapter.generatedFiles);
       } catch (err) {

@@ -369,7 +369,7 @@ async function runExtraction(
 ): Promise<Extraction | null> {
   const adapter = backgroundAgentFor(adapterType);
   if (!adapter) {
-    logger.info(`[memory-autosave] The Claude account "${adapterType}" was removed, so extraction is skipped`);
+    logger.info(`[memory-autosave] The agent "${adapterType}" is gone, so extraction is skipped`);
     return null;
   }
 

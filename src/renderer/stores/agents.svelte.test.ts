@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { mockGroveBench } from '../__mocks__/setup.js';
 import { agentsStore } from './agents.svelte.js';
+import { settingsStore } from './settings.svelte.js';
 
 const claude = { id: 'claude-code', displayName: 'Claude Agent', capabilities: { plugins: true, mcpConfig: true } };
 const codex = { id: 'codex', displayName: 'Codex', capabilities: { plugins: false, mcpConfig: false }, isDefault: true };
@@ -37,6 +38,27 @@ describe('agentsStore', () => {
 
     agentsStore.list = [claude, { ...codex, isDefault: false }];
     expect(agentsStore.defaultId).toBe('claude-code');
+  });
+
+  it("uses the user's default agent while it is offered for new threads", () => {
+    const opencode = { id: 'opencode', displayName: 'OpenCode', capabilities: {}, stage: 'alpha' as const };
+    agentsStore.list = [{ ...claude, isDefault: true }, codex, opencode];
+    const saved = settingsStore.current;
+    try {
+      settingsStore.current = { ...saved, defaultAgent: 'codex' };
+      expect(agentsStore.defaultId).toBe('codex');
+      expect(agentsStore.pickedDefaultId).toBe('codex');
+      // An alpha agent only once turned on; one that is gone never.
+      settingsStore.current = { ...saved, defaultAgent: 'opencode', enabledAlphaAgents: [] };
+      expect(agentsStore.defaultId).toBe('claude-code');
+      expect(agentsStore.pickedDefaultId).toBeNull();
+      settingsStore.current = { ...saved, defaultAgent: 'opencode', enabledAlphaAgents: ['opencode'] };
+      expect(agentsStore.defaultId).toBe('opencode');
+      settingsStore.current = { ...saved, defaultAgent: 'gone-agent' };
+      expect(agentsStore.defaultId).toBe('claude-code');
+    } finally {
+      settingsStore.current = saved;
+    }
   });
 
   it('lists the agents that support a feature', async () => {

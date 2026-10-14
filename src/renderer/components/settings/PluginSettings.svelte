@@ -33,10 +33,11 @@
     return pluginStore.available.find((a) => a.pluginId === installedId);
   }
 
-  // Plugins configure the default agent (the IPC calls don't name an agent).
-  const defaultAgent = $derived(agentsStore.get(agentsStore.defaultId));
+  // Plugins configure the built-in agent, whatever the default agent is (the
+  // IPC calls don't name an agent).
+  const pluginAgent = $derived(agentsStore.get(agentsStore.builtInDefaultId));
   const agentNote = $derived(
-    agentsStore.list.length > 1 && defaultAgent ? `These plugins are for ${defaultAgent.displayName} threads.` : '',
+    agentsStore.list.length > 1 && pluginAgent ? `These plugins are for ${pluginAgent.displayName} threads.` : '',
   );
 </script>
 

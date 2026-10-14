@@ -23,14 +23,17 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { app } from 'electron';
-import { execa, type ResultPromise } from 'execa';
 import type {
   AdapterConfig, AdapterEvent, AdapterPrerequisiteStatus, AgentAdapter, AgentCapabilities, AgentQueryHandle,
   ApiKeyDescriptor, CliSignInDescriptor, ModelInfo, PermissionResponse, SignInCheck, UserMessage,
 } from '../types.js';
 import type { AgentStage, ControlDescriptor, ControlOption, PermissionMode, ImageMediaType } from '../../../shared/types.js';
-import { CONTROL_IDS } from '../../../shared/types.js';
-import { checkToolRules, cleanEnv, isPathInside } from '../../agent-utils.js';
+import { CONTROL_IDS, isImageMediaType } from '../../../shared/types.js';
+import { cleanEnv } from '../../agent-utils.js';
+import { decideToolCall, groveServersOf } from '../../tool-policy.js';
+import { RunningCost } from '../running-cost.js';
+import { runProcess, spawnProcess } from '../../process-host.js';
+import type { HostedProcess } from '../../process-host-spawn.js';
 import { getApiKey } from '../../credentials.js';
 import { killTree } from '../../process-tree.js';
 import { logger } from '../../logger.js';
@@ -96,7 +99,6 @@ const COMMANDS_WAIT_MS = 300;
 const GENERATE_TIMEOUT_MS = 180_000;
 /** How much of the agent's stderr is kept for error messages. */
 const STDERR_TAIL_CHARS = 4_000;
-const IMAGE_MEDIA: ReadonlySet<string> = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
 /** The tool call fields a Grove tool event is built from (describe()). */
 const SHOWN_FIELDS = ['name', 'kind', 'title', 'rawInput', 'locations', 'content'] as const;
 /** Kinds of call Grove's modes and rules guard: an agent that runs these
@@ -171,9 +173,12 @@ function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<
   ]).finally(() => clearTimeout(timer));
 }
 
-/** Start the agent program with Grove's usual options. Shared by
- *  conversations and generateText so a start-up fix lands in both. */
-function spawnAgent(def: AcpAgentDefinition, cwd: string, extraEnv?: Record<string, string> | null): ResultPromise {
+/** Start the agent program with Grove's usual options, in the agent host
+ *  (spawnProcess) so a slow start (a cold npm shim, an antivirus scan) never
+ *  holds up the window, as for Claude Code. The command is found as a shell
+ *  would, npm's .cmd shims included. Shared by conversations, generateText
+ *  and the sign-in check so a start-up fix lands in all of them. */
+function spawnAgent(def: AcpAgentDefinition, cwd: string, extraEnv?: Record<string, string> | null): HostedProcess {
   const savedKey = def.apiKey ? getApiKey(def.id) : null;
   const env = {
     ...cleanEnv(process.env),
@@ -182,22 +187,21 @@ function spawnAgent(def: AcpAgentDefinition, cwd: string, extraEnv?: Record<stri
     ...(savedKey && def.apiKey ? { [def.apiKey.envVar]: savedKey } : {}),
   } as Record<string, string>;
   Object.assign(env, def.spawnEnv?.(env, { savedKey: savedKey !== null }));
-  return execa(def.command, def.args, {
-    cwd,
-    env,
-    extendEnv: false,
-    stdin: 'pipe',
-    stdout: 'pipe',
-    stderr: 'pipe',
-    buffer: false,
-    reject: false,
-    windowsHide: true,
-    cleanup: true,
+  return spawnProcess(def.command, def.args, { cwd, env, findCommand: true });
+}
+
+/** Call `onEnd` once the agent program has gone, with its exit code and, when
+ *  it never started or was stopped by a signal, why. */
+export function onAgentEnd(proc: HostedProcess, onEnd: (exitCode: number | undefined, failure?: string) => void): void {
+  let failure: string | undefined;
+  proc.on('error', (e: Error) => { failure ??= e.message; });
+  proc.once('close', (code: number | null, signal: NodeJS.Signals | null) => {
+    onEnd(code ?? undefined, failure ?? (code === null && signal ? `was stopped (${signal})` : undefined));
   });
 }
 
 /** Keep the last STDERR_TAIL_CHARS of the agent's stderr for error messages. */
-function collectStderr(proc: ResultPromise, onTail: (tail: string) => void): void {
+function collectStderr(proc: HostedProcess, onTail: (tail: string) => void): void {
   let tail = '';
   proc.stderr?.setEncoding('utf8');
   proc.stderr?.on('data', (chunk: string) => {
@@ -285,6 +289,9 @@ export class AcpAdapter implements AgentAdapter {
     plugins: false,
     skills: false,
     usage: false,
+    // ACP has no compaction request; an agent that lists a compact command
+    // gets it from its own command list.
+    compact: false,
     // Sent only when the agent says it takes images (promptCapabilities).
     imageAttachments: true,
     structuredOutput: false,
@@ -385,7 +392,8 @@ export class AcpAdapter implements AgentAdapter {
       rpc.close();
       // On Windows the agent runs under npm's .cmd shim: kill() would stop
       // only cmd.exe and leave the agent running in the folder.
-      if (proc.exitCode === null && proc.pid) await killTree(proc.pid).catch(() => proc.kill());
+      // No pid yet (the host hasn't said it started): kill() reaches it once it does.
+      if (proc.exitCode === null) await (proc.pid ? killTree(proc.pid) : Promise.reject()).catch(() => proc.kill());
       try {
         fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
       } catch (e) {
@@ -479,7 +487,8 @@ export class AcpAdapter implements AgentAdapter {
     }
     const lookup = process.platform === 'win32' ? 'where.exe' : 'which';
     try {
-      const { stdout, exitCode } = await execa(lookup, [this.def.command], { reject: false, timeout: 10_000, windowsHide: true });
+      // In the process host, like git and gh, so the lookup never holds up the window.
+      const { stdout, exitCode } = await runProcess(lookup, [this.def.command], { reject: false, timeout: 10_000 });
       const found = exitCode === 0 ? String(stdout).trim().split(/\r?\n/)[0] : '';
       if (found) {
         // Signing in happens in the agent's own CLI and is only reported when
@@ -593,7 +602,7 @@ interface AdapterHooks {
 /** One running agent process and its session. */
 class AcpQuery {
   private readonly events = new EventQueue<AdapterEvent>();
-  private proc: ResultPromise | null = null;
+  private proc: HostedProcess | null = null;
   private rpc: JsonRpcConnection | null = null;
   private mcp: GroveMcpHttp | null = null;
   /** Grove's tool servers as the agent is told about them (also for /clear). */
@@ -632,6 +641,9 @@ class AcpQuery {
    *  unknown: a new session starts at 0, a resumed one only knows it once
    *  the agent reports. */
   private sessionCost: number | undefined;
+  /** Turns that running cost into each turn's, from where a resumed
+   *  conversation had got to (priorCostUsd), as for Claude Code. */
+  private runningCost = new RunningCost();
   /** Context tokens the agent last reported. */
   private contextUsed = 0;
   /** Permission requests waiting on the user; answered "cancelled" on interrupt. */
@@ -684,7 +696,7 @@ class AcpQuery {
     const proc = spawnAgent(def, config.cwd, config.extraEnv);
     this.proc = proc;
     collectStderr(proc, (tail) => { this.stderrTail = tail; });
-    void proc.then((result) => this.onExit(result.exitCode, result.failed ? result.message : undefined));
+    onAgentEnd(proc, (exitCode, failure) => this.onExit(exitCode, failure));
 
     if (!proc.stdout || !proc.stdin) throw new Error(`Could not start ${def.displayName}`);
     this.rpc = new JsonRpcConnection(proc.stdout, proc.stdin, {
@@ -755,11 +767,13 @@ class AcpQuery {
           this.sessionId = resumeSessionId;
           return;
         }
-        this.emit({ type: 'status', level: 'warning', message: `${this.def.displayName} can't reopen earlier threads, so it starts afresh. The thread above stays, but the agent won't remember it.` });
+        // newConversation: what came before belongs to a conversation the
+        // agent no longer has (running cost, rewind points, inline audio).
+        this.emit({ type: 'status', level: 'warning', newConversation: true, message: `${this.def.displayName} can't reopen earlier threads, so it starts afresh. The thread above stays, but the agent won't remember it.` });
       } catch (e) {
         if (isAuthRequired(e)) throw e;
         logger.warn(`[${this.def.id}] resume failed:`, e);
-        this.emit({ type: 'status', level: 'warning', message: `${this.def.displayName} couldn't reopen this thread, so it starts afresh. The thread above stays, but the agent won't remember it.` });
+        this.emit({ type: 'status', level: 'warning', newConversation: true, message: `${this.def.displayName} couldn't reopen this thread, so it starts afresh. The thread above stays, but the agent won't remember it.` });
       }
     }
     const setup = await this.signedIn(() => rpc.request<AcpSessionSetup>('session/new', { cwd, mcpServers }));
@@ -784,12 +798,17 @@ class AcpQuery {
 
   /** `fresh`: a new session, so its values are the agent's defaults. */
   private takeSetup(setup: AcpSessionSetup | null | undefined, fresh: boolean): void {
-    if (!setup) return;
-    // A resumed session keeps whatever cost a replay reported.
+    // A resumed session keeps whatever cost a replay reported, and counts
+    // from where the conversation had got to, even when the agent's answer
+    // to the resume is empty.
     if (fresh) {
       this.sessionCost = 0;
       this.contextUsed = 0;
+      this.runningCost = new RunningCost();
+    } else {
+      this.runningCost = new RunningCost(this.config.priorCostUsd ?? null);
     }
+    if (!setup) return;
     if (Array.isArray(setup.configOptions)) this.configOptions = setup.configOptions;
     if (setup.modes) this.modes = setup.modes;
     this.models = modelList(this.configOptions, setup.models);
@@ -873,7 +892,6 @@ class AcpQuery {
       return;
     }
     const started = Date.now();
-    const costBefore = this.sessionCost;
     this.turns++;
     this.resetTurn();
     let stopReason: AcpStopReason | null = null;
@@ -923,8 +941,9 @@ class AcpQuery {
       numTurns: this.turns,
       ...(this.contextSize ? { contextWindow: this.contextSize } : {}),
       // usage_update's cost covers the whole session: this turn's is the rise.
-      ...(costBefore !== undefined && this.sessionCost !== undefined ? { totalCostUsd: Math.max(0, this.sessionCost - costBefore) } : {}),
-      ...(this.sessionCost !== undefined ? { sessionCostUsd: this.sessionCost } : {}),
+      ...(this.sessionCost !== undefined
+        ? { totalCostUsd: this.runningCost.turnCost(this.sessionCost, failed), sessionCostUsd: this.sessionCost }
+        : {}),
     });
   }
 
@@ -942,7 +961,7 @@ class AcpQuery {
       ({ type: 'resource_link', uri: pathToFileURL(filePath).href, name, ...(mimeType ? { mimeType } : {}), size });
     let leftOut = 0;
     for (const img of message.images ?? []) {
-      if (caps?.image === true && IMAGE_MEDIA.has(img.mediaType)) blocks.push({ type: 'image', data: img.data, mimeType: img.mediaType });
+      if (caps?.image === true && isImageMediaType(img.mediaType)) blocks.push({ type: 'image', data: img.data, mimeType: img.mediaType });
       else if (img.path) blocks.push(link(img.path, img.name, img.mediaType, Buffer.byteLength(img.data, 'base64')));
       else leftOut++;
     }
@@ -1202,7 +1221,7 @@ class AcpQuery {
   private reportToolEnd(call: AcpToolCall, errorText?: string): void {
     if (!this.openTools.delete(call.toolCallId)) return;
     const images = contentImages(call.content)
-      .filter((i) => IMAGE_MEDIA.has(i.mediaType))
+      .filter((i) => isImageMediaType(i.mediaType))
       .map((i) => ({ data: i.data, mediaType: i.mediaType as ImageMediaType }));
     const raw = call.rawOutput;
     const text = contentText(call.content)
@@ -1304,43 +1323,32 @@ class AcpQuery {
     }
   }
 
-  /** What Grove decides about a call without asking the user: the
-   *  conversation's allowed tools, the allow/deny rules, always-allow, then
-   *  the Edit and Read-safe modes, which approve edits inside the worktree. */
+  /** What Grove decides about a call without asking the user (tool-policy.ts):
+   *  the conversation's allowed tools, the allow/deny rules, the attached
+   *  files, Grove's own tools, always-allow, then the Edit and Read-safe
+   *  modes, which approve edits inside the worktree. Shell commands are
+   *  matched as both bash and PowerShell, since Grove can't tell which shell
+   *  the agent uses: a deny in either denies, an allow needs both. */
   private autoDecision({ toolName, toolCategory, toolView }: ReturnType<AcpQuery['describe']>): 'allow' | 'deny' | 'ask' {
     const { config } = this;
-    if (config.allowedTools && !config.allowedTools.has(toolName)) return 'deny';
-    const verdict = this.checkRules(toolName, toolCategory, toolView);
-    if (verdict) return verdict;
-    if (config.alwaysAllowedTools.has(toolName)) return 'allow';
-    if ((this.groveMode === 'acceptEdits' || this.groveMode === 'readSafe') && toolCategory === 'edit' && this.editsInsideWorktree(toolView)) {
-      return 'allow';
-    }
-    return 'ask';
-  }
-
-  /** Grove's allow/deny rules. Shell commands are matched as both bash and
-   *  PowerShell, since Grove can't tell which shell the agent uses: a deny
-   *  in either denies, an allow needs both. */
-  private checkRules(toolName: string, category: ReturnType<typeof categoryForKind>, view: ReturnType<typeof toolViewFor>): 'allow' | 'deny' | null {
-    const { toolAllowRules, toolDenyRules } = this.config;
     // Without a command (an agent that sends only a title) the specifier is
     // empty: rules with a glob can't match it, tool-wide ones still apply.
-    const specifier = specifierFor(view);
-    if (category !== 'bash') {
-      return checkToolRules(toolAllowRules, toolDenyRules, toolName, specifier, category)?.behavior ?? null;
-    }
-    const bash = checkToolRules(toolAllowRules, toolDenyRules, toolName, specifier, category, 'bash');
-    const ps = checkToolRules(toolAllowRules, toolDenyRules, toolName, specifier, category, 'powershell');
-    if (bash?.behavior === 'deny' || ps?.behavior === 'deny') return 'deny';
-    if (bash?.behavior === 'allow' && ps?.behavior === 'allow') return 'allow';
-    return null;
-  }
-
-  private editsInsideWorktree(view: ReturnType<typeof toolViewFor>): boolean {
-    const paths = [view.path, ...(view.morePaths ?? [])].filter((p): p is string => !!p);
-    const cwd = this.config.cwd;
-    return paths.length > 0 && paths.every((p) => isPathInside(cwd, path.resolve(cwd, p)));
+    return decideToolCall({
+      toolName,
+      category: toolCategory,
+      view: toolView,
+      specifier: specifierFor(toolView),
+      shells: ['bash', 'powershell'],
+    }, {
+      cwd: config.cwd,
+      attachmentsDir: config.attachmentsDir,
+      allowedTools: config.allowedTools,
+      toolAllowRules: config.toolAllowRules,
+      toolDenyRules: config.toolDenyRules,
+      alwaysAllowedTools: config.alwaysAllowedTools,
+      groveServers: groveServersOf(config),
+      approveEditsInWorktree: this.groveMode === 'acceptEdits' || this.groveMode === 'readSafe',
+    }).behavior;
   }
 }
 

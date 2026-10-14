@@ -109,10 +109,11 @@ const MAX_GOAL_AUTO_ATTEMPTS = 2;
 
 /** Generate a goal from a conversation's messages on its own agent and save
  *  it, unless the goal changed from `current` meanwhile. Resolves to the
- *  saved goal, or null when it wasn't saved. */
-async function generateAndSaveGoal(sessionId: string, current: ConversationGoal, input: GoalInput): Promise<ConversationGoal | null> {
+ *  saved goal, or null when it wasn't saved. `substitute`: the agent the user
+ *  picked for a conversation whose agent is gone (recordedAgent). */
+async function generateAndSaveGoal(sessionId: string, current: ConversationGoal, input: GoalInput, substitute?: string): Promise<ConversationGoal | null> {
   const live = sessionManager.getSession(sessionId);
-  const adapter = live?.adapter ?? await recordedAgent(sessionId);
+  const adapter = live?.adapter ?? await recordedAgent(sessionId, substitute);
   const cwd = live?.worktreePath ?? (await worktreeManager.getWorktreeOrManifest(sessionId))?.path;
   if (!cwd) throw new Error('The thread\'s folder could not be found');
   const text = await generateGoal(input, adapter, cwd);
@@ -719,7 +720,7 @@ export function registerHandlers() {
     }
   });
 
-  ipcMain.handle(IPC.SESSION_GOAL_REFRESH, async (_event, sessionId: string): Promise<ConversationGoal | null> => {
+  ipcMain.handle(IPC.SESSION_GOAL_REFRESH, async (_event, sessionId: string, substitute?: unknown): Promise<ConversationGoal | null> => {
     // One is already being written: its result is on the way.
     if (goalInFlight.has(sessionId)) return (await worktreeManager.getGoal(sessionId)) ?? null;
     goalInFlight.add(sessionId);
@@ -728,7 +729,8 @@ export function registerHandlers() {
       if (!current) return null;
       const input = goalInputFromEvents(prelaunchPrefixedEvents(sessionId));
       // Not saved when the goal was edited meanwhile: the edit stands.
-      return (await generateAndSaveGoal(sessionId, current, input)) ?? (await worktreeManager.getGoal(sessionId)) ?? null;
+      const agent = typeof substitute === 'string' ? substitute : undefined;
+      return (await generateAndSaveGoal(sessionId, current, input, agent)) ?? (await worktreeManager.getGoal(sessionId)) ?? null;
     } finally {
       goalInFlight.delete(sessionId);
     }
@@ -1034,15 +1036,27 @@ export function registerHandlers() {
     return result;
   });
 
-  ipcMain.handle(IPC.SKILLS_LIST, (_event, sessionId: string, fallbackPath: string) => {
-    const adapter = sessionManager.getSessionAdapter(sessionId) ?? adapterRegistry.getDefault();
+  /** A thread's agent, running or not: the live one, else the one its
+   *  manifest records, else the default for an id with no thread (yet).
+   *  Undefined when the recorded agent is gone, so no other agent's files
+   *  are read or written for it. */
+  async function threadAgent(sessionId: string): Promise<AgentAdapter | undefined> {
+    const live = sessionManager.getSessionAdapter(sessionId);
+    if (live) return live;
+    const recorded = sessionId ? await worktreeManager.getAdapterType(sessionId).catch(() => undefined) : undefined;
+    return recorded ? adapterRegistry.get(recorded) : adapterRegistry.getDefault();
+  }
+
+  ipcMain.handle(IPC.SKILLS_LIST, async (_event, sessionId: string, fallbackPath: string) => {
+    const adapter = await threadAgent(sessionId);
     const root = sessionManager.getWorktreePath(sessionId) ?? fallbackPath;
-    if (!root || !adapter.listSkills) return [];
+    if (!root || !adapter?.listSkills) return [];
     return adapter.listSkills(root);
   });
 
-  ipcMain.handle(IPC.SKILLS_ADD, (_event, sessionId: string, fallbackPath: string, def: SkillDefinition) => {
-    const adapter = sessionManager.getSessionAdapter(sessionId) ?? adapterRegistry.getDefault();
+  ipcMain.handle(IPC.SKILLS_ADD, async (_event, sessionId: string, fallbackPath: string, def: SkillDefinition) => {
+    const adapter = await threadAgent(sessionId);
+    if (!adapter) throw new Error("This thread's agent isn't available any more, so skills can't be added for it");
     if (!adapter.addSkill) {
       throw new Error(`${adapter.displayName} does not support adding skills`);
     }
@@ -1398,11 +1412,13 @@ export function registerHandlers() {
     await commit(worktree.path, message);
   });
 
-  ipcMain.handle(IPC.GIT_GENERATE_COMMIT_MESSAGE, async (_event, sessionId: string) => {
+  ipcMain.handle(IPC.GIT_GENERATE_COMMIT_MESSAGE, async (_event, sessionId: string, substitute?: unknown) => {
     const worktree = worktreeManager.getWorktree(sessionId);
     if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
-    // The conversation's own agent, recorded in the manifest when it isn't running.
-    const adapter = sessionManager.getSession(sessionId)?.adapter ?? await recordedAgent(sessionId);
+    // The conversation's own agent, recorded in the manifest when it isn't
+    // running, or the one the user picked when that agent is gone.
+    const adapter = sessionManager.getSession(sessionId)?.adapter
+      ?? await recordedAgent(sessionId, typeof substitute === 'string' ? substitute : undefined);
     return generateCommitMessage(worktree.path, adapter);
   });
 
@@ -1644,10 +1660,20 @@ export function registerHandlers() {
 
   // ─── Plugins ───
 
-  /** Resolve adapter by optional type, falling back to registry default. */
-  function resolveAdapter(adapterType?: string) {
-    return adapterType ? (adapterRegistry.get(adapterType) ?? adapterRegistry.getDefault()) : adapterRegistry.getDefault();
+  /** The agent a Settings or status-bar call names, else the default agent
+   *  (the Settings tabs configure that one). An id that isn't registered is
+   *  refused rather than taken for the default, so another agent's
+   *  configuration is never changed in its place. */
+  function resolveAdapter(adapterType?: string, fallback = () => adapterRegistry.getDefault()) {
+    if (!adapterType) return fallback();
+    const adapter = adapterRegistry.get(adapterType);
+    if (!adapter) throw new Error(`The agent "${adapterType}" isn't available`);
+    return adapter;
   }
+
+  /** Plugins configure the built-in agent (Claude Code's first account)
+   *  whatever the default agent is: the Plugins section names no agent. */
+  const builtInAgent = () => adapterRegistry.getBuiltInDefault();
 
   // ─── MCP server configuration ───
 
@@ -1685,7 +1711,7 @@ export function registerHandlers() {
   });
 
   ipcMain.handle(IPC.PLUGIN_LIST, async (_event, adapterType?: string) => {
-    const adapter = resolveAdapter(adapterType);
+    const adapter = resolveAdapter(adapterType, builtInAgent);
     if (!adapter.capabilities.plugins || !adapter.listPlugins) {
       return { installed: [], available: [] };
     }
@@ -1698,25 +1724,25 @@ export function registerHandlers() {
   });
 
   ipcMain.handle(IPC.PLUGIN_INSTALL, async (_event, pluginId: string, scope = 'user', adapterType?: string) => {
-    const adapter = resolveAdapter(adapterType);
+    const adapter = resolveAdapter(adapterType, builtInAgent);
     if (!adapter.installPlugin) throw new Error(`Adapter "${adapter.id}" does not support plugins`);
     await adapter.installPlugin(pluginId, scope);
   });
 
   ipcMain.handle(IPC.PLUGIN_UNINSTALL, async (_event, pluginId: string, adapterType?: string) => {
-    const adapter = resolveAdapter(adapterType);
+    const adapter = resolveAdapter(adapterType, builtInAgent);
     if (!adapter.uninstallPlugin) throw new Error(`Adapter "${adapter.id}" does not support plugins`);
     await adapter.uninstallPlugin(pluginId);
   });
 
   ipcMain.handle(IPC.PLUGIN_ENABLE, async (_event, pluginId: string, adapterType?: string) => {
-    const adapter = resolveAdapter(adapterType);
+    const adapter = resolveAdapter(adapterType, builtInAgent);
     if (!adapter.enablePlugin) throw new Error(`Adapter "${adapter.id}" does not support plugins`);
     await adapter.enablePlugin(pluginId);
   });
 
   ipcMain.handle(IPC.PLUGIN_DISABLE, async (_event, pluginId: string, adapterType?: string) => {
-    const adapter = resolveAdapter(adapterType);
+    const adapter = resolveAdapter(adapterType, builtInAgent);
     if (!adapter.disablePlugin) throw new Error(`Adapter "${adapter.id}" does not support plugins`);
     await adapter.disablePlugin(pluginId);
   });
@@ -1812,7 +1838,9 @@ export function registerHandlers() {
   });
 
   ipcMain.handle(IPC.AGENT_LIST_ADAPTERS, () => {
-    const defaultId = adapterRegistry.getDefault().id;
+    // The built-in default: the user's pick (settings.defaultAgent) can change
+    // after the list loads, so the renderer applies it itself.
+    const defaultId = adapterRegistry.getBuiltInDefault().id;
     // Other Claude accounts go right after the Claude agent, also ones added
     // after launch, which the registry lists last.
     const all = adapterRegistry.list();

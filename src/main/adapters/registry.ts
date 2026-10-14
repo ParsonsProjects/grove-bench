@@ -3,6 +3,7 @@ import type { AgentAdapter } from './types.js';
 class AdapterRegistry {
   private adapters = new Map<string, AgentAdapter>();
   private defaultId: string | null = null;
+  private preferred: () => string | null = () => null;
 
   register(adapter: AgentAdapter): void {
     this.adapters.set(adapter.id, adapter);
@@ -22,7 +23,24 @@ class AdapterRegistry {
     this.defaultId = id;
   }
 
+  /** Follow the user's pick of default agent: `pick` is asked on every
+   *  getDefault, so a change in Settings applies at once. It returns an
+   *  adapter id, or null for the built-in default. */
+  setPreferred(pick: () => string | null): void {
+    this.preferred = pick;
+  }
+
+  /** The agent new threads start on: the user's pick when it is registered,
+   *  else the built-in default. */
   getDefault(): AgentAdapter {
+    const preferred = this.preferred();
+    const picked = preferred ? this.adapters.get(preferred) : undefined;
+    return picked ?? this.getBuiltInDefault();
+  }
+
+  /** The default when the user hasn't picked one (the first registered,
+   *  unless setDefault said otherwise). */
+  getBuiltInDefault(): AgentAdapter {
     if (!this.defaultId) throw new Error('No adapters registered');
     const adapter = this.adapters.get(this.defaultId);
     if (!adapter) throw new Error(`Default adapter "${this.defaultId}" not found`);

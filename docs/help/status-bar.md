@@ -138,7 +138,7 @@ Every filled block takes the colour. Tokens served from the prompt cache take up
 
 Click the bar for details and two actions:
 
-- **Summarise to free space** (`/compact`): replaces the earlier messages with a summary, so the agent has room to keep going. It keeps the gist, not every detail.
+- **Summarise to free space** (`/compact`): replaces the earlier messages with a summary, so the agent has room to keep going. It keeps the gist, not every detail. Shown only for agents that can do it (Claude Agent, or an agent that lists a `compact` command)
 - **Start fresh…** (`/clear`): clears the thread and the agent's memory of it. It asks you to confirm first. Your files are not changed.
 
 With **Show grove characters** on (Settings → General (The grove)), a strip of pixel grove also runs along the top of the status bar. It starts with a few small plants and fills in as the thread uses its context window: grass and saplings first, then bushes and trees, until it is a full grove at 100%. Its leaves change with the bar's colour: summer green while there is plenty of room, then late summer, autumn, and rust when the context is nearly full. They turn a plant at a time in the run-up to each change, so by the time the bar changes colour the whole grove has. After `/compact` or `/clear` it thins out and turns green again. Each thread grows its own grove, with the plants in their own random places. In the open thread you can watch it happen: new plants sprout one after another and rise out of the ground (unless your system is set to reduce motion).

@@ -29,6 +29,14 @@ describe('PermissionBlock commands', () => {
     expect(screen.getByText('rm -rf build')).toBeInTheDocument();
     expect(screen.getByText(/As the agent describes it/)).toBeInTheDocument();
   });
+
+  it("names what any agent's read or search is about, from its view", () => {
+    render(PermissionBlock, {
+      sessionId: 's1', requestId: 'r1', toolName: 'read', toolInput: {}, resolved: false,
+      toolCategory: 'read', toolView: { kind: 'read', path: 'docs/notes.md' },
+    });
+    expect(screen.getByText('docs/notes.md')).toBeInTheDocument();
+  });
 });
 
 describe('PermissionBlock grove character', () => {

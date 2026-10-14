@@ -16,7 +16,7 @@ Type `@` followed by a filename to open the file picker. Select a file to refere
 
 Type `/` to see available commands:
 
-- `/compact` — Compact the thread to free context space
+- `/compact` — Compact the thread to free context space (agents that can, such as Claude Agent)
 - `/clear` — Clear the thread and start fresh
 - `/rewind` — Rewind to a previous checkpoint
 

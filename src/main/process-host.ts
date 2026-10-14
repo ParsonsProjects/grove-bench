@@ -1,8 +1,8 @@
 /**
  * Process host: git and gh run from an Electron utility process
  * (process-host-child.ts), so starting them never blocks the main process.
- * So does the agent's claude binary, which keeps running and streams its
- * input and output through a second host of its own, the agent host
+ * So do the agents' programs (claude, ACP agents), which keep running and
+ * stream their input and output through a second host of their own, the agent host
  * (process-host-spawn.ts). Kept apart because the git host is restarted when
  * a command goes unanswered, and a restart stops whatever the host started.
  *
@@ -47,6 +47,8 @@ export type { HostedProcess } from './process-host-spawn.js';
 export interface SpawnProcessOptions {
   cwd?: string;
   env?: Record<string, string | undefined>;
+  /** Find `file` as a shell would, npm's .cmd shims included (SpawnRequest). */
+  findCommand?: boolean;
 }
 
 /** The host's file name next to the main bundle (vite.main.config.mjs). */

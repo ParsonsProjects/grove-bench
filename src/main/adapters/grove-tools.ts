@@ -9,8 +9,9 @@
  */
 import { z } from 'zod';
 import type { MemoryOperations, PreviewOperations } from './types.js';
+import { groveToolOf, type GroveServerName } from '../../shared/grove-tools.js';
 
-export type GroveServerName = 'grove-memory' | 'grove-preview';
+export { groveToolOf, type GroveServerName };
 
 export type GroveToolResult = {
   content: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }>;
@@ -42,6 +43,23 @@ export interface GroveServer {
   /** Load the tools up front rather than behind the agent's tool search. */
   alwaysLoad?: boolean;
   tools: GroveTool[];
+}
+
+/** Grove's tools that run without a prompt in every mode: all of
+ *  grove-memory, and grove-preview's looking tools. Clicking and typing in
+ *  the page ask like other actions. */
+const AUTO_ALLOWED: Readonly<Record<GroveServerName, readonly string[]>> = {
+  'grove-memory': ['memory_list', 'memory_read', 'memory_write', 'memory_delete'],
+  'grove-preview': ['preview_open', 'preview_screenshot', 'preview_read', 'preview_logs'],
+};
+
+/** Whether a call is one of Grove's own tools that need no prompt
+ *  (AUTO_ALLOWED), from a server Grove gave this agent (`servers`): a call
+ *  named for a Grove server Grove didn't start comes from some other server
+ *  that took the name, and asks like any other. */
+export function isAutoAllowedGroveTool(name: string, servers: ReadonlySet<GroveServerName>): boolean {
+  const tool = groveToolOf(name);
+  return !!tool && servers.has(tool.server) && AUTO_ALLOWED[tool.server].includes(tool.tool);
 }
 
 function text(value: string): GroveToolResult {

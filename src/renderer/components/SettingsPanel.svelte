@@ -66,15 +66,15 @@
     });
   });
 
-  // The Plugins section configures the default agent (its IPC calls don't
+  // The Plugins section configures the built-in agent (its IPC calls don't
   // name an agent), so it only shows when that agent supports it. The MCP
   // section picks its agent, so it shows when any agent can edit MCP config.
   // Until the agent list loads, both stay visible.
-  const defaultAgent = $derived(agentsStore.get(agentsStore.defaultId));
+  const pluginAgent = $derived(agentsStore.get(agentsStore.builtInDefaultId));
   const visibleSections = $derived(SETTINGS_SECTIONS.filter((s) => {
-    if (!defaultAgent) return true;
+    if (!pluginAgent) return true;
     if (s.id === 'mcp') return agentsStore.supporting('mcpConfig').length > 0;
-    if (s.id === 'plugins') return defaultAgent.capabilities.plugins ?? true;
+    if (s.id === 'plugins') return pluginAgent.capabilities.plugins ?? true;
     return true;
   }));
   $effect(() => {

@@ -23,15 +23,13 @@
  * OPENCODE_CONFIG_CONTENT the user already set.
  */
 import crypto from 'node:crypto';
-import { net } from 'electron';
-import { logger } from '../../logger.js';
 import { isRecord, type RawRecord } from '../../persisted-state.js';
+import { checkKeyWithGet, type KeyCheckFetch } from '../key-check.js';
 
 /** Where a new conversation starts when the OpenRouter key is Grove's. */
 export const OPENCODE_DEFAULT_MODEL = 'openrouter/deepseek/deepseek-v4.1-flash';
 
 const OPENROUTER_KEY_CHECK_URL = 'https://openrouter.ai/api/v1/key';
-const OPENROUTER_KEY_CHECK_TIMEOUT_MS = 10_000;
 
 /** Grove's permissions for OpenCode (see the top of this file). */
 const GROVE_PERMISSION = { edit: 'ask', bash: 'ask', webfetch: 'ask', task: 'deny' } as const;
@@ -75,25 +73,11 @@ export function openCodeEnv(env: Readonly<Record<string, string | undefined>>, {
   };
 }
 
-type KeyCheckFetch = (url: string, init: { headers: Record<string, string>; signal: AbortSignal }) => Promise<{ ok: boolean; status: number }>;
-
 /** Ask OpenRouter about a key (GET /api/v1/key): true when it is accepted,
  *  false when refused, null when that couldn't be told (offline, an outage). */
 export async function verifyOpenRouterKey(
   key: string,
-  { fetchFn = (url, init) => net.fetch(url, init) }: { fetchFn?: KeyCheckFetch } = {},
+  { fetchFn }: { fetchFn?: KeyCheckFetch } = {},
 ): Promise<boolean | null> {
-  try {
-    const res = await fetchFn(OPENROUTER_KEY_CHECK_URL, {
-      headers: { Authorization: `Bearer ${key}` },
-      signal: AbortSignal.timeout(OPENROUTER_KEY_CHECK_TIMEOUT_MS),
-    });
-    if (res.ok) return true;
-    if (res.status === 401 || res.status === 403) return false;
-    logger.debug(`[opencode] OpenRouter key check answered ${res.status}`);
-    return null;
-  } catch (err) {
-    logger.debug('[opencode] OpenRouter key check failed:', err);
-    return null;
-  }
+  return checkKeyWithGet(OPENROUTER_KEY_CHECK_URL, { Authorization: `Bearer ${key}` }, { refused: [401, 403], label: 'opencode', fetchFn });
 }

@@ -11,6 +11,7 @@ import { rateLimitStore } from './rateLimit.svelte.js';
 import { usageStore } from './usage.svelte.js';
 import { settingsStore } from './settings.svelte.js';
 import type { AgentEvent } from '../../shared/types.js';
+import { CONTROL_IDS } from '../../shared/types.js';
 
 const SID = 'test-session';
 
@@ -523,6 +524,24 @@ describe('ingestEvent — permission_request', () => {
     const q = msgs[0] as any;
     expect(q.questions).toHaveLength(1);
     expect(q.resolved).toBe(false);
+  });
+
+  it("takes another agent's questions from its view", () => {
+    messageStore.ingestEvent(SID, {
+      type: 'permission_request',
+      toolName: 'ask_user',
+      toolInput: { anything: 'else' },
+      toolUseId: 'tu-q2',
+      requestId: 'req-q2',
+      toolCategory: 'question',
+      toolView: { kind: 'question', questions: [{ question: 'Ship it?', options: [{ label: 'Yes' }, { label: 'No', description: 'Not yet' }] }] },
+    } as AgentEvent);
+
+    const q = messageStore.getMessages(SID).find((m) => m.kind === 'question') as any;
+    expect(q.questions).toEqual([{
+      question: 'Ship it?', header: '', multiSelect: false,
+      options: [{ label: 'Yes', description: '' }, { label: 'No', description: 'Not yet' }],
+    }]);
   });
 });
 
@@ -1380,15 +1399,40 @@ describe('sendCommand', () => {
     expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, '/clear');
   });
 
+  /** The thread's agent offers these permission modes. */
+  function modes(...values: string[]) {
+    messageStore.controlsBySession[SID] = {
+      descriptors: [{ id: CONTROL_IDS.permissionMode, label: 'Mode', default: 'default', options: values.map((value) => ({ value, label: value })) }],
+      values: {},
+    };
+  }
+
   it('syncs mode on /plan command', () => {
+    modes('default', 'plan', 'acceptEdits');
     messageStore.sendCommand(SID, '/plan');
     expect(messageStore.getMode(SID)).toBe('plan');
   });
 
   it('syncs mode on /code command', () => {
+    modes('default', 'plan', 'acceptEdits');
     messageStore.modeBySession[SID] = 'plan';
     messageStore.sendCommand(SID, '/code');
     expect(messageStore.getMode(SID)).toBe('default');
+  });
+
+  it('syncs mode on /plan before the controls have loaded', () => {
+    messageStore.sendCommand(SID, '/plan');
+    expect(messageStore.getMode(SID)).toBe('plan');
+  });
+
+  it("leaves the mode alone for an agent without Plan mode, which takes /plan as text", () => {
+    modes('default', 'acceptEdits', 'readSafe');
+    messageStore.modeBySession[SID] = 'acceptEdits';
+    messageStore.sendCommand(SID, '/plan');
+    expect(messageStore.getMode(SID)).toBe('acceptEdits');
+    messageStore.sendCommand(SID, '/code');
+    expect(messageStore.getMode(SID)).toBe('acceptEdits');
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, '/plan');
   });
 });
 

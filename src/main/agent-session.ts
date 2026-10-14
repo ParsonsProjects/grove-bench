@@ -24,7 +24,7 @@ import { audioSentInline, inlineAudioType } from './adapters/file-attachments.js
 import { ResumeNotFoundError } from './adapters/types.js';
 import { lastRunningCost } from './adapters/running-cost.js';
 import { getGitIdentity } from './git.js';
-import { findRewindForkPoint, isAuthFailure, lastTurnUuid } from './agent-utils.js';
+import { capToolResult, findRewindForkPoint, isAuthFailure, lastTurnUuid } from './agent-utils.js';
 import { hasApiKey, isApiKeyRejected, markApiKeyRejected } from './credentials.js';
 import { CheckpointManager } from './checkpoints.js';
 import type { EventSearchHit } from './event-search.js';
@@ -569,10 +569,17 @@ class AgentSessionManager {
         }
         if (abortController.signal.aborted) break;
 
-        // Save the images a tool returned; the event passes on references.
-        const event: AgentEvent = adapterEvent.type === 'tool_result' && adapterEvent.imageData
-          ? await storeToolImages(id, adapterEvent)
+        // Cap what a tool returned, and save the images it returned; the
+        // event passes on references.
+        const cappedContent = adapterEvent.type === 'tool_result' && typeof adapterEvent.content === 'string'
+          ? capToolResult(adapterEvent.content)
+          : undefined;
+        const capped = adapterEvent.type === 'tool_result' && cappedContent !== undefined && cappedContent !== adapterEvent.content
+          ? { ...adapterEvent, content: cappedContent }
           : adapterEvent;
+        const event: AgentEvent = capped.type === 'tool_result' && capped.imageData
+          ? await storeToolImages(id, capped)
+          : capped;
 
         // Skip adapter user_message events — we emit our own with UUIDs in sendMessage
         if (event.type === 'user_message') continue;
@@ -1261,8 +1268,9 @@ class AgentSessionManager {
     // It may have started while the manifest was read.
     const started = this.sessions.get(id);
     if (started) return this.reconcileControls(started);
-    const adapter = (adapterType ? adapterRegistry.get(adapterType) : undefined) ?? adapterRegistry.getDefault();
-    return { descriptors: adapter.getControls(model ?? null), values: {} };
+    // An agent that is gone has no controls; another agent's would mislead.
+    const adapter = adapterType ? adapterRegistry.get(adapterType) : adapterRegistry.getDefault();
+    return { descriptors: adapter?.getControls(model ?? null) ?? [], values: {} };
   }
 
   async setControl(id: string, controlId: string, value: string): Promise<void> {

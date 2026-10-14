@@ -1,8 +1,8 @@
 /**
  * Claude Code adapter — wraps the @anthropic-ai/claude-agent-sdk.
  */
-import type { ControlDescriptor, ControlOption, McpServerInfo, McpConfiguredServer, McpAddServerOpts, McpConfigScope, McpElicitationRequest, McpServerContextCost, McpServerManager, McpSupport, ImageMediaType, PermissionMode, ProviderUsage, SkillDefinition, ThinkingLevel, ToolCategory, UsageWindow } from '../../shared/types.js';
-import { CONTROL_IDS, PERMISSION_TIMEOUT_MINUTES, THINKING_LEVELS } from '../../shared/types.js';
+import type { ControlDescriptor, ControlOption, McpServerInfo, McpConfiguredServer, McpAddServerOpts, McpConfigScope, McpElicitationRequest, McpServerContextCost, McpServerManager, McpSupport, ImageMediaType, PermissionMode, ProviderUsage, SkillDefinition, ThinkingLevel, UsageWindow } from '../../shared/types.js';
+import { CONTROL_IDS, PERMISSION_TIMEOUT_MINUTES, THINKING_LEVELS, isImageMediaType } from '../../shared/types.js';
 import type {
   AgentAdapter,
   AgentCapabilities,
@@ -17,15 +17,17 @@ import type {
   ToolImageData,
   UserMessage,
 } from './types.js';
-import { net } from 'electron';
 import { ResumeNotFoundError } from './types.js';
 import { getApiKey } from '../credentials.js';
 import { loadModelCatalog, saveModelCatalog } from '../app-state.js';
 import { z } from 'zod';
-import { asarUnpackedPath, cleanEnv, isPathInside, checkToolRules, toolCallSpecifier, readableStreamToAsyncIterable } from '../agent-utils.js';
+import { asarUnpackedPath, cleanEnv, isPathInside, toolCallSpecifier, readableStreamToAsyncIterable } from '../agent-utils.js';
+import { decideToolCall, groveServersOf, type PolicyDecision } from '../tool-policy.js';
+import { categoryForView, claudeToolView } from '../../shared/tool-view.js';
 import { attachedFilesNote } from './file-attachments.js';
-import { createMemoryMcpServer, GROVE_MEMORY_TOOL_NAMES } from './memory-mcp-server.js';
-import { createPreviewMcpServer, GROVE_PREVIEW_READ_TOOL_NAMES } from './preview-mcp-server.js';
+import { checkKeyWithGet, type KeyCheckFetch } from './key-check.js';
+import { createMemoryMcpServer } from './memory-mcp-server.js';
+import { createPreviewMcpServer } from './preview-mcp-server.js';
 import * as skillsModule from '../skills.js';
 import { accountEnv, accountSignInCommand, type ClaudeAccount } from './claude-accounts.js';
 import { logger } from '../logger.js';
@@ -76,19 +78,6 @@ type HookCallback = import('@anthropic-ai/claude-agent-sdk').HookCallback;
  * Electron's own binary with ELECTRON_RUN_AS_NODE=1: a GUI-launched app on
  * Windows often has no `node` on PATH, and `process.execPath` is always valid.
  */
-/** Tool results are kept only for display, replay and memory extraction — the
- *  model already received the full text. Cap what we retain so a test suite
- *  or build printing tens of MB doesn't live in main-process history, the
- *  JSONL log and renderer state for the rest of the session. */
-const MAX_TOOL_RESULT_CHARS = 200_000;
-const TOOL_RESULT_HEAD_CHARS = 150_000;
-
-export function capToolResult(content: string): string {
-  if (content.length <= MAX_TOOL_RESULT_CHARS) return content;
-  const tailChars = MAX_TOOL_RESULT_CHARS - TOOL_RESULT_HEAD_CHARS;
-  const omitted = content.length - TOOL_RESULT_HEAD_CHARS - tailChars;
-  return `${content.slice(0, TOOL_RESULT_HEAD_CHARS)}\n\n… [${omitted.toLocaleString()} characters omitted] …\n\n${content.slice(content.length - tailChars)}`;
-}
 
 export function spawnClaudeCodeProcess(
   opts: SpawnOptions,
@@ -133,35 +122,7 @@ async function getQuery() {
   return (await getSdk()).query;
 }
 
-// ─── Tool category mapping ───
-
-/** Map Claude Code SDK tool names to adapter-agnostic categories. */
-function categorizeToolName(toolName: string): ToolCategory {
-  switch (toolName) {
-    case 'Edit':
-    case 'Write':
-    case 'MultiEdit':
-      return 'edit';
-    case 'Bash':
-    case 'PowerShell':
-      return 'bash';
-    case 'Read':
-    case 'Grep':
-    case 'Glob':
-    case 'NotebookRead':
-      return 'read';
-    case 'AskUserQuestion':
-      return 'question';
-    case 'WebFetch':
-      return 'web_fetch';
-    case 'Agent':
-      return 'agent';
-    default:
-      // MCP tools with WebFetch prefix
-      if (toolName.startsWith('mcp__') && toolName.includes('WebFetch')) return 'web_fetch';
-      return 'other';
-  }
-}
+// ─── Tool calls ───
 
 /** File-writing tools mapped to the input field that holds the target path. */
 const WRITE_TOOL_PATH_FIELD: Record<string, string> = {
@@ -170,6 +131,35 @@ const WRITE_TOOL_PATH_FIELD: Record<string, string> = {
   MultiEdit: 'file_path',
   NotebookEdit: 'notebook_path',
 };
+
+/**
+ * Claude's own checks in the shared policy (its `guard`): with a sandbox,
+ * Bash runs without a prompt when the sandbox config opts in (matching SDK
+ * semantics), and a file write outside the sandbox's allowWrite folders is
+ * refused even if the tool is always allowed. Read-safe mode's sandbox
+ * deliberately does NOT opt in to the first: there the sandbox is an
+ * enforcement backstop and Bash approval stays with the read-only
+ * classifier in the session's permission handler.
+ */
+export function sandboxDecision(
+  toolName: string,
+  input: Record<string, unknown>,
+  config: Pick<AdapterConfig, 'cwd' | 'sandbox'>,
+): PolicyDecision | null {
+  const sandbox = config.sandbox as { autoAllowBashIfSandboxed?: boolean; filesystem?: { allowWrite?: string[] } } | null | undefined;
+  if (!sandbox) return null;
+  if (sandbox.autoAllowBashIfSandboxed && toolName === 'Bash') return { behavior: 'allow' };
+  const pathField = WRITE_TOOL_PATH_FIELD[toolName];
+  const filePath = pathField ? input[pathField] : undefined;
+  const allowWrite = sandbox.filesystem?.allowWrite;
+  if (typeof filePath === 'string' && filePath && allowWrite && allowWrite.length > 0) {
+    const resolved = path.resolve(config.cwd, filePath);
+    if (!allowWrite.some((dir) => isPathInside(path.resolve(config.cwd, dir), resolved))) {
+      return { behavior: 'deny', reason: 'guard', message: `Path "${filePath}" is outside the allowed write directories` };
+    }
+  }
+  return null;
+}
 
 // Re-exported so existing importers (tests) keep working after the move to
 // agent-utils, where non-adapter modules can share it.
@@ -247,7 +237,6 @@ export function fromSdkSyncMode(mode: PermissionMode, ctx: MessageContext): Perm
   return mode === 'acceptEdits' && ctx.groveMode === 'readSafe' ? 'readSafe' : mode;
 }
 
-const IMAGE_MEDIA_TYPES = new Set<string>(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
 
 /**
  * A user message as the SDK takes it: attached images as content blocks
@@ -264,26 +253,6 @@ export function userMessageContent(message: UserMessage): string | Array<Record<
   ];
 }
 
-/** Claude's read tools and the input field naming what each reads. */
-const READ_TOOL_PATH_FIELD: Readonly<Record<string, string>> = { Read: 'file_path', Glob: 'path', Grep: 'path', LS: 'path' };
-
-/**
- * Whether a call only reads inside the attachments folder, where the files
- * the user attached are saved. Those reads are allowed without a prompt.
- * Only reads: the folder isn't a working directory, so Claude can't edit
- * the saved copies without asking.
- */
-export function readsAttachedFile(
-  toolName: string,
-  input: Record<string, unknown>,
-  cwd: string,
-  attachmentsDir: string | null | undefined,
-): boolean {
-  const field = Object.hasOwn(READ_TOOL_PATH_FIELD, toolName) ? READ_TOOL_PATH_FIELD[toolName] : null;
-  const target = field ? input[field] : undefined;
-  return !!attachmentsDir && typeof target === 'string' && isPathInside(attachmentsDir, path.resolve(cwd, target));
-}
-
 /** The base64 images in a tool result's content: API image blocks (Read on an
  *  image file) or MCP ones (`data` + `mimeType`), in case they arrive unconverted. */
 export function toolResultImages(content: unknown[]): ToolImageData[] {
@@ -292,7 +261,7 @@ export function toolResultImages(content: unknown[]): ToolImageData[] {
     if (c?.type !== 'image') continue;
     const data = c.source?.type === 'base64' ? c.source.data : c.data;
     const mediaType = c.source?.type === 'base64' ? c.source.media_type : c.mimeType;
-    if (typeof data === 'string' && data && IMAGE_MEDIA_TYPES.has(mediaType)) {
+    if (typeof data === 'string' && data && isImageMediaType(mediaType)) {
       images.push({ data, mediaType: mediaType as ImageMediaType });
     }
   }
@@ -515,7 +484,7 @@ export function transformMessage(
               toolInput: block.input,
               toolUseId: block.id,
               uuid: message.uuid,
-              toolCategory: categorizeToolName(block.name),
+              toolCategory: categoryForView(claudeToolView(block.name, block.input)),
               ...subagent,
             });
           } else if (block.type === 'thinking') {
@@ -556,7 +525,7 @@ export function transformMessage(
             events.push({
               type: 'tool_result',
               toolUseId: block.tool_use_id,
-              content: capToolResult(resultContent),
+              content: resultContent,
               isError: block.is_error,
               ...(imageData.length > 0 && { imageData }),
               ...subagentTag(message.parent_tool_use_id),
@@ -1432,33 +1401,16 @@ export function envAuthMethod(env: NodeJS.ProcessEnv = process.env): string | nu
 /** Lists one model: it needs only the key and runs no model, so it shows
  *  whether Anthropic accepts a key (https://platform.claude.com/docs/en/api/models/list). */
 const API_KEY_CHECK_URL = 'https://api.anthropic.com/v1/models?limit=1';
-const API_KEY_CHECK_TIMEOUT_MS = 10_000;
-
-type KeyCheckFetch = (url: string, init: { headers: Record<string, string>; signal: AbortSignal }) => Promise<{ ok: boolean; status: number }>;
-
 /** Whether Anthropic accepts `key`: true when it does, false when it answers
- *  401, null when that couldn't be told (offline, a proxy in the way, an
- *  outage). With ANTHROPIC_BASE_URL set, conversations go to that endpoint
- *  instead, which may take other keys, so nothing is checked. Uses Electron's
- *  network stack, which follows the system's proxy settings. */
+ *  401, null when that couldn't be told (checkKeyWithGet). With
+ *  ANTHROPIC_BASE_URL set, conversations go to that endpoint instead, which
+ *  may take other keys, so nothing is checked. */
 export async function verifyAnthropicKey(
   key: string,
-  { env = process.env, fetchFn = (url, init) => net.fetch(url, init) }: { env?: NodeJS.ProcessEnv; fetchFn?: KeyCheckFetch } = {},
+  { env = process.env, fetchFn }: { env?: NodeJS.ProcessEnv; fetchFn?: KeyCheckFetch } = {},
 ): Promise<boolean | null> {
   if (env.ANTHROPIC_BASE_URL?.trim()) return null;
-  try {
-    const res = await fetchFn(API_KEY_CHECK_URL, {
-      headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' },
-      signal: AbortSignal.timeout(API_KEY_CHECK_TIMEOUT_MS),
-    });
-    if (res.ok) return true;
-    if (res.status === 401) return false;
-    logger.debug(`[ClaudeCodeAdapter] API key check answered ${res.status}`);
-    return null;
-  } catch (err) {
-    logger.debug('[ClaudeCodeAdapter] API key check failed:', err);
-    return null;
-  }
+  return checkKeyWithGet(API_KEY_CHECK_URL, { 'x-api-key': key, 'anthropic-version': '2023-06-01' }, { refused: [401], label: 'ClaudeCodeAdapter', fetchFn });
 }
 
 /**
@@ -1507,6 +1459,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     plugins: true,
     skills: true,
     usage: true,
+    compact: true,
     imageAttachments: true,
     structuredOutput: true,
     sandbox: true,
@@ -1734,20 +1687,14 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     if (config.memoryOperations) {
       const memoryServer = await createMemoryMcpServer(config.memoryOperations);
       mcpServers = { 'grove-memory': memoryServer };
-      // Auto-allow memory tools so they don't trigger permission prompts
-      for (const t of GROVE_MEMORY_TOOL_NAMES) {
-        config.alwaysAllowedTools.add(t);
-      }
     }
 
     // Browser tools for the conversation's Preview tab. Looking runs without
-    // a prompt; clicking and typing ask like other action tools.
+    // a prompt, like the memory tools (tool-policy.ts); clicking and typing
+    // ask like other action tools.
     if (config.previewOperations) {
       const previewServer = await createPreviewMcpServer(config.previewOperations);
       mcpServers = { ...(mcpServers ?? {}), 'grove-preview': previewServer };
-      for (const t of GROVE_PREVIEW_READ_TOOL_NAMES) {
-        config.alwaysAllowedTools.add(t);
-      }
     }
 
     // Create input stream for multi-turn conversations
@@ -1763,70 +1710,37 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     let agentProcess: ReturnType<typeof spawnClaudeCodeProcess> | undefined;
 
     // Build the canUseTool callback from the adapter config.
+    const groveServers = groveServersOf(config);
     const canUseTool = async (
       toolName: string,
       input: Record<string, unknown>,
       options: { toolUseID: string; decisionReason?: string; suggestions?: unknown[] },
     ) => {
-      // Allowlist check
-      if (config.allowedTools && !config.allowedTools.has(toolName)) {
-        return { behavior: 'deny' as const, message: `Tool "${toolName}" is not allowed in this session` };
-      }
-
-      // Settings rules are written in neutral terms (shell(...), edit(...),
-      // read(...), ...) or with Claude's tool names; both match here.
-      // Chained shell commands are split first, so an allow rule has to
-      // match every command in the chain (see checkToolRules). shell(...)
-      // covers PowerShell too, split by PowerShell's own syntax.
-      const category = categorizeToolName(toolName);
-      const specifier = toolCallSpecifier(toolName, input, category);
-      const shellSyntax = toolName === 'PowerShell' ? 'powershell' : 'bash';
-      const ruleVerdict = checkToolRules(
-        config.toolAllowRules, config.toolDenyRules, toolName, specifier, category, shellSyntax,
-      );
-      if (ruleVerdict?.behavior === 'deny') {
-        return { behavior: 'deny' as const, message: `Denied by settings rule: ${ruleVerdict.pattern}` };
-      }
-      if (ruleVerdict?.behavior === 'allow') {
-        return { behavior: 'allow' as const, updatedInput: input };
-      }
-
-      // The files the user attached are saved outside the checkout, and the
-      // message gives Claude their paths: reading them needs no prompt.
-      if (readsAttachedFile(toolName, input, config.cwd, config.attachmentsDir)) {
-        return { behavior: 'allow' as const, updatedInput: input };
-      }
-
-      // Sandbox auto-approve Bash — only when the sandbox config opts in,
-      // matching SDK semantics. Read-safe mode's sandbox deliberately does
-      // NOT opt in: there the sandbox is an enforcement backstop and Bash
-      // approval stays with the read-only classifier in the session's
-      // permission handler.
-      const sandboxConfig = config.sandbox as { autoAllowBashIfSandboxed?: boolean } | null | undefined;
-      if (sandboxConfig?.autoAllowBashIfSandboxed && toolName === 'Bash') {
-        return { behavior: 'allow' as const, updatedInput: input };
-      }
-
-      // Sandbox: validate file-writing tool paths against allowWrite
-      if (config.sandbox) {
-        const pathField = WRITE_TOOL_PATH_FIELD[toolName];
-        const filePath = pathField ? (input as any)[pathField] : undefined;
-        if (filePath && typeof filePath === 'string') {
-          const allowWrite = (config.sandbox as any)?.filesystem?.allowWrite as string[] | undefined;
-          if (allowWrite && allowWrite.length > 0) {
-            const resolved = path.resolve(config.cwd, filePath);
-            const allowed = allowWrite.some((dir: string) => isPathInside(path.resolve(config.cwd, dir), resolved));
-            if (!allowed) {
-              return { behavior: 'deny' as const, message: `Path "${filePath}" is outside the allowed write directories` };
-            }
-          }
-        }
-      }
-
-      // Always-allowed tools (from session state)
-      if (config.alwaysAllowedTools.has(toolName)) {
-        return { behavior: 'allow' as const, updatedInput: input };
-      }
+      // Grove's shared policy (tool-policy.ts): allowed tools, the user's
+      // rules (neutral shell(...), edit(...), ... or Claude's tool names; a
+      // PowerShell command is split by PowerShell's own syntax), attached
+      // files, Grove's own tools and always-allow. The sandbox checks below
+      // come before always-allow.
+      const view = claudeToolView(toolName, input);
+      const category = categoryForView(view);
+      const decision = decideToolCall({
+        toolName,
+        category,
+        view,
+        specifier: toolCallSpecifier(toolName, input, category),
+        shells: [toolName === 'PowerShell' ? 'powershell' : 'bash'],
+      }, {
+        cwd: config.cwd,
+        attachmentsDir: config.attachmentsDir,
+        allowedTools: config.allowedTools,
+        toolAllowRules: config.toolAllowRules,
+        toolDenyRules: config.toolDenyRules,
+        alwaysAllowedTools: config.alwaysAllowedTools,
+        groveServers,
+        guard: () => sandboxDecision(toolName, input, config),
+      });
+      if (decision.behavior === 'deny') return { behavior: 'deny' as const, message: decision.message };
+      if (decision.behavior === 'allow') return { behavior: 'allow' as const, updatedInput: input };
 
       // Forward to the permission handler (which prompts the user).
       // The session manager assigns the canonical requestId; we pass an empty
@@ -1839,7 +1753,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         decisionReason: options.decisionReason,
         suggestions: options.suggestions,
         isPlanExecution: toolName === 'ExitPlanMode',
-        toolCategory: categorizeToolName(toolName),
+        toolCategory: category,
         planText: toolName === 'ExitPlanMode' && typeof (input as any)?.plan === 'string'
           ? (input as any).plan
           : undefined,

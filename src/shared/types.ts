@@ -127,6 +127,8 @@ export interface AgentSummary {
   /** Set for an agent that is still being tested (see AgentStage). */
   stage?: AgentStage;
   capabilities: Record<string, boolean>;
+  /** The built-in default agent, for when the user hasn't picked one
+   *  (settings.defaultAgent; see agentsStore.defaultId). */
   isDefault?: boolean;
   /** The adapter's own model for background tasks, if it declares one. */
   backgroundModel?: string;
@@ -975,7 +977,13 @@ export interface SpellcheckMenuRequest {
 
 // ─── Image Attachment ───
 
-export type ImageMediaType = 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
+export const IMAGE_MEDIA_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'] as const;
+export type ImageMediaType = (typeof IMAGE_MEDIA_TYPES)[number];
+
+/** Whether `mediaType` is an image type agents take inline (ImageMediaType). */
+export function isImageMediaType(mediaType: unknown): mediaType is ImageMediaType {
+  return (IMAGE_MEDIA_TYPES as readonly unknown[]).includes(mediaType);
+}
 
 export interface ImageAttachment {
   /** base64-encoded image data (no data: prefix) */
@@ -1193,8 +1201,9 @@ export interface GroveBenchAPI {
    *  turned off, one exists already, no reply yet, or generation failed). */
   autoConversationGoal(sessionId: string): Promise<ConversationGoal | null>;
   /** Generate a new goal now, replacing the current one, typed or not.
-   *  Rejects when generation fails. */
-  refreshConversationGoal(sessionId: string): Promise<ConversationGoal | null>;
+   *  Rejects when generation fails. `substituteAgent`: the agent to use when
+   *  the conversation's own agent is gone (backgroundAgentStore asks). */
+  refreshConversationGoal(sessionId: string, substituteAgent?: string): Promise<ConversationGoal | null>;
   /** Close (or reopen) the goal bar for one conversation. */
   setConversationGoalHidden(sessionId: string, hidden: boolean): Promise<ConversationGoal | null>;
   listSessions(): Promise<SessionInfo[]>;
@@ -1355,8 +1364,10 @@ export interface GroveBenchAPI {
   stageFile(sessionId: string, filePath: string): Promise<void>;
   unstageFile(sessionId: string, filePath: string): Promise<void>;
   commit(sessionId: string, message: string): Promise<void>;
-  /** Ask the agent to write a commit message for the staged changes. */
-  generateCommitMessage(sessionId: string): Promise<string>;
+  /** Ask the agent to write a commit message for the staged changes.
+   *  `substituteAgent`: the agent to use when the conversation's own agent
+   *  is gone (backgroundAgentStore asks). */
+  generateCommitMessage(sessionId: string, substituteAgent?: string): Promise<string>;
   push(sessionId: string): Promise<void>;
   getGitSyncStatus(sessionId: string): Promise<GitSyncStatus>;
   getBranchCommits(sessionId: string, base: string): Promise<BranchCommit[]>;
@@ -1533,8 +1544,9 @@ export interface GroveBenchAPI {
   spellcheckAddWord(): void;
 
   // Agent adapters
-  /** Registered agents, in registration order. `isDefault` marks the one new
-   *  conversations use unless another is picked. */
+  /** Registered agents, in registration order. `isDefault` marks the
+   *  built-in default, which new threads use when the user hasn't picked one
+   *  (settings.defaultAgent). */
   listAdapters(): Promise<AgentSummary[]>;
   /** Check a Claude account the user is typing in (name and optional
    *  folder) without adding it. */
@@ -1683,6 +1695,11 @@ export interface GroveBenchSettings {
   /** Ids of alpha agents (AgentSummary.stage) the user turned on. Others
    *  stay out of the agent picker; their existing conversations still work. */
   enabledAlphaAgents: string[];
+  /** Adapter id new threads start on (Settings > Agents). Empty: the open
+   *  thread's agent, else the built-in default (AgentSummary.isDefault).
+   *  Ignored while that agent isn't offered for new threads (offeredForNew),
+   *  so turning an alpha agent off or removing an account can't strand it. */
+  defaultAgent: string;
 
   // Memory
   /** Enable auto-save of memories at end of session / compaction. Default true. */

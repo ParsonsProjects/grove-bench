@@ -4,6 +4,8 @@
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Checkbox } from '$lib/components/ui/checkbox/index.js';
+  import { agentsStore } from '../stores/agents.svelte.js';
+  import { canRewindThread } from '../lib/agent-commands.js';
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -20,6 +22,9 @@
   /** A conversation in a folder without git has no checkpoints, so only the
    *  conversation can be rewound; its files stay as they are. */
   let noGit = $derived(!!store.sessions.find((s) => s.id === sessionId)?.noGit);
+  /** An agent that can't forget part of a thread starts afresh after a rewind. */
+  let canForget = $derived(canRewindThread(sessionId));
+  let agentName = $derived(agentsStore.get(store.sessions.find((s) => s.id === sessionId)?.agentType)?.displayName ?? 'The agent');
 
   // Opened from a message in the Activity thread: preselect it and load its
   // preview so the user only has to confirm. Runs once per open; a manual
@@ -90,6 +95,11 @@
           Select a message to rewind to. Files on disk will be restored to their state at that point.
           <span class="text-muted-foreground text-xs block mt-1">
             Captures full working tree state including all file changes.
+          </span>
+        {/if}
+        {#if !canForget}
+          <span class="text-muted-foreground text-xs block mt-1" data-testid="rewind-starts-afresh">
+            {agentName} can't forget part of a thread, so it starts afresh from there: it won't remember the earlier turns either.
           </span>
         {/if}
       </Dialog.Description>

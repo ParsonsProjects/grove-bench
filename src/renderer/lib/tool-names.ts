@@ -3,15 +3,12 @@
  * (`ExitPlanMode`, `mcp__linear__create_issue`); the UI says what the tool
  * does, or at least drops the plumbing.
  */
-import { claudeToolView, type ToolView } from '../../shared/tool-view.js';
+import { claudeMcpTool, claudeToolView, type ToolView } from '../../shared/tool-view.js';
 
-/** `mcp__<server>__<tool_name>` → its server and `tool name`. */
+/** `mcp__<server>__<tool_name>` → its server and `tool name`, for display. */
 export function parseMcpToolName(toolName: string): { server: string; tool: string } | null {
-  if (!toolName.startsWith('mcp__')) return null;
-  const rest = toolName.slice('mcp__'.length);
-  const sep = rest.indexOf('__');
-  if (sep < 0 || sep + 2 >= rest.length) return null;
-  return { server: rest.slice(0, sep), tool: rest.slice(sep + 2).replace(/_/g, ' ') };
+  const mcp = claudeMcpTool(toolName);
+  return mcp ? { server: mcp.server, tool: mcp.tool.replace(/_/g, ' ') } : null;
 }
 
 /** A tool's name for display: an MCP tool as "tool name (server)", others as they are. */

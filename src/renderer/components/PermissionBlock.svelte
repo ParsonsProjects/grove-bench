@@ -10,7 +10,7 @@
   import { sessionRepoColor } from '../lib/session-repo-color.js';
   import { alwaysAllowLabel } from '../lib/always-allow.js';
   import { PERMISSION_TIMEOUT_MINUTES } from '../../shared/types.js';
-  import { toolViewOf, type ToolView } from '../../shared/tool-view.js';
+  import { toolViewOf, toolViewSummary, type ToolView } from '../../shared/tool-view.js';
 
   let {
     sessionId,
@@ -66,6 +66,9 @@
   let fetchUrl = $derived(isWebFetch ? (view.url ?? String(input?.url ?? '')) : '');
   let diffLines = $derived(isEditTool ? computeDiffLines(view, filePath) : []);
   let alwaysAllow = $derived(alwaysAllowLabel(toolName, toolCategory));
+  /** What a call other than an edit or command is about, from the view, so
+   *  any agent's reads, searches and fetches name their target. */
+  let viewTarget = $derived(toolViewSummary(view));
   /** "Approve and start fresh…" clears the conversation, so it asks first. */
   let confirmFresh = $state(false);
 
@@ -231,7 +234,7 @@
         title="Open in editor"
       >{filePath}</button>
     {:else if !isBashTool}
-      <span class="text-muted-foreground truncate flex-1">{summarizeInput(toolInput)}</span>
+      <span class="text-muted-foreground truncate flex-1">{viewTarget || summarizeInput(toolInput)}</span>
     {/if}
     {#if !isResolved && isEditTool && diffLines.length > 0 && !!view.edits?.length}
       <Button

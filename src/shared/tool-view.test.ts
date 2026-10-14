@@ -47,8 +47,23 @@ describe('claudeToolView', () => {
   });
 
   it('summarises other tools from common input fields', () => {
-    expect(claudeToolView('mcp__linear__create_issue', { description: 'Bug' })).toEqual({ kind: 'other', summary: 'Bug' });
+    expect(claudeToolView('mcp__linear__create_issue', { description: 'Bug' })).toEqual({ kind: 'other', summary: 'Bug', mcp: { server: 'linear', tool: 'create_issue' } });
     expect(claudeToolView('Mystery', null)).toEqual({ kind: 'other', summary: undefined });
+  });
+
+  it("carries a question's choices and a sub-agent's kind and task", () => {
+    const asked = claudeToolView('AskUserQuestion', {
+      questions: [
+        { question: 'Which database?', header: 'DB', multiSelect: false, options: [{ label: 'Postgres', description: 'SQL' }, { label: 'SQLite' }, { nope: 1 }] },
+        { header: 'no question here' },
+      ],
+    });
+    expect(asked).toEqual({
+      kind: 'question',
+      questions: [{ question: 'Which database?', header: 'DB', options: [{ label: 'Postgres', description: 'SQL' }, { label: 'SQLite' }] }],
+    });
+    expect(claudeToolView('Agent', { description: 'Find usages', prompt: 'Find every use of foo', subagent_type: 'Explore' }))
+      .toEqual({ kind: 'agent', summary: 'Find usages', agentType: 'Explore', prompt: 'Find every use of foo' });
   });
 });
 
