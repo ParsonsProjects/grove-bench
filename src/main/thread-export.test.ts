@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { AgentEvent } from '../shared/types.js';
 import { THREAD_EXPORT_VERSION, exportFileName, threadJson, threadMarkdown, type ThreadExportInfo } from './thread-export.js';
+import { buildContentBlock } from '../shared/prompt-text.js';
 
 const info: ThreadExportInfo = { id: 'abc12345', title: 'Fix the login', project: 'shop', branch: 'fix-login', agent: 'Claude Agent' };
 const when = new Date(2026, 9, 14, 12);
@@ -53,7 +54,7 @@ describe('threadMarkdown', () => {
       { type: 'assistant_text', text: 'On it.', uuid: 'a2' },
     ] as AgentEvent[], { ...info, agent: 'Gemini CLI' }, when);
 
-    expect(md).toContain('See these\n\nAttached: screen.png, notes.pdf');
+    expect(md).toContain('See these\n\nAttached: `screen.png`, `notes.pdf`');
     expect(md).toContain('## Claude Agent\n\nSeen.');
     expect(md).toContain('*Switched from Claude Agent to Gemini CLI.*');
     expect(md).toContain('## Gemini CLI\n\nOn it.');
@@ -65,6 +66,64 @@ describe('threadMarkdown', () => {
       { type: 'error', message: 'Rate limited.\nTry later.' },
     ], info, when);
     expect(md).toContain('> Error: Rate limited. Try later.');
+  });
+
+  it('gives what was typed, not the contents of a mentioned file', () => {
+    const sent = `${buildContentBlock('file', 'src/secret.ts', 'const KEY = "abc123";')}\n\nFix @src/secret.ts please`;
+    const md = threadMarkdown([{ type: 'user_message', text: sent }], info, when);
+    expect(md).not.toContain('abc123');
+    expect(md).not.toContain('<file');
+    expect(md).toContain('## You\n\nFix @src/secret.ts please');
+    expect(md).not.toContain('Attached:');
+  });
+
+  it('names an attached text file instead of including its contents', () => {
+    const sent = `${buildContentBlock('file', 'notes.txt', 'private notes')}\n\nSummarise this`;
+    const md = threadMarkdown([{ type: 'user_message', text: sent }], info, when);
+    expect(md).not.toContain('private notes');
+    expect(md).toContain('Summarise this\n\nAttached: `notes.txt`');
+  });
+
+  it('shows a tool call as its updates filled it in', () => {
+    const md = threadMarkdown([
+      { type: 'user_message', text: 'test it' },
+      tool('other', {}, { toolUseId: 'acp-1' }),
+      { type: 'tool_update', toolUseId: 'acp-1', toolName: 'run_shell_command', toolView: { kind: 'shell', command: 'npm test' } },
+    ], info, when);
+    expect(md).toContain('- run_shell_command `npm test`');
+    expect(md).not.toContain('- other');
+  });
+
+  it('keeps a message exactly as written, blank lines in its code included', () => {
+    const code = '```py\ndef a():\n    pass\n\n\ndef b():\n    pass\n```';
+    const md = threadMarkdown([{ type: 'user_message', text: 'go' }, { type: 'assistant_text', text: code, uuid: 'a' }], info, when);
+    expect(md).toContain(code);
+  });
+
+  it('includes a turn that ended in error, the plan the agent proposed and the user\'s answers', () => {
+    const md = threadMarkdown([
+      { type: 'user_message', text: 'plan it' },
+      { type: 'permission_request', toolName: 'ExitPlanMode', toolInput: {}, toolUseId: 'p', requestId: 'r', isPlanExecution: true, planText: '1. Read\n2. Fix' },
+      { type: 'permission_resolved', requestId: 'r', toolUseId: 'p', decision: 'deny', message: 'Do step 2 first' },
+      { type: 'tool_use_summary', summary: 'Read the login code.', toolUseIds: [] },
+      { type: 'result', subtype: 'error_max_turns', isError: true, errors: ['Reached max turns'] },
+    ], info, when);
+    expect(md).toContain('**Proposed plan:**\n\n1. Read\n2. Fix');
+    expect(md).toContain('## You\n\nDo step 2 first');
+    expect(md).toContain('Read the login code.');
+    expect(md).toContain('> Error: Reached max turns');
+  });
+
+  it('keeps an agent\'s title for a call on one line, as plain text', () => {
+    const md = threadMarkdown([
+      { type: 'user_message', text: 'go' },
+      tool('Write *notes*.md\n(Run)', { command: '\nnpm run build' }),
+    ], info, when);
+    expect(md).toContain('- Write \\*notes\\*.md (Run) `npm run build`');
+  });
+
+  it('leaves the branch out for a folder without git', () => {
+    expect(threadMarkdown([], { ...info, branch: '' }, when)).not.toContain('Branch:');
   });
 
   it('shows a command on one line, in a fence its backticks can\'t close', () => {
@@ -96,6 +155,8 @@ describe('exportFileName', () => {
   it('never gives an empty, device or overlong name', () => {
     expect(exportFileName('???', 'md')).toBe('Thread.md');
     expect(exportFileName('con', 'md')).toBe('Thread con.md');
+    expect(exportFileName('aux.ts cleanup', 'md')).toBe('Thread aux.ts cleanup.md');
+    expect(exportFileName('auxiliary', 'md')).toBe('auxiliary.md');
     expect(exportFileName('x'.repeat(200), 'md')).toBe(`${'x'.repeat(80)}.md`);
   });
 });

@@ -897,6 +897,16 @@ describe('SESSION_EXPORT', () => {
     expect(path.basename(options.defaultPath!)).toBe('feat.md');
   });
 
+  it('writes nothing for a thread deleted while the dialog was open', async () => {
+    const file = path.join(tmp, 'gone.md');
+    vi.mocked(dialog.showSaveDialog).mockImplementation(async () => {
+      m.worktreeManager.getWorktreeOrManifest.mockResolvedValue(undefined);
+      return { canceled: false, filePath: file };
+    });
+    await expect(invoke(IPC.SESSION_EXPORT, 's1')).rejects.toThrow('deleted before it was saved');
+    expect(fs.existsSync(file)).toBe(false);
+  });
+
   it('refuses a thread that is gone, or an id that isn\'t one', async () => {
     m.worktreeManager.getWorktreeOrManifest.mockResolvedValue(undefined);
     await expect(invoke(IPC.SESSION_EXPORT, 's1')).rejects.toThrow('This thread is gone');

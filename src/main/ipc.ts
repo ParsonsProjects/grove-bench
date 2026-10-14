@@ -44,6 +44,7 @@ import * as bookmarks from './bookmarks.js';
 import { listProjects, rememberProject, forgetProject, loadAppState, saveOpenTabs, saveCollapsedRepos, saveSessionSort, saveSidebarWidth, saveCollapsedPanels, loadConversationGroups, saveConversationGroups, saveUnreadSessionIds, loadUnreadSessionIds, flushPendingSaves, loadPrerequisiteCache, savePrerequisiteCache, loadUsageSnapshot } from './app-state.js';
 import { logRendererError } from './crash-handling.js';
 import { freezeLog } from './freeze-log.js';
+import { isThreadId } from './session-event-store.js';
 import { perfSteps, logWindowTiming } from './perf-steps.js';
 import { recordTrace, lastTracePath } from './perf-trace.js';
 import { perfLogPath } from './perf-log.js';
@@ -650,8 +651,7 @@ export function registerHandlers() {
   /** Save a thread to a file the user picks: Markdown, or JSON when they
    *  pick that type. Resolves to the path written, or null if cancelled. */
   ipcMain.handle(IPC.SESSION_EXPORT, async (event, sessionId: unknown): Promise<string | null> => {
-    // The id names the thread's log file: a plain name only.
-    if (typeof sessionId !== 'string' || !/^[\w-]+$/.test(sessionId)) throw new Error('No such thread to export.');
+    if (!isThreadId(sessionId)) throw new Error('No such thread to export.');
     const worktree = await worktreeManager.getWorktreeOrManifest(sessionId);
     if (!worktree) throw new Error('This thread is gone, so there is nothing to export.');
     const live = sessionManager.getSession(sessionId);
@@ -676,11 +676,17 @@ export function registerHandlers() {
     };
     const picked = win ? await dialog.showSaveDialog(win, options) : await dialog.showSaveDialog(options);
     if (picked.canceled || !picked.filePath) return null;
+    // Deleted while the dialog was open: its history is gone with it.
+    if (!(await worktreeManager.getWorktreeOrManifest(sessionId))) {
+      throw new Error('The thread was deleted before it was saved, so it wasn\'t exported.');
+    }
 
     const events = sessionManager.getEventHistory(sessionId);
     const now = new Date();
     const json = path.extname(picked.filePath).toLowerCase() === '.json';
-    await fs.writeFile(picked.filePath, json ? threadJson(events, info, now) : threadMarkdown(events, info, now));
+    const text = freezeLog.timeWork(`thread export, ${events.length} events`,
+      () => json ? threadJson(events, info, now) : threadMarkdown(events, info, now));
+    await fs.writeFile(picked.filePath, text);
     logger.info(`Exported thread ${sessionId} as ${json ? 'JSON' : 'Markdown'} (${events.length} events)`);
     return picked.filePath;
   });
@@ -1135,7 +1141,7 @@ export function registerHandlers() {
 
   // The id names the thread's log file: a plain name only.
   ipcMain.handle(IPC.LIMITS_THREAD_SPEND, (_event, sessionId: unknown) =>
-    typeof sessionId === 'string' && /^[\w-]+$/.test(sessionId) ? sessionManager.threadSpend(sessionId) : 0);
+    isThreadId(sessionId) ? sessionManager.threadSpend(sessionId) : 0);
 
   ipcMain.handle(IPC.AGENT_HISTORY, (_event, sessionId: string) => {
     const prelaunch = prelaunchEvents.get(sessionId) ?? [];
