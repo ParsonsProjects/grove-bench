@@ -71,8 +71,10 @@ export function turnSpend(event: AgentEvent): number {
 }
 
 /** A thread's limit state from its saved history: what it has spent, and
- *  how far the user last let it go past its spend limit. */
-export function limitsFromHistory(history: readonly AgentEvent[]): SessionLimits {
+ *  how far the user last let it go past its spend limit. `savedSpendUsd`:
+ *  the total recorded when it last ran (worktree manifest), which still
+ *  counts turns a rewind or /clear has since cut from the history. */
+export function limitsFromHistory(history: readonly AgentEvent[], savedSpendUsd?: number): SessionLimits {
   let threadSpendUsd = 0;
   let threadAllowanceUsd: number | null = null;
   for (const e of history) {
@@ -81,6 +83,7 @@ export function limitsFromHistory(history: readonly AgentEvent[]): SessionLimits
       threadAllowanceUsd = e.allowance;
     }
   }
+  threadSpendUsd = Math.max(threadSpendUsd, savedSpendUsd ?? 0);
   return { turn: null, threadSpendUsd, threadAllowanceUsd, pending: null, stopped: false };
 }
 

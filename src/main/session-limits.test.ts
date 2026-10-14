@@ -49,6 +49,13 @@ describe('spend', () => {
     expect(turnSpend({ type: 'status', message: 'x' })).toBe(0);
   });
 
+  it('keeps a saved total that turns cut from the history still count toward', () => {
+    expect(limitsFromHistory([result(0.5, 0.5)], 3).threadSpendUsd).toBe(3);
+    // A save that missed the last turn doesn't lower it.
+    expect(limitsFromHistory([result(0.5, 0.5), result(0.25, 0.75)], 0.5).threadSpendUsd).toBeCloseTo(0.75);
+    expect(limitsFromHistory([], undefined).threadSpendUsd).toBe(0);
+  });
+
   it('rebuilds a thread\'s spend and allowance from its history', () => {
     const limits = limitsFromHistory([
       result(3, null),

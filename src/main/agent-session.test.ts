@@ -3,6 +3,7 @@ import type { AgentAdapter, AgentQueryHandle, AdapterConfig, PermissionResponse 
 import { IPC, PERMISSION_TIMEOUT_MINUTES, type AgentEvent, type McpServerInfo } from '../shared/types.js';
 import * as fs from 'node:fs';
 import { perfSteps } from './perf-steps.js';
+import { worktreeManager } from './worktree-manager.js';
 
 // ─── Mock infrastructure ───
 
@@ -42,6 +43,8 @@ vi.mock('./worktree-manager.js', () => ({
     getAdapterType: vi.fn().mockResolvedValue(undefined),
     getAgentAndModel: vi.fn().mockResolvedValue({}),
     saveAdapterType: vi.fn().mockResolvedValue(undefined),
+    saveThreadSpend: vi.fn().mockResolvedValue(undefined),
+    getThreadSpend: vi.fn().mockResolvedValue(undefined),
     writeAgentSettings: vi.fn().mockResolvedValue(undefined),
     list: vi.fn().mockResolvedValue([]),
     getWorktreeOrManifest: vi.fn().mockResolvedValue(undefined),
@@ -926,12 +929,32 @@ describe('AgentSessionManager limits', () => {
     mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false, totalCostUsd: 0.4, sessionCostUsd: 0.4 });
     mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false, totalCostUsd: 0.1, sessionCostUsd: 0.5 });
     await vi.waitFor(() => expect(sessionManager.getSession('test-spend')!.limits.threadSpendUsd).toBeCloseTo(0.5));
-    expect(sessionManager.threadSpend('test-spend')).toBeCloseTo(0.5);
+    expect(await sessionManager.threadSpend('test-spend')).toBeCloseTo(0.5);
+    // Saved after each turn, so a rewind or /clear can't lower it later.
+    expect(worktreeManager.saveThreadSpend).toHaveBeenCalledWith('test-spend', 0.4);
+    expect(vi.mocked(worktreeManager.saveThreadSpend).mock.calls.at(-1)?.[0]).toBe('test-spend');
+    expect(vi.mocked(worktreeManager.saveThreadSpend).mock.calls.at(-1)?.[1]).toBeCloseTo(0.5);
 
     await sessionManager.destroySession('test-spend');
   });
 
-  it('adds up the spend of a thread that isn\'t loaded from its saved history', () => {
+  it('starts a resumed thread\'s spend from the total saved when it last ran', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({ id: 'test-spend-resumed', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock', threadSpendUsd: 2.5 });
+    expect(sessionManager.getSession('test-spend-resumed')!.limits.threadSpendUsd).toBe(2.5);
+    expect(await sessionManager.threadSpend('test-spend-resumed')).toBe(2.5);
+
+    await sessionManager.destroySession('test-spend-resumed');
+  });
+
+  it('gives a thread that isn\'t loaded the total saved when it last ran, without reading its log', async () => {
+    vi.mocked(worktreeManager.getThreadSpend).mockResolvedValueOnce(2.5);
+    vi.mocked(fs.readFileSync).mockClear();
+    expect(await sessionManager.threadSpend('test-spend-closed')).toBe(2.5);
+    expect(fs.readFileSync).not.toHaveBeenCalled();
+  });
+
+  it('adds up the spend of a thread that isn\'t loaded and has no saved total from its history', async () => {
     const content = [
       { type: 'result', subtype: 'success', isError: false, totalCostUsd: 0.25, sessionCostUsd: 0.25 },
       { type: 'user_message', text: 'and again' },
@@ -942,15 +965,15 @@ describe('AgentSessionManager limits', () => {
     vi.mocked(fs.statSync).mockImplementation(() => ({ mtimeMs: 1, size: content.length }) as fs.Stats);
     vi.mocked(fs.readFileSync).mockImplementation(() => content);
     try {
-      expect(sessionManager.threadSpend('test-spend-saved')).toBeCloseTo(0.75);
+      expect(await sessionManager.threadSpend('test-spend-saved')).toBeCloseTo(0.75);
     } finally {
       vi.mocked(fs.statSync).mockImplementation(() => { throw new Error('ENOENT'); });
       vi.mocked(fs.readFileSync).mockImplementation(() => { throw new Error('ENOENT'); });
     }
   });
 
-  it('gives no spend for a thread with no saved history', () => {
-    expect(sessionManager.threadSpend('test-spend-none')).toBe(0);
+  it('gives no spend for a thread with no saved history', async () => {
+    expect(await sessionManager.threadSpend('test-spend-none')).toBe(0);
   });
 
   it('settles a limit question when the user clicks Stop', async () => {

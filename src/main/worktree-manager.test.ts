@@ -83,6 +83,38 @@ beforeEach(() => {
   vi.mocked(getDefaultBranch).mockResolvedValue('main');
 });
 
+describe('saveThreadSpend / getThreadSpend', () => {
+  it('records what a thread has spent', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({
+      'wt-1': { repoPath: '/repo', branch: 'feature', createdAt: 1000 },
+    }));
+
+    await manager.saveThreadSpend('wt-1', 1.5);
+    expect(savedManifest).toEqual({
+      'wt-1': { repoPath: '/repo', branch: 'feature', createdAt: 1000, threadSpendUsd: 1.5 },
+    });
+
+    // A thread no longer in the manifest isn't added back.
+    await manager.saveThreadSpend('gone', 2);
+    expect(savedManifest).not.toHaveProperty('gone');
+  });
+
+  it('reads it back, and nothing for a thread without one or a value that is not a sum', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({
+      'wt-1': { repoPath: '/repo', branch: 'a', createdAt: 1, threadSpendUsd: 1.5 },
+      'wt-old': { repoPath: '/repo', branch: 'b', createdAt: 2 },
+      'wt-bad': { repoPath: '/repo', branch: 'c', createdAt: 3, threadSpendUsd: 'lots' },
+      'wt-neg': { repoPath: '/repo', branch: 'd', createdAt: 4, threadSpendUsd: -1 },
+    }));
+
+    expect(await manager.getThreadSpend('wt-1')).toBe(1.5);
+    expect(await manager.getThreadSpend('wt-old')).toBeUndefined();
+    expect(await manager.getThreadSpend('wt-bad')).toBeUndefined();
+    expect(await manager.getThreadSpend('wt-neg')).toBeUndefined();
+    expect(await manager.getThreadSpend('missing')).toBeUndefined();
+  });
+});
+
 describe('saveAdapterType / getAdapterType', () => {
   it('records which agent a session runs', async () => {
     mockFs.readFile.mockResolvedValue(JSON.stringify({

@@ -166,6 +166,8 @@ class AgentSessionManager {
      *  the same tick the session becomes visible, so the caller can drop its
      *  own copy then and a history read never sees them twice. */
     adoptSetupEvents?: () => AgentEvent[];
+    /** What the thread had spent when it last ran (worktree manifest). */
+    threadSpendUsd?: number;
   }): Promise<SessionInfo> {
     const { id, branch, cwd, repoPath, window: win } = opts;
 
@@ -262,7 +264,7 @@ class AgentSessionManager {
       sleepSettled: null,
       turnHandle: null,
       promptsBeforeInit: null,
-      limits: limitsFromHistory(eventHistory),
+      limits: limitsFromHistory(eventHistory, opts.threadSpendUsd),
     };
 
     this.sessions.set(id, session);
@@ -686,8 +688,14 @@ class AgentSessionManager {
           if (session.turnHandle === handle) session.turnHandle = null;
           // The files the turn made go just ahead of its result.
           await this.endTurnFiles(session, emit);
-          // Adds the turn's cost to the thread's and today's spend.
+          // Adds the turn's cost to the thread's and today's spend, and saves
+          // the thread's, which its history won't keep through a rewind.
+          const spentBefore = session.limits.threadSpendUsd;
           turnEnded(session.limits, event);
+          if (session.limits.threadSpendUsd !== spentBefore) {
+            worktreeManager.saveThreadSpend(session.id, session.limits.threadSpendUsd)
+              .catch((e) => logger.warn(`Failed to save the spend of ${session.id}:`, e));
+          }
           this.runHeldMcpReconnects(session);
           session.lastResult = {
             isError: event.isError,
@@ -1877,12 +1885,14 @@ class AgentSessionManager {
   }
 
   /** What a thread has spent over its life, as its agent estimated it: the
-   *  figure its spend limit counts (session-limits.ts). A thread that isn't
-   *  loaded is added up from its saved history. */
-  threadSpend(id: string): number {
+   *  figure its spend limit counts (session-limits.ts). For a thread that
+   *  isn't loaded, the total saved when it last ran, or, for one that hasn't
+   *  run a turn since totals were saved, its history added up. */
+  async threadSpend(id: string): Promise<number> {
     const session = this.sessions.get(id);
     if (session) return session.limits.threadSpendUsd;
-    return limitsFromHistory(this.events.load(id)).threadSpendUsd;
+    const saved = await worktreeManager.getThreadSpend(id);
+    return saved ?? limitsFromHistory(this.events.load(id)).threadSpendUsd;
   }
 
   /**
