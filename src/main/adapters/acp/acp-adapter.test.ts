@@ -3,7 +3,8 @@ import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { AcpAdapter, type AcpAgentDefinition } from './acp-adapter.js';
+import { AcpAdapter, onAgentEnd, type AcpAgentDefinition } from './acp-adapter.js';
+import { HostedProcess } from '../../process-host-spawn.js';
 import { AUDIO_INLINE_BUDGET_BYTES, AUDIO_INLINE_MAX_BYTES } from '../file-attachments.js';
 import type { AdapterConfig, AdapterEvent, AgentQueryHandle, MessageFile, PermissionRequest, PermissionResponse } from '../types.js';
 
@@ -459,16 +460,6 @@ describe('AcpAdapter', () => {
     expect((await adapter.checkPrerequisites()).available).toBe(false);
   }, SPAWNS_TIMEOUT_MS);
 
-  it('says when the agent was stopped by a signal, not just that it exited', async () => {
-    const adapter = new AcpAdapter(def());
-    const handle = await adapter.start(config());
-    await until(handle, 'system_init');
-    await vi.waitFor(() => expect(handle.processId?.()).toBeTypeOf('number'));
-    process.kill(handle.processId!()!, 'SIGKILL');
-    const events = await until(handle, 'error');
-    expect(events.at(-1)).toMatchObject({ type: 'error', message: expect.stringContaining('was stopped (SIGKILL)') });
-  });
-
   it('keeps the agent\'s own defaults when a conversation changes a control', async () => {
     const adapter = new AcpAdapter(def());
     const handle = await adapter.start(config());
@@ -665,5 +656,34 @@ describe('AcpAdapter', () => {
     });
 
     const adapter = () => new AcpAdapter(def());
+  });
+});
+
+describe('onAgentEnd', () => {
+  /** How a hosted agent program ended, as onAgentEnd reports it. Driven by
+   *  the host's events, so it reads the same on every OS (Windows has no
+   *  POSIX signals: a killed process there just exits with a code). */
+  function ended(events: Array<{ type: 'exit'; code: number | null; signal: string | null } | { type: 'error'; message: string }>) {
+    const proc = new HostedProcess('agent');
+    const seen: Array<[number | undefined, string | undefined]> = [];
+    onAgentEnd(proc, (code, failure) => seen.push([code, failure]));
+    for (const e of events) {
+      if (e.type === 'exit') proc.receive({ type: 'exit', id: 1, code: e.code, signal: e.signal });
+      else proc.receive({ type: 'error', id: 1, error: { name: 'Error', message: e.message } });
+    }
+    proc.receive({ type: 'close', id: 1 });
+    return seen;
+  }
+
+  it('reports the exit code, once', () => {
+    expect(ended([{ type: 'exit', code: 1, signal: null }])).toEqual([[1, undefined]]);
+  });
+
+  it('says when the agent was stopped by a signal, not just that it exited', () => {
+    expect(ended([{ type: 'exit', code: null, signal: 'SIGKILL' }])).toEqual([[undefined, 'was stopped (SIGKILL)']]);
+  });
+
+  it('says why the program never started', () => {
+    expect(ended([{ type: 'error', message: 'spawn gemini ENOENT' }])).toEqual([[undefined, 'spawn gemini ENOENT']]);
   });
 });

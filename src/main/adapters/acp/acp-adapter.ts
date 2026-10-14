@@ -192,7 +192,7 @@ function spawnAgent(def: AcpAgentDefinition, cwd: string, extraEnv?: Record<stri
 
 /** Call `onEnd` once the agent program has gone, with its exit code and, when
  *  it never started or was stopped by a signal, why. */
-function onAgentEnd(proc: HostedProcess, onEnd: (exitCode: number | undefined, failure?: string) => void): void {
+export function onAgentEnd(proc: HostedProcess, onEnd: (exitCode: number | undefined, failure?: string) => void): void {
   let failure: string | undefined;
   proc.on('error', (e: Error) => { failure ??= e.message; });
   proc.once('close', (code: number | null, signal: NodeJS.Signals | null) => {
