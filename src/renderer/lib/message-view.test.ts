@@ -94,6 +94,8 @@ describe('isMessageVisible', () => {
     // ACP doesn't mark MCP calls: one Grove can't place may act outside the project.
     expect(isMessageVisible(acp('3', 'create_issue(title: "Bug")', {}), 'summary')).toBe(true);
     expect(isMessageVisible(acp('4', 'todowrite', {}, { toolInput: { todos: [{ content: 'a', status: 'pending' }] } }), 'summary')).toBe(false);
+    // Gemini CLI titles Grove's own tools without the server when they have arguments.
+    expect(isMessageVisible(acp('6', 'memory_read(path: "repo/overview.md")', {}), 'summary')).toBe(false);
     // A read Grove can place still hides.
     expect(isMessageVisible(tool({ id: '5', toolName: 'read', toolView: { kind: 'read', path: 'a.ts' }, toolCategory: 'read' } as never), 'summary')).toBe(false);
   });

@@ -1420,6 +1420,11 @@ describe('sendCommand', () => {
     expect(messageStore.getMode(SID)).toBe('default');
   });
 
+  it('syncs mode on /plan before the controls have loaded', () => {
+    messageStore.sendCommand(SID, '/plan');
+    expect(messageStore.getMode(SID)).toBe('plan');
+  });
+
   it("leaves the mode alone for an agent without Plan mode, which takes /plan as text", () => {
     modes('default', 'acceptEdits', 'readSafe');
     messageStore.modeBySession[SID] = 'acceptEdits';

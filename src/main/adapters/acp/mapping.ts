@@ -6,7 +6,7 @@
 import path from 'node:path';
 import type { ControlDescriptor, ControlOption, ControlTone, ToolCategory } from '../../../shared/types.js';
 import type { ToolView, ToolTextEdit } from '../../../shared/tool-view.js';
-import { groveToolOf } from '../grove-tools.js';
+import { groveToolOf } from '../../../shared/grove-tools.js';
 import type {
   AcpConfigOption, AcpConfigSelectOption, AcpContentBlock, AcpModeState, AcpModelState, AcpPermissionOption,
   AcpPermissionOptionKind, AcpPlanEntry, AcpToolCall, AcpToolKind,

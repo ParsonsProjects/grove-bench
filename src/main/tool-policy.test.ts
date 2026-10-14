@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import path from 'node:path';
-import { decideToolCall, editsInsideWorktree, readsAttachedFiles, type PolicyCall, type PolicyContext } from './tool-policy.js';
+import { decideToolCall, editsInsideWorktree, groveServersOf, readsAttachedFiles, type PolicyCall, type PolicyContext } from './tool-policy.js';
 import { categoryForView, claudeToolView, type ToolView } from '../shared/tool-view.js';
 import { toolCallSpecifier } from './agent-utils.js';
 import { groveToolOf } from './adapters/grove-tools.js';
@@ -63,16 +63,25 @@ describe('decideToolCall', () => {
   });
 
   it("runs Grove's memory and Preview looking tools without a prompt, under each agent's name for them", () => {
+    const groveServers = groveServersOf({ memoryOperations: {} as never, previewOperations: {} as never });
     for (const name of ['mcp__grove-memory__memory_write', 'grove-memory_memory_read', 'memory_list (grove-memory MCP Server)', 'grove-preview_preview_screenshot']) {
-      expect(decideToolCall(call(name, { kind: 'other' }), ctx()), name).toEqual({ behavior: 'allow' });
+      expect(decideToolCall(call(name, { kind: 'other' }), ctx({ groveServers })), name).toEqual({ behavior: 'allow' });
     }
     // Clicking asks like other actions; same-named tools elsewhere aren't Grove's.
     for (const name of ['mcp__grove-preview__preview_click', 'grove-preview_preview_type', 'mcp__notes__memory_read', 'memory_read(path: "a.md")']) {
-      expect(decideToolCall(call(name, { kind: 'other' }), ctx()), name).toEqual({ behavior: 'ask' });
+      expect(decideToolCall(call(name, { kind: 'other' }), ctx({ groveServers })), name).toEqual({ behavior: 'ask' });
     }
     // A deny rule still wins.
-    expect(decideToolCall(call('grove-memory_memory_write', { kind: 'other' }), ctx({ toolDenyRules: [{ pattern: 'mcp(grove-memory__memory_write)' }] })))
+    expect(decideToolCall(call('grove-memory_memory_write', { kind: 'other' }), ctx({ groveServers, toolDenyRules: [{ pattern: 'mcp(grove-memory__memory_write)' }] })))
       .toMatchObject({ behavior: 'deny' });
+  });
+
+  it("asks about a call named for a Grove server Grove didn't give the agent: another server took the name", () => {
+    // The user turned the Preview tools off, so Grove started no grove-preview.
+    const groveServers = groveServersOf({ memoryOperations: {} as never, previewOperations: null });
+    expect(decideToolCall(call('mcp__grove-preview__preview_open', { kind: 'other' }), ctx({ groveServers }))).toEqual({ behavior: 'ask' });
+    expect(decideToolCall(call('mcp__grove-memory__memory_read', { kind: 'other' }), ctx({ groveServers }))).toEqual({ behavior: 'allow' });
+    expect(decideToolCall(call('mcp__grove-memory__memory_read', { kind: 'other' }), ctx())).toEqual({ behavior: 'ask' });
   });
 
   it("runs the agent's own checks before always-allow, so it can't get past them", () => {

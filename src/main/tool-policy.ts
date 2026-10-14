@@ -16,6 +16,8 @@ import type { ToolCategory, ToolRule } from '../shared/types.js';
 import type { ToolView } from '../shared/tool-view.js';
 import { checkToolRules, isPathInside, type ShellSyntax } from './agent-utils.js';
 import { isAutoAllowedGroveTool } from './adapters/grove-tools.js';
+import type { GroveServerName } from '../shared/grove-tools.js';
+import type { AdapterConfig } from './adapters/types.js';
 
 /** A tool call as the policy sees it. Each adapter builds it its own way. */
 export interface PolicyCall {
@@ -40,6 +42,9 @@ export interface PolicyContext {
   toolDenyRules: readonly ToolRule[];
   /** Tools the user said to always allow in this thread. */
   alwaysAllowedTools: ReadonlySet<string>;
+  /** Grove's own MCP servers this agent was given (groveServersOf): their
+   *  memory and Preview looking tools run without a prompt. */
+  groveServers?: ReadonlySet<GroveServerName>;
   /** Approve edits whose every path is inside `cwd`: Edit and Read-safe
    *  modes, for agents whose modes Grove applies itself (ACP). Claude Code
    *  applies its own. */
@@ -67,7 +72,7 @@ export function decideToolCall(call: PolicyCall, ctx: PolicyContext): PolicyDeci
   // message gives the agent their paths: reading them needs no prompt.
   if (readsAttachedFiles(call.view, ctx.cwd, ctx.attachmentsDir)) return { behavior: 'allow' };
 
-  if (isAutoAllowedGroveTool(call.toolName)) return { behavior: 'allow' };
+  if (ctx.groveServers && isAutoAllowedGroveTool(call.toolName, ctx.groveServers)) return { behavior: 'allow' };
 
   const guarded = ctx.guard?.();
   if (guarded) return guarded;
@@ -78,6 +83,16 @@ export function decideToolCall(call: PolicyCall, ctx: PolicyContext): PolicyDeci
     return { behavior: 'allow' };
   }
   return { behavior: 'ask' };
+}
+
+/** The Grove servers an agent is given for a session: memory when the
+ *  session has memory operations, Preview when the user left the agent's
+ *  browser tools on. */
+export function groveServersOf(config: Pick<AdapterConfig, 'memoryOperations' | 'previewOperations'>): ReadonlySet<GroveServerName> {
+  const servers = new Set<GroveServerName>();
+  if (config.memoryOperations) servers.add('grove-memory');
+  if (config.previewOperations) servers.add('grove-preview');
+  return servers;
 }
 
 /** The user's rules. Chained shell commands are split first (checkToolRules),

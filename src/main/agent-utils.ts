@@ -7,7 +7,7 @@ import { TOOL_RULE_KEYWORDS, subagentParent } from '../shared/types.js';
 import type { ToolCategory, ToolRule } from '../shared/types.js';
 import { parseToolRule } from '../shared/tool-rules.js';
 import { POWERSHELL_ALIASES } from './powershell-aliases.js';
-import { groveToolOf } from './adapters/grove-tools.js';
+import { groveToolOf } from '../shared/grove-tools.js';
 
 export { parseToolRule };
 

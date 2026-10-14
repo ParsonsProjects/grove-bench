@@ -30,7 +30,7 @@ import type {
 import type { AgentStage, ControlDescriptor, ControlOption, PermissionMode, ImageMediaType } from '../../../shared/types.js';
 import { CONTROL_IDS, isImageMediaType } from '../../../shared/types.js';
 import { cleanEnv } from '../../agent-utils.js';
-import { decideToolCall } from '../../tool-policy.js';
+import { decideToolCall, groveServersOf } from '../../tool-policy.js';
 import { RunningCost } from '../running-cost.js';
 import { runProcess, spawnProcess } from '../../process-host.js';
 import type { HostedProcess } from '../../process-host-spawn.js';
@@ -191,11 +191,13 @@ function spawnAgent(def: AcpAgentDefinition, cwd: string, extraEnv?: Record<stri
 }
 
 /** Call `onEnd` once the agent program has gone, with its exit code and, when
- *  it never started, why. */
+ *  it never started or was stopped by a signal, why. */
 function onAgentEnd(proc: HostedProcess, onEnd: (exitCode: number | undefined, failure?: string) => void): void {
   let failure: string | undefined;
   proc.on('error', (e: Error) => { failure ??= e.message; });
-  proc.once('close', (code: number | null) => onEnd(code ?? undefined, failure));
+  proc.once('close', (code: number | null, signal: NodeJS.Signals | null) => {
+    onEnd(code ?? undefined, failure ?? (code === null && signal ? `was stopped (${signal})` : undefined));
+  });
 }
 
 /** Keep the last STDERR_TAIL_CHARS of the agent's stderr for error messages. */
@@ -796,8 +798,9 @@ class AcpQuery {
 
   /** `fresh`: a new session, so its values are the agent's defaults. */
   private takeSetup(setup: AcpSessionSetup | null | undefined, fresh: boolean): void {
-    if (!setup) return;
-    // A resumed session keeps whatever cost a replay reported.
+    // A resumed session keeps whatever cost a replay reported, and counts
+    // from where the conversation had got to, even when the agent's answer
+    // to the resume is empty.
     if (fresh) {
       this.sessionCost = 0;
       this.contextUsed = 0;
@@ -805,6 +808,7 @@ class AcpQuery {
     } else {
       this.runningCost = new RunningCost(this.config.priorCostUsd ?? null);
     }
+    if (!setup) return;
     if (Array.isArray(setup.configOptions)) this.configOptions = setup.configOptions;
     if (setup.modes) this.modes = setup.modes;
     this.models = modelList(this.configOptions, setup.models);
@@ -1342,6 +1346,7 @@ class AcpQuery {
       toolAllowRules: config.toolAllowRules,
       toolDenyRules: config.toolDenyRules,
       alwaysAllowedTools: config.alwaysAllowedTools,
+      groveServers: groveServersOf(config),
       approveEditsInWorktree: this.groveMode === 'acceptEdits' || this.groveMode === 'readSafe',
     }).behavior;
   }

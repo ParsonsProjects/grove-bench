@@ -22,7 +22,7 @@ import { getApiKey } from '../credentials.js';
 import { loadModelCatalog, saveModelCatalog } from '../app-state.js';
 import { z } from 'zod';
 import { asarUnpackedPath, cleanEnv, isPathInside, toolCallSpecifier, readableStreamToAsyncIterable } from '../agent-utils.js';
-import { decideToolCall, type PolicyDecision } from '../tool-policy.js';
+import { decideToolCall, groveServersOf, type PolicyDecision } from '../tool-policy.js';
 import { categoryForView, claudeToolView } from '../../shared/tool-view.js';
 import { attachedFilesNote } from './file-attachments.js';
 import { checkKeyWithGet, type KeyCheckFetch } from './key-check.js';
@@ -1710,6 +1710,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     let agentProcess: ReturnType<typeof spawnClaudeCodeProcess> | undefined;
 
     // Build the canUseTool callback from the adapter config.
+    const groveServers = groveServersOf(config);
     const canUseTool = async (
       toolName: string,
       input: Record<string, unknown>,
@@ -1735,6 +1736,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         toolAllowRules: config.toolAllowRules,
         toolDenyRules: config.toolDenyRules,
         alwaysAllowedTools: config.alwaysAllowedTools,
+        groveServers,
         guard: () => sandboxDecision(toolName, input, config),
       });
       if (decision.behavior === 'deny') return { behavior: 'deny' as const, message: decision.message };

@@ -69,10 +69,10 @@ describe('previewToolHandlers', () => {
 describe('tool names', () => {
   it('auto-allows looking but not acting', () => {
     for (const tool of ['preview_open', 'preview_screenshot', 'preview_read', 'preview_logs']) {
-      expect(isAutoAllowedGroveTool(`mcp__grove-preview__${tool}`), tool).toBe(true);
+      expect(isAutoAllowedGroveTool(`mcp__grove-preview__${tool}`, new Set(['grove-preview'])), tool).toBe(true);
     }
     for (const tool of ['preview_click', 'preview_type']) {
-      expect(isAutoAllowedGroveTool(`mcp__grove-preview__${tool}`), tool).toBe(false);
+      expect(isAutoAllowedGroveTool(`mcp__grove-preview__${tool}`, new Set(['grove-preview'])), tool).toBe(false);
     }
   });
 });

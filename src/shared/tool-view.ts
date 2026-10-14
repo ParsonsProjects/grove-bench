@@ -110,7 +110,7 @@ export function claudeMcpTool(toolName: string): { server: string; tool: string 
   if (!toolName.startsWith('mcp__')) return undefined;
   const rest = toolName.slice('mcp__'.length);
   const sep = rest.indexOf('__');
-  return sep > 0 && sep + 2 < rest.length ? { server: rest.slice(0, sep), tool: rest.slice(sep + 2) } : undefined;
+  return sep >= 0 && sep + 2 < rest.length ? { server: rest.slice(0, sep), tool: rest.slice(sep + 2) } : undefined;
 }
 
 /** AskUserQuestion's `questions`, keeping only well-formed entries. */

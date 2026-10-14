@@ -1,6 +1,6 @@
 # Provider coupling audit
 
-> **Status: steps 1 to 6 done on this branch, step 7 waiting on a decision.**
+> **Status: steps 1 to 6 done on this branch; step 7 left out by decision.**
 > Checked on 14 October 2026 against `c0249cf`; line references below are
 > to that commit. Every one was read in the code, not inferred. What changed
 > is in [Done](#done), what is left in [Left to do](#left-to-do).
@@ -158,13 +158,11 @@ Checked and left as they are, on purpose:
 
 ## Left to do
 
-- **Step 7, memory save around compaction for ACP agents (L9).** ACP has no
-  compaction event. Proposal: treat a sharp drop in the context the agent
-  reports (`usage_update.used` falling below half of a figure that was over
-  60% of the window) as a compaction, and run the same autosave and
-  "re-read your plan" nudge as Claude's `compact_boundary`. Needs a yes
-  first: a false positive costs a background model call and puts a message
-  in the thread.
+- **Step 7, memory save around compaction for ACP agents (L9): left out.**
+  ACP has no compaction event, and the proposed stand-in (a sharp drop in
+  the context the agent reports) could misfire, costing a background model
+  call and putting a message in the thread. Decided against for now; ACP
+  agents still get memory notes when their run ends and before `/clear`.
 - **Gemini CLI's MCP titles.** A call with arguments is titled
   `tool(arg: …)` with no server, so Grove can't tell Grove's own tools from
   another server's there: those still ask, and `mcp(...)` rules can't match

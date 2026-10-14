@@ -233,6 +233,8 @@ async function handle(msg) {
     case 'session/load':
       // A conversation the agent no longer has.
       if (params.sessionId === 'gone-session') return fail(-32002, 'Session not found');
+      // An agent that answers a load with nothing.
+      if (params.sessionId === 'null-answer') return reply(null);
       lastMcpServers = params.mcpServers ?? [];
       update(params.sessionId, { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'old question' } });
       update(params.sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'old answer' } });

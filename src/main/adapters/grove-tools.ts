@@ -9,8 +9,9 @@
  */
 import { z } from 'zod';
 import type { MemoryOperations, PreviewOperations } from './types.js';
+import { groveToolOf, type GroveServerName } from '../../shared/grove-tools.js';
 
-export type GroveServerName = 'grove-memory' | 'grove-preview';
+export { groveToolOf, type GroveServerName };
 
 export type GroveToolResult = {
   content: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }>;
@@ -52,26 +53,13 @@ const AUTO_ALLOWED: Readonly<Record<GroveServerName, readonly string[]>> = {
   'grove-preview': ['preview_open', 'preview_screenshot', 'preview_read', 'preview_logs'],
 };
 
-/**
- * Which of Grove's tools a call is, from the name the agent gives it, in the
- * forms that name Grove's server: Claude Code's `mcp__grove-memory__memory_read`,
- * OpenCode's `grove-memory_memory_read`, and Gemini CLI's
- * `memory_list (grove-memory MCP Server)`. Gemini CLI titles a call that has
- * arguments `memory_read(path: …)`, without the server, so that can't be told
- * from another server's tool of the same name and isn't matched.
- */
-export function groveToolOf(name: string): { server: GroveServerName; tool: string } | null {
-  const trimmed = name.trim();
-  const named = /^(?:mcp__)?(grove-memory|grove-preview)(?:__|_)(\w+)$/.exec(trimmed);
-  if (named) return { server: named[1] as GroveServerName, tool: named[2] };
-  const titled = /^(\w+) \((grove-memory|grove-preview) MCP Server\)$/.exec(trimmed);
-  return titled ? { server: titled[2] as GroveServerName, tool: titled[1] } : null;
-}
-
-/** Whether a call is one of Grove's own tools that need no prompt (AUTO_ALLOWED). */
-export function isAutoAllowedGroveTool(name: string): boolean {
+/** Whether a call is one of Grove's own tools that need no prompt
+ *  (AUTO_ALLOWED), from a server Grove gave this agent (`servers`): a call
+ *  named for a Grove server Grove didn't start comes from some other server
+ *  that took the name, and asks like any other. */
+export function isAutoAllowedGroveTool(name: string, servers: ReadonlySet<GroveServerName>): boolean {
   const tool = groveToolOf(name);
-  return !!tool && AUTO_ALLOWED[tool.server].includes(tool.tool);
+  return !!tool && servers.has(tool.server) && AUTO_ALLOWED[tool.server].includes(tool.tool);
 }
 
 function text(value: string): GroveToolResult {

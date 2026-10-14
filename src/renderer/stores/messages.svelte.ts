@@ -2307,8 +2307,10 @@ class MessageStore {
     }
     // Sync mode when user issues mode-changing slash commands, for an agent
     // with Plan mode (Claude Code's). To another agent they are only text.
-    const hasPlanMode = this.getControlDescriptors(sessionId)
-      .find((d) => d.id === CONTROL_IDS.permissionMode)?.options.some((o) => o.value === 'plan');
+    // Before its controls have loaded, the agent is taken to have it, as
+    // before agents could differ.
+    const modeControl = this.getControlDescriptors(sessionId).find((d) => d.id === CONTROL_IDS.permissionMode);
+    const hasPlanMode = !modeControl || modeControl.options.some((o) => o.value === 'plan');
     if (hasPlanMode && trimmed === '/plan') {
       this.modeBySession[sessionId] = 'plan';
     } else if (hasPlanMode && trimmed === '/code') {

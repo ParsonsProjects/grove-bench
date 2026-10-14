@@ -1,8 +1,8 @@
 import type { ChatMessage } from '../stores/messages.svelte.js';
 import type { ActivityViewMode } from '../../shared/types.js';
-import { parseMcpToolName } from './tool-names.js';
 import { changesFiles, toolViewOf, type ToolView } from '../../shared/tool-view.js';
 import { taskListOf } from '../../shared/thread-items.js';
+import { GROVE_SERVER_NAMES, titledAsGroveTool } from '../../shared/grove-tools.js';
 
 /** See ActivityViewMode in shared/types.ts for what each mode shows. */
 export type MessageViewMode = ActivityViewMode;
@@ -22,7 +22,7 @@ export const VIEW_MODE_DESCRIPTIONS: Record<MessageViewMode, string> = {
 
 /** Grove's own MCP servers (the Preview browser, project memory): local, and
  *  too frequent for Summary. */
-const GROVE_MCP_SERVERS = new Set(['grove-preview', 'grove-memory']);
+const GROVE_MCP_SERVERS: ReadonlySet<string> = new Set(GROVE_SERVER_NAMES);
 
 /** A call that started a subagent. It stays in every view as one line that
  *  opens the subagent's own thread, so its work is never out of reach. */
@@ -73,14 +73,14 @@ export function threadMessages(messages: ChatMessage[], parentToolUseId?: string
  *  commands, and MCP tools other than Grove's own, since they can act outside
  *  the project, such as creating a ticket or sending a message. Another
  *  agent's call Grove can't place (ACP doesn't mark MCP calls) stays too, for
- *  the same reason, unless it only carries a to-do list. */
+ *  the same reason, unless it is titled as one of Grove's tools (as Gemini
+ *  CLI titles them, without the server) or only carries a to-do list. */
 function shownInSummary(call: Extract<ChatMessage, { kind: 'tool_call' }>): boolean {
   const view = toolViewOf(call);
   if (changesFiles(view, call.toolCategory)) return true;
-  const mcp = view.mcp ?? parseMcpToolName(call.toolName);
-  if (mcp) return !GROVE_MCP_SERVERS.has(mcp.server);
+  if (view.mcp) return !GROVE_MCP_SERVERS.has(view.mcp.server);
   return !!call.toolView && view.kind === 'other' && (call.toolCategory ?? 'other') === 'other'
-    && !taskListOf(call.toolName, call.toolInput);
+    && !titledAsGroveTool(call.toolName) && !taskListOf(call.toolName, call.toolInput);
 }
 
 /**

@@ -249,13 +249,16 @@ describe('AcpAdapter', () => {
   });
 
   it('charges the first turn after a resume only for its own rise in the running cost', async () => {
-    const adapter = new AcpAdapter(def());
-    const handle = await adapter.start(config({ resumeSessionId: 'old-session', priorCostUsd: 0.004 }));
-    await until(handle, 'system_init');
-    handle.sendMessage({ text: 'cost' });
-    const turn = await until(handle, 'result');
-    expect((turn.at(-1) as { totalCostUsd: number }).totalCostUsd).toBeCloseTo(0.006, 10);
-    handle.close();
+    // 'null-answer': the agent answers the load with nothing.
+    for (const resumeSessionId of ['old-session', 'null-answer']) {
+      const adapter = new AcpAdapter(def());
+      const handle = await adapter.start(config({ resumeSessionId, priorCostUsd: 0.004 }));
+      await until(handle, 'system_init');
+      handle.sendMessage({ text: 'cost' });
+      const turn = await until(handle, 'result');
+      expect((turn.at(-1) as { totalCostUsd: number }).totalCostUsd, resumeSessionId).toBeCloseTo(0.006, 10);
+      handle.close();
+    }
   });
 
   it("marks where it starts afresh when the agent can't reopen the thread, so its costs and rewinds start again", async () => {
@@ -456,6 +459,16 @@ describe('AcpAdapter', () => {
     expect((await adapter.checkPrerequisites()).available).toBe(false);
   }, SPAWNS_TIMEOUT_MS);
 
+  it('says when the agent was stopped by a signal, not just that it exited', async () => {
+    const adapter = new AcpAdapter(def());
+    const handle = await adapter.start(config());
+    await until(handle, 'system_init');
+    await vi.waitFor(() => expect(handle.processId?.()).toBeTypeOf('number'));
+    process.kill(handle.processId!()!, 'SIGKILL');
+    const events = await until(handle, 'error');
+    expect(events.at(-1)).toMatchObject({ type: 'error', message: expect.stringContaining('was stopped (SIGKILL)') });
+  });
+
   it('keeps the agent\'s own defaults when a conversation changes a control', async () => {
     const adapter = new AcpAdapter(def());
     const handle = await adapter.start(config());
@@ -484,7 +497,8 @@ describe('AcpAdapter', () => {
     const attachmentsDir = path.join(cwd, '..', 'attachments-s1');
     const adapter = new AcpAdapter(def());
     const onPermissionRequest = vi.fn(async (): Promise<PermissionResponse> => ({ behavior: 'deny', message: 'no' }));
-    const handle = await adapter.start(config({ attachmentsDir, onPermissionRequest }));
+    const memoryOperations = { list: () => [], read: () => null, write: () => {}, delete: () => false };
+    const handle = await adapter.start(config({ attachmentsDir, memoryOperations, onPermissionRequest }));
     await until(handle, 'system_init');
     for (const ask of ['ask-for grove-memory_memory_write', `ask-for read ${path.join(attachmentsDir, 'a.pdf')}`]) {
       handle.sendMessage({ text: ask });

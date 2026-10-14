@@ -569,9 +569,11 @@ class AgentSessionManager {
 
         // Cap what a tool returned, and save the images it returned; the
         // event passes on references.
-        const capped = adapterEvent.type === 'tool_result' && typeof adapterEvent.content === 'string'
-          && capToolResult(adapterEvent.content) !== adapterEvent.content
-          ? { ...adapterEvent, content: capToolResult(adapterEvent.content) }
+        const cappedContent = adapterEvent.type === 'tool_result' && typeof adapterEvent.content === 'string'
+          ? capToolResult(adapterEvent.content)
+          : undefined;
+        const capped = adapterEvent.type === 'tool_result' && cappedContent !== undefined && cappedContent !== adapterEvent.content
+          ? { ...adapterEvent, content: cappedContent }
           : adapterEvent;
         const event: AgentEvent = capped.type === 'tool_result' && capped.imageData
           ? await storeToolImages(id, capped)
