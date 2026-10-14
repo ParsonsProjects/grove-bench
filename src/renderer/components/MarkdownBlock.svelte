@@ -240,6 +240,17 @@
     margin: 0.4em 0;
     padding-left: 1.5em;
   }
+  /* Tailwind's base styles turn list markers off; lists here need them. */
+  .markdown-content :global(ul) { list-style: disc; }
+  .markdown-content :global(ul ul) { list-style: circle; }
+  .markdown-content :global(ul ul ul) { list-style: square; }
+  .markdown-content :global(ol) { list-style: decimal; }
+  /* A task list item's checkbox is its marker. marked puts it first in the
+     item, or first in the item's paragraph when the list is loose. */
+  .markdown-content :global(li:has(> input[type='checkbox']:first-child)),
+  .markdown-content :global(li:has(> p:first-child > input[type='checkbox']:first-child)) {
+    list-style: none;
+  }
   .markdown-content :global(li) {
     margin: 0.2em 0;
   }
