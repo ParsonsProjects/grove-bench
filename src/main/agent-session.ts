@@ -24,7 +24,7 @@ import { audioSentInline, inlineAudioType } from './adapters/file-attachments.js
 import { ResumeNotFoundError } from './adapters/types.js';
 import { lastRunningCost } from './adapters/running-cost.js';
 import { getGitIdentity } from './git.js';
-import { findRewindForkPoint, isAuthFailure, lastTurnUuid } from './agent-utils.js';
+import { capToolResult, findRewindForkPoint, isAuthFailure, lastTurnUuid } from './agent-utils.js';
 import { hasApiKey, isApiKeyRejected, markApiKeyRejected } from './credentials.js';
 import { CheckpointManager } from './checkpoints.js';
 import type { EventSearchHit } from './event-search.js';
@@ -567,10 +567,15 @@ class AgentSessionManager {
         }
         if (abortController.signal.aborted) break;
 
-        // Save the images a tool returned; the event passes on references.
-        const event: AgentEvent = adapterEvent.type === 'tool_result' && adapterEvent.imageData
-          ? await storeToolImages(id, adapterEvent)
+        // Cap what a tool returned, and save the images it returned; the
+        // event passes on references.
+        const capped = adapterEvent.type === 'tool_result' && typeof adapterEvent.content === 'string'
+          && capToolResult(adapterEvent.content) !== adapterEvent.content
+          ? { ...adapterEvent, content: capToolResult(adapterEvent.content) }
           : adapterEvent;
+        const event: AgentEvent = capped.type === 'tool_result' && capped.imageData
+          ? await storeToolImages(id, capped)
+          : capped;
 
         // Skip adapter user_message events — we emit our own with UUIDs in sendMessage
         if (event.type === 'user_message') continue;

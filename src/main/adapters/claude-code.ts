@@ -2,7 +2,7 @@
  * Claude Code adapter — wraps the @anthropic-ai/claude-agent-sdk.
  */
 import type { ControlDescriptor, ControlOption, McpServerInfo, McpConfiguredServer, McpAddServerOpts, McpConfigScope, McpElicitationRequest, McpServerContextCost, McpServerManager, McpSupport, ImageMediaType, PermissionMode, ProviderUsage, SkillDefinition, ThinkingLevel, UsageWindow } from '../../shared/types.js';
-import { CONTROL_IDS, PERMISSION_TIMEOUT_MINUTES, THINKING_LEVELS } from '../../shared/types.js';
+import { CONTROL_IDS, PERMISSION_TIMEOUT_MINUTES, THINKING_LEVELS, isImageMediaType } from '../../shared/types.js';
 import type {
   AgentAdapter,
   AgentCapabilities,
@@ -17,7 +17,6 @@ import type {
   ToolImageData,
   UserMessage,
 } from './types.js';
-import { net } from 'electron';
 import { ResumeNotFoundError } from './types.js';
 import { getApiKey } from '../credentials.js';
 import { loadModelCatalog, saveModelCatalog } from '../app-state.js';
@@ -26,6 +25,7 @@ import { asarUnpackedPath, cleanEnv, isPathInside, toolCallSpecifier, readableSt
 import { decideToolCall, type PolicyDecision } from '../tool-policy.js';
 import { categoryForView, claudeToolView } from '../../shared/tool-view.js';
 import { attachedFilesNote } from './file-attachments.js';
+import { checkKeyWithGet, type KeyCheckFetch } from './key-check.js';
 import { createMemoryMcpServer } from './memory-mcp-server.js';
 import { createPreviewMcpServer } from './preview-mcp-server.js';
 import * as skillsModule from '../skills.js';
@@ -78,19 +78,6 @@ type HookCallback = import('@anthropic-ai/claude-agent-sdk').HookCallback;
  * Electron's own binary with ELECTRON_RUN_AS_NODE=1: a GUI-launched app on
  * Windows often has no `node` on PATH, and `process.execPath` is always valid.
  */
-/** Tool results are kept only for display, replay and memory extraction — the
- *  model already received the full text. Cap what we retain so a test suite
- *  or build printing tens of MB doesn't live in main-process history, the
- *  JSONL log and renderer state for the rest of the session. */
-const MAX_TOOL_RESULT_CHARS = 200_000;
-const TOOL_RESULT_HEAD_CHARS = 150_000;
-
-export function capToolResult(content: string): string {
-  if (content.length <= MAX_TOOL_RESULT_CHARS) return content;
-  const tailChars = MAX_TOOL_RESULT_CHARS - TOOL_RESULT_HEAD_CHARS;
-  const omitted = content.length - TOOL_RESULT_HEAD_CHARS - tailChars;
-  return `${content.slice(0, TOOL_RESULT_HEAD_CHARS)}\n\n… [${omitted.toLocaleString()} characters omitted] …\n\n${content.slice(content.length - tailChars)}`;
-}
 
 export function spawnClaudeCodeProcess(
   opts: SpawnOptions,
@@ -250,7 +237,6 @@ export function fromSdkSyncMode(mode: PermissionMode, ctx: MessageContext): Perm
   return mode === 'acceptEdits' && ctx.groveMode === 'readSafe' ? 'readSafe' : mode;
 }
 
-const IMAGE_MEDIA_TYPES = new Set<string>(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
 
 /**
  * A user message as the SDK takes it: attached images as content blocks
@@ -275,7 +261,7 @@ export function toolResultImages(content: unknown[]): ToolImageData[] {
     if (c?.type !== 'image') continue;
     const data = c.source?.type === 'base64' ? c.source.data : c.data;
     const mediaType = c.source?.type === 'base64' ? c.source.media_type : c.mimeType;
-    if (typeof data === 'string' && data && IMAGE_MEDIA_TYPES.has(mediaType)) {
+    if (typeof data === 'string' && data && isImageMediaType(mediaType)) {
       images.push({ data, mediaType: mediaType as ImageMediaType });
     }
   }
@@ -539,7 +525,7 @@ export function transformMessage(
             events.push({
               type: 'tool_result',
               toolUseId: block.tool_use_id,
-              content: capToolResult(resultContent),
+              content: resultContent,
               isError: block.is_error,
               ...(imageData.length > 0 && { imageData }),
               ...subagentTag(message.parent_tool_use_id),
@@ -1415,33 +1401,16 @@ export function envAuthMethod(env: NodeJS.ProcessEnv = process.env): string | nu
 /** Lists one model: it needs only the key and runs no model, so it shows
  *  whether Anthropic accepts a key (https://platform.claude.com/docs/en/api/models/list). */
 const API_KEY_CHECK_URL = 'https://api.anthropic.com/v1/models?limit=1';
-const API_KEY_CHECK_TIMEOUT_MS = 10_000;
-
-type KeyCheckFetch = (url: string, init: { headers: Record<string, string>; signal: AbortSignal }) => Promise<{ ok: boolean; status: number }>;
-
 /** Whether Anthropic accepts `key`: true when it does, false when it answers
- *  401, null when that couldn't be told (offline, a proxy in the way, an
- *  outage). With ANTHROPIC_BASE_URL set, conversations go to that endpoint
- *  instead, which may take other keys, so nothing is checked. Uses Electron's
- *  network stack, which follows the system's proxy settings. */
+ *  401, null when that couldn't be told (checkKeyWithGet). With
+ *  ANTHROPIC_BASE_URL set, conversations go to that endpoint instead, which
+ *  may take other keys, so nothing is checked. */
 export async function verifyAnthropicKey(
   key: string,
-  { env = process.env, fetchFn = (url, init) => net.fetch(url, init) }: { env?: NodeJS.ProcessEnv; fetchFn?: KeyCheckFetch } = {},
+  { env = process.env, fetchFn }: { env?: NodeJS.ProcessEnv; fetchFn?: KeyCheckFetch } = {},
 ): Promise<boolean | null> {
   if (env.ANTHROPIC_BASE_URL?.trim()) return null;
-  try {
-    const res = await fetchFn(API_KEY_CHECK_URL, {
-      headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' },
-      signal: AbortSignal.timeout(API_KEY_CHECK_TIMEOUT_MS),
-    });
-    if (res.ok) return true;
-    if (res.status === 401) return false;
-    logger.debug(`[ClaudeCodeAdapter] API key check answered ${res.status}`);
-    return null;
-  } catch (err) {
-    logger.debug('[ClaudeCodeAdapter] API key check failed:', err);
-    return null;
-  }
+  return checkKeyWithGet(API_KEY_CHECK_URL, { 'x-api-key': key, 'anthropic-version': '2023-06-01' }, { refused: [401], label: 'ClaudeCodeAdapter', fetchFn });
 }
 
 /**

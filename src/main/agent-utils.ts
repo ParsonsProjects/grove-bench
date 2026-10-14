@@ -23,6 +23,21 @@ export function isPathInside(parent: string, child: string): boolean {
   return rel === '' || (rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel));
 }
 
+/** Tool results are kept only for display, replay and memory extraction:
+ *  the model already received the full text. The session caps what it keeps,
+ *  for every agent, so a test suite or build printing tens of MB doesn't live
+ *  in main-process history, the JSONL log and renderer state for the rest of
+ *  the session. */
+const MAX_TOOL_RESULT_CHARS = 200_000;
+const TOOL_RESULT_HEAD_CHARS = 150_000;
+
+export function capToolResult(content: string): string {
+  if (content.length <= MAX_TOOL_RESULT_CHARS) return content;
+  const tailChars = MAX_TOOL_RESULT_CHARS - TOOL_RESULT_HEAD_CHARS;
+  const omitted = content.length - TOOL_RESULT_HEAD_CHARS - tailChars;
+  return `${content.slice(0, TOOL_RESULT_HEAD_CHARS)}\n\n… [${omitted.toLocaleString()} characters omitted] …\n\n${content.slice(content.length - tailChars)}`;
+}
+
 /**
  * Environment variable prefixes that leak noisy paths into the LLM context.
  */

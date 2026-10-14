@@ -45,7 +45,7 @@ export function checkNavigation(url: string, audience: PreviewAudience, worktree
       return { ok: false, reason: `Only files inside this thread's worktree can be opened (${worktreePath}).` };
     }
     if (audience === 'agent' && !/\.html?$/i.test(filePath)) {
-      return { ok: false, reason: "The agent's browser only opens .html files from the worktree. Use the Read tool for other files." };
+      return { ok: false, reason: "The agent's browser only opens .html files from the worktree. Read other files with your file tools." };
     }
     return { ok: true };
   }

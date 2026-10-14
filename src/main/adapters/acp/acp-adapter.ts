@@ -29,9 +29,10 @@ import type {
   ApiKeyDescriptor, CliSignInDescriptor, ModelInfo, PermissionResponse, SignInCheck, UserMessage,
 } from '../types.js';
 import type { AgentStage, ControlDescriptor, ControlOption, PermissionMode, ImageMediaType } from '../../../shared/types.js';
-import { CONTROL_IDS } from '../../../shared/types.js';
+import { CONTROL_IDS, isImageMediaType } from '../../../shared/types.js';
 import { cleanEnv } from '../../agent-utils.js';
 import { decideToolCall } from '../../tool-policy.js';
+import { RunningCost } from '../running-cost.js';
 import { getApiKey } from '../../credentials.js';
 import { killTree } from '../../process-tree.js';
 import { logger } from '../../logger.js';
@@ -97,7 +98,6 @@ const COMMANDS_WAIT_MS = 300;
 const GENERATE_TIMEOUT_MS = 180_000;
 /** How much of the agent's stderr is kept for error messages. */
 const STDERR_TAIL_CHARS = 4_000;
-const IMAGE_MEDIA: ReadonlySet<string> = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
 /** The tool call fields a Grove tool event is built from (describe()). */
 const SHOWN_FIELDS = ['name', 'kind', 'title', 'rawInput', 'locations', 'content'] as const;
 /** Kinds of call Grove's modes and rules guard: an agent that runs these
@@ -633,6 +633,9 @@ class AcpQuery {
    *  unknown: a new session starts at 0, a resumed one only knows it once
    *  the agent reports. */
   private sessionCost: number | undefined;
+  /** Turns that running cost into each turn's, from where a resumed
+   *  conversation had got to (priorCostUsd), as for Claude Code. */
+  private runningCost = new RunningCost();
   /** Context tokens the agent last reported. */
   private contextUsed = 0;
   /** Permission requests waiting on the user; answered "cancelled" on interrupt. */
@@ -756,11 +759,13 @@ class AcpQuery {
           this.sessionId = resumeSessionId;
           return;
         }
-        this.emit({ type: 'status', level: 'warning', message: `${this.def.displayName} can't reopen earlier threads, so it starts afresh. The thread above stays, but the agent won't remember it.` });
+        // newConversation: what came before belongs to a conversation the
+        // agent no longer has (running cost, rewind points, inline audio).
+        this.emit({ type: 'status', level: 'warning', newConversation: true, message: `${this.def.displayName} can't reopen earlier threads, so it starts afresh. The thread above stays, but the agent won't remember it.` });
       } catch (e) {
         if (isAuthRequired(e)) throw e;
         logger.warn(`[${this.def.id}] resume failed:`, e);
-        this.emit({ type: 'status', level: 'warning', message: `${this.def.displayName} couldn't reopen this thread, so it starts afresh. The thread above stays, but the agent won't remember it.` });
+        this.emit({ type: 'status', level: 'warning', newConversation: true, message: `${this.def.displayName} couldn't reopen this thread, so it starts afresh. The thread above stays, but the agent won't remember it.` });
       }
     }
     const setup = await this.signedIn(() => rpc.request<AcpSessionSetup>('session/new', { cwd, mcpServers }));
@@ -790,6 +795,9 @@ class AcpQuery {
     if (fresh) {
       this.sessionCost = 0;
       this.contextUsed = 0;
+      this.runningCost = new RunningCost();
+    } else {
+      this.runningCost = new RunningCost(this.config.priorCostUsd ?? null);
     }
     if (Array.isArray(setup.configOptions)) this.configOptions = setup.configOptions;
     if (setup.modes) this.modes = setup.modes;
@@ -874,7 +882,6 @@ class AcpQuery {
       return;
     }
     const started = Date.now();
-    const costBefore = this.sessionCost;
     this.turns++;
     this.resetTurn();
     let stopReason: AcpStopReason | null = null;
@@ -924,8 +931,9 @@ class AcpQuery {
       numTurns: this.turns,
       ...(this.contextSize ? { contextWindow: this.contextSize } : {}),
       // usage_update's cost covers the whole session: this turn's is the rise.
-      ...(costBefore !== undefined && this.sessionCost !== undefined ? { totalCostUsd: Math.max(0, this.sessionCost - costBefore) } : {}),
-      ...(this.sessionCost !== undefined ? { sessionCostUsd: this.sessionCost } : {}),
+      ...(this.sessionCost !== undefined
+        ? { totalCostUsd: this.runningCost.turnCost(this.sessionCost, failed), sessionCostUsd: this.sessionCost }
+        : {}),
     });
   }
 
@@ -943,7 +951,7 @@ class AcpQuery {
       ({ type: 'resource_link', uri: pathToFileURL(filePath).href, name, ...(mimeType ? { mimeType } : {}), size });
     let leftOut = 0;
     for (const img of message.images ?? []) {
-      if (caps?.image === true && IMAGE_MEDIA.has(img.mediaType)) blocks.push({ type: 'image', data: img.data, mimeType: img.mediaType });
+      if (caps?.image === true && isImageMediaType(img.mediaType)) blocks.push({ type: 'image', data: img.data, mimeType: img.mediaType });
       else if (img.path) blocks.push(link(img.path, img.name, img.mediaType, Buffer.byteLength(img.data, 'base64')));
       else leftOut++;
     }
@@ -1203,7 +1211,7 @@ class AcpQuery {
   private reportToolEnd(call: AcpToolCall, errorText?: string): void {
     if (!this.openTools.delete(call.toolCallId)) return;
     const images = contentImages(call.content)
-      .filter((i) => IMAGE_MEDIA.has(i.mediaType))
+      .filter((i) => isImageMediaType(i.mediaType))
       .map((i) => ({ data: i.data, mediaType: i.mediaType as ImageMediaType }));
     const raw = call.rawOutput;
     const text = contentText(call.content)

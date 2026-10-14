@@ -977,7 +977,13 @@ export interface SpellcheckMenuRequest {
 
 // ─── Image Attachment ───
 
-export type ImageMediaType = 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
+export const IMAGE_MEDIA_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'] as const;
+export type ImageMediaType = (typeof IMAGE_MEDIA_TYPES)[number];
+
+/** Whether `mediaType` is an image type agents take inline (ImageMediaType). */
+export function isImageMediaType(mediaType: unknown): mediaType is ImageMediaType {
+  return (IMAGE_MEDIA_TYPES as readonly unknown[]).includes(mediaType);
+}
 
 export interface ImageAttachment {
   /** base64-encoded image data (no data: prefix) */

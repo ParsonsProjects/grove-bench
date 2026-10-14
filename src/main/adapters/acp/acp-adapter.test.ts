@@ -248,6 +248,29 @@ describe('AcpAdapter', () => {
     handle.close();
   });
 
+  it('charges the first turn after a resume only for its own rise in the running cost', async () => {
+    const adapter = new AcpAdapter(def());
+    const handle = await adapter.start(config({ resumeSessionId: 'old-session', priorCostUsd: 0.004 }));
+    await until(handle, 'system_init');
+    handle.sendMessage({ text: 'cost' });
+    const turn = await until(handle, 'result');
+    expect((turn.at(-1) as { totalCostUsd: number }).totalCostUsd).toBeCloseTo(0.006, 10);
+    handle.close();
+  });
+
+  it("marks where it starts afresh when the agent can't reopen the thread, so its costs and rewinds start again", async () => {
+    const adapter = new AcpAdapter(def());
+    const handle = await adapter.start(config({ resumeSessionId: 'gone-session', priorCostUsd: 0.5 }));
+    const events = await until(handle, 'system_init');
+    expect(events.find((e) => e.type === 'status')).toMatchObject({ level: 'warning', newConversation: true });
+    expect(events.at(-1)).not.toMatchObject({ sessionId: 'gone-session' });
+    // A new conversation's first turn costs what the agent reports for it.
+    handle.sendMessage({ text: 'cost' });
+    const turn = await until(handle, 'result');
+    expect((turn.at(-1) as { totalCostUsd: number }).totalCostUsd).toBeCloseTo(0.01, 10);
+    handle.close();
+  });
+
   it('resumes a conversation with session/load without replaying it into the thread', async () => {
     const adapter = new AcpAdapter(def());
     const handle = await adapter.start(config({ resumeSessionId: 'old-session' }));

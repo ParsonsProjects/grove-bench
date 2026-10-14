@@ -12,33 +12,17 @@
  * `authenticate` in its ACP client). Gemini CLI then saves that choice in its
  * own settings.
  */
-import { net } from 'electron';
-import { logger } from '../../logger.js';
+import { checkKeyWithGet, type KeyCheckFetch } from '../key-check.js';
 
 /** Lists models, which any working key may do (Gemini API, models.list). */
 const GEMINI_KEY_CHECK_URL = 'https://generativelanguage.googleapis.com/v1beta/models?pageSize=1';
-const GEMINI_KEY_CHECK_TIMEOUT_MS = 10_000;
-
-type KeyCheckFetch = (url: string, init: { headers: Record<string, string>; signal: AbortSignal }) => Promise<{ ok: boolean; status: number }>;
 
 /** True when Google accepts the key, false when it refuses it (400 for a key
  *  that isn't valid, 401/403 for one that may not call the Gemini API), null
  *  when that couldn't be told (offline, a server error). */
 export async function verifyGeminiKey(
   key: string,
-  { fetchFn = (url, init) => net.fetch(url, init) }: { fetchFn?: KeyCheckFetch } = {},
+  { fetchFn }: { fetchFn?: KeyCheckFetch } = {},
 ): Promise<boolean | null> {
-  try {
-    const res = await fetchFn(GEMINI_KEY_CHECK_URL, {
-      headers: { 'x-goog-api-key': key },
-      signal: AbortSignal.timeout(GEMINI_KEY_CHECK_TIMEOUT_MS),
-    });
-    if (res.ok) return true;
-    if (res.status === 400 || res.status === 401 || res.status === 403) return false;
-    logger.debug(`[gemini] key check answered ${res.status}`);
-    return null;
-  } catch (err) {
-    logger.debug('[gemini] key check failed:', err);
-    return null;
-  }
+  return checkKeyWithGet(GEMINI_KEY_CHECK_URL, { 'x-goog-api-key': key }, { refused: [400, 401, 403], label: 'gemini', fetchFn });
 }
