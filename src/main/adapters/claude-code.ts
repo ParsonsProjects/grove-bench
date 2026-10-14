@@ -1459,6 +1459,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     plugins: true,
     skills: true,
     usage: true,
+    compact: true,
     imageAttachments: true,
     structuredOutput: true,
     sandbox: true,

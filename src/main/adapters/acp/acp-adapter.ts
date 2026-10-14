@@ -286,6 +286,9 @@ export class AcpAdapter implements AgentAdapter {
     plugins: false,
     skills: false,
     usage: false,
+    // ACP has no compaction request; an agent that lists a compact command
+    // gets it from its own command list.
+    compact: false,
     // Sent only when the agent says it takes images (promptCapabilities).
     imageAttachments: true,
     structuredOutput: false,

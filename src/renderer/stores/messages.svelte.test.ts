@@ -11,6 +11,7 @@ import { rateLimitStore } from './rateLimit.svelte.js';
 import { usageStore } from './usage.svelte.js';
 import { settingsStore } from './settings.svelte.js';
 import type { AgentEvent } from '../../shared/types.js';
+import { CONTROL_IDS } from '../../shared/types.js';
 
 const SID = 'test-session';
 
@@ -1380,15 +1381,35 @@ describe('sendCommand', () => {
     expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, '/clear');
   });
 
+  /** The thread's agent offers these permission modes. */
+  function modes(...values: string[]) {
+    messageStore.controlsBySession[SID] = {
+      descriptors: [{ id: CONTROL_IDS.permissionMode, label: 'Mode', default: 'default', options: values.map((value) => ({ value, label: value })) }],
+      values: {},
+    };
+  }
+
   it('syncs mode on /plan command', () => {
+    modes('default', 'plan', 'acceptEdits');
     messageStore.sendCommand(SID, '/plan');
     expect(messageStore.getMode(SID)).toBe('plan');
   });
 
   it('syncs mode on /code command', () => {
+    modes('default', 'plan', 'acceptEdits');
     messageStore.modeBySession[SID] = 'plan';
     messageStore.sendCommand(SID, '/code');
     expect(messageStore.getMode(SID)).toBe('default');
+  });
+
+  it("leaves the mode alone for an agent without Plan mode, which takes /plan as text", () => {
+    modes('default', 'acceptEdits', 'readSafe');
+    messageStore.modeBySession[SID] = 'acceptEdits';
+    messageStore.sendCommand(SID, '/plan');
+    expect(messageStore.getMode(SID)).toBe('acceptEdits');
+    messageStore.sendCommand(SID, '/code');
+    expect(messageStore.getMode(SID)).toBe('acceptEdits');
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, '/plan');
   });
 });
 

@@ -2299,10 +2299,13 @@ class MessageStore {
     if (trimmed === '/clear') {
       this.pendingClear[sessionId] = true;
     }
-    // Sync mode when user issues mode-changing slash commands
-    if (trimmed === '/plan') {
+    // Sync mode when user issues mode-changing slash commands, for an agent
+    // with Plan mode (Claude Code's). To another agent they are only text.
+    const hasPlanMode = this.getControlDescriptors(sessionId)
+      .find((d) => d.id === CONTROL_IDS.permissionMode)?.options.some((o) => o.value === 'plan');
+    if (hasPlanMode && trimmed === '/plan') {
       this.modeBySession[sessionId] = 'plan';
-    } else if (trimmed === '/code') {
+    } else if (hasPlanMode && trimmed === '/code') {
       this.modeBySession[sessionId] = 'default';
     }
     this.pushMessage(sessionId, {

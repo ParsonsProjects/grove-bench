@@ -380,10 +380,19 @@ describe('StatusBar context grove', () => {
   });
 });
 
+/** The thread's agent, which can summarise the thread unless told not to. */
+function claudeAgent(compact = true) {
+  agentsStore.list = [{ id: 'claude-code', displayName: 'Claude Agent', capabilities: { compact }, isDefault: true }];
+  agentsStore.loaded = true;
+}
+
 describe('StatusBar context actions', () => {
+  beforeEach(() => claudeAgent());
   afterEach(() => {
     delete messageStore.usageBySession[ACTIVE];
     delete messageStore.contextWindowBySession[ACTIVE];
+    agentsStore.list = [];
+    agentsStore.loaded = false;
   });
 
   async function openContext() {
@@ -420,6 +429,13 @@ describe('StatusBar context actions', () => {
     await openContext();
     await fireEvent.click(screen.getByRole('button', { name: 'Summarise to free space' }));
     expect(send).toHaveBeenCalledWith(ACTIVE, '/compact');
+  });
+
+  it("doesn't offer to summarise for an agent that can't", async () => {
+    claudeAgent(false);
+    await openContext();
+    expect(screen.queryByRole('button', { name: 'Summarise to free space' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Start fresh…' })).toBeTruthy();
   });
 
   it('colours the whole used length, cached tokens included', () => {
@@ -715,6 +731,7 @@ describe('StatusBar context popover closes on Escape', () => {
   });
 
   it('closes the context popover without stopping anything else', async () => {
+    claudeAgent();
     messageStore.contextWindowBySession[ACTIVE] = 200_000;
     messageStore.usageBySession[ACTIVE] = { inputTokens: 50_000, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 };
     render(StatusBar, { props: { sessionId: ACTIVE } });
@@ -728,6 +745,8 @@ describe('StatusBar context popover closes on Escape', () => {
 
     expect(screen.queryByText('Summarise to free space')).toBeNull();
     expect(later).not.toHaveBeenCalled();
+    agentsStore.list = [];
+    agentsStore.loaded = false;
   });
 });
 

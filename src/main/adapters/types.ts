@@ -34,6 +34,10 @@ export interface AgentCapabilities {
   skills?: boolean;
   /** Reports account-level plan usage windows (see AgentQueryHandle.getUsage) */
   usage?: boolean;
+  /** Has a command (/compact) that replaces the conversation so far with a
+   *  summary to free context. The UI offers it only for these agents, or one
+   *  that lists a `compact` command itself. */
+  compact?: boolean;
   /** Supports image attachments in messages */
   imageAttachments: boolean;
   /** Supports structured JSON output */
