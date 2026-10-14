@@ -173,6 +173,6 @@ the spike pins.
 12. [OpenCode docs: Config](https://opencode.ai/docs/config/).
 13. [anomalyco/opencode #31750: ACP per-session model selection](https://github.com/anomalyco/opencode/issues/31750); [#14098: ACP session config options](https://github.com/anomalyco/opencode/issues/14098).
 14. [anomalyco/opencode #47918: Expose per-session automatic approval through ACP](https://github.com/anomalyco/opencode/issues/47918).
-15. [Node.js April 2024 security releases (CVE-2024-27980)](https://nodejs.org/en/blog/vulnerability/april-2024-security-releases-2). Main spawns agents with execa, which uses cross-spawn, so npm `.cmd` shims work.
+15. [Node.js April 2024 security releases (CVE-2024-27980)](https://nodejs.org/en/blog/vulnerability/april-2024-security-releases-2). Agents start in the agent host through cross-spawn's parse (`findCommand`), as execa does, so npm `.cmd` shims work.
 16. [OpenRouter docs: API credit and rate limits (402 and 429)](https://openrouter.ai/docs/api_reference/limits).
 17. [OpenRouter API reference: Get current API key](https://openrouter.ai/docs/api/api-reference/api-keys/get-current-api-key).

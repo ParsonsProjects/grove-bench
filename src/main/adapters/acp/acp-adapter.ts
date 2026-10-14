@@ -23,7 +23,6 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { app } from 'electron';
-import { execa, type ResultPromise } from 'execa';
 import type {
   AdapterConfig, AdapterEvent, AdapterPrerequisiteStatus, AgentAdapter, AgentCapabilities, AgentQueryHandle,
   ApiKeyDescriptor, CliSignInDescriptor, ModelInfo, PermissionResponse, SignInCheck, UserMessage,
@@ -33,6 +32,8 @@ import { CONTROL_IDS, isImageMediaType } from '../../../shared/types.js';
 import { cleanEnv } from '../../agent-utils.js';
 import { decideToolCall } from '../../tool-policy.js';
 import { RunningCost } from '../running-cost.js';
+import { runProcess, spawnProcess } from '../../process-host.js';
+import type { HostedProcess } from '../../process-host-spawn.js';
 import { getApiKey } from '../../credentials.js';
 import { killTree } from '../../process-tree.js';
 import { logger } from '../../logger.js';
@@ -172,9 +173,12 @@ function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<
   ]).finally(() => clearTimeout(timer));
 }
 
-/** Start the agent program with Grove's usual options. Shared by
- *  conversations and generateText so a start-up fix lands in both. */
-function spawnAgent(def: AcpAgentDefinition, cwd: string, extraEnv?: Record<string, string> | null): ResultPromise {
+/** Start the agent program with Grove's usual options, in the agent host
+ *  (spawnProcess) so a slow start (a cold npm shim, an antivirus scan) never
+ *  holds up the window, as for Claude Code. The command is found as a shell
+ *  would, npm's .cmd shims included. Shared by conversations, generateText
+ *  and the sign-in check so a start-up fix lands in all of them. */
+function spawnAgent(def: AcpAgentDefinition, cwd: string, extraEnv?: Record<string, string> | null): HostedProcess {
   const savedKey = def.apiKey ? getApiKey(def.id) : null;
   const env = {
     ...cleanEnv(process.env),
@@ -183,22 +187,19 @@ function spawnAgent(def: AcpAgentDefinition, cwd: string, extraEnv?: Record<stri
     ...(savedKey && def.apiKey ? { [def.apiKey.envVar]: savedKey } : {}),
   } as Record<string, string>;
   Object.assign(env, def.spawnEnv?.(env, { savedKey: savedKey !== null }));
-  return execa(def.command, def.args, {
-    cwd,
-    env,
-    extendEnv: false,
-    stdin: 'pipe',
-    stdout: 'pipe',
-    stderr: 'pipe',
-    buffer: false,
-    reject: false,
-    windowsHide: true,
-    cleanup: true,
-  });
+  return spawnProcess(def.command, def.args, { cwd, env, findCommand: true });
+}
+
+/** Call `onEnd` once the agent program has gone, with its exit code and, when
+ *  it never started, why. */
+function onAgentEnd(proc: HostedProcess, onEnd: (exitCode: number | undefined, failure?: string) => void): void {
+  let failure: string | undefined;
+  proc.on('error', (e: Error) => { failure ??= e.message; });
+  proc.once('close', (code: number | null) => onEnd(code ?? undefined, failure));
 }
 
 /** Keep the last STDERR_TAIL_CHARS of the agent's stderr for error messages. */
-function collectStderr(proc: ResultPromise, onTail: (tail: string) => void): void {
+function collectStderr(proc: HostedProcess, onTail: (tail: string) => void): void {
   let tail = '';
   proc.stderr?.setEncoding('utf8');
   proc.stderr?.on('data', (chunk: string) => {
@@ -389,7 +390,8 @@ export class AcpAdapter implements AgentAdapter {
       rpc.close();
       // On Windows the agent runs under npm's .cmd shim: kill() would stop
       // only cmd.exe and leave the agent running in the folder.
-      if (proc.exitCode === null && proc.pid) await killTree(proc.pid).catch(() => proc.kill());
+      // No pid yet (the host hasn't said it started): kill() reaches it once it does.
+      if (proc.exitCode === null) await (proc.pid ? killTree(proc.pid) : Promise.reject()).catch(() => proc.kill());
       try {
         fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
       } catch (e) {
@@ -483,7 +485,8 @@ export class AcpAdapter implements AgentAdapter {
     }
     const lookup = process.platform === 'win32' ? 'where.exe' : 'which';
     try {
-      const { stdout, exitCode } = await execa(lookup, [this.def.command], { reject: false, timeout: 10_000, windowsHide: true });
+      // In the process host, like git and gh, so the lookup never holds up the window.
+      const { stdout, exitCode } = await runProcess(lookup, [this.def.command], { reject: false, timeout: 10_000 });
       const found = exitCode === 0 ? String(stdout).trim().split(/\r?\n/)[0] : '';
       if (found) {
         // Signing in happens in the agent's own CLI and is only reported when
@@ -597,7 +600,7 @@ interface AdapterHooks {
 /** One running agent process and its session. */
 class AcpQuery {
   private readonly events = new EventQueue<AdapterEvent>();
-  private proc: ResultPromise | null = null;
+  private proc: HostedProcess | null = null;
   private rpc: JsonRpcConnection | null = null;
   private mcp: GroveMcpHttp | null = null;
   /** Grove's tool servers as the agent is told about them (also for /clear). */
@@ -691,7 +694,7 @@ class AcpQuery {
     const proc = spawnAgent(def, config.cwd, config.extraEnv);
     this.proc = proc;
     collectStderr(proc, (tail) => { this.stderrTail = tail; });
-    void proc.then((result) => this.onExit(result.exitCode, result.failed ? result.message : undefined));
+    onAgentEnd(proc, (exitCode, failure) => this.onExit(exitCode, failure));
 
     if (!proc.stdout || !proc.stdin) throw new Error(`Could not start ${def.displayName}`);
     this.rpc = new JsonRpcConnection(proc.stdout, proc.stdin, {
