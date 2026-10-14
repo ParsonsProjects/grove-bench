@@ -718,3 +718,23 @@ describe('ChangesReviewPanel — reviewing the PR', () => {
     expect(await findByText('Review PR #7')).toBeInTheDocument();
   });
 });
+
+describe('ChangesReviewPanel — Markdown preview', () => {
+  it('offers to read a changed Markdown file as it renders', async () => {
+    mockGroveBench.getFileDiff.mockResolvedValue({ kind: 'text', patch: patch('# Plan') });
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('docs/plan.md')] } };
+    mockGroveBench.openWorktreeFile.mockResolvedValueOnce({ kind: 'markdown', content: '# Plan' });
+    const { findByRole } = render(ChangesReviewPanel, { sessionId: SID });
+
+    (await findByRole('button', { name: 'Preview' })).click();
+    await waitFor(() => expect(mockGroveBench.openWorktreeFile).toHaveBeenCalledWith(SID, 'docs/plan.md'));
+  });
+
+  it('doesn\'t offer it for a deleted Markdown file or another type', async () => {
+    mockGroveBench.getFileDiff.mockResolvedValue({ kind: 'text', patch: patch('x') });
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('old.md', { status: 'deleted' }), entry('src/a.ts')] } };
+    const { container, queryByRole } = render(ChangesReviewPanel, { sessionId: SID });
+    await waitFor(() => expect(diffText(container)).toContain('x'));
+    expect(queryByRole('button', { name: 'Preview' })).toBeNull();
+  });
+});

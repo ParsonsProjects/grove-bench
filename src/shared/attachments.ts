@@ -79,6 +79,14 @@ const MADE_FILE_KINDS: Readonly<Record<string, MadeFileKind>> = {
   pptx: 'document',
 };
 
+/** A Markdown file, which opens in the Focus panel. Not a "Files made" kind:
+ *  agents mostly edit Markdown as source (a README, docs), and the thread
+ *  shows those edits. */
+export function isMarkdownFile(name: string): boolean {
+  const ext = extOf(name);
+  return ext === 'md' || ext === 'markdown';
+}
+
 /** The kind of a file a turn's "Files made" list shows, or null for one it
  *  leaves out (source code, logs, anything else). */
 export function madeFileKind(name: string): MadeFileKind | null {

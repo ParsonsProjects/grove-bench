@@ -10,6 +10,8 @@
   import { reviewStore } from '../stores/review.svelte.js';
   import type { GitStatusEntry, FileDiffResult, FileLinesResult } from '../../shared/types.js';
   import CopyButton from './CopyButton.svelte';
+  import { isMarkdownFile } from '../../shared/attachments.js';
+  import { openWorktreeFile } from '$lib/worktree-files.js';
   import ImageDiffView from './ImageDiffView.svelte';
   import SelectionMenu from './SelectionMenu.svelte';
   import { settingsStore } from '../stores/settings.svelte.js';
@@ -549,6 +551,11 @@
     composer = null;
   }
 
+  /** A Markdown file as it is now, rendered, in the Focus panel. */
+  function previewMarkdown(filePath: string) {
+    openWorktreeFile(sessionId, filePath).catch((err) => console.warn(`Could not preview ${filePath}:`, err));
+  }
+
   function openInEditor(filePath: string) {
     window.groveBench.openInEditor(sessionId, filePath).catch(() => {});
   }
@@ -912,6 +919,12 @@
             title="Show individual edits from this thread"
           >
             {history.edits.length} edit{history.edits.length !== 1 ? 's' : ''}
+          </Button>
+        {/if}
+
+        {#if isMarkdownFile(selectedEntry.filePath) && selectedEntry.status !== 'deleted'}
+          <Button size="xs" variant="quiet" onclick={() => previewMarkdown(selectedEntry.filePath)} title="Read the file as it is now, rendered, in the Focus panel">
+            Preview
           </Button>
         {/if}
 

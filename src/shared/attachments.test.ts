@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isAudioType, isPdfType, knownMediaType, madeFileKind, worktreeFileUrl, worktreeImageType } from './attachments.js';
+import { isAudioType, isMarkdownFile, isPdfType, knownMediaType, madeFileKind, worktreeFileUrl, worktreeImageType } from './attachments.js';
 
 describe('knownMediaType', () => {
   it('gives the type for PDFs and audio, whatever the case of the extension', () => {
@@ -68,5 +68,14 @@ describe('worktreeFileUrl', () => {
   it('encodes the path as one segment, so it can hold slashes and a drive', () => {
     expect(worktreeFileUrl('s1', 'shots/home.png')).toBe('grove-attachment://worktree/s1/shots%2Fhome.png');
     expect(worktreeFileUrl('s1', 'C:\\wt\\a b.svg')).toBe('grove-attachment://worktree/s1/C%3A%5Cwt%5Ca%20b.svg');
+  });
+});
+
+describe('isMarkdownFile', () => {
+  it('knows a Markdown file by its extension, in any case', () => {
+    expect(isMarkdownFile('docs/plan.md')).toBe(true);
+    expect(isMarkdownFile('NOTES.Markdown')).toBe(true);
+    expect(isMarkdownFile('notes.mdx')).toBe(false);
+    expect(isMarkdownFile('md')).toBe(false);
   });
 });

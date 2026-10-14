@@ -137,6 +137,19 @@ describe('openWorktreeFile', () => {
     expect(shell.openPath).not.toHaveBeenCalled();
   });
 
+  it('hands a Markdown file\'s text back to read in the Focus panel', async () => {
+    write(worktree, 'docs/plan.md', '# Plan\n\n1. Fix');
+    expect(await openWorktreeFile(worktree, 'docs/plan.md')).toEqual({ kind: 'markdown', content: '# Plan\n\n1. Fix' });
+    expect(shell.openPath).not.toHaveBeenCalled();
+    expect(shell.showItemInFolder).not.toHaveBeenCalled();
+  });
+
+  it('shows a Markdown file too large to draw in its folder instead', async () => {
+    const p = write(worktree, 'huge.md', 'x'.repeat(1024 * 1024 + 1));
+    expect(await openWorktreeFile(worktree, 'huge.md')).toEqual({ kind: 'shown' });
+    expect(shell.showItemInFolder).toHaveBeenLastCalledWith(p);
+  });
+
   it('opens viewers’ types in their default app', async () => {
     for (const rel of ['r.pdf', 'demo.mp4', 'data.csv', 'deck.pptx', 'shot.png']) {
       const p = write(worktree, rel, 'x');

@@ -114,6 +114,14 @@ describe('MarkdownBlock links', () => {
     navigate.mockRestore();
   });
 
+  it('opens a link to a Markdown file, to read in the Focus panel', async () => {
+    const open = vi.mocked(window.groveBench.openWorktreeFile);
+    open.mockClear();
+    const { container } = render(MarkdownBlock, { content: 'See [the plan](docs/plan.md).', sessionId: 's1' });
+    await fireEvent.click(container.querySelector('a')!);
+    expect(open).toHaveBeenCalledWith('s1', 'docs/plan.md');
+  });
+
   it('opens no file without a thread', async () => {
     const open = vi.mocked(window.groveBench.openWorktreeFile);
     open.mockClear();

@@ -1032,6 +1032,8 @@ export type OpenWorktreeFileResult =
   | { kind: 'opened' }
   | { kind: 'shown' }
   | { kind: 'preview'; url: string }
+  /** A Markdown file's text, for the Focus panel. */
+  | { kind: 'markdown'; content: string }
   | { kind: 'missing' };
 
 // ─── File Attachment ───

@@ -1,5 +1,7 @@
-import { describe, it, expect } from 'vitest';
-import { localFilePath, localFileTarget } from './worktree-files.js';
+import { describe, it, expect, afterEach } from 'vitest';
+import { localFilePath, localFileTarget, openWorktreeFile } from './worktree-files.js';
+import { markdownPreviewStore } from '../stores/markdownPreview.svelte.js';
+import { mockGroveBench } from '../__mocks__/setup.js';
 
 describe('localFileTarget', () => {
   it('reads relative and absolute paths and file:// URLs', () => {
@@ -42,5 +44,21 @@ describe('localFilePath', () => {
   it('is the path alone', () => {
     expect(localFilePath('report.html#summary')).toBe('report.html');
     expect(localFilePath('https://example.com')).toBeNull();
+  });
+});
+
+describe('openWorktreeFile', () => {
+  afterEach(() => markdownPreviewStore.close());
+
+  it('shows a Markdown file in the Focus panel, titled by its path', async () => {
+    mockGroveBench.openWorktreeFile.mockResolvedValueOnce({ kind: 'markdown', content: '# Plan' });
+    expect(await openWorktreeFile('s1', 'docs/plan.md')).toBe(true);
+    expect(markdownPreviewStore).toMatchObject({ open: true, content: '# Plan', title: 'docs/plan.md', sessionId: 's1' });
+  });
+
+  it('says when the file is gone', async () => {
+    mockGroveBench.openWorktreeFile.mockResolvedValueOnce({ kind: 'missing' });
+    expect(await openWorktreeFile('s1', 'docs/plan.md')).toBe(false);
+    expect(markdownPreviewStore.open).toBe(false);
   });
 });

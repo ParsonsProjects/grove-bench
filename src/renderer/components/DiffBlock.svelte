@@ -4,6 +4,8 @@
   import { Pulse } from '$lib/components/ui/pulse/index.js';
   import DiffView, { computeDiffLines } from './DiffView.svelte';
   import type { ToolView } from '../../shared/tool-view.js';
+  import { isMarkdownFile } from '../../shared/attachments.js';
+  import { openWorktreeFile } from '$lib/worktree-files.js';
 
   let {
     sessionId,
@@ -33,6 +35,18 @@
 
   function openInEditor() {
     window.groveBench.openInEditor(sessionId, filePath).catch(() => {});
+  }
+
+  /** A Markdown file can be read as it renders, in the Focus panel. */
+  let isMarkdown = $derived(isMarkdownFile(filePath));
+  /** It's no longer in the worktree. */
+  let gone = $state(false);
+  async function preview() {
+    try {
+      gone = !(await openWorktreeFile(sessionId, filePath));
+    } catch (err) {
+      console.warn(`Could not preview ${filePath}:`, err);
+    }
   }
 </script>
 
@@ -70,6 +84,18 @@
       {:else if diffLines.length > 0}
         <div class="ml-auto flex items-center gap-1">
           <CopyButton text={copyContent} class="opacity-0 group-hover/diff-hdr:opacity-100" />
+          {#if isMarkdown}
+            <Button
+              variant="quiet"
+              size="inline"
+              onclick={preview}
+              disabled={gone}
+              class="select-none"
+              title={gone ? `${filePath} is no longer in the worktree` : 'Read the file as it is now, rendered, in the Focus panel'}
+            >
+              preview
+            </Button>
+          {/if}
           {#if !isWrite}
             <Button
               variant="quiet"

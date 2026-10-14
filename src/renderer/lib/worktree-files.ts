@@ -4,6 +4,7 @@
  */
 import { messageStore } from '../stores/messages.svelte.js';
 import { previewStore } from '../stores/preview.svelte.js';
+import { markdownPreviewStore } from '../stores/markdownPreview.svelte.js';
 
 /** A local file a link names, and the anchor in it (`#summary`), if any. */
 export interface LocalFileTarget {
@@ -45,14 +46,16 @@ export function localFilePath(href: string | null | undefined): string | null {
 }
 
 /** Open a file in the thread's worktree: a web page in the Preview tab (at
- *  `hash`, an anchor in it), anything else as main decides
- *  (worktree-files.ts). False when it's gone. */
+ *  `hash`, an anchor in it), a Markdown file in the Focus panel, anything
+ *  else as main decides (worktree-files.ts). False when it's gone. */
 export async function openWorktreeFile(sessionId: string, filePath: string, hash = ''): Promise<boolean> {
   const result = await window.groveBench.openWorktreeFile(sessionId, filePath);
   if (result.kind === 'preview') {
     previewStore.setMode(sessionId, 'user');
     messageStore.setActiveTab(sessionId, 'preview');
     await previewStore.navigate(sessionId, 'user', result.url + hash).catch((err) => console.warn(`Could not preview ${filePath}:`, err));
+  } else if (result.kind === 'markdown') {
+    markdownPreviewStore.show(result.content, filePath, sessionId);
   }
   return result.kind !== 'missing';
 }

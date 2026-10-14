@@ -8,7 +8,7 @@
   import { COPY_MARK, isRenderedCopyButton, renderedCode, renderedTable } from '$lib/copy-mark.js';
   import { HIGHLIGHT_MARK, highlightWhenVisible } from '$lib/code-highlight.js';
   import { localFilePath, localFileTarget, openWorktreeFile } from '$lib/worktree-files.js';
-  import { madeFileKind, worktreeFileUrl, worktreeImageType } from '../../shared/attachments.js';
+  import { isMarkdownFile, madeFileKind, worktreeFileUrl, worktreeImageType } from '../../shared/attachments.js';
 
   const COPY_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"></rect><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path></svg>`;
 
@@ -63,13 +63,17 @@
     },
   };
 
-  /** Link renderer: a link to an output file in the worktree (madeFileKind)
+  /** A worktree file a link in a reply opens: an output file (madeFileKind),
+   *  or a Markdown file, read in the Focus panel. */
+  const opensFromThread = (path: string) => !!madeFileKind(path) || isMarkdownFile(path);
+
+  /** Link renderer: a link to a file the thread opens (opensFromThread)
    *  keeps the path as written in `data-local-href`. DOMPurify would drop an
    *  absolute one (`C:\\...`, `file:///...`) from `href`, which only holds `#`. */
   const linkRenderer = {
     link(this: Renderer, token: Tokens.Link) {
       const local = localFilePath(token.href);
-      if (local === null || !madeFileKind(local)) return false;
+      if (local === null || !opensFromThread(local)) return false;
       const title = token.title ? ` title="${escapeAttr(token.title)}"` : '';
       return `<a href="#" data-local-href="${escapeAttr(token.href)}"${title}>${this.parser.parseInline(token.tokens)}</a>`;
     },
@@ -147,7 +151,7 @@
       // Links: localhost opens in the Preview tab, the rest in the system
       // browser. An output file in the thread's worktree (a web page, PDF,
       // image, video, spreadsheet: madeFileKind) opens from there, a web page
-      // in the Preview tab. Every other link (source files, `?x`, `#x`,
+      // in the Preview tab, and a Markdown file in the Focus panel. Every other link (source files, `?x`, `#x`,
       // mailto:) does nothing: followed, it would navigate or reload the app
       // window, and a link the agent wrote shouldn't open a script.
       const anchor = target.closest('a');
@@ -159,7 +163,7 @@
         return;
       }
       const local = localFileTarget(anchor.dataset.localHref ?? href);
-      if (local !== null && sessionId && madeFileKind(local.path)) {
+      if (local !== null && sessionId && opensFromThread(local.path)) {
         const sid = sessionId;
         openWorktreeFile(sid, local.path, local.hash)
           .then((found) => { if (!found) anchor.title = `${local.path} isn't in this thread's worktree`; })
