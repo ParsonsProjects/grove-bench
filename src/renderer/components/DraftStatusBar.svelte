@@ -1,18 +1,22 @@
 <script lang="ts">
   /**
-   * Status bar for a draft conversation. Same layout as a running one: agent
-   * settings on the left, project / branch stack next to it. Everything here
-   * can still change because nothing exists yet; sending the first message
-   * fixes the agent, the project and where it runs.
+   * Options for a draft conversation, along the foot of its message box
+   * (DraftPane). Same layout as a running one's status bar: agent settings
+   * on the left, project / branch stack next to it. Everything here can
+   * still change because nothing exists yet; sending the first message
+   * fixes the agent, the project and where it runs. The box sits in the
+   * middle of the pane, so its menus open downwards, or upwards when they
+   * only fit there (placeInPane). They fade in, as they may open either way.
    */
   import { onMount, onDestroy } from 'svelte';
-  import { fly } from 'svelte/transition';
+  import { fade } from 'svelte/transition';
   import { store } from '../stores/sessions.svelte.js';
   import { draftStore } from '../stores/draft.svelte.js';
   import DraftAgentControl from './DraftAgentControl.svelte';
   import DraftStartPicker from './DraftStartPicker.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
   import { menuItem, menuPanel } from '$lib/components/ui/menu/index.js';
+  import { placeInPane } from '../lib/keep-in-viewport.js';
   import XIcon from '@lucide/svelte/icons/x';
 
   let pickerOpen = $state(false);
@@ -72,8 +76,10 @@
 
 {#if draft}
 <!-- A container like the conversation bar, so the shared Agent settings
-     button widens its model name the same way when there is room. -->
-<div class="@container flex items-center gap-4 px-4 py-1 bg-card border-t border-b border-border text-xs text-muted-foreground shrink-0">
+     button sizes its model name from this row. The row is narrower than the
+     button's wide breakpoint, so the name keeps its short width here rather
+     than widening with some outer container. -->
+<div class="@container flex-1 min-w-0 flex items-center gap-4 text-xs text-muted-foreground">
   <DraftAgentControl />
 
   <span class="w-px self-stretch bg-border"></span>
@@ -109,13 +115,13 @@
     <span class="text-caption text-muted-foreground truncate max-w-80">{whereDetail}</span>
 
     {#if pickerOpen}
-      <div transition:fly={{ y: 6, duration: 140 }} class="absolute bottom-full left-0 mb-2 z-50">
+      <div transition:fade={{ duration: 120 }} use:placeInPane class="absolute top-full left-0 mt-2 z-50">
         <DraftStartPicker onclose={() => pickerOpen = false} />
       </div>
     {/if}
 
     {#if projectMenuOpen}
-      <div transition:fly={{ y: 6, duration: 140 }} class="{menuPanel()} absolute bottom-full left-0 mb-2 z-50 min-w-48" role="menu" aria-label="Project">
+      <div transition:fade={{ duration: 120 }} use:placeInPane class="{menuPanel()} absolute top-full left-0 mt-2 z-50 min-w-48" role="menu" aria-label="Project">
         {#each store.repos as repo (repo)}
           <button
             type="button"
@@ -148,6 +154,5 @@
     </span>
   {/if}
 
-  <span class="ml-auto text-caption text-muted-foreground text-right">Nothing is created until you send</span>
 </div>
 {/if}
