@@ -1876,6 +1876,15 @@ class AgentSessionManager {
     return this.sessions.get(id);
   }
 
+  /** What a thread has spent over its life, as its agent estimated it: the
+   *  figure its spend limit counts (session-limits.ts). A thread that isn't
+   *  loaded is added up from its saved history. */
+  threadSpend(id: string): number {
+    const session = this.sessions.get(id);
+    if (session) return session.limits.threadSpendUsd;
+    return limitsFromHistory(this.events.load(id)).threadSpendUsd;
+  }
+
   /**
    * Re-attach a new BrowserWindow to an existing running session.
    * Called after renderer reload so that IPC events flow to the new webContents.

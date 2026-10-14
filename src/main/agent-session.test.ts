@@ -926,8 +926,31 @@ describe('AgentSessionManager limits', () => {
     mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false, totalCostUsd: 0.4, sessionCostUsd: 0.4 });
     mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false, totalCostUsd: 0.1, sessionCostUsd: 0.5 });
     await vi.waitFor(() => expect(sessionManager.getSession('test-spend')!.limits.threadSpendUsd).toBeCloseTo(0.5));
+    expect(sessionManager.threadSpend('test-spend')).toBeCloseTo(0.5);
 
     await sessionManager.destroySession('test-spend');
+  });
+
+  it('adds up the spend of a thread that isn\'t loaded from its saved history', () => {
+    const content = [
+      { type: 'result', subtype: 'success', isError: false, totalCostUsd: 0.25, sessionCostUsd: 0.25 },
+      { type: 'user_message', text: 'and again' },
+      { type: 'result', subtype: 'success', isError: false, totalCostUsd: 0.5, sessionCostUsd: 0.75 },
+      // From before results carried a running total: not counted.
+      { type: 'result', subtype: 'success', isError: false, totalCostUsd: 9 },
+    ].map((e) => JSON.stringify(e)).join('\n') + '\n';
+    vi.mocked(fs.statSync).mockImplementation(() => ({ mtimeMs: 1, size: content.length }) as fs.Stats);
+    vi.mocked(fs.readFileSync).mockImplementation(() => content);
+    try {
+      expect(sessionManager.threadSpend('test-spend-saved')).toBeCloseTo(0.75);
+    } finally {
+      vi.mocked(fs.statSync).mockImplementation(() => { throw new Error('ENOENT'); });
+      vi.mocked(fs.readFileSync).mockImplementation(() => { throw new Error('ENOENT'); });
+    }
+  });
+
+  it('gives no spend for a thread with no saved history', () => {
+    expect(sessionManager.threadSpend('test-spend-none')).toBe(0);
   });
 
   it('settles a limit question when the user clicks Stop', async () => {

@@ -1075,6 +1075,9 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.LIMITS_DAILY_SPEND, () => todaySpend().usd);
 
+  ipcMain.handle(IPC.LIMITS_THREAD_SPEND, (_event, sessionId: unknown) =>
+    typeof sessionId === 'string' ? sessionManager.threadSpend(sessionId) : 0);
+
   ipcMain.handle(IPC.AGENT_HISTORY, (_event, sessionId: string) => {
     const prelaunch = prelaunchEvents.get(sessionId) ?? [];
     const history = sessionManager.getEventHistory(sessionId);

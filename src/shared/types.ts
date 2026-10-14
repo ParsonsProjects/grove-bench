@@ -1236,6 +1236,8 @@ export interface GroveBenchAPI {
   respondToLimit(sessionId: string, requestId: string, decision: 'continue' | 'stop'): Promise<boolean>;
   /** Today's estimated spend across threads, in USD, as the daily limit counts it. */
   getDailySpend(): Promise<number>;
+  /** What one thread has spent over its life, as its agent estimated it. */
+  getThreadSpend(sessionId: string): Promise<number>;
   onAgentEvent(sessionId: string, callback: (event: AgentEvent) => void): () => void;
   offAgentEvent(sessionId: string): void;
   getEventHistory(sessionId: string): Promise<AgentEvent[]>;
@@ -2082,6 +2084,7 @@ export const IPC = {
   AGENT_ELICITATION: 'agent:elicitation',
   AGENT_LIMIT: 'agent:limit',
   LIMITS_DAILY_SPEND: 'limits:dailySpend',
+  LIMITS_THREAD_SPEND: 'limits:threadSpend',
   MCP_CONFIG_LIST: 'mcpConfig:list',
   MCP_CONFIG_ADD: 'mcpConfig:add',
   MCP_CONFIG_REMOVE: 'mcpConfig:remove',

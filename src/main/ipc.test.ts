@@ -22,7 +22,7 @@ const m = vi.hoisted(() => {
       'listMcpServers', 'getMcpContextCost', 'reconnectMcpServer', 'setMcpServerEnabled', 'authenticateMcpServer', 'reconnectDownMcpServers',
       'getSessionAdapter', 'getWorktreePath', 'analyzeSkillSuggestionsForRepo', 'respondToPermission',
       'respondToElicitation', 'rewindFiles', 'getCheckpointDiff', 'listCheckpoints', 'getDiffHistory', 'getTurnDiff',
-      'getFullThreadDiff', 'getCheckpointFiles', 'getCheckpointFileDiff', 'getCheckpointFileLines',
+      'getFullThreadDiff', 'getCheckpointFiles', 'getCheckpointFileDiff', 'getCheckpointFileLines', 'threadSpend',
     ),
     worktreeManager: fns(
       'validateRepo', 'cleanupOrphans', 'getWorktreeOrManifest', 'registerDirect', 'create', 'getRepoConfig',
@@ -806,6 +806,18 @@ describe('branch switching', () => {
 });
 
 // ─── Agent I/O and history ───
+
+describe('LIMITS_THREAD_SPEND', () => {
+  it('gives the thread\'s spend, and nothing for a malformed id', async () => {
+    m.sessionManager.threadSpend.mockReturnValue(1.25);
+    expect(await invoke(IPC.LIMITS_THREAD_SPEND, 's1')).toBe(1.25);
+    expect(m.sessionManager.threadSpend).toHaveBeenCalledWith('s1');
+
+    m.sessionManager.threadSpend.mockClear();
+    expect(await invoke(IPC.LIMITS_THREAD_SPEND, { id: 's1' })).toBe(0);
+    expect(m.sessionManager.threadSpend).not.toHaveBeenCalled();
+  });
+});
 
 describe('agent I/O', () => {
   it('tells the tab when a message could not be delivered', async () => {
