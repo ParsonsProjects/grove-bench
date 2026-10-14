@@ -25,10 +25,12 @@
   $effect(() => {
     if (mcpConfigStore.attempted || mcpConfigStore.loading) return;
     untrack(() => {
-      // Start with the open conversation's agent (if it can edit MCP config)
-      // and project: project and local servers only list for one project.
+      // Start with the open conversation's agent (if it can edit MCP config),
+      // else the default agent, else the first that can, and the open
+      // project: project and local servers only list for one project.
       const active = store.activeSession;
-      mcpConfigStore.adapterType ??= mcpAgents.find((a) => a.id === active?.agentType)?.id;
+      mcpConfigStore.adapterType ??= mcpAgents.find((a) => a.id === active?.agentType)?.id
+        ?? mcpAgents.find((a) => a.id === agentsStore.defaultId)?.id ?? mcpAgents[0]?.id;
       mcpConfigStore.showProject(mcpConfigStore.cwd ?? active?.repoPath ?? store.repos[0]);
     });
   });

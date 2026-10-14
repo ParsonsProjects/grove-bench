@@ -824,8 +824,8 @@ async function runCompaction(
 
   const adapter = backgroundAgentFor(adapterType);
   if (!adapter) {
-    logger.info(`[memory-compact] The Claude account "${adapterType}" was removed, so LLM compaction is skipped`);
-    return { compacted: false, skippedReason: 'account removed', filesChanged };
+    logger.info(`[memory-compact] The agent "${adapterType}" is gone, so LLM compaction is skipped`);
+    return { compacted: false, skippedReason: 'agent gone', filesChanged };
   }
 
   if (!adapter.generateText) {

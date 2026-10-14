@@ -3,7 +3,8 @@ import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { AcpAdapter, type AcpAgentDefinition } from './acp-adapter.js';
+import { AcpAdapter, onAgentEnd, type AcpAgentDefinition } from './acp-adapter.js';
+import { HostedProcess } from '../../process-host-spawn.js';
 import { AUDIO_INLINE_BUDGET_BYTES, AUDIO_INLINE_MAX_BYTES } from '../file-attachments.js';
 import type { AdapterConfig, AdapterEvent, AgentQueryHandle, MessageFile, PermissionRequest, PermissionResponse } from '../types.js';
 
@@ -248,6 +249,32 @@ describe('AcpAdapter', () => {
     handle.close();
   });
 
+  it('charges the first turn after a resume only for its own rise in the running cost', async () => {
+    // 'null-answer': the agent answers the load with nothing.
+    for (const resumeSessionId of ['old-session', 'null-answer']) {
+      const adapter = new AcpAdapter(def());
+      const handle = await adapter.start(config({ resumeSessionId, priorCostUsd: 0.004 }));
+      await until(handle, 'system_init');
+      handle.sendMessage({ text: 'cost' });
+      const turn = await until(handle, 'result');
+      expect((turn.at(-1) as { totalCostUsd: number }).totalCostUsd, resumeSessionId).toBeCloseTo(0.006, 10);
+      handle.close();
+    }
+  });
+
+  it("marks where it starts afresh when the agent can't reopen the thread, so its costs and rewinds start again", async () => {
+    const adapter = new AcpAdapter(def());
+    const handle = await adapter.start(config({ resumeSessionId: 'gone-session', priorCostUsd: 0.5 }));
+    const events = await until(handle, 'system_init');
+    expect(events.find((e) => e.type === 'status')).toMatchObject({ level: 'warning', newConversation: true });
+    expect(events.at(-1)).not.toMatchObject({ sessionId: 'gone-session' });
+    // A new conversation's first turn costs what the agent reports for it.
+    handle.sendMessage({ text: 'cost' });
+    const turn = await until(handle, 'result');
+    expect((turn.at(-1) as { totalCostUsd: number }).totalCostUsd).toBeCloseTo(0.01, 10);
+    handle.close();
+  });
+
   it('resumes a conversation with session/load without replaying it into the thread', async () => {
     const adapter = new AcpAdapter(def());
     const handle = await adapter.start(config({ resumeSessionId: 'old-session' }));
@@ -457,6 +484,26 @@ describe('AcpAdapter', () => {
     handle.close();
   });
 
+  it("runs Grove's memory tools and reads of attached files without asking, as for Claude Code", async () => {
+    const attachmentsDir = path.join(cwd, '..', 'attachments-s1');
+    const adapter = new AcpAdapter(def());
+    const onPermissionRequest = vi.fn(async (): Promise<PermissionResponse> => ({ behavior: 'deny', message: 'no' }));
+    const memoryOperations = { list: () => [], read: () => null, write: () => {}, delete: () => false };
+    const handle = await adapter.start(config({ attachmentsDir, memoryOperations, onPermissionRequest }));
+    await until(handle, 'system_init');
+    for (const ask of ['ask-for grove-memory_memory_write', `ask-for read ${path.join(attachmentsDir, 'a.pdf')}`]) {
+      handle.sendMessage({ text: ask });
+      const turn = await until(handle, 'result');
+      expect(turn.find((e) => e.type === 'tool_result' && e.toolUseId === 'p1'), ask).toMatchObject({ isError: false });
+    }
+    expect(onPermissionRequest).not.toHaveBeenCalled();
+    // Another server's tool still asks.
+    handle.sendMessage({ text: 'ask-for notes_memory_write' });
+    await until(handle, 'result');
+    expect(onPermissionRequest).toHaveBeenCalledTimes(1);
+    handle.close();
+  });
+
   it('asks about a command the agent only titled, whatever the shell rules say', async () => {
     const adapter = new AcpAdapter(def());
     const asked: PermissionRequest[] = [];
@@ -609,5 +656,34 @@ describe('AcpAdapter', () => {
     });
 
     const adapter = () => new AcpAdapter(def());
+  });
+});
+
+describe('onAgentEnd', () => {
+  /** How a hosted agent program ended, as onAgentEnd reports it. Driven by
+   *  the host's events, so it reads the same on every OS (Windows has no
+   *  POSIX signals: a killed process there just exits with a code). */
+  function ended(events: Array<{ type: 'exit'; code: number | null; signal: string | null } | { type: 'error'; message: string }>) {
+    const proc = new HostedProcess('agent');
+    const seen: Array<[number | undefined, string | undefined]> = [];
+    onAgentEnd(proc, (code, failure) => seen.push([code, failure]));
+    for (const e of events) {
+      if (e.type === 'exit') proc.receive({ type: 'exit', id: 1, code: e.code, signal: e.signal });
+      else proc.receive({ type: 'error', id: 1, error: { name: 'Error', message: e.message } });
+    }
+    proc.receive({ type: 'close', id: 1 });
+    return seen;
+  }
+
+  it('reports the exit code, once', () => {
+    expect(ended([{ type: 'exit', code: 1, signal: null }])).toEqual([[1, undefined]]);
+  });
+
+  it('says when the agent was stopped by a signal, not just that it exited', () => {
+    expect(ended([{ type: 'exit', code: null, signal: 'SIGKILL' }])).toEqual([[undefined, 'was stopped (SIGKILL)']]);
+  });
+
+  it('says why the program never started', () => {
+    expect(ended([{ type: 'error', message: 'spawn gemini ENOENT' }])).toEqual([[undefined, 'spawn gemini ENOENT']]);
   });
 });

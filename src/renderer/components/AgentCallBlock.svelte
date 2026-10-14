@@ -8,7 +8,7 @@
   import { messageStore } from '../stores/messages.svelte.js';
   import { backgroundTaskStore } from '../stores/backgroundTask.svelte.js';
   import { subagentPanelStore } from '../stores/subagentPanel.svelte.js';
-  import { agentCallInput, threadMessages } from '../lib/message-view.js';
+  import { threadMessages } from '../lib/message-view.js';
   import { Pulse } from '$lib/components/ui/pulse/index.js';
   import ImageAttachments from './ImageAttachments.svelte';
 
@@ -18,6 +18,7 @@
     toolName,
     toolInput,
     summary,
+    agentType,
     result,
     pending,
     isError,
@@ -28,6 +29,8 @@
     toolInput: unknown;
     /** The task the subagent was given, in a line. */
     summary?: string;
+    /** The kind of subagent (Explore, general-purpose, ...), when the agent says. */
+    agentType?: string;
     result?: string;
     pending: boolean;
     isError?: boolean;
@@ -38,7 +41,6 @@
   let images = $derived(thread.flatMap((m) => (m.kind === 'tool_call' && m.images) || []));
   // A background subagent's call returns at once; its task says it's still at work.
   let running = $derived(pending || backgroundTaskStore.isRunningFor(sessionId, toolUseId));
-  let agentType = $derived(agentCallInput(toolInput).agentType);
   let showing = $derived(subagentPanelStore.isShowing(sessionId, toolUseId));
 </script>
 

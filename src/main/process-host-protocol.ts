@@ -73,9 +73,9 @@ export interface HostStarted {
 export const HOST_READY = 'grove-process-host-ready';
 
 /**
- * Start a long-running process whose output streams back as it comes (the
- * agent's claude binary), rather than a command that is waited for. Its
- * input, and a request to stop it, follow as StdioRequests with the same id.
+ * Start a long-running process whose output streams back as it comes (an
+ * agent's program), rather than a command that is waited for. Its input, and
+ * a request to stop it, follow as StdioRequests with the same id.
  */
 export interface SpawnRequest {
   type: 'spawn';
@@ -84,6 +84,11 @@ export interface SpawnRequest {
   args: string[];
   cwd?: string;
   env?: Record<string, string | undefined>;
+  /** `file` is a command name to find as a shell would (PATH, and PATHEXT on
+   *  Windows), running a .cmd or .bat through cmd.exe with its arguments
+   *  escaped, as execa does (cross-spawn). npm installs command-line agents
+   *  as .cmd shims, which Node's spawn can't start on its own. */
+  findCommand?: boolean;
 }
 
 export type StdioRequest =
@@ -212,7 +217,8 @@ export function isSpawnRequest(value: unknown): value is SpawnRequest {
     && typeof r.file === 'string'
     && Array.isArray(r.args) && r.args.every((a) => typeof a === 'string')
     && (r.cwd === undefined || typeof r.cwd === 'string')
-    && (r.env === undefined || (typeof r.env === 'object' && r.env !== null));
+    && (r.env === undefined || (typeof r.env === 'object' && r.env !== null))
+    && (r.findCommand === undefined || typeof r.findCommand === 'boolean');
 }
 
 /** Whether `value` is input for, or a request to stop, a spawned process. */

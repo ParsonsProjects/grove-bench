@@ -54,11 +54,24 @@ describe('recordedAgent()', () => {
     expect((await recordedAgent('s1')).id).toBe('codex');
   });
 
-  it('falls back to the default agent for unknown conversations or agents', async () => {
+  it('uses the default agent for a conversation that recorded none', async () => {
     vi.mocked(worktreeManager.getAdapterType).mockResolvedValue(undefined);
     expect((await recordedAgent('gone')).id).toBe('claude-code');
+  });
+
+  it("refuses an agent that is gone, rather than send its work to another provider unasked", async () => {
     vi.mocked(worktreeManager.getAdapterType).mockResolvedValue('removed-agent');
-    expect((await recordedAgent('s2')).id).toBe('claude-code');
+    await expect(recordedAgent('s2')).rejects.toThrow(/This thread's agent \("removed-agent"\) isn't available any more/);
+  });
+
+  it('runs on the agent the user picked when its own is gone, and only then', async () => {
+    vi.mocked(worktreeManager.getAdapterType).mockResolvedValue('removed-agent');
+    expect((await recordedAgent('s2', 'codex')).id).toBe('codex');
+    // A pick that isn't registered either is refused too.
+    await expect(recordedAgent('s2', 'also-gone')).rejects.toThrow(/isn't available any more/);
+    // The thread's own agent wins while it is there.
+    vi.mocked(worktreeManager.getAdapterType).mockResolvedValue('claude-code');
+    expect((await recordedAgent('s3', 'codex')).id).toBe('claude-code');
   });
 
   it("refuses a Claude account that was removed, rather than send its work to another account", async () => {
@@ -71,9 +84,9 @@ describe('recordedAgent()', () => {
 });
 
 describe('backgroundAgentFor()', () => {
-  it('gives no agent for a removed Claude account, and the default for anything else unknown', () => {
+  it('gives no agent for one that is gone, and the default for a conversation that recorded none', () => {
     expect(backgroundAgentFor('claude-account-work')).toBeNull();
-    expect(backgroundAgentFor('removed-agent')?.id).toBe('claude-code');
+    expect(backgroundAgentFor('removed-agent')).toBeNull();
     expect(backgroundAgentFor(undefined)?.id).toBe('claude-code');
     expect(backgroundAgentFor('codex')?.id).toBe('codex');
   });

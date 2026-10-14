@@ -7,6 +7,7 @@ import { TOOL_RULE_KEYWORDS, subagentParent } from '../shared/types.js';
 import type { ToolCategory, ToolRule } from '../shared/types.js';
 import { parseToolRule } from '../shared/tool-rules.js';
 import { POWERSHELL_ALIASES } from './powershell-aliases.js';
+import { groveToolOf } from '../shared/grove-tools.js';
 
 export { parseToolRule };
 
@@ -20,6 +21,21 @@ export { parseToolRule };
 export function isPathInside(parent: string, child: string): boolean {
   const rel = path.relative(parent, child);
   return rel === '' || (rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel));
+}
+
+/** Tool results are kept only for display, replay and memory extraction:
+ *  the model already received the full text. The session caps what it keeps,
+ *  for every agent, so a test suite or build printing tens of MB doesn't live
+ *  in main-process history, the JSONL log and renderer state for the rest of
+ *  the session. */
+const MAX_TOOL_RESULT_CHARS = 200_000;
+const TOOL_RESULT_HEAD_CHARS = 150_000;
+
+export function capToolResult(content: string): string {
+  if (content.length <= MAX_TOOL_RESULT_CHARS) return content;
+  const tailChars = MAX_TOOL_RESULT_CHARS - TOOL_RESULT_HEAD_CHARS;
+  const omitted = content.length - TOOL_RESULT_HEAD_CHARS - tailChars;
+  return `${content.slice(0, TOOL_RESULT_HEAD_CHARS)}\n\n… [${omitted.toLocaleString()} characters omitted] …\n\n${content.slice(content.length - tailChars)}`;
 }
 
 /**
@@ -82,10 +98,20 @@ export function toolCallSpecifier(
   }
 }
 
+/** An MCP tool's name as `mcp(...)` rules see it, `<server>__<tool>`, or
+ *  null for a call that isn't one Grove can tell is an MCP tool: Claude
+ *  Code's `mcp__<server>__<tool>`, and Grove's own tools under the names
+ *  other agents give them (groveToolOf). ACP doesn't mark other MCP calls. */
+function mcpRuleSubject(toolName: string): string | null {
+  if (toolName.startsWith('mcp__')) return toolName.slice('mcp__'.length);
+  const grove = groveToolOf(toolName);
+  return grove ? `${grove.server}__${grove.tool}` : null;
+}
+
 /** True when a parsed rule's `<tool>` part covers this tool, ignoring its glob. */
 function ruleTargetsTool(rule: { tool: string }, toolName: string, category?: ToolCategory): boolean {
   const keyword = rule.tool.toLowerCase();
-  if (keyword === 'mcp') return toolName.startsWith('mcp__');
+  if (keyword === 'mcp') return mcpRuleSubject(toolName) !== null;
   const neutralCategory = TOOL_RULE_KEYWORDS[keyword];
   return (neutralCategory !== undefined && category !== undefined && neutralCategory === category)
     || toolName === rule.tool
@@ -102,10 +128,10 @@ function isToolWideRule(rule: { specifier: string | null }): boolean {
  *
  * `pattern` is `<tool>` or `<tool>(<glob>)` where `<tool>` is a neutral
  * keyword (see TOOL_RULE_KEYWORDS: `shell`, `edit`, `read`, `web`, `agent`,
- * `question`, or `mcp` for any `mcp__*` tool) matched via `category`, or a
- * provider tool name matched by exact name / prefix. `toolCall` is
- * `Name(specifier)` (or just `Name`); the glob matches the specifier, except
- * for `mcp(...)` where it matches the tool name after `mcp__`.
+ * `question`, or `mcp` for an MCP tool, see mcpRuleSubject) matched via
+ * `category`, or a provider tool name matched by exact name / prefix.
+ * `toolCall` is `Name(specifier)` (or just `Name`); the glob matches the
+ * specifier, except for `mcp(...)` where it matches `<server>__<tool>`.
  *
  * This matches the whole specifier as one string. To decide whether a call
  * is allowed or denied, use checkToolRules, which splits chained shell
@@ -127,7 +153,7 @@ export function matchToolRule(
   if (rule.specifier === '*') return true;
 
   const subject = isMcpKeyword
-    ? toolName.slice('mcp__'.length)
+    ? mcpRuleSubject(toolName) ?? ''
     : (toolCall.startsWith(toolName + '(') && toolCall.endsWith(')')
       ? toolCall.slice(toolName.length + 1, -1)
       : '');

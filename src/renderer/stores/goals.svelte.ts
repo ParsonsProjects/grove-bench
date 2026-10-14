@@ -1,5 +1,6 @@
 import type { ConversationGoal } from '../../shared/types.js';
 import { stripIpcErrorPrefix } from '../lib/mcp-errors.js';
+import { backgroundAgentStore } from './background-agent.svelte.js';
 
 const NO_GOAL: ConversationGoal = { text: null, source: null, hidden: false };
 
@@ -88,7 +89,10 @@ class GoalStore {
     this.clearError(sessionId);
     this.generating[sessionId] = true;
     try {
-      this.set(sessionId, await window.groveBench.refreshConversationGoal(sessionId));
+      // A thread whose agent is gone asks which agent to use first.
+      const substitute = await backgroundAgentStore.substituteFor(sessionId, 'write a goal');
+      if (substitute === null) return;
+      this.set(sessionId, await window.groveBench.refreshConversationGoal(sessionId, substitute));
     } catch (e) {
       const message = stripIpcErrorPrefix(e instanceof Error ? e.message : String(e ?? ''));
       this.errors[sessionId] = message || 'Could not write a goal';

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { cleanEnv, matchToolRule, parseToolRule, toolCallSpecifier, splitShellCommand, splitPowerShellCommand, checkToolRules, readableStreamToAsyncIterable, findRewindForkPoint, lastTurnUuid, isAuthFailure, canonicalizePowerShellCommand } from './agent-utils.js';
+import { cleanEnv, matchToolRule, parseToolRule, toolCallSpecifier, splitShellCommand, splitPowerShellCommand, checkToolRules, readableStreamToAsyncIterable, findRewindForkPoint, lastTurnUuid, isAuthFailure, canonicalizePowerShellCommand, capToolResult } from './agent-utils.js';
 import type { AgentEvent } from '../shared/types.js';
 
 describe('cleanEnv()', () => {
@@ -635,5 +635,23 @@ describe('isAuthFailure()', () => {
       'Invalid JSON at key "name"',
       'Claude Code process exited with code 1',
     ]) expect(isAuthFailure(msg), msg).toBe(false);
+  });
+});
+
+describe('capToolResult()', () => {
+  it('returns short results unchanged', () => {
+    expect(capToolResult('hello')).toBe('hello');
+    const exact = 'x'.repeat(200_000);
+    expect(capToolResult(exact)).toBe(exact);
+  });
+
+  it('keeps the head and tail of an oversized result with an omission marker', () => {
+    const big = 'H'.repeat(150_000) + 'M'.repeat(1_000_000) + 'T'.repeat(50_000);
+    const capped = capToolResult(big);
+    expect(capped.length).toBeLessThan(big.length);
+    expect(capped.startsWith('H'.repeat(150_000))).toBe(true);
+    expect(capped.endsWith('T'.repeat(50_000))).toBe(true);
+    expect(capped).toContain('characters omitted');
+    expect(capped).not.toContain('MMMMMMMMMMMMMMMMMMMM' + 'M'.repeat(999_980));
   });
 });

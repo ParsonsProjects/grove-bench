@@ -94,9 +94,11 @@ class DraftStore {
   /**
    * Open the draft in `repoPath` (default: the open conversation's project,
    * then the first project) and show it. An existing draft keeps its message
-   * and moves to that project. A new one takes its agent and model from the
-   * open conversation, or `agentId` when given. With `group`, the
-   * conversation joins that group (or starts it) when it starts. Opened for
+   * and moves to that project. A new one takes its agent from `agentId` when
+   * given, else the user's default agent (Settings > Agents), else the open
+   * conversation, and the open conversation's model when the agent matches.
+   * With `group`, the conversation joins that group (or starts it) when it
+   * starts. Opened for
    * a project without one (a project's +, a conversation's controls), an
    * existing draft leaves its group: it is no longer that group's work.
    */
@@ -111,9 +113,12 @@ class DraftStore {
       if (repo !== this.draft.repoPath) this.setRepo(repo);
       if (opts.agentId && opts.agentId !== this.draft.agentId) this.setAgent(opts.agentId);
     } else {
-      // An alpha agent the user hasn't turned on isn't offered, even when the
-      // open conversation runs on it.
-      const agentId = this.offeredAgent(opts.agentId) || this.offeredAgent(active?.agentType) || agentsStore.defaultId || '';
+      // The agent asked for, else the user's default agent, else the open
+      // conversation's (when the user hasn't picked a default). An alpha
+      // agent the user hasn't turned on isn't offered, even when the open
+      // conversation runs on it.
+      const agentId = this.offeredAgent(opts.agentId) || agentsStore.pickedDefaultId
+        || this.offeredAgent(active?.agentType) || agentsStore.defaultId || '';
       // Same agent as the open conversation: start on its model too.
       const model = active && active.agentType === agentId ? messageStore.getModel(active.id) : '';
       const groupId = opts.group && 'groupId' in opts.group ? opts.group.groupId : undefined;

@@ -34,6 +34,10 @@ export interface AgentCapabilities {
   skills?: boolean;
   /** Reports account-level plan usage windows (see AgentQueryHandle.getUsage) */
   usage?: boolean;
+  /** Has a command (/compact) that replaces the conversation so far with a
+   *  summary to free context. The UI offers it only for these agents, or one
+   *  that lists a `compact` command itself. */
+  compact?: boolean;
   /** Supports image attachments in messages */
   imageAttachments: boolean;
   /** Supports structured JSON output */
@@ -76,6 +80,10 @@ export interface PermissionRequest {
   planText?: string;
 }
 
+/** The user's answer. For a question (toolCategory 'question', its choices
+ *  in toolView.questions) the answer comes back as a deny whose message is
+ *  what the user picked or typed: Claude Code hands that message to the
+ *  model as the tool's result. */
 export type PermissionResponse =
   | { behavior: 'allow'; updatedInput: Record<string, unknown>; updatedPermissions?: unknown[] }
   | { behavior: 'deny'; message: string };

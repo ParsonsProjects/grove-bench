@@ -39,6 +39,7 @@ export const SETTINGS_INDEX: readonly SettingsEntry[] = [
   { id: 'updates', section: 'general', label: 'Updates', keywords: 'version check for updates releases' },
   { id: 'auto-download-updates', section: 'general', label: 'Download updates automatically', keywords: 'install background restart' },
 
+  { id: 'default-agent', section: 'agents', label: 'Default agent', keywords: 'new thread start agent pick claude gemini copilot opencode' },
   { id: 'credentials', section: 'agents', label: 'Credentials', keywords: 'api key sign in login authentication' },
   { id: 'default-model', section: 'agents', label: 'Default model', keywords: 'opus sonnet haiku' },
   { id: 'background-model', section: 'agents', label: 'Background model', keywords: 'cheap model memory commit messages' },

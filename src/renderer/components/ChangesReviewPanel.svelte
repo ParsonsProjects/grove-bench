@@ -5,6 +5,7 @@
   import { resolveBaseBranch } from '../lib/base-branch.js';
   import { store as sessionStore } from '../stores/sessions.svelte.js';
   import { reviewStore } from '../stores/review.svelte.js';
+  import { backgroundAgentStore } from '../stores/background-agent.svelte.js';
   import type { GitStatusEntry, DiffScope, PrReviewEvent, PrReviewSubmitResult } from '../../shared/types.js';
   import ReviewDiffPanel from './ReviewDiffPanel.svelte';
   import { lazyComponent } from '../lib/lazy-component.js';
@@ -133,7 +134,10 @@
     generatingMsg = true;
     commitError = '';
     try {
-      commitMessage = await window.groveBench.generateCommitMessage(sessionId);
+      // A thread whose agent is gone asks which agent to use first.
+      const substitute = await backgroundAgentStore.substituteFor(sessionId, 'write a commit message');
+      if (substitute === null) return;
+      commitMessage = await window.groveBench.generateCommitMessage(sessionId, substitute);
     } catch (e: any) {
       commitError = e?.message || 'Failed to generate commit message';
     } finally {

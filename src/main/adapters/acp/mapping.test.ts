@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import {
-  agentControls, agentModeTone, categoryForKind, commandOf, configIdForControl, mergeToolCall, modelList, pickPermissionOption,
+  agentControls, agentModeTone, mcpToolOf, categoryForKind, commandOf, configIdForControl, mergeToolCall, modelList, pickPermissionOption,
   planSummary, specifierFor, toolNameFor, toolViewFor,
 } from './mapping.js';
 import { customAcpAgents } from './presets.js';
@@ -198,5 +198,20 @@ describe('JsonRpcConnection', () => {
     const orphan = rpc.request('y');
     rpc.close(new Error('gone'));
     await expect(orphan).rejects.toThrow('gone');
+  });
+});
+
+describe('mcpToolOf', () => {
+  it('reads the server where the call names it', () => {
+    expect(mcpToolOf({ toolCallId: 'a', kind: 'other', title: 'list_issues (linear MCP Server)' })).toEqual({ server: 'linear', tool: 'list_issues' });
+    expect(mcpToolOf({ toolCallId: 'b', kind: 'other', title: 'grove-memory_memory_read' })).toEqual({ server: 'grove-memory', tool: 'memory_read' });
+    expect(toolViewFor({ toolCallId: 'c', kind: 'other', title: 'list_issues (linear MCP Server)' }, '/wt').mcp).toEqual({ server: 'linear', tool: 'list_issues' });
+  });
+
+  it("has nothing when the name doesn't say", () => {
+    // Gemini CLI's title for a call with arguments; OpenCode's for another server's tool.
+    expect(mcpToolOf({ toolCallId: 'a', kind: 'other', title: 'list_issues(team: "ENG")' })).toBeUndefined();
+    expect(mcpToolOf({ toolCallId: 'b', kind: 'other', title: 'linear_list_issues' })).toBeUndefined();
+    expect(toolViewFor({ toolCallId: 'c', kind: 'other', title: 'todowrite' }, '/wt').mcp).toBeUndefined();
   });
 });

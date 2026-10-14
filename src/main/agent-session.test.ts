@@ -2405,6 +2405,23 @@ describe('AgentSessionManager.sendMessage()', () => {
     await sessionManager.destroySession('test-no-images');
   });
 
+  it("caps what a tool returned, whichever agent ran it", async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-tool-cap', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+
+    mockAdapter.control!.emitEvent({ type: 'tool_result', toolUseId: 'tu1', content: 'a'.repeat(300_000) });
+    await vi.waitFor(() => {
+      const result = sessionManager.getEventHistory('test-tool-cap').find((e) => e.type === 'tool_result');
+      expect(result).toBeDefined();
+      expect((result as { content: string }).content.length).toBeLessThan(300_000);
+      expect((result as { content: string }).content).toContain('characters omitted');
+    });
+    await sessionManager.destroySession('test-tool-cap');
+  });
+
   it('records a tool result with references to the images the tool returned', async () => {
     const win = makeMockWindow();
     await sessionManager.createSession({

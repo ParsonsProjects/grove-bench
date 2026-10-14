@@ -28,7 +28,7 @@
   let viewMode = $derived(subagentPanelStore.viewMode(sessionId));
   let visible = $derived(filterVisibleMessages(thread, viewMode));
 
-  let input = $derived(agentCallInput(call?.toolInput));
+  let input = $derived(agentCallInput(call));
   let title = $derived((call && toolViewOf(call).summary) || 'Subagent');
   let callCount = $derived(thread.reduce((n, m) => n + (m.kind === 'tool_call' ? 1 : 0), 0));
   let running = $derived(!!call?.pending || backgroundTaskStore.isRunningFor(sessionId, toolUseId));

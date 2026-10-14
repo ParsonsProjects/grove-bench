@@ -8,6 +8,7 @@
   import { store as sessionStore } from '../stores/sessions.svelte.js';
   import type FilePickerPopup from './FilePickerPopup.svelte';
   import { lazyComponent } from '../lib/lazy-component.js';
+  import { canCompact } from '../lib/agent-commands.js';
   import MessageQueue from './MessageQueue.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
   import * as Command from '$lib/components/ui/command/index.js';
@@ -101,11 +102,12 @@
   let commandQuery = $state('');
   let commandSelectedIndex = $state(0);
 
-  const builtinCommands = [
-    { name: '/compact', description: 'Compact thread to free context space' },
+  // /compact only for an agent that can summarise the thread.
+  let builtinCommands = $derived([
+    ...(canCompact(sessionId) ? [{ name: '/compact', description: 'Compact thread to free context space' }] : []),
     { name: '/clear', description: 'Clear thread and start fresh' },
     { name: '/rewind', description: 'Rewind to a previous checkpoint' },
-  ];
+  ]);
 
   // Include custom slash commands from session info
   let customCommands = $derived.by(() => {

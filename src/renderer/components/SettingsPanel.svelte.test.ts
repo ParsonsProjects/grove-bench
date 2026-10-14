@@ -29,7 +29,7 @@ const MODE: ControlDescriptor = {
 function settings(adapterDefaults: GroveBenchSettings['adapterDefaults'] = {}): GroveBenchSettings {
   return {
     toolAllowRules: [], toolDenyRules: [], disabledSkills: [], autoSkillSuggestions: false, showConversationGoal: true,
-    defaultModels: {}, adapterDefaults, showThinkingSummaries: true, cavemanMode: 'off', workingDirectories: [], defaultSystemPromptAppend: '', acpAgents: [], claudeAccounts: [], enabledAlphaAgents: [],
+    defaultModels: {}, adapterDefaults, showThinkingSummaries: true, cavemanMode: 'off', workingDirectories: [], defaultSystemPromptAppend: '', acpAgents: [], claudeAccounts: [], enabledAlphaAgents: [], defaultAgent: '',
     memoryAutoSave: true, memoryCompactTimeoutSeconds: 300, backgroundModels: {},
     autoInstallDeps: false, previewAgentTools: true, idleSleepMinutes: 30, defaultBaseBranch: '', branchNamingRule: '', theme: 'system', alwaysOnTop: false, autoDownloadUpdates: true,
     repoColors: {}, groveCharacters: true, diffViewMode: 'unified', defaultActivityView: 'summary', spellcheck: true,
@@ -396,6 +396,8 @@ describe('SettingsPanel sections and search', () => {
     agentsStore.list = [
       { ...claude, capabilities: { thinkingSummaries: true, mcpConfig: true, plugins: true, accounts: true } },
       { id: 'opencode', displayName: 'OpenCode', capabilities: {}, stage: 'alpha' },
+      // A second agent offered for new threads, so there is a default to pick.
+      { id: 'gemini', displayName: 'Gemini CLI', capabilities: {} },
     ];
     store.repos = ['C:/dev/grove-bench'];
     store.prerequisites = {
@@ -736,7 +738,22 @@ describe('SettingsPanel MCP servers', () => {
     expect(screen.getByText('Remove github?')).toBeInTheDocument();
 
     await fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
-    await waitFor(() => expect(mockGroveBench.mcpConfigRemove).toHaveBeenCalledWith('github', undefined, undefined, undefined));
+    // The section names the agent it shows (the default one here).
+    await waitFor(() => expect(mockGroveBench.mcpConfigRemove).toHaveBeenCalledWith('github', undefined, undefined, 'claude-code'));
+  });
+
+  it("starts on an agent that can edit MCP config, not a default agent that can't", async () => {
+    const gemini = { id: 'gemini-cli', displayName: 'Gemini CLI', capabilities: {} };
+    agentsStore.list = [{ ...claude, capabilities: { mcpConfig: true } }, gemini];
+    const saved = settingsStore.current;
+    settingsStore.current = { ...saved, defaultAgent: 'gemini-cli' };
+    try {
+      await renderPanel();
+      await openSection('MCP servers');
+      await waitFor(() => expect(mockGroveBench.mcpConfigList).toHaveBeenCalledWith(undefined, 'claude-code'));
+    } finally {
+      settingsStore.current = saved;
+    }
   });
 
   it('drops a pending Remove when the list changes', async () => {

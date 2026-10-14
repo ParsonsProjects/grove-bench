@@ -9,6 +9,7 @@
   import { Button } from '$lib/components/ui/button/index.js';
   import StatusBarPopover from './StatusBarPopover.svelte';
   import PixelMeter from './PixelMeter.svelte';
+  import { canCompact } from '../lib/agent-commands.js';
 
   let { sessionId, contextWindow }: { sessionId: string; contextWindow: number } = $props();
 
@@ -16,6 +17,8 @@
   let usage = $derived(messageStore.getUsage(sessionId));
   let systemInfo = $derived(messageStore.getSystemInfo(sessionId));
   let turns = $derived(messageStore.getTurns(sessionId));
+  /** Summarise is offered only when the thread's agent can do it. */
+  let compactable = $derived(canCompact(sessionId));
 
   let { usedTokens, freeTokens, usedPercent } = $derived(contextUsage(usage, contextWindow));
   let showContext = $derived(usedTokens > 0);
@@ -56,11 +59,12 @@
       <span class="font-medium text-foreground text-sm">Context</span>
       <span class="font-medium {usedTextClass}">{usedPercent.toFixed(1)}%</span>
     </div>
-    <!-- What it is, for someone new to agents. Claude Code's own
-         behaviour near the limit: https://code.claude.com/docs/en/how-claude-code-works#when-context-fills-up -->
+    <!-- What it is, for someone new to agents. True of every agent: Claude
+         Code, for one, clears old tool output, then summarises
+         (https://code.claude.com/docs/en/how-claude-code-works#when-context-fills-up). -->
     <p class="text-muted-foreground mb-3">
       How much the agent can hold in mind at once: your messages, its replies, files it read and command
-      output. Near the limit it clears old tool output, then summarises the thread, so early details
+      output. Near the limit agents drop or summarise older parts of the thread, so early details
       can be lost.
     </p>
 
@@ -209,16 +213,18 @@
       {:else}
         <!-- Stacked: side by side, the labels wrapped onto two lines. -->
         <div class="flex flex-col gap-2">
-          <Button
-            variant="subtle"
-            size="xs"
-            onclick={() => { messageStore.sendCommand(sessionId, '/compact'); contextExpanded = false; }}
-            disabled={isRunning}
-            class="w-full disabled:cursor-not-allowed"
-            title="Replace the earlier messages with a summary, so the agent has room to keep going. It keeps the gist, not every detail. (/compact)"
-          >
-            Summarise to free space
-          </Button>
+          {#if compactable}
+            <Button
+              variant="subtle"
+              size="xs"
+              onclick={() => { messageStore.sendCommand(sessionId, '/compact'); contextExpanded = false; }}
+              disabled={isRunning}
+              class="w-full disabled:cursor-not-allowed"
+              title="Replace the earlier messages with a summary, so the agent has room to keep going. It keeps the gist, not every detail. (/compact)"
+            >
+              Summarise to free space
+            </Button>
+          {/if}
           <Button
             variant="subtle"
             size="xs"

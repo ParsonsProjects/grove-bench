@@ -1,4 +1,16 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+
+// cross-spawn's parse, as it would wrap an npm shim on Windows, recorded.
+const parseCalls: Array<{ command: string; args: readonly string[] }> = [];
+vi.mock('cross-spawn', () => ({
+  default: {
+    _parse: (command: string, args: readonly string[], options: Record<string, unknown>) => {
+      parseCalls.push({ command, args });
+      return { command: 'cmd.exe', args: ['/d', '/s', '/c', `"${[command, ...args].join(' ')}"`], options: { ...options, windowsVerbatimArguments: true } };
+    },
+  },
+}));
+
 import { createSpawnRunner, HostedProcess, type ProcessCommand } from './process-host-spawn.js';
 import type { SpawnEvent } from './process-host-protocol.js';
 
@@ -147,6 +159,20 @@ describe('createSpawnRunner', () => {
     });
     expect(events.find((e) => e.type === 'spawned')).toBeUndefined();
     expect(events.find((e) => e.type === 'error')).toMatchObject({ error: { code: 'ENOENT', syscall: 'spawn /no/such/claude' } });
+  });
+
+  it('finds a command as a shell would when asked, with the parse execa runs, and only then', () => {
+    const calls: Array<{ file: string; args: readonly string[]; options: Record<string, unknown> }> = [];
+    const fakeSpawn = ((file: string, args: readonly string[], options: Record<string, unknown>) => {
+      calls.push({ file, args, options });
+      throw new Error('not starting it');
+    }) as unknown as Parameters<typeof createSpawnRunner>[1];
+    const runner = createSpawnRunner(() => {}, fakeSpawn);
+    runner.handle({ type: 'spawn', id: 1, file: 'gemini', args: ['--acp'], cwd: '/w', findCommand: true });
+    runner.handle({ type: 'spawn', id: 2, file: '/abs/claude', args: ['--x'], cwd: '/w' });
+    expect(parseCalls).toEqual([{ command: 'gemini', args: ['--acp'] }]);
+    expect(calls[0]).toMatchObject({ file: 'cmd.exe', args: ['/d', '/s', '/c', '"gemini --acp"'], options: { windowsVerbatimArguments: true, cwd: '/w' } });
+    expect(calls[1]).toMatchObject({ file: '/abs/claude', args: ['--x'], options: { cwd: '/w', stdio: 'pipe', windowsHide: true } });
   });
 
   it('ignores input for a process it does not have', () => {

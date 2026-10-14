@@ -33,7 +33,7 @@ const m = vi.hoisted(() => {
     ),
     terminalManager: fns('killAllForSession', 'spawnPty', 'write', 'resize', 'killPty', 'isAlive'),
     previewManager: fns('close', 'closeAgentPage', 'navigate', 'command', 'setViewport', 'snapshot', 'agentFrame', 'getStates'),
-    adapterRegistry: fns('get', 'getDefault', 'list'),
+    adapterRegistry: fns('get', 'getDefault', 'getBuiltInDefault', 'list'),
     registerClaudeAccount: vi.fn((account: { id: string }) => ({ id: account.id })),
     settings: fns('getSettings', 'saveSettings', 'applyImmediateEffects'),
     appState: fns(
@@ -112,6 +112,8 @@ import { launchEditor } from './editor-launch.js';
 import { installDependencies } from './deps-install.js';
 import { logRendererError } from './crash-handling.js';
 import { applyAttentionBadge } from './attention-badge.js';
+import { recordedAgent } from './background-tasks.js';
+import { generateCommitMessage } from './commit-message.js';
 import { registerHandlers } from './ipc.js';
 
 // ─── Harness ───
@@ -234,7 +236,7 @@ describe('AGENT_LIST_ADAPTERS', () => {
     const account = (slug: string) => ({ id: `claude-account-${slug}`, displayName: slug, capabilities: {}, account: { name: slug, configDir: `/h/.claude-${slug}` } });
     // Added after launch: the registry lists it last.
     m.adapterRegistry.list.mockReturnValue([claude, account('work'), gemini, account('client'), account('old')]);
-    m.adapterRegistry.getDefault.mockReturnValue(claude);
+    m.adapterRegistry.getBuiltInDefault.mockReturnValue(claude);
     m.settings.getSettings.mockReturnValueOnce({ claudeAccounts: [{ id: 'work', name: 'work', configDir: '' }, { id: 'client', name: 'client', configDir: '' }] });
     const list = await invoke(IPC.AGENT_LIST_ADAPTERS);
     expect(list.map((a: { id: string; account?: { removed?: boolean } }) => [a.id, !!a.account?.removed]))
@@ -246,10 +248,21 @@ describe('AGENT_LIST_ADAPTERS', () => {
     const claude = { id: 'claude-code', displayName: 'Claude Agent', capabilities: {} };
     const opencode = { id: 'opencode', displayName: 'OpenCode', capabilities: {}, stage: 'alpha' };
     m.adapterRegistry.list.mockReturnValue([claude, opencode]);
-    m.adapterRegistry.getDefault.mockReturnValue(claude);
+    m.adapterRegistry.getBuiltInDefault.mockReturnValue(claude);
     const list = await invoke(IPC.AGENT_LIST_ADAPTERS);
     expect(list.map((a: { id: string; stage?: string; isDefault: boolean }) => [a.id, a.stage ?? null, a.isDefault]))
       .toEqual([['claude-code', null, true], ['opencode', 'alpha', false]]);
+  });
+
+  it("marks the built-in default even when the user picked another, which the renderer applies itself", async () => {
+    const claude = { id: 'claude-code', displayName: 'Claude Agent', capabilities: {} };
+    const gemini = { id: 'gemini-cli', displayName: 'Gemini CLI', capabilities: {} };
+    m.adapterRegistry.list.mockReturnValue([claude, gemini]);
+    m.adapterRegistry.getBuiltInDefault.mockReturnValue(claude);
+    m.adapterRegistry.getDefault.mockReturnValue(gemini);
+    const list = await invoke(IPC.AGENT_LIST_ADAPTERS);
+    expect(list.map((a: { id: string; isDefault: boolean }) => [a.id, a.isDefault]))
+      .toEqual([['claude-code', true], ['gemini-cli', false]]);
   });
 });
 
@@ -773,6 +786,18 @@ describe('conversation goal', () => {
     expect(await invoke(IPC.SESSION_GOAL_REFRESH, 'g0000008')).toEqual(edited);
   });
 
+  it("writes the goal of a thread that isn't running on the agent the user picked for it", async () => {
+    m.worktreeManager.getGoal.mockResolvedValue(NO_GOAL);
+    m.worktreeManager.getWorktreeOrManifest.mockResolvedValue({ path: '/wt' });
+    vi.mocked(recordedAgent).mockResolvedValue({ id: 'gemini-cli' } as never);
+    vi.mocked(generateGoal).mockResolvedValue('Goal');
+
+    await invoke(IPC.SESSION_GOAL_REFRESH, 'g0000011', 'gemini-cli');
+    expect(recordedAgent).toHaveBeenCalledWith('g0000011', 'gemini-cli');
+    await invoke(IPC.SESSION_GOAL_REFRESH, 'g0000011', { not: 'an id' });
+    expect(recordedAgent).toHaveBeenLastCalledWith('g0000011', undefined);
+  });
+
   it('saves a typed goal on one line, and hides the bar', async () => {
     m.worktreeManager.saveGoal.mockResolvedValue({ text: 'Ship it', source: 'user', hidden: false });
     await invoke(IPC.SESSION_GOAL_SET, 's1', '  Ship\n it ');
@@ -780,6 +805,18 @@ describe('conversation goal', () => {
 
     await invoke(IPC.SESSION_GOAL_HIDE, 's1', true);
     expect(m.worktreeManager.setGoalHidden).toHaveBeenCalledWith('s1', true);
+  });
+});
+
+describe('GIT_GENERATE_COMMIT_MESSAGE', () => {
+  it("runs on a thread's recorded agent, or the one the user picked when that is gone", async () => {
+    m.worktreeManager.getWorktree.mockReturnValue({ path: '/wt' });
+    vi.mocked(recordedAgent).mockResolvedValue({ id: 'gemini-cli' } as never);
+    vi.mocked(generateCommitMessage).mockResolvedValue('feat: x');
+
+    expect(await invoke(IPC.GIT_GENERATE_COMMIT_MESSAGE, 's1', 'gemini-cli')).toBe('feat: x');
+    expect(recordedAgent).toHaveBeenCalledWith('s1', 'gemini-cli');
+    expect(generateCommitMessage).toHaveBeenCalledWith('/wt', { id: 'gemini-cli' });
   });
 });
 
@@ -1330,18 +1367,50 @@ describe('adapters, skills and MCP config', () => {
     expect(invoke(IPC.AGENT_GET_ADAPTER_CONTROLS, 'unknown')).toEqual([]);
   });
 
-  it('SKILLS_ADD needs an agent that can add skills and a project folder', () => {
+  it('SKILLS_ADD needs an agent that can add skills and a project folder', async () => {
     m.sessionManager.getSessionAdapter.mockReturnValue(undefined);
+    m.worktreeManager.getAdapterType.mockResolvedValue(undefined);
     m.adapterRegistry.getDefault.mockReturnValue({ displayName: 'Plain' });
-    expect(() => invoke(IPC.SKILLS_ADD, 's1', '/repo', { name: 'x' })).toThrow('does not support adding skills');
+    await expect(invoke(IPC.SKILLS_ADD, 's1', '/repo', { name: 'x' })).rejects.toThrow('does not support adding skills');
 
     const addSkill = vi.fn();
     m.adapterRegistry.getDefault.mockReturnValue({ displayName: 'Claude Code', addSkill });
     m.sessionManager.getWorktreePath.mockReturnValue(undefined);
-    expect(() => invoke(IPC.SKILLS_ADD, 's1', '', { name: 'x' })).toThrow('No project root');
+    await expect(invoke(IPC.SKILLS_ADD, 's1', '', { name: 'x' })).rejects.toThrow('No project root');
 
-    invoke(IPC.SKILLS_ADD, 's1', '/repo', { name: 'x' });
+    await invoke(IPC.SKILLS_ADD, 's1', '/repo', { name: 'x' });
     expect(addSkill).toHaveBeenCalledWith('/repo', { name: 'x' });
+  });
+
+  it("skills of a thread that isn't running come from its own agent, and none from one that is gone", async () => {
+    const listSkills = vi.fn(async () => [{ name: 'gem' }]);
+    m.sessionManager.getSessionAdapter.mockReturnValue(undefined);
+    m.sessionManager.getWorktreePath.mockReturnValue(undefined);
+    m.adapterRegistry.getDefault.mockReturnValue({ displayName: 'Claude Code', listSkills: vi.fn(async () => [{ name: 'claude' }]) });
+    m.worktreeManager.getAdapterType.mockResolvedValue('gemini-cli');
+    m.adapterRegistry.get.mockImplementation((id: string) => (id === 'gemini-cli' ? { displayName: 'Gemini CLI', listSkills } : undefined));
+    expect(await invoke(IPC.SKILLS_LIST, 's1', '/repo')).toEqual([{ name: 'gem' }]);
+
+    m.worktreeManager.getAdapterType.mockResolvedValue('removed-agent');
+    expect(await invoke(IPC.SKILLS_LIST, 's1', '/repo')).toEqual([]);
+    await expect(invoke(IPC.SKILLS_ADD, 's1', '/repo', { name: 'x' })).rejects.toThrow("isn't available any more");
+  });
+
+  it("refuses MCP and plugin calls for an agent that isn't registered, rather than change the default's", async () => {
+    const addConfiguredMcpServer = vi.fn();
+    m.adapterRegistry.getDefault.mockReturnValue({ id: 'claude-code', addConfiguredMcpServer });
+    m.adapterRegistry.get.mockReturnValue(undefined);
+    await expect(invoke(IPC.MCP_CONFIG_ADD, { name: 'x' }, 'removed-agent')).rejects.toThrow('The agent "removed-agent" isn\'t available');
+    expect(addConfiguredMcpServer).not.toHaveBeenCalled();
+    await invoke(IPC.MCP_CONFIG_ADD, { name: 'x' });
+    expect(addConfiguredMcpServer).toHaveBeenCalledWith({ name: 'x' });
+  });
+
+  it('keeps Plugins on the built-in agent whatever the default agent is', async () => {
+    const listPlugins = vi.fn(async () => ({ installed: [{ id: 'p' }], available: [] }));
+    m.adapterRegistry.getDefault.mockReturnValue({ id: 'gemini-cli', capabilities: { plugins: false } });
+    m.adapterRegistry.getBuiltInDefault.mockReturnValue({ id: 'claude-code', capabilities: { plugins: true }, listPlugins });
+    expect(await invoke(IPC.PLUGIN_LIST)).toEqual({ installed: [{ id: 'p' }], available: [] });
   });
 
   it('MCP_CONFIG_APPROVE approves a server for the project and all its worktrees', async () => {

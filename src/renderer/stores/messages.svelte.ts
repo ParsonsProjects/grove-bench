@@ -1029,7 +1029,7 @@ class MessageStore {
     const parent = call.parentToolUseId;
     if (parent) {
       const agentCall = msgs.find((m) => m.kind === 'tool_call' && m.toolUseId === parent) as ChatToolCallMessage | undefined;
-      return { subagentCall: parent, inSubagent: agentCallInput(agentCall?.toolInput).agentType ?? 'subagent' };
+      return { subagentCall: parent, inSubagent: agentCallInput(agentCall).agentType ?? 'subagent' };
     }
     return isAgentCall(call) ? { subagentCall: call.toolUseId } : {};
   }
@@ -1974,10 +1974,16 @@ class MessageStore {
         ...permMsgs.slice(toolIdx + 1),
       ]);
     }
-    // Detect question tools — render as an interactive question, not a permission gate
+    // Detect question tools: render as an interactive question, not a permission gate.
+    // The answer goes back as a deny carrying it (resolveQuestion), which is
+    // how an adapter hands it to its agent.
     if (event.toolCategory === 'question') {
-      const input = event.toolInput as Record<string, unknown>;
-      const questions = (Array.isArray(input?.questions) ? input.questions : []) as QuestionItem[];
+      const questions: QuestionItem[] = (toolViewOf(event).questions ?? []).map((q) => ({
+        question: q.question,
+        header: q.header ?? '',
+        options: q.options.map((o) => ({ label: o.label, description: o.description ?? '' })),
+        multiSelect: q.multiSelect === true,
+      }));
       this.pushMessage(sessionId, {
         kind: 'question',
         id: nextId(),
@@ -2299,10 +2305,15 @@ class MessageStore {
     if (trimmed === '/clear') {
       this.pendingClear[sessionId] = true;
     }
-    // Sync mode when user issues mode-changing slash commands
-    if (trimmed === '/plan') {
+    // Sync mode when user issues mode-changing slash commands, for an agent
+    // with Plan mode (Claude Code's). To another agent they are only text.
+    // Before its controls have loaded, the agent is taken to have it, as
+    // before agents could differ.
+    const modeControl = this.getControlDescriptors(sessionId).find((d) => d.id === CONTROL_IDS.permissionMode);
+    const hasPlanMode = !modeControl || modeControl.options.some((o) => o.value === 'plan');
+    if (hasPlanMode && trimmed === '/plan') {
       this.modeBySession[sessionId] = 'plan';
-    } else if (trimmed === '/code') {
+    } else if (hasPlanMode && trimmed === '/code') {
       this.modeBySession[sessionId] = 'default';
     }
     this.pushMessage(sessionId, {

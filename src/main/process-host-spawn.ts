@@ -1,7 +1,7 @@
 /**
  * Long-running processes started from the process host (process-host.ts):
- * the agent's claude binary. Starting a process holds whichever process asks
- * until the OS has created it. On the main process the freeze log measured
+ * the agents' programs (claude, ACP agents). Starting a process holds
+ * whichever process asks until the OS has created it. On the main process the freeze log measured
  * every claude.exe launch at 1 s or more, and up to 21 s on a PC running an
  * antivirus, with the window frozen throughout. From the host, only the host
  * waits.
@@ -10,9 +10,11 @@
  * ChildProcess the agent SDK expects (stdin, stdout, exitCode, kill, 'exit')
  * and follows the SpawnEvents it is given. createSpawnRunner starts the real
  * process and reports those events; it runs in the host, or in the main
- * process when the host is down. Only Node here: the host has no `app`.
+ * process when the host is down. Only Node (and cross-spawn) here: the host
+ * has no `app`.
  */
-import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
+import { spawn as nodeSpawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
+import crossSpawn from 'cross-spawn';
 import { EventEmitter } from 'node:events';
 import { Readable, Writable } from 'node:stream';
 import {
@@ -168,11 +170,16 @@ export function createSpawnRunner(
 ): SpawnRunner {
   const children = new Map<number, ChildProcess>();
 
-  function start({ id, file, args, cwd, env }: SpawnRequest): void {
+  function start({ id, file, args, cwd, env, findCommand }: SpawnRequest): void {
     const startedAt = now();
     let child: ChildProcess;
     try {
-      child = spawn(file, args, { cwd, env, stdio: 'pipe', windowsHide: true });
+      const options: SpawnOptions = { cwd, env, stdio: 'pipe', windowsHide: true };
+      // cross-spawn's parse finds the command and wraps a .cmd shim in
+      // cmd.exe, as execa does before it spawns. It reads the disk, which is
+      // why it runs here and not on the main process.
+      const launch = findCommand ? crossSpawn._parse(file, args, options) : { command: file, args, options };
+      child = spawn(launch.command, launch.args, launch.options);
     } catch (e) {
       post({ type: 'error', id, error: serializeError(e) });
       post({ type: 'close', id });

@@ -86,6 +86,20 @@ describe('isMessageVisible', () => {
     expect(isMessageVisible(tool({ id: '3', toolName: 'mcp__grove-memory__save_memory' }), 'summary')).toBe(false);
   });
 
+  it("in summary mode shows another agent's MCP calls and calls Grove can't place, but not its own or to-do lists", () => {
+    const acp = (id: string, toolName: string, view: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
+      tool({ id, toolName, toolView: { kind: 'other', ...view }, toolCategory: 'other', ...extra } as never);
+    expect(isMessageVisible(acp('1', 'list_issues (linear MCP Server)', { mcp: { server: 'linear', tool: 'list_issues' } }), 'summary')).toBe(true);
+    expect(isMessageVisible(acp('2', 'grove-memory_memory_read', { mcp: { server: 'grove-memory', tool: 'memory_read' } }), 'summary')).toBe(false);
+    // ACP doesn't mark MCP calls: one Grove can't place may act outside the project.
+    expect(isMessageVisible(acp('3', 'create_issue(title: "Bug")', {}), 'summary')).toBe(true);
+    expect(isMessageVisible(acp('4', 'todowrite', {}, { toolInput: { todos: [{ content: 'a', status: 'pending' }] } }), 'summary')).toBe(false);
+    // Gemini CLI titles Grove's own tools without the server when they have arguments.
+    expect(isMessageVisible(acp('6', 'memory_read(path: "repo/overview.md")', {}), 'summary')).toBe(false);
+    // A read Grove can place still hides.
+    expect(isMessageVisible(tool({ id: '5', toolName: 'read', toolView: { kind: 'read', path: 'a.ts' }, toolCategory: 'read' } as never), 'summary')).toBe(false);
+  });
+
   it('in summary mode shows tools that returned images, so the images stay in view', () => {
     const images = [{ file: `${'a'.repeat(32)}.png` }];
     expect(isMessageVisible(tool({ id: '1', toolName: 'mcp__grove-preview__screenshot', images }), 'summary')).toBe(true);
@@ -278,10 +292,15 @@ describe('threadMessages', () => {
 });
 
 describe('agentCallInput', () => {
-  it('reads the subagent type and prompt, ignoring anything else', () => {
-    expect(agentCallInput({ subagent_type: 'Explore', prompt: 'Find the cron job', description: 'x' }))
+  it("reads the subagent type and prompt from Claude Code's input, ignoring anything else", () => {
+    expect(agentCallInput({ toolName: 'Agent', toolInput: { subagent_type: 'Explore', prompt: 'Find the cron job', description: 'x' } }))
       .toEqual({ agentType: 'Explore', prompt: 'Find the cron job' });
-    expect(agentCallInput({ subagent_type: 3, prompt: '' })).toEqual({});
-    expect(agentCallInput(null)).toEqual({});
+    expect(agentCallInput({ toolName: 'Agent', toolInput: { subagent_type: 3, prompt: '' } })).toEqual({});
+    expect(agentCallInput(undefined)).toEqual({});
+  });
+
+  it("reads them from another agent's view", () => {
+    expect(agentCallInput({ toolName: 'task', toolInput: {}, toolView: { kind: 'agent', agentType: 'reviewer', prompt: 'Check it' } }))
+      .toEqual({ agentType: 'reviewer', prompt: 'Check it' });
   });
 });

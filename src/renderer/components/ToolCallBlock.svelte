@@ -55,7 +55,7 @@
 {:else if (view.kind === 'read' || view.kind === 'search') && (view.path || view.pattern)}
   <FileOpBlock {sessionId} {toolName} {view} {result} {pending} {isError} />
 {:else if view.kind === 'agent' && toolUseId}
-  <AgentCallBlock {sessionId} {toolUseId} {toolName} {toolInput} summary={view.summary} {result} {pending} {isError} />
+  <AgentCallBlock {sessionId} {toolUseId} {toolName} {toolInput} summary={view.summary} agentType={view.agentType} {result} {pending} {isError} />
 {:else}
   <GenericToolBlock {toolName} {toolInput} summary={toolView?.summary} {result} {pending} {isError} />
 {/if}
