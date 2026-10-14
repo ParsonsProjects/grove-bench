@@ -80,6 +80,10 @@ export interface PermissionRequest {
   planText?: string;
 }
 
+/** The user's answer. For a question (toolCategory 'question', its choices
+ *  in toolView.questions) the answer comes back as a deny whose message is
+ *  what the user picked or typed: Claude Code hands that message to the
+ *  model as the tool's result. */
 export type PermissionResponse =
   | { behavior: 'allow'; updatedInput: Record<string, unknown>; updatedPermissions?: unknown[] }
   | { behavior: 'deny'; message: string };

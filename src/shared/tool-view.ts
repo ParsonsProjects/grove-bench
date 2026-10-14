@@ -40,6 +40,16 @@ export interface ToolTextEdit {
   newText: string;
 }
 
+/** A question an agent puts to the user, with the answers it offers. */
+export interface ToolQuestion {
+  question: string;
+  /** A short label for the question, e.g. "Database". */
+  header?: string;
+  options: Array<{ label: string; description?: string }>;
+  /** More than one option may be picked. */
+  multiSelect?: boolean;
+}
+
 export interface ToolView {
   kind: ToolKind;
   /** The file the call reads, edits or searches, as the agent gave it. */
@@ -57,6 +67,15 @@ export interface ToolView {
   /** A short line saying what the call does, for tools the fields above
    *  don't describe (an agent-written title, a sub-agent's task). */
   summary?: string;
+  /** The MCP server and tool, when the call is to an MCP tool the agent
+   *  names as one. ACP doesn't mark MCP calls, so other agents' often have
+   *  none. */
+  mcp?: { server: string; tool: string };
+  /** For 'question': what is asked, and the answers offered. */
+  questions?: ToolQuestion[];
+  /** For 'agent': the kind of sub-agent, and the task it was given. */
+  agentType?: string;
+  prompt?: string;
 }
 
 function str(input: Record<string, unknown>, ...keys: string[]): string | undefined {
@@ -84,6 +103,37 @@ function textEdits(raw: unknown): ToolTextEdit[] {
 function genericSummary(input: Record<string, unknown>): string | undefined {
   const s = str(input, 'description', 'prompt', 'query', 'url', 'file_path', 'path', 'command', 'pattern');
   return s ? s.slice(0, 120) : undefined;
+}
+
+/** `mcp__<server>__<tool>` → its server and tool. */
+export function claudeMcpTool(toolName: string): { server: string; tool: string } | undefined {
+  if (!toolName.startsWith('mcp__')) return undefined;
+  const rest = toolName.slice('mcp__'.length);
+  const sep = rest.indexOf('__');
+  return sep > 0 && sep + 2 < rest.length ? { server: rest.slice(0, sep), tool: rest.slice(sep + 2) } : undefined;
+}
+
+/** AskUserQuestion's `questions`, keeping only well-formed entries. */
+function questionsOf(value: unknown): ToolQuestion[] {
+  if (!Array.isArray(value)) return [];
+  const out: ToolQuestion[] = [];
+  for (const raw of value) {
+    const q = (raw && typeof raw === 'object') ? raw as Record<string, unknown> : {};
+    if (typeof q.question !== 'string') continue;
+    const options = Array.isArray(q.options) ? q.options.flatMap((o) => {
+      const opt = (o && typeof o === 'object') ? o as Record<string, unknown> : {};
+      return typeof opt.label === 'string'
+        ? [{ label: opt.label, ...(typeof opt.description === 'string' ? { description: opt.description } : {}) }]
+        : [];
+    }) : [];
+    out.push({
+      question: q.question,
+      ...(typeof q.header === 'string' ? { header: q.header } : {}),
+      options,
+      ...(q.multiSelect === true ? { multiSelect: true } : {}),
+    });
+  }
+  return out;
 }
 
 /**
@@ -125,17 +175,27 @@ export function claudeToolView(toolName: string, toolInput: unknown): ToolView {
     case 'WebSearch':
       return { kind: 'web_search', query: str(input, 'query') };
     case 'AskUserQuestion':
-      return { kind: 'question' };
+      return { kind: 'question', questions: questionsOf(input.questions) };
     case 'Agent':
-    case 'Task':
-      return { kind: 'agent', summary: str(input, 'description', 'prompt')?.slice(0, 120) };
+    case 'Task': {
+      const agentType = str(input, 'subagent_type');
+      const prompt = str(input, 'prompt');
+      return {
+        kind: 'agent',
+        summary: str(input, 'description', 'prompt')?.slice(0, 120),
+        ...(agentType ? { agentType } : {}),
+        ...(prompt ? { prompt } : {}),
+      };
+    }
     case 'ExitPlanMode':
       return { kind: 'plan' };
-    default:
+    default: {
+      const mcp = claudeMcpTool(toolName);
       if (toolName.startsWith('mcp__') && toolName.includes('WebFetch')) {
-        return { kind: 'fetch', url: str(input, 'url') };
+        return { kind: 'fetch', url: str(input, 'url'), ...(mcp ? { mcp } : {}) };
       }
-      return { kind: 'other', summary: genericSummary(input) };
+      return { kind: 'other', summary: genericSummary(input), ...(mcp ? { mcp } : {}) };
+    }
   }
 }
 

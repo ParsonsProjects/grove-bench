@@ -1029,7 +1029,7 @@ class MessageStore {
     const parent = call.parentToolUseId;
     if (parent) {
       const agentCall = msgs.find((m) => m.kind === 'tool_call' && m.toolUseId === parent) as ChatToolCallMessage | undefined;
-      return { subagentCall: parent, inSubagent: agentCallInput(agentCall?.toolInput).agentType ?? 'subagent' };
+      return { subagentCall: parent, inSubagent: agentCallInput(agentCall).agentType ?? 'subagent' };
     }
     return isAgentCall(call) ? { subagentCall: call.toolUseId } : {};
   }
@@ -1974,10 +1974,16 @@ class MessageStore {
         ...permMsgs.slice(toolIdx + 1),
       ]);
     }
-    // Detect question tools — render as an interactive question, not a permission gate
+    // Detect question tools — render as an interactive question, not a permission gate.
+    // The answer goes back as a deny carrying it (resolveQuestion), which is
+    // how an adapter hands it to its agent.
     if (event.toolCategory === 'question') {
-      const input = event.toolInput as Record<string, unknown>;
-      const questions = (Array.isArray(input?.questions) ? input.questions : []) as QuestionItem[];
+      const questions: QuestionItem[] = (toolViewOf(event).questions ?? []).map((q) => ({
+        question: q.question,
+        header: q.header ?? '',
+        options: q.options.map((o) => ({ label: o.label, description: o.description ?? '' })),
+        multiSelect: q.multiSelect === true,
+      }));
       this.pushMessage(sessionId, {
         kind: 'question',
         id: nextId(),

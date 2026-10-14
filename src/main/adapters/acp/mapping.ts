@@ -6,6 +6,7 @@
 import path from 'node:path';
 import type { ControlDescriptor, ControlOption, ControlTone, ToolCategory } from '../../../shared/types.js';
 import type { ToolView, ToolTextEdit } from '../../../shared/tool-view.js';
+import { groveToolOf } from '../grove-tools.js';
 import type {
   AcpConfigOption, AcpConfigSelectOption, AcpContentBlock, AcpModeState, AcpModelState, AcpPermissionOption,
   AcpPermissionOptionKind, AcpPlanEntry, AcpToolCall, AcpToolKind,
@@ -127,6 +128,20 @@ export function firstText(content: AcpToolCall['content']): string | undefined {
 }
 
 /**
+ * The MCP server and tool an ACP call names, where its name says: Gemini
+ * CLI's title for a call without arguments, `<tool> (<server> MCP Server)`,
+ * and Grove's own tools under OpenCode's `<server>_<tool>` (groveToolOf).
+ * ACP doesn't mark other MCP calls. For display: rules use groveToolOf only.
+ */
+export function mcpToolOf(call: AcpToolCall): { server: string; tool: string } | undefined {
+  const name = toolNameFor(call);
+  const grove = groveToolOf(name);
+  if (grove) return grove;
+  const titled = /^([\w.-]+) \(([^()]+) MCP Server\)$/.exec(name.trim());
+  return titled ? { server: titled[2], tool: titled[1] } : undefined;
+}
+
+/**
  * Grove's view of an ACP tool call (see shared/tool-view.ts). Paths are
  * shown relative to `cwd` when they are inside it, as Claude Code shows them.
  */
@@ -190,8 +205,10 @@ export function toolViewFor(call: AcpToolCall, cwd: string): ToolView {
     }
     case 'switch_mode':
       return { kind: 'plan', ...(title ? { summary: title } : {}) };
-    default:
-      return withPaths({ kind: 'other' });
+    default: {
+      const mcp = mcpToolOf(call);
+      return withPaths({ kind: 'other', ...(mcp ? { mcp } : {}) });
+    }
   }
 }
 

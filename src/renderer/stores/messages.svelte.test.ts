@@ -525,6 +525,24 @@ describe('ingestEvent — permission_request', () => {
     expect(q.questions).toHaveLength(1);
     expect(q.resolved).toBe(false);
   });
+
+  it("takes another agent's questions from its view", () => {
+    messageStore.ingestEvent(SID, {
+      type: 'permission_request',
+      toolName: 'ask_user',
+      toolInput: { anything: 'else' },
+      toolUseId: 'tu-q2',
+      requestId: 'req-q2',
+      toolCategory: 'question',
+      toolView: { kind: 'question', questions: [{ question: 'Ship it?', options: [{ label: 'Yes' }, { label: 'No', description: 'Not yet' }] }] },
+    } as AgentEvent);
+
+    const q = messageStore.getMessages(SID).find((m) => m.kind === 'question') as any;
+    expect(q.questions).toEqual([{
+      question: 'Ship it?', header: '', multiSelect: false,
+      options: [{ label: 'Yes', description: '' }, { label: 'No', description: 'Not yet' }],
+    }]);
+  });
 });
 
 describe('OS notification triggers', () => {
