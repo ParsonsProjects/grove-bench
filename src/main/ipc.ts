@@ -1075,8 +1075,9 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.LIMITS_DAILY_SPEND, () => todaySpend().usd);
 
+  // The id names the thread's log file: a plain name only.
   ipcMain.handle(IPC.LIMITS_THREAD_SPEND, (_event, sessionId: unknown) =>
-    typeof sessionId === 'string' ? sessionManager.threadSpend(sessionId) : 0);
+    typeof sessionId === 'string' && /^[\w-]+$/.test(sessionId) ? sessionManager.threadSpend(sessionId) : 0);
 
   ipcMain.handle(IPC.AGENT_HISTORY, (_event, sessionId: string) => {
     const prelaunch = prelaunchEvents.get(sessionId) ?? [];

@@ -839,12 +839,39 @@ describe('StatusBar last turn', () => {
       expect(row('Last turn')).toHaveTextContent('$0.50');
     });
 
-    it('says when the totals could not be read', async () => {
+    it('says which total could not be read, and still shows the other', async () => {
       api().getThreadSpend.mockRejectedValue(new Error('gone'));
       finishTurn(0.0423);
       render(StatusBar, { props: { sessionId: ACTIVE } });
       await fireEvent.click(screen.getByTestId('last-turn'));
       await waitFor(() => expect(row('This thread')).toHaveTextContent('unknown'));
+      expect(row('Today, all threads')).toHaveTextContent('$6.30');
+    });
+
+    it('drops a total it could not read again, rather than show the old one', async () => {
+      finishTurn(0.0423);
+      render(StatusBar, { props: { sessionId: ACTIVE } });
+      await fireEvent.click(screen.getByTestId('last-turn'));
+      await waitFor(() => expect(row('This thread')).toHaveTextContent('$1.23'));
+
+      api().getThreadSpend.mockRejectedValue(new Error('gone'));
+      messageStore.messagesBySession[ACTIVE] = [
+        ...messageStore.messagesBySession[ACTIVE],
+        { kind: 'result', id: 'r2', totalCostUsd: 0.5, durationMs: 1000 } as any,
+      ];
+      await waitFor(() => expect(row('This thread')).toHaveTextContent('unknown'));
+    });
+
+    it('asks afresh each time it opens, without showing the last answers meanwhile', async () => {
+      finishTurn(0.0423);
+      render(StatusBar, { props: { sessionId: ACTIVE } });
+      await fireEvent.click(screen.getByTestId('last-turn'));
+      await waitFor(() => expect(row('This thread')).toHaveTextContent('$1.23'));
+      await fireEvent.click(screen.getByTestId('last-turn'));
+
+      api().getThreadSpend.mockReturnValue(new Promise(() => {}));
+      await fireEvent.click(screen.getByTestId('last-turn'));
+      expect(row('This thread')).toHaveTextContent('…');
     });
 
     it('links to the spend limits in Settings', async () => {

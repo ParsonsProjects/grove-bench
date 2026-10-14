@@ -61,20 +61,32 @@
   });
 
   let spendOpen = $state(false);
+  /** A total in the popover: null while it's being asked for. */
+  type Total = number | 'unknown' | null;
   /** The thread's and today's spend, asked for when the popover opens and
-   *  again when a turn ends while it is open. */
-  let spend = $state<{ thread: number; today: number } | null>(null);
-  let spendFailed = $state(false);
+   *  again when a turn ends while it is open. Each settles on its own. */
+  let threadUsd = $state<Total>(null);
+  let todayUsd = $state<Total>(null);
+  /** Only the latest ask's answers are shown. */
+  let asking = 0;
   $effect(() => {
-    if (!spendOpen) return;
+    if (!spendOpen) {
+      threadUsd = null;
+      todayUsd = null;
+      return;
+    }
     void lastResult?.id;
+    const ask = ++asking;
+    const settle = (set: (total: Total) => void) => [
+      (usd: number) => { if (ask === asking) set(usd); },
+      () => { if (ask === asking) set('unknown'); },
+    ] as const;
     untrack(() => {
-      Promise.all([window.groveBench.getThreadSpend(sessionId), window.groveBench.getDailySpend()]).then(
-        ([thread, today]) => { spend = { thread, today }; spendFailed = false; },
-        () => { spendFailed = true; },
-      );
+      window.groveBench.getThreadSpend(sessionId).then(...settle((t) => { threadUsd = t; }));
+      window.groveBench.getDailySpend().then(...settle((t) => { todayUsd = t; }));
     });
   });
+  const shown = (total: Total) => total === null ? '…' : total === 'unknown' ? 'unknown' : formatUsd(total);
 </script>
 
 {#snippet summary()}
@@ -104,11 +116,11 @@
     <div class="font-medium text-foreground mb-2">Spend</div>
     <dl class="space-y-1.5 text-muted-foreground">
       <div class="flex justify-between gap-3"><dt>Last turn</dt><dd class="text-foreground">{lastTurnCost}</dd></div>
-      <div class="flex justify-between gap-3"><dt>This thread</dt><dd class="text-foreground">{spend ? formatUsd(spend.thread) : spendFailed ? 'unknown' : '…'}</dd></div>
-      <div class="flex justify-between gap-3"><dt>Today, all threads</dt><dd class="text-foreground">{spend ? formatUsd(spend.today) : spendFailed ? 'unknown' : '…'}</dd></div>
+      <div class="flex justify-between gap-3"><dt>This thread</dt><dd class="text-foreground">{shown(threadUsd)}</dd></div>
+      <div class="flex justify-between gap-3"><dt>Today, all threads</dt><dd class="text-foreground">{shown(todayUsd)}</dd></div>
     </dl>
     <p class="mt-2 text-caption text-muted-foreground">
-      Estimates, {reportsPlanUsage ? 'at list price' : 'as the agent reported them'}. Today adds up every thread since midnight.
+      Estimates. This thread's are {reportsPlanUsage ? 'at list price' : 'as its agent reported them'}. Today's add up every thread since midnight as each agent estimates it, threads on a plan included.
     </p>
     <Button variant="link" size="inline" class="mt-2" onclick={() => { spendOpen = false; settingsStore.openAt('limits'); }}>
       Spend limits

@@ -815,6 +815,9 @@ describe('LIMITS_THREAD_SPEND', () => {
 
     m.sessionManager.threadSpend.mockClear();
     expect(await invoke(IPC.LIMITS_THREAD_SPEND, { id: 's1' })).toBe(0);
+    // The id names a log file: nothing that could reach outside its folder.
+    expect(await invoke(IPC.LIMITS_THREAD_SPEND, '../../x')).toBe(0);
+    expect(await invoke(IPC.LIMITS_THREAD_SPEND, 'a/b')).toBe(0);
     expect(m.sessionManager.threadSpend).not.toHaveBeenCalled();
   });
 });
