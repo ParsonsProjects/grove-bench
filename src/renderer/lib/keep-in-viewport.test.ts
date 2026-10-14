@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { viewportShiftX, keepInViewport, marginAboveBar, aboveBar } from './keep-in-viewport.js';
+import { viewportShiftX, keepInViewport, marginAboveBar, aboveBar, opensAbove, placeInPane } from './keep-in-viewport.js';
 
 describe('viewportShiftX', () => {
   it('leaves an element that fits where it is', () => {
@@ -101,5 +101,91 @@ describe('aboveBar', () => {
     const { node } = popoverIn(748, 766, { marked: false });
     aboveBar(node).destroy();
     expect(node.style.marginBottom).toBe('');
+  });
+});
+
+describe('opensAbove', () => {
+  const area = { top: 64, bottom: 800 };
+
+  it('opens below when it fits there', () => {
+    expect(opensAbove(200, { top: 520, bottom: 560 }, area)).toBe(false);
+  });
+
+  it("opens above when it doesn't fit below but does above", () => {
+    // 232px below the anchor, less the gap; 448px above it.
+    expect(opensAbove(260, { top: 520, bottom: 560 }, area)).toBe(true);
+  });
+
+  it('stays below when it fits neither way, where the pane can scroll to it', () => {
+    expect(opensAbove(500, { top: 520, bottom: 560 }, area)).toBe(false);
+  });
+});
+
+describe('placeInPane', () => {
+  let action: { destroy(): void } | null = null;
+  afterEach(() => {
+    action?.destroy();
+    action = null;
+    vi.restoreAllMocks();
+    document.body.innerHTML = '';
+  });
+
+  /** A popover in an anchor in a scrolling pane (64 to 800 down, 300 to
+   *  1200 across). jsdom has no layout, so the rects, the popover's height
+   *  and its offsetParent (its anchor) are stubbed. Its left edge moves with
+   *  its margin-left, as it would. */
+  function popoverIn(anchor: { top: number; bottom: number }, size: { height: number; left?: number; width?: number }) {
+    const pane = document.createElement('div');
+    pane.style.overflowY = 'auto';
+    const anchorEl = document.createElement('div');
+    const node = document.createElement('div');
+    anchorEl.append(node);
+    pane.append(anchorEl);
+    document.body.append(pane);
+    vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(800);
+    vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(1200);
+    vi.spyOn(pane, 'getBoundingClientRect').mockImplementation(() => ({ top: 64, bottom: 800, left: 300, right: 1200 }) as DOMRect);
+    vi.spyOn(anchorEl, 'getBoundingClientRect').mockImplementation(() => anchor as DOMRect);
+    vi.spyOn(node, 'getBoundingClientRect').mockImplementation(() => {
+      const left = (size.left ?? 400) + parseFloat(node.style.marginLeft || '0');
+      return { left, right: left + (size.width ?? 300) } as DOMRect;
+    });
+    Object.defineProperty(node, 'offsetParent', { get: () => anchorEl });
+    Object.defineProperty(node, 'offsetHeight', { get: () => size.height });
+    return { pane, node, size };
+  }
+
+  it('leaves a popover that fits below where it is', () => {
+    const { node } = popoverIn({ top: 520, bottom: 560 }, { height: 200 });
+    action = placeInPane(node);
+    expect(node.style.bottom).toBe('');
+    expect(node.style.marginLeft).toBe('');
+  });
+
+  it('opens one that only fits above its anchor there', () => {
+    const { node } = popoverIn({ top: 520, bottom: 560 }, { height: 260 });
+    action = placeInPane(node);
+    expect(node.style.bottom).toBe('100%');
+    expect(node.style.top).toBe('auto');
+    expect(node.style.marginBottom).toBe('8px');
+  });
+
+  it('moves one that grows too tall for above back below, and not up again', () => {
+    const { node, size } = popoverIn({ top: 520, bottom: 560 }, { height: 260 });
+    action = placeInPane(node);
+    size.height = 480;
+    window.dispatchEvent(new Event('resize'));
+    expect(node.style.bottom).toBe('');
+    size.height = 260;
+    window.dispatchEvent(new Event('resize'));
+    expect(node.style.bottom).toBe('');
+  });
+
+  it('keeps one inside the pane sideways, no wider than it', () => {
+    // 600px wide from 800: 200px past the pane's right edge, plus the gap.
+    const { node } = popoverIn({ top: 520, bottom: 560 }, { height: 200, left: 800, width: 600 });
+    action = placeInPane(node);
+    expect(node.style.marginLeft).toBe('-208px');
+    expect(node.style.maxWidth).toBe('884px');
   });
 });
