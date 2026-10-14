@@ -147,3 +147,108 @@ describe('highlightWhenVisible', () => {
     expect(code.textContent).toBe('IDENTIFICATION DIVISION.');
   });
 });
+
+describe('whenOnScreen', () => {
+  it('runs a job a slice at a time until it says it is finished', async () => {
+    const mod = await load();
+    const el = document.body.appendChild(document.createElement('div'));
+    let calls = 0;
+    mod.whenOnScreen(el, () => ++calls === 3);
+
+    await flush();
+    expect(calls).toBe(1);
+    await flush();
+    await flush();
+    expect(calls).toBe(3);
+    await flush();
+    expect(calls).toBe(3);
+  });
+
+  it('gives the job the slice\'s time check', async () => {
+    let left = 10;
+    vi.stubGlobal('requestIdleCallback', (cb: IdleRequestCallback) => {
+      setTimeout(() => cb({ didTimeout: false, timeRemaining: () => left }), 0);
+      return 1;
+    });
+    const mod = await load();
+    const el = document.body.appendChild(document.createElement('div'));
+    const seen: boolean[] = [];
+    mod.whenOnScreen(el, (hasTime) => {
+      seen.push(hasTime());
+      left = 0;
+      seen.push(hasTime());
+      return true;
+    });
+
+    await flush();
+    expect(seen).toEqual([true, false]);
+  });
+
+  it('waits until the element is on screen', async () => {
+    vi.stubGlobal('IntersectionObserver', FakeObserver);
+    const mod = await load();
+    const el = document.body.appendChild(document.createElement('div'));
+    const job = vi.fn(() => true);
+    mod.whenOnScreen(el, job);
+
+    await flush();
+    expect(job).not.toHaveBeenCalled();
+
+    FakeObserver.last!.show(el);
+    await flush();
+    expect(job).toHaveBeenCalledOnce();
+  });
+
+  it('drops a job once released, between slices too', async () => {
+    const mod = await load();
+    const el = document.body.appendChild(document.createElement('div'));
+    const job = vi.fn(() => false);
+    const release = mod.whenOnScreen(el, job);
+
+    await flush();
+    expect(job).toHaveBeenCalledOnce();
+    release();
+    await flush();
+    expect(job).toHaveBeenCalledOnce();
+  });
+
+  it('keeps a newer job for the same element when the older one is released', async () => {
+    vi.stubGlobal('IntersectionObserver', FakeObserver);
+    const mod = await load();
+    const el = document.body.appendChild(document.createElement('div'));
+    const older = vi.fn(() => true);
+    const newer = vi.fn(() => true);
+    const releaseOlder = mod.whenOnScreen(el, older);
+    mod.whenOnScreen(el, newer);
+    releaseOlder();
+    expect(FakeObserver.last!.observed.has(el)).toBe(true);
+
+    FakeObserver.last!.show(el);
+    await flush();
+    expect(older).not.toHaveBeenCalled();
+    expect(newer).toHaveBeenCalledOnce();
+  });
+});
+
+describe('whenOnScreen errors', () => {
+  it('drops a job that throws and still runs the rest', async () => {
+    const errors: unknown[] = [];
+    vi.stubGlobal('requestIdleCallback', (cb: IdleRequestCallback) => {
+      setTimeout(() => {
+        try { cb({ didTimeout: false, timeRemaining: () => 10 }); } catch (e) { errors.push(e); }
+      }, 0);
+      return 1;
+    });
+    const mod = await load();
+    const broken = vi.fn(() => { throw new Error('boom'); });
+    const after = vi.fn(() => true);
+    mod.whenOnScreen(document.body.appendChild(document.createElement('div')), broken);
+    mod.whenOnScreen(document.body.appendChild(document.createElement('div')), after);
+
+    await flush();
+    await flush();
+    expect(errors).toHaveLength(1);
+    expect(broken).toHaveBeenCalledOnce();
+    expect(after).toHaveBeenCalledOnce();
+  });
+});

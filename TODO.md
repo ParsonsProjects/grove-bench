@@ -14,8 +14,8 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [x] Open models through OpenCode (alpha, off until enabled in Settings > Agents): built-in ACP preset (`adapters/acp/opencode.ts`) that makes OpenCode ask before it acts and locks its local server; an OpenRouter key saved in Grove starts conversations on DeepSeek V4.1 Flash. Left to do (a Windows run with a real key, OpenCode's retried replies and subagents, to-do lists, cost) in `docs/open-model-harnesses-plan.md`
 - [x] Per-adapter defaults in Settings — `adapterDefaults` (adapter id → control id → value) replaces `defaultThinkingLevel` (settings schema v2 migration); the Agent tab lists every registered adapter's declared controls for the default model via `getAdapterControls`, and `initialControls` overlays the saved values that the adapter actually offers
 - [x] Neutral form for tool allow/deny rules — rules are `<tool>` / `<tool>(<glob>)` with adapter-neutral keywords (`shell`, `edit`, `read`, `web`, `agent`, `question`, `mcp`) matched by tool category; adapters build the call specifier with `toolCallSpecifier` (command, file path, URL, ...). Provider tool names (`Bash(...)`) keep working, so no migration
-- [ ] Switch agent mid-conversation — needs the on-disk transcript (see Session Export) to replay context into another backend
-- [ ] Agent discovery/install marketplace ("app store")
+- [x] Switch agent mid-thread: picking another agent in the Agent settings popover hands the thread to it (`switchAgent` in `agent-session.ts`). The thread, worktree and checkpoints stay; if the user agrees, the next message carries a short transcript built from Grove's event log (`agent-handoff.ts`), so it didn't need the on-disk transcript after all
+- [x] Agent discovery: Settings > Agents lists the ACP Registry's agents (`RegistryAgents.svelte`, fetched daily by `catalogs.ts`) with how to install each and a "Use" button that fills in the add form. Installing stays manual: Grove shows the install commands but never runs them
 - [x] Agent Client Protocol for custom agent integration: `adapters/acp/`, with Gemini CLI and GitHub Copilot CLI built in, others added in Settings → Agent; see docs/acp-adapter-plan.md for what is left
 
 ### Embedded Terminal
@@ -67,7 +67,8 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 
 ### Diff Viewer
 - [x] Side-by-side diff view option (toggle in Edit tool header)
-- [ ] Syntax highlighting in diff views across multiple languages
+- [x] Syntax highlighting in diff views across multiple languages: `DiffView` highlights by file extension (`languageForPath` in `lib/diff-highlight.ts`, grammars registered in `lib/hljs.ts`) whenever it's given a `filePath`
+- [x] Syntax highlighting in the thread's edit blocks (`DiffBlock.svelte`) and permission prompts (`PermissionBlock.svelte`): they pass `filePath` with `deferHighlight`, so `DiffView` draws plain lines and colours them once on screen, in idle time, a slice of lines at a time (`whenOnScreen` in `lib/code-highlight.ts`, shared with Markdown code blocks), keeping the colours per diff rather than in the shared cache. Lines over 2,000 characters and diffs over 5,000 distinct lines stay plain there (`linesToColour`). Colouring as they rendered would cost about 200 µs a line (a 2,000-line write is about 400 ms), the same freeze code blocks had when a thread woke
 - [x] Full thread diff view (cumulative changes across all turns) — "All turns" entry in the Checkpoints tab, plus per-turn diff stats and a This turn / Since here toggle
 
 ### PR Creation Workflow
@@ -88,23 +89,23 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 
 ### Help System
 - [x] Keybinding documentation (F1 or similar) — `F1` opens Help, and the empty state links to Getting Started
-- [ ] Context-aware footer showing relevant keyboard shortcuts
+- [ ] Context-aware footer showing relevant keyboard shortcuts. Today "Keys" in the status bar (`StatusBarKeys.svelte`) lists every shortcut, whatever has focus
 
 ### Cost & Usage Dashboard
 - [x] Plan usage runway — `AgentQueryHandle.getUsage()` returns a neutral `ProviderUsage` (windows with 0–1 utilization and reset time); the Claude adapter maps the SDK's experimental `/usage` control and probes for it so a rename degrades to "no usage"; `usage.svelte.ts` keeps one snapshot per provider, refreshes on popover open and after turns (throttled), and folds live `rate_limit` events in; shown as bars under the agent in the Agent settings popover
-- [ ] Per-session and cumulative token/cost view — data is already captured per message (`adapters/claude-code.ts`) but only lands in memory notes
+- [ ] Per-session and cumulative token/cost view. The status bar shows only the last turn's cost (`StatusBarLastTurn.svelte`); each result event already carries the thread's running total (`sessionCostUsd`, see Turn cost below), but no view shows it
 - [x] Turn cost per turn: Claude Code's `total_cost_usd` is the query's running total, so `adapters/running-cost.ts` turns it into each turn's cost (`totalCostUsd`) and keeps the running total as `sessionCostUsd`; a resumed query starts from the total its history last reached
 - [x] Limits and alerts (Settings > Limits & alerts): plan usage alert at a chosen percent (in-app toast and desktop notification, once per window, `planAlerts.svelte.ts`); spend per thread and per day, tool calls and minutes per turn, each pausing the thread before its next tool call to ask Continue or Stop (`session-limits.ts`, a `PreToolUse` hook for Claude Code, permission requests for ACP agents)
 
 ### Session Export
-- [ ] Markdown transcript per session written to disk (`.grove-wt/<id>/thread.md` or under the repo's memory dir) with an "Open in editor" action — also the enabler for switching agents mid-conversation
+- [ ] Markdown transcript per session written to disk (`.grove-wt/<id>/thread.md` or under the repo's memory dir) with an "Open in editor" action
 - [ ] Export conversation transcript (Markdown / JSON)
 - [ ] Session export/import between machines
 
 ### Security Hardening
 - [ ] Validate IPC inputs at the boundary with Zod (already a dependency, unused for IPC)
-- [ ] Enable Electron `sandbox: true` in webPreferences
-- [ ] Add a Content-Security-Policy for the renderer
+- [x] Electron sandbox for the app window: on by default since Electron 20 unless `nodeIntegration: true` or `sandbox: false` is set, and the main window sets neither (`src/main/index.ts`). The preload only uses `contextBridge` and `ipcRenderer`, which work sandboxed. The Preview pages set `sandbox: true` themselves
+- [x] Content-Security-Policy for the renderer: a `<meta>` tag added at build time by `scripts/vite-csp.mjs` (only the app's own scripts, no inline scripts or eval, local images only)
 
 ### Onboarding
 - [ ] First-launch welcome/tour surfacing the existing `docs/help/` content (currently only the git notice, the API key step in New Conversation, and analytics consent)
@@ -123,21 +124,21 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [x] Copy buttons on code blocks, bash output, diffs, file ops, thinking blocks
 
 ### Accessibility & i18n
-- [ ] ARIA roles/labels on app components (currently only the vendored bits-ui primitives have them)
-- [ ] `prefers-reduced-motion` support
+- [ ] ARIA roles/labels on app components (80 of 122 app components have `aria-*` or `role` attributes; the other 42 have none)
+- [x] `prefers-reduced-motion` support: `globals.css` stops the pulses, the tooltip and the empty-state animation, and animated components check it themselves (`GroveWalk`, `AgentSprite`, `StatusDot`, `PixelMeter` and others). Loading spinners still turn
 - [ ] i18n framework (all UI strings hardcoded English; spellchecker pinned to `en-US`)
 
 ### Maintenance & Hygiene
 - [ ] ESLint/Prettier config (CONTRIBUTING.md notes none exists)
 - [x] Tests for the IPC layer: `ipc.test.ts` covers handler validation, file access bounds, setup cancel and history paging
-- [ ] Component tests (5 of 42 Svelte components covered) and E2E tests (Playwright)
-- [ ] In-app log viewer or "open logs folder" action; configurable log level
+- [ ] Component tests (54 of 122 app components have their own test file) and E2E tests (Playwright)
+- [ ] In-app log viewer and a log level setting. Today Settings > Diagnostics can open the logs folder ("Show performance log"), and the level is set with the `GROVE_LOG_LEVEL` env var (`logger.ts`)
 - [ ] Worktree disk-usage reporting and a "reclaim space" tool
 - [ ] Measure live conversation memory: a running conversation keeps every non-streaming event in memory for its whole life (`SessionEventStore.append`); log history size per conversation, and if it's large, keep only recent events in memory and read older ones from the JSONL log
 - [ ] Purge userData on uninstall (NSIS currently leaves settings/logs/worktrees behind)
 - [ ] CHANGELOG.md and SECURITY.md
 - [x] Fetch Claude model list dynamically — the adapter reads `Query.supportedModels()` when a conversation starts (once per run), keeps the concrete model ids, caches the list in app-state for the next launch and falls back to `FALLBACK_MODELS` before the first read; the SDK's effort levels, adaptive thinking, fast mode and auto mode override the static rules in `claudeControlsFor()` (default effort and thinking-off still come from the table)
-- [ ] Demo harness (`/demo.html`) console errors — duplicate keyed-each id in the Sidebar demo data, and mock bridge methods the demo never defined (`checkPrerequisites`, update listeners)
+- [x] Demo harness (`/demo.html`) console errors: the duplicate keyed-each id in the Sidebar demo data and the missing mock bridge methods (`checkPrerequisites`, update listeners) are fixed; the page now loads on the dev server with no console errors
 
 ### From DESIGN.md v2 (documented but previously untracked)
 - [ ] Docker-based sandboxing of agent sessions

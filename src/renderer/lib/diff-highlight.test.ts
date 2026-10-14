@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { RecentCache, languageForPath, highlightLine, wordDiffSegments, hunkLineIndices } from './diff-highlight.js';
+import { RecentCache, languageForPath, highlightLine, highlightLineUncached, linesToColour, MAX_DEFERRED_LINE, MAX_DEFERRED_LINES, wordDiffSegments, hunkLineIndices } from './diff-highlight.js';
 import type { DiffLine } from './diff-types.js';
 
 describe('languageForPath', () => {
@@ -12,6 +12,38 @@ describe('languageForPath', () => {
   it('returns null for unknown or extensionless paths', () => {
     expect(languageForPath('LICENSE')).toBeNull();
     expect(languageForPath('weird.xyz')).toBeNull();
+  });
+});
+
+describe('highlightLineUncached', () => {
+  it('gives the same HTML as highlightLine', () => {
+    const text = 'const uncached = a < b;';
+    expect(highlightLineUncached(text, 'typescript')).toBe(highlightLine(text, 'typescript'));
+  });
+
+  it('escapes plain text when no language is given', () => {
+    expect(highlightLineUncached('a < b', null)).toBe('a &lt; b');
+  });
+});
+
+describe('linesToColour', () => {
+  const line = (type: DiffLine['type'], text: string): DiffLine => ({ type, text });
+
+  it('takes each distinct code line once, not hunk headers', () => {
+    const texts = linesToColour([line('hunk', '@@ -1 +1 @@'), line('context', 'a'), line('del', 'b'), line('add', 'c'), line('add', 'a')]);
+    expect(texts && [...texts]).toEqual(['a', 'b', 'c']);
+  });
+
+  it('leaves out lines too long to colour in one go', () => {
+    const texts = linesToColour([line('add', 'x'.repeat(MAX_DEFERRED_LINE)), line('add', 'y'.repeat(MAX_DEFERRED_LINE + 1))]);
+    expect(texts?.size).toBe(1);
+    expect(texts?.has('x'.repeat(MAX_DEFERRED_LINE))).toBe(true);
+  });
+
+  it('gives up on a diff with too many distinct lines', () => {
+    const lines = Array.from({ length: MAX_DEFERRED_LINES }, (_, i) => line('add', `line ${i}`));
+    expect(linesToColour(lines)?.size).toBe(MAX_DEFERRED_LINES);
+    expect(linesToColour([...lines, line('add', 'one more')])).toBeNull();
   });
 });
 

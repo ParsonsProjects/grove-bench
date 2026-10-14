@@ -265,7 +265,7 @@
   <!-- Inline diff preview for Edit/Write (only while awaiting approval) -->
   {#if !isResolved && isEditTool && diffLines.length > 0}
     <div class="mt-1">
-      <DiffView lines={diffLines} {sideBySide} maxHeight="200px" />
+      <DiffView lines={diffLines} {sideBySide} maxHeight="200px" {filePath} deferHighlight />
     </div>
   {/if}
 

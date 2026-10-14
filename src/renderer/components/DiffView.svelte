@@ -105,7 +105,8 @@
 </script>
 
 <script lang="ts">
-  import { languageForPath, highlightLine, markRanges } from '../lib/diff-highlight.js';
+  import { languageForPath, highlightLine, highlightLineUncached, linesToColour, markRanges } from '../lib/diff-highlight.js';
+  import { whenOnScreen } from '../lib/code-highlight.js';
   import { EXPAND_STEP } from '../lib/diff-context.js';
   import { Button } from '$lib/components/ui/button/index.js';
 
@@ -114,6 +115,7 @@
     sideBySide = false,
     maxHeight = '400px',
     filePath = '',
+    deferHighlight = false,
     onExpand,
     comments = [],
     composer = null,
@@ -127,6 +129,10 @@
     sideBySide?: boolean;
     maxHeight?: string;
     filePath?: string;
+    /** Colour the lines once the diff is on screen, in idle time, rather than
+     *  while it renders: for diffs in the thread, where a page of them draws
+     *  at once (see lib/code-highlight.ts). */
+    deferHighlight?: boolean;
     /** Reveal hidden context for a gap; when absent, expander rows are not rendered. */
     onExpand?: (gap: ContextGap, dir: 'up' | 'down' | 'all') => void;
     /** Review comments for this file, rendered under their anchored line. */
@@ -144,8 +150,48 @@
   let rows = $derived(sideBySide ? buildSideBySideRows(lines) : []);
   let intraline = $derived(sideBySide ? new Map<number, [number, number][]>() : unifiedIntralineRanges(lines));
   let lang = $derived(filePath ? languageForPath(filePath) : null);
+  let root = $state<HTMLElement>();
+  /** With deferHighlight: each line's coloured HTML by its text, worked out
+   *  once the diff is on screen, in idle time. Kept here, not in
+   *  diff-highlight's shared cache, so drawing a line never colours it there
+   *  and then, however long the diff. */
+  const colours = { lang: null as string | null, html: new Map<string, string>() };
+  /** Bumped after each slice, so lines show their colours as they're done. */
+  let colourVersion = $state(0);
+  $effect(() => {
+    if (!deferHighlight || !lang || !root) return;
+    const language = lang;
+    if (colours.lang !== language) {
+      colours.lang = language;
+      colours.html.clear();
+    }
+    const texts = linesToColour(lines);
+    if (!texts) return;
+    for (const text of colours.html.keys()) {
+      if (!texts.has(text)) colours.html.delete(text);
+    }
+    const todo = [...texts].filter((text) => !colours.html.has(text));
+    if (todo.length === 0) return;
+    let next = 0;
+    return whenOnScreen(root, (hasTime) => {
+      // At least one line a slice, so a busy window still gets there.
+      while (next < todo.length) {
+        const text = todo[next++];
+        colours.html.set(text, highlightLineUncached(text, language));
+        if (!hasTime()) break;
+      }
+      colourVersion++;
+      return next >= todo.length;
+    });
+  });
+  /** With deferHighlight: the line's colours if they're worked out, else
+   *  its escaped text. */
+  function colourOf(text: string): string {
+    void colourVersion; // read, so lines redraw as they're coloured
+    return (colours.lang === lang && colours.html.get(text)) || highlightLine(text, null);
+  }
   const hl = (text: string, ranges?: [number, number][]) => {
-    const html = highlightLine(text, lang);
+    const html = deferHighlight ? colourOf(text) : highlightLine(text, lang);
     return ranges && ranges.length ? markRanges(html, ranges) : html;
   };
 
@@ -291,7 +337,7 @@
 
 {#if lines.length > 0}
   {#if sideBySide}
-    <div class="overflow-x-auto overflow-y-auto text-xs font-mono" style:max-height={maxHeight}>
+    <div bind:this={root} class="overflow-x-auto overflow-y-auto text-xs font-mono" style:max-height={maxHeight}>
       <table class="w-full border-collapse table-fixed">
         <colgroup>
           <col class="w-8" />
@@ -342,7 +388,7 @@
       </table>
     </div>
   {:else}
-    <div class="overflow-x-auto overflow-y-auto text-xs font-mono" style:max-height={maxHeight}>
+    <div bind:this={root} class="overflow-x-auto overflow-y-auto text-xs font-mono" style:max-height={maxHeight}>
       {#each lines as line, idx}
         {#if line.type === 'hunk'}
           <div data-hunk="true" class="text-cyan-400 bg-cyan-950/20 px-2 py-0.5">{line.text}</div>

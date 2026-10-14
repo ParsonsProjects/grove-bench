@@ -84,7 +84,7 @@
       {/if}
     </div>
 
-    <DiffView lines={diffLines} {sideBySide} />
+    <DiffView lines={diffLines} {sideBySide} {filePath} deferHighlight />
 
     {#if isError && result}
       <div class="text-xs text-destructive mt-1">{result}</div>
