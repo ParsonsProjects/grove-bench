@@ -105,7 +105,7 @@
 </script>
 
 <script lang="ts">
-  import { languageForPath, highlightLine, cachedHighlightLine, markRanges } from '../lib/diff-highlight.js';
+  import { languageForPath, highlightLine, highlightLineUncached, linesToColour, markRanges } from '../lib/diff-highlight.js';
   import { whenOnScreen } from '../lib/code-highlight.js';
   import { EXPAND_STEP } from '../lib/diff-context.js';
   import { Button } from '$lib/components/ui/button/index.js';
@@ -151,30 +151,47 @@
   let intraline = $derived(sideBySide ? new Map<number, [number, number][]>() : unifiedIntralineRanges(lines));
   let lang = $derived(filePath ? languageForPath(filePath) : null);
   let root = $state<HTMLElement>();
-  /** With deferHighlight: the lines (and language) whose colours are all
-   *  worked out. Raw, so the lines are kept as given and compare equal. */
-  let colouredFor = $state.raw<{ lines: DiffLine[]; lang: string } | null>(null);
-  /** Until then a line shows its colours only if they already were
-   *  (diff-highlight's cache), so new lines never wait on highlight.js. */
-  let coloured = $derived(colouredFor?.lines === lines && colouredFor.lang === lang);
+  /** With deferHighlight: each line's coloured HTML by its text, worked out
+   *  once the diff is on screen, in idle time. Kept here, not in
+   *  diff-highlight's shared cache, so drawing a line never colours it there
+   *  and then, however long the diff. */
+  const colours = { lang: null as string | null, html: new Map<string, string>() };
+  /** Bumped after each slice, so lines show their colours as they're done. */
+  let colourVersion = $state(0);
   $effect(() => {
-    if (!deferHighlight || !lang || !root || coloured) return;
-    const target = { lines, lang };
-    const texts = lines.filter((l) => l.type === 'add' || l.type === 'del' || l.type === 'context').map((l) => l.text);
+    if (!deferHighlight || !lang || !root) return;
+    const language = lang;
+    if (colours.lang !== language) {
+      colours.lang = language;
+      colours.html.clear();
+    }
+    const texts = linesToColour(lines);
+    if (!texts) return;
+    for (const text of colours.html.keys()) {
+      if (!texts.has(text)) colours.html.delete(text);
+    }
+    const todo = [...texts].filter((text) => !colours.html.has(text));
+    if (todo.length === 0) return;
     let next = 0;
     return whenOnScreen(root, (hasTime) => {
       // At least one line a slice, so a busy window still gets there.
-      while (next < texts.length) {
-        highlightLine(texts[next++], target.lang);
+      while (next < todo.length) {
+        const text = todo[next++];
+        colours.html.set(text, highlightLineUncached(text, language));
         if (!hasTime()) break;
       }
-      if (next < texts.length) return false;
-      colouredFor = target;
-      return true;
+      colourVersion++;
+      return next >= todo.length;
     });
   });
+  /** With deferHighlight: the line's colours if they're worked out, else
+   *  its escaped text. */
+  function colourOf(text: string): string {
+    void colourVersion; // read, so lines redraw as they're coloured
+    return (colours.lang === lang && colours.html.get(text)) || highlightLine(text, null);
+  }
   const hl = (text: string, ranges?: [number, number][]) => {
-    const html = deferHighlight && !coloured ? cachedHighlightLine(text, lang) : highlightLine(text, lang);
+    const html = deferHighlight ? colourOf(text) : highlightLine(text, lang);
     return ranges && ranges.length ? markRanges(html, ranges) : html;
   };
 

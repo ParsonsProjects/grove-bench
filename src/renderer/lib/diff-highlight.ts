@@ -36,22 +36,45 @@ function escapeHtml(s: string): string {
  */
 export function highlightLine(text: string, lang: string | null): string {
   if (!lang) return escapeHtml(text);
-  return highlightCache.get(`${lang}\n${text}`, () => {
-    try {
-      return DOMPurify.sanitize(hljs.highlight(text, { language: lang }).value);
-    } catch {
-      return escapeHtml(text);
-    }
-  });
+  return highlightCache.get(`${lang}\n${text}`, () => renderLine(text, lang));
 }
 
 /**
- * The line's highlighted HTML if `highlightLine` already worked it out, else
- * the escaped text. For drawing a diff before its colours are ready without
- * doing the work there and then; safe for {@html} either way.
+ * `highlightLine` without the shared cache, for a caller that keeps its own
+ * results (DiffView's thread diffs), so a long diff in the thread can't push
+ * out the lines the Changes panel redraws on every refresh.
  */
-export function cachedHighlightLine(text: string, lang: string | null): string {
-  return (lang && highlightCache.peek(`${lang}\n${text}`)) || escapeHtml(text);
+export function highlightLineUncached(text: string, lang: string | null): string {
+  return lang ? renderLine(text, lang) : escapeHtml(text);
+}
+
+/** Longer lines (minified code) stay plain in a diff DiffView colours in idle
+ *  time: one can take highlight.js longer than any idle slice. Word marks
+ *  stop at the same length (intralineRanges). */
+export const MAX_DEFERRED_LINE = 2000;
+/** Such a diff with more distinct lines than this stays plain, which bounds
+ *  the work and memory one diff in the thread can take. The Changes panel
+ *  colours it in full. */
+export const MAX_DEFERRED_LINES = 5000;
+
+/**
+ * The distinct code lines DiffView colours in idle time (deferHighlight), or
+ * null when the diff has too many to colour at all.
+ */
+export function linesToColour(lines: DiffLine[]): Set<string> | null {
+  const texts = new Set<string>();
+  for (const l of lines) {
+    if ((l.type === 'add' || l.type === 'del' || l.type === 'context') && l.text.length <= MAX_DEFERRED_LINE) texts.add(l.text);
+  }
+  return texts.size > MAX_DEFERRED_LINES ? null : texts;
+}
+
+function renderLine(text: string, lang: string): string {
+  try {
+    return DOMPurify.sanitize(hljs.highlight(text, { language: lang }).value);
+  } catch {
+    return escapeHtml(text);
+  }
 }
 
 /**
@@ -82,9 +105,6 @@ export class RecentCache<V> {
     this.map.set(key, value);
     return value;
   }
-
-  /** The entry if there is one, without making it. */
-  peek(key: string): V | undefined { return this.map.get(key); }
 
   get size(): number { return this.map.size; }
 }

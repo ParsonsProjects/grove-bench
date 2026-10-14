@@ -13,7 +13,10 @@ import DiffView from './DiffView.svelte';
 import { parseDiffLines } from '../lib/diff-parse.js';
 import type { ReviewComment } from '../lib/diff-types.js';
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 const lines = parseDiffLines(['@@ -5,2 +5,2 @@', ' keep();', '-oldCall();', '+newCall();', ''].join('\n'));
 
@@ -57,22 +60,37 @@ describe('DiffView highlighting', () => {
     expect(container).toHaveTextContent('let b = 2;');
   });
 
-  it('with deferHighlight, shows colours already worked out straight away', async () => {
-    const diff = codeDiff('var c = 1;', 'var c = 2;');
-    render(DiffView, { lines: diff, filePath: 'src/c.ts' });
-    cleanup();
-    const { container } = render(DiffView, { lines: diff, filePath: 'src/c.ts', deferHighlight: true });
+  it('with deferHighlight, keeps its colours when given the same lines again', async () => {
+    const { container, rerender } = render(DiffView, { lines: codeDiff('var c = 1;', 'var c = 2;'), filePath: 'src/c.ts', deferHighlight: true });
+    await vi.waitFor(() => expect(container.querySelector('.hljs-keyword')).not.toBeNull());
+
+    await rerender({ lines: codeDiff('var c = 1;', 'var c = 2;') });
     expect(container.querySelector('.hljs-keyword')).toHaveTextContent('var');
   });
 
-  it('with deferHighlight, draws new lines plain first even once earlier ones are coloured', async () => {
-    const { container, rerender } = render(DiffView, { lines: codeDiff('let f = 1;', 'let f = 2;'), filePath: 'src/f.ts', deferHighlight: true });
-    await vi.waitFor(() => expect(container.querySelector('.hljs-keyword')).not.toBeNull());
+  it('with deferHighlight, leaves a very long line plain and colours the rest', async () => {
+    const long = `const minified = [${'1,'.repeat(1200)}];`;
+    const { container } = render(DiffView, { lines: codeDiff('const h = 1;', long), filePath: 'src/h.ts', deferHighlight: true });
+    await vi.waitFor(() => expect(container.querySelector('.diff-del .hljs-keyword')).not.toBeNull());
+    expect(container.querySelector('.diff-add [class^="hljs-"]')).toBeNull();
+    expect(container.querySelector('.diff-add')).toHaveTextContent(long);
+  });
 
-    await rerender({ lines: codeDiff('function g() {}', 'function g() { return 1; }') });
-    expect(container).toHaveTextContent('function g() { return 1; }');
-    expect(container.querySelector('.hljs-keyword')).toBeNull();
-    await vi.waitFor(() => expect(container.querySelector('.hljs-keyword')).toHaveTextContent('function'));
+  it('with deferHighlight, shows lines coloured so far after each slice', async () => {
+    // No idle time to spare: one line a slice.
+    vi.stubGlobal('requestIdleCallback', (cb: IdleRequestCallback) => {
+      setTimeout(() => cb({ didTimeout: false, timeRemaining: () => 0 }), 0);
+      return 1;
+    });
+    const { container } = render(DiffView, { lines: codeDiff('const i = 1;', 'return i;'), filePath: 'src/i.ts', deferHighlight: true });
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+    await flush();
+    expect(container.querySelector('.diff-del .hljs-keyword')).toHaveTextContent('const');
+    expect(container.querySelector('.diff-add .hljs-keyword')).toBeNull();
+
+    await flush();
+    expect(container.querySelector('.diff-add .hljs-keyword')).toHaveTextContent('return');
   });
 
   it('leaves a file with no known language plain', async () => {

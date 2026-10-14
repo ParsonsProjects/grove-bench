@@ -62,13 +62,17 @@ function drain(deadline?: IdleDeadline): void {
   // A job that ran out of time goes to the back, so one long diff can't hold
   // up the blocks that came into view after it.
   const unfinished: [Element, ScreenJob][] = [];
-  for (const [el, job] of queue) {
-    queue.delete(el);
-    if (!job(hasTime)) unfinished.push([el, job]);
-    if (!hasTime()) break;
+  try {
+    for (const [el, job] of queue) {
+      queue.delete(el);
+      if (!job(hasTime)) unfinished.push([el, job]);
+      if (!hasTime()) break;
+    }
+  } finally {
+    // A job that throws is dropped; the rest still run.
+    for (const [el, job] of unfinished) queue.set(el, job);
+    if (queue.size > 0) schedule();
   }
-  for (const [el, job] of unfinished) queue.set(el, job);
-  if (queue.size > 0) schedule();
 }
 
 function schedule(): void {

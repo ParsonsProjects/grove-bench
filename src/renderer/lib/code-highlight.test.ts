@@ -229,3 +229,26 @@ describe('whenOnScreen', () => {
     expect(newer).toHaveBeenCalledOnce();
   });
 });
+
+describe('whenOnScreen errors', () => {
+  it('drops a job that throws and still runs the rest', async () => {
+    const errors: unknown[] = [];
+    vi.stubGlobal('requestIdleCallback', (cb: IdleRequestCallback) => {
+      setTimeout(() => {
+        try { cb({ didTimeout: false, timeRemaining: () => 10 }); } catch (e) { errors.push(e); }
+      }, 0);
+      return 1;
+    });
+    const mod = await load();
+    const broken = vi.fn(() => { throw new Error('boom'); });
+    const after = vi.fn(() => true);
+    mod.whenOnScreen(document.body.appendChild(document.createElement('div')), broken);
+    mod.whenOnScreen(document.body.appendChild(document.createElement('div')), after);
+
+    await flush();
+    await flush();
+    expect(errors).toHaveLength(1);
+    expect(broken).toHaveBeenCalledOnce();
+    expect(after).toHaveBeenCalledOnce();
+  });
+});
