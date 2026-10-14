@@ -68,7 +68,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 ### Diff Viewer
 - [x] Side-by-side diff view option (toggle in Edit tool header)
 - [x] Syntax highlighting in diff views across multiple languages: `DiffView` highlights by file extension (`languageForPath` in `lib/diff-highlight.ts`, grammars registered in `lib/hljs.ts`) whenever it's given a `filePath`
-- [ ] Syntax highlighting in the thread's edit blocks (`DiffBlock.svelte`) and permission prompts (`PermissionBlock.svelte`): both know the file path but don't pass `filePath` to `DiffView`, so they show no colours
+- [x] Syntax highlighting in the thread's edit blocks (`DiffBlock.svelte`) and permission prompts (`PermissionBlock.svelte`): they pass `filePath` with `deferHighlight`, so `DiffView` draws plain lines and colours them once on screen, in idle time, a slice of lines at a time (`whenOnScreen` in `lib/code-highlight.ts`, shared with Markdown code blocks). Colouring as they rendered would cost about 200 µs a line (a 2,000-line write is about 400 ms), the same freeze code blocks had when a thread woke
 - [x] Full thread diff view (cumulative changes across all turns) — "All turns" entry in the Checkpoints tab, plus per-turn diff stats and a This turn / Since here toggle
 
 ### PR Creation Workflow

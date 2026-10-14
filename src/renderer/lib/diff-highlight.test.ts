@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { RecentCache, languageForPath, highlightLine, wordDiffSegments, hunkLineIndices } from './diff-highlight.js';
+import { RecentCache, languageForPath, highlightLine, cachedHighlightLine, wordDiffSegments, hunkLineIndices } from './diff-highlight.js';
 import type { DiffLine } from './diff-types.js';
 
 describe('languageForPath', () => {
@@ -12,6 +12,19 @@ describe('languageForPath', () => {
   it('returns null for unknown or extensionless paths', () => {
     expect(languageForPath('LICENSE')).toBeNull();
     expect(languageForPath('weird.xyz')).toBeNull();
+  });
+});
+
+describe('cachedHighlightLine', () => {
+  it('gives the escaped text until highlightLine has worked the line out', () => {
+    const text = 'const cached = a < b;';
+    expect(cachedHighlightLine(text, 'typescript')).toBe('const cached = a &lt; b;');
+    const html = highlightLine(text, 'typescript');
+    expect(cachedHighlightLine(text, 'typescript')).toBe(html);
+  });
+
+  it('escapes plain text when no language is given', () => {
+    expect(cachedHighlightLine('a < b', null)).toBe('a &lt; b');
   });
 });
 
@@ -130,5 +143,13 @@ describe('RecentCache', () => {
     expect(cache.get('k2', () => (remade = 'k2'))).toBe('v2');
     expect(remade).toBe('');
     expect(cache.get('k1', () => 'remade')).toBe('remade');
+  });
+
+  it('peeks without making a value', () => {
+    const cache = new RecentCache<string>(10);
+    expect(cache.peek('a')).toBeUndefined();
+    expect(cache.size).toBe(0);
+    cache.get('a', () => 'made');
+    expect(cache.peek('a')).toBe('made');
   });
 });

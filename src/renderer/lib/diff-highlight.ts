@@ -46,6 +46,15 @@ export function highlightLine(text: string, lang: string | null): string {
 }
 
 /**
+ * The line's highlighted HTML if `highlightLine` already worked it out, else
+ * the escaped text. For drawing a diff before its colours are ready without
+ * doing the work there and then; safe for {@html} either way.
+ */
+export function cachedHighlightLine(text: string, lang: string | null): string {
+  return (lang && highlightCache.peek(`${lang}\n${text}`)) || escapeHtml(text);
+}
+
+/**
  * A Map that keeps the `max` most recently used entries. When full it drops
  * the least recently used tenth, rather than everything: clearing it all
  * meant a diff longer than the cache was worked out in full on every render.
@@ -73,6 +82,9 @@ export class RecentCache<V> {
     this.map.set(key, value);
     return value;
   }
+
+  /** The entry if there is one, without making it. */
+  peek(key: string): V | undefined { return this.map.get(key); }
 
   get size(): number { return this.map.size; }
 }

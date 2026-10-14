@@ -105,7 +105,8 @@
 </script>
 
 <script lang="ts">
-  import { languageForPath, highlightLine, markRanges } from '../lib/diff-highlight.js';
+  import { languageForPath, highlightLine, cachedHighlightLine, markRanges } from '../lib/diff-highlight.js';
+  import { whenOnScreen } from '../lib/code-highlight.js';
   import { EXPAND_STEP } from '../lib/diff-context.js';
   import { Button } from '$lib/components/ui/button/index.js';
 
@@ -114,6 +115,7 @@
     sideBySide = false,
     maxHeight = '400px',
     filePath = '',
+    deferHighlight = false,
     onExpand,
     comments = [],
     composer = null,
@@ -127,6 +129,10 @@
     sideBySide?: boolean;
     maxHeight?: string;
     filePath?: string;
+    /** Colour the lines once the diff is on screen, in idle time, rather than
+     *  while it renders: for diffs in the thread, where a page of them draws
+     *  at once (see lib/code-highlight.ts). */
+    deferHighlight?: boolean;
     /** Reveal hidden context for a gap; when absent, expander rows are not rendered. */
     onExpand?: (gap: ContextGap, dir: 'up' | 'down' | 'all') => void;
     /** Review comments for this file, rendered under their anchored line. */
@@ -144,8 +150,31 @@
   let rows = $derived(sideBySide ? buildSideBySideRows(lines) : []);
   let intraline = $derived(sideBySide ? new Map<number, [number, number][]>() : unifiedIntralineRanges(lines));
   let lang = $derived(filePath ? languageForPath(filePath) : null);
+  let root = $state<HTMLElement>();
+  /** With deferHighlight: the lines (and language) whose colours are all
+   *  worked out. Raw, so the lines are kept as given and compare equal. */
+  let colouredFor = $state.raw<{ lines: DiffLine[]; lang: string } | null>(null);
+  /** Until then a line shows its colours only if they already were
+   *  (diff-highlight's cache), so new lines never wait on highlight.js. */
+  let coloured = $derived(colouredFor?.lines === lines && colouredFor.lang === lang);
+  $effect(() => {
+    if (!deferHighlight || !lang || !root || coloured) return;
+    const target = { lines, lang };
+    const texts = lines.filter((l) => l.type === 'add' || l.type === 'del' || l.type === 'context').map((l) => l.text);
+    let next = 0;
+    return whenOnScreen(root, (hasTime) => {
+      // At least one line a slice, so a busy window still gets there.
+      while (next < texts.length) {
+        highlightLine(texts[next++], target.lang);
+        if (!hasTime()) break;
+      }
+      if (next < texts.length) return false;
+      colouredFor = target;
+      return true;
+    });
+  });
   const hl = (text: string, ranges?: [number, number][]) => {
-    const html = highlightLine(text, lang);
+    const html = deferHighlight && !coloured ? cachedHighlightLine(text, lang) : highlightLine(text, lang);
     return ranges && ranges.length ? markRanges(html, ranges) : html;
   };
 
@@ -291,7 +320,7 @@
 
 {#if lines.length > 0}
   {#if sideBySide}
-    <div class="overflow-x-auto overflow-y-auto text-xs font-mono" style:max-height={maxHeight}>
+    <div bind:this={root} class="overflow-x-auto overflow-y-auto text-xs font-mono" style:max-height={maxHeight}>
       <table class="w-full border-collapse table-fixed">
         <colgroup>
           <col class="w-8" />
@@ -342,7 +371,7 @@
       </table>
     </div>
   {:else}
-    <div class="overflow-x-auto overflow-y-auto text-xs font-mono" style:max-height={maxHeight}>
+    <div bind:this={root} class="overflow-x-auto overflow-y-auto text-xs font-mono" style:max-height={maxHeight}>
       {#each lines as line, idx}
         {#if line.type === 'hunk'}
           <div data-hunk="true" class="text-cyan-400 bg-cyan-950/20 px-2 py-0.5">{line.text}</div>

@@ -2,6 +2,13 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
 import { render, cleanup, screen, fireEvent } from '@testing-library/svelte';
 
+// The default export is a factory in this environment; build a real
+// sanitizer on jsdom's window so highlight.js spans survive it.
+vi.mock('dompurify', async () => {
+  const actual = await vi.importActual<{ default: (w: Window) => unknown }>('dompurify');
+  return { default: actual.default(window) };
+});
+
 import PermissionBlock from './PermissionBlock.svelte';
 import { settingsStore } from '../stores/settings.svelte.js';
 import { messageStore } from '../stores/messages.svelte.js';
@@ -94,5 +101,17 @@ describe('PermissionBlock always-allow button', () => {
     const button = screen.getByRole('button', { name: 'Allow all commands' });
     expect(button).toHaveAttribute('title', expect.stringContaining('every shell command'));
     expect(screen.queryByRole('button', { name: 'Always Allow' })).toBeNull();
+  });
+});
+
+describe('PermissionBlock edit preview', () => {
+  it('colours the proposed change by the file\'s language', async () => {
+    const { container } = render(PermissionBlock, {
+      sessionId: 's1', requestId: 'r3', toolName: 'Edit', resolved: false, toolCategory: 'edit',
+      toolInput: { file_path: 'src/app.ts', old_string: 'const port = 1;', new_string: 'const port = 2;' },
+      toolView: { kind: 'edit', path: 'src/app.ts', edits: [{ oldText: 'const port = 1;', newText: 'const port = 2;' }] },
+    });
+    expect(container).toHaveTextContent('const port = 2;');
+    await vi.waitFor(() => expect(container.querySelector('.hljs-keyword')).toHaveTextContent('const'));
   });
 });
