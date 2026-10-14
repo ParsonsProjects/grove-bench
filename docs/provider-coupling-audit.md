@@ -1,9 +1,9 @@
 # Provider coupling audit
 
-> **Status: findings only, nothing changed yet.** Checked on 14 October 2026
-> against `c0249cf`. Every line reference below was read in the code, not
-> inferred. The plan at the end needs the answers in [Open questions](#open-questions)
-> before work starts.
+> **Status: steps 1 to 6 done on this branch, step 7 waiting on a decision.**
+> Checked on 14 October 2026 against `c0249cf`; line references below are
+> to that commit. Every one was read in the code, not inferred. What changed
+> is in [Done](#done), what is left in [Left to do](#left-to-do).
 
 ## Short answer
 
@@ -123,7 +123,57 @@ saved history readable.
 7. **Compaction for other agents** (L9). Needs a product decision: run the
    memory save on a token threshold instead of the agent's own signal?
 
-## Open questions
+## Decisions
+
+- Goal: better parity across providers, and for the tools Grove itself
+  offers (memory, Preview, attachments, rules, background tasks).
+- The user picks the default agent.
+- When a thread's agent is gone, background tasks ask which agent to use.
+- The SDK-style event names stay; new neutral fields are added beside them.
+
+## Done
+
+| Step | Findings | What changed |
+|---|---|---|
+| 1 | L1, L2, L3 | **Default agent** setting (Settings > Agents > All agents; "Same as the open thread" keeps the old behaviour). A gone agent's commit message or goal asks which agent to use (`backgroundAgentStore`); its memory notes are skipped. Unknown agent ids are refused for MCP, plugins, skills and worktree settings. Plugins stay on the built-in agent; the MCP section starts on an agent that can edit MCP config. |
+| 2 | D1, L5, L7, L14, F3 | One tool policy for both adapters (`src/main/tool-policy.ts`). ACP agents now read attached files and use Grove's memory and Preview looking tools without a prompt (where the call names Grove's server). Claude categorises its tools with the shared reading, so `edit` rules stop `NotebookEdit`. `mcp(...)` rules match Grove's tools under other agents' names. |
+| 3 | D2, D3, D4, D7, L4 | ACP turns cost from `RunningCost` with `priorCostUsd`; a failed ACP resume carries the `newConversation` marker; the session caps every agent's tool output; one key-check helper; one list of image types; the path rules prompt names no agent's tools. |
+| 4 | L8, L11, L12, L13 | New `compact` capability gates "Summarise" and `/compact`; the Rewind dialog says when the agent will start afresh; `/plan` and `/code` flip the badge only for agents with Plan mode; permission prompts name the target of any agent's call. |
+| 5 | L6, L10 | `ToolView` gains `mcp`, `questions`, `agentType` and `prompt`. Summary view shows other agents' MCP calls, and calls Grove can't place. Questions and sub-agent info read the view. |
+| 6 | L15 | ACP agents start in the agent host; spawn requests can ask for cross-spawn's command lookup (`findCommand`) so npm `.cmd` shims start on Windows. The agent lookup runs through `runProcess`. |
+
+Checked and left as they are, on purpose:
+
+- **D5** (auth error events): the two paths behave the same in effect,
+  since a rejected key is only marked when one is saved.
+- **D6** (mode descriptions): the same modes do different things per agent
+  (Claude's Ask lets reads through, its Read-safe adds a sandbox), so the
+  descriptions differ for a reason.
+- **To-do lists**: already found by shape for Claude, OpenCode and ACP
+  plans (`shared/thread-items.ts`); a view field would add plumbing for no
+  new agent.
+- **Resending Grove's instructions on an ACP resume** (F10): a resumed
+  conversation still has them in context, and there is no record of what
+  was sent to compare against.
+
+## Left to do
+
+- **Step 7, memory save around compaction for ACP agents (L9).** ACP has no
+  compaction event. Proposal: treat a sharp drop in the context the agent
+  reports (`usage_update.used` falling below half of a figure that was over
+  60% of the window) as a compaction, and run the same autosave and
+  "re-read your plan" nudge as Claude's `compact_boundary`. Needs a yes
+  first: a false positive costs a background model call and puts a message
+  in the thread.
+- **Gemini CLI's MCP titles.** A call with arguments is titled
+  `tool(arg: …)` with no server, so Grove can't tell Grove's own tools from
+  another server's there: those still ask, and `mcp(...)` rules can't match
+  them. Needs Gemini CLI to send the server (an upstream issue).
+- **Not run on Windows yet.** The `.cmd` shim path is covered by unit tests
+  with a mocked parse and by the same parse execa used before; a real run of
+  Gemini CLI or OpenCode from the packaged app on Windows should confirm it.
+
+## Open questions (answered)
 
 - What is the goal: better parity for ACP agents, a native adapter for a
   specific provider (Codex app-server is in `TODO.md`), or calling model APIs

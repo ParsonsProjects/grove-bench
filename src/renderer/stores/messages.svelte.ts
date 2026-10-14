@@ -1974,7 +1974,7 @@ class MessageStore {
         ...permMsgs.slice(toolIdx + 1),
       ]);
     }
-    // Detect question tools — render as an interactive question, not a permission gate.
+    // Detect question tools: render as an interactive question, not a permission gate.
     // The answer goes back as a deny carrying it (resolveQuestion), which is
     // how an adapter hands it to its agent.
     if (event.toolCategory === 'question') {

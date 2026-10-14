@@ -135,7 +135,7 @@ export function appendedSystemPrompt(opts: {
   const builtInPrompt = [
     'IMPORTANT PATH RULES — you are already in your project directory. Follow these strictly:',
     // Every agent gets these, so they name no agent's tools.
-    '- Use RELATIVE paths (e.g. "src/foo.ts") for ALL file operations: reading, editing, writing and searching files. NEVER use absolute paths like "' + opts.cwd.replace(/\\/g, '/').slice(0, 30) + '..." — just use paths relative to the project root.',
+    '- Use RELATIVE paths (e.g. "src/foo.ts") for ALL file operations: reading, editing, writing and searching files. NEVER use absolute paths like "' + opts.cwd.replace(/\\/g, '/').slice(0, 30) + '...". Just use paths relative to the project root.',
     '- Files the user attaches to a message are the one exception: they are saved outside the project, so open them by the absolute path given.',
     '- When running shell commands, use short command names (npm, npx, node, git) not absolute paths to binaries.',
     '- Do NOT use `cd` to navigate to your current working directory before running commands — you are already there.',
