@@ -44,6 +44,7 @@
   import { panelStore } from '../stores/panels.svelte.js';
   import type { SessionSortState, PrInfo } from '../../shared/types.js';
   import { limitedQueue } from '../lib/limited-queue.js';
+  import { stripIpcErrorPrefix } from '../lib/mcp-errors.js';
   import { onMount, untrack } from 'svelte';
 
   // Per-repo accordion collapse state, persisted via app-state. An explicit
@@ -160,7 +161,7 @@
 
   interface MenuItem {
     label: string;
-    icon: 'rename' | 'folder' | 'destroy' | 'add' | 'close' | 'ungroup';
+    icon: 'rename' | 'folder' | 'export' | 'destroy' | 'add' | 'close' | 'ungroup';
     action: () => void;
     variant?: 'destructive';
     separator?: boolean;
@@ -172,6 +173,7 @@
     const items: MenuItem[] = [
       { label: 'Rename', icon: 'rename', action: () => startRename(sessionId, sessionLabel(session)) },
       { label: 'Open Folder', icon: 'folder', action: () => window.groveBench.openSessionFolder(sessionId) },
+      { label: 'Export Thread…', icon: 'export', action: () => exportThread(sessionId) },
     ];
     // Close Conversation stops a live session (it was called Stop, then Mark
     // Completed) but keeps it resumable from Ctrl+R; not shown for
@@ -183,6 +185,15 @@
     items.push(...groupMenuItems(sessionId));
     items.push({ label: 'Delete Thread', icon: 'destroy', action: () => requestDestroy(sessionId), variant: 'destructive', separator: true });
     return items;
+  }
+
+  /** Save the thread to a file (main asks where, and Markdown or JSON). */
+  async function exportThread(sessionId: string) {
+    try {
+      await window.groveBench.exportThread(sessionId);
+    } catch (e) {
+      store.setError(`Couldn't export the thread: ${stripIpcErrorPrefix(e instanceof Error ? e.message : String(e))}`);
+    }
   }
 
   /** Group actions for a conversation: leave its group, join another, or

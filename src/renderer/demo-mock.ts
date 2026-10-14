@@ -545,6 +545,7 @@ const api: Record<string, unknown> = {
   getCachedUsage: async () => null,
   getDailySpend: async () => 3.42,
   getThreadSpend: async () => 1.84,
+  exportThread: async () => null,
   switchAgent: async () => {},
   // Mirrors the Claude Code adapter's declared controls (for Opus 5.5, the
   // default model) so the status bar

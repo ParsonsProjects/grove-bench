@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow, dialog, shell } from 'electron';
+import { app, ipcMain, BrowserWindow, dialog, shell } from 'electron';
 import { runProcess } from './process-host.js';
 import { IPC, PERMISSION_MODES } from '../shared/types.js';
 import type { BranchSwitchResult, ClaudeAccountPreview, ClaudeAccountSetting, BranchSyncResult, ConversationGoal, CreateSessionOpts, OpenPrSummary, PermissionMode, PrerequisiteStatus, PermissionDecision, RegistryAgentSummary, SessionInfo, SkillDefinition, WorktreeInfo } from '../shared/types.js';
@@ -24,6 +24,7 @@ import { EMPTY_THREAD_ITEMS, threadItems } from '../shared/thread-items.js';
 import { openAttachedFile, removeAttachments } from './attachments.js';
 import { openWorktreeFile } from './worktree-files.js';
 import { generateCommitMessage } from './commit-message.js';
+import { exportFileName, threadJson, threadMarkdown, type ThreadExportInfo } from './thread-export.js';
 import type { PreviewBounds, PreviewCommand, PreviewPageKind } from '../shared/types.js';
 import type { CheckpointDiffScope, FileDiffResult, FileLinesResult, GitStatusOptions, GitStatusResult, GitStatusEntry, ImageDiffContent, OpenWorktreeFileResult, PrCreateOpts, PrReviewSubmitResult } from '../shared/types.js';
 import { parsePrReviewSubmit, submitPrReview } from './pr-review.js';
@@ -43,6 +44,7 @@ import * as bookmarks from './bookmarks.js';
 import { listProjects, rememberProject, forgetProject, loadAppState, saveOpenTabs, saveCollapsedRepos, saveSessionSort, saveSidebarWidth, saveCollapsedPanels, loadConversationGroups, saveConversationGroups, saveUnreadSessionIds, loadUnreadSessionIds, flushPendingSaves, loadPrerequisiteCache, savePrerequisiteCache, loadUsageSnapshot } from './app-state.js';
 import { logRendererError } from './crash-handling.js';
 import { freezeLog } from './freeze-log.js';
+import { isThreadId } from './session-event-store.js';
 import { perfSteps, logWindowTiming } from './perf-steps.js';
 import { recordTrace, lastTracePath } from './perf-trace.js';
 import { perfLogPath } from './perf-log.js';
@@ -644,6 +646,47 @@ export function registerHandlers() {
     return sessionManager.listSessions();
   });
 
+  // ─── Thread export ───
+
+  /** Save a thread to a file the user picks: Markdown, or JSON when they
+   *  pick that type. Resolves to the path written, or null if cancelled. */
+  ipcMain.handle(IPC.SESSION_EXPORT, async (event, sessionId: unknown): Promise<string | null> => {
+    if (!isThreadId(sessionId)) throw new Error('No such thread to export.');
+    const worktree = await worktreeManager.getWorktreeOrManifest(sessionId);
+    if (!worktree) throw new Error('This thread is gone, so there is nothing to export.');
+    const live = sessionManager.getSession(sessionId);
+    const displayName = live?.displayName ?? (await worktreeManager.getDisplayNameState(sessionId))?.displayName;
+    const agentId = live?.agentType ?? await worktreeManager.getAdapterType(sessionId);
+    const info: ThreadExportInfo = {
+      id: sessionId,
+      title: displayName || worktree.branch || 'New thread',
+      project: path.basename(worktree.repoPath),
+      branch: worktree.branch,
+      agent: (agentId && adapterRegistry.get(agentId)?.displayName) || 'Agent',
+    };
+
+    const win = BrowserWindow.fromWebContents(event.sender);
+    const options: Electron.SaveDialogOptions = {
+      title: 'Export thread',
+      defaultPath: path.join(app.getPath('documents'), exportFileName(info.title, 'md')),
+      filters: [
+        { name: 'Markdown', extensions: ['md'] },
+        { name: 'JSON (every event)', extensions: ['json'] },
+      ],
+    };
+    const picked = win ? await dialog.showSaveDialog(win, options) : await dialog.showSaveDialog(options);
+    if (picked.canceled || !picked.filePath) return null;
+
+    const events = sessionManager.getEventHistory(sessionId);
+    const now = new Date();
+    const json = path.extname(picked.filePath).toLowerCase() === '.json';
+    const text = freezeLog.timeWork(`thread export, ${events.length} events`,
+      () => json ? threadJson(events, info, now) : threadMarkdown(events, info, now));
+    await fs.writeFile(picked.filePath, text);
+    logger.info(`Exported thread ${sessionId} as ${json ? 'JSON' : 'Markdown'} (${events.length} events)`);
+    return picked.filePath;
+  });
+
   // ─── Session rename ───
 
   ipcMain.handle(IPC.SESSION_RENAME, async (_event, sessionId: string, displayName: string) => {
@@ -1094,7 +1137,7 @@ export function registerHandlers() {
 
   // The id names the thread's log file: a plain name only.
   ipcMain.handle(IPC.LIMITS_THREAD_SPEND, (_event, sessionId: unknown) =>
-    typeof sessionId === 'string' && /^[\w-]+$/.test(sessionId) ? sessionManager.threadSpend(sessionId) : 0);
+    isThreadId(sessionId) ? sessionManager.threadSpend(sessionId) : 0);
 
   ipcMain.handle(IPC.AGENT_HISTORY, (_event, sessionId: string) => {
     const prelaunch = prelaunchEvents.get(sessionId) ?? [];

@@ -100,7 +100,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 
 ### Session Export
 - [ ] Markdown transcript per session written to disk (`.grove-wt/<id>/thread.md` or under the repo's memory dir) with an "Open in editor" action
-- [ ] Export conversation transcript (Markdown / JSON)
+- [x] Export a thread (Markdown / JSON): **Export Thread…** in the sidebar's thread menu asks where to save it (`SESSION_EXPORT` in `ipc.ts`, `thread-export.ts`). Markdown has the messages (what was typed, not the contents of attached or @-mentioned files), proposed plans and the user's answers, a line per tool call and errors, without tool output, thinking or subagents' work; JSON has every saved event
 - [ ] Session export/import between machines
 
 ### Security Hardening

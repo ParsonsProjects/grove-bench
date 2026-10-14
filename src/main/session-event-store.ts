@@ -39,6 +39,10 @@ export const getEventsDir = () => path.join(app.getPath('userData'), 'worktrees'
 
 export const eventLogPath = (id: string) => path.join(getEventsDir(), `${id}.jsonl`);
 
+/** A thread id that is a plain name (thread ids are short ids), so a file or
+ *  folder named after it can't reach outside its folder. */
+export const isThreadId = (id: unknown): id is string => typeof id === 'string' && /^[\w-]+$/.test(id);
+
 /** A size for the freeze log, which names event-log reads and writes. */
 const kb = (bytes: number) => `${Math.round(bytes / 1024)} KB`;
 

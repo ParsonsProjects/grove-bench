@@ -4,7 +4,7 @@
  * answers, the turn stops, or it times out.
  */
 import { randomUUID } from 'node:crypto';
-import { PERMISSION_TIMEOUT_MINUTES } from '../shared/types.js';
+import { DEFAULT_DENY_MESSAGE, PERMISSION_TIMEOUT_MINUTES } from '../shared/types.js';
 import type { McpElicitationRequest, McpElicitationResponse, PermissionDecision } from '../shared/types.js';
 import type { PermissionRequest, PermissionResponse } from './adapters/types.js';
 import { isReadOnlyToolCall } from './read-only-tools.js';
@@ -103,7 +103,7 @@ export function respondToPermission(session: ManagedSession, decision: Permissio
   } else {
     pending.resolve({
       behavior: 'deny',
-      message: decision.message || 'User denied permission',
+      message: decision.message || DEFAULT_DENY_MESSAGE,
     });
   }
 

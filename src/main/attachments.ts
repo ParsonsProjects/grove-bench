@@ -20,6 +20,7 @@ import type { AdapterEvent } from './adapters/types.js';
 import type { FoundFile } from './turn-files.js';
 import { withLockRetry } from './fs-utils.js';
 import { logger } from './logger.js';
+import { isThreadId } from './session-event-store.js';
 import { worktreeImageResponse } from './worktree-files.js';
 
 const EXT_BY_TYPE: Record<ImageMediaType, string> = {
@@ -39,8 +40,6 @@ const FILE_RE = /^[0-9a-f]{32}\.(png|jpg|gif|webp)$/;
 /** Any stored name, images included: a content hash and the extension the
  *  attached file had, when it had a plain one. */
 const STORED_RE = /^[0-9a-f]{32}(?:\.[a-z0-9]{1,10})?$/;
-/** Conversation ids are short ids; refuse anything that could be a path. */
-const ID_RE = /^[\w-]+$/;
 /** A conversation folder being deleted is renamed to this prefix, which no
  *  conversation id can start with. */
 const DELETED_PREFIX = '.deleted-';
@@ -51,7 +50,7 @@ export const getAttachmentsDir = () => path.join(app.getPath('userData'), 'attac
 /** A conversation's attachments folder (which may not exist yet), or null
  *  for an id that could be a path. */
 export function attachmentsFolder(sessionId: string): string | null {
-  return ID_RE.test(sessionId) ? path.join(getAttachmentsDir(), sessionId) : null;
+  return isThreadId(sessionId) ? path.join(getAttachmentsDir(), sessionId) : null;
 }
 
 /** The conversation's attachments folder, created if missing. Null if it can't be. */

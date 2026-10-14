@@ -636,6 +636,26 @@ describe('Sidebar rename', () => {
   });
 });
 
+describe('Sidebar export', () => {
+  afterEach(() => store.clearError());
+
+  it('exports the thread from its menu', async () => {
+    render(Sidebar);
+    await fireEvent.contextMenu(await screen.findByText('Sidebar revamp'));
+    await fireEvent.click(await screen.findByText('Export Thread…'));
+    expect(mockGroveBench.exportThread).toHaveBeenCalledWith('s1');
+    expect(store.error).toBeNull();
+  });
+
+  it('says why an export failed', async () => {
+    mockGroveBench.exportThread.mockRejectedValueOnce(new Error("Error invoking remote method 'session:export': Error: EACCES: permission denied"));
+    render(Sidebar);
+    await fireEvent.contextMenu(await screen.findByText('Sidebar revamp'));
+    await fireEvent.click(await screen.findByText('Export Thread…'));
+    await waitFor(() => expect(store.error).toBe("Couldn't export the thread: EACCES: permission denied"));
+  });
+});
+
 describe('Sidebar groups', () => {
   beforeEach(() => {
     store.repos = ['/api', '/web', '/infra'];

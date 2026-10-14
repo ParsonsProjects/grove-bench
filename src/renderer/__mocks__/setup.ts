@@ -204,6 +204,7 @@ const mockGroveBench = {
   renameSession: vi.fn((_sessionId: string, _displayName: string) => Promise.resolve()),
   renameBranch: vi.fn(() => notMocked('renameBranch')),
   openSessionFolder: vi.fn(() => Promise.resolve()),
+  exportThread: vi.fn(() => Promise.resolve(null)),
   getOpenTabs: vi.fn(() => Promise.resolve([] as string[])),
   setOpenTabs: vi.fn(),
   onSessionStatus: vi.fn(() => () => {}),
