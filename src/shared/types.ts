@@ -1183,6 +1183,8 @@ export interface GroveBenchAPI {
   stopBackgroundTask(sessionId: string, taskId: string): Promise<void>;
   destroySession(id: string, deleteBranch?: boolean): Promise<void>;
   renameSession(sessionId: string, displayName: string): Promise<void>;
+  /** Save the thread to a file the user picks (Markdown or JSON); the path, or null if cancelled. */
+  exportThread(sessionId: string): Promise<string | null>;
   /** Refresh a conversation's automatic name (provider title, else a name
    *  from the first prompt). Resolves to the new name, or null when it is
    *  unchanged or was set by the user. */
@@ -2011,6 +2013,7 @@ export const IPC = {
   SESSION_STOP_TASK: 'session:stopTask',
   SESSION_DESTROY: 'session:destroy',
   SESSION_RENAME: 'session:rename',
+  SESSION_EXPORT: 'session:export',
   SESSION_AUTO_NAME: 'session:autoName',
   SESSION_GOAL_GET: 'session:getGoal',
   SESSION_GOAL_SET: 'session:setGoal',

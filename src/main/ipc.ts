@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow, dialog, shell } from 'electron';
+import { app, ipcMain, BrowserWindow, dialog, shell } from 'electron';
 import { runProcess } from './process-host.js';
 import { IPC, PERMISSION_MODES } from '../shared/types.js';
 import type { BranchSwitchResult, ClaudeAccountPreview, ClaudeAccountSetting, BranchSyncResult, ConversationGoal, CreateSessionOpts, OpenPrSummary, PermissionMode, PrerequisiteStatus, PermissionDecision, RegistryAgentSummary, SessionInfo, SkillDefinition, WorktreeInfo } from '../shared/types.js';
@@ -24,6 +24,7 @@ import { EMPTY_THREAD_ITEMS, threadItems } from '../shared/thread-items.js';
 import { openAttachedFile, removeAttachments } from './attachments.js';
 import { openWorktreeFile } from './worktree-files.js';
 import { generateCommitMessage } from './commit-message.js';
+import { exportFileName, threadJson, threadMarkdown, type ThreadExportInfo } from './thread-export.js';
 import type { PreviewBounds, PreviewCommand, PreviewPageKind } from '../shared/types.js';
 import type { CheckpointDiffScope, FileDiffResult, FileLinesResult, GitStatusOptions, GitStatusResult, GitStatusEntry, ImageDiffContent, OpenWorktreeFileResult, PrCreateOpts, PrReviewSubmitResult } from '../shared/types.js';
 import { parsePrReviewSubmit, submitPrReview } from './pr-review.js';
@@ -642,6 +643,46 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.SESSION_LIST, async (): Promise<SessionInfo[]> => {
     return sessionManager.listSessions();
+  });
+
+  // ─── Thread export ───
+
+  /** Save a thread to a file the user picks: Markdown, or JSON when they
+   *  pick that type. Resolves to the path written, or null if cancelled. */
+  ipcMain.handle(IPC.SESSION_EXPORT, async (event, sessionId: unknown): Promise<string | null> => {
+    // The id names the thread's log file: a plain name only.
+    if (typeof sessionId !== 'string' || !/^[\w-]+$/.test(sessionId)) throw new Error('No such thread to export.');
+    const worktree = await worktreeManager.getWorktreeOrManifest(sessionId);
+    if (!worktree) throw new Error('This thread is gone, so there is nothing to export.');
+    const live = sessionManager.getSession(sessionId);
+    const displayName = live?.displayName ?? (await worktreeManager.getDisplayNameState(sessionId))?.displayName;
+    const agentId = live?.agentType ?? await worktreeManager.getAdapterType(sessionId);
+    const info: ThreadExportInfo = {
+      id: sessionId,
+      title: displayName || worktree.branch || 'New thread',
+      project: path.basename(worktree.repoPath),
+      branch: worktree.branch,
+      agent: (agentId && adapterRegistry.get(agentId)?.displayName) || 'Agent',
+    };
+
+    const win = BrowserWindow.fromWebContents(event.sender);
+    const options: Electron.SaveDialogOptions = {
+      title: 'Export thread',
+      defaultPath: path.join(app.getPath('documents'), exportFileName(info.title, 'md')),
+      filters: [
+        { name: 'Markdown', extensions: ['md'] },
+        { name: 'JSON (every event)', extensions: ['json'] },
+      ],
+    };
+    const picked = win ? await dialog.showSaveDialog(win, options) : await dialog.showSaveDialog(options);
+    if (picked.canceled || !picked.filePath) return null;
+
+    const events = sessionManager.getEventHistory(sessionId);
+    const now = new Date();
+    const json = path.extname(picked.filePath).toLowerCase() === '.json';
+    await fs.writeFile(picked.filePath, json ? threadJson(events, info, now) : threadMarkdown(events, info, now));
+    logger.info(`Exported thread ${sessionId} as ${json ? 'JSON' : 'Markdown'} (${events.length} events)`);
+    return picked.filePath;
   });
 
   // ─── Session rename ───

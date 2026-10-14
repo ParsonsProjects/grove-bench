@@ -845,6 +845,66 @@ describe('branch switching', () => {
 
 // ─── Agent I/O and history ───
 
+describe('SESSION_EXPORT', () => {
+  const events = [
+    { type: 'user_message', text: 'Fix the login' },
+    { type: 'assistant_text', text: 'Done.', uuid: 'a1' },
+  ];
+
+  beforeEach(() => {
+    m.worktreeManager.getWorktreeOrManifest.mockResolvedValue(wtInfo());
+    m.worktreeManager.getDisplayNameState.mockResolvedValue({ displayName: 'Login fix', source: 'user' });
+    m.worktreeManager.getAdapterType.mockResolvedValue('claude-code');
+    m.adapterRegistry.get.mockReturnValue({ id: 'claude-code', displayName: 'Claude Agent' });
+    m.sessionManager.getSession.mockReturnValue(undefined);
+    m.sessionManager.getEventHistory.mockReturnValue(events);
+  });
+
+  it('asks where to save, under the thread\'s name, and writes Markdown there', async () => {
+    const file = path.join(tmp, 'login.md');
+    vi.mocked(dialog.showSaveDialog).mockResolvedValue({ canceled: false, filePath: file });
+
+    expect(await invoke(IPC.SESSION_EXPORT, 's1')).toBe(file);
+    const options = vi.mocked(dialog.showSaveDialog).mock.calls.at(-1)!.at(-1) as Electron.SaveDialogOptions;
+    expect(path.basename(options.defaultPath!)).toBe('Login fix.md');
+    const written = fs.readFileSync(file, 'utf8');
+    expect(written).toContain('# Login fix');
+    expect(written).toContain('Project: repo');
+    expect(written).toContain('## Claude Agent\n\nDone.');
+  });
+
+  it('writes every event as JSON when that type is picked', async () => {
+    const file = path.join(tmp, 'login.json');
+    vi.mocked(dialog.showSaveDialog).mockResolvedValue({ canceled: false, filePath: file });
+
+    await invoke(IPC.SESSION_EXPORT, 's1');
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+    expect(parsed.events).toEqual(events);
+    expect(parsed.thread).toMatchObject({ id: 's1', title: 'Login fix', branch: 'feat', agent: 'Claude Agent' });
+  });
+
+  it('writes nothing when the dialog is cancelled', async () => {
+    vi.mocked(dialog.showSaveDialog).mockResolvedValue({ canceled: true, filePath: '' });
+    expect(await invoke(IPC.SESSION_EXPORT, 's1')).toBeNull();
+    expect(m.sessionManager.getEventHistory).not.toHaveBeenCalled();
+  });
+
+  it('names an unnamed thread by its branch', async () => {
+    m.worktreeManager.getDisplayNameState.mockResolvedValue({ displayName: null });
+    vi.mocked(dialog.showSaveDialog).mockResolvedValue({ canceled: true, filePath: '' });
+    await invoke(IPC.SESSION_EXPORT, 's1');
+    const options = vi.mocked(dialog.showSaveDialog).mock.calls.at(-1)!.at(-1) as Electron.SaveDialogOptions;
+    expect(path.basename(options.defaultPath!)).toBe('feat.md');
+  });
+
+  it('refuses a thread that is gone, or an id that isn\'t one', async () => {
+    m.worktreeManager.getWorktreeOrManifest.mockResolvedValue(undefined);
+    await expect(invoke(IPC.SESSION_EXPORT, 's1')).rejects.toThrow('This thread is gone');
+    await expect(invoke(IPC.SESSION_EXPORT, '../x')).rejects.toThrow('No such thread');
+    expect(dialog.showSaveDialog).not.toHaveBeenCalled();
+  });
+});
+
 describe('LIMITS_THREAD_SPEND', () => {
   it('gives the thread\'s spend, and nothing for a malformed id', async () => {
     m.sessionManager.threadSpend.mockReturnValue(1.25);

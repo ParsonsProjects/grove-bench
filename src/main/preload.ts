@@ -321,6 +321,8 @@ const api: GroveBenchAPI = {
   // Folder
   openSessionFolder: (sessionId: string) =>
     ipcRenderer.invoke(IPC.OPEN_SESSION_FOLDER, sessionId),
+  exportThread: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.SESSION_EXPORT, sessionId) as Promise<string | null>,
 
   // Memory
   memoryList: (repoPath: string) => ipcRenderer.invoke(IPC.MEMORY_LIST, repoPath),

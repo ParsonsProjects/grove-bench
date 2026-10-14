@@ -59,6 +59,7 @@ export const ipcRenderer = {
 
 export const dialog = {
   showOpenDialog: vi.fn(),
+  showSaveDialog: vi.fn(),
   showMessageBox: vi.fn(),
 };
 
