@@ -149,6 +149,15 @@
   ];
   const responseStyle = $derived(responseStyles.find((s) => s.value === settingsStore.draft.cavemanMode) ?? responseStyles[0]);
 
+  // The agent new threads start on. "Same as the open thread" (saved as '')
+  // keeps a new thread on the open one's agent, else the built-in default.
+  const SAME_AS_OPEN = '__same-as-open__';
+  const defaultAgentChoices = $derived(agentsStore.offered(settingsStore.draft.enabledAlphaAgents));
+  const selectedDefaultAgent = $derived(
+    defaultAgentChoices.some((a) => a.id === settingsStore.draft.defaultAgent) ? settingsStore.draft.defaultAgent : SAME_AS_OPEN,
+  );
+  const builtInDefaultName = $derived(agentsStore.get(agentsStore.builtInDefaultId)?.displayName ?? 'the built-in agent');
+
   /** Thinking summaries is one setting, offered only by some agents. */
   const summaryAgents = $derived(agentGroups.filter((a) => a.thinkingSummaries));
 
@@ -405,6 +414,34 @@
 {/if}
 
 <SettingsGroup title="All agents" description="These apply to every agent's threads." card collapse={{ key: 'all-agents', open: true }}>
+  {#if defaultAgentChoices.length > 1}
+    <SettingRow
+      setting="default-agent"
+      label="Default agent"
+      for="settings-default-agent"
+      description={selectedDefaultAgent === SAME_AS_OPEN
+        ? `New threads start on the open thread's agent, or ${builtInDefaultName} when none is open. Each can pick another before it starts.`
+        : 'New threads start on this agent. Each can pick another before it starts.'}
+    >
+      <Select.Root
+        type="single"
+        value={selectedDefaultAgent}
+        onValueChange={(v) => { if (v) settingsStore.draft.defaultAgent = v === SAME_AS_OPEN ? '' : v; }}
+      >
+        <Select.Trigger id="settings-default-agent" class="w-64">
+          {selectedDefaultAgent === SAME_AS_OPEN ? 'Same as the open thread' : agentsStore.get(selectedDefaultAgent)?.displayName ?? selectedDefaultAgent}
+        </Select.Trigger>
+        <Select.Content>
+          <Select.Item value={SAME_AS_OPEN} label="Same as the open thread" />
+          <Select.Separator />
+          {#each defaultAgentChoices as choice (choice.id)}
+            <Select.Item value={choice.id} label={choice.displayName} />
+          {/each}
+        </Select.Content>
+      </Select.Root>
+    </SettingRow>
+  {/if}
+
   <SettingRow
     setting="system-prompt"
     label="System prompt append"

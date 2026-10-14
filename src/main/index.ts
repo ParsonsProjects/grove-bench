@@ -11,7 +11,7 @@ import { logger } from './logger.js';
 import { terminalManager } from './terminal.js';
 import { previewManager } from './preview.js';
 import { IPC } from '../shared/types.js';
-import { initAdapters } from './adapters/index.js';
+import { followDefaultAgent, initAdapters } from './adapters/index.js';
 import { initAutoUpdater } from './auto-updater.js';
 import { installProcessErrorHandlers } from './crash-handling.js';
 import { installSpellcheckMenu } from './spellcheck.js';
@@ -55,9 +55,10 @@ app.setAppUserModelId('com.parsonsprojects.grove-bench');
 
 // Register agent adapters before anything else uses them. The user's own
 // ACP agents and other Claude accounts come from settings, so a change
-// applies after a restart.
+// applies after a restart. The default agent follows Settings as it changes.
 const launchSettings = settings.loadSettings();
 initAdapters(launchSettings.acpAgents, launchSettings.claudeAccounts);
+followDefaultAgent(settings.getSettings);
 
 // Custom schemes can only be registered before the app is ready.
 registerAttachmentScheme();

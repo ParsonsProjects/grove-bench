@@ -26,6 +26,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   acpAgents: [],
   claudeAccounts: [],
   enabledAlphaAgents: [],
+  defaultAgent: '', // empty = the open thread's agent, else Claude Code
 
   // Memory
   memoryAutoSave: true,
@@ -243,6 +244,7 @@ const settingsSchema = z.object({
     configDir: z.string().catch(''),
   })).catch(DEFAULT_SETTINGS.claudeAccounts),
   enabledAlphaAgents: z.array(z.string()).catch(DEFAULT_SETTINGS.enabledAlphaAgents),
+  defaultAgent: z.string().catch(DEFAULT_SETTINGS.defaultAgent),
 
   memoryAutoSave: z.boolean().catch(DEFAULT_SETTINGS.memoryAutoSave),
   // Stored as compaction will use it, so Settings shows the value in use.

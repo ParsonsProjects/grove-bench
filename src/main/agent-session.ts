@@ -1249,8 +1249,9 @@ class AgentSessionManager {
     // It may have started while the manifest was read.
     const started = this.sessions.get(id);
     if (started) return this.reconcileControls(started);
-    const adapter = (adapterType ? adapterRegistry.get(adapterType) : undefined) ?? adapterRegistry.getDefault();
-    return { descriptors: adapter.getControls(model ?? null), values: {} };
+    // An agent that is gone has no controls; another agent's would mislead.
+    const adapter = adapterType ? adapterRegistry.get(adapterType) : adapterRegistry.getDefault();
+    return { descriptors: adapter?.getControls(model ?? null) ?? [], values: {} };
   }
 
   async setControl(id: string, controlId: string, value: string): Promise<void> {

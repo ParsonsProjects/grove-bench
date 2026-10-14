@@ -21,23 +21,34 @@ export function backgroundModelFor(adapter: AgentAdapter): string | undefined {
 }
 
 /** The agent for background work on a conversation recorded as running on
- *  `adapterType`: that agent, else the default one (an agent that is gone, or
- *  an older conversation that recorded none). Null for one of the user's
- *  other Claude accounts that has been removed, whose work must not go to a
- *  different account. */
+ *  `adapterType`: that agent, or the default one for a conversation that
+ *  recorded none. Null when that agent is gone (a custom agent taken out of
+ *  Settings, a removed Claude account): its content must not go to another
+ *  provider unless the user says so (recordedAgent's `substitute`). */
 export function backgroundAgentFor(adapterType: string | null | undefined): AgentAdapter | null {
-  const adapter = adapterType ? adapterRegistry.get(adapterType) : undefined;
-  if (adapter) return adapter;
-  return isClaudeAccountId(adapterType) ? null : adapterRegistry.getDefault();
+  if (!adapterType) return adapterRegistry.getDefault();
+  return adapterRegistry.get(adapterType) ?? null;
+}
+
+/** Why a background task didn't run: the conversation's agent is gone and
+ *  the user picked no other. */
+export function agentGoneMessage(adapterType: string): string {
+  return isClaudeAccountId(adapterType)
+    ? removedAccountMessage(adapterType)
+    : `This thread's agent ("${adapterType}") isn't available any more. Pick another agent to run this on.`;
 }
 
 /** The agent a conversation ran on, from the manifest, for a conversation
- *  that isn't running (backgroundAgentFor). Throws for a removed account. */
-export async function recordedAgent(sessionId: string): Promise<AgentAdapter> {
+ *  that isn't running (backgroundAgentFor). When that agent is gone,
+ *  `substitute` is the agent the user picked to run the task on instead (the
+ *  renderer asks: backgroundAgentStore); without one this throws. */
+export async function recordedAgent(sessionId: string, substitute?: string): Promise<AgentAdapter> {
   const id = await worktreeManager.getAdapterType(sessionId);
   const adapter = backgroundAgentFor(id);
-  if (!adapter) throw new Error(removedAccountMessage(id!));
-  return adapter;
+  if (adapter) return adapter;
+  const picked = substitute ? adapterRegistry.get(substitute) : undefined;
+  if (picked) return picked;
+  throw new Error(agentGoneMessage(id!));
 }
 
 /** The agent of the most recently active conversation in `conversations`

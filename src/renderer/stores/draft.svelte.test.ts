@@ -79,6 +79,26 @@ describe('draftStore.open', () => {
     expect(store.activeSessionId).toBeNull();
   });
 
+  it("starts on the user's default agent rather than the open conversation's, once one is picked", () => {
+    store.sessions = [{ id: 's1', branch: 'feat/x', repoPath: '/repo/two', status: 'running', agentType: 'claude-code' }];
+    store.activeSessionId = 's1';
+    vi.spyOn(messageStore, 'getModel').mockReturnValue('opus');
+    const saved = settingsStore.current;
+    try {
+      settingsStore.current = { ...saved, defaultAgent: 'codex' };
+      draftStore.open();
+      // Another agent: the open conversation's model doesn't carry over.
+      expect(draftStore.draft).toMatchObject({ agentId: 'codex', model: '' });
+      draftStore.discard();
+      // Asked for by name still wins.
+      store.activeSessionId = 's1';
+      draftStore.open('', { agentId: 'claude-code' });
+      expect(draftStore.draft?.agentId).toBe('claude-code');
+    } finally {
+      settingsStore.current = saved;
+    }
+  });
+
   it('keeps the typed message when opened again in another project', () => {
     draftStore.open('/repo/one');
     draftStore.setText('Fix API-12');

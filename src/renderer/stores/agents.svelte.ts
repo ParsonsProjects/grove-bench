@@ -1,5 +1,6 @@
 import type { AgentSummary } from '../../shared/types.js';
 import { DEFAULT_GROVE_WRITTEN } from '../lib/unsaved-files.js';
+import { settingsStore } from './settings.svelte.js';
 
 /** Whether new conversations may use `agent`: any agent that isn't in
  *  alpha, and alpha agents the user turned on (enabledAlphaAgents). Not a
@@ -37,8 +38,23 @@ class AgentsStore {
     return this.load();
   }
 
-  /** The agent new conversations use unless another is picked. */
+  /** The agent new threads use unless another is picked: the user's pick
+   *  (pickedDefaultId), else the built-in default. */
   get defaultId(): string | null {
+    return this.pickedDefaultId ?? this.builtInDefaultId;
+  }
+
+  /** The agent the user picked for new threads in Settings > Agents
+   *  (settings.defaultAgent), or null when they haven't picked one or it
+   *  isn't offered for new threads. Main's pickedDefaultAgent matches it. */
+  get pickedDefaultId(): string | null {
+    const { defaultAgent, enabledAlphaAgents } = settingsStore.current;
+    const agent = this.get(defaultAgent);
+    return agent && offeredForNew(agent, enabledAlphaAgents) ? agent.id : null;
+  }
+
+  /** The default when the user hasn't picked one (Claude Code). */
+  get builtInDefaultId(): string | null {
     return this.list.find((a) => a.isDefault)?.id ?? this.list[0]?.id ?? null;
   }
 

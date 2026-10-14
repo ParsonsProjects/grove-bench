@@ -23,7 +23,7 @@ There is one group per agent, each with:
 
 - **Credentials**: Shows how the agent signs in. Paste an API key to save it (stored encrypted on this computer), or remove a saved key. While a key is saved it is used instead of a CLI sign-in. For agents that sign in with their own program (Gemini CLI, GitHub Copilot CLI) it shows whether the last try got in, the sign-in command with a copy button, and **Check sign-in**, which starts the agent for a moment to find out. When the agent isn't installed, the command that installs it is shown too
 - **Default model**: Pick the model new threads with this agent start on. The list comes from the agent itself and updates after a thread starts, so new models appear without an app update. **Default** follows the agent's own default model (shown in brackets). A model ID typed in an older version stays in the list, marked "custom"
-- **Background model**: The model used for this agent's background tasks: memory notes, memory compaction, commit messages, skill suggestions and thread goals. **Default** is the agent's own cheap model (Haiku 4.5 for Claude Agent). Each task runs on the agent of the thread it belongs to, so a thread's content only goes to the provider you chose for it
+- **Background model**: The model used for this agent's background tasks: memory notes, memory compaction, commit messages, skill suggestions and thread goals. **Default** is the agent's own cheap model (Haiku 4.5 for Claude Agent). Each task runs on the agent of the thread it belongs to, so a thread's content only goes to the provider you chose for it. If that agent is no longer set up, Grove Bench asks which agent to use before writing a commit message or goal for the thread, and skips its memory notes
 - **Default permission mode**: The mode new threads with this agent start in. Only the modes the agent offers on its default model are listed. See [Status bar](status-bar.md#mode) for what each mode allows. For Claude Agent:
   - **Ask**: checks with you before each edit or command; reading files and read-only commands run without asking
   - **Plan**: explores and plans without editing files
@@ -37,6 +37,7 @@ If a thread starts on a model that doesn't offer the saved mode, it starts in Co
 
 **All agents** holds the settings that apply to every agent:
 
+- **Default agent** (shown when more than one agent is offered): The agent new threads start on. **Same as the open thread** (the default) starts a new thread on the open thread's agent, or Claude Agent when none is open. Each new thread can still pick another agent before it starts. The **Plugins** section stays with Claude Agent whatever you pick here
 - **System prompt append**: Instructions added to every thread
 - **Additional working directories**: Folders outside the project that agents can also use
 - **Response style**: Normal, or one of three "caveman" styles that cut the agent's wording to shorten its replies. They don't ask it to think less or use fewer tools, so its total token use can drop much less than its replies do. Code blocks stay normal. **Caveman lite** drops filler and hedging, **Caveman full** also drops articles, and **Caveman ultra** compresses the most, with abbreviations
@@ -49,7 +50,7 @@ Use more than one Claude account, such as a work plan next to a personal one. Cl
 
 The account shows up straight away as its own agent, **Claude Agent (Name)**, in the agent picker for new threads, with its own group under Claude Agent showing its folder. Sign in from that group: copy the sign-in command into PowerShell (it runs Claude Code's own `claude auth login` with the account's folder, then clears that setting again), or save an API key for that account. A thread stays on the account it started on.
 
-To remove an account, click **Remove** in its group. It stops being offered for new threads at once. Threads already on it keep working until Grove Bench restarts; after that they can't start, and their memory notes and other background work are skipped rather than sent to another account. The folder stays on this computer, so adding an account with the same name and folder brings back its sign-in and history.
+To remove an account, click **Remove** in its group. It stops being offered for new threads at once. Threads already on it keep working until Grove Bench restarts; after that they can't start, and nothing from them is sent to another agent unasked: memory notes are skipped, and writing a commit message or a goal first asks which agent to use. The folder stays on this computer, so adding an account with the same name and folder brings back its sign-in and history.
 
 Good to know:
 

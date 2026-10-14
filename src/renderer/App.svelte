@@ -38,6 +38,7 @@
   import { panelStore } from './stores/panels.svelte.js';
   import { previewStore } from './stores/preview.svelte.js';
   import { subagentPanelStore } from './stores/subagentPanel.svelte.js';
+  import { backgroundAgentStore } from './stores/background-agent.svelte.js';
   import type { AppErrorReport } from '../shared/types.js';
   import { isTempBranch } from '../shared/temp-branch.js';
   import { draftStore } from './stores/draft.svelte.js';
@@ -50,6 +51,7 @@
   // Loaded the first time it opens (Ctrl+R or the search button).
   const loadSessionFinder = lazyComponent(() => import('./components/SessionFinder.svelte'));
   const loadSubagentPanel = lazyComponent(() => import('./components/SubagentPanel.svelte'));
+  const loadBackgroundAgentDialog = lazyComponent(() => import('./components/BackgroundAgentDialog.svelte'));
 
   // ── Global error handling ──
   // Uncaught renderer errors (window.onerror / unhandledrejection / a Svelte
@@ -597,6 +599,12 @@
 {#if store.finderOpen}
   {#await loadSessionFinder() then SessionFinder}
     <SessionFinder onclose={() => store.finderOpen = false} />
+  {/await}
+{/if}
+
+{#if backgroundAgentStore.ask}
+  {#await loadBackgroundAgentDialog() then BackgroundAgentDialog}
+    <BackgroundAgentDialog />
   {/await}
 {/if}
 

@@ -38,8 +38,8 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.SESSION_GOAL_SET, sessionId, text),
   autoConversationGoal: (sessionId: string) =>
     ipcRenderer.invoke(IPC.SESSION_GOAL_AUTO, sessionId),
-  refreshConversationGoal: (sessionId: string) =>
-    ipcRenderer.invoke(IPC.SESSION_GOAL_REFRESH, sessionId),
+  refreshConversationGoal: (sessionId: string, substituteAgent?: string) =>
+    ipcRenderer.invoke(IPC.SESSION_GOAL_REFRESH, sessionId, substituteAgent),
   setConversationGoalHidden: (sessionId: string, hidden: boolean) =>
     ipcRenderer.invoke(IPC.SESSION_GOAL_HIDE, sessionId, hidden),
   listSessions: () => ipcRenderer.invoke(IPC.SESSION_LIST),
@@ -195,8 +195,8 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.FILE_UNSTAGE, sessionId, filePath),
   commit: (sessionId: string, message: string) =>
     ipcRenderer.invoke(IPC.GIT_COMMIT, sessionId, message),
-  generateCommitMessage: (sessionId: string) =>
-    ipcRenderer.invoke(IPC.GIT_GENERATE_COMMIT_MESSAGE, sessionId),
+  generateCommitMessage: (sessionId: string, substituteAgent?: string) =>
+    ipcRenderer.invoke(IPC.GIT_GENERATE_COMMIT_MESSAGE, sessionId, substituteAgent),
   push: (sessionId: string) => ipcRenderer.invoke(IPC.GIT_PUSH, sessionId),
   getGitSyncStatus: (sessionId: string) =>
     ipcRenderer.invoke(IPC.GIT_SYNC_STATUS, sessionId),
