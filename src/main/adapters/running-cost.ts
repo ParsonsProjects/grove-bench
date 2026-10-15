@@ -1,4 +1,4 @@
-import type { AgentEvent } from '../../shared/types.js';
+import type { AgentEvent, TokenCounts } from '../../shared/types.js';
 
 /**
  * Turns a running cost total back into each turn's cost.
@@ -18,6 +18,12 @@ export class RunningCost {
    *  query resumed it, or null for a new conversation (or unknown). */
   constructor(private readonly resumedFrom: number | null = null) {
     this.last = resumedFrom ?? 0;
+  }
+
+  /** The running total as far as it's known: a zeroed total from a failed
+   *  start doesn't replace it. */
+  get total(): number {
+    return this.last;
   }
 
   /** The cost of the turn a result with running total `total` ends. */
@@ -59,6 +65,43 @@ export function lastRunningCost(history: readonly AgentEvent[]): number | null {
     if (e.type === 'result' && (e.sessionCostUsd !== undefined || e.totalCostUsd !== undefined)) {
       return e.sessionCostUsd ?? e.totalCostUsd ?? null;
     }
+  }
+  return null;
+}
+
+/**
+ * Turns Claude Code's running token totals (modelUsage, which shares
+ * total_cost_usd's lifecycle) back into each turn's tokens, by the same
+ * rules as RunningCost.
+ */
+export class RunningTokens {
+  private readonly input: RunningCost;
+  private readonly output: RunningCost;
+
+  constructor(resumedFrom: TokenCounts | null = null) {
+    this.input = new RunningCost(resumedFrom?.input ?? null);
+    this.output = new RunningCost(resumedFrom?.output ?? null);
+  }
+
+  /** The tokens of the turn a result with running totals `total` ends. */
+  turnTokens(total: TokenCounts, isError: boolean): TokenCounts {
+    return { input: this.input.turnCost(total.input, isError), output: this.output.turnCost(total.output, isError) };
+  }
+
+  /** The running totals as far as they're known (as RunningCost.total). */
+  get total(): TokenCounts {
+    return { input: this.input.total, output: this.output.total };
+  }
+}
+
+/** The running token totals the conversation last reached, from its
+ *  history, for a query that resumes it (as lastRunningCost). */
+export function lastRunningTokens(history: readonly AgentEvent[]): TokenCounts | null {
+  for (let i = history.length - 1; i >= 0; i--) {
+    const e = history[i];
+    if (e.type === 'agent_changed') return null;
+    if (e.type === 'status' && e.newConversation) return null;
+    if (e.type === 'result' && e.sessionTokens) return e.sessionTokens;
   }
   return null;
 }

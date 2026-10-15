@@ -544,7 +544,7 @@ const api: Record<string, unknown> = {
   }),
   getCachedUsage: async () => null,
   getDailySpend: async () => 3.42,
-  getThreadSpend: async () => 1.84,
+  getThreadUsage: async () => ({ spendUsd: 1.84, tokens: { input: 1_240_000, output: 45_300 } }),
   exportThread: async () => null,
   switchAgent: async () => {},
   // Mirrors the Claude Code adapter's declared controls (for Opus 5.5, the
@@ -672,7 +672,7 @@ async function seedConversations() {
   };
   messageStore.usageBySession = {
     ...messageStore.usageBySession,
-    's-sidebar': { inputTokens: 24_312, outputTokens: 8_120, cacheReadTokens: 210_450, cacheCreationTokens: 12_300 },
+    's-sidebar': { inputTokens: 24_312, cacheReadTokens: 210_450, cacheCreationTokens: 12_300 },
   };
   messageStore.contextWindowBySession = { ...messageStore.contextWindowBySession, 's-sidebar': 1_000_000 };
   messageStore.setIsRunning('s-sidebar', true);

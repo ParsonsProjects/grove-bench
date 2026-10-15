@@ -718,3 +718,35 @@ describe('ChangesReviewPanel — reviewing the PR', () => {
     expect(await findByText('Review PR #7')).toBeInTheDocument();
   });
 });
+
+describe('ChangesReviewPanel — Markdown preview', () => {
+  it('offers to read a changed Markdown file as it renders', async () => {
+    mockGroveBench.getFileDiff.mockResolvedValue({ kind: 'text', patch: patch('# Plan') });
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('docs/plan.md')] } };
+    mockGroveBench.openWorktreeFile.mockResolvedValueOnce({ kind: 'markdown', content: '# Plan' });
+    const { findByRole } = render(ChangesReviewPanel, { sessionId: SID });
+
+    (await findByRole('button', { name: 'Preview' })).click();
+    await waitFor(() => expect(mockGroveBench.openWorktreeFile).toHaveBeenCalledWith(SID, 'docs/plan.md'));
+  });
+
+  it('says when the file is no longer there to read', async () => {
+    mockGroveBench.getFileDiff.mockResolvedValue({ kind: 'text', patch: patch('# Plan') });
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('docs/plan.md')] } };
+    mockGroveBench.openWorktreeFile.mockResolvedValueOnce({ kind: 'missing' });
+    const { findByRole } = render(ChangesReviewPanel, { sessionId: SID });
+
+    const preview = await findByRole('button', { name: 'Preview' });
+    await fireEvent.click(preview);
+    await waitFor(() => expect(preview).toBeDisabled());
+    expect(preview.title).toBe('docs/plan.md is no longer in the worktree');
+  });
+
+  it('doesn\'t offer it for a deleted Markdown file or another type', async () => {
+    mockGroveBench.getFileDiff.mockResolvedValue({ kind: 'text', patch: patch('x') });
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('old.md', { status: 'deleted' }), entry('src/a.ts')] } };
+    const { container, queryByRole } = render(ChangesReviewPanel, { sessionId: SID });
+    await waitFor(() => expect(diffText(container)).toContain('x'));
+    expect(queryByRole('button', { name: 'Preview' })).toBeNull();
+  });
+});

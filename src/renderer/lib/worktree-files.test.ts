@@ -1,5 +1,7 @@
-import { describe, it, expect } from 'vitest';
-import { localFilePath, localFileTarget } from './worktree-files.js';
+import { describe, it, expect, afterEach } from 'vitest';
+import { folderOf, localFilePath, localFileTarget, openWorktreeFile, pathFrom } from './worktree-files.js';
+import { markdownPreviewStore } from '../stores/markdownPreview.svelte.js';
+import { mockGroveBench } from '../__mocks__/setup.js';
 
 describe('localFileTarget', () => {
   it('reads relative and absolute paths and file:// URLs', () => {
@@ -42,5 +44,45 @@ describe('localFilePath', () => {
   it('is the path alone', () => {
     expect(localFilePath('report.html#summary')).toBe('report.html');
     expect(localFilePath('https://example.com')).toBeNull();
+  });
+});
+
+describe('folderOf / pathFrom', () => {
+  it('gives the folder a file is in, either slash', () => {
+    expect(folderOf('docs/plan.md')).toBe('docs');
+    expect(folderOf('C:\\wt\\docs\\plan.md')).toBe('C:\\wt\\docs');
+    expect(folderOf('plan.md')).toBe('');
+  });
+
+  it('reads a relative path from the folder, working out . and ..', () => {
+    expect(pathFrom('docs', 'arch.png')).toBe('docs/arch.png');
+    expect(pathFrom('docs/guide', './../api.md')).toBe('docs/api.md');
+    expect(pathFrom('C:\\wt\\docs', '..\\README.md')).toBe('C:/wt/README.md');
+    expect(pathFrom('/wt/docs', 'img/a.png')).toBe('/wt/docs/img/a.png');
+    // Out of the folder it goes as far as it says; main refuses it outside the worktree.
+    expect(pathFrom('docs', '../../x.md')).toBe('../x.md');
+  });
+
+  it('leaves an absolute path, a file:// URL, or any path without a folder as it is', () => {
+    expect(pathFrom('docs', 'C:\\wt\\a.png')).toBe('C:\\wt\\a.png');
+    expect(pathFrom('docs', '/wt/a.png')).toBe('/wt/a.png');
+    expect(pathFrom('docs', 'file:///C:/wt/a.png')).toBe('file:///C:/wt/a.png');
+    expect(pathFrom('', 'docs/a.png')).toBe('docs/a.png');
+  });
+});
+
+describe('openWorktreeFile', () => {
+  afterEach(() => markdownPreviewStore.close());
+
+  it('shows a Markdown file in the Focus panel, titled by its path', async () => {
+    mockGroveBench.openWorktreeFile.mockResolvedValueOnce({ kind: 'markdown', content: '# Plan' });
+    expect(await openWorktreeFile('s1', 'docs/plan.md')).toBe(true);
+    expect(markdownPreviewStore).toMatchObject({ open: true, content: '# Plan', title: 'docs/plan.md', sessionId: 's1', baseDir: 'docs' });
+  });
+
+  it('says when the file is gone', async () => {
+    mockGroveBench.openWorktreeFile.mockResolvedValueOnce({ kind: 'missing' });
+    expect(await openWorktreeFile('s1', 'docs/plan.md')).toBe(false);
+    expect(markdownPreviewStore.open).toBe(false);
   });
 });

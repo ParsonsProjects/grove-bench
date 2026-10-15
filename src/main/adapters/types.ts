@@ -5,7 +5,7 @@
  * plugged into Grove Bench by implementing the AgentAdapter interface.
  */
 import type { ToolView } from '../../shared/tool-view.js';
-import type { AgentStage, AgentEvent, MemoryEntry, PermissionMode, ControlDescriptor, ProviderUsage, McpServerInfo, McpAuthStartResult, McpConfiguredServer, McpAddServerOpts, McpConfigScope, McpElicitationRequest, McpElicitationResponse, McpServerContextCost, McpSupport, SkillDefinition, SkillInfo, ToolCategory, ToolRule, ImageAttachment, ImageMediaType } from '../../shared/types.js';
+import type { AgentStage, AgentEvent, MemoryEntry, TokenCounts, PermissionMode, ControlDescriptor, ProviderUsage, McpServerInfo, McpAuthStartResult, McpConfiguredServer, McpAddServerOpts, McpConfigScope, McpElicitationRequest, McpElicitationResponse, McpServerContextCost, McpSupport, SkillDefinition, SkillInfo, ToolCategory, ToolRule, ImageAttachment, ImageMediaType } from '../../shared/types.js';
 
 // ─── Capability Flags ───
 
@@ -212,6 +212,8 @@ export interface AdapterConfig {
    *  (lastRunningCost), for an agent that reports cost that way, so the
    *  first result after resuming isn't charged for the turns before it. */
   priorCostUsd?: number | null;
+  /** The running token totals it had reached, for the same reason. */
+  priorTokens?: TokenCounts | null;
   onPermissionRequest: PermissionHandler;
   /** Called before a tool call runs, wherever the adapter can hold one:
    *  every call for Claude Code (a PreToolUse hook), the calls the agent

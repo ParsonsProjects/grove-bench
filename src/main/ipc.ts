@@ -1,7 +1,7 @@
 import { app, ipcMain, BrowserWindow, dialog, shell } from 'electron';
 import { runProcess } from './process-host.js';
 import { IPC, PERMISSION_MODES } from '../shared/types.js';
-import type { BranchSwitchResult, ClaudeAccountPreview, ClaudeAccountSetting, BranchSyncResult, ConversationGoal, CreateSessionOpts, OpenPrSummary, PermissionMode, PrerequisiteStatus, PermissionDecision, RegistryAgentSummary, SessionInfo, SkillDefinition, WorktreeInfo } from '../shared/types.js';
+import type { BranchSwitchResult, ClaudeAccountPreview, ClaudeAccountSetting, BranchSyncResult, ConversationGoal, CreateSessionOpts, ThreadUsage, OpenPrSummary, PermissionMode, PrerequisiteStatus, PermissionDecision, RegistryAgentSummary, SessionInfo, SkillDefinition, WorktreeInfo } from '../shared/types.js';
 import { sessionManager } from './agent-session.js';
 import { todaySpend } from './session-limits.js';
 import { searchEvents, findEventIndexByUuid, extractSessionPreview, firstUserPrompt } from './event-search.js';
@@ -1136,8 +1136,8 @@ export function registerHandlers() {
   ipcMain.handle(IPC.LIMITS_DAILY_SPEND, () => todaySpend().usd);
 
   // The id names the thread's log file: a plain name only.
-  ipcMain.handle(IPC.LIMITS_THREAD_SPEND, (_event, sessionId: unknown) =>
-    isThreadId(sessionId) ? sessionManager.threadSpend(sessionId) : 0);
+  ipcMain.handle(IPC.LIMITS_THREAD_USAGE, (_event, sessionId: unknown): Promise<ThreadUsage> | ThreadUsage =>
+    isThreadId(sessionId) ? sessionManager.threadUsage(sessionId) : { spendUsd: 0, tokens: { input: 0, output: 0 } });
 
   ipcMain.handle(IPC.AGENT_HISTORY, (_event, sessionId: string) => {
     const prelaunch = prelaunchEvents.get(sessionId) ?? [];

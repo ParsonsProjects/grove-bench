@@ -100,6 +100,9 @@ describe('AcpAdapter', () => {
     expect((second.at(-1) as { totalCostUsd: number }).totalCostUsd).toBeCloseTo(0.01, 10);
     expect((second.at(-1) as { sessionCostUsd: number }).sessionCostUsd).toBeCloseTo(0.02, 10);
     expect(first.filter((e) => e.type === 'usage').at(-1)).toEqual({ type: 'usage', inputTokens: 900, outputTokens: 40 });
+    // session/prompt's usage is the turn's own, so each result carries it as is.
+    expect(first.at(-1)).toMatchObject({ turnTokens: { input: 900, output: 40 } });
+    expect(second.at(-1)).toMatchObject({ turnTokens: { input: 900, output: 40 } });
     handle.close();
   });
 

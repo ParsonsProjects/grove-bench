@@ -27,7 +27,7 @@ import type {
   AdapterConfig, AdapterEvent, AdapterPrerequisiteStatus, AgentAdapter, AgentCapabilities, AgentQueryHandle,
   ApiKeyDescriptor, CliSignInDescriptor, ModelInfo, PermissionResponse, SignInCheck, UserMessage,
 } from '../types.js';
-import type { AgentStage, ControlDescriptor, ControlOption, PermissionMode, ImageMediaType } from '../../../shared/types.js';
+import type { AgentStage, ControlDescriptor, ControlOption, PermissionMode, ImageMediaType, TokenCounts } from '../../../shared/types.js';
 import { CONTROL_IDS, isImageMediaType } from '../../../shared/types.js';
 import { cleanEnv } from '../../agent-utils.js';
 import { decideToolCall, groveServersOf } from '../../tool-policy.js';
@@ -898,6 +898,8 @@ class AcpQuery {
     let error: string | null = null;
     /** The error was already shown, as an error the UI offers a fix for. */
     let shown = false;
+    /** The tokens this turn used, when the agent reports them with its reply. */
+    let turnTokens: TokenCounts | null = null;
     try {
       const res = await this.rpc!.request<AcpPromptResponse>('session/prompt', {
         sessionId: this.sessionId,
@@ -909,7 +911,11 @@ class AcpQuery {
       // Without a usage_update yet, the turn's own input count is the best
       // figure for the context; 0 would empty the context meter.
       const out = res?.usage?.outputTokens;
-      const input = this.contextUsed || (typeof res?.usage?.inputTokens === 'number' ? res.usage.inputTokens : 0);
+      const turnInput = res?.usage?.inputTokens;
+      if (typeof out === 'number' || typeof turnInput === 'number') {
+        turnTokens = { input: typeof turnInput === 'number' ? turnInput : 0, output: typeof out === 'number' ? out : 0 };
+      }
+      const input = this.contextUsed || (typeof turnInput === 'number' ? turnInput : 0);
       if (typeof out === 'number' && out > 0 && input > 0) this.emit({ type: 'usage', inputTokens: input, outputTokens: out });
     } catch (e) {
       if (this.closing) return;
@@ -944,6 +950,7 @@ class AcpQuery {
       ...(this.sessionCost !== undefined
         ? { totalCostUsd: this.runningCost.turnCost(this.sessionCost, failed), sessionCostUsd: this.sessionCost }
         : {}),
+      ...(turnTokens ? { turnTokens } : {}),
     });
   }
 

@@ -319,8 +319,11 @@ class MessageStore {
    *  values) per session, fed by controls_sync events and loadControls(). */
   controlsBySession = $state<Record<string, SessionControls>>({});
 
-  /** Token usage per session — inputTokens is latest (= current context size), outputTokens is cumulative */
-  usageBySession = $state<Record<string, { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number }>>({});
+  /** The context each session's latest reply read (its input, as the
+   *  context meter shows it). The thread's output total comes from main
+   *  (getThreadUsage): a reply's output count here is a placeholder from
+   *  when it began, repeated on each of its messages. */
+  usageBySession = $state<Record<string, { inputTokens: number; cacheReadTokens: number; cacheCreationTokens: number }>>({});
 
   /** System info per session (from system_init) */
   systemInfoBySession = $state<Record<string, {
@@ -559,6 +562,15 @@ class MessageStore {
 
   getMessages(sessionId: string): ChatMessage[] {
     return this.messagesBySession[sessionId] ?? [];
+  }
+
+  /** The result that ended the thread's latest turn, or null before one. */
+  lastResult(sessionId: string): ChatResultMessage | null {
+    const msgs = this.getMessages(sessionId);
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i].kind === 'result') return msgs[i] as ChatResultMessage;
+    }
+    return null;
   }
 
   getStreamingText(sessionId: string): string {
@@ -800,7 +812,7 @@ class MessageStore {
   }
 
   getUsage(sessionId: string) {
-    return this.usageBySession[sessionId] ?? { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 };
+    return this.usageBySession[sessionId] ?? { inputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 };
   }
 
   getSystemInfo(sessionId: string) {
@@ -1571,12 +1583,9 @@ class MessageStore {
         break;
 
       case 'usage': {
-        const prev = this.usageBySession[sessionId] ?? { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 };
         this.usageBySession[sessionId] = {
           // input_tokens = current context window usage (latest value, not cumulative)
           inputTokens: event.inputTokens,
-          // output_tokens accumulate across turns
-          outputTokens: prev.outputTokens + event.outputTokens,
           cacheReadTokens: event.cacheReadTokens ?? 0,
           cacheCreationTokens: event.cacheCreationTokens ?? 0,
         };
