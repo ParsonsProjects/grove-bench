@@ -29,6 +29,8 @@ describe('SessionStore', () => {
     store.creating = false;
     store.repos = [];
     store.deferredResume = {};
+    store.needsAttention = {};
+    store.lastReadAt = {};
     store.sessionSort = { key: 'name', dir: 'asc' };
     localStorageMock.clear();
   });
@@ -175,6 +177,50 @@ describe('SessionStore', () => {
       expect(store.openConversations.map((s) => s.id)).toEqual(['a', 'b', 'c']);
       store.sessionSort = { key: 'age', dir: 'desc' };
       expect(store.openConversations.map((s) => s.id)).toEqual(['c', 'a', 'b']);
+    });
+
+    it('sorts an unread thread by when it was last read', () => {
+      store.sessions = [
+        { ...makeSession({ id: 'a' }), lastActiveAt: 100 },
+        { ...makeSession({ id: 'b' }), lastActiveAt: 300 },
+        { ...makeSession({ id: 'c' }), lastActiveAt: 200 },
+      ];
+      store.sessionSort = { key: 'age', dir: 'desc' };
+      // Read after it was last active, then went unread.
+      store.lastReadAt = { a: 400 };
+      expect(store.openConversations.map((s) => s.id)).toEqual(['b', 'c', 'a']);
+      store.markNeedsAttention('a');
+      expect(store.openConversations.map((s) => s.id)).toEqual(['a', 'b', 'c']);
+    });
+  });
+
+  describe('lastReadAt', () => {
+    it('stamps a known thread and ignores an unknown one', () => {
+      vi.useFakeTimers({ now: 5_000 });
+      try {
+        store.addSession(makeSession({ id: 's1' }), false);
+        store.markRead('s1');
+        store.markRead('gone');
+        expect(store.lastReadAt).toEqual({ s1: 5_000 });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('drops the time when the thread is removed', () => {
+      store.addSession(makeSession({ id: 's1' }), false);
+      store.markRead('s1');
+      store.removeSession('s1');
+      expect(store.lastReadAt).toEqual({});
+    });
+
+    it('gives an unread row the read age and any other row its last activity', () => {
+      const session = { ...makeSession({ id: 's1' }), lastActiveAt: 100 };
+      store.sessions = [session];
+      store.lastReadAt = { s1: 200 };
+      expect(store.ageOf(session)).toEqual({ at: 100, kind: 'active' });
+      store.markNeedsAttention('s1');
+      expect(store.ageOf(session)).toEqual({ at: 200, kind: 'read' });
     });
   });
 

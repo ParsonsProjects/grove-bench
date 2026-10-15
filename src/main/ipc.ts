@@ -41,7 +41,7 @@ import * as skillSuggestions from './skill-suggestions.js';
 import * as memory from './memory.js';
 import * as memoryCompact from './memory-compact.js';
 import * as bookmarks from './bookmarks.js';
-import { listProjects, rememberProject, forgetProject, loadAppState, saveOpenTabs, saveCollapsedRepos, saveSessionSort, saveSidebarWidth, saveCollapsedPanels, loadConversationGroups, saveConversationGroups, saveUnreadSessionIds, loadUnreadSessionIds, flushPendingSaves, loadPrerequisiteCache, savePrerequisiteCache, loadUsageSnapshot } from './app-state.js';
+import { listProjects, rememberProject, forgetProject, loadAppState, saveOpenTabs, saveCollapsedRepos, saveSessionSort, saveSidebarWidth, saveCollapsedPanels, loadConversationGroups, saveConversationGroups, saveUnreadSessionIds, loadUnreadSessionIds, saveReadTimes, loadReadTimes, flushPendingSaves, loadPrerequisiteCache, savePrerequisiteCache, loadUsageSnapshot } from './app-state.js';
 import { logRendererError } from './crash-handling.js';
 import { freezeLog } from './freeze-log.js';
 import { isThreadId } from './session-event-store.js';
@@ -2083,6 +2083,20 @@ export function registerHandlers() {
   ipcMain.on(IPC.APP_STATE_SET_UNREAD, (_event, ids: unknown) => {
     if (Array.isArray(ids) && ids.every((id) => typeof id === 'string')) {
       saveUnreadSessionIds(ids);
+    }
+  });
+
+  ipcMain.handle(IPC.APP_STATE_GET_READ_TIMES, () => {
+    flushPendingSaves();
+    return loadReadTimes();
+  });
+
+  ipcMain.on(IPC.APP_STATE_SET_READ_TIMES, (_event, times: unknown) => {
+    if (
+      typeof times === 'object' && times !== null && !Array.isArray(times)
+      && Object.values(times).every((t) => typeof t === 'number' && Number.isFinite(t))
+    ) {
+      saveReadTimes(times as Record<string, number>);
     }
   });
 

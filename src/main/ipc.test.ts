@@ -39,7 +39,7 @@ const m = vi.hoisted(() => {
     appState: fns(
       'listProjects', 'rememberProject', 'forgetProject', 'saveCollapsedPanels', 'loadConversationGroups', 'saveConversationGroups',
       'loadAppState', 'saveOpenTabs', 'saveCollapsedRepos', 'saveSessionSort', 'saveSidebarWidth', 'saveUnreadSessionIds',
-      'loadUnreadSessionIds', 'flushPendingSaves', 'loadPrerequisiteCache', 'savePrerequisiteCache',
+      'loadUnreadSessionIds', 'saveReadTimes', 'loadReadTimes', 'flushPendingSaves', 'loadPrerequisiteCache', 'savePrerequisiteCache',
     ),
     prerequisites: fns('apiKeyState', 'checkCorePrerequisites', 'checkGh'),
     credentials: fns('canStoreApiKey', 'clearApiKey', 'parseApiKey', 'saveApiKey'),
@@ -1393,6 +1393,14 @@ describe('renderer input checks', () => {
     expect(m.appState.saveUnreadSessionIds).not.toHaveBeenCalled();
     invoke(IPC.APP_STATE_SET_UNREAD, ['a', 'b']);
     expect(m.appState.saveUnreadSessionIds).toHaveBeenCalledWith(['a', 'b']);
+
+    invoke(IPC.APP_STATE_SET_READ_TIMES, [1]);
+    invoke(IPC.APP_STATE_SET_READ_TIMES, null);
+    invoke(IPC.APP_STATE_SET_READ_TIMES, { a: 'now' });
+    invoke(IPC.APP_STATE_SET_READ_TIMES, { a: Number.NaN });
+    expect(m.appState.saveReadTimes).not.toHaveBeenCalled();
+    invoke(IPC.APP_STATE_SET_READ_TIMES, { a: 1, b: 2 });
+    expect(m.appState.saveReadTimes).toHaveBeenCalledWith({ a: 1, b: 2 });
 
     invoke(IPC.APP_STATE_SET_SIDEBAR_WIDTH, 'wide');
     invoke(IPC.APP_STATE_SET_SIDEBAR_WIDTH, Number.POSITIVE_INFINITY);

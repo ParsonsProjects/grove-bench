@@ -21,7 +21,7 @@ vi.mock('./logger.js', () => ({
 }));
 
 import {
-  loadAppState, saveOpenTabs, saveUnreadSessionIds, loadUnreadSessionIds,
+  loadAppState, saveOpenTabs, saveUnreadSessionIds, loadUnreadSessionIds, saveReadTimes, loadReadTimes,
   saveKnownSkills, saveCollapsedPanels, flushPendingSaves, validateAppState, upgradeAppState, APP_STATE_SCHEMA_VERSION,
   loadPrerequisiteCache, loadModelCatalog, saveModelCatalog, loadUsageSnapshot, saveUsageSnapshot,
   mergeProjects, listProjects, rememberProject, forgetProject,
@@ -154,6 +154,15 @@ describe('debounced writers', () => {
     saveUnreadSessionIds(['s1', 's2']);
     flushPendingSaves();
     expect(loadUnreadSessionIds()).toEqual(['s1', 's2']);
+  });
+
+  it('round-trips read times, and drops a corrupt map', () => {
+    useDisk(undefined);
+    expect(loadReadTimes()).toEqual({});
+    saveReadTimes({ s1: 100, s2: 200 });
+    flushPendingSaves();
+    expect(loadReadTimes()).toEqual({ s1: 100, s2: 200 });
+    expect(validateAppState({ readTimes: { s1: 'soon' } }).readTimes).toBeUndefined();
   });
 
   it('saves collapsed panels, cleaned, and ignores junk from the renderer', () => {

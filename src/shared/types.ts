@@ -1521,6 +1521,10 @@ export interface GroveBenchAPI {
    *  focused) when the app last ran, so the flag survives a restart. */
   getUnreadSessions(): Promise<string[]>;
   setUnreadSessions(ids: string[]): void;
+  /** When the user last had each thread open (ms, by session id), so an
+   *  unread row's age survives a restart. */
+  getReadTimes(): Promise<Record<string, number>>;
+  setReadTimes(times: Record<string, number>): void;
 
   // App lifecycle
   onAppClosing(callback: () => void): () => void;
@@ -2158,6 +2162,8 @@ export const IPC = {
   APP_STATE_SET_GROUPS: 'appState:setConversationGroups',
   APP_STATE_GET_UNREAD: 'appState:getUnreadSessions',
   APP_STATE_SET_UNREAD: 'appState:setUnreadSessions',
+  APP_STATE_GET_READ_TIMES: 'appState:getReadTimes',
+  APP_STATE_SET_READ_TIMES: 'appState:setReadTimes',
   /** Main → renderer: an uncaught main-process error. */
   APP_ERROR: 'app:error',
   /** Renderer → main: an uncaught renderer error, for the file log. */
