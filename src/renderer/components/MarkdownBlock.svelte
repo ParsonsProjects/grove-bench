@@ -7,7 +7,7 @@
   import { writeRichText, encodeCopyText } from '$lib/clipboard.js';
   import { COPY_MARK, isRenderedCopyButton, renderedCode, renderedTable } from '$lib/copy-mark.js';
   import { HIGHLIGHT_MARK, highlightWhenVisible } from '$lib/code-highlight.js';
-  import { localFilePath, localFileTarget, openWorktreeFile } from '$lib/worktree-files.js';
+  import { localFilePath, localFileTarget, openWorktreeFile, pathFrom } from '$lib/worktree-files.js';
   import { isMarkdownFile, madeFileKind, worktreeFileUrl, worktreeImageType } from '../../shared/attachments.js';
 
   const COPY_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"></rect><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path></svg>`;
@@ -104,8 +104,10 @@
    *  is also rendered a block at a time: blocks that are done keep their
    *  HTML, and each flush re-parses only the block still growing.
    *  `sessionId`: the thread the text is in. Images and links that name a
-   *  file in its worktree show and open it; without one they do nothing. */
-  let { content, streaming = false, sessionId }: { content: string; streaming?: boolean; sessionId?: string } = $props();
+   *  file in its worktree show and open it; without one they do nothing.
+   *  `baseDir`: the folder relative ones are read from, for a Markdown file
+   *  from the worktree (its own folder); the worktree's when empty. */
+  let { content, streaming = false, sessionId, baseDir = '' }: { content: string; streaming?: boolean; sessionId?: string; baseDir?: string } = $props();
 
   let html = $derived(streaming ? '' : renderMarkdown(content));
   let streamParts = $derived(streaming ? splitStreamingMarkdown(content) : null);
@@ -165,7 +167,7 @@
       const local = localFileTarget(anchor.dataset.localHref ?? href);
       if (local !== null && sessionId && opensFromThread(local.path)) {
         const sid = sessionId;
-        openWorktreeFile(sid, local.path, local.hash)
+        openWorktreeFile(sid, pathFrom(baseDir, local.path), local.hash)
           .then((found) => { if (!found) anchor.title = `${local.path} isn't in this thread's worktree`; })
           .catch((err) => console.warn(`Could not open ${local.path}:`, err));
       }
@@ -194,9 +196,10 @@
     void html;
     void streamParts;
     const sid = sessionId;
+    const dir = baseDir;
     if (!container || !sid) return;
     for (const img of container.querySelectorAll<HTMLImageElement>('img[data-local-src]:not([src])')) {
-      img.src = worktreeFileUrl(sid, img.dataset.localSrc ?? '');
+      img.src = worktreeFileUrl(sid, pathFrom(dir, img.dataset.localSrc ?? ''));
     }
   });
 

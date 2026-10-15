@@ -672,7 +672,7 @@ async function seedConversations() {
   };
   messageStore.usageBySession = {
     ...messageStore.usageBySession,
-    's-sidebar': { inputTokens: 24_312, outputTokens: 8_120, cacheReadTokens: 210_450, cacheCreationTokens: 12_300 },
+    's-sidebar': { inputTokens: 24_312, cacheReadTokens: 210_450, cacheCreationTokens: 12_300 },
   };
   messageStore.contextWindowBySession = { ...messageStore.contextWindowBySession, 's-sidebar': 1_000_000 };
   messageStore.setIsRunning('s-sidebar', true);

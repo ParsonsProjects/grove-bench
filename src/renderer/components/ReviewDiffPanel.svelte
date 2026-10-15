@@ -552,8 +552,14 @@
   }
 
   /** A Markdown file as it is now, rendered, in the Focus panel. */
-  function previewMarkdown(filePath: string) {
-    openWorktreeFile(sessionId, filePath).catch((err) => console.warn(`Could not preview ${filePath}:`, err));
+  /** Markdown files Preview found gone (an earlier turn's, in Checkpoints). */
+  let previewMissing = $state<Record<string, true>>({});
+  async function previewMarkdown(filePath: string) {
+    try {
+      if (!(await openWorktreeFile(sessionId, filePath))) previewMissing[filePath] = true;
+    } catch (err) {
+      console.warn(`Could not preview ${filePath}:`, err);
+    }
   }
 
   function openInEditor(filePath: string) {
@@ -923,7 +929,15 @@
         {/if}
 
         {#if isMarkdownFile(selectedEntry.filePath) && selectedEntry.status !== 'deleted'}
-          <Button size="xs" variant="quiet" onclick={() => previewMarkdown(selectedEntry.filePath)} title="Read the file as it is now, rendered, in the Focus panel">
+          <Button
+            size="xs"
+            variant="quiet"
+            onclick={() => previewMarkdown(selectedEntry.filePath)}
+            disabled={previewMissing[selectedEntry.filePath]}
+            title={previewMissing[selectedEntry.filePath]
+              ? `${selectedEntry.filePath} is no longer in the worktree`
+              : 'Read the file as it is now, rendered, in the Focus panel'}
+          >
             Preview
           </Button>
         {/if}

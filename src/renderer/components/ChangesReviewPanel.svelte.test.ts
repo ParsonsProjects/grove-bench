@@ -730,6 +730,18 @@ describe('ChangesReviewPanel — Markdown preview', () => {
     await waitFor(() => expect(mockGroveBench.openWorktreeFile).toHaveBeenCalledWith(SID, 'docs/plan.md'));
   });
 
+  it('says when the file is no longer there to read', async () => {
+    mockGroveBench.getFileDiff.mockResolvedValue({ kind: 'text', patch: patch('# Plan') });
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('docs/plan.md')] } };
+    mockGroveBench.openWorktreeFile.mockResolvedValueOnce({ kind: 'missing' });
+    const { findByRole } = render(ChangesReviewPanel, { sessionId: SID });
+
+    const preview = await findByRole('button', { name: 'Preview' });
+    await fireEvent.click(preview);
+    await waitFor(() => expect(preview).toBeDisabled());
+    expect(preview.title).toBe('docs/plan.md is no longer in the worktree');
+  });
+
   it('doesn\'t offer it for a deleted Markdown file or another type', async () => {
     mockGroveBench.getFileDiff.mockResolvedValue({ kind: 'text', patch: patch('x') });
     gitStatusStore.statusBySession = { [SID]: { entries: [entry('old.md', { status: 'deleted' }), entry('src/a.ts')] } };

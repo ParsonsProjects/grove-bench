@@ -342,7 +342,7 @@ describe('StatusBar context grove', () => {
 
   function useContext(tokens: number) {
     messageStore.contextWindowBySession[ACTIVE] = 200_000;
-    messageStore.usageBySession[ACTIVE] = { inputTokens: tokens, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 };
+    messageStore.usageBySession[ACTIVE] = { inputTokens: tokens, cacheReadTokens: 0, cacheCreationTokens: 0 };
   }
 
   /** Every drawn run, as path data: more grove, more of it. */
@@ -367,7 +367,7 @@ describe('StatusBar context grove', () => {
 
   it('shows a hidden conversation\'s grove at once', () => {
     messageStore.contextWindowBySession[HIDDEN] = 200_000;
-    messageStore.usageBySession[HIDDEN] = { inputTokens: 100_000, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 };
+    messageStore.usageBySession[HIDDEN] = { inputTokens: 100_000, cacheReadTokens: 0, cacheCreationTokens: 0 };
     const { getByTestId } = render(StatusBar, { props: { sessionId: HIDDEN } });
     expect(getByTestId('context-grove').querySelectorAll('path').length).toBeGreaterThan(0);
   });
@@ -397,7 +397,7 @@ describe('StatusBar context actions', () => {
 
   async function openContext() {
     messageStore.contextWindowBySession[ACTIVE] = 200_000;
-    messageStore.usageBySession[ACTIVE] = { inputTokens: 150_000, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 };
+    messageStore.usageBySession[ACTIVE] = { inputTokens: 150_000, cacheReadTokens: 0, cacheCreationTokens: 0 };
     render(StatusBar, { props: { sessionId: ACTIVE } });
     await fireEvent.click(screen.getByRole('button', { name: 'Context 75% used. Click for details.' }));
   }
@@ -408,6 +408,22 @@ describe('StatusBar context actions', () => {
     await openContext();
     expect(getThreadUsage).toHaveBeenCalledWith(ACTIVE);
     await waitFor(() => expect(screen.getByText('Output, this thread').nextElementSibling).toHaveTextContent('12.3k'));
+  });
+
+  it('asks for the output again when a turn ends while it is open', async () => {
+    const getThreadUsage = window.groveBench.getThreadUsage as ReturnType<typeof vi.fn>;
+    getThreadUsage.mockResolvedValueOnce({ spendUsd: 0, tokens: { input: 90_000, output: 12_300 } });
+    await openContext();
+    const output = () => screen.getByText('Output, this thread').nextElementSibling;
+    await waitFor(() => expect(output()).toHaveTextContent('12.3k'));
+
+    getThreadUsage.mockResolvedValueOnce({ spendUsd: 0, tokens: { input: 120_000, output: 15_000 } });
+    try {
+      messageStore.messagesBySession[ACTIVE] = [{ kind: 'result', id: 'r-next', durationMs: 1000 } as any];
+      await waitFor(() => expect(output()).toHaveTextContent('15.0k'));
+    } finally {
+      delete messageStore.messagesBySession[ACTIVE];
+    }
   });
 
   it('says when the thread\'s output could not be read', async () => {
@@ -456,7 +472,7 @@ describe('StatusBar context actions', () => {
     // Nearly all of it cached, as it is with prompt caching: the bar still
     // reads as 90% full (nine of ten blocks), in the full colour.
     messageStore.contextWindowBySession[ACTIVE] = 200_000;
-    messageStore.usageBySession[ACTIVE] = { inputTokens: 2_000, outputTokens: 0, cacheReadTokens: 170_000, cacheCreationTokens: 8_000 };
+    messageStore.usageBySession[ACTIVE] = { inputTokens: 2_000, cacheReadTokens: 170_000, cacheCreationTokens: 8_000 };
     const { getByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
 
     const blocks = [...getByTestId('context-bar').children] as HTMLElement[];
@@ -747,7 +763,7 @@ describe('StatusBar context popover closes on Escape', () => {
   it('closes the context popover without stopping anything else', async () => {
     claudeAgent();
     messageStore.contextWindowBySession[ACTIVE] = 200_000;
-    messageStore.usageBySession[ACTIVE] = { inputTokens: 50_000, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 };
+    messageStore.usageBySession[ACTIVE] = { inputTokens: 50_000, cacheReadTokens: 0, cacheCreationTokens: 0 };
     render(StatusBar, { props: { sessionId: ACTIVE } });
     await fireEvent.click(screen.getByRole('button', { name: /^Context 25% used/ }));
     expect(screen.queryByText('Summarise to free space')).not.toBeNull();

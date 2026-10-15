@@ -36,7 +36,8 @@
   $effect(() => { if (!contextExpanded) confirmClear = false; });
 
   /** The thread's output tokens, from main's per-turn figures, asked for
-   *  when the popover opens (null while asked). The per-reply usage events
+   *  when the popover opens and again when a turn ends while it is open
+   *  (null while first asked). The per-reply usage events
    *  can't be added up for this: their output count is a placeholder from
    *  when the reply began, repeated on each message of it
    *  (https://code.claude.com/docs/en/agent-sdk/cost-tracking). */
@@ -46,6 +47,7 @@
       threadOutput = null;
       return;
     }
+    void messageStore.lastResult(sessionId)?.id;
     let current = true;
     window.groveBench.getThreadUsage(sessionId).then(
       (u) => { if (current) threadOutput = u.tokens.output; },

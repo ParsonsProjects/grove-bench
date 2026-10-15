@@ -20,6 +20,12 @@ export class RunningCost {
     this.last = resumedFrom ?? 0;
   }
 
+  /** The running total as far as it's known: a zeroed total from a failed
+   *  start doesn't replace it. */
+  get total(): number {
+    return this.last;
+  }
+
   /** The cost of the turn a result with running total `total` ends. */
   turnCost(total: number, isError: boolean): number {
     const first = this.first;
@@ -80,6 +86,11 @@ export class RunningTokens {
   /** The tokens of the turn a result with running totals `total` ends. */
   turnTokens(total: TokenCounts, isError: boolean): TokenCounts {
     return { input: this.input.turnCost(total.input, isError), output: this.output.turnCost(total.output, isError) };
+  }
+
+  /** The running totals as far as they're known (as RunningCost.total). */
+  get total(): TokenCounts {
+    return { input: this.input.total, output: this.output.total };
   }
 }
 

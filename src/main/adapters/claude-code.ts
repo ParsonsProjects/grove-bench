@@ -574,18 +574,23 @@ export function transformMessage(
         input: sum.input + (u.inputTokens ?? 0) + (u.cacheReadInputTokens ?? 0) + (u.cacheCreationInputTokens ?? 0),
         output: sum.output + (u.outputTokens ?? 0),
       }), { input: 0, output: 0 }) : undefined;
+      // The session totals are the trackers' rather than the result's, which
+      // a failed start or crash can report zeroed: saved as the totals to
+      // resume from, those would count the earlier turns again.
+      const cost = ctx.cost ?? new RunningCost();
+      const tokens = ctx.tokens ?? new RunningTokens();
       events.push({
         type: 'result',
         subtype: message.subtype,
         result: 'result' in message ? (message as any).result : undefined,
         structured_output: 'structured_output' in message ? (message as any).structured_output : undefined,
         ...(runningCost !== undefined ? {
-          totalCostUsd: (ctx.cost ?? new RunningCost()).turnCost(runningCost, message.is_error),
-          sessionCostUsd: runningCost,
+          totalCostUsd: cost.turnCost(runningCost, message.is_error),
+          sessionCostUsd: cost.total,
         } : {}),
         ...(runningTokens ? {
-          turnTokens: (ctx.tokens ?? new RunningTokens()).turnTokens(runningTokens, message.is_error),
-          sessionTokens: runningTokens,
+          turnTokens: tokens.turnTokens(runningTokens, message.is_error),
+          sessionTokens: tokens.total,
         } : {}),
         durationMs: message.duration_ms,
         isError: message.is_error,
@@ -666,6 +671,19 @@ export function transformMessage(
         utilization: info.utilization,
         rateLimitType: info.rate_limit_type ?? info.rateLimitType,
       });
+      break;
+    }
+
+    case 'conversation_reset': {
+      // /clear starts the running totals again
+      // (https://code.claude.com/docs/en/agent-sdk/cost-tracking). A turn
+      // can read more than the whole conversation before it, so the drop
+      // RunningCost looks for may not come. Other resets aren't documented
+      // to start them again, so those are left to that check.
+      if (message.trigger === 'clear') {
+        ctx.cost = new RunningCost();
+        ctx.tokens = new RunningTokens();
+      }
       break;
     }
 

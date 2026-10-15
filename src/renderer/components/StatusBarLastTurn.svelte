@@ -6,7 +6,7 @@
    * today have cost (main's figures, the ones the spend limits count).
    */
   import { untrack } from 'svelte';
-  import { messageStore, type ChatResultMessage } from '../stores/messages.svelte.js';
+  import { messageStore } from '../stores/messages.svelte.js';
   import { usageStore } from '../stores/usage.svelte.js';
   import { agentsStore } from '../stores/agents.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
@@ -19,13 +19,7 @@
 
   let { sessionId }: { sessionId: string } = $props();
 
-  let lastResult = $derived.by(() => {
-    const msgs = messageStore.getMessages(sessionId);
-    for (let i = msgs.length - 1; i >= 0; i--) {
-      if (msgs[i].kind === 'result') return msgs[i] as ChatResultMessage;
-    }
-    return null;
-  });
+  let lastResult = $derived(messageStore.lastResult(sessionId));
 
   /** On a plan (Pro, Max, ...) turns count toward the plan's limits, and the
    *  SDK's dollar figure is list price that isn't billed, so it is left out:

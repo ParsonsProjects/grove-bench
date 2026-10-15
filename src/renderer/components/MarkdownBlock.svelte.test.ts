@@ -122,6 +122,17 @@ describe('MarkdownBlock links', () => {
     expect(open).toHaveBeenCalledWith('s1', 'docs/plan.md');
   });
 
+  it('reads a Markdown file\'s relative links from its own folder', async () => {
+    const open = vi.mocked(window.groveBench.openWorktreeFile);
+    open.mockClear();
+    const { container } = render(MarkdownBlock, { content: '[API](../api.md) and [readme](C:\\wt\\README.md)', sessionId: 's1', baseDir: 'docs/guide' });
+    const [api, readme] = container.querySelectorAll('a');
+    await fireEvent.click(api);
+    expect(open).toHaveBeenLastCalledWith('s1', 'docs/api.md');
+    await fireEvent.click(readme);
+    expect(open).toHaveBeenLastCalledWith('s1', 'C:\\wt\\README.md');
+  });
+
   it('opens no file without a thread', async () => {
     const open = vi.mocked(window.groveBench.openWorktreeFile);
     open.mockClear();
@@ -143,6 +154,15 @@ describe('MarkdownBlock images from the worktree', () => {
     expect(home.getAttribute('alt')).toBe('Home page');
     expect(home.getAttribute('title')).toBe('After');
     expect(chart.getAttribute('src')).toBe(`grove-attachment://worktree/s1/${encodeURIComponent('C:\\wt\\chart.svg')}`);
+  });
+
+  it('loads a Markdown file\'s relative images from its own folder', async () => {
+    const { container } = render(MarkdownBlock, { content: '![arch](arch.png)', sessionId: 's1', baseDir: 'docs' });
+    await tick();
+    const img = container.querySelector('img')!;
+    expect(img.getAttribute('src')).toBe('grove-attachment://worktree/s1/docs%2Farch.png');
+    // Named as the file names it, should it not load.
+    expect(img.dataset.localSrc).toBe('arch.png');
   });
 
   it('leaves it unloaded without a thread, rather than loading it against the app', async () => {

@@ -670,7 +670,7 @@ describe('ingestEvent — result', () => {
 });
 
 describe('ingestEvent — usage', () => {
-  it('tracks input tokens as latest (not cumulative)', () => {
+  it('tracks input tokens as latest (not cumulative), and keeps no output total', () => {
     messageStore.ingestEvent(SID, {
       type: 'usage',
       inputTokens: 1000,
@@ -684,7 +684,8 @@ describe('ingestEvent — usage', () => {
 
     const usage = messageStore.getUsage(SID);
     expect(usage.inputTokens).toBe(1500); // latest, not summed
-    expect(usage.outputTokens).toBe(500); // cumulative
+    // A reply's output count is a placeholder; main keeps the thread's total.
+    expect(usage).not.toHaveProperty('outputTokens');
   });
 });
 
@@ -1546,8 +1547,7 @@ describe('getters with defaults', () => {
 
   it('getUsage returns zeros for unknown session', () => {
     const u = messageStore.getUsage('unknown');
-    expect(u.inputTokens).toBe(0);
-    expect(u.outputTokens).toBe(0);
+    expect(u).toEqual({ inputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 });
   });
 });
 
@@ -2289,7 +2289,7 @@ describe('destroySession', () => {
     messageStore.subscribe(SID);
     messageStore.messagesBySession[SID] = [{ kind: 'system', id: 'm1', text: 'hi' }] as any;
     messageStore.modelBySession[SID] = 'claude-opus-4-8';
-    messageStore.usageBySession[SID] = { inputTokens: 1, outputTokens: 2, cacheReadTokens: 0, cacheCreationTokens: 0 };
+    messageStore.usageBySession[SID] = { inputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0 };
     messageStore.setPagination(SID, 10, 5);
 
     messageStore.destroySession(SID);

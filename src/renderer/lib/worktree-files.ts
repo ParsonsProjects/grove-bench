@@ -45,6 +45,28 @@ export function localFilePath(href: string | null | undefined): string | null {
   return localFileTarget(href)?.path ?? null;
 }
 
+/** The folder a file is in, for the paths it names (see pathFrom). */
+export function folderOf(filePath: string): string {
+  const at = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'));
+  return at < 0 ? '' : filePath.slice(0, at) || filePath.slice(0, 1);
+}
+
+/** A path a Markdown file names, read from the file's `folder`, as a link in
+ *  it would be: a relative one joined to the folder (`..` and `.` worked
+ *  out), an absolute one or a file:// URL as it is. Main still refuses one
+ *  that leads out of the worktree. */
+export function pathFrom(folder: string, path: string): string {
+  if (!folder || /^([\\/]|[a-z]:[\\/]|file:)/i.test(path)) return path;
+  const root = /^(?:[a-z]:)?[\\/]*/i.exec(folder)![0];
+  const parts: string[] = [];
+  for (const part of `${folder.slice(root.length)}/${path}`.split(/[\\/]+/)) {
+    if (part === '' || part === '.') continue;
+    if (part === '..' && parts.length > 0 && parts.at(-1) !== '..') parts.pop();
+    else parts.push(part);
+  }
+  return root.replace(/\\/g, '/') + parts.join('/');
+}
+
 /** Open a file in the thread's worktree: a web page in the Preview tab (at
  *  `hash`, an anchor in it), a Markdown file in the Focus panel, anything
  *  else as main decides (worktree-files.ts). False when it's gone. */
@@ -55,7 +77,7 @@ export async function openWorktreeFile(sessionId: string, filePath: string, hash
     messageStore.setActiveTab(sessionId, 'preview');
     await previewStore.navigate(sessionId, 'user', result.url + hash).catch((err) => console.warn(`Could not preview ${filePath}:`, err));
   } else if (result.kind === 'markdown') {
-    markdownPreviewStore.show(result.content, filePath, sessionId);
+    markdownPreviewStore.show(result.content, filePath, sessionId, folderOf(filePath));
   }
   return result.kind !== 'missing';
 }

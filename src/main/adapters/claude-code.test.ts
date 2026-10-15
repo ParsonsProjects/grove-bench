@@ -1044,6 +1044,49 @@ describe('transformMessage()', () => {
       expect(result(40, 50)).toMatchObject({ turnTokens: { input: 30, output: 30 }, sessionTokens: { input: 1145, output: 51 } });
     });
 
+    it('keeps the session totals through a zeroed error result, so a resume doesn\'t count earlier turns again', () => {
+      const ctx = { ...makeCtx(), cost: new RunningCost(), tokens: new RunningTokens() };
+      const usage = (input: number, output: number) => ({ 'claude-opus-5-5': { inputTokens: input, outputTokens: output, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 } });
+      const result = (usd: number, input: number, output: number, isError: boolean) => transformMessage(
+        { type: 'result', subtype: isError ? 'error_during_execution' : 'success', total_cost_usd: usd, modelUsage: usage(input, output), duration_ms: 1, is_error: isError, num_turns: 1 } as any,
+        ctx,
+      )[0] as Extract<AgentEvent, { type: 'result' }>;
+
+      result(0.5, 2000, 40, false);
+      expect(result(0, 0, 0, true)).toMatchObject({
+        totalCostUsd: 0, sessionCostUsd: 0.5,
+        turnTokens: { input: 0, output: 0 }, sessionTokens: { input: 2000, output: 40 },
+      });
+    });
+
+    it('counts afresh after /clear, even when the next turn reads more than the whole conversation before it', () => {
+      const ctx = { ...makeCtx(), cost: new RunningCost(), tokens: new RunningTokens() };
+      const usage = (input: number, output: number) => ({ 'claude-opus-5-5': { inputTokens: input, outputTokens: output, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 } });
+      const result = (usd: number, input: number, output: number) => transformMessage(
+        { type: 'result', subtype: 'success', total_cost_usd: usd, modelUsage: usage(input, output), duration_ms: 1, is_error: false, num_turns: 1 } as any,
+        ctx,
+      )[0] as Extract<AgentEvent, { type: 'result' }>;
+
+      result(0.1, 30_000, 500);
+      transformMessage({ type: 'conversation_reset', trigger: 'clear', new_conversation_id: 'c2', uuid: 'u', session_id: 's2' } as any, ctx);
+      expect(result(0.4, 175_000, 3000)).toMatchObject({
+        totalCostUsd: 0.4, sessionCostUsd: 0.4,
+        turnTokens: { input: 175_000, output: 3000 }, sessionTokens: { input: 175_000, output: 3000 },
+      });
+    });
+
+    it('leaves the totals running through a reset other than /clear', () => {
+      const ctx = { ...makeCtx(), cost: new RunningCost() };
+      const result = (usd: number) => transformMessage(
+        { type: 'result', subtype: 'success', total_cost_usd: usd, duration_ms: 1, is_error: false, num_turns: 1 } as any,
+        ctx,
+      )[0] as Extract<AgentEvent, { type: 'result' }>;
+
+      result(0.1);
+      transformMessage({ type: 'conversation_reset', trigger: 'plan_mode_exit', new_conversation_id: 'c2', uuid: 'u', session_id: 's2' } as any, ctx);
+      expect(result(0.3).totalCostUsd).toBeCloseTo(0.2);
+    });
+
     it('reports no tokens for a result without modelUsage', () => {
       const event = transformMessage({ type: 'result', subtype: 'success', duration_ms: 1, is_error: false, num_turns: 1 } as any, makeCtx())[0];
       expect(event).not.toHaveProperty('turnTokens');
