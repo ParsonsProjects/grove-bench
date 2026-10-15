@@ -393,6 +393,14 @@ class AgentSessionManager {
       }
     } catch { /* best effort */ }
 
+    // Settings an older Grove wrote into the worktree (its deny rules hid
+    // every file from Claude Code's Grep and Glob). A direct thread's folder
+    // is the user's.
+    if (session.worktreePath !== session.repoPath && session.adapter.updateWorktreeSettings) {
+      await session.adapter.updateWorktreeSettings(session.worktreePath)
+        .catch((e) => logger.warn(`[runQuery] session=${id} could not update the worktree's agent settings:`, e));
+    }
+
     // Snapshot the rewind fork target for this start attempt. It stays set on
     // the session until a query successfully starts with it, so a stop that
     // lands mid-startup (restartRequested) retries the same truncated resume.

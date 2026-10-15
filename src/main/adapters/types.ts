@@ -506,6 +506,11 @@ export interface AgentAdapter {
    *  project the worktree belongs to, for settings carried over from it. */
   generateWorktreeSettings?(wtPath: string, repoPath?: string): Promise<void>;
 
+  /** Bring the settings files an older Grove wrote into a worktree up to
+   *  date, keeping the rest of each file. Runs before each start in a
+   *  worktree of Grove's own, never in a direct thread's folder. */
+  updateWorktreeSettings?(wtPath: string): Promise<void>;
+
   /** Approve a project-scope MCP server (e.g. from `.mcp.json`) in each of
    *  `dirs`: the project root and its conversations' worktrees. */
   approveProjectMcpServer?(name: string, dirs: string[]): Promise<void>;
