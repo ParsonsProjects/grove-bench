@@ -150,8 +150,6 @@ const mockGroveBench = {
   setConversationGroups: vi.fn(),
   getUnreadSessions: vi.fn(() => Promise.resolve([] as string[])),
   setUnreadSessions: vi.fn(),
-  getReadTimes: vi.fn(() => Promise.resolve({} as Record<string, number>)),
-  setReadTimes: vi.fn(),
   onAppError: vi.fn(() => () => {}),
   reportError: vi.fn(),
   reportFreeze: vi.fn(),

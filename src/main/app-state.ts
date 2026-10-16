@@ -51,9 +51,6 @@ export interface AppState {
   /** Sessions flagged unread (finished a turn / got a PR alert while not
    *  focused) when the app last ran. Restored into the sidebar on launch. */
   unreadSessionIds?: string[];
-  /** When the user last had each thread open (ms, by session id), for the
-   *  age on unread rows. */
-  readTimes?: Record<string, number>;
   /** Model lists learned from each agent's own SDK/CLI, keyed by adapter id.
    *  Shown at the next launch until the agent reports its list again. The
    *  shape of `models` belongs to the adapter, which validates it on load. */
@@ -153,7 +150,6 @@ const appStateSchema = z.object({
     checkedAt: z.number(),
   }).nullable().optional().catch(null),
   unreadSessionIds: z.array(z.string()).optional().catch(undefined),
-  readTimes: z.record(z.string(), z.number().finite()).optional().catch(undefined),
   modelCatalogs: z.record(z.string(), z.object({
     models: z.array(z.unknown()),
     fetchedAt: z.number(),
@@ -284,7 +280,6 @@ const sessionSortWriter = debouncedWriter<SessionSortState>((s, v) => { s.sessio
 const sidebarWidthWriter = debouncedWriter<number>((s, v) => { s.sidebarWidth = v; });
 const collapsedPanelsWriter = debouncedWriter<CollapsedPanels>((s, v) => { s.collapsedPanels = v; });
 const unreadWriter = debouncedWriter<string[]>((s, v) => { s.unreadSessionIds = v; });
-const readTimesWriter = debouncedWriter<Record<string, number>>((s, v) => { s.readTimes = v; });
 const groupsWriter = debouncedWriter<ConversationGroup[]>((s, v) => { s.groups = v; });
 const usageWriter = debouncedWriter<Record<string, ProviderUsage>>((s, v) => { s.usageSnapshots = v; });
 const dailySpendWriter = debouncedWriter<DailySpend>((s, v) => { s.dailySpend = v; });
@@ -316,14 +311,6 @@ export function loadUnreadSessionIds(): string[] {
 
 export function saveUnreadSessionIds(ids: string[]): void {
   unreadWriter.save(ids);
-}
-
-export function loadReadTimes(): Record<string, number> {
-  return loadAppState().readTimes ?? {};
-}
-
-export function saveReadTimes(times: Record<string, number>): void {
-  readTimesWriter.save(times);
 }
 
 export function loadKnownSkills(repoPath: string): string[] {

@@ -119,30 +119,6 @@ describe('Sidebar session rows', () => {
     }
   });
 
-  it('ages an unread row from when it was last read, any other from its last activity', async () => {
-    const now = Date.now();
-    store.sessions = [
-      { id: 's1', branch: 'feat-x', repoPath: '/repo-a', status: 'running', displayName: 'Read one', lastActiveAt: now - 3 * 3_600_000 },
-      { id: 's2', branch: 'feat-y', repoPath: '/repo-a', status: 'running', displayName: 'Unread one', lastActiveAt: now - 3 * 3_600_000 },
-    ] as any;
-    store.needsAttention = { s2: true };
-    store.lastReadAt = { s1: now - 10 * 60_000, s2: now - 10 * 60_000 };
-    try {
-      render(Sidebar);
-      // Listed under Threads and in the Projects tree alike.
-      const rows = (name: string) => screen.getAllByText(name).map((label) => label.closest('button')!);
-      for (const row of rows('Unread one')) {
-        expect(within(row).getByText('10m ago')).toHaveAttribute('title', expect.stringMatching(/^Last read /));
-      }
-      for (const row of rows('Read one')) {
-        expect(within(row).getByText('3h ago')).toHaveAttribute('title', expect.stringMatching(/^Last active /));
-      }
-    } finally {
-      store.needsAttention = {};
-      store.lastReadAt = {};
-    }
-  });
-
   it('only moves the plain dot when the system allows motion', async () => {
     store.sessions = [
       { id: 's1', branch: 'feat-x', repoPath: '/repo-a', status: 'running', displayName: 'Working one' },

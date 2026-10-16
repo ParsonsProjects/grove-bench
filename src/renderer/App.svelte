@@ -124,15 +124,6 @@
       }
     } catch { /* best-effort */ }
 
-    // And when you last had each thread open. A thread opened during the
-    // restore keeps this run's time.
-    try {
-      const saved = await window.groveBench.getReadTimes();
-      const known = new Set(store.sessions.map((s) => s.id));
-      const kept = Object.fromEntries(Object.entries(saved).filter(([id]) => known.has(id)));
-      store.lastReadAt = { ...kept, ...store.lastReadAt };
-    } catch { /* best-effort */ }
-
     restored = true;
     window.groveBench.notifyRestoreComplete();
 
@@ -208,26 +199,6 @@
     const ids = Object.keys(store.needsAttention);
     if (restored) {
       window.groveBench.setUnreadSessions(ids);
-    }
-  });
-
-  // Note when you last had each thread open: as you open it and as you
-  // leave it. An unread row's age counts from the later of the two.
-  let openThreadId: string | null = null;
-  $effect(() => {
-    const id = store.activeSessionId;
-    untrack(() => {
-      if (openThreadId && openThreadId !== id) store.markRead(openThreadId);
-      if (id) store.markRead(id);
-      openThreadId = id;
-    });
-  });
-
-  // Persist those times too
-  $effect(() => {
-    const times = store.lastReadAt;
-    if (restored) {
-      window.groveBench.setReadTimes($state.snapshot(times));
     }
   });
 

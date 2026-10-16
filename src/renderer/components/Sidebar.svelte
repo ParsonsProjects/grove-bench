@@ -29,7 +29,7 @@
   import ContextMenu from './ContextMenu.svelte';
   import { formatAge } from '../lib/format-age.js';
   import { isRepoCollapsed } from '../lib/repo-collapse.js';
-  import { sortSessions, defaultDirFor, type RowAge } from '../lib/session-sort.js';
+  import { sortSessions, defaultDirFor } from '../lib/session-sort.js';
   import { triageForSprite, triageCounts, matchesTriageFilter, TRIAGE_FILTERS, TRIAGE_FILTER_LABELS, type TriageFilter, type TriageState } from '../lib/session-triage.js';
   import { sessionSubtitle, pendingPermissionTool, pendingPermissionView, lastTextSnippet, firstPromptSnippet, type SessionSubtitle } from '../lib/session-subtitle.js';
   import { sessionPreviewStore } from '../stores/sessionPreviews.svelte.js';
@@ -134,13 +134,6 @@
     working: 'text-status-working',
     waiting: 'text-status-attention',
     context: 'text-muted-foreground',
-  };
-
-  /** What the age on a row counts from, for its tooltip. */
-  const AGE_KIND_LABEL: Record<RowAge['kind'], string> = {
-    read: 'Last read',
-    active: 'Last active',
-    created: 'Created',
   };
 
   function toggleRepoCollapsed(repo: string) {
@@ -830,7 +823,7 @@
       (groups[key] ??= []).push(s);
     }
     return Object.entries(groups).map(
-      ([branch, sessions]): [string, typeof store.sessions] => [branch, sortSessions(sessions, store.sessionSort, (s) => store.ageOf(s).at)],
+      ([branch, sessions]): [string, typeof store.sessions] => [branch, sortSessions(sessions, store.sessionSort)],
     );
   }
 </script>
@@ -899,8 +892,7 @@
     {@const spriteState = sessionSpriteState(session, isDestroying)}
     {@const restFade = spriteState === 'stopped' ? 'opacity-60' : spriteState === 'sleeping' ? 'opacity-70' : ''}
     {@const repoColor = getRepoColor(store.repos, session.repoPath, settingsStore.current.repoColors)}
-    <!-- An unread row counts from when you last had it open, not its last activity. -->
-    {@const age = store.ageOf(session)}
+    {@const ts = session.lastActiveAt ?? session.createdAt}
     {@const subtitle = rowSubtitle(session)}
     <!-- Changed in the worktree: the Changes tab may be listing the whole branch. -->
     {@const gitState = gitStatusStore.getStatus(session.id)}
@@ -934,12 +926,12 @@
             <svg class="w-3.5 h-3.5 shrink-0 {health.textClass}" xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 24 24" role="img" aria-label={branchIconLabel} title={branchIconLabel} data-pr-health={health.kind}><path d="M4 2h4v2H4zm0 6h4v2H4zM2 4h2v4H2zm6 0h2v4H8zm8 0h4v2h-4zm0 6h4v2h-4zm-2-4h2v4h-2zm6 0h2v4h-2zm-8 13h5v2h-5zm5-5h2v5h-2zM5 12h2v10H5z"/></svg>
           {/if}
           <span class="text-sm truncate min-w-0 flex-1">{label}</span>
-          {#if age.at}
+          {#if ts}
             <!-- Invisible, not hidden, while the quick action sits over it, so the name doesn't reflow. -->
             <span
               class="shrink-0 text-micro text-muted-foreground {isDestroying ? '' : 'group-hover/session:invisible group-has-[:focus-visible]/session:invisible'}"
-              title="{AGE_KIND_LABEL[age.kind]} {new Date(age.at).toLocaleString()}"
-            >{formatAge(age.at)}</span>
+              title="{session.lastActiveAt ? 'Last active' : 'Created'} {new Date(ts).toLocaleString()}"
+            >{formatAge(ts)}</span>
           {/if}
         </div>
         {#if group || showProject || subtitle || changedCount > 0}

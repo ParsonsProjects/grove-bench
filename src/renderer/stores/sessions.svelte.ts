@@ -1,5 +1,5 @@
 import type { PrerequisiteStatus, SessionStatus } from '../../shared/types.js';
-import { sortSessions, rowAge, DEFAULT_SORT, type RowAge, type SessionSortState } from '../lib/session-sort.js';
+import { sortSessions, DEFAULT_SORT, type SessionSortState } from '../lib/session-sort.js';
 
 interface SessionEntry {
   id: string;
@@ -38,10 +38,6 @@ class SessionStore {
    *  flash on their sidebar row until the user focuses them. */
   needsAttention = $state<Record<string, boolean>>({});
 
-  /** When you last had each thread open (ms), so an unread row's age says
-   *  how long since you last looked. Saved across restarts by App. */
-  lastReadAt = $state<Record<string, number>>({});
-
   /** Tabs restored at startup whose agent hasn't been reconnected yet. They
    *  stay 'stopped' (no agent process) but still count as open tabs, and
    *  reconnect the first time the user focuses them. */
@@ -69,14 +65,7 @@ class SessionStore {
     return sortSessions(
       this.sessions.filter((s) => this.isOpenTab(s)),
       this.sessionSort,
-      (s) => this.ageOf(s).at,
     );
-  }
-
-  /** What a thread's age (shown on its row, and sorted by) counts from:
-   *  when you last had it open while it's unread, else its last activity. */
-  ageOf(session: SessionEntry): RowAge {
-    return rowAge(session, !!this.needsAttention[session.id], this.lastReadAt[session.id]);
   }
 
   get canCreate() {
@@ -198,11 +187,6 @@ class SessionStore {
     this.removeFromRecentlyClosed(id);
     this.clearNeedsAttention(id);
     this.clearDeferredResume(id);
-    if (id in this.lastReadAt) {
-      const next = { ...this.lastReadAt };
-      delete next[id];
-      this.lastReadAt = next;
-    }
     // Back to the landing screen rather than jumping into another conversation.
     if (this.activeSessionId === id) this.activeSessionId = null;
   }
@@ -274,12 +258,6 @@ class SessionStore {
     if (!this.needsAttention[id]) {
       this.needsAttention = { ...this.needsAttention, [id]: true };
     }
-  }
-
-  /** Note that you have the thread open now. */
-  markRead(id: string) {
-    if (!this.sessions.some((s) => s.id === id)) return;
-    this.lastReadAt = { ...this.lastReadAt, [id]: Date.now() };
   }
 
   /** Clear the needs-attention flag (e.g. when the session is focused). */

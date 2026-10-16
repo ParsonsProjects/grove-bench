@@ -31,7 +31,6 @@ afterEach(() => {
   store.activeSessionId = null;
   store.deferredResume = {};
   store.needsAttention = {};
-  store.lastReadAt = {};
   messageStore.isRunning = {};
 });
 
@@ -133,45 +132,6 @@ describe('App unread flag', () => {
     vi.advanceTimersByTime(TURN_SETTLE_MS);
 
     expect(store.needsAttention.w).toBeUndefined();
-  });
-});
-
-describe('App read times', () => {
-  async function renderApp() {
-    mockGroveBench.getSettings.mockResolvedValue(JSON.parse(JSON.stringify(settingsStore.current)));
-    getOpenTabs.mockResolvedValue([]);
-    mockGroveBench.notifyRestoreComplete.mockClear();
-    render(App);
-    await vi.waitFor(() => expect(mockGroveBench.notifyRestoreComplete).toHaveBeenCalled(), { timeout: 5000 });
-  }
-
-  it('notes when you open a thread and when you leave it, and saves it', async () => {
-    mockGroveBench.listRepos.mockResolvedValue([]);
-    await renderApp();
-    vi.useFakeTimers({ toFake: ['Date'], now: 1_000 });
-    store.sessions = [
-      { id: 'a', branch: 'feat-a', repoPath: '/repo', status: 'running' },
-      { id: 'b', branch: 'feat-b', repoPath: '/repo', status: 'running' },
-    ] as any;
-    store.activeSessionId = 'a';
-    flushSync();
-    expect(store.lastReadAt).toEqual({ a: 1_000 });
-
-    vi.setSystemTime(5_000);
-    store.activeSessionId = 'b';
-    flushSync();
-    expect(store.lastReadAt).toEqual({ a: 5_000, b: 5_000 });
-    expect(mockGroveBench.setReadTimes).toHaveBeenLastCalledWith({ a: 5_000, b: 5_000 });
-  });
-
-  it('brings back the saved times of threads that still exist', async () => {
-    mockGroveBench.listRepos.mockResolvedValue(['/repo']);
-    mockGroveBench.listWorktrees.mockResolvedValue([
-      { id: 'a', branch: 'feat-a', repoPath: '/repo', path: '/wt/a', createdAt: 1, lastActiveAt: 1 },
-    ]);
-    mockGroveBench.getReadTimes.mockResolvedValueOnce({ a: 100, gone: 50 });
-    await renderApp();
-    expect(store.lastReadAt).toEqual({ a: 100 });
   });
 });
 

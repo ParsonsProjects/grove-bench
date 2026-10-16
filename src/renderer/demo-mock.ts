@@ -391,8 +391,6 @@ const api: Record<string, unknown> = {
   ],
   getUnreadSessions: async () => [],
   setUnreadSessions: () => {},
-  getReadTimes: async () => ({}),
-  setReadTimes: () => {},
   onAppError: () => () => {},
   reportError: () => {},
   reportFreeze: () => {},
