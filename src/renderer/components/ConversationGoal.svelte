@@ -1,12 +1,12 @@
 <script lang="ts">
   /**
    * The conversation's goal, pinned at the top of the Thread tab: a line on
-   * what it is trying to get done, on a filled band with a marked left edge
-   * so it reads apart from the thread under it, and up to two lines before
-   * it is cut off. Written once after the first reply by the
-   * conversation's agent; Edit replaces it with your own words and Refresh
-   * writes a new one. Close hides it for this conversation; Settings >
-   * Tending turns it off everywhere.
+   * what it is trying to get done, in a card edged all round so it reads
+   * apart from the thread under it (messages are marked on the left edge
+   * only), and up to two lines before it is cut off. Written once after the
+   * first reply by the conversation's agent; Edit replaces it with your own
+   * words and Refresh writes a new one. Close hides it for this
+   * conversation; Settings > Tending turns it off everywhere.
    */
   import { tick, untrack } from 'svelte';
   import { goalStore } from '../stores/goals.svelte.js';
@@ -80,69 +80,71 @@
 </script>
 
 {#if visible}
-  <div class="flex items-start gap-2 pl-3.5 pr-4 py-1 border-b border-border border-l-2 border-l-muted-foreground bg-muted text-sm shrink-0 min-w-0" data-testid="conversation-goal">
-    <span class="flex items-center gap-1.5 py-0.5 font-medium text-muted-foreground shrink-0">
-      <GoalFlagIcon />
-      Goal
-    </span>
+  <div class="px-4 pt-2 pb-1 shrink-0 min-w-0" data-testid="conversation-goal">
+    <div class="flex items-start gap-2 border border-input bg-card px-3 py-1.5 text-sm min-w-0">
+      <span class="flex items-center gap-1.5 py-0.5 font-medium text-muted-foreground shrink-0">
+        <GoalFlagIcon />
+        Goal
+      </span>
 
-    {#if editing}
-      <input
-        bind:this={input}
-        bind:value={draft}
-        onkeydown={handleKeydown}
-        onblur={commit}
-        type="text"
-        maxlength={MAX_USER_GOAL_LENGTH}
-        placeholder="What should this thread get done?"
-        aria-label="Thread goal"
-        class="flex-1 min-w-0 bg-background border border-input px-1.5 py-0.5 text-sm text-foreground outline-none focus:border-ring placeholder:text-muted-foreground"
-      />
-    {:else if goal.text}
-      <button
-        type="button"
-        onclick={() => { expanded = !expanded; }}
-        aria-expanded={expanded}
-        title={expanded ? 'Show less' : goal.text}
-        class="flex-1 min-w-0 py-0.5 text-left text-foreground {generating ? 'opacity-60' : ''}"
-      ><span class="break-words {expanded ? '' : 'line-clamp-2'}">{goal.text}</span></button>
-    {:else if generating}
-      <span class="flex-1 min-w-0 py-0.5 truncate text-muted-foreground animate-pulse">Writing a goal…</span>
-    {:else}
-      <span class="flex-1 min-w-0 py-0.5 truncate text-muted-foreground">No goal yet</span>
-    {/if}
-
-    {#if !editing}
-      {#if error}
-        <span class="py-0.5 text-destructive truncate max-w-[40%]" title={error} role="status">{error}</span>
+      {#if editing}
+        <input
+          bind:this={input}
+          bind:value={draft}
+          onkeydown={handleKeydown}
+          onblur={commit}
+          type="text"
+          maxlength={MAX_USER_GOAL_LENGTH}
+          placeholder="What should this thread get done?"
+          aria-label="Thread goal"
+          class="flex-1 min-w-0 bg-background border border-input px-1.5 py-0.5 text-sm text-foreground outline-none focus:border-ring placeholder:text-muted-foreground"
+        />
+      {:else if goal.text}
+        <button
+          type="button"
+          onclick={() => { expanded = !expanded; }}
+          aria-expanded={expanded}
+          title={expanded ? 'Show less' : goal.text}
+          class="flex-1 min-w-0 py-0.5 text-left text-foreground {generating ? 'opacity-60' : ''}"
+        ><span class="break-words {expanded ? '' : 'line-clamp-2'}">{goal.text}</span></button>
+      {:else if generating}
+        <span class="flex-1 min-w-0 py-0.5 truncate text-muted-foreground animate-pulse">Writing a goal…</span>
+      {:else}
+        <span class="flex-1 min-w-0 py-0.5 truncate text-muted-foreground">No goal yet</span>
       {/if}
-      <!-- Padded to the text's first line, which is taller than the buttons. -->
-      <div class="flex items-center gap-0.5 py-0.5 shrink-0">
-        <Button variant="quiet" size="icon-2xs" onclick={startEdit} title="Edit the goal" aria-label="Edit the goal">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
-        </Button>
-        <Button
-          variant="quiet"
-          size="icon-2xs"
-          onclick={() => goalStore.refresh(sessionId)}
-          disabled={generating}
-          title="Write a new goal from the thread so far (one background model call)"
-          aria-label="Refresh the goal"
-        >
-          <svg class={generating ? 'animate-spin' : ''} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-          </svg>
-        </Button>
-        <Button
-          variant="quiet"
-          size="icon-2xs"
-          onclick={() => goalStore.setHidden(sessionId, true)}
-          title="Hide the goal for this thread"
-          aria-label="Hide the goal"
-        >
-          <XIcon />
-        </Button>
-      </div>
-    {/if}
+
+      {#if !editing}
+        {#if error}
+          <span class="py-0.5 text-destructive truncate max-w-[40%]" title={error} role="status">{error}</span>
+        {/if}
+        <!-- Padded to the text's first line, which is taller than the buttons. -->
+        <div class="flex items-center gap-0.5 py-0.5 shrink-0">
+          <Button variant="quiet" size="icon-2xs" onclick={startEdit} title="Edit the goal" aria-label="Edit the goal">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+          </Button>
+          <Button
+            variant="quiet"
+            size="icon-2xs"
+            onclick={() => goalStore.refresh(sessionId)}
+            disabled={generating}
+            title="Write a new goal from the thread so far (one background model call)"
+            aria-label="Refresh the goal"
+          >
+            <svg class={generating ? 'animate-spin' : ''} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+          </Button>
+          <Button
+            variant="quiet"
+            size="icon-2xs"
+            onclick={() => goalStore.setHidden(sessionId, true)}
+            title="Hide the goal for this thread"
+            aria-label="Hide the goal"
+          >
+            <XIcon />
+          </Button>
+        </div>
+      {/if}
+    </div>
   </div>
 {/if}
