@@ -44,7 +44,7 @@
   <CheckboxSetting
     setting="conversation-goal"
     label="Show the thread goal"
-    description="Pin one line at the top of the Thread tab saying what the thread is for, written after its first reply. Costs one model call per thread, plus one each time you press Refresh. You can edit it or hide it per thread."
+    description="Pin a line at the top of the Thread tab saying what the thread is for, written after its first reply, and show it when you hover the thread in the sidebar. Costs one model call per thread, plus one each time you press Refresh. You can edit it or hide it per thread."
     bind:checked={settingsStore.draft.showConversationGoal}
   />
   <NumberSetting

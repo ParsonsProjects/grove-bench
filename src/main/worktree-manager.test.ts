@@ -352,6 +352,21 @@ describe('conversation goal', () => {
     expect(await manager.getGoal('wt-unknown')).toBeUndefined();
   });
 
+  it('reads several goals from one manifest read, leaving out unknown and removed ids', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({
+      'wt-set': { repoPath: '/repo', branch: 'a', createdAt: 1000, goal: 'Fix sort', goalSource: 'auto' },
+      'wt-none': { repoPath: '/repo', branch: 'b', createdAt: 1000 },
+      'wt-gone': { repoPath: '/repo', branch: 'c', createdAt: 1000, goal: 'Old', pendingRemoval: true },
+    }));
+    mockFs.readFile.mockClear();
+
+    expect(await manager.getGoals(['wt-set', 'wt-none', 'wt-gone', 'wt-unknown'])).toEqual({
+      'wt-set': { text: 'Fix sort', source: 'auto', hidden: false },
+      'wt-none': { text: null, source: null, hidden: false },
+    });
+    expect(mockFs.readFile).toHaveBeenCalledTimes(1);
+  });
+
   it('saves a typed goal, and an empty one clears the text but keeps the source', async () => {
     mockFs.readFile.mockResolvedValue(JSON.stringify({
       'wt-123': { repoPath: '/repo', branch: 'feature', createdAt: 1000, goal: 'Old', goalSource: 'auto' },

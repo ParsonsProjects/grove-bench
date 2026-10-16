@@ -88,6 +88,11 @@ const GOALS: Record<string, string> = {
   's-oauth': 'Fix the OAuth refresh flow so sessions stop dropping after one hour',
 };
 
+function demoGoal(id: string) {
+  const text = GOALS[id] ?? null;
+  return { text, source: text ? 'auto' as const : null, hidden: false };
+}
+
 // The status bar's Tasks and Files for the working thread: a to-do list part
 // done, and files of each kind (no images: grove-attachment:// doesn't load
 // in a plain browser).
@@ -406,10 +411,8 @@ const api: Record<string, unknown> = {
   getSessionPreviews: async (ids: string[]) =>
     Object.fromEntries(ids.filter((id) => PREVIEWS[id]).map((id) => [id, PREVIEWS[id]])),
   // The goal pinned at the top of the Thread tab.
-  getConversationGoal: async (id: string) => {
-    const text = GOALS[id] ?? null;
-    return { text, source: text ? 'auto' : null, hidden: false };
-  },
+  getConversationGoal: async (id: string) => demoGoal(id),
+  getConversationGoals: async (ids: string[]) => Object.fromEntries(ids.map((id) => [id, demoGoal(id)])),
   getDefaultBranch: async () => 'main',
   // Branch picker: `main` is checked out in the project folder, so picking it
   // from a worktree conversation shows the refusal.

@@ -728,6 +728,11 @@ export function registerHandlers() {
     return (await worktreeManager.getGoal(sessionId)) ?? null;
   });
 
+  ipcMain.handle(IPC.SESSION_GOALS_GET, async (_event, sessionIds: unknown): Promise<Record<string, ConversationGoal>> => {
+    if (!Array.isArray(sessionIds)) return {};
+    return worktreeManager.getGoals(sessionIds.filter((id): id is string => typeof id === 'string'));
+  });
+
   ipcMain.handle(IPC.SESSION_GOAL_SET, async (_event, sessionId: string, text: string): Promise<ConversationGoal | null> => {
     return worktreeManager.saveGoal(sessionId, cleanUserGoal(typeof text === 'string' ? text : ''), 'user');
   });

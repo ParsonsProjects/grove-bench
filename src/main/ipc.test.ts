@@ -29,7 +29,7 @@ const m = vi.hoisted(() => {
       'copyUntrackedFiles', 'getNpmCachePath', 'getProviderSessionId', 'getModel', 'getAdapterType', 'getThreadLimits', 'remove',
       'saveDisplayName', 'getDisplayNameState', 'saveAutoDisplayName', 'renameBranch', 'switchBranch',
       'syncBranch', 'list', 'register', 'listRepos', 'getWorktree', 'assertRemovable', 'checkoutSharers',
-      'getGoal', 'saveGoal', 'setGoalHidden',
+      'getGoal', 'getGoals', 'saveGoal', 'setGoalHidden',
     ),
     terminalManager: fns('killAllForSession', 'spawnPty', 'write', 'resize', 'killPty', 'isAlive'),
     previewManager: fns('close', 'closeAgentPage', 'navigate', 'command', 'setViewport', 'snapshot', 'agentFrame', 'getStates'),
@@ -699,6 +699,14 @@ describe('conversation goal', () => {
     );
     // Saved only if nothing changed while it was generated.
     expect(m.worktreeManager.saveGoal).toHaveBeenCalledWith('g0000001', 'Add a dark mode toggle', 'auto', NO_GOAL);
+  });
+
+  it('reads several goals at once, ignoring anything that is not an id', async () => {
+    const goals = { g0000010: { text: 'Fix sort', source: 'auto', hidden: false } };
+    m.worktreeManager.getGoals.mockResolvedValue(goals);
+    expect(await invoke(IPC.SESSION_GOALS_GET, ['g0000010', 7, null])).toEqual(goals);
+    expect(m.worktreeManager.getGoals).toHaveBeenCalledWith(['g0000010']);
+    expect(await invoke(IPC.SESSION_GOALS_GET, 'g0000010')).toEqual({});
   });
 
   it('writes a goal only once, never over one already made or typed', async () => {
