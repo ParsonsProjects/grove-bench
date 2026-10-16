@@ -48,6 +48,17 @@ describe('ConversationGoal', () => {
     expect(screen.getByText('Add a dark mode toggle')).toBeInTheDocument();
   });
 
+  it('cuts a long goal off after two lines until it is clicked', async () => {
+    await renderWith(goal());
+    const text = screen.getByText('Add a dark mode toggle');
+    // Only while nothing else sets display: line-clamp needs its -webkit-box.
+    expect(text).toHaveClass('line-clamp-2');
+    expect(text).not.toHaveClass('block');
+    await fireEvent.click(screen.getByRole('button', { name: 'Add a dark mode toggle' }));
+    expect(text).not.toHaveClass('line-clamp-2');
+    expect(screen.getByRole('button', { name: 'Add a dark mode toggle' })).toHaveAttribute('aria-expanded', 'true');
+  });
+
   it('shows nothing when goals are off or the bar was hidden', async () => {
     settingsStore.current.showConversationGoal = false;
     await renderWith(goal());

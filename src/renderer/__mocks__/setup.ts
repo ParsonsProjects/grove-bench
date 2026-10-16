@@ -110,6 +110,7 @@ const mockGroveBench = {
   autoNameSession: vi.fn(() => Promise.resolve(null as string | null)),
   autoNameBranch: vi.fn((_sessionId: string) => Promise.resolve(null as string | null)),
   getConversationGoal: vi.fn((_sessionId: string) => Promise.resolve({ text: null, source: null, hidden: false } as import('../../shared/types.js').ConversationGoal | null)),
+  getConversationGoals: vi.fn((_sessionIds: string[]) => Promise.resolve({} as Record<string, import('../../shared/types.js').ConversationGoal>)),
   setConversationGoal: vi.fn((_sessionId: string, text: string) => Promise.resolve({ text: text || null, source: 'user', hidden: false } as import('../../shared/types.js').ConversationGoal | null)),
   autoConversationGoal: vi.fn((_sessionId: string) => Promise.resolve(null as import('../../shared/types.js').ConversationGoal | null)),
   refreshConversationGoal: vi.fn((_sessionId: string) => Promise.resolve(null as import('../../shared/types.js').ConversationGoal | null)),

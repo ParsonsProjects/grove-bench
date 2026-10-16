@@ -33,6 +33,7 @@
   import { triageForSprite, triageCounts, matchesTriageFilter, TRIAGE_FILTERS, TRIAGE_FILTER_LABELS, type TriageFilter, type TriageState } from '../lib/session-triage.js';
   import { sessionSubtitle, pendingPermissionTool, pendingPermissionView, lastTextSnippet, firstPromptSnippet, type SessionSubtitle } from '../lib/session-subtitle.js';
   import { sessionPreviewStore } from '../stores/sessionPreviews.svelte.js';
+  import { goalStore } from '../stores/goals.svelte.js';
   import { prStateFlag, isPrMerged, prHealth } from '../lib/pr-state.js';
   import { prStore } from '../stores/pr.svelte.js';
   import { forgetConversation } from '$lib/forget-conversation.js';
@@ -113,6 +114,24 @@
       .map((s) => s.id);
     if (unloaded.length > 0) sessionPreviewStore.ensure(unloaded);
   });
+
+  // Goals for the rows' tooltips, while goals are on: one call for every
+  // thread not read yet.
+  $effect(() => {
+    if (!settingsStore.current.showConversationGoal) return;
+    const ids = store.sessions.map((s) => s.id);
+    untrack(() => { void goalStore.loadMany(ids); });
+  });
+
+  /** A row's tooltip: its name, its goal (while goals are on and the
+   *  thread's goal bar isn't hidden), then the line under the row. */
+  function rowTitle(sessionId: string, name: string, subtitle: SessionSubtitle | null): string {
+    const lines = [name];
+    const goal = goalStore.get(sessionId);
+    if (settingsStore.current.showConversationGoal && goal.text && !goal.hidden) lines.push(`Goal: ${goal.text}`);
+    if (subtitle) lines.push(subtitle.text);
+    return lines.join('\n');
+  }
 
   /** Context line under a session row: waiting-reason > live activity > last/first message. */
   function rowSubtitle(session: { id: string }): SessionSubtitle | null {
@@ -912,7 +931,7 @@
       <button
         onclick={() => { if (!isDestroying) focusSession(session.id); }}
         disabled={isDestroying}
-        title={subtitle ? `${label}\n${subtitle.text}` : label}
+        title={rowTitle(session.id, label, subtitle)}
         class="w-full flex flex-col pl-4 pr-2 py-1.5 text-left transition-colors
           {isDestroying ? 'opacity-50 cursor-not-allowed' : store.activeSessionId === session.id ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}
           {restFade}"
@@ -1056,7 +1075,7 @@
           onclick={() => { if (!isDestroying) focusSession(session.id); }}
           oncontextmenu={(e) => { if (isDestroying) { e.preventDefault(); return; } openContextMenu(e, session.id); }}
           disabled={isDestroying}
-          title={subtitle ? `${name}\n${subtitle.text}` : name}
+          title={rowTitle(session.id, name, subtitle)}
           aria-label={name}
           data-rail-session={session.id}
           class="w-full flex justify-center py-2 transition-colors

@@ -34,6 +34,8 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.SESSION_AUTO_NAME, sessionId),
   getConversationGoal: (sessionId: string) =>
     ipcRenderer.invoke(IPC.SESSION_GOAL_GET, sessionId),
+  getConversationGoals: (sessionIds: string[]) =>
+    ipcRenderer.invoke(IPC.SESSION_GOALS_GET, sessionIds),
   setConversationGoal: (sessionId: string, text: string) =>
     ipcRenderer.invoke(IPC.SESSION_GOAL_SET, sessionId, text),
   autoConversationGoal: (sessionId: string) =>

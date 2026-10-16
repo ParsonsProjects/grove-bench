@@ -1220,6 +1220,9 @@ export interface GroveBenchAPI {
   autoNameBranch(sessionId: string): Promise<string | null>;
   /** A conversation's goal, or null for an unknown conversation. */
   getConversationGoal(sessionId: string): Promise<ConversationGoal | null>;
+  /** Several conversations' goals in one call (the sidebar's tooltips).
+   *  Unknown ids are left out. */
+  getConversationGoals(sessionIds: string[]): Promise<Record<string, ConversationGoal>>;
   /** Save a goal the user typed. Empty text clears it; either way it is
    *  never replaced automatically. */
   setConversationGoal(sessionId: string, text: string): Promise<ConversationGoal | null>;
@@ -2041,6 +2044,7 @@ export const IPC = {
   SESSION_EXPORT: 'session:export',
   SESSION_AUTO_NAME: 'session:autoName',
   SESSION_GOAL_GET: 'session:getGoal',
+  SESSION_GOALS_GET: 'session:getGoals',
   SESSION_GOAL_SET: 'session:setGoal',
   SESSION_GOAL_AUTO: 'session:autoGoal',
   SESSION_GOAL_REFRESH: 'session:refreshGoal',

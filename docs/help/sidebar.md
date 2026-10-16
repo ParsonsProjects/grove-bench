@@ -34,7 +34,7 @@ Click a thread to switch to it. The workspace will show that thread's activity, 
 
 ## Collapsing the sidebar
 
-Click the panel button next to the search box to fold the sidebar down to a thin rail. The rail shows one status dot (or grove character) per open thread, and you can click one to switch to it or right-click it for the context menu. Hover a dot to see its name. Above them, a **+** starts a new thread (once you have one, it shows as a dashed square for the draft). The rail also keeps search, bookmarks, memory, clean-up and settings. To add a project, open the sidebar. Projects and the filters are only in the full sidebar, so the rail always lists every open thread. Click the panel button at the top of the rail to open the sidebar again. Grove Bench remembers whether it was collapsed.
+Click the panel button next to the search box to fold the sidebar down to a thin rail. The rail shows one status dot (or grove character) per open thread, and you can click one to switch to it or right-click it for the context menu. Hover a dot to see its name, and its goal when goals are on. Above them, a **+** starts a new thread (once you have one, it shows as a dashed square for the draft). The rail also keeps search, bookmarks, memory, clean-up and settings. To add a project, open the sidebar. Projects and the filters are only in the full sidebar, so the rail always lists every open thread. Click the panel button at the top of the rail to open the sidebar again. Grove Bench remembers whether it was collapsed.
 
 ## Folding Groups and Projects
 
@@ -69,7 +69,7 @@ Right-click a thread to access:
 - **New Group…**, **Add to**, **Move to**, **Remove from**: put the thread in a group, or take it out (see Groups above)
 - **Delete Thread**: remove the thread and its copy of the project, and optionally its branch. It warns first when files have uncommitted changes, or, if you also delete the branch, when the branch has commits its base branch doesn't have
 
-Hovering a row, or moving to it with Tab, also shows a quick button: an **✕** to close an open thread (it asks first if the agent is mid-turn), or a bin to delete a closed one (it always asks first).
+Hovering a row shows its full name and, when goals are on (see [Thread tab](thread-tab.md)), what the thread is trying to get done. Hovering it, or moving to it with Tab, also shows a quick button: an **✕** to close an open thread (it asks first if the agent is mid-turn), or a bin to delete a closed one (it always asks first).
 
 Closing or deleting the thread you have open takes you back to the landing screen. It doesn't open another thread in its place.
 

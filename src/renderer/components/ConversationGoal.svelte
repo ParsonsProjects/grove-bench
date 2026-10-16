@@ -1,7 +1,9 @@
 <script lang="ts">
   /**
-   * The conversation's goal, pinned at the top of the Thread tab: one line on
-   * what it is trying to get done. Written once after the first reply by the
+   * The conversation's goal, pinned at the top of the Thread tab: a line on
+   * what it is trying to get done, on a filled band with a marked left edge
+   * so it reads apart from the thread under it, and up to two lines before
+   * it is cut off. Written once after the first reply by the
    * conversation's agent; Edit replaces it with your own words and Refresh
    * writes a new one. Close hides it for this conversation; Settings >
    * Tending turns it off everywhere.
@@ -78,8 +80,8 @@
 </script>
 
 {#if visible}
-  <div class="flex items-start gap-2 px-4 py-1 border-b border-border bg-card/40 text-xs shrink-0 min-w-0" data-testid="conversation-goal">
-    <span class="flex items-center gap-1 py-0.5 text-muted-foreground shrink-0">
+  <div class="flex items-start gap-2 pl-3.5 pr-4 py-1 border-b border-border border-l-2 border-l-muted-foreground bg-muted text-sm shrink-0 min-w-0" data-testid="conversation-goal">
+    <span class="flex items-center gap-1.5 py-0.5 font-medium text-muted-foreground shrink-0">
       <GoalFlagIcon />
       Goal
     </span>
@@ -94,16 +96,16 @@
         maxlength={MAX_USER_GOAL_LENGTH}
         placeholder="What should this thread get done?"
         aria-label="Thread goal"
-        class="flex-1 min-w-0 bg-transparent border border-input px-1.5 py-0.5 text-xs text-foreground outline-none focus:border-ring placeholder:text-muted-foreground"
+        class="flex-1 min-w-0 bg-background border border-input px-1.5 py-0.5 text-sm text-foreground outline-none focus:border-ring placeholder:text-muted-foreground"
       />
     {:else if goal.text}
       <button
         type="button"
         onclick={() => { expanded = !expanded; }}
         aria-expanded={expanded}
-        title={expanded ? 'Show one line' : goal.text}
-        class="flex-1 min-w-0 py-0.5 text-left text-foreground/90 {expanded ? 'whitespace-normal break-words' : 'truncate'} {generating ? 'opacity-60' : ''}"
-      >{goal.text}</button>
+        title={expanded ? 'Show less' : goal.text}
+        class="flex-1 min-w-0 py-0.5 text-left text-foreground {generating ? 'opacity-60' : ''}"
+      ><span class="break-words {expanded ? '' : 'line-clamp-2'}">{goal.text}</span></button>
     {:else if generating}
       <span class="flex-1 min-w-0 py-0.5 truncate text-muted-foreground animate-pulse">Writing a goal…</span>
     {:else}
@@ -114,7 +116,8 @@
       {#if error}
         <span class="py-0.5 text-destructive truncate max-w-[40%]" title={error} role="status">{error}</span>
       {/if}
-      <div class="flex items-center gap-0.5 shrink-0">
+      <!-- Padded to the text's first line, which is taller than the buttons. -->
+      <div class="flex items-center gap-0.5 py-0.5 shrink-0">
         <Button variant="quiet" size="icon-2xs" onclick={startEdit} title="Edit the goal" aria-label="Edit the goal">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
         </Button>

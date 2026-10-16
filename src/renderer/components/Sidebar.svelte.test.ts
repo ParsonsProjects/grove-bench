@@ -7,6 +7,7 @@ import Sidebar from './Sidebar.svelte';
 import { store } from '../stores/sessions.svelte.js';
 import { messageStore } from '../stores/messages.svelte.js';
 import { sessionPreviewStore } from '../stores/sessionPreviews.svelte.js';
+import { goalStore } from '../stores/goals.svelte.js';
 import { settingsStore } from '../stores/settings.svelte.js';
 import { prStore } from '../stores/pr.svelte.js';
 import { panelStore } from '../stores/panels.svelte.js';
@@ -317,6 +318,60 @@ describe('Sidebar session rows', () => {
     } finally {
       prStore.clear('s2');
     }
+  });
+
+  describe('goal tooltip', () => {
+    const goal = (text: string | null, hidden = false) => ({ text, source: text ? 'auto' as const : null, hidden });
+    const row = (name: string) => screen.getAllByText(name)[0].closest('button')!;
+
+    beforeEach(() => {
+      goalStore.goals = {};
+      settingsStore.current.showConversationGoal = true;
+      store.sessions = [
+        { id: 's1', branch: 'feat-x', repoPath: '/repo-a', status: 'running', displayName: 'Sidebar revamp' },
+        { id: 's2', branch: 'feat-y', repoPath: '/repo-a', status: 'running', displayName: 'Parser fix' },
+        { id: 's3', branch: 'feat-z', repoPath: '/repo-a', status: 'running', displayName: 'Docs' },
+      ] as any;
+      mockGroveBench.getConversationGoals.mockResolvedValue({
+        s1: goal('Group threads by project in the sidebar'),
+        s2: goal('Fix the parser crash', true),
+        s3: goal(null),
+      });
+    });
+
+    afterEach(() => {
+      goalStore.goals = {};
+      settingsStore.current.showConversationGoal = false;
+      mockGroveBench.getConversationGoals.mockReset();
+      mockGroveBench.getConversationGoals.mockResolvedValue({});
+    });
+
+    it('adds the goal under the name, reading every thread in one call', async () => {
+      render(Sidebar);
+      await waitFor(() => expect(row('Sidebar revamp')).toHaveAttribute('title', 'Sidebar revamp\nGoal: Group threads by project in the sidebar'));
+      expect(mockGroveBench.getConversationGoals).toHaveBeenCalledTimes(1);
+      expect(mockGroveBench.getConversationGoals).toHaveBeenCalledWith(['s1', 's2', 's3']);
+      // A hidden goal stays hidden here too, and no goal adds no line.
+      expect(row('Parser fix')).toHaveAttribute('title', 'Parser fix');
+      expect(row('Docs')).toHaveAttribute('title', 'Docs');
+    });
+
+    it('follows an edit to the goal', async () => {
+      render(Sidebar);
+      await waitFor(() => expect(goalStore.isLoaded('s3')).toBe(true));
+      goalStore.goals = { ...goalStore.goals, s3: goal('Write the install guide') };
+      await tick();
+      expect(row('Docs')).toHaveAttribute('title', 'Docs\nGoal: Write the install guide');
+    });
+
+    it('reads and shows no goals while goals are off', async () => {
+      settingsStore.current.showConversationGoal = false;
+      goalStore.goals = { s1: goal('Group threads by project in the sidebar') };
+      render(Sidebar);
+      await tick();
+      expect(row('Sidebar revamp')).toHaveAttribute('title', 'Sidebar revamp');
+      expect(mockGroveBench.getConversationGoals).not.toHaveBeenCalled();
+    });
   });
 
   it('opens the session finder from the search field', async () => {
