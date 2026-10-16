@@ -7,15 +7,17 @@ export interface SkillPromptOpts {
 }
 
 /**
- * Build the conversation turn that asks the session's agent to author a skill
- * itself. Provider-neutral on purpose: every agent knows its own packaged-skill
- * format better than Grove does (frontmatter extensions, resource files), so
- * beyond a Claude Code example the format is left to the agent.
+ * Build the first message of a thread started to have its agent author a
+ * skill (startSkillThread). Provider-neutral on purpose: every agent knows
+ * its own packaged-skill format better than Grove does (frontmatter
+ * extensions, resource files), so beyond a Claude Code example the format is
+ * left to the agent. A project skill's thread has a branch of its own; a user
+ * skill's runs in the project folder, which it should leave alone.
  */
 export function buildCreateSkillPrompt(opts: SkillPromptOpts): string {
   const location = opts.scope === 'project'
-    ? 'inside this repository, so it ships with this branch'
-    : 'in your user-level skills location, so it applies across repositories';
+    ? "inside this repository. This thread's branch is only for this skill, so change nothing else"
+    : "in your user-level skills location, so it applies across repositories. Don't change this repository's files";
   const lines = [
     `Create a new agent skill named \`${opts.name}\` ${location}.`,
     '',

@@ -9,7 +9,7 @@
   import { store } from '../stores/sessions.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
   import { mergeSkills } from '../lib/skills-merge.js';
-  import { buildCreateSkillPrompt } from '../lib/skill-prompt.js';
+  import { startSkillThread } from '../lib/skill-thread.js';
   import { lazyComponent } from '../lib/lazy-component.js';
   import type { SkillInfo, SkillSuggestion } from '../../shared/types.js';
   import { Badge } from '$lib/components/ui/badge/index.js';
@@ -25,8 +25,6 @@
   // The dialog loads when first opened.
   const loadAddSkillDialog = lazyComponent(() => import('./AddSkillDialog.svelte'));
 
-  let sessionStatus = $derived(store.sessions.find((s) => s.id === sessionId)?.status);
-  let isRunning = $derived(messageStore.getIsRunning(sessionId));
   let systemInfo = $derived(messageStore.getSystemInfo(sessionId));
 
   let skillsExpanded = $state(false);
@@ -76,7 +74,6 @@
   let analyzingSuggestions = $state(false);
   let addSkillInitial = $state<{ name: string; description: string; instructions: string } | null>(null);
   let sessionRepoPath = $derived(store.sessions.find((s) => s.id === sessionId)?.repoPath ?? '');
-  let canAskAgent = $derived(sessionStatus === 'running' && !isRunning);
 
   async function refreshSuggestions() {
     if (!sessionRepoPath) return;
@@ -96,10 +93,10 @@
     }
   }
 
-  async function dismissSkillSuggestion(id: string) {
+  async function dismissSkillSuggestion(id: string, repoPath = sessionRepoPath) {
     suggestions = suggestions.filter((s) => s.id !== id);
     try {
-      await window.groveBench.dismissSkillSuggestion(sessionRepoPath, id);
+      await window.groveBench.dismissSkillSuggestion(repoPath, id);
     } catch { /* worst case it reappears on the next analysis */ }
   }
 
@@ -109,20 +106,21 @@
     addSkillOpen = true;
   }
 
-  /** Hand the suggestion to the agent with the mined evidence as draft notes. */
+  /** Hand the suggestion to the agent in a new thread on a branch of its
+   *  own, with the mined evidence as draft notes. */
   function askAgentFromSuggestion(s: SkillSuggestion) {
-    if (!canAskAgent) return;
-    const prompt = buildCreateSkillPrompt({
+    // Read now: once the new thread opens, this bar may show that one.
+    const repoPath = sessionRepoPath;
+    skillsExpanded = false;
+    void startSkillThread(sessionId, {
       name: s.name,
       description: s.description,
       scope: 'project',
       notes: `${s.draftInstructions}\n\nEvidence from past threads (${s.rationale}):\n${s.evidence.map((e) => `- ${e}`).join('\n')}`,
+    }).then((started) => {
+      // Kept when the thread couldn't start, so it can be tried again.
+      if (started) dismissSkillSuggestion(s.id, repoPath);
     });
-    messageStore.addUserMessage(sessionId, prompt);
-    window.groveBench.sendMessage(sessionId, prompt);
-    store.updateLastActive(sessionId);
-    skillsExpanded = false;
-    dismissSkillSuggestion(s.id);
   }
 
   $effect(() => { count = allSkills.length; });
@@ -206,10 +204,7 @@
                   variant="subtle"
                   size="2xs"
                   onclick={() => askAgentFromSuggestion(suggestion)}
-                  disabled={!canAskAgent}
-                  title={canAskAgent
-                    ? 'Ask the agent to write this skill, with the mined evidence as notes'
-                    : 'Needs a running, idle thread'}
+                  title="Start a new thread on a branch of its own where the agent writes this skill, with the mined evidence as notes"
                 >
                   Agent
                 </Button>

@@ -8,8 +8,7 @@
   import { Pulse } from '$lib/components/ui/pulse/index.js';
   import * as Segmented from '$lib/components/ui/segmented/index.js';
   import { store } from '../stores/sessions.svelte.js';
-  import { messageStore } from '../stores/messages.svelte.js';
-  import { buildCreateSkillPrompt } from '../lib/skill-prompt.js';
+  import { startSkillThread } from '../lib/skill-thread.js';
   import type { SkillInfo } from '../../shared/types.js';
 
   let {
@@ -37,14 +36,9 @@
   let creating = $state(false);
   let dialogError = $state('');
 
-  let sessionStatus = $derived(store.sessions.find((s) => s.id === sessionId)?.status);
-  let isRunning = $derived(messageStore.getIsRunning(sessionId));
-  /** The agent path needs a live, idle session to take the turn. */
-  let canAskAgent = $derived(sessionStatus === 'running' && !isRunning);
-
   let nameValid = $derived(/^[a-z0-9][a-z0-9-]*$/.test(name.trim()));
   let canCreate = $derived(nameValid && description.trim().length > 0 && instructions.trim().length > 0);
-  let canSendToAgent = $derived(nameValid && description.trim().length > 0 && canAskAgent);
+  let canSendToAgent = $derived(nameValid && description.trim().length > 0);
 
   function close() {
     open = false;
@@ -72,20 +66,17 @@
     }
   }
 
-  /** Hand skill authoring to the agent as a turn in this conversation — it
-   *  knows its own packaged-skill format (frontmatter extensions, resources)
-   *  better than the manual form does. */
+  /** Hand skill authoring to the agent in a new thread: it knows its own
+   *  packaged-skill format (frontmatter extensions, resources) better than
+   *  the manual form does, and follow-up questions go there. */
   function handleAskAgent() {
     if (!canSendToAgent) return;
-    const prompt = buildCreateSkillPrompt({
+    void startSkillThread(sessionId, {
       name: name.trim(),
       description: description.trim(),
       scope,
       notes: instructions,
     });
-    messageStore.addUserMessage(sessionId, prompt);
-    window.groveBench.sendMessage(sessionId, prompt);
-    store.updateLastActive(sessionId);
     close();
   }
 
@@ -164,7 +155,7 @@
         ></textarea>
         <p class="text-micro text-muted-foreground mt-1">
           {scope === 'project'
-            ? 'Project skills are written into the worktree and show up in the Changes tab.'
+            ? 'Create Skill writes it into this thread\'s worktree, where it shows up in the Changes tab. Ask Agent writes it on a new branch.'
             : 'User skills apply to every project on this machine.'}
         </p>
       </div>
@@ -183,9 +174,9 @@
           variant="secondary"
           onclick={handleAskAgent}
           disabled={!canSendToAgent}
-          title={canAskAgent
-            ? 'Send a turn asking the agent to draft and write the skill itself (instructions above become optional notes)'
-            : 'Needs a running, idle thread'}
+          title={scope === 'project'
+            ? 'Start a new thread on a branch of its own where the agent drafts and writes the skill (instructions above become optional notes)'
+            : 'Start a new thread in the project folder where the agent drafts and writes the skill (instructions above become optional notes)'}
         >
           Ask Agent to Write It
         </Button>

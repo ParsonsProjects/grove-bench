@@ -6,12 +6,14 @@ describe('buildCreateSkillPrompt', () => {
     const p = buildCreateSkillPrompt({ name: 'release-notes', description: 'Draft release notes', scope: 'project' });
     expect(p).toContain('`release-notes`');
     expect(p).toContain('inside this repository');
+    expect(p).toContain('branch is only for this skill');
     expect(p).toContain('Draft release notes');
   });
 
-  it('routes user scope to the user-level location', () => {
+  it('routes user scope to the user-level location and keeps it out of the project', () => {
     const p = buildCreateSkillPrompt({ name: 'x', description: 'd', scope: 'user' });
     expect(p).toContain('user-level skills location');
+    expect(p).toContain("Don't change this repository's files");
     expect(p).not.toContain('inside this repository');
   });
 
