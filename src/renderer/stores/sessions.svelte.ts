@@ -16,7 +16,8 @@ interface SessionEntry {
   displayName?: string | null;
   /** Timestamp (ms) when the worktree was created. */
   createdAt?: number;
-  /** Timestamp (ms) of the last user interaction. */
+  /** Timestamp (ms) of the last activity: a message sent, or a turn the
+   *  agent finished. */
   lastActiveAt?: number;
 }
 

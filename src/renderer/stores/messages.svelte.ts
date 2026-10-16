@@ -2173,6 +2173,9 @@ class MessageStore {
     // interrupt), and the SDK reports their end via task_notification /
     // background_tasks_changed. Only process_exit drops them as stale.
     if (this.sideEffects) gitStatusStore.scheduleRefresh(sessionId, 100);
+    // The age on its row counts from here, as main now saves (live only:
+    // an old turn played back from history isn't new activity).
+    if (this.sideEffects && this._replayBuffer === null) sessionStore.updateLastActive(sessionId);
 
     // Turn finished — the agent is free for the next queued prompt.
     this.flushQueue(sessionId);

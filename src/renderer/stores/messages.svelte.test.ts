@@ -667,6 +667,20 @@ describe('ingestEvent — result', () => {
     expect(messageStore.getContextWindow(SID)).toBe(100000);
     expect(messageStore.getTurns(SID)).toBe(5);
   });
+
+  it('counts a finished turn as activity, but not one played back from history', () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: 5_000 });
+    try {
+      sessionStore.sessions = [{ id: SID, branch: 'feat/x', repoPath: 'C:/repo', status: 'running', lastActiveAt: 1_000 }];
+      messageStore.replayEvents(SID, [{ type: 'result', subtype: 'success', isError: false } as AgentEvent]);
+      expect(sessionStore.sessions[0].lastActiveAt).toBe(1_000);
+
+      messageStore.ingestEvent(SID, { type: 'result', subtype: 'success', isError: false } as AgentEvent);
+      expect(sessionStore.sessions[0].lastActiveAt).toBe(5_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe('ingestEvent — usage', () => {

@@ -162,6 +162,23 @@ describe('SessionFinder', () => {
     expect(mockGroveBench.searchAllEventHistory).toHaveBeenCalledTimes(1);
   });
 
+  it('does not re-run the content search when a finished turn reorders the threads', async () => {
+    render(SessionFinder, { onclose: vi.fn() });
+    await typeQuery('parser');
+    expect(mockGroveBench.searchAllEventHistory).toHaveBeenCalledTimes(1);
+    store.updateLastActive('s2');
+    await new Promise((r) => setTimeout(r, 300));
+    expect(mockGroveBench.searchAllEventHistory).toHaveBeenCalledTimes(1);
+  });
+
+  it('searches again when a thread is added', async () => {
+    render(SessionFinder, { onclose: vi.fn() });
+    await typeQuery('parser');
+    expect(mockGroveBench.searchAllEventHistory).toHaveBeenCalledTimes(1);
+    store.addSession({ id: 's3', branch: 'feat-z', repoPath: '/repo-a', status: 'running' }, false);
+    await vi.waitFor(() => expect(mockGroveBench.searchAllEventHistory).toHaveBeenCalledTimes(2));
+  });
+
   it('highlights query words in conversation rows', async () => {
     render(SessionFinder, { onclose: vi.fn() });
     await typeQuery('revamp');
