@@ -312,20 +312,11 @@ This env var tells Claude Code to reset the working directory back to the projec
 
 **Layer 2: Per-worktree `.claude/settings.local.json`**
 
-When creating a worktree, the app generates a `.claude/settings.local.json` file that denies read/write access outside the worktree:
+When creating a worktree, the app generates a `.claude/settings.local.json` file with Grove's commit attribution settings and the project's `.mcp.json` approvals. It has no deny rules.
 
-```json
-{
-  "permissions": {
-    "deny": [
-      "Read(../../**)",
-      "Edit(../../**)"
-    ]
-  }
-}
-```
+Earlier versions also denied `Read(../../**)` and `Edit(../../**)`, meant to keep Claude's file tools out of other worktrees and the main checkout. Neither rule did that: in tests with the agent SDK 0.3.281, Read, Grep and Write still reached the main checkout. Worse, Claude Code read `Read(../../**)` as covering the worktree itself (it sits two levels below the `worktrees` folder), so Grep and Glob searches there found no files. Before each start in a worktree, Grove removes those two rules from its settings file and keeps the rest.
 
-This uses Claude Code's built-in permission system. It's not a hard sandbox — Claude Code could still execute arbitrary shell commands that touch files outside the worktree — but it prevents Claude's own file operations from accidentally reaching into other worktrees or the main checkout.
+Rules that would work need absolute paths (`Edit(//c/path/to/repo/**)`). Grove doesn't write them: in the modes that ask, Layer 3 already asks before edits outside the worktree, and a deny rule would refuse even edits the user wants to approve.
 
 **Layer 3: Claude Code's interactive permission model**
 
@@ -339,9 +330,8 @@ To be clear: this is an **ergonomic safety net**, not a security boundary. The g
 
 What it prevents:
 - Agent A accidentally editing files that Agent B is working on
-- An agent modifying the main checkout while you're working in it
 - Agents stepping on each other's branches or working trees
-- Accidental file operations outside the intended worktree scope
+- In the modes that ask (Layer 3), edits to the main checkout or anywhere else outside the worktree without your approval. In auto mode Claude Code's classifier decides instead, and bypass mode doesn't ask
 
 What it does NOT prevent:
 - Arbitrary shell commands (Claude Code can run them by design — that's the point)
@@ -414,7 +404,7 @@ User clicks "+ New Agent"
   → WorktreeManager.create() -- creates branch + worktree directory
     → Auto-add .grove-wt to .gitignore if not present
     → Copy untracked files (.env, etc.) from main checkout per repo config
-    → Generate .claude/settings.local.json with directory-scoped deny rules
+    → Generate .claude/settings.local.json (attribution, .mcp.json approvals)
   → AgentSessionManager.createSession()
     → Verify git meets minimum version (2.17+)
     → Verify claude CLI is available (where.exe claude)

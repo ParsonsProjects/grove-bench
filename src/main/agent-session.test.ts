@@ -386,6 +386,40 @@ describe('AgentSessionManager.createSession()', () => {
 
     await sessionManager.destroySession('test-config');
   });
+
+  it("updates a worktree's agent settings before starting, but not a direct thread's folder", async () => {
+    const order: string[] = [];
+    const updateWorktreeSettings = vi.fn(async (wtPath: string) => { order.push(`update ${wtPath}`); });
+    Object.assign(mockAdapter, { updateWorktreeSettings });
+    const start = mockAdapter.start.bind(mockAdapter);
+    mockAdapter.start = async (config) => { order.push(`start ${config.cwd}`); return start(config); };
+
+    await sessionManager.createSession({
+      id: 'test-wt-settings', branch: 'main', cwd: '/repo-wt', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(1));
+    expect(order).toEqual(['update /repo-wt', 'start /repo-wt']);
+
+    await sessionManager.createSession({
+      id: 'test-direct-settings', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(2));
+    expect(updateWorktreeSettings).toHaveBeenCalledTimes(1);
+
+    await sessionManager.destroySession('test-wt-settings');
+    await sessionManager.destroySession('test-direct-settings');
+  });
+
+  it("starts even when the worktree's agent settings can't be updated", async () => {
+    Object.assign(mockAdapter, { updateWorktreeSettings: vi.fn().mockRejectedValue(new Error("isn't valid JSON")) });
+
+    await sessionManager.createSession({
+      id: 'test-wt-settings-fail', branch: 'main', cwd: '/repo-wt', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(1));
+
+    await sessionManager.destroySession('test-wt-settings-fail');
+  });
 });
 
 describe('AgentSessionManager in a folder without git', () => {

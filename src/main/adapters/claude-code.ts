@@ -31,6 +31,7 @@ import { createPreviewMcpServer } from './preview-mcp-server.js';
 import * as skillsModule from '../skills.js';
 import { accountEnv, accountSignInCommand, type ClaudeAccount } from './claude-accounts.js';
 import { logger } from '../logger.js';
+import { writeFileAtomic } from '../fs-utils.js';
 import { RunningCost, RunningTokens } from './running-cost.js';
 import { execFile } from 'node:child_process';
 import { spawnProcess } from '../process-host.js';
@@ -1258,6 +1259,25 @@ export function withMcpjsonApproval(settings: Record<string, unknown>, name: str
   return next;
 }
 
+/** Deny rules Grove used to write into each worktree. They blocked nothing
+ *  outside it, and Claude Code read `Read(../../**)` as covering the worktree
+ *  itself, so Grep and Glob searches there found no files. */
+const LEGACY_WORKTREE_DENY_RULES: readonly unknown[] = ['Read(../../**)', 'Edit(../../**)'];
+
+/** Settings without Grove's old worktree deny rules, or null when it has none
+ *  of them. Other deny rules and keys stay as they are. */
+export function withoutLegacyDenyRules(settings: Record<string, unknown>): Record<string, unknown> | null {
+  const permissions = settings.permissions;
+  if (!permissions || typeof permissions !== 'object' || Array.isArray(permissions)) return null;
+  const { deny, ...rest } = permissions as Record<string, unknown>;
+  if (!Array.isArray(deny) || !deny.some((r) => LEGACY_WORKTREE_DENY_RULES.includes(r))) return null;
+  const kept = deny.filter((r) => !LEGACY_WORKTREE_DENY_RULES.includes(r));
+  const nextPermissions = kept.length > 0 ? { ...rest, deny: kept } : rest;
+  const next: Record<string, unknown> = { ...settings, permissions: nextPermissions };
+  if (Object.keys(nextPermissions).length === 0) delete next.permissions;
+  return next;
+}
+
 /** Read a JSON settings file. A missing file reads as `{}`; one that isn't a
  *  JSON object throws, so callers don't overwrite it. */
 async function readSettingsFile(file: string): Promise<Record<string, unknown>> {
@@ -2233,9 +2253,6 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       settingsPath,
       JSON.stringify(
         {
-          permissions: {
-            deny: ['Read(../../**)', 'Edit(../../**)'],
-          },
           attribution: {
             commit: '',
             pr: '',
@@ -2246,6 +2263,15 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         2
       )
     );
+  }
+
+  async updateWorktreeSettings(wtPath: string): Promise<void> {
+    const settingsPath = path.join(wtPath, '.claude', 'settings.local.json');
+    // A file we can't parse is the user's to fix; overwriting it would lose their settings.
+    const next = withoutLegacyDenyRules(await readSettingsFile(settingsPath));
+    // Atomic: another thread on this checkout may be starting Claude Code,
+    // which reads the file.
+    if (next) await writeFileAtomic(settingsPath, JSON.stringify(next, null, 2));
   }
 
   async approveProjectMcpServer(name: string, dirs: string[]): Promise<void> {

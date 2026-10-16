@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import path from 'node:path';
-import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS, thinkingConfigFor, parseMcpListOutput, mcpServerManager, claudeMcpOrigin, mcpToolServerKey, mcpContextCostByServer, toMcpElicitationRequest, withMcpjsonApproval, mcpjsonApprovalsFrom, buildMcpAddArgs, quoteArg, validatePluginId, validateConfigScope, claudeControlsFor, supportsAdaptiveThinking, supportsFastMode, supportsAutoMode, claudeModelCaps, effortFor, reasoningOptionsFor, toSdkPermissionMode, fromSdkSyncMode, stripAnsi, mapClaudeUsage, thinkingDisplayFor, TEXT_GENERATION_OPTIONS, missingConversationError, userMessageContent, sandboxDecision } from './claude-code.js';
+import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS, thinkingConfigFor, parseMcpListOutput, mcpServerManager, claudeMcpOrigin, mcpToolServerKey, mcpContextCostByServer, toMcpElicitationRequest, withMcpjsonApproval, mcpjsonApprovalsFrom, withoutLegacyDenyRules, buildMcpAddArgs, quoteArg, validatePluginId, validateConfigScope, claudeControlsFor, supportsAdaptiveThinking, supportsFastMode, supportsAutoMode, claudeModelCaps, effortFor, reasoningOptionsFor, toSdkPermissionMode, fromSdkSyncMode, stripAnsi, mapClaudeUsage, thinkingDisplayFor, TEXT_GENERATION_OPTIONS, missingConversationError, userMessageContent, sandboxDecision } from './claude-code.js';
 import type { AgentEvent } from '../../shared/types.js';
 import { RunningCost, RunningTokens } from './running-cost.js';
 import { limitHook, LIMIT_STOP_REASON } from './claude-code.js';
@@ -402,7 +402,7 @@ describe('.mcp.json approvals', () => {
 
       const fresh = nodePath.join(root, 'fresh');
       await adapter.generateWorktreeSettings(fresh, repo);
-      expect(await read(fresh)).toMatchObject({ permissions: expect.any(Object), enabledMcpjsonServers: ['repo-tools'] });
+      expect(await read(fresh)).toMatchObject({ enabledMcpjsonServers: ['repo-tools'] });
     } finally {
       await fsp.rm(root, { recursive: true, force: true });
     }
@@ -418,6 +418,84 @@ describe('.mcp.json approvals', () => {
     await fsp.writeFile(file, '{ broken');
     try {
       await expect(new ClaudeCodeAdapter().approveProjectMcpServer('x', [root])).rejects.toThrow(/isn't valid JSON/);
+      expect(await fsp.readFile(file, 'utf8')).toBe('{ broken');
+    } finally {
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('worktree deny rules', () => {
+  const legacy = ['Read(../../**)', 'Edit(../../**)'];
+
+  it('writes no deny rules into a new worktree', async () => {
+    const fsp = await import('node:fs/promises');
+    const os = await import('node:os');
+    const nodePath = await import('node:path');
+    const root = await fsp.mkdtemp(nodePath.join(os.tmpdir(), 'grove-wt-'));
+    try {
+      await new ClaudeCodeAdapter().generateWorktreeSettings(root);
+      const written = JSON.parse(await fsp.readFile(nodePath.join(root, '.claude', 'settings.local.json'), 'utf8'));
+      expect(written).not.toHaveProperty('permissions');
+      expect(written).toMatchObject({ attribution: { commit: '', pr: '' } });
+    } finally {
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('drops only the old rules, keeping the rest of the file', () => {
+    expect(withoutLegacyDenyRules({
+      permissions: { deny: [...legacy, 'Read(./.env)'], allow: ['Bash(npm test)'] },
+      attribution: { commit: '', pr: '' },
+    })).toEqual({
+      permissions: { deny: ['Read(./.env)'], allow: ['Bash(npm test)'] },
+      attribution: { commit: '', pr: '' },
+    });
+    expect(withoutLegacyDenyRules({ permissions: { deny: legacy, allow: ['Bash(ls)'] } })).toEqual({ permissions: { allow: ['Bash(ls)'] } });
+    expect(withoutLegacyDenyRules({ permissions: { deny: legacy }, enabledMcpjsonServers: ['a'] })).toEqual({ enabledMcpjsonServers: ['a'] });
+  });
+
+  it('leaves settings without the old rules alone', () => {
+    expect(withoutLegacyDenyRules({})).toBeNull();
+    expect(withoutLegacyDenyRules({ permissions: { deny: ['Read(./.env)'] } })).toBeNull();
+    expect(withoutLegacyDenyRules({ permissions: { deny: 'Read(../../**)' } })).toBeNull();
+    expect(withoutLegacyDenyRules({ permissions: ['Read(../../**)'] })).toBeNull();
+  });
+
+  it('updates an existing worktree, and writes nothing when there is nothing to change', async () => {
+    const fsp = await import('node:fs/promises');
+    const os = await import('node:os');
+    const nodePath = await import('node:path');
+    const root = await fsp.mkdtemp(nodePath.join(os.tmpdir(), 'grove-wt-'));
+    const file = nodePath.join(root, '.claude', 'settings.local.json');
+    const adapter = new ClaudeCodeAdapter();
+    try {
+      await adapter.updateWorktreeSettings(root);
+      await expect(fsp.access(file)).rejects.toThrow();
+
+      await fsp.mkdir(nodePath.dirname(file), { recursive: true });
+      await fsp.writeFile(file, JSON.stringify({ permissions: { deny: legacy }, enabledMcpjsonServers: ['a'] }));
+      await adapter.updateWorktreeSettings(root);
+      expect(JSON.parse(await fsp.readFile(file, 'utf8'))).toEqual({ enabledMcpjsonServers: ['a'] });
+
+      await fsp.writeFile(file, '{"keep":true}');
+      await adapter.updateWorktreeSettings(root);
+      expect(await fsp.readFile(file, 'utf8')).toBe('{"keep":true}');
+    } finally {
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("doesn't overwrite a worktree settings file it can't parse", async () => {
+    const fsp = await import('node:fs/promises');
+    const os = await import('node:os');
+    const nodePath = await import('node:path');
+    const root = await fsp.mkdtemp(nodePath.join(os.tmpdir(), 'grove-wt-'));
+    const file = nodePath.join(root, '.claude', 'settings.local.json');
+    await fsp.mkdir(nodePath.dirname(file), { recursive: true });
+    await fsp.writeFile(file, '{ broken');
+    try {
+      await expect(new ClaudeCodeAdapter().updateWorktreeSettings(root)).rejects.toThrow(/isn't valid JSON/);
       expect(await fsp.readFile(file, 'utf8')).toBe('{ broken');
     } finally {
       await fsp.rm(root, { recursive: true, force: true });
