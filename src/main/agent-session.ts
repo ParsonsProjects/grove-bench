@@ -695,7 +695,9 @@ class AgentSessionManager {
         if (event.type === 'result') {
           if (session.turnHandle === handle) session.turnHandle = null;
           // A finished turn is activity too, as much as a prompt sent.
-          worktreeManager.updateLastActive(id).catch(() => {});
+          worktreeManager.updateLastActive(id).catch((e) => {
+            logger.warn(`Failed to persist last activity for ${id}:`, e);
+          });
           // The files the turn made go just ahead of its result.
           await this.endTurnFiles(session, emit);
           // Adds the turn's cost to the thread's and today's spend and its

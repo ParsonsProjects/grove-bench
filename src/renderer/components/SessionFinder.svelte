@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import Fuse from 'fuse.js';
   import { store } from '../stores/sessions.svelte.js';
   import { messageStore } from '../stores/messages.svelte.js';
@@ -96,14 +96,17 @@
   let contentLoading = $state(false);
   let reqToken = 0;
 
-  // Newest conversations first, so the capped hit list favours them. Kept as a
-  // string so session updates that don't change the order (status, rename)
-  // don't re-run the search.
-  let searchOrder = $derived(JSON.stringify(sortSessions(store.sessions, { key: 'age', dir: 'desc' }).map((s) => s.id)));
+  // The threads to search. Kept as a string so session updates that don't
+  // add or remove one (status, rename, a turn ending) don't re-run the search.
+  let searchedIds = $derived(JSON.stringify(store.sessions.map((s) => s.id).sort()));
 
   $effect(() => {
     const q = query.trim();
-    const ids: string[] = JSON.parse(searchOrder);
+    void searchedIds;
+    // Newest first, so the capped hit list favours them. Read untracked: a
+    // thread finishing a turn moves it up, and searching again then would
+    // swap the hits under the highlighted row.
+    const ids = untrack(() => sortSessions(store.sessions, { key: 'age', dir: 'desc' }).map((s) => s.id));
     if (q.length < 2 || ids.length === 0) {
       reqToken++; // a search still in flight is for a query that's gone
       contentHits = [];
