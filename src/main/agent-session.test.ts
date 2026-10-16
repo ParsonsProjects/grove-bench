@@ -688,6 +688,25 @@ describe('AgentSessionManager caveman mode', () => {
 });
 
 describe('AgentSessionManager event processing', () => {
+  it('saves a finished turn as the thread\'s last activity', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-turn-active',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    vi.mocked(worktreeManager.updateLastActive).mockClear();
+
+    mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false } as any);
+
+    await vi.waitFor(() => expect(worktreeManager.updateLastActive).toHaveBeenCalledWith('test-turn-active'));
+    await sessionManager.destroySession('test-turn-active');
+  });
+
   it('transitions to running on system_init and sends SESSION_STATUS', async () => {
     const win = makeMockWindow();
     await sessionManager.createSession({
