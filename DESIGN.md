@@ -330,9 +330,8 @@ To be clear: this is an **ergonomic safety net**, not a security boundary. The g
 
 What it prevents:
 - Agent A accidentally editing files that Agent B is working on
-- An agent modifying the main checkout while you're working in it
 - Agents stepping on each other's branches or working trees
-- Accidental file operations outside the intended worktree scope
+- In the modes that ask (Layer 3), edits to the main checkout or anywhere else outside the worktree without your approval. In auto mode Claude Code's classifier decides instead, and bypass mode doesn't ask
 
 What it does NOT prevent:
 - Arbitrary shell commands (Claude Code can run them by design — that's the point)

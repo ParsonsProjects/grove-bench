@@ -31,6 +31,7 @@ import { createPreviewMcpServer } from './preview-mcp-server.js';
 import * as skillsModule from '../skills.js';
 import { accountEnv, accountSignInCommand, type ClaudeAccount } from './claude-accounts.js';
 import { logger } from '../logger.js';
+import { writeFileAtomic } from '../fs-utils.js';
 import { RunningCost, RunningTokens } from './running-cost.js';
 import { execFile } from 'node:child_process';
 import { spawnProcess } from '../process-host.js';
@@ -2265,11 +2266,12 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   }
 
   async updateWorktreeSettings(wtPath: string): Promise<void> {
-    const fs = await import('node:fs/promises');
     const settingsPath = path.join(wtPath, '.claude', 'settings.local.json');
     // A file we can't parse is the user's to fix; overwriting it would lose their settings.
     const next = withoutLegacyDenyRules(await readSettingsFile(settingsPath));
-    if (next) await fs.writeFile(settingsPath, JSON.stringify(next, null, 2));
+    // Atomic: another thread on this checkout may be starting Claude Code,
+    // which reads the file.
+    if (next) await writeFileAtomic(settingsPath, JSON.stringify(next, null, 2));
   }
 
   async approveProjectMcpServer(name: string, dirs: string[]): Promise<void> {
