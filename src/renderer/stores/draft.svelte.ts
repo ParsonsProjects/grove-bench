@@ -381,7 +381,8 @@ class DraftStore {
    * The user's own draft, if they have one, is left as it is. The agent is
    * picked as open() picks it; without `start` it runs where a new draft
    * would, and in a project without git it runs in the folder whatever
-   * `start` says. Returns whether it started; a refusal goes in a toast.
+   * `start` says. Returns whether it started; a refusal goes in a toast,
+   * and the thread that was on screen comes back.
    */
   async startThread(setup: { repoPath: string; text: string; agentId?: string; model?: string; start?: DraftStart }): Promise<boolean> {
     const repo = setup.repoPath;
@@ -389,7 +390,7 @@ class DraftStore {
       sessionStore.setError("The thread couldn't start: its project was removed.");
       return false;
     }
-    const agentId = this.offeredAgent(setup.agentId) || agentsStore.pickedDefaultId || agentsStore.defaultId || '';
+    const agentId = this.offeredAgent(setup.agentId) || agentsStore.defaultId || '';
     const d: Draft = {
       repoPath: repo,
       agentId,
@@ -399,7 +400,15 @@ class DraftStore {
       start: (!sessionStore.isFolderProject(repo) && setup.start) || defaultStart(repo),
       text: setup.text,
     };
-    return this.launch(d, (message) => sessionStore.setError(`The thread couldn't start: ${message}`));
+    // The new row takes the screen; a refusal shouldn't leave the landing
+    // screen where the asking thread was.
+    const shown = sessionStore.activeSessionId;
+    return this.launch(d, (message, onScreen) => {
+      if (onScreen && shown && sessionStore.sessions.some((s) => s.id === shown)) {
+        sessionStore.activeSessionId = shown;
+      }
+      sessionStore.setError(`The thread couldn't start: ${message}`);
+    });
   }
 
   /** Add the thread's row, create it in main and send `d.text` as its first

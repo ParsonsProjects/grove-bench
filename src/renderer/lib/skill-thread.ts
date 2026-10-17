@@ -16,15 +16,17 @@ import { buildCreateSkillPrompt, type SkillPromptOpts } from './skill-prompt.js'
 export function startSkillThread(fromSessionId: string, opts: SkillPromptOpts): Promise<boolean> {
   const from = store.sessions.find((s) => s.id === fromSessionId);
   if (!from) return Promise.resolve(false);
+  // A project without git can only run in its folder (startThread).
+  const ownBranch = opts.scope === 'project' && !store.isFolderProject(from.repoPath);
   return draftStore.startThread({
     repoPath: from.repoPath,
     // A thread with no agent type runs the default agent; naming it keeps
     // the model, which startThread drops for any other agent.
     agentId: from.agentType ?? agentsStore.defaultId ?? undefined,
     model: messageStore.getModel(fromSessionId),
-    start: opts.scope === 'project'
+    start: ownBranch
       ? { kind: 'new', branchName: '', baseBranch: '' }
       : { kind: 'folder' },
-    text: buildCreateSkillPrompt(opts),
+    text: buildCreateSkillPrompt(opts, ownBranch),
   });
 }

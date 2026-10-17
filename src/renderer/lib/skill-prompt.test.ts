@@ -17,6 +17,12 @@ describe('buildCreateSkillPrompt', () => {
     expect(p).not.toContain('inside this repository');
   });
 
+  it('promises no branch for a project skill written in the project folder', () => {
+    const p = buildCreateSkillPrompt({ name: 'x', description: 'd', scope: 'project' }, false);
+    expect(p).toContain('inside this project folder');
+    expect(p).not.toContain('branch');
+  });
+
   it('includes draft notes only when provided and non-blank', () => {
     const withNotes = buildCreateSkillPrompt({ name: 'x', description: 'd', scope: 'project', notes: 'Step 1: build' });
     expect(withNotes).toContain('Step 1: build');

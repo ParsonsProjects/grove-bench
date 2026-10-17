@@ -10,6 +10,7 @@
   import { settingsStore } from '../stores/settings.svelte.js';
   import { mergeSkills } from '../lib/skills-merge.js';
   import { startSkillThread } from '../lib/skill-thread.js';
+  import type { SkillPromptOpts } from '../lib/skill-prompt.js';
   import { lazyComponent } from '../lib/lazy-component.js';
   import type { SkillInfo, SkillSuggestion } from '../../shared/types.js';
   import { Badge } from '$lib/components/ui/badge/index.js';
@@ -72,7 +73,7 @@
 
   let suggestions = $state<SkillSuggestion[]>([]);
   let analyzingSuggestions = $state(false);
-  let addSkillInitial = $state<{ name: string; description: string; instructions: string } | null>(null);
+  let addSkillInitial = $state<{ name: string; description: string; instructions: string; scope?: 'project' | 'user' } | null>(null);
   let sessionRepoPath = $derived(store.sessions.find((s) => s.id === sessionId)?.repoPath ?? '');
 
   async function refreshSuggestions() {
@@ -93,10 +94,10 @@
     }
   }
 
-  async function dismissSkillSuggestion(id: string, repoPath = sessionRepoPath) {
+  async function dismissSkillSuggestion(id: string) {
     suggestions = suggestions.filter((s) => s.id !== id);
     try {
-      await window.groveBench.dismissSkillSuggestion(repoPath, id);
+      await window.groveBench.dismissSkillSuggestion(sessionRepoPath, id);
     } catch { /* worst case it reappears on the next analysis */ }
   }
 
@@ -106,20 +107,28 @@
     addSkillOpen = true;
   }
 
-  /** Hand the suggestion to the agent in a new thread on a branch of its
-   *  own, with the mined evidence as draft notes. */
+  /** Hand a skill to the agent in a new thread. A suggestion of the same
+   *  name is resolved straight away, as for a manual create, so it can't be
+   *  handed off twice while the thread starts. If the thread can't start,
+   *  the Add Skill dialog opens with the skill, so nothing is lost. */
+  async function askAgent(skill: SkillPromptOpts) {
+    const suggested = suggestions.find((s) => s.name === skill.name);
+    if (suggested) dismissSkillSuggestion(suggested.id);
+    if (await startSkillThread(sessionId, skill)) return;
+    // The dialog shows over whatever is on screen, so only over this thread.
+    if (store.activeSessionId !== sessionId) return;
+    addSkillInitial = { name: skill.name, description: skill.description, instructions: skill.notes ?? '', scope: skill.scope };
+    addSkillOpen = true;
+  }
+
+  /** Hand the suggestion to the agent, with the mined evidence as draft notes. */
   function askAgentFromSuggestion(s: SkillSuggestion) {
-    // Read now: once the new thread opens, this bar may show that one.
-    const repoPath = sessionRepoPath;
     skillsExpanded = false;
-    void startSkillThread(sessionId, {
+    void askAgent({
       name: s.name,
       description: s.description,
       scope: 'project',
       notes: `${s.draftInstructions}\n\nEvidence from past threads (${s.rationale}):\n${s.evidence.map((e) => `- ${e}`).join('\n')}`,
-    }).then((started) => {
-      // Kept when the thread couldn't start, so it can be tried again.
-      if (started) dismissSkillSuggestion(s.id, repoPath);
     });
   }
 
@@ -204,7 +213,9 @@
                   variant="subtle"
                   size="2xs"
                   onclick={() => askAgentFromSuggestion(suggestion)}
-                  title="Start a new thread on a branch of its own where the agent writes this skill, with the mined evidence as notes"
+                  title={store.isFolderProject(sessionRepoPath)
+                    ? 'Start a new thread in the project folder where the agent writes this skill, with the mined evidence as notes'
+                    : 'Start a new thread on a branch of its own where the agent writes this skill, with the mined evidence as notes'}
                 >
                   Agent
                 </Button>
@@ -302,6 +313,7 @@
         const created = suggestions.find((s) => s.name === skill.name);
         if (created) dismissSkillSuggestion(created.id);
       }}
+      onaskagent={(skill) => void askAgent(skill)}
     />
   {/await}
 {/if}

@@ -655,6 +655,16 @@ describe('draftStore.startThread', () => {
     store.clearError();
   });
 
+  it('brings back the thread that was on screen when main refuses', async () => {
+    store.sessions = [{ id: 's1', branch: 'feat/x', repoPath: '/repo/one', status: 'running', agentType: 'claude-code' }];
+    store.activeSessionId = 's1';
+    createSessionMock().mockRejectedValue(new Error('Claude Agent isn\'t installed'));
+    expect(await draftStore.startThread({ repoPath: '/repo/one', text: 'Write a skill' })).toBe(false);
+    expect(store.activeSessionId).toBe('s1');
+    expect(store.error).toContain("isn't installed");
+    store.clearError();
+  });
+
   it('refuses a project that was removed', async () => {
     expect(await draftStore.startThread({ repoPath: '/repo/gone', text: 'Write a skill' })).toBe(false);
     expect(createSessionMock()).not.toHaveBeenCalled();

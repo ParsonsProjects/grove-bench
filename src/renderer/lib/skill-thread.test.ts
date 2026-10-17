@@ -46,6 +46,19 @@ describe('startSkillThread', () => {
     expect(startThread).toHaveBeenCalledWith(expect.objectContaining({ start: { kind: 'folder' } }));
   });
 
+  it('runs a project skill in the folder of a project without git, and says so', async () => {
+    store.setFolderProject('/repo/one', true);
+    try {
+      await startSkillThread('s1', { name: 'x', description: 'd', scope: 'project' });
+      const setup = startThread.mock.calls[0][0];
+      expect(setup.start).toEqual({ kind: 'folder' });
+      expect(setup.text).toContain('inside this project folder');
+      expect(setup.text).not.toContain('branch');
+    } finally {
+      store.setFolderProject('/repo/one', false);
+    }
+  });
+
   it('starts nothing when the asking thread is gone', async () => {
     expect(await startSkillThread('gone', { name: 'x', description: 'd', scope: 'project' })).toBe(false);
     expect(startThread).not.toHaveBeenCalled();
