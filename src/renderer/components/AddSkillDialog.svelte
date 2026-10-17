@@ -8,22 +8,25 @@
   import { Pulse } from '$lib/components/ui/pulse/index.js';
   import * as Segmented from '$lib/components/ui/segmented/index.js';
   import { store } from '../stores/sessions.svelte.js';
-  import { messageStore } from '../stores/messages.svelte.js';
-  import { buildCreateSkillPrompt } from '../lib/skill-prompt.js';
+  import type { SkillPromptOpts } from '../lib/skill-prompt.js';
   import type { SkillInfo } from '../../shared/types.js';
 
   let {
     sessionId,
     onclose,
     oncreated,
+    onaskagent,
     initial = null,
   }: {
     sessionId: string;
     onclose: () => void;
     /** Fired after a manual create succeeds so the caller can refresh its list. */
     oncreated: (skill: SkillInfo) => void;
+    /** Ask Agent to Write It: the caller starts the agent's thread (and can
+     *  open the dialog again with these if it can't start). */
+    onaskagent: (skill: SkillPromptOpts) => void;
     /** Prefill (e.g. from a skill suggestion) — editable before creating. */
-    initial?: { name?: string; description?: string; instructions?: string } | null;
+    initial?: { name?: string; description?: string; instructions?: string; scope?: 'project' | 'user' } | null;
   } = $props();
 
   let open = $state(true);
@@ -32,19 +35,16 @@
   const prefill = untrack(() => initial);
   let name = $state(prefill?.name ?? '');
   let description = $state(prefill?.description ?? '');
-  let scope = $state<'project' | 'user'>('project');
+  let scope = $state<'project' | 'user'>(prefill?.scope ?? 'project');
   let instructions = $state(prefill?.instructions ?? '');
   let creating = $state(false);
   let dialogError = $state('');
 
-  let sessionStatus = $derived(store.sessions.find((s) => s.id === sessionId)?.status);
-  let isRunning = $derived(messageStore.getIsRunning(sessionId));
-  /** The agent path needs a live, idle session to take the turn. */
-  let canAskAgent = $derived(sessionStatus === 'running' && !isRunning);
-
   let nameValid = $derived(/^[a-z0-9][a-z0-9-]*$/.test(name.trim()));
   let canCreate = $derived(nameValid && description.trim().length > 0 && instructions.trim().length > 0);
-  let canSendToAgent = $derived(nameValid && description.trim().length > 0 && canAskAgent);
+  let canSendToAgent = $derived(nameValid && description.trim().length > 0);
+  /** A project without git: every thread runs in its folder, so no branch. */
+  let folderProject = $derived(store.isFolderProject(store.sessions.find((s) => s.id === sessionId)?.repoPath ?? ''));
 
   function close() {
     open = false;
@@ -72,21 +72,16 @@
     }
   }
 
-  /** Hand skill authoring to the agent as a turn in this conversation — it
-   *  knows its own packaged-skill format (frontmatter extensions, resources)
-   *  better than the manual form does. */
+  /** Hand skill authoring to the agent in a new thread: it knows its own
+   *  packaged-skill format (frontmatter extensions, resources) better than
+   *  the manual form does, and follow-up questions go there. */
   function handleAskAgent() {
     if (!canSendToAgent) return;
-    const prompt = buildCreateSkillPrompt({
-      name: name.trim(),
-      description: description.trim(),
-      scope,
-      notes: instructions,
-    });
-    messageStore.addUserMessage(sessionId, prompt);
-    window.groveBench.sendMessage(sessionId, prompt);
-    store.updateLastActive(sessionId);
+    const skill = { name: name.trim(), description: description.trim(), scope, notes: instructions };
+    // Closed first: the new thread takes the screen, and this dialog would
+    // stay over it.
     close();
+    onaskagent(skill);
   }
 
   function handleOpenChange(isOpen: boolean) {
@@ -126,7 +121,7 @@
           >
             <Segmented.Item
               value="project"
-              title="Written into this thread's worktree, so it ships with the branch and gets code review"
+              title="Written into the project, so it ships with the code and is reviewed with it"
             >
               Project
             </Segmented.Item>
@@ -163,9 +158,11 @@
           class="w-full text-sm bg-background border border-input px-3 py-2 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring resize-y font-mono"
         ></textarea>
         <p class="text-micro text-muted-foreground mt-1">
-          {scope === 'project'
-            ? 'Project skills are written into the worktree and show up in the Changes tab.'
-            : 'User skills apply to every project on this machine.'}
+          {scope === 'user'
+            ? 'User skills apply to every project on this machine.'
+            : folderProject
+              ? 'Project skills are written into the project folder.'
+              : 'Create Skill writes it into this thread\'s worktree, where it shows up in the Changes tab. Ask Agent writes it on a new branch.'}
         </p>
       </div>
 
@@ -183,9 +180,9 @@
           variant="secondary"
           onclick={handleAskAgent}
           disabled={!canSendToAgent}
-          title={canAskAgent
-            ? 'Send a turn asking the agent to draft and write the skill itself (instructions above become optional notes)'
-            : 'Needs a running, idle thread'}
+          title={scope === 'project' && !folderProject
+            ? 'Start a new thread on a branch of its own where the agent drafts and writes the skill (instructions above become optional notes)'
+            : 'Start a new thread in the project folder where the agent drafts and writes the skill (instructions above become optional notes)'}
         >
           Ask Agent to Write It
         </Button>

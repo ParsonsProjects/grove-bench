@@ -360,6 +360,61 @@ class DraftStore {
       this.error = `${name} is turned off. Turn it on in Settings → Agents, or pick another agent at the bottom of the message box.`;
       return false;
     }
+    this.discard();
+    return this.launch(d, (message, onScreen) => {
+      // Back to the draft, message and all, unless one with a message has
+      // been opened since: that one is kept and the error goes in a toast.
+      if (!this.draft?.text.trim()) {
+        this.draft = draft;
+        this.error = message;
+        void this.loadAgentInfo();
+      }
+      if (this.draft !== draft || !onScreen) {
+        sessionStore.setError(`The thread couldn't start: ${message}`);
+      }
+    });
+  }
+
+  /**
+   * Start a thread set up by the caller rather than typed into the draft,
+   * with `text` as its first message (Add Skill's "Ask Agent to Write It").
+   * The user's own draft, if they have one, is left as it is. The agent is
+   * picked as open() picks it; without `start` it runs where a new draft
+   * would, and in a project without git it runs in the folder whatever
+   * `start` says. Returns whether it started; a refusal goes in a toast,
+   * and the thread that was on screen comes back.
+   */
+  async startThread(setup: { repoPath: string; text: string; agentId?: string; model?: string; start?: DraftStart }): Promise<boolean> {
+    const repo = setup.repoPath;
+    if (!sessionStore.repos.includes(repo)) {
+      sessionStore.setError("The thread couldn't start: its project was removed.");
+      return false;
+    }
+    const agentId = this.offeredAgent(setup.agentId) || agentsStore.defaultId || '';
+    const d: Draft = {
+      repoPath: repo,
+      agentId,
+      // The model belongs to the agent asked for.
+      model: agentId === setup.agentId ? setup.model ?? '' : '',
+      controls: {},
+      start: (!sessionStore.isFolderProject(repo) && setup.start) || defaultStart(repo),
+      text: setup.text,
+    };
+    // The new row takes the screen; a refusal shouldn't leave the landing
+    // screen where the asking thread was.
+    const shown = sessionStore.activeSessionId;
+    return this.launch(d, (message, onScreen) => {
+      if (onScreen && shown && sessionStore.sessions.some((s) => s.id === shown)) {
+        sessionStore.activeSessionId = shown;
+      }
+      sessionStore.setError(`The thread couldn't start: ${message}`);
+    });
+  }
+
+  /** Add the thread's row, create it in main and send `d.text` as its first
+   *  message once main has it. `refused` runs when main refuses a thread
+   *  that is still open, with whether its row was on screen. */
+  private async launch(d: Draft, refused: (message: string, onScreen: boolean) => void): Promise<boolean> {
     const text = d.text.trim();
     const direct = d.start.kind === 'folder';
     const id = crypto.randomUUID().slice(0, 8);
@@ -387,7 +442,6 @@ class DraftStore {
       messageStore.addUserMessage(id, text);
       sessionStore.updateLastActive(id);
     }
-    this.discard();
     try {
       // No base picked yet (still resolving, or cleared): use the project's
       // default rather than whatever the project folder has checked out.
@@ -435,16 +489,7 @@ class DraftStore {
       const dropped = !this.stillOpen(id);
       dropRow(id);
       if (dropped) return false;
-      // Back to the draft, message and all, unless one with a message has
-      // been opened since: that one is kept and the error goes in a toast.
-      if (!this.draft?.text.trim()) {
-        this.draft = draft;
-        this.error = message;
-        void this.loadAgentInfo();
-      }
-      if (this.draft !== draft || !onScreen) {
-        sessionStore.setError(`The thread couldn't start: ${message}`);
-      }
+      refused(message, onScreen);
       return false;
     }
   }
