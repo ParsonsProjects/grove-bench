@@ -3,6 +3,7 @@ import { startSkillThread } from './skill-thread.js';
 import { draftStore } from '../stores/draft.svelte.js';
 import { store } from '../stores/sessions.svelte.js';
 import { messageStore } from '../stores/messages.svelte.js';
+import { agentsStore } from '../stores/agents.svelte.js';
 
 describe('startSkillThread', () => {
   let startThread: ReturnType<typeof vi.spyOn>;
@@ -27,6 +28,17 @@ describe('startSkillThread', () => {
       start: { kind: 'new', branchName: '', baseBranch: '' },
     }));
     expect(startThread.mock.calls[0][0].text).toContain('`release-notes`');
+  });
+
+  it('names the default agent for a thread with no agent type, so its model carries over', async () => {
+    agentsStore.list = [{ id: 'claude-code', displayName: 'Claude Agent', capabilities: {}, isDefault: true }];
+    store.sessions = [{ id: 's1', branch: 'feat/x', repoPath: '/repo/one', status: 'running' }];
+    try {
+      await startSkillThread('s1', { name: 'x', description: 'd', scope: 'project' });
+      expect(startThread).toHaveBeenCalledWith(expect.objectContaining({ agentId: 'claude-code', model: 'o4' }));
+    } finally {
+      agentsStore.list = [];
+    }
   });
 
   it('starts a user skill in the project folder', async () => {

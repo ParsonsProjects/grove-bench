@@ -1,6 +1,7 @@
 import { draftStore } from '../stores/draft.svelte.js';
 import { store } from '../stores/sessions.svelte.js';
 import { messageStore } from '../stores/messages.svelte.js';
+import { agentsStore } from '../stores/agents.svelte.js';
 import { buildCreateSkillPrompt, type SkillPromptOpts } from './skill-prompt.js';
 
 /**
@@ -17,7 +18,9 @@ export function startSkillThread(fromSessionId: string, opts: SkillPromptOpts): 
   if (!from) return Promise.resolve(false);
   return draftStore.startThread({
     repoPath: from.repoPath,
-    agentId: from.agentType,
+    // A thread with no agent type runs the default agent; naming it keeps
+    // the model, which startThread drops for any other agent.
+    agentId: from.agentType ?? agentsStore.defaultId ?? undefined,
     model: messageStore.getModel(fromSessionId),
     start: opts.scope === 'project'
       ? { kind: 'new', branchName: '', baseBranch: '' }
