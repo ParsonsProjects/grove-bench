@@ -1,10 +1,12 @@
 <script lang="ts">
   /**
    * A header's attention counts (project or group): how many of its
-   * conversations need you, are working, or are unread, with the same dots
-   * as the sidebar's filter chips. A count of zero isn't shown.
+   * conversations need you, are working, are unread, or are flagged To do,
+   * with the same marks as the sidebar's filter chips. A count of zero isn't
+   * shown.
    */
   import type { TriageCounts } from '../lib/session-triage.js';
+  import TodoMark from './TodoMark.svelte';
 
   let { counts }: { counts: TriageCounts } = $props();
 </script>
@@ -17,4 +19,7 @@
 {/if}
 {#if counts.unread}
   <span class="flex items-center gap-0.5 text-micro text-status-unread shrink-0" title="{counts.unread} unread"><span class="w-1.5 h-1.5 bg-status-unread"></span>{counts.unread}</span>
+{/if}
+{#if counts.todo}
+  <span class="flex items-center gap-0.5 text-micro text-foreground/80 shrink-0" title="{counts.todo} to do"><TodoMark />{counts.todo}</span>
 {/if}

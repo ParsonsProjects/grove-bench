@@ -404,6 +404,8 @@ const api: GroveBenchAPI = {
     ipcRenderer.send(IPC.APP_STATE_SET_SESSION_SORT, sort),
   getUnreadSessions: () => ipcRenderer.invoke(IPC.APP_STATE_GET_UNREAD) as Promise<string[]>,
   setUnreadSessions: (ids: string[]) => ipcRenderer.send(IPC.APP_STATE_SET_UNREAD, ids),
+  getTodoSessions: () => ipcRenderer.invoke(IPC.APP_STATE_GET_TODO) as Promise<string[] | null>,
+  setTodoSessions: (ids: string[]) => ipcRenderer.send(IPC.APP_STATE_SET_TODO, ids),
   getSidebarWidth: () =>
     ipcRenderer.invoke(IPC.APP_STATE_GET_SIDEBAR_WIDTH) as Promise<number | null>,
   setSidebarWidth: (width: number) =>

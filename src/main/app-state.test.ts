@@ -26,6 +26,7 @@ import {
   loadPrerequisiteCache, loadModelCatalog, saveModelCatalog, loadUsageSnapshot, saveUsageSnapshot,
   mergeProjects, listProjects, rememberProject, forgetProject,
   loadConversationGroups, saveConversationGroups,
+  loadTodoSessionIds, saveTodoSessionIds,
 } from './app-state.js';
 
 /** The file as the last write left it, so read-modify-write chains see their own updates. */
@@ -322,5 +323,38 @@ describe('conversation groups', () => {
     flushPendingSaves();
     expect(mockWriteFileSync).not.toHaveBeenCalled();
     expect(loadConversationGroups()).toEqual([billing]);
+  });
+});
+
+describe('To do flags', () => {
+  it('saves debounced and reads back, flushing first', () => {
+    const disk = useDisk({ schemaVersion: APP_STATE_SCHEMA_VERSION, openTabIds: ['keep'] });
+    saveTodoSessionIds(['a']);
+    saveTodoSessionIds(['a', 'b']);
+    expect(mockWriteFileSync).not.toHaveBeenCalled();
+    expect(loadTodoSessionIds()).toEqual(['a', 'b']);
+    expect(mockWriteFileSync).toHaveBeenCalledTimes(1);
+    expect(disk.get()).toMatchObject({ todoSessionIds: ['a', 'b'], openTabIds: ['keep'] });
+  });
+
+  it('has none until the first is saved', () => {
+    useDisk(undefined);
+    expect(loadTodoSessionIds()).toEqual([]);
+  });
+
+  it('says it can\'t tell while the file can\'t be read, rather than "none"', () => {
+    useDisk({ schemaVersion: APP_STATE_SCHEMA_VERSION, todoSessionIds: ['a'] });
+    mockReadFileSync.mockImplementation(() => { throw Object.assign(new Error('EBUSY: resource busy or locked'), { code: 'EBUSY' }); });
+    expect(loadTodoSessionIds()).toBeNull();
+  });
+
+  it('ignores junk from the renderer and in the file', () => {
+    useDisk({ schemaVersion: APP_STATE_SCHEMA_VERSION, todoSessionIds: ['a'] });
+    saveTodoSessionIds([1, 2]);
+    saveTodoSessionIds('a');
+    flushPendingSaves();
+    expect(mockWriteFileSync).not.toHaveBeenCalled();
+    expect(loadTodoSessionIds()).toEqual(['a']);
+    expect(validateAppState({ todoSessionIds: 'nope' }).todoSessionIds).toBeUndefined();
   });
 });

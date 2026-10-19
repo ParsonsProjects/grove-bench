@@ -1525,6 +1525,10 @@ export interface GroveBenchAPI {
    *  focused) when the app last ran, so the flag survives a restart. */
   getUnreadSessions(): Promise<string[]>;
   setUnreadSessions(ids: string[]): void;
+  /** Threads flagged To do, or null while app-state.json can't be read (a
+   *  passing lock), so "none" is never mistaken for the real list. */
+  getTodoSessions(): Promise<string[] | null>;
+  setTodoSessions(ids: string[]): void;
 
   // App lifecycle
   onAppClosing(callback: () => void): () => void;
@@ -2163,6 +2167,8 @@ export const IPC = {
   APP_STATE_SET_GROUPS: 'appState:setConversationGroups',
   APP_STATE_GET_UNREAD: 'appState:getUnreadSessions',
   APP_STATE_SET_UNREAD: 'appState:setUnreadSessions',
+  APP_STATE_GET_TODO: 'appState:getTodoSessions',
+  APP_STATE_SET_TODO: 'appState:setTodoSessions',
   /** Main → renderer: an uncaught main-process error. */
   APP_ERROR: 'app:error',
   /** Renderer → main: an uncaught renderer error, for the file log. */

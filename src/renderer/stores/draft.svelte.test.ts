@@ -7,6 +7,7 @@ import { messageStore } from './messages.svelte.js';
 import { arrivalScene } from './arrivalScene.svelte.js';
 import { settingsStore } from './settings.svelte.js';
 import { groupStore } from './groups.svelte.js';
+import { todoStore } from './todo.svelte.js';
 import type { ControlDescriptor } from '../../shared/types.js';
 
 const modeControl: ControlDescriptor = {
@@ -307,6 +308,25 @@ describe('draftStore.start', () => {
     expect(arrivalScene.for('new1')).toBeNull();
     // The draft says what went wrong; no toast as well.
     expect(store.error).toBeNull();
+  });
+
+  it('drops the To do flag of a row flagged while it started, when main refuses', async () => {
+    let fail!: (e: Error) => void;
+    createSessionMock().mockReturnValueOnce(new Promise((_, reject) => { fail = reject; }));
+    draftStore.open('/repo/one');
+    await settle();
+    draftStore.setText('hello');
+    const started = draftStore.start();
+    todoStore.ready = true;
+    try {
+      todoStore.set('new1', true);
+      fail(new Error('Branch "feat/x" already exists'));
+      expect(await started).toBe(false);
+      expect(todoStore.has('new1')).toBe(false);
+    } finally {
+      todoStore.ids = [];
+      todoStore.ready = false;
+    }
   });
 
   it('lets a thread closed before main replied go: no draft back, no message sent', async () => {

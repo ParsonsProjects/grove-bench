@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { menuPanel, menuItem, menuSeparator } from '$lib/components/ui/menu/index.js';
   import { cn } from '$lib/utils.js';
+  import TodoMark from './TodoMark.svelte';
 
   interface ContextMenuItem {
     label: string;
@@ -174,6 +175,13 @@
       {:else if item.icon === 'ungroup'}
         <!-- Not an ✕: that closes a conversation, and this keeps it. -->
         <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="6" x="5" y="4" rx="1"/><rect width="8" height="6" x="11" y="14" rx="1"/></svg>
+      {:else if item.icon === 'todo'}
+        <!-- The sidebar row's To do mark, in the 12px slot the others take. -->
+        <span class="w-3 shrink-0 flex justify-center"><TodoMark /></span>
+      {:else if item.icon === 'unread'}
+        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
+      {:else if item.icon === 'read'}
+        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.2 8.4c.5.38.8.97.8 1.6v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V10a2 2 0 0 1 .8-1.6l8-6a2 2 0 0 1 2.4 0l8 6Z"/><path d="m22 10-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 10"/></svg>
       {:else if hasIcons}
         <span class="w-3 shrink-0" aria-hidden="true"></span>
       {/if}

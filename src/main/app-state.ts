@@ -51,6 +51,10 @@ export interface AppState {
   /** Sessions flagged unread (finished a turn / got a PR alert while not
    *  focused) when the app last ran. Restored into the sidebar on launch. */
   unreadSessionIds?: string[];
+  /** Threads flagged To do in the sidebar. Unlike unread, only the user sets
+   *  or clears one, so ids of threads that didn't load (their project folder
+   *  is missing) are kept for when they come back. */
+  todoSessionIds?: string[];
   /** Model lists learned from each agent's own SDK/CLI, keyed by adapter id.
    *  Shown at the next launch until the agent reports its list again. The
    *  shape of `models` belongs to the adapter, which validates it on load. */
@@ -119,6 +123,9 @@ const groupSchema = z.object({
   sessionIds: z.array(z.string()),
 });
 
+/** A list of thread ids, as the To do flags are saved. */
+const sessionIdsSchema = z.array(z.string());
+
 /** Keeps the well-formed groups and drops the rest, so one bad entry doesn't
  *  lose every group. A conversation listed twice keeps its first place only
  *  (the sidebar keys rows by conversation), and a group left with none goes. */
@@ -150,6 +157,7 @@ const appStateSchema = z.object({
     checkedAt: z.number(),
   }).nullable().optional().catch(null),
   unreadSessionIds: z.array(z.string()).optional().catch(undefined),
+  todoSessionIds: sessionIdsSchema.optional().catch(undefined),
   modelCatalogs: z.record(z.string(), z.object({
     models: z.array(z.unknown()),
     fetchedAt: z.number(),
@@ -280,6 +288,7 @@ const sessionSortWriter = debouncedWriter<SessionSortState>((s, v) => { s.sessio
 const sidebarWidthWriter = debouncedWriter<number>((s, v) => { s.sidebarWidth = v; });
 const collapsedPanelsWriter = debouncedWriter<CollapsedPanels>((s, v) => { s.collapsedPanels = v; });
 const unreadWriter = debouncedWriter<string[]>((s, v) => { s.unreadSessionIds = v; });
+const todoWriter = debouncedWriter<string[]>((s, v) => { s.todoSessionIds = v; });
 const groupsWriter = debouncedWriter<ConversationGroup[]>((s, v) => { s.groups = v; });
 const usageWriter = debouncedWriter<Record<string, ProviderUsage>>((s, v) => { s.usageSnapshots = v; });
 const dailySpendWriter = debouncedWriter<DailySpend>((s, v) => { s.dailySpend = v; });
@@ -311,6 +320,20 @@ export function loadUnreadSessionIds(): string[] {
 
 export function saveUnreadSessionIds(ids: string[]): void {
   unreadWriter.save(ids);
+}
+
+/** The threads flagged To do, or null when the file exists but can't be read
+ *  right now, as with the groups: "none" would let the next save wipe them. */
+export function loadTodoSessionIds(): string[] | null {
+  flushPendingSaves();
+  const state = readAppState();
+  return state ? state.todoSessionIds ?? [] : null;
+}
+
+/** Debounced, like the unread flags. Junk from the renderer is ignored. */
+export function saveTodoSessionIds(ids: unknown): void {
+  const parsed = sessionIdsSchema.safeParse(ids);
+  if (parsed.success) todoWriter.save(parsed.data);
 }
 
 export function loadKnownSkills(repoPath: string): string[] {

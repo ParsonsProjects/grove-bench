@@ -39,7 +39,7 @@ const m = vi.hoisted(() => {
     appState: fns(
       'listProjects', 'rememberProject', 'forgetProject', 'saveCollapsedPanels', 'loadConversationGroups', 'saveConversationGroups',
       'loadAppState', 'saveOpenTabs', 'saveCollapsedRepos', 'saveSessionSort', 'saveSidebarWidth', 'saveUnreadSessionIds',
-      'loadUnreadSessionIds', 'flushPendingSaves', 'loadPrerequisiteCache', 'savePrerequisiteCache',
+      'loadUnreadSessionIds', 'loadTodoSessionIds', 'saveTodoSessionIds', 'flushPendingSaves', 'loadPrerequisiteCache', 'savePrerequisiteCache',
     ),
     prerequisites: fns('apiKeyState', 'checkCorePrerequisites', 'checkGh'),
     credentials: fns('canStoreApiKey', 'clearApiKey', 'parseApiKey', 'saveApiKey'),
@@ -1393,6 +1393,13 @@ describe('renderer input checks', () => {
     await invoke(IPC.OPEN_EXTERNAL, 'https://example.com');
     expect(shell.openExternal).toHaveBeenCalledTimes(1);
     expect(shell.openExternal).toHaveBeenCalledWith('https://example.com');
+  });
+
+  it('app state: To do flags go to app-state, which checks them', () => {
+    m.appState.loadTodoSessionIds.mockReturnValue(null);
+    expect(invoke(IPC.APP_STATE_GET_TODO)).toBeNull();
+    invoke(IPC.APP_STATE_SET_TODO, ['a']);
+    expect(m.appState.saveTodoSessionIds).toHaveBeenCalledWith(['a']);
   });
 
   it('app state: unread ids must be strings, sidebar widths finite numbers', () => {

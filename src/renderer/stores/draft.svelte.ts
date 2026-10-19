@@ -4,6 +4,7 @@ import { deriveSessionName } from '../../shared/session-name.js';
 import { tempBranchName } from '../../shared/temp-branch.js';
 import { store as sessionStore } from './sessions.svelte.js';
 import { groupStore } from './groups.svelte.js';
+import { todoStore } from './todo.svelte.js';
 import { messageStore } from './messages.svelte.js';
 import { arrivalScene } from './arrivalScene.svelte.js';
 import { agentsStore } from './agents.svelte.js';
@@ -505,6 +506,7 @@ class DraftStore {
 /** Take away the row start() added, and what the thread showed. */
 function dropRow(id: string): void {
   sessionStore.removeSession(id);
+  todoStore.forget(id); // it can be flagged while it starts
   messageStore.destroySession(id);
   arrivalScene.end(id);
 }
