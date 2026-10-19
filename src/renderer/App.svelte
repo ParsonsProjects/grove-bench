@@ -117,11 +117,12 @@
       if (session?.status === 'stopped') store.deferResume(id);
     }
 
-    // Bring back the unread flags from the previous run.
+    // Bring back the unread flags from the previous run. Not the open
+    // thread's: it was opened while the projects loaded, so it has been read.
     try {
       const unread = await window.groveBench.getUnreadSessions();
       for (const id of unread) {
-        if (store.sessions.find((s) => s.id === id)) store.markNeedsAttention(id);
+        if (id !== store.activeSessionId && store.sessions.find((s) => s.id === id)) store.markNeedsAttention(id);
       }
     } catch { /* best-effort */ }
 

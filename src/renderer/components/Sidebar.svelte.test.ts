@@ -629,12 +629,13 @@ describe('Sidebar follow-up flags', () => {
       { id: 'closed', branch: 'feat-f', repoPath: '/repo-b', status: 'stopped', displayName: 'Closed one' },
     ] as any;
     todoStore.ids = ['working', 'closed'];
-    mockGroveBench.getCollapsedRepos.mockResolvedValue({ '/repo-b': false });
     render(Sidebar);
-    expect(await screen.findByText('Closed one')).toBeInTheDocument();
+    // Closed, and its project starts folded: nowhere to be seen yet.
+    expect(screen.queryByText('Closed one')).not.toBeInTheDocument();
 
     await fireEvent.click(screen.getByTitle('To do: 2'));
     expect(screen.getAllByText('Working one').length).toBeGreaterThan(0);
+    // Under Threads, as the chip is on.
     expect(screen.getByText('Closed one')).toBeInTheDocument();
     expect(screen.queryByText('Quiet one')).not.toBeInTheDocument();
     expect(screen.queryByText('Finished one')).not.toBeInTheDocument();
@@ -665,6 +666,7 @@ describe('Sidebar follow-up flags', () => {
   it('offers no To do until the saved flags are read', async () => {
     todoStore.ready = false;
     render(Sidebar);
+    expect(chips()).not.toHaveTextContent('To do');
     await fireEvent.contextMenu(screen.getByText('Quiet one'));
     expect(screen.getByRole('menu')).toBeInTheDocument();
     expect(screen.queryByText('Mark as To Do')).toBeNull();
@@ -689,6 +691,15 @@ describe('Sidebar follow-up flags', () => {
     await fireEvent.click(screen.getByText('Mark as Unread'));
     expect(store.needsAttention['quiet']).toBe(true);
     expect(chips()).toHaveTextContent('Unread 2');
+  });
+
+  it('offers no Mark as Unread on a closed thread, which counts as dealt with', async () => {
+    store.sessions = [...store.sessions, { id: 'closed', branch: 'feat-f', repoPath: '/repo-b', status: 'stopped', displayName: 'Closed one' }] as any;
+    mockGroveBench.getCollapsedRepos.mockResolvedValue({ '/repo-b': false });
+    render(Sidebar);
+    await fireEvent.contextMenu(await screen.findByText('Closed one'));
+    expect(screen.getByText('Mark as To Do')).toBeInTheDocument();
+    expect(screen.queryByText('Mark as Unread')).toBeNull();
   });
 
   it('offers no Mark as Unread on a red thread, where it would not show', async () => {
@@ -1048,18 +1059,45 @@ describe('Sidebar clean-up dialog', () => {
     expect(mockGroveBench.getPrs).not.toHaveBeenCalledWith('live');
   });
 
-  it('leaves a thread marked To do unticked, and says why', async () => {
-    todoStore.ready = true;
-    todoStore.ids = ['nopr'];
-    try {
+  describe('with threads marked To do', () => {
+    beforeEach(() => {
+      todoStore.ready = true;
+      todoStore.ids = ['nopr', 'merged'];
+    });
+
+    afterEach(() => {
+      todoStore.ids = [];
+      todoStore.ready = false;
+    });
+
+    it('leaves them unticked, and says why', async () => {
       await openDialog();
       await waitFor(() => expect(screen.getByLabelText(/Open one/)).toBeChecked());
       expect(screen.getByLabelText(/No PR one/)).not.toBeChecked();
+      expect(screen.getByLabelText(/Merged one/)).not.toBeChecked();
       expect(screen.getByTestId('cleanup-todo-nopr')).toHaveTextContent('to do');
-    } finally {
-      todoStore.ids = [];
-      todoStore.ready = false;
-    }
+    });
+
+    it('keeps them unticked through "Select all" and "Select merged"', async () => {
+      await openDialog();
+      await waitFor(() => expect(screen.getByLabelText(/Open one/)).toBeChecked());
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Select all except 2 to do' }));
+      expect(screen.getByLabelText(/Open one/)).toBeChecked();
+      expect(screen.getByLabelText(/No PR one/)).not.toBeChecked();
+      expect(screen.getByLabelText(/Merged one/)).not.toBeChecked();
+
+      await fireEvent.click(await screen.findByRole('button', { name: 'Select merged (1)' }));
+      expect(screen.getByLabelText(/Merged one/)).not.toBeChecked();
+    });
+
+    it('says so before removing one the user ticked', async () => {
+      await openDialog();
+      await waitFor(() => expect(screen.getByLabelText(/Open one/)).toBeChecked());
+      await fireEvent.click(screen.getByLabelText(/No PR one/));
+      await fireEvent.click(screen.getByRole('button', { name: /^Remove \d+ threads?$/ }));
+      expect(await screen.findByText('1 of them is marked To do.')).toBeInTheDocument();
+    });
   });
 
   it('"Select merged" ticks only conversations whose PR has been merged', async () => {

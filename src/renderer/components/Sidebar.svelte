@@ -191,7 +191,7 @@
   function getContextMenuItems(sessionId: string): MenuItem[] {
     const session = store.sessions.find(s => s.id === sessionId);
     if (!session) return [];
-    const followUp = followUpMenuItems(sessionId, session.status);
+    const followUp = followUpMenuItems(session);
     const items: MenuItem[] = [
       ...followUp,
       { label: 'Rename', icon: 'rename', action: () => startRename(sessionId, sessionLabel(session)), separator: followUp.length > 0 },
@@ -213,7 +213,8 @@
   /** Flags for coming back to a thread. To do stays until it is cleared;
    *  unread goes when the thread is next opened (marking the open thread
    *  unread keeps it so until then). */
-  function followUpMenuItems(sessionId: string, status: string): MenuItem[] {
+  function followUpMenuItems(session: (typeof store.sessions)[number]): MenuItem[] {
+    const sessionId = session.id;
     const items: MenuItem[] = [];
     // Until the saved flags are read, changing them could write over them.
     if (todoStore.ready) {
@@ -223,8 +224,9 @@
     }
     if (store.needsAttention[sessionId]) {
       items.push({ label: 'Mark as Read', icon: 'read', action: () => store.clearNeedsAttention(sessionId) });
-    } else if (status !== 'error') {
-      // Not on a red thread: red wins over unread, so it would look the same.
+    } else if (session.status !== 'error' && store.isOpenTab(session)) {
+      // Not on a red thread, which stays red, nor a closed one, which counts
+      // as dealt with. A working or waiting one shows it once that's over.
       items.push({ label: 'Mark as Unread', icon: 'unread', action: () => store.markNeedsAttention(sessionId) });
     }
     return items;
@@ -333,10 +335,28 @@
   const cleanupCandidateKey = $derived(cleanupCandidates.map((s) => s.id).join('\n'));
   const cleanupSelectedIds = $derived(cleanupCandidates.map((s) => s.id).filter((id) => cleanupSelection[id]));
   const cleanupSelectedDirtyCount = $derived(cleanupSelectedIds.filter((id) => cleanupDirty[id]).length);
+  const cleanupSelectedTodoCount = $derived(cleanupSelectedIds.filter((id) => todoStore.has(id)).length);
   /** Listed candidates known to have uncommitted changes: "Select all" leaves these out. */
   const cleanupDirtyCount = $derived(cleanupCandidates.filter((s) => cleanupDirty[s.id]).length);
+  /** Listed candidates marked To do, not counted above: left out too. */
+  const cleanupTodoCount = $derived(cleanupCandidates.filter((s) => todoStore.has(s.id) && !cleanupDirty[s.id]).length);
+  /** Says what it leaves out, so "all" never means less than all. */
+  const cleanupSelectAllLabel = $derived.by(() => {
+    const left = [
+      cleanupDirtyCount > 0 ? `${cleanupDirtyCount} with changes` : '',
+      cleanupTodoCount > 0 ? `${cleanupTodoCount} to do` : '',
+    ].filter(Boolean);
+    return left.length ? `Select all except ${left.join(' and ')}` : 'Select all';
+  });
   const cleanupMergedCount = $derived(cleanupCandidates.filter((s) => isPrMerged(cleanupPrOf(s.id))).length);
   const cleanupGhAvailable = $derived(store.prerequisites?.gh?.available === true);
+
+  /** Whether a candidate is left unticked unless the user ticks it: one
+   *  with uncommitted changes (removing it loses work), or one marked To do
+   *  (put aside to come back to). Undefined while its check still runs. */
+  function cleanupKeptBack(id: string): boolean | undefined {
+    return todoStore.has(id) || cleanupDirty[id];
+  }
 
   function cleanupPrOf(id: string): PrInfo | null {
     const pr = cleanupPr[id];
@@ -379,9 +399,8 @@
       if (generation !== cleanupGeneration) return;
       cleanupDirty = { ...cleanupDirty, [id]: dirty };
       if (unknown) cleanupStatusUnknown = { ...cleanupStatusUnknown, [id]: true };
-      // Tick it when clean, unless the user already decided about it. One
-      // flagged To do is kept back too: it was put aside to come back to.
-      if (cleanupSelection[id] === undefined) cleanupSelection = { ...cleanupSelection, [id]: !dirty && !todoStore.has(id) };
+      // Tick it unless it is kept back, or the user already decided about it.
+      if (cleanupSelection[id] === undefined) cleanupSelection = { ...cleanupSelection, [id]: !cleanupKeptBack(id) };
     }
     untrack(() => {
       for (const s of fresh) {
@@ -417,27 +436,29 @@
     });
   });
 
-  /** Tick every candidate known to have no uncommitted changes (the initial
-   *  state). Ones still being checked are left undecided, so they are
-   *  ticked if their check comes back clean. */
+  /** Tick every candidate that isn't kept back (the initial state). Ones
+   *  still being checked are left undecided, so they are ticked if their
+   *  check comes back clean. */
   function cleanupSelectAllClean() {
     const sel: Record<string, boolean> = {};
     for (const s of cleanupCandidates) {
-      if (cleanupDirty[s.id] !== undefined) sel[s.id] = !cleanupDirty[s.id];
+      const kept = cleanupKeptBack(s.id);
+      if (kept !== undefined) sel[s.id] = !kept;
     }
     cleanupSelection = sel;
   }
 
   /** Tick only candidates whose PR has been merged. Their work has landed,
-   *  so they are the safest to remove. Dirty ones stay unticked, same as the
-   *  initial preselection. */
+   *  so they are the safest to remove. Kept-back ones stay unticked, same as
+   *  the initial preselection. */
   function cleanupSelectMerged() {
     const sel: Record<string, boolean> = {};
     for (const s of cleanupCandidates) {
       const merged = isPrMerged(cleanupPrOf(s.id));
+      const kept = cleanupKeptBack(s.id);
       // A merged one still being checked is ticked once it comes back clean.
-      if (merged && cleanupDirty[s.id] === undefined) continue;
-      sel[s.id] = merged && cleanupDirty[s.id] === false;
+      if (merged && kept === undefined) continue;
+      sel[s.id] = merged && kept === false;
     }
     cleanupSelection = sel;
   }
@@ -768,6 +789,8 @@
   /** The chips shown. There is no "All" chip: clicking the active chip
    *  again goes back to all, which keeps the row short. */
   const CHIP_FILTERS = TRIAGE_FILTERS.filter((f): f is Exclude<TriageFilter, 'all'> => f !== 'all');
+  /** To do waits for the saved flags, as its menu items do. */
+  let chipFilters = $derived(todoStore.ready ? CHIP_FILTERS : CHIP_FILTERS.filter((f) => f !== 'todo'));
 
   function toggleFilter(f: TriageFilter) {
     triageFilter = triageFilter === f ? 'all' : f;
@@ -842,9 +865,13 @@
   }
 
   /** Open tabs (live sessions, plus restored tabs waiting to reconnect) that pass the filter, ordered by the
-   *  active sort. This is the always-visible "working set"; the landing's picker shows the same list. */
+   *  active sort. This is the always-visible "working set"; the landing's picker shows the same list.
+   *  Under To do it is every flagged thread, closed ones too: otherwise those would only be in the
+   *  Projects tree, where projects start folded. */
   let activeSessions = $derived(
-    store.openConversations.filter(rowVisible),
+    triageFilter === 'todo'
+      ? sortSessions(store.sessions.filter(rowVisible), store.sessionSort)
+      : store.openConversations.filter(rowVisible),
   );
 
   /** Closed conversations: stopped and not an open tab. */
@@ -1150,7 +1177,7 @@
       <!-- 9px, plus a chip's 1px border and 6px padding, puts the dots in line
            with the rows' status column, like the Threads heading below. -->
       <div class="flex flex-wrap items-center gap-1 mb-2 pl-2.25 pr-1" role="group" aria-label="Filter threads">
-        {#each CHIP_FILTERS as f (f)}
+        {#each chipFilters as f (f)}
           {@const n = counts[f]}
           {@const active = triageFilter === f}
           <button
@@ -1471,10 +1498,9 @@
               size="inline"
               onclick={cleanupSelectAllClean}
               class="hover:underline"
-              title="Tick every listed thread without uncommitted changes"
+              title="Tick every listed thread without uncommitted changes that isn't marked To do"
             >
-              <!-- Says what it leaves out, so "all" never means less than all. -->
-              {cleanupDirtyCount > 0 ? `Select all except ${cleanupDirtyCount} with changes` : 'Select all'}
+              {cleanupSelectAllLabel}
             </Button>
             {#if cleanupGhAvailable}
               <span class="text-muted-foreground/40" aria-hidden="true">·</span>
@@ -1485,7 +1511,7 @@
                 onclick={cleanupSelectMerged}
                 disabled={cleanupMergedCount === 0}
                 class="text-purple-400 hover:text-purple-300 disabled:no-underline"
-                title="Tick only threads whose pull request has been merged (and that have no uncommitted changes)"
+                title="Tick only threads whose pull request has been merged (and that have no uncommitted changes and aren't marked To do)"
               >
                 Select merged ({cleanupMergedCount})
               </Button>
@@ -1561,6 +1587,11 @@
           {#if cleanupSelectedDirtyCount > 0}
             <span class="text-amber-500 font-medium">
               {cleanupSelectedDirtyCount} of them {cleanupSelectedDirtyCount === 1 ? 'has' : 'have'} uncommitted changes that will be lost.
+            </span>
+          {/if}
+          {#if cleanupSelectedTodoCount > 0}
+            <span class="text-foreground font-medium">
+              {cleanupSelectedTodoCount} of them {cleanupSelectedTodoCount === 1 ? 'is' : 'are'} marked To do.
             </span>
           {/if}
         </Dialog.Description>

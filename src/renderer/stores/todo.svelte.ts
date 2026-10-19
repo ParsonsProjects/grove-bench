@@ -49,10 +49,6 @@ class TodoStore {
     this.save(on ? [...this.ids, sessionId] : this.ids.filter((id) => id !== sessionId));
   }
 
-  toggle(sessionId: string): void {
-    this.set(sessionId, !this.has(sessionId));
-  }
-
   /** Drop the flag of a thread that was deleted. */
   forget(sessionId: string): void {
     this.set(sessionId, false);

@@ -48,7 +48,6 @@ describe('todoStore.load', () => {
     expect(todoStore.ready).toBe(false);
 
     todoStore.set('a', true);
-    todoStore.toggle('b');
     expect(todoStore.has('a')).toBe(false);
     expect(mockGroveBench.setTodoSessions).not.toHaveBeenCalled();
   });
@@ -72,13 +71,6 @@ describe('todoStore', () => {
     todoStore.set('b', true);
     expect(mockGroveBench.setTodoSessions).toHaveBeenCalledTimes(1);
     expect(todoStore.ids).toEqual(['b']);
-  });
-
-  it('toggles', () => {
-    todoStore.toggle('a');
-    expect(todoStore.has('a')).toBe(true);
-    todoStore.toggle('a');
-    expect(todoStore.has('a')).toBe(false);
   });
 
   it('forgets a deleted thread and keeps the rest', () => {

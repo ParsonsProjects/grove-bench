@@ -123,6 +123,9 @@ const groupSchema = z.object({
   sessionIds: z.array(z.string()),
 });
 
+/** A list of thread ids, as the To do flags are saved. */
+const sessionIdsSchema = z.array(z.string());
+
 /** Keeps the well-formed groups and drops the rest, so one bad entry doesn't
  *  lose every group. A conversation listed twice keeps its first place only
  *  (the sidebar keys rows by conversation), and a group left with none goes. */
@@ -154,7 +157,7 @@ const appStateSchema = z.object({
     checkedAt: z.number(),
   }).nullable().optional().catch(null),
   unreadSessionIds: z.array(z.string()).optional().catch(undefined),
-  todoSessionIds: z.array(z.string()).optional().catch(undefined),
+  todoSessionIds: sessionIdsSchema.optional().catch(undefined),
   modelCatalogs: z.record(z.string(), z.object({
     models: z.array(z.unknown()),
     fetchedAt: z.number(),
@@ -329,7 +332,7 @@ export function loadTodoSessionIds(): string[] | null {
 
 /** Debounced, like the unread flags. Junk from the renderer is ignored. */
 export function saveTodoSessionIds(ids: unknown): void {
-  const parsed = z.array(z.string()).safeParse(ids);
+  const parsed = sessionIdsSchema.safeParse(ids);
   if (parsed.success) todoWriter.save(parsed.data);
 }
 
