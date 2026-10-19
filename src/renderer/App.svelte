@@ -34,6 +34,7 @@
   import SpellcheckMenu from './components/SpellcheckMenu.svelte';
   import { bookmarkStore } from './stores/bookmarks.svelte.js';
   import { groupStore } from './stores/groups.svelte.js';
+  import { todoStore } from './stores/todo.svelte.js';
   import { goalStore } from './stores/goals.svelte.js';
   import { panelStore } from './stores/panels.svelte.js';
   import { previewStore } from './stores/preview.svelte.js';
@@ -179,11 +180,12 @@
     for (const id of sessionIds) await autoNameSession(id);
   }
 
-  // Clear flash when switching to a session
+  // Clear flash when switching to a session. Only on the switch: Mark as
+  // Unread on the open thread keeps it unread until it is opened again.
   $effect(() => {
     const activeId = store.activeSessionId;
     if (activeId) {
-      store.clearNeedsAttention(activeId);
+      untrack(() => store.clearNeedsAttention(activeId));
     }
   });
 
@@ -378,6 +380,7 @@
     settingsStore.load();
     bookmarkStore.load();
     groupStore.load();
+    todoStore.load();
     panelStore.load();
     memoryStore.init();
     previewStore.init();

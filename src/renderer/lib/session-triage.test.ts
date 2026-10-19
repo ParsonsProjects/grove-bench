@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { triageForSprite, matchesTriageFilter, triageCounts, TRIAGE_FILTERS } from './session-triage.js';
+import { triageForSprite, matchesTriageFilter, triageCounts, TRIAGE_FILTERS, type TriageState } from './session-triage.js';
 import { agentSpriteState } from './agent-sprite.js';
 
 describe('triageForSprite', () => {
@@ -34,25 +34,47 @@ describe('triageForSprite', () => {
 });
 
 describe('matchesTriageFilter', () => {
+  const entry = (state: TriageState, todo = false) => ({ state, todo });
+
   it('"all" matches every state and the others match only themselves', () => {
     for (const state of ['needs-you', 'working', 'unread', 'idle', 'none'] as const) {
-      expect(matchesTriageFilter('all', state)).toBe(true);
+      expect(matchesTriageFilter('all', entry(state))).toBe(true);
     }
-    expect(matchesTriageFilter('working', 'working')).toBe(true);
-    expect(matchesTriageFilter('working', 'unread')).toBe(false);
-    expect(matchesTriageFilter('unread', 'idle')).toBe(false);
-    expect(matchesTriageFilter('idle', 'idle')).toBe(true);
-    expect(matchesTriageFilter('idle', 'none')).toBe(false);
+    expect(matchesTriageFilter('working', entry('working'))).toBe(true);
+    expect(matchesTriageFilter('working', entry('unread'))).toBe(false);
+    expect(matchesTriageFilter('unread', entry('idle'))).toBe(false);
+    expect(matchesTriageFilter('idle', entry('idle'))).toBe(true);
+    expect(matchesTriageFilter('idle', entry('none'))).toBe(false);
+  });
+
+  it('"todo" matches flagged threads in any state, closed ones too', () => {
+    for (const state of ['needs-you', 'working', 'unread', 'idle', 'none'] as const) {
+      expect(matchesTriageFilter('todo', entry(state, true))).toBe(true);
+      expect(matchesTriageFilter('todo', entry(state, false))).toBe(false);
+    }
+    // The flag doesn't change which state chip a thread is under.
+    expect(matchesTriageFilter('working', entry('working', true))).toBe(true);
+    expect(matchesTriageFilter('idle', entry('working', true))).toBe(false);
   });
 });
 
 describe('triageCounts', () => {
   it('counts each state once and no-chip states only in the total', () => {
-    const counts = triageCounts(['needs-you', 'working', 'working', 'unread', 'idle', 'idle', 'none']);
-    expect(counts).toEqual({ all: 7, 'needs-you': 1, working: 2, unread: 1, idle: 2 });
+    const states: TriageState[] = ['needs-you', 'working', 'working', 'unread', 'idle', 'idle', 'none'];
+    const counts = triageCounts(states.map((state) => ({ state, todo: false })));
+    expect(counts).toEqual({ all: 7, 'needs-you': 1, working: 2, unread: 1, idle: 2, todo: 0 });
+  });
+
+  it('counts To do on top of the states, so it overlaps them', () => {
+    const counts = triageCounts([
+      { state: 'working', todo: true },
+      { state: 'none', todo: true },
+      { state: 'idle', todo: false },
+    ]);
+    expect(counts).toEqual({ all: 3, 'needs-you': 0, working: 1, unread: 0, idle: 1, todo: 2 });
   });
 
   it('exposes filters in the sidebar order', () => {
-    expect(TRIAGE_FILTERS).toEqual(['all', 'needs-you', 'working', 'unread', 'idle']);
+    expect(TRIAGE_FILTERS).toEqual(['all', 'needs-you', 'working', 'unread', 'idle', 'todo']);
   });
 });

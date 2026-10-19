@@ -10,9 +10,11 @@
   import { addProject } from '../lib/add-project.js';
   import { draftStore } from '../stores/draft.svelte.js';
   import { groupStore } from '../stores/groups.svelte.js';
+  import { todoStore } from '../stores/todo.svelte.js';
   import SidebarGroups from './SidebarGroups.svelte';
   import SidebarSection from './SidebarSection.svelte';
   import AttentionCounts from './AttentionCounts.svelte';
+  import TodoMark from './TodoMark.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Badge } from '$lib/components/ui/badge/index.js';
   import { Kbd } from '$lib/components/ui/kbd/index.js';
@@ -30,7 +32,7 @@
   import { formatAge } from '../lib/format-age.js';
   import { isRepoCollapsed } from '../lib/repo-collapse.js';
   import { sortSessions, defaultDirFor } from '../lib/session-sort.js';
-  import { triageForSprite, triageCounts, matchesTriageFilter, TRIAGE_FILTERS, TRIAGE_FILTER_LABELS, type TriageFilter, type TriageState } from '../lib/session-triage.js';
+  import { triageForSprite, triageCounts, matchesTriageFilter, TRIAGE_FILTERS, TRIAGE_FILTER_LABELS, type TriageFilter, type TriageEntry } from '../lib/session-triage.js';
   import { sessionSubtitle, pendingPermissionTool, pendingPermissionView, lastTextSnippet, firstPromptSnippet, type SessionSubtitle } from '../lib/session-subtitle.js';
   import { sessionPreviewStore } from '../stores/sessionPreviews.svelte.js';
   import { goalStore } from '../stores/goals.svelte.js';
@@ -60,7 +62,7 @@
   const SIDEBAR_DEFAULT = 300;
   // Below this width the first three filter chips' labels no longer fit on
   // one line, so the chips show just their dot and count. Idle wraps onto a
-  // second line until the sidebar is about 336px wide.
+  // second line until the sidebar is about 336px wide, and To do after it.
   const SIDEBAR_COMPACT_BELOW = 280;
   let sidebarWidth = $state(SIDEBAR_DEFAULT);
   let compact = $derived(sidebarWidth < SIDEBAR_COMPACT_BELOW);
@@ -180,7 +182,7 @@
 
   interface MenuItem {
     label: string;
-    icon: 'rename' | 'folder' | 'export' | 'destroy' | 'add' | 'close' | 'ungroup';
+    icon: 'rename' | 'folder' | 'export' | 'destroy' | 'add' | 'close' | 'ungroup' | 'todo' | 'unread' | 'read';
     action: () => void;
     variant?: 'destructive';
     separator?: boolean;
@@ -189,8 +191,10 @@
   function getContextMenuItems(sessionId: string): MenuItem[] {
     const session = store.sessions.find(s => s.id === sessionId);
     if (!session) return [];
+    const followUp = followUpMenuItems(sessionId, session.status);
     const items: MenuItem[] = [
-      { label: 'Rename', icon: 'rename', action: () => startRename(sessionId, sessionLabel(session)) },
+      ...followUp,
+      { label: 'Rename', icon: 'rename', action: () => startRename(sessionId, sessionLabel(session)), separator: followUp.length > 0 },
       { label: 'Open Folder', icon: 'folder', action: () => window.groveBench.openSessionFolder(sessionId) },
       { label: 'Export Thread…', icon: 'export', action: () => exportThread(sessionId) },
     ];
@@ -203,6 +207,26 @@
     }
     items.push(...groupMenuItems(sessionId));
     items.push({ label: 'Delete Thread', icon: 'destroy', action: () => requestDestroy(sessionId), variant: 'destructive', separator: true });
+    return items;
+  }
+
+  /** Flags for coming back to a thread. To do stays until it is cleared;
+   *  unread goes when the thread is next opened (marking the open thread
+   *  unread keeps it so until then). */
+  function followUpMenuItems(sessionId: string, status: string): MenuItem[] {
+    const items: MenuItem[] = [];
+    // Until the saved flags are read, changing them could write over them.
+    if (todoStore.ready) {
+      items.push(todoStore.has(sessionId)
+        ? { label: 'Clear To Do', icon: 'todo', action: () => todoStore.set(sessionId, false) }
+        : { label: 'Mark as To Do', icon: 'todo', action: () => todoStore.set(sessionId, true) });
+    }
+    if (store.needsAttention[sessionId]) {
+      items.push({ label: 'Mark as Read', icon: 'read', action: () => store.clearNeedsAttention(sessionId) });
+    } else if (status !== 'error') {
+      // Not on a red thread: red wins over unread, so it would look the same.
+      items.push({ label: 'Mark as Unread', icon: 'unread', action: () => store.markNeedsAttention(sessionId) });
+    }
     return items;
   }
 
@@ -355,8 +379,9 @@
       if (generation !== cleanupGeneration) return;
       cleanupDirty = { ...cleanupDirty, [id]: dirty };
       if (unknown) cleanupStatusUnknown = { ...cleanupStatusUnknown, [id]: true };
-      // Tick it when clean, unless the user already decided about it.
-      if (cleanupSelection[id] === undefined) cleanupSelection = { ...cleanupSelection, [id]: !dirty };
+      // Tick it when clean, unless the user already decided about it. One
+      // flagged To do is kept back too: it was put aside to come back to.
+      if (cleanupSelection[id] === undefined) cleanupSelection = { ...cleanupSelection, [id]: !dirty && !todoStore.has(id) };
     }
     untrack(() => {
       for (const s of fresh) {
@@ -748,7 +773,8 @@
     triageFilter = triageFilter === f ? 'all' : f;
   }
 
-  const TRIAGE_DOT: Record<Exclude<TriageFilter, 'all'>, string> = {
+  /** To do has its ring instead of a dot. */
+  const TRIAGE_DOT: Record<Exclude<TriageFilter, 'all' | 'todo'>, string> = {
     'needs-you': 'bg-status-attention',
     working: 'bg-status-working',
     unread: 'bg-status-unread',
@@ -766,9 +792,13 @@
     collapsedBranches = { ...collapsedBranches, [key]: !collapsedBranches[key] };
   }
 
-  /** Which chip a conversation counts under: the one its status colour matches. */
-  function triageOf(session: { id: string; status: string }): TriageState {
-    return triageForSprite(sessionSpriteState(session, destroying.has(session.id)));
+  /** Which chip a conversation counts under: the one its status colour
+   *  matches, and To do as well when it is flagged. */
+  function triageOf(session: { id: string; status: string }): TriageEntry {
+    return {
+      state: triageForSprite(sessionSpriteState(session, destroying.has(session.id))),
+      todo: todoStore.has(session.id),
+    };
   }
 
   /** Counts for the filter chips, over active and stopped sessions alike. */
@@ -945,6 +975,9 @@
             <svg class="w-3.5 h-3.5 shrink-0 {health.textClass}" xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 24 24" role="img" aria-label={branchIconLabel} title={branchIconLabel} data-pr-health={health.kind}><path d="M4 2h4v2H4zm0 6h4v2H4zM2 4h2v4H2zm6 0h2v4H8zm8 0h4v2h-4zm0 6h4v2h-4zm-2-4h2v4h-2zm6 0h2v4h-2zm-8 13h5v2h-5zm5-5h2v5h-2zM5 12h2v10H5z"/></svg>
           {/if}
           <span class="text-sm truncate min-w-0 flex-1">{label}</span>
+          {#if todoStore.has(session.id)}
+            <span class="shrink-0 flex text-foreground/80" role="img" aria-label="To do" title="To do (right-click to clear)" data-row-todo><TodoMark /></span>
+          {/if}
           {#if ts}
             <!-- Invisible, not hidden, while the quick action sits over it, so the name doesn't reflow. -->
             <span
@@ -1109,9 +1142,10 @@
   <div class="flex-1 overflow-auto px-3 pt-3 flex-col {collapsed ? 'hidden' : 'flex'}">
     <div class="shrink-0 pb-3">
       <!-- Triage filter: what needs me, what is working, what finished while I was away,
-           what is open and quiet. Click a chip to show only those; click it again to
-           show all. Wraps when the sidebar is too narrow for all four. Hidden, with
-           the sort, until there is a conversation to filter. -->
+           what is open and quiet, and what I flagged to come back to. Click a chip to
+           show only those; click it again to show all. Wraps when the sidebar is too
+           narrow for them all. Hidden, with the sort, until there is a conversation
+           to filter. -->
       {#if store.sessions.length > 0}
       <!-- 9px, plus a chip's 1px border and 6px padding, puts the dots in line
            with the rows' status column, like the Threads heading below. -->
@@ -1129,7 +1163,11 @@
               {n === 0 ? 'opacity-50' : ''}"
             title="{TRIAGE_FILTER_LABELS[f]}: {n}{active ? '. Click again to show all' : ''}"
           >
-            <span class="w-1.5 h-1.5 shrink-0 {TRIAGE_DOT[f]}"></span>
+            {#if f === 'todo'}
+              <TodoMark class="text-foreground/80" />
+            {:else}
+              <span class="w-1.5 h-1.5 shrink-0 {TRIAGE_DOT[f]}"></span>
+            {/if}
             <!-- Narrow sidebar: dot and count only, the label is in the tooltip. -->
             {#if !compact}{TRIAGE_FILTER_LABELS[f]}{/if}
             <span class="text-muted-foreground">{n}</span>
@@ -1195,7 +1233,9 @@
         {@render sessionRow(session, store.repos.length > 1, null, true)}
       {/each}
       <!-- With no filter the draft row is enough; a filter says why the list is short. -->
-      {#if activeSessions.length === 0 && triageFilter !== 'all'}
+      {#if activeSessions.length === 0 && triageFilter === 'todo' && counts.todo === 0}
+        <p class="text-xs text-muted-foreground pl-4 py-1">No threads to do. Right-click one and choose Mark as To Do to come back to it later.</p>
+      {:else if activeSessions.length === 0 && triageFilter !== 'all'}
         <p class="text-xs text-muted-foreground pl-4 py-1">No threads match "{TRIAGE_FILTER_LABELS[triageFilter]}"</p>
       {/if}
     </div>
@@ -1395,7 +1435,7 @@
       <Dialog.Header>
         <Dialog.Title>Clean Up Old Threads</Dialog.Title>
         <Dialog.Description>
-          Remove closed threads you no longer need. Removing a thread kills its shell and deletes its worktree. Threads with uncommitted changes are flagged and left unselected. Tick them only if you're sure. Each thread's pull request state is shown when the GitHub CLI is available; merged ones are the safest to remove. Branches are kept unless you choose otherwise. Running threads are never listed.
+          Remove closed threads you no longer need. Removing a thread kills its shell and deletes its worktree. Threads with uncommitted changes or marked To do are flagged and left unselected. Tick them only if you're sure. Each thread's pull request state is shown when the GitHub CLI is available; merged ones are the safest to remove. Branches are kept unless you choose otherwise. Running threads are never listed.
         </Dialog.Description>
       </Dialog.Header>
 
@@ -1474,6 +1514,9 @@
                     <span data-testid="cleanup-pr-{session.id}">· no PR</span>
                   {:else if cleanupPr[session.id] === 'unknown'}
                     <span title="The GitHub CLI could not look up this branch's pull request (offline or not logged in)" data-testid="cleanup-pr-{session.id}">· PR unknown</span>
+                  {/if}
+                  {#if todoStore.has(session.id)}
+                    <span class="text-foreground/80 font-medium" title="Marked To do in the sidebar" data-testid="cleanup-todo-{session.id}">· to do</span>
                   {/if}
                   {#if cleanupStatusUnknown[session.id]}
                     <span class="text-amber-500 font-medium" title="Git couldn't read this worktree's status, so it may have uncommitted changes">· changes unknown</span>

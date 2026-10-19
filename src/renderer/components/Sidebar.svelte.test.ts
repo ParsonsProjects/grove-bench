@@ -16,6 +16,7 @@ import { DEFAULT_REPO_COLORS } from '../lib/repo-colors.js';
 import { AGENT_SPRITES } from '../lib/agent-sprite.js';
 import { agentsStore } from '../stores/agents.svelte.js';
 import { groupStore } from '../stores/groups.svelte.js';
+import { todoStore } from '../stores/todo.svelte.js';
 import { draftStore } from '../stores/draft.svelte.js';
 import { gitStatusStore } from '../stores/gitStatus.svelte.js';
 
@@ -570,6 +571,135 @@ describe('Sidebar attention triage', () => {
   });
 });
 
+describe('Sidebar follow-up flags', () => {
+  beforeEach(() => {
+    store.repos = ['/repo-a', '/repo-b'];
+    store.sessions = [
+      { id: 'working', branch: 'feat-a', repoPath: '/repo-a', status: 'running', displayName: 'Working one' },
+      { id: 'finished', branch: 'feat-c', repoPath: '/repo-b', status: 'running', displayName: 'Finished one' },
+      { id: 'quiet', branch: 'feat-d', repoPath: '/repo-b', status: 'running', displayName: 'Quiet one' },
+    ] as any;
+    store.activeSessionId = 'quiet';
+    store.needsAttention = { finished: true };
+    messageStore.setIsRunning('working', true);
+    todoStore.ids = [];
+    todoStore.ready = true;
+  });
+
+  afterEach(() => {
+    store.needsAttention = {};
+    todoStore.ids = [];
+    todoStore.ready = false;
+  });
+
+  const chips = () => screen.getByRole('group', { name: 'Filter threads' });
+
+  it('flags a thread To do from its menu: the row shows it and the chip counts it', async () => {
+    render(Sidebar);
+    expect(chips()).toHaveTextContent('To do 0');
+
+    await fireEvent.contextMenu(screen.getByText('Quiet one'));
+    await fireEvent.click(screen.getByText('Mark as To Do'));
+
+    expect(todoStore.has('quiet')).toBe(true);
+    expect(mockGroveBench.setTodoSessions).toHaveBeenLastCalledWith(['quiet']);
+    expect(chips()).toHaveTextContent('To do 1');
+    // Under Threads and under its project.
+    expect(screen.getAllByRole('img', { name: 'To do' }).length).toBeGreaterThan(0);
+    // It is still counted under its state too.
+    expect(chips()).toHaveTextContent('Idle 1');
+  });
+
+  it('clears To do from the menu', async () => {
+    todoStore.ids = ['quiet'];
+    render(Sidebar);
+
+    await fireEvent.contextMenu(screen.getByText('Quiet one'));
+    expect(screen.queryByText('Mark as To Do')).toBeNull();
+    await fireEvent.click(screen.getByText('Clear To Do'));
+
+    expect(todoStore.has('quiet')).toBe(false);
+    expect(mockGroveBench.setTodoSessions).toHaveBeenLastCalledWith([]);
+    expect(screen.queryByRole('img', { name: 'To do' })).toBeNull();
+  });
+
+  it('lists flagged threads under the To do chip whatever their state, closed ones too', async () => {
+    store.sessions = [
+      ...store.sessions,
+      { id: 'closed', branch: 'feat-f', repoPath: '/repo-b', status: 'stopped', displayName: 'Closed one' },
+    ] as any;
+    todoStore.ids = ['working', 'closed'];
+    mockGroveBench.getCollapsedRepos.mockResolvedValue({ '/repo-b': false });
+    render(Sidebar);
+    expect(await screen.findByText('Closed one')).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByTitle('To do: 2'));
+    expect(screen.getAllByText('Working one').length).toBeGreaterThan(0);
+    expect(screen.getByText('Closed one')).toBeInTheDocument();
+    expect(screen.queryByText('Quiet one')).not.toBeInTheDocument();
+    expect(screen.queryByText('Finished one')).not.toBeInTheDocument();
+  });
+
+  it('keeps the flag when the thread is opened, unlike unread', async () => {
+    todoStore.ids = ['finished'];
+    render(Sidebar);
+
+    await fireEvent.click(screen.getAllByText('Finished one')[0]);
+    expect(store.needsAttention['finished']).toBeUndefined();
+    expect(todoStore.has('finished')).toBe(true);
+    expect(chips()).toHaveTextContent('To do 1');
+  });
+
+  it('says how to add one when nothing is flagged', async () => {
+    render(Sidebar);
+    await fireEvent.click(screen.getByTitle('To do: 0'));
+    expect(screen.getByText(/Right-click one and choose Mark as To Do/)).toBeInTheDocument();
+  });
+
+  it('shows the To do count on the project header', () => {
+    todoStore.ids = ['quiet', 'finished'];
+    render(Sidebar);
+    expect(screen.getByTitle('2 to do')).toBeInTheDocument();
+  });
+
+  it('offers no To do until the saved flags are read', async () => {
+    todoStore.ready = false;
+    render(Sidebar);
+    await fireEvent.contextMenu(screen.getByText('Quiet one'));
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    expect(screen.queryByText('Mark as To Do')).toBeNull();
+  });
+
+  it('marks a thread unread from its menu, and read again', async () => {
+    render(Sidebar);
+
+    await fireEvent.contextMenu(screen.getAllByText('Working one')[0]);
+    await fireEvent.click(screen.getByText('Mark as Unread'));
+    expect(store.needsAttention['working']).toBe(true);
+
+    await fireEvent.contextMenu(screen.getAllByText('Finished one')[0]);
+    await fireEvent.click(screen.getByText('Mark as Read'));
+    expect(store.needsAttention['finished']).toBeUndefined();
+    expect(chips()).toHaveTextContent('Unread 0');
+  });
+
+  it('marks the open thread unread too, and it stays so while it is open', async () => {
+    render(Sidebar);
+    await fireEvent.contextMenu(screen.getAllByText('Quiet one')[0]);
+    await fireEvent.click(screen.getByText('Mark as Unread'));
+    expect(store.needsAttention['quiet']).toBe(true);
+    expect(chips()).toHaveTextContent('Unread 2');
+  });
+
+  it('offers no Mark as Unread on a red thread, where it would not show', async () => {
+    store.sessions = [...store.sessions, { id: 'broken', branch: 'feat-e', repoPath: '/repo-b', status: 'error', displayName: 'Broken one' }] as any;
+    render(Sidebar);
+    await fireEvent.contextMenu(screen.getAllByText('Broken one')[0]);
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    expect(screen.queryByText('Mark as Unread')).toBeNull();
+  });
+});
+
 describe('Sidebar for a new user', () => {
   it('leaves out the filter chips, sort and Groups until there is a conversation', async () => {
     store.repos = ['/repo-a', '/repo-b'];
@@ -916,6 +1046,20 @@ describe('Sidebar clean-up dialog', () => {
     expect(await screen.findByTestId('cleanup-pr-nopr')).toHaveTextContent('no PR');
     // Running sessions are not candidates, so no gh call is spent on them.
     expect(mockGroveBench.getPrs).not.toHaveBeenCalledWith('live');
+  });
+
+  it('leaves a thread marked To do unticked, and says why', async () => {
+    todoStore.ready = true;
+    todoStore.ids = ['nopr'];
+    try {
+      await openDialog();
+      await waitFor(() => expect(screen.getByLabelText(/Open one/)).toBeChecked());
+      expect(screen.getByLabelText(/No PR one/)).not.toBeChecked();
+      expect(screen.getByTestId('cleanup-todo-nopr')).toHaveTextContent('to do');
+    } finally {
+      todoStore.ids = [];
+      todoStore.ready = false;
+    }
   });
 
   it('"Select merged" ticks only conversations whose PR has been merged', async () => {

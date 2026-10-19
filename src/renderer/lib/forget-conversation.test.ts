@@ -5,6 +5,7 @@ import { prStore } from '../stores/pr.svelte.js';
 import { reviewStore } from '../stores/review.svelte.js';
 import { messageStore } from '../stores/messages.svelte.js';
 import { goalStore } from '../stores/goals.svelte.js';
+import { todoStore } from '../stores/todo.svelte.js';
 import type { PrInfo } from '../../shared/types.js';
 
 describe('forgetConversation', () => {
@@ -18,6 +19,8 @@ describe('forgetConversation', () => {
     expect(localStorage.getItem(`grove-bench:review:${id}`)).not.toBeNull();
     goalStore.goals = { ...goalStore.goals, [id]: { text: 'Ship it', source: 'auto', hidden: false } };
     goalStore.errors = { ...goalStore.errors, [id]: 'model busy' };
+    todoStore.ready = true;
+    todoStore.set(id, true);
 
     forgetConversation(id);
 
@@ -29,5 +32,6 @@ describe('forgetConversation', () => {
     expect(localStorage.getItem(`grove-bench:review:${id}`)).toBeNull();
     expect(goalStore.goals).not.toHaveProperty(id);
     expect(goalStore.errors).not.toHaveProperty(id);
+    expect(todoStore.has(id)).toBe(false);
   });
 });

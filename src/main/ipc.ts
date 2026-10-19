@@ -41,7 +41,7 @@ import * as skillSuggestions from './skill-suggestions.js';
 import * as memory from './memory.js';
 import * as memoryCompact from './memory-compact.js';
 import * as bookmarks from './bookmarks.js';
-import { listProjects, rememberProject, forgetProject, loadAppState, saveOpenTabs, saveCollapsedRepos, saveSessionSort, saveSidebarWidth, saveCollapsedPanels, loadConversationGroups, saveConversationGroups, saveUnreadSessionIds, loadUnreadSessionIds, flushPendingSaves, loadPrerequisiteCache, savePrerequisiteCache, loadUsageSnapshot } from './app-state.js';
+import { listProjects, rememberProject, forgetProject, loadAppState, saveOpenTabs, saveCollapsedRepos, saveSessionSort, saveSidebarWidth, saveCollapsedPanels, loadConversationGroups, saveConversationGroups, saveUnreadSessionIds, loadUnreadSessionIds, saveTodoSessionIds, loadTodoSessionIds, flushPendingSaves, loadPrerequisiteCache, savePrerequisiteCache, loadUsageSnapshot } from './app-state.js';
 import { logRendererError } from './crash-handling.js';
 import { freezeLog } from './freeze-log.js';
 import { isThreadId } from './session-event-store.js';
@@ -2089,6 +2089,12 @@ export function registerHandlers() {
     if (Array.isArray(ids) && ids.every((id) => typeof id === 'string')) {
       saveUnreadSessionIds(ids);
     }
+  });
+
+  ipcMain.handle(IPC.APP_STATE_GET_TODO, () => loadTodoSessionIds());
+
+  ipcMain.on(IPC.APP_STATE_SET_TODO, (_event, ids: unknown) => {
+    saveTodoSessionIds(ids);
   });
 
   // ─── Error reporting ───

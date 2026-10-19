@@ -44,15 +44,24 @@ When a section is further down than you have scrolled, its heading stays pinned 
 
 ## Filters
 
-Above the thread lists, three chips let you narrow the sidebar to what matters right now. Each shows a count, and a thread is in at most one:
+Above the thread lists, chips let you narrow the sidebar to what matters right now. Each shows a count. The first four are states, and a thread is in at most one of them:
 
-- **Needs you** — the agent is waiting on a permission or a question
-- **Working** — a turn is in progress, or the thread is starting up
-- **Unread** — the agent finished a turn (or a PR alert arrived) while you were in another thread
+- **Needs you**: the agent is waiting on a permission or a question
+- **Working**: a turn is in progress, or the thread is starting up
+- **Unread**: the agent finished a turn (or a PR alert arrived) while you were in another thread, or you marked it unread
+- **Idle**: open and quiet, ready or asleep. Closed and red threads come under none of the four
+
+The last, **To do**, lists the threads you flagged to come back to (see below), whatever their state, closed ones too. So a thread can count under **Working** and **To do** at once.
 
 Click a chip to show only those threads, and click it again to show them all. When the sidebar is narrow the chips show just their dot and count; hover one for its name. **Name** and **Age** next to the Threads heading set the order of both lists.
 
-The same three counts appear on each project header, so you can see at a glance which project has agents waiting on you.
+The same counts (except Idle) appear on each project header, so you can see at a glance which project has agents waiting on you, or threads to come back to.
+
+## Coming back to a thread
+
+Right-click a thread and choose **Mark as To Do** to keep track of something you want to follow up. A ring shows next to its name, and the **To do** chip lists every flagged thread. The flag stays when you open the thread, close it or restart Grove Bench. It goes only when you right-click and choose **Clear To Do**, or delete the thread.
+
+**Mark as Unread** is the lighter option: the thread shows as unread (green) until you next open it, the same as when its agent finishes while you're elsewhere. Marking the thread you have open keeps it unread until you open it again. **Mark as Read** clears it without opening the thread.
 
 ## Closed threads
 
@@ -62,6 +71,8 @@ To put a thread aside, whether it's done or you'll come back to it later, right-
 
 Right-click a thread to access:
 
+- **Mark as To Do** or **Clear To Do**: flag the thread to come back to, or clear the flag (see Coming back to a thread above)
+- **Mark as Unread** or **Mark as Read**: show the thread as unread until you next open it, or clear that
 - **Rename** — Give the thread a custom display name
 - **Open Folder** — Open the worktree directory in your file explorer
 - **Export Thread…**: save the thread to a file. As Markdown it has the messages and a line for each tool call, without tool output, thinking or the contents of attached files; pick JSON in the save dialog for every event the thread saved
@@ -85,7 +96,7 @@ Grove Bench also starts on the landing screen. The threads you had open are list
 At the bottom of the sidebar you'll find:
 
 - **Project Memory** (brain icon) — Open the project memory panel
-- **Clean up old threads** (broom icon) — Review and remove closed threads inactive past a chosen cutoff. Removal deletes the worktree (branches are kept unless you opt in). Threads with uncommitted changes are flagged and left unselected, so nothing with unsaved work is removed unless you explicitly tick it. **Select all** says how many it leaves out for that reason. When the GitHub CLI is available, each row also shows the state of the pull request on its branch (open, draft, merged, closed or none), and **Select merged** ticks only the threads whose PR has been merged. Running threads are never listed.
+- **Clean up old threads** (broom icon) — Review and remove closed threads inactive past a chosen cutoff. Removal deletes the worktree (branches are kept unless you opt in). Threads with uncommitted changes are flagged and left unselected, so nothing with unsaved work is removed unless you explicitly tick it. **Select all** says how many it leaves out for that reason. Threads marked To do show **to do** and start unticked too, though **Select all** ticks them. When the GitHub CLI is available, each row also shows the state of the pull request on its branch (open, draft, merged, closed or none), and **Select merged** ticks only the threads whose PR has been merged. Running threads are never listed.
 - **Settings** (gear icon, or `Ctrl+,`) — Open application settings
 
 You can also access **Help** (? icon) from the title bar, next to the window controls in the top right.
