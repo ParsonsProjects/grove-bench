@@ -38,7 +38,8 @@ const m = vi.hoisted(() => {
     settings: fns('getSettings', 'saveSettings', 'applyImmediateEffects'),
     appState: fns(
       'listProjects', 'rememberProject', 'forgetProject', 'saveCollapsedPanels', 'loadConversationGroups', 'saveConversationGroups',
-      'loadAppState', 'saveOpenTabs', 'saveCollapsedRepos', 'saveSessionSort', 'saveSidebarWidth', 'saveUnreadSessionIds',
+      'loadOpenTabs', 'saveOpenTabs', 'loadCollapsedRepos', 'saveCollapsedRepos', 'loadSessionSort', 'saveSessionSort',
+      'loadSidebarWidth', 'saveSidebarWidth', 'loadCollapsedPanels', 'saveUnreadSessionIds',
       'loadUnreadSessionIds', 'loadTodoSessionIds', 'saveTodoSessionIds', 'flushPendingSaves', 'loadPrerequisiteCache', 'savePrerequisiteCache',
     ),
     prerequisites: fns('apiKeyState', 'checkCorePrerequisites', 'checkGh'),
@@ -1393,6 +1394,19 @@ describe('renderer input checks', () => {
     await invoke(IPC.OPEN_EXTERNAL, 'https://example.com');
     expect(shell.openExternal).toHaveBeenCalledTimes(1);
     expect(shell.openExternal).toHaveBeenCalledWith('https://example.com');
+  });
+
+  it('app state: each getter reads only its own field', () => {
+    m.appState.loadOpenTabs.mockReturnValue(['t']);
+    m.appState.loadCollapsedRepos.mockReturnValue({ '/r': true });
+    m.appState.loadSessionSort.mockReturnValue({ key: 'age', dir: 'desc' });
+    m.appState.loadSidebarWidth.mockReturnValue(240);
+    m.appState.loadCollapsedPanels.mockReturnValue({ sidebar: true });
+    expect(invoke(IPC.APP_STATE_GET_OPEN_TABS)).toEqual(['t']);
+    expect(invoke(IPC.APP_STATE_GET_COLLAPSED_REPOS)).toEqual({ '/r': true });
+    expect(invoke(IPC.APP_STATE_GET_SESSION_SORT)).toEqual({ key: 'age', dir: 'desc' });
+    expect(invoke(IPC.APP_STATE_GET_SIDEBAR_WIDTH)).toBe(240);
+    expect(invoke(IPC.APP_STATE_GET_COLLAPSED_PANELS)).toEqual({ sidebar: true });
   });
 
   it('app state: To do flags go to app-state, which checks them', () => {

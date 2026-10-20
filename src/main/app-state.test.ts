@@ -46,8 +46,10 @@ vi.mock('./logger.js', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
+import { logger } from './logger.js';
 import {
   loadAppState, saveOpenTabs, saveUnreadSessionIds, loadUnreadSessionIds, saveSessionSort,
+  loadOpenTabs, loadCollapsedRepos, loadSessionSort, loadSidebarWidth, loadCollapsedPanels,
   saveKnownSkills, loadKnownSkills, saveCollapsedPanels, flushPendingSaves, validateAppState, upgradeAppState, APP_STATE_SCHEMA_VERSION,
   loadPrerequisiteCache, loadModelCatalog, saveModelCatalog, loadUsageSnapshot, saveUsageSnapshot,
   loadSkillSuggestionCache, saveSkillSuggestionCache,
@@ -187,6 +189,39 @@ describe('loadAppState', () => {
   });
 });
 
+describe('field loads', () => {
+  it('copy only the field they return', () => {
+    useDisk({
+      schemaVersion: V, openTabIds: ['a'], collapsedRepos: { '/r': true }, sessionSort: { key: 'age', dir: 'desc' },
+      sidebarWidth: 300, collapsedPanels: { sidebar: true },
+      skillSuggestions: { '/r': { suggestions: [], dismissedIds: ['d'], analyzedAt: 1 } },
+    });
+    loadAppState(); // the read
+    const cloned = vi.spyOn(globalThis, 'structuredClone');
+    const tabs = loadOpenTabs();
+    expect(tabs).toEqual(['a']);
+    expect(loadCollapsedRepos()).toEqual({ '/r': true });
+    expect(loadSessionSort()).toEqual({ key: 'age', dir: 'desc' });
+    expect(loadSidebarWidth()).toBe(300);
+    expect(loadCollapsedPanels()).toEqual({ sidebar: true });
+    expect(cloned.mock.calls.map(([value]) => value)).toEqual([['a'], { '/r': true }, { key: 'age', dir: 'desc' }, 300, { sidebar: true }]);
+    cloned.mockRestore();
+
+    tabs.push('b');
+    expect(loadOpenTabs()).toEqual(['a']);
+  });
+
+  it('give the defaults while the file can\'t be read', () => {
+    useDisk({ schemaVersion: V, openTabIds: ['a'], collapsedRepos: { '/r': true }, sidebarWidth: 300, collapsedPanels: { sidebar: true } });
+    lockReads();
+    expect(loadOpenTabs()).toEqual([]);
+    expect(loadCollapsedRepos()).toEqual({});
+    expect(loadSessionSort()).toEqual({ key: 'name', dir: 'asc' });
+    expect(loadSidebarWidth()).toBeNull();
+    expect(loadCollapsedPanels()).toEqual({});
+  });
+});
+
 describe('validateAppState', () => {
   it('resets only the corrupt fields', () => {
     const s = validateAppState({
@@ -249,11 +284,14 @@ describe('saving', () => {
     expect(strays()).toEqual([]);
   });
 
-  it('saves the write-through fields straight away, merged into the file', async () => {
+  it('writes the rare fields before returning, merged into the file, with changes waiting to be saved', async () => {
     const file = useDisk({ schemaVersion: V, knownSkills: { '/a': ['x'] } });
+    saveOpenTabs(['t']);
     saveKnownSkills('/b', ['y']);
-    await appStateSaved();
-    expect(file.get().knownSkills).toEqual({ '/a': ['x'], '/b': ['y'] });
+    expect(file.get()).toMatchObject({ openTabIds: ['t'], knownSkills: { '/a': ['x'], '/b': ['y'] } });
+    expect(syncWrites()).toBe(1);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(asyncWrites()).toBe(0);
   });
 
   it('round-trips unread session ids', async () => {
@@ -300,12 +338,13 @@ describe('overlapping saves', () => {
   it('runs one write at a time; changes made during one go out in the next, the latest winning', async () => {
     const file = useDisk({ schemaVersion: V, openTabIds: ['keep'] });
     const release = holdNext(promises.writeFile);
-    saveKnownSkills('/a', ['1']);
+    saveUnreadSessionIds(['1']);
+    vi.advanceTimersByTime(500);
     await drain();
     expect(asyncWrites()).toBe(1);
 
-    saveKnownSkills('/a', ['2']);
-    saveKnownSkills('/b', ['3']);
+    saveUnreadSessionIds(['2']);
+    saveTodoSessionIds(['3']);
     saveOpenTabs(['t']);
     vi.advanceTimersByTime(500);
     await drain();
@@ -314,11 +353,28 @@ describe('overlapping saves', () => {
     release();
     await appStateSaved();
     expect(asyncWrites()).toBe(2);
-    expect(disk.landed.map((text) => JSON.parse(text).knownSkills)).toEqual([
-      { '/a': ['1'] },
-      { '/a': ['2'], '/b': ['3'] },
-    ]);
-    expect(file.get()).toMatchObject({ openTabIds: ['t'], knownSkills: { '/a': ['2'], '/b': ['3'] } });
+    expect(disk.landed.map((text) => JSON.parse(text).unreadSessionIds)).toEqual([['1'], ['2']]);
+    expect(file.get()).toMatchObject({ openTabIds: ['t'], unreadSessionIds: ['2'], todoSessionIds: ['3'] });
+    expect(strays()).toEqual([]);
+  });
+
+  it('a rare save cancels a background write whose rename is on its way, so it can\'t land after', async () => {
+    const file = useDisk({ schemaVersion: V });
+    loadAppState();
+    const release = holdNext(promises.rename);
+    saveOpenTabs(['old']);
+    vi.advanceTimersByTime(500);
+    await drain();
+    expect(promises.rename).toHaveBeenCalledTimes(1);
+
+    saveOpenTabs(['new']);
+    rememberProject('/p');
+    expect(file.get()).toMatchObject({ openTabIds: ['new'], projects: ['/p'] });
+
+    release();
+    await appStateSaved();
+    expect(disk.landed.map((text) => JSON.parse(text).openTabIds)).toEqual([['new']]);
+    expect(file.get()).toMatchObject({ openTabIds: ['new'], projects: ['/p'] });
     expect(strays()).toEqual([]);
   });
 
@@ -398,39 +454,184 @@ describe('a write that fails', () => {
       disk.files.set(p, data.slice(0, 10));
       throw disk.error('ENOSPC', p);
     });
-    saveKnownSkills('/a', ['x']);
+    saveUnreadSessionIds(['x']);
+    vi.advanceTimersByTime(500);
     await appStateSaved();
     expect(file.get()).toEqual({ schemaVersion: V, openTabIds: ['keep'] });
     expect(strays()).toEqual([]);
-    expect(loadKnownSkills('/a')).toEqual(['x']);
+    expect(loadUnreadSessionIds()).toEqual(['x']);
 
     await vi.advanceTimersByTimeAsync(5_000);
     await appStateSaved();
-    expect(file.get()).toMatchObject({ openTabIds: ['keep'], knownSkills: { '/a': ['x'] } });
+    expect(file.get()).toMatchObject({ openTabIds: ['keep'], unreadSessionIds: ['x'] });
   });
 
-  it('cleans up after a failed rename, and a flush then saves the change', async () => {
+  it('cleans up after a failed rename, and a flush then saves the change and ends the backoff', async () => {
     const file = useDisk({ schemaVersion: V });
     promises.rename.mockImplementationOnce(async () => { throw disk.error('EXDEV', FILE); });
-    saveKnownSkills('/a', ['x']);
+    saveUnreadSessionIds(['x']);
+    vi.advanceTimersByTime(500);
     await appStateSaved();
-    expect(file.get().knownSkills).toBeUndefined();
+    expect(file.get().unreadSessionIds).toBeUndefined();
     expect(strays()).toEqual([]);
 
     flushPendingSaves();
-    expect(file.get().knownSkills).toEqual({ '/a': ['x'] });
+    expect(file.get().unreadSessionIds).toEqual(['x']);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(asyncWrites()).toBe(1); // no try left waiting
   });
 
   it('rides out a locked rename with timers, not by blocking', async () => {
     const file = useDisk({ schemaVersion: V });
     promises.rename.mockImplementationOnce(async () => { throw lockError(); });
-    saveKnownSkills('/a', ['x']);
+    saveUnreadSessionIds(['x']);
+    vi.advanceTimersByTime(500);
     await drain();
-    expect(file.get().knownSkills).toBeUndefined();
+    expect(file.get().unreadSessionIds).toBeUndefined();
     await vi.advanceTimersByTimeAsync(50);
     await appStateSaved();
-    expect(file.get().knownSkills).toEqual({ '/a': ['x'] });
+    expect(file.get().unreadSessionIds).toEqual(['x']);
     expect(sync.renameSync).not.toHaveBeenCalled();
+  });
+});
+
+describe('backing off', () => {
+  const noSpace = (p: string) => disk.error('ENOSPC', p);
+
+  /** Fail every background write until the returned function. */
+  function failWrites(): () => void {
+    const write = promises.writeFile.getMockImplementation()!;
+    promises.writeFile.mockImplementation(async (p: string) => { throw noSpace(p); });
+    return () => promises.writeFile.mockImplementation(write);
+  }
+
+  /** Save once and fail: the next try waits 5 s. */
+  async function failOnce() {
+    useDisk({ schemaVersion: V });
+    loadAppState();
+    const restore = failWrites();
+    saveOpenTabs(['1']);
+    await vi.advanceTimersByTimeAsync(500);
+    await drain();
+    expect(asyncWrites()).toBe(1);
+    return restore;
+  }
+
+  it('tries a disk that keeps failing at the backoff\'s pace, saving changes made meanwhile with the next try', async () => {
+    const restore = await failOnce(); // t = 500, next try at 5.5 s
+    vi.mocked(logger.warn).mockClear();
+
+    // Changes due within 500 ms wait for the next try, adding none.
+    saveOpenTabs(['2']);
+    saveUnreadSessionIds(['u']);
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(asyncWrites()).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await drain();
+    expect(asyncWrites()).toBe(2); // failed again: next try 10 s later, at 15.5 s
+
+    saveOpenTabs(['3']);
+    await vi.advanceTimersByTimeAsync(5_000);
+    saveOpenTabs(['4']);
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(asyncWrites()).toBe(2);
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+
+    restore();
+    await vi.advanceTimersByTimeAsync(1);
+    await appStateSaved();
+    expect(asyncWrites()).toBe(3);
+    expect(disk.landed.map((text) => JSON.parse(text))).toEqual([
+      expect.objectContaining({ openTabIds: ['4'], unreadSessionIds: ['u'] }),
+    ]);
+
+    // That worked, so changes are saved within 500 ms again.
+    saveOpenTabs(['5']);
+    await vi.advanceTimersByTimeAsync(500);
+    await appStateSaved();
+    expect(asyncWrites()).toBe(4);
+    expect(JSON.parse(disk.landed.at(-1)!).openTabIds).toEqual(['5']);
+  });
+
+  it('a rare save while backing off still tries, and one that works saves every change and ends the backoff', async () => {
+    const restore = await failOnce();
+    saveOpenTabs(['2']);
+    rememberProject('/p');
+    expect(syncWrites()).toBe(1);
+    expect(disk.landed.map((text) => JSON.parse(text))).toEqual([
+      expect.objectContaining({ openTabIds: ['2'], projects: ['/p'] }),
+    ]);
+
+    // The try that was waiting is gone.
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(asyncWrites()).toBe(1);
+
+    restore();
+    saveOpenTabs(['3']);
+    await vi.advanceTimersByTimeAsync(500);
+    await appStateSaved();
+    expect(asyncWrites()).toBe(2);
+    expect(JSON.parse(disk.landed.at(-1)!).openTabIds).toEqual(['3']);
+  });
+
+  it('a rare save that fails while backing off adds no background try', async () => {
+    const restore = await failOnce(); // next try at 5.5 s
+    sync.writeFileSync.mockImplementation((p: string) => { throw noSpace(p); });
+    rememberProject('/p');
+    expect(syncWrites()).toBe(1);
+    expect(disk.landed).toEqual([]);
+
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(asyncWrites()).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await drain();
+    expect(asyncWrites()).toBe(2); // the try that was waiting, on time
+
+    restore();
+    await vi.advanceTimersByTimeAsync(60_000);
+    await appStateSaved();
+    expect(disk.landed.map((text) => JSON.parse(text))).toEqual([
+      expect.objectContaining({ openTabIds: ['1'], projects: ['/p'] }),
+    ]);
+  });
+
+  it('a rare save that fails stops the background write on its way, which then waits out the backoff too', async () => {
+    const file = useDisk({ schemaVersion: V });
+    loadAppState();
+    const release = holdNext(promises.rename);
+    saveOpenTabs(['1']);
+    await vi.advanceTimersByTimeAsync(500);
+    await drain();
+    expect(promises.rename).toHaveBeenCalledTimes(1);
+
+    sync.writeFileSync.mockImplementationOnce((p: string) => { throw noSpace(p); });
+    rememberProject('/p'); // next try in 5 s
+    release();
+    await appStateSaved();
+    expect(disk.landed).toEqual([]);
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(asyncWrites()).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await appStateSaved();
+    expect(asyncWrites()).toBe(2);
+    expect(file.get()).toMatchObject({ openTabIds: ['1'], projects: ['/p'] });
+    expect(strays()).toEqual([]);
+  });
+
+  it('a rare save that fails starts the backoff', async () => {
+    const file = useDisk({ schemaVersion: V });
+    loadAppState();
+    sync.writeFileSync.mockImplementationOnce((p: string) => { throw noSpace(p); });
+    rememberProject('/p');
+    expect(file.get().projects).toBeUndefined();
+    saveOpenTabs(['t']);
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(asyncWrites()).toBe(0);
+    await vi.advanceTimersByTimeAsync(1);
+    await appStateSaved();
+    expect(asyncWrites()).toBe(1);
+    expect(file.get()).toMatchObject({ openTabIds: ['t'], projects: ['/p'] });
   });
 });
 
@@ -487,6 +688,8 @@ describe('projects', () => {
   it('keeps a project with no conversations across a restart', async () => {
     const file = useDisk({ projects: [] });
     rememberProject('C:\\notes');
+    // In the file before it returns, so a crash right after can't lose it.
+    expect(file.get().projects).toEqual(['C:\\notes']);
     await appStateSaved();
     resetAppStateForTests();
     // At the next launch the manifest knows nothing about it.
@@ -499,15 +702,14 @@ describe('projects', () => {
     expect(mergeProjects(undefined, ['/a', '/b'])).toEqual(['/a', '/b']);
   });
 
-  it('starts the list from the manifest the first time, keeping its order', async () => {
+  it('starts the list from the manifest the first time, keeping its order', () => {
     const file = useDisk({});
     expect(listProjects(['/a', '/b'])).toEqual(['/a', '/b']);
-    await appStateSaved();
     expect(file.get().projects).toEqual(['/a', '/b']);
     rememberProject('/c');
     rememberProject('/a');
-    await appStateSaved();
     expect(file.get().projects).toEqual(['/a', '/b', '/c']);
+    expect(asyncWrites()).toBe(0);
   });
 
   it('merges a list made while the file was locked with the file\'s, once it can be read', async () => {
@@ -521,10 +723,9 @@ describe('projects', () => {
     expect(file.get().projects).toEqual(['/kept', '/m']);
   });
 
-  it('forgets a removed project', async () => {
+  it('forgets a removed project', () => {
     const file = useDisk({ projects: ['/a', '/b'] });
     forgetProject('/a');
-    await appStateSaved();
     expect(file.get().projects).toEqual(['/b']);
     expect(listProjects([])).toEqual(['/b']);
   });
