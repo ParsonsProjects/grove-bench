@@ -48,15 +48,22 @@ function parseNumstat(output: string): DiffStats {
 /** The worktree's own index file: `.git/index` in a main checkout, or the
  *  `index` in the gitdir a linked worktree's `.git` file points to. Null when
  *  it can't be found. */
-function realIndexPath(cwd: string): string | null {
+async function realIndexPath(cwd: string): Promise<string | null> {
   try {
     const dotGit = path.join(cwd, '.git');
-    if (fs.statSync(dotGit).isDirectory()) return path.join(dotGit, 'index');
-    const gitdir = fs.readFileSync(dotGit, 'utf-8').match(/^gitdir:\s*(.+?)\s*$/m)?.[1];
+    if ((await fs.promises.stat(dotGit)).isDirectory()) return path.join(dotGit, 'index');
+    const gitdir = (await fs.promises.readFile(dotGit, 'utf-8')).match(/^gitdir:\s*(.+?)\s*$/m)?.[1];
     return gitdir ? path.join(path.resolve(cwd, gitdir), 'index') : null;
   } catch {
     return null;
   }
+}
+
+/** Delete a temp file, if it's there. Off the main process: creating and
+ *  deleting files in the temp folder, which an antivirus watches, can take
+ *  hundreds of ms, and checkpoints are taken every turn. */
+async function removeTemp(file: string): Promise<void> {
+  try { await fs.promises.rm(file, { force: true }); } catch { /* ignore */ }
 }
 
 interface CheckpointRef {
@@ -191,7 +198,7 @@ export class CheckpointManager {
       const msgFile = path.join(os.tmpdir(), `grove-msg-${sessionId}-${turn}-${Date.now()}`);
       let commitOid: string;
       try {
-        fs.writeFileSync(msgFile, commitMsg);
+        await fs.promises.writeFile(msgFile, commitMsg);
         // commit-tree refuses to run without an author identity. Checkpoint
         // commits are internal (never on a branch), so a fixed identity keeps
         // captures working on machines where user.name/email are not set.
@@ -199,7 +206,7 @@ export class CheckpointManager {
           ['commit-tree', treeOid, '-F', msgFile], cwd, CHECKPOINT_IDENTITY_ENV
         )).trim();
       } finally {
-        try { fs.rmSync(msgFile, { force: true }); } catch { /* ignore */ }
+        await removeTemp(msgFile);
       }
 
       // Store the ref
@@ -210,7 +217,7 @@ export class CheckpointManager {
       return true;
     } finally {
       // Always clean up temp index
-      try { fs.rmSync(tmpIndex, { force: true }); } catch { /* ignore */ }
+      await removeTemp(tmpIndex);
     }
   }
 
@@ -229,15 +236,15 @@ export class CheckpointManager {
    */
   private async snapshotTree(sessionId: string, cwd: string, tmpIndex: string): Promise<string> {
     const env = { GIT_INDEX_FILE: tmpIndex };
-    const realIndex = realIndexPath(cwd);
+    const realIndex = await realIndexPath(cwd);
     if (realIndex) {
       try {
-        fs.copyFileSync(realIndex, tmpIndex);
+        await fs.promises.copyFile(realIndex, tmpIndex);
         await gitEnv(['add', '-A'], cwd, env);
         return (await gitEnv(['write-tree'], cwd, env)).trim();
       } catch (err) {
         logger.debug(`[checkpoints] snapshot from the worktree index failed session=${sessionId}, reading HEAD instead:`, err);
-        try { fs.rmSync(tmpIndex, { force: true }); } catch { /* ignore */ }
+        await removeTemp(tmpIndex);
       }
     }
     try {
@@ -346,7 +353,7 @@ export class CheckpointManager {
       this.workingTreeMemo.set(sessionId, { oid, at: Date.now() });
       return oid;
     } finally {
-      try { fs.rmSync(tmpIndex, { force: true }); } catch { /* ignore */ }
+      await removeTemp(tmpIndex);
     }
   }
 

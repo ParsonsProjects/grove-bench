@@ -36,7 +36,7 @@ src/
     credentials.ts     # Encrypted API key storage (safeStorage)
     logger.ts          # File-based logging
     rotating-log.ts    # Size-rotated log file (app log and performance.log share it)
-    freeze-log.ts      # Main-process stalls, slow window frames (100 ms+), process launches, timed work, GC pauses
+    freeze-log.ts      # Main-process stalls, slow window frames (100 ms+), process launches, timed work, GC pauses, agent output, process CPU
     perf-*.ts          # performance.log, step timings (new/resume/wake), health line, traces
     git-status-parser.ts
     preview.ts         # Preview tab: your page (WebContentsView) + the agent's (offscreen)

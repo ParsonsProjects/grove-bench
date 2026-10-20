@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { COLLAPSIBLE_PANELS, type CollapsedPanels, type ConversationGroup, type PrerequisiteStatus, type ProviderUsage, type SessionSortState, type SkillSuggestion } from '../shared/types.js';
 import { migrateRaw, stampSchemaVersion, type Migration } from './persisted-state.js';
 import { readJsonFile, writeFileAtomicSync } from './json-file.js';
+import { freezeLog } from './freeze-log.js';
 
 export interface PrerequisiteCache {
   status: PrerequisiteStatus;
@@ -231,14 +232,19 @@ export function loadAppState(): AppState {
 
 /** Read-modify-write the state file. Skipped when the file can't be read, so
  *  a passing lock doesn't replace everything in it with defaults. Write
- *  errors are ignored (best-effort persistence, same as before versioning). */
+ *  errors are ignored (best-effort persistence, same as before versioning).
+ *  It reads and writes on the main process, and some saves follow agent
+ *  events (plan usage on rate-limit events, today's spend on each result),
+ *  so the freeze log names it. */
 function updateAppState(mutate: (state: AppState) => void): void {
-  try {
-    const state = readAppState();
-    if (!state) return;
-    mutate(state);
-    writeAppState(state);
-  } catch { /* ignore */ }
+  freezeLog.timeWork('app state save', () => {
+    try {
+      const state = readAppState();
+      if (!state) return;
+      mutate(state);
+      writeAppState(state);
+    } catch { /* ignore */ }
+  });
 }
 
 // ─── Debounced writers ───
