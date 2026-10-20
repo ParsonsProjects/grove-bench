@@ -151,8 +151,9 @@ describe('backgroundTaskStore', () => {
     backgroundTaskStore.destroy(SID);
     expect(backgroundTaskStore.get(SID)).toEqual([]);
     expect(backgroundTaskStore.tasksBySession[SID]).toBeUndefined();
-    // Advancing time must not throw or resurrect state via a leaked timer.
+    // A leaked timer would remove a new task that reuses the id.
+    backgroundTaskStore.start(SID, { type: 'task_started', taskId: 't1', description: 'again' } as any);
     vi.advanceTimersByTime(3000);
-    expect(backgroundTaskStore.tasksBySession[SID]).toBeUndefined();
+    expect(backgroundTaskStore.get(SID).map((t) => t.description)).toEqual(['again']);
   });
 });

@@ -507,20 +507,14 @@ describe('remove', () => {
     expect(savedManifest).not.toHaveProperty('wt-a');
     expect(savedManifest).not.toHaveProperty('wt-b');
 
-    // Verify serialization: all operations for one worktree should finish
-    // before the other starts (worktree remove calls should not interleave)
-    const worktreeRemoveStarts = callOrder
+    // Verify serialization: the second worktree remove starts only after the
+    // first has ended (either order is fine, but they must not overlap)
+    const [first, second] = callOrder
       .filter((e) => e.startsWith('start:worktree:'))
-      .map((e) => e.split(':')[2]);
-    const worktreeRemoveEnds = callOrder
-      .filter((e) => e.startsWith('end:worktree:'))
-      .map((e) => e.split(':')[2]);
-
-    // The first remove should end before the second starts
-    // (both entries exist, so order is either a-then-b or b-then-a)
-    const firstStarted = worktreeRemoveStarts[0];
-    const firstEnded = worktreeRemoveEnds[0];
-    expect(firstStarted).toBe(firstEnded); // same worktree starts and ends first
+      .map((e) => e.slice('start:worktree:'.length)); // a Windows path has its own ':'
+    expect(second).toBeDefined();
+    expect(callOrder.indexOf(`start:worktree:${second}`))
+      .toBeGreaterThan(callOrder.indexOf(`end:worktree:${first}`));
   });
 
   it('cleans up empty repoHash directory', async () => {

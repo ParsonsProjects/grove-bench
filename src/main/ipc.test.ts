@@ -1506,6 +1506,14 @@ describe('adapters, skills and MCP config', () => {
     expect(await invoke(IPC.PLUGIN_LIST)).toEqual({ installed: [{ id: 'p' }], available: [] });
   });
 
+  it('lists no plugins for an agent without them, and refuses to install one', async () => {
+    const listPlugins = vi.fn();
+    m.adapterRegistry.get.mockReturnValue({ id: 'gemini-cli', capabilities: { plugins: false }, listPlugins });
+    expect(await invoke(IPC.PLUGIN_LIST, 'gemini-cli')).toEqual({ installed: [], available: [] });
+    expect(listPlugins).not.toHaveBeenCalled();
+    await expect(invoke(IPC.PLUGIN_INSTALL, 'p', 'user', 'gemini-cli')).rejects.toThrow('Adapter "gemini-cli" does not support plugins');
+  });
+
   it('MCP_CONFIG_APPROVE approves a server for the project and all its worktrees', async () => {
     const approveProjectMcpServer = vi.fn();
     m.adapterRegistry.getDefault.mockReturnValue({ id: 'claude', approveProjectMcpServer });

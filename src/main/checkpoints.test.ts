@@ -94,11 +94,12 @@ describe('CheckpointManager', () => {
     });
 
     it('serializes concurrent captures via queue', async () => {
-      const callOrder: number[] = [];
-      let captureCount = 0;
-
+      // Hold the first capture on its first git step, so a second capture
+      // that didn't wait its turn would start in the meantime.
+      let release!: () => void;
+      const gate = new Promise<void>((r) => { release = r; });
       mockGitEnv.mockImplementation(async () => {
-        callOrder.push(++captureCount);
+        if (mockGitEnv.mock.calls.length === 1) await gate;
         return '';
       });
       mockGit.mockResolvedValue('oid');
@@ -107,10 +108,13 @@ describe('CheckpointManager', () => {
       // Fire two captures concurrently
       const p1 = mgr.capture('sess1', '/repo', 'uuid-1');
       const p2 = mgr.capture('sess1', '/repo', 'uuid-2');
-      await Promise.all([p1, p2]);
+      await new Promise((r) => setTimeout(r, 10));
+      expect(mockGitEnv).toHaveBeenCalledTimes(1);
 
-      // Both should complete (all gitEnv calls executed)
-      expect(mockGitEnv).toHaveBeenCalled();
+      release();
+      expect(await Promise.all([p1, p2])).toEqual([true, true]);
+      const refs = mockGit.mock.calls.filter(([args]) => args[0] === 'update-ref').map(([args]) => args[1]);
+      expect(refs).toEqual(['refs/grove/checkpoints/sess1/turn/1', 'refs/grove/checkpoints/sess1/turn/2']);
     });
 
     it('resolves true when the ref was written and false when the capture failed', async () => {

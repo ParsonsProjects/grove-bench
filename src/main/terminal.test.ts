@@ -127,8 +127,9 @@ describe('TerminalManager', () => {
     });
 
     it('write to non-existent session is a no-op', () => {
+      tm.spawnPty('s1', '/tmp', sender);
       tm.write('nope', 'hello');
-      expect(spawnedPtys).toHaveLength(0);
+      expect(ptyAt(0).write).not.toHaveBeenCalled();
     });
 
     it('resize forwards to pty', () => {
