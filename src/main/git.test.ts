@@ -518,8 +518,9 @@ describe('synthesizeUntrackedDiff()', () => {
   it('does not count the final newline as another line', () => {
     expect(synthesizeUntrackedDiff('new.ts', 'hi\n')).toBe('--- /dev/null\n+++ b/new.ts\n@@ -0,0 +1,1 @@\n+hi');
     expect(synthesizeUntrackedDiff('two.ts', 'a\nb\n')).toBe('--- /dev/null\n+++ b/two.ts\n@@ -0,0 +1,2 @@\n+a\n+b');
-    // A file holding one empty line still shows that line
+    // A file holding one empty line still shows that line; an empty file shows none
     expect(synthesizeUntrackedDiff('blank.txt', '\n')).toBe('--- /dev/null\n+++ b/blank.txt\n@@ -0,0 +1,1 @@\n+');
+    expect(synthesizeUntrackedDiff('empty.txt', '')).toBe('');
   });
 });
 

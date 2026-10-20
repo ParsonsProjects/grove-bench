@@ -23,13 +23,16 @@ function write(dir: string, rel: string, data: Buffer | string): string {
 /** Reported as skipped, not passed, where these checks can't run. */
 const NO_SYMLINKS = 'this machine cannot make symlinks';
 
-/** A symlink, or null where the OS won't make one (Windows without rights). */
+/** A symlink, or false where the OS won't make one (Windows without rights).
+ *  Any other error is a broken fixture, so it fails the test. */
 function trySymlink(target: string, at: string): boolean {
   try {
     fs.symlinkSync(target, at);
     return true;
-  } catch {
-    return false;
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code === 'EPERM' || code === 'EACCES') return false;
+    throw e;
   }
 }
 

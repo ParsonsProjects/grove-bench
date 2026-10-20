@@ -1517,6 +1517,23 @@ describe('adapters, skills and MCP config', () => {
     await expect(invoke(IPC.PLUGIN_INSTALL, 'p', 'user', 'gemini-cli')).rejects.toThrow('Adapter "gemini-cli" does not support plugins');
   });
 
+  it('passes plugin installs and changes to the built-in agent', async () => {
+    const agent = {
+      id: 'claude-code', capabilities: { plugins: true },
+      installPlugin: vi.fn(), uninstallPlugin: vi.fn(), enablePlugin: vi.fn(), disablePlugin: vi.fn(),
+    };
+    m.adapterRegistry.getBuiltInDefault.mockReturnValue(agent);
+    await invoke(IPC.PLUGIN_INSTALL, 'p', 'project');
+    await invoke(IPC.PLUGIN_INSTALL, 'q');
+    await invoke(IPC.PLUGIN_UNINSTALL, 'p');
+    await invoke(IPC.PLUGIN_ENABLE, 'p');
+    await invoke(IPC.PLUGIN_DISABLE, 'p');
+    expect(agent.installPlugin.mock.calls).toEqual([['p', 'project'], ['q', 'user']]);
+    expect(agent.uninstallPlugin).toHaveBeenCalledWith('p');
+    expect(agent.enablePlugin).toHaveBeenCalledWith('p');
+    expect(agent.disablePlugin).toHaveBeenCalledWith('p');
+  });
+
   it('MCP_CONFIG_APPROVE approves a server for the project and all its worktrees', async () => {
     const approveProjectMcpServer = vi.fn();
     m.adapterRegistry.getDefault.mockReturnValue({ id: 'claude', approveProjectMcpServer });

@@ -102,10 +102,10 @@ describe('TerminalManager', () => {
     });
 
     it('kill on non-existent session is a no-op', async () => {
+      tm.spawnPty('s1', '/tmp', sender);
       await tm.killPty('nope');
       expect(killDescendants).not.toHaveBeenCalled();
-      // No PTY was spawned, nothing to call kill on
-      expect(spawnedPtys).toHaveLength(0);
+      expect(ptyAt(0).kill).not.toHaveBeenCalled();
     });
 
     it('killAll kills all sessions', async () => {

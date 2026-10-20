@@ -37,8 +37,7 @@ describe('generateSessionFilename', () => {
 
   it('truncates long branch names', () => {
     const longBranch = 'feature/' + 'a'.repeat(100);
-    const result = generateSessionFilename('hhh', longBranch);
-    expect(result.length).toBeLessThanOrEqual('sessions/'.length + 60 + '.md'.length);
+    expect(generateSessionFilename('hhh', longBranch)).toBe(`sessions/${'a'.repeat(60)}.md`);
   });
 
   it('handles nested prefixes (e.g. feature/JIRA-123/description)', () => {
