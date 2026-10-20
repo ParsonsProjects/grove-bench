@@ -160,9 +160,11 @@ describe('Catalogs', () => {
     const [opencode] = parseRegistry({ agents: [OPENCODE] });
     const catalogs = make();
     expect(await catalogs.icon(opencode, { download: false })).toBeNull();
-    expect(await catalogs.icon(opencode)).toBe(svgDataUrl(svg));
+    const url = await catalogs.icon(opencode);
+    expect(url).toMatch(/^data:image\/svg\+xml;base64,/);
+    expect(Buffer.from(url!.slice(url!.indexOf(',') + 1), 'base64').toString('utf8')).toBe(svg);
     // Once fetched it is on disk, so it shows with online lookups off too.
-    expect(await catalogs.icon(opencode, { download: false })).toBe(svgDataUrl(svg));
+    expect(await catalogs.icon(opencode, { download: false })).toBe(url);
     expect(await catalogs.icon({ ...opencode, icon: 'https://evil.example/x.svg' })).toBeNull();
     expect(svgDataUrl('<html><script>alert(1)</script></html>')).toBeNull();
     expect(svgDataUrl(`<svg>${'x'.repeat(40_000)}</svg>`)).toBeNull();

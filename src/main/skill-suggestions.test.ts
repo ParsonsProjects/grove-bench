@@ -12,7 +12,6 @@ import {
   clusterPrompts,
   findPatterns,
   suggestionFromPattern,
-  suggestionId,
   filterCovered,
   parseDistilled,
   distillSuggestions,
@@ -121,8 +120,9 @@ describe('suggestionFromPattern', () => {
       occurrences: 6,
       examples: ['Update the changelog with merged PRs'],
     });
-    expect(suggestion.name).toMatch(/^[a-z0-9][a-z0-9-]*$/);
-    expect(suggestion.id).toBe(suggestionId('Update the changelog with merged PRs'));
+    expect(suggestion.name).toBe('update-changelog-merged');
+    // Saved dismissals hold this id, so it must stay the same between versions
+    expect(suggestion.id).toBe('d16e9436');
     expect(suggestion.rationale).toContain('4 threads');
   });
 });
@@ -172,7 +172,7 @@ describe('distillSuggestions', () => {
     expect(result).toHaveLength(1);
     expect(result![0]).toMatchObject({
       name: 'dist-build',
-      id: suggestionId('npm run dist'),
+      id: '6893d559', // the id of the pattern's label, 'npm run dist'
       evidence: ['npm run dist'],
       sessionCount: 3,
     });
