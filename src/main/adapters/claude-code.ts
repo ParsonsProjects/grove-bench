@@ -100,7 +100,7 @@ export function spawnClaudeCodeProcess(
     child.once('exit', () => signal.removeEventListener('abort', abort));
   }
   if (onStderr) {
-    child.stderr.on('data', (d: Buffer) => onStderr(d.toString()));
+    child.stderr.on('data', (d: string) => onStderr(d));
   } else {
     // Unread, it would pile up in memory for the life of the process.
     child.stderr.resume();
@@ -1906,6 +1906,10 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     async function* eventGenerator(): AsyncGenerator<AdapterEvent> {
       for await (const message of q) {
         if (abortController.signal.aborted) break;
+
+        // A subagent's token stream makes no events (see transformMessage):
+        // skip it before any other work. The SDK has parsed it already.
+        if (message.type === 'stream_event' && message.parent_tool_use_id) continue;
 
         // Capture session ID from system_init
         if (message.type === 'system' && message.subtype === 'init') {

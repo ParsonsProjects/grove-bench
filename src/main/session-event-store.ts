@@ -7,7 +7,7 @@ import { app } from 'electron';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { AgentEvent } from '../shared/types.js';
-import { freezeLog } from './freeze-log.js';
+import { formatBytes, freezeLog } from './freeze-log.js';
 import { logger } from './logger.js';
 import { perfLine } from './perf-log.js';
 import { SearchIndexCache, type EventSearchIndex, type EventSearchHit } from './event-search.js';
@@ -25,10 +25,24 @@ const EVENT_LOG_FLUSH_BYTES = 64 * 1024;
  *  running an antivirus, with the window frozen all that time. */
 export const SLOW_EVENT_LOG_WRITE_MS = 1_000;
 
-/** Parsed on-disk histories for sessions that are not running, keyed by id.
- *  Bounded so old sessions don't pin memory forever. Search doesn't rely on
- *  it: see SEARCH_INDEX_BUDGET. */
-const HISTORY_CACHE_MAX = 12;
+/**
+ * Bytes of event log (size on disk) whose parsed histories are kept for
+ * threads that are not running, least recently used dropped first. A thread
+ * is read several times in a row: its sidebar preview, its pane's first page,
+ * its items and usage, then its resume. Each read that misses parses the
+ * whole log on the main process, about 10 ms per MB with the window frozen.
+ *
+ * Parsed events take about 1 to 1.3 times their log's size in the heap (up to
+ * twice that for text outside Latin-1). 48 MB holds every open thread's log
+ * for someone with 18 to 27 open (15 to 30 MB in all, one of them 18 MB, in
+ * one user's performance logs), so those reads parse each log once, and it
+ * caps what the cache can pin: the count cap it replaces (12) thrashed with
+ * more threads open than that, yet let a dozen big logs pin hundreds of MB.
+ * The last log read that is bigger than the whole budget is kept outside it,
+ * on its own (see cacheHistory). Search doesn't rely on this cache: see
+ * SEARCH_INDEX_BUDGET.
+ */
+const HISTORY_CACHE_BUDGET = 48 * 1024 * 1024;
 
 /** Chars of searchable event text kept across all conversations (about one
  *  byte each for ASCII text), so the session finder's search doesn't re-parse
@@ -43,20 +57,32 @@ export const eventLogPath = (id: string) => path.join(getEventsDir(), `${id}.jso
  *  folder named after it can't reach outside its folder. */
 export const isThreadId = (id: unknown): id is string => typeof id === 'string' && /^[\w-]+$/.test(id);
 
-/** A size for the freeze log, which names event-log reads and writes. */
-const kb = (bytes: number) => `${Math.round(bytes / 1024)} KB`;
-
 /** The parts of a live session the store reads and writes. */
 type LoggedSession = Pick<ManagedSession, 'id' | 'eventHistory' | 'eventLogPath' | 'logBuffer' | 'logBufferBytes' | 'logFlushTimer'>;
 
+/** A stopped thread's parsed log, valid while the file's mtime and size match. */
+interface CachedHistory {
+  mtimeMs: number;
+  size: number;
+  events: AgentEvent[];
+}
+
 export class SessionEventStore {
-  private historyCache = new Map<string, { mtimeMs: number; size: number; events: AgentEvent[] }>();
+  /** Least recently used first (a Map keeps insertion order). */
+  private historyCache = new Map<string, CachedHistory>();
+  /** Log bytes the cached histories were parsed from (see HISTORY_CACHE_BUDGET). */
+  private historyBytes = 0;
+  /** The last log read that is bigger than the whole budget (see cacheHistory). */
+  private bigHistory: { id: string; entry: CachedHistory } | null = null;
   /** The last write queued for each log file. Writes to a file run one after
    *  another, so a rewrite never lands under an earlier append. */
   private writes = new Map<string, Promise<void>>();
   private searchIndexes = new SearchIndexCache(SEARCH_INDEX_BUDGET);
   /** Cross-conversation search sweeps in progress (see beginSearch). */
   private searchSweeps = 0;
+
+  /** `historyBudget`: bytes of log kept parsed (HISTORY_CACHE_BUDGET; tests pass less). */
+  constructor(private readonly historyBudget = HISTORY_CACHE_BUDGET) {}
 
   /** Create the folder the logs live in, if it is missing. */
   ensureDir(): void {
@@ -94,7 +120,7 @@ export class SessionEventStore {
     const data = session.logBuffer.join('');
     session.logBuffer = [];
     session.logBufferBytes = 0;
-    return this.write(session.eventLogPath, `event log write, ${kb(Buffer.byteLength(data))}`, () =>
+    return this.write(session.eventLogPath, `event log write, ${formatBytes(Buffer.byteLength(data))}`, () =>
       fs.promises.appendFile(session.eventLogPath, data));
   }
 
@@ -149,46 +175,107 @@ export class SessionEventStore {
 
   /** Drop what is cached for a conversation: its parsed log and search index. */
   forget(id: string): void {
-    this.historyCache.delete(id);
+    this.dropHistory(id);
     this.searchIndexes.delete(id);
+  }
+
+  /**
+   * The history a thread starts running with: its log as load() reads it,
+   * copied for the session to add to. What is cached for the thread is
+   * dropped: from now on the session keeps its history in memory (which
+   * getEventHistory and search read while it runs) and appends to the log,
+   * so the parse and the log's search index could never be read again, and
+   * would hold memory and cache budget until the thread closed.
+   */
+  startLive(id: string): AgentEvent[] {
+    // A log that wasn't cached isn't cached now, so it can't push out others.
+    const events = [...this.read(id, false)];
+    this.forget(id);
+    return events;
   }
 
   /** Load event history from the disk JSONL log for a session.
    *  Parses each line individually so a single corrupt line (e.g. from a
    *  crash mid-write) doesn't discard the entire history. The result is
-   *  cached: callers must copy it before changing it. */
+   *  cached: callers must copy it before changing it.
+   *
+   *  Reads are synchronous, so the requests a thread gets together (a pane's
+   *  page, items and usage) run one after another and the later ones find the
+   *  first one's parse here: no parse is ever in flight to share. */
   load(id: string): AgentEvent[] {
+    return this.read(id, true);
+  }
+
+  /** A log's events, from the cache when it still matches the file; a log
+   *  parsed now is cached when `keep` is set. */
+  private read(id: string, keep: boolean): AgentEvent[] {
     const logPath = eventLogPath(id);
     let stat: { mtimeMs: number; size: number };
     try {
       stat = fs.statSync(logPath);
     } catch {
-      this.historyCache.delete(id);
+      this.dropHistory(id);
       return [];
     }
-    const cached = this.historyCache.get(id);
+    const cached = this.cachedHistory(id);
     if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
-      // Refresh recency (Map preserves insertion order; oldest is evicted first).
-      this.historyCache.delete(id);
-      this.historyCache.set(id, cached);
+      // Now the most recently used (a big log has its own slot).
+      if (this.historyCache.delete(id)) this.historyCache.set(id, cached);
       return cached.events;
     }
     const events = this.readLog(id, logPath, stat.size);
-    if (!events) return [];
-    this.historyCache.delete(id);
-    this.historyCache.set(id, { mtimeMs: stat.mtimeMs, size: stat.size, events });
-    while (this.historyCache.size > HISTORY_CACHE_MAX) {
-      const oldest = this.historyCache.keys().next().value;
-      if (oldest === undefined) break;
-      this.historyCache.delete(oldest);
+    if (!events || !keep) {
+      this.dropHistory(id);
+      return events ?? [];
     }
+    this.cacheHistory(id, { mtimeMs: stat.mtimeMs, size: stat.size, events });
     return events;
+  }
+
+  /** What is kept for a thread, in the cache or the big log's slot. */
+  private cachedHistory(id: string): CachedHistory | undefined {
+    return this.historyCache.get(id) ?? (this.bigHistory?.id === id ? this.bigHistory.entry : undefined);
+  }
+
+  /**
+   * Keep a parsed log as the most recently used, dropping the least recently
+   * used ones until the cache is within its budget.
+   *
+   * A log bigger than the whole budget takes a slot of its own instead,
+   * replacing the one there. Not kept, each read of its thread (preview,
+   * history count, every page scrolled, usage, resume) would parse all of it
+   * again, about 0.6 s for 60 MB. Kept in the cache, letting the newest
+   * entry run over the budget alone, it would push out every other thread,
+   * which would then all parse again once the user moves on. With the slot,
+   * the others stay, and memory is at most the budget plus one big log.
+   */
+  private cacheHistory(id: string, entry: CachedHistory): void {
+    this.dropHistory(id);
+    if (entry.size > this.historyBudget) {
+      this.bigHistory = { id, entry };
+      return;
+    }
+    this.historyCache.set(id, entry);
+    this.historyBytes += entry.size;
+    // The new entry is last and fits, so this stops before reaching it.
+    for (const oldest of this.historyCache.keys()) {
+      if (this.historyBytes <= this.historyBudget) break;
+      this.dropHistory(oldest);
+    }
+  }
+
+  private dropHistory(id: string): void {
+    if (this.bigHistory?.id === id) this.bigHistory = null;
+    const cached = this.historyCache.get(id);
+    if (!cached) return;
+    this.historyCache.delete(id);
+    this.historyBytes -= cached.size;
   }
 
   /** Parse a JSONL event log, or null if it can't be read (so callers don't
    *  cache an empty history over a transient failure). */
   private readLog(id: string, logPath: string, size: number): AgentEvent[] | null {
-    return freezeLog.timeWork(`event log read, ${kb(size)}`, () => this.parseLog(id, logPath));
+    return freezeLog.timeWork(`event log read, ${formatBytes(size)}`, () => this.parseLog(id, logPath));
   }
 
   private parseLog(id: string, logPath: string): AgentEvent[] | null {
@@ -224,7 +311,7 @@ export class SessionEventStore {
       return null;
     }
     return this.searchIndexes.snapshot(id, `${stat.mtimeMs}:${stat.size}`, () => {
-      const cached = this.historyCache.get(id);
+      const cached = this.cachedHistory(id);
       if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) return cached.events;
       return this.readLog(id, logPath, stat.size);
     });

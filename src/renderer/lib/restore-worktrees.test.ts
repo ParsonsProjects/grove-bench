@@ -132,6 +132,26 @@ describe('restoreWorktrees', () => {
     expect(mockGroveBench.resumeSession).toHaveBeenCalledWith('wt1', '/repo/a');
   });
 
+  // A resumed thread's agent reports in only with its first prompt, so main
+  // holds it as 'starting' until then. Restored as stopped, its agent kept
+  // running unseen: idle sleep skips stopped threads, so it never slept.
+  it('restores a thread whose agent is up but has had no prompt yet as live', async () => {
+    store.repos = ['/repo/a'];
+
+    mockGroveBench.listSessions.mockResolvedValueOnce([
+      makeSessionInfo({ id: 'wt1', status: 'starting' }),
+    ]);
+    mockGroveBench.listWorktrees.mockResolvedValueOnce([
+      makeWorktree({ id: 'wt1', branch: 'feat/test', direct: false }),
+    ]);
+    mockGroveBench.resumeSession.mockResolvedValueOnce({ id: 'wt1' });
+
+    await restoreWorktrees();
+
+    expect(store.sessions[0].status).toBe('running');
+    expect(mockGroveBench.resumeSession).toHaveBeenCalledWith('wt1', '/repo/a');
+  });
+
   it('keeps a session main has put to sleep asleep, without waking it', async () => {
     store.repos = ['/repo/a'];
 

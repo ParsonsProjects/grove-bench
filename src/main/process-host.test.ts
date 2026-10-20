@@ -9,6 +9,7 @@ import type { HostedProcess } from './process-host-spawn.js';
 
 /** A stand-in for the utility process: keeps what it was sent. */
 class FakeHost extends EventEmitter implements HostProcess {
+  pid = 5150;
   sent: HostRequest[] = [];
   killed = false;
   failPost = false;
@@ -160,6 +161,44 @@ describe('process host', () => {
     latest().failPost = true;
     await expect(host.run('git', ['status'])).resolves.toEqual({ stdout: 'here: git status' });
     expect(runHere).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs a host-only command in the host, and never here', async () => {
+    const { host, runHere, latest } = setup();
+    await expect(host.runInHost('typeperf', ['-sc', '1'])).rejects.toThrow("The process host isn't running, so typeperf didn't run");
+    host.start();
+    await expect(host.runInHost('typeperf', ['-sc', '1'])).rejects.toThrow("isn't running");
+
+    latest().ready();
+    const listed = host.runInHost('typeperf', ['-sc', '1'], { timeout: 30_000 });
+    expect(latest().sent).toEqual([{ id: 1, file: 'typeperf', args: ['-sc', '1'], options: { timeout: 30_000 } }]);
+    latest().reply(ok(1, 'sample'));
+    await expect(listed).resolves.toMatchObject({ stdout: 'sample' });
+
+    latest().failPost = true;
+    await expect(host.runInHost('typeperf', ['-sc', '1'])).rejects.toThrow("isn't running");
+    expect(runHere).not.toHaveBeenCalled();
+  });
+
+  it('fails a host-only command when the host dies, even one that only reads', async () => {
+    const { host, runHere, latest } = setup();
+    host.start();
+    latest().ready();
+    const status = host.runInHost('git', ['status']);
+    latest().exit(1);
+    await expect(status).rejects.toThrow(HOST_STOPPED_MESSAGE);
+    expect(runHere).not.toHaveBeenCalled();
+  });
+
+  it("knows the host's process id only while it is up", () => {
+    const { host, latest } = setup();
+    expect(host.pid).toBeUndefined();
+    host.start();
+    expect(host.pid).toBeUndefined();
+    latest().ready();
+    expect(host.pid).toBe(5150);
+    latest().exit(1);
+    expect(host.pid).toBeUndefined();
   });
 
   it('fails the commands in flight when the host exits, then starts it again', async () => {
@@ -401,6 +440,43 @@ describe('process host: spawned processes', () => {
     expect(proc.pid).toBe(42);
     expect(proc.exitCode).toBe(0);
     expect(seen).toEqual(['exit 0 null', 'close', 'out {"type":"system"}\n', 'out end']);
+  });
+
+  it('hands its output on through timeOutput, with its size, and nothing else', async () => {
+    const timed: number[] = [];
+    const timeOutput = vi.fn((chars: number, deliver: () => void) => { timed.push(chars); deliver(); });
+    const { host, latest } = setup({ timeOutput });
+    host.start();
+    latest().ready();
+    const proc = host.spawn('claude.exe', []);
+    const seen = watch(proc);
+    latest().emit('message', { type: 'spawned', id: 1, pid: 42, launchMs: 5 });
+    latest().emit('message', { type: 'stdout', id: 1, data: '{"a":1}\n' });
+    latest().emit('message', { type: 'stderr', id: 1, data: 'warn' });
+    latest().emit('message', { type: 'exit', id: 1, code: 0, signal: null });
+    await settle();
+    expect(timed).toEqual([8, 4]);
+    expect(seen).toEqual(['exit 0 null', 'out {"a":1}\n']);
+
+    // A process started here, the host never having come up, the same way.
+    const down = setup({ timeOutput });
+    down.host.start();
+    watch(down.host.spawn('claude.exe', []));
+    down.fire(HOST_START_TIMEOUT_MS);
+    down.local[0].post({ type: 'stdout', id: 0, data: 'xyz' });
+    expect(timed).toEqual([8, 4, 3]);
+  });
+
+  it('passes output on as strings, as the host decoded it', async () => {
+    const { host, latest } = setup();
+    host.start();
+    latest().ready();
+    const proc = host.spawn('claude.exe', []);
+    const chunks: unknown[] = [];
+    proc.stdout.on('data', (d) => chunks.push(d));
+    latest().emit('message', { type: 'stdout', id: 1, data: '€ {"a":1}\n' });
+    await settle();
+    expect(chunks).toEqual(['€ {"a":1}\n']);
   });
 
   it('sends its input, and a request to stop it, to the host', async () => {

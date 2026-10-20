@@ -93,6 +93,11 @@ describe('treeOf', () => {
     expect(treeOf([{ pid: 1, ppid: 0 }], 99)).toEqual([]);
   });
 
+  it('leaves out a child that its parent check turns down, and what is under it', () => {
+    const table = [{ pid: 10, ppid: 1 }, { pid: 11, ppid: 10 }, { pid: 12, ppid: 10 }, { pid: 13, ppid: 12 }];
+    expect(treeOf(table, 10, (child) => child.pid !== 12).map((p) => p.pid)).toEqual([10, 11]);
+  });
+
   it('does not loop on a process listed as its own parent', () => {
     expect(treeOf([{ pid: 0, ppid: 0 }, { pid: 4, ppid: 0 }], 0).map((p) => p.pid)).toEqual([0, 4]);
   });

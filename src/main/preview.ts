@@ -29,6 +29,7 @@ import { previewKeyAction } from './preview-keys.js';
 import { locateScript, readScript, type LocateResult, type PageReadResult } from './preview-scripts.js';
 import type { PreviewOperations, PreviewScreenshot, PreviewTarget } from './adapters/types.js';
 import { logger } from './logger.js';
+import { within } from './within.js';
 
 /** The agent's page viewport. A common laptop size; the agent can change it. */
 const AGENT_DEFAULT_SIZE = { width: 1280, height: 800 };
@@ -84,18 +85,6 @@ function blankState(): PreviewPageState {
 }
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
-
-/** Wait for `promise` up to `ms`. Resolves true if it settled in time, false
- *  on timeout; rethrows its rejection. Clears its timer either way. */
-export async function within(promise: Promise<unknown>, ms: number): Promise<boolean> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<false>((resolve) => { timer = setTimeout(() => resolve(false), ms); });
-  try {
-    return await Promise.race([promise.then(() => true as const), timeout]);
-  } finally {
-    clearTimeout(timer);
-  }
-}
 
 function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);

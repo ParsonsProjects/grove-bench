@@ -8,6 +8,7 @@ import type { AgentEvent, McpElicitationResponse, PermissionMode, SessionStatus 
 import type { AgentAdapter, AgentQueryHandle, PermissionResponse, UserMessage } from './adapters/types.js';
 import type { Checkpoints } from './no-git-checkpoints.js';
 import type { SessionLimits } from './session-limits.js';
+import type { StreamDeltas } from './session-stream.js';
 
 export type Emit = (event: AgentEvent) => void;
 
@@ -110,6 +111,10 @@ export interface ManagedSession {
   autoSaveInProgress: boolean;
   /** Emit function for sending events to the renderer — set by createEmitter. */
   emit: Emit | null;
+  /** Streamed text and thinking held to send as one event (session-stream.ts).
+   *  Kept on the session, not the emitter: a stop makes a new emitter while
+   *  the old run's deltas may still be held. */
+  streamDeltas?: StreamDeltas;
   /** Counter for permission request IDs; persists across stopQuery restarts
    *  but not a new ManagedSession, so the ids also carry a random part. */
   permRequestCounter: number;
@@ -164,6 +169,13 @@ export interface ManagedSession {
   /** Watches the worktree while a turn runs, for the files it makes
    *  (turn-files.ts). Null between turns. */
   turnFiles?: TurnFiles | null;
+  /** The background tasks the agent says are running, by id, with their
+   *  types when it says ('local_bash'): its live set (background_tasks_changed),
+   *  emptied when its process starts again. Idle sleep would kill them, so it
+   *  waits. Not their descriptions, which can hold a command line's secrets. */
+  backgroundTasks?: Map<string, string | undefined>;
+  /** Why idle sleep last refused, so the log says it once, not on every ask. */
+  sleepRefusal?: string | null;
 }
 
 export interface SessionCompletionResult {

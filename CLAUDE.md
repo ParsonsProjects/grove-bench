@@ -23,7 +23,7 @@ src/
     process-host*.ts   # Utility processes git, gh and the agents' programs (claude, ACP agents) launch from, so launches can't freeze the window (3rd Vite entry)
     worktree-manager.ts
     agent-session.ts   # Session lifecycle management
-    session-*.ts       # Session types, event log + history, permission prompts, limits, skills, agent config
+    session-*.ts       # Session types, event log + history, permission prompts, limits, skills, agent config, streamed text merged before IPC
     agent-utils.ts     # Agent helper utilities
     terminal.ts        # node-pty management
     app-state.ts       # Persistent app state
@@ -36,7 +36,7 @@ src/
     credentials.ts     # Encrypted API key storage (safeStorage)
     logger.ts          # File-based logging
     rotating-log.ts    # Size-rotated log file (app log and performance.log share it)
-    freeze-log.ts      # Main-process stalls, slow window frames (100 ms+), process launches, timed work, GC pauses
+    freeze-log.ts      # Main-process stalls, slow window frames (100 ms+), process launches, timed work, GC pauses, agent output, process CPU
     perf-*.ts          # performance.log, step timings (new/resume/wake), health line, traces
     git-status-parser.ts
     preview.ts         # Preview tab: your page (WebContentsView) + the agent's (offscreen)

@@ -18,8 +18,11 @@ export async function restoreWorktrees(): Promise<Set<string>> {
   const restored = new Set<string>();
   const runningSessions = await window.groveBench.listSessions();
   // Sessions main still holds: running, or asleep (open, agent shut down).
+  // Starting counts as running: a resumed agent reports in only with its
+  // first prompt, and one shown stopped would keep running out of sight,
+  // where idle sleep never reaches it.
   const runningMap = new Map(runningSessions
-    .filter((s) => s.status === 'running' || s.status === 'sleeping')
+    .filter((s) => s.status === 'running' || s.status === 'starting' || s.status === 'sleeping')
     .map((s) => [s.id, s]));
 
   await Promise.all([...store.repos].map(async (repo) => {

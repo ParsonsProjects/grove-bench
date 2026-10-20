@@ -4,6 +4,7 @@ import { IPC, PERMISSION_TIMEOUT_MINUTES, type AgentEvent, type McpServerInfo } 
 import * as fs from 'node:fs';
 import { perfSteps } from './perf-steps.js';
 import { worktreeManager } from './worktree-manager.js';
+import { STREAM_FLUSH_MS } from './session-stream.js';
 
 // ─── Mock infrastructure ───
 
@@ -825,6 +826,32 @@ describe('AgentSessionManager event processing', () => {
     expect(textEvents).toHaveLength(2);
 
     await sessionManager.destroySession('test-history');
+  });
+
+  it('resumes from the log its pane already read, without parsing it again', async () => {
+    const log = `${JSON.stringify({ type: 'assistant_text', text: 'before', uuid: 'b1' })}\n`;
+    const isLog = (p: unknown) => String(p).endsWith('test-resume-log.jsonl');
+    const missing = () => { throw new Error('ENOENT'); };
+    vi.mocked(fs.statSync).mockImplementation(((p: fs.PathLike) => isLog(p) ? { mtimeMs: 1, size: log.length } : missing()) as typeof fs.statSync);
+    vi.mocked(fs.readFileSync).mockImplementation(((p: fs.PathOrFileDescriptor) => isLog(p) ? log : missing()) as typeof fs.readFileSync);
+    const parses = () => vi.mocked(fs.readFileSync).mock.calls.filter(([p]) => isLog(p)).length;
+    try {
+      // The stopped thread's pane shows its first page, then the thread resumes.
+      expect(sessionManager.getEventHistoryPage('test-resume-log', 200).totalCount).toBe(1);
+      await sessionManager.createSession({
+        id: 'test-resume-log', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+      });
+
+      expect(parses()).toBe(1);
+      expect(sessionManager.getEventHistory('test-resume-log')[0]).toMatchObject({ text: 'before' });
+      // The running session holds the history; the stopped-log cache doesn't.
+      const store = (sessionManager as unknown as { events: { historyCache: Map<string, unknown> } }).events;
+      expect(store.historyCache.has('test-resume-log')).toBe(false);
+      await sessionManager.destroySession('test-resume-log');
+    } finally {
+      vi.mocked(fs.statSync).mockImplementation(missing);
+      vi.mocked(fs.readFileSync).mockImplementation(missing);
+    }
   });
 
   it('starts the history with the setup steps already shown, without sending them again', async () => {
@@ -2141,6 +2168,18 @@ describe('AgentSessionManager sleep and wake', () => {
     await sessionManager.destroySession('test-sleep');
   });
 
+  it("lists a thread's agent process while it runs, and not once asleep", async () => {
+    mockAdapter.pid = 6150;
+    await startSession('test-sleep-pids');
+    const mine = () => sessionManager.agentProcesses().filter((a) => a.thread === 'test-sleep-pids');
+    expect(mine()).toEqual([{ thread: 'test-sleep-pids', pid: 6150 }]);
+
+    await sessionManager.sleepSession('test-sleep-pids');
+    expect(mine()).toEqual([]);
+
+    await sessionManager.destroySession('test-sleep-pids');
+  });
+
   it('is not reported as the conversation ending or as an error', async () => {
     mockAdapter.pid = 6200;
     const { win } = await startSession('test-sleep-quiet');
@@ -2297,6 +2336,80 @@ describe('AgentSessionManager sleep and wake', () => {
     expect(session.queryHandle).not.toBeNull();
 
     await sessionManager.destroySession('test-sleep-perm');
+  });
+
+  it('stays awake while the agent reports a background task, and sleeps once none is left', async () => {
+    const { session } = await startSession('test-sleep-bg');
+    mockAdapter.control!.emitEvent({ type: 'background_tasks_changed', tasks: [{ taskId: 'b1', description: 'npm run dev' }] });
+    await vi.waitFor(() => expect(session.backgroundTasks?.size).toBe(1));
+
+    expect(await sessionManager.sleepSession('test-sleep-bg')).toBe(false);
+    expect(session.status).toBe('running');
+
+    mockAdapter.control!.emitEvent({ type: 'background_tasks_changed', tasks: [] });
+    await vi.waitFor(async () => expect(await sessionManager.sleepSession('test-sleep-bg')).toBe(true));
+
+    await sessionManager.destroySession('test-sleep-bg');
+  });
+
+  it("is not kept awake by a background task of an agent that has since restarted", async () => {
+    const { session } = await startSession('test-sleep-bg-restart');
+    mockAdapter.control!.emitEvent({ type: 'background_tasks_changed', tasks: [{ taskId: 'b1', description: 'npm run dev' }] });
+    await vi.waitFor(() => expect(session.backgroundTasks?.size).toBe(1));
+
+    // A stop or model switch restarts the agent: its tasks went with it.
+    await sessionManager.stopQuery('test-sleep-bg-restart');
+    await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(2));
+    await vi.waitFor(() => expect(session.queryHandle).toBeTruthy());
+
+    expect(await sessionManager.sleepSession('test-sleep-bg-restart')).toBe(true);
+    await sessionManager.destroySession('test-sleep-bg-restart');
+  });
+
+  it('logs why it stays awake, once per reason', async () => {
+    await startSession('test-sleep-why');
+    vi.mocked(logger.debug).mockClear();
+    const refusals = () => vi.mocked(logger.debug).mock.calls
+      .map(([line]) => String(line))
+      .filter((line) => line.includes('test-sleep-why') && line.includes('stays awake'));
+
+    await sessionManager.sendMessage('test-sleep-why', 'run the tests');
+    await sessionManager.sleepSession('test-sleep-why');
+    await sessionManager.sleepSession('test-sleep-why');
+    expect(refusals()).toEqual([expect.stringContaining('mid-turn')]);
+
+    mockAdapter.control!.emitEvent({ type: 'background_tasks_changed', tasks: [
+      { taskId: 'b1', taskType: 'local_bash', description: 'OPENAI_API_KEY=sk-secret npm run dev' },
+      { taskId: 'b2', taskType: 'local_bash', description: 'npm test -- --watch' },
+    ] });
+    mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false });
+    await vi.waitFor(() => expect(sessionManager.getSession('test-sleep-why')!.turnHandle).toBeNull());
+    await sessionManager.sleepSession('test-sleep-why');
+    await sessionManager.sleepSession('test-sleep-why');
+    expect(refusals()).toEqual([
+      expect.stringContaining('mid-turn'),
+      expect.stringMatching(/stays awake: 2 background tasks running \(local_bash\)$/),
+    ]);
+
+    await sessionManager.destroySession('test-sleep-why');
+  });
+
+  it('never logs what a background task runs, which can hold a secret', async () => {
+    await startSession('test-sleep-secret');
+    mockAdapter.control!.emitEvent({ type: 'background_tasks_changed', tasks: [
+      { taskId: 'b1', description: 'OPENAI_API_KEY=sk-secret npm run dev' },
+    ] });
+    await vi.waitFor(() => expect(sessionManager.getSession('test-sleep-secret')!.backgroundTasks?.size).toBe(1));
+
+    expect(await sessionManager.sleepSession('test-sleep-secret')).toBe(false);
+
+    const lines = [logger.debug, logger.info, logger.warn, logger.error]
+      .flatMap((log) => vi.mocked(log).mock.calls.map((args) => args.map(String).join(' ')));
+    // No task type given: the count alone.
+    expect(lines).toContainEqual(expect.stringMatching(/test-sleep-secret stays awake: 1 background task running$/));
+    expect(lines.join('\n')).not.toMatch(/sk-secret|npm run dev/);
+
+    await sessionManager.destroySession('test-sleep-secret');
   });
 
   it('stays awake while its agent is still starting', async () => {
@@ -4577,5 +4690,342 @@ describe('AgentSessionManager files a turn makes', () => {
     await sessionManager.destroySession('files-closed');
     expect(watch.closed).toBe(true);
     expect(watch.finished).toBe(false);
+  });
+});
+
+describe('AgentSessionManager streamed text and thinking', () => {
+  async function startSession(id: string, opts: { running?: boolean } = {}) {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id, branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(sessionManager.getSession(id)?.queryHandle).toBeTruthy());
+    const control = mockAdapter.control!;
+    if (opts.running) {
+      control.emitEvent({ type: 'system_init', sessionId: 'provider-1', model: 'mock-model', tools: [] });
+      await vi.waitFor(() => expect(sessionManager.getSession(id)?.status).toBe('running'));
+    }
+    return { win, control };
+  }
+
+  /** Only the timers, so held deltas wait until a test moves the clock;
+   *  setImmediate stays real for processed(). */
+  const holdTimers = () => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  afterEach(() => { vi.useRealTimers(); });
+
+  /** Let the session's event loop take what the adapter emitted. */
+  const processed = async () => {
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+  };
+
+  /** destroySession waits on a real timer. */
+  async function destroy(id: string) {
+    vi.useRealTimers();
+    await sessionManager.destroySession(id);
+  }
+
+  /** What the window was sent, in order: agent events by type (`type:text`
+   *  for deltas) and statuses as `status:<status>`. */
+  const sent = (win: ReturnType<typeof makeMockWindow>): string[] =>
+    win._send.mock.calls.map(([channel, a, b]: [string, any, any]) => {
+      if (channel === IPC.SESSION_STATUS) return `status:${b}`;
+      return a.type === 'partial_text' || a.type === 'partial_thinking' ? `${a.type}:${a.text}` : a.type;
+    });
+  const deltasSent = (win: ReturnType<typeof makeMockWindow>) =>
+    sent(win).filter((s) => s.startsWith('partial_'));
+
+  it("sends a thread's deltas as one event, ahead of the event that ends them", async () => {
+    const { win, control } = await startSession('stream-merge');
+    holdTimers();
+
+    control.emitEvent({ type: 'partial_text', text: 'Hel' });
+    control.emitEvent({ type: 'partial_text', text: 'lo' });
+    control.emitEvent({ type: 'partial_text', text: ' there' });
+    await processed();
+    expect(deltasSent(win)).toEqual([]);
+
+    control.emitEvent({ type: 'assistant_text', text: 'Hello there', uuid: 'u1' });
+    await processed();
+    expect(sent(win).slice(-2)).toEqual(['partial_text:Hello there', 'assistant_text']);
+    // Still live only, never kept.
+    expect(sessionManager.getEventHistory('stream-merge').some((e) => e.type === 'partial_text')).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(STREAM_FLUSH_MS * 2);
+    expect(deltasSent(win)).toEqual(['partial_text:Hello there']);
+    await destroy('stream-merge');
+  });
+
+  it('keeps thinking, text and a tool call in the order the agent sent them', async () => {
+    const { win, control } = await startSession('stream-order');
+    holdTimers();
+    const before = sent(win).length;
+
+    control.emitEvent({ type: 'partial_thinking', text: 'Need ' });
+    control.emitEvent({ type: 'partial_thinking', text: 'tests' });
+    control.emitEvent({ type: 'partial_text', text: 'Running ' });
+    control.emitEvent({ type: 'partial_text', text: 'them' });
+    control.emitEvent({ type: 'assistant_tool_use', toolName: 'Bash', toolInput: { command: 'npm test' }, toolUseId: 'tu1', uuid: 'u1' });
+    control.emitEvent({ type: 'partial_text', text: 'Done' });
+    await processed();
+    await vi.advanceTimersByTimeAsync(STREAM_FLUSH_MS);
+
+    expect(sent(win).slice(before)).toEqual([
+      'partial_thinking:Need tests', 'partial_text:Running them', 'assistant_tool_use', 'partial_text:Done',
+    ]);
+    await destroy('stream-order');
+  });
+
+  it('sends what a thread holds once the timer runs out', async () => {
+    const { win, control } = await startSession('stream-timer');
+    holdTimers();
+
+    control.emitEvent({ type: 'partial_text', text: 'a' });
+    control.emitEvent({ type: 'partial_text', text: 'b' });
+    await processed();
+    await vi.advanceTimersByTimeAsync(STREAM_FLUSH_MS - 1);
+    expect(deltasSent(win)).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(deltasSent(win)).toEqual(['partial_text:ab']);
+
+    control.emitEvent({ type: 'partial_text', text: 'c' });
+    await processed();
+    await vi.advanceTimersByTimeAsync(STREAM_FLUSH_MS);
+    expect(deltasSent(win)).toEqual(['partial_text:ab', 'partial_text:c']);
+    await destroy('stream-timer');
+  });
+
+  it("holds each thread's deltas apart", async () => {
+    const a = await startSession('stream-a');
+    const b = await startSession('stream-b');
+    holdTimers();
+
+    a.control.emitEvent({ type: 'partial_text', text: 'a1' });
+    b.control.emitEvent({ type: 'partial_text', text: 'b1' });
+    a.control.emitEvent({ type: 'partial_text', text: 'a2' });
+    b.control.emitEvent({ type: 'partial_thinking', text: 'bt' });
+    await processed();
+    // B's thinking sent B's text, not A's.
+    expect(deltasSent(a.win)).toEqual([]);
+    expect(deltasSent(b.win)).toEqual(['partial_text:b1']);
+
+    // A's reply sends A's text only.
+    a.control.emitEvent({ type: 'assistant_text', text: 'a1a2', uuid: 'ua' });
+    await processed();
+    expect(deltasSent(a.win)).toEqual(['partial_text:a1a2']);
+    expect(deltasSent(b.win)).toEqual(['partial_text:b1']);
+
+    await vi.advanceTimersByTimeAsync(STREAM_FLUSH_MS);
+    expect(deltasSent(a.win)).toEqual(['partial_text:a1a2']);
+    expect(deltasSent(b.win)).toEqual(['partial_text:b1', 'partial_thinking:bt']);
+    for (const [channel] of a.win._send.mock.calls) expect(channel).not.toContain('stream-b');
+    for (const [channel] of b.win._send.mock.calls) expect(channel).not.toContain('stream-a');
+    await destroy('stream-a');
+    await destroy('stream-b');
+  });
+
+  it('sends what is held when the user stops the thread, ahead of the restart', async () => {
+    const { win, control } = await startSession('stream-stop');
+    holdTimers();
+
+    control.emitEvent({ type: 'partial_text', text: 'half a sent' });
+    await processed();
+    await sessionManager.stopQuery('stream-stop');
+
+    const after = sent(win);
+    expect(deltasSent(win)).toEqual(['partial_text:half a sent']);
+    expect(after.indexOf('partial_text:half a sent')).toBeLessThan(after.lastIndexOf('mode_sync'));
+    await vi.advanceTimersByTimeAsync(STREAM_FLUSH_MS * 2);
+    expect(deltasSent(win)).toEqual(['partial_text:half a sent']);
+    await destroy('stream-stop');
+  });
+
+  it('sends what is held when the turn is interrupted', async () => {
+    const { win, control } = await startSession('stream-interrupt');
+    holdTimers();
+
+    control.emitEvent({ type: 'partial_text', text: 'stop me' });
+    await processed();
+    await sessionManager.interruptQuery('stream-interrupt');
+
+    const after = sent(win);
+    expect(deltasSent(win)).toEqual(['partial_text:stop me']);
+    expect(after.indexOf('partial_text:stop me')).toBeLessThan(after.lastIndexOf('mode_sync'));
+    await destroy('stream-interrupt');
+  });
+
+  it('sends what is held before the thread reports it is asleep', async () => {
+    const { win, control } = await startSession('stream-sleep', { running: true });
+    holdTimers();
+
+    // Thinking alone doesn't start a turn, so the thread can still sleep.
+    control.emitEvent({ type: 'partial_thinking', text: 'idle thought' });
+    await processed();
+    expect(await sessionManager.sleepSession('stream-sleep')).toBe(true);
+
+    const after = sent(win);
+    expect(deltasSent(win)).toEqual(['partial_thinking:idle thought']);
+    expect(after.indexOf('partial_thinking:idle thought')).toBeLessThan(after.lastIndexOf('status:sleeping'));
+    await destroy('stream-sleep');
+  });
+
+  it('sends what is held when the thread closes', async () => {
+    const { win, control } = await startSession('stream-close');
+    holdTimers();
+
+    control.emitEvent({ type: 'partial_text', text: 'closing words' });
+    await processed();
+    await sessionManager.closeSession('stream-close');
+
+    const after = sent(win);
+    expect(deltasSent(win)).toEqual(['partial_text:closing words']);
+    expect(after.indexOf('partial_text:closing words')).toBeLessThan(after.lastIndexOf('status:stopped'));
+  });
+
+  it('sends what is held ahead of the process exit', async () => {
+    const { win, control } = await startSession('stream-exit');
+    holdTimers();
+
+    control.emitEvent({ type: 'partial_text', text: 'last' });
+    control.finish();
+    await processed();
+
+    expect(sent(win).slice(-3)).toEqual(['partial_text:last', 'process_exit', 'status:stopped']);
+    await destroy('stream-exit');
+  });
+
+  it('sends what is held ahead of an error', async () => {
+    const { win, control } = await startSession('stream-error');
+    holdTimers();
+
+    control.emitEvent({ type: 'partial_text', text: 'before the crash' });
+    await processed();
+    control.error(new Error('agent crashed'));
+    await processed();
+
+    const after = sent(win);
+    expect(deltasSent(win)).toEqual(['partial_text:before the crash']);
+    expect(after.indexOf('partial_text:before the crash')).toBeLessThan(after.indexOf('error'));
+    await destroy('stream-error');
+  });
+
+  // Every status goes on its own channel (sendStatus), so each must send what
+  // the thread holds first.
+
+  /** Text the thread holds as if just streamed, for a status no agent event
+   *  can come before. */
+  const hold = (id: string, text: string) =>
+    sessionManager.getSession(id)!.streamDeltas!.add({ type: 'partial_text', text });
+
+  /** Wait for `done` without moving the faked clock (vi.waitFor would). */
+  async function until(done: () => boolean) {
+    for (let i = 0; i < 200 && !done(); i++) await new Promise((r) => setImmediate(r));
+    expect(done()).toBe(true);
+  }
+
+  /** `delta` went out once, ahead of the last `status` sent. */
+  function expectSentBefore(win: ReturnType<typeof makeMockWindow>, delta: string, status: string) {
+    const after = sent(win);
+    expect(deltasSent(win)).toEqual([delta]);
+    expect(after.indexOf(delta)).toBeLessThan(after.lastIndexOf(`status:${status}`));
+  }
+
+  it('sends what is held before the thread reports it is running', async () => {
+    const { win, control } = await startSession('stream-init');
+    holdTimers();
+
+    control.emitEvent({ type: 'partial_thinking', text: 'warming up' });
+    control.emitEvent({ type: 'system_init', sessionId: 'provider-1', model: 'mock-model', tools: [] });
+    await until(() => sent(win).includes('status:running'));
+
+    expectSentBefore(win, 'partial_thinking:warming up', 'running');
+    await destroy('stream-init');
+  });
+
+  it('sends what the agent streamed while being put to sleep before the thread reports it is awake', async () => {
+    mockAdapter.pid = 7200;
+    const { win, control } = await startSession('stream-wake', { running: true });
+    let releaseKill!: () => void;
+    processTree.killTree.mockImplementationOnce(() => new Promise<void>((r) => { releaseKill = () => r(); }));
+    holdTimers();
+
+    const sleeping = sessionManager.sleepSession('stream-wake');
+    // Still being killed, so it can stream a little more.
+    control.emitEvent({ type: 'partial_thinking', text: 'last thought' });
+    await processed();
+    expect(deltasSent(win)).toEqual([]);
+
+    sessionManager.wakeSession('stream-wake');
+    expectSentBefore(win, 'partial_thinking:last thought', 'running');
+
+    releaseKill();
+    await sleeping;
+    await destroy('stream-wake');
+  });
+
+  it('sends what is held before a failed start reports the error', async () => {
+    let failStart!: () => void;
+    mockAdapter.start = vi.fn(() => new Promise<never>((_, reject) => { failStart = () => reject(new Error('spawn failed')); }));
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'stream-start-error', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.start).toHaveBeenCalled());
+    holdTimers();
+
+    hold('stream-start-error', 'early words');
+    failStart();
+    await until(() => sent(win).includes('status:error'));
+
+    expectSentBefore(win, 'partial_text:early words', 'error');
+    await destroy('stream-start-error');
+  });
+
+  it('sends what is held before a failed restart reports the error', async () => {
+    let openGate!: () => void;
+    mockAdapter.startGate = new Promise<void>((r) => { openGate = r; });
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'stream-restart-error', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(1));
+    // A stop while the agent starts restarts it once it is up: that fails.
+    await sessionManager.stopQuery('stream-restart-error');
+    mockAdapter.start = vi.fn(async () => { throw new Error('spawn failed'); });
+    holdTimers();
+
+    hold('stream-restart-error', 'before the restart');
+    openGate();
+    await until(() => sent(win).includes('status:error'));
+
+    expectSentBefore(win, 'partial_text:before the restart', 'error');
+    await destroy('stream-restart-error');
+  });
+
+  it('sends what is held before a failed wake reports the error', async () => {
+    const { win } = await startSession('stream-wake-error', { running: true });
+    await sessionManager.sleepSession('stream-wake-error');
+    mockAdapter.start = vi.fn(async () => { throw new Error('spawn failed'); });
+    holdTimers();
+
+    sessionManager.wakeSession('stream-wake-error');
+    hold('stream-wake-error', 'while waking');
+    await until(() => sent(win).includes('status:error'));
+
+    expectSentBefore(win, 'partial_text:while waking', 'error');
+    await destroy('stream-wake-error');
+  });
+
+  it('sends what is held before the health check reports the thread stopped', async () => {
+    const { win } = await startSession('stream-health', { running: true });
+    holdTimers();
+    // Its query died without a word, e.g. while the PC was asleep.
+    sessionManager.getSession('stream-health')!.queryHandle = null;
+
+    hold('stream-health', 'unfinished');
+    sessionManager.healthCheckAll();
+
+    expectSentBefore(win, 'partial_text:unfinished', 'stopped');
+    await destroy('stream-health');
   });
 });
