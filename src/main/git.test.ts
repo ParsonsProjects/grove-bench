@@ -109,11 +109,13 @@ describe('isGitRepo()', () => {
   it('returns true when git rev-parse succeeds', async () => {
     mockExeca.mockResolvedValue({ stdout: '.git' } as any);
     expect(await isGitRepo('/repo')).toBe(true);
+    expect(mockExeca).toHaveBeenCalledWith('git', ['rev-parse', '--git-dir'], { cwd: '/repo' });
   });
 
   it('returns false when git rev-parse fails', async () => {
     mockExeca.mockRejectedValue(new Error('not a repo'));
     expect(await isGitRepo('/not-a-repo')).toBe(false);
+    expect(mockExeca).toHaveBeenCalledWith('git', ['rev-parse', '--git-dir'], { cwd: '/not-a-repo' });
   });
 });
 
@@ -121,11 +123,13 @@ describe('branchExists()', () => {
   it('returns true when branch exists', async () => {
     mockExeca.mockResolvedValue({ stdout: 'abc123' } as any);
     expect(await branchExists('/repo', 'main')).toBe(true);
+    expect(mockExeca).toHaveBeenCalledWith('git', ['rev-parse', '--verify', 'main'], { cwd: '/repo' });
   });
 
   it('returns false when branch does not exist', async () => {
     mockExeca.mockRejectedValue(new Error('not a valid ref'));
     expect(await branchExists('/repo', 'nope')).toBe(false);
+    expect(mockExeca).toHaveBeenCalledWith('git', ['rev-parse', '--verify', 'nope'], { cwd: '/repo' });
   });
 });
 
@@ -363,11 +367,13 @@ describe('validateBranchName()', () => {
   it('returns true for valid names', async () => {
     mockExeca.mockResolvedValue({ stdout: '' } as any);
     expect(await validateBranchName('feat/valid-name')).toBe(true);
+    expect(mockExeca).toHaveBeenCalledWith('git', ['check-ref-format', '--branch', 'feat/valid-name']);
   });
 
   it('returns false for invalid names', async () => {
     mockExeca.mockRejectedValue(new Error('invalid'));
     expect(await validateBranchName('..bad')).toBe(false);
+    expect(mockExeca).toHaveBeenCalledWith('git', ['check-ref-format', '--branch', '..bad']);
   });
 });
 

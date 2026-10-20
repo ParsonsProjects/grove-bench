@@ -10,13 +10,15 @@ describe('startSkillThread', () => {
 
   beforeEach(() => {
     startThread = vi.spyOn(draftStore, 'startThread').mockResolvedValue(true);
-    vi.spyOn(messageStore, 'getModel').mockReturnValue('o4');
+    // Another thread's model too, so taking the wrong thread's shows
+    messageStore.modelBySession = { s1: 'o4', other: 'gpt-5' };
     store.sessions = [{ id: 's1', branch: 'feat/x', repoPath: '/repo/one', status: 'running', agentType: 'codex' }];
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
     store.sessions = [];
+    messageStore.modelBySession = {};
   });
 
   it('starts a project skill on a new branch, on the asking thread\'s agent and model', async () => {

@@ -276,6 +276,13 @@ describe('backup preview', () => {
   it('reads a single snapshot file for display', async () => {
     mockGroveBench.memoryReadBackupFile.mockResolvedValueOnce('archived content');
     await memoryStore.readBackupFile('snap-1', 'repo/a.md');
+    expect(mockGroveBench.memoryReadBackupFile).toHaveBeenCalledWith('/repo', 'snap-1', 'repo/a.md');
     expect(memoryStore.backupPreviewFile).toEqual({ path: 'repo/a.md', content: 'archived content' });
+  });
+
+  it('shows a snapshot file it cannot read as unreadable', async () => {
+    mockGroveBench.memoryReadBackupFile.mockResolvedValueOnce(null);
+    await memoryStore.readBackupFile('snap-1', 'repo/a.md');
+    expect(memoryStore.backupPreviewFile).toEqual({ path: 'repo/a.md', content: '(unreadable)' });
   });
 });

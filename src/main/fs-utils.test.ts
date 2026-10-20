@@ -25,8 +25,7 @@ beforeEach(() => {
 });
 
 describe('removeDirectory', () => {
-  it('returns once the directory is gone without touching fs.rm on Windows', async () => {
-    if (process.platform !== 'win32') return;
+  it.runIf(process.platform === 'win32')('returns once the directory is gone without touching fs.rm on Windows', async () => {
     mockFs.access.mockRejectedValue(new Error('ENOENT'));
 
     await removeDirectory('C:\\tmp\\wt');

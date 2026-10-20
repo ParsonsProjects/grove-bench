@@ -1396,6 +1396,9 @@ describe('renderer input checks', () => {
   });
 
   it('app state: To do flags go to app-state, which checks them', () => {
+    m.appState.loadTodoSessionIds.mockReturnValue(['a']);
+    expect(invoke(IPC.APP_STATE_GET_TODO)).toEqual(['a']);
+    // null (an unreadable file) reaches the renderer as is, so it keeps its list
     m.appState.loadTodoSessionIds.mockReturnValue(null);
     expect(invoke(IPC.APP_STATE_GET_TODO)).toBeNull();
     invoke(IPC.APP_STATE_SET_TODO, ['a']);

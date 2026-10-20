@@ -1509,10 +1509,7 @@ describe('AgentSessionManager.setMode()', () => {
     const session = sessionManager.getSession('test-mode2');
     // Every app mode is passed to the adapter, which decides which it offers
     // per model; only modes outside PERMISSION_MODES are refused (test above).
-    const handle = session?.queryHandle;
-    if (handle?.setPermissionMode) {
-      expect(handle.setPermissionMode).toHaveBeenCalledWith('acceptEdits');
-    }
+    expect(session?.queryHandle?.setPermissionMode).toHaveBeenCalledWith('acceptEdits');
 
     await sessionManager.destroySession('test-mode2');
   });

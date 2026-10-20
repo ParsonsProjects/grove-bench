@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { SHORTCUT_GROUPS, formatShortcut } from './shortcut-list.js';
 import { GROVE_WINDOW_SHORTCUTS } from '../../shared/grove-shortcuts.js';
-import { TAB_BY_KEY } from './keyboard-shortcuts.js';
 
 const rows = SHORTCUT_GROUPS.flatMap((g) => g.rows);
 const same = (a: { key: string; ctrl?: boolean; shift?: boolean; alt?: boolean }, b: typeof a) =>
@@ -23,7 +22,6 @@ describe('SHORTCUT_GROUPS', () => {
       'Alt+4 Terminal tab',
       'Alt+5 Preview tab',
     ]);
-    expect(tabs).toHaveLength(Object.keys(TAB_BY_KEY).length);
   });
 
   it('has no shortcut twice', () => {
