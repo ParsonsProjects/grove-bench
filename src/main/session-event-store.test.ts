@@ -275,19 +275,88 @@ describe('SessionEventStore history cache', () => {
     expect(parses()).toBe(6);
   });
 
-  it('parses a log bigger than the whole budget each time, without pushing out the others', () => {
+  it('keeps the last log read that is bigger than the whole budget on its own, without pushing out the others', () => {
     const small = writeLog('a', 300);
+    writeLog('b', 300);
+    // A 60 MB log against the 48 MB budget, scaled down.
     writeLog('huge', 5_000);
+    writeLog('huge2', 6_000);
     const store = new SessionEventStore(2 * small);
     const parses = countParses();
 
     store.load('a');
-    expect(store.load('huge')).toHaveLength(1);
-    expect(store.load('huge')).toHaveLength(1);
+    store.load('b');
+    // Its preview, its history count, each page and its usage: one parse.
+    const huge = store.load('huge');
+    expect(huge).toHaveLength(1);
+    for (let i = 0; i < 5; i++) expect(store.load('huge')).toBe(huge);
     expect(parses()).toBe(3);
 
     store.load('a');
+    store.load('b');
     expect(parses()).toBe(3);
+
+    // Another big log takes its place: only one is kept.
+    store.load('huge2');
+    store.load('huge2');
+    expect(parses()).toBe(4);
+    expect(store.load('huge')).not.toBe(huge);
+    expect(parses()).toBe(5);
+    store.load('a');
+    store.load('b');
+    expect(parses()).toBe(5);
+  });
+
+  it('still drops the least recently used of the others while it keeps a big log', () => {
+    const small = writeLog('a', 300);
+    writeLog('b', 300);
+    writeLog('c', 300);
+    writeLog('huge', 5_000);
+    const store = new SessionEventStore(2 * small);
+    const parses = countParses();
+
+    store.load('huge');
+    store.load('a');
+    store.load('b');
+    store.load('a'); // now the most recently used: b is the oldest
+    store.load('c'); // b goes
+    store.load('a');
+    store.load('huge');
+    expect(parses()).toBe(4);
+
+    store.load('b'); // c goes
+    store.load('a');
+    store.load('huge');
+    expect(parses()).toBe(5);
+    store.load('c');
+    expect(parses()).toBe(6);
+  });
+
+  it('startLive() and forget() free the big log kept on its own', () => {
+    const small = writeLog('a', 300);
+    writeLog('huge', 5_000);
+    writeLog('huge2', 5_000);
+    const store = new SessionEventStore(2 * small);
+    const kept = () => (store as unknown as { bigHistory: { id: string } | null }).bigHistory?.id ?? null;
+    const parses = countParses();
+
+    const page = store.load('huge');
+    // Resuming another big thread doesn't take the slot: it is live from now on.
+    expect(store.startLive('huge2')).toHaveLength(1);
+    expect(kept()).toBe('huge');
+
+    const history = store.startLive('huge'); // the resume reuses that parse
+    expect(parses()).toBe(2);
+    expect(history).toEqual(page);
+    expect(history).not.toBe(page);
+    expect(kept()).toBeNull();
+
+    store.load('huge2');
+    expect(kept()).toBe('huge2');
+    store.forget('huge2');
+    expect(kept()).toBeNull();
+    store.load('huge2');
+    expect(parses()).toBe(4);
   });
 
   it('frees the budget a log held once it grows past it', () => {

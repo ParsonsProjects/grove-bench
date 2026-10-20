@@ -80,8 +80,13 @@ function sleepRefusal(session: ManagedSession): string | null {
   if (session.pendingPermissions.size > 0) return 'waiting on a permission';
   if (session.pendingElicitations.size > 0) return 'waiting on an MCP server question';
   if (session.limits.pending) return 'waiting on a limit question';
-  const tasks = [...(session.backgroundTasks?.values() ?? [])];
-  if (tasks.length > 0) return `${tasks.length} background task${tasks.length > 1 ? 's' : ''} running (${tasks.join(', ').slice(0, 120)})`;
+  // Their count and types only: this goes to the app log, and a task's
+  // description is its command line, secrets and all (OPENAI_API_KEY=sk-...).
+  const tasks = session.backgroundTasks;
+  if (tasks && tasks.size > 0) {
+    const types = [...new Set(tasks.values())].filter((t): t is string => !!t && /^\w{1,40}$/.test(t));
+    return `${tasks.size} background task${tasks.size > 1 ? 's' : ''} running${types.length > 0 ? ` (${types.join(', ')})` : ''}`;
+  }
   return null;
 }
 
@@ -171,10 +176,20 @@ class AgentSessionManager {
   }
 
   /** Send the streamed text and thinking a session still holds. The session's
-   *  next event does it anyway; this is for the ways a run ends, which may
-   *  send nothing more (or only a status, on its own channel). */
+   *  next event does it anyway, and sendStatus before a status; this is for
+   *  the ways a run ends that may send nothing more. */
   private flushStream(session: ManagedSession): void {
     session.streamDeltas?.flush();
+  }
+
+  /** Tell the window a session's status. Every status goes through here: it
+   *  has its own channel rather than going through emit, so the streamed text
+   *  and thinking the session still holds go first, or it would overtake them. */
+  private sendStatus(session: ManagedSession, status: SessionStatus): void {
+    this.flushStream(session);
+    if (!session.window.isDestroyed()) {
+      session.window.webContents.send(IPC.SESSION_STATUS, session.id, status);
+    }
   }
 
   async createSession(opts: {
@@ -339,10 +354,7 @@ class AgentSessionManager {
         console.error(`[runQuery] session=${id} FAILED:`, err);
         emit(failureEvent(adapter, String(err.message || err)));
         session.status = 'error';
-        const w = session.window;
-        if (!w.isDestroyed()) {
-          w.webContents.send(IPC.SESSION_STATUS, id, 'error');
-        }
+        this.sendStatus(session, 'error');
         // Fire completion callback on error
         const errCb = this.completionCallbacks.get(id);
         if (errCb) {
@@ -378,9 +390,7 @@ class AgentSessionManager {
       console.error(`[runQuery] session=${session.id} FAILED on restart:`, err);
       emit(failureEvent(session.adapter, String(err?.message || err)));
       session.status = 'error';
-      if (!session.window.isDestroyed()) {
-        session.window.webContents.send(IPC.SESSION_STATUS, session.id, 'error');
-      }
+      this.sendStatus(session, 'error');
     });
   }
 
@@ -667,7 +677,7 @@ class AgentSessionManager {
         // task_notification, which can go missing and would keep a finished
         // task running for good.
         if (event.type === 'background_tasks_changed' && session.queryHandle === handle) {
-          session.backgroundTasks = new Map(event.tasks.map((t) => [t.taskId, t.description]));
+          session.backgroundTasks = new Map(event.tasks.map((t) => [t.taskId, t.taskType]));
         }
         if (event.type === 'assistant_tool_use') {
           toolCallSeen(session.limits, event.toolUseId);
@@ -708,10 +718,7 @@ class AgentSessionManager {
             });
           }
 
-          const w = session.window;
-          if (!w.isDestroyed()) {
-            w.webContents.send(IPC.SESSION_STATUS, session.id, 'running');
-          }
+          this.sendStatus(session, 'running');
 
           // A resumed provider session (app restart, stop/restart, rewind
           // fork) keeps its refs in git: rebuild the uuid map and turn counter
@@ -819,7 +826,8 @@ class AgentSessionManager {
     }
 
     // A run that ended without a last event (an abort, a stop, a sleep)
-    // would leave the text it streamed last waiting on the timer.
+    // would leave the text it streamed last waiting on the timer. Those
+    // return below with no status, which would send it.
     this.flushStream(session);
     if (session.turnHandle === handle) session.turnHandle = null;
     // A turn cut short by an error reports no files. Only this run's: once
@@ -852,10 +860,7 @@ class AgentSessionManager {
     // Query finished
     session.status = 'stopped';
     emit({ type: 'process_exit' });
-    const w = session.window;
-    if (!w.isDestroyed()) {
-      w.webContents.send(IPC.SESSION_STATUS, id, 'stopped');
-    }
+    this.sendStatus(session, 'stopped');
 
     // Fire completion callback if registered
     const cb = this.completionCallbacks.get(id);
@@ -1750,11 +1755,7 @@ class AgentSessionManager {
     void this.endTurnFiles(session);
     const abortController = session.abortController;
     session.abortController = new AbortController();
-    // Ahead of the status, which doesn't go through emit.
-    this.flushStream(session);
-    if (!session.window.isDestroyed()) {
-      session.window.webContents.send(IPC.SESSION_STATUS, id, 'sleeping');
-    }
+    this.sendStatus(session, 'sleeping');
 
     const settled = (async () => {
       // Kill the tree while the agent is still running, as shutDown() does.
@@ -1787,9 +1788,7 @@ class AgentSessionManager {
     session.queryReady = new Promise<void>((resolve) => {
       session.resolveQueryReady = resolve;
     });
-    if (!session.window.isDestroyed()) {
-      session.window.webContents.send(IPC.SESSION_STATUS, id, 'running');
-    }
+    this.sendStatus(session, 'running');
     const emit = session.emit ?? this.createEmitter(session);
     const asleep = session.sleepSettled;
     perfSteps.begin(id, 'wake');
@@ -1804,9 +1803,7 @@ class AgentSessionManager {
       console.error(`[runQuery] session=${id} FAILED on wake:`, err);
       emit(failureEvent(session.adapter, String(err?.message || err)));
       session.status = 'error';
-      if (!session.window.isDestroyed()) {
-        session.window.webContents.send(IPC.SESSION_STATUS, id, 'error');
-      }
+      this.sendStatus(session, 'error');
     });
   }
 
@@ -1844,9 +1841,7 @@ class AgentSessionManager {
         await this.events.flush(session);
         this.events.forget(id);
         session.status = 'stopped';
-        if (!session.window.isDestroyed()) {
-          session.window.webContents.send(IPC.SESSION_STATUS, id, 'stopped');
-        }
+        this.sendStatus(session, 'stopped');
         this.closing.delete(id);
       }
     })();
@@ -2422,10 +2417,7 @@ class AgentSessionManager {
         logger.warn(`[healthCheck] session ${id} has no queryHandle but status=running — marking stopped`);
         session.status = 'stopped';
         session.emit?.({ type: 'process_exit' });
-        const w = session.window;
-        if (!w.isDestroyed()) {
-          w.webContents.send(IPC.SESSION_STATUS, id, 'stopped');
-        }
+        this.sendStatus(session, 'stopped');
       }
     }
 
