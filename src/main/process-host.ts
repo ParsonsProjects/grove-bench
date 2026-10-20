@@ -109,6 +109,10 @@ export interface ProcessHostDeps {
   clearTimer?: (timer: unknown) => void;
   /** Where slow launches and failures are noted. */
   note?: (line: string) => void;
+  /** Hand on a chunk of a spawned process's output (`deliver`), timing it
+   *  for the freeze log (freezeLog.timeAgentOutput). By default it's only
+   *  handed on. */
+  timeOutput?: (chars: number, deliver: () => void) => void;
   /** What the notes call the host, and what it runs. */
   name?: string;
   runs?: string;
@@ -139,6 +143,7 @@ export function createProcessHost(deps: ProcessHostDeps) {
   const killPid = deps.killPid ?? killQuietly;
   const note = deps.note ?? noteInLogs;
   const name = deps.name ?? 'process host';
+  const timeOutput = deps.timeOutput ?? ((_chars: number, deliver: () => void) => deliver());
 
   let state: State = 'idle';
   let host: HostProcess | null = null;
@@ -249,7 +254,13 @@ export function createProcessHost(deps: ProcessHostDeps) {
       note(`${proc.label} took ${Math.round(event.launchMs)} ms to start, in the ${name} (the window kept responding)`);
     }
     if (event.type === 'close') spawned.delete(event.id);
-    proc.receive(event);
+    deliver(proc, event);
+  }
+
+  /** Pass what a spawned process did on to it, timing its output. */
+  function deliver(proc: HostedProcess, event: SpawnEvent): void {
+    if (event.type === 'stdout' || event.type === 'stderr') timeOutput(event.data.length, () => proc.receive(event));
+    else proc.receive(event);
   }
 
   /** The host is gone, and the processes it started can't go on without
@@ -381,7 +392,7 @@ export function createProcessHost(deps: ProcessHostDeps) {
         });
         return;
       }
-      const runner = (deps.spawnHere ?? createSpawnRunner)((event) => proc.receive(event));
+      const runner = (deps.spawnHere ?? createSpawnRunner)((event) => deliver(proc, event));
       runner.handle({ ...request, id: 0 });
       proc.connect((command) => runner.handle({ ...command, id: 0 }));
     };
@@ -499,6 +510,7 @@ const agentHost = createProcessHost({
   runHere: runInMain,
   name: 'agent host',
   runs: 'agents',
+  timeOutput: freezeLog.timeAgentOutput,
 });
 
 /**

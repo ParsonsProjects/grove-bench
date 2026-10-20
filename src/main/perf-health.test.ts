@@ -2,7 +2,8 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { formatHealth, startHealthLog, type HealthInput } from './perf-health.js';
 import type { FreezeStats } from './freeze-log.js';
 
-const quiet: FreezeStats = { stalls: 0, stallMs: 0, slowFrames: 0, launches: 0, launchMs: 0, slowestLaunch: null, loopDelay: null };
+const noOutput = { events: 0, chars: 0, ms: 0 };
+const quiet: FreezeStats = { stalls: 0, stallMs: 0, slowFrames: 0, launches: 0, launchMs: 0, slowestLaunch: null, agentOutput: noOutput, loopDelay: null };
 
 const metric = (type: string, cpu: number, kb: number, privateKb?: number) =>
   ({ type, cpu: { percentCPUUsage: cpu, idleWakeupsPerSecond: 0 }, memory: { workingSetSize: kb, peakWorkingSetSize: kb, ...(privateKb !== undefined ? { privateBytes: privateKb } : {}) } }) as HealthInput['metrics'][number];
@@ -18,6 +19,7 @@ describe('formatHealth', () => {
       freeze: {
         stalls: 3, stallMs: 640, slowFrames: 1,
         launches: 42, launchMs: 1900, slowestLaunch: { name: 'git worktree', ms: 120.4 },
+        agentOutput: { events: 4210, chars: 12.3 * 1024 * 1024, ms: 12_480 },
         loopDelay: { p50: 1.2, p99: 38, max: 310 },
       },
       metrics: [
@@ -34,6 +36,7 @@ describe('formatHealth', () => {
     });
     expect(line).toBe('last 10 min: event loop delay p50 1 ms, p99 38 ms, max 310 ms; '
       + 'freezes: main 3 (640 ms), window 1; process launches 42 (1.9 s blocking, slowest git worktree 120 ms); '
+      + 'agent output 12.3 MB, 4210 events (12.5 s); '
       + 'CPU main 2%, pages 4%, gpu 1%, other 0%; memory main 205 MB, pages 480 MB, gpu 120 MB, other 90 MB; conversations 5 (2 asleep), terminals 2');
   });
 

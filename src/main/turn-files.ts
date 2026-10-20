@@ -14,6 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { MadeFileKind } from '../shared/types.js';
 import { madeFileKind } from '../shared/attachments.js';
+import { freezeLog } from './freeze-log.js';
 import { logger } from './logger.js';
 
 /** Folders of dependencies, caches and compiled output, skipped wherever they
@@ -35,9 +36,12 @@ const CLOCK_SLACK_MS = 2000;
 export type WatchFn = (root: string, onChange: (relPath: string) => void, onError: (err: unknown) => void) => { close(): void };
 type StatFn = (p: string) => Promise<Pick<fs.Stats, 'isFile' | 'size' | 'mtimeMs' | 'birthtimeMs'>>;
 
-/** fs.watch over the whole tree: native and cheap on Windows (and macOS). */
+/** fs.watch over the whole tree: native and cheap on Windows (and macOS).
+ *  Each change still runs a callback on the main process, and an install or
+ *  a build in the worktree makes thousands, so the freeze log counts them. */
 const watchTree: WatchFn = (root, onChange, onError) => {
   const watcher = fs.watch(root, { recursive: true }, (_event, filename) => {
+    freezeLog.noteWorktreeChange();
     if (filename) onChange(filename.toString());
   });
   watcher.on('error', onError);

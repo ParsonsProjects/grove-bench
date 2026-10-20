@@ -10,6 +10,7 @@ import { attachmentsFolder, imagePath, pruneAttachments, removeAttachments, save
 import { TurnFiles } from './turn-files.js';
 import { toolViewOf } from '../shared/tool-view.js';
 import { logger } from './logger.js';
+import { freezeLog } from './freeze-log.js';
 import { perfSteps } from './perf-steps.js';
 import { perfLine } from './perf-log.js';
 import { worktreeManager } from './worktree-manager.js';
@@ -107,6 +108,8 @@ class AgentSessionManager {
   private createEmitter(session: ManagedSession): Emit {
     const id = session.id;
     const emit = (event: AgentEvent) => {
+      // Counted for the freeze log, which names how many a stall handled.
+      freezeLog.noteAgentEvent();
       // The provider refused the credentials. A saved key is used instead of
       // any other sign-in, so when one is saved it is the bad one: flag it so
       // new conversations ask for another.

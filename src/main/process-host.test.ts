@@ -403,6 +403,43 @@ describe('process host: spawned processes', () => {
     expect(seen).toEqual(['exit 0 null', 'close', 'out {"type":"system"}\n', 'out end']);
   });
 
+  it('hands its output on through timeOutput, with its size, and nothing else', async () => {
+    const timed: number[] = [];
+    const timeOutput = vi.fn((chars: number, deliver: () => void) => { timed.push(chars); deliver(); });
+    const { host, latest } = setup({ timeOutput });
+    host.start();
+    latest().ready();
+    const proc = host.spawn('claude.exe', []);
+    const seen = watch(proc);
+    latest().emit('message', { type: 'spawned', id: 1, pid: 42, launchMs: 5 });
+    latest().emit('message', { type: 'stdout', id: 1, data: '{"a":1}\n' });
+    latest().emit('message', { type: 'stderr', id: 1, data: 'warn' });
+    latest().emit('message', { type: 'exit', id: 1, code: 0, signal: null });
+    await settle();
+    expect(timed).toEqual([8, 4]);
+    expect(seen).toEqual(['exit 0 null', 'out {"a":1}\n']);
+
+    // A process started here, the host never having come up, the same way.
+    const down = setup({ timeOutput });
+    down.host.start();
+    watch(down.host.spawn('claude.exe', []));
+    down.fire(HOST_START_TIMEOUT_MS);
+    down.local[0].post({ type: 'stdout', id: 0, data: 'xyz' });
+    expect(timed).toEqual([8, 4, 3]);
+  });
+
+  it('passes output on as strings, as the host decoded it', async () => {
+    const { host, latest } = setup();
+    host.start();
+    latest().ready();
+    const proc = host.spawn('claude.exe', []);
+    const chunks: unknown[] = [];
+    proc.stdout.on('data', (d) => chunks.push(d));
+    latest().emit('message', { type: 'stdout', id: 1, data: '€ {"a":1}\n' });
+    await settle();
+    expect(chunks).toEqual(['€ {"a":1}\n']);
+  });
+
   it('sends its input, and a request to stop it, to the host', async () => {
     const { host, latest } = setup();
     host.start();

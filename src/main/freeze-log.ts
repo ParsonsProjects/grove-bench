@@ -17,6 +17,15 @@
  * A stall with nothing named used to be a mystery, so two more things are
  * named: synchronous work the app marks with timeWork (reading an event log,
  * execa's PATH search before a launch), and garbage collection pauses.
+ *
+ * Most stalls were still unnamed, and they grew with how busy the agents
+ * were, so the agents' output is counted too: every chunk an agent writes
+ * reaches the main process, where the agent SDK parses it and the session
+ * hands on the events it holds (agent events: N from X of output, with the
+ * time that took), and so are the file changes the worktree watchers see
+ * during turns (turn-files.ts). And the process's CPU time over a stall says
+ * whether the main process was busy (CPU near the gap) or waiting on the
+ * system, a disk or an antivirus (CPU far below it).
  */
 import { constants as perfConstants, PerformanceObserver } from 'node:perf_hooks';
 import type { IpcMain, PowerMonitor } from 'electron';
@@ -73,12 +82,30 @@ export interface FreezeStats {
   launches: number;
   launchMs: number;
   slowestLaunch: { name: string; ms: number } | null;
+  /** Agent output handled on the main process (see timeAgentOutput). */
+  agentOutput: AgentOutput;
   /** How late the timer ran: the main process's event-loop delay, in ms.
    *  Null when it didn't run. */
   loopDelay: { p50: number; p99: number; max: number } | null;
 }
 
-const emptyStats = (): Omit<FreezeStats, 'loopDelay'> => ({ stalls: 0, stallMs: 0, slowFrames: 0, launches: 0, launchMs: 0, slowestLaunch: null });
+/** Agents' output the main process handled: the events it gave, its size
+ *  (in characters, about bytes for the JSON agents write) and how long
+ *  handling it held the main process. */
+export interface AgentOutput {
+  events: number;
+  chars: number;
+  ms: number;
+}
+
+const emptyStats = (): Omit<FreezeStats, 'loopDelay' | 'agentOutput'> => ({ stalls: 0, stallMs: 0, slowFrames: 0, launches: 0, launchMs: 0, slowestLaunch: null });
+
+/** A size in characters, for the log. */
+export function formatChars(chars: number): string {
+  if (chars < 1024) return `${chars} bytes`;
+  if (chars < 1024 * 1024) return `${Math.round(chars / 1024)} KB`;
+  return `${(chars / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 /** The nearest-rank percentile `p` (0 to 1) of ascending `sorted`. */
 function percentile(sorted: number[], p: number): number {
@@ -89,6 +116,15 @@ export interface FreezeLogOptions {
   /** Monotonic clock in ms. */
   now?: () => number;
   write?: (line: string) => void;
+  /** CPU time the process has used so far, in ms (every thread's). When
+   *  given, each stall line says how much was used during it. */
+  cpuMs?: () => number;
+}
+
+/** The CPU time this process has used, in ms. */
+export function processCpuMs(): number {
+  const { user, system } = process.cpuUsage();
+  return (user + system) / 1000;
 }
 
 /** Shells a process may be launched through (`shell: true`); the command
@@ -138,9 +174,19 @@ function writeFreeze(line: string): void {
   logger.warn(`[freeze] ${line}`);
 }
 
-export function createFreezeLog({ now = () => performance.now(), write = writeFreeze }: FreezeLogOptions = {}) {
+export function createFreezeLog({ now = () => performance.now(), write = writeFreeze, cpuMs }: FreezeLogOptions = {}) {
   let lastTick = now();
+  let lastCpu = cpuMs?.() ?? 0;
   let suspended = false;
+  /** Agent output handled, and worktree changes the turn watchers saw, as
+   *  running totals. A stall names what they grew by since the tick before
+   *  it, the health line what they grew by since the last one. Plain
+   *  counters, so counting costs next to nothing. */
+  const agent: AgentOutput = { events: 0, chars: 0, ms: 0 };
+  const agentAtTick: AgentOutput = { ...agent };
+  const agentAtStats: AgentOutput = { ...agent };
+  let worktreeChanges = 0;
+  let worktreeChangesAtTick = 0;
   const ipcCalls: Activity[] = [];
   const launches: Activity[] = [];
   const work: Activity[] = [];
@@ -190,15 +236,23 @@ export function createFreezeLog({ now = () => performance.now(), write = writeFr
   }
 
   /** A stall from `from` to `t`, naming what ran during it, all but the
-   *  garbage collection. */
-  function describeStall(from: number, t: number, gap: number): string {
+   *  garbage collection. `cpu` is the process's CPU time over it, when
+   *  measured; `output` and `changes` are what the agents wrote and the
+   *  worktree watchers saw meanwhile. */
+  function describeStall(from: number, t: number, gap: number, cpu: number | undefined, output: AgentOutput, changes: number): string {
     const ipc = during(ipcCalls, from, t);
     const launched = during(launches, from, t);
     const other = during(work, from, t);
+    const agentEvents = output.events > 0 || output.chars > 0
+      ? `agent events: ${output.events}${output.chars > 0 ? ` from ${formatChars(output.chars)} of output (${Math.round(output.ms)} ms)` : ''}`
+      : '';
     return `main process didn't run for ${Math.round(gap)} ms`
+      + (cpu !== undefined ? ` (process CPU ${Math.round(cpu)} ms)` : '')
       + (ipc ? `; IPC calls during it: ${ipc}` : '')
       + (launched ? `; processes started: ${launched}` : '')
-      + (other ? `; other work: ${other}` : '');
+      + (other ? `; other work: ${other}` : '')
+      + (agentEvents ? `; ${agentEvents}` : '')
+      + (changes > 0 ? `; worktree file changes: ${changes}` : '');
   }
 
   /** Write the stall waiting for its garbage collections, if there is one. */
@@ -216,15 +270,44 @@ export function createFreezeLog({ now = () => performance.now(), write = writeFr
     flush();
     const gap = t - lastTick;
     lastTick = t;
+    const cpu = cpuMs?.();
+    const cpuUsed = cpu === undefined ? undefined : cpu - lastCpu;
+    if (cpu !== undefined) lastCpu = cpu;
+    const output: AgentOutput = {
+      events: agent.events - agentAtTick.events,
+      chars: agent.chars - agentAtTick.chars,
+      ms: agent.ms - agentAtTick.ms,
+    };
+    Object.assign(agentAtTick, agent);
+    const changes = worktreeChanges - worktreeChangesAtTick;
+    worktreeChangesAtTick = worktreeChanges;
     if (suspended || gap >= SLEEP_GAP_MS) return;
     delays.push(Math.max(0, gap - TICK_MS));
     if (gap < STALL_GAP_MS) return;
     stats.stalls++;
     stats.stallMs += gap;
     const from = t - gap;
-    const line = describeStall(from, t, gap);
+    const line = describeStall(from, t, gap, cpuUsed, output, changes);
     if (gcWatched) pendingStall = { line, from, t };
     else emit(line);
+  }
+
+  /**
+   * Hand a chunk of an agent's output on with `deliver`, timing what that
+   * costs the main process: `deliver` itself (into the stream the agent SDK
+   * reads) and the promise chain it sets off, the SDK parsing the chunk and
+   * the session handling the events it held. That chain runs as microtasks
+   * before the main process does anything else, so the time is taken in a
+   * tick queued from a microtask, which Node runs once none is left.
+   */
+  function timeAgentOutput(chars: number, deliver: () => void): void {
+    const start = now();
+    agent.chars += chars;
+    try {
+      deliver();
+    } finally {
+      queueMicrotask(() => process.nextTick(() => { agent.ms += now() - start; }));
+    }
   }
 
   /** Run `fn` and remember how long it held the main process, so a stall
@@ -279,8 +362,11 @@ export function createFreezeLog({ now = () => performance.now(), write = writeFr
   }
 
   /** Time the synchronous part of every handler registered with
-   *  `ipc.handle` from now on, so a stall can name the calls it covered. */
-  function timeIpcHandlers(ipc: Pick<IpcMain, 'handle'>): void {
+   *  `ipc.handle` from now on, and of every listener registered with
+   *  `ipc.on` (messages the window sends without waiting: a prompt sent, a
+   *  notification, the taskbar badge, saved app state), so a stall can name
+   *  the calls it covered. */
+  function timeIpcHandlers(ipc: Pick<IpcMain, 'handle' | 'on'>): void {
     const handle = ipc.handle.bind(ipc);
     ipc.handle = (channel: string, listener: Parameters<IpcMain['handle']>[1]) => handle(channel, (event, ...args) => {
       const start = now();
@@ -290,6 +376,15 @@ export function createFreezeLog({ now = () => performance.now(), write = writeFr
         remember(ipcCalls, { name: channel, start, ms: now() - start });
       }
     });
+    const on = ipc.on.bind(ipc);
+    ipc.on = ((channel: string, listener: Parameters<IpcMain['on']>[1]) => on(channel, (event, ...args) => {
+      const start = now();
+      try {
+        listener(event, ...args);
+      } finally {
+        remember(ipcCalls, { name: channel, start, ms: now() - start });
+      }
+    })) as IpcMain['on'];
   }
 
   /** Write a slow frame (or task) the window reported. */
@@ -309,6 +404,11 @@ export function createFreezeLog({ now = () => performance.now(), write = writeFr
     timeIpcHandlers,
     timeProcessLaunches,
     timeWork,
+    timeAgentOutput,
+    /** Count an event a session handed on (agent-session.ts). */
+    noteAgentEvent(): void { agent.events++; },
+    /** Count a change a turn's worktree watcher saw (turn-files.ts). */
+    noteWorktreeChange(): void { worktreeChanges++; },
     watchGc,
     /** Write a stall still waiting for the next tick (at quit). */
     flush,
@@ -319,16 +419,22 @@ export function createFreezeLog({ now = () => performance.now(), write = writeFr
       const loopDelay = sorted.length > 0
         ? { p50: percentile(sorted, 0.5), p99: percentile(sorted, 0.99), max: sorted[sorted.length - 1] }
         : null;
-      const taken = { ...stats, loopDelay };
+      const agentOutput: AgentOutput = {
+        events: agent.events - agentAtStats.events,
+        chars: agent.chars - agentAtStats.chars,
+        ms: agent.ms - agentAtStats.ms,
+      };
+      Object.assign(agentAtStats, agent);
+      const taken = { ...stats, agentOutput, loopDelay };
       stats = emptyStats();
       delays = [];
       return taken;
     },
     /** Start (or restart) the clock the next tick is measured from. */
-    start(): void { suspended = false; lastTick = now(); },
+    start(): void { suspended = false; lastTick = now(); lastCpu = cpuMs?.() ?? 0; },
     /** The system is going to sleep: the timer stops, that's not a freeze. */
     suspend(): void { suspended = true; },
-    resume(): void { suspended = false; lastTick = now(); },
+    resume(): void { suspended = false; lastTick = now(); lastCpu = cpuMs?.() ?? 0; },
   };
 }
 
@@ -363,7 +469,7 @@ export function sanitizeReport(value: unknown): FreezeReport | null {
   };
 }
 
-export const freezeLog = createFreezeLog();
+export const freezeLog = createFreezeLog({ cpuMs: processCpuMs });
 
 /** Start the main-process timer. Call once the app is ready (it listens to
  *  power events, which need that). */

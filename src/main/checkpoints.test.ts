@@ -10,19 +10,26 @@ vi.mock('./logger.js', () => ({
   logger: { debug: vi.fn(), warn: vi.fn(), info: vi.fn(), error: vi.fn() },
 }));
 
-// Mock fs — capture() now writes commit messages to a temp file
+// Mock fs: capture() writes commit messages to a temp file. No worktree
+// index is found (stat fails), so snapshots start from read-tree HEAD.
 vi.mock('node:fs', () => ({
-  rmSync: vi.fn(),
-  writeFileSync: vi.fn(),
+  promises: {
+    rm: vi.fn(async () => {}),
+    writeFile: vi.fn(async () => {}),
+    copyFile: vi.fn(async () => {}),
+    readFile: vi.fn(async () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); }),
+    stat: vi.fn(async () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); }),
+  },
 }));
 
 import { git, gitEnv } from './git.js';
 import { CheckpointManager } from './checkpoints.js';
 import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 const mockGit = vi.mocked(git);
 const mockGitEnv = vi.mocked(gitEnv);
-const mockFs = vi.mocked(fs);
+const mockWriteFile = vi.mocked(fs.promises.writeFile);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -127,6 +134,26 @@ describe('CheckpointManager', () => {
       expect(await mgr.capture('sess1', '/repo', 'uuid-3')).toBe(true);
     });
 
+    it('copies the worktree index and writes and removes its temp files without blocking', async () => {
+      // A linked worktree: .git is a file naming its gitdir.
+      vi.mocked(fs.promises.stat).mockResolvedValueOnce({ isDirectory: () => false } as never);
+      vi.mocked(fs.promises.readFile).mockResolvedValueOnce('gitdir: /main/.git/worktrees/wt\n' as never);
+      mockGitEnv.mockImplementation(async (args: string[]) => (args[0] === 'write-tree' ? 'tree1' : args[0] === 'commit-tree' ? 'commit1' : ''));
+      mockGit.mockResolvedValue('');
+
+      const mgr = new CheckpointManager();
+      expect(await mgr.capture('sess1', '/repo', 'uuid-1', 'hello')).toBe(true);
+
+      const copy = vi.mocked(fs.promises.copyFile).mock.calls;
+      expect(copy).toHaveLength(1);
+      expect(path.normalize(String(copy[0][0]))).toBe(path.normalize('/main/.git/worktrees/wt/index'));
+      const tmpIndex = String(copy[0][1]);
+      expect(mockGitEnv).not.toHaveBeenCalledWith(['read-tree', 'HEAD'], expect.anything(), expect.anything());
+      const msgFile = String(mockWriteFile.mock.calls[0][0]);
+      expect(mockGitEnv).toHaveBeenCalledWith(['commit-tree', 'tree1', '-F', msgFile], '/repo', expect.anything());
+      expect(vi.mocked(fs.promises.rm).mock.calls.map(([file]) => file).sort()).toEqual([msgFile, tmpIndex].sort());
+    });
+
     it('falls back to an empty index when HEAD cannot be read (branch with no commits)', async () => {
       mockGitEnv.mockImplementation(async (args: string[]) => {
         if (args[0] === 'read-tree' && args[1] === 'HEAD') throw new Error('fatal: Not a valid object name HEAD');
@@ -151,7 +178,7 @@ describe('CheckpointManager', () => {
       const mgr = new CheckpointManager();
       expect(await mgr.captureBaseline('sess1', '/repo')).toBe(true);
 
-      const msg = String(mockFs.writeFileSync.mock.calls.at(-1)![1]);
+      const msg = String(mockWriteFile.mock.calls.at(-1)![1]);
       expect(msg).toContain('uuid=__baseline__');
       expect(mockGit).toHaveBeenCalledWith(['update-ref', 'refs/grove/checkpoints/sess1/turn/1', expect.any(String)], '/repo');
     });
@@ -446,7 +473,7 @@ describe('CheckpointManager', () => {
   describe('capture() with text', () => {
     /** Helper: get the commit message written to the temp file by capture(). */
     function getWrittenCommitMsg(): string {
-      const writeCall = mockFs.writeFileSync.mock.calls.find(
+      const writeCall = mockWriteFile.mock.calls.find(
         (c) => String(c[0]).includes('grove-msg-'),
       );
       return writeCall ? String(writeCall[1]) : '';
@@ -538,7 +565,7 @@ describe('CheckpointManager', () => {
       expect(mockGit).toHaveBeenCalledWith(
         ['update-ref', 'refs/grove/checkpoints/sess1/turn/2', 'commit2'], '/repo'
       );
-      const msg = mockFs.writeFileSync.mock.calls.at(-1)![1] as string;
+      const msg = mockWriteFile.mock.calls.at(-1)![1] as string;
       expect(msg).toContain('uuid=__clear__');
       // Real refs are never deleted by a clear
       expect(mockGit).not.toHaveBeenCalledWith(expect.arrayContaining(['update-ref', '-d']), expect.anything());

@@ -5,7 +5,8 @@
  *
  *   last 10 min: event loop delay p50 1 ms, p99 38 ms, max 310 ms;
  *   freezes: main 3 (640 ms), window 1; process launches 42 (1.9 s blocking,
- *   slowest git worktree 120 ms); CPU main 2%, pages 4%, gpu 1%, other 0%;
+ *   slowest git worktree 120 ms); agent output 12.3 MB, 4210 events (12.5 s);
+ *   CPU main 2%, pages 4%, gpu 1%, other 0%;
  *   memory main 210 MB, pages 480 MB, gpu 120 MB, other 90 MB;
  *   conversations 5 (2 asleep), terminals 2
  *
@@ -16,7 +17,7 @@
  * is.
  */
 import type { ProcessMetric } from 'electron';
-import type { FreezeStats } from './freeze-log.js';
+import { formatChars, type FreezeStats } from './freeze-log.js';
 import { perfLine } from './perf-log.js';
 
 /** Time between health lines. */
@@ -54,6 +55,10 @@ export function formatHealth(h: HealthInput): string {
   parts.push(`process launches ${f.launches}${f.launches > 0
     ? ` (${ms(f.launchMs)} blocking${f.slowestLaunch ? `, slowest ${f.slowestLaunch.name} ${ms(f.slowestLaunch.ms)}` : ''})`
     : ''}`);
+  const out = f.agentOutput;
+  if (out.events > 0 || out.chars > 0) {
+    parts.push(`agent output ${formatChars(out.chars)}, ${out.events} events (${ms(out.ms)})`);
+  }
 
   if (h.metrics.length > 0) {
     const cpu = new Map<string, number>();

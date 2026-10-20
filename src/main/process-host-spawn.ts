@@ -28,8 +28,13 @@ export type ProcessCommand = WithoutId<StdioRequest>;
 
 export class HostedProcess extends EventEmitter {
   readonly stdin: Writable;
-  readonly stdout = new Readable({ read() {} });
-  readonly stderr = new Readable({ read() {} });
+  /** Output arrives decoded (createSpawnRunner), and these streams hand it
+   *  on as the same strings. Without an encoding, a Readable turns each
+   *  string into a Buffer that the reader (the agent SDK's readline)
+   *  decodes again: a quarter of the main process's time on a 200 KB tool
+   *  result. */
+  readonly stdout = new Readable({ read() {}, encoding: 'utf8' });
+  readonly stderr = new Readable({ read() {}, encoding: 'utf8' });
   /** Set once the OS has created the process. */
   pid: number | undefined;
   exitCode: number | null = null;
