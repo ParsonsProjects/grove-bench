@@ -1127,7 +1127,7 @@ describe('file handlers', () => {
     write('new.ts', 'hi\n');
     vi.mocked(git.fileDiff).mockResolvedValue('');
     expect(await invoke(IPC.FILE_DIFF, 's1', 'new.ts')).toEqual({
-      kind: 'text', patch: git.synthesizeUntrackedDiff('new.ts', 'hi\n'),
+      kind: 'text', patch: '--- /dev/null\n+++ b/new.ts\n@@ -0,0 +1,1 @@\n+hi',
     });
     // A staged diff that is empty really is empty.
     expect(await invoke(IPC.FILE_DIFF, 's1', 'new.ts', true)).toEqual({ kind: 'text', patch: '' });
