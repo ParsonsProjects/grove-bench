@@ -146,7 +146,8 @@ describe('CheckpointManager', () => {
 
       const copy = vi.mocked(fs.promises.copyFile).mock.calls;
       expect(copy).toHaveLength(1);
-      expect(path.normalize(String(copy[0][0]))).toBe(path.normalize('/main/.git/worktrees/wt/index'));
+      // resolve, as the gitdir is: on Windows it adds the current drive.
+      expect(String(copy[0][0])).toBe(path.resolve('/main/.git/worktrees/wt/index'));
       const tmpIndex = String(copy[0][1]);
       expect(mockGitEnv).not.toHaveBeenCalledWith(['read-tree', 'HEAD'], expect.anything(), expect.anything());
       const msgFile = String(mockWriteFile.mock.calls[0][0]);
