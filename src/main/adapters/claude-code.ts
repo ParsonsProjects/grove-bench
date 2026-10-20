@@ -1907,6 +1907,10 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       for await (const message of q) {
         if (abortController.signal.aborted) break;
 
+        // A subagent's token stream makes no events (see transformMessage):
+        // skip it before any other work. The SDK has parsed it already.
+        if (message.type === 'stream_event' && message.parent_tool_use_id) continue;
+
         // Capture session ID from system_init
         if (message.type === 'system' && message.subtype === 'init') {
           sessionId = message.session_id;
