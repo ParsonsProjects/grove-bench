@@ -34,6 +34,7 @@ import { killTree } from './process-tree.js';
 import { previewManager } from './preview.js';
 import type { Emit, ManagedSession, SessionCompletionResult } from './session-types.js';
 import { SessionEventStore, TRANSIENT_EVENT_TYPES, eventLogPath } from './session-event-store.js';
+import { StreamDeltas, isStreamDelta } from './session-stream.js';
 import {
   requestPermission, respondToPermission as answerPermission, denyPendingPermissions,
   awaitElicitation, respondToElicitation as answerElicitation, cancelElicitations,
@@ -120,10 +121,19 @@ class AgentSessionManager {
 
   /** Create an emit function bound to a session — buffers events and persists them to JSONL on disk. */
   private createEmitter(session: ManagedSession): Emit {
-    const id = session.id;
+    const streamDeltas = session.streamDeltas ??= new StreamDeltas((delta) => this.deliver(session, delta));
     const emit = (event: AgentEvent) => {
       // Counted for the freeze log, which names how many a stall handled.
       freezeLog.noteAgentEvent();
+
+      // Streamed text and thinking go out merged, a few times a frame at most
+      // (session-stream.ts). Anything else sends them first, keeping order.
+      if (isStreamDelta(event)) {
+        streamDeltas.add(event);
+        return;
+      }
+      streamDeltas.flush();
+
       // The provider refused the credentials. A saved key is used instead of
       // any other sign-in, so when one is saved it is the bad one: flag it so
       // new conversations ask for another.
@@ -137,21 +147,34 @@ class AgentSessionManager {
         this.events.append(session, event);
       }
 
-      // Notify registered listeners (used for progress events)
-      const listeners = this.eventListeners.get(id);
-      if (listeners) {
-        for (const cb of listeners) {
-          try { cb(event); } catch { /* non-fatal */ }
-        }
-      }
-
-      const w = session.window;
-      if (!w.isDestroyed()) {
-        w.webContents.send(`${IPC.AGENT_EVENT}:${id}`, event);
-      }
+      this.deliver(session, event);
     };
     session.emit = emit;
     return emit;
+  }
+
+  /** Pass an event to the session's listeners and its window. */
+  private deliver(session: ManagedSession, event: AgentEvent): void {
+    const { id } = session;
+    // Notify registered listeners (used for progress events)
+    const listeners = this.eventListeners.get(id);
+    if (listeners) {
+      for (const cb of listeners) {
+        try { cb(event); } catch { /* non-fatal */ }
+      }
+    }
+
+    const w = session.window;
+    if (!w.isDestroyed()) {
+      w.webContents.send(`${IPC.AGENT_EVENT}:${id}`, event);
+    }
+  }
+
+  /** Send the streamed text and thinking a session still holds. The session's
+   *  next event does it anyway; this is for the ways a run ends, which may
+   *  send nothing more (or only a status, on its own channel). */
+  private flushStream(session: ManagedSession): void {
+    session.streamDeltas?.flush();
   }
 
   async createSession(opts: {
@@ -795,6 +818,9 @@ class AgentSessionManager {
       }
     }
 
+    // A run that ended without a last event (an abort, a stop, a sleep)
+    // would leave the text it streamed last waiting on the timer.
+    this.flushStream(session);
     if (session.turnHandle === handle) session.turnHandle = null;
     // A turn cut short by an error reports no files. Only this run's: once
     // stopped or put to sleep, a newer run may be watching its own turn.
@@ -1554,6 +1580,8 @@ class AgentSessionManager {
     }
 
     const emit = session.emit ?? this.createEmitter(session);
+    // What the agent wrote up to the stop shows now, not after the interrupt.
+    this.flushStream(session);
 
     // Resolve any pending permissions as denied first so the SDK isn't left
     // awaiting a tool decision.  The process is still alive, so these control
@@ -1652,6 +1680,8 @@ class AgentSessionManager {
     // Set up fresh abort controller for the next query
     session.abortController = new AbortController();
     session.queryHandle = null;
+    // The old run sends nothing more: what it streamed before the stop goes now.
+    this.flushStream(session);
 
     const emit = this.createEmitter(session);
 
@@ -1720,6 +1750,8 @@ class AgentSessionManager {
     void this.endTurnFiles(session);
     const abortController = session.abortController;
     session.abortController = new AbortController();
+    // Ahead of the status, which doesn't go through emit.
+    this.flushStream(session);
     if (!session.window.isDestroyed()) {
       session.window.webContents.send(IPC.SESSION_STATUS, id, 'sleeping');
     }
@@ -1901,6 +1933,8 @@ class AgentSessionManager {
 
     // Abort any remaining in-flight operations
     session.abortController.abort();
+    // The run sends nothing more after the abort: send what it streamed last.
+    this.flushStream(session);
 
     // Resolve any pending permissions as denied
     denyPendingPermissions(session, reason, session.emit);
@@ -2024,18 +2058,10 @@ class AgentSessionManager {
   injectEvent(id: string, event: AgentEvent): void {
     const session = this.sessions.get(id);
     if (!session) return;
+    // After the text streamed before it, as emit does.
+    this.flushStream(session);
     this.events.append(session, event);
-    const w = session.window;
-    if (!w.isDestroyed()) {
-      w.webContents.send(`${IPC.AGENT_EVENT}:${id}`, event);
-    }
-    // Notify internal listeners
-    const listeners = this.eventListeners.get(id);
-    if (listeners) {
-      for (const cb of listeners) {
-        try { cb(event); } catch { /* non-fatal */ }
-      }
-    }
+    this.deliver(session, event);
   }
 
   /** Start a search request (see SessionEventStore.beginSearch). Returns a

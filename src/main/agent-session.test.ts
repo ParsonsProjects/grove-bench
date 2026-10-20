@@ -4,6 +4,7 @@ import { IPC, PERMISSION_TIMEOUT_MINUTES, type AgentEvent, type McpServerInfo } 
 import * as fs from 'node:fs';
 import { perfSteps } from './perf-steps.js';
 import { worktreeManager } from './worktree-manager.js';
+import { STREAM_FLUSH_MS } from './session-stream.js';
 
 // ─── Mock infrastructure ───
 
@@ -4668,5 +4669,222 @@ describe('AgentSessionManager files a turn makes', () => {
     await sessionManager.destroySession('files-closed');
     expect(watch.closed).toBe(true);
     expect(watch.finished).toBe(false);
+  });
+});
+
+describe('AgentSessionManager streamed text and thinking', () => {
+  async function startSession(id: string, opts: { running?: boolean } = {}) {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id, branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(sessionManager.getSession(id)?.queryHandle).toBeTruthy());
+    const control = mockAdapter.control!;
+    if (opts.running) {
+      control.emitEvent({ type: 'system_init', sessionId: 'provider-1', model: 'mock-model', tools: [] });
+      await vi.waitFor(() => expect(sessionManager.getSession(id)?.status).toBe('running'));
+    }
+    return { win, control };
+  }
+
+  /** Only the timers, so held deltas wait until a test moves the clock;
+   *  setImmediate stays real for processed(). */
+  const holdTimers = () => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  afterEach(() => { vi.useRealTimers(); });
+
+  /** Let the session's event loop take what the adapter emitted. */
+  const processed = async () => {
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+  };
+
+  /** destroySession waits on a real timer. */
+  async function destroy(id: string) {
+    vi.useRealTimers();
+    await sessionManager.destroySession(id);
+  }
+
+  /** What the window was sent, in order: agent events by type (`type:text`
+   *  for deltas) and statuses as `status:<status>`. */
+  const sent = (win: ReturnType<typeof makeMockWindow>): string[] =>
+    win._send.mock.calls.map(([channel, a, b]: [string, any, any]) => {
+      if (channel === IPC.SESSION_STATUS) return `status:${b}`;
+      return a.type === 'partial_text' || a.type === 'partial_thinking' ? `${a.type}:${a.text}` : a.type;
+    });
+  const deltasSent = (win: ReturnType<typeof makeMockWindow>) =>
+    sent(win).filter((s) => s.startsWith('partial_'));
+
+  it("sends a thread's deltas as one event, ahead of the event that ends them", async () => {
+    const { win, control } = await startSession('stream-merge');
+    holdTimers();
+
+    control.emitEvent({ type: 'partial_text', text: 'Hel' });
+    control.emitEvent({ type: 'partial_text', text: 'lo' });
+    control.emitEvent({ type: 'partial_text', text: ' there' });
+    await processed();
+    expect(deltasSent(win)).toEqual([]);
+
+    control.emitEvent({ type: 'assistant_text', text: 'Hello there', uuid: 'u1' });
+    await processed();
+    expect(sent(win).slice(-2)).toEqual(['partial_text:Hello there', 'assistant_text']);
+    // Still live only, never kept.
+    expect(sessionManager.getEventHistory('stream-merge').some((e) => e.type === 'partial_text')).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(STREAM_FLUSH_MS * 2);
+    expect(deltasSent(win)).toEqual(['partial_text:Hello there']);
+    await destroy('stream-merge');
+  });
+
+  it('keeps thinking, text and a tool call in the order the agent sent them', async () => {
+    const { win, control } = await startSession('stream-order');
+    holdTimers();
+    const before = sent(win).length;
+
+    control.emitEvent({ type: 'partial_thinking', text: 'Need ' });
+    control.emitEvent({ type: 'partial_thinking', text: 'tests' });
+    control.emitEvent({ type: 'partial_text', text: 'Running ' });
+    control.emitEvent({ type: 'partial_text', text: 'them' });
+    control.emitEvent({ type: 'assistant_tool_use', toolName: 'Bash', toolInput: { command: 'npm test' }, toolUseId: 'tu1', uuid: 'u1' });
+    control.emitEvent({ type: 'partial_text', text: 'Done' });
+    await processed();
+    await vi.advanceTimersByTimeAsync(STREAM_FLUSH_MS);
+
+    expect(sent(win).slice(before)).toEqual([
+      'partial_thinking:Need tests', 'partial_text:Running them', 'assistant_tool_use', 'partial_text:Done',
+    ]);
+    await destroy('stream-order');
+  });
+
+  it('sends what a thread holds once the timer runs out', async () => {
+    const { win, control } = await startSession('stream-timer');
+    holdTimers();
+
+    control.emitEvent({ type: 'partial_text', text: 'a' });
+    control.emitEvent({ type: 'partial_text', text: 'b' });
+    await processed();
+    await vi.advanceTimersByTimeAsync(STREAM_FLUSH_MS - 1);
+    expect(deltasSent(win)).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(deltasSent(win)).toEqual(['partial_text:ab']);
+
+    control.emitEvent({ type: 'partial_text', text: 'c' });
+    await processed();
+    await vi.advanceTimersByTimeAsync(STREAM_FLUSH_MS);
+    expect(deltasSent(win)).toEqual(['partial_text:ab', 'partial_text:c']);
+    await destroy('stream-timer');
+  });
+
+  it("holds each thread's deltas apart", async () => {
+    const a = await startSession('stream-a');
+    const b = await startSession('stream-b');
+    holdTimers();
+
+    a.control.emitEvent({ type: 'partial_text', text: 'a1' });
+    b.control.emitEvent({ type: 'partial_text', text: 'b1' });
+    a.control.emitEvent({ type: 'partial_text', text: 'a2' });
+    b.control.emitEvent({ type: 'partial_thinking', text: 'bt' });
+    await processed();
+    // B's thinking sent B's text, not A's.
+    expect(deltasSent(a.win)).toEqual([]);
+    expect(deltasSent(b.win)).toEqual(['partial_text:b1']);
+
+    // A's reply sends A's text only.
+    a.control.emitEvent({ type: 'assistant_text', text: 'a1a2', uuid: 'ua' });
+    await processed();
+    expect(deltasSent(a.win)).toEqual(['partial_text:a1a2']);
+    expect(deltasSent(b.win)).toEqual(['partial_text:b1']);
+
+    await vi.advanceTimersByTimeAsync(STREAM_FLUSH_MS);
+    expect(deltasSent(a.win)).toEqual(['partial_text:a1a2']);
+    expect(deltasSent(b.win)).toEqual(['partial_text:b1', 'partial_thinking:bt']);
+    for (const [channel] of a.win._send.mock.calls) expect(channel).not.toContain('stream-b');
+    for (const [channel] of b.win._send.mock.calls) expect(channel).not.toContain('stream-a');
+    await destroy('stream-a');
+    await destroy('stream-b');
+  });
+
+  it('sends what is held when the user stops the thread, ahead of the restart', async () => {
+    const { win, control } = await startSession('stream-stop');
+    holdTimers();
+
+    control.emitEvent({ type: 'partial_text', text: 'half a sent' });
+    await processed();
+    await sessionManager.stopQuery('stream-stop');
+
+    const after = sent(win);
+    expect(deltasSent(win)).toEqual(['partial_text:half a sent']);
+    expect(after.indexOf('partial_text:half a sent')).toBeLessThan(after.lastIndexOf('mode_sync'));
+    await vi.advanceTimersByTimeAsync(STREAM_FLUSH_MS * 2);
+    expect(deltasSent(win)).toEqual(['partial_text:half a sent']);
+    await destroy('stream-stop');
+  });
+
+  it('sends what is held when the turn is interrupted', async () => {
+    const { win, control } = await startSession('stream-interrupt');
+    holdTimers();
+
+    control.emitEvent({ type: 'partial_text', text: 'stop me' });
+    await processed();
+    await sessionManager.interruptQuery('stream-interrupt');
+
+    const after = sent(win);
+    expect(deltasSent(win)).toEqual(['partial_text:stop me']);
+    expect(after.indexOf('partial_text:stop me')).toBeLessThan(after.lastIndexOf('mode_sync'));
+    await destroy('stream-interrupt');
+  });
+
+  it('sends what is held before the thread reports it is asleep', async () => {
+    const { win, control } = await startSession('stream-sleep', { running: true });
+    holdTimers();
+
+    // Thinking alone doesn't start a turn, so the thread can still sleep.
+    control.emitEvent({ type: 'partial_thinking', text: 'idle thought' });
+    await processed();
+    expect(await sessionManager.sleepSession('stream-sleep')).toBe(true);
+
+    const after = sent(win);
+    expect(deltasSent(win)).toEqual(['partial_thinking:idle thought']);
+    expect(after.indexOf('partial_thinking:idle thought')).toBeLessThan(after.lastIndexOf('status:sleeping'));
+    await destroy('stream-sleep');
+  });
+
+  it('sends what is held when the thread closes', async () => {
+    const { win, control } = await startSession('stream-close');
+    holdTimers();
+
+    control.emitEvent({ type: 'partial_text', text: 'closing words' });
+    await processed();
+    await sessionManager.closeSession('stream-close');
+
+    const after = sent(win);
+    expect(deltasSent(win)).toEqual(['partial_text:closing words']);
+    expect(after.indexOf('partial_text:closing words')).toBeLessThan(after.lastIndexOf('status:stopped'));
+  });
+
+  it('sends what is held ahead of the process exit', async () => {
+    const { win, control } = await startSession('stream-exit');
+    holdTimers();
+
+    control.emitEvent({ type: 'partial_text', text: 'last' });
+    control.finish();
+    await processed();
+
+    expect(sent(win).slice(-3)).toEqual(['partial_text:last', 'process_exit', 'status:stopped']);
+    await destroy('stream-exit');
+  });
+
+  it('sends what is held ahead of an error', async () => {
+    const { win, control } = await startSession('stream-error');
+    holdTimers();
+
+    control.emitEvent({ type: 'partial_text', text: 'before the crash' });
+    await processed();
+    control.error(new Error('agent crashed'));
+    await processed();
+
+    const after = sent(win);
+    expect(deltasSent(win)).toEqual(['partial_text:before the crash']);
+    expect(after.indexOf('partial_text:before the crash')).toBeLessThan(after.indexOf('error'));
+    await destroy('stream-error');
   });
 });
