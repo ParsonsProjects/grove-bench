@@ -270,7 +270,9 @@ function shutdown(): Promise<void> {
 }
 
 app.on('before-quit', (event) => {
-  // Debounced app-state saves (open tabs, groups, …) still waiting to be written.
+  // App-state changes (open tabs, groups, …) not in the file yet, waiting to
+  // be saved or on their way in the background: written synchronously, since
+  // a background save might not finish before the process exits.
   flushPendingSaves();
   if (isQuitting) return;
   if (!shutdownDone && nothingRunning()) {

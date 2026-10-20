@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { app } from 'electron';
 import type { AgentEvent, SkillInfo } from '../shared/types.js';
+import { appStateSaved, resetAppStateForTests } from './app-state.js';
 import {
   normalizeCommand,
   extractActivity,
@@ -188,9 +189,13 @@ describe('analyzeRepo (integration)', () => {
     eventsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'grove-events-'));
     stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'grove-state-'));
     vi.mocked(app.getPath).mockReturnValue(stateDir);
+    // App state is read once and kept in memory: start each test from its
+    // own (empty) folder.
+    resetAppStateForTests();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await appStateSaved();
     fs.rmSync(eventsDir, { recursive: true, force: true });
     fs.rmSync(stateDir, { recursive: true, force: true });
   });
