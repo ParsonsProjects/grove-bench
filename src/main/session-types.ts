@@ -164,6 +164,12 @@ export interface ManagedSession {
   /** Watches the worktree while a turn runs, for the files it makes
    *  (turn-files.ts). Null between turns. */
   turnFiles?: TurnFiles | null;
+  /** The background tasks the agent says are running, by id, with their
+   *  descriptions: its live set (background_tasks_changed), emptied when
+   *  its process starts again. Idle sleep would kill them, so it waits. */
+  backgroundTasks?: Map<string, string>;
+  /** Why idle sleep last refused, so the log says it once, not on every ask. */
+  sleepRefusal?: string | null;
 }
 
 export interface SessionCompletionResult {
