@@ -23,12 +23,15 @@
  * reaches the main process, where the agent SDK parses it and the session
  * hands on the events it holds (agent events: N from X of output, with the
  * time that took), and so are the file changes the worktree watchers see
- * during turns (turn-files.ts). And the process's CPU time over a stall says
- * whether the main process was busy (CPU near the gap) or waiting on the
- * system, a disk or an antivirus (CPU far below it).
+ * during turns (turn-files.ts). And the process's CPU time over a stall is
+ * named. That is every thread's, not the main thread's alone: Chromium's own
+ * threads, V8's garbage collection helpers and libuv's pool doing file I/O
+ * count too. So CPU far below the gap means the main process was waiting, on
+ * the system, a disk or an antivirus; CPU near it means some thread was
+ * busy, but doesn't show it was the main one.
  */
 import { constants as perfConstants, PerformanceObserver } from 'node:perf_hooks';
-import type { IpcMain, PowerMonitor } from 'electron';
+import type { IpcMain, IpcMainEvent, PowerMonitor } from 'electron';
 import type { FreezeReport } from '../shared/types.js';
 import { logger } from './logger.js';
 import { perfLine } from './perf-log.js';
@@ -43,7 +46,8 @@ const SLEEP_GAP_MS = 30_000;
 /** At most this many freeze lines a minute, so a bad state can't flood the log. */
 const MAX_LINES_PER_MINUTE = 30;
 /** IPC calls, process launches, timed work and collections remembered, to
- *  name the ones that ran during a stall. */
+ *  name the ones that ran during a stall. (Messages from the window, which
+ *  come in bursts, are counted by channel instead.) */
 const RECENT = 32;
 /** Shorter collections are left out: a stall is 100 ms or more, and V8's
  *  small young-generation collections run all the time. */
@@ -56,6 +60,13 @@ interface Activity {
   start: number;
   /** Time it held the main process (an IPC handler: until it returned or
    *  reached its first await; a launch: until the OS created the process). */
+  ms: number;
+}
+
+/** The messages the window sent on one channel: how many, and the time
+ *  their listeners took. */
+interface ChannelMessages {
+  count: number;
   ms: number;
 }
 
@@ -100,11 +111,19 @@ export interface AgentOutput {
 
 const emptyStats = (): Omit<FreezeStats, 'loopDelay' | 'agentOutput'> => ({ stalls: 0, stallMs: 0, slowFrames: 0, launches: 0, launchMs: 0, slowestLaunch: null });
 
-/** A size in characters, for the log. */
-export function formatChars(chars: number): string {
-  if (chars < 1024) return `${chars} bytes`;
-  if (chars < 1024 * 1024) return `${Math.round(chars / 1024)} KB`;
-  return `${(chars / (1024 * 1024)).toFixed(1)} MB`;
+const KB = 1024;
+const MB = 1024 * KB;
+const GB = 1024 * MB;
+
+/** A size for the logs, in bytes, KB, MB or GB: a whole number, but with
+ *  one decimal place for MB and GB under 10 (1.3 MB, 12 MB, 2.0 GB).
+ *  (Agents' output is counted in characters, about bytes for the JSON they
+ *  write.) */
+export function formatBytes(bytes: number): string {
+  if (bytes < KB) return `${bytes} bytes`;
+  if (bytes < MB) return `${Math.round(bytes / KB)} KB`;
+  const [n, unit] = bytes < GB ? [bytes / MB, 'MB'] : [bytes / GB, 'GB'];
+  return `${n < 10 ? n.toFixed(1) : Math.round(n)} ${unit}`;
 }
 
 /** The nearest-rank percentile `p` (0 to 1) of ascending `sorted`. */
@@ -121,7 +140,8 @@ export interface FreezeLogOptions {
   cpuMs?: () => number;
 }
 
-/** The CPU time this process has used, in ms. */
+/** The CPU time this process has used, in ms: every thread's, as
+ *  process.cpuUsage counts it, not the main thread's alone. */
 export function processCpuMs(): number {
   const { user, system } = process.cpuUsage();
   return (user + system) / 1000;
@@ -187,6 +207,12 @@ export function createFreezeLog({ now = () => performance.now(), write = writeFr
   const agentAtStats: AgentOutput = { ...agent };
   let worktreeChanges = 0;
   let worktreeChangesAtTick = 0;
+  /** Messages the window sent without waiting (ipc.on) since the last tick,
+   *  by channel. They come in bursts (typing or pasting in a terminal sends
+   *  one a keystroke), so they are counted here rather than remembered with
+   *  the IPC calls, where a burst queued behind a slow call would push that
+   *  call out of the stall line. */
+  let messages = new Map<string, ChannelMessages>();
   const ipcCalls: Activity[] = [];
   const launches: Activity[] = [];
   const work: Activity[] = [];
@@ -235,20 +261,32 @@ export function createFreezeLog({ now = () => performance.now(), write = writeFr
       .join(', ');
   }
 
+  /** The messages in `sent` by channel, the costliest first:
+   *  "pty:write ×120 (3 ms)". */
+  function messageList(sent: Map<string, ChannelMessages>): string {
+    return [...sent]
+      .sort((a, b) => b[1].ms - a[1].ms)
+      .map(([channel, m]) => `${channel}${m.count > 1 ? ` ×${m.count}` : ''} (${Math.round(m.ms)} ms)`)
+      .join(', ');
+  }
+
   /** A stall from `from` to `t`, naming what ran during it, all but the
-   *  garbage collection. `cpu` is the process's CPU time over it, when
-   *  measured; `output` and `changes` are what the agents wrote and the
-   *  worktree watchers saw meanwhile. */
-  function describeStall(from: number, t: number, gap: number, cpu: number | undefined, output: AgentOutput, changes: number): string {
+   *  garbage collection. `cpu` is the process's CPU time over it (all
+   *  threads'), when measured; `sent` the messages the window sent,
+   *  `output` and `changes` what the agents wrote and the worktree watchers
+   *  saw meanwhile. */
+  function describeStall(from: number, t: number, gap: number, cpu: number | undefined, sent: Map<string, ChannelMessages>, output: AgentOutput, changes: number): string {
     const ipc = during(ipcCalls, from, t);
+    const messaged = messageList(sent);
     const launched = during(launches, from, t);
     const other = during(work, from, t);
     const agentEvents = output.events > 0 || output.chars > 0
-      ? `agent events: ${output.events}${output.chars > 0 ? ` from ${formatChars(output.chars)} of output (${Math.round(output.ms)} ms)` : ''}`
+      ? `agent events: ${output.events}${output.chars > 0 ? ` from ${formatBytes(output.chars)} of output (${Math.round(output.ms)} ms)` : ''}`
       : '';
     return `main process didn't run for ${Math.round(gap)} ms`
-      + (cpu !== undefined ? ` (process CPU ${Math.round(cpu)} ms)` : '')
+      + (cpu !== undefined ? ` (process CPU, all threads: ${Math.round(cpu)} ms)` : '')
       + (ipc ? `; IPC calls during it: ${ipc}` : '')
+      + (messaged ? `; IPC messages during it: ${messaged}` : '')
       + (launched ? `; processes started: ${launched}` : '')
       + (other ? `; other work: ${other}` : '')
       + (agentEvents ? `; ${agentEvents}` : '')
@@ -281,13 +319,15 @@ export function createFreezeLog({ now = () => performance.now(), write = writeFr
     Object.assign(agentAtTick, agent);
     const changes = worktreeChanges - worktreeChangesAtTick;
     worktreeChangesAtTick = worktreeChanges;
+    const sent = messages;
+    if (sent.size > 0) messages = new Map();
     if (suspended || gap >= SLEEP_GAP_MS) return;
     delays.push(Math.max(0, gap - TICK_MS));
     if (gap < STALL_GAP_MS) return;
     stats.stalls++;
     stats.stallMs += gap;
     const from = t - gap;
-    const line = describeStall(from, t, gap, cpuUsed, output, changes);
+    const line = describeStall(from, t, gap, cpuUsed, sent, output, changes);
     if (gcWatched) pendingStall = { line, from, t };
     else emit(line);
   }
@@ -361,12 +401,23 @@ export function createFreezeLog({ now = () => performance.now(), write = writeFr
     };
   }
 
+  /** Count a message a listener registered with `ipc.on` handled. */
+  function noteMessage(channel: string, ms: number): void {
+    const m = messages.get(channel);
+    if (m) {
+      m.count++;
+      m.ms += ms;
+    } else {
+      messages.set(channel, { count: 1, ms });
+    }
+  }
+
   /** Time the synchronous part of every handler registered with
    *  `ipc.handle` from now on, and of every listener registered with
-   *  `ipc.on` (messages the window sends without waiting: a prompt sent, a
-   *  notification, the taskbar badge, saved app state), so a stall can name
-   *  the calls it covered. */
-  function timeIpcHandlers(ipc: Pick<IpcMain, 'handle' | 'on'>): void {
+   *  `ipc.on` or `ipc.once` (messages the window sends without waiting: a
+   *  prompt sent, a keystroke in a terminal, saved app state), so a stall
+   *  can name the calls it covered, and the messages by channel. */
+  function timeIpcHandlers(ipc: Pick<IpcMain, 'handle' | 'on' | 'once' | 'removeListener'>): void {
     const handle = ipc.handle.bind(ipc);
     ipc.handle = (channel: string, listener: Parameters<IpcMain['handle']>[1]) => handle(channel, (event, ...args) => {
       const start = now();
@@ -376,15 +427,31 @@ export function createFreezeLog({ now = () => performance.now(), write = writeFr
         remember(ipcCalls, { name: channel, start, ms: now() - start });
       }
     });
+    type Listener = Parameters<IpcMain['on']>[1];
     const on = ipc.on.bind(ipc);
-    ipc.on = ((channel: string, listener: Parameters<IpcMain['on']>[1]) => on(channel, (event, ...args) => {
+    const removeListener = ipc.removeListener.bind(ipc);
+    /** `run`, counted as a message on `channel` each time it runs. The
+     *  wrapper keeps `listener` as its `listener`, as EventEmitter's once
+     *  wrappers do, so removeListener and off given `listener` remove it. */
+    const counted = (channel: string, listener: Listener, run: Listener = listener) => Object.assign((event: IpcMainEvent, ...args: unknown[]) => {
       const start = now();
       try {
-        listener(event, ...args);
+        run(event, ...args);
       } finally {
-        remember(ipcCalls, { name: channel, start, ms: now() - start });
+        noteMessage(channel, now() - start);
       }
-    })) as IpcMain['on'];
+    }, { listener });
+    ipc.on = ((channel: string, listener: Listener) => on(channel, counted(channel, listener))) as IpcMain['on'];
+    // Not EventEmitter's own once: it registers its wrapper through the on
+    // above, so the emitter would hold this file's wrapper around that one,
+    // and the once wrapper's removal of itself would find nothing.
+    ipc.once = ((channel: string, listener: Listener) => {
+      const wrapper = counted(channel, listener, (event, ...args) => {
+        removeListener(channel, wrapper);
+        listener(event, ...args);
+      });
+      return on(channel, wrapper);
+    }) as IpcMain['once'];
   }
 
   /** Write a slow frame (or task) the window reported. */

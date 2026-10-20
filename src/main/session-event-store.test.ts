@@ -184,7 +184,7 @@ describe('SessionEventStore', () => {
     store.append(s, text('x'));
     await store.flush(s);
 
-    expect(perf.perfLine).toHaveBeenCalledWith('events', expect.stringMatching(/^event log write, 0 KB took 1500 ms/));
+    expect(perf.perfLine).toHaveBeenCalledWith('events', expect.stringMatching(/^event log write, \d+ bytes took 1500 ms/));
   });
 
   it('load() skips corrupt lines and serves a cached copy until the log changes', () => {

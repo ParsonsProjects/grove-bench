@@ -100,7 +100,7 @@ export function spawnClaudeCodeProcess(
     child.once('exit', () => signal.removeEventListener('abort', abort));
   }
   if (onStderr) {
-    child.stderr.on('data', (d: Buffer) => onStderr(d.toString()));
+    child.stderr.on('data', (d: string) => onStderr(d));
   } else {
     // Unread, it would pile up in memory for the life of the process.
     child.stderr.resume();

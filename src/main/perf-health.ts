@@ -5,12 +5,12 @@
  *
  *   last 10 min: event loop delay p50 1 ms, p99 38 ms, max 310 ms;
  *   freezes: main 3 (640 ms), window 1; process launches 42 (1.9 s blocking,
- *   slowest git worktree 120 ms); agent output 12.3 MB, 4210 events (12.5 s);
+ *   slowest git worktree 120 ms); agent output 12 MB, 4210 events (12.5 s);
  *   CPU main 2%, pages 4%, gpu 1%, other 0%;
  *   memory main 210 MB, pages 480 MB, gpu 120 MB, other 90 MB;
  *   agents 3, 2.0 GB: node.exe 9 (1.2 GB), claude.exe 3 (800 MB),
  *   conhost.exe 3 (40 MB), cmd.exe 4 (25 MB); dev server 900 MB: node.exe 2
- *   (880 MB), esbuild.exe 1 (15 MB), cmd.exe 1 (5 MB);
+ *   (880 MB), esbuild.exe 1 (15 MB), cmd.exe 1 (5.0 MB);
  *   conversations 5 (2 asleep), terminals 2
  *
  * followed by the largest processes under the agents, each with its thread
@@ -32,9 +32,10 @@
  * when they can't be had (or on other platforms). Their CPU isn't measured.
  */
 import type { ProcessMetric } from 'electron';
-import { formatChars, type FreezeStats } from './freeze-log.js';
+import { formatBytes, type FreezeStats } from './freeze-log.js';
 import { perfLine } from './perf-log.js';
 import type { AgentTreeProcess, ExeTotal, ProcessMemory } from './process-memory.js';
+import { within } from './within.js';
 
 /** Time between health lines. */
 export const HEALTH_MS = 10 * 60_000;
@@ -63,16 +64,14 @@ export interface HealthInput {
 }
 
 const ms = (v: number) => (v >= 1000 ? `${(v / 1000).toFixed(1)} s` : `${Math.round(v)} ms`);
-const MB = 1024 * 1024;
-const size = (bytes: number) => (bytes >= 1024 * MB ? `${(bytes / 1024 / MB).toFixed(1)} GB` : `${Math.round(bytes / MB)} MB`);
 const total = (totals: ExeTotal[]) => totals.reduce((n, t) => n + t.bytes, 0);
 
 /** node.exe 64 (5.2 GB), claude.exe 21 (3.9 GB), other 12 (400 MB) */
 function exeList(totals: ExeTotal[]): string {
   const named = totals.length > NAMED_EXES + 1 ? totals.slice(0, NAMED_EXES) : totals;
   const rest = totals.slice(named.length);
-  const items = named.map((t) => `${t.name} ${t.count} (${size(t.bytes)})`);
-  if (rest.length > 0) items.push(`other ${rest.reduce((n, t) => n + t.count, 0)} (${size(total(rest))})`);
+  const items = named.map((t) => `${t.name} ${t.count} (${formatBytes(t.bytes)})`);
+  if (rest.length > 0) items.push(`other ${rest.reduce((n, t) => n + t.count, 0)} (${formatBytes(total(rest))})`);
   return items.join(', ');
 }
 
@@ -91,7 +90,7 @@ export function formatHealth(h: HealthInput): string {
     : ''}`);
   const out = f.agentOutput;
   if (out.events > 0 || out.chars > 0) {
-    parts.push(`agent output ${formatChars(out.chars)}, ${out.events} events (${ms(out.ms)})`);
+    parts.push(`agent output ${formatBytes(out.chars)}, ${out.events} events (${ms(out.ms)})`);
   }
 
   if (h.metrics.length > 0) {
@@ -112,10 +111,10 @@ export function formatHealth(h: HealthInput): string {
   if (h.processes) {
     const a = h.processes.agents;
     parts.push(`agents ${a.agents}${a.untracked > 0 ? ` + ${a.untracked} not a thread's` : ''}${a.byExe.length > 0
-      ? `, ${size(total(a.byExe))}: ${exeList(a.byExe)}`
+      ? `, ${formatBytes(total(a.byExe))}: ${exeList(a.byExe)}`
       : ''}`);
     const dev = h.processes.devServer;
-    if (dev && dev.length > 0) parts.push(`dev server ${size(total(dev))}: ${exeList(dev)}`);
+    if (dev && dev.length > 0) parts.push(`dev server ${formatBytes(total(dev))}: ${exeList(dev)}`);
   }
 
   parts.push(`conversations ${h.conversations}${h.asleep > 0 ? ` (${h.asleep} asleep)` : ''}, terminals ${h.terminals}`);
@@ -128,7 +127,7 @@ export function formatLargest(largest: AgentTreeProcess[]): string {
   return `largest agent processes: ${largest.map((p) => {
     const where = [`pid ${p.pid}`, p.thread === null ? "not a thread's" : `thread ${p.thread}`];
     if (p.under.length > 0) where.push(`under ${p.under.join(' > ')}`);
-    return `${p.name} ${size(p.bytes)} (${where.join(', ')})`;
+    return `${p.name} ${formatBytes(p.bytes)} (${where.join(', ')})`;
   }).join(', ')}`;
 }
 
@@ -139,18 +138,6 @@ export interface HealthSources {
   /** The agents' processes (process-memory.ts). Null, a failure or a wait
    *  past PROCESSES_WAIT_MS leaves them out of the line. */
   processes?: () => Promise<ProcessMemory | null>;
-}
-
-/** What `measuring` resolves to, or null if it fails or takes longer than `ms`. */
-function within<T>(measuring: Promise<T | null>, ms: number): Promise<T | null> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => resolve(null), ms);
-    (timer as { unref?: () => void }).unref?.();
-    measuring.then(
-      (value) => { clearTimeout(timer); resolve(value); },
-      () => { clearTimeout(timer); resolve(null); },
-    );
-  });
 }
 
 /** Write a health line now and then. Returns a function that stops it. */
@@ -189,9 +176,12 @@ export function startHealthLog(
       write(formatHealth(input));
       return;
     }
-    // The rest of the line is as of now; the processes follow within seconds.
-    void within(measuring, processesWaitMs).then((processes) => {
+    // The rest of the line is as of now; the processes follow within seconds,
+    // or are left out if measuring them fails or takes too long.
+    let measured: ProcessMemory | null = null;
+    void within(measuring.then((m) => { measured = m; }), processesWaitMs).catch(() => false).then((inTime) => {
       if (stopped) return;
+      const processes = inTime ? measured : null;
       write(formatHealth({ ...input, processes }));
       if (processes && processes.agents.largest.length > 0) write(formatLargest(processes.agents.largest));
     });

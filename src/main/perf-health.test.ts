@@ -64,7 +64,7 @@ describe('formatHealth', () => {
     });
     expect(line).toBe('last 10 min: event loop delay p50 1 ms, p99 38 ms, max 310 ms; '
       + 'freezes: main 3 (640 ms), window 1; process launches 42 (1.9 s blocking, slowest git worktree 120 ms); '
-      + 'agent output 12.3 MB, 4210 events (12.5 s); '
+      + 'agent output 12 MB, 4210 events (12.5 s); '
       + 'CPU main 2%, pages 4%, gpu 1%, other 0%; memory main 205 MB, pages 480 MB, gpu 120 MB, other 90 MB; conversations 5 (2 asleep), terminals 2');
   });
 

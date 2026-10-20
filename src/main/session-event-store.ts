@@ -7,7 +7,7 @@ import { app } from 'electron';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { AgentEvent } from '../shared/types.js';
-import { freezeLog } from './freeze-log.js';
+import { formatBytes, freezeLog } from './freeze-log.js';
 import { logger } from './logger.js';
 import { perfLine } from './perf-log.js';
 import { SearchIndexCache, type EventSearchIndex, type EventSearchHit } from './event-search.js';
@@ -55,9 +55,6 @@ export const eventLogPath = (id: string) => path.join(getEventsDir(), `${id}.jso
 /** A thread id that is a plain name (thread ids are short ids), so a file or
  *  folder named after it can't reach outside its folder. */
 export const isThreadId = (id: unknown): id is string => typeof id === 'string' && /^[\w-]+$/.test(id);
-
-/** A size for the freeze log, which names event-log reads and writes. */
-const kb = (bytes: number) => `${Math.round(bytes / 1024)} KB`;
 
 /** The parts of a live session the store reads and writes. */
 type LoggedSession = Pick<ManagedSession, 'id' | 'eventHistory' | 'eventLogPath' | 'logBuffer' | 'logBufferBytes' | 'logFlushTimer'>;
@@ -120,7 +117,7 @@ export class SessionEventStore {
     const data = session.logBuffer.join('');
     session.logBuffer = [];
     session.logBufferBytes = 0;
-    return this.write(session.eventLogPath, `event log write, ${kb(Buffer.byteLength(data))}`, () =>
+    return this.write(session.eventLogPath, `event log write, ${formatBytes(Buffer.byteLength(data))}`, () =>
       fs.promises.appendFile(session.eventLogPath, data));
   }
 
@@ -259,7 +256,7 @@ export class SessionEventStore {
   /** Parse a JSONL event log, or null if it can't be read (so callers don't
    *  cache an empty history over a transient failure). */
   private readLog(id: string, logPath: string, size: number): AgentEvent[] | null {
-    return freezeLog.timeWork(`event log read, ${kb(size)}`, () => this.parseLog(id, logPath));
+    return freezeLog.timeWork(`event log read, ${formatBytes(size)}`, () => this.parseLog(id, logPath));
   }
 
   private parseLog(id: string, logPath: string): AgentEvent[] | null {
