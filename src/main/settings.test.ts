@@ -149,7 +149,7 @@ describe('saveSettings', () => {
   it('writes a temp file and renames it over settings.json', () => {
     saveSettings({ ...loadSettings(), theme: 'dark' });
     const [tmp, data] = mockWriteFileSync.mock.calls[0];
-    expect(tmp).toMatch(/settings\.json\.\d+\.\d+\.tmp$/);
+    expect(tmp).toMatch(/settings\.json\.\d+\.\d+\.\d+\.tmp$/);
     expect(JSON.parse(data as string).theme).toBe('dark');
     expect(mockRenameSync).toHaveBeenCalledWith(tmp, expect.stringMatching(/settings\.json$/));
   });

@@ -41,7 +41,7 @@ import * as skillSuggestions from './skill-suggestions.js';
 import * as memory from './memory.js';
 import * as memoryCompact from './memory-compact.js';
 import * as bookmarks from './bookmarks.js';
-import { listProjects, rememberProject, forgetProject, loadAppState, saveOpenTabs, saveCollapsedRepos, saveSessionSort, saveSidebarWidth, saveCollapsedPanels, loadConversationGroups, saveConversationGroups, saveUnreadSessionIds, loadUnreadSessionIds, saveTodoSessionIds, loadTodoSessionIds, flushPendingSaves, loadPrerequisiteCache, savePrerequisiteCache, loadUsageSnapshot } from './app-state.js';
+import { listProjects, rememberProject, forgetProject, loadAppState, saveOpenTabs, saveCollapsedRepos, saveSessionSort, saveSidebarWidth, saveCollapsedPanels, loadConversationGroups, saveConversationGroups, saveUnreadSessionIds, loadUnreadSessionIds, saveTodoSessionIds, loadTodoSessionIds, loadPrerequisiteCache, savePrerequisiteCache, loadUsageSnapshot } from './app-state.js';
 import { logRendererError } from './crash-handling.js';
 import { freezeLog } from './freeze-log.js';
 import { isThreadId } from './session-event-store.js';
@@ -2025,39 +2025,28 @@ export function registerHandlers() {
 
   // ─── App State ───
 
-  ipcMain.handle(IPC.APP_STATE_GET_OPEN_TABS, () => {
-    // Flush any debounced writes so the renderer always reads the latest state
-    // (prevents closed tabs from reopening after Vite hot-reload).
-    flushPendingSaves();
-    return loadAppState().openTabIds;
-  });
+  // Loads read the state in memory, which has every change, saved or not,
+  // so the renderer always gets the latest (closed tabs don't reopen after a
+  // Vite hot reload) without a write here.
+  ipcMain.handle(IPC.APP_STATE_GET_OPEN_TABS, () => loadAppState().openTabIds);
 
   ipcMain.on(IPC.APP_STATE_SET_OPEN_TABS, (_event, ids: string[]) => {
     saveOpenTabs(ids);
   });
 
-  ipcMain.handle(IPC.APP_STATE_GET_COLLAPSED_REPOS, () => {
-    flushPendingSaves();
-    return loadAppState().collapsedRepos ?? {};
-  });
+  ipcMain.handle(IPC.APP_STATE_GET_COLLAPSED_REPOS, () => loadAppState().collapsedRepos ?? {});
 
   ipcMain.on(IPC.APP_STATE_SET_COLLAPSED_REPOS, (_event, map: Record<string, boolean>) => {
     saveCollapsedRepos(map);
   });
 
-  ipcMain.handle(IPC.APP_STATE_GET_SESSION_SORT, () => {
-    flushPendingSaves();
-    return loadAppState().sessionSort ?? { key: 'name', dir: 'asc' };
-  });
+  ipcMain.handle(IPC.APP_STATE_GET_SESSION_SORT, () => loadAppState().sessionSort ?? { key: 'name', dir: 'asc' });
 
   ipcMain.on(IPC.APP_STATE_SET_SESSION_SORT, (_event, sort: import('../shared/types.js').SessionSortState) => {
     saveSessionSort(sort);
   });
 
-  ipcMain.handle(IPC.APP_STATE_GET_SIDEBAR_WIDTH, () => {
-    flushPendingSaves();
-    return loadAppState().sidebarWidth ?? null;
-  });
+  ipcMain.handle(IPC.APP_STATE_GET_SIDEBAR_WIDTH, () => loadAppState().sidebarWidth ?? null);
 
   ipcMain.on(IPC.APP_STATE_SET_SIDEBAR_WIDTH, (_event, width: number) => {
     if (typeof width === 'number' && Number.isFinite(width)) {
@@ -2065,10 +2054,7 @@ export function registerHandlers() {
     }
   });
 
-  ipcMain.handle(IPC.APP_STATE_GET_COLLAPSED_PANELS, () => {
-    flushPendingSaves();
-    return loadAppState().collapsedPanels ?? {};
-  });
+  ipcMain.handle(IPC.APP_STATE_GET_COLLAPSED_PANELS, () => loadAppState().collapsedPanels ?? {});
 
   ipcMain.on(IPC.APP_STATE_SET_COLLAPSED_PANELS, (_event, panels: unknown) => {
     saveCollapsedPanels(panels);
@@ -2080,10 +2066,7 @@ export function registerHandlers() {
     saveConversationGroups(groups);
   });
 
-  ipcMain.handle(IPC.APP_STATE_GET_UNREAD, () => {
-    flushPendingSaves();
-    return loadUnreadSessionIds();
-  });
+  ipcMain.handle(IPC.APP_STATE_GET_UNREAD, () => loadUnreadSessionIds());
 
   ipcMain.on(IPC.APP_STATE_SET_UNREAD, (_event, ids: unknown) => {
     if (Array.isArray(ids) && ids.every((id) => typeof id === 'string')) {
