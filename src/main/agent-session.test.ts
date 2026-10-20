@@ -2311,6 +2311,59 @@ describe('AgentSessionManager sleep and wake', () => {
     await sessionManager.destroySession('test-sleep-perm');
   });
 
+  it('stays awake while the agent reports a background task, and sleeps once none is left', async () => {
+    const { session } = await startSession('test-sleep-bg');
+    mockAdapter.control!.emitEvent({ type: 'background_tasks_changed', tasks: [{ taskId: 'b1', description: 'npm run dev' }] });
+    await vi.waitFor(() => expect(session.backgroundTasks?.size).toBe(1));
+
+    expect(await sessionManager.sleepSession('test-sleep-bg')).toBe(false);
+    expect(session.status).toBe('running');
+
+    mockAdapter.control!.emitEvent({ type: 'background_tasks_changed', tasks: [] });
+    await vi.waitFor(async () => expect(await sessionManager.sleepSession('test-sleep-bg')).toBe(true));
+
+    await sessionManager.destroySession('test-sleep-bg');
+  });
+
+  it("is not kept awake by a background task of an agent that has since restarted", async () => {
+    const { session } = await startSession('test-sleep-bg-restart');
+    mockAdapter.control!.emitEvent({ type: 'background_tasks_changed', tasks: [{ taskId: 'b1', description: 'npm run dev' }] });
+    await vi.waitFor(() => expect(session.backgroundTasks?.size).toBe(1));
+
+    // A stop or model switch restarts the agent: its tasks went with it.
+    await sessionManager.stopQuery('test-sleep-bg-restart');
+    await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(2));
+    await vi.waitFor(() => expect(session.queryHandle).toBeTruthy());
+
+    expect(await sessionManager.sleepSession('test-sleep-bg-restart')).toBe(true);
+    await sessionManager.destroySession('test-sleep-bg-restart');
+  });
+
+  it('logs why it stays awake, once per reason', async () => {
+    await startSession('test-sleep-why');
+    vi.mocked(logger.debug).mockClear();
+    const refusals = () => vi.mocked(logger.debug).mock.calls
+      .map(([line]) => String(line))
+      .filter((line) => line.includes('test-sleep-why') && line.includes('stays awake'));
+
+    await sessionManager.sendMessage('test-sleep-why', 'run the tests');
+    await sessionManager.sleepSession('test-sleep-why');
+    await sessionManager.sleepSession('test-sleep-why');
+    expect(refusals()).toEqual([expect.stringContaining('mid-turn')]);
+
+    mockAdapter.control!.emitEvent({ type: 'background_tasks_changed', tasks: [{ taskId: 'b1', description: 'npm run dev' }] });
+    mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false });
+    await vi.waitFor(() => expect(sessionManager.getSession('test-sleep-why')!.turnHandle).toBeNull());
+    await sessionManager.sleepSession('test-sleep-why');
+    await sessionManager.sleepSession('test-sleep-why');
+    expect(refusals()).toEqual([
+      expect.stringContaining('mid-turn'),
+      expect.stringContaining('npm run dev'),
+    ]);
+
+    await sessionManager.destroySession('test-sleep-why');
+  });
+
   it('stays awake while its agent is still starting', async () => {
     let openGate!: () => void;
     mockAdapter.startGate = new Promise<void>((r) => { openGate = r; });

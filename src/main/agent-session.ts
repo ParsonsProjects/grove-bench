@@ -70,6 +70,20 @@ function failureEvent(adapter: AgentAdapter, detail: string): AgentEvent {
     : { type: 'error', message: detail };
 }
 
+/** Why idle sleep must leave `session` awake for now, or null when it can
+ *  sleep. Checked here rather than trusting the renderer's view alone. */
+function sleepRefusal(session: ManagedSession): string | null {
+  if (session.status !== 'running' && session.status !== 'starting') return `status is ${session.status}`;
+  if (!session.queryHandle || session.isStartingQuery) return 'its agent is starting';
+  if (session.turnHandle === session.queryHandle) return 'mid-turn';
+  if (session.pendingPermissions.size > 0) return 'waiting on a permission';
+  if (session.pendingElicitations.size > 0) return 'waiting on an MCP server question';
+  if (session.limits.pending) return 'waiting on a limit question';
+  const tasks = [...(session.backgroundTasks?.values() ?? [])];
+  if (tasks.length > 0) return `${tasks.length} background task${tasks.length > 1 ? 's' : ''} running (${tasks.join(', ').slice(0, 120)})`;
+  return null;
+}
+
 class AgentSessionManager {
   private sessions = new Map<string, ManagedSession>();
   private completionCallbacks = new Map<string, (result: SessionCompletionResult) => void>();
@@ -546,6 +560,9 @@ class AgentSessionManager {
     perfSteps.finish(id, 'agent start');
     session.queryHandle = handle;
     session.isStartingQuery = false;
+    // A new agent process: the previous one's background tasks went with it,
+    // and the agent only reports its set when it changes.
+    session.backgroundTasks = new Map();
     // Only a resumed conversation can turn out to be missing.
     session.promptsBeforeInit = resumingProviderSession ? { handle, prompts: [] } : null;
     // Before resolving queryReady below, so they go ahead of sends waiting on it.
@@ -620,6 +637,13 @@ class AgentSessionManager {
           session.turnHandle = handle;
           turnActive(session.limits);
           this.watchTurnFiles(session);
+        }
+        // The agent's whole set of running background tasks, for idle sleep.
+        // Taken as is each time rather than paired from task_started and
+        // task_notification, which can go missing and would keep a finished
+        // task running for good.
+        if (event.type === 'background_tasks_changed' && session.queryHandle === handle) {
+          session.backgroundTasks = new Map(event.tasks.map((t) => [t.taskId, t.description]));
         }
         if (event.type === 'assistant_tool_use') {
           toolCallSeen(session.limits, event.toolUseId);
@@ -1668,15 +1692,22 @@ class AgentSessionManager {
    * so the conversation keeps its place, mode, controls and always-allowed
    * tools. The terminal is left alone. It wakes (see wake()) when opened or
    * sent a message. Returns false, leaving it awake, unless the agent is up
-   * and not mid-turn or waiting on a permission or an MCP elicitation.
+   * and not mid-turn, running a background task, or waiting on a permission,
+   * an MCP elicitation or a limit question (see sleepRefusal).
    */
   async sleepSession(id: string): Promise<boolean> {
     const session = this.sessions.get(id);
     if (!session || session.destroying) return false;
-    if (session.status !== 'running' && session.status !== 'starting') return false;
-    const handle = session.queryHandle;
-    if (!handle || session.isStartingQuery || session.pendingPermissions.size > 0 || session.pendingElicitations.size > 0 || session.limits.pending) return false;
-    if (session.turnHandle === handle) return false;
+    const refusal = sleepRefusal(session);
+    if (refusal) {
+      // Once per reason: the renderer asks again each time the thread has
+      // been idle long enough.
+      if (session.sleepRefusal !== refusal) logger.debug(`[sleep] session=${id} stays awake: ${refusal}`);
+      session.sleepRefusal = refusal;
+      return false;
+    }
+    session.sleepRefusal = null;
+    const handle = session.queryHandle!;
 
     perfSteps.fail(id, 'put to sleep');
     session.statusBeforeSleep = session.status;
