@@ -827,6 +827,32 @@ describe('AgentSessionManager event processing', () => {
     await sessionManager.destroySession('test-history');
   });
 
+  it('resumes from the log its pane already read, without parsing it again', async () => {
+    const log = `${JSON.stringify({ type: 'assistant_text', text: 'before', uuid: 'b1' })}\n`;
+    const isLog = (p: unknown) => String(p).endsWith('test-resume-log.jsonl');
+    const missing = () => { throw new Error('ENOENT'); };
+    vi.mocked(fs.statSync).mockImplementation(((p: fs.PathLike) => isLog(p) ? { mtimeMs: 1, size: log.length } : missing()) as typeof fs.statSync);
+    vi.mocked(fs.readFileSync).mockImplementation(((p: fs.PathOrFileDescriptor) => isLog(p) ? log : missing()) as typeof fs.readFileSync);
+    const parses = () => vi.mocked(fs.readFileSync).mock.calls.filter(([p]) => isLog(p)).length;
+    try {
+      // The stopped thread's pane shows its first page, then the thread resumes.
+      expect(sessionManager.getEventHistoryPage('test-resume-log', 200).totalCount).toBe(1);
+      await sessionManager.createSession({
+        id: 'test-resume-log', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+      });
+
+      expect(parses()).toBe(1);
+      expect(sessionManager.getEventHistory('test-resume-log')[0]).toMatchObject({ text: 'before' });
+      // The running session holds the history; the stopped-log cache doesn't.
+      const store = (sessionManager as unknown as { events: { historyCache: Map<string, unknown> } }).events;
+      expect(store.historyCache.has('test-resume-log')).toBe(false);
+      await sessionManager.destroySession('test-resume-log');
+    } finally {
+      vi.mocked(fs.statSync).mockImplementation(missing);
+      vi.mocked(fs.readFileSync).mockImplementation(missing);
+    }
+  });
+
   it('starts the history with the setup steps already shown, without sending them again', async () => {
     const win = makeMockWindow();
     const setup = [{ type: 'status' as const, message: 'Creating worktree…' }, { type: 'status' as const, message: 'Starting agent…' }];
