@@ -170,9 +170,10 @@ export interface ManagedSession {
    *  (turn-files.ts). Null between turns. */
   turnFiles?: TurnFiles | null;
   /** The background tasks the agent says are running, by id, with their
-   *  descriptions: its live set (background_tasks_changed), emptied when
-   *  its process starts again. Idle sleep would kill them, so it waits. */
-  backgroundTasks?: Map<string, string>;
+   *  types when it says ('local_bash'): its live set (background_tasks_changed),
+   *  emptied when its process starts again. Idle sleep would kill them, so it
+   *  waits. Not their descriptions, which can hold a command line's secrets. */
+  backgroundTasks?: Map<string, string | undefined>;
   /** Why idle sleep last refused, so the log says it once, not on every ask. */
   sleepRefusal?: string | null;
 }

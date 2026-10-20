@@ -38,8 +38,9 @@ export const SLOW_EVENT_LOG_WRITE_MS = 1_000;
  * one user's performance logs), so those reads parse each log once, and it
  * caps what the cache can pin: the count cap it replaces (12) thrashed with
  * more threads open than that, yet let a dozen big logs pin hundreds of MB.
- * A log bigger than the whole budget is parsed each time it is read, not
- * kept. Search doesn't rely on this cache: see SEARCH_INDEX_BUDGET.
+ * The last log read that is bigger than the whole budget is kept outside it,
+ * on its own (see cacheHistory). Search doesn't rely on this cache: see
+ * SEARCH_INDEX_BUDGET.
  */
 const HISTORY_CACHE_BUDGET = 48 * 1024 * 1024;
 
@@ -71,6 +72,8 @@ export class SessionEventStore {
   private historyCache = new Map<string, CachedHistory>();
   /** Log bytes the cached histories were parsed from (see HISTORY_CACHE_BUDGET). */
   private historyBytes = 0;
+  /** The last log read that is bigger than the whole budget (see cacheHistory). */
+  private bigHistory: { id: string; entry: CachedHistory } | null = null;
   /** The last write queued for each log file. Writes to a file run one after
    *  another, so a rewrite never lands under an earlier append. */
   private writes = new Map<string, Promise<void>>();
@@ -214,11 +217,10 @@ export class SessionEventStore {
       this.dropHistory(id);
       return [];
     }
-    const cached = this.historyCache.get(id);
+    const cached = this.cachedHistory(id);
     if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
-      // Now the most recently used.
-      this.historyCache.delete(id);
-      this.historyCache.set(id, cached);
+      // Now the most recently used (a big log has its own slot).
+      if (this.historyCache.delete(id)) this.historyCache.set(id, cached);
       return cached.events;
     }
     const events = this.readLog(id, logPath, stat.size);
@@ -230,13 +232,29 @@ export class SessionEventStore {
     return events;
   }
 
-  /** Keep a parsed log as the most recently used, dropping the least recently
-   *  used ones until the cache is within its budget. A log bigger than the
-   *  whole budget isn't kept: it would push out every other thread and still
-   *  break the budget. */
+  /** What is kept for a thread, in the cache or the big log's slot. */
+  private cachedHistory(id: string): CachedHistory | undefined {
+    return this.historyCache.get(id) ?? (this.bigHistory?.id === id ? this.bigHistory.entry : undefined);
+  }
+
+  /**
+   * Keep a parsed log as the most recently used, dropping the least recently
+   * used ones until the cache is within its budget.
+   *
+   * A log bigger than the whole budget takes a slot of its own instead,
+   * replacing the one there. Not kept, each read of its thread (preview,
+   * history count, every page scrolled, usage, resume) would parse all of it
+   * again, about 0.6 s for 60 MB. Kept in the cache, letting the newest
+   * entry run over the budget alone, it would push out every other thread,
+   * which would then all parse again once the user moves on. With the slot,
+   * the others stay, and memory is at most the budget plus one big log.
+   */
   private cacheHistory(id: string, entry: CachedHistory): void {
     this.dropHistory(id);
-    if (entry.size > this.historyBudget) return;
+    if (entry.size > this.historyBudget) {
+      this.bigHistory = { id, entry };
+      return;
+    }
     this.historyCache.set(id, entry);
     this.historyBytes += entry.size;
     // The new entry is last and fits, so this stops before reaching it.
@@ -247,6 +265,7 @@ export class SessionEventStore {
   }
 
   private dropHistory(id: string): void {
+    if (this.bigHistory?.id === id) this.bigHistory = null;
     const cached = this.historyCache.get(id);
     if (!cached) return;
     this.historyCache.delete(id);
@@ -292,7 +311,7 @@ export class SessionEventStore {
       return null;
     }
     return this.searchIndexes.snapshot(id, `${stat.mtimeMs}:${stat.size}`, () => {
-      const cached = this.historyCache.get(id);
+      const cached = this.cachedHistory(id);
       if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) return cached.events;
       return this.readLog(id, logPath, stat.size);
     });
