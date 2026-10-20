@@ -229,8 +229,9 @@ class AgentSessionManager {
     // A folder project isn't a git repository: no checkpoints, no commits.
     const gitBacked = !opts.noGit;
 
-    // Copy: the cached array must not be mutated by the live session.
-    const eventHistory = [...this.events.load(id)];
+    // The log a stopped thread's pane already read, if still cached. The
+    // store keeps no copy from now on: the session's own history is read.
+    const eventHistory = this.events.startLive(id);
 
     const session: ManagedSession = {
       id,
