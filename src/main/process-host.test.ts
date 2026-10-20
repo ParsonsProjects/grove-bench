@@ -9,6 +9,7 @@ import type { HostedProcess } from './process-host-spawn.js';
 
 /** A stand-in for the utility process: keeps what it was sent. */
 class FakeHost extends EventEmitter implements HostProcess {
+  pid = 5150;
   sent: HostRequest[] = [];
   killed = false;
   failPost = false;
@@ -160,6 +161,44 @@ describe('process host', () => {
     latest().failPost = true;
     await expect(host.run('git', ['status'])).resolves.toEqual({ stdout: 'here: git status' });
     expect(runHere).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs a host-only command in the host, and never here', async () => {
+    const { host, runHere, latest } = setup();
+    await expect(host.runInHost('typeperf', ['-sc', '1'])).rejects.toThrow("The process host isn't running, so typeperf didn't run");
+    host.start();
+    await expect(host.runInHost('typeperf', ['-sc', '1'])).rejects.toThrow("isn't running");
+
+    latest().ready();
+    const listed = host.runInHost('typeperf', ['-sc', '1'], { timeout: 30_000 });
+    expect(latest().sent).toEqual([{ id: 1, file: 'typeperf', args: ['-sc', '1'], options: { timeout: 30_000 } }]);
+    latest().reply(ok(1, 'sample'));
+    await expect(listed).resolves.toMatchObject({ stdout: 'sample' });
+
+    latest().failPost = true;
+    await expect(host.runInHost('typeperf', ['-sc', '1'])).rejects.toThrow("isn't running");
+    expect(runHere).not.toHaveBeenCalled();
+  });
+
+  it('fails a host-only command when the host dies, even one that only reads', async () => {
+    const { host, runHere, latest } = setup();
+    host.start();
+    latest().ready();
+    const status = host.runInHost('git', ['status']);
+    latest().exit(1);
+    await expect(status).rejects.toThrow(HOST_STOPPED_MESSAGE);
+    expect(runHere).not.toHaveBeenCalled();
+  });
+
+  it("knows the host's process id only while it is up", () => {
+    const { host, latest } = setup();
+    expect(host.pid).toBeUndefined();
+    host.start();
+    expect(host.pid).toBeUndefined();
+    latest().ready();
+    expect(host.pid).toBe(5150);
+    latest().exit(1);
+    expect(host.pid).toBeUndefined();
   });
 
   it('fails the commands in flight when the host exits, then starts it again', async () => {

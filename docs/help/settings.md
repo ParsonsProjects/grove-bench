@@ -152,5 +152,5 @@ Browse and manage MCP server plugins that extend the agent's capabilities. Plugi
 
 For tracking down slowness. Nothing here leaves your computer.
 
-- **Performance log**: freezes (when the app stopped responding, and what it was doing), how long each new thread, resume and wake took step by step, and a summary every 10 minutes are written to `performance.log` in the logs folder. **Show performance log** opens the folder with it selected. Send it along when reporting something slow
+- **Performance log**: freezes (when the app stopped responding, and what it was doing), how long each new thread, resume and wake took step by step, and a summary every 10 minutes are written to `performance.log` in the logs folder. The summary includes how much memory the agents use, with everything they started (MCP servers, shells, dev servers), by program, and the largest of those processes. **Show performance log** opens the folder with it selected. Send it along when reporting something slow, or when the app uses a lot of memory
 - **Record a performance trace**: records what every part of the app does for 10 seconds and saves it as a file. Start it, then do the slow thing, such as starting a new thread. Open the file at ui.perfetto.dev or in `chrome://tracing`. It holds timings, file paths and page addresses, not thread text. The newest 5 are kept

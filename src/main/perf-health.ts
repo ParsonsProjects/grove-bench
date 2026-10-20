@@ -7,22 +7,42 @@
  *   freezes: main 3 (640 ms), window 1; process launches 42 (1.9 s blocking,
  *   slowest git worktree 120 ms); CPU main 2%, pages 4%, gpu 1%, other 0%;
  *   memory main 210 MB, pages 480 MB, gpu 120 MB, other 90 MB;
+ *   agents 3, 2.0 GB: node.exe 9 (1.2 GB), claude.exe 3 (800 MB),
+ *   conhost.exe 3 (40 MB), cmd.exe 4 (25 MB); dev server 900 MB: node.exe 2
+ *   (880 MB), esbuild.exe 1 (15 MB), cmd.exe 1 (5 MB);
  *   conversations 5 (2 asleep), terminals 2
+ *
+ * followed by the largest processes under the agents, each with its thread
+ * and the executables above it:
+ *
+ *   largest agent processes: node.exe 700 MB (pid 4312, thread 1a2b3c4d,
+ *   under claude.exe > cmd.exe > node.exe), claude.exe 310 MB (pid 2210,
+ *   thread 1a2b3c4d), ...
  *
  * It uses the stall timer's numbers (freeze-log.ts) rather than a timer of
  * its own. (Node's event-loop utilization isn't used: Electron runs Node's
- * loop inside Chromium's, so it doesn't measure the main thread.) Agents' own processes aren't Electron's, so their CPU and memory
- * aren't in it; how many conversations are open (agents running or asleep)
- * is.
+ * loop inside Chromium's, so it doesn't measure the main thread.) CPU and
+ * memory are for Electron's own processes (app.getAppMetrics()). The agents
+ * aren't Electron's: on Windows their memory is summed apart
+ * (process-memory.ts), every process under each thread's agent by
+ * executable, and in dev mode the npm and Vite processes above the app too.
+ * Listing them takes typeperf a second or two in the process host, so the
+ * line waits for it, up to PROCESSES_WAIT_MS, and is written without them
+ * when they can't be had (or on other platforms). Their CPU isn't measured.
  */
 import type { ProcessMetric } from 'electron';
 import type { FreezeStats } from './freeze-log.js';
 import { perfLine } from './perf-log.js';
+import type { AgentTreeProcess, ExeTotal, ProcessMemory } from './process-memory.js';
 
 /** Time between health lines. */
 export const HEALTH_MS = 10 * 60_000;
 /** The first comes sooner, to show how the app settled after starting. */
 export const FIRST_HEALTH_MS = 60_000;
+/** Longest the line waits for the agents' processes to be listed. */
+export const PROCESSES_WAIT_MS = 45_000;
+/** Executables named in a list of processes; the rest are summed as other. */
+const NAMED_EXES = 5;
 
 /** The Electron processes, grouped as the line shows them. */
 const GROUPS: Record<string, string> = { Browser: 'main', Tab: 'pages', GPU: 'gpu' };
@@ -37,9 +57,23 @@ export interface HealthInput {
   conversations: number;
   asleep: number;
   terminals: number;
+  /** The agents' processes, and the dev server's (Windows only). */
+  processes?: ProcessMemory | null;
 }
 
 const ms = (v: number) => (v >= 1000 ? `${(v / 1000).toFixed(1)} s` : `${Math.round(v)} ms`);
+const MB = 1024 * 1024;
+const size = (bytes: number) => (bytes >= 1024 * MB ? `${(bytes / 1024 / MB).toFixed(1)} GB` : `${Math.round(bytes / MB)} MB`);
+const total = (totals: ExeTotal[]) => totals.reduce((n, t) => n + t.bytes, 0);
+
+/** node.exe 64 (5.2 GB), claude.exe 21 (3.9 GB), other 12 (400 MB) */
+function exeList(totals: ExeTotal[]): string {
+  const named = totals.length > NAMED_EXES + 1 ? totals.slice(0, NAMED_EXES) : totals;
+  const rest = totals.slice(named.length);
+  const items = named.map((t) => `${t.name} ${t.count} (${size(t.bytes)})`);
+  if (rest.length > 0) items.push(`other ${rest.reduce((n, t) => n + t.count, 0)} (${size(total(rest))})`);
+  return items.join(', ');
+}
 
 export function formatHealth(h: HealthInput): string {
   const parts: string[] = [];
@@ -70,21 +104,61 @@ export function formatHealth(h: HealthInput): string {
     parts.push(`memory ${groups.map((g) => `${g} ${Math.round(mem.get(g)! / 1024)} MB`).join(', ')}`);
   }
 
+  if (h.processes) {
+    const a = h.processes.agents;
+    parts.push(`agents ${a.agents}${a.untracked > 0 ? ` + ${a.untracked} not a thread's` : ''}${a.byExe.length > 0
+      ? `, ${size(total(a.byExe))}: ${exeList(a.byExe)}`
+      : ''}`);
+    const dev = h.processes.devServer;
+    if (dev && dev.length > 0) parts.push(`dev server ${size(total(dev))}: ${exeList(dev)}`);
+  }
+
   parts.push(`conversations ${h.conversations}${h.asleep > 0 ? ` (${h.asleep} asleep)` : ''}, terminals ${h.terminals}`);
   return `last ${h.minutes} min: ${parts.join('; ')}`;
+}
+
+/** The largest processes under the agents, each with its thread and the
+ *  executables above it. Names only: no command lines, which can hold tokens. */
+export function formatLargest(largest: AgentTreeProcess[]): string {
+  return `largest agent processes: ${largest.map((p) => {
+    const where = [`pid ${p.pid}`, p.thread === null ? "not a thread's" : `thread ${p.thread}`];
+    if (p.under.length > 0) where.push(`under ${p.under.join(' > ')}`);
+    return `${p.name} ${size(p.bytes)} (${where.join(', ')})`;
+  }).join(', ')}`;
 }
 
 export interface HealthSources {
   takeFreezeStats: () => FreezeStats;
   getAppMetrics: () => HealthInput['metrics'];
   counts: () => Pick<HealthInput, 'conversations' | 'asleep' | 'terminals'>;
+  /** The agents' processes (process-memory.ts). Null, a failure or a wait
+   *  past PROCESSES_WAIT_MS leaves them out of the line. */
+  processes?: () => Promise<ProcessMemory | null>;
+}
+
+/** What `measuring` resolves to, or null if it fails or takes longer than `ms`. */
+function within<T>(measuring: Promise<T | null>, ms: number): Promise<T | null> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(null), ms);
+    (timer as { unref?: () => void }).unref?.();
+    measuring.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      () => { clearTimeout(timer); resolve(null); },
+    );
+  });
 }
 
 /** Write a health line now and then. Returns a function that stops it. */
 export function startHealthLog(
   sources: HealthSources,
-  { write = (line: string) => perfLine('health', line), everyMs = HEALTH_MS, firstMs = FIRST_HEALTH_MS } = {},
+  {
+    write = (line: string) => perfLine('health', line),
+    everyMs = HEALTH_MS,
+    firstMs = FIRST_HEALTH_MS,
+    processesWaitMs = PROCESSES_WAIT_MS,
+  } = {},
 ): () => void {
+  let stopped = false;
   let lastAt = performance.now();
   // Every period starts now. CPU use is measured since the previous call, and
   // the freeze totals so far cover the launch before the app was ready,
@@ -96,12 +170,26 @@ export function startHealthLog(
     const now = performance.now();
     const minutes = Math.max(1, Math.round((now - lastAt) / 60_000));
     lastAt = now;
-    write(formatHealth({
+    const input: HealthInput = {
       minutes,
       freeze: sources.takeFreezeStats(),
       metrics: sources.getAppMetrics(),
       ...sources.counts(),
-    }));
+    };
+    let measuring: Promise<ProcessMemory | null> | undefined;
+    try {
+      measuring = sources.processes?.();
+    } catch { /* left out */ }
+    if (!measuring) {
+      write(formatHealth(input));
+      return;
+    }
+    // The rest of the line is as of now; the processes follow within seconds.
+    void within(measuring, processesWaitMs).then((processes) => {
+      if (stopped) return;
+      write(formatHealth({ ...input, processes }));
+      if (processes && processes.agents.largest.length > 0) write(formatLargest(processes.agents.largest));
+    });
   };
 
   let interval: ReturnType<typeof setInterval> | null = null;
@@ -112,6 +200,7 @@ export function startHealthLog(
   }, firstMs);
   (first as { unref?: () => void }).unref?.();
   return () => {
+    stopped = true;
     clearTimeout(first);
     if (interval) clearInterval(interval);
   };

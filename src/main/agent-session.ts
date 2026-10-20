@@ -1903,6 +1903,17 @@ class AgentSessionManager {
     }));
   }
 
+  /** Each thread's agent process while it runs, for the health line's
+   *  memory (process-memory.ts). Asleep and stopped threads have none. */
+  agentProcesses(): { thread: string; pid: number }[] {
+    const agents: { thread: string; pid: number }[] = [];
+    for (const s of this.sessions.values()) {
+      const pid = s.queryHandle?.processId?.();
+      if (pid) agents.push({ thread: s.id, pid });
+    }
+    return agents;
+  }
+
   getSessionsByRepo(repoPath: string): ManagedSession[] {
     return [...this.sessions.values()].filter((s) => s.repoPath === repoPath);
   }

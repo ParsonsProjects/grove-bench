@@ -143,11 +143,17 @@ export function parseProcessList(stdout: string): ProcessEntry[] {
 }
 
 /** `rootPid` and every process under it in `table`, parents before children.
- *  Empty when the root isn't in the table. */
-export function treeOf(table: ProcessEntry[], rootPid: number): ProcessEntry[] {
+ *  Empty when the root isn't in the table. `isChild` can turn down a process
+ *  that names a parent which can't be it (one started after it, whose PID
+ *  Windows reused). */
+export function treeOf<T extends ProcessEntry>(
+  table: T[],
+  rootPid: number,
+  isChild: (child: T, parent: T) => boolean = () => true,
+): T[] {
   const root = table.find((p) => p.pid === rootPid);
   if (!root) return [];
-  const childrenOf = new Map<number, ProcessEntry[]>();
+  const childrenOf = new Map<number, T[]>();
   for (const p of table) {
     const siblings = childrenOf.get(p.ppid);
     if (siblings) siblings.push(p);
@@ -157,7 +163,7 @@ export function treeOf(table: ProcessEntry[], rootPid: number): ProcessEntry[] {
   const seen = new Set([root.pid]);
   for (let i = 0; i < tree.length; i++) {
     for (const child of childrenOf.get(tree[i].pid) ?? []) {
-      if (seen.has(child.pid)) continue;
+      if (seen.has(child.pid) || !isChild(child, tree[i])) continue;
       seen.add(child.pid);
       tree.push(child);
     }

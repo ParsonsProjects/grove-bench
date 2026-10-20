@@ -15,7 +15,8 @@
  *
  * Before the app is ready, while the host starts, and once it has failed
  * MAX_FAILURES times in a row, commands run in the main process as they did
- * before. Tests never start it, so their execa mocks see every call.
+ * before, except those that can be skipped (runProcessInHost), which fail
+ * instead. Tests never start it, so their execa mocks see every call.
  *
  * When the host dies with commands in flight, their processes are stopped
  * (their execa timeouts died with the host), read-only ones run again here,
@@ -86,6 +87,8 @@ export const HOST_STOPPED_MESSAGE = 'The process host stopped before the command
 
 /** The parts of Electron's UtilityProcess the host uses. */
 export interface HostProcess {
+  /** Its process id, once it is running. */
+  readonly pid?: number;
   postMessage(message: unknown): void;
   on(event: 'message', listener: (message: unknown) => void): unknown;
   on(event: 'exit', listener: (code: number) => void): unknown;
@@ -119,6 +122,8 @@ interface Pending {
   args: string[];
   options?: HostedOptions;
   label: string;
+  /** Asked for with runInHost: it never runs in this process. */
+  hostOnly: boolean;
   /** Captured when the command was asked for: errors keep the caller's stack. */
   origin: Error;
   /** The command's process, once the host says it has started. */
@@ -289,7 +294,7 @@ export function createProcessHost(deps: ProcessHostDeps) {
     const waiting = [...pending.keys()].map(take).filter((p): p is Pending => !!p);
     for (const p of waiting) {
       if (p.pid !== undefined) killPid(p.pid);
-      if (rerun && isReadOnly(p.file, p.args)) {
+      if (rerun && !p.hostOnly && isReadOnly(p.file, p.args)) {
         deps.runHere(p.file, p.args, p.options).then(p.resolve, (e: unknown) => p.reject(e instanceof Error ? e : new Error(String(e))));
       } else {
         p.reject(fromCaller(new Error(`${HOST_STOPPED_MESSAGE}: ${p.label}`), p.origin));
@@ -326,21 +331,28 @@ export function createProcessHost(deps: ProcessHostDeps) {
     }
   }
 
-  function run(file: string, args: string[], options?: HostedOptions): Promise<unknown> {
+  /** Run a command in the host, or, unless `hostOnly`, here when the host
+   *  can't take it. */
+  function run(file: string, args: string[], options: HostedOptions | undefined, hostOnly: boolean): Promise<unknown> {
     const child = host;
-    if (state !== 'ready' || !child) return deps.runHere(file, args, options);
+    const label = launchLabel(file, [file, ...args]);
+    const here = () => (hostOnly
+      ? Promise.reject(new Error(`The ${name} isn't running, so ${label} didn't run`))
+      : deps.runHere(file, args, options));
+    if (state !== 'ready' || !child) return here();
     const id = ++nextId;
     const request: HostRequest = options === undefined ? { id, file, args } : { id, file, args, options };
     const origin = new Error();
     return new Promise((resolve, reject) => {
-      const waiting: Pending = { file, args, options, label: launchLabel(file, [file, ...args]), origin, resolve, reject };
+      const waiting: Pending = { file, args, options, label, hostOnly, origin, resolve, reject };
       pending.set(id, waiting);
       try {
         child.postMessage(request);
       } catch {
-        // Never delivered, so it can't have run: run it here instead.
+        // Never delivered, so it can't have run: run it here instead (or,
+        // host-only, not at all).
         pending.delete(id);
-        deps.runHere(file, args, options).then(resolve, reject);
+        here().then(resolve, reject);
         return;
       }
       const timeout = options?.timeout;
@@ -408,10 +420,15 @@ export function createProcessHost(deps: ProcessHostDeps) {
   return {
     start,
     stop,
-    run,
+    run: (file: string, args: string[], options?: HostedOptions) => run(file, args, options, false),
+    /** Like run, but never in this process: fails when the host isn't up (or
+     *  dies), for work that can be skipped rather than freeze the window. */
+    runInHost: (file: string, args: string[], options?: HostedOptions) => run(file, args, options, true),
     spawn,
     /** Whether commands go to the host right now. */
     get ready(): boolean { return state === 'ready'; },
+    /** The host's process id while it's up. */
+    get pid(): number | undefined { return state === 'ready' ? host?.pid : undefined; },
   };
 }
 
@@ -510,6 +527,22 @@ export function runProcess(file: string, args: string[], options: HostedOptions 
 export function runProcess(file: string, args: string[], options?: HostedOptions): Promise<ProcessResult>;
 export function runProcess(file: string, args: string[], options?: HostedOptions): Promise<unknown> {
   return processHost.run(file, args, options);
+}
+
+/**
+ * runProcess, but only in the process host: rejects when the host isn't up
+ * (before it is ready, or once it has given up), rather than run the command
+ * in the main process. For work that can be skipped, such as the health
+ * line's process list (process-memory.ts).
+ */
+export function runProcessInHost(file: string, args: string[], options?: HostedOptions): Promise<ProcessResult> {
+  return processHost.runInHost(file, args, options) as Promise<ProcessResult>;
+}
+
+/** The agent host's process id while it's up. The agents' programs are its
+ *  children. */
+export function agentHostPid(): number | undefined {
+  return agentHost.pid;
 }
 
 /**

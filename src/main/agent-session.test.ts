@@ -2141,6 +2141,18 @@ describe('AgentSessionManager sleep and wake', () => {
     await sessionManager.destroySession('test-sleep');
   });
 
+  it("lists a thread's agent process while it runs, and not once asleep", async () => {
+    mockAdapter.pid = 6150;
+    await startSession('test-sleep-pids');
+    const mine = () => sessionManager.agentProcesses().filter((a) => a.thread === 'test-sleep-pids');
+    expect(mine()).toEqual([{ thread: 'test-sleep-pids', pid: 6150 }]);
+
+    await sessionManager.sleepSession('test-sleep-pids');
+    expect(mine()).toEqual([]);
+
+    await sessionManager.destroySession('test-sleep-pids');
+  });
+
   it('is not reported as the conversation ending or as an error', async () => {
     mockAdapter.pid = 6200;
     const { win } = await startSession('test-sleep-quiet');
