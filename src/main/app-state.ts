@@ -300,7 +300,9 @@ export function loadAppState(): AppState {
   return pick((state) => state);
 }
 
-/** Change the state and save it, within `delayMs` or (0) straight away.
+/** Change the state and save it, in the background within `delayMs`, or
+ *  (0) now, synchronously, before returning: for rare changes the user would
+ *  miss after a crash or a kill (a project added), written as a flush is.
  *  `key` names what the change sets: while the file can't be read, a later
  *  change with the same key replaces this one. */
 function change(mutate: (state: AppState) => void, delayMs: number, key = `#${++waitingKeys}`): void {
@@ -311,7 +313,7 @@ function change(mutate: (state: AppState) => void, delayMs: number, key = `#${++
     waiting.delete(key);
     waiting.set(key, mutate);
   }
-  if (delayMs === 0) startSaving();
+  if (delayMs === 0) writeNow('app state write');
   else scheduleSave(delayMs);
 }
 
@@ -322,10 +324,14 @@ function change(mutate: (state: AppState) => void, delayMs: number, key = `#${++
 // between lock retries. A save writes every change made before it started,
 // so changes made while one is on its way go out in the next, and the last
 // change always ends up in the file. A save that fails, or finds the file
-// unreadable, keeps its changes and tries again later.
+// unreadable, keeps its changes and tries again later, backing off: no
+// background save starts before that try, so changes made meanwhile, however
+// soon they were due, wait for it and go out with it.
 //
-// flushPendingSaves() writes synchronously instead, for quitting and system
-// suspend, when a background save might not finish.
+// writeNow() writes synchronously instead: for rare changes (projects, the
+// caches), and in flushPendingSaves() for quitting and system suspend, when a
+// background save might not finish. It tries even while backing off, and any
+// write that works ends the backoff.
 
 /** The longest a change waits to be saved, so a burst (tab switches, a
  *  sidebar drag, rate-limit events from many threads) is one write, or one
@@ -336,6 +342,8 @@ const RETRY_MS = 5_000;
 const MAX_RETRY_MS = 60_000;
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
+/** The next try after a failed save, while backing off. */
+let retryTimer: ReturnType<typeof setTimeout> | null = null;
 /** The save loop, while it runs. */
 let saving: Promise<void> | null = null;
 let failedTries = 0;
@@ -352,8 +360,9 @@ interface InFlight {
 let inFlight: InFlight | null = null;
 
 function scheduleSave(delayMs: number): void {
-  // A save that's running picks the change up when it's done.
-  if (saveTimer || saving) return;
+  // A save that's running picks the change up when it's done, and after a
+  // failed one the next try does.
+  if (saveTimer || saving || retryTimer) return;
   saveTimer = setTimeout(startSaving, delayMs);
 }
 
@@ -362,13 +371,29 @@ function startSaving(): void {
     clearTimeout(saveTimer);
     saveTimer = null;
   }
+  // Backing off: the next try starts it.
+  if (retryTimer) return;
   saving ??= saveLoop();
 }
 
+/** A save failed, or found the file unreadable: back off. A try already
+ *  waiting keeps its time; the one after waits longer. */
 function retryLater(): void {
   failedTries++;
-  if (saveTimer) return;
-  saveTimer = setTimeout(startSaving, Math.min(RETRY_MS * 2 ** (failedTries - 1), MAX_RETRY_MS));
+  if (retryTimer) return;
+  retryTimer = setTimeout(() => {
+    retryTimer = null;
+    startSaving();
+  }, Math.min(RETRY_MS * 2 ** (failedTries - 1), MAX_RETRY_MS));
+}
+
+/** A write landed: the disk takes them again, so stop backing off. */
+function saveWorked(): void {
+  failedTries = 0;
+  if (retryTimer) {
+    clearTimeout(retryTimer);
+    retryTimer = null;
+  }
 }
 
 async function saveLoop(): Promise<void> {
@@ -383,7 +408,9 @@ async function saveLoop(): Promise<void> {
         retryLater();
         return;
       }
-      if (savedCount >= changeCount) return;
+      // A sync write that failed meanwhile started a backoff: its try saves
+      // these.
+      if (retryTimer || savedCount >= changeCount) return;
       const upTo = changeCount;
       const text = freezeLog.timeWork('app state save', () => serialize(state));
       const entry: InFlight = { write: writeFileAtomic(getStatePath(), text), upTo };
@@ -399,7 +426,7 @@ async function saveLoop(): Promise<void> {
         inFlight = null;
       }
       if (result === 'written') {
-        failedTries = 0;
+        saveWorked();
         // Landed after a flush that couldn't stop it, maybe over newer
         // changes: go round and write them again.
         savedCount = entry.stopped === false ? Math.min(savedCount, upTo) : Math.max(savedCount, upTo);
@@ -412,34 +439,46 @@ async function saveLoop(): Promise<void> {
 }
 
 /**
- * Write every change the file doesn't have yet, now and synchronously:
- * before quitting and before the system suspends, when a background save
- * might not finish. A background write on its way is cancelled first, so it
- * can't land after this one with older changes. Skipped, as saves are, while
- * the file has never been read and still can't be.
+ * Write every change the file doesn't have yet, now and synchronously. A
+ * background write on its way is cancelled first, so it can't land after
+ * this one with older changes. Tried even while backing off: a write that
+ * works ends the backoff, with every change saved, and one that fails counts
+ * as a failed try (the try already waiting keeps its time). Skipped, as
+ * saves are, while the file has never been read and still can't be; the
+ * background save reads it again, with longer lock retries.
  */
-export function flushPendingSaves(): void {
+function writeNow(work: string): void {
   const unstopped = inFlight?.stopped === false;
   if (savedCount >= changeCount && !unstopped) return;
-  freezeLog.timeWork('app state flush', () => {
+  freezeLog.timeWork(work, () => {
     const state = memory ?? adopt(readJsonFile(getStatePath()));
-    if (!state) return;
+    if (!state) {
+      startSaving();
+      return;
+    }
     if (inFlight) inFlight.stopped = inFlight.write.cancel();
     const upTo = changeCount;
     try {
       writeFileAtomicSync(getStatePath(), serialize(state));
     } catch (err) {
-      logger.warn('[app-state] could not save app-state.json:', err);
+      logger.warn('[app-state] could not save app-state.json; trying again later:', err);
       retryLater();
       return;
     }
     savedCount = upTo;
-    failedTries = 0;
+    saveWorked();
     if (saveTimer) {
       clearTimeout(saveTimer);
       saveTimer = null;
     }
   });
+}
+
+/** Write every change the file doesn't have yet, synchronously (writeNow):
+ *  before quitting and before the system suspends, when a background save
+ *  might not finish. */
+export function flushPendingSaves(): void {
+  writeNow('app state flush');
 }
 
 /** Test hook: resolves once no save is running. */
@@ -451,7 +490,9 @@ export function appStateSaved(): Promise<void> {
  *  launch. Call once no save is running (appStateSaved). */
 export function resetAppStateForTests(): void {
   if (saveTimer) clearTimeout(saveTimer);
+  if (retryTimer) clearTimeout(retryTimer);
   saveTimer = null;
+  retryTimer = null;
   memory = null;
   waiting.clear();
   changeCount = 0;
@@ -469,20 +510,42 @@ function setSoon<K extends keyof AppState>(key: K, value: AppState[K]): void {
   change((state) => { state[key] = value; }, SAVE_DELAY_MS, key);
 }
 
+// Loads copy only the field they return, not the whole state (loadAppState).
+
+export function loadOpenTabs(): string[] {
+  return pick((state) => state.openTabIds);
+}
+
 export function saveOpenTabs(ids: string[]): void {
   setSoon('openTabIds', ids);
+}
+
+export function loadCollapsedRepos(): Record<string, boolean> {
+  return pick((state) => state.collapsedRepos ?? {});
 }
 
 export function saveCollapsedRepos(map: Record<string, boolean>): void {
   setSoon('collapsedRepos', map);
 }
 
+export function loadSessionSort(): SessionSortState {
+  return pick((state) => state.sessionSort ?? DEFAULT_STATE.sessionSort);
+}
+
 export function saveSessionSort(sort: SessionSortState): void {
   setSoon('sessionSort', sort);
 }
 
+export function loadSidebarWidth(): number | null {
+  return pick((state) => state.sidebarWidth ?? null);
+}
+
 export function saveSidebarWidth(width: number): void {
   setSoon('sidebarWidth', width);
+}
+
+export function loadCollapsedPanels(): CollapsedPanels {
+  return pick((state) => state.collapsedPanels ?? {});
 }
 
 export function saveCollapsedPanels(panels: unknown): void {
