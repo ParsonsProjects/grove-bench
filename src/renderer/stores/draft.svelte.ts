@@ -10,6 +10,8 @@ import { arrivalScene } from './arrivalScene.svelte.js';
 import { agentsStore } from './agents.svelte.js';
 import { settingsStore } from './settings.svelte.js';
 import { resolveBaseBranch } from '../lib/base-branch.js';
+import { attachmentPayload, type AttachedFile } from '../lib/file-attachments.js';
+import { buildOutgoingMessage } from '../lib/prompt-file-refs.js';
 import { trackEvent } from '../lib/analytics.js';
 
 /**
@@ -40,6 +42,8 @@ export interface Draft {
   start: DraftStart;
   /** The first message, as typed so far. */
   text: string;
+  /** Files dropped on the draft, sent with the first message. */
+  attachments: AttachedFile[];
   /** Group the conversation joins once it starts. */
   groupId?: string;
   /** A group made with this conversation once it starts (from New group).
@@ -124,7 +128,7 @@ class DraftStore {
       const model = active && active.agentType === agentId ? messageStore.getModel(active.id) : '';
       const groupId = opts.group && 'groupId' in opts.group ? opts.group.groupId : undefined;
       this.draft = {
-        repoPath: repo, agentId, model, controls: {}, start: defaultStart(repo, groupId), text: '',
+        repoPath: repo, agentId, model, controls: {}, start: defaultStart(repo, groupId), text: '', attachments: [],
         ...opts.group,
       };
       this.error = '';
@@ -149,6 +153,25 @@ class DraftStore {
 
   setText(text: string): void {
     if (this.draft) this.draft.text = text;
+  }
+
+  addAttachments(files: AttachedFile[]): void {
+    if (this.draft) this.draft.attachments = [...this.draft.attachments, ...files];
+  }
+
+  removeAttachment(index: number): void {
+    if (this.draft) this.draft.attachments = this.draft.attachments.filter((_, i) => i !== index);
+  }
+
+  /** Why the draft's files can't go with its first message, or null. */
+  get attachmentProblem(): string | null {
+    const d = this.draft;
+    if (!d?.attachments.length) return null;
+    const text = d.text.trim();
+    if (!text) return 'Write a message to go with the attached files.';
+    // Files go ahead of the text, so the command would no longer lead it.
+    if (text.startsWith('/')) return "A slash command can't take attached files. Remove them, or send them in the next message.";
+    return null;
   }
 
   setRepo(repo: string): void {
@@ -351,6 +374,7 @@ class DraftStore {
     // conversation being created.
     const d = $state.snapshot(draft) as Draft;
     if (d.start.kind === 'existing' && !d.start.branch) return false;
+    if (this.attachmentProblem) return false;
     if (!sessionStore.repos.includes(d.repoPath)) {
       this.error = 'This project was removed. Pick another project at the bottom of the message box.';
       return false;
@@ -363,9 +387,10 @@ class DraftStore {
     }
     this.discard();
     return this.launch(d, (message, onScreen) => {
-      // Back to the draft, message and all, unless one with a message has
-      // been opened since: that one is kept and the error goes in a toast.
-      if (!this.draft?.text.trim()) {
+      // Back to the draft, message and all, unless one with a message or
+      // files has been opened since: that one is kept and the error goes in
+      // a toast.
+      if (!this.draft?.text.trim() && !this.draft?.attachments.length) {
         this.draft = draft;
         this.error = message;
         void this.loadAgentInfo();
@@ -400,6 +425,7 @@ class DraftStore {
       controls: {},
       start: (!sessionStore.isFolderProject(repo) && setup.start) || defaultStart(repo),
       text: setup.text,
+      attachments: [],
     };
     // The new row takes the screen; a refusal shouldn't leave the landing
     // screen where the asking thread was.
@@ -412,11 +438,21 @@ class DraftStore {
     });
   }
 
-  /** Add the thread's row, create it in main and send `d.text` as its first
-   *  message once main has it. `refused` runs when main refuses a thread
-   *  that is still open, with whether its row was on screen. */
+  /** Add the thread's row, create it in main and send `d.text` (with its
+   *  attachments) as its first message once main has it. `refused` runs when
+   *  main refuses a thread that is still open, with whether its row was on
+   *  screen. */
   private async launch(d: Draft, refused: (message: string, onScreen: boolean) => void): Promise<boolean> {
     const text = d.text.trim();
+    // Text files go in the message text; images and other files alongside it.
+    const { tags, images, files } = attachmentPayload(d.attachments);
+    const sent = text
+      ? {
+          outgoing: buildOutgoingMessage(tags, text),
+          ...(images.length > 0 ? { images } : {}),
+          ...(files.length > 0 ? { files } : {}),
+        }
+      : null;
     const direct = d.start.kind === 'folder';
     const id = crypto.randomUUID().slice(0, 8);
     // Name the row from the message straight away; the automatic name
@@ -437,10 +473,10 @@ class DraftStore {
       ...(direct && sessionStore.isFolderProject(d.repoPath) ? { noGit: true } : {}),
       ...(placeholderName ? { displayName: placeholderName } : {}),
     });
-    if (text) {
+    if (sent) {
       // The chat shows the agent walking to its bench until the first reply.
       arrivalScene.begin(id);
-      messageStore.addUserMessage(id, text);
+      messageStore.addSentMessage(id, sent);
       sessionStore.updateLastActive(id);
     }
     try {
@@ -480,7 +516,7 @@ class DraftStore {
       // Main holds a prompt sent during setup until the agent is ready. Not
       // for a thread closed or deleted meanwhile: main closes that one once
       // it's up.
-      if (text && this.stillOpen(id)) window.groveBench.sendMessage(id, text);
+      if (sent && this.stillOpen(id)) window.groveBench.sendMessage(id, sent.outgoing, sent.images, sent.files);
       return true;
     } catch (e: any) {
       const message = e?.message || String(e);
