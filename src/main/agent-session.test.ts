@@ -2324,7 +2324,7 @@ describe('AgentSessionManager turn state for a loading history', () => {
     // A window reload now: the page ends with the prompt, and its turn agrees.
     const page = sessionManager.getEventHistoryPage('test-turn-gap', 200);
     expect(page.events.at(-1)?.type).toBe('user_message');
-    expect(page.turn).toEqual({ midTurn: true, pendingPromptIds: [] });
+    expect(page.turn).toEqual({ midTurn: true, pendingPromptIds: [], agentLive: true });
     expect(sessionManager.isMidTurn('test-turn-gap')).toBe(true);
     expect(session.queryHandle!.sendMessage).not.toHaveBeenCalled();
     // Idle sleep would kill the agent the prompt is about to go to.
