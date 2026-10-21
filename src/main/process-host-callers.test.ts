@@ -145,6 +145,35 @@ describe('commands the main process runs start in the process host', () => {
     expect(commands()).toEqual([{ file: 'code', args: ['-g', '/repo/src/a.ts:7'], options: undefined }]);
   });
 
+  it('a command asked for while the process host restarts waits for it, but taskkill runs here at once', async () => {
+    setPlatform('win32');
+    mockExeca.mockResolvedValue({ stdout: '', stderr: '', exitCode: 0, failed: false, timedOut: false });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    let opened: Promise<boolean>;
+    let killed: Promise<void>;
+    try {
+      processHost.emit('exit', 1);
+      processHost = newProcessHost();
+      opened = launchEditor('code', '/repo/src/a.ts', 7);
+      // Killing can't wait: the thread's processes keep running until then.
+      killed = killTree(4242);
+      expect(mockExeca.mock.calls).toEqual([[
+        expect.stringMatching(/\\System32\\taskkill\.exe$/i),
+        ['/PID', '4242', '/T', '/F'],
+        { timeout: 10_000, reject: false },
+      ]]);
+      vi.advanceTimersByTime(RESTART_DELAY_MS);
+      expect(processHost.sent).toEqual([]);
+      processHost.emit('message', HOST_READY);
+    } finally {
+      vi.useRealTimers();
+    }
+    await killed;
+    expect(await opened).toBe(true);
+    expect(commands()).toEqual([{ file: 'code', args: ['-g', '/repo/src/a.ts:7'], options: undefined }]);
+    // The one launch here this file expects (afterEach checks there are none).
+    mockExeca.mockReset();
+  });
 });
 
 describe('the claude CLI starts in the agent host, its lookup in the process host', () => {

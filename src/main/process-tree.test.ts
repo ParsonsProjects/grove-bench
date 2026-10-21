@@ -111,7 +111,8 @@ describe('listProcesses', () => {
     mockRun.mockResolvedValue(psOutput([{ pid: 1, ppid: 0 }]));
     expect(await listProcesses()).toEqual([{ pid: 1, ppid: 0 }]);
     // It only reads: if the host dies under it, it runs again (idempotent).
-    expect(mockRun).toHaveBeenCalledWith('ps', ['-A', '-o', 'pid=,ppid='], { timeout: 10_000, idempotent: true });
+    // It lists a tree to kill, so it never waits for a restarting host (urgent).
+    expect(mockRun).toHaveBeenCalledWith('ps', ['-A', '-o', 'pid=,ppid='], { timeout: 10_000, idempotent: true, urgent: true });
     expect(mockExeca).not.toHaveBeenCalled();
   });
 
@@ -169,7 +170,7 @@ describe('killTree on Windows', () => {
     const [command, args, opts] = mockRun.mock.calls[0];
     expect(command).toMatch(/\\System32\\taskkill\.exe$/i);
     expect(args).toEqual(['/PID', '4242', '/T', '/F']);
-    expect(opts).toEqual({ timeout: 10_000, reject: false, idempotent: true });
+    expect(opts).toEqual({ timeout: 10_000, reject: false, idempotent: true, urgent: true });
   });
 
   it('starts taskkill in the process host, not in the main process', async () => {
@@ -184,6 +185,12 @@ describe('killTree on Windows', () => {
     await killTree(4242);
     expect(mockRun).toHaveBeenCalledOnce();
     expect(mockRun.mock.calls[0][2]).toMatchObject({ idempotent: true });
+  });
+
+  it('marks taskkill urgent, so it runs here at once rather than wait for a restarting host', async () => {
+    mockRun.mockResolvedValue({ failed: false, exitCode: 0 });
+    await killTree(4242);
+    expect(mockRun.mock.calls[0][2]).toMatchObject({ urgent: true });
   });
 
   it('never throws when taskkill fails to run at all, and says so', async () => {
@@ -239,9 +246,11 @@ describe('killDescendants on Windows', () => {
     const [agent, agentArgs] = mockFork.mock.calls[0];
     expect(agent).toMatch(/node-pty[\\/]lib[\\/]conpty_console_list_agent\.js$/);
     expect(agentArgs).toEqual(['500']);
-    const [command, args] = mockRun.mock.calls[0];
+    const [command, args, opts] = mockRun.mock.calls[0];
     expect(command).toMatch(/\\System32\\taskkill\.exe$/i);
     expect(args).toEqual(['/PID', '700', '/T', '/F']);
+    // Closing a terminal doesn't wait for a restarting host either.
+    expect(opts).toMatchObject({ idempotent: true, urgent: true });
   });
 
   it('runs nothing when only the shell is on the console', async () => {

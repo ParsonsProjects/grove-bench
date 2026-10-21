@@ -129,7 +129,11 @@
     const ready = messageStore.getIsReady(sessionId);
     if (session && (session.status === 'running' || session.status === 'error') && !ready) {
       messageStore.setIsReady(sessionId, true);
-      messageStore.setIsRunning(sessionId, false);
+      // A prompt waiting on its reply (a new thread's first) keeps it
+      // working: the agent coming up is when it starts on it.
+      if (session.status === 'error' || !messageStore.isAwaitingResponse(sessionId)) {
+        messageStore.setIsRunning(sessionId, false);
+      }
     }
   });
 
@@ -148,6 +152,9 @@
     // lost but isReady might have been set by a leaked event.
     /** The page replayed, for sorting out live events held meanwhile. */
     let replayedPage: AgentEvent[] | null = null;
+    // The prompt waiting on a reply, as the chat shows it before it's
+    // cleared, to look for its turn's end in the page (see below).
+    const waitingOn = messageStore.pendingPrompt(sessionId);
     try {
       // Clear existing messages so replay starts fresh.
       // clearSession does NOT reset isReady — that's handled below based on
@@ -184,6 +191,9 @@
 
       const page = await window.groveBench.getEventHistoryPage(sessionId, INITIAL_PAGE_SIZE);
       timing.step('history fetch');
+      // A prompt sent that main hadn't finished when it answered (see
+      // applyTurnState). Read before the replay, whose results clear it.
+      const promptSent = messageStore.stillAwaitingResponse(sessionId, waitingOn, page.events);
       eventCount = page.events.length;
       messageStore.setPagination(sessionId, page.totalCount, page.startIndex);
 
@@ -192,26 +202,24 @@
       // avoiding O(n²) array copies and hundreds of intermediate re-renders.
       messageStore.replayEvents(sessionId, page.events, skipDuringReplay, page.startIndex);
       replayedPage = page.events;
-      if (page.events.length > 0) {
-        const last = page.events[page.events.length - 1];
-        if (last.type === 'result' || last.type === 'process_exit') {
-          messageStore.setIsRunning(sessionId, false);
-        }
-      }
-      // After replay, resolve any permissions/tool_calls still unresolved
-      // (denied permissions have no tool_result, stopped sessions cleared theirs)
-      messageStore.resolveStaleToolCalls(sessionId);
-      backgroundTaskStore.resolveStale(sessionId, messageStore.getIsRunning(sessionId));
-      messageStore.resolveReplayedPermissions(sessionId);
+      // Whether a turn is running, and which prompts still wait on the user,
+      // come from main, read with the page: a history cut off mid-turn (the
+      // app quit or was killed) ends just like a turn still running. Tool
+      // calls and prompts nothing answered are settled accordingly. Live
+      // events held meanwhile go on from here when released below.
+      messageStore.applyTurnState(sessionId, page.turn, promptSent);
+      // Background tasks (a dev server) run on between turns while the
+      // agent's process is up, so they go only once it is gone.
+      backgroundTaskStore.resolveStale(sessionId, page.turn.agentLive);
       timing.step('replay');
 
       // If the session is already running but system_init was missed during
-      // replay (e.g. agent just connected, or SESSION_STATUS arrived during
-      // the await above), ensure the input unlocks.
+      // replay (e.g. agent just connected, older than the page, or
+      // SESSION_STATUS arrived during the await above), ensure the input
+      // unlocks. Whether a turn is running is main's answer above.
       const session = store.sessions.find((s) => s.id === sessionId);
       if (session && (session.status === 'running' || session.status === 'error') && !messageStore.getIsReady(sessionId)) {
         messageStore.setIsReady(sessionId, true);
-        messageStore.setIsRunning(sessionId, false);
       }
     } catch (e: any) {
       historyFailed = true;
@@ -248,6 +256,12 @@
     destroyed = true;
     window.removeEventListener('keydown', handleKeydown);
     messageStore.unsubscribe(sessionId);
+    // The thread was closed or deleted (its row stopped or gone): a prompt
+    // sent to it gets no reply now, and must not leave it working when
+    // reopened. A pane remounted while its thread lives on (after a render
+    // error) keeps it: the agent is still on that prompt.
+    const row = store.sessions.find((s) => s.id === sessionId);
+    if (!row || row.status === 'stopped') messageStore.dropAwaitingResponse(sessionId);
   });
 </script>
 

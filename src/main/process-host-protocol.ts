@@ -24,11 +24,20 @@ export interface HostedOptions {
   input?: string;
   encoding?: 'utf8' | 'buffer';
   /** Safe to run again: it only reads, or doing it twice does no harm
-   *  (taskkill). runProcess runs it again in the main process when the host
-   *  fails it (dies, stops answering, or stops at quit); runInAgentHost
-   *  starts it again when the agent host dies. Not an execa option: the
-   *  main process keeps it, and never sends it. */
+   *  (taskkill). runProcess runs it again when the host fails it: in the
+   *  restarted host if it died (or in the main process, as a command
+   *  waiting for it would), in the main process if it stopped answering or
+   *  stopped at quit; runInAgentHost starts it again when the agent host
+   *  dies. Not an execa option: the main process keeps it, and never sends
+   *  it. */
   idempotent?: boolean;
+  /** Can't wait for the host: when it isn't up (starting, or restarting
+   *  after a crash or a kill) or dies under it, runProcess runs it in the
+   *  main process at once, as before the host, rather than wait up to
+   *  HOST_WAIT_MS. For killing a process tree (taskkill): the agent keeps
+   *  running until it is, and a quit has only so long. Not an execa option
+   *  either: the main process keeps it, and never sends it. */
+  urgent?: boolean;
 }
 
 /** The fields of an execa result (or error) that callers read. */

@@ -405,7 +405,7 @@ const api: Record<string, unknown> = {
   logIdle: () => {},
   recordPerformanceTrace: () => new Promise((resolve) => setTimeout(() => resolve({ name: 'trace-2026-10-01T12-00-00-000Z.json', sizeBytes: 12_582_912, seconds: 10 }), 10_000)),
   setAttentionBadge: () => {},
-  getEventHistoryPage: async () => ({ events: [], totalCount: 0, startIndex: 0 }),
+  getEventHistoryPage: async () => ({ events: [], totalCount: 0, startIndex: 0, turn: { midTurn: false, pendingPromptIds: [], agentLive: false } }),
   getEventHistoryCount: async () => 0,
   getThreadItems: async (id: string) => THREAD_ITEMS[id] ?? { tasks: [], tasksEventIndex: null, files: [] },
   searchEventHistory: async () => [],

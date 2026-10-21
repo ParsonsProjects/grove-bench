@@ -23,7 +23,9 @@ import { runProcess, type ProcessResult } from './process-host.js';
  * taskkill (and ps) start in the process host (runProcess), so a slow launch
  * never freezes the window: they run whenever a thread closes or sleeps. At
  * quit they still have the host, which stops only after the threads have
- * closed (will-quit, index.ts); once it has stopped they run here.
+ * closed (will-quit, index.ts); once it has stopped they run here. They
+ * never wait for a host that is starting or restarting (`urgent`): the
+ * processes keep running until they are killed, so they run here then.
  */
 
 export interface ProcessEntry {
@@ -76,8 +78,9 @@ async function taskkill(pids: number[]): Promise<void> {
   try {
     // No console window: execa hides it by default. Killing is safe to
     // repeat (idempotent): if the host dies, stops answering or stops (at
-    // quit) while taskkill runs, it runs again in the main process.
-    result = await runProcess(exe, args, { timeout: KILL_TIMEOUT_MS, reject: false, idempotent: true });
+    // quit) while taskkill runs, it runs again in the main process. It
+    // can't wait for a restarting host (urgent): it runs here at once.
+    result = await runProcess(exe, args, { timeout: KILL_TIMEOUT_MS, reject: false, idempotent: true, urgent: true });
   } catch (e) {
     logger.warn(`[process-tree] taskkill ${pids.join(', ')} failed:`, e instanceof Error ? e.message : String(e));
     return;
@@ -142,7 +145,8 @@ export function listProcesses(): Promise<ProcessEntry[]> {
 
 async function queryProcesses(): Promise<ProcessEntry[]> {
   try {
-    const { stdout } = await runProcess('ps', ['-A', '-o', 'pid=,ppid='], { timeout: LIST_TIMEOUT_MS, idempotent: true });
+    // It finds the tree to kill (off Windows), so it doesn't wait either (urgent).
+    const { stdout } = await runProcess('ps', ['-A', '-o', 'pid=,ppid='], { timeout: LIST_TIMEOUT_MS, idempotent: true, urgent: true });
     return parseProcessList(stdout);
   } catch (err) {
     logger.warn('[process-tree] could not list processes:', err);

@@ -168,12 +168,13 @@ class BackgroundTaskStore {
 
   /**
    * Remove tasks still marked 'running' once the agent process is gone (exit
-   * or history replay of a dead session). Not called on a plain turn result:
-   * background tasks legitimately outlive the turn that started them, and an
-   * interrupt spares them (perTaskStopAffordance), so they must stay listed.
+   * or history replay of a dead session): `agentLive` false. Not called on a
+   * plain turn result: background tasks legitimately outlive the turn that
+   * started them, and an interrupt spares them (perTaskStopAffordance), so
+   * they must stay listed while the agent is up.
    */
-  resolveStale(sessionId: string, isRunning: boolean): void {
-    if (isRunning) return;
+  resolveStale(sessionId: string, agentLive: boolean): void {
+    if (agentLive) return;
     const tasks = this.tasksBySession[sessionId];
     if (!tasks) return;
     const remaining: Record<string, BackgroundTask> = {};

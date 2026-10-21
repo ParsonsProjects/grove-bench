@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { flushSync } from 'svelte';
-import { mockGroveBench } from '../__mocks__/setup.js';
+import { IDLE_TURN, mockGroveBench } from '../__mocks__/setup.js';
 
-import { messageStore, type ChatUserMessage } from './messages.svelte.js';
+import { messageStore, settlePrompts, type ChatUserMessage } from './messages.svelte.js';
 import { userMessageLabel } from '../lib/message-label.js';
 import { store as sessionStore } from './sessions.svelte.js';
 import { checkpointStore } from './checkpoints.svelte.js';
@@ -1485,6 +1485,261 @@ describe('resolveStaleToolCalls', () => {
   });
 });
 
+describe('applyTurnState (main says how a replayed history ends)', () => {
+  const midTurn: AgentEvent[] = [
+    { type: 'user_message', text: 'Run the tests', uuid: 'u1' },
+    { type: 'assistant_tool_use', toolName: 'Bash', toolInput: { command: 'npm test' }, toolUseId: 'tu-1', uuid: 'a1' },
+  ];
+  const asks: AgentEvent[] = [
+    ...midTurn,
+    { type: 'permission_request', toolName: 'Bash', toolInput: { command: 'npm test' }, toolUseId: 'tu-1', requestId: 'perm-1' },
+    {
+      type: 'permission_request', toolName: 'AskUserQuestion', toolInput: {}, toolUseId: 'tu-2', requestId: 'perm-2', toolCategory: 'question',
+      toolView: { kind: 'question', questions: [{ question: 'Ship it?', options: [{ label: 'Yes' }] }] },
+    },
+    { type: 'elicitation_request', requestId: 'elicit-1', request: { serverName: 'deploy', message: 'Which env?', mode: 'form', requestedSchema: { type: 'object' } } },
+    { type: 'limit_request', requestId: 'limit-1', limit: 'turnToolCalls', used: 100, reachedAt: 100, nextAllowance: 200 },
+  ];
+  const byKind = (kind: string) => messageStore.getMessages(SID).find((m) => m.kind === kind) as any;
+
+  it('shows a history cut off mid-turn as not running when main has no turn', () => {
+    messageStore.replayEvents(SID, midTurn);
+    expect(messageStore.getIsRunning(SID)).toBe(true);
+
+    messageStore.applyTurnState(SID, IDLE_TURN, false);
+
+    expect(messageStore.getIsRunning(SID)).toBe(false);
+    expect(messageStore.getActivity(SID).activity).toBe('idle');
+    expect(byKind('tool_call').pending).toBe(false);
+  });
+
+  it('keeps it running when main says the turn is', () => {
+    messageStore.replayEvents(SID, [...midTurn, { type: 'process_exit' }, { type: 'user_message', text: 'Again', uuid: 'u2' }]);
+    expect(messageStore.getIsRunning(SID)).toBe(false);
+
+    messageStore.applyTurnState(SID, { midTurn: true, pendingPromptIds: [], agentLive: true }, false);
+
+    expect(messageStore.getIsRunning(SID)).toBe(true);
+  });
+
+  it('settles the prompts main no longer waits on, and leaves open the ones it does', () => {
+    messageStore.replayEvents(SID, asks);
+
+    messageStore.applyTurnState(SID, { midTurn: true, pendingPromptIds: ['perm-1', 'elicit-1'], agentLive: true }, false);
+
+    expect(byKind('permission')).toMatchObject({ requestId: 'perm-1', resolved: false });
+    expect(byKind('tool_call')).toMatchObject({ toolUseId: 'tu-1', awaitingPermission: true });
+    expect(byKind('question')).toMatchObject({ requestId: 'perm-2', resolved: true });
+    expect(byKind('elicitation')).toMatchObject({ requestId: 'elicit-1', resolved: false });
+    expect(byKind('limit')).toMatchObject({ requestId: 'limit-1', resolved: true, decision: 'stop' });
+    expect(messageStore.needsInput(SID)).toBe(true);
+  });
+
+  it('settles them all for a thread main holds nothing for, even one it says is running', () => {
+    messageStore.replayEvents(SID, asks);
+
+    messageStore.applyTurnState(SID, { midTurn: true, pendingPromptIds: [], agentLive: true }, false);
+
+    expect(byKind('permission')).toMatchObject({ resolved: true, decision: 'deny' });
+    expect(byKind('tool_call').awaitingPermission).toBe(false);
+    expect(byKind('elicitation')).toMatchObject({ resolved: true, action: 'cancel' });
+    expect(messageStore.needsInput(SID)).toBe(false);
+  });
+
+  it('stays working on a prompt sent before the history loaded, past the old turns it replays', () => {
+    messageStore.addUserMessage(SID, 'Add a test');
+    messageStore.clearSession(SID);
+    expect(messageStore.isAwaitingResponse(SID)).toBe(true);
+    messageStore.replayEvents(SID, [...midTurn, { type: 'result', subtype: 'success', isError: false }]);
+
+    messageStore.applyTurnState(SID, IDLE_TURN, true);
+
+    expect(messageStore.getIsRunning(SID)).toBe(true);
+    // Still waiting on the reply: the agent connecting doesn't end it.
+    messageStore.ingestEvent(SID, { type: 'system_init', sessionId: 'p', model: 'm', tools: [] } as AgentEvent);
+    expect(messageStore.getIsRunning(SID)).toBe(true);
+  });
+
+  it('forgets a prompt still waiting once its pane closes', () => {
+    messageStore.addUserMessage(SID, 'Add a test');
+    messageStore.dropAwaitingResponse(SID);
+    expect(messageStore.isAwaitingResponse(SID)).toBe(false);
+  });
+
+  const call = (toolUseId: string) => messageStore.getMessages(SID).find((m) => m.kind === 'tool_call' && m.toolUseId === toolUseId) as any;
+  const later: AgentEvent[] = [
+    { type: 'user_message', text: 'Again', uuid: 'u2' },
+    { type: 'assistant_tool_use', toolName: 'Bash', toolInput: { command: 'npm test' }, toolUseId: 'tu-2', uuid: 'a2' },
+  ];
+
+  // The agent exited (or the app quit) during tu-1: nothing answered it.
+  it('settles a tool call an earlier turn left cut off, though main says a later turn is running', () => {
+    messageStore.replayEvents(SID, [...midTurn, { type: 'process_exit' }, ...later]);
+
+    messageStore.applyTurnState(SID, { midTurn: true, pendingPromptIds: [], agentLive: true }, false);
+
+    expect(call('tu-1').pending).toBe(false);
+    expect(call('tu-2').pending).toBe(true);
+  });
+
+  it('settles one a turn ended without answering, but not a background subagent\'s, which works on', () => {
+    messageStore.replayEvents(SID, [
+      ...midTurn,
+      { type: 'assistant_tool_use', toolName: 'Agent', toolInput: { prompt: 'watch the build' }, toolUseId: 'tu-agent', uuid: 'a3' },
+      { type: 'task_started', taskId: 'bg-1', toolUseId: 'tu-agent', description: 'watch the build' },
+      { type: 'tool_result', toolUseId: 'tu-agent', content: 'Started in the background' },
+      { type: 'assistant_tool_use', toolName: 'Bash', toolInput: { command: 'npm run build' }, toolUseId: 'tu-sub', uuid: 'a4', parentToolUseId: 'tu-agent' },
+      { type: 'result', subtype: 'error_during_execution', isError: true },
+      ...later,
+    ]);
+
+    messageStore.applyTurnState(SID, { midTurn: true, pendingPromptIds: [], agentLive: true }, false);
+
+    expect(call('tu-1').pending).toBe(false);
+    expect(call('tu-sub').pending).toBe(true);
+    expect(call('tu-2').pending).toBe(true);
+  });
+});
+
+describe('stillAwaitingResponse (a prompt waiting, against the page a pane loaded)', () => {
+  const prompt = (uuid: string, text = 'Run the tests'): AgentEvent => ({ type: 'user_message', text, uuid });
+  const reply: AgentEvent = { type: 'assistant_text', text: 'Done', uuid: 'r' };
+  const done: AgentEvent = { type: 'result', subtype: 'success', isError: false };
+
+  /** What the chat showed (`shown`), then a prompt sent; the pane reloads. */
+  function sendThenReload(shown: AgentEvent[]) {
+    messageStore.replayEvents(SID, shown);
+    messageStore.addUserMessage(SID, 'And the linter');
+    const before = messageStore.pendingPrompt(SID);
+    messageStore.clearSession(SID);
+    return before;
+  }
+
+  it('waits while main has not logged the prompt, past the older turns the page ends', () => {
+    const before = sendThenReload([prompt('u1'), done]);
+    expect(before).toEqual({ after: 'u1', nth: 1 });
+    expect(messageStore.stillAwaitingResponse(SID, before, [prompt('u1'), done])).toBe(true);
+  });
+
+  it('waits while the prompt\'s turn runs in the page', () => {
+    const before = sendThenReload([prompt('u1'), done]);
+    expect(messageStore.stillAwaitingResponse(SID, before, [prompt('u1'), done, prompt('u2', 'And the linter'), reply])).toBe(true);
+  });
+
+  it('does not wait once the page holds the end of the prompt\'s turn', () => {
+    const before = sendThenReload([prompt('u1'), done]);
+    expect(messageStore.stillAwaitingResponse(SID, before, [prompt('u1'), done, prompt('u2', 'And the linter'), reply, done])).toBe(false);
+    // An exit ends it too.
+    expect(messageStore.stillAwaitingResponse(SID, before, [prompt('u1'), done, prompt('u2', 'And the linter'), { type: 'process_exit' }])).toBe(false);
+  });
+
+  it('finds a prompt main echoed by its uuid', () => {
+    messageStore.replayEvents(SID, [prompt('u1'), done]);
+    messageStore.addUserMessage(SID, 'And the linter');
+    // Echoed before the reload: the chat has its uuid.
+    messageStore.ingestEvent(SID, prompt('u2', 'And the linter'));
+    const before = messageStore.pendingPrompt(SID);
+    messageStore.clearSession(SID);
+
+    expect(before).toEqual({ after: 'u2', nth: 0 });
+    expect(messageStore.stillAwaitingResponse(SID, before, [prompt('u1'), done, prompt('u2'), reply])).toBe(true);
+    expect(messageStore.stillAwaitingResponse(SID, before, [prompt('u1'), done, prompt('u2'), reply, done])).toBe(false);
+  });
+
+  it('does not wait on a new thread\'s first prompt that main answered before the page', () => {
+    messageStore.addUserMessage(SID, 'Add a test');
+    const before = messageStore.pendingPrompt(SID);
+    messageStore.clearSession(SID);
+    expect(before).toEqual({ after: null, nth: 1 });
+    expect(messageStore.stillAwaitingResponse(SID, before, [{ type: 'status', message: 'Creating worktree…' }])).toBe(true);
+    expect(messageStore.stillAwaitingResponse(SID, before, [prompt('u1', 'Add a test'), reply, done])).toBe(false);
+  });
+
+  it('waits on a prompt sent while the page loaded: main read the page first', () => {
+    const before = sendThenReload([prompt('u1'), done]);
+    messageStore.addUserMessage(SID, 'And the tests');
+    expect(messageStore.stillAwaitingResponse(SID, before, [prompt('u1'), done, prompt('u2', 'And the linter'), reply, done])).toBe(true);
+  });
+
+  it('is false with nothing waiting', () => {
+    messageStore.replayEvents(SID, [prompt('u1'), done]);
+    expect(messageStore.pendingPrompt(SID)).toBeNull();
+    expect(messageStore.stillAwaitingResponse(SID, null, [prompt('u1'), done])).toBe(false);
+  });
+});
+
+describe('settlePrompts (one way to settle unanswered prompts, for every caller)', () => {
+  const ev = (e: Record<string, unknown>) => e as unknown as AgentEvent;
+  const asks: AgentEvent[] = [
+    ev({ type: 'user_message', text: 'Ship it', uuid: 'u1' }),
+    ev({ type: 'assistant_tool_use', toolName: 'Bash', toolInput: { command: 'npm test' }, toolUseId: 'tu-1', uuid: 'a1' }),
+    ev({ type: 'permission_request', toolName: 'Bash', toolInput: { command: 'npm test' }, toolUseId: 'tu-1', requestId: 'perm-1' }),
+    ev({
+      type: 'permission_request', toolName: 'AskUserQuestion', toolInput: {}, toolUseId: 'tu-2', requestId: 'perm-2', toolCategory: 'question',
+      toolView: { kind: 'question', questions: [{ question: 'Ship it?', options: [{ label: 'Yes' }] }] },
+    }),
+    ev({ type: 'elicitation_request', requestId: 'elicit-1', request: { serverName: 'deploy', message: 'Which env?', mode: 'form', requestedSchema: { type: 'object' } } }),
+    ev({ type: 'limit_request', requestId: 'limit-1', limit: 'turnToolCalls', used: 100, reachedAt: 100, nextAllowance: 200 }),
+  ];
+  /** How each message ended up, without its generated id. */
+  const outcome = (msgs: readonly unknown[]) => msgs.map((m) => {
+    const { kind, resolved, decision, action, pending, awaitingPermission } = m as Record<string, unknown>;
+    return { kind, resolved, decision, action, pending, awaitingPermission };
+  });
+
+  it('settles a stopped thread, a reloaded one and an older page alike', async () => {
+    messageStore.replayEvents(SID, asks);
+    messageStore.markSessionStopped(SID);
+    const stopped = outcome(messageStore.getMessages(SID));
+    messageStore.destroySession(SID);
+
+    messageStore.replayEvents(SID, asks);
+    messageStore.applyTurnState(SID, IDLE_TURN, false);
+    const reloaded = outcome(messageStore.getMessages(SID));
+    messageStore.destroySession(SID);
+
+    // An older page, with a newer prompt loaded after it.
+    messageStore.replayEvents(SID, [ev({ type: 'user_message', text: 'Next', uuid: 'u9' })], undefined, 200);
+    messageStore.setPagination(SID, 201, 200);
+    mockGroveBench.getEventHistoryPage.mockResolvedValueOnce({ events: asks, totalCount: 201, startIndex: 0, turn: IDLE_TURN });
+    await messageStore.loadOlderEvents(SID);
+    const older = outcome(messageStore.getMessages(SID).slice(0, -1));
+
+    expect(reloaded).toEqual(stopped);
+    expect(older).toEqual(stopped);
+    expect(stopped).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'permission', resolved: true, decision: 'deny' }),
+      expect.objectContaining({ kind: 'question', resolved: true }),
+      expect.objectContaining({ kind: 'elicitation', resolved: true, action: 'cancel' }),
+      expect.objectContaining({ kind: 'limit', resolved: true, decision: 'stop' }),
+      expect.objectContaining({ kind: 'tool_call', pending: false, awaitingPermission: false }),
+    ]));
+  });
+
+  it('keeps open in an older page the prompts main still waits on', async () => {
+    messageStore.replayEvents(SID, [ev({ type: 'user_message', text: 'Next', uuid: 'u9' })], undefined, 200);
+    messageStore.setPagination(SID, 201, 200);
+    mockGroveBench.getEventHistoryPage.mockResolvedValueOnce({
+      events: asks, totalCount: 201, startIndex: 0, turn: { midTurn: true, pendingPromptIds: ['perm-1', 'limit-1'], agentLive: true },
+    });
+
+    await messageStore.loadOlderEvents(SID);
+
+    const msgs = messageStore.getMessages(SID) as any[];
+    expect(msgs.find((m) => m.kind === 'permission')).toMatchObject({ requestId: 'perm-1', resolved: false });
+    expect(msgs.find((m) => m.kind === 'tool_call')).toMatchObject({ toolUseId: 'tu-1', awaitingPermission: true });
+    expect(msgs.find((m) => m.kind === 'limit')).toMatchObject({ resolved: false });
+    expect(msgs.find((m) => m.kind === 'question')).toMatchObject({ resolved: true });
+    expect(msgs.find((m) => m.kind === 'elicitation')).toMatchObject({ resolved: true, action: 'cancel' });
+  });
+
+  it('returns the same list when there is nothing to settle', () => {
+    messageStore.replayEvents(SID, [ev({ type: 'user_message', text: 'Hi', uuid: 'u1' })]);
+    const msgs = messageStore.getMessages(SID);
+    expect(settlePrompts(msgs)).toBe(msgs);
+  });
+});
+
 describe('background task cleanup (delegates to backgroundTaskStore)', () => {
   // resolveStale's own logic is covered in backgroundTask.svelte.test.ts; this
   // guards that only a process exit (not a turn result) cleans up orphaned
@@ -2177,7 +2432,7 @@ describe('requestPromptInsert', () => {
 describe('pagination — loadOlderUntil', () => {
   it('loads older pages until the target index is covered', async () => {
     messageStore.setPagination(SID, 500, 300);
-    mockGroveBench.getEventHistoryPage.mockResolvedValueOnce({ events: [], totalCount: 500, startIndex: 100 });
+    mockGroveBench.getEventHistoryPage.mockResolvedValueOnce({ events: [], totalCount: 500, startIndex: 100, turn: IDLE_TURN });
 
     await messageStore.loadOlderUntil(SID, 150);
 
@@ -2189,8 +2444,8 @@ describe('pagination — loadOlderUntil', () => {
   it('loads multiple pages when needed', async () => {
     messageStore.setPagination(SID, 500, 400);
     mockGroveBench.getEventHistoryPage
-      .mockResolvedValueOnce({ events: [], totalCount: 500, startIndex: 200 })
-      .mockResolvedValueOnce({ events: [], totalCount: 500, startIndex: 0 });
+      .mockResolvedValueOnce({ events: [], totalCount: 500, startIndex: 200, turn: IDLE_TURN })
+      .mockResolvedValueOnce({ events: [], totalCount: 500, startIndex: 0, turn: IDLE_TURN });
 
     await messageStore.loadOlderUntil(SID, 50);
 
@@ -2217,6 +2472,7 @@ describe('pagination — loadOlderEvents', () => {
       events: [],
       totalCount: 500,
       startIndex: 100,
+      turn: IDLE_TURN,
     });
 
     await messageStore.loadOlderEvents(SID, 200);
@@ -2234,6 +2490,7 @@ describe('pagination — loadOlderEvents', () => {
       events: [],
       totalCount: 100,
       startIndex: 0,
+      turn: IDLE_TURN,
     });
 
     await messageStore.loadOlderEvents(SID, 200);
