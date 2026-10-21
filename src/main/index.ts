@@ -159,7 +159,8 @@ app.whenReady().then(() => {
   if (!isFirstCopy) return;
   // git and gh launch from here on in a utility process, so a slow launch
   // can't freeze the window (process-host.ts). First, before the window
-  // starts asking for git status.
+  // starts asking for git status: what it asks for before the host is up
+  // waits for it.
   startProcessHost();
   handleAttachmentProtocol((id) => worktreeManager.getWorktree(id)?.path);
   void removeDeletedFolders();

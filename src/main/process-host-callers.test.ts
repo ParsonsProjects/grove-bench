@@ -145,6 +145,27 @@ describe('commands the main process runs start in the process host', () => {
     expect(commands()).toEqual([{ file: 'code', args: ['-g', '/repo/src/a.ts:7'], options: undefined }]);
   });
 
+  it('a command asked for while the process host restarts waits for it', async () => {
+    setPlatform('win32');
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    let killed: Promise<void>;
+    try {
+      processHost.emit('exit', 1);
+      processHost = newProcessHost();
+      killed = killTree(4242);
+      vi.advanceTimersByTime(RESTART_DELAY_MS);
+      expect(processHost.sent).toEqual([]);
+      processHost.emit('message', HOST_READY);
+    } finally {
+      vi.useRealTimers();
+    }
+    await killed;
+    expect(commands()).toEqual([{
+      file: expect.stringMatching(/\\System32\\taskkill\.exe$/i),
+      args: ['/PID', '4242', '/T', '/F'],
+      options: { timeout: 10_000, reject: false },
+    }]);
+  });
 });
 
 describe('the claude CLI starts in the agent host, its lookup in the process host', () => {

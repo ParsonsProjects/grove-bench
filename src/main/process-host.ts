@@ -17,10 +17,20 @@
  * While the main process waits, the window can't respond. The host waits
  * instead.
  *
- * Before the app is ready, while the host starts, and once it has failed
- * MAX_FAILURES times in a row, commands run in the main process as they did
- * before, except those that can be skipped (runProcessInHost), which fail
- * instead. Tests never start it, so their execa mocks see every call.
+ * Before the app is ready (the host isn't started yet), once it has failed
+ * MAX_FAILURES times in a row, and after it has stopped at quit, commands run
+ * in the main process as they did before, except those that can be skipped
+ * (runProcessInHost), which fail instead. Tests never start it, so their
+ * execa mocks see every call.
+ *
+ * A command asked for while the host starts, or restarts after a crash or a
+ * kill, waits for it (in order) rather than run here: at launch the app
+ * restores every project and thread at once, dozens of git and gh calls in
+ * the first seconds, which ran here and froze the window. It waits at most
+ * HOST_WAIT_MS, and no longer once that start has failed: then it runs here
+ * (or, host-only, fails) as it did before. Its timeout, and the deadline for
+ * the host's answer, count from when it is sent, not from when it was asked
+ * for, so it can take up to HOST_WAIT_MS longer than its timeout.
  *
  * When the host dies with commands in flight, their processes are stopped
  * (their execa timeouts died with the host), read-only ones and those marked
@@ -68,6 +78,13 @@ export interface SpawnProcessOptions {
 export const HOST_BUNDLE_NAME = 'process-host-child.js';
 /** Give up waiting for a starting host after this long, and count it failed. */
 export const HOST_START_TIMEOUT_MS = 10_000;
+/** The longest a command waits for a starting (or restarting) host before it
+ *  runs in the main process after all. A utility process normally starts in
+ *  well under a second, and a restart takes RESTART_DELAY_MS plus a start;
+ *  5 s covers both on a slow, busy PC at login. A start that takes longer is
+ *  probably stuck (HOST_START_TIMEOUT_MS ends it), and the window shouldn't
+ *  wait for its git status all that time. */
+export const HOST_WAIT_MS = 5_000;
 /** After this many failures in a row (crashes, starts that never finished,
  *  hosts that stopped answering), the host stays down and commands run in
  *  the main process. */
@@ -154,7 +171,8 @@ interface Pending {
 }
 
 /** 'stopping': killed for not answering (overdue), until its exit. It takes
- *  no new commands, which would only fail with it: they run here meanwhile. */
+ *  no new commands, which would only fail with it: they wait for the host
+ *  that replaces it. */
 type State = 'idle' | 'starting' | 'ready' | 'stopping' | 'stopped' | 'failed';
 
 export function createProcessHost(deps: ProcessHostDeps) {
@@ -170,10 +188,20 @@ export function createProcessHost(deps: ProcessHostDeps) {
   let host: HostProcess | null = null;
   let failures = 0;
   let readyAt: number | null = null;
+  /** When the host was last launched (now()). */
+  let launchedAt = 0;
   let nextId = 0;
   let startTimer: unknown = null;
   let restartTimer: unknown = null;
   const pending = new Map<number, Pending>();
+  /** Commands waiting for a starting or restarting host, in the order they
+   *  were asked for. Not sent, so they can't have run. */
+  const queued: Pending[] = [];
+  /** Ends the wait for the first of them (HOST_WAIT_MS). */
+  let waitTimer: unknown = null;
+  /** This start ran past HOST_WAIT_MS: commands run here until it is up or
+   *  has failed, rather than each wait as long. */
+  let waitedOut = false;
   /** Processes running in the host, by request id. */
   const spawned = new Map<number, HostedProcess>();
   /** Spawns waiting for a starting host: told whether it came up. */
@@ -187,6 +215,7 @@ export function createProcessHost(deps: ProcessHostDeps) {
   function launch(): void {
     state = 'starting';
     readyAt = null;
+    launchedAt = now();
     let child: HostProcess;
     try {
       child = deps.fork();
@@ -210,6 +239,7 @@ export function createProcessHost(deps: ProcessHostDeps) {
         clearTimer(startTimer);
         state = 'ready';
         readyAt = now();
+        sendQueued(child);
         hostCameUp(true);
         return;
       }
@@ -242,15 +272,21 @@ export function createProcessHost(deps: ProcessHostDeps) {
 
   /** The host failed: try again after a pause, or give up for good. */
   function failed(reason: string): void {
+    // It never came up, as opposed to dying once it was (a crash, or a kill
+    // for not answering).
+    const startFailed = state === 'starting';
     if (readyAt !== null && now() - readyAt >= HEALTHY_UPTIME_MS) failures = 0;
     readyAt = null;
     failures++;
     // Spawns waiting on this start go ahead here, rather than wait through
     // more restarts.
     hostCameUp(false);
+    // The next start gets its own wait.
+    waitedOut = false;
     if (failures >= MAX_FAILURES) {
       state = 'failed';
       note(`${name} ${reason}; ${deps.runs ?? 'git and gh'} run in the main process from now on`);
+      runQueuedHere();
       return;
     }
     state = 'idle';
@@ -261,10 +297,77 @@ export function createProcessHost(deps: ProcessHostDeps) {
     }, RESTART_DELAY_MS);
     timer.unref?.();
     restartTimer = timer;
+    // Commands waiting on this start run here too, as the spawns do.
+    // Those waiting since the host died wait on for its restart (within
+    // HOST_WAIT_MS): the restart is what they were waiting for.
+    if (startFailed) runQueuedHere();
   }
 
   function hostCameUp(ready: boolean): void {
     for (const go of waitingForHost.splice(0)) go(ready);
+  }
+
+  /** The host is on its way up: starting, or restarting after it died (until
+   *  its exit if it was killed, then the pause before it starts again). A
+   *  command asked for now waits for it, unless this start has already
+   *  taken too long. */
+  function comingUp(): boolean {
+    if (waitedOut) return false;
+    return state === 'starting' || state === 'stopping' || (state === 'idle' && restartTimer !== null);
+  }
+
+  /** Hold a command until the host is up, for HOST_WAIT_MS at most (counted
+   *  from the first command waiting). */
+  function wait(command: Pending): void {
+    queued.push(command);
+    if (waitTimer !== null) return;
+    const timer = setTimer(waitedTooLong, HOST_WAIT_MS);
+    timer.unref?.();
+    waitTimer = timer;
+  }
+
+  /** The host took longer than HOST_WAIT_MS: what waited runs here, and so
+   *  does what follows, until the host is up or this start has failed. */
+  function waitedTooLong(): void {
+    waitTimer = null;
+    if (queued.length === 0) return;
+    waitedOut = true;
+    note(`${name} wasn't up after ${HOST_WAIT_MS / 1000} s; ${countOf(queued.length)} that waited for it, and those after them until it is, run in the main process`);
+    runQueuedHere();
+  }
+
+  function stopWaitTimer(): void {
+    if (waitTimer === null) return;
+    clearTimer(waitTimer);
+    waitTimer = null;
+  }
+
+  /** The host is up: send what waited for it, in order. */
+  function sendQueued(child: HostProcess): void {
+    stopWaitTimer();
+    waitedOut = false;
+    if (queued.length === 0) return;
+    note(`${name} up in ${Math.round(now() - launchedAt)} ms; ${countOf(queued.length)} waited for it`);
+    for (const command of queued.splice(0)) send(command, child);
+  }
+
+  /** The host won't be up in time, or at all: what waited for it runs here
+   *  after all, in order (host-only commands fail). */
+  function runQueuedHere(): void {
+    stopWaitTimer();
+    for (const command of queued.splice(0)) fallBack(command);
+  }
+
+  /** Run a command here, as before the host, or, host-only, refuse it. */
+  function fallBack(command: Pending): void {
+    if (command.hostOnly) {
+      command.reject(fromCaller(new Error(`The ${name} isn't running, so ${command.label} didn't run`), command.origin));
+      return;
+    }
+    // Run now, but a throw only fails this command, not the others queued
+    // with it.
+    new Promise((resolve) => { resolve(deps.runHere(command.file, command.args, command.options)); })
+      .then(command.resolve, command.reject);
   }
 
   /** A spawned process did something: pass it on. */
@@ -375,35 +478,44 @@ export function createProcessHost(deps: ProcessHostDeps) {
   }
 
   /** Run a command in the host, or, unless `hostOnly`, here when the host
-   *  can't take it. */
+   *  can't take it. While the host is on its way up, it waits for it. */
   function run(file: string, args: string[], hostedOptions: HostedOptions | undefined, hostOnly: boolean): Promise<unknown> {
-    const child = host;
+    const up = state === 'ready' ? host : null;
     const label = launchLabel(file, [file, ...args]);
     // `idempotent` stays here; execa gets the rest.
     const { idempotent = false, ...rest } = hostedOptions ?? {};
     const options = hostedOptions === undefined ? undefined : rest;
-    const here = () => (hostOnly
-      ? Promise.reject(new Error(`The ${name} isn't running, so ${label} didn't run`))
-      : deps.runHere(file, args, options));
-    if (state !== 'ready' || !child) return here();
-    const id = ++nextId;
-    const request: HostRequest = options === undefined ? { id, file, args } : { id, file, args, options };
+    if (!up && !comingUp()) {
+      return hostOnly
+        ? Promise.reject(new Error(`The ${name} isn't running, so ${label} didn't run`))
+        : deps.runHere(file, args, options);
+    }
     const origin = new Error();
     return new Promise((resolve, reject) => {
-      const waiting: Pending = { file, args, options, label, hostOnly, idempotent, origin, resolve, reject };
-      pending.set(id, waiting);
-      try {
-        child.postMessage(request);
-      } catch {
-        // Never delivered, so it can't have run: run it here instead (or,
-        // host-only, not at all).
-        pending.delete(id);
-        here().then(resolve, reject);
-        return;
-      }
-      const timeout = options?.timeout;
-      if (timeout && timeout > 0) setDeadline(id, waiting, timeout);
+      const command: Pending = { file, args, options, label, hostOnly, idempotent, origin, resolve, reject };
+      if (up) send(command, up);
+      else wait(command);
     });
+  }
+
+  /** Send a command to the host. Its deadline counts from now, as its
+   *  timeout does in the host. */
+  function send(command: Pending, child: HostProcess): void {
+    const { file, args, options } = command;
+    const id = ++nextId;
+    const request: HostRequest = options === undefined ? { id, file, args } : { id, file, args, options };
+    pending.set(id, command);
+    try {
+      child.postMessage(request);
+    } catch {
+      // Never delivered, so it can't have run: run it here instead (or,
+      // host-only, not at all).
+      pending.delete(id);
+      fallBack(command);
+      return;
+    }
+    const timeout = options?.timeout;
+    if (timeout && timeout > 0) setDeadline(id, command, timeout);
   }
 
   /**
@@ -450,7 +562,8 @@ export function createProcessHost(deps: ProcessHostDeps) {
   }
 
   /** Stop the host for good (at quit). Commands in flight are stopped and
-   *  fail: nothing is waiting for their answers any more. */
+   *  fail: nothing is waiting for their answers any more. Those waiting for
+   *  a restart were never sent: they run here, as later ones will. */
   function stop(): void {
     state = 'stopped';
     clearTimer(startTimer);
@@ -458,6 +571,7 @@ export function createProcessHost(deps: ProcessHostDeps) {
     const child = host;
     host = null;
     abandonPending(false);
+    runQueuedHere();
     loseSpawned();
     hostCameUp(false);
     child?.kill();
@@ -484,6 +598,11 @@ function fromCaller(error: Error, origin: Error): Error {
   const frames = origin.stack?.split('\n').slice(1).join('\n');
   if (frames) error.stack = `${error.name}: ${error.message}\n${frames}`;
   return error;
+}
+
+/** "1 command", "3 commands". */
+function countOf(n: number): string {
+  return `${n} command${n === 1 ? '' : 's'}`;
 }
 
 /** git subcommands that only read, whatever their arguments. */
@@ -566,7 +685,8 @@ const agentHost = createProcessHost({
 });
 
 /**
- * Run `file` with `args` like execa, in the process host when it's up.
+ * Run `file` with `args` like execa, in the process host when it's up, or
+ * once it is when it's starting (for HOST_WAIT_MS at most).
  * Resolves with execa's result fields, or rejects with an error that carries
  * them (`stderr`, `exitCode`, `timedOut`, `code`).
  */
@@ -578,8 +698,9 @@ export function runProcess(file: string, args: string[], options?: HostedOptions
 
 /**
  * runProcess, but only in the process host: rejects when the host isn't up
- * (before it is ready, or once it has given up), rather than run the command
- * in the main process. For work that can be skipped, such as the health
+ * (before it is started, once it has given up or stopped, or when it doesn't
+ * come up within HOST_WAIT_MS), rather than run the command in the main
+ * process. For work that can be skipped, such as the health
  * line's process list (process-memory.ts).
  */
 export function runProcessInHost(file: string, args: string[], options?: HostedOptions): Promise<ProcessResult> {
