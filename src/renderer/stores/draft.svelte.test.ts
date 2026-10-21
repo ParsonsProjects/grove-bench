@@ -499,6 +499,7 @@ describe('draftStore review fixes', () => {
     expect(draftStore.error).toContain('project was removed');
     expect(createSessionMock()).not.toHaveBeenCalled();
   });
+});
 
 describe('draftStore in a folder project without git', () => {
   beforeEach(() => {
@@ -557,7 +558,6 @@ describe('draftStore in a folder project without git', () => {
     expect(await draftStore.start()).toBe(true);
     expect(store.sessions.find((s) => s.id === 'new1')?.noGit).toBeUndefined();
   });
-});
 });
 
 describe('draftStore.start while it is still starting', () => {

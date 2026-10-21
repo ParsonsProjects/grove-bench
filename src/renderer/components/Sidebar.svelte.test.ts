@@ -1380,6 +1380,7 @@ describe('Sidebar delete conversation', () => {
     await screen.findByRole('button', { name: 'Delete' });
     expect(screen.queryByText(/uncommitted changes that will be lost/)).toBeNull();
   });
+});
 
 describe('Sidebar projects tree', () => {
   beforeEach(() => {
@@ -1572,7 +1573,6 @@ describe('Sidebar rows for folder projects without git', () => {
     const icon = await screen.findByRole('img', { name: 'In the project folder (no git)' });
     expect(within(icon.closest('button')!).getByText('New thread')).toBeInTheDocument();
   });
-});
 });
 
 describe('Sidebar rail', () => {
