@@ -16,9 +16,12 @@ describe('languageForPath', () => {
 });
 
 describe('highlightLineUncached', () => {
-  it('gives the same HTML as highlightLine', () => {
+  it('highlights the line as highlightLine does', () => {
     const text = 'const uncached = a < b;';
-    expect(highlightLineUncached(text, 'typescript')).toBe(highlightLine(text, 'typescript'));
+    const html = highlightLineUncached(text, 'typescript');
+    expect(html).toContain('<span class="hljs-keyword">const</span>');
+    expect(html).toContain('a &lt; b');
+    expect(html).toBe(highlightLine(text, 'typescript'));
   });
 
   it('escapes plain text when no language is given', () => {
@@ -53,11 +56,8 @@ describe('highlightLine', () => {
   });
 
   it('preserves code content for a known language', () => {
-    // Note: DOMPurify span output isn't asserted here — the jsdom window is replaced in
-    // the test setup, which prevents DOMPurify from retaining markup. Content preservation
-    // and XSS-inertness (below) are the load-bearing guarantees.
     const html = highlightLine('const x = 1;', 'typescript');
-    expect(html).toContain('const');
+    expect(html).toContain('<span class="hljs-keyword">const</span>');
     expect(html).toContain('x');
   });
 

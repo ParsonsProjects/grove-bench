@@ -1128,7 +1128,7 @@ describe('file handlers', () => {
     write('new.ts', 'hi\n');
     vi.mocked(git.fileDiff).mockResolvedValue('');
     expect(await invoke(IPC.FILE_DIFF, 's1', 'new.ts')).toEqual({
-      kind: 'text', patch: git.synthesizeUntrackedDiff('new.ts', 'hi\n'),
+      kind: 'text', patch: '--- /dev/null\n+++ b/new.ts\n@@ -0,0 +1,1 @@\n+hi',
     });
     // A staged diff that is empty really is empty.
     expect(await invoke(IPC.FILE_DIFF, 's1', 'new.ts', true)).toEqual({ kind: 'text', patch: '' });
@@ -1410,6 +1410,9 @@ describe('renderer input checks', () => {
   });
 
   it('app state: To do flags go to app-state, which checks them', () => {
+    m.appState.loadTodoSessionIds.mockReturnValue(['a']);
+    expect(invoke(IPC.APP_STATE_GET_TODO)).toEqual(['a']);
+    // null (an unreadable file) reaches the renderer as is, so it keeps its list
     m.appState.loadTodoSessionIds.mockReturnValue(null);
     expect(invoke(IPC.APP_STATE_GET_TODO)).toBeNull();
     invoke(IPC.APP_STATE_SET_TODO, ['a']);
@@ -1518,6 +1521,31 @@ describe('adapters, skills and MCP config', () => {
     m.adapterRegistry.getDefault.mockReturnValue({ id: 'gemini-cli', capabilities: { plugins: false } });
     m.adapterRegistry.getBuiltInDefault.mockReturnValue({ id: 'claude-code', capabilities: { plugins: true }, listPlugins });
     expect(await invoke(IPC.PLUGIN_LIST)).toEqual({ installed: [{ id: 'p' }], available: [] });
+  });
+
+  it('lists no plugins for an agent without them, and refuses to install one', async () => {
+    const listPlugins = vi.fn();
+    m.adapterRegistry.get.mockReturnValue({ id: 'gemini-cli', capabilities: { plugins: false }, listPlugins });
+    expect(await invoke(IPC.PLUGIN_LIST, 'gemini-cli')).toEqual({ installed: [], available: [] });
+    expect(listPlugins).not.toHaveBeenCalled();
+    await expect(invoke(IPC.PLUGIN_INSTALL, 'p', 'user', 'gemini-cli')).rejects.toThrow('Adapter "gemini-cli" does not support plugins');
+  });
+
+  it('passes plugin installs and changes to the built-in agent', async () => {
+    const agent = {
+      id: 'claude-code', capabilities: { plugins: true },
+      installPlugin: vi.fn(), uninstallPlugin: vi.fn(), enablePlugin: vi.fn(), disablePlugin: vi.fn(),
+    };
+    m.adapterRegistry.getBuiltInDefault.mockReturnValue(agent);
+    await invoke(IPC.PLUGIN_INSTALL, 'p', 'project');
+    await invoke(IPC.PLUGIN_INSTALL, 'q');
+    await invoke(IPC.PLUGIN_UNINSTALL, 'p');
+    await invoke(IPC.PLUGIN_ENABLE, 'p');
+    await invoke(IPC.PLUGIN_DISABLE, 'p');
+    expect(agent.installPlugin.mock.calls).toEqual([['p', 'project'], ['q', 'user']]);
+    expect(agent.uninstallPlugin).toHaveBeenCalledWith('p');
+    expect(agent.enablePlugin).toHaveBeenCalledWith('p');
+    expect(agent.disablePlugin).toHaveBeenCalledWith('p');
   });
 
   it('MCP_CONFIG_APPROVE approves a server for the project and all its worktrees', async () => {

@@ -742,9 +742,13 @@ describe('ChangesReviewPanel — Markdown preview', () => {
     expect(preview.title).toBe('docs/plan.md is no longer in the worktree');
   });
 
-  it('doesn\'t offer it for a deleted Markdown file or another type', async () => {
+  // One file each, so the file checked is the one shown
+  it.each([
+    ['a deleted Markdown file', entry('old.md', { status: 'deleted' })],
+    ['another type', entry('src/a.ts')],
+  ])('doesn\'t offer it for %s', async (_what, file) => {
     mockGroveBench.getFileDiff.mockResolvedValue({ kind: 'text', patch: patch('x') });
-    gitStatusStore.statusBySession = { [SID]: { entries: [entry('old.md', { status: 'deleted' }), entry('src/a.ts')] } };
+    gitStatusStore.statusBySession = { [SID]: { entries: [file] } };
     const { container, queryByRole } = render(ChangesReviewPanel, { sessionId: SID });
     await waitFor(() => expect(diffText(container)).toContain('x'));
     expect(queryByRole('button', { name: 'Preview' })).toBeNull();

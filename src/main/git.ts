@@ -675,6 +675,10 @@ export function looksBinary(buf: Buffer): boolean {
 /** Build an all-add unified diff for an untracked file from its content. */
 export function synthesizeUntrackedDiff(relPath: string, content: string): string {
   const lines = content.split('\n');
+  // A final newline ends the last line rather than starting another (as git counts)
+  if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
+  // An empty file has no lines to show, as in git's diff of one
+  if (lines.length === 0) return '';
   const posix = relPath.replace(/\\/g, '/');
   const header = `--- /dev/null\n+++ b/${posix}\n@@ -0,0 +1,${lines.length} @@\n`;
   return header + lines.map(l => `+${l}`).join('\n');

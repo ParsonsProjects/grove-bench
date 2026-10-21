@@ -20,13 +20,19 @@ function write(dir: string, rel: string, data: Buffer | string): string {
   return p;
 }
 
-/** A symlink, or null where the OS won't make one (Windows without rights). */
+/** Reported as skipped, not passed, where these checks can't run. */
+const NO_SYMLINKS = 'this machine cannot make symlinks';
+
+/** A symlink, or false where the OS won't make one (Windows without rights).
+ *  Any other error is a broken fixture, so it fails the test. */
 function trySymlink(target: string, at: string): boolean {
   try {
     fs.symlinkSync(target, at);
     return true;
-  } catch {
-    return false;
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code === 'EPERM' || code === 'EACCES') return false;
+    throw e;
   }
 }
 
@@ -62,9 +68,9 @@ describe('resolveWorktreeFile', () => {
     expect(await resolveWorktreeFile(worktree, pathToFileURL(secret).href)).toBeNull();
   });
 
-  it('refuses a link inside the worktree that leads out of it', async () => {
+  it('refuses a link inside the worktree that leads out of it', async ({ skip }) => {
     const secret = write(outside, 'secret.png', PNG);
-    if (!trySymlink(secret, path.join(worktree, 'innocent.png'))) return;
+    if (!trySymlink(secret, path.join(worktree, 'innocent.png'))) skip(NO_SYMLINKS);
     expect(await resolveWorktreeFile(worktree, 'innocent.png')).toBeNull();
   });
 
@@ -115,9 +121,9 @@ describe('worktreeImageResponse', () => {
     expect((await worktreeImageResponse(worktree, 'notes.txt')).status).toBe(404);
   });
 
-  it('refuses a link named like an image that leads to another file', async () => {
+  it('refuses a link named like an image that leads to another file', async ({ skip }) => {
     write(worktree, '.env', 'KEY=secret');
-    if (!trySymlink(path.join(worktree, '.env'), path.join(worktree, 'env.png'))) return;
+    if (!trySymlink(path.join(worktree, '.env'), path.join(worktree, 'env.png'))) skip(NO_SYMLINKS);
     expect((await worktreeImageResponse(worktree, 'env.png')).status).toBe(404);
   });
 

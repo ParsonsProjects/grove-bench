@@ -795,11 +795,14 @@ describe('AgentSessionManager event processing', () => {
     mockAdapter.control!.emitEvent({ type: 'assistant_text', text: 'Hello', uuid: 'u1' });
     await new Promise((r) => setTimeout(r, 50));
 
-    // The agent event channel sends events
+    // The agent event channel carries the adapter's event, not just the
+    // session's own status events
     const agentEventCalls = win._send.mock.calls.filter(
       (c: any[]) => c[0].includes('agent:event'),
     );
-    expect(agentEventCalls.length).toBeGreaterThanOrEqual(1);
+    expect(agentEventCalls.map((c: any[]) => c[1])).toContainEqual(
+      expect.objectContaining({ type: 'assistant_text', text: 'Hello', uuid: 'u1' }),
+    );
 
     await sessionManager.destroySession('test-emit');
   });
@@ -888,6 +891,21 @@ describe('AgentSessionManager event processing', () => {
     expect(markApiKeyRejected).not.toHaveBeenCalled();
 
     await sessionManager.destroySession('test-refused');
+  });
+
+  it("shows the agent's own sign-in help when the run fails to sign in", async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-auth-fail', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+
+    mockAdapter.control!.error(new Error('401 Unauthorized: invalid API key'));
+    await new Promise((r) => setTimeout(r, 50));
+    const errors = win._send.mock.calls.map((c: any[]) => c[1]).filter((e: any) => e?.type === 'error');
+    expect(errors).toEqual([{ type: 'error', message: 'Auth failed. Please configure mock credentials.', auth: true }]);
+
+    await sessionManager.destroySession('test-auth-fail');
   });
 
   it('forwards transient streaming events to the renderer without buffering them', async () => {
@@ -1518,10 +1536,7 @@ describe('AgentSessionManager.setMode()', () => {
     const session = sessionManager.getSession('test-mode2');
     // Every app mode is passed to the adapter, which decides which it offers
     // per model; only modes outside PERMISSION_MODES are refused (test above).
-    const handle = session?.queryHandle;
-    if (handle?.setPermissionMode) {
-      expect(handle.setPermissionMode).toHaveBeenCalledWith('acceptEdits');
-    }
+    expect(session?.queryHandle?.setPermissionMode).toHaveBeenCalledWith('acceptEdits');
 
     await sessionManager.destroySession('test-mode2');
   });
@@ -3550,11 +3565,13 @@ describe('AgentSessionManager model handling', () => {
     });
 
     await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
-    await sessionManager.setModel('test-model-switch', 'mock-model');
-
     const session = sessionManager.getSession('test-model-switch');
     expect(session?.model).toBe('mock-model');
-    expect(worktreeManager.saveModel).toHaveBeenCalledWith('test-model-switch', 'mock-model');
+    await sessionManager.setModel('test-model-switch', 'mock-lite');
+
+    expect(session?.queryHandle?.setModel).toHaveBeenCalledWith('mock-lite');
+    expect(session?.model).toBe('mock-lite');
+    expect(worktreeManager.saveModel).toHaveBeenCalledWith('test-model-switch', 'mock-lite');
 
     await sessionManager.destroySession('test-model-switch');
   });

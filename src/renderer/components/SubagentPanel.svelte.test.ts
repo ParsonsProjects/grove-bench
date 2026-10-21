@@ -11,6 +11,7 @@ vi.mock('dompurify', () => ({
 
 import OutputPanel from './OutputPanel.svelte';
 import SubagentPanel from './SubagentPanel.svelte';
+import MarkdownPreviewPanel from './MarkdownPreviewPanel.svelte';
 import { messageStore, type ChatMessage } from '../stores/messages.svelte.js';
 import { store } from '../stores/sessions.svelte.js';
 import { subagentPanelStore } from '../stores/subagentPanel.svelte.js';
@@ -111,9 +112,9 @@ describe('SubagentPanel', () => {
     await tick();
 
     // The Focus panel's own handler closes it as the key reaches the window.
+    render(MarkdownPreviewPanel);
     markdownPreviewStore.show('report', 'Agent response');
-    const closeFocus = () => markdownPreviewStore.close();
-    window.addEventListener('keydown', closeFocus, { once: true });
+    await tick();
     pressEsc();
     expect(markdownPreviewStore.open).toBe(false);
     expect(subagentPanelStore.open).toBe(true);

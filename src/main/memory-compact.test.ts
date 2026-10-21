@@ -148,15 +148,16 @@ describe('memory prompt', () => {
     writeMemory('sessions/note.md', 'Note', 'z'.repeat(999));
 
     const stats = memory.getMemoryStats(REPO);
-    const plan = memory.planMemoryPrompt(REPO);
 
     expect(stats.fileCount).toBe(2);
     expect(stats.sessionNoteCount).toBe(1);
     expect(stats.fullFiles).toEqual(['conventions/naming.md']);
     expect(stats.unlistedFiles).toEqual([]);
     expect(stats.budgetBytes).toBe(16 * 1024);
-    const indexBytes = plan.indexed.reduce((sum, i) => sum + Buffer.byteLength(i.line) + 1, 0);
-    expect(stats.promptBytes).toBe(50 + indexBytes);
+    // The naming file in full (50), then an index line and its newline for the
+    // others: "- repo/overview.md: Overview" (28 + 1) and
+    // "- sessions/note.md: Note (updated YYYY-MM-DD)" (45 + 1).
+    expect(stats.promptBytes).toBe(50 + 29 + 46);
   });
 
   it('adds nothing to the prompt for a project without memory files', () => {

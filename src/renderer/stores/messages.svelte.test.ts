@@ -392,7 +392,7 @@ describe('ingestEvent — tool_use and tool_result', () => {
   it('mode-changing tool_use does NOT sync mode (mode_sync events handle it)', () => {
     messageStore.ingestEvent(SID, {
       type: 'assistant_tool_use',
-      toolName: 'some_plan_tool',
+      toolName: 'EnterPlanMode',
       toolInput: {},
       toolUseId: 'tu-plan',
       uuid: 'u-plan',
@@ -406,7 +406,7 @@ describe('ingestEvent — tool_use and tool_result', () => {
     messageStore.modeBySession[SID] = 'plan';
     messageStore.ingestEvent(SID, {
       type: 'assistant_tool_use',
-      toolName: 'some_exit_tool',
+      toolName: 'ExitPlanMode',
       toolInput: {},
       toolUseId: 'tu-exit',
       uuid: 'u-exit',
@@ -1188,36 +1188,6 @@ describe('ingestEvent — permission_resolved', () => {
     const msgs = messageStore.getMessages(SID);
     const tc = msgs.find((m) => m.kind === 'tool_call') as any;
     expect(tc.awaitingPermission).toBe(false);
-  });
-});
-
-describe('ingestEvent — tool_use does NOT sync mode (mode_sync events do)', () => {
-  it('plan-related tool does not change mode — mode_sync handles it', () => {
-    messageStore.modeBySession[SID] = 'default';
-    messageStore.ingestEvent(SID, {
-      type: 'assistant_tool_use',
-      toolName: 'some_plan_tool',
-      toolInput: {},
-      toolUseId: 'tu-enter',
-      uuid: 'u-enter',
-    } as AgentEvent);
-
-    // Mode should stay 'default' — only mode_sync events change mode
-    expect(messageStore.getMode(SID)).toBe('default');
-  });
-
-  it('any tool does not change mode — mode_sync handles it', () => {
-    messageStore.modeBySession[SID] = 'plan';
-    messageStore.ingestEvent(SID, {
-      type: 'assistant_tool_use',
-      toolName: 'some_exit_tool',
-      toolInput: {},
-      toolUseId: 'tu-exit2',
-      uuid: 'u-exit2',
-    } as AgentEvent);
-
-    // Mode should stay 'plan' — only mode_sync events change mode
-    expect(messageStore.getMode(SID)).toBe('plan');
   });
 });
 

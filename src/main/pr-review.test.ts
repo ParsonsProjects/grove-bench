@@ -174,7 +174,7 @@ describe('submitPrReview()', () => {
     fakeTools();
     await submitPrReview('/wt', '/repo', { prNumber: 7, event: 'APPROVE', body: '', comments: [] });
     expect(postedPayload()).toEqual({ event: 'APPROVE', commit_id: 'HEAD1aaaaaaa' });
-    expect(mockExeca.mock.calls.some(([file, args]) => file === 'gh' && (args as string[]).includes('/files'))).toBe(false);
+    expect(mockExeca.mock.calls.some(([file, args]) => file === 'gh' && (args as string[]).some((a) => a.includes('/files')))).toBe(false);
   });
 
   it('refuses to approve a head the checkout doesn\'t have', async () => {
