@@ -180,13 +180,15 @@ describe('process host', () => {
     expect(runHere).not.toHaveBeenCalled();
   });
 
-  it('fails a host-only command when the host dies, even one that only reads', async () => {
+  it('fails a host-only command when the host dies, even one that only reads or is idempotent', async () => {
     const { host, runHere, latest } = setup();
     host.start();
     latest().ready();
     const status = host.runInHost('git', ['status']);
+    const list = host.runInHost('typeperf', ['-sc', '1'], { idempotent: true });
     latest().exit(1);
     await expect(status).rejects.toThrow(HOST_STOPPED_MESSAGE);
+    await expect(list).rejects.toThrow(HOST_STOPPED_MESSAGE);
     expect(runHere).not.toHaveBeenCalled();
   });
 
@@ -343,6 +345,96 @@ describe('process host', () => {
     first.exit(15);
     fire(RESTART_DELAY_MS);
     expect(hosts).toHaveLength(2);
+  });
+
+  it('takes no more commands once it has been killed for not answering, until it has restarted', async () => {
+    const { host, hosts, runHere, fire, latest } = setup();
+    host.start();
+    latest().ready();
+    const first = latest();
+    const result = host.run('gh', ['pr', 'list'], { timeout: 30_000 });
+    fire(30_000 + DEADLINE_MARGIN_MS);
+    await expect(result).rejects.toMatchObject({ timedOut: true });
+    expect(first.killed).toBe(true);
+    expect(host.ready).toBe(false);
+    expect(host.pid).toBeUndefined();
+
+    // Until its exit comes, the dying host is still `host`: a retry posted
+    // there would only fail with it.
+    await expect(host.run('git', ['commit', '-m', 'x'], { cwd: '/r' })).resolves.toEqual({ stdout: 'here: git commit -m x' });
+    expect(first.sent).toHaveLength(1);
+
+    first.exit(15);
+    fire(RESTART_DELAY_MS);
+    latest().ready();
+    expect(hosts).toHaveLength(2);
+    void host.run('git', ['status']);
+    expect(latest().sent).toEqual([{ id: 2, file: 'git', args: ['status'] }]);
+    expect(runHere).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs an idempotent command again here when the host stops answering under it, once', async () => {
+    const { host, hosts, runHere, fire, latest } = setup();
+    host.start();
+    latest().ready();
+    const first = latest();
+    const taskkill = 'C:\\Windows\\System32\\taskkill.exe';
+    const killed = host.run(taskkill, ['/PID', '4242', '/T', '/F'], { timeout: 10_000, reject: false, idempotent: true });
+    // A command already waiting on the hung host, and one asked for after.
+    const other = host.run('git', ['status'], { cwd: '/r' });
+    fire(10_000 + DEADLINE_MARGIN_MS);
+
+    // The kill still happens, here, with the options execa takes.
+    await expect(killed).resolves.toEqual({ stdout: `here: ${taskkill} /PID 4242 /T /F` });
+    expect(runHere).toHaveBeenCalledWith(taskkill, ['/PID', '4242', '/T', '/F'], { timeout: 10_000, reject: false });
+    expect(first.killed).toBe(true);
+    await host.run(taskkill, ['/PID', '7', '/T', '/F'], { timeout: 10_000, reject: false, idempotent: true });
+    expect(first.sent).toHaveLength(2);
+
+    // The host's exit runs what was waiting on it again, not the kill.
+    first.exit(15);
+    await expect(other).resolves.toEqual({ stdout: 'here: git status' });
+    expect(runHere.mock.calls.map(([, args]) => args[1])).toEqual(['4242', '7', undefined]);
+    fire(RESTART_DELAY_MS);
+    expect(hosts).toHaveLength(2);
+  });
+
+  it('runs an idempotent command again here when the host dies, and still fails one that is not', async () => {
+    const { host, runHere, killed, latest } = setup();
+    host.start();
+    latest().ready();
+    const lookup = host.run('where.exe', ['claude'], { timeout: 10_000, idempotent: true });
+    const editor = host.run('code', ['-g', '/r/a.ts:7']);
+    latest().started(1, 4242);
+    latest().exit(1);
+
+    expect(killed).toEqual([4242]);
+    await expect(lookup).resolves.toEqual({ stdout: 'here: where.exe claude' });
+    expect(runHere).toHaveBeenCalledWith('where.exe', ['claude'], { timeout: 10_000 });
+    await expect(editor).rejects.toThrow(`${HOST_STOPPED_MESSAGE}: code`);
+    expect(runHere).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs an idempotent command again here at quit, unlike a read-only one', async () => {
+    const { host, runHere, latest } = setup();
+    host.start();
+    latest().ready();
+    const kill = host.run('taskkill.exe', ['/PID', '4242', '/T', '/F'], { reject: false, idempotent: true });
+    const version = host.run('git', ['--version']);
+    host.stop();
+    await expect(kill).resolves.toEqual({ stdout: 'here: taskkill.exe /PID 4242 /T /F' });
+    await expect(version).rejects.toThrow(HOST_STOPPED_MESSAGE);
+    expect(runHere).toHaveBeenCalledTimes(1);
+  });
+
+  it('never sends idempotent to the host, or to execa', async () => {
+    const { host, runHere, latest } = setup();
+    await host.run('ps', ['-A'], { timeout: 10_000, idempotent: true });
+    expect(runHere).toHaveBeenLastCalledWith('ps', ['-A'], { timeout: 10_000 });
+    host.start();
+    latest().ready();
+    void host.run('ps', ['-A'], { timeout: 10_000, idempotent: true });
+    expect(latest().sent).toEqual([{ id: 1, file: 'ps', args: ['-A'], options: { timeout: 10_000 } }]);
   });
 
   it('gives a command its time again when its deadline comes late, as after sleep', async () => {
@@ -589,6 +681,25 @@ describe('process host: spawned processes', () => {
     expect(notes).toContain('claude.exe stopped with the process host');
     // Input for it goes nowhere now.
     proc.stdin.write('late\n');
+  });
+
+  it('says a process was lost to a host that died, not to one stopped at quit', () => {
+    const crashed = setup();
+    crashed.host.start();
+    crashed.latest().ready();
+    const proc = crashed.host.spawn('claude', ['mcp', 'list'], { shell: true });
+    expect(spawnOf(crashed.latest())).toEqual([{ type: 'spawn', id: 1, file: 'claude', args: ['mcp', 'list'], shell: true }]);
+    crashed.latest().exit(1);
+    expect(proc.hostDied).toBe(true);
+
+    const quit = setup();
+    quit.host.start();
+    quit.latest().ready();
+    const atQuit = quit.host.spawn('claude', ['mcp', 'list'], { shell: true });
+    quit.host.stop();
+    expect(atQuit.exitCode).toBeNull();
+    expect(atQuit.signalCode).toBe('SIGKILL');
+    expect(atQuit.hostDied).toBe(false);
   });
 
   it('notes a slow start the host absorbed', () => {

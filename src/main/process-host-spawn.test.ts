@@ -104,6 +104,20 @@ describe('HostedProcess', () => {
     await settle();
     expect(seen).toEqual(['exit null SIGKILL', 'end']);
     expect(proc.signalCode).toBe('SIGKILL');
+    // Its host was stopped (at quit), not dead.
+    expect(proc.hostDied).toBe(false);
+  });
+
+  it('says when its host died under it, unless it had exited by itself first', () => {
+    const died = new HostedProcess('claude.exe');
+    died.lost(true);
+    expect(died.hostDied).toBe(true);
+
+    const proc = new HostedProcess('claude.exe');
+    proc.receive({ type: 'exit', id: 1, code: 0, signal: null });
+    proc.lost(true);
+    expect(proc.hostDied).toBe(false);
+    expect(proc.exitCode).toBe(0);
   });
 });
 
@@ -173,6 +187,32 @@ describe('createSpawnRunner', () => {
     expect(parseCalls).toEqual([{ command: 'gemini', args: ['--acp'] }]);
     expect(calls[0]).toMatchObject({ file: 'cmd.exe', args: ['/d', '/s', '/c', '"gemini --acp"'], options: { windowsVerbatimArguments: true, cwd: '/w' } });
     expect(calls[1]).toMatchObject({ file: '/abs/claude', args: ['--x'], options: { cwd: '/w', stdio: 'pipe', windowsHide: true } });
+  });
+
+  it('runs a command line in a shell as execa does: joined with spaces, as given', () => {
+    parseCalls.length = 0;
+    const calls: Array<{ file: string; args: readonly string[]; options: Record<string, unknown> }> = [];
+    const fakeSpawn = ((file: string, args: readonly string[], options: Record<string, unknown>) => {
+      calls.push({ file, args, options });
+      throw new Error('not starting it');
+    }) as unknown as Parameters<typeof createSpawnRunner>[1];
+    const runner = createSpawnRunner(() => {}, fakeSpawn);
+    runner.handle({ type: 'spawn', id: 1, file: 'claude', args: ['mcp', 'remove', '"my server"'], cwd: '/w', shell: true, findCommand: true });
+    expect(parseCalls).toEqual([]);
+    expect(calls).toEqual([{ file: 'claude mcp remove "my server"', args: [], options: { cwd: '/w', env: undefined, stdio: 'pipe', windowsHide: true, shell: true } }]);
+  });
+
+  it('runs a real command line in a shell', async () => {
+    const events: SpawnEvent[] = [];
+    await new Promise<void>((resolve) => {
+      const runner = createSpawnRunner((event) => {
+        events.push(event);
+        if (event.type === 'close') resolve();
+      });
+      runner.handle({ type: 'spawn', id: 3, file: 'echo', args: ['one', 'two'], shell: true });
+    });
+    expect(events.filter((e) => e.type === 'stdout').map((e) => (e as { data: string }).data).join('').trim()).toBe('one two');
+    expect(events).toContainEqual({ type: 'exit', id: 3, code: 0, signal: null });
   });
 
   it('ignores input for a process it does not have', () => {

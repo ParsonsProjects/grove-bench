@@ -40,6 +40,9 @@ export class HostedProcess extends EventEmitter {
   exitCode: number | null = null;
   signalCode: NodeJS.Signals | null = null;
   killed = false;
+  /** Ended because its host died (lost(true)) before it exited by itself, so
+   *  it could run again. Not when the host was stopped at quit. */
+  hostDied = false;
   private exited = false;
   private closed = false;
   private stdoutEnded = false;
@@ -117,8 +120,10 @@ export class HostedProcess extends EventEmitter {
   }
 
   /** The process's host went away, so the process was stopped with it (or
-   *  never started): end it here too. */
-  lost(): void {
+   *  never started): end it here too. `hostDied`: the host died, rather than
+   *  being stopped at quit. */
+  lost(hostDied = false): void {
+    if (hostDied && !this.exited) this.hostDied = true;
     this.exit(null, 'SIGKILL');
     this.close();
   }
@@ -175,15 +180,18 @@ export function createSpawnRunner(
 ): SpawnRunner {
   const children = new Map<number, ChildProcess>();
 
-  function start({ id, file, args, cwd, env, findCommand }: SpawnRequest): void {
+  function start({ id, file, args, cwd, env, findCommand, shell }: SpawnRequest): void {
     const startedAt = now();
     let child: ChildProcess;
     try {
-      const options: SpawnOptions = { cwd, env, stdio: 'pipe', windowsHide: true };
+      const options: SpawnOptions = { cwd, env, stdio: 'pipe', windowsHide: true, ...(shell ? { shell: true } : {}) };
+      // A shell gets one command line, joined here as execa joins it (Node
+      // would join it too, warning that it does from Node 24). Otherwise
       // cross-spawn's parse finds the command and wraps a .cmd shim in
       // cmd.exe, as execa does before it spawns. It reads the disk, which is
       // why it runs here and not on the main process.
-      const launch = findCommand ? crossSpawn._parse(file, args, options) : { command: file, args, options };
+      const launch = shell ? { command: [file, ...args].join(' '), args: [], options }
+        : findCommand ? crossSpawn._parse(file, args, options) : { command: file, args, options };
       child = spawn(launch.command, launch.args, launch.options);
     } catch (e) {
       post({ type: 'error', id, error: serializeError(e) });

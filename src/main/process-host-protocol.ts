@@ -23,6 +23,12 @@ export interface HostedOptions {
   reject?: boolean;
   input?: string;
   encoding?: 'utf8' | 'buffer';
+  /** Safe to run again: it only reads, or doing it twice does no harm
+   *  (taskkill). runProcess runs it again in the main process when the host
+   *  fails it (dies, stops answering, or stops at quit); runInAgentHost
+   *  starts it again when the agent host dies. Not an execa option: the
+   *  main process keeps it, and never sends it. */
+  idempotent?: boolean;
 }
 
 /** The fields of an execa result (or error) that callers read. */
@@ -97,6 +103,10 @@ export interface SpawnRequest {
    *  escaped, as execa does (cross-spawn). npm installs command-line agents
    *  as .cmd shims, which Node's spawn can't start on its own. */
   findCommand?: boolean;
+  /** Run the command line in cmd.exe (/bin/sh elsewhere), as execa's
+   *  `shell: true` does: `file` and `args` joined with spaces, unquoted, so
+   *  the caller quotes them. */
+  shell?: boolean;
 }
 
 export type StdioRequest =
@@ -226,7 +236,8 @@ export function isSpawnRequest(value: unknown): value is SpawnRequest {
     && Array.isArray(r.args) && r.args.every((a) => typeof a === 'string')
     && (r.cwd === undefined || typeof r.cwd === 'string')
     && (r.env === undefined || (typeof r.env === 'object' && r.env !== null))
-    && (r.findCommand === undefined || typeof r.findCommand === 'boolean');
+    && (r.findCommand === undefined || typeof r.findCommand === 'boolean')
+    && (r.shell === undefined || typeof r.shell === 'boolean');
 }
 
 /** Whether `value` is input for, or a request to stop, a spawned process. */

@@ -1,12 +1,14 @@
 /**
  * Process host: git and gh run from an Electron utility process
  * (process-host-child.ts), so starting them never blocks the main process,
- * as do the main process's other short commands (taskkill, the claude CLI's
- * where, auth, mcp and plugin calls, rmdir, the editor CLIs).
+ * as do the main process's other short commands (taskkill, ps, where,
+ * rmdir, the editor CLIs).
  * So do the agents' programs (claude, ACP agents), which keep running and
  * stream their input and output through a second host of their own, the agent host
- * (process-host-spawn.ts). Kept apart because the git host is restarted when
- * a command goes unanswered, and a restart stops whatever the host started.
+ * (process-host-spawn.ts), and the claude CLI's auth, mcp and plugin calls,
+ * which can run long or hang (runInAgentHost, process-host-run.ts). Kept
+ * apart because the git host is restarted when a command goes unanswered,
+ * and a restart stops whatever the host started.
  *
  * Starting a process holds whichever process asks for it until the OS has
  * created it. On Windows that is execa's PATH search (cross-spawn stats every
@@ -21,10 +23,14 @@
  * instead. Tests never start it, so their execa mocks see every call.
  *
  * When the host dies with commands in flight, their processes are stopped
- * (their execa timeouts died with the host), read-only ones run again here,
- * and the rest fail: they may have done their work, so they don't run twice.
- * At quit (stop) they all fail. A spawned process can't outlive the host
- * either (its pipes were the host's): it is stopped and reported as exited.
+ * (their execa timeouts died with the host), read-only ones and those marked
+ * safe to run again (`idempotent`) run again here, and the rest fail: they
+ * may have done their work, so they don't run twice. At quit (stop) all but
+ * the idempotent ones fail. A host that stops answering is killed and takes
+ * no new commands until it has restarted; the command that found it out
+ * fails as timed out, unless it is idempotent. A spawned process can't
+ * outlive the host either (its pipes were the host's): it is stopped and
+ * reported as exited.
  *
  * A process spawned while the host is starting waits for it, rather than
  * starting here: at launch the open thread's agent starts within seconds,
@@ -52,6 +58,8 @@ export interface SpawnProcessOptions {
   env?: Record<string, string | undefined>;
   /** Find `file` as a shell would, npm's .cmd shims included (SpawnRequest). */
   findCommand?: boolean;
+  /** Run `file` and `args` as one command line in a shell (SpawnRequest). */
+  shell?: boolean;
 }
 
 /** The host's file name next to the main bundle (vite.main.config.mjs). */
@@ -84,7 +92,7 @@ export const LATE_DEADLINE_MS = 30_000;
 export const SLOW_HOSTED_LAUNCH_MS = 1_000;
 
 /** Thrown for a command in flight when the host stops, unless it only reads
- *  (isReadOnly), in which case it runs again here. */
+ *  (isReadOnly) or is idempotent, in which case it runs again here. */
 export const HOST_STOPPED_MESSAGE = 'The process host stopped before the command finished';
 
 /** The parts of Electron's UtilityProcess the host uses. */
@@ -130,6 +138,8 @@ interface Pending {
   label: string;
   /** Asked for with runInHost: it never runs in this process. */
   hostOnly: boolean;
+  /** Safe to run again (HostedOptions.idempotent). */
+  idempotent: boolean;
   /** Captured when the command was asked for: errors keep the caller's stack. */
   origin: Error;
   /** The command's process, once the host says it has started. */
@@ -141,7 +151,9 @@ interface Pending {
   reject: (error: Error) => void;
 }
 
-type State = 'idle' | 'starting' | 'ready' | 'stopped' | 'failed';
+/** 'stopping': killed for not answering (overdue), until its exit. It takes
+ *  no new commands, which would only fail with it: they run here meanwhile. */
+type State = 'idle' | 'starting' | 'ready' | 'stopping' | 'stopped' | 'failed';
 
 export function createProcessHost(deps: ProcessHostDeps) {
   const now = deps.now ?? (() => Date.now());
@@ -278,7 +290,7 @@ export function createProcessHost(deps: ProcessHostDeps) {
     for (const proc of lost) {
       if (proc.pid !== undefined) killPid(proc.pid);
       if (state !== 'stopped') note(`${proc.label} stopped with the ${name}`);
-      proc.lost();
+      proc.lost(state !== 'stopped');
     }
   }
 
@@ -301,18 +313,26 @@ export function createProcessHost(deps: ProcessHostDeps) {
     return waiting;
   }
 
-  /** The host is gone: stop what it started, run read-only commands again
-   *  here (unless the app is quitting), and fail the rest. */
+  /** The host is gone: stop what it started, run commands that are safe to
+   *  repeat again here, and fail the rest. At quit (`rerun` false) only
+   *  those marked idempotent run again, since their callers need them done
+   *  (taskkill); nothing waits for a read-only git command's answer then. */
   function abandonPending(rerun: boolean): void {
     const waiting = [...pending.keys()].map(take).filter((p): p is Pending => !!p);
     for (const p of waiting) {
       if (p.pid !== undefined) killPid(p.pid);
-      if (rerun && !p.hostOnly && isReadOnly(p.file, p.args)) {
-        deps.runHere(p.file, p.args, p.options).then(p.resolve, (e: unknown) => p.reject(e instanceof Error ? e : new Error(String(e))));
+      if (!p.hostOnly && (p.idempotent || (rerun && isReadOnly(p.file, p.args)))) {
+        runAgainHere(p);
       } else {
         p.reject(fromCaller(new Error(`${HOST_STOPPED_MESSAGE}: ${p.label}`), p.origin));
       }
     }
+  }
+
+  /** Run a command the host failed again here, where execa's own timeout
+   *  ends it: it can't go overdue, or run a third time. */
+  function runAgainHere(p: Pending): void {
+    deps.runHere(p.file, p.args, p.options).then(p.resolve, (e: unknown) => p.reject(e instanceof Error ? e : new Error(String(e))));
   }
 
   /** Fail a command as timed out if it gets no answer long after its timeout. */
@@ -324,9 +344,11 @@ export function createProcessHost(deps: ProcessHostDeps) {
   }
 
   /** A command with a timeout got no answer long after it: the host has
-   *  stopped answering. Fail the command as timed out and restart the host
-   *  (its exit handles the other commands). Unless the deadline itself came
-   *  late (LATE_DEADLINE_MS): then the command waits its full time again. */
+   *  stopped answering. Restart the host (its exit handles the other
+   *  commands), taking no new commands meanwhile. The command fails as timed
+   *  out, or, if it is safe to repeat, runs again here: its caller needs it
+   *  done (taskkill). Unless the deadline itself came late
+   *  (LATE_DEADLINE_MS): then the command waits its full time again. */
   function overdue(id: number, timeout: number): void {
     const current = pending.get(id);
     if (current?.deadlineSetAt !== undefined && now() - current.deadlineSetAt - (timeout + DEADLINE_MARGIN_MS) >= LATE_DEADLINE_MS) {
@@ -335,20 +357,29 @@ export function createProcessHost(deps: ProcessHostDeps) {
     }
     const waiting = take(id);
     if (!waiting) return;
-    const error = Object.assign(new Error(`${waiting.label} got no answer from the process host within ${Math.round((timeout + DEADLINE_MARGIN_MS) / 1000)} s`), { timedOut: true });
-    waiting.reject(fromCaller(error, waiting.origin));
     const child = host;
     if (child && state === 'ready') {
       note(`${name} stopped answering (${waiting.label}); restarting it`);
+      // Before anyone can retry: until the exit, `host` is still this one.
+      state = 'stopping';
       child.kill();
     }
+    if (waiting.idempotent && !waiting.hostOnly) {
+      runAgainHere(waiting);
+      return;
+    }
+    const error = Object.assign(new Error(`${waiting.label} got no answer from the process host within ${Math.round((timeout + DEADLINE_MARGIN_MS) / 1000)} s`), { timedOut: true });
+    waiting.reject(fromCaller(error, waiting.origin));
   }
 
   /** Run a command in the host, or, unless `hostOnly`, here when the host
    *  can't take it. */
-  function run(file: string, args: string[], options: HostedOptions | undefined, hostOnly: boolean): Promise<unknown> {
+  function run(file: string, args: string[], hostedOptions: HostedOptions | undefined, hostOnly: boolean): Promise<unknown> {
     const child = host;
     const label = launchLabel(file, [file, ...args]);
+    // `idempotent` stays here; execa gets the rest.
+    const { idempotent = false, ...rest } = hostedOptions ?? {};
+    const options = hostedOptions === undefined ? undefined : rest;
     const here = () => (hostOnly
       ? Promise.reject(new Error(`The ${name} isn't running, so ${label} didn't run`))
       : deps.runHere(file, args, options));
@@ -357,7 +388,7 @@ export function createProcessHost(deps: ProcessHostDeps) {
     const request: HostRequest = options === undefined ? { id, file, args } : { id, file, args, options };
     const origin = new Error();
     return new Promise((resolve, reject) => {
-      const waiting: Pending = { file, args, options, label, hostOnly, origin, resolve, reject };
+      const waiting: Pending = { file, args, options, label, hostOnly, idempotent, origin, resolve, reject };
       pending.set(id, waiting);
       try {
         child.postMessage(request);

@@ -1,0 +1,191 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { HostedProcess } from './process-host-spawn.js';
+
+// The command starts in the agent host (spawnProcess), never here.
+const hosted = vi.hoisted(() => ({ spawnProcess: vi.fn() }));
+vi.mock('./process-host.js', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  spawnProcess: hosted.spawnProcess,
+}));
+vi.mock('execa', () => ({ execa: vi.fn() }));
+vi.mock('./process-tree.js', () => ({ killTree: vi.fn(async () => {}) }));
+vi.mock('./logger.js', () => ({
+  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+}));
+
+import { execa } from 'execa';
+import { killTree } from './process-tree.js';
+import { HOST_STOPPED_MESSAGE } from './process-host.js';
+import { runInAgentHost } from './process-host-run.js';
+
+/** The next command spawnProcess starts, driven by the test as the host
+ *  would drive it. */
+function nextCommand() {
+  const proc = new HostedProcess('claude');
+  hosted.spawnProcess.mockReturnValueOnce(proc);
+  const send = (event: Parameters<HostedProcess['receive']>[0]) => proc.receive(event);
+  return {
+    proc,
+    started: (pid = 4321) => send({ type: 'spawned', id: 1, pid, launchMs: 5 }),
+    stdout: (data: string) => send({ type: 'stdout', id: 1, data }),
+    stderr: (data: string) => send({ type: 'stderr', id: 1, data }),
+    exited: (code: number | null, signal: string | null = null) => send({ type: 'exit', id: 1, code, signal }),
+    /** It exits with `code` (or is killed) and its output ends. */
+    exit(code: number | null, signal: string | null = null) {
+      this.exited(code, signal);
+      send({ type: 'close', id: 1 });
+    },
+  };
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  hosted.spawnProcess.mockReset();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+  // Nothing started in this process.
+  expect(execa).not.toHaveBeenCalled();
+});
+
+describe('runInAgentHost', () => {
+  it('starts the command in the agent host as execa would, and resolves with its output', async () => {
+    const cmd = nextCommand();
+    const done = runInAgentHost('claude', ['plugin', 'list', '--json'], { cwd: '/repo', shell: true });
+    cmd.started();
+    cmd.stdout('{"installed":[]');
+    cmd.stdout(']}\r\n');
+    cmd.stderr('warn\n');
+    cmd.exit(0);
+    await expect(done).resolves.toMatchObject({ stdout: '{"installed":[]]}', stderr: 'warn', exitCode: 0, failed: false, timedOut: false });
+    expect(hosted.spawnProcess).toHaveBeenCalledWith('claude', ['plugin', 'list', '--json'], { cwd: '/repo', shell: true });
+  });
+
+  it('gives it the environment execa would', async () => {
+    // None: the host's own, as execa's extended environment would be.
+    let cmd = nextCommand();
+    let done = runInAgentHost('claude', ['mcp', 'list']);
+    cmd.exit(0);
+    await done;
+    expect(hosted.spawnProcess).toHaveBeenLastCalledWith('claude', ['mcp', 'list'], {});
+
+    // extendEnv: false: that environment and nothing else.
+    const accountEnv = { PATH: '/bin', CLAUDE_CONFIG_DIR: '/home/me/.claude-work' };
+    cmd = nextCommand();
+    done = runInAgentHost('claude', ['auth', 'status'], { env: accountEnv, extendEnv: false });
+    cmd.exit(0);
+    await done;
+    expect(hosted.spawnProcess).toHaveBeenLastCalledWith('claude', ['auth', 'status'], { env: accountEnv });
+
+    // Otherwise added to this one.
+    cmd = nextCommand();
+    done = runInAgentHost('claude', ['auth', 'status'], { env: { EXTRA: '1' } });
+    cmd.exit(0);
+    await done;
+    expect(hosted.spawnProcess).toHaveBeenLastCalledWith('claude', ['auth', 'status'], { env: { ...process.env, EXTRA: '1' } });
+  });
+
+  it('rejects as execa did when it exits non-zero', async () => {
+    const cmd = nextCommand();
+    const done = runInAgentHost('claude', ['plugin', 'install', 'x'], { shell: true });
+    cmd.started();
+    cmd.stderr('Plugin not found\n');
+    cmd.exit(1);
+    await expect(done).rejects.toMatchObject({
+      message: 'Command failed with exit code 1: claude plugin install x\n\nPlugin not found',
+      exitCode: 1,
+      stderr: 'Plugin not found',
+      failed: true,
+      timedOut: false,
+    });
+  });
+
+  it('rejects with the error that kept it from starting', async () => {
+    const cmd = nextCommand();
+    const done = runInAgentHost('claude', ['mcp', 'list'], { cwd: '/gone' });
+    cmd.proc.receive({ type: 'error', id: 1, error: { name: 'Error', message: 'spawn cmd.exe ENOENT', code: 'ENOENT' } });
+    cmd.proc.receive({ type: 'close', id: 1 });
+    await expect(done).rejects.toMatchObject({ message: 'spawn cmd.exe ENOENT', code: 'ENOENT' });
+  });
+
+  it('kills the whole tree when it runs out of time, not just the shell', async () => {
+    vi.useFakeTimers();
+    const cmd = nextCommand();
+    const done = runInAgentHost('claude', ['mcp', 'list'], { shell: true, timeout: 60_000 });
+    const failed = done.catch((e: unknown) => e);
+    cmd.started(4321);
+    cmd.stdout('figma: checking');
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(killTree).toHaveBeenCalledWith(4321);
+    expect(await failed).toMatchObject({ message: expect.stringMatching(/^Command timed out after 60000 milliseconds: claude mcp list/), timedOut: true, stdout: 'figma: checking' });
+  });
+
+  it('kills a command that ran out of time before it started once it starts', async () => {
+    vi.useFakeTimers();
+    const cmd = nextCommand();
+    const done = runInAgentHost('claude', ['auth', 'status'], { timeout: 15_000 });
+    const failed = done.catch((e: unknown) => e);
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(await failed).toMatchObject({ timedOut: true });
+    expect(killTree).not.toHaveBeenCalled();
+    cmd.started(77);
+    expect(killTree).toHaveBeenCalledWith(77);
+  });
+
+  it("doesn't kill by a PID that has exited, which may be another process's by now", async () => {
+    vi.useFakeTimers();
+    const cmd = nextCommand();
+    const done = runInAgentHost('claude', ['mcp', 'list'], { shell: true, timeout: 60_000 });
+    const failed = done.catch((e: unknown) => e);
+    cmd.started(4321);
+    // The shell exited, but something it started still holds the output open.
+    cmd.exited(0);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(await failed).toMatchObject({ timedOut: true });
+    expect(killTree).not.toHaveBeenCalled();
+  });
+
+  it('runs an idempotent command again once if the host dies under it', async () => {
+    const first = nextCommand();
+    const second = nextCommand();
+    const done = runInAgentHost('claude', ['mcp', 'list'], { shell: true, idempotent: true });
+    first.started();
+    first.proc.lost(true);
+    await vi.waitFor(() => expect(hosted.spawnProcess).toHaveBeenCalledTimes(2));
+    second.started();
+    second.stdout('figma: ok\n');
+    second.exit(0);
+    await expect(done).resolves.toMatchObject({ stdout: 'figma: ok' });
+    expect(hosted.spawnProcess.mock.calls[1]).toEqual(hosted.spawnProcess.mock.calls[0]);
+  });
+
+  it('fails an idempotent command the host dies under twice, rather than run it a third time', async () => {
+    const first = nextCommand();
+    const second = nextCommand();
+    const done = runInAgentHost('claude', ['mcp', 'list'], { idempotent: true });
+    first.proc.lost(true);
+    await vi.waitFor(() => expect(hosted.spawnProcess).toHaveBeenCalledTimes(2));
+    second.proc.lost(true);
+    await expect(done).rejects.toThrow(`${HOST_STOPPED_MESSAGE}: claude mcp list`);
+    expect(hosted.spawnProcess).toHaveBeenCalledTimes(2);
+  });
+
+  it("doesn't run an idempotent command again when the host is stopped at quit", async () => {
+    const cmd = nextCommand();
+    const done = runInAgentHost('claude', ['mcp', 'list'], { idempotent: true });
+    cmd.started();
+    cmd.proc.lost();
+    await expect(done).rejects.toMatchObject({ signal: 'SIGKILL' });
+    expect(hosted.spawnProcess).toHaveBeenCalledOnce();
+  });
+
+  it('fails a command that is not idempotent if the host dies under it', async () => {
+    const cmd = nextCommand();
+    const done = runInAgentHost('claude', ['plugin', 'install', 'x'], { shell: true });
+    cmd.started();
+    cmd.proc.lost(true);
+    await expect(done).rejects.toThrow(`${HOST_STOPPED_MESSAGE}: claude plugin install x`);
+    expect(hosted.spawnProcess).toHaveBeenCalledOnce();
+  });
+});

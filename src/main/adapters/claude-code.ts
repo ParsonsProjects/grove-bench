@@ -34,16 +34,20 @@ import { logger } from '../logger.js';
 import { writeFileAtomic } from '../fs-utils.js';
 import { RunningCost, RunningTokens } from './running-cost.js';
 import { runProcess, spawnProcess, type HostedOptions, type ProcessResult } from '../process-host.js';
+import { runInAgentHost, type AgentHostRunOptions } from '../process-host-run.js';
 import * as path from 'node:path';
 
 /**
  * Run the `claude` CLI as Node's execFile with `shell: true` did: the
  * command line in cmd.exe on Windows (its arguments quoted with quoteArg),
- * failing when it exits non-zero. It runs in the process host (runProcess),
- * so the launch never holds up the window.
+ * failing when it exits non-zero. It runs in the agent host
+ * (runInAgentHost), so the launch never holds up the window, and a plugin
+ * install or a hung `mcp list` neither is stopped by nor stops the git host,
+ * which is restarted when a command goes unanswered. A timeout kills the
+ * whole tree, not just cmd.exe.
  */
-function runClaudeCli(file: string, args: string[], options: HostedOptions = {}): Promise<ProcessResult> {
-  return runProcess(file, args, { ...options, shell: true });
+function runClaudeCli(file: string, args: string[], options: AgentHostRunOptions = {}): Promise<ProcessResult> {
+  return runInAgentHost(file, args, { ...options, shell: true });
 }
 
 /** Shown when Claude can't sign in: a bad or revoked API key, or an expired
@@ -1653,13 +1657,16 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     // %USERPROFILE%\.local\bin or npm global bin.  We therefore try
     // `where.exe` / `which` first, and if that fails, probe well-known
     // install locations before giving up.
-    // Both CLI calls run in the process host (runProcess): started from the
-    // main process, one `where claude` held the window for 3.5 s. The lookup
-    // needs no shell, which would only add a cmd.exe to start.
+    // Neither CLI call starts in the main process: from there, one `where
+    // claude` held the window for 3.5 s. The lookup runs in the process host
+    // with git (runProcess): a short, single process with no shell, which
+    // its timeout really ends, so it can't hang that host. `auth status`
+    // runs the claude CLI, in the agent host (runClaudeCli). Both only read,
+    // so they run again if their host dies under them (idempotent).
     let claudePath: string | undefined;
     try {
       const cmd = process.platform === 'win32' ? 'where.exe' : 'which';
-      const { stdout } = await runProcess(cmd, ['claude'], { timeout: CLI_LOOKUP_TIMEOUT_MS });
+      const { stdout } = await runProcess(cmd, ['claude'], { timeout: CLI_LOOKUP_TIMEOUT_MS, idempotent: true });
       claudePath = stdout.trim().split(/\r?\n/)[0];
     } catch {
       // `where`/`which` failed — try known Windows install locations
@@ -1703,7 +1710,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     }
 
     try {
-      const { stdout: authJson } = await runClaudeCli(claudePath, ['auth', 'status', '--json'], { timeout: AUTH_STATUS_TIMEOUT_MS, ...this.cliEnv() });
+      const { stdout: authJson } = await runClaudeCli(claudePath, ['auth', 'status', '--json'], { timeout: AUTH_STATUS_TIMEOUT_MS, idempotent: true, ...this.cliEnv() });
       const auth = JSON.parse(authJson.trim());
       return {
         available: true,
@@ -2117,6 +2124,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     const { stdout } = await runClaudeCli('claude', ['mcp', 'list'], {
       ...(cwd ? { cwd } : {}),
       timeout: 60_000,
+      idempotent: true,
       ...this.cliEnv(),
     });
     return parseMcpListOutput(stdout);
@@ -2149,7 +2157,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
   async listPlugins(): Promise<{ installed: Array<{ id: string; name?: string; enabled?: boolean }>; available: unknown[] }> {
     try {
-      const { stdout } = await runClaudeCli('claude', ['plugin', 'list', '--json', '--available'], this.cliEnv());
+      const { stdout } = await runClaudeCli('claude', ['plugin', 'list', '--json', '--available'], { idempotent: true, ...this.cliEnv() });
       return JSON.parse(stdout);
     } catch {
       return { installed: [], available: [] };

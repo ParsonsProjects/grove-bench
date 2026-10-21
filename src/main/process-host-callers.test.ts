@@ -1,7 +1,8 @@
 /**
  * The commands the main process runs (taskkill, ps, rmdir, the editor CLIs,
- * the claude CLI) go to the process host, and npm install to the agent host:
- * none starts in the main process, where a slow launch freezes the window.
+ * where) go to the process host, and npm install and the claude CLI to the
+ * agent host: none starts in the main process, where a slow launch freezes
+ * the window.
  *
  * The real hosts (process-host.ts) run here on stand-in utility processes.
  * execa and Node's child_process are mocked, so a command that started in
@@ -21,7 +22,7 @@ vi.mock('node:child_process', () => ({ ...childProcess, default: childProcess })
 vi.mock('./logger.js', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 vi.mock('./credentials.js', () => ({ getApiKey: vi.fn(() => null) }));
 
-import { startProcessHost, stopProcessHost } from './process-host.js';
+import { RESTART_DELAY_MS, startProcessHost, stopProcessHost } from './process-host.js';
 import { killTree, listProcesses } from './process-tree.js';
 import { removeDirectory } from './fs-utils.js';
 import { launchEditor } from './editor-launch.js';
@@ -46,7 +47,8 @@ class FakeUtilityProcess extends EventEmitter {
 /** What the process host's commands print, by command. */
 let respond: (request: HostRequest) => Partial<ProcessResult> = () => ({});
 
-const processHost = new FakeUtilityProcess(5150, (message, host) => {
+/** A process host that answers each command with `respond`. */
+const newProcessHost = () => new FakeUtilityProcess(5150, (message, host) => {
   const request = message as HostRequest;
   host.emit('message', {
     id: request.id,
@@ -55,23 +57,40 @@ const processHost = new FakeUtilityProcess(5150, (message, host) => {
     result: { stdout: '', stderr: '', exitCode: 0, failed: false, timedOut: false, ...respond(request) },
   });
 });
+/** The process host now: a restart forks a new one. */
+let processHost = newProcessHost();
 
-/** The agent host starts each process, which exits at once with 0. */
+/** What the agent host's processes print, by request, and whether one keeps
+ *  running (`hold`) until the test ends it (`held`). */
+let respondSpawn: (request: SpawnRequest) => { stdout?: string; hold?: boolean } = () => ({});
+/** Ends a held process with an exit code. */
+const held: ((code: number) => void)[] = [];
+
+/** The agent host starts each process, which prints what respondSpawn says
+ *  and exits with 0, unless held. */
 const agentHost = new FakeUtilityProcess(5151, (message, host) => {
   const request = message as SpawnRequest;
   if (request.type !== 'spawn') return;
   const { id } = request;
-  for (const event of [
-    { type: 'spawned', id, pid: 999, launchMs: 1 },
-    { type: 'stdout-end', id },
-    { type: 'stderr-end', id },
-    { type: 'exit', id, code: 0, signal: null },
-    { type: 'close', id },
-  ]) host.emit('message', event);
+  const { stdout, hold } = respondSpawn(request);
+  host.emit('message', { type: 'spawned', id, pid: 999, launchMs: 1 });
+  if (stdout) host.emit('message', { type: 'stdout', id, data: stdout });
+  const finish = (code: number) => {
+    for (const event of [
+      { type: 'stdout-end', id },
+      { type: 'stderr-end', id },
+      { type: 'exit', id, code, signal: null },
+      { type: 'close', id },
+    ]) host.emit('message', event);
+  };
+  if (hold) held.push(finish);
+  else finish(0);
 });
 
 /** The commands each host was sent, as `file args options`. */
 const commands = () => (processHost.sent as HostRequest[]).map(({ file, args, options }) => ({ file, args, options }));
+/** The processes the agent host was asked to start. */
+const spawns = () => (agentHost.sent as SpawnRequest[]).filter((m) => m.type === 'spawn');
 
 const realPlatform = process.platform;
 function setPlatform(platform: NodeJS.Platform) {
@@ -94,6 +113,7 @@ beforeEach(() => {
   processHost.sent = [];
   agentHost.sent = [];
   respond = () => ({});
+  respondSpawn = () => ({});
   mockExeca.mockReset();
 });
 
@@ -140,70 +160,118 @@ describe('commands the main process runs start in the process host', () => {
     expect(commands()).toEqual([{ file: 'code', args: ['-g', '/repo/src/a.ts:7'], options: undefined }]);
   });
 
-  describe('the claude CLI', () => {
-    const AUTH_ENV = ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_ANTHROPIC_AWS', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY'];
-    let savedEnv: Record<string, string | undefined>;
+});
 
-    beforeEach(() => {
-      savedEnv = Object.fromEntries(AUTH_ENV.map((k) => [k, process.env[k]]));
-      for (const k of AUTH_ENV) delete process.env[k];
-    });
+describe('the claude CLI starts in the agent host, its lookup in the process host', () => {
+  const AUTH_ENV = ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_ANTHROPIC_AWS', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY'];
+  let savedEnv: Record<string, string | undefined>;
 
-    afterEach(() => {
-      for (const [k, v] of Object.entries(savedEnv)) {
-        if (v === undefined) delete process.env[k];
-        else process.env[k] = v;
-      }
-    });
+  beforeEach(() => {
+    savedEnv = Object.fromEntries(AUTH_ENV.map((k) => [k, process.env[k]]));
+    for (const k of AUTH_ENV) delete process.env[k];
+  });
 
-    it('where and auth status, to check Claude Code is installed and signed in (checkPrerequisites)', async () => {
-      setPlatform('win32');
-      respond = ({ args }) => ({ stdout: args[0] === 'claude' ? 'C:\\bin\\claude.exe' : '{"loggedIn":true,"authMethod":"claude.ai"}' });
-      expect(await new ClaudeCodeAdapter().checkPrerequisites()).toMatchObject({ available: true, path: 'C:\\bin\\claude.exe', authenticated: true });
-      expect(commands()).toEqual([
-        { file: 'where.exe', args: ['claude'], options: { timeout: 10_000 } },
-        { file: 'C:\\bin\\claude.exe', args: ['auth', 'status', '--json'], options: { timeout: 15_000, shell: true } },
-      ]);
-    });
+  afterEach(() => {
+    for (const [k, v] of Object.entries(savedEnv)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
 
-    it("auth status for another account, with that account's whole environment", async () => {
-      process.env.ANTHROPIC_API_KEY = 'sk-shell';
-      respond = ({ args }) => ({ stdout: args[0] === 'claude' ? '/usr/bin/claude' : '{"loggedIn":true}' });
-      const account = new ClaudeCodeAdapter(undefined, { id: 'claude-account-work', name: 'Work', configDir: '/home/me/.claude-work' });
-      await account.checkPrerequisites();
-      const auth = commands()[1];
-      expect(auth.options).toMatchObject({ shell: true, extendEnv: false, env: expect.objectContaining({ CLAUDE_CONFIG_DIR: '/home/me/.claude-work' }) });
-      expect(auth.options?.env).not.toHaveProperty('ANTHROPIC_API_KEY');
-    });
+  it('where and auth status, to check Claude Code is installed and signed in (checkPrerequisites)', async () => {
+    setPlatform('win32');
+    respond = () => ({ stdout: 'C:\\bin\\claude.exe' });
+    respondSpawn = () => ({ stdout: '{"loggedIn":true,"authMethod":"claude.ai"}\r\n' });
+    expect(await new ClaudeCodeAdapter().checkPrerequisites()).toMatchObject({ available: true, path: 'C:\\bin\\claude.exe', authenticated: true, authMethod: 'claude.ai' });
+    // A short lookup with no shell, which its timeout really ends.
+    expect(commands()).toEqual([{ file: 'where.exe', args: ['claude'], options: { timeout: 10_000 } }]);
+    // Its command line in a shell, with the environment it would inherit.
+    expect(spawns()).toEqual([{ type: 'spawn', id: expect.any(Number), file: 'C:\\bin\\claude.exe', args: ['auth', 'status', '--json'], shell: true }]);
+  });
 
-    it('mcp list, add and remove', async () => {
-      const adapter = new ClaudeCodeAdapter();
-      await adapter.listConfiguredMcpServers('/repo');
-      await adapter.addConfiguredMcpServer({ name: 'docs', transport: 'http', scope: 'user', commandOrUrl: 'https://example.com/mcp' });
-      await adapter.removeConfiguredMcpServer('docs', 'user');
-      expect(commands()).toEqual([
-        { file: 'claude', args: ['mcp', 'list'], options: { shell: true, cwd: '/repo', timeout: 60_000 } },
-        { file: 'claude', args: ['mcp', 'add', '-s', 'user', '-t', 'http', 'docs', 'https://example.com/mcp'], options: { shell: true, timeout: 30_000 } },
-        { file: 'claude', args: ['mcp', 'remove', '-s', 'user', 'docs'], options: { shell: true, timeout: 30_000 } },
-      ]);
-    });
+  it("auth status for another account, with that account's whole environment", async () => {
+    process.env.ANTHROPIC_API_KEY = 'sk-shell';
+    respond = () => ({ stdout: '/usr/bin/claude' });
+    respondSpawn = () => ({ stdout: '{"loggedIn":true}' });
+    const account = new ClaudeCodeAdapter(undefined, { id: 'claude-account-work', name: 'Work', configDir: '/home/me/.claude-work' });
+    expect(await account.checkPrerequisites()).toMatchObject({ authenticated: true });
+    const [auth] = spawns();
+    expect(auth).toMatchObject({ args: ['auth', 'status', '--json'], shell: true, env: expect.objectContaining({ CLAUDE_CONFIG_DIR: '/home/me/.claude-work' }) });
+    // A spawn's env is the whole environment: the key left out stays out.
+    expect(auth.env).not.toHaveProperty('ANTHROPIC_API_KEY');
+  });
 
-    it('plugin list, install, uninstall, enable and disable', async () => {
-      respond = ({ args }) => ({ stdout: args[1] === 'list' ? '{"installed":[],"available":[]}' : '' });
-      const adapter = new ClaudeCodeAdapter();
-      expect(await adapter.listPlugins()).toEqual({ installed: [], available: [] });
-      await adapter.installPlugin('p@m');
-      await adapter.uninstallPlugin('p@m');
-      await adapter.enablePlugin('p@m');
-      await adapter.disablePlugin('p@m');
-      expect(commands()).toEqual([
-        { file: 'claude', args: ['plugin', 'list', '--json', '--available'], options: { shell: true } },
-        { file: 'claude', args: ['plugin', 'install', 'p@m', '--scope', 'user'], options: { shell: true } },
-        { file: 'claude', args: ['plugin', 'uninstall', 'p@m'], options: { shell: true } },
-        { file: 'claude', args: ['plugin', 'enable', 'p@m'], options: { shell: true } },
-        { file: 'claude', args: ['plugin', 'disable', 'p@m'], options: { shell: true } },
-      ]);
-    });
+  it('mcp list, add and remove', async () => {
+    const adapter = new ClaudeCodeAdapter();
+    await adapter.listConfiguredMcpServers('/repo');
+    await adapter.addConfiguredMcpServer({ name: 'docs', transport: 'http', scope: 'user', commandOrUrl: 'https://example.com/mcp' });
+    await adapter.removeConfiguredMcpServer('docs', 'user');
+    expect(commands()).toEqual([]);
+    expect(spawns()).toEqual([
+      { type: 'spawn', id: expect.any(Number), file: 'claude', args: ['mcp', 'list'], cwd: '/repo', shell: true },
+      { type: 'spawn', id: expect.any(Number), file: 'claude', args: ['mcp', 'add', '-s', 'user', '-t', 'http', 'docs', 'https://example.com/mcp'], shell: true },
+      { type: 'spawn', id: expect.any(Number), file: 'claude', args: ['mcp', 'remove', '-s', 'user', 'docs'], shell: true },
+    ]);
+  });
+
+  it('plugin list, install, uninstall, enable and disable', async () => {
+    respondSpawn = ({ args }) => ({ stdout: args[1] === 'list' ? '{"installed":[],"available":[]}\n' : '' });
+    const adapter = new ClaudeCodeAdapter();
+    expect(await adapter.listPlugins()).toEqual({ installed: [], available: [] });
+    await adapter.installPlugin('p@m');
+    await adapter.uninstallPlugin('p@m');
+    await adapter.enablePlugin('p@m');
+    await adapter.disablePlugin('p@m');
+    expect(commands()).toEqual([]);
+    expect(spawns().map(({ file, args, shell }) => ({ file, args, shell }))).toEqual([
+      { file: 'claude', args: ['plugin', 'list', '--json', '--available'], shell: true },
+      { file: 'claude', args: ['plugin', 'install', 'p@m', '--scope', 'user'], shell: true },
+      { file: 'claude', args: ['plugin', 'uninstall', 'p@m'], shell: true },
+      { file: 'claude', args: ['plugin', 'enable', 'p@m'], shell: true },
+      { file: 'claude', args: ['plugin', 'disable', 'p@m'], shell: true },
+    ]);
+  });
+
+  it('at its time limit, its whole tree is killed, by taskkill from the process host', async () => {
+    setPlatform('win32');
+    respondSpawn = () => ({ hold: true });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const listed = new ClaudeCodeAdapter().listConfiguredMcpServers('/repo').catch((e: unknown) => e);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(await listed).toMatchObject({ timedOut: true });
+      // 999: cmd.exe, which the claude CLI runs under.
+      expect(commands()).toEqual([{
+        file: expect.stringMatching(/\\System32\\taskkill\.exe$/i),
+        args: ['/PID', '999', '/T', '/F'],
+        options: { timeout: 10_000, reject: false },
+      }]);
+    } finally {
+      vi.useRealTimers();
+      for (const finish of held.splice(0)) finish(1);
+    }
+  });
+
+  it('keeps running when the process host is restarted', async () => {
+    respondSpawn = ({ args }) => ({ hold: args[1] === 'install' });
+    const install = new ClaudeCodeAdapter().installPlugin('p@m');
+    await vi.waitFor(() => expect(held).toHaveLength(1));
+
+    // The process host dies, as when a hung command gets it restarted, and
+    // comes back.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      processHost.emit('exit', 1);
+      processHost = newProcessHost();
+      vi.advanceTimersByTime(RESTART_DELAY_MS);
+      processHost.emit('message', HOST_READY);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    held.splice(0)[0](0);
+    await expect(install).resolves.toBeUndefined();
+    expect(commands()).toEqual([]);
   });
 });
 
