@@ -71,10 +71,13 @@ function failureEvent(adapter: AgentAdapter, detail: string): AgentEvent {
     : { type: 'error', message: detail };
 }
 
-/** Whether `session`'s agent is working on a turn: a prompt went to it or
- *  it started replying, and the turn hasn't ended. An agent still starting
- *  up isn't, until a prompt goes to it. */
+/** Whether `session` is in a turn: from the prompt's user_message (still on
+ *  its way to the agent, see unsentPrompts) or the agent starting to reply,
+ *  until the turn's result is in the history (see resultLogging). So the
+ *  history and this agree at every point. An agent still starting up isn't,
+ *  until a prompt goes to it. */
 function turnInFlight(session: ManagedSession): boolean {
+  if (session.unsentPrompts?.size || session.resultLogging) return true;
   return !!session.turnHandle && session.turnHandle === session.queryHandle;
 }
 
@@ -650,6 +653,9 @@ class AgentSessionManager {
         const event: AgentEvent = capped.type === 'tool_result' && capped.imageData
           ? await storeToolImages(id, capped)
           : capped;
+        // Stopped or closed while they were saved: dropped like anything it
+        // sends after, so nothing lands after a close's process_exit.
+        if (abortController.signal.aborted) break;
 
         // Skip adapter user_message events — we emit our own with UUIDs in sendMessage
         if (event.type === 'user_message') continue;
@@ -766,38 +772,8 @@ class AgentSessionManager {
 
         // Track result for completion callback
         if (event.type === 'result') {
-          if (session.turnHandle === handle) session.turnHandle = null;
-          // A finished turn is activity too, as much as a prompt sent.
-          worktreeManager.updateLastActive(id).catch((e) => {
-            logger.warn(`Failed to persist last activity for ${id}:`, e);
-          });
-          // The files the turn made go just ahead of its result.
-          await this.endTurnFiles(session, emit);
-          // Adds the turn's cost to the thread's and today's spend and its
-          // tokens to the thread's, and saves the thread's, which its history
-          // won't keep through a rewind.
-          const { threadSpendUsd: spent, threadTokens: { input, output } } = session.limits;
-          turnEnded(session.limits, event);
-          const { threadSpendUsd, threadTokens } = session.limits;
-          if (threadSpendUsd !== spent || threadTokens.input !== input || threadTokens.output !== output) this.saveThreadLimits(session);
-          this.runHeldMcpReconnects(session);
-          session.lastResult = {
-            isError: event.isError,
-            totalCostUsd: event.totalCostUsd,
-            durationMs: event.durationMs,
-          };
-
-          // A finished turn is new history — refresh skill suggestions soon.
-          if (!event.isError) this.skills.scheduleSuggestions(session);
-
-          // A turn ended by a user interrupt reports abort/teardown errors
-          // (e.g. "Request was aborted", in-flight tool failures). The user
-          // asked to stop, so present a clean result instead of dumping them.
-          if (session.interrupting) {
-            session.interrupting = false;
-            emit({ ...event, isError: false, errors: undefined });
-            continue;
-          }
+          await this.logResult(session, handle, event, emit);
+          continue;
         }
 
         emit(event);
@@ -836,7 +812,9 @@ class AgentSessionManager {
     // would leave the text it streamed last waiting on the timer. Those
     // return below with no status, which would send it.
     this.flushStream(session);
-    if (session.turnHandle === handle) session.turnHandle = null;
+    // A close or delete decides itself, once the agent is dead, whether the
+    // turn ended (see shutDown).
+    if (session.turnHandle === handle && !session.destroying) session.turnHandle = null;
     // A turn cut short by an error reports no files. Only this run's: once
     // stopped or put to sleep, a newer run may be watching its own turn.
     if (session.queryHandle === handle || session.destroying) void this.endTurnFiles(session);
@@ -896,6 +874,61 @@ class AgentSessionManager {
     }).catch(err => {
       logger.warn(`[memory-autosave] Auto-save failed for session ${id}: ${err}`);
     });
+  }
+
+  /** A turn's result from `handle`'s run: list the files the turn made, count
+   *  what it cost and log the result. The turn counts as in flight until the
+   *  result is in the history (see turnInFlight), so a history page read
+   *  meanwhile has both or neither. */
+  private async logResult(
+    session: ManagedSession,
+    handle: AgentQueryHandle,
+    event: Extract<AgentEvent, { type: 'result' }>,
+    emit: Emit,
+  ): Promise<void> {
+    const { id } = session;
+    let logged!: () => void;
+    const logging = new Promise<void>((resolve) => { logged = resolve; });
+    session.resultLogging = logging;
+    // A prompt sent from here on starts the next turn.
+    if (session.turnHandle === handle) session.turnHandle = null;
+    try {
+      // A finished turn is activity too, as much as a prompt sent.
+      worktreeManager.updateLastActive(id).catch((e) => {
+        logger.warn(`Failed to persist last activity for ${id}:`, e);
+      });
+      // The files the turn made go just ahead of its result.
+      await this.endTurnFiles(session, emit);
+      // Adds the turn's cost to the thread's and today's spend and its
+      // tokens to the thread's, and saves the thread's, which its history
+      // won't keep through a rewind.
+      const { threadSpendUsd: spent, threadTokens: { input, output } } = session.limits;
+      turnEnded(session.limits, event);
+      const { threadSpendUsd, threadTokens } = session.limits;
+      if (threadSpendUsd !== spent || threadTokens.input !== input || threadTokens.output !== output) this.saveThreadLimits(session);
+      session.lastResult = {
+        isError: event.isError,
+        totalCostUsd: event.totalCostUsd,
+        durationMs: event.durationMs,
+      };
+
+      // A finished turn is new history — refresh skill suggestions soon.
+      if (!event.isError) this.skills.scheduleSuggestions(session);
+
+      // A turn ended by a user interrupt reports abort/teardown errors
+      // (e.g. "Request was aborted", in-flight tool failures). The user
+      // asked to stop, so present a clean result instead of dumping them.
+      if (session.interrupting) {
+        session.interrupting = false;
+        emit({ ...event, isError: false, errors: undefined });
+      } else {
+        emit(event);
+      }
+    } finally {
+      if (session.resultLogging === logging) session.resultLogging = undefined;
+      logged();
+    }
+    this.runHeldMcpReconnects(session);
   }
 
   /** Watch the worktree for the files this turn makes, unless a watch for
@@ -1051,7 +1084,7 @@ class AgentSessionManager {
       return false;
     }
 
-    if (!(await this.awaitQueryHandle(session))) return false;
+    if (!(await this.awaitQueryHandle(session)) || session.destroying) return false;
 
     // A new turn supersedes any pending interrupt: don't let a stale flag
     // sanitize this turn's genuine result.
@@ -1071,6 +1104,8 @@ class AgentSessionManager {
     }
     const storedImages = images?.length ? await saveImages(id, images) : [];
     const savedFiles = files?.length ? await saveFiles(id, files) : [];
+    // Closed or deleted meanwhile: its history has ended (see shutDown).
+    if (session.destroying) return false;
     if (files && savedFiles.length < files.length) {
       const lost = files.length - savedFiles.length;
       session.emit?.({ type: 'status', level: 'warning', message: `${lost === 1 ? 'An attached file' : `${lost} attached files`} could not be saved, so ${lost === 1 ? 'it was' : 'they were'} left out. See the log for details.` });
@@ -1088,71 +1123,86 @@ class AgentSessionManager {
       ...(storedImages.length > 0 && { images: storedImages }),
       ...(savedFiles.length > 0 && { files: savedFiles.map((f) => f.stored) }),
     };
-    session.emit?.(userEvent);
-
-    // Snapshot the working tree before the agent gets the prompt. The capture
-    // is awaited on purpose: fired concurrently, the agent could start editing
-    // files while `git add -A` is still scanning, and the "before this turn"
-    // checkpoint would silently include part of the turn. capture() never
-    // throws; a false result means there is no checkpoint for this message,
-    // which the thread shows so a later rewind attempt is not a surprise.
-    // Label the checkpoint with what the chat shows, not attached file content.
-    const captured = await session.checkpoints.capture(id, session.worktreePath, uuid, userEventText(userEvent));
-    // Without git there are no checkpoints to capture, so nothing failed.
-    if (captured) {
-      session.checkpointFailing = false;
-    } else if (session.gitBacked) {
-      logger.warn(`Checkpoint capture failed for ${id} uuid=${uuid}`);
-      if (!session.checkpointFailing) {
-        session.checkpointFailing = true;
-        session.emit?.({
-          type: 'error',
-          message: 'Checkpoint could not be captured for this message, so rewinding to it will not be available. Later messages won\'t get one either until git works again. See the log for the git error.',
-        });
-      }
-    }
-    // The query may have been torn down while the snapshot ran (stop, model
-    // switch); if a replacement is starting, hand the prompt to that one.
-    if (!(await this.awaitQueryHandle(session))) return false;
-    const queryHandle = session.queryHandle!;
-
-    const sessionId = session.providerSessionId ?? '';
-    logger.debug(`[sendMessage] session=${id} sending to adapter, providerSessionId=${sessionId || '(not yet initialized)'}${images?.length ? ` with ${images.length} image(s)` : ''}${savedFiles.length ? ` with ${savedFiles.length} file(s)` : ''}`);
+    // The thread is mid-turn from here, as its history now says, though the
+    // prompt reaches the agent only after the checkpoint (see turnInFlight).
+    const unsent = session.unsentPrompts ??= new Set();
+    unsent.add(uuid);
     try {
-      session.turnHandle = queryHandle;
-      promptSent(session.limits);
-      this.watchTurnFiles(session);
-      // Once per query: a second message before the reply doesn't repeat it,
-      // but a query that failed to start and was replaced gets it again.
-      const withNote = handoffNote !== null && session.handoffSentTo !== queryHandle;
-      const message: UserMessage = {
-        text: withNote ? `${handoffNote}\n${content}` : content,
-        // With the path of each saved copy when every one was saved (so the
-        // lists line up), for an agent that can't take images.
-        images: images?.map((img, i) => {
-          const saved = storedImages.length === images!.length ? imagePath(id, storedImages[i].file) : null;
-          return saved ? { ...img, path: saved.path } : img;
-        }),
-        // Only a clip that may go inline carries its data; the rest go by path.
-        ...(savedFiles.length > 0 && {
-          files: savedFiles.map(({ stored, path, data }) => ({
-            name: stored.name, mediaType: stored.mediaType, size: stored.size, path,
-            ...(inlineAudioType(stored) ? { data } : {}),
-          })),
-          ...(audioInHistory > 0 && { audioInHistory }),
-        }),
-      };
-      if (withNote) session.handoffSentTo = queryHandle;
-      queryHandle.sendMessage(message);
-      if (session.promptsBeforeInit?.handle === queryHandle) session.promptsBeforeInit.prompts.push(message);
-      logger.debug(`[sendMessage] session=${id} sent successfully`);
-      // Update last-active timestamp (fire-and-forget)
-      worktreeManager.updateLastActive(id).catch(() => {});
-      return true;
-    } catch (e) {
-      console.error(`[sendMessage] session=${id} send FAILED:`, e);
-      logger.warn(`Failed to send message to session ${id}:`, e);
-      return false;
+      session.emit?.(userEvent);
+
+      // Snapshot the working tree before the agent gets the prompt. The capture
+      // is awaited on purpose: fired concurrently, the agent could start editing
+      // files while `git add -A` is still scanning, and the "before this turn"
+      // checkpoint would silently include part of the turn. capture() never
+      // throws; a false result means there is no checkpoint for this message,
+      // which the thread shows so a later rewind attempt is not a surprise.
+      // Label the checkpoint with what the chat shows, not attached file content.
+      const captured = await session.checkpoints.capture(id, session.worktreePath, uuid, userEventText(userEvent));
+      if (session.destroying) return false;
+      // Without git there are no checkpoints to capture, so nothing failed.
+      if (captured) {
+        session.checkpointFailing = false;
+      } else if (session.gitBacked) {
+        logger.warn(`Checkpoint capture failed for ${id} uuid=${uuid}`);
+        if (!session.checkpointFailing) {
+          session.checkpointFailing = true;
+          session.emit?.({
+            type: 'error',
+            message: 'Checkpoint could not be captured for this message, so rewinding to it will not be available. Later messages won\'t get one either until git works again. See the log for the git error.',
+          });
+        }
+      }
+      // The query may have been torn down while the snapshot ran (stop, model
+      // switch); if a replacement is starting, hand the prompt to that one.
+      if (!(await this.awaitQueryHandle(session)) || session.destroying) return false;
+      const queryHandle = session.queryHandle!;
+
+      const sessionId = session.providerSessionId ?? '';
+      logger.debug(`[sendMessage] session=${id} sending to adapter, providerSessionId=${sessionId || '(not yet initialized)'}${images?.length ? ` with ${images.length} image(s)` : ''}${savedFiles.length ? ` with ${savedFiles.length} file(s)` : ''}`);
+      // Whether the agent was already in a turn, which a failed send leaves running.
+      const turnRunning = session.turnHandle === queryHandle;
+      try {
+        // Takes over from unsentPrompts (cleared below, in the same tick).
+        session.turnHandle = queryHandle;
+        promptSent(session.limits);
+        this.watchTurnFiles(session);
+        // Once per query: a second message before the reply doesn't repeat it,
+        // but a query that failed to start and was replaced gets it again.
+        const withNote = handoffNote !== null && session.handoffSentTo !== queryHandle;
+        const message: UserMessage = {
+          text: withNote ? `${handoffNote}\n${content}` : content,
+          // With the path of each saved copy when every one was saved (so the
+          // lists line up), for an agent that can't take images.
+          images: images?.map((img, i) => {
+            const saved = storedImages.length === images!.length ? imagePath(id, storedImages[i].file) : null;
+            return saved ? { ...img, path: saved.path } : img;
+          }),
+          // Only a clip that may go inline carries its data; the rest go by path.
+          ...(savedFiles.length > 0 && {
+            files: savedFiles.map(({ stored, path, data }) => ({
+              name: stored.name, mediaType: stored.mediaType, size: stored.size, path,
+              ...(inlineAudioType(stored) ? { data } : {}),
+            })),
+            ...(audioInHistory > 0 && { audioInHistory }),
+          }),
+        };
+        if (withNote) session.handoffSentTo = queryHandle;
+        queryHandle.sendMessage(message);
+        if (session.promptsBeforeInit?.handle === queryHandle) session.promptsBeforeInit.prompts.push(message);
+        logger.debug(`[sendMessage] session=${id} sent successfully`);
+        // Update last-active timestamp (fire-and-forget)
+        worktreeManager.updateLastActive(id).catch(() => {});
+        return true;
+      } catch (e) {
+        console.error(`[sendMessage] session=${id} send FAILED:`, e);
+        logger.warn(`Failed to send message to session ${id}:`, e);
+        // It never reached the agent, so it started no turn.
+        if (!turnRunning && session.turnHandle === queryHandle) session.turnHandle = null;
+        return false;
+      }
+    } finally {
+      // Gone to the agent (turnHandle has it now), or given up on.
+      unsent.delete(uuid);
     }
   }
 
@@ -1937,9 +1987,6 @@ class AgentSessionManager {
     // the close can't start a second agent on the same transcript.
     await session.sleepSettled;
 
-    // Read before the kill: the run's end clears the turn.
-    const midTurn = turnInFlight(session);
-
     // Kill the agent's process tree while the agent is still running. Once it
     // exits, whatever it left running can no longer be traced back to it.
     const pid = session.queryHandle?.processId?.();
@@ -1965,11 +2012,21 @@ class AgentSessionManager {
     cancelElicitations(session);
     cancelLimit(session.limits);
 
+    // A result the agent sent before it died may still be on its way into
+    // the history (the files its turn made go first). Once it's in, nothing
+    // more from the run can be: anything it sends after the abort is dropped.
+    await session.resultLogging;
+
     // The turn under way ends here, and runQuery's tail writes no
     // process_exit for a close or a delete (see there). Without one the
-    // history ends mid-turn, as if the turn were still running. Before the
-    // caller flushes the log.
-    if (midTurn) session.emit?.({ type: 'process_exit' });
+    // history ends mid-turn, as if the turn were still running. Decided only
+    // now, with the agent dead: a turn can end or start during the kill (the
+    // run's tail leaves the turn as it is for this). Before the caller
+    // flushes the log.
+    if (turnInFlight(session)) session.emit?.({ type: 'process_exit' });
+    // That ends the turn. Sends still on their way give up (see sendMessage).
+    session.turnHandle = null;
+    session.unsentPrompts?.clear();
 
     // Clean up completion callback and event listeners
     this.completionCallbacks.delete(id);
