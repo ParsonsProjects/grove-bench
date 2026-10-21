@@ -2164,7 +2164,10 @@ describe('AgentSessionManager turn state for a loading history', () => {
     await vi.waitFor(() => expect(sessionManager.getSession(id)?.queryHandle).toBeTruthy());
     return { win, session: sessionManager.getSession(id)! };
   }
-  const idle = { midTurn: false, pendingPromptIds: [] };
+  /** A live agent between turns. */
+  const idle = { midTurn: false, pendingPromptIds: [], agentLive: true };
+  /** No agent: closed, or not up yet. */
+  const none = { midTurn: false, pendingPromptIds: [], agentLive: false };
   const sentTypes = (win: ReturnType<typeof makeMockWindow>) =>
     win._send.mock.calls.map(([, event]: [string, AgentEvent | undefined]) => event?.type).filter(Boolean);
   /** Hold the next checkpoint capture of `session` until the returned call. */
@@ -2175,7 +2178,7 @@ describe('AgentSessionManager turn state for a loading history', () => {
   }
 
   it('says a thread with no live agent runs nothing and asks nothing', () => {
-    expect(sessionManager.turnState('test-turn-none')).toEqual(idle);
+    expect(sessionManager.turnState('test-turn-none')).toEqual(none);
   });
 
   it('follows a turn from the prompt to its result, with the questions it waits on', async () => {
@@ -2183,14 +2186,14 @@ describe('AgentSessionManager turn state for a loading history', () => {
     expect(sessionManager.turnState('test-turn-state')).toEqual(idle);
 
     await sessionManager.sendMessage('test-turn-state', 'run the tests');
-    expect(sessionManager.turnState('test-turn-state')).toEqual({ midTurn: true, pendingPromptIds: [] });
+    expect(sessionManager.turnState('test-turn-state')).toEqual({ midTurn: true, pendingPromptIds: [], agentLive: true });
 
     void mockAdapter.control!.permissionHandler!({ requestId: 'a1', toolName: 'Bash', toolUseId: 'tu_1', toolInput: {} });
     const asked = sessionManager.getEventHistory('test-turn-state').find((e) => e.type === 'permission_request');
     const requestId = (asked as Extract<AgentEvent, { type: 'permission_request' }>).requestId;
-    expect(sessionManager.turnState('test-turn-state')).toEqual({ midTurn: true, pendingPromptIds: [requestId] });
+    expect(sessionManager.turnState('test-turn-state')).toEqual({ midTurn: true, pendingPromptIds: [requestId], agentLive: true });
     // Read with the page, so the renderer gets both as of the same moment.
-    expect(sessionManager.getEventHistoryPage('test-turn-state', 200).turn).toEqual({ midTurn: true, pendingPromptIds: [requestId] });
+    expect(sessionManager.getEventHistoryPage('test-turn-state', 200).turn).toEqual({ midTurn: true, pendingPromptIds: [requestId], agentLive: true });
 
     sessionManager.respondToPermission('test-turn-state', { requestId, behavior: 'allow' });
     mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false });
@@ -2234,7 +2237,7 @@ describe('AgentSessionManager turn state for a loading history', () => {
     await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(1));
 
     expect(sessionManager.isMidTurn('test-turn-starting')).toBe(true);
-    expect(sessionManager.turnState('test-turn-starting')).toEqual(idle);
+    expect(sessionManager.turnState('test-turn-starting')).toEqual(none);
 
     openGate();
     await vi.waitFor(() => expect(sessionManager.getSession('test-turn-starting')?.queryHandle).toBeTruthy());
@@ -2250,7 +2253,23 @@ describe('AgentSessionManager turn state for a loading history', () => {
 
     expect(session.eventHistory.slice(-2).map((e) => e.type)).toEqual(['permission_resolved', 'process_exit']);
     expect(sentTypes(win)).toContain('process_exit');
-    expect(sessionManager.turnState('test-turn-close')).toEqual(idle);
+    expect(sessionManager.turnState('test-turn-close')).toEqual(none);
+  });
+
+  // Its background tasks (a dev server) run on between turns, and go with it.
+  it('says whether the agent is up, between turns too', async () => {
+    await startSession('test-turn-live');
+    await sessionManager.sendMessage('test-turn-live', 'start the dev server');
+    mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false });
+    await vi.waitFor(() => expect(sessionManager.turnState('test-turn-live')).toEqual(idle));
+
+    // The agent ends by itself: its handle stays, but its process is gone.
+    mockAdapter.control!.finish();
+    await vi.waitFor(() => expect(sessionManager.getSession('test-turn-live')?.status).toBe('stopped'));
+    expect(sessionManager.getSession('test-turn-live')?.queryHandle).toBeTruthy();
+    expect(sessionManager.turnState('test-turn-live')).toEqual(none);
+
+    await sessionManager.destroySession('test-turn-live');
   });
 
   it('ends the history of every thread quitting mid-turn, and only those', async () => {

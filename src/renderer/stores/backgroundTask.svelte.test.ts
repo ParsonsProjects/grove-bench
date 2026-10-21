@@ -55,7 +55,7 @@ describe('backgroundTaskStore', () => {
     expect(backgroundTaskStore.get(SID)).toHaveLength(0);
   });
 
-  it('resolveStale drops running tasks once idle, keeps finished ones', () => {
+  it('resolveStale drops running tasks once the agent is gone, keeps finished ones', () => {
     backgroundTaskStore.tasksBySession[SID] = {
       t1: { taskId: 't1', description: 'a', status: 'running', totalTokens: 0, toolUses: 0, durationMs: 0 },
       t2: { taskId: 't2', description: 'b', status: 'completed', totalTokens: 10, toolUses: 1, durationMs: 5 },
@@ -66,7 +66,7 @@ describe('backgroundTaskStore', () => {
     expect(tasks[0].taskId).toBe('t2');
   });
 
-  it('resolveStale is a no-op while the session is running', () => {
+  it('resolveStale is a no-op while the agent is live, between turns too', () => {
     backgroundTaskStore.tasksBySession[SID] = {
       t1: { taskId: 't1', description: 'a', status: 'running', totalTokens: 0, toolUses: 0, durationMs: 0 },
     };

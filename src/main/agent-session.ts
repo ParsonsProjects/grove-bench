@@ -1612,10 +1612,11 @@ class AgentSessionManager {
    *  starting up counts as idle here (unlike isMidTurn), as it has nothing
    *  to show as working on until a prompt goes to it. A thread without a
    *  live session (closed, or still being set up) runs no turn and asks
-   *  nothing. */
+   *  nothing. Its agent is live while its process is up: not asleep (no
+   *  handle), and not ended by itself (stopped, the handle kept). */
   turnState(id: string): ThreadTurnState {
     const session = this.sessions.get(id);
-    if (!session) return { midTurn: false, pendingPromptIds: [] };
+    if (!session) return { midTurn: false, pendingPromptIds: [], agentLive: false };
     return {
       midTurn: turnInFlight(session),
       pendingPromptIds: [
@@ -1623,6 +1624,7 @@ class AgentSessionManager {
         ...session.pendingElicitations.keys(),
         ...(session.limits.pending ? [session.limits.pending.requestId] : []),
       ],
+      agentLive: !!session.queryHandle && session.status !== 'stopped',
     };
   }
 

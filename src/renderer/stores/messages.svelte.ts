@@ -277,6 +277,80 @@ function userMessage(sent: string, images?: ThreadImage[], attachments?: ThreadF
   };
 }
 
+/**
+ * Settle the prompts in `msgs` that nothing answered, the way one that
+ * ended unanswered reads: permission prompts denied, the agent's questions
+ * closed, MCP questions cancelled, limit questions stopped. Those `keep`
+ * names (by requestId: main still waits on them) stay open, and so do the
+ * tool calls waiting on them. Other tool calls stop waiting for a
+ * permission, and with `toolCalls` stop running too (their turn is over).
+ * Returns `msgs` itself when nothing changed.
+ */
+export function settlePrompts(
+  msgs: ChatMessage[],
+  keep: (requestId: string) => boolean = () => false,
+  { toolCalls = false }: { toolCalls?: boolean } = {},
+): ChatMessage[] {
+  const stillAwaited = new Set<string>();
+  for (const m of msgs) {
+    if ((m.kind === 'permission' || m.kind === 'question') && !m.resolved && keep(m.requestId)) stillAwaited.add(m.toolUseId);
+  }
+  const settled = (m: ChatMessage): ChatMessage => {
+    switch (m.kind) {
+      case 'permission':
+        return m.resolved || keep(m.requestId) ? m : { ...m, resolved: true, decision: 'deny' };
+      case 'question':
+        return m.resolved || keep(m.requestId) ? m : { ...m, resolved: true };
+      case 'elicitation':
+        return m.resolved || keep(m.requestId) ? m : { ...m, resolved: true, action: 'cancel' };
+      case 'limit':
+        return m.resolved || keep(m.requestId) ? m : { ...m, resolved: true, decision: 'stop' };
+      case 'tool_call':
+        if (stillAwaited.has(m.toolUseId) || !(m.awaitingPermission || (toolCalls && m.pending))) return m;
+        return { ...m, awaitingPermission: false, ...(toolCalls ? { pending: false } : {}) };
+      default:
+        return m;
+    }
+  };
+  const updated = msgs.map(settled);
+  return updated.some((m, i) => m !== msgs[i]) ? updated : msgs;
+}
+
+/**
+ * The prompt a thread waits on a reply to, as the chat knows it (see
+ * MessageStore.pendingPrompt): `nth` prompts after the one main logged as
+ * `after` (null: from the history's start). 0 when it is that one: main
+ * has echoed it.
+ */
+export interface PendingPrompt {
+  after: string | null;
+  nth: number;
+}
+
+/**
+ * Whether `events`, a history page read after `prompt` was sent, holds the
+ * end of its turn (or of a later prompt's): main had it and finished it
+ * before reading the page. A page doesn't start before the history the chat
+ * showed, so a logged prompt missing from it is older than all of it.
+ */
+function promptAnsweredIn(events: readonly AgentEvent[], prompt: PendingPrompt): boolean {
+  const isPrompt = (e: AgentEvent) => e.type === 'user_message' && !subagentParent(e);
+  let i = prompt.after === null ? 0 : events.findIndex((e) => isPrompt(e) && (e as { uuid?: string }).uuid === prompt.after) + 1;
+  for (let left = prompt.nth; left > 0; i++) {
+    // Not in the page: main hadn't logged it yet.
+    if (i >= events.length) return false;
+    if (isPrompt(events[i])) left--;
+  }
+  let ended = false;
+  for (; i < events.length; i++) {
+    const e = events[i];
+    if (subagentParent(e)) continue;
+    if (e.type === 'user_message') ended = false;
+    else if (e.type === 'result' || e.type === 'process_exit') ended = true;
+  }
+  return ended;
+}
+
 class MessageStore {
   /** False for the scratch store an older history page is built in (see
    *  loadOlderEvents): it only makes messages, so it must not touch other
@@ -492,7 +566,10 @@ class MessageStore {
 
       const existing = this.messagesBySession[sessionId] ?? [];
       if (older.length > 0) {
-        this.messagesBySession[sessionId] = [...this.settleOlderPage(sessionId, older, existing), ...existing];
+        // Main's prompts still waiting, as of this page (none from a main
+        // that doesn't say: then all of them are settled, as before).
+        const pending = new Set(page.turn?.pendingPromptIds ?? []);
+        this.messagesBySession[sessionId] = [...this.settleOlderPage(sessionId, older, existing, pending), ...existing];
       }
       this.paginationBySession[sessionId] = { totalCount: p.totalCount, loadedFromIndex: page.startIndex, loading: false };
     } finally {
@@ -506,21 +583,15 @@ class MessageStore {
 
   /**
    * Tool calls, prompts and questions in an older page that nothing answered
-   * are over: they were stopped, timed out or cut off. The exception is a
+   * are over: they were stopped, timed out or cut off, except the prompts
+   * main still waits on (`stillPending`, by requestId). The exception is a
    * page that may hold the start of a turn that is still running, which is
    * when no user message has been loaded after it yet.
    */
-  private settleOlderPage(sessionId: string, older: ChatMessage[], newer: ChatMessage[]): ChatMessage[] {
+  private settleOlderPage(sessionId: string, older: ChatMessage[], newer: ChatMessage[], stillPending: ReadonlySet<string>): ChatMessage[] {
     const liveTurnMayBeHere = this.getIsRunning(sessionId) && !newer.some((m) => m.kind === 'user');
     if (liveTurnMayBeHere) return older;
-    return older.map((m) => {
-      if (m.kind === 'tool_call' && (m.pending || m.awaitingPermission)) return { ...m, pending: false, awaitingPermission: false };
-      if (m.kind === 'permission' && !m.resolved) return { ...m, resolved: true as const, decision: 'deny' as const };
-      if (m.kind === 'question' && !m.resolved) return { ...m, resolved: true as const };
-      if (m.kind === 'elicitation' && !m.resolved) return { ...m, resolved: true as const, action: 'cancel' as const };
-      if (m.kind === 'limit' && !m.resolved) return { ...m, resolved: true as const, decision: 'stop' as const };
-      return m;
-    });
+    return settlePrompts(older, (id) => stillPending.has(id), { toolCalls: true });
   }
 
   /** Replace the loaded messages with the last page of the history as main
@@ -590,10 +661,43 @@ class MessageStore {
     return !!this.awaitingResponse[sessionId];
   }
 
-  /** The thread's pane closed: its agent was stopped or the thread deleted,
-   *  so a prompt sent to it gets no reply. The events that would say so
-   *  (main's close) come after the pane stopped listening, and a prompt
-   *  left waiting would show the thread working when it is opened again. */
+  /** The prompt waiting on a reply, or null when none is, as the chat
+   *  shows it: the last prompt, counted from the last one main echoed (by
+   *  its uuid). Read before a pane reloads the history, which clears the
+   *  chat (see stillAwaitingResponse). */
+  pendingPrompt(sessionId: string): PendingPrompt | null {
+    if (!this.awaitingResponse[sessionId]) return null;
+    const msgs = this.messagesBySession[sessionId] ?? [];
+    let nth = 0;
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const m = msgs[i];
+      if (m.kind !== 'user') continue;
+      if (m.uuid) return { after: m.uuid, nth };
+      nth++;
+    }
+    return nth > 0 ? { after: null, nth } : null;
+  }
+
+  /**
+   * Whether the thread still waits on a reply to a prompt, given the history
+   * page a pane loaded (before it is replayed, whose results clear the
+   * flag). `before` is pendingPrompt() from before the chat was cleared for
+   * the page. Main may have had that prompt and finished its turn before it
+   * read the page: then the page holds the end, and nothing waits. One sent
+   * while the page loaded (it shows in the cleared chat) waits: main read
+   * the page before it got it.
+   */
+  stillAwaitingResponse(sessionId: string, before: PendingPrompt | null, page: readonly AgentEvent[]): boolean {
+    if (!this.awaitingResponse[sessionId]) return false;
+    if ((this.messagesBySession[sessionId] ?? []).some((m) => m.kind === 'user')) return true;
+    return !before || !promptAnsweredIn(page, before);
+  }
+
+  /** The thread's pane closed for good: the thread was closed or deleted,
+   *  or its agent stopped, so a prompt sent to it gets no reply. The events
+   *  that would say so (main's close) come after the pane stopped
+   *  listening, and a prompt left waiting would show the thread working
+   *  when it is opened again. */
   dropAwaitingResponse(sessionId: string) {
     delete this.awaitingResponse[sessionId];
   }
@@ -1393,29 +1497,10 @@ class MessageStore {
     // rather than firing the next one into the restarted query.
     this.pauseQueue(sessionId);
 
-    // Resolve any pending tool calls and permissions so spinners/buttons don't linger
+    // Resolve any pending tool calls and prompts so spinners/buttons don't linger
     const msgs = this.messagesBySession[sessionId] ?? [];
-    let changed = false;
-    const updated = msgs.map((m) => {
-      if (m.kind === 'tool_call' && (m.pending || m.awaitingPermission)) {
-        changed = true;
-        return { ...m, pending: false, awaitingPermission: false };
-      }
-      if (m.kind === 'permission' && !m.resolved) {
-        changed = true;
-        return { ...m, resolved: true, decision: 'deny' as const };
-      }
-      if (m.kind === 'elicitation' && !m.resolved) {
-        changed = true;
-        return { ...m, resolved: true, action: 'cancel' as const };
-      }
-      if (m.kind === 'limit' && !m.resolved) {
-        changed = true;
-        return { ...m, resolved: true, decision: 'stop' as const };
-      }
-      return m;
-    });
-    if (changed) {
+    const updated = settlePrompts(msgs, undefined, { toolCalls: true });
+    if (updated !== msgs) {
       this.messagesBySession[sessionId] = updated;
     }
   }
@@ -1561,6 +1646,7 @@ class MessageStore {
         break;
 
       case 'result':
+        this.settleReplayedToolCalls(sessionId, false);
         this.onResult(sessionId, event);
         // A finished turn is the cheapest moment to learn what it cost the
         // plan; the store throttles so back-to-back turns don't spam the SDK.
@@ -1650,6 +1736,7 @@ class MessageStore {
         break;
 
       case 'process_exit':
+        this.settleReplayedToolCalls(sessionId, true);
         this.flushStreamingText(sessionId);
         this.streamingThinking[sessionId] = '';
         this.dropPendingClear(sessionId);
@@ -1661,7 +1748,7 @@ class MessageStore {
         }
         this.activityBySession[sessionId] = { activity: 'idle' };
         if (this.sideEffects) {
-          backgroundTaskStore.resolveStale(sessionId, this.getIsRunning(sessionId));
+          backgroundTaskStore.resolveStale(sessionId, false);
           gitStatusStore.scheduleRefresh(sessionId, 100);
         }
         break;
@@ -2588,7 +2675,8 @@ class MessageStore {
     // Preserve isRunning and isReady — caller controls these based on main's
     // turn state and the session's status (applyTurnState). And
     // awaitingResponse: a prompt sent before the history loads (a new
-    // thread's first) still waits for its reply. A pane that closes drops it
+    // thread's first) still waits for its reply, unless the page ends its
+    // turn (stillAwaitingResponse). A pane closing with its thread drops it
     // (dropAwaitingResponse).
   }
 
@@ -2698,6 +2786,22 @@ class MessageStore {
     window.groveBench.offAgentEvent(sessionId);
   }
 
+  /** A replayed turn's end (its result, or the agent's exit): the tool
+   *  calls before it that nothing answered were cut off then, whatever main
+   *  says of the turn under way now (applyTurnState). Not those of a
+   *  subagent working on in the background, which outlives the turn, unless
+   *  the agent exited (`exited`). */
+  private settleReplayedToolCalls(sessionId: string, exited: boolean) {
+    const buffer = this._replayBuffer;
+    if (!buffer || this._replaySessionId !== sessionId) return;
+    for (let i = 0; i < buffer.length; i++) {
+      const m = buffer[i];
+      if (m.kind !== 'tool_call' || !m.pending) continue;
+      if (!exited && m.parentToolUseId && backgroundTaskStore.isRunningFor(sessionId, m.parentToolUseId)) continue;
+      buffer[i] = { ...m, pending: false };
+    }
+  }
+
   /** After replaying event history, mark any tool_calls still pending as resolved.
    *  During replay the tool_result handler should match, but if events arrive
    *  out of order or the session is idle, we clean up so spinners don't linger. */
@@ -2727,15 +2831,18 @@ class MessageStore {
    * shown after this (releaseLiveEvents), so a turn or a prompt that came
    * after main answered still shows.
    *
-   * `promptSent`: the user sent a prompt that main can't have had when it
-   * answered: a new thread's first (sent once main has the thread, after the
-   * pane asked for the page) or one sent while the page loaded. The thread
-   * is working on that one.
+   * `promptSent`: the user sent a prompt whose turn the page doesn't end
+   * (stillAwaitingResponse): main didn't have it when it answered (a new
+   * thread's first, sent once main has the thread, after the pane asked for
+   * the page; or one sent while the page loaded), or is still on it. The
+   * thread is working on that one. Replayed tool calls a turn's end cut off
+   * are settled during the replay (settleReplayedToolCalls), whatever this
+   * says.
    */
   applyTurnState(sessionId: string, turn: ThreadTurnState, promptSent: boolean) {
     const running = turn.midTurn || promptSent;
     this.setIsRunning(sessionId, running);
-    // Replayed results and exits clear it, but they are older than the prompt.
+    // Replayed results and exits clear it, but they are older than its turn.
     if (promptSent) this.awaitingResponse[sessionId] = true;
     if (!running) this.activityBySession[sessionId] = { activity: 'idle' };
     this.resolveStaleToolCalls(sessionId);
@@ -2749,39 +2856,8 @@ class MessageStore {
    *  closed, or the app quit or was killed, while they waited. */
   resolveReplayedPermissions(sessionId: string, stillPending: ReadonlySet<string>) {
     const msgs = this.messagesBySession[sessionId] ?? [];
-    const unanswered = (m: { resolved: boolean; requestId: string }) => !m.resolved && !stillPending.has(m.requestId);
-    // Tool calls whose prompt is still open go on waiting for it.
-    const stillAwaited = new Set<string>();
-    for (const m of msgs) {
-      if ((m.kind === 'permission' || m.kind === 'question') && !m.resolved && stillPending.has(m.requestId)) {
-        stillAwaited.add(m.toolUseId);
-      }
-    }
-    let changed = false;
-    const updated = msgs.map((m) => {
-      if (m.kind === 'permission' && unanswered(m)) {
-        changed = true;
-        return { ...m, resolved: true as const, decision: 'deny' as const };
-      }
-      if (m.kind === 'question' && unanswered(m)) {
-        changed = true;
-        return { ...m, resolved: true as const };
-      }
-      if (m.kind === 'elicitation' && unanswered(m)) {
-        changed = true;
-        return { ...m, resolved: true as const, action: 'cancel' as const };
-      }
-      if (m.kind === 'limit' && unanswered(m)) {
-        changed = true;
-        return { ...m, resolved: true as const, decision: 'stop' as const };
-      }
-      if (m.kind === 'tool_call' && m.awaitingPermission && !stillAwaited.has(m.toolUseId)) {
-        changed = true;
-        return { ...m, awaitingPermission: false };
-      }
-      return m;
-    });
-    if (changed) {
+    const updated = settlePrompts(msgs, (id) => stillPending.has(id));
+    if (updated !== msgs) {
       this.messagesBySession[sessionId] = updated;
     }
   }

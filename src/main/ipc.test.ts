@@ -1028,7 +1028,7 @@ describe('history', () => {
     const texts = (page: { events: AgentEvent[] }) => page.events.map((e) => (e as { text?: string; message?: string }).text ?? (e as { message?: string }).message);
 
     // The thread being set up has no agent yet: nothing running or asked.
-    const idle = { midTurn: false, pendingPromptIds: [] };
+    const idle = { midTurn: false, pendingPromptIds: [], agentLive: false };
     m.sessionManager.turnState.mockReturnValue(idle);
 
     expect(invoke(IPC.AGENT_HISTORY_COUNT, id)).toBe(5);

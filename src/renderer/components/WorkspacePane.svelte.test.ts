@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
 import { render, cleanup, screen, fireEvent, waitFor } from '@testing-library/svelte';
+import { flushSync } from 'svelte';
 import { IDLE_TURN, mockGroveBench } from '../__mocks__/setup.js';
 import type { ThreadTurnState } from '../../shared/types.js';
 import WorkspacePane from './WorkspacePane.svelte';
@@ -8,6 +9,7 @@ import { store } from '../stores/sessions.svelte.js';
 import { messageStore } from '../stores/messages.svelte.js';
 import { settingsStore } from '../stores/settings.svelte.js';
 import { gitStatusStore } from '../stores/gitStatus.svelte.js';
+import { backgroundTaskStore } from '../stores/backgroundTask.svelte.js';
 
 const agents = { 'claude-code': { available: true, authenticated: true } };
 
@@ -324,7 +326,7 @@ describe('WorkspacePane taking the turn state from main', () => {
   });
 
   it('keeps a thread main says is mid-turn running, with the prompt it waits on', async () => {
-    await load([prompt, toolUse, asked], { midTurn: true, pendingPromptIds: ['perm-1'] });
+    await load([prompt, toolUse, asked], { midTurn: true, pendingPromptIds: ['perm-1'], agentLive: true });
 
     expect(messageStore.getIsRunning(SID)).toBe(true);
     expect(permission()).toMatchObject({ resolved: false });
@@ -350,7 +352,7 @@ describe('WorkspacePane taking the turn state from main', () => {
   it('shows a prompt that arrives while the history loads, and one answered meanwhile as answered', async () => {
     const second = { type: 'permission_request', toolName: 'Write', toolInput: {}, toolUseId: 'tu-2', requestId: 'perm-2' };
     const answered = { type: 'permission_resolved', requestId: 'perm-1', toolUseId: 'tu-1', decision: 'allow' };
-    await load([prompt, toolUse, asked], { midTurn: true, pendingPromptIds: ['perm-1'] }, () => {
+    await load([prompt, toolUse, asked], { midTurn: true, pendingPromptIds: ['perm-1'], agentLive: true }, () => {
       live!(answered);
       live!(second);
     });
@@ -384,12 +386,112 @@ describe('WorkspacePane taking the turn state from main', () => {
     const first = await load([prompt], IDLE_TURN);
     messageStore.addUserMessage(SID, 'And the linter');
     expect(messageStore.getIsRunning(SID)).toBe(true);
-    // Closed: the pane goes before main's events for the close arrive.
+    // Closed: its row stops and the pane goes, before main's events for the
+    // close arrive. (A pane that goes while its thread runs on keeps the
+    // prompt waiting: see the remount below.)
+    store.updateStatus(SID, 'stopped');
     first.unmount();
     live = undefined;
+    // Opened again: it resumes.
+    store.updateStatus(SID, 'running');
 
     await load([prompt, toolUse, { type: 'user_message', text: 'And the linter', uuid: 'u2' }], IDLE_TURN);
 
     expect(messageStore.getIsRunning(SID)).toBe(false);
+  });
+
+  const done = { type: 'result', subtype: 'success', isError: false };
+  const reply = { type: 'assistant_text', text: 'Done', uuid: 'a9' };
+  const second = { type: 'user_message', text: 'And the linter', uuid: 'u2' };
+
+  it('keeps a prompt waiting through a remount after a render error, and drops it once the thread is closed or deleted', async () => {
+    const first = await load([prompt, done], IDLE_TURN);
+    messageStore.addUserMessage(SID, 'And the linter');
+    // A render error: the boundary takes the pane down while the thread
+    // runs on, and puts it back. Main hasn't logged the prompt yet.
+    first.unmount();
+    live = undefined;
+    expect(messageStore.isAwaitingResponse(SID)).toBe(true);
+    const remounted = await load([prompt, done], IDLE_TURN);
+    expect(messageStore.getIsRunning(SID)).toBe(true);
+
+    // Closed: its row stops, then its pane goes.
+    store.updateStatus(SID, 'stopped');
+    remounted.unmount();
+    live = undefined;
+    expect(messageStore.isAwaitingResponse(SID)).toBe(false);
+
+    // Opened again, a prompt sent, then deleted: its row goes, then its pane.
+    store.updateStatus(SID, 'running');
+    const reopened = await load([prompt, done], IDLE_TURN);
+    messageStore.addUserMessage(SID, 'And the linter');
+    store.removeSession(SID);
+    reopened.unmount();
+    expect(messageStore.isAwaitingResponse(SID)).toBe(false);
+  });
+
+  it('does not stay working on a prompt whose turn main finished before it answered the page', async () => {
+    const first = await load([prompt, done], IDLE_TURN);
+    messageStore.addUserMessage(SID, 'And the linter');
+    // The pane goes (a render error) and comes back after main ran the whole turn.
+    first.unmount();
+    live = undefined;
+
+    await load([prompt, done, second, reply, done], IDLE_TURN);
+
+    expect(messageStore.getIsRunning(SID)).toBe(false);
+    expect(messageStore.isAwaitingResponse(SID)).toBe(false);
+  });
+
+  it('keeps a new thread working on its first prompt as its agent comes up, until the turn ends', async () => {
+    store.sessions = [{ id: SID, branch: 'grove/x', repoPath: '/repo', status: 'starting' }] as never;
+    messageStore.addUserMessage(SID, 'Add a hello world test');
+    await load([{ type: 'status', message: 'Creating worktree…' }], IDLE_TURN);
+    expect(messageStore.getIsReady(SID)).toBe(false);
+
+    // Its agent is up: the row turns 'running' (a folder thread's when main
+    // confirms it, a worktree thread's just before system_init).
+    store.updateStatus(SID, 'running');
+    flushSync();
+    expect(messageStore.getIsReady(SID)).toBe(true);
+    expect(messageStore.getIsRunning(SID)).toBe(true);
+    live!({ type: 'system_init', sessionId: 'p', model: 'm', tools: [] });
+    expect(messageStore.getIsRunning(SID)).toBe(true);
+
+    live!({ type: 'user_message', text: 'Add a hello world test', uuid: 'u1' });
+    live!(reply);
+    live!(done);
+    expect(messageStore.getIsRunning(SID)).toBe(false);
+  });
+
+  it('settles a tool call an earlier turn left cut off, while main says a later one runs', async () => {
+    await load([prompt, toolUse, { type: 'process_exit' }, second], { midTurn: true, pendingPromptIds: [], agentLive: true });
+
+    const call = messageStore.getMessages(SID).find((m) => m.kind === 'tool_call');
+    expect(call).toMatchObject({ toolUseId: 'tu-1', pending: false });
+    expect(messageStore.getIsRunning(SID)).toBe(true);
+  });
+
+  describe('background tasks', () => {
+    const devServer = [
+      prompt,
+      { type: 'assistant_tool_use', toolName: 'Bash', toolInput: { command: 'npm run dev', run_in_background: true }, toolUseId: 'tu-1', uuid: 'a1' },
+      { type: 'task_started', taskId: 'bg-1', toolUseId: 'tu-1', description: 'npm run dev', taskType: 'local_bash' },
+      { type: 'tool_result', toolUseId: 'tu-1', content: 'Running in the background' },
+      done,
+    ];
+
+    it('keeps one a live agent runs between turns listed through a reload', async () => {
+      await load(devServer, { midTurn: false, pendingPromptIds: [], agentLive: true });
+
+      expect(messageStore.getIsRunning(SID)).toBe(false);
+      expect(backgroundTaskStore.get(SID)).toEqual([expect.objectContaining({ taskId: 'bg-1', status: 'running' })]);
+    });
+
+    it('drops those of an agent that is gone', async () => {
+      await load(devServer, IDLE_TURN);
+
+      expect(backgroundTaskStore.get(SID)).toEqual([]);
+    });
   });
 });

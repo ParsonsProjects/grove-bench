@@ -220,6 +220,30 @@ describe('App unread flag', () => {
   });
 });
 
+describe('App status from main', () => {
+  it('keeps a new thread working on its first prompt when its agent comes up', async () => {
+    mockGroveBench.getSettings.mockResolvedValue(JSON.parse(JSON.stringify(settingsStore.current)));
+    mockGroveBench.listRepos.mockResolvedValue([]);
+    getOpenTabs.mockResolvedValue([]);
+    mockGroveBench.notifyRestoreComplete.mockClear();
+    render(App);
+    await vi.waitFor(() => expect(mockGroveBench.notifyRestoreComplete).toHaveBeenCalled(), { timeout: 5000 });
+    const [onStatus] = mockGroveBench.onSessionStatus.mock.calls.at(-1) as unknown as [(id: string, status: string) => void];
+    // Sent from the draft as the thread was added.
+    store.sessions = [{ id: 'f', branch: 'feat-f', repoPath: '/repo', status: 'starting' }] as any;
+    messageStore.addUserMessage('f', 'Add a hello world test');
+    flushSync();
+
+    // A worktree thread's agent is up: main says 'running' before system_init.
+    onStatus('f', 'running');
+    flushSync();
+
+    expect(messageStore.getIsReady('f')).toBe(true);
+    expect(messageStore.getIsRunning('f')).toBe(true);
+    messageStore.destroySession('f');
+  });
+});
+
 describe('App auto-resume', () => {
   /** Render the app and open stopped conversation 's', whose resume then
    *  succeeds. Returns the handler for statuses main sends. */

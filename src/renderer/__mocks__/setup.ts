@@ -20,9 +20,9 @@ const localStorageMock = (() => {
 })();
 Object.defineProperty(globalThis, 'localStorage', { value: localStorageMock });
 
-/** Main's answer for a thread with no turn under way and nothing asked
- *  (the turn state history pages carry). */
-const IDLE_TURN: ThreadTurnState = Object.freeze({ midTurn: false, pendingPromptIds: [] as string[] });
+/** Main's answer for a thread with no turn under way, nothing asked and no
+ *  agent running (the turn state history pages carry). */
+const IDLE_TURN: ThreadTurnState = Object.freeze({ midTurn: false, pendingPromptIds: [] as string[], agentLive: false });
 
 // ─── window.groveBench mock ───
 const mockGroveBench = {
