@@ -569,7 +569,9 @@ describe('Sidebar attention triage', () => {
     expect(screen.getByRole('group', { name: 'Filter threads' })).toHaveTextContent('Unread 1');
     expect(screen.getByTitle('1 unread')).toBeInTheDocument();
     // Drawn closed, not green, and its menu has nothing to mark read.
-    await fireEvent.contextMenu(await screen.findByText('Closed one'));
+    const row = await screen.findByText('Closed one');
+    expect(screen.getByRole('img', { name: 'Closed' })).toHaveClass(AGENT_SPRITES.stopped.colorClass);
+    await fireEvent.contextMenu(row);
     expect(screen.getByRole('menu')).toBeInTheDocument();
     expect(screen.queryByText('Mark as Read')).toBeNull();
     expect(screen.queryByText('Mark as Unread')).toBeNull();

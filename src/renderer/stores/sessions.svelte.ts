@@ -76,7 +76,7 @@ class SessionStore {
 
   /** Whether the session is an open tab: live, or restored and waiting to
    *  reconnect on first focus. */
-  isOpenTab(session: { id: string; status: string }): boolean {
+  isOpenTab(session: { id: string; status: SessionStatus }): boolean {
     return session.status !== 'stopped' || !!this.deferredResume[session.id];
   }
 
@@ -84,7 +84,7 @@ class SessionStore {
    *  one counts as dealt with, so a flag it still carries (its agent stopped
    *  by itself, say) doesn't count while it is closed. That way the Unread
    *  chip never counts a thread the Threads list leaves out. */
-  isUnread(session: { id: string; status: string }): boolean {
+  isUnread(session: { id: string; status: SessionStatus }): boolean {
     return !!this.needsAttention[session.id] && this.isOpenTab(session);
   }
 
