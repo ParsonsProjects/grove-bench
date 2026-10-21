@@ -3,7 +3,9 @@ name: Release
 # Push a tag named v<package.json version> on a commit in main. The tag is
 # checked, the Package workflow builds and smoke tests the installer, then it
 # is published as a GitHub release. Versions with a pre-release part
-# (0.1.0-alpha.3) are published as pre-releases.
+# (0.1.0-alpha.3) are published as pre-releases once a full version has been
+# tagged; until then they are full releases, so GitHub's "Latest" badge shows
+# the newest build (scripts/release-check.mjs).
 
 on:
   push:
