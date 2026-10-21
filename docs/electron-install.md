@@ -47,9 +47,9 @@ Uses `electron-updater` with GitHub Releases as the update feed (`publish:` in `
    - runs the Package workflow: type check, tests, `npm run dist`, the node-pty smoke test
    - creates the GitHub release with generated notes and uploads the installer, its `.blockmap` and `latest.yml`
 
-Plain `X.Y.Z` versions are published as full releases. Versions with a pre-release part (`-alpha.3`, `-beta.1`) are published as GitHub pre-releases once a plain version has been tagged. Until then they are full releases too: GitHub's "Latest" badge skips pre-releases, so it would otherwise stay on an old build and people would download that. The release is only created once everything has passed, so a failed run leaves nothing to clean up: fix it on `main`, then delete and re-push the tag (`git push --delete origin vX && git tag -d vX`).
+Plain `X.Y.Z` versions are published as full releases. Versions with a pre-release part (`-alpha.3`, `-beta.1`) are published as GitHub pre-releases once a plain version has a published full release (`scripts/release-type.mjs`). Until then they are full releases too: GitHub's "Latest" badge skips pre-releases, so it would otherwise stay on an old build and people would download that. The release is only created once everything has passed, so a failed run leaves nothing to clean up: fix it on `main`, then delete and re-push the tag (`git push --delete origin vX && git tag -d vX`).
 
-`electron-updater` reads `latest.yml` from the release to detect and download updates. Installs of a pre-release version also receive pre-releases (electron-updater turns `allowPrerelease` on when the running version has a pre-release part); installs of a full release only receive full releases.
+`electron-updater` reads `latest.yml` from the release to detect and download updates. Installs of a pre-release version also receive pre-releases (electron-updater turns `allowPrerelease` on when the running version has a pre-release part); installs of a full version only receive full releases.
 
 The Package workflow also runs on pull requests that touch packaging files, every Monday (runner image updates can break packaging with no change here), and on demand from the Actions tab. Its `windows-installer` artifact (kept 7 days) can be installed for testing.
 

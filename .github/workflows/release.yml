@@ -4,8 +4,8 @@ name: Release
 # checked, the Package workflow builds and smoke tests the installer, then it
 # is published as a GitHub release. Versions with a pre-release part
 # (0.1.0-alpha.3) are published as pre-releases once a full version has been
-# tagged; until then they are full releases, so GitHub's "Latest" badge shows
-# the newest build (scripts/release-check.mjs).
+# released; until then they are full releases, so GitHub's "Latest" badge
+# shows the newest build (scripts/release-type.mjs).
 
 on:
   push:
@@ -37,6 +37,9 @@ jobs:
 
       - name: Check tag matches package.json and is on main
         id: check
+        env:
+          # Lists the published releases (pre-release or not)
+          GH_TOKEN: ${{ github.token }}
         run: node scripts/release-check.mjs
 
   package:

@@ -35,6 +35,7 @@ import { writeFileAtomic } from '../fs-utils.js';
 import { RunningCost, RunningTokens } from './running-cost.js';
 import { execFile } from 'node:child_process';
 import { spawnProcess } from '../process-host.js';
+import { extractJsonObject } from '../extract-json.js';
 import { promisify } from 'node:util';
 import * as path from 'node:path';
 
@@ -1430,40 +1431,59 @@ const AUTH_STATUS_TIMEOUT_MS = 15_000;
 interface AuthStatus { loggedIn: boolean; authMethod?: string; email?: string }
 
 /** The sign-in from `claude auth status --json`, or null when `stdout` holds
- *  none. Text around the JSON (a notice, a warning) is skipped. */
+ *  none. Text around the JSON (a notice, a warning), braces included, is
+ *  skipped: each `{` is tried until one starts the status object. */
 function parseAuthStatus(stdout: string): AuthStatus | null {
-  const start = stdout.indexOf('{');
-  const end = stdout.lastIndexOf('}');
-  if (start === -1 || end < start) return null;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(stdout.slice(start, end + 1));
-  } catch {
-    return null;
+  for (let i = stdout.indexOf('{'); i !== -1; i = stdout.indexOf('{', i + 1)) {
+    const json = extractJsonObject(stdout.slice(i));
+    if (!json) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(json);
+    } catch {
+      continue;
+    }
+    if (!parsed || typeof parsed !== 'object') continue;
+    const { loggedIn, authMethod, email } = parsed as Record<string, unknown>;
+    if (typeof loggedIn !== 'boolean') continue;
+    return {
+      loggedIn,
+      authMethod: typeof authMethod === 'string' ? authMethod : undefined,
+      email: typeof email === 'string' ? email : undefined,
+    };
   }
-  if (!parsed || typeof parsed !== 'object') return null;
-  const { loggedIn, authMethod, email } = parsed as Record<string, unknown>;
-  if (typeof loggedIn !== 'boolean') return null;
-  return {
-    loggedIn,
-    ...(typeof authMethod === 'string' ? { authMethod } : {}),
-    ...(typeof email === 'string' ? { email } : {}),
-  };
+  return null;
 }
 
-/** Why `claude auth status` gave no sign-in, for the log. */
+/** Why `claude auth status` gave no sign-in, for the log. Email addresses are
+ *  left out: people attach the log to bug reports. */
 function describeAuthStatusFailure(err: unknown, stdout: string): string {
   const output = stdout.trim() ? ` Output: ${stdout.trim().slice(0, 300)}` : '';
-  if (!err) return `no sign-in in its output.${output}`;
-  const { code, signal, killed } = typeof err === 'object' ? err as { code?: unknown; signal?: unknown; killed?: unknown } : {};
-  const details = [
-    killed ? 'timed out' : null,
-    code !== undefined && code !== null ? `code ${String(code)}` : null,
-    signal ? `signal ${String(signal)}` : null,
-  ].filter(Boolean).join(', ');
-  // execFile's message is the command line and its stderr.
-  const message = (err instanceof Error ? err.message : String(err)).trim().slice(0, 500);
-  return `${message}${details ? ` (${details})` : ''}.${output}`;
+  let text: string;
+  if (!err) {
+    text = `no sign-in in its output.${output}`;
+  } else {
+    const { code, signal, killed } = typeof err === 'object' ? err as { code?: unknown; signal?: unknown; killed?: unknown } : {};
+    const details = [
+      killed ? 'timed out' : null,
+      code !== undefined && code !== null ? `code ${String(code)}` : null,
+      signal ? `signal ${String(signal)}` : null,
+    ].filter(Boolean).join(', ');
+    // execFile's message is the command line and its stderr.
+    const message = (err instanceof Error ? err.message : String(err)).trim().slice(0, 500);
+    text = `${message}${details ? ` (${details})` : ''}.${output}`;
+  }
+  return text.replace(/[^\s"'<>(),;:@]+@[^\s"'<>(),;:@]+\.[^\s"'<>(),;:@]+/g, '<email>');
+}
+
+/** The CLI to run from `where`/`which` output. An npm install on Windows puts
+ *  a shell script named plain `claude` next to `claude.cmd`, and `where` can
+ *  list it first; Windows can't run that script itself, so on Windows the
+ *  first line with a runnable extension wins. */
+export function pickCliPath(stdout: string, platform: NodeJS.Platform = process.platform): string | undefined {
+  const lines = stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  if (platform !== 'win32') return lines[0];
+  return lines.find((line) => /\.(exe|cmd|bat|com)$/i.test(line)) ?? lines[0];
 }
 
 /** Provider switches the agent reads from the environment
@@ -1690,7 +1710,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     try {
       const cmd = process.platform === 'win32' ? 'where.exe' : 'which';
       const { stdout } = await execFileAsync(cmd, ['claude'], { shell: true, timeout: CLI_LOOKUP_TIMEOUT_MS });
-      claudePath = stdout.trim().split(/\r?\n/)[0];
+      claudePath = pickCliPath(stdout);
     } catch {
       // `where`/`which` failed — try known Windows install locations
       if (process.platform === 'win32') {
@@ -1735,7 +1755,9 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     let stdout = '';
     let failure: unknown;
     try {
-      ({ stdout } = await execFileAsync(claudePath, ['auth', 'status', '--json'], { shell: true, timeout: AUTH_STATUS_TIMEOUT_MS, ...this.cliEnv() }));
+      // Quoted: with `shell: true`, cmd.exe gets the command line unquoted,
+      // so a path with a space (C:\Users\Jo Smith\...) would be cut short.
+      ({ stdout } = await execFileAsync(quoteArg(claudePath), ['auth', 'status', '--json'], { shell: true, timeout: AUTH_STATUS_TIMEOUT_MS, ...this.cliEnv() }));
     } catch (err) {
       failure = err;
       // Signed out exits 1 with the JSON still on stdout
