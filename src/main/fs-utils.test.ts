@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const mockFs = vi.hoisted(() => ({
   rm: vi.fn(),
@@ -10,32 +10,76 @@ const mockFs = vi.hoisted(() => ({
 
 vi.mock('node:fs/promises', () => ({ ...mockFs, default: mockFs }));
 
+// rmdir starts in the process host only (runProcessInHost), never here.
+const mockRunInHost = vi.hoisted(() => vi.fn());
+vi.mock('./process-host.js', () => ({ runProcessInHost: mockRunInHost }));
 const mockExeca = vi.hoisted(() => vi.fn());
 vi.mock('execa', () => ({ execa: mockExeca }));
 
 import { removeDirectory, removeDirectoryWithRetry, readFileWithRetry, writeFileAtomic } from './fs-utils.js';
 
+const realPlatform = process.platform;
+function setPlatform(platform: NodeJS.Platform) {
+  Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+}
+
 beforeEach(() => {
   vi.resetAllMocks();
-  mockExeca.mockResolvedValue({ exitCode: 0 });
+  mockRunInHost.mockResolvedValue({ exitCode: 0, failed: false });
   // Like the real fs, every call returns a promise.
   mockFs.rm.mockResolvedValue(undefined);
   mockFs.writeFile.mockResolvedValue(undefined);
   mockFs.rename.mockResolvedValue(undefined);
 });
 
+afterEach(() => {
+  setPlatform(realPlatform);
+});
+
 describe('removeDirectory', () => {
-  it.runIf(process.platform === 'win32')('returns once the directory is gone without touching fs.rm on Windows', async () => {
+  it('returns once the directory is gone without touching fs.rm on Windows', async () => {
+    setPlatform('win32');
     mockFs.access.mockRejectedValue(new Error('ENOENT'));
 
     await removeDirectory('C:\\tmp\\wt');
 
-    expect(mockExeca).toHaveBeenCalledWith(
+    expect(mockRunInHost).toHaveBeenCalledWith(
       'cmd.exe',
-      expect.arrayContaining([expect.stringContaining('rmdir /s /q')]),
-      expect.objectContaining({ reject: false }),
+      ['/d', '/s', '/c', 'rmdir /s /q "C:\\tmp\\wt"'],
+      { reject: false, timeout: 5 * 60_000 },
     );
     expect(mockFs.rm).not.toHaveBeenCalled();
+  });
+
+  it('starts rmdir in the process host, not in the main process', async () => {
+    setPlatform('win32');
+    mockFs.access.mockRejectedValue(new Error('ENOENT'));
+
+    await removeDirectory('C:\\tmp\\wt');
+
+    expect(mockRunInHost).toHaveBeenCalledOnce();
+    expect(mockExeca).not.toHaveBeenCalled();
+  });
+
+  it('leaves the delete to fs.rm when the process host is not up', async () => {
+    setPlatform('win32');
+    mockRunInHost.mockRejectedValue(new Error("The process host isn't running, so cmd.exe: rmdir didn't run"));
+    mockFs.access.mockResolvedValue(undefined);
+
+    await removeDirectory('C:\\tmp\\wt');
+
+    expect(mockExeca).not.toHaveBeenCalled();
+    expect(mockFs.rm).toHaveBeenCalledWith('C:\\tmp\\wt', { recursive: true, force: true });
+  });
+
+  it('starts no process elsewhere', async () => {
+    setPlatform('linux');
+    mockFs.access.mockResolvedValue(undefined);
+
+    await removeDirectory('/tmp/wt');
+
+    expect(mockRunInHost).not.toHaveBeenCalled();
+    expect(mockFs.rm).toHaveBeenCalledWith('/tmp/wt', { recursive: true, force: true });
   });
 
   it('falls back to fs.rm when the directory survives the shell delete', async () => {

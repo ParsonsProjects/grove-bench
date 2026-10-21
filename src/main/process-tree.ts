@@ -1,8 +1,8 @@
 import path from 'node:path';
 import { fork } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { execa } from 'execa';
 import { logger } from './logger.js';
+import { runProcess, type ProcessResult } from './process-host.js';
 
 /**
  * Kill the processes a conversation started.
@@ -19,6 +19,11 @@ import { logger } from './logger.js';
  * malware: it kills the app and quarantines electron.exe. On Windows the
  * killing is done by taskkill, which ships with Windows and walks the tree
  * itself.
+ *
+ * taskkill (and ps) start in the process host (runProcess), so a slow launch
+ * never freezes the window: they run whenever a thread closes or sleeps. At
+ * quit they still have the host, which stops only after the threads have
+ * closed (will-quit, index.ts); once it has stopped they run here.
  */
 
 export interface ProcessEntry {
@@ -67,10 +72,26 @@ async function taskkill(pids: number[]): Promise<void> {
   // Full path, so a taskkill.exe in the worktree or on PATH can't stand in.
   const exe = path.win32.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'taskkill.exe');
   const args = [...pids.flatMap((pid) => ['/PID', String(pid)]), '/T', '/F'];
-  const result = await execa(exe, args, { windowsHide: true, timeout: KILL_TIMEOUT_MS, reject: false });
+  // No console window: execa hides it by default.
+  const run = () => runProcess(exe, args, { timeout: KILL_TIMEOUT_MS, reject: false });
+  let result: ProcessResult;
+  try {
+    result = await run();
+  } catch {
+    // With reject: false only the host fails a command: it stopped or died
+    // while taskkill ran, and stopped taskkill with it. Killing is safe to
+    // repeat, so it runs again, here if the host is gone (at quit).
+    try {
+      result = await run();
+    } catch (e) {
+      logger.warn(`[process-tree] taskkill ${pids.join(', ')} failed:`, e instanceof Error ? e.message : String(e));
+      return;
+    }
+  }
   // 128: one of them had already exited.
   if (result.failed && result.exitCode !== 128) {
-    logger.warn(`[process-tree] taskkill ${pids.join(', ')} failed:`, result.stderr || result.shortMessage);
+    const why = result.stderr || (result.timedOut ? 'timed out' : `exit code ${result.exitCode ?? 'none'}`);
+    logger.warn(`[process-tree] taskkill ${pids.join(', ')} failed:`, why);
   }
 }
 
@@ -78,6 +99,10 @@ async function taskkill(pids: number[]): Promise<void> {
  * PIDs attached to a ConPTY shell's console. node-pty lists them the same way
  * when it kills a PTY: its helper script attaches to the console, which it has
  * to do from a process of its own. Empty when the console can't be read.
+ *
+ * Forked here, not in the process host: the helper answers over a Node IPC
+ * channel (process.send), which the host's commands don't carry, and
+ * node-pty forks the same helper from here anyway when it kills the PTY.
  */
 function consoleProcesses(shellPid: number): Promise<number[]> {
   return new Promise((resolve) => {
@@ -123,7 +148,7 @@ export function listProcesses(): Promise<ProcessEntry[]> {
 
 async function queryProcesses(): Promise<ProcessEntry[]> {
   try {
-    const { stdout } = await execa('ps', ['-A', '-o', 'pid=,ppid='], { timeout: LIST_TIMEOUT_MS });
+    const { stdout } = await runProcess('ps', ['-A', '-o', 'pid=,ppid='], { timeout: LIST_TIMEOUT_MS });
     return parseProcessList(stdout);
   } catch (err) {
     logger.warn('[process-tree] could not list processes:', err);

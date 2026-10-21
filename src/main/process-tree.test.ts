@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 
+// taskkill and ps start in the process host (runProcess), never here.
+const mockRun = vi.hoisted(() => vi.fn());
+vi.mock('./process-host.js', () => ({ runProcess: mockRun }));
 const mockExeca = vi.hoisted(() => vi.fn());
 vi.mock('execa', () => ({ execa: mockExeca }));
 const mockFork = vi.hoisted(() => vi.fn());
@@ -54,7 +57,7 @@ function fakeHelper(list: number[] | null, pid = 9000) {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.restoreAllMocks();
-  mockExeca.mockReset();
+  mockRun.mockReset();
   mockFork.mockReset();
   setPlatform('linux');
 });
@@ -104,22 +107,23 @@ describe('treeOf', () => {
 });
 
 describe('listProcesses', () => {
-  it('uses ps', async () => {
-    mockExeca.mockResolvedValue(psOutput([{ pid: 1, ppid: 0 }]));
+  it('uses ps, started in the process host', async () => {
+    mockRun.mockResolvedValue(psOutput([{ pid: 1, ppid: 0 }]));
     expect(await listProcesses()).toEqual([{ pid: 1, ppid: 0 }]);
-    expect(mockExeca).toHaveBeenCalledWith('ps', ['-A', '-o', 'pid=,ppid='], expect.any(Object));
+    expect(mockRun).toHaveBeenCalledWith('ps', ['-A', '-o', 'pid=,ppid='], { timeout: 10_000 });
+    expect(mockExeca).not.toHaveBeenCalled();
   });
 
   it('returns an empty table when the query fails', async () => {
-    mockExeca.mockRejectedValue(new Error('ps: not found'));
+    mockRun.mockRejectedValue(new Error('ps: not found'));
     expect(await listProcesses()).toEqual([]);
   });
 
   it('shares one query between concurrent callers', async () => {
-    mockExeca.mockResolvedValue(psOutput([{ pid: 1, ppid: 0 }]));
+    mockRun.mockResolvedValue(psOutput([{ pid: 1, ppid: 0 }]));
     const [a, b] = await Promise.all([listProcesses(), listProcesses()]);
     expect(a).toBe(b);
-    expect(mockExeca).toHaveBeenCalledOnce();
+    expect(mockRun).toHaveBeenCalledOnce();
   });
 });
 
@@ -127,7 +131,7 @@ describe('killTree on POSIX', () => {
   it('kills the root and everything under it, parents first', async () => {
     const running = new Set([1, 200, 201, 202, 300]);
     const killed = fakeKill(running);
-    mockExeca.mockResolvedValue(psOutput([
+    mockRun.mockResolvedValue(psOutput([
       { pid: 1, ppid: 0 }, { pid: 200, ppid: 1 }, { pid: 201, ppid: 200 }, { pid: 202, ppid: 201 }, { pid: 300, ppid: 1 },
     ]));
 
@@ -137,7 +141,7 @@ describe('killTree on POSIX', () => {
 
   it('still kills the root when processes cannot be listed', async () => {
     const killed = fakeKill(new Set([400]));
-    mockExeca.mockRejectedValue(new Error('boom'));
+    mockRun.mockRejectedValue(new Error('boom'));
 
     await killTree(400);
     expect(killed).toEqual([400]);
@@ -148,7 +152,7 @@ describe('killTree on POSIX', () => {
     await killTree(0);
     await killTree(process.pid);
     expect(killed).toEqual([]);
-    expect(mockExeca).not.toHaveBeenCalled();
+    expect(mockRun).not.toHaveBeenCalled();
   });
 });
 
@@ -156,27 +160,59 @@ describe('killTree on Windows', () => {
   beforeEach(() => setPlatform('win32'));
 
   it('kills the tree with System32 taskkill, never PowerShell', async () => {
-    mockExeca.mockResolvedValue({ failed: false, exitCode: 0 });
+    mockRun.mockResolvedValue({ failed: false, exitCode: 0 });
 
     await killTree(4242);
 
-    expect(mockExeca).toHaveBeenCalledOnce();
-    const [command, args, opts] = mockExeca.mock.calls[0];
+    expect(mockRun).toHaveBeenCalledOnce();
+    const [command, args, opts] = mockRun.mock.calls[0];
     expect(command).toMatch(/\\System32\\taskkill\.exe$/i);
     expect(args).toEqual(['/PID', '4242', '/T', '/F']);
-    expect(opts).toMatchObject({ windowsHide: true, reject: false });
+    expect(opts).toEqual({ timeout: 10_000, reject: false });
+  });
+
+  it('starts taskkill in the process host, not in the main process', async () => {
+    mockRun.mockResolvedValue({ failed: false, exitCode: 0 });
+    await killTree(4242);
+    expect(mockRun).toHaveBeenCalledOnce();
+    expect(mockExeca).not.toHaveBeenCalled();
+  });
+
+  it('runs taskkill again when the host stops under it, as at quit', async () => {
+    mockRun
+      .mockRejectedValueOnce(new Error('The process host stopped before the command finished: taskkill.exe'))
+      .mockResolvedValueOnce({ failed: false, exitCode: 0 });
+
+    await killTree(4242);
+
+    expect(mockRun).toHaveBeenCalledTimes(2);
+    expect(mockRun.mock.calls[1]).toEqual(mockRun.mock.calls[0]);
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it('never throws when taskkill fails to run at all, and says so', async () => {
+    mockRun.mockRejectedValue(new Error('The process host stopped before the command finished: taskkill.exe'));
+    await expect(killTree(4242)).resolves.toBeUndefined();
+    expect(mockRun).toHaveBeenCalledTimes(2);
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('4242'), expect.stringContaining('process host stopped'));
   });
 
   it('treats a process that already exited as done', async () => {
-    mockExeca.mockResolvedValue({ failed: true, exitCode: 128, stderr: 'ERROR: The process "4242" not found.' });
+    mockRun.mockResolvedValue({ failed: true, exitCode: 128, stderr: 'ERROR: The process "4242" not found.' });
     await killTree(4242);
     expect(logger.warn).not.toHaveBeenCalled();
   });
 
   it('logs any other taskkill failure', async () => {
-    mockExeca.mockResolvedValue({ failed: true, exitCode: 1, stderr: 'ERROR: Access is denied.' });
+    mockRun.mockResolvedValue({ failed: true, exitCode: 1, stderr: 'ERROR: Access is denied.' });
     await killTree(4242);
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('4242'), 'ERROR: Access is denied.');
+  });
+
+  it('logs a taskkill that timed out', async () => {
+    mockRun.mockResolvedValue({ failed: true, timedOut: true, stderr: '' });
+    await killTree(4242);
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('4242'), 'timed out');
   });
 });
 
@@ -184,7 +220,7 @@ describe('killDescendants on POSIX', () => {
   it('kills everything under the root but not the root', async () => {
     const running = new Set([1, 100, 101, 102]);
     const killed = fakeKill(running);
-    mockExeca.mockResolvedValue(psOutput([
+    mockRun.mockResolvedValue(psOutput([
       { pid: 1, ppid: 0 }, { pid: 100, ppid: 1 }, { pid: 101, ppid: 100 }, { pid: 102, ppid: 101 },
     ]));
 
@@ -200,14 +236,14 @@ describe('killDescendants on Windows', () => {
   it("kills the tree of everything on the shell's console, leaving the shell", async () => {
     // Console: the helper itself (9000), a dev server (700) and the shell (500).
     fakeHelper([9000, 700, 500]);
-    mockExeca.mockResolvedValue({ failed: false, exitCode: 0 });
+    mockRun.mockResolvedValue({ failed: false, exitCode: 0 });
 
     expect(await killDescendants(500)).toEqual([700]);
 
     const [agent, agentArgs] = mockFork.mock.calls[0];
     expect(agent).toMatch(/node-pty[\\/]lib[\\/]conpty_console_list_agent\.js$/);
     expect(agentArgs).toEqual(['500']);
-    const [command, args] = mockExeca.mock.calls[0];
+    const [command, args] = mockRun.mock.calls[0];
     expect(command).toMatch(/\\System32\\taskkill\.exe$/i);
     expect(args).toEqual(['/PID', '700', '/T', '/F']);
   });
@@ -215,12 +251,12 @@ describe('killDescendants on Windows', () => {
   it('runs nothing when only the shell is on the console', async () => {
     fakeHelper([9000, 500]);
     expect(await killDescendants(500)).toEqual([]);
-    expect(mockExeca).not.toHaveBeenCalled();
+    expect(mockRun).not.toHaveBeenCalled();
   });
 
   it('kills nothing when the console cannot be read', async () => {
     fakeHelper(null);
     expect(await killDescendants(500)).toEqual([]);
-    expect(mockExeca).not.toHaveBeenCalled();
+    expect(mockRun).not.toHaveBeenCalled();
   });
 });

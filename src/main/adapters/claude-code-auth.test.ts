@@ -1,10 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-const execFileMock = vi.fn();
-vi.mock('node:child_process', () => ({
-  execFile: (...args: unknown[]) => execFileMock(...args),
-  spawn: vi.fn(),
+// The CLI calls run in the process host (runProcess), never here.
+const runMock = vi.hoisted(() => vi.fn());
+vi.mock('../process-host.js', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  runProcess: runMock,
 }));
+const childProcess = vi.hoisted(() => ({ execFile: vi.fn(), spawn: vi.fn() }));
+vi.mock('node:child_process', () => childProcess);
 
 vi.mock('../credentials.js', () => ({
   getApiKey: vi.fn(() => null),
@@ -20,12 +23,12 @@ import { net } from 'electron';
 
 type ExecResult = { stdout: string } | Error;
 
-/** Answer each execFile call in order: `which claude`, then `claude auth status`. */
-function execFileAnswers(...answers: ExecResult[]): void {
-  execFileMock.mockImplementation((_file: string, _args: string[], _opts: unknown, cb: (err: Error | null, out?: { stdout: string; stderr: string }) => void) => {
-    const next = answers.shift() ?? new Error('unexpected execFile call');
-    if (next instanceof Error) cb(next);
-    else cb(null, { stdout: next.stdout, stderr: '' });
+/** Answer each CLI call in order: `which claude`, then `claude auth status`. */
+function cliAnswers(...answers: ExecResult[]): void {
+  runMock.mockImplementation(async () => {
+    const next = answers.shift() ?? new Error('unexpected CLI call');
+    if (next instanceof Error) throw next;
+    return { stdout: next.stdout, stderr: '', exitCode: 0, failed: false, timedOut: false };
   });
 }
 
@@ -72,45 +75,111 @@ describe('ClaudeCodeAdapter.checkPrerequisites()', () => {
   const adapter = new ClaudeCodeAdapter();
 
   it('reports the CLI missing and no credentials', async () => {
-    execFileAnswers(new Error('not found'));
+    cliAnswers(new Error('not found'));
     const status = await adapter.checkPrerequisites();
     expect(status).toMatchObject({ available: false, authenticated: false });
   });
 
   it('counts an env API key as signed in even without the CLI', async () => {
     process.env.ANTHROPIC_API_KEY = 'sk-test';
-    execFileAnswers(new Error('not found'));
+    cliAnswers(new Error('not found'));
     const status = await adapter.checkPrerequisites();
     expect(status).toMatchObject({ available: false, authenticated: true, authMethod: 'ANTHROPIC_API_KEY' });
   });
 
   it('skips the CLI auth probe when the environment already has credentials', async () => {
     process.env.CLAUDE_CODE_USE_BEDROCK = '1';
-    execFileAnswers({ stdout: '/usr/bin/claude\n' });
+    cliAnswers({ stdout: '/usr/bin/claude\n' });
     const status = await adapter.checkPrerequisites();
     expect(status).toMatchObject({ available: true, path: '/usr/bin/claude', authenticated: true, authMethod: 'Amazon Bedrock' });
-    expect(execFileMock).toHaveBeenCalledTimes(1);
+    expect(runMock).toHaveBeenCalledTimes(1);
   });
 
   it('reads the CLI sign-in', async () => {
-    execFileAnswers({ stdout: '/usr/bin/claude\n' }, { stdout: '{"loggedIn":true,"authMethod":"claude.ai","email":"a@b.c"}' });
+    cliAnswers({ stdout: '/usr/bin/claude\n' }, { stdout: '{"loggedIn":true,"authMethod":"claude.ai","email":"a@b.c"}' });
     const status = await adapter.checkPrerequisites();
     expect(status).toMatchObject({ available: true, authenticated: true, authMethod: 'claude.ai', email: 'a@b.c' });
   });
 
   it('treats a failed or slow auth probe as signed out, not as a crash', async () => {
-    execFileAnswers({ stdout: '/usr/bin/claude\n' }, Object.assign(new Error('timed out'), { killed: true, signal: 'SIGTERM' }));
+    cliAnswers({ stdout: '/usr/bin/claude\n' }, Object.assign(new Error('timed out'), { killed: true, signal: 'SIGTERM' }));
     const status = await adapter.checkPrerequisites();
     expect(status).toMatchObject({ available: true, authenticated: false });
   });
 
   it('puts a time limit on both CLI calls', async () => {
-    execFileAnswers({ stdout: '/usr/bin/claude\n' }, { stdout: '{"loggedIn":false}' });
+    cliAnswers({ stdout: '/usr/bin/claude\n' }, { stdout: '{"loggedIn":false}' });
     await adapter.checkPrerequisites();
-    expect(execFileMock).toHaveBeenCalledTimes(2);
-    for (const call of execFileMock.mock.calls) {
+    expect(runMock).toHaveBeenCalledTimes(2);
+    for (const call of runMock.mock.calls) {
       expect((call[2] as { timeout?: number }).timeout).toBeGreaterThan(0);
     }
+  });
+
+  it('runs both CLI calls in the process host, not in the main process', async () => {
+    cliAnswers({ stdout: '/usr/bin/claude\n' }, { stdout: '{"loggedIn":true}' });
+    await adapter.checkPrerequisites();
+    const lookup = process.platform === 'win32' ? 'where.exe' : 'which';
+    // The lookup needs no shell; `auth status` runs as the CLI always has,
+    // its command line in a shell.
+    expect(runMock.mock.calls).toEqual([
+      [lookup, ['claude'], { timeout: 10_000 }],
+      ['/usr/bin/claude', ['auth', 'status', '--json'], { timeout: 15_000, shell: true }],
+    ]);
+    expect(childProcess.execFile).not.toHaveBeenCalled();
+    expect(childProcess.spawn).not.toHaveBeenCalled();
+  });
+});
+
+describe('ClaudeCodeAdapter MCP and plugin commands', () => {
+  const adapter = new ClaudeCodeAdapter();
+  const ran = () => runMock.mock.calls.map(([file, args, opts]) => [file, args, opts]);
+
+  beforeEach(() => {
+    runMock.mockResolvedValue({ stdout: '', stderr: '', exitCode: 0, failed: false, timedOut: false });
+  });
+
+  afterEach(() => {
+    // Nothing here starts a process in the main process.
+    expect(childProcess.execFile).not.toHaveBeenCalled();
+    expect(childProcess.spawn).not.toHaveBeenCalled();
+  });
+
+  it('lists MCP servers through the CLI in the process host, in a shell', async () => {
+    runMock.mockResolvedValueOnce({ stdout: 'figma: https://mcp.figma.com/mcp (HTTP) - ✔ Connected\n', stderr: '', exitCode: 0, failed: false, timedOut: false });
+    expect(await adapter.listConfiguredMcpServers('/repo')).toEqual([expect.objectContaining({ name: 'figma' })]);
+    expect(ran()).toEqual([['claude', ['mcp', 'list'], { shell: true, cwd: '/repo', timeout: 60_000 }]]);
+  });
+
+  it('adds and removes MCP servers through the CLI in the process host, args quoted for the shell', async () => {
+    await adapter.addConfiguredMcpServer({ name: 'my-server', transport: 'stdio', scope: 'user', commandOrUrl: 'npx', args: ['some mcp'], cwd: '/repo' });
+    await adapter.removeConfiguredMcpServer('my-server', 'user', '/repo');
+    expect(ran()).toEqual([
+      ['claude', ['mcp', 'add', '-s', 'user', '-t', 'stdio', 'my-server', '--', 'npx', '"some mcp"'], { shell: true, cwd: '/repo', timeout: 30_000 }],
+      ['claude', ['mcp', 'remove', '-s', 'user', 'my-server'], { shell: true, cwd: '/repo', timeout: 30_000 }],
+    ]);
+  });
+
+  it('lists, installs, uninstalls, enables and disables plugins through the CLI in the process host', async () => {
+    runMock.mockResolvedValueOnce({ stdout: '{"installed":[{"id":"p@m"}],"available":[]}', stderr: '', exitCode: 0, failed: false, timedOut: false });
+    expect(await adapter.listPlugins()).toEqual({ installed: [{ id: 'p@m' }], available: [] });
+    await adapter.installPlugin('p@m', 'project');
+    await adapter.uninstallPlugin('p@m');
+    await adapter.enablePlugin('p@m');
+    await adapter.disablePlugin('p@m');
+    expect(ran()).toEqual([
+      ['claude', ['plugin', 'list', '--json', '--available'], { shell: true }],
+      ['claude', ['plugin', 'install', 'p@m', '--scope', 'project'], { shell: true }],
+      ['claude', ['plugin', 'uninstall', 'p@m'], { shell: true }],
+      ['claude', ['plugin', 'enable', 'p@m'], { shell: true }],
+      ['claude', ['plugin', 'disable', 'p@m'], { shell: true }],
+    ]);
+  });
+
+  it('passes a failed CLI command on, and lists no plugins when listing fails', async () => {
+    runMock.mockRejectedValue(Object.assign(new Error('Command failed with exit code 1: claude plugin install x'), { exitCode: 1, stderr: 'not found' }));
+    await expect(adapter.installPlugin('x')).rejects.toMatchObject({ exitCode: 1, stderr: 'not found' });
+    expect(await adapter.listPlugins()).toEqual({ installed: [], available: [] });
   });
 });
 
@@ -209,17 +278,20 @@ describe('ClaudeCodeAdapter for another Claude account', () => {
 
   it('reads the sign-in in its folder and ignores credentials in Grove\'s environment', async () => {
     process.env.ANTHROPIC_API_KEY = 'sk-shell';
-    execFileAnswers({ stdout: '/usr/bin/claude\n' }, { stdout: '{"loggedIn":true,"authMethod":"claude.ai","email":"me@work.example"}' });
+    cliAnswers({ stdout: '/usr/bin/claude\n' }, { stdout: '{"loggedIn":true,"authMethod":"claude.ai","email":"me@work.example"}' });
     const status = await adapter.checkPrerequisites();
     expect(status).toMatchObject({ available: true, authenticated: true, email: 'me@work.example' });
-    const env = (execFileMock.mock.calls[1][2] as { env: Record<string, string | undefined> }).env;
-    expect(env.CLAUDE_CONFIG_DIR).toBe('/home/me/.claude-work');
-    expect(env).not.toHaveProperty('ANTHROPIC_API_KEY');
+    const opts = runMock.mock.calls[1][2] as { env: Record<string, string | undefined>; extendEnv?: boolean };
+    expect(opts.env.CLAUDE_CONFIG_DIR).toBe('/home/me/.claude-work');
+    expect(opts.env).not.toHaveProperty('ANTHROPIC_API_KEY');
+    // The whole environment: the key left out mustn't come back from the
+    // one the command would otherwise inherit.
+    expect(opts.extendEnv).toBe(false);
   });
 
   it('is signed out without the CLI, even with a key in the environment', async () => {
     process.env.ANTHROPIC_API_KEY = 'sk-shell';
-    execFileAnswers(new Error('not found'));
+    cliAnswers(new Error('not found'));
     expect(await adapter.checkPrerequisites()).toMatchObject({ available: false, authenticated: false });
   });
 
@@ -237,9 +309,9 @@ describe('ClaudeCodeAdapter for another Claude account', () => {
   });
 
   it("edits the account's own MCP configuration", async () => {
-    execFileAnswers({ stdout: '' });
+    cliAnswers({ stdout: '' });
     await adapter.listConfiguredMcpServers('/repo');
-    expect((execFileMock.mock.calls[0][2] as { env: Record<string, string> }).env.CLAUDE_CONFIG_DIR).toBe('/home/me/.claude-work');
+    expect((runMock.mock.calls[0][2] as { env: Record<string, string> }).env.CLAUDE_CONFIG_DIR).toBe('/home/me/.claude-work');
   });
 
   it("checks a pasted key with Anthropic even when Grove's environment points elsewhere", async () => {

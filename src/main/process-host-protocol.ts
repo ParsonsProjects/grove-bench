@@ -11,6 +11,14 @@
 export interface HostedOptions {
   cwd?: string;
   env?: Record<string, string | undefined>;
+  /** false: `env` is the whole environment, rather than added to the one
+   *  the command would inherit. For an environment with variables taken out
+   *  (accountEnv), which would otherwise come back. */
+  extendEnv?: boolean;
+  /** Run the command line in cmd.exe (/bin/sh elsewhere), as Node's
+   *  `shell: true` does: `file` and `args` joined with spaces, unquoted, so
+   *  the caller quotes them. */
+  shell?: boolean;
   timeout?: number;
   reject?: boolean;
   input?: string;

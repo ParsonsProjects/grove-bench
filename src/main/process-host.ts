@@ -1,6 +1,8 @@
 /**
  * Process host: git and gh run from an Electron utility process
- * (process-host-child.ts), so starting them never blocks the main process.
+ * (process-host-child.ts), so starting them never blocks the main process,
+ * as do the main process's other short commands (taskkill, the claude CLI's
+ * where, auth, mcp and plugin calls, rmdir, the editor CLIs).
  * So do the agents' programs (claude, ACP agents), which keep running and
  * stream their input and output through a second host of their own, the agent host
  * (process-host-spawn.ts). Kept apart because the git host is restarted when
