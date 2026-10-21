@@ -1000,13 +1000,7 @@ class MessageStore {
       this.sendCommand(sessionId, item.outgoing);
       return;
     }
-    this.addUserMessage(
-      sessionId,
-      item.outgoing,
-      item.images?.map((img) => ({ name: img.name, dataUrl: `data:${img.mediaType};base64,${img.data}` })),
-      // Shown by name until main has saved them.
-      item.files?.map((f) => ({ name: f.name, mediaType: f.mediaType, size: base64Size(f.data) })),
-    );
+    this.addSentMessage(sessionId, item);
     window.groveBench.sendMessage(
       sessionId,
       item.outgoing,
@@ -1411,6 +1405,18 @@ class MessageStore {
     if (changed) {
       this.messagesBySession[sessionId] = updated;
     }
+  }
+
+  /** Add a prompt to the display as it goes to main, with its images and
+   *  other files. */
+  addSentMessage(sessionId: string, msg: Pick<QueuedMessage, 'outgoing' | 'images' | 'files'>) {
+    this.addUserMessage(
+      sessionId,
+      msg.outgoing,
+      msg.images?.map((img) => ({ name: img.name, dataUrl: `data:${img.mediaType};base64,${img.data}` })),
+      // Shown by name until main has saved them.
+      msg.files?.map((f) => ({ name: f.name, mediaType: f.mediaType, size: base64Size(f.data) })),
+    );
   }
 
   /** Add a user message to the display. `sent` is the text as sent to the

@@ -13,6 +13,8 @@
   import { settingsStore } from '../stores/settings.svelte.js';
   import { agentReady, gitReady } from '../../shared/prerequisites.js';
   import { controlHint } from '../lib/control-hint.js';
+  import { processFiles } from '$lib/file-attachments.js';
+  import AttachmentChips from './AttachmentChips.svelte';
   import ApiKeyField from './ApiKeyField.svelte';
   import CommandLine from './CommandLine.svelte';
   import GroveEmptyState from './GroveEmptyState.svelte';
@@ -74,10 +76,6 @@
   });
 
   const start = $derived(draft?.start);
-  const canStart = $derived(
-    !!draft && credentials === 'ready'
-      && (start?.kind !== 'existing' || !!start.branch),
-  );
 
   /** Set when credentials go from missing to ready in this draft, so the
    *  user sees that the Re-check or the saved key worked. */
@@ -110,8 +108,10 @@
     if (credentials === 'checking') return 'Checking credentials…';
     if (credentials === 'no-agent') return 'No agent is available to start this thread.';
     if (start?.kind === 'existing' && !start.branch) return 'Pick a branch or pull request first.';
+    if (draft.attachments.length > 0 && !draft.text.trim()) return 'Write a message to go with the attached files.';
     return null;
   });
+  const canStart = $derived(!!draft && !startBlocker);
   /** Enter was pressed while Start was off: say why under the message box. */
   let nudged = $state(false);
   $effect(() => {
@@ -178,6 +178,49 @@
     if (credentials === 'ready') textEl?.focus();
   });
 
+  // ─── Drag & Drop ───
+
+  /** Whether the draft's agent takes images; they are attached as files
+   *  (sent by path) otherwise. */
+  const allowImages = $derived(agentsStore.supports(agentId, 'imageAttachments'));
+  let paneEl = $state<HTMLDivElement | null>(null);
+  let dragOver = $state(false);
+  let dropMessage = $state('');
+  let dropMessageTimer: ReturnType<typeof setTimeout> | undefined;
+
+  // Only files: dragged text still drops into the message box as usual.
+  function handleDragOver(e: DragEvent) {
+    if (!e.dataTransfer?.types.includes('Files')) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    dragOver = true;
+  }
+
+  function handleDragLeave(e: DragEvent) {
+    // Only when leaving the pane, not when moving onto a child of it.
+    if (!paneEl?.contains(e.relatedTarget as Node | null)) dragOver = false;
+  }
+
+  async function handleDrop(e: DragEvent) {
+    dragOver = false;
+    const dropped = e.dataTransfer?.files;
+    if (!draft || !dropped?.length) return;
+    e.preventDefault();
+    const { files, skipped } = await processFiles(dropped, draft.attachments, { allowImages });
+    draftStore.addAttachments(files);
+    if (skipped.length > 0) {
+      clearTimeout(dropMessageTimer);
+      dropMessage = `Skipped: ${skipped.join(', ')}`;
+      dropMessageTimer = setTimeout(() => { dropMessage = ''; }, 3000);
+    }
+    textEl?.focus();
+  }
+
+  function removeAttachment(index: number) {
+    draftStore.removeAttachment(index);
+    textEl?.focus();
+  }
+
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
@@ -188,7 +231,15 @@
 </script>
 
 {#if draft}
-<div class="flex flex-col h-full bg-background">
+<!-- Files dropped anywhere on the pane attach to the first message. -->
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div
+  bind:this={paneEl}
+  class="flex flex-col h-full bg-background"
+  ondragover={handleDragOver}
+  ondragleave={handleDragLeave}
+  ondrop={handleDrop}
+>
   <PanelHeader title="New thread">
     <span class="truncate text-muted-foreground">in {store.repoDisplayName(draft.repoPath)}{agentName ? ` · ${agentName}` : ''}</span>
     {#snippet actions()}
@@ -306,7 +357,18 @@
       {/if}
 
       <!-- The message box, with the options and Start along its foot. -->
-      <div class="bg-card border border-input has-[textarea:focus]:ring-1 has-[textarea:focus]:ring-ring">
+      <div class="relative bg-card border border-input has-[textarea:focus]:ring-1 has-[textarea:focus]:ring-ring">
+        {#if dragOver}
+          <div class="absolute -inset-px z-20 border-2 border-primary bg-primary/10 flex items-center justify-center pointer-events-none">
+            <span class="text-primary text-sm font-medium">Drop files to attach</span>
+          </div>
+        {/if}
+        {#if dropMessage}
+          <p class="px-4 pt-2 text-xs text-destructive" role="status">{dropMessage}</p>
+        {/if}
+        {#if draft.attachments.length > 0}
+          <AttachmentChips files={draft.attachments} onremove={removeAttachment} class="px-4 pt-3" />
+        {/if}
         <textarea
           bind:this={textEl}
           value={draft.text}

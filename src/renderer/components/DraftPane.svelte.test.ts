@@ -90,7 +90,7 @@ describe('DraftPane', () => {
     await waitFor(() => expect(createSessionMock()).toHaveBeenCalled());
     // The thread's id is picked by the draft store and sent with the create.
     const { id } = createSessionMock().mock.calls[0][0];
-    await waitFor(() => expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(id, 'Fix API-12 login crash'));
+    await waitFor(() => expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(id, 'Fix API-12 login crash', undefined, undefined));
   });
 
   it('keeps Shift+Enter as a new line', async () => {
@@ -127,6 +127,64 @@ describe('DraftPane', () => {
     render(DraftPane);
     await fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
     expect(draftStore.draft).toBeNull();
+  });
+});
+
+describe('DraftPane drag and drop', () => {
+  // jsdom has no DataTransfer: fireEvent puts this object on the event.
+  const dropped = (...files: File[]) => ({ dataTransfer: { types: ['Files'], files } });
+  const notes = () => new File(['steps'], 'notes.md', { type: 'text/markdown' });
+
+  it('attaches files dropped on the pane and sends them with the first message', async () => {
+    render(DraftPane);
+    const box = screen.getByLabelText('First message');
+    await fireEvent.dragOver(box, dropped(notes()));
+    expect(screen.getByText('Drop files to attach')).toBeInTheDocument();
+    await fireEvent.drop(box, dropped(notes()));
+    expect(await screen.findByText('notes.md')).toBeInTheDocument();
+    expect(screen.queryByText('Drop files to attach')).not.toBeInTheDocument();
+
+    await fireEvent.input(box, { target: { value: 'Fix the crash' } });
+    await fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(mockGroveBench.sendMessage).toHaveBeenCalled());
+    expect(mockGroveBench.sendMessage.mock.calls[0][1]).toBe('<file path="notes.md" length="5">\nsteps\n</file>\n\nFix the crash');
+  });
+
+  it('leaves dragged text to the message box', async () => {
+    render(DraftPane);
+    const box = screen.getByLabelText('First message');
+    // Not prevented, so the browser drops the text as usual.
+    expect(await fireEvent.dragOver(box, { dataTransfer: { types: ['text/plain'] } })).toBe(true);
+    expect(screen.queryByText('Drop files to attach')).not.toBeInTheDocument();
+  });
+
+  it('stops showing the drop target when the drag leaves the pane', async () => {
+    render(DraftPane);
+    const box = screen.getByLabelText('First message');
+    await fireEvent.dragOver(box, dropped(notes()));
+    await fireEvent.dragLeave(box, { relatedTarget: null });
+    expect(screen.queryByText('Drop files to attach')).not.toBeInTheDocument();
+  });
+
+  it('removes a dropped file', async () => {
+    render(DraftPane);
+    await fireEvent.drop(screen.getByLabelText('First message'), dropped(notes()));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Remove notes.md' }));
+    expect(screen.queryByText('notes.md')).not.toBeInTheDocument();
+    expect(draftStore.draft?.attachments).toEqual([]);
+  });
+
+  it('asks for a message to go with dropped files', async () => {
+    render(DraftPane);
+    const box = screen.getByLabelText('First message');
+    await fireEvent.drop(box, dropped(notes()));
+    await screen.findByText('notes.md');
+    const startButton = screen.getByRole('button', { name: 'Start' });
+    expect(startButton).toBeDisabled();
+    expect(startButton).toHaveAttribute('title', 'Write a message to go with the attached files.');
+    await fireEvent.keyDown(box, { key: 'Enter' });
+    expect(screen.getByRole('status')).toHaveTextContent('Write a message to go with the attached files.');
+    expect(createSessionMock()).not.toHaveBeenCalled();
   });
 });
 

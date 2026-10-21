@@ -9,6 +9,7 @@ import {
   base64Size,
   dataUrlData,
   formatFileSize,
+  attachmentPayload,
   TEXT_EXTENSIONS,
   IMAGE_MIME_TYPES,
   MAX_TEXT_SIZE,
@@ -409,6 +410,25 @@ describe('dataUrlData and base64Size', () => {
     for (const bytes of ['', 'a', 'ab', 'abc', 'abcd']) {
       expect(base64Size(btoa(bytes))).toBe(bytes.length);
     }
+  });
+});
+
+describe('attachmentPayload', () => {
+  it('puts text files in content blocks and sends images and other files alongside, in order', () => {
+    expect(attachmentPayload([
+      { name: 'a.md', content: 'one', type: 'text' },
+      { name: 'shot.webp', dataUrl: 'data:image/webp;base64,AAAA', type: 'image' },
+      { name: 'b.md', content: 'two', type: 'text' },
+      { name: 'spec.pdf', dataUrl: 'data:application/pdf;base64,BBBB', mediaType: 'application/pdf', size: 3, type: 'file' },
+    ])).toEqual({
+      tags: ['<file path="a.md" length="3">\none\n</file>', '<file path="b.md" length="3">\ntwo\n</file>'],
+      images: [{ name: 'shot.webp', data: 'AAAA', mediaType: 'image/webp' }],
+      files: [{ name: 'spec.pdf', data: 'BBBB', mediaType: 'application/pdf' }],
+    });
+  });
+
+  it('is empty with nothing attached', () => {
+    expect(attachmentPayload([])).toEqual({ tags: [], images: [], files: [] });
   });
 });
 
