@@ -1,4 +1,4 @@
-import type { AgentEvent, ControlDescriptor, FileAttachment, ImageAttachment, MadeFile, McpElicitationRequest, McpElicitationResponse, McpServerInfo, PermissionDecision, PermissionMode, SessionControls, StoredFile, StoredImage } from '../../shared/types.js';
+import type { AgentEvent, ControlDescriptor, FileAttachment, ImageAttachment, MadeFile, McpElicitationRequest, McpElicitationResponse, McpServerInfo, PermissionDecision, PermissionMode, SessionControls, StoredFile, StoredImage, ThreadTurnState } from '../../shared/types.js';
 import { CONTROL_IDS, DEFAULT_DENY_MESSAGE, subagentParent } from '../../shared/types.js';
 import { attachedFilesFromSent, type SentBlock } from '../../shared/prompt-text.js';
 import { userMessageLabel } from '../lib/message-label.js';
@@ -583,6 +583,19 @@ class MessageStore {
 
   getIsRunning(sessionId: string): boolean {
     return this.isRunning[sessionId] ?? false;
+  }
+
+  /** The user sent a prompt that has had no reply yet (see awaitingResponse). */
+  isAwaitingResponse(sessionId: string): boolean {
+    return !!this.awaitingResponse[sessionId];
+  }
+
+  /** The thread's pane closed: its agent was stopped or the thread deleted,
+   *  so a prompt sent to it gets no reply. The events that would say so
+   *  (main's close) come after the pane stopped listening, and a prompt
+   *  left waiting would show the thread working when it is opened again. */
+  dropAwaitingResponse(sessionId: string) {
+    delete this.awaitingResponse[sessionId];
   }
 
   /** Set isRunning for a session using full object reassignment so Svelte 5
@@ -2570,10 +2583,13 @@ class MessageStore {
     // for the old history sees it gone and is dropped.
     delete this.paginationBySession[sessionId];
     delete this.stoppingSession[sessionId];
-    delete this.awaitingResponse[sessionId];
     delete this.userExplicitMode[sessionId];
     this.streamBuf.delete(sessionId);
-    // Preserve isRunning and isReady — caller controls these based on history/status
+    // Preserve isRunning and isReady — caller controls these based on main's
+    // turn state and the session's status (applyTurnState). And
+    // awaitingResponse: a prompt sent before the history loads (a new
+    // thread's first) still waits for its reply. A pane that closes drops it
+    // (dropAwaitingResponse).
   }
 
   /** Tear down ALL state for a session that is being permanently destroyed.
@@ -2702,32 +2718,64 @@ class MessageStore {
   }
 
 
-  /** After replaying event history, resolve any permission/question messages
-   *  that were not resolved by a permission_resolved or tool_result event.
-   *  If the session is still running, leave them unresolved (genuinely pending).
-   *  Otherwise, mark as denied (timeout/stop/destroy happened before replay). */
-  resolveReplayedPermissions(sessionId: string) {
-    if (this.getIsRunning(sessionId)) return;
+  /**
+   * After the pane replays the newest history page: set the turn state from
+   * main (`turn`, read with the page) rather than from how the page ends. A
+   * history cut off mid-turn (the app quit or was killed then) ends just
+   * like a turn still running, and left the thread working and its prompts
+   * open until its next turn. Live events held while the page loaded are
+   * shown after this (releaseLiveEvents), so a turn or a prompt that came
+   * after main answered still shows.
+   *
+   * `promptSent`: the user sent a prompt that main can't have had when it
+   * answered: a new thread's first (sent once main has the thread, after the
+   * pane asked for the page) or one sent while the page loaded. The thread
+   * is working on that one.
+   */
+  applyTurnState(sessionId: string, turn: ThreadTurnState, promptSent: boolean) {
+    const running = turn.midTurn || promptSent;
+    this.setIsRunning(sessionId, running);
+    // Replayed results and exits clear it, but they are older than the prompt.
+    if (promptSent) this.awaitingResponse[sessionId] = true;
+    if (!running) this.activityBySession[sessionId] = { activity: 'idle' };
+    this.resolveStaleToolCalls(sessionId);
+    this.resolveReplayedPermissions(sessionId, new Set(turn.pendingPromptIds));
+  }
+
+  /** After replaying event history, settle the permission prompts,
+   *  questions, MCP questions and limit questions it left unanswered, except
+   *  those main still waits on (`stillPending`, by requestId). The rest
+   *  ended without an answer in the log: the agent stopped, the thread was
+   *  closed, or the app quit or was killed, while they waited. */
+  resolveReplayedPermissions(sessionId: string, stillPending: ReadonlySet<string>) {
     const msgs = this.messagesBySession[sessionId] ?? [];
+    const unanswered = (m: { resolved: boolean; requestId: string }) => !m.resolved && !stillPending.has(m.requestId);
+    // Tool calls whose prompt is still open go on waiting for it.
+    const stillAwaited = new Set<string>();
+    for (const m of msgs) {
+      if ((m.kind === 'permission' || m.kind === 'question') && !m.resolved && stillPending.has(m.requestId)) {
+        stillAwaited.add(m.toolUseId);
+      }
+    }
     let changed = false;
     const updated = msgs.map((m) => {
-      if (m.kind === 'permission' && !m.resolved) {
+      if (m.kind === 'permission' && unanswered(m)) {
         changed = true;
         return { ...m, resolved: true as const, decision: 'deny' as const };
       }
-      if (m.kind === 'question' && !m.resolved) {
+      if (m.kind === 'question' && unanswered(m)) {
         changed = true;
         return { ...m, resolved: true as const };
       }
-      if (m.kind === 'elicitation' && !m.resolved) {
+      if (m.kind === 'elicitation' && unanswered(m)) {
         changed = true;
         return { ...m, resolved: true as const, action: 'cancel' as const };
       }
-      if (m.kind === 'limit' && !m.resolved) {
+      if (m.kind === 'limit' && unanswered(m)) {
         changed = true;
         return { ...m, resolved: true as const, decision: 'stop' as const };
       }
-      if (m.kind === 'tool_call' && m.awaitingPermission) {
+      if (m.kind === 'tool_call' && m.awaitingPermission && !stillAwaited.has(m.toolUseId)) {
         changed = true;
         return { ...m, awaitingPermission: false };
       }

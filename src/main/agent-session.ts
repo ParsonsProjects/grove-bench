@@ -1,6 +1,6 @@
 import type { BrowserWindow } from 'electron';
 import { IPC } from '../shared/types.js';
-import type { SessionInfo, SessionStatus, AgentEvent, ThreadUsage, PermissionDecision, PermissionMode, McpServerInfo, McpAuthStartResult, McpElicitationResponse, McpServerContextCost, ProviderUsage, SessionControls } from '../shared/types.js';
+import type { SessionInfo, SessionStatus, AgentEvent, ThreadUsage, PermissionDecision, PermissionMode, McpServerInfo, McpAuthStartResult, McpElicitationResponse, McpServerContextCost, ProviderUsage, SessionControls, ThreadTurnState, EventHistoryPage } from '../shared/types.js';
 import { CONTROL_IDS, MCP_SIGN_IN_TIMEOUT_MS, PERMISSION_MODES, isMcpServerDown, subagentParent } from '../shared/types.js';
 import { userEventText } from '../shared/prompt-text.js';
 import { applyRateLimit } from '../shared/usage.js';
@@ -71,12 +71,19 @@ function failureEvent(adapter: AgentAdapter, detail: string): AgentEvent {
     : { type: 'error', message: detail };
 }
 
+/** Whether `session`'s agent is working on a turn: a prompt went to it or
+ *  it started replying, and the turn hasn't ended. An agent still starting
+ *  up isn't, until a prompt goes to it. */
+function turnInFlight(session: ManagedSession): boolean {
+  return !!session.turnHandle && session.turnHandle === session.queryHandle;
+}
+
 /** Why idle sleep must leave `session` awake for now, or null when it can
  *  sleep. Checked here rather than trusting the renderer's view alone. */
 function sleepRefusal(session: ManagedSession): string | null {
   if (session.status !== 'running' && session.status !== 'starting') return `status is ${session.status}`;
   if (!session.queryHandle || session.isStartingQuery) return 'its agent is starting';
-  if (session.turnHandle === session.queryHandle) return 'mid-turn';
+  if (turnInFlight(session)) return 'mid-turn';
   if (session.pendingPermissions.size > 0) return 'waiting on a permission';
   if (session.pendingElicitations.size > 0) return 'waiting on an MCP server question';
   if (session.limits.pending) return 'waiting on a limit question';
@@ -844,7 +851,8 @@ class AgentSessionManager {
     // destroySession closed the query: the session is being torn down and its
     // worktree removed. Don't flip status, fire callbacks, or start a memory
     // extraction (which would spawn a subprocess with cwd inside the worktree
-    // and hold it locked while removal runs).
+    // and hold it locked while removal runs). A turn the close or delete cut
+    // short gets its process_exit from shutDown.
     if (session.destroying) {
       logger.debug(`[runQuery] session=${id} event loop ended during destroy`);
       return;
@@ -1547,7 +1555,25 @@ class AgentSessionManager {
    *  under way). Same test idle sleep uses. */
   isMidTurn(id: string): boolean {
     const session = this.sessions.get(id);
-    return !!session && (session.isStartingQuery || (!!session.turnHandle && session.turnHandle === session.queryHandle));
+    return !!session && (session.isStartingQuery || turnInFlight(session));
+  }
+
+  /** Where `id`'s turn stands, for a pane loading its history: an agent
+   *  starting up counts as idle here (unlike isMidTurn), as it has nothing
+   *  to show as working on until a prompt goes to it. A thread without a
+   *  live session (closed, or still being set up) runs no turn and asks
+   *  nothing. */
+  turnState(id: string): ThreadTurnState {
+    const session = this.sessions.get(id);
+    if (!session) return { midTurn: false, pendingPromptIds: [] };
+    return {
+      midTurn: turnInFlight(session),
+      pendingPromptIds: [
+        ...session.pendingPermissions.keys(),
+        ...session.pendingElicitations.keys(),
+        ...(session.limits.pending ? [session.limits.pending.requestId] : []),
+      ],
+    };
   }
 
   setBranch(id: string, newBranch: string): void {
@@ -1911,6 +1937,9 @@ class AgentSessionManager {
     // the close can't start a second agent on the same transcript.
     await session.sleepSettled;
 
+    // Read before the kill: the run's end clears the turn.
+    const midTurn = turnInFlight(session);
+
     // Kill the agent's process tree while the agent is still running. Once it
     // exits, whatever it left running can no longer be traced back to it.
     const pid = session.queryHandle?.processId?.();
@@ -1935,6 +1964,12 @@ class AgentSessionManager {
     denyPendingPermissions(session, reason, session.emit);
     cancelElicitations(session);
     cancelLimit(session.limits);
+
+    // The turn under way ends here, and runQuery's tail writes no
+    // process_exit for a close or a delete (see there). Without one the
+    // history ends mid-turn, as if the turn were still running. Before the
+    // caller flushes the log.
+    if (midTurn) session.emit?.({ type: 'process_exit' });
 
     // Clean up completion callback and event listeners
     this.completionCallbacks.delete(id);
@@ -2337,7 +2372,7 @@ class AgentSessionManager {
   /** Return a page of events from the end of the history.
    *  Returns `limit` events ending before `beforeIndex` (exclusive).
    *  If beforeIndex is undefined, returns the last `limit` events. */
-  getEventHistoryPage(id: string, limit: number, beforeIndex?: number): { events: AgentEvent[]; totalCount: number; startIndex: number } {
+  getEventHistoryPage(id: string, limit: number, beforeIndex?: number): EventHistoryPage {
     const all = this.getEventHistory(id);
     const totalCount = all.length;
     const end = beforeIndex !== undefined ? Math.min(beforeIndex, totalCount) : totalCount;
@@ -2346,6 +2381,7 @@ class AgentSessionManager {
       events: all.slice(start, end),
       totalCount,
       startIndex: start,
+      turn: this.turnState(id),
     };
   }
 

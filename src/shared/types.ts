@@ -365,6 +365,30 @@ export function subagentParent(event: AgentEvent): string | undefined {
   return 'parentToolUseId' in event ? event.parentToolUseId : undefined;
 }
 
+/**
+ * Where a thread's agent is as its history ends, from main: whether a turn is
+ * under way, and the requestIds of the prompts still waiting on the user
+ * (permission prompts and the agent's questions, MCP questions, limit
+ * questions). The history alone can't tell: one cut off mid-turn (the app
+ * quit or was killed then) ends just like a turn still running. A thread
+ * with no live agent (closed, or still being set up) runs no turn and asks
+ * nothing.
+ */
+export interface ThreadTurnState {
+  midTurn: boolean;
+  pendingPromptIds: string[];
+}
+
+/** A page of a thread's history. `turn` is read in the same step as the
+ *  events, so it fits the end of the history as main had it then: an event
+ *  logged later is in neither. */
+export interface EventHistoryPage {
+  events: AgentEvent[];
+  totalCount: number;
+  startIndex: number;
+  turn: ThreadTurnState;
+}
+
 /** A single full-history search match (main-process search over event history). */
 export interface EventSearchHit {
   /** Index of the matching event in the session's (prelaunch-prefixed) history. */
@@ -1282,8 +1306,9 @@ export interface GroveBenchAPI {
   onAgentEvent(sessionId: string, callback: (event: AgentEvent) => void): () => void;
   offAgentEvent(sessionId: string): void;
   getEventHistory(sessionId: string): Promise<AgentEvent[]>;
-  /** Load the last `limit` events, optionally ending before `beforeIndex`. */
-  getEventHistoryPage(sessionId: string, limit: number, beforeIndex?: number): Promise<{ events: AgentEvent[]; totalCount: number; startIndex: number }>;
+  /** Load the last `limit` events, optionally ending before `beforeIndex`,
+   *  with where the thread's turn stands (see ThreadTurnState). */
+  getEventHistoryPage(sessionId: string, limit: number, beforeIndex?: number): Promise<EventHistoryPage>;
   /** Get the total number of persisted events for a session. */
   getEventHistoryCount(sessionId: string): Promise<number>;
   /** The thread's to-do list and files, from its whole history
