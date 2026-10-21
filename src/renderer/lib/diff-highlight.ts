@@ -62,7 +62,8 @@ export const MAX_DEFERRED_LINES = 5000;
  *  diff" in the Changes and Checkpoints panels, then colours in idle time.
  *  Drawn at once it stalls the window: in Chromium, 5,000 lines took about a
  *  second to colour and lay out, and one changed line of minified code can
- *  be megabytes. */
+ *  be megabytes. Edit History applies the same limits to an edit's text
+ *  (editSize). Check them with isLargeDiff, not by hand. */
 export const LARGE_DIFF_LINES = 2000;
 export const LARGE_DIFF_CHARS = 100_000;
 
@@ -84,6 +85,8 @@ export function editSize(view: ToolView): { lines: number; chars: number } {
     chars += t.length;
     lines++;
     for (let i = t.indexOf('\n'); i !== -1; i = t.indexOf('\n', i + 1)) lines++;
+    // A final newline ends the last line rather than starting another.
+    if (t.endsWith('\n')) lines--;
   }
   return { lines, chars };
 }

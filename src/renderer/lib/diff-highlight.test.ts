@@ -179,7 +179,9 @@ describe('editSize', () => {
   });
 
   it('counts a whole-file write, and nothing for an empty one', () => {
-    expect(editSize({ write: 'x\ny\n' } as never)).toEqual({ lines: 3, chars: 4 });
+    // The final newline ends the last line, as git and the main diff count it
+    expect(editSize({ write: 'x\ny\n' } as never)).toEqual({ lines: 2, chars: 4 });
+    expect(editSize({ write: 'x\ny' } as never)).toEqual({ lines: 2, chars: 3 });
     expect(editSize({ write: '' } as never)).toEqual({ lines: 0, chars: 0 });
   });
 });
