@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import { mockGroveBench } from '../__mocks__/setup.js';
 import {
-  computeIdleSleeps, describeIdleReason, IdleLog, IDLE_SUMMARY_EVERY, startIdleManager,
+  computeIdleSleeps, describeIdleReason, IdleLog, IDLE_GRACE_MS, IDLE_SUMMARY_EVERY, idleGraceMs, startIdleManager,
   type IdleReason, type IdleSnapshotSession,
 } from './idle-manager.js';
 import { store } from '../stores/sessions.svelte.js';
@@ -28,15 +28,16 @@ describe('computeIdleSleeps', () => {
     expect(reasons.get('s1')).toEqual({ kind: 'asking', idleMs: THRESHOLD });
   });
 
-  it('never asks on the first tick a thread is seen unfocused, however long it has been idle', () => {
+  // It used to wait for a second unfocused tick, so a thread wasn't asked
+  // the moment it was left. That sampled focus once a minute and missed a
+  // visit between two ticks; the grace after leaving (below) does it now.
+  it('asks about a thread not open this run on the first tick it is past the threshold', () => {
     const s = [session({ id: 's1', lastActiveAt: 0 })];
     const first = computeIdleSleeps(s, new Map(), THRESHOLD * 4, THRESHOLD);
-    expect(first.toSleep).toEqual([]);
+    expect(first.toSleep).toEqual(['s1']);
     expect(first.nextUnfocusedSince.get('s1')).toBe(THRESHOLD * 4);
-    expect(first.reasons.get('s1')).toEqual({ kind: 'counting', idleMs: THRESHOLD * 4, since: 'activity' });
-    // The next tick it is.
+    expect(first.reasons.get('s1')).toEqual({ kind: 'asking', idleMs: THRESHOLD * 4 });
     const second = computeIdleSleeps(s, first.nextUnfocusedSince, THRESHOLD * 4 + MINUTE, THRESHOLD);
-    expect(second.toSleep).toEqual(['s1']);
     expect(second.nextUnfocusedSince.get('s1')).toBe(THRESHOLD * 4); // first sighting kept
   });
 
@@ -56,16 +57,57 @@ describe('computeIdleSleeps', () => {
   });
 
   it('never asks about the focused thread, but focusing it does not restart its clock', () => {
-    const s = (isActive: boolean) => [session({ id: 's1', lastActiveAt: 0, isActive })];
-    // Unfocused at 10m, opened at 20m (to clear its unread flag), left again.
+    const s = (isActive: boolean, leftAt?: number) => [session({ id: 's1', lastActiveAt: 0, isActive, leftAt })];
+    // Unfocused at 10m, opened at 20m (to clear its unread flag), left at 21m.
     let seen = computeIdleSleeps(s(false), new Map(), 10 * MINUTE, THRESHOLD).nextUnfocusedSince;
     const focused = computeIdleSleeps(s(true), seen, 20 * MINUTE, THRESHOLD);
     expect(focused.toSleep).toEqual([]);
     expect(focused.reasons.get('s1')).toEqual({ kind: 'focused' });
     expect(focused.nextUnfocusedSince.has('s1')).toBe(false);
-    seen = computeIdleSleeps(s(false), focused.nextUnfocusedSince, 22 * MINUTE, THRESHOLD).nextUnfocusedSince;
+    seen = computeIdleSleeps(s(false, 21 * MINUTE), focused.nextUnfocusedSince, 22 * MINUTE, THRESHOLD).nextUnfocusedSince;
     // 30 minutes after the turn ended, not 30 after it was left.
-    expect(computeIdleSleeps(s(false), seen, THRESHOLD, THRESHOLD).toSleep).toEqual(['s1']);
+    expect(computeIdleSleeps(s(false, 21 * MINUTE), seen, THRESHOLD, THRESHOLD).toSleep).toEqual(['s1']);
+  });
+
+  it('gives a thread the user just left a grace period, however long it has been idle', () => {
+    // Idle for two hours, opened (which wakes it) and left at 120m.
+    const s = [session({ id: 's1', lastActiveAt: 0, leftAt: 120 * MINUTE })];
+    const during = computeIdleSleeps(s, new Map([['s1', 0]]), 125 * MINUTE - 1, THRESHOLD);
+    expect(during.toSleep).toEqual([]);
+    expect(during.reasons.get('s1')).toEqual({ kind: 'grace', idleMs: 125 * MINUTE - 1, leftMs: 5 * MINUTE - 1, graceMs: IDLE_GRACE_MS });
+    // Past the threshold and the grace: asked on the next tick.
+    const after = computeIdleSleeps(s, new Map([['s1', 0]]), 125 * MINUTE, THRESHOLD);
+    expect(after.toSleep).toEqual(['s1']);
+    expect(after.reasons.get('s1')).toEqual({ kind: 'asking', idleMs: 125 * MINUTE });
+  });
+
+  it('waits out the grace after a look near the threshold, not the whole threshold again', () => {
+    // Finished a turn at 0, looked at from 28m to 29m.
+    const s = [session({ id: 's1', lastActiveAt: 0, leftAt: 29 * MINUTE })];
+    expect(computeIdleSleeps(s, new Map(), THRESHOLD, THRESHOLD).reasons.get('s1')?.kind).toBe('grace');
+    expect(computeIdleSleeps(s, new Map(), 34 * MINUTE - 1, THRESHOLD).toSleep).toEqual([]);
+    expect(computeIdleSleeps(s, new Map(), 34 * MINUTE, THRESHOLD).toSleep).toEqual(['s1']);
+    // Left well before the threshold: the threshold is what it waits for.
+    const early = [session({ id: 's1', lastActiveAt: 0, leftAt: 10 * MINUTE })];
+    expect(computeIdleSleeps(early, new Map(), THRESHOLD - 1, THRESHOLD).reasons.get('s1')?.kind).toBe('counting');
+    expect(computeIdleSleeps(early, new Map(), THRESHOLD, THRESHOLD).toSleep).toEqual(['s1']);
+  });
+
+  it('keeps the grace no longer than a shorter threshold', () => {
+    expect(idleGraceMs(THRESHOLD)).toBe(5 * MINUTE);
+    expect(idleGraceMs(2 * MINUTE)).toBe(2 * MINUTE);
+    const s = [session({ id: 's1', lastActiveAt: 0, leftAt: 10 * MINUTE })];
+    expect(computeIdleSleeps(s, new Map(), 12 * MINUTE - 1, 2 * MINUTE).toSleep).toEqual([]);
+    expect(computeIdleSleeps(s, new Map(), 12 * MINUTE, 2 * MINUTE).toSleep).toEqual(['s1']);
+  });
+
+  it('counts a thread with no recorded activity from when it was left', () => {
+    // First seen at 0, opened later and left at 10m.
+    const s = [session({ id: 's1', leftAt: 10 * MINUTE })];
+    const seen = new Map([['s1', 0]]);
+    expect(computeIdleSleeps(s, seen, 40 * MINUTE - 1, THRESHOLD).reasons.get('s1'))
+      .toEqual({ kind: 'counting', idleMs: THRESHOLD - 1, since: 'left' });
+    expect(computeIdleSleeps(s, seen, 40 * MINUTE, THRESHOLD).toSleep).toEqual(['s1']);
   });
 
   it('asks only about running threads (sleeping, stopped, starting, error are left alone)', () => {
@@ -132,10 +174,11 @@ describe('IdleLog', () => {
     const tick = () => log.lines(reasons({
       a: counting(5), b: { kind: 'focused' }, c: { kind: 'asking', idleMs: THRESHOLD }, d: { kind: 'waiting', idleMs: THRESHOLD },
       e: { kind: 'status', status: 'sleeping' }, f: { kind: 'status', status: 'stopped' }, g: { kind: 'status', status: 'stopped' },
-    }), THRESHOLD, 7);
-    expect(tick()).toHaveLength(8); // the setting, then each thread once
+      h: { kind: 'grace', idleMs: THRESHOLD, leftMs: MINUTE, graceMs: IDLE_GRACE_MS },
+    }), THRESHOLD, 8);
+    expect(tick()).toHaveLength(9); // the setting, then each thread once
     for (let i = 2; i < IDLE_SUMMARY_EVERY; i++) expect(tick()).toEqual([]);
-    expect(tick()).toEqual(['7 threads, threshold 30m: 1 counting, 1 focused, 2 asked, 1 sleeping, 2 stopped']);
+    expect(tick()).toEqual(['8 threads, threshold 30m: 1 counting, 1 focused, 2 asked, 1 sleeping, 2 stopped, 1 in grace']);
     expect(tick()).toEqual([]);
   });
 
@@ -154,9 +197,11 @@ describe('IdleLog', () => {
     expect(log.lines(reasons({ a: counting(3) }), 45 * MINUTE, 1)).toEqual(['threshold 45m', 'session=a idle 3m of 45m since its last activity']);
   });
 
-  it('describes a thread seen unfocused for the first tick, already past the threshold', () => {
-    expect(describeIdleReason({ kind: 'counting', idleMs: 125 * MINUTE + 30_000, since: 'activity' }, THRESHOLD))
-      .toBe('idle 125m of 30m since its last activity, asks next tick');
+  it('describes a thread in its grace after being left, and one with no recorded activity', () => {
+    expect(describeIdleReason({ kind: 'grace', idleMs: 125 * MINUTE + 30_000, leftMs: 2 * MINUTE + 10_000, graceMs: IDLE_GRACE_MS }, THRESHOLD))
+      .toBe('idle 125m of 30m since its last activity, left 2m ago, grace 5m');
+    expect(describeIdleReason({ kind: 'grace', idleMs: 3 * MINUTE, leftMs: 0, graceMs: 2 * MINUTE }, 2 * MINUTE))
+      .toBe('idle 3m of 2m since its last activity, left 0m ago, grace 2m');
     expect(describeIdleReason({ kind: 'counting', idleMs: 0, since: 'left' }, 0.5 * MINUTE))
       .toBe('idle 0m of 0.5m since it was left (no activity recorded)');
   });
@@ -197,6 +242,8 @@ describe('startIdleManager', () => {
     vi.useFakeTimers();
     store.sessions = [];
     store.activeSessionId = null;
+    // Times from an earlier test's clock, which ran on ahead of this one's.
+    store.lastLeftAt.clear();
     mockGroveBench.sleepSession.mockClear();
     mockGroveBench.logIdle.mockClear();
     settingsStore.current = { ...savedSettings, idleSleepMinutes: 30 };
@@ -293,7 +340,7 @@ describe('startIdleManager', () => {
     expect(store.sessions.find((s) => s.id === 't1')?.status).toBe('sleeping');
   });
 
-  it('puts a thread idle for long to sleep on the tick after it is left, not the moment it is left', async () => {
+  it('puts a thread idle for long to sleep once the grace after leaving it is over, not the moment it is left', async () => {
     liveThread('old', { lastActiveAt: Date.now() - 2 * 60 * MINUTE });
     liveThread('other');
     store.activeSessionId = 'old';
@@ -302,17 +349,75 @@ describe('startIdleManager', () => {
 
     await vi.advanceTimersByTimeAsync(MINUTE);
     store.activeSessionId = 'other';
-    await vi.advanceTimersByTimeAsync(MINUTE);
+    await vi.advanceTimersByTimeAsync(4 * MINUTE);
     expect(asks('old')).toBe(0);
+    // The first tick 5 minutes after it was left.
     await vi.advanceTimersByTimeAsync(MINUTE);
     expect(asks('old')).toBe(1);
     expect(logged().filter((l) => l.startsWith('session=old'))).toEqual([
       'session=old focused',
-      'session=old idle 122m of 30m since its last activity, asks next tick',
-      'session=old idle 123m of 30m, asking main to sleep it',
+      'session=old idle 122m of 30m since its last activity, left 1m ago, grace 5m',
+      'session=old idle 126m of 30m, asking main to sleep it',
     ]);
     await vi.advanceTimersByTimeAsync(MINUTE);
     expect(logged()).toContain('session=old status sleeping');
+  });
+
+  // Focus was sampled on each tick, so a visit that began and ended between
+  // two ticks went unseen, and the thread could sleep seconds after it.
+  it('sees a visit that starts and ends between two ticks, and gives it the grace', async () => {
+    liveThread('t1', { lastActiveAt: Date.now() - 25 * MINUTE });
+    liveThread('other');
+    store.activeSessionId = 'other';
+    mainSleepsIt();
+    stop = startIdleManager();
+
+    await vi.advanceTimersByTimeAsync(2 * MINUTE + 10_000);
+    store.activeSessionId = 't1';
+    await vi.advanceTimersByTimeAsync(30_000);
+    store.activeSessionId = 'other'; // left at 2:40, before the next tick
+    // Its 30 minutes are up at the 5:00 tick, but it was left 2:20 before.
+    await vi.advanceTimersByTimeAsync(4 * MINUTE + 20_000);
+    expect(asks('t1')).toBe(0);
+    expect(logged()).toContain('session=t1 idle 30m of 30m since its last activity, left 2m ago, grace 5m');
+    // 7:40 is 5 minutes after it was left: the 8:00 tick asks.
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    expect(asks('t1')).toBe(1);
+    expect(logged().filter((l) => l.startsWith('session=t1'))).toEqual([
+      'session=t1 idle 26m of 30m since its last activity',
+      'session=t1 idle 30m of 30m since its last activity, left 2m ago, grace 5m',
+      'session=t1 idle 33m of 30m, asking main to sleep it',
+    ]);
+  });
+
+  // Opening a sleeping thread wakes it, a whole agent start. Read and left,
+  // it was asked to sleep again a minute or two later, as its last activity
+  // was hours old: every glance cost a start and a kill.
+  it('does not put a thread woken just to read it back to sleep before the grace ends', async () => {
+    liveThread('old', { lastActiveAt: Date.now() - 3 * 60 * MINUTE });
+    store.updateStatus('old', 'sleeping');
+    liveThread('other');
+    store.activeSessionId = 'other';
+    mainSleepsIt();
+    stop = startIdleManager();
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    // Opened: App wakes it, and main reports it running.
+    store.activeSessionId = 'old';
+    store.updateStatus('old', 'running');
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    store.activeSessionId = 'other'; // read for a minute, left at 1:30
+    await vi.advanceTimersByTimeAsync(5 * MINUTE);
+    expect(asks('old')).toBe(0);
+    // Past the grace at 6:30: the next tick asks.
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    expect(asks('old')).toBe(1);
+    expect(store.sessions.find((s) => s.id === 'old')?.status).toBe('sleeping');
+    expect(logged().filter((l) => l.startsWith('session=old'))).toEqual([
+      'session=old focused',
+      'session=old idle 182m of 30m since its last activity, left 0m ago, grace 5m',
+      'session=old idle 187m of 30m, asking main to sleep it',
+    ]);
   });
 
   // Main refuses mid-turn and open prompts itself. The renderer's view can
@@ -360,7 +465,8 @@ describe('startIdleManager', () => {
     // Main is slow to answer: no second call stacked on the first.
     await vi.advanceTimersByTimeAsync(3 * MINUTE);
     expect(asks('t1')).toBe(1);
-    expect(logged()).toContain('session=t1 idle 63m of 30m, still waiting on main\'s answer to the last ask');
+    // Asked on the first tick (not open this run, so no grace), waiting from the second.
+    expect(logged()).toContain('session=t1 idle 62m of 30m, still waiting on main\'s answer to the last ask');
     answer(false);
     await vi.advanceTimersByTimeAsync(MINUTE);
     expect(asks('t1')).toBe(2);

@@ -227,3 +227,54 @@ describe('WorkspacePane loading a new conversation', () => {
     ]);
   });
 });
+
+describe('WorkspacePane loading a running thread', () => {
+  // After a window reload a thread mid-turn has the lastActiveAt it had before
+  // the turn. One that finished while its pane loaded is in the page, so its
+  // result was only replayed (not activity) and the live copy dropped, and
+  // the idle loop slept the thread a minute after it finished.
+  it('counts a turn that finished live while the history loaded as activity', async () => {
+    const before = Date.now() - 2 * 60 * 60_000;
+    store.sessions = [{ id: SID, branch: 'grove/x', repoPath: '/repo', status: 'running', lastActiveAt: before }] as never;
+    store.activeSessionId = null;
+    gitStatusStore.statusBySession = { [SID]: { entries: [] } };
+    let live: ((event: unknown) => void) | undefined;
+    mockGroveBench.onAgentEvent.mockImplementation(((_id: string, cb: (event: unknown) => void) => {
+      live = cb;
+      return vi.fn();
+    }) as never);
+    const prompt = { type: 'user_message', text: 'Run the tests', uuid: 'u1' };
+    const result = { type: 'result', subtype: 'success', isError: false };
+    type Page = { events: unknown[]; totalCount: number; startIndex: number };
+    let answerPage: (page: Page) => void = () => {};
+    mockGroveBench.getEventHistoryPage.mockImplementationOnce((() => new Promise<Page>((r) => { answerPage = r; })) as never);
+
+    render(WorkspacePane, { sessionId: SID });
+    await waitFor(() => expect(live).toBeDefined());
+    const finished = Date.now();
+    live!(result);
+    // Main logged the result before it answered the page request.
+    answerPage({ events: [prompt, result], totalCount: 2, startIndex: 0 });
+    await waitFor(() => expect(messageStore.isHistoryLoaded(SID)).toBe(true));
+
+    expect(store.sessions[0].lastActiveAt).toBeGreaterThanOrEqual(finished);
+    expect(messageStore.getMessages(SID).filter((m) => m.kind === 'result')).toHaveLength(1);
+  });
+
+  it('leaves lastActiveAt alone for a turn that ended before the history loaded', async () => {
+    const before = Date.now() - 2 * 60 * 60_000;
+    store.sessions = [{ id: SID, branch: 'grove/x', repoPath: '/repo', status: 'running', lastActiveAt: before }] as never;
+    store.activeSessionId = null;
+    gitStatusStore.statusBySession = { [SID]: { entries: [] } };
+    mockGroveBench.getEventHistoryPage.mockResolvedValueOnce({
+      events: [{ type: 'user_message', text: 'Run the tests', uuid: 'u1' }, { type: 'result', subtype: 'success', isError: false }],
+      totalCount: 2,
+      startIndex: 0,
+    } as never);
+
+    render(WorkspacePane, { sessionId: SID });
+    await waitFor(() => expect(messageStore.isHistoryLoaded(SID)).toBe(true));
+
+    expect(store.sessions[0].lastActiveAt).toBe(before);
+  });
+});

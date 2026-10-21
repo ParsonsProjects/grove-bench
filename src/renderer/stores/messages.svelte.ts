@@ -2661,6 +2661,11 @@ class MessageStore {
     const held = this.heldLive.get(sessionId);
     this.heldLive.delete(sessionId);
     if (!held?.length) return;
+    // A turn that finished while the page loaded is in the page, so its
+    // result was replayed (not counted as activity) and its live copy is
+    // dropped here. It did finish just now: count it, or the idle loop goes
+    // by the lastActiveAt from before the turn and sleeps the thread at once.
+    if (this.sideEffects && held.some((e) => e.type === 'result')) sessionStore.updateLastActive(sessionId);
     for (const event of page ? liveEventsMissingFrom(page, held) : held) {
       this.ingestEvent(sessionId, event);
     }
