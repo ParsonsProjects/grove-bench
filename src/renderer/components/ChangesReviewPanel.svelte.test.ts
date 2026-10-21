@@ -12,12 +12,14 @@ import { settingsStore } from '../stores/settings.svelte.js';
 import { prStore } from '../stores/pr.svelte.js';
 import type { GitStatusEntry } from '../../shared/types.js';
 
-// Counts syntax-highlight calls; otherwise the real module.
+// Counts syntax-highlight calls; otherwise the real module, with a low
+// large-diff limit so a test needn't draw thousands of rows.
 const highlights = vi.hoisted(() => ({ count: 0 }));
 vi.mock('../lib/diff-highlight.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../lib/diff-highlight.js')>();
   return {
     ...actual,
+    LARGE_DIFF_LINES: 20,
     highlightLine: (...args: Parameters<typeof actual.highlightLine>) => {
       highlights.count++;
       return actual.highlightLine(...args);
@@ -755,11 +757,24 @@ describe('ChangesReviewPanel — Markdown preview', () => {
   });
 });
 
-describe('ChangesReviewPanel — large new files', () => {
-  it('says a new file is too large to show instead of drawing it', async () => {
+describe('ChangesReviewPanel — large diffs', () => {
+  it('says a diff is too large to show instead of drawing it', async () => {
     mockGroveBench.getFileDiff.mockResolvedValue({ kind: 'tooLarge', bytes: 5 * 1024 * 1024 });
     gitStatusStore.statusBySession = { [SID]: { entries: [entry('big.log', { status: 'untracked' })] } };
     const { findByText } = render(ChangesReviewPanel, { sessionId: SID });
-    expect(await findByText(/New file too large to show here \(5\.0 MB\)/)).toBeInTheDocument();
+    expect(await findByText(/Too large to show here \(5\.0 MB\)/)).toBeInTheDocument();
+  });
+
+  it('holds a long diff back until asked, then draws it', async () => {
+    const body = Array.from({ length: 30 }, (_, i) => `+line ${i + 1}`).join('\n');
+    mockGroveBench.getFileDiff.mockResolvedValue({ kind: 'text', patch: `--- a/big.ts\n+++ b/big.ts\n@@ -0,0 +1,30 @@\n${body}\n` });
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('big.ts')] } };
+    const { container, findByText, getByRole } = render(ChangesReviewPanel, { sessionId: SID });
+
+    expect(await findByText(/Large diff \(31 lines\)/)).toBeInTheDocument();
+    expect(diffText(container)).not.toContain('line 30');
+
+    await fireEvent.click(getByRole('button', { name: 'Show diff' }));
+    await waitFor(() => expect(diffText(container)).toContain('line 30'));
   });
 });

@@ -4,7 +4,7 @@
   import DiffView, { computeDiffLines, parseDiffLines } from './DiffView.svelte';
   import { toolViewOf } from '../../shared/tool-view.js';
   import type { DiffLine, CommentAnchor, ContextGap } from './DiffView.svelte';
-  import { hunkLineIndices } from '../lib/diff-highlight.js';
+  import { hunkLineIndices, LARGE_DIFF_LINES } from '../lib/diff-highlight.js';
   import { withExpandableContext, reveal, expansionFor, type RevealedRanges } from '../lib/diff-context.js';
   import { buildReviewPrompt } from '../lib/review-prompt.js';
   import { reviewStore } from '../stores/review.svelte.js';
@@ -441,6 +441,9 @@
     return lines;
   });
   let selectedHunkCount = $derived(hunkLineIndices(selectedDiffLines).length);
+
+  /** File keys whose large diff the user chose to see. */
+  let largeDiffShown = $state<Record<string, true>>({});
 
   // ── Expandable context ──
   // Revealed new-side line ranges and the new-side file lines, per file key.
@@ -1010,12 +1013,21 @@
             <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
             </svg>
-            New file too large to show here ({(diffResult.bytes / 1024 / 1024).toFixed(1)} MB).
+            Too large to show here ({(diffResult.bytes / 1024 / 1024).toFixed(1)} MB).
+          </div>
+        {:else if diffLines.length > LARGE_DIFF_LINES && !largeDiffShown[key]}
+          <div class="flex items-center gap-2 text-xs text-muted-foreground py-3 px-2 border border-border/50 bg-card/30">
+            <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+            </svg>
+            <span class="flex-1">Large diff ({diffLines.length.toLocaleString()} lines). Drawing it can pause the app for a moment.</span>
+            <Button size="2xs" variant="subtle" onclick={() => (largeDiffShown = { ...largeDiffShown, [key]: true })}>Show diff</Button>
           </div>
         {:else if diffLines.length > 0}
           <DiffView
             lines={displayLines}
             {sideBySide}
+            deferHighlight={diffLines.length > LARGE_DIFF_LINES}
             maxHeight="none"
             filePath={selectedEntry.filePath}
             onExpand={expandContext}

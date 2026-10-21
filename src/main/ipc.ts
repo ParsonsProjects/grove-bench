@@ -109,7 +109,8 @@ const goalInFlight = new Set<string>();
 const goalAutoAttempts = new Map<string, number>();
 const MAX_GOAL_AUTO_ATTEMPTS = 2;
 
-/** Larger files aren't read whole to show in a diff or expand its context. */
+/** Larger files aren't read whole to show in a diff or expand its context,
+ *  and a larger patch isn't sent to the window. */
 const MAX_TEXT_FILE_BYTES = 4 * 1024 * 1024;
 
 /** Generate a goal from a conversation's messages on its own agent and save
@@ -1380,6 +1381,9 @@ export function registerHandlers() {
       diffError = e;
     }
     if (detectBinaryDiff(diff)) return { kind: 'binary' };
+    // Too big to send to the window and parse, let alone draw.
+    const patchBytes = Buffer.byteLength(diff);
+    if (patchBytes > MAX_TEXT_FILE_BYTES) return { kind: 'tooLarge', bytes: patchBytes };
     if (diff) return { kind: 'text', patch: diff };
     // A staged-but-empty diff genuinely has no changes; don't synthesize for it.
     if (staged && !diffError) return { kind: 'text', patch: '' };
