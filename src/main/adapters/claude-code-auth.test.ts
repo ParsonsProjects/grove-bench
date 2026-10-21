@@ -20,8 +20,9 @@ vi.mock('../logger.js', () => ({
   logger: { debug: vi.fn(), warn: vi.fn(), info: vi.fn(), error: vi.fn() },
 }));
 
-import { ClaudeCodeAdapter, CLAUDE_AUTH_ERROR_MESSAGE, envAuthMethod, transformMessage, verifyAnthropicKey } from './claude-code.js';
+import { ClaudeCodeAdapter, CLAUDE_AUTH_ERROR_MESSAGE, envAuthMethod, pickCliPath, transformMessage, verifyAnthropicKey } from './claude-code.js';
 import { getApiKey } from '../credentials.js';
+import { logger } from '../logger.js';
 import { net } from 'electron';
 
 type ExecResult = { stdout: string } | Error;
@@ -108,10 +109,67 @@ describe('ClaudeCodeAdapter.checkPrerequisites()', () => {
     expect(status).toMatchObject({ available: true, authenticated: true, authMethod: 'claude.ai', email: 'a@b.c' });
   });
 
-  it('treats a failed or slow auth probe as signed out, not as a crash', async () => {
-    cliAnswers({ stdout: '/usr/bin/claude\n' }, Object.assign(new Error('timed out'), { killed: true, signal: 'SIGTERM' }));
+  it('reads a sign-out, which the CLI reports with exit code 1', async () => {
+    cliAnswers({ stdout: '/usr/bin/claude\n' }, Object.assign(new Error('Command failed'), { code: 1, stdout: '{"loggedIn":false}\n' }));
     const status = await adapter.checkPrerequisites();
     expect(status).toMatchObject({ available: true, authenticated: false });
+    expect(status.authUnchecked).toBeUndefined();
+  });
+
+  it('finds the sign-in when the CLI prints a notice around it', async () => {
+    cliAnswers({ stdout: '/usr/bin/claude\n' }, { stdout: 'Update available.\n{"loggedIn":true,"authMethod":"claude.ai"}\n' });
+    const status = await adapter.checkPrerequisites();
+    expect(status).toMatchObject({ available: true, authenticated: true, authMethod: 'claude.ai' });
+  });
+
+  it('skips braces in text around the sign-in', async () => {
+    cliAnswers({ stdout: '/usr/bin/claude\n' }, { stdout: 'Warning: config {x} ignored\n{"loggedIn":false}\n' });
+    expect(await adapter.checkPrerequisites()).toMatchObject({ authenticated: false });
+    cliAnswers({ stdout: '/usr/bin/claude\n' }, { stdout: '{"loggedIn":true}\nSee {docs}\n' });
+    expect(await adapter.checkPrerequisites()).toMatchObject({ authenticated: true });
+    expect(vi.mocked(logger.warn)).not.toHaveBeenCalled();
+  });
+
+  it('quotes a CLI path with a space, which cmd.exe would cut short', async () => {
+    cliAnswers({ stdout: '/opt/my tools/claude\n' }, { stdout: '{"loggedIn":true}' });
+    const status = await adapter.checkPrerequisites();
+    expect(status).toMatchObject({ path: '/opt/my tools/claude', authenticated: true });
+    expect(agentRunMock.mock.calls[0][0]).toBe('"/opt/my tools/claude"');
+  });
+
+  it('treats a failed run with no JSON (an older CLI without --json) as unchecked', async () => {
+    cliAnswers({ stdout: '/usr/bin/claude\n' }, Object.assign(new Error("Command failed: claude auth status --json\nerror: unknown option '--json'"), { code: 1, stdout: '' }));
+    const status = await adapter.checkPrerequisites();
+    expect(status).toMatchObject({ available: true, authenticated: true, authUnchecked: true });
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(expect.stringMatching(/unknown option '--json'.*code 1/s));
+  });
+
+  it('leaves email addresses out of the log', async () => {
+    cliAnswers({ stdout: '/usr/bin/claude\n' }, { stdout: 'Signed in as me@corp.example (token expired)\n' });
+    await adapter.checkPrerequisites();
+    const logged = String(vi.mocked(logger.warn).mock.calls[0]?.[0]);
+    expect(logged).toContain('Signed in as <email>');
+    expect(logged).not.toContain('me@corp.example');
+  });
+
+  it('keeps package paths in the log', async () => {
+    cliAnswers({ stdout: '/usr/bin/claude\n' }, Object.assign(new Error('Command failed\nCannot find C:\\npm\\node_modules\\@anthropic-ai\\claude-code\\cli.js'), { code: 1, stdout: '' }));
+    await adapter.checkPrerequisites();
+    expect(String(vi.mocked(logger.warn).mock.calls[0]?.[0])).toContain('node_modules\\@anthropic-ai\\claude-code\\cli.js');
+  });
+
+  it("doesn't lock anyone out when the check itself fails, and logs why", async () => {
+    cliAnswers({ stdout: '/usr/bin/claude\n' }, Object.assign(new Error('Command failed: claude auth status --json'), { killed: true, signal: 'SIGTERM', code: null }));
+    const status = await adapter.checkPrerequisites();
+    expect(status).toMatchObject({ available: true, authenticated: true, authUnchecked: true });
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(expect.stringMatching(/auth status.*timed out.*signal SIGTERM/));
+  });
+
+  it('treats output without a sign-in as unchecked, not signed out', async () => {
+    cliAnswers({ stdout: '/usr/bin/claude\n' }, { stdout: 'Something went wrong\n' });
+    const status = await adapter.checkPrerequisites();
+    expect(status).toMatchObject({ available: true, authenticated: true, authUnchecked: true });
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(expect.stringContaining('Something went wrong'));
   });
 
   it('puts a time limit on both CLI calls', async () => {
@@ -190,6 +248,19 @@ describe('ClaudeCodeAdapter MCP and plugin commands', () => {
     agentRunMock.mockRejectedValue(Object.assign(new Error('Command failed with exit code 1: claude plugin install x'), { exitCode: 1, stderr: 'not found' }));
     await expect(adapter.installPlugin('x')).rejects.toMatchObject({ exitCode: 1, stderr: 'not found' });
     expect(await adapter.listPlugins()).toEqual({ installed: [], available: [] });
+  });
+});
+
+describe('pickCliPath()', () => {
+  it("prefers a runnable file over npm's extensionless shell script on Windows", () => {
+    const where = 'C:\\Users\\me\\AppData\\Roaming\\npm\\claude\r\nC:\\Users\\me\\AppData\\Roaming\\npm\\claude.cmd\r\n';
+    expect(pickCliPath(where, 'win32')).toBe('C:\\Users\\me\\AppData\\Roaming\\npm\\claude.cmd');
+  });
+
+  it('takes the first line when nothing better is listed, or off Windows', () => {
+    expect(pickCliPath('C:\\tools\\claude\r\n', 'win32')).toBe('C:\\tools\\claude');
+    expect(pickCliPath('/usr/local/bin/claude\n/usr/bin/claude\n', 'linux')).toBe('/usr/local/bin/claude');
+    expect(pickCliPath('\n', 'win32')).toBeUndefined();
   });
 });
 

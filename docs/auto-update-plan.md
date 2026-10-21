@@ -216,7 +216,7 @@ Other facts:
 
 ## Open questions
 
-- **Moving to stable.** You'll decide later. Until then, every release is an alpha pre-release. After the switch, stable installs only get deliberate version bumps.
+- **Moving to stable.** You'll decide later. Until then, every release is an alpha version, published as a full GitHub release so the "Latest" badge shows it (`scripts/release-type.mjs`). After the switch, stable installs only get deliberate version bumps.
 - **Code signing.** Not a blocker. It can be added at any time. Once it is, electron-updater starts checking update signatures, so every later release must be signed by the same publisher.
 
 ## Sources

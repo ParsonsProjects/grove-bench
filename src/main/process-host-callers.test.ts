@@ -170,8 +170,9 @@ describe('the claude CLI starts in the agent host, its lookup in the process hos
     expect(await new ClaudeCodeAdapter().checkPrerequisites()).toMatchObject({ available: true, path: 'C:\\bin\\claude.exe', authenticated: true, authMethod: 'claude.ai' });
     // A short lookup with no shell, which its timeout really ends.
     expect(commands()).toEqual([{ file: 'where.exe', args: ['claude'], options: { timeout: 10_000 } }]);
-    // Its command line in a shell, with the environment it would inherit.
-    expect(spawns()).toEqual([{ type: 'spawn', id: expect.any(Number), file: 'C:\\bin\\claude.exe', args: ['auth', 'status', '--json'], shell: true }]);
+    // Its command line in a shell, with the environment it would inherit, and
+    // the CLI's path quoted, as cmd.exe would cut one with a space short.
+    expect(spawns()).toEqual([{ type: 'spawn', id: expect.any(Number), file: '"C:\\bin\\claude.exe"', args: ['auth', 'status', '--json'], shell: true }]);
   });
 
   it("auth status for another account, with that account's whole environment", async () => {
