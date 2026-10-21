@@ -4,7 +4,7 @@
   import DiffView, { computeDiffLines, parseDiffLines } from './DiffView.svelte';
   import { toolViewOf } from '../../shared/tool-view.js';
   import type { DiffLine, CommentAnchor, ContextGap } from './DiffView.svelte';
-  import { hunkLineIndices, LARGE_DIFF_LINES, LARGE_DIFF_CHARS } from '../lib/diff-highlight.js';
+  import { editSize, hunkLineIndices, isLargeDiff, LARGE_DIFF_LINES } from '../lib/diff-highlight.js';
   import { withExpandableContext, reveal, expansionFor, type RevealedRanges } from '../lib/diff-context.js';
   import { buildReviewPrompt } from '../lib/review-prompt.js';
   import { reviewStore } from '../stores/review.svelte.js';
@@ -443,7 +443,8 @@
   });
   let selectedHunkCount = $derived(hunkLineIndices(selectedDiffLines).length);
 
-  /** File keys whose large diff the user chose to see, for this comparison. */
+  /** File keys (and edit ids, in Edit History) whose large diff the user
+   *  chose to see, for this comparison. */
   let largeDiffShown = $state<Record<string, true>>({});
   /** The selected diff's code lines and characters, hunk headers aside. */
   let selectedDiffSize = $derived.by(() => {
@@ -456,7 +457,7 @@
     }
     return { lines, chars };
   });
-  let selectedDiffLarge = $derived(selectedDiffSize.lines > LARGE_DIFF_LINES || selectedDiffSize.chars > LARGE_DIFF_CHARS);
+  let selectedDiffLarge = $derived(isLargeDiff(selectedDiffSize));
   /** A large diff waits for "Show diff". */
   let diffHeldBack = $derived(selectedDiffLarge && selectedKey !== null && !largeDiffShown[selectedKey]);
 
@@ -1051,14 +1052,28 @@
           <div class="mt-2 border-t border-border/50 pt-2">
             <div class="text-xs text-muted-foreground mb-1.5 font-medium">Edit History</div>
             {#each history.edits as edit, idx}
-              {@const editDiffLines = computeDiffLines(toolViewOf(edit), selectedEntry.filePath)}
-              {#if editDiffLines.length > 0}
+              {@const view = toolViewOf(edit)}
+              {@const size = editSize(view)}
+              {@const large = isLargeDiff(size)}
+              {#if large && !largeDiffShown[edit.id]}
+                <!-- Held back before its diff is even worked out. -->
                 <div class="mb-2 {idx > 0 ? 'border-t border-border/30 pt-2' : ''}">
-                  <div class="text-micro text-muted-foreground mb-1">
-                    {edit.toolName} #{idx + 1}
-                  </div>
-                  <DiffView lines={editDiffLines} sideBySide={false} maxHeight="300px" filePath={selectedEntry.filePath} />
+                  <div class="text-micro text-muted-foreground mb-1">{edit.toolName} #{idx + 1}</div>
+                  <Notice tone="neutral">
+                    {#snippet actions()}<Button size="2xs" variant="subtle" onclick={() => (largeDiffShown = { ...largeDiffShown, [edit.id]: true })}>Show edit</Button>{/snippet}
+                    <p>Large edit ({size.lines.toLocaleString()} {size.lines === 1 ? 'line' : 'lines'} of text, {(size.chars / 1024 / 1024).toFixed(1)} MB). Showing it can pause the app for a moment.</p>
+                  </Notice>
                 </div>
+              {:else}
+                {@const editDiffLines = computeDiffLines(view, selectedEntry.filePath)}
+                {#if editDiffLines.length > 0}
+                  <div class="mb-2 {idx > 0 ? 'border-t border-border/30 pt-2' : ''}">
+                    <div class="text-micro text-muted-foreground mb-1">
+                      {edit.toolName} #{idx + 1}
+                    </div>
+                    <DiffView lines={editDiffLines} sideBySide={false} maxHeight="300px" filePath={selectedEntry.filePath} deferHighlight={large} />
+                  </div>
+                {/if}
               {/if}
             {/each}
           </div>

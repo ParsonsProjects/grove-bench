@@ -20,6 +20,7 @@ vi.mock('../lib/diff-highlight.js', async (importOriginal) => {
   return {
     ...actual,
     LARGE_DIFF_LINES: 20,
+    isLargeDiff: (size: { lines: number; chars: number }) => size.lines > 20 || size.chars > actual.LARGE_DIFF_CHARS,
     highlightLine: (...args: Parameters<typeof actual.highlightLine>) => {
       highlights.count++;
       return actual.highlightLine(...args);
@@ -785,6 +786,26 @@ describe('ChangesReviewPanel — large diffs', () => {
     gitStatusStore.statusBySession = { [SID]: { entries: [entry('app.min.js')] } };
     const { findByText } = render(ChangesReviewPanel, { sessionId: SID });
     expect(await findByText(/Large diff \(2 lines, 0\.1 MB\)/)).toBeInTheDocument();
+  });
+
+  it('holds a large edit back in Edit History until asked', async () => {
+    const content = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`).join('\n');
+    messageStore.messagesBySession[SID] = [
+      { kind: 'user', id: 'm1', text: 'write it' },
+      { kind: 'tool_call', id: 'w1', toolName: 'Write', toolInput: { file_path: 'big.ts', content }, toolUseId: 't1', uuid: 'u1', pending: false },
+      { kind: 'result', id: 'm2', subtype: 'success', isError: false },
+    ] as any;
+    mockGroveBench.getFileDiff.mockResolvedValue({ kind: 'text', patch: patch('small') });
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('big.ts')] } };
+    const { container, findByRole, findByText } = render(ChangesReviewPanel, { sessionId: SID });
+
+    await fireEvent.click(await findByRole('button', { name: '1 edit' }));
+    expect(await findByText(/Large edit \(30 lines of text/)).toBeInTheDocument();
+    expect(diffText(container)).not.toContain('line 30');
+
+    await fireEvent.click(await findByRole('button', { name: 'Show edit' }));
+    await waitFor(() => expect(diffText(container)).toContain('line 30'));
+    delete messageStore.messagesBySession[SID];
   });
 
   it('asks again after switching to another comparison', async () => {
