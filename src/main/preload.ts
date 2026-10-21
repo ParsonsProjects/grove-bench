@@ -468,6 +468,7 @@ const api: GroveBenchAPI = {
     ipcRenderer.send(IPC.APP_REPORT_FREEZE, report),
   reportTiming: (report: import('../shared/types.js').TimingReport) =>
     ipcRenderer.send(IPC.APP_REPORT_TIMING, report),
+  logIdle: (line: string) => ipcRenderer.send(IPC.APP_LOG_IDLE, line),
   recordPerformanceTrace: () => ipcRenderer.invoke(IPC.PERF_RECORD_TRACE),
   showPerformanceFile: (which: 'log' | 'trace') => ipcRenderer.invoke(IPC.PERF_SHOW_FILE, which),
 

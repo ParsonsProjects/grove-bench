@@ -1547,6 +1547,9 @@ export interface GroveBenchAPI {
   reportFreeze(report: FreezeReport): void;
   /** Send step timings from the window to main for the performance log. */
   reportTiming(report: TimingReport): void;
+  /** Send a line from the idle sleep loop (why a thread was or wasn't put
+   *  to sleep) to main for the app log. Thread ids only. */
+  logIdle(line: string): void;
   /** Record a performance trace for a few seconds; resolves once it's saved. */
   recordPerformanceTrace(): Promise<TraceResult>;
   /** Show the performance log, or the last trace saved, in the file manager. */
@@ -2179,6 +2182,8 @@ export const IPC = {
   APP_REPORT_FREEZE: 'app:reportFreeze',
   /** Renderer → main: step timings from the window, for the performance log. */
   APP_REPORT_TIMING: 'app:reportTiming',
+  /** Renderer → main: a line from the idle sleep loop, for the app log. */
+  APP_LOG_IDLE: 'app:logIdle',
   /** Record a performance trace for a few seconds and save it. */
   PERF_RECORD_TRACE: 'perf:recordTrace',
   /** Show the performance log, or the last trace, in the file manager. */

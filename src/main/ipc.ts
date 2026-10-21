@@ -109,6 +109,9 @@ const goalInFlight = new Set<string>();
 const goalAutoAttempts = new Map<string, number>();
 const MAX_GOAL_AUTO_ATTEMPTS = 2;
 
+/** Longest idle sleep loop line written to the app log (APP_LOG_IDLE). */
+export const IDLE_LOG_MAX_CHARS = 500;
+
 /** Generate a goal from a conversation's messages on its own agent and save
  *  it, unless the goal changed from `current` meanwhile. Resolves to the
  *  saved goal, or null when it wasn't saved. `substitute`: the agent the user
@@ -2106,6 +2109,14 @@ export function registerHandlers() {
 
   ipcMain.on(IPC.APP_REPORT_TIMING, (_event, report: unknown) => {
     logWindowTiming(report);
+  });
+
+  // The idle sleep loop's view (renderer lib/idle-manager.ts): why a thread
+  // was or wasn't asked to sleep, beside main's own `[sleep]` lines. One line
+  // each, so a newline can't forge another entry.
+  ipcMain.on(IPC.APP_LOG_IDLE, (_event, line: unknown) => {
+    if (typeof line !== 'string' || !line) return;
+    logger.debug(`[idle] ${line.slice(0, IDLE_LOG_MAX_CHARS).replace(/[\r\n]+/g, ' ')}`);
   });
 
   ipcMain.handle(IPC.PERF_RECORD_TRACE, () => recordTrace());

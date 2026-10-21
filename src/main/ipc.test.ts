@@ -115,7 +115,7 @@ import { logRendererError } from './crash-handling.js';
 import { applyAttentionBadge } from './attention-badge.js';
 import { recordedAgent } from './background-tasks.js';
 import { generateCommitMessage } from './commit-message.js';
-import { registerHandlers } from './ipc.js';
+import { registerHandlers, IDLE_LOG_MAX_CHARS } from './ipc.js';
 
 // ─── Harness ───
 
@@ -414,6 +414,24 @@ describe('SESSION_CREATE', () => {
     await lastSetup().promise;
 
     expect(tabEvents(id)).toContainEqual({ type: 'error', message: 'npm install failed:\nnpm ERR! 404' });
+    expect(m.sessionManager.createSession).toHaveBeenCalled();
+  });
+
+  it("skips the install quietly when npm isn't installed, and still starts the agent", async () => {
+    m.settings.getSettings.mockReturnValue({ autoInstallDeps: true });
+    const withPkg = fs.mkdtempSync(path.join(tmp, 'pkg-'));
+    fs.writeFileSync(path.join(withPkg, 'package.json'), '{}');
+    m.worktreeManager.create.mockImplementation(async (c: { id: string; branchName: string }) => ({
+      id: c.id, path: withPkg, branch: c.branchName, repoPath: '/repo', createdAt: 0,
+    }));
+    // As installDependencies rejects on Windows too, where cmd.exe said npm
+    // "is not recognized" (deps-install.test.ts).
+    vi.mocked(installDependencies).mockRejectedValue(Object.assign(new Error('spawn npm ENOENT'), { code: 'ENOENT', syscall: 'spawn npm' }));
+
+    const { id } = await create();
+    await lastSetup().promise;
+
+    expect(tabEvents(id).some((e) => e.type === 'error')).toBe(false);
     expect(m.sessionManager.createSession).toHaveBeenCalled();
   });
 
@@ -1481,6 +1499,23 @@ describe('renderer input checks', () => {
     expect(report.stack).toHaveLength(8000);
     expect(report).not.toHaveProperty('sessionId');
     expect(typeof report.timestamp).toBe('number');
+  });
+
+  it('idle sleep loop lines are logged only as strings, on one line, capped', () => {
+    invoke(IPC.APP_LOG_IDLE, 42);
+    invoke(IPC.APP_LOG_IDLE, { line: 'session=s1 focused' });
+    invoke(IPC.APP_LOG_IDLE, '');
+    expect(m.logger.debug).not.toHaveBeenCalled();
+
+    invoke(IPC.APP_LOG_IDLE, 'session=s1 focused');
+    expect(m.logger.debug).toHaveBeenCalledWith('[idle] session=s1 focused');
+
+    invoke(IPC.APP_LOG_IDLE, 'session=s1 x\r\n[2026-01-01] [ERROR] forged' + 'y'.repeat(5000));
+    const line = m.logger.debug.mock.calls[1][0] as string;
+    expect(line.startsWith('[idle] session=s1 x [2026-01-01] [ERROR] forged')).toBe(true);
+    expect(line).not.toMatch(/[\r\n]/);
+    expect(line.length).toBeLessThanOrEqual('[idle] '.length + IDLE_LOG_MAX_CHARS);
+    expect(m.logger.debug).toHaveBeenCalledTimes(2);
   });
 
   it('attention badge counts are whole, non-negative numbers', () => {

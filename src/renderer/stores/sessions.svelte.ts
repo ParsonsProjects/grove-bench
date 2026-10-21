@@ -26,7 +26,22 @@ class SessionStore {
   repos = $state<string[]>([]);
   /** Projects that are plain folders, not git repositories. */
   folderRepos = $state<string[]>([]);
-  activeSessionId = $state<string | null>(null);
+  /** The open thread, or null (the landing, the draft). Moving off a thread
+   *  notes the time in lastLeftAt. */
+  get activeSessionId(): string | null {
+    return this._activeSessionId;
+  }
+  set activeSessionId(id: string | null) {
+    const left = this._activeSessionId;
+    if (left !== null && left !== id) this.lastLeftAt.set(left, Date.now());
+    this._activeSessionId = id;
+  }
+  private _activeSessionId = $state<string | null>(null);
+  /** When the user last moved off each thread this run (ms), noted as it
+   *  happens rather than on the idle loop's once-a-minute tick, which misses
+   *  a visit that starts and ends between two ticks (idle-manager.ts). Plain:
+   *  only that tick reads it. */
+  readonly lastLeftAt = new Map<string, number>();
   error = $state<string | null>(null);
   creating = $state(false);
   prerequisites = $state<PrerequisiteStatus | null>(null);
@@ -199,6 +214,7 @@ class SessionStore {
     this.clearDeferredResume(id);
     // Back to the landing screen rather than jumping into another conversation.
     if (this.activeSessionId === id) this.activeSessionId = null;
+    this.lastLeftAt.delete(id);
   }
 
   updateStatus(id: string, status: SessionStatus) {

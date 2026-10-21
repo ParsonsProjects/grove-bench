@@ -33,13 +33,23 @@ import { accountEnv, accountSignInCommand, type ClaudeAccount } from './claude-a
 import { logger } from '../logger.js';
 import { writeFileAtomic } from '../fs-utils.js';
 import { RunningCost, RunningTokens } from './running-cost.js';
-import { execFile } from 'node:child_process';
-import { spawnProcess } from '../process-host.js';
+import { runProcess, spawnProcess, type HostedOptions, type ProcessResult } from '../process-host.js';
+import { runInAgentHost, type AgentHostRunOptions } from '../process-host-run.js';
 import { extractJsonObject } from '../extract-json.js';
-import { promisify } from 'node:util';
 import * as path from 'node:path';
 
-const execFileAsync = promisify(execFile);
+/**
+ * Run the `claude` CLI as Node's execFile with `shell: true` did: the
+ * command line in cmd.exe on Windows (its arguments quoted with quoteArg),
+ * failing when it exits non-zero. It runs in the agent host
+ * (runInAgentHost), so the launch never holds up the window, and a plugin
+ * install or a hung `mcp list` neither is stopped by nor stops the git host,
+ * which is restarted when a command goes unanswered. A timeout kills the
+ * whole tree, not just cmd.exe.
+ */
+function runClaudeCli(file: string, args: string[], options: AgentHostRunOptions = {}): Promise<ProcessResult> {
+  return runInAgentHost(file, args, { ...options, shell: true });
+}
 
 /** Shown when Claude can't sign in: a bad or revoked API key, or an expired
  *  Claude Code sign-in. */
@@ -1331,8 +1341,8 @@ export function validateConfigScope(scope: unknown): McpConfigScope {
 }
 
 /**
- * Quote a single argument for execFile with `shell: true` (cmd.exe on
- * Windows joins args with spaces and does NOT quote them). Values that could
+ * Quote a single argument for a command run with `shell: true` (runClaudeCli:
+ * cmd.exe on Windows gets the args joined with spaces, NOT quoted). Values that could
  * defeat double-quoting (`"`, `%`, control chars) are rejected outright.
  */
 export function quoteArg(arg: string): string {
@@ -1707,10 +1717,16 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     // %USERPROFILE%\.local\bin or npm global bin.  We therefore try
     // `where.exe` / `which` first, and if that fails, probe well-known
     // install locations before giving up.
+    // Neither CLI call starts in the main process: from there, one `where
+    // claude` held the window for 3.5 s. The lookup runs in the process host
+    // with git (runProcess): a short, single process with no shell, which
+    // its timeout really ends, so it can't hang that host. `auth status`
+    // runs the claude CLI, in the agent host (runClaudeCli). Both only read,
+    // so they run again if their host dies under them (idempotent).
     let claudePath: string | undefined;
     try {
       const cmd = process.platform === 'win32' ? 'where.exe' : 'which';
-      const { stdout } = await execFileAsync(cmd, ['claude'], { shell: true, timeout: CLI_LOOKUP_TIMEOUT_MS });
+      const { stdout } = await runProcess(cmd, ['claude'], { timeout: CLI_LOOKUP_TIMEOUT_MS, idempotent: true });
       claudePath = pickCliPath(stdout);
     } catch {
       // `where`/`which` failed — try known Windows install locations
@@ -1758,7 +1774,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     try {
       // Quoted: with `shell: true`, cmd.exe gets the command line unquoted,
       // so a path with a space (C:\Users\Jo Smith\...) would be cut short.
-      ({ stdout } = await execFileAsync(quoteArg(claudePath), ['auth', 'status', '--json'], { shell: true, timeout: AUTH_STATUS_TIMEOUT_MS, ...this.cliEnv() }));
+      ({ stdout } = await runClaudeCli(quoteArg(claudePath), ['auth', 'status', '--json'], { timeout: AUTH_STATUS_TIMEOUT_MS, idempotent: true, ...this.cliEnv() }));
     } catch (err) {
       failure = err;
       // Signed out exits 1 with the JSON still on stdout
@@ -1802,9 +1818,11 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   /** Options for `claude` CLI commands (auth status, mcp, plugin): nothing
    *  extra for the default account, which uses Grove's own environment; an
    *  account agent's environment otherwise, without the saved key so `auth
-   *  status` reports the folder's own sign-in. */
-  private cliEnv(): { env?: NodeJS.ProcessEnv } {
-    return this.account ? { env: accountEnv(process.env, this.account.configDir) } : {};
+   *  status` reports the folder's own sign-in. That environment is the
+   *  whole of it (extendEnv: false), or the sign-ins it leaves out would
+   *  come back from the one the command inherits. */
+  private cliEnv(): Pick<HostedOptions, 'env' | 'extendEnv'> {
+    return this.account ? { env: accountEnv(process.env, this.account.configDir), extendEnv: false } : {};
   }
 
   async start(config: AdapterConfig): Promise<AgentQueryHandle> {
@@ -2180,10 +2198,10 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
   async listConfiguredMcpServers(cwd?: string): Promise<McpConfiguredServer[]> {
     // `claude mcp list` health-checks each server, so this can take seconds.
-    const { stdout } = await execFileAsync('claude', ['mcp', 'list'], {
-      shell: true,
+    const { stdout } = await runClaudeCli('claude', ['mcp', 'list'], {
       ...(cwd ? { cwd } : {}),
       timeout: 60_000,
+      idempotent: true,
       ...this.cliEnv(),
     });
     return parseMcpListOutput(stdout);
@@ -2191,8 +2209,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
   async addConfiguredMcpServer(opts: McpAddServerOpts): Promise<void> {
     const args = buildMcpAddArgs(opts);
-    await execFileAsync('claude', args, {
-      shell: true,
+    await runClaudeCli('claude', args, {
       ...(opts.cwd ? { cwd: opts.cwd } : {}),
       timeout: 30_000,
       ...this.cliEnv(),
@@ -2206,8 +2223,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     }
     validateMcpName(name);
     const args = ['mcp', 'remove', ...(scope ? ['-s', validateConfigScope(scope)] : []), quoteArg(name)];
-    await execFileAsync('claude', args, {
-      shell: true,
+    await runClaudeCli('claude', args, {
       ...(cwd ? { cwd } : {}),
       timeout: 30_000,
       ...this.cliEnv(),
@@ -2218,7 +2234,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
   async listPlugins(): Promise<{ installed: Array<{ id: string; name?: string; enabled?: boolean }>; available: unknown[] }> {
     try {
-      const { stdout } = await execFileAsync('claude', ['plugin', 'list', '--json', '--available'], { shell: true, ...this.cliEnv() });
+      const { stdout } = await runClaudeCli('claude', ['plugin', 'list', '--json', '--available'], { idempotent: true, ...this.cliEnv() });
       return JSON.parse(stdout);
     } catch {
       return { installed: [], available: [] };
@@ -2226,19 +2242,19 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   }
 
   async installPlugin(pluginId: string, scope = 'user'): Promise<void> {
-    await execFileAsync('claude', ['plugin', 'install', validatePluginId(pluginId), '--scope', validateConfigScope(scope)], { shell: true, ...this.cliEnv() });
+    await runClaudeCli('claude', ['plugin', 'install', validatePluginId(pluginId), '--scope', validateConfigScope(scope)], this.cliEnv());
   }
 
   async uninstallPlugin(pluginId: string): Promise<void> {
-    await execFileAsync('claude', ['plugin', 'uninstall', validatePluginId(pluginId)], { shell: true, ...this.cliEnv() });
+    await runClaudeCli('claude', ['plugin', 'uninstall', validatePluginId(pluginId)], this.cliEnv());
   }
 
   async enablePlugin(pluginId: string): Promise<void> {
-    await execFileAsync('claude', ['plugin', 'enable', validatePluginId(pluginId)], { shell: true, ...this.cliEnv() });
+    await runClaudeCli('claude', ['plugin', 'enable', validatePluginId(pluginId)], this.cliEnv());
   }
 
   async disablePlugin(pluginId: string): Promise<void> {
-    await execFileAsync('claude', ['plugin', 'disable', validatePluginId(pluginId)], { shell: true, ...this.cliEnv() });
+    await runClaudeCli('claude', ['plugin', 'disable', validatePluginId(pluginId)], this.cliEnv());
   }
 
   // ─── Text generation (for memory extraction) ───

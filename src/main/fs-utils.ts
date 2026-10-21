@@ -1,27 +1,15 @@
 import fs from 'node:fs/promises';
-import { execa } from 'execa';
 
 /**
- * Recursively delete a directory.
+ * Recursively delete a directory, with `fs.rm`. One that isn't there counts
+ * as deleted. Errors (EBUSY, EPERM, … while another process holds a file)
+ * are thrown for callers that retry (removeDirectoryWithRetry).
  *
- * On Windows, large trees (worktrees with node_modules) are handed to
- * `rmdir /s /q` in a child process so the deletion does not tie up the main
- * process's libuv thread pool, which every other fs call in the app shares.
- * If the directory still exists afterwards (locked handles, permissions), fall
- * back to `fs.rm`, which surfaces a proper error (EBUSY, EPERM, …) for callers
- * that retry.
+ * No `rmdir /s /q` in a cmd.exe first, as there once was: Node quoted its
+ * path with backslash escapes cmd.exe doesn't read, so it most likely never
+ * deleted anything, and it cost a process launch on every delete.
  */
 export async function removeDirectory(dirPath: string): Promise<void> {
-  if (process.platform === 'win32') {
-    try {
-      await execa('cmd.exe', ['/d', '/s', '/c', `rmdir /s /q "${dirPath}"`], {
-        windowsHide: true,
-        reject: false,
-        timeout: 5 * 60_000,
-      });
-    } catch { /* fall through to fs.rm */ }
-    if (!(await pathExists(dirPath))) return;
-  }
   await fs.rm(dirPath, { recursive: true, force: true });
 }
 

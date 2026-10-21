@@ -127,6 +127,29 @@ describe('SessionStore', () => {
     it('activeSession returns null when no active', () => {
       expect(store.activeSession).toBeNull();
     });
+
+    // The idle loop's grace counts from these (idle-manager.ts).
+    it('notes when each thread was left, the moment focus moves off it', () => {
+      vi.useFakeTimers({ toFake: ['Date'], now: 1_000 });
+      try {
+        store.lastLeftAt.clear();
+        store.addSession(makeSession({ id: 's1' }));
+        store.addSession(makeSession({ id: 's2' }), false);
+        expect(store.lastLeftAt.size).toBe(0);
+        vi.setSystemTime(2_000);
+        store.activeSessionId = 's1'; // no move: nothing noted
+        store.activeSessionId = 's2';
+        expect(store.lastLeftAt.get('s1')).toBe(2_000);
+        vi.setSystemTime(3_000);
+        store.activeSessionId = null; // to the landing
+        expect(store.lastLeftAt.get('s2')).toBe(3_000);
+        expect(store.lastLeftAt.get('s1')).toBe(2_000);
+        store.removeSession('s1');
+        expect(store.lastLeftAt.has('s1')).toBe(false);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
   describe('deferredResume', () => {
