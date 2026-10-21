@@ -558,6 +558,37 @@ describe('Sidebar attention triage', () => {
     expect(screen.queryByText('Finished one')).not.toBeInTheDocument();
   });
 
+  it('counts a closed thread under no chip, even when it is still flagged unread', async () => {
+    // Its agent stopped by itself after the turn that flagged it, so it left
+    // the Threads list with the flag on.
+    store.sessions = [...store.sessions, { id: 'closed', branch: 'feat-f', repoPath: '/repo-b', status: 'stopped', displayName: 'Closed one' }] as any;
+    store.needsAttention = { finished: true, closed: true };
+    mockGroveBench.getCollapsedRepos.mockResolvedValue({ '/repo-b': false });
+    render(Sidebar);
+
+    expect(screen.getByRole('group', { name: 'Filter threads' })).toHaveTextContent('Unread 1');
+    expect(screen.getByTitle('1 unread')).toBeInTheDocument();
+    // Drawn closed, not green, and its menu has nothing to mark read.
+    await fireEvent.contextMenu(await screen.findByText('Closed one'));
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    expect(screen.queryByText('Mark as Read')).toBeNull();
+    expect(screen.queryByText('Mark as Unread')).toBeNull();
+  });
+
+  it('counts the flag again once the closed thread is an open tab again', async () => {
+    store.sessions = [...store.sessions, { id: 'closed', branch: 'feat-f', repoPath: '/repo-b', status: 'stopped', displayName: 'Closed one' }] as any;
+    store.needsAttention = { finished: true, closed: true };
+    render(Sidebar);
+    expect(screen.getByRole('group', { name: 'Filter threads' })).toHaveTextContent('Unread 1');
+
+    // Kept open after its agent died in system sleep, to reconnect on focus.
+    store.deferResume('closed');
+    await tick();
+    expect(screen.getByRole('group', { name: 'Filter threads' })).toHaveTextContent('Unread 2');
+    await fireEvent.click(screen.getByTitle('Unread: 2'));
+    expect(screen.getByText('Closed one')).toBeInTheDocument();
+  });
+
   it('offers no Close Conversation for a conversation that is already stopped', async () => {
     store.sessions = store.sessions.map((s) => (s.id === 'quiet' ? { ...s, status: 'stopped' } : s));
     mockGroveBench.getCollapsedRepos.mockResolvedValue({ '/repo-b': false });

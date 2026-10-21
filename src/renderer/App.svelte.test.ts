@@ -170,6 +170,43 @@ describe('App unread flag', () => {
     expect(store.needsAttention.b).toBe(true);
   });
 
+  it('brings back no unread flag on a closed thread, which counts as dealt with', async () => {
+    mockGroveBench.getSettings.mockResolvedValue(JSON.parse(JSON.stringify(settingsStore.current)));
+    mockGroveBench.listRepos.mockResolvedValue([]);
+    getOpenTabs.mockResolvedValue([]);
+    mockGroveBench.notifyRestoreComplete.mockClear();
+    mockGroveBench.getUnreadSessions.mockImplementationOnce(async () => {
+      store.sessions = [
+        { id: 'open', branch: 'feat-a', repoPath: '/repo', status: 'running' },
+        { id: 'closed', branch: 'feat-b', repoPath: '/repo', status: 'stopped' },
+      ] as any;
+      return ['open', 'closed'];
+    });
+    render(App);
+    await vi.waitFor(() => expect(mockGroveBench.notifyRestoreComplete).toHaveBeenCalled(), { timeout: 5000 });
+    flushSync();
+
+    expect(store.needsAttention).toEqual({ open: true });
+  });
+
+  it('leaves a closed thread out of the taskbar badge, as the sidebar does', async () => {
+    mockGroveBench.getSettings.mockResolvedValue(JSON.parse(JSON.stringify(settingsStore.current)));
+    mockGroveBench.listRepos.mockResolvedValue([]);
+    getOpenTabs.mockResolvedValue([]);
+    render(App);
+    await screen.findByText('Add a project to get started.', {}, { timeout: 5000 });
+
+    store.sessions = [
+      { id: 'open', branch: 'feat-a', repoPath: '/repo', status: 'running' },
+      // Its agent stopped by itself after the turn that flagged it.
+      { id: 'closed', branch: 'feat-b', repoPath: '/repo', status: 'stopped' },
+    ] as any;
+    store.needsAttention = { open: true, closed: true };
+    flushSync();
+
+    expect(mockGroveBench.setAttentionBadge).toHaveBeenLastCalledWith(1, null);
+  });
+
   it('does not mark it unread when it is closed mid-turn', async () => {
     await renderWithWorkingConversation();
 

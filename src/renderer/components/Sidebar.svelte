@@ -222,7 +222,7 @@
         ? { label: 'Clear To Do', icon: 'todo', action: () => todoStore.set(sessionId, false) }
         : { label: 'Mark as To Do', icon: 'todo', action: () => todoStore.set(sessionId, true) });
     }
-    if (store.needsAttention[sessionId]) {
+    if (store.isUnread(session)) {
       items.push({ label: 'Mark as Read', icon: 'read', action: () => store.clearNeedsAttention(sessionId) });
     } else if (session.status !== 'error' && store.isOpenTab(session)) {
       // Not on a red thread, which stays red, nor a closed one, which counts

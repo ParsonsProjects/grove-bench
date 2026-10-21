@@ -18,7 +18,7 @@ export function sessionSpriteState(session: { id: string; status: string }, dest
     status: restoredTab ? 'sleeping' : session.status,
     hasPending: messageStore.needsInput(session.id),
     isRunning: messageStore.getIsRunning(session.id),
-    needsAttention: !!store.needsAttention[session.id],
+    needsAttention: store.isUnread(session),
   });
 }
 
