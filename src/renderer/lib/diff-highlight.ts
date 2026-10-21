@@ -2,6 +2,7 @@ import hljs from './hljs.js';
 import DOMPurify from 'dompurify';
 import { diffWordsWithSpace } from 'diff';
 import type { DiffLine } from './diff-types.js';
+import type { ToolView } from '../../shared/tool-view.js';
 
 /** Map of file extensions to highlight.js language ids. */
 const EXT_TO_LANG: Record<string, string> = {
@@ -61,9 +62,34 @@ export const MAX_DEFERRED_LINES = 5000;
  *  diff" in the Changes and Checkpoints panels, then colours in idle time.
  *  Drawn at once it stalls the window: in Chromium, 5,000 lines took about a
  *  second to colour and lay out, and one changed line of minified code can
- *  be megabytes. */
+ *  be megabytes. Edit History applies the same limits to an edit's text
+ *  (editSize). Check them with isLargeDiff, not by hand. */
 export const LARGE_DIFF_LINES = 2000;
 export const LARGE_DIFF_CHARS = 100_000;
+
+/** Whether a diff of this many code lines and characters waits for "Show diff". */
+export function isLargeDiff(size: { lines: number; chars: number }): boolean {
+  return size.lines > LARGE_DIFF_LINES || size.chars > LARGE_DIFF_CHARS;
+}
+
+/** How much text an edit call carries: both sides of each replacement, or
+ *  the whole write. Edit History decides on this before working out the
+ *  diff, since createPatch on a large input is slow too, even when the diff
+ *  it makes is small. */
+export function editSize(view: ToolView): { lines: number; chars: number } {
+  const texts = view.edits?.length ? view.edits.flatMap((e) => [e.oldText, e.newText]) : [view.write ?? ''];
+  let lines = 0;
+  let chars = 0;
+  for (const t of texts) {
+    if (!t) continue;
+    chars += t.length;
+    lines++;
+    for (let i = t.indexOf('\n'); i !== -1; i = t.indexOf('\n', i + 1)) lines++;
+    // A final newline ends the last line rather than starting another.
+    if (t.endsWith('\n')) lines--;
+  }
+  return { lines, chars };
+}
 
 /**
  * The distinct code lines DiffView colours in idle time (deferHighlight), or
