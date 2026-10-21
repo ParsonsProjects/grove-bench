@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { mockGroveBench } from '../__mocks__/setup.js';
+import { IDLE_TURN, mockGroveBench } from '../__mocks__/setup.js';
 import { messageStore } from '../stores/messages.svelte.js';
 import {
   attachedTextContent, showInThread, textFileMarkdown, threadFileName, threadFileSize, threadImageSrc,
@@ -62,7 +62,7 @@ describe('attachedTextContent', () => {
   });
 
   it('gives null when the message is gone or is something else', async () => {
-    mockGroveBench.getEventHistoryPage.mockResolvedValueOnce({ events: [], totalCount: 2, startIndex: 2 });
+    mockGroveBench.getEventHistoryPage.mockResolvedValueOnce({ events: [], totalCount: 2, startIndex: 2, turn: IDLE_TURN });
     expect(await attachedTextContent(SID, 4, 'a.ts')).toBeNull();
     mockGroveBench.getEventHistoryPage.mockResolvedValueOnce({ events: [{ type: 'assistant_text', text: 'x', uuid: 'u' }], totalCount: 9, startIndex: 4 } as never);
     expect(await attachedTextContent(SID, 4, 'a.ts')).toBeNull();

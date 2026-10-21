@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { flushSync } from 'svelte';
-import { mockGroveBench } from '../__mocks__/setup.js';
+import { IDLE_TURN, mockGroveBench } from '../__mocks__/setup.js';
 
 import { messageStore, type ChatUserMessage } from './messages.svelte.js';
 import { userMessageLabel } from '../lib/message-label.js';
@@ -1485,6 +1485,88 @@ describe('resolveStaleToolCalls', () => {
   });
 });
 
+describe('applyTurnState (main says how a replayed history ends)', () => {
+  const midTurn: AgentEvent[] = [
+    { type: 'user_message', text: 'Run the tests', uuid: 'u1' },
+    { type: 'assistant_tool_use', toolName: 'Bash', toolInput: { command: 'npm test' }, toolUseId: 'tu-1', uuid: 'a1' },
+  ];
+  const asks: AgentEvent[] = [
+    ...midTurn,
+    { type: 'permission_request', toolName: 'Bash', toolInput: { command: 'npm test' }, toolUseId: 'tu-1', requestId: 'perm-1' },
+    {
+      type: 'permission_request', toolName: 'AskUserQuestion', toolInput: {}, toolUseId: 'tu-2', requestId: 'perm-2', toolCategory: 'question',
+      toolView: { kind: 'question', questions: [{ question: 'Ship it?', options: [{ label: 'Yes' }] }] },
+    },
+    { type: 'elicitation_request', requestId: 'elicit-1', request: { serverName: 'deploy', message: 'Which env?', mode: 'form', requestedSchema: { type: 'object' } } },
+    { type: 'limit_request', requestId: 'limit-1', limit: 'turnToolCalls', used: 100, reachedAt: 100, nextAllowance: 200 },
+  ];
+  const byKind = (kind: string) => messageStore.getMessages(SID).find((m) => m.kind === kind) as any;
+
+  it('shows a history cut off mid-turn as not running when main has no turn', () => {
+    messageStore.replayEvents(SID, midTurn);
+    expect(messageStore.getIsRunning(SID)).toBe(true);
+
+    messageStore.applyTurnState(SID, IDLE_TURN, false);
+
+    expect(messageStore.getIsRunning(SID)).toBe(false);
+    expect(messageStore.getActivity(SID).activity).toBe('idle');
+    expect(byKind('tool_call').pending).toBe(false);
+  });
+
+  it('keeps it running when main says the turn is', () => {
+    messageStore.replayEvents(SID, [...midTurn, { type: 'process_exit' }, { type: 'user_message', text: 'Again', uuid: 'u2' }]);
+    expect(messageStore.getIsRunning(SID)).toBe(false);
+
+    messageStore.applyTurnState(SID, { midTurn: true, pendingPromptIds: [] }, false);
+
+    expect(messageStore.getIsRunning(SID)).toBe(true);
+  });
+
+  it('settles the prompts main no longer waits on, and leaves open the ones it does', () => {
+    messageStore.replayEvents(SID, asks);
+
+    messageStore.applyTurnState(SID, { midTurn: true, pendingPromptIds: ['perm-1', 'elicit-1'] }, false);
+
+    expect(byKind('permission')).toMatchObject({ requestId: 'perm-1', resolved: false });
+    expect(byKind('tool_call')).toMatchObject({ toolUseId: 'tu-1', awaitingPermission: true });
+    expect(byKind('question')).toMatchObject({ requestId: 'perm-2', resolved: true });
+    expect(byKind('elicitation')).toMatchObject({ requestId: 'elicit-1', resolved: false });
+    expect(byKind('limit')).toMatchObject({ requestId: 'limit-1', resolved: true, decision: 'stop' });
+    expect(messageStore.needsInput(SID)).toBe(true);
+  });
+
+  it('settles them all for a thread main holds nothing for, even one it says is running', () => {
+    messageStore.replayEvents(SID, asks);
+
+    messageStore.applyTurnState(SID, { midTurn: true, pendingPromptIds: [] }, false);
+
+    expect(byKind('permission')).toMatchObject({ resolved: true, decision: 'deny' });
+    expect(byKind('tool_call').awaitingPermission).toBe(false);
+    expect(byKind('elicitation')).toMatchObject({ resolved: true, action: 'cancel' });
+    expect(messageStore.needsInput(SID)).toBe(false);
+  });
+
+  it('stays working on a prompt sent before the history loaded, past the old turns it replays', () => {
+    messageStore.addUserMessage(SID, 'Add a test');
+    messageStore.clearSession(SID);
+    expect(messageStore.isAwaitingResponse(SID)).toBe(true);
+    messageStore.replayEvents(SID, [...midTurn, { type: 'result', subtype: 'success', isError: false }]);
+
+    messageStore.applyTurnState(SID, IDLE_TURN, true);
+
+    expect(messageStore.getIsRunning(SID)).toBe(true);
+    // Still waiting on the reply: the agent connecting doesn't end it.
+    messageStore.ingestEvent(SID, { type: 'system_init', sessionId: 'p', model: 'm', tools: [] } as AgentEvent);
+    expect(messageStore.getIsRunning(SID)).toBe(true);
+  });
+
+  it('forgets a prompt still waiting once its pane closes', () => {
+    messageStore.addUserMessage(SID, 'Add a test');
+    messageStore.dropAwaitingResponse(SID);
+    expect(messageStore.isAwaitingResponse(SID)).toBe(false);
+  });
+});
+
 describe('background task cleanup (delegates to backgroundTaskStore)', () => {
   // resolveStale's own logic is covered in backgroundTask.svelte.test.ts; this
   // guards that only a process exit (not a turn result) cleans up orphaned
@@ -2177,7 +2259,7 @@ describe('requestPromptInsert', () => {
 describe('pagination — loadOlderUntil', () => {
   it('loads older pages until the target index is covered', async () => {
     messageStore.setPagination(SID, 500, 300);
-    mockGroveBench.getEventHistoryPage.mockResolvedValueOnce({ events: [], totalCount: 500, startIndex: 100 });
+    mockGroveBench.getEventHistoryPage.mockResolvedValueOnce({ events: [], totalCount: 500, startIndex: 100, turn: IDLE_TURN });
 
     await messageStore.loadOlderUntil(SID, 150);
 
@@ -2189,8 +2271,8 @@ describe('pagination — loadOlderUntil', () => {
   it('loads multiple pages when needed', async () => {
     messageStore.setPagination(SID, 500, 400);
     mockGroveBench.getEventHistoryPage
-      .mockResolvedValueOnce({ events: [], totalCount: 500, startIndex: 200 })
-      .mockResolvedValueOnce({ events: [], totalCount: 500, startIndex: 0 });
+      .mockResolvedValueOnce({ events: [], totalCount: 500, startIndex: 200, turn: IDLE_TURN })
+      .mockResolvedValueOnce({ events: [], totalCount: 500, startIndex: 0, turn: IDLE_TURN });
 
     await messageStore.loadOlderUntil(SID, 50);
 
@@ -2217,6 +2299,7 @@ describe('pagination — loadOlderEvents', () => {
       events: [],
       totalCount: 500,
       startIndex: 100,
+      turn: IDLE_TURN,
     });
 
     await messageStore.loadOlderEvents(SID, 200);
@@ -2234,6 +2317,7 @@ describe('pagination — loadOlderEvents', () => {
       events: [],
       totalCount: 100,
       startIndex: 0,
+      turn: IDLE_TURN,
     });
 
     await messageStore.loadOlderEvents(SID, 200);

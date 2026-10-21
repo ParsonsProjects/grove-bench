@@ -17,7 +17,7 @@ const m = vi.hoisted(() => {
     sessionManager: fns(
       'getSessionsByRepo', 'createSession', 'getSession', 'reattachWindow', 'trackPendingSetup', 'hasPendingSetup', 'interruptQuery',
       'closeSession', 'sleepSession', 'wakeSession', 'stopTask', 'destroySession', 'listSessions', 'renameSession',
-      'setBranch', 'isMidTurn', 'getEventHistory', 'getEventHistoryPage', 'getEventHistoryCount', 'searchEventHistory',
+      'setBranch', 'isMidTurn', 'turnState', 'getEventHistory', 'getEventHistoryPage', 'getEventHistoryCount', 'searchEventHistory',
       'beginSearch', 'clearEventHistory', 'sendMessage', 'setMode', 'setModel', 'getControls', 'getUsage', 'setControl',
       'listMcpServers', 'getMcpContextCost', 'reconnectMcpServer', 'setMcpServerEnabled', 'authenticateMcpServer', 'reconnectDownMcpServers',
       'getSessionAdapter', 'getWorktreePath', 'analyzeSkillSuggestionsForRepo', 'respondToPermission',
@@ -1027,9 +1027,14 @@ describe('history', () => {
     });
     const texts = (page: { events: AgentEvent[] }) => page.events.map((e) => (e as { text?: string; message?: string }).text ?? (e as { message?: string }).message);
 
+    // The thread being set up has no agent yet: nothing running or asked.
+    const idle = { midTurn: false, pendingPromptIds: [] };
+    m.sessionManager.turnState.mockReturnValue(idle);
+
     expect(invoke(IPC.AGENT_HISTORY_COUNT, id)).toBe(5);
     const newest = invoke(IPC.AGENT_HISTORY_PAGE, id, 2);
-    expect(newest).toMatchObject({ totalCount: 5, startIndex: 3 });
+    expect(newest).toMatchObject({ totalCount: 5, startIndex: 3, turn: idle });
+    expect(m.sessionManager.turnState).toHaveBeenCalledWith(id);
     expect(texts(newest)).toEqual(['h1', 'h2']);
     const older = invoke(IPC.AGENT_HISTORY_PAGE, id, 2, 3);
     expect(older.startIndex).toBe(1);

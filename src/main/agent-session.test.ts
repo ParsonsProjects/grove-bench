@@ -2147,6 +2147,119 @@ describe('AgentSessionManager.closeAll()', () => {
   });
 });
 
+describe('AgentSessionManager turn state for a loading history', () => {
+  async function startSession(id: string, win = makeMockWindow()) {
+    await sessionManager.createSession({
+      id, branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(sessionManager.getSession(id)?.queryHandle).toBeTruthy());
+    return { win, session: sessionManager.getSession(id)! };
+  }
+  const idle = { midTurn: false, pendingPromptIds: [] };
+  const sentTypes = (win: ReturnType<typeof makeMockWindow>) =>
+    win._send.mock.calls.map(([, event]: [string, AgentEvent | undefined]) => event?.type).filter(Boolean);
+
+  it('says a thread with no live agent runs nothing and asks nothing', () => {
+    expect(sessionManager.turnState('test-turn-none')).toEqual(idle);
+  });
+
+  it('follows a turn from the prompt to its result, with the questions it waits on', async () => {
+    await startSession('test-turn-state');
+    expect(sessionManager.turnState('test-turn-state')).toEqual(idle);
+
+    await sessionManager.sendMessage('test-turn-state', 'run the tests');
+    expect(sessionManager.turnState('test-turn-state')).toEqual({ midTurn: true, pendingPromptIds: [] });
+
+    void mockAdapter.control!.permissionHandler!({ requestId: 'a1', toolName: 'Bash', toolUseId: 'tu_1', toolInput: {} });
+    const asked = sessionManager.getEventHistory('test-turn-state').find((e) => e.type === 'permission_request');
+    const requestId = (asked as Extract<AgentEvent, { type: 'permission_request' }>).requestId;
+    expect(sessionManager.turnState('test-turn-state')).toEqual({ midTurn: true, pendingPromptIds: [requestId] });
+    // Read with the page, so the renderer gets both as of the same moment.
+    expect(sessionManager.getEventHistoryPage('test-turn-state', 200).turn).toEqual({ midTurn: true, pendingPromptIds: [requestId] });
+
+    sessionManager.respondToPermission('test-turn-state', { requestId, behavior: 'allow' });
+    mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false });
+    await vi.waitFor(() => expect(sessionManager.turnState('test-turn-state')).toEqual(idle));
+
+    await sessionManager.destroySession('test-turn-state');
+  });
+
+  it('lists MCP questions and limit questions too', async () => {
+    const limitSettings = { defaultSystemPromptAppend: null, toolAllowRules: [], toolDenyRules: [], cavemanMode: 'off', turnToolCallLimit: 1 };
+    settingsMock.getSettings.mockImplementation(() => limitSettings);
+    try {
+      await startSession('test-turn-asks');
+      await sessionManager.sendMessage('test-turn-asks', 'go');
+      const before = mockAdapter.lastConfig!.beforeToolUse!;
+      await before({ toolName: 'Bash', toolUseId: 'tu_1' });
+      void before({ toolName: 'Bash', toolUseId: 'tu_2' });
+      void mockAdapter.lastConfig!.onElicitation!(
+        { serverName: 'deploy', message: 'Which env?', mode: 'form', requestedSchema: { type: 'object' } },
+        new AbortController().signal,
+      );
+
+      const history = sessionManager.getEventHistory('test-turn-asks');
+      const ids = history.filter((e) => e.type === 'limit_request' || e.type === 'elicitation_request')
+        .map((e) => (e as { requestId: string }).requestId);
+      expect(ids).toHaveLength(2);
+      expect(new Set(sessionManager.turnState('test-turn-asks').pendingPromptIds)).toEqual(new Set(ids));
+
+      await sessionManager.destroySession('test-turn-asks');
+    } finally {
+      settingsMock.getSettings.mockImplementation(() => ({ defaultSystemPromptAppend: null, toolAllowRules: [], toolDenyRules: [], cavemanMode: 'off' }));
+    }
+  });
+
+  it('counts an agent still starting up as idle, though idle sleep waits for it', async () => {
+    let openGate!: () => void;
+    mockAdapter.startGate = new Promise<void>((r) => { openGate = r; });
+    await sessionManager.createSession({
+      id: 'test-turn-starting', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(1));
+
+    expect(sessionManager.isMidTurn('test-turn-starting')).toBe(true);
+    expect(sessionManager.turnState('test-turn-starting')).toEqual(idle);
+
+    openGate();
+    await vi.waitFor(() => expect(sessionManager.getSession('test-turn-starting')?.queryHandle).toBeTruthy());
+    await sessionManager.destroySession('test-turn-starting');
+  });
+
+  it('ends the history of a turn cut short by a close, after its unanswered prompt', async () => {
+    const { win, session } = await startSession('test-turn-close');
+    await sessionManager.sendMessage('test-turn-close', 'run the tests');
+    void mockAdapter.control!.permissionHandler!({ requestId: 'a1', toolName: 'Bash', toolUseId: 'tu_1', toolInput: {} });
+
+    await sessionManager.closeSession('test-turn-close');
+
+    expect(session.eventHistory.slice(-2).map((e) => e.type)).toEqual(['permission_resolved', 'process_exit']);
+    expect(sentTypes(win)).toContain('process_exit');
+    expect(sessionManager.turnState('test-turn-close')).toEqual(idle);
+  });
+
+  it('ends the history of every thread quitting mid-turn, and only those', async () => {
+    const { session: busy } = await startSession('test-turn-quit-busy');
+    await sessionManager.sendMessage('test-turn-quit-busy', 'run the tests');
+    const { session: quiet } = await startSession('test-turn-quit-idle');
+
+    await sessionManager.closeAll();
+
+    expect(busy.eventHistory.at(-1)).toEqual({ type: 'process_exit' });
+    expect(quiet.eventHistory.map((e) => e.type)).not.toContain('process_exit');
+  });
+
+  it('ends the history of a turn cut short by a delete', async () => {
+    const { session } = await startSession('test-turn-destroy');
+    mockAdapter.control!.emitEvent({ type: 'assistant_text', text: 'Working on it', uuid: 'u1' });
+    await vi.waitFor(() => expect(sessionManager.turnState('test-turn-destroy').midTurn).toBe(true));
+
+    await sessionManager.destroySession('test-turn-destroy');
+
+    expect(session.eventHistory.at(-1)).toEqual({ type: 'process_exit' });
+  });
+});
+
 describe('AgentSessionManager sleep and wake', () => {
   /** A live session whose provider session has initialised (status 'running'). */
   async function startSession(id: string) {

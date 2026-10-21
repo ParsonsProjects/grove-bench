@@ -184,6 +184,9 @@
 
       const page = await window.groveBench.getEventHistoryPage(sessionId, INITIAL_PAGE_SIZE);
       timing.step('history fetch');
+      // A prompt sent that main can't have had when it answered (see
+      // applyTurnState). Read before the replay, whose results clear it.
+      const promptSent = messageStore.isAwaitingResponse(sessionId);
       eventCount = page.events.length;
       messageStore.setPagination(sessionId, page.totalCount, page.startIndex);
 
@@ -192,26 +195,22 @@
       // avoiding O(n²) array copies and hundreds of intermediate re-renders.
       messageStore.replayEvents(sessionId, page.events, skipDuringReplay, page.startIndex);
       replayedPage = page.events;
-      if (page.events.length > 0) {
-        const last = page.events[page.events.length - 1];
-        if (last.type === 'result' || last.type === 'process_exit') {
-          messageStore.setIsRunning(sessionId, false);
-        }
-      }
-      // After replay, resolve any permissions/tool_calls still unresolved
-      // (denied permissions have no tool_result, stopped sessions cleared theirs)
-      messageStore.resolveStaleToolCalls(sessionId);
+      // Whether a turn is running, and which prompts still wait on the user,
+      // come from main, read with the page: a history cut off mid-turn (the
+      // app quit or was killed) ends just like a turn still running. Tool
+      // calls and prompts nothing answered are settled accordingly. Live
+      // events held meanwhile go on from here when released below.
+      messageStore.applyTurnState(sessionId, page.turn, promptSent);
       backgroundTaskStore.resolveStale(sessionId, messageStore.getIsRunning(sessionId));
-      messageStore.resolveReplayedPermissions(sessionId);
       timing.step('replay');
 
       // If the session is already running but system_init was missed during
-      // replay (e.g. agent just connected, or SESSION_STATUS arrived during
-      // the await above), ensure the input unlocks.
+      // replay (e.g. agent just connected, older than the page, or
+      // SESSION_STATUS arrived during the await above), ensure the input
+      // unlocks. Whether a turn is running is main's answer above.
       const session = store.sessions.find((s) => s.id === sessionId);
       if (session && (session.status === 'running' || session.status === 'error') && !messageStore.getIsReady(sessionId)) {
         messageStore.setIsReady(sessionId, true);
-        messageStore.setIsRunning(sessionId, false);
       }
     } catch (e: any) {
       historyFailed = true;
@@ -248,6 +247,9 @@
     destroyed = true;
     window.removeEventListener('keydown', handleKeydown);
     messageStore.unsubscribe(sessionId);
+    // The thread was closed or deleted, or its agent stopped: a prompt sent
+    // to it gets no reply now, and must not leave it working when reopened.
+    messageStore.dropAwaitingResponse(sessionId);
   });
 </script>
 

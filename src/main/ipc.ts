@@ -1,7 +1,7 @@
 import { app, ipcMain, BrowserWindow, dialog, shell } from 'electron';
 import { runProcess } from './process-host.js';
 import { IPC, PERMISSION_MODES } from '../shared/types.js';
-import type { BranchSwitchResult, ClaudeAccountPreview, ClaudeAccountSetting, BranchSyncResult, ConversationGoal, CreateSessionOpts, ThreadUsage, OpenPrSummary, PermissionMode, PrerequisiteStatus, PermissionDecision, RegistryAgentSummary, SessionInfo, SkillDefinition, WorktreeInfo } from '../shared/types.js';
+import type { BranchSwitchResult, ClaudeAccountPreview, ClaudeAccountSetting, BranchSyncResult, ConversationGoal, CreateSessionOpts, EventHistoryPage, ThreadUsage, OpenPrSummary, PermissionMode, PrerequisiteStatus, PermissionDecision, RegistryAgentSummary, SessionInfo, SkillDefinition, WorktreeInfo } from '../shared/types.js';
 import { sessionManager } from './agent-session.js';
 import { todaySpend } from './session-limits.js';
 import { searchEvents, findEventIndexByUuid, extractSessionPreview, firstUserPrompt } from './event-search.js';
@@ -1155,7 +1155,7 @@ export function registerHandlers() {
     return prelaunch.length > 0 ? [...prelaunch, ...history] : history;
   });
 
-  ipcMain.handle(IPC.AGENT_HISTORY_PAGE, (_event, sessionId: string, limit: number, beforeIndex?: number) => {
+  ipcMain.handle(IPC.AGENT_HISTORY_PAGE, (_event, sessionId: string, limit: number, beforeIndex?: number): EventHistoryPage => {
     const prelaunch = prelaunchEvents.get(sessionId) ?? [];
     if (prelaunch.length === 0) return sessionManager.getEventHistoryPage(sessionId, limit, beforeIndex);
     // Page over the prelaunch-prefixed index space the renderer, search and
@@ -1164,7 +1164,7 @@ export function registerHandlers() {
     const all = prelaunchPrefixedEvents(sessionId);
     const end = beforeIndex !== undefined ? Math.min(beforeIndex, all.length) : all.length;
     const start = Math.max(0, end - limit);
-    return { events: all.slice(start, end), totalCount: all.length, startIndex: start };
+    return { events: all.slice(start, end), totalCount: all.length, startIndex: start, turn: sessionManager.turnState(sessionId) };
   });
 
   ipcMain.handle(IPC.AGENT_HISTORY_COUNT, (_event, sessionId: string) => {

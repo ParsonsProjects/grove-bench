@@ -1,5 +1,5 @@
 import { afterAll, vi } from 'vitest';
-import type { GroveBenchAPI, OpenWorktreeFileResult } from '../../shared/types.js';
+import type { GroveBenchAPI, OpenWorktreeFileResult, ThreadTurnState } from '../../shared/types.js';
 import type { ThreadItems } from '../../shared/thread-items.js';
 
 // A closed bits-ui dialog resets the page body's style on a timer (24ms by
@@ -19,6 +19,10 @@ const localStorageMock = (() => {
   };
 })();
 Object.defineProperty(globalThis, 'localStorage', { value: localStorageMock });
+
+/** Main's answer for a thread with no turn under way and nothing asked
+ *  (the turn state history pages carry). */
+const IDLE_TURN: ThreadTurnState = Object.freeze({ midTurn: false, pendingPromptIds: [] as string[] });
 
 // ─── window.groveBench mock ───
 const mockGroveBench = {
@@ -102,7 +106,8 @@ const mockGroveBench = {
   getCheckpointFileDiff: vi.fn((_sessionId: string, _uuid: string, _scope: import('../../shared/types.js').CheckpointDiffScope, _filePath: string) => Promise.resolve({ kind: 'text', patch: '' } as import('../../shared/types.js').FileDiffResult)),
   getCheckpointFileLines: vi.fn((_sessionId: string, _uuid: string, _scope: import('../../shared/types.js').CheckpointDiffScope, _filePath: string) => Promise.resolve(null as import('../../shared/types.js').FileLinesResult)),
   clearEventHistory: vi.fn(() => Promise.resolve()),
-  getEventHistoryPage: vi.fn(() => Promise.resolve({ events: [], totalCount: 0, startIndex: 0 })),
+  getEventHistoryPage: vi.fn((_sessionId: string, _limit: number, _beforeIndex?: number): Promise<import('../../shared/types.js').EventHistoryPage> =>
+    Promise.resolve({ events: [], totalCount: 0, startIndex: 0, turn: IDLE_TURN })),
   getThreadItems: vi.fn((): Promise<ThreadItems> => Promise.resolve({ tasks: [], tasksEventIndex: null, files: [] })),
   searchEventHistory: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').EventSearchHit[])),
   searchAllEventHistory: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').CrossSessionSearchHit[])),
@@ -254,4 +259,4 @@ if (typeof globalThis.window === 'undefined') {
 }
 (globalThis.window as unknown as { groveBench: typeof mockGroveBench }).groveBench = mockGroveBench;
 
-export { localStorageMock, mockGroveBench };
+export { IDLE_TURN, localStorageMock, mockGroveBench };
