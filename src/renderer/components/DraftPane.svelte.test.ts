@@ -422,6 +422,7 @@ describe('DraftPane with no agent', () => {
     await waitFor(() => expect(draftStore.draft?.agentId).toBe('claude-code'));
     expect(await screen.findByLabelText('First message')).toBeInTheDocument();
   });
+});
 
 describe('DraftPane git identity heads-up', () => {
   it('warns before the first message when git has no name and email for the project', async () => {
@@ -454,5 +455,4 @@ describe('DraftPane git identity heads-up', () => {
     store.setFolderProject('/repo/one', false);
     mockGroveBench.repoKind.mockResolvedValue('git');
   });
-});
 });
