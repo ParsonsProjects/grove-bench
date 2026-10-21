@@ -463,7 +463,7 @@ export type FileDiffResult =
   | { kind: 'text'; patch: string }
   | { kind: 'binary' }
   | { kind: 'image'; ext: string }
-  /** A new file too big to read whole into a diff. */
+  /** A diff too big to show: a new file over the size limit, or a patch over it. */
   | { kind: 'tooLarge'; bytes: number };
 
 /** Base64 data URLs for an image file's working-tree and HEAD versions (either may be null). */

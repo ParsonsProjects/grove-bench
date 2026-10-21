@@ -12,17 +12,14 @@
   import MessageQueue from './MessageQueue.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
   import * as Command from '$lib/components/ui/command/index.js';
-  import XIcon from '@lucide/svelte/icons/x';
   import {
     type AttachedFile,
     processFiles,
     extractClipboardImages,
-    dataUrlData,
-    formatFileSize,
+    attachmentPayload,
   } from '$lib/file-attachments.js';
-  import AttachmentIcon from './AttachmentIcon.svelte';
+  import AttachmentChips from './AttachmentChips.svelte';
   import { extractAtRefs, buildRefTags, buildOutgoingMessage } from '$lib/prompt-file-refs.js';
-  import { buildContentBlock } from '../../shared/prompt-text.js';
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -177,21 +174,7 @@
     const refs = extractAtRefs(text);
 
     // Text files go in the message text; images and other files alongside it
-    const textFiles = attachedFiles.filter((f): f is AttachedFile & { type: 'text' } => f.type === 'text');
-    const imageFiles = attachedFiles.filter((f): f is AttachedFile & { type: 'image' } => f.type === 'image');
-    const otherFiles = attachedFiles.filter((f): f is AttachedFile & { type: 'file' } => f.type === 'file');
-
-    // Build file tags from text attachments
-    const droppedTags = textFiles.map((f) => buildContentBlock('file', f.name, f.content));
-
-    // Extract base64 image data for the API
-    const images = imageFiles.map((f) => {
-      // dataUrl format: "data:image/png;base64,iVBOR..."
-      const [header, data] = f.dataUrl.split(',');
-      const mediaType = header.match(/data:(image\/\w+)/)?.[1] ?? 'image/png';
-      return { data, mediaType: mediaType as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp', name: f.name };
-    });
-    const files = otherFiles.map((f) => ({ data: dataUrlData(f.dataUrl), mediaType: f.mediaType, name: f.name }));
+    const { tags: droppedTags, images, files } = attachmentPayload(attachedFiles);
 
     const displayText = attachedFiles.length > 0
       ? `[${attachedFiles.map((f) => f.name).join(', ')}] ${text}`
@@ -578,29 +561,7 @@
 
   <!-- Attached file chips -->
   {#if attachedFiles.length > 0}
-    <div class="flex flex-wrap gap-1.5 px-4 pt-2 max-h-24 overflow-y-auto">
-      {#each attachedFiles as file, i}
-        <span
-          class="inline-flex items-center gap-1 bg-primary/15 text-primary text-xs px-2 py-1 font-mono border border-primary/25"
-          title={file.type === 'file' ? `${file.name} (${formatFileSize(file.size)})` : undefined}
-        >
-          {#if file.type === 'image'}
-            <img src={file.dataUrl} alt={file.name} class="w-5 h-5 object-cover shrink-0" />
-          {:else}
-            <AttachmentIcon mediaType={file.type === 'file' ? file.mediaType : ''} />
-          {/if}
-          {file.name}
-          <Button
-            variant="quiet-destructive"
-            size="icon-2xs"
-            onclick={() => removeAttachedFile(i)}
-            class="-my-0.5 -mr-1"
-            title="Remove"
-            aria-label="Remove {file.name}"
-          ><XIcon /></Button>
-        </span>
-      {/each}
-    </div>
+    <AttachmentChips files={attachedFiles} onremove={removeAttachedFile} class="px-4 pt-2" />
   {/if}
 
   <!-- Prompt suggestions -->

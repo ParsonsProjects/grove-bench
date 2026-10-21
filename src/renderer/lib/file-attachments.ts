@@ -1,4 +1,6 @@
 import { knownMediaType } from '../../shared/attachments.js';
+import { buildContentBlock } from '../../shared/prompt-text.js';
+import type { FileAttachment, ImageAttachment, ImageMediaType } from '../../shared/types.js';
 
 // ─── File attachment constants and utilities ───
 
@@ -208,6 +210,30 @@ export function processFiles(
   }
 
   return Promise.all(promises).then(() => ({ files: result, skipped }));
+}
+
+/** What a message's attachments send: text files as content blocks to go
+ *  ahead of the message text, images and other files alongside it. */
+export function attachmentPayload(attached: AttachedFile[]): {
+  tags: string[];
+  images: ImageAttachment[];
+  files: FileAttachment[];
+} {
+  const tags: string[] = [];
+  const images: ImageAttachment[] = [];
+  const files: FileAttachment[] = [];
+  for (const f of attached) {
+    if (f.type === 'text') {
+      tags.push(buildContentBlock('file', f.name, f.content));
+    } else if (f.type === 'image') {
+      // dataUrl format: "data:image/png;base64,iVBOR..."
+      const mediaType = f.dataUrl.match(/^data:(image\/\w+)/)?.[1] ?? 'image/png';
+      images.push({ data: dataUrlData(f.dataUrl), mediaType: mediaType as ImageMediaType, name: f.name });
+    } else {
+      files.push({ data: dataUrlData(f.dataUrl), mediaType: f.mediaType, name: f.name });
+    }
+  }
+  return { tags, images, files };
 }
 
 /** About how many bytes an attachment takes, toward MAX_TOTAL_SIZE. */

@@ -119,10 +119,12 @@
 
     // Bring back the unread flags from the previous run. Not the open
     // thread's: it was opened while the projects loaded, so it has been read.
+    // Nor a closed thread's, which counts as dealt with.
     try {
       const unread = await window.groveBench.getUnreadSessions();
       for (const id of unread) {
-        if (id !== store.activeSessionId && store.sessions.find((s) => s.id === id)) store.markNeedsAttention(id);
+        const session = store.sessions.find((s) => s.id === id);
+        if (id !== store.activeSessionId && session && store.isOpenTab(session)) store.markNeedsAttention(id);
       }
     } catch { /* best-effort */ }
 
@@ -213,8 +215,8 @@
     const count = enabled
       ? attentionCount(
         store.sessions,
-        (id) => messageStore.needsInput(id),
-        (id) => !!store.needsAttention[id],
+        (s) => messageStore.needsInput(s.id),
+        (s) => store.isUnread(s),
       )
       : 0;
     if (count === lastBadgeCount) return;

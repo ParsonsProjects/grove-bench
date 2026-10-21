@@ -1157,6 +1157,20 @@ describe('file handlers', () => {
     expect(await invoke(IPC.FILE_DIFF, 's1', 'big.log')).toEqual({ kind: 'tooLarge', bytes: 5 * 1024 * 1024 });
   });
 
+  it('FILE_DIFF does not send a patch over the size limit to the window', async () => {
+    const patch = `@@ -1 +1 @@\n-a\n+${'b'.repeat(5 * 1024 * 1024)}\n`;
+    vi.mocked(git.fileDiff).mockResolvedValue(patch);
+    expect(await invoke(IPC.FILE_DIFF, 's1', 'bundle.js')).toEqual({ kind: 'tooLarge', bytes: Buffer.byteLength(patch) });
+
+    vi.mocked(git.fileDiff).mockResolvedValue('@@ -1 +1 @@\n-a\n+b\n');
+    expect(await invoke(IPC.FILE_DIFF, 's1', 'bundle.js')).toEqual({ kind: 'text', patch: '@@ -1 +1 @@\n-a\n+b\n' });
+
+    // A new file under the limit whose patch, a '+' on every line, is over it.
+    write('lines.txt', 'a\n'.repeat(1_900_000));
+    vi.mocked(git.fileDiff).mockResolvedValue('');
+    expect(await invoke(IPC.FILE_DIFF, 's1', 'lines.txt')).toMatchObject({ kind: 'tooLarge' });
+  });
+
   it('FILE_DIFF diffs against the merge base in branch scope', async () => {
     vi.mocked(git.resolveMergeBase).mockResolvedValue({ ref: 'main', mergeBase: 'abc123' });
     vi.mocked(git.fileDiffAgainst).mockResolvedValue('@@ -1 +1 @@\n-a\n+b\n');
