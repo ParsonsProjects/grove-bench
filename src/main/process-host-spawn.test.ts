@@ -34,6 +34,7 @@ function setPlatform(platform: NodeJS.Platform) {
 afterEach(() => {
   setPlatform(realPlatform);
   found.clear();
+  parseCalls.length = 0;
 });
 
 describe('HostedProcess', () => {
@@ -211,7 +212,6 @@ describe('createSpawnRunner', () => {
   });
 
   it('runs a command line in a shell as execa does: joined with spaces, as given', () => {
-    parseCalls.length = 0;
     const calls: Array<{ file: string; args: readonly string[]; options: Record<string, unknown> }> = [];
     const fakeSpawn = ((file: string, args: readonly string[], options: Record<string, unknown>) => {
       calls.push({ file, args, options });
