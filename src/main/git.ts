@@ -425,6 +425,16 @@ export async function fileDiff(
   return git(args, cwd);
 }
 
+/** Whether git tracks a path (it is in the index), unlike a new or ignored file. */
+export async function isTracked(cwd: string, relPath: string): Promise<boolean> {
+  try {
+    await git(['ls-files', '--error-unmatch', '--', relPath], cwd);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Diff a single file against an arbitrary ref (working tree vs `ref`). */
 export async function fileDiffAgainst(cwd: string, relPath: string, ref: string): Promise<string> {
   return git(['diff', ref, '--', relPath], cwd);

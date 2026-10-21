@@ -1005,6 +1005,13 @@
             </svg>
             Binary file — no text diff to display.
           </div>
+        {:else if diffResult?.kind === 'tooLarge'}
+          <div class="flex items-center gap-2 text-xs text-muted-foreground py-3 px-2 border border-border/50 bg-card/30">
+            <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+            </svg>
+            New file too large to show here ({(diffResult.bytes / 1024 / 1024).toFixed(1)} MB).
+          </div>
         {:else if diffLines.length > 0}
           <DiffView
             lines={displayLines}
