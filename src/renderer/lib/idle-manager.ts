@@ -11,6 +11,9 @@ export interface IdleSnapshotSession {
   /** When the thread last did anything (ms): a message sent to it, or a
    *  live turn it finished. Missing for a thread that has done neither. */
   lastActiveAt?: number;
+  /** When the user last moved off this thread (ms), noted as it happened
+   *  (store.lastLeftAt). Missing for a thread not open this run. */
+  leftAt?: number;
 }
 
 /** What the idle loop made of one thread on one tick. Goes to the app log
@@ -18,23 +21,45 @@ export interface IdleSnapshotSession {
 export type IdleReason =
   | { kind: 'status'; status: string }
   | { kind: 'focused' }
-  /** Unfocused and live, but not asked yet: under the threshold, or first
-   *  seen unfocused this tick. `since` says where its idle time counts from. */
+  /** Unfocused and live, under the threshold. `since` says where its idle
+   *  time counts from. */
   | { kind: 'counting'; idleMs: number; since: 'activity' | 'left' }
+  /** Past the threshold, but the user left it less than `graceMs` ago. */
+  | { kind: 'grace'; idleMs: number; leftMs: number; graceMs: number }
   | { kind: 'asking'; idleMs: number }
   /** Past the threshold, but main hasn't answered the last ask yet. */
   | { kind: 'waiting'; idleMs: number };
 
+/** How long after the user leaves a thread it can't be asked to sleep (see
+ *  computeIdleSleeps). Five minutes covers a look at a thread and a trip to
+ *  another and back, and is short against the 30-minute default. */
+export const IDLE_GRACE_MS = 5 * 60_000;
+
+/** The grace for a threshold: never longer than the threshold itself, so a
+ *  short setting still means what it says. */
+export function idleGraceMs(thresholdMs: number): number {
+  return Math.min(IDLE_GRACE_MS, thresholdMs);
+}
+
+const isTime = (t: number | undefined): t is number => typeof t === 'number' && Number.isFinite(t);
+
 /**
  * Pure idle policy: which threads to ask main to put to sleep this tick.
  *
- * A thread is idle from the last thing it did (`lastActiveAt`), not from
- * when it was last focused: opening a thread to read it, or to clear its
- * unread flag, doesn't restart the clock. A thread without a `lastActiveAt`
- * counts from the first tick it was seen live and unfocused. The focused
- * thread is never asked, and a thread is asked only once it has been seen
- * unfocused on an earlier tick too, so leaving a thread that's long past the
- * threshold sleeps it on the next tick, not the moment it's left.
+ * A running, unfocused thread is asked once both hold:
+ * - it has been idle for the threshold, counted from the last thing it did
+ *   (`lastActiveAt`). Opening a thread doesn't restart that count: reading
+ *   it, or clearing its unread flag, isn't activity. A thread without a
+ *   `lastActiveAt` counts from when it was left, or from the first tick it
+ *   was seen live and unfocused if it wasn't open this run.
+ * - the user left it at least the grace (idleGraceMs: 5 minutes, or the
+ *   threshold if shorter) ago. Opening a sleeping thread wakes it (a new
+ *   agent process, seconds to start), so a glance at one long past the
+ *   threshold would otherwise cost a full start, then a kill a minute
+ *   later. `leftAt` is noted the moment focus moves, so a visit between two
+ *   ticks counts too.
+ * So it's asked at the later of `lastActiveAt` + threshold and `leftAt` +
+ * grace: a short look costs at most the grace, never the full threshold.
  *
  * Whether it's safe is main's call: sleepSession refuses (and logs why) a
  * thread mid-turn, waiting on a permission, an MCP question or a limit
@@ -59,6 +84,7 @@ export function computeIdleSleeps(
   const toSleep: string[] = [];
   const reasons = new Map<string, IdleReason>();
   if (thresholdMs <= 0) return { toSleep, nextUnfocusedSince, reasons };
+  const graceMs = idleGraceMs(thresholdMs);
 
   for (const s of sessions) {
     if (reasons.has(s.id)) continue; // listed twice: decided once
@@ -70,12 +96,18 @@ export function computeIdleSleeps(
       reasons.set(s.id, { kind: 'focused' });
       continue;
     }
-    const seen = unfocusedSince.get(s.id);
-    nextUnfocusedSince.set(s.id, seen ?? now);
-    const hasActivity = typeof s.lastActiveAt === 'number' && Number.isFinite(s.lastActiveAt);
-    const idleMs = Math.max(0, now - (hasActivity ? s.lastActiveAt! : seen ?? now));
-    if (seen === undefined || idleMs < thresholdMs) {
+    const seen = unfocusedSince.get(s.id) ?? now;
+    nextUnfocusedSince.set(s.id, seen);
+    const leftAt = isTime(s.leftAt) ? s.leftAt : undefined;
+    const hasActivity = isTime(s.lastActiveAt);
+    // With no activity recorded: from when it was left, or first seen if later.
+    const idleFrom = hasActivity ? s.lastActiveAt! : Math.max(seen, leftAt ?? seen);
+    const idleMs = Math.max(0, now - idleFrom);
+    const leftMs = leftAt === undefined ? Infinity : Math.max(0, now - leftAt);
+    if (idleMs < thresholdMs) {
       reasons.set(s.id, { kind: 'counting', idleMs, since: hasActivity ? 'activity' : 'left' });
+    } else if (leftMs < graceMs) {
+      reasons.set(s.id, { kind: 'grace', idleMs, leftMs, graceMs });
     } else if (inFlight.has(s.id)) {
       reasons.set(s.id, { kind: 'waiting', idleMs });
     } else {
@@ -99,8 +131,9 @@ export function describeIdleReason(reason: IdleReason, thresholdMs: number): str
     case 'focused': return 'focused';
     case 'counting':
       return of(reason.idleMs)
-        + (reason.since === 'left' ? ' since it was left (no activity recorded)' : ' since its last activity')
-        + (reason.idleMs >= thresholdMs ? ', asks next tick' : '');
+        + (reason.since === 'left' ? ' since it was left (no activity recorded)' : ' since its last activity');
+    case 'grace':
+      return `${of(reason.idleMs)} since its last activity, left ${wholeMinutes(reason.leftMs)} ago, grace ${settingMinutes(reason.graceMs)}`;
     case 'asking': return `${of(reason.idleMs)}, asking main to sleep it`;
     case 'waiting': return `${of(reason.idleMs)}, still waiting on main's answer to the last ask`;
   }
@@ -160,7 +193,8 @@ export class IdleLog {
     for (const reason of reasons.values()) {
       const key = reason.kind === 'asking' || reason.kind === 'waiting' ? 'asked'
         : reason.kind === 'status' ? reason.status
-          : reason.kind;
+          : reason.kind === 'grace' ? 'in grace'
+            : reason.kind;
       counts.set(key, (counts.get(key) ?? 0) + 1);
     }
     return `${head}, threshold ${settingMinutes(thresholdMs)}: ${[...counts].map(([k, n]) => `${n} ${k}`).join(', ')}`;
@@ -195,6 +229,7 @@ export function startIdleManager(intervalMs = 60_000): () => void {
       status: s.status,
       isActive: store.activeSessionId === s.id,
       lastActiveAt: s.lastActiveAt,
+      leftAt: store.lastLeftAt.get(s.id),
     }));
     const { toSleep, nextUnfocusedSince, reasons } = computeIdleSleeps(snapshot, unfocusedSince, now, thresholdMs, inFlight);
     unfocusedSince = nextUnfocusedSince;
