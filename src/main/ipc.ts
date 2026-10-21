@@ -15,7 +15,7 @@ import { adapterRegistry, registerClaudeAccount } from './adapters/index.js';
 import { claudeAccounts, isClaudeAccountId, newClaudeAccount } from './adapters/claude-accounts.js';
 import type { AgentAdapter } from './adapters/types.js';
 import { agentForProject, recordedAgent } from './background-tasks.js';
-import { validateBranchName, branchExists, branchExistsAnywhere, worktreeBranches, listBranches, getDefaultBranch, git, fileDiff, fileDiffAgainst, isTracked, resolveMergeBase, indexFileContent, hashWorkingFiles, listProjectFiles, revertFile, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, logCommits, rebaseOnto, cherryPick, squashSince, currentBranch, recentCheckouts, getGitIdentity, gitVersion } from './git.js';
+import { validateBranchName, branchExists, branchExistsAnywhere, worktreeBranches, listBranches, getDefaultBranch, git, fileDiff, fileDiffAgainst, isTracked, patchResult, MAX_TEXT_FILE_BYTES, resolveMergeBase, indexFileContent, hashWorkingFiles, listProjectFiles, revertFile, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, logCommits, rebaseOnto, cherryPick, squashSince, currentBranch, recentCheckouts, getGitIdentity, gitVersion } from './git.js';
 import { inspectProjectFolder, projectKind } from './project-path.js';
 import { prsForBranches, prCreate, prReviewComments, ghLogin, isNetworkError, isRateLimitError, openPrs, GH_OFFLINE_COOLDOWN_MS, GH_OFFLINE_MESSAGE, GH_RATE_LIMITED_MESSAGE } from './gh.js';
 import { tempBranchName, isTempBranch, generateBranchName } from './branch-name.js';
@@ -108,9 +108,6 @@ const MAX_BRANCH_AUTO_NAME_ATTEMPTS = 2;
 const goalInFlight = new Set<string>();
 const goalAutoAttempts = new Map<string, number>();
 const MAX_GOAL_AUTO_ATTEMPTS = 2;
-
-/** Larger files aren't read whole to show in a diff or expand its context. */
-const MAX_TEXT_FILE_BYTES = 4 * 1024 * 1024;
 
 /** Generate a goal from a conversation's messages on its own agent and save
  *  it, unless the goal changed from `current` meanwhile. Resolves to the
@@ -1380,7 +1377,7 @@ export function registerHandlers() {
       diffError = e;
     }
     if (detectBinaryDiff(diff)) return { kind: 'binary' };
-    if (diff) return { kind: 'text', patch: diff };
+    if (diff) return patchResult(diff);
     // A staged-but-empty diff genuinely has no changes; don't synthesize for it.
     if (staged && !diffError) return { kind: 'text', patch: '' };
     // An empty or failed diff means a new file only when git doesn't track
@@ -1395,7 +1392,8 @@ export function registerHandlers() {
       if (size > MAX_TEXT_FILE_BYTES) return { kind: 'tooLarge', bytes: size };
       const buf = await fs.readFile(resolved);
       if (looksBinary(buf)) return { kind: 'binary' };
-      return { kind: 'text', patch: synthesizeUntrackedDiff(relPath, buf.toString('utf-8')) };
+      // The '+' on every line can take the patch over the limit the file was under.
+      return patchResult(synthesizeUntrackedDiff(relPath, buf.toString('utf-8')));
     } catch {
       return { kind: 'text', patch: '' };
     }

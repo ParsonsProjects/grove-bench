@@ -53,9 +53,17 @@ export function highlightLineUncached(text: string, lang: string | null): string
  *  stop at the same length (intralineRanges). */
 export const MAX_DEFERRED_LINE = 2000;
 /** Such a diff with more distinct lines than this stays plain, which bounds
- *  the work and memory one diff in the thread can take. The Changes panel
- *  colours it in full. */
+ *  the work and memory one diff in the thread can take. The Changes and
+ *  Checkpoints panels colour a diff in full unless it is large (below),
+ *  when these limits apply there too. */
 export const MAX_DEFERRED_LINES = 5000;
+/** A diff with more code lines or characters than these waits for "Show
+ *  diff" in the Changes and Checkpoints panels, then colours in idle time.
+ *  Drawn at once it stalls the window: in Chromium, 5,000 lines took about a
+ *  second to colour and lay out, and one changed line of minified code can
+ *  be megabytes. */
+export const LARGE_DIFF_LINES = 2000;
+export const LARGE_DIFF_CHARS = 100_000;
 
 /**
  * The distinct code lines DiffView colours in idle time (deferHighlight), or
