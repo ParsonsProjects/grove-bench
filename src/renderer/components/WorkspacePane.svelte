@@ -129,7 +129,11 @@
     const ready = messageStore.getIsReady(sessionId);
     if (session && (session.status === 'running' || session.status === 'error') && !ready) {
       messageStore.setIsReady(sessionId, true);
-      messageStore.setIsRunning(sessionId, false);
+      // A prompt waiting on its reply (a new thread's first) keeps it
+      // working: the agent coming up is when it starts on it.
+      if (session.status === 'error' || !messageStore.isAwaitingResponse(sessionId)) {
+        messageStore.setIsRunning(sessionId, false);
+      }
     }
   });
 
@@ -148,6 +152,9 @@
     // lost but isReady might have been set by a leaked event.
     /** The page replayed, for sorting out live events held meanwhile. */
     let replayedPage: AgentEvent[] | null = null;
+    // The prompt waiting on a reply, as the chat shows it before it's
+    // cleared, to look for its turn's end in the page (see below).
+    const waitingOn = messageStore.pendingPrompt(sessionId);
     try {
       // Clear existing messages so replay starts fresh.
       // clearSession does NOT reset isReady — that's handled below based on
@@ -184,9 +191,9 @@
 
       const page = await window.groveBench.getEventHistoryPage(sessionId, INITIAL_PAGE_SIZE);
       timing.step('history fetch');
-      // A prompt sent that main can't have had when it answered (see
+      // A prompt sent that main hadn't finished when it answered (see
       // applyTurnState). Read before the replay, whose results clear it.
-      const promptSent = messageStore.isAwaitingResponse(sessionId);
+      const promptSent = messageStore.stillAwaitingResponse(sessionId, waitingOn, page.events);
       eventCount = page.events.length;
       messageStore.setPagination(sessionId, page.totalCount, page.startIndex);
 
@@ -201,7 +208,9 @@
       // calls and prompts nothing answered are settled accordingly. Live
       // events held meanwhile go on from here when released below.
       messageStore.applyTurnState(sessionId, page.turn, promptSent);
-      backgroundTaskStore.resolveStale(sessionId, messageStore.getIsRunning(sessionId));
+      // Background tasks (a dev server) run on between turns while the
+      // agent's process is up, so they go only once it is gone.
+      backgroundTaskStore.resolveStale(sessionId, page.turn.agentLive);
       timing.step('replay');
 
       // If the session is already running but system_init was missed during
@@ -247,9 +256,12 @@
     destroyed = true;
     window.removeEventListener('keydown', handleKeydown);
     messageStore.unsubscribe(sessionId);
-    // The thread was closed or deleted, or its agent stopped: a prompt sent
-    // to it gets no reply now, and must not leave it working when reopened.
-    messageStore.dropAwaitingResponse(sessionId);
+    // The thread was closed or deleted (its row stopped or gone): a prompt
+    // sent to it gets no reply now, and must not leave it working when
+    // reopened. A pane remounted while its thread lives on (after a render
+    // error) keeps it: the agent is still on that prompt.
+    const row = store.sessions.find((s) => s.id === sessionId);
+    if (!row || row.status === 'stopped') messageStore.dropAwaitingResponse(sessionId);
   });
 </script>
 

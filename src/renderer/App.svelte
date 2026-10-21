@@ -413,7 +413,9 @@
         // subscribe/replay race. system_init will fill in model/tools info
         // when it arrives; this just guarantees the input is usable.
         messageStore.setIsReady(sessionId, true);
-        messageStore.setIsRunning(sessionId, false);
+        // A prompt waiting on its reply (a new thread's first) keeps it
+        // working, as system_init does: the agent starts on it now.
+        if (!messageStore.isAwaitingResponse(sessionId)) messageStore.setIsRunning(sessionId, false);
       } else if (status === 'error') {
         messageStore.setIsReady(sessionId, true);
         messageStore.setIsRunning(sessionId, false);

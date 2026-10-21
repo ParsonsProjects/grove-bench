@@ -377,6 +377,10 @@ export function subagentParent(event: AgentEvent): string | undefined {
 export interface ThreadTurnState {
   midTurn: boolean;
   pendingPromptIds: string[];
+  /** The agent's process is up, between turns too. Background tasks it
+   *  started (a dev server) run on until it stops, so the history's
+   *  running ones are still running; without it they are gone. */
+  agentLive: boolean;
 }
 
 /** A page of a thread's history. `turn` is read in the same step as the
