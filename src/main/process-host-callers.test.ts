@@ -1,5 +1,5 @@
 /**
- * The commands the main process runs (taskkill, ps, rmdir, the editor CLIs,
+ * The commands the main process runs (taskkill, ps, the editor CLIs,
  * the claude CLI) go to the process host, and npm install to the agent host:
  * none starts in the main process, where a slow launch freezes the window.
  *
@@ -9,8 +9,6 @@
  */
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
-import os from 'node:os';
-import path from 'node:path';
 import { utilityProcess } from 'electron';
 import { HOST_READY, type HostRequest, type ProcessResult, type SpawnRequest } from './process-host-protocol.js';
 
@@ -23,7 +21,6 @@ vi.mock('./credentials.js', () => ({ getApiKey: vi.fn(() => null) }));
 
 import { startProcessHost, stopProcessHost } from './process-host.js';
 import { killTree, listProcesses } from './process-tree.js';
-import { removeDirectory } from './fs-utils.js';
 import { launchEditor } from './editor-launch.js';
 import { installDependencies } from './deps-install.js';
 import { ClaudeCodeAdapter } from './adapters/claude-code.js';
@@ -123,18 +120,6 @@ describe('commands the main process runs start in the process host', () => {
     expect(commands()).toEqual([{ file: 'ps', args: ['-A', '-o', 'pid=,ppid='], options: { timeout: 10_000 } }]);
   });
 
-  it('rmdir, when a worktree is deleted (removeDirectory)', async () => {
-    setPlatform('win32');
-    // Gone once rmdir has run, so fs.rm isn't needed.
-    const dir = path.join(os.tmpdir(), `grove-never-there-${process.pid}-${Date.now()}`);
-    await removeDirectory(dir);
-    expect(commands()).toEqual([{
-      file: 'cmd.exe',
-      args: ['/d', '/s', '/c', `rmdir /s /q "${dir}"`],
-      options: { reject: false, timeout: 5 * 60_000 },
-    }]);
-  });
-
   it('the editor CLI, to open a file (launchEditor)', async () => {
     expect(await launchEditor('code', '/repo/src/a.ts', 7)).toBe(true);
     expect(commands()).toEqual([{ file: 'code', args: ['-g', '/repo/src/a.ts:7'], options: undefined }]);
@@ -212,7 +197,7 @@ describe('npm install starts in the agent host', () => {
     await installDependencies('/wt', '/cache', new AbortController().signal);
     expect(processHost.sent).toEqual([]);
     expect(agentHost.sent).toEqual([
-      { type: 'spawn', id: expect.any(Number), file: 'npm', args: ['install', '--prefer-offline', '--cache', '/cache'], cwd: '/wt', findCommand: true },
+      { type: 'spawn', id: expect.any(Number), file: 'npm', args: ['install', '--prefer-offline', '--cache', '/cache'], cwd: '/wt', findCommand: true, stdout: 'ignore' },
     ]);
   });
 });

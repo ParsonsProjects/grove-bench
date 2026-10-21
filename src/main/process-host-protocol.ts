@@ -97,6 +97,10 @@ export interface SpawnRequest {
    *  escaped, as execa does (cross-spawn). npm installs command-line agents
    *  as .cmd shims, which Node's spawn can't start on its own. */
   findCommand?: boolean;
+  /** 'ignore': the process's standard output is thrown away where it runs,
+   *  never sent (npm install's progress, which nobody reads). Its stderr
+   *  still comes. 'pipe' (the default) sends it. */
+  stdout?: 'pipe' | 'ignore';
 }
 
 export type StdioRequest =
@@ -226,7 +230,8 @@ export function isSpawnRequest(value: unknown): value is SpawnRequest {
     && Array.isArray(r.args) && r.args.every((a) => typeof a === 'string')
     && (r.cwd === undefined || typeof r.cwd === 'string')
     && (r.env === undefined || (typeof r.env === 'object' && r.env !== null))
-    && (r.findCommand === undefined || typeof r.findCommand === 'boolean');
+    && (r.findCommand === undefined || typeof r.findCommand === 'boolean')
+    && (r.stdout === undefined || r.stdout === 'pipe' || r.stdout === 'ignore');
 }
 
 /** Whether `value` is input for, or a request to stop, a spawned process. */

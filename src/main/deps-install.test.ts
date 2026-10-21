@@ -1,9 +1,23 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { HostedProcess } from './process-host-spawn.js';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
+import { createSpawnRunner, HostedProcess } from './process-host-spawn.js';
 
 // npm install starts in the agent host (spawnProcess), never here.
 const hosted = vi.hoisted(() => ({ spawnProcess: vi.fn() }));
 vi.mock('./process-host.js', () => ({ spawnProcess: hosted.spawnProcess }));
+// cross-spawn's parse as on Windows with npm not on PATH: it found no
+// `file`, so cmd.exe runs the command.
+vi.mock('cross-spawn', () => ({
+  default: {
+    _parse: (command: string, args: readonly string[], options: Record<string, unknown>) => ({
+      command: 'cmd.exe',
+      args: ['/d', '/s', '/c', `"${[command, ...args].join(' ')}"`],
+      options: { ...options, windowsVerbatimArguments: true },
+      file: undefined,
+    }),
+  },
+}));
 vi.mock('execa', () => ({ execa: vi.fn() }));
 vi.mock('./process-tree.js', () => ({ killTree: vi.fn(async () => {}) }));
 vi.mock('./logger.js', () => ({
@@ -35,11 +49,40 @@ function fakeInstall() {
   };
 }
 
+/**
+ * spawnProcess as the agent host's fallback runs it, in the main process:
+ * createSpawnRunner starts the process with `spawn` inside the call, before
+ * it returns.
+ */
+function spawnHere(spawn: Parameters<typeof createSpawnRunner>[1]) {
+  hosted.spawnProcess.mockImplementation((file: string, args: string[], options: object) => {
+    const proc = new HostedProcess(file);
+    const runner = createSpawnRunner((event) => proc.receive(event), spawn);
+    runner.handle({ type: 'spawn', id: 1, file, args, ...options });
+    proc.connect((command) => runner.handle({ ...command, id: 1 }));
+    return proc;
+  });
+}
+
+/** A stand-in for the process Node starts, its stdout ignored. */
+function fakeChild() {
+  return Object.assign(new EventEmitter(), { pid: 4321, stdin: new PassThrough(), stdout: null, stderr: new PassThrough(), kill: () => true });
+}
+
 /** Let stream events (they come on the next tick) run. */
 const settle = () => new Promise((r) => setImmediate(r));
 
+const realPlatform = process.platform;
+function setPlatform(platform: NodeJS.Platform) {
+  Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+afterEach(() => {
+  setPlatform(realPlatform);
 });
 
 describe('installDependencies', () => {
@@ -49,7 +92,16 @@ describe('installDependencies', () => {
     install.started();
     install.exit(0);
     await done;
-    expect(hosted.spawnProcess).toHaveBeenCalledWith('npm', ['install', '--prefer-offline', '--cache', '/cache'], { cwd: '/wt', findCommand: true });
+    expect(hosted.spawnProcess).toHaveBeenCalledWith('npm', ['install', '--prefer-offline', '--cache', '/cache'], expect.objectContaining({ cwd: '/wt', findCommand: true }));
+  });
+
+  it("leaves npm's output in the agent host, so it isn't timed as agent output, and keeps its stderr", async () => {
+    const install = fakeInstall();
+    const done = installDependencies('/wt', '/cache', new AbortController().signal);
+    install.started();
+    install.exit(0);
+    await done;
+    expect(hosted.spawnProcess).toHaveBeenCalledWith('npm', expect.any(Array), { cwd: '/wt', findCommand: true, stdout: 'ignore' });
   });
 
   it('starts npm in the agent host, not in the main process', async () => {
@@ -104,6 +156,26 @@ describe('installDependencies', () => {
     const done = installDependencies('/wt', '/cache', new AbortController().signal);
     install.failedToStart({ name: 'Error', message: 'spawn npm ENOENT', code: 'ENOENT' });
     await expect(done).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('rejects with ENOENT on Windows too, where cmd.exe runs the missing npm and exits 1', async () => {
+    setPlatform('win32');
+    const cmd = fakeChild();
+    spawnHere((() => cmd) as unknown as Parameters<typeof createSpawnRunner>[1]);
+    const done = installDependencies('C:\\wt', 'C:\\cache', new AbortController().signal);
+    cmd.stderr.end("'npm' is not recognized as an internal or external command,\r\noperable program or batch file.\r\n");
+    await settle();
+    cmd.emit('exit', 1, null);
+    cmd.emit('close', 1, null);
+    // Not "npm install failed": the caller skips an ENOENT quietly.
+    await expect(done).rejects.toMatchObject({ code: 'ENOENT', syscall: 'spawn npm' });
+    await expect(done).rejects.not.toHaveProperty('exitCode');
+  });
+
+  it('settles when Node throws the start (the agent host down, so it starts here)', async () => {
+    const einval = Object.assign(new Error('spawn EINVAL'), { code: 'EINVAL', syscall: 'spawn' });
+    spawnHere((() => { throw einval; }) as unknown as Parameters<typeof createSpawnRunner>[1]);
+    await expect(installDependencies('/wt', '/cache', new AbortController().signal)).rejects.toMatchObject({ code: 'EINVAL', message: 'spawn EINVAL' });
   });
 
   it('does not start when already aborted', async () => {

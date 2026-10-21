@@ -19,8 +19,10 @@ export async function installDependencies(cwd: string, npmCache: string, signal:
   signal.throwIfAborted();
   const args = ['install', '--prefer-offline', '--cache', npmCache];
   // findCommand: find npm's .cmd shim on PATH and run it through cmd.exe,
-  // its arguments escaped, as execa does.
-  const install = spawnProcess('npm', args, { cwd, findCommand: true });
+  // its arguments escaped, as execa does. stdout 'ignore': npm's progress
+  // stays in the agent host. Nobody reads it, and sent here it would be
+  // timed as agent output in the freeze log and health line.
+  const install = spawnProcess('npm', args, { cwd, findCommand: true, stdout: 'ignore' });
   const stop = () => {
     if (install.pid === undefined) return;
     killTree(install.pid).catch((e) => logger.warn(`Failed to stop npm install in ${cwd}:`, e));
@@ -47,11 +49,12 @@ export async function installDependencies(cwd: string, npmCache: string, signal:
  * Wait for a spawned command to end. Resolves when it exits with 0;
  * otherwise rejects as execa did, with `exitCode` and what it wrote to
  * stderr (which the caller shows), or with the error that kept it from
- * starting (`code` ENOENT when npm isn't installed).
+ * starting: `code` ENOENT when npm isn't installed, which the caller skips
+ * quietly. On Windows too, where cmd.exe runs the missing npm and exits 1
+ * ("is not recognized"): the agent host reports that as ENOENT
+ * (createSpawnRunner).
  */
 function finished(proc: HostedProcess, command: string): Promise<void> {
-  // Unread, its output would pile up here for as long as it runs.
-  proc.stdout.resume();
   let stderr = '';
   proc.stderr.on('data', (chunk: string) => { stderr += chunk; });
   return new Promise((resolve, reject) => {

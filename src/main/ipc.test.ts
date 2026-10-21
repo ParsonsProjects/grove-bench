@@ -417,6 +417,24 @@ describe('SESSION_CREATE', () => {
     expect(m.sessionManager.createSession).toHaveBeenCalled();
   });
 
+  it("skips the install quietly when npm isn't installed, and still starts the agent", async () => {
+    m.settings.getSettings.mockReturnValue({ autoInstallDeps: true });
+    const withPkg = fs.mkdtempSync(path.join(tmp, 'pkg-'));
+    fs.writeFileSync(path.join(withPkg, 'package.json'), '{}');
+    m.worktreeManager.create.mockImplementation(async (c: { id: string; branchName: string }) => ({
+      id: c.id, path: withPkg, branch: c.branchName, repoPath: '/repo', createdAt: 0,
+    }));
+    // As installDependencies rejects on Windows too, where cmd.exe said npm
+    // "is not recognized" (deps-install.test.ts).
+    vi.mocked(installDependencies).mockRejectedValue(Object.assign(new Error('spawn npm ENOENT'), { code: 'ENOENT', syscall: 'spawn npm' }));
+
+    const { id } = await create();
+    await lastSetup().promise;
+
+    expect(tabEvents(id).some((e) => e.type === 'error')).toBe(false);
+    expect(m.sessionManager.createSession).toHaveBeenCalled();
+  });
+
   it('tells the tab when setup fails', async () => {
     m.worktreeManager.create.mockRejectedValue(new Error('worktree add failed'));
 
