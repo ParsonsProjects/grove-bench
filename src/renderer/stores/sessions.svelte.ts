@@ -36,7 +36,8 @@ class SessionStore {
   finderOpen = $state(false);
 
   /** Sessions that completed a turn while not focused — drives the "needs you"
-   *  flash on their sidebar row until the user focuses them. */
+   *  flash on their sidebar row until the user focuses them. Read it through
+   *  isUnread, which leaves closed threads out. */
   needsAttention = $state<Record<string, boolean>>({});
 
   /** Tabs restored at startup whose agent hasn't been reconnected yet. They
@@ -77,6 +78,14 @@ class SessionStore {
    *  reconnect on first focus. */
   isOpenTab(session: { id: string; status: SessionStatus }): boolean {
     return session.status !== 'stopped' || !!this.deferredResume[session.id];
+  }
+
+  /** Whether the session counts as unread: flagged, and an open tab. A closed
+   *  one counts as dealt with, so a flag it still carries (its agent stopped
+   *  by itself, say) doesn't count while it is closed. That way the Unread
+   *  chip never counts a thread the Threads list leaves out. */
+  isUnread(session: { id: string; status: SessionStatus }): boolean {
+    return !!this.needsAttention[session.id] && this.isOpenTab(session);
   }
 
   /** Mark a stopped session as an open tab that reconnects on first focus. */

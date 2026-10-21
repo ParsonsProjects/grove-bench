@@ -5,8 +5,8 @@ describe('attentionCount', () => {
   const sessions = [{ id: 'a' }, { id: 'b' }, { id: 'c' }];
 
   it('counts sessions that need input or are unread, once each', () => {
-    const needsInput = (id: string) => id === 'a';
-    const unread = (id: string) => id === 'a' || id === 'c';
+    const needsInput = (s: { id: string }) => s.id === 'a';
+    const unread = (s: { id: string }) => s.id === 'a' || s.id === 'c';
     expect(attentionCount(sessions, needsInput, unread)).toBe(2); // a (both), c (unread)
   });
 

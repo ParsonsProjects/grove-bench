@@ -45,7 +45,7 @@
   import { mapLimit } from '../lib/map-limit.js';
   import PanelToggle from './PanelToggle.svelte';
   import { panelStore } from '../stores/panels.svelte.js';
-  import type { SessionSortState, PrInfo } from '../../shared/types.js';
+  import type { SessionSortState, SessionStatus, PrInfo } from '../../shared/types.js';
   import { limitedQueue } from '../lib/limited-queue.js';
   import { stripIpcErrorPrefix } from '../lib/mcp-errors.js';
   import { onMount, untrack } from 'svelte';
@@ -222,7 +222,7 @@
         ? { label: 'Clear To Do', icon: 'todo', action: () => todoStore.set(sessionId, false) }
         : { label: 'Mark as To Do', icon: 'todo', action: () => todoStore.set(sessionId, true) });
     }
-    if (store.needsAttention[sessionId]) {
+    if (store.isUnread(session)) {
       items.push({ label: 'Mark as Read', icon: 'read', action: () => store.clearNeedsAttention(sessionId) });
     } else if (session.status !== 'error' && store.isOpenTab(session)) {
       // Not on a red thread, which stays red, nor a closed one, which counts
@@ -817,7 +817,7 @@
 
   /** Which chip a conversation counts under: the one its status colour
    *  matches, and To do as well when it is flagged. */
-  function triageOf(session: { id: string; status: string }): TriageEntry {
+  function triageOf(session: { id: string; status: SessionStatus }): TriageEntry {
     return {
       state: triageForSprite(sessionSpriteState(session, destroying.has(session.id))),
       todo: todoStore.has(session.id),
