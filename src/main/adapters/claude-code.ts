@@ -35,6 +35,7 @@ import { writeFileAtomic } from '../fs-utils.js';
 import { RunningCost, RunningTokens } from './running-cost.js';
 import { execFile } from 'node:child_process';
 import { spawnProcess } from '../process-host.js';
+import { extractJsonObject } from '../extract-json.js';
 import { promisify } from 'node:util';
 import * as path from 'node:path';
 
@@ -1427,6 +1428,65 @@ export function buildMcpAddArgs(opts: McpAddServerOpts): string[] {
 const CLI_LOOKUP_TIMEOUT_MS = 10_000;
 const AUTH_STATUS_TIMEOUT_MS = 15_000;
 
+interface AuthStatus { loggedIn: boolean; authMethod?: string; email?: string }
+
+/** The sign-in from `claude auth status --json`, or null when `stdout` holds
+ *  none. Text around the JSON (a notice, a warning), braces included, is
+ *  skipped: each `{` is tried until one starts the status object. */
+function parseAuthStatus(stdout: string): AuthStatus | null {
+  for (let i = stdout.indexOf('{'); i !== -1; i = stdout.indexOf('{', i + 1)) {
+    const json = extractJsonObject(stdout.slice(i));
+    if (!json) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(json);
+    } catch {
+      continue;
+    }
+    if (!parsed || typeof parsed !== 'object') continue;
+    const { loggedIn, authMethod, email } = parsed as Record<string, unknown>;
+    if (typeof loggedIn !== 'boolean') continue;
+    return {
+      loggedIn,
+      authMethod: typeof authMethod === 'string' ? authMethod : undefined,
+      email: typeof email === 'string' ? email : undefined,
+    };
+  }
+  return null;
+}
+
+/** Why `claude auth status` gave no sign-in, for the log. Email addresses are
+ *  left out: people attach the log to bug reports. */
+function describeAuthStatusFailure(err: unknown, stdout: string): string {
+  const output = stdout.trim() ? ` Output: ${stdout.trim().slice(0, 300)}` : '';
+  let text: string;
+  if (!err) {
+    text = `no sign-in in its output.${output}`;
+  } else {
+    const { code, signal, killed } = typeof err === 'object' ? err as { code?: unknown; signal?: unknown; killed?: unknown } : {};
+    const details = [
+      killed ? 'timed out' : null,
+      code !== undefined && code !== null ? `code ${String(code)}` : null,
+      signal ? `signal ${String(signal)}` : null,
+    ].filter(Boolean).join(', ');
+    // execFile's message is the command line and its stderr.
+    const message = (err instanceof Error ? err.message : String(err)).trim().slice(0, 500);
+    text = `${message}${details ? ` (${details})` : ''}.${output}`;
+  }
+  // No slashes in an address, so a scoped package path (\node_modules\@scope\...) stays.
+  return text.replace(/[^\s"'<>(),;:@\\/]+@[^\s"'<>(),;:@\\/]+\.[^\s"'<>(),;:@\\/]+/g, '<email>');
+}
+
+/** The CLI to run from `where`/`which` output. An npm install on Windows puts
+ *  a shell script named plain `claude` next to `claude.cmd`, and `where` can
+ *  list it first; Windows can't run that script itself, so on Windows the
+ *  first line with a runnable extension wins. */
+export function pickCliPath(stdout: string, platform: NodeJS.Platform = process.platform): string | undefined {
+  const lines = stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  if (platform !== 'win32') return lines[0];
+  return lines.find((line) => /\.(exe|cmd|bat|com)$/i.test(line)) ?? lines[0];
+}
+
 /** Provider switches the agent reads from the environment
  *  (https://code.claude.com/docs/en/agent-sdk/quickstart). */
 const PROVIDER_ENV_FLAGS: ReadonlyArray<[flag: string, method: string]> = [
@@ -1651,7 +1711,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     try {
       const cmd = process.platform === 'win32' ? 'where.exe' : 'which';
       const { stdout } = await execFileAsync(cmd, ['claude'], { shell: true, timeout: CLI_LOOKUP_TIMEOUT_MS });
-      claudePath = stdout.trim().split(/\r?\n/)[0];
+      claudePath = pickCliPath(stdout);
     } catch {
       // `where`/`which` failed — try known Windows install locations
       if (process.platform === 'win32') {
@@ -1693,19 +1753,36 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       return { available: true, path: claudePath, authenticated: true, authMethod: envMethod };
     }
 
+    let stdout = '';
+    let failure: unknown;
     try {
-      const { stdout: authJson } = await execFileAsync(claudePath, ['auth', 'status', '--json'], { shell: true, timeout: AUTH_STATUS_TIMEOUT_MS, ...this.cliEnv() });
-      const auth = JSON.parse(authJson.trim());
+      // Quoted: with `shell: true`, cmd.exe gets the command line unquoted,
+      // so a path with a space (C:\Users\Jo Smith\...) would be cut short.
+      ({ stdout } = await execFileAsync(quoteArg(claudePath), ['auth', 'status', '--json'], { shell: true, timeout: AUTH_STATUS_TIMEOUT_MS, ...this.cliEnv() }));
+    } catch (err) {
+      failure = err;
+      // Signed out exits 1 with the JSON still on stdout
+      // (https://code.claude.com/docs/en/cli-reference).
+      const out = (err as { stdout?: unknown } | null)?.stdout;
+      if (typeof out === 'string') stdout = out;
+    }
+
+    const auth = parseAuthStatus(stdout);
+    if (auth) {
       return {
         available: true,
         path: claudePath,
-        authenticated: auth.loggedIn === true,
+        authenticated: auth.loggedIn,
         authMethod: auth.authMethod,
         email: auth.email,
       };
-    } catch {
-      return { available: true, path: claudePath, authenticated: false };
     }
+    // The check itself broke: the CLI didn't start, timed out or printed
+    // something else. That says nothing about the sign-in, so it mustn't
+    // lock out someone who is signed in. The thread starts, and a missing
+    // sign-in comes back from the agent as an auth error.
+    logger.warn(`[ClaudeCodeAdapter] couldn't read "claude auth status" (${claudePath}): ${describeAuthStatusFailure(failure, stdout)}`);
+    return { available: true, path: claudePath, authenticated: true, authUnchecked: true };
   }
 
   /** The API key saved in the app, as env for the agent process. Spread after
