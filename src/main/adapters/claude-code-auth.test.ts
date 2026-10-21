@@ -16,6 +16,7 @@ vi.mock('../logger.js', () => ({
 
 import { ClaudeCodeAdapter, CLAUDE_AUTH_ERROR_MESSAGE, envAuthMethod, transformMessage, verifyAnthropicKey } from './claude-code.js';
 import { getApiKey } from '../credentials.js';
+import { logger } from '../logger.js';
 import { net } from 'electron';
 
 type ExecResult = { stdout: string } | Error;
@@ -98,10 +99,31 @@ describe('ClaudeCodeAdapter.checkPrerequisites()', () => {
     expect(status).toMatchObject({ available: true, authenticated: true, authMethod: 'claude.ai', email: 'a@b.c' });
   });
 
-  it('treats a failed or slow auth probe as signed out, not as a crash', async () => {
-    execFileAnswers({ stdout: '/usr/bin/claude\n' }, Object.assign(new Error('timed out'), { killed: true, signal: 'SIGTERM' }));
+  it('reads a sign-out, which the CLI reports with exit code 1', async () => {
+    execFileAnswers({ stdout: '/usr/bin/claude\n' }, Object.assign(new Error('Command failed'), { code: 1, stdout: '{"loggedIn":false}\n' }));
     const status = await adapter.checkPrerequisites();
     expect(status).toMatchObject({ available: true, authenticated: false });
+    expect(status.authUnchecked).toBeUndefined();
+  });
+
+  it('finds the sign-in when the CLI prints a notice around it', async () => {
+    execFileAnswers({ stdout: '/usr/bin/claude\n' }, { stdout: 'Update available.\n{"loggedIn":true,"authMethod":"claude.ai"}\n' });
+    const status = await adapter.checkPrerequisites();
+    expect(status).toMatchObject({ available: true, authenticated: true, authMethod: 'claude.ai' });
+  });
+
+  it("doesn't lock anyone out when the check itself fails, and logs why", async () => {
+    execFileAnswers({ stdout: '/usr/bin/claude\n' }, Object.assign(new Error('Command failed: claude auth status --json'), { killed: true, signal: 'SIGTERM', code: null }));
+    const status = await adapter.checkPrerequisites();
+    expect(status).toMatchObject({ available: true, authenticated: true, authUnchecked: true });
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(expect.stringMatching(/auth status.*timed out.*signal SIGTERM/));
+  });
+
+  it('treats output without a sign-in as unchecked, not signed out', async () => {
+    execFileAnswers({ stdout: '/usr/bin/claude\n' }, { stdout: 'Something went wrong\n' });
+    const status = await adapter.checkPrerequisites();
+    expect(status).toMatchObject({ available: true, authenticated: true, authUnchecked: true });
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(expect.stringContaining('Something went wrong'));
   });
 
   it('puts a time limit on both CLI calls', async () => {

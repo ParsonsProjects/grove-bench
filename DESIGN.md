@@ -606,6 +606,7 @@ Conversations don't need the installed CLI: the Agent SDK runs its own bundled C
 - An API key is saved in the app. It is encrypted with Electron `safeStorage` in `<userData>/credentials.json` (`src/main/credentials.ts`), never sent to the renderer, and passed to the agent as `ANTHROPIC_API_KEY`. While saved it wins over a CLI sign-in, which matches how Claude Code treats that variable ([env vars](https://code.claude.com/docs/en/env-vars)).
 - `ANTHROPIC_API_KEY` or a provider switch (`CLAUDE_CODE_USE_BEDROCK`, `_VERTEX`, `_FOUNDRY`, `_ANTHROPIC_AWS`) is set in the environment.
 - `claude auth status` reports a sign-in.
+- `claude auth status` can't be read: it didn't start, timed out or printed no sign-in. That says nothing about the sign-in, so the agent counts as ready but unchecked (`authUnchecked`) and the reason goes to the log. A missing sign-in then comes back as an auth error when the thread starts. Only `"loggedIn": false` counts as signed out; the CLI reports it with exit code 1 ([CLI reference](https://code.claude.com/docs/en/cli-reference)).
 
 If none is, the New Conversation dialog shows an API key field and a Re-check button instead of the form. The key can be changed or removed later in Settings > Agent.
 

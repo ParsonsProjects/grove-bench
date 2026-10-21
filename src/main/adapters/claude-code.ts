@@ -1427,6 +1427,45 @@ export function buildMcpAddArgs(opts: McpAddServerOpts): string[] {
 const CLI_LOOKUP_TIMEOUT_MS = 10_000;
 const AUTH_STATUS_TIMEOUT_MS = 15_000;
 
+interface AuthStatus { loggedIn: boolean; authMethod?: string; email?: string }
+
+/** The sign-in from `claude auth status --json`, or null when `stdout` holds
+ *  none. Text around the JSON (a notice, a warning) is skipped. */
+function parseAuthStatus(stdout: string): AuthStatus | null {
+  const start = stdout.indexOf('{');
+  const end = stdout.lastIndexOf('}');
+  if (start === -1 || end < start) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stdout.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== 'object') return null;
+  const { loggedIn, authMethod, email } = parsed as Record<string, unknown>;
+  if (typeof loggedIn !== 'boolean') return null;
+  return {
+    loggedIn,
+    ...(typeof authMethod === 'string' ? { authMethod } : {}),
+    ...(typeof email === 'string' ? { email } : {}),
+  };
+}
+
+/** Why `claude auth status` gave no sign-in, for the log. */
+function describeAuthStatusFailure(err: unknown, stdout: string): string {
+  const output = stdout.trim() ? ` Output: ${stdout.trim().slice(0, 300)}` : '';
+  if (!err) return `no sign-in in its output.${output}`;
+  const { code, signal, killed } = typeof err === 'object' ? err as { code?: unknown; signal?: unknown; killed?: unknown } : {};
+  const details = [
+    killed ? 'timed out' : null,
+    code !== undefined && code !== null ? `code ${String(code)}` : null,
+    signal ? `signal ${String(signal)}` : null,
+  ].filter(Boolean).join(', ');
+  // execFile's message is the command line and its stderr.
+  const message = (err instanceof Error ? err.message : String(err)).trim().slice(0, 500);
+  return `${message}${details ? ` (${details})` : ''}.${output}`;
+}
+
 /** Provider switches the agent reads from the environment
  *  (https://code.claude.com/docs/en/agent-sdk/quickstart). */
 const PROVIDER_ENV_FLAGS: ReadonlyArray<[flag: string, method: string]> = [
@@ -1693,19 +1732,34 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       return { available: true, path: claudePath, authenticated: true, authMethod: envMethod };
     }
 
+    let stdout = '';
+    let failure: unknown;
     try {
-      const { stdout: authJson } = await execFileAsync(claudePath, ['auth', 'status', '--json'], { shell: true, timeout: AUTH_STATUS_TIMEOUT_MS, ...this.cliEnv() });
-      const auth = JSON.parse(authJson.trim());
+      ({ stdout } = await execFileAsync(claudePath, ['auth', 'status', '--json'], { shell: true, timeout: AUTH_STATUS_TIMEOUT_MS, ...this.cliEnv() }));
+    } catch (err) {
+      failure = err;
+      // Signed out exits 1 with the JSON still on stdout
+      // (https://code.claude.com/docs/en/cli-reference).
+      const out = (err as { stdout?: unknown } | null)?.stdout;
+      if (typeof out === 'string') stdout = out;
+    }
+
+    const auth = parseAuthStatus(stdout);
+    if (auth) {
       return {
         available: true,
         path: claudePath,
-        authenticated: auth.loggedIn === true,
+        authenticated: auth.loggedIn,
         authMethod: auth.authMethod,
         email: auth.email,
       };
-    } catch {
-      return { available: true, path: claudePath, authenticated: false };
     }
+    // The check itself broke: the CLI didn't start, timed out or printed
+    // something else. That says nothing about the sign-in, so it mustn't
+    // lock out someone who is signed in. The thread starts, and a missing
+    // sign-in comes back from the agent as an auth error.
+    logger.warn(`[ClaudeCodeAdapter] couldn't read "claude auth status" (${claudePath}): ${describeAuthStatusFailure(failure, stdout)}`);
+    return { available: true, path: claudePath, authenticated: true, authUnchecked: true };
   }
 
   /** The API key saved in the app, as env for the agent process. Spread after
