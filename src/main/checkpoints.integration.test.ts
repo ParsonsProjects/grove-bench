@@ -84,6 +84,18 @@ describe('checkpoints with real git', () => {
     expect(run(['diff', '--cached', '--name-only'], wt)).toBe('');
   });
 
+  it('does not send a turn\'s diff over the size limit to the window', async () => {
+    const mgr = new CheckpointManager();
+    await mgr.capture('s1', wt, 'u1');
+    write('dist/bundle.js', 'x'.repeat(5 * 1024 * 1024) + '\n');
+    write('src/small.ts', 'small\n');
+
+    const big = await mgr.fileDiff('s1', wt, 'u1', 'turn', 'dist/bundle.js');
+    expect(big.kind).toBe('tooLarge');
+    expect(big.kind === 'tooLarge' && big.bytes).toBeGreaterThan(5 * 1024 * 1024);
+    expect(await mgr.fileDiff('s1', wt, 'u1', 'turn', 'src/small.ts')).toMatchObject({ kind: 'text', patch: expect.stringContaining('+small') });
+  });
+
   it('rewinds edits, deletions and new files, leaving ignored files alone', async () => {
     write('a.ts', 'two\n');
     write('keep.ts', 'untracked at the checkpoint\n');

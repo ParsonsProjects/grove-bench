@@ -240,8 +240,8 @@ describe('draftStore.start', () => {
 
     expect(await draftStore.start()).toBe(true);
     expect(createSessionMock()).toHaveBeenCalledWith(expect.objectContaining({ repoPath: '/repo/one', branchName: '', baseBranch: 'main' }));
-    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith('new1', 'Fix API-12 login crash');
-    expect(addUserMessage).toHaveBeenCalledWith('new1', 'Fix API-12 login crash');
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith('new1', 'Fix API-12 login crash', undefined, undefined);
+    expect(addUserMessage).toHaveBeenCalledWith('new1', 'Fix API-12 login crash', undefined, undefined);
     expect(store.activeSessionId).toBe('new1');
     expect(store.sessions.find((s) => s.id === 'new1')?.displayName).toBeTruthy();
     expect(draftStore.draft).toBeNull();
@@ -257,6 +257,57 @@ describe('draftStore.start', () => {
     expect(await draftStore.start()).toBe(true);
     expect(mockGroveBench.sendMessage).not.toHaveBeenCalled();
     expect(arrivalScene.for('new1')).toBeNull();
+  });
+
+  it('sends dropped files with the first message', async () => {
+    const addUserMessage = vi.spyOn(messageStore, 'addUserMessage');
+    draftStore.open('/repo/one');
+    await settle();
+    draftStore.setText('Fix the crash');
+    draftStore.addAttachments([
+      { name: 'notes.md', content: 'steps', type: 'text' },
+      { name: 'shot.png', dataUrl: 'data:image/png;base64,AAAA', type: 'image' },
+      { name: 'spec.pdf', dataUrl: 'data:application/pdf;base64,BBBB', mediaType: 'application/pdf', size: 3, type: 'file' },
+    ]);
+
+    expect(await draftStore.start()).toBe(true);
+    // Text files go in the message, images and other files alongside it.
+    const outgoing = '<file path="notes.md" length="5">\nsteps\n</file>\n\nFix the crash';
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(
+      'new1',
+      outgoing,
+      [{ name: 'shot.png', data: 'AAAA', mediaType: 'image/png' }],
+      [{ name: 'spec.pdf', data: 'BBBB', mediaType: 'application/pdf' }],
+    );
+    expect(addUserMessage).toHaveBeenCalledWith(
+      'new1',
+      outgoing,
+      [{ name: 'shot.png', dataUrl: 'data:image/png;base64,AAAA' }],
+      [{ name: 'spec.pdf', mediaType: 'application/pdf', size: 3 }],
+    );
+    addUserMessage.mockRestore();
+    arrivalScene.end('new1');
+  });
+
+  it('keeps dropped files with the draft when main refuses', async () => {
+    createSessionMock().mockRejectedValue(new Error('Branch "feat/x" already exists'));
+    draftStore.open('/repo/one');
+    await settle();
+    draftStore.setText('Fix the crash');
+    draftStore.addAttachments([{ name: 'notes.md', content: 'steps', type: 'text' }]);
+
+    expect(await draftStore.start()).toBe(false);
+    expect(draftStore.draft?.attachments).toEqual([{ name: 'notes.md', content: 'steps', type: 'text' }]);
+  });
+
+  it('removes a dropped file', async () => {
+    draftStore.open('/repo/one');
+    draftStore.addAttachments([
+      { name: 'a.md', content: 'a', type: 'text' },
+      { name: 'b.md', content: 'b', type: 'text' },
+    ]);
+    draftStore.removeAttachment(0);
+    expect(draftStore.draft?.attachments.map((f) => f.name)).toEqual(['b.md']);
   });
 
   it('resolves the base branch when none is set', async () => {
@@ -282,7 +333,7 @@ describe('draftStore.start', () => {
     });
     expect(store.activeSessionId).toBe('new1');
     expect(draftStore.draft).toBeNull();
-    expect(addUserMessage).toHaveBeenCalledWith('new1', 'Fix API-12 login crash');
+    expect(addUserMessage).toHaveBeenCalledWith('new1', 'Fix API-12 login crash', undefined, undefined);
     expect(createSessionMock()).toHaveBeenCalledWith(expect.objectContaining({ id: 'new1' }));
     // Main has nowhere to put the prompt until it knows the thread.
     expect(mockGroveBench.sendMessage).not.toHaveBeenCalled();
@@ -290,7 +341,7 @@ describe('draftStore.start', () => {
     finish({ id: 'new1', branch: 'grove/new1', agentType: 'codex' });
     expect(await started).toBe(true);
     expect(store.sessions.find((s) => s.id === 'new1')?.agentType).toBe('codex');
-    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith('new1', 'Fix API-12 login crash');
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith('new1', 'Fix API-12 login crash', undefined, undefined);
     addUserMessage.mockRestore();
     arrivalScene.end('new1');
   });
@@ -390,6 +441,36 @@ describe('draftStore.start', () => {
     expect(draftStore.draft?.text).toBe('second');
     expect(store.error).toContain('already exists');
     store.clearError();
+  });
+
+  it('keeps a draft with only files opened meanwhile', async () => {
+    let fail!: (e: Error) => void;
+    createSessionMock().mockReturnValueOnce(new Promise((_r, reject) => { fail = reject; }));
+    draftStore.open('/repo/one');
+    await settle();
+    draftStore.setText('first');
+    const started = draftStore.start();
+    draftStore.open('/repo/two');
+    draftStore.addAttachments([{ name: 'notes.md', content: 'steps', type: 'text' }]);
+
+    fail(new Error('Branch "feat/x" already exists'));
+    expect(await started).toBe(false);
+    expect(draftStore.draft?.attachments.map((f) => f.name)).toEqual(['notes.md']);
+    expect(store.error).toContain('already exists');
+    store.clearError();
+  });
+
+  it('will not start with files and no message, or with files and a slash command', async () => {
+    draftStore.open('/repo/one');
+    await settle();
+    draftStore.addAttachments([{ name: 'notes.md', content: 'steps', type: 'text' }]);
+    expect(draftStore.attachmentProblem).toBe('Write a message to go with the attached files.');
+    expect(await draftStore.start()).toBe(false);
+    draftStore.setText('/review this');
+    expect(draftStore.attachmentProblem).toMatch(/slash command can't take attached files/);
+    expect(await draftStore.start()).toBe(false);
+    expect(createSessionMock()).not.toHaveBeenCalled();
+    expect(draftStore.draft).not.toBeNull();
   });
 
   it('will not start an existing-branch draft with no branch', async () => {
@@ -630,7 +711,7 @@ describe('draftStore.startThread', () => {
     expect(createSessionMock()).toHaveBeenCalledWith(expect.objectContaining({
       repoPath: '/repo/one', adapterType: 'codex', model: 'o4', branchName: '', baseBranch: 'main',
     }));
-    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith('new1', 'Write a skill');
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith('new1', 'Write a skill', undefined, undefined);
     expect(store.activeSessionId).toBe('new1');
     expect(draftStore.draft).toMatchObject({ repoPath: '/repo/two', text: 'half typed' });
     arrivalScene.end('new1');

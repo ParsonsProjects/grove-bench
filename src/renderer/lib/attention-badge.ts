@@ -12,14 +12,14 @@ export interface BadgeSession {
   id: string;
 }
 
-export function attentionCount(
-  sessions: readonly BadgeSession[],
-  needsInput: (id: string) => boolean,
-  unread: (id: string) => boolean,
+export function attentionCount<S extends BadgeSession>(
+  sessions: readonly S[],
+  needsInput: (session: S) => boolean,
+  unread: (session: S) => boolean,
 ): number {
   let n = 0;
   for (const s of sessions) {
-    if (needsInput(s.id) || unread(s.id)) n++;
+    if (needsInput(s) || unread(s)) n++;
   }
   return n;
 }
