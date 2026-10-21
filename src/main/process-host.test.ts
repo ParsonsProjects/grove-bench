@@ -5,7 +5,7 @@ import {
   RESTART_DELAY_MS, SLOW_HOSTED_LAUNCH_MS, type HostProcess,
 } from './process-host.js';
 import { HOST_READY, type HostReply, type HostRequest, type SpawnEvent, type SpawnRequest, type StdioRequest } from './process-host-protocol.js';
-import type { HostedProcess } from './process-host-spawn.js';
+import { createSpawnRunner, type HostedProcess } from './process-host-spawn.js';
 
 /** A stand-in for the utility process: keeps what it was sent. */
 class FakeHost extends EventEmitter implements HostProcess {
@@ -558,6 +558,23 @@ describe('process host: spawned processes', () => {
     stopped.host.stop();
     stopped.host.spawn('claude.exe', []);
     expect(stopped.local).toHaveLength(1);
+  });
+
+  it('reports a start that Node throws here to listeners added once spawn has returned', async () => {
+    // The host down, the process starts in this process, inside spawn(); on
+    // Windows Node throws EINVAL, EPERM or ENAMETOOLONG rather than emit them.
+    const einval = Object.assign(new Error('spawn EINVAL'), { code: 'EINVAL', syscall: 'spawn' });
+    const throwing = (() => { throw einval; }) as unknown as Parameters<typeof createSpawnRunner>[1];
+    const { host } = setup({ spawnHere: (post) => createSpawnRunner(post, throwing) });
+
+    const proc = host.spawn('npm', ['install'], { findCommand: true });
+    const errors: Error[] = [];
+    proc.on('error', (e: Error) => errors.push(e));
+    const seen = watch(proc);
+    await settle();
+
+    expect(errors).toEqual([expect.objectContaining({ code: 'EINVAL', message: 'spawn EINVAL' })]);
+    expect(seen).toEqual(['close', 'out end']);
   });
 
   it('a process stopped before the host came up never starts', () => {

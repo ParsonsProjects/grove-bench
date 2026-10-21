@@ -1,12 +1,21 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
 
 // cross-spawn's parse, as it would wrap an npm shim on Windows, recorded.
+// `file` is the program it found: only those in `found`.
 const parseCalls: Array<{ command: string; args: readonly string[] }> = [];
+const found = new Map<string, string>();
 vi.mock('cross-spawn', () => ({
   default: {
     _parse: (command: string, args: readonly string[], options: Record<string, unknown>) => {
       parseCalls.push({ command, args });
-      return { command: 'cmd.exe', args: ['/d', '/s', '/c', `"${[command, ...args].join(' ')}"`], options: { ...options, windowsVerbatimArguments: true } };
+      return {
+        command: 'cmd.exe',
+        args: ['/d', '/s', '/c', `"${[command, ...args].join(' ')}"`],
+        options: { ...options, windowsVerbatimArguments: true },
+        file: found.get(command),
+      };
     },
   },
 }));
@@ -16,6 +25,16 @@ import type { SpawnEvent } from './process-host-protocol.js';
 
 /** Let stream events (they come on the next tick) run. */
 const settle = () => new Promise((r) => setImmediate(r));
+
+const realPlatform = process.platform;
+function setPlatform(platform: NodeJS.Platform) {
+  Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+}
+
+afterEach(() => {
+  setPlatform(realPlatform);
+  found.clear();
+});
 
 describe('HostedProcess', () => {
   it('holds input and stop requests until it is connected, then sends them in order', async () => {
@@ -173,6 +192,91 @@ describe('createSpawnRunner', () => {
     expect(parseCalls).toEqual([{ command: 'gemini', args: ['--acp'] }]);
     expect(calls[0]).toMatchObject({ file: 'cmd.exe', args: ['/d', '/s', '/c', '"gemini --acp"'], options: { windowsVerbatimArguments: true, cwd: '/w' } });
     expect(calls[1]).toMatchObject({ file: '/abs/claude', args: ['--x'], options: { cwd: '/w', stdio: 'pipe', windowsHide: true } });
+  });
+
+  it('reports a start Node throws (EINVAL) on the next tick, as Node reports the others', async () => {
+    const events: SpawnEvent[] = [];
+    const einval = Object.assign(new Error('spawn EINVAL'), { code: 'EINVAL', errno: -4071, syscall: 'spawn' });
+    const throwing = (() => { throw einval; }) as unknown as Parameters<typeof createSpawnRunner>[1];
+    const runner = createSpawnRunner((event) => events.push(event), throwing);
+    runner.handle({ type: 'spawn', id: 3, file: 'C:\\tools\\agent.bat', args: [] });
+    // Nothing yet: run in the main process, it would reach the
+    // HostedProcess before spawnProcess had returned it.
+    expect(events).toEqual([]);
+    await settle();
+    expect(events).toEqual([
+      { type: 'error', id: 3, error: expect.objectContaining({ code: 'EINVAL', syscall: 'spawn', message: 'spawn EINVAL' }) },
+      { type: 'close', id: 3 },
+    ]);
+  });
+
+  it("throws a process's output away where it runs when asked, and keeps its stderr", async () => {
+    const events: SpawnEvent[] = [];
+    await new Promise<void>((resolve) => {
+      const runner = createSpawnRunner((event) => {
+        events.push(event);
+        if (event.type === 'close') resolve();
+      });
+      runner.handle({
+        type: 'spawn', id: 6, file: process.execPath, stdout: 'ignore',
+        args: ['-e', "process.stdout.write('added 1 package'); process.stderr.write('npm warn')"],
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      });
+    });
+    expect(events.filter((e) => e.type === 'stdout')).toEqual([]);
+    expect(events).toContainEqual({ type: 'stdout-end', id: 6 });
+    expect(text(events, 'stderr')).toBe('npm warn');
+    expect(events).toContainEqual({ type: 'exit', id: 6, code: 0, signal: null });
+  });
+
+  it('pipes stdout unless told to ignore it', () => {
+    const calls: Array<{ options: Record<string, unknown> }> = [];
+    const fakeSpawn = ((_file: string, _args: readonly string[], options: Record<string, unknown>) => {
+      calls.push({ options });
+      throw new Error('not starting it');
+    }) as unknown as Parameters<typeof createSpawnRunner>[1];
+    const runner = createSpawnRunner(() => {}, fakeSpawn);
+    runner.handle({ type: 'spawn', id: 1, file: 'npm', args: [], stdout: 'ignore', findCommand: true });
+    runner.handle({ type: 'spawn', id: 2, file: 'claude', args: [] });
+    expect(calls[0].options).toMatchObject({ stdio: ['pipe', 'ignore', 'pipe'], windowsVerbatimArguments: true });
+    expect(calls[1].options).toMatchObject({ stdio: 'pipe' });
+  });
+
+  describe('a command it was asked to find, that ends with exit code 1', () => {
+    /** Start `file` (found as a shell would, unless `findCommand` is false)
+     *  on a stand-in process that exits 1, as cmd.exe does for a command
+     *  that isn't there. */
+    function exitsOne(file: string, findCommand = true) {
+      const events: SpawnEvent[] = [];
+      const child = Object.assign(new EventEmitter(), { pid: 77, stdin: new PassThrough(), stdout: null, stderr: null, kill: () => true });
+      const runner = createSpawnRunner((event) => events.push(event), (() => child) as unknown as Parameters<typeof createSpawnRunner>[1]);
+      runner.handle({ type: 'spawn', id: 4, file, args: ['install'], findCommand });
+      child.emit('exit', 1, null);
+      child.emit('close', 1, null);
+      return events.filter((e) => e.type !== 'stdout-end' && e.type !== 'stderr-end');
+    }
+
+    it("on Windows, when it wasn't found (cmd.exe: \"is not recognized\"), is ENOENT, as Node reports a missing program", () => {
+      setPlatform('win32');
+      expect(exitsOne('npm')).toEqual([
+        { type: 'spawned', id: 4, pid: 77, launchMs: expect.any(Number) },
+        { type: 'error', id: 4, error: expect.objectContaining({ code: 'ENOENT', syscall: 'spawn npm', path: 'npm', message: 'spawn npm ENOENT' }) },
+        { type: 'close', id: 4 },
+      ]);
+    });
+
+    it('on Windows, when it was found, is a failure like any other', () => {
+      setPlatform('win32');
+      found.set('npm', 'C:\\Program Files\\nodejs\\npm.cmd');
+      expect(exitsOne('npm')).toContainEqual({ type: 'exit', id: 4, code: 1, signal: null });
+    });
+
+    it('elsewhere, or when not asked to find it, is a failure like any other', () => {
+      setPlatform('linux');
+      expect(exitsOne('npm')).toContainEqual({ type: 'exit', id: 4, code: 1, signal: null });
+      setPlatform('win32');
+      expect(exitsOne('C:\\tools\\agent.exe', false)).toContainEqual({ type: 'exit', id: 4, code: 1, signal: null });
+    });
   });
 
   it('ignores input for a process it does not have', () => {

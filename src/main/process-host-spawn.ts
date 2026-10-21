@@ -175,19 +175,35 @@ export function createSpawnRunner(
 ): SpawnRunner {
   const children = new Map<number, ChildProcess>();
 
-  function start({ id, file, args, cwd, env, findCommand }: SpawnRequest): void {
+  function start({ id, file, args, cwd, env, findCommand, stdout }: SpawnRequest): void {
     const startedAt = now();
     let child: ChildProcess;
+    let notFound = false;
     try {
-      const options: SpawnOptions = { cwd, env, stdio: 'pipe', windowsHide: true };
+      // stdout 'ignore': the process's output goes nowhere, so none is posted.
+      const stdio: SpawnOptions['stdio'] = stdout === 'ignore' ? ['pipe', 'ignore', 'pipe'] : 'pipe';
+      const options: SpawnOptions = { cwd, env, stdio, windowsHide: true };
       // cross-spawn's parse finds the command and wraps a .cmd shim in
       // cmd.exe, as execa does before it spawns. It reads the disk, which is
       // why it runs here and not on the main process.
-      const launch = findCommand ? crossSpawn._parse(file, args, options) : { command: file, args, options };
+      const parsed = findCommand ? crossSpawn._parse(file, args, options) : undefined;
+      const launch = parsed ?? { command: file, args, options };
+      // On Windows a command it didn't find (no `file`) still starts, as
+      // cmd.exe, which exits 1: "'npm' is not recognized as an internal or
+      // external command".
+      notFound = parsed !== undefined && process.platform === 'win32' && !parsed.file;
       child = spawn(launch.command, launch.args, launch.options);
     } catch (e) {
-      post({ type: 'error', id, error: serializeError(e) });
-      post({ type: 'close', id });
+      // Node throws some failed starts (EINVAL, EPERM, ENAMETOOLONG, a bad
+      // argument) rather than emitting them. Report them on the next tick,
+      // as Node reports the rest: run in the main process (the agent host
+      // down), they would otherwise reach the HostedProcess before
+      // spawnProcess has returned it, with nobody listening yet.
+      const error = serializeError(e);
+      process.nextTick(() => {
+        post({ type: 'error', id, error });
+        post({ type: 'close', id });
+      });
       return;
     }
     const launchMs = now() - startedAt;
@@ -206,7 +222,13 @@ export function createSpawnRunner(
     // Writing to a process that has exited fails here, not in the caller.
     child.stdin?.on('error', (e) => post({ type: 'stdin-error', id, error: serializeError(e) }));
     child.on('error', (e) => post({ type: 'error', id, error: serializeError(e) }));
-    child.on('exit', (code, signal) => post({ type: 'exit', id, code, signal }));
+    child.on('exit', (code, signal) => {
+      // That cmd.exe is reported as Node reports a program that isn't there
+      // (and cross-spawn's own spawn does): ENOENT, with no exit. Callers
+      // can tell "not installed" from a failure, on Windows too.
+      if (notFound && code === 1) post({ type: 'error', id, error: serializeError(notFoundError(file)) });
+      else post({ type: 'exit', id, code, signal });
+    });
     child.on('close', () => {
       children.delete(id);
       post({ type: 'close', id });
@@ -230,4 +252,9 @@ export function createSpawnRunner(
       } catch { /* it has already gone */ }
     },
   };
+}
+
+/** The error Node's spawn gives for a program that isn't there. */
+function notFoundError(file: string): Error {
+  return Object.assign(new Error(`spawn ${file} ENOENT`), { code: 'ENOENT', syscall: `spawn ${file}`, path: file });
 }
