@@ -462,7 +462,9 @@ export type CheckpointDiffScope = 'turn' | 'since' | 'full';
 export type FileDiffResult =
   | { kind: 'text'; patch: string }
   | { kind: 'binary' }
-  | { kind: 'image'; ext: string };
+  | { kind: 'image'; ext: string }
+  /** A new file too big to read whole into a diff. */
+  | { kind: 'tooLarge'; bytes: number };
 
 /** Base64 data URLs for an image file's working-tree and HEAD versions (either may be null). */
 export interface ImageDiffContent {

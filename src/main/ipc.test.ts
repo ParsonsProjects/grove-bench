@@ -84,7 +84,7 @@ vi.mock('./git.js', async (importOriginal) => {
     'git', 'validateBranchName', 'branchExists', 'branchExistsAnywhere', 'listBranches', 'getDefaultBranch', 'fileDiff',
     'fileDiffAgainst', 'resolveMergeBase', 'indexFileContent', 'hashWorkingFiles', 'listProjectFiles', 'revertFile',
     'stageFile', 'unstageFile', 'commit', 'push', 'syncStatus', 'branchCommits', 'logCommits', 'rebaseOnto', 'cherryPick',
-    'squashSince', 'currentBranch', 'recentCheckouts', 'worktreeBranches',
+    'squashSince', 'currentBranch', 'recentCheckouts', 'worktreeBranches', 'isTracked',
   ];
   return { ...actual, ...Object.fromEntries(runsGit.map((n) => [n, vi.fn()])) };
 });
@@ -1132,6 +1132,29 @@ describe('file handlers', () => {
     });
     // A staged diff that is empty really is empty.
     expect(await invoke(IPC.FILE_DIFF, 's1', 'new.ts', true)).toEqual({ kind: 'text', patch: '' });
+  });
+
+  it('FILE_DIFF never shows a tracked file as new: an empty diff is no change, a failed one an error', async () => {
+    write('a.ts', 'all of the file\n');
+    vi.mocked(git.isTracked).mockResolvedValue(true);
+    vi.mocked(git.fileDiff).mockResolvedValue('');
+    expect(await invoke(IPC.FILE_DIFF, 's1', 'a.ts')).toEqual({ kind: 'text', patch: '' });
+    expect(git.isTracked).toHaveBeenCalledWith(wt, 'a.ts');
+
+    vi.mocked(git.fileDiff).mockRejectedValue(new Error('index.lock exists'));
+    await expect(invoke(IPC.FILE_DIFF, 's1', 'a.ts')).rejects.toThrow('index.lock exists');
+  });
+
+  it('FILE_DIFF still shows a new file whose diff fails, and skips one too large to read', async () => {
+    write('new.ts', 'hi\n');
+    vi.mocked(git.fileDiff).mockRejectedValue(new Error('fatal'));
+    expect(await invoke(IPC.FILE_DIFF, 's1', 'new.ts')).toEqual({
+      kind: 'text', patch: '--- /dev/null\n+++ b/new.ts\n@@ -0,0 +1,1 @@\n+hi',
+    });
+
+    write('big.log', Buffer.alloc(5 * 1024 * 1024, 'a'));
+    vi.mocked(git.fileDiff).mockResolvedValue('');
+    expect(await invoke(IPC.FILE_DIFF, 's1', 'big.log')).toEqual({ kind: 'tooLarge', bytes: 5 * 1024 * 1024 });
   });
 
   it('FILE_DIFF diffs against the merge base in branch scope', async () => {

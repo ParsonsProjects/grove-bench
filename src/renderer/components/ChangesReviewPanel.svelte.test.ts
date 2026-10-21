@@ -754,3 +754,12 @@ describe('ChangesReviewPanel — Markdown preview', () => {
     expect(queryByRole('button', { name: 'Preview' })).toBeNull();
   });
 });
+
+describe('ChangesReviewPanel — large new files', () => {
+  it('says a new file is too large to show instead of drawing it', async () => {
+    mockGroveBench.getFileDiff.mockResolvedValue({ kind: 'tooLarge', bytes: 5 * 1024 * 1024 });
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('big.log', { status: 'untracked' })] } };
+    const { findByText } = render(ChangesReviewPanel, { sessionId: SID });
+    expect(await findByText(/New file too large to show here \(5\.0 MB\)/)).toBeInTheDocument();
+  });
+});

@@ -15,7 +15,7 @@ import { adapterRegistry, registerClaudeAccount } from './adapters/index.js';
 import { claudeAccounts, isClaudeAccountId, newClaudeAccount } from './adapters/claude-accounts.js';
 import type { AgentAdapter } from './adapters/types.js';
 import { agentForProject, recordedAgent } from './background-tasks.js';
-import { validateBranchName, branchExists, branchExistsAnywhere, worktreeBranches, listBranches, getDefaultBranch, git, fileDiff, fileDiffAgainst, resolveMergeBase, indexFileContent, hashWorkingFiles, listProjectFiles, revertFile, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, logCommits, rebaseOnto, cherryPick, squashSince, currentBranch, recentCheckouts, getGitIdentity, gitVersion } from './git.js';
+import { validateBranchName, branchExists, branchExistsAnywhere, worktreeBranches, listBranches, getDefaultBranch, git, fileDiff, fileDiffAgainst, isTracked, resolveMergeBase, indexFileContent, hashWorkingFiles, listProjectFiles, revertFile, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, logCommits, rebaseOnto, cherryPick, squashSince, currentBranch, recentCheckouts, getGitIdentity, gitVersion } from './git.js';
 import { inspectProjectFolder, projectKind } from './project-path.js';
 import { prsForBranches, prCreate, prReviewComments, ghLogin, isNetworkError, isRateLimitError, openPrs, GH_OFFLINE_COOLDOWN_MS, GH_OFFLINE_MESSAGE, GH_RATE_LIMITED_MESSAGE } from './gh.js';
 import { tempBranchName, isTempBranch, generateBranchName } from './branch-name.js';
@@ -108,6 +108,9 @@ const MAX_BRANCH_AUTO_NAME_ATTEMPTS = 2;
 const goalInFlight = new Set<string>();
 const goalAutoAttempts = new Map<string, number>();
 const MAX_GOAL_AUTO_ATTEMPTS = 2;
+
+/** Larger files aren't read whole to show in a diff or expand its context. */
+const MAX_TEXT_FILE_BYTES = 4 * 1024 * 1024;
 
 /** Generate a goal from a conversation's messages on its own agent and save
  *  it, unless the goal changed from `current` meanwhile. Resolves to the
@@ -1363,8 +1366,9 @@ export function registerHandlers() {
     // Branch scope: working tree vs the merge base with the base branch, so
     // commits the agent already made on the branch stay in the diff.
     // Otherwise staged diff = index vs HEAD; unstaged diff = working tree vs index.
+    let diff = '';
+    let diffError: unknown;
     try {
-      let diff: string;
       if (opts?.base) {
         const mb = await resolveMergeBase(worktree.path, opts.base);
         if (!mb) throw new Error(`no merge base with ${opts.base}`);
@@ -1372,24 +1376,28 @@ export function registerHandlers() {
       } else {
         diff = await fileDiff(worktree.path, relPath, { staged });
       }
-      if (detectBinaryDiff(diff)) return { kind: 'binary' };
-      if (diff) return { kind: 'text', patch: diff };
-      // A staged-but-empty diff genuinely has no changes; don't synthesize for it.
-      if (staged) return { kind: 'text', patch: '' };
-      // Empty unstaged diff often means an untracked file — read it (guarding binaries).
+    } catch (e) {
+      diffError = e;
+    }
+    if (detectBinaryDiff(diff)) return { kind: 'binary' };
+    if (diff) return { kind: 'text', patch: diff };
+    // A staged-but-empty diff genuinely has no changes; don't synthesize for it.
+    if (staged && !diffError) return { kind: 'text', patch: '' };
+    // An empty or failed diff means a new file only when git doesn't track
+    // it. A tracked file with an empty diff has no changes (reverted since
+    // the list was read), and a failed diff of one is a real error.
+    if (await isTracked(worktree.path, relPath)) {
+      if (diffError) throw diffError;
+      return { kind: 'text', patch: '' };
+    }
+    try {
+      const { size } = await fs.stat(resolved);
+      if (size > MAX_TEXT_FILE_BYTES) return { kind: 'tooLarge', bytes: size };
       const buf = await fs.readFile(resolved);
       if (looksBinary(buf)) return { kind: 'binary' };
-      const content = buf.toString('utf-8');
-      return { kind: 'text', patch: content ? synthesizeUntrackedDiff(relPath, content) : '' };
+      return { kind: 'text', patch: synthesizeUntrackedDiff(relPath, buf.toString('utf-8')) };
     } catch {
-      // File may be untracked (new file) — try to read and synthesize diff
-      try {
-        const buf = await fs.readFile(resolved);
-        if (looksBinary(buf)) return { kind: 'binary' };
-        return { kind: 'text', patch: synthesizeUntrackedDiff(relPath, buf.toString('utf-8')) };
-      } catch {
-        return { kind: 'text', patch: '' };
-      }
+      return { kind: 'text', patch: '' };
     }
   });
 
@@ -1404,7 +1412,7 @@ export function registerHandlers() {
       if (staged) {
         content = await indexFileContent(worktree.path, relPath);
       } else {
-        if ((await fs.stat(resolved)).size > 4 * 1024 * 1024) return null;
+        if ((await fs.stat(resolved)).size > MAX_TEXT_FILE_BYTES) return null;
         const buf = await fs.readFile(resolved);
         if (looksBinary(buf)) return null;
         content = buf.toString('utf-8');

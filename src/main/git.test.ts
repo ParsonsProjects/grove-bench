@@ -23,6 +23,7 @@ import {
   branchHasRemote,
   renameBranch,
   fileDiff,
+  isTracked,
   synthesizeUntrackedDiff,
   detectBinaryDiff,
   imageExtFor,
@@ -411,6 +412,17 @@ describe('commit()', () => {
   it('rejects an empty or whitespace-only message without calling git', async () => {
     await expect(commit('/repo', '   ')).rejects.toThrow();
     expect(mockExeca).not.toHaveBeenCalled();
+  });
+});
+
+describe('isTracked()', () => {
+  it('asks git whether the path is in the index', async () => {
+    mockExeca.mockResolvedValue({ stdout: 'src/a.ts' } as any);
+    expect(await isTracked('/repo', 'src/a.ts')).toBe(true);
+    expect(mockExeca).toHaveBeenCalledWith('git', ['ls-files', '--error-unmatch', '--', 'src/a.ts'], { cwd: '/repo' });
+
+    mockExeca.mockRejectedValue(new Error("error: pathspec 'new.ts' did not match any file(s) known to git"));
+    expect(await isTracked('/repo', 'new.ts')).toBe(false);
   });
 });
 
