@@ -12,14 +12,15 @@ import { settingsStore } from '../stores/settings.svelte.js';
 import { prStore } from '../stores/pr.svelte.js';
 import type { GitStatusEntry } from '../../shared/types.js';
 
-// Counts syntax-highlight calls; otherwise the real module, with a low
-// large-diff limit so a test needn't draw thousands of rows.
+// Counts syntax-highlight calls; otherwise the real module. The real
+// large-diff rule decides, with line counts scaled by 100 so that over 20
+// lines counts as large and a test needn't draw thousands of rows.
 const highlights = vi.hoisted(() => ({ count: 0 }));
 vi.mock('../lib/diff-highlight.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../lib/diff-highlight.js')>();
   return {
     ...actual,
-    LARGE_DIFF_LINES: 20,
+    isLargeDiff: (size: { lines: number; chars: number }) => actual.isLargeDiff({ lines: size.lines * 100, chars: size.chars }),
     highlightLine: (...args: Parameters<typeof actual.highlightLine>) => {
       highlights.count++;
       return actual.highlightLine(...args);
@@ -784,7 +785,52 @@ describe('ChangesReviewPanel — large diffs', () => {
     mockGroveBench.getFileDiff.mockResolvedValue({ kind: 'text', patch: `--- a/app.min.js\n+++ b/app.min.js\n@@ -1 +1 @@\n-old\n+${minified}\n` });
     gitStatusStore.statusBySession = { [SID]: { entries: [entry('app.min.js')] } };
     const { findByText } = render(ChangesReviewPanel, { sessionId: SID });
-    expect(await findByText(/Large diff \(2 lines, 0\.1 MB\)/)).toBeInTheDocument();
+    expect(await findByText(/Large diff \(2 lines, 150,003 characters\)/)).toBeInTheDocument();
+  });
+
+  /** A turn that edits notes.txt twice: a small Edit, then a 30-line Write.
+   *  Plain text, so no idle-time colouring runs to muddle the highlight count. */
+  function editTurn() {
+    const content = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`).join('\n');
+    messageStore.messagesBySession[SID] = [
+      { kind: 'user', id: 'm1', text: 'write it' },
+      { kind: 'tool_call', id: 'e1', toolName: 'Edit', toolInput: { file_path: 'notes.txt', old_string: 'tiny old', new_string: 'tiny new' }, toolUseId: 't0', uuid: 'u0', pending: false },
+      { kind: 'tool_call', id: 'w1', toolName: 'Write', toolInput: { file_path: 'notes.txt', content }, toolUseId: 't1', uuid: 'u1', pending: false },
+      { kind: 'result', id: 'm2', subtype: 'success', isError: false },
+    ] as any;
+    mockGroveBench.getFileDiff.mockResolvedValue({ kind: 'text', patch: patch('small') });
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('notes.txt', { contentHash: 'h1' })] } };
+  }
+
+  it('holds a large edit back in Edit History until asked, and draws a small one', async () => {
+    editTurn();
+    const { container, findByRole, findByText } = render(ChangesReviewPanel, { sessionId: SID });
+
+    await fireEvent.click(await findByRole('button', { name: '2 edits' }));
+    expect(await findByText(/Large edit \(30 lines, \d[\d,]* characters of text\)/)).toBeInTheDocument();
+    await waitFor(() => expect(diffText(container)).toContain('tiny new'));
+    expect(diffText(container)).not.toContain('line 30');
+
+    await fireEvent.click(await findByRole('button', { name: 'Show Write #2' }));
+    await waitFor(() => expect(diffText(container)).toContain('line 30'));
+  });
+
+  it('does not redraw shown edits when a status refresh brings back the same file', async () => {
+    editTurn();
+    const { container, findByRole } = render(ChangesReviewPanel, { sessionId: SID });
+    await fireEvent.click(await findByRole('button', { name: '2 edits' }));
+    await fireEvent.click(await findByRole('button', { name: 'Show Write #2' }));
+    await waitFor(() => expect(diffText(container)).toContain('line 30'));
+    const calls = mockGroveBench.getFileDiff.mock.calls.length;
+    highlights.count = 0;
+
+    // Same file, same content, a new entry object (as every refresh returns).
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('notes.txt', { contentHash: 'h1' })] } };
+    await waitFor(() => expect(mockGroveBench.getFileDiff.mock.calls.length).toBeGreaterThan(calls));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(highlights.count).toBe(0);
+    expect(diffText(container)).toContain('line 30');
   });
 
   it('asks again after switching to another comparison', async () => {

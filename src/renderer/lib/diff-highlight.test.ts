@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { RecentCache, languageForPath, highlightLine, highlightLineUncached, linesToColour, MAX_DEFERRED_LINE, MAX_DEFERRED_LINES, wordDiffSegments, hunkLineIndices } from './diff-highlight.js';
+import { editSize, isLargeDiff, LARGE_DIFF_LINES, LARGE_DIFF_CHARS, RecentCache, languageForPath, highlightLine, highlightLineUncached, linesToColour, MAX_DEFERRED_LINE, MAX_DEFERRED_LINES, wordDiffSegments, hunkLineIndices } from './diff-highlight.js';
 import type { DiffLine } from './diff-types.js';
 
 describe('languageForPath', () => {
@@ -162,5 +162,26 @@ describe('RecentCache', () => {
     expect(cache.get('k2', () => (remade = 'k2'))).toBe('v2');
     expect(remade).toBe('');
     expect(cache.get('k1', () => 'remade')).toBe('remade');
+  });
+});
+
+describe('isLargeDiff', () => {
+  it('holds back a diff over either limit, and not one at it', () => {
+    expect(isLargeDiff({ lines: LARGE_DIFF_LINES, chars: LARGE_DIFF_CHARS })).toBe(false);
+    expect(isLargeDiff({ lines: LARGE_DIFF_LINES + 1, chars: 0 })).toBe(true);
+    expect(isLargeDiff({ lines: 1, chars: LARGE_DIFF_CHARS + 1 })).toBe(true);
+  });
+});
+
+describe('editSize', () => {
+  it('counts the lines and characters on both sides of each replacement', () => {
+    expect(editSize({ edits: [{ oldText: 'a\nb', newText: 'c' }, { oldText: '', newText: 'd\ne\nf' }] } as never)).toEqual({ lines: 6, chars: 9 });
+  });
+
+  it('counts a whole-file write, and nothing for an empty one', () => {
+    // The final newline ends the last line, as git and the main diff count it
+    expect(editSize({ write: 'x\ny\n' } as never)).toEqual({ lines: 2, chars: 4 });
+    expect(editSize({ write: 'x\ny' } as never)).toEqual({ lines: 2, chars: 3 });
+    expect(editSize({ write: '' } as never)).toEqual({ lines: 0, chars: 0 });
   });
 });
