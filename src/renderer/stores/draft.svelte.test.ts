@@ -443,6 +443,36 @@ describe('draftStore.start', () => {
     store.clearError();
   });
 
+  it('keeps a draft with only files opened meanwhile', async () => {
+    let fail!: (e: Error) => void;
+    createSessionMock().mockReturnValueOnce(new Promise((_r, reject) => { fail = reject; }));
+    draftStore.open('/repo/one');
+    await settle();
+    draftStore.setText('first');
+    const started = draftStore.start();
+    draftStore.open('/repo/two');
+    draftStore.addAttachments([{ name: 'notes.md', content: 'steps', type: 'text' }]);
+
+    fail(new Error('Branch "feat/x" already exists'));
+    expect(await started).toBe(false);
+    expect(draftStore.draft?.attachments.map((f) => f.name)).toEqual(['notes.md']);
+    expect(store.error).toContain('already exists');
+    store.clearError();
+  });
+
+  it('will not start with files and no message, or with files and a slash command', async () => {
+    draftStore.open('/repo/one');
+    await settle();
+    draftStore.addAttachments([{ name: 'notes.md', content: 'steps', type: 'text' }]);
+    expect(draftStore.attachmentProblem).toBe('Write a message to go with the attached files.');
+    expect(await draftStore.start()).toBe(false);
+    draftStore.setText('/review this');
+    expect(draftStore.attachmentProblem).toMatch(/slash command can't take attached files/);
+    expect(await draftStore.start()).toBe(false);
+    expect(createSessionMock()).not.toHaveBeenCalled();
+    expect(draftStore.draft).not.toBeNull();
+  });
+
   it('will not start an existing-branch draft with no branch', async () => {
     draftStore.open('/repo/one');
     draftStore.setStart({ kind: 'existing', branch: '' });

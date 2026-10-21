@@ -108,8 +108,8 @@
     if (credentials === 'checking') return 'Checking credentials…';
     if (credentials === 'no-agent') return 'No agent is available to start this thread.';
     if (start?.kind === 'existing' && !start.branch) return 'Pick a branch or pull request first.';
-    if (draft.attachments.length > 0 && !draft.text.trim()) return 'Write a message to go with the attached files.';
-    return null;
+    if (reading > 0) return 'Reading the attached files…';
+    return draftStore.attachmentProblem;
   });
   const canStart = $derived(!!draft && !startBlocker);
   /** Enter was pressed while Start was off: say why under the message box. */
@@ -185,6 +185,10 @@
   const allowImages = $derived(agentsStore.supports(agentId, 'imageAttachments'));
   let paneEl = $state<HTMLDivElement | null>(null);
   let dragOver = $state(false);
+  /** Drops still being read. Start waits for them, and each drop is read
+   *  after the one before, so it is checked against those files too. */
+  let reading = $state(0);
+  let lastRead: Promise<void> = Promise.resolve();
   let dropMessage = $state('');
   let dropMessageTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -201,12 +205,23 @@
     if (!paneEl?.contains(e.relatedTarget as Node | null)) dragOver = false;
   }
 
-  async function handleDrop(e: DragEvent) {
+  function handleDrop(e: DragEvent) {
     dragOver = false;
-    const dropped = e.dataTransfer?.files;
-    if (!draft || !dropped?.length) return;
+    // Taken in handleDragOver, so the browser mustn't drop it into the box,
+    // even when it has no files after all (an image dragged from the page).
+    if (!e.dataTransfer?.types.includes('Files')) return;
     e.preventDefault();
-    const { files, skipped } = await processFiles(dropped, draft.attachments, { allowImages });
+    const dropped = Array.from(e.dataTransfer.files);
+    if (dropped.length === 0) return;
+    reading++;
+    lastRead = lastRead
+      .then(() => attach(dropped))
+      .catch((err) => console.warn('[draft] could not attach the dropped files:', err))
+      .finally(() => { reading--; });
+  }
+
+  async function attach(dropped: File[]) {
+    const { files, skipped } = await processFiles(dropped, draftStore.draft?.attachments ?? [], { allowImages });
     draftStore.addAttachments(files);
     if (skipped.length > 0) {
       clearTimeout(dropMessageTimer);

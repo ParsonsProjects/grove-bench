@@ -163,6 +163,17 @@ class DraftStore {
     if (this.draft) this.draft.attachments = this.draft.attachments.filter((_, i) => i !== index);
   }
 
+  /** Why the draft's files can't go with its first message, or null. */
+  get attachmentProblem(): string | null {
+    const d = this.draft;
+    if (!d?.attachments.length) return null;
+    const text = d.text.trim();
+    if (!text) return 'Write a message to go with the attached files.';
+    // Files go ahead of the text, so the command would no longer lead it.
+    if (text.startsWith('/')) return "A slash command can't take attached files. Remove them, or send them in the next message.";
+    return null;
+  }
+
   setRepo(repo: string): void {
     if (!this.draft || repo === this.draft.repoPath) return;
     this.draft.repoPath = repo;
@@ -363,6 +374,7 @@ class DraftStore {
     // conversation being created.
     const d = $state.snapshot(draft) as Draft;
     if (d.start.kind === 'existing' && !d.start.branch) return false;
+    if (this.attachmentProblem) return false;
     if (!sessionStore.repos.includes(d.repoPath)) {
       this.error = 'This project was removed. Pick another project at the bottom of the message box.';
       return false;
@@ -375,9 +387,10 @@ class DraftStore {
     }
     this.discard();
     return this.launch(d, (message, onScreen) => {
-      // Back to the draft, message and all, unless one with a message has
-      // been opened since: that one is kept and the error goes in a toast.
-      if (!this.draft?.text.trim()) {
+      // Back to the draft, message and all, unless one with a message or
+      // files has been opened since: that one is kept and the error goes in
+      // a toast.
+      if (!this.draft?.text.trim() && !this.draft?.attachments.length) {
         this.draft = draft;
         this.error = message;
         void this.loadAgentInfo();

@@ -186,6 +186,71 @@ describe('DraftPane drag and drop', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Write a message to go with the attached files.');
     expect(createSessionMock()).not.toHaveBeenCalled();
   });
+
+  it('keeps a files drag that has no files out of the message box', async () => {
+    render(DraftPane);
+    // Prevented, so the browser doesn't drop it into the box as text.
+    expect(await fireEvent.drop(screen.getByLabelText('First message'), dropped())).toBe(false);
+    expect(draftStore.draft?.attachments).toEqual([]);
+  });
+
+  describe('while files are being read', () => {
+    /** Reads held until release() is called. */
+    let held: (() => void)[] = [];
+    const release = async () => {
+      for (const read of held.splice(0)) read();
+      await settle();
+    };
+    beforeEach(() => {
+      held = [];
+      vi.spyOn(FileReader.prototype, 'readAsText').mockImplementation(function (this: FileReader) {
+        held.push(() => {
+          Object.defineProperty(this, 'result', { value: 'steps' });
+          this.onload?.(new ProgressEvent('load') as ProgressEvent<FileReader>);
+        });
+      });
+    });
+    afterEach(() => vi.restoreAllMocks());
+
+    it('waits for them before starting', async () => {
+      render(DraftPane);
+      const box = screen.getByLabelText('First message');
+      await fireEvent.input(box, { target: { value: 'Fix the crash' } });
+      await fireEvent.drop(box, dropped(notes()));
+      await settle();
+      const startButton = screen.getByRole('button', { name: 'Start' });
+      expect(startButton).toHaveAttribute('title', 'Reading the attached files…');
+      await fireEvent.keyDown(box, { key: 'Enter' });
+      expect(createSessionMock()).not.toHaveBeenCalled();
+
+      await release();
+      expect(screen.getByText('notes.md')).toBeInTheDocument();
+      expect(startButton).toBeEnabled();
+    });
+
+    it('reads a second drop after the first, so the same file is attached once', async () => {
+      render(DraftPane);
+      const box = screen.getByLabelText('First message');
+      await fireEvent.drop(box, dropped(notes()));
+      await fireEvent.drop(box, dropped(notes()));
+      await settle();
+      await release(); // the first drop; the second is only read after it
+      await release();
+      expect(draftStore.draft?.attachments.map((f) => f.name)).toEqual(['notes.md']);
+    });
+  });
+
+  it('asks for files to wait when the first message is a slash command', async () => {
+    render(DraftPane);
+    const box = screen.getByLabelText('First message');
+    await fireEvent.drop(box, dropped(notes()));
+    await screen.findByText('notes.md');
+    await fireEvent.input(box, { target: { value: '/review this' } });
+    expect(screen.getByRole('button', { name: 'Start' })).toHaveAttribute(
+      'title',
+      "A slash command can't take attached files. Remove them, or send them in the next message.",
+    );
+  });
 });
 
 describe('DraftPane credentials', () => {
