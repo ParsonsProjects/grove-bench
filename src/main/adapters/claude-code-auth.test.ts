@@ -1,11 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-// The CLI calls run in the process host (runProcess), never here.
+// The CLI lookup runs in the process host (runProcess) and the claude CLI
+// in the agent host (runInAgentHost), never here.
 const runMock = vi.hoisted(() => vi.fn());
 vi.mock('../process-host.js', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   runProcess: runMock,
 }));
+const agentRunMock = vi.hoisted(() => vi.fn());
+vi.mock('../process-host-run.js', () => ({ runInAgentHost: agentRunMock }));
 const childProcess = vi.hoisted(() => ({ execFile: vi.fn(), spawn: vi.fn() }));
 vi.mock('node:child_process', () => childProcess);
 
@@ -23,13 +26,16 @@ import { net } from 'electron';
 
 type ExecResult = { stdout: string } | Error;
 
-/** Answer each CLI call in order: `which claude`, then `claude auth status`. */
+/** Answer each CLI call in order, wherever it runs: `which claude`, then
+ *  `claude auth status`. */
 function cliAnswers(...answers: ExecResult[]): void {
-  runMock.mockImplementation(async () => {
+  const answer = async () => {
     const next = answers.shift() ?? new Error('unexpected CLI call');
     if (next instanceof Error) throw next;
     return { stdout: next.stdout, stderr: '', exitCode: 0, failed: false, timedOut: false };
-  });
+  };
+  runMock.mockImplementation(answer);
+  agentRunMock.mockImplementation(answer);
 }
 
 const AUTH_ENV = ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_ANTHROPIC_AWS', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY'];
@@ -93,6 +99,7 @@ describe('ClaudeCodeAdapter.checkPrerequisites()', () => {
     const status = await adapter.checkPrerequisites();
     expect(status).toMatchObject({ available: true, path: '/usr/bin/claude', authenticated: true, authMethod: 'Amazon Bedrock' });
     expect(runMock).toHaveBeenCalledTimes(1);
+    expect(agentRunMock).not.toHaveBeenCalled();
   });
 
   it('reads the CLI sign-in', async () => {
@@ -110,21 +117,22 @@ describe('ClaudeCodeAdapter.checkPrerequisites()', () => {
   it('puts a time limit on both CLI calls', async () => {
     cliAnswers({ stdout: '/usr/bin/claude\n' }, { stdout: '{"loggedIn":false}' });
     await adapter.checkPrerequisites();
-    expect(runMock).toHaveBeenCalledTimes(2);
-    for (const call of runMock.mock.calls) {
+    const calls = [...runMock.mock.calls, ...agentRunMock.mock.calls];
+    expect(calls).toHaveLength(2);
+    for (const call of calls) {
       expect((call[2] as { timeout?: number }).timeout).toBeGreaterThan(0);
     }
   });
 
-  it('runs both CLI calls in the process host, not in the main process', async () => {
+  it('looks the CLI up in the process host and asks it for the sign-in in the agent host, both safe to run again', async () => {
     cliAnswers({ stdout: '/usr/bin/claude\n' }, { stdout: '{"loggedIn":true}' });
     await adapter.checkPrerequisites();
     const lookup = process.platform === 'win32' ? 'where.exe' : 'which';
     // The lookup needs no shell; `auth status` runs as the CLI always has,
     // its command line in a shell.
-    expect(runMock.mock.calls).toEqual([
-      [lookup, ['claude'], { timeout: 10_000 }],
-      ['/usr/bin/claude', ['auth', 'status', '--json'], { timeout: 15_000, shell: true }],
+    expect(runMock.mock.calls).toEqual([[lookup, ['claude'], { timeout: 10_000, idempotent: true }]]);
+    expect(agentRunMock.mock.calls).toEqual([
+      ['/usr/bin/claude', ['auth', 'status', '--json'], { timeout: 15_000, idempotent: true, shell: true }],
     ]);
     expect(childProcess.execFile).not.toHaveBeenCalled();
     expect(childProcess.spawn).not.toHaveBeenCalled();
@@ -133,25 +141,26 @@ describe('ClaudeCodeAdapter.checkPrerequisites()', () => {
 
 describe('ClaudeCodeAdapter MCP and plugin commands', () => {
   const adapter = new ClaudeCodeAdapter();
-  const ran = () => runMock.mock.calls.map(([file, args, opts]) => [file, args, opts]);
+  const ran = () => agentRunMock.mock.calls.map(([file, args, opts]) => [file, args, opts]);
 
   beforeEach(() => {
-    runMock.mockResolvedValue({ stdout: '', stderr: '', exitCode: 0, failed: false, timedOut: false });
+    agentRunMock.mockResolvedValue({ stdout: '', stderr: '', exitCode: 0, failed: false, timedOut: false });
   });
 
   afterEach(() => {
-    // Nothing here starts a process in the main process.
+    // Nothing here starts a process in the main process, or in the process host.
     expect(childProcess.execFile).not.toHaveBeenCalled();
     expect(childProcess.spawn).not.toHaveBeenCalled();
+    expect(runMock).not.toHaveBeenCalled();
   });
 
-  it('lists MCP servers through the CLI in the process host, in a shell', async () => {
-    runMock.mockResolvedValueOnce({ stdout: 'figma: https://mcp.figma.com/mcp (HTTP) - ✔ Connected\n', stderr: '', exitCode: 0, failed: false, timedOut: false });
+  it('lists MCP servers through the CLI in the agent host, in a shell, safe to run again', async () => {
+    agentRunMock.mockResolvedValueOnce({ stdout: 'figma: https://mcp.figma.com/mcp (HTTP) - ✔ Connected\n', stderr: '', exitCode: 0, failed: false, timedOut: false });
     expect(await adapter.listConfiguredMcpServers('/repo')).toEqual([expect.objectContaining({ name: 'figma' })]);
-    expect(ran()).toEqual([['claude', ['mcp', 'list'], { shell: true, cwd: '/repo', timeout: 60_000 }]]);
+    expect(ran()).toEqual([['claude', ['mcp', 'list'], { shell: true, cwd: '/repo', timeout: 60_000, idempotent: true }]]);
   });
 
-  it('adds and removes MCP servers through the CLI in the process host, args quoted for the shell', async () => {
+  it('adds and removes MCP servers through the CLI in the agent host, args quoted for the shell', async () => {
     await adapter.addConfiguredMcpServer({ name: 'my-server', transport: 'stdio', scope: 'user', commandOrUrl: 'npx', args: ['some mcp'], cwd: '/repo' });
     await adapter.removeConfiguredMcpServer('my-server', 'user', '/repo');
     expect(ran()).toEqual([
@@ -160,15 +169,16 @@ describe('ClaudeCodeAdapter MCP and plugin commands', () => {
     ]);
   });
 
-  it('lists, installs, uninstalls, enables and disables plugins through the CLI in the process host', async () => {
-    runMock.mockResolvedValueOnce({ stdout: '{"installed":[{"id":"p@m"}],"available":[]}', stderr: '', exitCode: 0, failed: false, timedOut: false });
+  it('lists, installs, uninstalls, enables and disables plugins through the CLI in the agent host', async () => {
+    agentRunMock.mockResolvedValueOnce({ stdout: '{"installed":[{"id":"p@m"}],"available":[]}', stderr: '', exitCode: 0, failed: false, timedOut: false });
     expect(await adapter.listPlugins()).toEqual({ installed: [{ id: 'p@m' }], available: [] });
     await adapter.installPlugin('p@m', 'project');
     await adapter.uninstallPlugin('p@m');
     await adapter.enablePlugin('p@m');
     await adapter.disablePlugin('p@m');
     expect(ran()).toEqual([
-      ['claude', ['plugin', 'list', '--json', '--available'], { shell: true }],
+      // Only listing is safe to run again.
+      ['claude', ['plugin', 'list', '--json', '--available'], { shell: true, idempotent: true }],
       ['claude', ['plugin', 'install', 'p@m', '--scope', 'project'], { shell: true }],
       ['claude', ['plugin', 'uninstall', 'p@m'], { shell: true }],
       ['claude', ['plugin', 'enable', 'p@m'], { shell: true }],
@@ -177,7 +187,7 @@ describe('ClaudeCodeAdapter MCP and plugin commands', () => {
   });
 
   it('passes a failed CLI command on, and lists no plugins when listing fails', async () => {
-    runMock.mockRejectedValue(Object.assign(new Error('Command failed with exit code 1: claude plugin install x'), { exitCode: 1, stderr: 'not found' }));
+    agentRunMock.mockRejectedValue(Object.assign(new Error('Command failed with exit code 1: claude plugin install x'), { exitCode: 1, stderr: 'not found' }));
     await expect(adapter.installPlugin('x')).rejects.toMatchObject({ exitCode: 1, stderr: 'not found' });
     expect(await adapter.listPlugins()).toEqual({ installed: [], available: [] });
   });
@@ -281,7 +291,7 @@ describe('ClaudeCodeAdapter for another Claude account', () => {
     cliAnswers({ stdout: '/usr/bin/claude\n' }, { stdout: '{"loggedIn":true,"authMethod":"claude.ai","email":"me@work.example"}' });
     const status = await adapter.checkPrerequisites();
     expect(status).toMatchObject({ available: true, authenticated: true, email: 'me@work.example' });
-    const opts = runMock.mock.calls[1][2] as { env: Record<string, string | undefined>; extendEnv?: boolean };
+    const opts = agentRunMock.mock.calls[0][2] as { env: Record<string, string | undefined>; extendEnv?: boolean };
     expect(opts.env.CLAUDE_CONFIG_DIR).toBe('/home/me/.claude-work');
     expect(opts.env).not.toHaveProperty('ANTHROPIC_API_KEY');
     // The whole environment: the key left out mustn't come back from the
@@ -311,7 +321,7 @@ describe('ClaudeCodeAdapter for another Claude account', () => {
   it("edits the account's own MCP configuration", async () => {
     cliAnswers({ stdout: '' });
     await adapter.listConfiguredMcpServers('/repo');
-    expect((runMock.mock.calls[0][2] as { env: Record<string, string> }).env.CLAUDE_CONFIG_DIR).toBe('/home/me/.claude-work');
+    expect((agentRunMock.mock.calls[0][2] as { env: Record<string, string> }).env.CLAUDE_CONFIG_DIR).toBe('/home/me/.claude-work');
   });
 
   it("checks a pasted key with Anthropic even when Grove's environment points elsewhere", async () => {

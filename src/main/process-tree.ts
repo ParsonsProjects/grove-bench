@@ -72,21 +72,15 @@ async function taskkill(pids: number[]): Promise<void> {
   // Full path, so a taskkill.exe in the worktree or on PATH can't stand in.
   const exe = path.win32.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'taskkill.exe');
   const args = [...pids.flatMap((pid) => ['/PID', String(pid)]), '/T', '/F'];
-  // No console window: execa hides it by default.
-  const run = () => runProcess(exe, args, { timeout: KILL_TIMEOUT_MS, reject: false });
   let result: ProcessResult;
   try {
-    result = await run();
-  } catch {
-    // With reject: false only the host fails a command: it stopped or died
-    // while taskkill ran, and stopped taskkill with it. Killing is safe to
-    // repeat, so it runs again, here if the host is gone (at quit).
-    try {
-      result = await run();
-    } catch (e) {
-      logger.warn(`[process-tree] taskkill ${pids.join(', ')} failed:`, e instanceof Error ? e.message : String(e));
-      return;
-    }
+    // No console window: execa hides it by default. Killing is safe to
+    // repeat (idempotent): if the host dies, stops answering or stops (at
+    // quit) while taskkill runs, it runs again in the main process.
+    result = await runProcess(exe, args, { timeout: KILL_TIMEOUT_MS, reject: false, idempotent: true });
+  } catch (e) {
+    logger.warn(`[process-tree] taskkill ${pids.join(', ')} failed:`, e instanceof Error ? e.message : String(e));
+    return;
   }
   // 128: one of them had already exited.
   if (result.failed && result.exitCode !== 128) {
@@ -148,7 +142,7 @@ export function listProcesses(): Promise<ProcessEntry[]> {
 
 async function queryProcesses(): Promise<ProcessEntry[]> {
   try {
-    const { stdout } = await runProcess('ps', ['-A', '-o', 'pid=,ppid='], { timeout: LIST_TIMEOUT_MS });
+    const { stdout } = await runProcess('ps', ['-A', '-o', 'pid=,ppid='], { timeout: LIST_TIMEOUT_MS, idempotent: true });
     return parseProcessList(stdout);
   } catch (err) {
     logger.warn('[process-tree] could not list processes:', err);

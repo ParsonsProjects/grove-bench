@@ -120,6 +120,8 @@ describe('message checks', () => {
     expect(isSpawnRequest({ type: 'spawn', id: 1, file: 'npm', args: ['install'], stdout: 'ignore' })).toBe(true);
     expect(isSpawnRequest({ type: 'spawn', id: 1, file: 'npm', args: ['install'], stdout: 'pipe' })).toBe(true);
     expect(isSpawnRequest({ type: 'spawn', id: 1, file: 'npm', args: ['install'], stdout: 'inherit' })).toBe(false);
+    expect(isSpawnRequest({ type: 'spawn', id: 1, file: 'claude', args: ['mcp', 'list'], shell: true })).toBe(true);
+    expect(isSpawnRequest({ type: 'spawn', id: 1, file: 'claude', args: [], shell: 'cmd.exe' })).toBe(false);
     expect(isSpawnRequest({ type: 'spawn', id: 1, file: 'claude.exe', args: [], cwd: 3 })).toBe(false);
     expect(isSpawnRequest({ type: 'spawn', id: 1, file: 'claude.exe', args: [], env: null })).toBe(false);
     expect(isSpawnRequest({ id: 1, file: 'claude.exe', args: [] })).toBe(false);

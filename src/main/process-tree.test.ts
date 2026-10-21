@@ -110,7 +110,8 @@ describe('listProcesses', () => {
   it('uses ps, started in the process host', async () => {
     mockRun.mockResolvedValue(psOutput([{ pid: 1, ppid: 0 }]));
     expect(await listProcesses()).toEqual([{ pid: 1, ppid: 0 }]);
-    expect(mockRun).toHaveBeenCalledWith('ps', ['-A', '-o', 'pid=,ppid='], { timeout: 10_000 });
+    // It only reads: if the host dies under it, it runs again (idempotent).
+    expect(mockRun).toHaveBeenCalledWith('ps', ['-A', '-o', 'pid=,ppid='], { timeout: 10_000, idempotent: true });
     expect(mockExeca).not.toHaveBeenCalled();
   });
 
@@ -168,7 +169,7 @@ describe('killTree on Windows', () => {
     const [command, args, opts] = mockRun.mock.calls[0];
     expect(command).toMatch(/\\System32\\taskkill\.exe$/i);
     expect(args).toEqual(['/PID', '4242', '/T', '/F']);
-    expect(opts).toEqual({ timeout: 10_000, reject: false });
+    expect(opts).toEqual({ timeout: 10_000, reject: false, idempotent: true });
   });
 
   it('starts taskkill in the process host, not in the main process', async () => {
@@ -178,23 +179,18 @@ describe('killTree on Windows', () => {
     expect(mockExeca).not.toHaveBeenCalled();
   });
 
-  it('runs taskkill again when the host stops under it, as at quit', async () => {
-    mockRun
-      .mockRejectedValueOnce(new Error('The process host stopped before the command finished: taskkill.exe'))
-      .mockResolvedValueOnce({ failed: false, exitCode: 0 });
-
+  it('marks taskkill safe to run again, so the host runs it again if it fails under it, rather than retrying it here', async () => {
+    mockRun.mockResolvedValue({ failed: false, exitCode: 0 });
     await killTree(4242);
-
-    expect(mockRun).toHaveBeenCalledTimes(2);
-    expect(mockRun.mock.calls[1]).toEqual(mockRun.mock.calls[0]);
-    expect(logger.warn).not.toHaveBeenCalled();
+    expect(mockRun).toHaveBeenCalledOnce();
+    expect(mockRun.mock.calls[0][2]).toMatchObject({ idempotent: true });
   });
 
   it('never throws when taskkill fails to run at all, and says so', async () => {
-    mockRun.mockRejectedValue(new Error('The process host stopped before the command finished: taskkill.exe'));
+    mockRun.mockRejectedValue(new Error('spawn taskkill.exe ENOENT'));
     await expect(killTree(4242)).resolves.toBeUndefined();
-    expect(mockRun).toHaveBeenCalledTimes(2);
-    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('4242'), expect.stringContaining('process host stopped'));
+    expect(mockRun).toHaveBeenCalledOnce();
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('4242'), 'spawn taskkill.exe ENOENT');
   });
 
   it('treats a process that already exited as done', async () => {
