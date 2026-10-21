@@ -771,10 +771,33 @@ describe('ChangesReviewPanel — large diffs', () => {
     gitStatusStore.statusBySession = { [SID]: { entries: [entry('big.ts')] } };
     const { container, findByText, getByRole } = render(ChangesReviewPanel, { sessionId: SID });
 
-    expect(await findByText(/Large diff \(31 lines\)/)).toBeInTheDocument();
+    // The count is code lines; the hunk header isn't one.
+    expect(await findByText(/Large diff \(30 lines/)).toBeInTheDocument();
     expect(diffText(container)).not.toContain('line 30');
 
     await fireEvent.click(getByRole('button', { name: 'Show diff' }));
     await waitFor(() => expect(diffText(container)).toContain('line 30'));
+  });
+
+  it('holds back a short diff with a huge line, such as minified code', async () => {
+    const minified = 'x'.repeat(150_000);
+    mockGroveBench.getFileDiff.mockResolvedValue({ kind: 'text', patch: `--- a/app.min.js\n+++ b/app.min.js\n@@ -1 +1 @@\n-old\n+${minified}\n` });
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('app.min.js')] } };
+    const { findByText } = render(ChangesReviewPanel, { sessionId: SID });
+    expect(await findByText(/Large diff \(2 lines, 0\.1 MB\)/)).toBeInTheDocument();
+  });
+
+  it('asks again after switching to another comparison', async () => {
+    const body = Array.from({ length: 30 }, (_, i) => `+line ${i + 1}`).join('\n');
+    mockGroveBench.getFileDiff.mockResolvedValue({ kind: 'text', patch: `--- a/big.ts\n+++ b/big.ts\n@@ -0,0 +1,30 @@\n${body}\n` });
+    mockGroveBench.getGitStatus.mockResolvedValue({ entries: [entry('big.ts')], baseRef: 'main' });
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('big.ts')] } };
+    const { container, findByRole } = render(ChangesReviewPanel, { sessionId: SID });
+    await fireEvent.click(await findByRole('button', { name: 'Show diff' }));
+    await waitFor(() => expect(diffText(container)).toContain('line 30'));
+
+    gitStatusStore.scopeBySession = { [SID]: { scope: 'branch', base: 'main' } };
+    expect(await findByRole('button', { name: 'Show diff' })).toBeInTheDocument();
+    expect(diffText(container)).not.toContain('line 30');
   });
 });

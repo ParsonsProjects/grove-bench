@@ -1164,6 +1164,11 @@ describe('file handlers', () => {
 
     vi.mocked(git.fileDiff).mockResolvedValue('@@ -1 +1 @@\n-a\n+b\n');
     expect(await invoke(IPC.FILE_DIFF, 's1', 'bundle.js')).toEqual({ kind: 'text', patch: '@@ -1 +1 @@\n-a\n+b\n' });
+
+    // A new file under the limit whose patch, a '+' on every line, is over it.
+    write('lines.txt', 'a\n'.repeat(1_900_000));
+    vi.mocked(git.fileDiff).mockResolvedValue('');
+    expect(await invoke(IPC.FILE_DIFF, 's1', 'lines.txt')).toMatchObject({ kind: 'tooLarge' });
   });
 
   it('FILE_DIFF diffs against the merge base in branch scope', async () => {

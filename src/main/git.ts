@@ -1,7 +1,7 @@
 import { runProcess } from './process-host.js';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import type { BranchCommit, CommitEntry, GitOpResult, GitSyncStatus } from '../shared/types.js';
+import type { BranchCommit, CommitEntry, FileDiffResult, GitOpResult, GitSyncStatus } from '../shared/types.js';
 
 /** Cap on network git commands (fetch): a dead network must not leave git
  *  processes hanging or block what waits on them. */
@@ -488,6 +488,16 @@ export async function hashWorkingFiles(cwd: string, relPaths: string[]): Promise
   if (relPaths.length === 0) return '';
   const result = await runProcess('git', ['hash-object', '--stdin-paths'], { cwd, input: relPaths.join('\n') + '\n' });
   return result.stdout;
+}
+
+/** Larger files aren't read whole to show in a diff or expand its context,
+ *  and a larger patch isn't sent to the window. */
+export const MAX_TEXT_FILE_BYTES = 4 * 1024 * 1024;
+
+/** A patch to show, or tooLarge when it's too big to send to the window. */
+export function patchResult(patch: string): FileDiffResult {
+  const bytes = Buffer.byteLength(patch);
+  return bytes > MAX_TEXT_FILE_BYTES ? { kind: 'tooLarge', bytes } : { kind: 'text', patch };
 }
 
 /** True when a git diff describes a binary change rather than a text patch. */

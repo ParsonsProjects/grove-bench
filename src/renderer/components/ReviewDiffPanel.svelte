@@ -4,7 +4,7 @@
   import DiffView, { computeDiffLines, parseDiffLines } from './DiffView.svelte';
   import { toolViewOf } from '../../shared/tool-view.js';
   import type { DiffLine, CommentAnchor, ContextGap } from './DiffView.svelte';
-  import { hunkLineIndices, LARGE_DIFF_LINES } from '../lib/diff-highlight.js';
+  import { hunkLineIndices, LARGE_DIFF_LINES, LARGE_DIFF_CHARS } from '../lib/diff-highlight.js';
   import { withExpandableContext, reveal, expansionFor, type RevealedRanges } from '../lib/diff-context.js';
   import { buildReviewPrompt } from '../lib/review-prompt.js';
   import { reviewStore } from '../stores/review.svelte.js';
@@ -22,6 +22,7 @@
   import { panelStore } from '../stores/panels.svelte.js';
   import PanelToggle from './PanelToggle.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
+  import { Notice } from '$lib/components/ui/notice/index.js';
   import { PanelHeader } from '$lib/components/ui/panel-header/index.js';
   import { Pulse } from '$lib/components/ui/pulse/index.js';
   import { menuPanel, menuItem } from '$lib/components/ui/menu/index.js';
@@ -274,7 +275,7 @@
         diffInFlight.clear();
       }
       fileDiffs = kept;
-      if (scopeChanged) { revealedByKey = {}; fileLinesByKey = {}; composer = null; }
+      if (scopeChanged) { revealedByKey = {}; fileLinesByKey = {}; composer = null; largeDiffShown = {}; }
 
       // Auto-select first file if no selection or selection no longer exists
       if (list.length > 0 && (selectedFileKey === null || !currentKeys.has(selectedFileKey))) {
@@ -442,8 +443,22 @@
   });
   let selectedHunkCount = $derived(hunkLineIndices(selectedDiffLines).length);
 
-  /** File keys whose large diff the user chose to see. */
+  /** File keys whose large diff the user chose to see, for this comparison. */
   let largeDiffShown = $state<Record<string, true>>({});
+  /** The selected diff's code lines and characters, hunk headers aside. */
+  let selectedDiffSize = $derived.by(() => {
+    let lines = 0;
+    let chars = 0;
+    for (const l of selectedDiffLines) {
+      if (l.type === 'hunk') continue;
+      lines++;
+      chars += l.text.length;
+    }
+    return { lines, chars };
+  });
+  let selectedDiffLarge = $derived(selectedDiffSize.lines > LARGE_DIFF_LINES || selectedDiffSize.chars > LARGE_DIFF_CHARS);
+  /** A large diff waits for "Show diff". */
+  let diffHeldBack = $derived(selectedDiffLarge && selectedKey !== null && !largeDiffShown[selectedKey]);
 
   // ── Expandable context ──
   // Revealed new-side line ranges and the new-side file lines, per file key.
@@ -947,7 +962,7 @@
 
         {#snippet actions()}
           <div class="flex items-center gap-2">
-            {#if selectedHunkCount > 1}
+            {#if selectedHunkCount > 1 && !diffHeldBack}
               <div class="flex items-center" title="Jump between hunks">
                 <Button size="icon-xs" variant="quiet" onclick={() => gotoHunk(-1)} aria-label="Previous hunk">
                   <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" /></svg>
@@ -1002,32 +1017,20 @@
         {#if diffResult?.kind === 'image'}
           <ImageDiffView {sessionId} filePath={selectedEntry.filePath} />
         {:else if diffResult?.kind === 'binary'}
-          <div class="flex items-center gap-2 text-xs text-muted-foreground py-3 px-2 border border-border/50 bg-card/30">
-            <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
-            </svg>
-            Binary file — no text diff to display.
-          </div>
+          <Notice tone="neutral"><p>Binary file — no text diff to display.</p></Notice>
         {:else if diffResult?.kind === 'tooLarge'}
-          <div class="flex items-center gap-2 text-xs text-muted-foreground py-3 px-2 border border-border/50 bg-card/30">
-            <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
-            </svg>
-            Too large to show here ({(diffResult.bytes / 1024 / 1024).toFixed(1)} MB).
-          </div>
-        {:else if diffLines.length > LARGE_DIFF_LINES && !largeDiffShown[key]}
-          <div class="flex items-center gap-2 text-xs text-muted-foreground py-3 px-2 border border-border/50 bg-card/30">
-            <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
-            </svg>
-            <span class="flex-1">Large diff ({diffLines.length.toLocaleString()} lines). Drawing it can pause the app for a moment.</span>
-            <Button size="2xs" variant="subtle" onclick={() => (largeDiffShown = { ...largeDiffShown, [key]: true })}>Show diff</Button>
-          </div>
+          <Notice tone="neutral"><p>Too large to show here ({(diffResult.bytes / 1024 / 1024).toFixed(1)} MB).</p></Notice>
+        {:else if diffHeldBack}
+          {@const { lines, chars } = selectedDiffSize}
+          <Notice tone="neutral">
+            {#snippet actions()}<Button size="2xs" variant="subtle" onclick={() => (largeDiffShown = { ...largeDiffShown, [key]: true })}>Show diff</Button>{/snippet}
+            <p>Large diff ({lines.toLocaleString()} {lines === 1 ? 'line' : 'lines'}, {(chars / 1024 / 1024).toFixed(1)} MB). Drawing it can pause the app for a moment.</p>
+          </Notice>
         {:else if diffLines.length > 0}
           <DiffView
             lines={displayLines}
             {sideBySide}
-            deferHighlight={diffLines.length > LARGE_DIFF_LINES}
+            deferHighlight={selectedDiffLarge || displayLines.length > LARGE_DIFF_LINES}
             maxHeight="none"
             filePath={selectedEntry.filePath}
             onExpand={expandContext}

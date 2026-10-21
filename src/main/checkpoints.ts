@@ -1,7 +1,7 @@
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
-import { git, gitEnv, detectBinaryDiff, imageExtFor } from './git.js';
+import { git, gitEnv, detectBinaryDiff, imageExtFor, patchResult } from './git.js';
 import { parseDiffRaw, parseNumstat as parseNumstatRows } from './git-status-parser.js';
 import { logger } from './logger.js';
 import type { CheckpointDiffScope, DiffHistoryEntry, DiffHistoryResult, DiffStats, FileDiffResult, FileLinesResult, GitStatusResult } from '../shared/types.js';
@@ -406,7 +406,7 @@ export class CheckpointManager {
     if (!range) return { kind: 'text', patch: '' };
     const diff = await git(['diff', range.from, range.to, '--', relPath], cwd);
     if (detectBinaryDiff(diff)) return { kind: 'binary' };
-    return { kind: 'text', patch: diff };
+    return patchResult(diff);
   }
 
   /** New-side content of one file across a checkpoint comparison, as lines. */
