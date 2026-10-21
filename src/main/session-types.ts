@@ -148,6 +148,15 @@ export interface ManagedSession {
    *  replaced query never counts as mid-turn. Idle sleep refuses while set,
    *  rather than trusting the renderer's view alone. */
   turnHandle: AgentQueryHandle | null;
+  /** Prompts already in the history (their user_message uuids) that haven't
+   *  gone to the agent yet: the checkpoint capture, or an agent restarting,
+   *  comes first. The thread counts as mid-turn meanwhile, as its history
+   *  says it is. Each leaves once turnHandle takes over or the send gives up. */
+  unsentPrompts?: Set<string>;
+  /** Set from a result's arrival until it is in the history (the files its
+   *  turn made go first), and settles then. The turn counts as in flight
+   *  meanwhile, and a close waits on it before deciding whether it ended. */
+  resultLogging?: Promise<void>;
   /** Prompts sent to a resumed query's `handle` before it reported
    *  system_init. If the agent turns out not to have the conversation it
    *  resumed, they went nowhere, and the new conversation started in its

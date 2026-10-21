@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { AgentAdapter, AgentQueryHandle, AdapterConfig, PermissionResponse } from './adapters/types.js';
+import type { ManagedSession } from './session-types.js';
 import { IPC, PERMISSION_TIMEOUT_MINUTES, type AgentEvent, type McpServerInfo } from '../shared/types.js';
 import * as fs from 'node:fs';
 import { perfSteps } from './perf-steps.js';
@@ -146,6 +147,8 @@ vi.mock('./attachments.js', () => attachments);
 const turnFiles = vi.hoisted(() => ({
   found: [] as { path: string; absPath: string; kind: string; size: number }[],
   instances: [] as { root: string; closed: boolean; finished: boolean; edited: string[] }[],
+  /** When set, listing a turn's files waits on it (a slow disk). */
+  listing: null as Promise<void> | null,
 }));
 vi.mock('./turn-files.js', () => ({
   TurnFiles: class {
@@ -155,7 +158,12 @@ vi.mock('./turn-files.js', () => ({
     constructor(public root: string) { turnFiles.instances.push(this); }
     noteEdited(p: string) { this.edited.push(p); }
     close() { this.closed = true; }
-    async finish() { this.finished = true; this.close(); return { files: turnFiles.found, more: 0 }; }
+    async finish() {
+      this.finished = true;
+      this.close();
+      await turnFiles.listing;
+      return { files: turnFiles.found, more: 0 };
+    }
   },
 }));
 vi.mock('./credentials.js', () => ({ markApiKeyRejected: vi.fn() }));
@@ -331,6 +339,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   turnFiles.found = [];
   turnFiles.instances = [];
+  turnFiles.listing = null;
 });
 
 describe('AgentSessionManager.createSession()', () => {
@@ -2158,6 +2167,12 @@ describe('AgentSessionManager turn state for a loading history', () => {
   const idle = { midTurn: false, pendingPromptIds: [] };
   const sentTypes = (win: ReturnType<typeof makeMockWindow>) =>
     win._send.mock.calls.map(([, event]: [string, AgentEvent | undefined]) => event?.type).filter(Boolean);
+  /** Hold the next checkpoint capture of `session` until the returned call. */
+  function holdCheckpoint(session: ManagedSession): (ok: boolean) => void {
+    let release!: (ok: boolean) => void;
+    vi.mocked(session.checkpoints.capture).mockImplementationOnce(() => new Promise<boolean>((r) => { release = r; }));
+    return (ok) => release(ok);
+  }
 
   it('says a thread with no live agent runs nothing and asks nothing', () => {
     expect(sessionManager.turnState('test-turn-none')).toEqual(idle);
@@ -2241,12 +2256,34 @@ describe('AgentSessionManager turn state for a loading history', () => {
   it('ends the history of every thread quitting mid-turn, and only those', async () => {
     const { session: busy } = await startSession('test-turn-quit-busy');
     await sessionManager.sendMessage('test-turn-quit-busy', 'run the tests');
+    // Its prompt is in the history, but the checkpoint isn't taken yet.
+    const { session: sending } = await startSession('test-turn-quit-sending');
+    const captured = holdCheckpoint(sending);
+    const send = sessionManager.sendMessage('test-turn-quit-sending', 'and the linter');
+    await vi.waitFor(() => expect(sending.eventHistory.at(-1)?.type).toBe('user_message'));
+    const { session: done } = await startSession('test-turn-quit-done');
+    await sessionManager.sendMessage('test-turn-quit-done', 'what changed?');
+    mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false });
+    await vi.waitFor(() => expect(done.eventHistory.at(-1)?.type).toBe('result'));
     const { session: quiet } = await startSession('test-turn-quit-idle');
 
     await sessionManager.closeAll();
 
-    expect(busy.eventHistory.at(-1)).toEqual({ type: 'process_exit' });
-    expect(quiet.eventHistory.map((e) => e.type)).not.toContain('process_exit');
+    for (const session of [busy, sending]) {
+      expect(session.eventHistory.at(-1)).toEqual({ type: 'process_exit' });
+      // Before the log was flushed, which took everything.
+      expect(session.logBuffer).toEqual([]);
+    }
+    for (const session of [done, quiet]) {
+      expect(session.eventHistory.map((e) => e.type)).not.toContain('process_exit');
+    }
+
+    // The send that was still on its way gives up, adding nothing.
+    captured(true);
+    expect(await send).toBe(false);
+    expect(sending.eventHistory.at(-1)).toEqual({ type: 'process_exit' });
+    expect(sending.logBuffer).toEqual([]);
+    expect(sending.queryHandle!.sendMessage).not.toHaveBeenCalled();
   });
 
   it('ends the history of a turn cut short by a delete', async () => {
@@ -2257,6 +2294,171 @@ describe('AgentSessionManager turn state for a loading history', () => {
     await sessionManager.destroySession('test-turn-destroy');
 
     expect(session.eventHistory.at(-1)).toEqual({ type: 'process_exit' });
+  });
+
+  it('counts the turn from its prompt in the history, while the checkpoint is still being taken', async () => {
+    const { session } = await startSession('test-turn-gap');
+    const release = holdCheckpoint(session);
+    const sent = sessionManager.sendMessage('test-turn-gap', 'run the tests');
+    await vi.waitFor(() => expect(session.eventHistory.at(-1)?.type).toBe('user_message'));
+
+    // A window reload now: the page ends with the prompt, and its turn agrees.
+    const page = sessionManager.getEventHistoryPage('test-turn-gap', 200);
+    expect(page.events.at(-1)?.type).toBe('user_message');
+    expect(page.turn).toEqual({ midTurn: true, pendingPromptIds: [] });
+    expect(sessionManager.isMidTurn('test-turn-gap')).toBe(true);
+    expect(session.queryHandle!.sendMessage).not.toHaveBeenCalled();
+    // Idle sleep would kill the agent the prompt is about to go to.
+    expect(await sessionManager.sleepSession('test-turn-gap')).toBe(false);
+    expect(session.sleepRefusal).toBe('mid-turn');
+    expect(session.status).not.toBe('sleeping');
+
+    release(true);
+    expect(await sent).toBe(true);
+    expect(session.queryHandle!.sendMessage).toHaveBeenCalledTimes(1);
+    // The agent has it now, and the turn carries on.
+    expect(session.unsentPrompts?.size).toBe(0);
+    expect(sessionManager.turnState('test-turn-gap').midTurn).toBe(true);
+
+    await sessionManager.destroySession('test-turn-gap');
+  });
+
+  it('ends the turn a prompt began when the prompt never reaches the agent', async () => {
+    const { session } = await startSession('test-turn-unsent');
+
+    // The agent is restarted while the checkpoint is taken, and doesn't come back.
+    const release = holdCheckpoint(session);
+    const sent = sessionManager.sendMessage('test-turn-unsent', 'run the tests');
+    await vi.waitFor(() => expect(session.eventHistory.at(-1)?.type).toBe('user_message'));
+    expect(sessionManager.turnState('test-turn-unsent').midTurn).toBe(true);
+    mockAdapter.start = vi.fn(async () => { throw new Error('agent not found'); });
+    await sessionManager.stopQuery('test-turn-unsent');
+    release(true);
+    expect(await sent).toBe(false);
+    expect(sessionManager.turnState('test-turn-unsent').midTurn).toBe(false);
+    expect(sessionManager.isMidTurn('test-turn-unsent')).toBe(false);
+
+    await sessionManager.destroySession('test-turn-unsent');
+  });
+
+  it('ends the turn a prompt began when the agent refuses it', async () => {
+    const { session } = await startSession('test-turn-refused');
+    vi.mocked(session.queryHandle!.sendMessage).mockImplementationOnce(() => { throw new Error('transport closed'); });
+
+    expect(await sessionManager.sendMessage('test-turn-refused', 'run the tests')).toBe(false);
+    expect(sessionManager.turnState('test-turn-refused').midTurn).toBe(false);
+
+    // A prompt the agent refuses mid-turn leaves that turn running.
+    await sessionManager.sendMessage('test-turn-refused', 'run the tests');
+    vi.mocked(session.queryHandle!.sendMessage).mockImplementationOnce(() => { throw new Error('transport closed'); });
+    expect(await sessionManager.sendMessage('test-turn-refused', 'and the linter')).toBe(false);
+    expect(sessionManager.turnState('test-turn-refused').midTurn).toBe(true);
+
+    await sessionManager.destroySession('test-turn-refused');
+  });
+
+  it('ends the turn only once its result is in the history, so a page and its turn agree throughout', async () => {
+    const { session } = await startSession('test-turn-result');
+    await sessionManager.sendMessage('test-turn-result', 'make a chart');
+    turnFiles.found = [{ path: 'chart.png', absPath: '/repo/chart.png', kind: 'image', size: 70 }];
+    let listed!: () => void;
+    turnFiles.listing = new Promise<void>((r) => { listed = r; });
+    /** Whether a page read now ends with the result, checking its turn says the same. */
+    const ended = () => {
+      const page = sessionManager.getEventHistoryPage('test-turn-result', 200);
+      const over = page.events.at(-1)?.type === 'result';
+      expect(page.turn.midTurn).toBe(!over);
+      return over;
+    };
+    expect(ended()).toBe(false);
+
+    mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false });
+    await vi.waitFor(() => expect(turnFiles.instances[0]?.finished).toBe(true));
+    // The turn's files are still being listed: no result yet, so still mid-turn.
+    expect(ended()).toBe(false);
+    expect(await sessionManager.sleepSession('test-turn-result')).toBe(false);
+
+    listed();
+    for (let i = 0; i < 50 && !ended(); i++) await new Promise((r) => setTimeout(r, 0));
+    expect(ended()).toBe(true);
+    expect(session.eventHistory.slice(-2).map((e) => e.type)).toEqual(['files_made', 'result']);
+
+    await sessionManager.destroySession('test-turn-result');
+  });
+
+  it('keeps the next turn going when its prompt is sent while the last result is logged', async () => {
+    await startSession('test-turn-next');
+    await sessionManager.sendMessage('test-turn-next', 'make a chart');
+    turnFiles.found = [{ path: 'chart.png', absPath: '/repo/chart.png', kind: 'image', size: 70 }];
+    let listed!: () => void;
+    turnFiles.listing = new Promise<void>((r) => { listed = r; });
+    mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false });
+    await vi.waitFor(() => expect(turnFiles.instances[0]?.finished).toBe(true));
+
+    expect(await sessionManager.sendMessage('test-turn-next', 'now a table')).toBe(true);
+    listed();
+    await vi.waitFor(() => expect(sessionManager.getEventHistory('test-turn-next').at(-1)?.type).toBe('result'));
+    expect(sessionManager.turnState('test-turn-next').midTurn).toBe(true);
+
+    await sessionManager.destroySession('test-turn-next');
+  });
+
+  it('writes no process_exit when the result lands while the agent is killed, and nothing after the close', async () => {
+    mockAdapter.pid = 7100;
+    const { win, session } = await startSession('test-turn-kill-result');
+    await sessionManager.sendMessage('test-turn-kill-result', 'make a chart');
+    turnFiles.found = [{ path: 'chart.png', absPath: '/repo/chart.png', kind: 'image', size: 70 }];
+    let listed!: () => void;
+    turnFiles.listing = new Promise<void>((r) => { listed = r; });
+    processTree.killTree.mockImplementationOnce(async () => {
+      // The agent finishes the turn as it is killed, and the turn's files
+      // are still being listed when the kill ends.
+      mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false });
+      await vi.waitFor(() => expect(turnFiles.instances[0]?.finished).toBe(true));
+      setTimeout(listed, 20);
+    });
+
+    await sessionManager.closeSession('test-turn-kill-result');
+
+    const types = session.eventHistory.map((e) => e.type);
+    expect(types.slice(-2)).toEqual(['files_made', 'result']);
+    expect(types).not.toContain('process_exit');
+    expect(session.logBuffer).toEqual([]);
+    // Nothing more lands once it's closed.
+    const sent = win._send.mock.calls.length;
+    await new Promise((r) => setTimeout(r, 30));
+    expect(session.eventHistory.map((e) => e.type)).toEqual(types);
+    expect(session.logBuffer).toEqual([]);
+    expect(win._send.mock.calls.slice(sent).filter(([channel]: [string]) => channel !== IPC.SESSION_STATUS)).toEqual([]);
+  });
+
+  it('ends a turn the agent starts by itself while it is killed, with nothing from it after', async () => {
+    mockAdapter.pid = 7200;
+    const { session } = await startSession('test-turn-kill-start');
+    expect(sessionManager.turnState('test-turn-kill-start').midTurn).toBe(false);
+    let saved!: () => void;
+    attachments.storeToolImages.mockImplementationOnce(async (_id: string, event: any) => {
+      await new Promise<void>((r) => { saved = r; });
+      const { imageData: _images, ...rest } = event;
+      return { ...rest, images: [{ file: 'tool0.png' }] };
+    });
+    processTree.killTree.mockImplementationOnce(async () => {
+      // A background task finished: the agent takes it up by itself as it
+      // is killed, and a screenshot it took is still being saved after.
+      mockAdapter.control!.emitEvent({ type: 'assistant_text', text: 'The build finished', uuid: 'u1' });
+      mockAdapter.control!.emitEvent({
+        type: 'tool_result', toolUseId: 'tu1', content: '', imageData: [{ data: 'iVBOR', mediaType: 'image/png' }],
+      } as any);
+      await vi.waitFor(() => expect(attachments.storeToolImages).toHaveBeenCalled());
+    });
+
+    await sessionManager.closeSession('test-turn-kill-start');
+
+    expect(session.eventHistory.slice(-2).map((e) => e.type)).toEqual(['assistant_text', 'process_exit']);
+    saved();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(session.eventHistory.at(-1)).toEqual({ type: 'process_exit' });
+    expect(session.logBuffer).toEqual([]);
   });
 });
 
