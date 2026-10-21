@@ -142,6 +142,12 @@ describe('ClaudeCodeAdapter.checkPrerequisites()', () => {
     expect(logged).not.toContain('me@corp.example');
   });
 
+  it('keeps package paths in the log', async () => {
+    execFileAnswers({ stdout: '/usr/bin/claude\n' }, Object.assign(new Error('Command failed\nCannot find C:\\npm\\node_modules\\@anthropic-ai\\claude-code\\cli.js'), { code: 1, stdout: '' }));
+    await adapter.checkPrerequisites();
+    expect(String(vi.mocked(logger.warn).mock.calls[0]?.[0])).toContain('node_modules\\@anthropic-ai\\claude-code\\cli.js');
+  });
+
   it("doesn't lock anyone out when the check itself fails, and logs why", async () => {
     execFileAnswers({ stdout: '/usr/bin/claude\n' }, Object.assign(new Error('Command failed: claude auth status --json'), { killed: true, signal: 'SIGTERM', code: null }));
     const status = await adapter.checkPrerequisites();

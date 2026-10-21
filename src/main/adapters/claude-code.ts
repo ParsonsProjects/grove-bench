@@ -1473,7 +1473,8 @@ function describeAuthStatusFailure(err: unknown, stdout: string): string {
     const message = (err instanceof Error ? err.message : String(err)).trim().slice(0, 500);
     text = `${message}${details ? ` (${details})` : ''}.${output}`;
   }
-  return text.replace(/[^\s"'<>(),;:@]+@[^\s"'<>(),;:@]+\.[^\s"'<>(),;:@]+/g, '<email>');
+  // No slashes in an address, so a scoped package path (\node_modules\@scope\...) stays.
+  return text.replace(/[^\s"'<>(),;:@\\/]+@[^\s"'<>(),;:@\\/]+\.[^\s"'<>(),;:@\\/]+/g, '<email>');
 }
 
 /** The CLI to run from `where`/`which` output. An npm install on Windows puts
