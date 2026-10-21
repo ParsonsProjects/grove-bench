@@ -23,6 +23,7 @@ import {
   branchHasRemote,
   renameBranch,
   fileDiff,
+  isTracked,
   synthesizeUntrackedDiff,
   detectBinaryDiff,
   imageExtFor,
@@ -109,11 +110,13 @@ describe('isGitRepo()', () => {
   it('returns true when git rev-parse succeeds', async () => {
     mockExeca.mockResolvedValue({ stdout: '.git' } as any);
     expect(await isGitRepo('/repo')).toBe(true);
+    expect(mockExeca).toHaveBeenCalledWith('git', ['rev-parse', '--git-dir'], { cwd: '/repo' });
   });
 
   it('returns false when git rev-parse fails', async () => {
     mockExeca.mockRejectedValue(new Error('not a repo'));
     expect(await isGitRepo('/not-a-repo')).toBe(false);
+    expect(mockExeca).toHaveBeenCalledWith('git', ['rev-parse', '--git-dir'], { cwd: '/not-a-repo' });
   });
 });
 
@@ -121,11 +124,13 @@ describe('branchExists()', () => {
   it('returns true when branch exists', async () => {
     mockExeca.mockResolvedValue({ stdout: 'abc123' } as any);
     expect(await branchExists('/repo', 'main')).toBe(true);
+    expect(mockExeca).toHaveBeenCalledWith('git', ['rev-parse', '--verify', 'main'], { cwd: '/repo' });
   });
 
   it('returns false when branch does not exist', async () => {
     mockExeca.mockRejectedValue(new Error('not a valid ref'));
     expect(await branchExists('/repo', 'nope')).toBe(false);
+    expect(mockExeca).toHaveBeenCalledWith('git', ['rev-parse', '--verify', 'nope'], { cwd: '/repo' });
   });
 });
 
@@ -363,11 +368,13 @@ describe('validateBranchName()', () => {
   it('returns true for valid names', async () => {
     mockExeca.mockResolvedValue({ stdout: '' } as any);
     expect(await validateBranchName('feat/valid-name')).toBe(true);
+    expect(mockExeca).toHaveBeenCalledWith('git', ['check-ref-format', '--branch', 'feat/valid-name']);
   });
 
   it('returns false for invalid names', async () => {
     mockExeca.mockRejectedValue(new Error('invalid'));
     expect(await validateBranchName('..bad')).toBe(false);
+    expect(mockExeca).toHaveBeenCalledWith('git', ['check-ref-format', '--branch', '..bad']);
   });
 });
 
@@ -405,6 +412,17 @@ describe('commit()', () => {
   it('rejects an empty or whitespace-only message without calling git', async () => {
     await expect(commit('/repo', '   ')).rejects.toThrow();
     expect(mockExeca).not.toHaveBeenCalled();
+  });
+});
+
+describe('isTracked()', () => {
+  it('asks git whether the path is in the index', async () => {
+    mockExeca.mockResolvedValue({ stdout: 'src/a.ts' } as any);
+    expect(await isTracked('/repo', 'src/a.ts')).toBe(true);
+    expect(mockExeca).toHaveBeenCalledWith('git', ['ls-files', '--error-unmatch', '--', 'src/a.ts'], { cwd: '/repo' });
+
+    mockExeca.mockRejectedValue(new Error("error: pathspec 'new.ts' did not match any file(s) known to git"));
+    expect(await isTracked('/repo', 'new.ts')).toBe(false);
   });
 });
 
@@ -507,6 +525,14 @@ describe('synthesizeUntrackedDiff()', () => {
   it('normalizes Windows path separators to forward slashes', () => {
     const patch = synthesizeUntrackedDiff('src\\nested\\new.ts', 'x');
     expect(patch).toContain('+++ b/src/nested/new.ts');
+  });
+
+  it('does not count the final newline as another line', () => {
+    expect(synthesizeUntrackedDiff('new.ts', 'hi\n')).toBe('--- /dev/null\n+++ b/new.ts\n@@ -0,0 +1,1 @@\n+hi');
+    expect(synthesizeUntrackedDiff('two.ts', 'a\nb\n')).toBe('--- /dev/null\n+++ b/two.ts\n@@ -0,0 +1,2 @@\n+a\n+b');
+    // A file holding one empty line still shows that line; an empty file shows none
+    expect(synthesizeUntrackedDiff('blank.txt', '\n')).toBe('--- /dev/null\n+++ b/blank.txt\n@@ -0,0 +1,1 @@\n+');
+    expect(synthesizeUntrackedDiff('empty.txt', '')).toBe('');
   });
 });
 

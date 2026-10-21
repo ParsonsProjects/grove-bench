@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { app } from 'electron';
 import type { AgentEvent, SkillInfo } from '../shared/types.js';
+import { appStateSaved, resetAppStateForTests } from './app-state.js';
 import {
   normalizeCommand,
   extractActivity,
@@ -12,7 +13,6 @@ import {
   clusterPrompts,
   findPatterns,
   suggestionFromPattern,
-  suggestionId,
   filterCovered,
   parseDistilled,
   distillSuggestions,
@@ -121,8 +121,9 @@ describe('suggestionFromPattern', () => {
       occurrences: 6,
       examples: ['Update the changelog with merged PRs'],
     });
-    expect(suggestion.name).toMatch(/^[a-z0-9][a-z0-9-]*$/);
-    expect(suggestion.id).toBe(suggestionId('Update the changelog with merged PRs'));
+    expect(suggestion.name).toBe('update-changelog-merged');
+    // Saved dismissals hold this id, so it must stay the same between versions
+    expect(suggestion.id).toBe('d16e9436');
     expect(suggestion.rationale).toContain('4 threads');
   });
 });
@@ -172,7 +173,7 @@ describe('distillSuggestions', () => {
     expect(result).toHaveLength(1);
     expect(result![0]).toMatchObject({
       name: 'dist-build',
-      id: suggestionId('npm run dist'),
+      id: '6893d559', // the id of the pattern's label, 'npm run dist'
       evidence: ['npm run dist'],
       sessionCount: 3,
     });
@@ -188,9 +189,13 @@ describe('analyzeRepo (integration)', () => {
     eventsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'grove-events-'));
     stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'grove-state-'));
     vi.mocked(app.getPath).mockReturnValue(stateDir);
+    // App state is read once and kept in memory: start each test from its
+    // own (empty) folder.
+    resetAppStateForTests();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await appStateSaved();
     fs.rmSync(eventsDir, { recursive: true, force: true });
     fs.rmSync(stateDir, { recursive: true, force: true });
   });

@@ -10,9 +10,11 @@
   import { addProject } from '../lib/add-project.js';
   import { draftStore } from '../stores/draft.svelte.js';
   import { groupStore } from '../stores/groups.svelte.js';
+  import { todoStore } from '../stores/todo.svelte.js';
   import SidebarGroups from './SidebarGroups.svelte';
   import SidebarSection from './SidebarSection.svelte';
   import AttentionCounts from './AttentionCounts.svelte';
+  import TodoMark from './TodoMark.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Badge } from '$lib/components/ui/badge/index.js';
   import { Kbd } from '$lib/components/ui/kbd/index.js';
@@ -30,9 +32,10 @@
   import { formatAge } from '../lib/format-age.js';
   import { isRepoCollapsed } from '../lib/repo-collapse.js';
   import { sortSessions, defaultDirFor } from '../lib/session-sort.js';
-  import { triageForSprite, triageCounts, matchesTriageFilter, TRIAGE_FILTERS, TRIAGE_FILTER_LABELS, type TriageFilter, type TriageState } from '../lib/session-triage.js';
+  import { triageForSprite, triageCounts, matchesTriageFilter, TRIAGE_FILTERS, TRIAGE_FILTER_LABELS, type TriageFilter, type TriageEntry } from '../lib/session-triage.js';
   import { sessionSubtitle, pendingPermissionTool, pendingPermissionView, lastTextSnippet, firstPromptSnippet, type SessionSubtitle } from '../lib/session-subtitle.js';
   import { sessionPreviewStore } from '../stores/sessionPreviews.svelte.js';
+  import { goalStore } from '../stores/goals.svelte.js';
   import { prStateFlag, isPrMerged, prHealth } from '../lib/pr-state.js';
   import { prStore } from '../stores/pr.svelte.js';
   import { forgetConversation } from '$lib/forget-conversation.js';
@@ -59,7 +62,7 @@
   const SIDEBAR_DEFAULT = 300;
   // Below this width the first three filter chips' labels no longer fit on
   // one line, so the chips show just their dot and count. Idle wraps onto a
-  // second line until the sidebar is about 336px wide.
+  // second line until the sidebar is about 336px wide, and To do after it.
   const SIDEBAR_COMPACT_BELOW = 280;
   let sidebarWidth = $state(SIDEBAR_DEFAULT);
   let compact = $derived(sidebarWidth < SIDEBAR_COMPACT_BELOW);
@@ -114,6 +117,24 @@
     if (unloaded.length > 0) sessionPreviewStore.ensure(unloaded);
   });
 
+  // Goals for the rows' tooltips, while goals are on: one call for every
+  // thread not read yet.
+  $effect(() => {
+    if (!settingsStore.current.showConversationGoal) return;
+    const ids = store.sessions.map((s) => s.id);
+    untrack(() => { void goalStore.loadMany(ids); });
+  });
+
+  /** A row's tooltip: its name, its goal (while goals are on and the
+   *  thread's goal bar isn't hidden), then the line under the row. */
+  function rowTitle(sessionId: string, name: string, subtitle: SessionSubtitle | null): string {
+    const lines = [name];
+    const goal = goalStore.get(sessionId);
+    if (settingsStore.current.showConversationGoal && goal.text && !goal.hidden) lines.push(`Goal: ${goal.text}`);
+    if (subtitle) lines.push(subtitle.text);
+    return lines.join('\n');
+  }
+
   /** Context line under a session row: waiting-reason > live activity > last/first message. */
   function rowSubtitle(session: { id: string }): SessionSubtitle | null {
     const msgs = messageStore.getMessages(session.id);
@@ -161,7 +182,7 @@
 
   interface MenuItem {
     label: string;
-    icon: 'rename' | 'folder' | 'export' | 'destroy' | 'add' | 'close' | 'ungroup';
+    icon: 'rename' | 'folder' | 'export' | 'destroy' | 'add' | 'close' | 'ungroup' | 'todo' | 'unread' | 'read';
     action: () => void;
     variant?: 'destructive';
     separator?: boolean;
@@ -170,8 +191,10 @@
   function getContextMenuItems(sessionId: string): MenuItem[] {
     const session = store.sessions.find(s => s.id === sessionId);
     if (!session) return [];
+    const followUp = followUpMenuItems(session);
     const items: MenuItem[] = [
-      { label: 'Rename', icon: 'rename', action: () => startRename(sessionId, sessionLabel(session)) },
+      ...followUp,
+      { label: 'Rename', icon: 'rename', action: () => startRename(sessionId, sessionLabel(session)), separator: followUp.length > 0 },
       { label: 'Open Folder', icon: 'folder', action: () => window.groveBench.openSessionFolder(sessionId) },
       { label: 'Export Thread…', icon: 'export', action: () => exportThread(sessionId) },
     ];
@@ -184,6 +207,28 @@
     }
     items.push(...groupMenuItems(sessionId));
     items.push({ label: 'Delete Thread', icon: 'destroy', action: () => requestDestroy(sessionId), variant: 'destructive', separator: true });
+    return items;
+  }
+
+  /** Flags for coming back to a thread. To do stays until it is cleared;
+   *  unread goes when the thread is next opened (marking the open thread
+   *  unread keeps it so until then). */
+  function followUpMenuItems(session: (typeof store.sessions)[number]): MenuItem[] {
+    const sessionId = session.id;
+    const items: MenuItem[] = [];
+    // Until the saved flags are read, changing them could write over them.
+    if (todoStore.ready) {
+      items.push(todoStore.has(sessionId)
+        ? { label: 'Clear To Do', icon: 'todo', action: () => todoStore.set(sessionId, false) }
+        : { label: 'Mark as To Do', icon: 'todo', action: () => todoStore.set(sessionId, true) });
+    }
+    if (store.needsAttention[sessionId]) {
+      items.push({ label: 'Mark as Read', icon: 'read', action: () => store.clearNeedsAttention(sessionId) });
+    } else if (session.status !== 'error' && store.isOpenTab(session)) {
+      // Not on a red thread, which stays red, nor a closed one, which counts
+      // as dealt with. A working or waiting one shows it once that's over.
+      items.push({ label: 'Mark as Unread', icon: 'unread', action: () => store.markNeedsAttention(sessionId) });
+    }
     return items;
   }
 
@@ -290,10 +335,28 @@
   const cleanupCandidateKey = $derived(cleanupCandidates.map((s) => s.id).join('\n'));
   const cleanupSelectedIds = $derived(cleanupCandidates.map((s) => s.id).filter((id) => cleanupSelection[id]));
   const cleanupSelectedDirtyCount = $derived(cleanupSelectedIds.filter((id) => cleanupDirty[id]).length);
+  const cleanupSelectedTodoCount = $derived(cleanupSelectedIds.filter((id) => todoStore.has(id)).length);
   /** Listed candidates known to have uncommitted changes: "Select all" leaves these out. */
   const cleanupDirtyCount = $derived(cleanupCandidates.filter((s) => cleanupDirty[s.id]).length);
+  /** Listed candidates marked To do, not counted above: left out too. */
+  const cleanupTodoCount = $derived(cleanupCandidates.filter((s) => todoStore.has(s.id) && !cleanupDirty[s.id]).length);
+  /** Says what it leaves out, so "all" never means less than all. */
+  const cleanupSelectAllLabel = $derived.by(() => {
+    const left = [
+      cleanupDirtyCount > 0 ? `${cleanupDirtyCount} with changes` : '',
+      cleanupTodoCount > 0 ? `${cleanupTodoCount} to do` : '',
+    ].filter(Boolean);
+    return left.length ? `Select all except ${left.join(' and ')}` : 'Select all';
+  });
   const cleanupMergedCount = $derived(cleanupCandidates.filter((s) => isPrMerged(cleanupPrOf(s.id))).length);
   const cleanupGhAvailable = $derived(store.prerequisites?.gh?.available === true);
+
+  /** Whether a candidate is left unticked unless the user ticks it: one
+   *  with uncommitted changes (removing it loses work), or one marked To do
+   *  (put aside to come back to). Undefined while its check still runs. */
+  function cleanupKeptBack(id: string): boolean | undefined {
+    return todoStore.has(id) || cleanupDirty[id];
+  }
 
   function cleanupPrOf(id: string): PrInfo | null {
     const pr = cleanupPr[id];
@@ -336,8 +399,8 @@
       if (generation !== cleanupGeneration) return;
       cleanupDirty = { ...cleanupDirty, [id]: dirty };
       if (unknown) cleanupStatusUnknown = { ...cleanupStatusUnknown, [id]: true };
-      // Tick it when clean, unless the user already decided about it.
-      if (cleanupSelection[id] === undefined) cleanupSelection = { ...cleanupSelection, [id]: !dirty };
+      // Tick it unless it is kept back, or the user already decided about it.
+      if (cleanupSelection[id] === undefined) cleanupSelection = { ...cleanupSelection, [id]: !cleanupKeptBack(id) };
     }
     untrack(() => {
       for (const s of fresh) {
@@ -373,27 +436,29 @@
     });
   });
 
-  /** Tick every candidate known to have no uncommitted changes (the initial
-   *  state). Ones still being checked are left undecided, so they are
-   *  ticked if their check comes back clean. */
+  /** Tick every candidate that isn't kept back (the initial state). Ones
+   *  still being checked are left undecided, so they are ticked if their
+   *  check comes back clean. */
   function cleanupSelectAllClean() {
     const sel: Record<string, boolean> = {};
     for (const s of cleanupCandidates) {
-      if (cleanupDirty[s.id] !== undefined) sel[s.id] = !cleanupDirty[s.id];
+      const kept = cleanupKeptBack(s.id);
+      if (kept !== undefined) sel[s.id] = !kept;
     }
     cleanupSelection = sel;
   }
 
   /** Tick only candidates whose PR has been merged. Their work has landed,
-   *  so they are the safest to remove. Dirty ones stay unticked, same as the
-   *  initial preselection. */
+   *  so they are the safest to remove. Kept-back ones stay unticked, same as
+   *  the initial preselection. */
   function cleanupSelectMerged() {
     const sel: Record<string, boolean> = {};
     for (const s of cleanupCandidates) {
       const merged = isPrMerged(cleanupPrOf(s.id));
+      const kept = cleanupKeptBack(s.id);
       // A merged one still being checked is ticked once it comes back clean.
-      if (merged && cleanupDirty[s.id] === undefined) continue;
-      sel[s.id] = merged && cleanupDirty[s.id] === false;
+      if (merged && kept === undefined) continue;
+      sel[s.id] = merged && kept === false;
     }
     cleanupSelection = sel;
   }
@@ -724,12 +789,15 @@
   /** The chips shown. There is no "All" chip: clicking the active chip
    *  again goes back to all, which keeps the row short. */
   const CHIP_FILTERS = TRIAGE_FILTERS.filter((f): f is Exclude<TriageFilter, 'all'> => f !== 'all');
+  /** To do waits for the saved flags, as its menu items do. */
+  let chipFilters = $derived(todoStore.ready ? CHIP_FILTERS : CHIP_FILTERS.filter((f) => f !== 'todo'));
 
   function toggleFilter(f: TriageFilter) {
     triageFilter = triageFilter === f ? 'all' : f;
   }
 
-  const TRIAGE_DOT: Record<Exclude<TriageFilter, 'all'>, string> = {
+  /** To do has its ring instead of a dot. */
+  const TRIAGE_DOT: Record<Exclude<TriageFilter, 'all' | 'todo'>, string> = {
     'needs-you': 'bg-status-attention',
     working: 'bg-status-working',
     unread: 'bg-status-unread',
@@ -747,9 +815,13 @@
     collapsedBranches = { ...collapsedBranches, [key]: !collapsedBranches[key] };
   }
 
-  /** Which chip a conversation counts under: the one its status colour matches. */
-  function triageOf(session: { id: string; status: string }): TriageState {
-    return triageForSprite(sessionSpriteState(session, destroying.has(session.id)));
+  /** Which chip a conversation counts under: the one its status colour
+   *  matches, and To do as well when it is flagged. */
+  function triageOf(session: { id: string; status: string }): TriageEntry {
+    return {
+      state: triageForSprite(sessionSpriteState(session, destroying.has(session.id))),
+      todo: todoStore.has(session.id),
+    };
   }
 
   /** Counts for the filter chips, over active and stopped sessions alike. */
@@ -793,9 +865,13 @@
   }
 
   /** Open tabs (live sessions, plus restored tabs waiting to reconnect) that pass the filter, ordered by the
-   *  active sort. This is the always-visible "working set"; the landing's picker shows the same list. */
+   *  active sort. This is the always-visible "working set"; the landing's picker shows the same list.
+   *  Under To do it is every flagged thread, closed ones too: otherwise those would only be in the
+   *  Projects tree, where projects start folded. */
   let activeSessions = $derived(
-    store.openConversations.filter(rowVisible),
+    triageFilter === 'todo'
+      ? sortSessions(store.sessions.filter(rowVisible), store.sessionSort)
+      : store.openConversations.filter(rowVisible),
   );
 
   /** Closed conversations: stopped and not an open tab. */
@@ -912,7 +988,7 @@
       <button
         onclick={() => { if (!isDestroying) focusSession(session.id); }}
         disabled={isDestroying}
-        title={subtitle ? `${label}\n${subtitle.text}` : label}
+        title={rowTitle(session.id, label, subtitle)}
         class="w-full flex flex-col pl-4 pr-2 py-1.5 text-left transition-colors
           {isDestroying ? 'opacity-50 cursor-not-allowed' : store.activeSessionId === session.id ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}
           {restFade}"
@@ -926,6 +1002,9 @@
             <svg class="w-3.5 h-3.5 shrink-0 {health.textClass}" xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 24 24" role="img" aria-label={branchIconLabel} title={branchIconLabel} data-pr-health={health.kind}><path d="M4 2h4v2H4zm0 6h4v2H4zM2 4h2v4H2zm6 0h2v4H8zm8 0h4v2h-4zm0 6h4v2h-4zm-2-4h2v4h-2zm6 0h2v4h-2zm-8 13h5v2h-5zm5-5h2v5h-2zM5 12h2v10H5z"/></svg>
           {/if}
           <span class="text-sm truncate min-w-0 flex-1">{label}</span>
+          {#if todoStore.has(session.id)}
+            <span class="shrink-0 flex text-foreground/80" role="img" aria-label="To do" title="To do (right-click to clear)" data-row-todo><TodoMark /></span>
+          {/if}
           {#if ts}
             <!-- Invisible, not hidden, while the quick action sits over it, so the name doesn't reflow. -->
             <span
@@ -1056,7 +1135,7 @@
           onclick={() => { if (!isDestroying) focusSession(session.id); }}
           oncontextmenu={(e) => { if (isDestroying) { e.preventDefault(); return; } openContextMenu(e, session.id); }}
           disabled={isDestroying}
-          title={subtitle ? `${name}\n${subtitle.text}` : name}
+          title={rowTitle(session.id, name, subtitle)}
           aria-label={name}
           data-rail-session={session.id}
           class="w-full flex justify-center py-2 transition-colors
@@ -1090,14 +1169,15 @@
   <div class="flex-1 overflow-auto px-3 pt-3 flex-col {collapsed ? 'hidden' : 'flex'}">
     <div class="shrink-0 pb-3">
       <!-- Triage filter: what needs me, what is working, what finished while I was away,
-           what is open and quiet. Click a chip to show only those; click it again to
-           show all. Wraps when the sidebar is too narrow for all four. Hidden, with
-           the sort, until there is a conversation to filter. -->
+           what is open and quiet, and what I flagged to come back to. Click a chip to
+           show only those; click it again to show all. Wraps when the sidebar is too
+           narrow for them all. Hidden, with the sort, until there is a conversation
+           to filter. -->
       {#if store.sessions.length > 0}
       <!-- 9px, plus a chip's 1px border and 6px padding, puts the dots in line
            with the rows' status column, like the Threads heading below. -->
       <div class="flex flex-wrap items-center gap-1 mb-2 pl-2.25 pr-1" role="group" aria-label="Filter threads">
-        {#each CHIP_FILTERS as f (f)}
+        {#each chipFilters as f (f)}
           {@const n = counts[f]}
           {@const active = triageFilter === f}
           <button
@@ -1110,7 +1190,11 @@
               {n === 0 ? 'opacity-50' : ''}"
             title="{TRIAGE_FILTER_LABELS[f]}: {n}{active ? '. Click again to show all' : ''}"
           >
-            <span class="w-1.5 h-1.5 shrink-0 {TRIAGE_DOT[f]}"></span>
+            {#if f === 'todo'}
+              <TodoMark class="text-foreground/80" />
+            {:else}
+              <span class="w-1.5 h-1.5 shrink-0 {TRIAGE_DOT[f]}"></span>
+            {/if}
             <!-- Narrow sidebar: dot and count only, the label is in the tooltip. -->
             {#if !compact}{TRIAGE_FILTER_LABELS[f]}{/if}
             <span class="text-muted-foreground">{n}</span>
@@ -1176,7 +1260,9 @@
         {@render sessionRow(session, store.repos.length > 1, null, true)}
       {/each}
       <!-- With no filter the draft row is enough; a filter says why the list is short. -->
-      {#if activeSessions.length === 0 && triageFilter !== 'all'}
+      {#if activeSessions.length === 0 && triageFilter === 'todo' && counts.todo === 0}
+        <p class="text-xs text-muted-foreground pl-4 py-1">No threads to do. Right-click one and choose Mark as To Do to come back to it later.</p>
+      {:else if activeSessions.length === 0 && triageFilter !== 'all'}
         <p class="text-xs text-muted-foreground pl-4 py-1">No threads match "{TRIAGE_FILTER_LABELS[triageFilter]}"</p>
       {/if}
     </div>
@@ -1376,7 +1462,7 @@
       <Dialog.Header>
         <Dialog.Title>Clean Up Old Threads</Dialog.Title>
         <Dialog.Description>
-          Remove closed threads you no longer need. Removing a thread kills its shell and deletes its worktree. Threads with uncommitted changes are flagged and left unselected. Tick them only if you're sure. Each thread's pull request state is shown when the GitHub CLI is available; merged ones are the safest to remove. Branches are kept unless you choose otherwise. Running threads are never listed.
+          Remove closed threads you no longer need. Removing a thread kills its shell and deletes its worktree. Threads with uncommitted changes or marked To do are flagged and left unselected. Tick them only if you're sure. Each thread's pull request state is shown when the GitHub CLI is available; merged ones are the safest to remove. Branches are kept unless you choose otherwise. Running threads are never listed.
         </Dialog.Description>
       </Dialog.Header>
 
@@ -1412,10 +1498,9 @@
               size="inline"
               onclick={cleanupSelectAllClean}
               class="hover:underline"
-              title="Tick every listed thread without uncommitted changes"
+              title="Tick every listed thread without uncommitted changes that isn't marked To do"
             >
-              <!-- Says what it leaves out, so "all" never means less than all. -->
-              {cleanupDirtyCount > 0 ? `Select all except ${cleanupDirtyCount} with changes` : 'Select all'}
+              {cleanupSelectAllLabel}
             </Button>
             {#if cleanupGhAvailable}
               <span class="text-muted-foreground/40" aria-hidden="true">·</span>
@@ -1426,7 +1511,7 @@
                 onclick={cleanupSelectMerged}
                 disabled={cleanupMergedCount === 0}
                 class="text-purple-400 hover:text-purple-300 disabled:no-underline"
-                title="Tick only threads whose pull request has been merged (and that have no uncommitted changes)"
+                title="Tick only threads whose pull request has been merged (and that have no uncommitted changes and aren't marked To do)"
               >
                 Select merged ({cleanupMergedCount})
               </Button>
@@ -1455,6 +1540,9 @@
                     <span data-testid="cleanup-pr-{session.id}">· no PR</span>
                   {:else if cleanupPr[session.id] === 'unknown'}
                     <span title="The GitHub CLI could not look up this branch's pull request (offline or not logged in)" data-testid="cleanup-pr-{session.id}">· PR unknown</span>
+                  {/if}
+                  {#if todoStore.has(session.id)}
+                    <span class="text-foreground/80 font-medium" title="Marked To do in the sidebar" data-testid="cleanup-todo-{session.id}">· to do</span>
                   {/if}
                   {#if cleanupStatusUnknown[session.id]}
                     <span class="text-amber-500 font-medium" title="Git couldn't read this worktree's status, so it may have uncommitted changes">· changes unknown</span>
@@ -1499,6 +1587,11 @@
           {#if cleanupSelectedDirtyCount > 0}
             <span class="text-amber-500 font-medium">
               {cleanupSelectedDirtyCount} of them {cleanupSelectedDirtyCount === 1 ? 'has' : 'have'} uncommitted changes that will be lost.
+            </span>
+          {/if}
+          {#if cleanupSelectedTodoCount > 0}
+            <span class="text-foreground font-medium">
+              {cleanupSelectedTodoCount} of them {cleanupSelectedTodoCount === 1 ? 'is' : 'are'} marked To do.
             </span>
           {/if}
         </Dialog.Description>

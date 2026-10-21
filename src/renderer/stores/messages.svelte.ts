@@ -598,11 +598,12 @@ class MessageStore {
 
   // ─── Streaming delta coalescing ───
   //
-  // The adapter emits one partial_text / partial_thinking event per model
-  // token. Appending each one to streamingText re-renders the whole markdown
-  // block per token. Deltas are buffered here and applied at most once per
-  // STREAM_FLUSH_MS; any non-streaming event settles the buffer first so
-  // ordering relative to finalized messages is preserved.
+  // Main sends a thread's partial_text / partial_thinking merged, up to
+  // ~30 a second (session-stream.ts), so one event may carry many tokens.
+  // Appending each one to streamingText would still re-render the whole
+  // markdown block that often. Deltas are buffered here and applied at most
+  // once per STREAM_FLUSH_MS; any non-streaming event settles the buffer
+  // first so ordering relative to finalized messages is preserved.
   private static readonly STREAM_FLUSH_MS = 80;
   private streamBuf = new Map<string, { text: string; thinking: string }>();
   private streamFlushTimer: ReturnType<typeof setTimeout> | null = null;

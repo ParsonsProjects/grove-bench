@@ -1,11 +1,13 @@
 import { describe, it, expect, vi } from 'vitest';
-import { openCodeEnv, verifyOpenRouterKey, OPENCODE_DEFAULT_MODEL } from './opencode.js';
+import { openCodeEnv, verifyOpenRouterKey } from './opencode.js';
 import { ACP_PRESETS } from './presets.js';
 import { AcpAdapter } from './acp-adapter.js';
 
 vi.mock('../../logger.js', () => ({ logger: { warn: vi.fn(), info: vi.fn(), debug: vi.fn(), error: vi.fn() } }));
 
 const config = (env: Record<string, string>) => JSON.parse(env.OPENCODE_CONFIG_CONTENT);
+/** The model a Grove-saved OpenRouter key starts on, written out so a typo in the constant fails. */
+const FLASH = 'openrouter/deepseek/deepseek-v4.1-flash';
 
 describe('the OpenCode preset', () => {
   it('is built in as an alpha agent, unlike Gemini CLI and Copilot CLI', () => {
@@ -41,7 +43,7 @@ describe('openCodeEnv', () => {
   });
 
   it('starts on DeepSeek V4.1 Flash only when the OpenRouter key is the one saved in Grove', () => {
-    expect(config(openCodeEnv({}, { savedKey: true }))).toMatchObject({ model: OPENCODE_DEFAULT_MODEL, small_model: OPENCODE_DEFAULT_MODEL });
+    expect(config(openCodeEnv({}, { savedKey: true }))).toMatchObject({ model: FLASH, small_model: FLASH });
     const own = config(openCodeEnv({ OPENROUTER_API_KEY: 'from-shell' }, { savedKey: false }));
     expect(own).not.toHaveProperty('model');
     expect(own).not.toHaveProperty('small_model');
@@ -56,7 +58,7 @@ describe('openCodeEnv', () => {
     };
     const c = config(openCodeEnv({ OPENCODE_CONFIG_CONTENT: JSON.stringify(user) }, { savedKey: true }));
     expect(c.model).toBe('anthropic/claude-x');
-    expect(c.small_model).toBe(OPENCODE_DEFAULT_MODEL);
+    expect(c.small_model).toBe(FLASH);
     expect(c.mcp).toEqual(user.mcp);
     const asking = { edit: 'ask', bash: 'ask', webfetch: 'ask', task: 'deny' };
     expect(c.permission).toEqual({ ...asking, external_directory: 'ask' });

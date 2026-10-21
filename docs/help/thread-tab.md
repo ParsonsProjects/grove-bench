@@ -4,11 +4,11 @@ The Thread tab (`Alt+1`) is the primary view for interacting with your agent. It
 
 ## Thread Goal
 
-A bar at the top of the Thread tab says, in one line, what the thread is trying to get done. The agent writes it once, after its first reply, using its background model. Click the line to see all of it.
+A box at the top of the Thread tab says what the thread is trying to get done. The agent writes it once, after its first reply, using its background model. A long goal is cut off after two lines; click it to see all of it. Hovering the thread in the sidebar shows the goal too.
 
 - **Edit** (pencil): type your own goal and press `Enter` (`Esc` cancels). A goal you typed is never replaced automatically. Clear the text to remove it.
 - **Refresh**: write a new goal from the thread so far, for when the work has moved on. This replaces the current goal, including one you typed, and costs one model call.
-- **Hide** (✕): close the bar for this thread. The flag next to the Thread view picker brings it back.
+- **Hide** (✕): close the box for this thread, which also takes the goal out of its sidebar tooltip. The flag next to the Thread view picker brings it back.
 
 Goals are off until you tick **Show the thread goal** in **Settings > Tending**. Untick it to turn them off again; no goals are written while it is off.
 

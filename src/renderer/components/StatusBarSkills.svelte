@@ -9,7 +9,8 @@
   import { store } from '../stores/sessions.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
   import { mergeSkills } from '../lib/skills-merge.js';
-  import { buildCreateSkillPrompt } from '../lib/skill-prompt.js';
+  import { startSkillThread } from '../lib/skill-thread.js';
+  import type { SkillPromptOpts } from '../lib/skill-prompt.js';
   import { lazyComponent } from '../lib/lazy-component.js';
   import type { SkillInfo, SkillSuggestion } from '../../shared/types.js';
   import { Badge } from '$lib/components/ui/badge/index.js';
@@ -25,8 +26,6 @@
   // The dialog loads when first opened.
   const loadAddSkillDialog = lazyComponent(() => import('./AddSkillDialog.svelte'));
 
-  let sessionStatus = $derived(store.sessions.find((s) => s.id === sessionId)?.status);
-  let isRunning = $derived(messageStore.getIsRunning(sessionId));
   let systemInfo = $derived(messageStore.getSystemInfo(sessionId));
 
   let skillsExpanded = $state(false);
@@ -74,9 +73,8 @@
 
   let suggestions = $state<SkillSuggestion[]>([]);
   let analyzingSuggestions = $state(false);
-  let addSkillInitial = $state<{ name: string; description: string; instructions: string } | null>(null);
+  let addSkillInitial = $state<{ name: string; description: string; instructions: string; scope?: 'project' | 'user' } | null>(null);
   let sessionRepoPath = $derived(store.sessions.find((s) => s.id === sessionId)?.repoPath ?? '');
-  let canAskAgent = $derived(sessionStatus === 'running' && !isRunning);
 
   async function refreshSuggestions() {
     if (!sessionRepoPath) return;
@@ -109,20 +107,29 @@
     addSkillOpen = true;
   }
 
-  /** Hand the suggestion to the agent with the mined evidence as draft notes. */
+  /** Hand a skill to the agent in a new thread. A suggestion of the same
+   *  name is resolved straight away, as for a manual create, so it can't be
+   *  handed off twice while the thread starts. If the thread can't start,
+   *  the Add Skill dialog opens with the skill, so nothing is lost. */
+  async function askAgent(skill: SkillPromptOpts) {
+    const suggested = suggestions.find((s) => s.name === skill.name);
+    if (suggested) dismissSkillSuggestion(suggested.id);
+    if (await startSkillThread(sessionId, skill)) return;
+    // The dialog shows over whatever is on screen, so only over this thread.
+    if (store.activeSessionId !== sessionId) return;
+    addSkillInitial = { name: skill.name, description: skill.description, instructions: skill.notes ?? '', scope: skill.scope };
+    addSkillOpen = true;
+  }
+
+  /** Hand the suggestion to the agent, with the mined evidence as draft notes. */
   function askAgentFromSuggestion(s: SkillSuggestion) {
-    if (!canAskAgent) return;
-    const prompt = buildCreateSkillPrompt({
+    skillsExpanded = false;
+    void askAgent({
       name: s.name,
       description: s.description,
       scope: 'project',
       notes: `${s.draftInstructions}\n\nEvidence from past threads (${s.rationale}):\n${s.evidence.map((e) => `- ${e}`).join('\n')}`,
     });
-    messageStore.addUserMessage(sessionId, prompt);
-    window.groveBench.sendMessage(sessionId, prompt);
-    store.updateLastActive(sessionId);
-    skillsExpanded = false;
-    dismissSkillSuggestion(s.id);
   }
 
   $effect(() => { count = allSkills.length; });
@@ -206,10 +213,9 @@
                   variant="subtle"
                   size="2xs"
                   onclick={() => askAgentFromSuggestion(suggestion)}
-                  disabled={!canAskAgent}
-                  title={canAskAgent
-                    ? 'Ask the agent to write this skill, with the mined evidence as notes'
-                    : 'Needs a running, idle thread'}
+                  title={store.isFolderProject(sessionRepoPath)
+                    ? 'Start a new thread in the project folder where the agent writes this skill, with the mined evidence as notes'
+                    : 'Start a new thread on a branch of its own where the agent writes this skill, with the mined evidence as notes'}
                 >
                   Agent
                 </Button>
@@ -307,6 +313,7 @@
         const created = suggestions.find((s) => s.name === skill.name);
         if (created) dismissSkillSuggestion(created.id);
       }}
+      onaskagent={(skill) => void askAgent(skill)}
     />
   {/await}
 {/if}

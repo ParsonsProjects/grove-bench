@@ -35,9 +35,9 @@ vi.mock('./memory-compact.js', () => ({ expireSessionNotes: vi.fn(() => []) }));
 vi.mock('./logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
-vi.mock('./adapters/index.js', () => ({
-  adapterRegistry: { get: () => adapter, getDefault: () => adapter },
-}));
+const adapterRegistry = vi.hoisted(() => ({ get: vi.fn(), getDefault: vi.fn() }));
+
+vi.mock('./adapters/index.js', () => ({ adapterRegistry }));
 
 import {
   extractJsonObject,
@@ -73,6 +73,8 @@ function opts(events: AgentEvent[], sessionId = 's1') {
 beforeEach(() => {
   vi.clearAllMocks();
   _resetForTests();
+  adapterRegistry.get.mockReturnValue(adapter);
+  adapterRegistry.getDefault.mockReturnValue(adapter);
   adapter.generateText.mockResolvedValue(EMPTY_RESULT);
   mockMemory.readMemoryFile.mockReturnValue(null);
 });
@@ -120,6 +122,15 @@ describe('triggerAutoSaveImmediate throttling', () => {
 
     expect(adapter.generateText).toHaveBeenCalledTimes(1);
     expect(statuses[0]).toBe('started');
+  });
+
+  it("runs extraction on the thread's own agent, not the default", async () => {
+    const own = { id: 'custom-adapter', generateText: vi.fn(async () => EMPTY_RESULT) };
+    adapterRegistry.get.mockImplementation((id: string) => (id === 'custom-adapter' ? own : undefined));
+    await triggerAutoSaveImmediate({ ...opts(makeEvents(3)).o, adapterType: 'custom-adapter' });
+
+    expect(own.generateText).toHaveBeenCalledTimes(1);
+    expect(adapter.generateText).not.toHaveBeenCalled();
   });
 
   it('skips a following turn that added too little activity', async () => {

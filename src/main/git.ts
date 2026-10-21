@@ -425,6 +425,16 @@ export async function fileDiff(
   return git(args, cwd);
 }
 
+/** Whether git tracks a path (it is in the index), unlike a new or ignored file. */
+export async function isTracked(cwd: string, relPath: string): Promise<boolean> {
+  try {
+    await git(['ls-files', '--error-unmatch', '--', relPath], cwd);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Diff a single file against an arbitrary ref (working tree vs `ref`). */
 export async function fileDiffAgainst(cwd: string, relPath: string, ref: string): Promise<string> {
   return git(['diff', ref, '--', relPath], cwd);
@@ -675,6 +685,10 @@ export function looksBinary(buf: Buffer): boolean {
 /** Build an all-add unified diff for an untracked file from its content. */
 export function synthesizeUntrackedDiff(relPath: string, content: string): string {
   const lines = content.split('\n');
+  // A final newline ends the last line rather than starting another (as git counts)
+  if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
+  // An empty file has no lines to show, as in git's diff of one
+  if (lines.length === 0) return '';
   const posix = relPath.replace(/\\/g, '/');
   const header = `--- /dev/null\n+++ b/${posix}\n@@ -0,0 +1,${lines.length} @@\n`;
   return header + lines.map(l => `+${l}`).join('\n');

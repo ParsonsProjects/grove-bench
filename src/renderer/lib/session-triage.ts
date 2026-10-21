@@ -5,15 +5,18 @@
  * permission is "needs you" even if it also finished a turn while unfocused.
  * The order is the status colour's (agentSpriteState), so the two never
  * disagree.
+ *
+ * To do is the one filter that isn't a state: it is a flag the user sets,
+ * and a thread in any state can carry it, so its count overlaps the others.
  */
 
 import type { AgentSpriteState } from './agent-sprite.js';
 
 /** 'none' belongs to no chip: closed, errored or being removed. */
 export type TriageState = 'needs-you' | 'working' | 'unread' | 'idle' | 'none';
-export type TriageFilter = 'all' | 'needs-you' | 'working' | 'unread' | 'idle';
+export type TriageFilter = 'all' | 'needs-you' | 'working' | 'unread' | 'idle' | 'todo';
 
-export const TRIAGE_FILTERS: TriageFilter[] = ['all', 'needs-you', 'working', 'unread', 'idle'];
+export const TRIAGE_FILTERS: TriageFilter[] = ['all', 'needs-you', 'working', 'unread', 'idle', 'todo'];
 
 export const TRIAGE_FILTER_LABELS: Record<TriageFilter, string> = {
   all: 'All',
@@ -21,7 +24,14 @@ export const TRIAGE_FILTER_LABELS: Record<TriageFilter, string> = {
   working: 'Working',
   unread: 'Unread',
   idle: 'Idle',
+  todo: 'To do',
 };
+
+/** A thread as the filters see it: its state, and whether it is flagged To do. */
+export interface TriageEntry {
+  state: TriageState;
+  todo: boolean;
+}
 
 /**
  * The triage state a conversation's status colour stands for (see
@@ -47,8 +57,9 @@ export function triageForSprite(state: AgentSpriteState): TriageState {
   }
 }
 
-export function matchesTriageFilter(filter: TriageFilter, state: TriageState): boolean {
-  return filter === 'all' || filter === state;
+export function matchesTriageFilter(filter: TriageFilter, entry: TriageEntry): boolean {
+  if (filter === 'todo') return entry.todo;
+  return filter === 'all' || filter === entry.state;
 }
 
 export interface TriageCounts {
@@ -57,13 +68,15 @@ export interface TriageCounts {
   working: number;
   unread: number;
   idle: number;
+  todo: number;
 }
 
-export function triageCounts(states: Iterable<TriageState>): TriageCounts {
-  const counts: TriageCounts = { all: 0, 'needs-you': 0, working: 0, unread: 0, idle: 0 };
-  for (const state of states) {
+export function triageCounts(entries: Iterable<TriageEntry>): TriageCounts {
+  const counts: TriageCounts = { all: 0, 'needs-you': 0, working: 0, unread: 0, idle: 0, todo: 0 };
+  for (const { state, todo } of entries) {
     counts.all++;
     if (state !== 'none') counts[state]++;
+    if (todo) counts.todo++;
   }
   return counts;
 }

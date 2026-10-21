@@ -34,6 +34,8 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.SESSION_AUTO_NAME, sessionId),
   getConversationGoal: (sessionId: string) =>
     ipcRenderer.invoke(IPC.SESSION_GOAL_GET, sessionId),
+  getConversationGoals: (sessionIds: string[]) =>
+    ipcRenderer.invoke(IPC.SESSION_GOALS_GET, sessionIds),
   setConversationGoal: (sessionId: string, text: string) =>
     ipcRenderer.invoke(IPC.SESSION_GOAL_SET, sessionId, text),
   autoConversationGoal: (sessionId: string) =>
@@ -402,6 +404,8 @@ const api: GroveBenchAPI = {
     ipcRenderer.send(IPC.APP_STATE_SET_SESSION_SORT, sort),
   getUnreadSessions: () => ipcRenderer.invoke(IPC.APP_STATE_GET_UNREAD) as Promise<string[]>,
   setUnreadSessions: (ids: string[]) => ipcRenderer.send(IPC.APP_STATE_SET_UNREAD, ids),
+  getTodoSessions: () => ipcRenderer.invoke(IPC.APP_STATE_GET_TODO) as Promise<string[] | null>,
+  setTodoSessions: (ids: string[]) => ipcRenderer.send(IPC.APP_STATE_SET_TODO, ids),
   getSidebarWidth: () =>
     ipcRenderer.invoke(IPC.APP_STATE_GET_SIDEBAR_WIDTH) as Promise<number | null>,
   setSidebarWidth: (width: number) =>

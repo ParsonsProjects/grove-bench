@@ -116,7 +116,7 @@ Memory, skill suggestions and thread goals run on each thread's own agent, using
 - **Auto-save project memory**: see [Project memory](memory.md)
 - **Compaction timeout**: Stop a compaction step (planning, or merging one group) that runs longer than this many seconds, from 30 to 3600 (an hour). A value saved outside that range is moved into it. Default 300 (5 minutes)
 - **Suggest skills automatically**: After each finished turn, look for requests and commands you repeat and suggest skills for them. Each run is a model call. Off by default; the **Suggest** button in the status bar's Skills popover does the same on demand
-- **Show the thread goal**: Pin one line at the top of the Thread tab saying what the thread is for, written after its first reply. Each goal is one model call, plus one each time you press **Refresh**. Off by default; see [Thread tab](thread-tab.md)
+- **Show the thread goal**: Pin a line at the top of the Thread tab saying what the thread is for, written after its first reply. Hovering the thread in the sidebar shows it too. Each goal is one model call, plus one each time you press **Refresh**. Off by default; see [Thread tab](thread-tab.md)
 - **Sleep idle threads after**: After this many minutes idle (not open, not working, not waiting on you, no background task running), a thread's agent is shut down to save memory and CPU. The thread stays in the Threads list with its mode and "always allow" choices, and wakes when you open it or send it a message. Its terminal keeps running; the agent's page in the Preview tab closes. 0 turns it off. Default 30 minutes
 
 ## Tool shed (MCP servers)
@@ -152,5 +152,5 @@ Browse and manage MCP server plugins that extend the agent's capabilities. Plugi
 
 For tracking down slowness. Nothing here leaves your computer.
 
-- **Performance log**: freezes (when the app stopped responding, and what it was doing), how long each new thread, resume and wake took step by step, and a summary every 10 minutes are written to `performance.log` in the logs folder. **Show performance log** opens the folder with it selected. Send it along when reporting something slow
+- **Performance log**: freezes (when the app stopped responding, and what it was doing), how long each new thread, resume and wake took step by step, and a summary every 10 minutes are written to `performance.log` in the logs folder. The summary includes how much memory the agents use, with everything they started (MCP servers, shells, dev servers), by program, and the largest of those processes. **Show performance log** opens the folder with it selected. Send it along when reporting something slow, or when the app uses a lot of memory
 - **Record a performance trace**: records what every part of the app does for 10 seconds and saves it as a file. Start it, then do the slow thing, such as starting a new thread. Open the file at ui.perfetto.dev or in `chrome://tracing`. It holds timings, file paths and page addresses, not thread text. The newest 5 are kept

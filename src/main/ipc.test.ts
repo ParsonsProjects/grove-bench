@@ -29,7 +29,7 @@ const m = vi.hoisted(() => {
       'copyUntrackedFiles', 'getNpmCachePath', 'getProviderSessionId', 'getModel', 'getAdapterType', 'getThreadLimits', 'remove',
       'saveDisplayName', 'getDisplayNameState', 'saveAutoDisplayName', 'renameBranch', 'switchBranch',
       'syncBranch', 'list', 'register', 'listRepos', 'getWorktree', 'assertRemovable', 'checkoutSharers',
-      'getGoal', 'saveGoal', 'setGoalHidden',
+      'getGoal', 'getGoals', 'saveGoal', 'setGoalHidden',
     ),
     terminalManager: fns('killAllForSession', 'spawnPty', 'write', 'resize', 'killPty', 'isAlive'),
     previewManager: fns('close', 'closeAgentPage', 'navigate', 'command', 'setViewport', 'snapshot', 'agentFrame', 'getStates'),
@@ -38,8 +38,9 @@ const m = vi.hoisted(() => {
     settings: fns('getSettings', 'saveSettings', 'applyImmediateEffects'),
     appState: fns(
       'listProjects', 'rememberProject', 'forgetProject', 'saveCollapsedPanels', 'loadConversationGroups', 'saveConversationGroups',
-      'loadAppState', 'saveOpenTabs', 'saveCollapsedRepos', 'saveSessionSort', 'saveSidebarWidth', 'saveUnreadSessionIds',
-      'loadUnreadSessionIds', 'flushPendingSaves', 'loadPrerequisiteCache', 'savePrerequisiteCache',
+      'loadOpenTabs', 'saveOpenTabs', 'loadCollapsedRepos', 'saveCollapsedRepos', 'loadSessionSort', 'saveSessionSort',
+      'loadSidebarWidth', 'saveSidebarWidth', 'loadCollapsedPanels', 'saveUnreadSessionIds',
+      'loadUnreadSessionIds', 'loadTodoSessionIds', 'saveTodoSessionIds', 'flushPendingSaves', 'loadPrerequisiteCache', 'savePrerequisiteCache',
     ),
     prerequisites: fns('apiKeyState', 'checkCorePrerequisites', 'checkGh'),
     credentials: fns('canStoreApiKey', 'clearApiKey', 'parseApiKey', 'saveApiKey'),
@@ -83,7 +84,7 @@ vi.mock('./git.js', async (importOriginal) => {
     'git', 'validateBranchName', 'branchExists', 'branchExistsAnywhere', 'listBranches', 'getDefaultBranch', 'fileDiff',
     'fileDiffAgainst', 'resolveMergeBase', 'indexFileContent', 'hashWorkingFiles', 'listProjectFiles', 'revertFile',
     'stageFile', 'unstageFile', 'commit', 'push', 'syncStatus', 'branchCommits', 'logCommits', 'rebaseOnto', 'cherryPick',
-    'squashSince', 'currentBranch', 'recentCheckouts', 'worktreeBranches',
+    'squashSince', 'currentBranch', 'recentCheckouts', 'worktreeBranches', 'isTracked',
   ];
   return { ...actual, ...Object.fromEntries(runsGit.map((n) => [n, vi.fn()])) };
 });
@@ -701,6 +702,14 @@ describe('conversation goal', () => {
     expect(m.worktreeManager.saveGoal).toHaveBeenCalledWith('g0000001', 'Add a dark mode toggle', 'auto', NO_GOAL);
   });
 
+  it('reads several goals at once, ignoring anything that is not an id', async () => {
+    const goals = { g0000010: { text: 'Fix sort', source: 'auto', hidden: false } };
+    m.worktreeManager.getGoals.mockResolvedValue(goals);
+    expect(await invoke(IPC.SESSION_GOALS_GET, ['g0000010', 7, null])).toEqual(goals);
+    expect(m.worktreeManager.getGoals).toHaveBeenCalledWith(['g0000010']);
+    expect(await invoke(IPC.SESSION_GOALS_GET, 'g0000010')).toEqual({});
+  });
+
   it('writes a goal only once, never over one already made or typed', async () => {
     liveWithReply('g0000002');
     m.worktreeManager.getGoal.mockResolvedValue({ text: null, source: 'user', hidden: false });
@@ -1119,10 +1128,33 @@ describe('file handlers', () => {
     write('new.ts', 'hi\n');
     vi.mocked(git.fileDiff).mockResolvedValue('');
     expect(await invoke(IPC.FILE_DIFF, 's1', 'new.ts')).toEqual({
-      kind: 'text', patch: git.synthesizeUntrackedDiff('new.ts', 'hi\n'),
+      kind: 'text', patch: '--- /dev/null\n+++ b/new.ts\n@@ -0,0 +1,1 @@\n+hi',
     });
     // A staged diff that is empty really is empty.
     expect(await invoke(IPC.FILE_DIFF, 's1', 'new.ts', true)).toEqual({ kind: 'text', patch: '' });
+  });
+
+  it('FILE_DIFF never shows a tracked file as new: an empty diff is no change, a failed one an error', async () => {
+    write('a.ts', 'all of the file\n');
+    vi.mocked(git.isTracked).mockResolvedValue(true);
+    vi.mocked(git.fileDiff).mockResolvedValue('');
+    expect(await invoke(IPC.FILE_DIFF, 's1', 'a.ts')).toEqual({ kind: 'text', patch: '' });
+    expect(git.isTracked).toHaveBeenCalledWith(wt, 'a.ts');
+
+    vi.mocked(git.fileDiff).mockRejectedValue(new Error('index.lock exists'));
+    await expect(invoke(IPC.FILE_DIFF, 's1', 'a.ts')).rejects.toThrow('index.lock exists');
+  });
+
+  it('FILE_DIFF still shows a new file whose diff fails, and skips one too large to read', async () => {
+    write('new.ts', 'hi\n');
+    vi.mocked(git.fileDiff).mockRejectedValue(new Error('fatal'));
+    expect(await invoke(IPC.FILE_DIFF, 's1', 'new.ts')).toEqual({
+      kind: 'text', patch: '--- /dev/null\n+++ b/new.ts\n@@ -0,0 +1,1 @@\n+hi',
+    });
+
+    write('big.log', Buffer.alloc(5 * 1024 * 1024, 'a'));
+    vi.mocked(git.fileDiff).mockResolvedValue('');
+    expect(await invoke(IPC.FILE_DIFF, 's1', 'big.log')).toEqual({ kind: 'tooLarge', bytes: 5 * 1024 * 1024 });
   });
 
   it('FILE_DIFF diffs against the merge base in branch scope', async () => {
@@ -1387,6 +1419,29 @@ describe('renderer input checks', () => {
     expect(shell.openExternal).toHaveBeenCalledWith('https://example.com');
   });
 
+  it('app state: each getter reads only its own field', () => {
+    m.appState.loadOpenTabs.mockReturnValue(['t']);
+    m.appState.loadCollapsedRepos.mockReturnValue({ '/r': true });
+    m.appState.loadSessionSort.mockReturnValue({ key: 'age', dir: 'desc' });
+    m.appState.loadSidebarWidth.mockReturnValue(240);
+    m.appState.loadCollapsedPanels.mockReturnValue({ sidebar: true });
+    expect(invoke(IPC.APP_STATE_GET_OPEN_TABS)).toEqual(['t']);
+    expect(invoke(IPC.APP_STATE_GET_COLLAPSED_REPOS)).toEqual({ '/r': true });
+    expect(invoke(IPC.APP_STATE_GET_SESSION_SORT)).toEqual({ key: 'age', dir: 'desc' });
+    expect(invoke(IPC.APP_STATE_GET_SIDEBAR_WIDTH)).toBe(240);
+    expect(invoke(IPC.APP_STATE_GET_COLLAPSED_PANELS)).toEqual({ sidebar: true });
+  });
+
+  it('app state: To do flags go to app-state, which checks them', () => {
+    m.appState.loadTodoSessionIds.mockReturnValue(['a']);
+    expect(invoke(IPC.APP_STATE_GET_TODO)).toEqual(['a']);
+    // null (an unreadable file) reaches the renderer as is, so it keeps its list
+    m.appState.loadTodoSessionIds.mockReturnValue(null);
+    expect(invoke(IPC.APP_STATE_GET_TODO)).toBeNull();
+    invoke(IPC.APP_STATE_SET_TODO, ['a']);
+    expect(m.appState.saveTodoSessionIds).toHaveBeenCalledWith(['a']);
+  });
+
   it('app state: unread ids must be strings, sidebar widths finite numbers', () => {
     invoke(IPC.APP_STATE_SET_UNREAD, [1, 2]);
     invoke(IPC.APP_STATE_SET_UNREAD, 'a');
@@ -1489,6 +1544,31 @@ describe('adapters, skills and MCP config', () => {
     m.adapterRegistry.getDefault.mockReturnValue({ id: 'gemini-cli', capabilities: { plugins: false } });
     m.adapterRegistry.getBuiltInDefault.mockReturnValue({ id: 'claude-code', capabilities: { plugins: true }, listPlugins });
     expect(await invoke(IPC.PLUGIN_LIST)).toEqual({ installed: [{ id: 'p' }], available: [] });
+  });
+
+  it('lists no plugins for an agent without them, and refuses to install one', async () => {
+    const listPlugins = vi.fn();
+    m.adapterRegistry.get.mockReturnValue({ id: 'gemini-cli', capabilities: { plugins: false }, listPlugins });
+    expect(await invoke(IPC.PLUGIN_LIST, 'gemini-cli')).toEqual({ installed: [], available: [] });
+    expect(listPlugins).not.toHaveBeenCalled();
+    await expect(invoke(IPC.PLUGIN_INSTALL, 'p', 'user', 'gemini-cli')).rejects.toThrow('Adapter "gemini-cli" does not support plugins');
+  });
+
+  it('passes plugin installs and changes to the built-in agent', async () => {
+    const agent = {
+      id: 'claude-code', capabilities: { plugins: true },
+      installPlugin: vi.fn(), uninstallPlugin: vi.fn(), enablePlugin: vi.fn(), disablePlugin: vi.fn(),
+    };
+    m.adapterRegistry.getBuiltInDefault.mockReturnValue(agent);
+    await invoke(IPC.PLUGIN_INSTALL, 'p', 'project');
+    await invoke(IPC.PLUGIN_INSTALL, 'q');
+    await invoke(IPC.PLUGIN_UNINSTALL, 'p');
+    await invoke(IPC.PLUGIN_ENABLE, 'p');
+    await invoke(IPC.PLUGIN_DISABLE, 'p');
+    expect(agent.installPlugin.mock.calls).toEqual([['p', 'project'], ['q', 'user']]);
+    expect(agent.uninstallPlugin).toHaveBeenCalledWith('p');
+    expect(agent.enablePlugin).toHaveBeenCalledWith('p');
+    expect(agent.disablePlugin).toHaveBeenCalledWith('p');
   });
 
   it('MCP_CONFIG_APPROVE approves a server for the project and all its worktrees', async () => {

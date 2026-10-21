@@ -21,7 +21,8 @@ import { handleAttachmentProtocol, registerAttachmentScheme, removeDeletedFolder
 import { freezeLog, startStallWatch } from './freeze-log.js';
 import { closePerfLog } from './perf-log.js';
 import { startHealthLog } from './perf-health.js';
-import { startProcessHost, stopProcessHost } from './process-host.js';
+import { agentHostPid, startProcessHost, stopProcessHost } from './process-host.js';
+import { measureProcesses } from './process-memory.js';
 import { ChildProcess } from 'node:child_process';
 
 // Time every process launch from the start: on Windows each one blocks the
@@ -203,6 +204,13 @@ app.whenReady().then(() => {
         terminals: terminalManager.count,
       };
     },
+    // The agents' processes aren't Electron's (Windows only, listed in the
+    // process host). In dev mode, also the npm and Vite processes above us.
+    processes: () => measureProcesses({
+      agents: () => sessionManager.agentProcesses(),
+      agentHostPid,
+      appPid: app.isPackaged ? undefined : process.pid,
+    }),
   });
 
   // ─── Power monitor: flush state on suspend, health-check on resume ───
@@ -262,7 +270,9 @@ function shutdown(): Promise<void> {
 }
 
 app.on('before-quit', (event) => {
-  // Debounced app-state saves (open tabs, groups, …) still waiting to be written.
+  // App-state changes (open tabs, groups, …) not in the file yet, waiting to
+  // be saved or on their way in the background: written synchronously, since
+  // a background save might not finish before the process exits.
   flushPendingSaves();
   if (isQuitting) return;
   if (!shutdownDone && nothingRunning()) {

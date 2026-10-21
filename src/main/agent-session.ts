@@ -10,6 +10,7 @@ import { attachmentsFolder, imagePath, pruneAttachments, removeAttachments, save
 import { TurnFiles } from './turn-files.js';
 import { toolViewOf } from '../shared/tool-view.js';
 import { logger } from './logger.js';
+import { freezeLog } from './freeze-log.js';
 import { perfSteps } from './perf-steps.js';
 import { perfLine } from './perf-log.js';
 import { worktreeManager } from './worktree-manager.js';
@@ -33,6 +34,7 @@ import { killTree } from './process-tree.js';
 import { previewManager } from './preview.js';
 import type { Emit, ManagedSession, SessionCompletionResult } from './session-types.js';
 import { SessionEventStore, TRANSIENT_EVENT_TYPES, eventLogPath } from './session-event-store.js';
+import { StreamDeltas, isStreamDelta } from './session-stream.js';
 import {
   requestPermission, respondToPermission as answerPermission, denyPendingPermissions,
   awaitElicitation, respondToElicitation as answerElicitation, cancelElicitations,
@@ -67,6 +69,25 @@ function failureEvent(adapter: AgentAdapter, detail: string): AgentEvent {
   return isAuthFailure(detail)
     ? { type: 'error', message: adapter.authErrorMessage, auth: true }
     : { type: 'error', message: detail };
+}
+
+/** Why idle sleep must leave `session` awake for now, or null when it can
+ *  sleep. Checked here rather than trusting the renderer's view alone. */
+function sleepRefusal(session: ManagedSession): string | null {
+  if (session.status !== 'running' && session.status !== 'starting') return `status is ${session.status}`;
+  if (!session.queryHandle || session.isStartingQuery) return 'its agent is starting';
+  if (session.turnHandle === session.queryHandle) return 'mid-turn';
+  if (session.pendingPermissions.size > 0) return 'waiting on a permission';
+  if (session.pendingElicitations.size > 0) return 'waiting on an MCP server question';
+  if (session.limits.pending) return 'waiting on a limit question';
+  // Their count and types only: this goes to the app log, and a task's
+  // description is its command line, secrets and all (OPENAI_API_KEY=sk-...).
+  const tasks = session.backgroundTasks;
+  if (tasks && tasks.size > 0) {
+    const types = [...new Set(tasks.values())].filter((t): t is string => !!t && /^\w{1,40}$/.test(t));
+    return `${tasks.size} background task${tasks.size > 1 ? 's' : ''} running${types.length > 0 ? ` (${types.join(', ')})` : ''}`;
+  }
+  return null;
 }
 
 class AgentSessionManager {
@@ -105,8 +126,19 @@ class AgentSessionManager {
 
   /** Create an emit function bound to a session — buffers events and persists them to JSONL on disk. */
   private createEmitter(session: ManagedSession): Emit {
-    const id = session.id;
+    const streamDeltas = session.streamDeltas ??= new StreamDeltas((delta) => this.deliver(session, delta));
     const emit = (event: AgentEvent) => {
+      // Counted for the freeze log, which names how many a stall handled.
+      freezeLog.noteAgentEvent();
+
+      // Streamed text and thinking go out merged, a few times a frame at most
+      // (session-stream.ts). Anything else sends them first, keeping order.
+      if (isStreamDelta(event)) {
+        streamDeltas.add(event);
+        return;
+      }
+      streamDeltas.flush();
+
       // The provider refused the credentials. A saved key is used instead of
       // any other sign-in, so when one is saved it is the bad one: flag it so
       // new conversations ask for another.
@@ -120,21 +152,44 @@ class AgentSessionManager {
         this.events.append(session, event);
       }
 
-      // Notify registered listeners (used for progress events)
-      const listeners = this.eventListeners.get(id);
-      if (listeners) {
-        for (const cb of listeners) {
-          try { cb(event); } catch { /* non-fatal */ }
-        }
-      }
-
-      const w = session.window;
-      if (!w.isDestroyed()) {
-        w.webContents.send(`${IPC.AGENT_EVENT}:${id}`, event);
-      }
+      this.deliver(session, event);
     };
     session.emit = emit;
     return emit;
+  }
+
+  /** Pass an event to the session's listeners and its window. */
+  private deliver(session: ManagedSession, event: AgentEvent): void {
+    const { id } = session;
+    // Notify registered listeners (used for progress events)
+    const listeners = this.eventListeners.get(id);
+    if (listeners) {
+      for (const cb of listeners) {
+        try { cb(event); } catch { /* non-fatal */ }
+      }
+    }
+
+    const w = session.window;
+    if (!w.isDestroyed()) {
+      w.webContents.send(`${IPC.AGENT_EVENT}:${id}`, event);
+    }
+  }
+
+  /** Send the streamed text and thinking a session still holds. The session's
+   *  next event does it anyway, and sendStatus before a status; this is for
+   *  the ways a run ends that may send nothing more. */
+  private flushStream(session: ManagedSession): void {
+    session.streamDeltas?.flush();
+  }
+
+  /** Tell the window a session's status. Every status goes through here: it
+   *  has its own channel rather than going through emit, so the streamed text
+   *  and thinking the session still holds go first, or it would overtake them. */
+  private sendStatus(session: ManagedSession, status: SessionStatus): void {
+    this.flushStream(session);
+    if (!session.window.isDestroyed()) {
+      session.window.webContents.send(IPC.SESSION_STATUS, session.id, status);
+    }
   }
 
   async createSession(opts: {
@@ -212,8 +267,9 @@ class AgentSessionManager {
     // A folder project isn't a git repository: no checkpoints, no commits.
     const gitBacked = !opts.noGit;
 
-    // Copy: the cached array must not be mutated by the live session.
-    const eventHistory = [...this.events.load(id)];
+    // The log a stopped thread's pane already read, if still cached. The
+    // store keeps no copy from now on: the session's own history is read.
+    const eventHistory = this.events.startLive(id);
 
     const session: ManagedSession = {
       id,
@@ -298,10 +354,7 @@ class AgentSessionManager {
         console.error(`[runQuery] session=${id} FAILED:`, err);
         emit(failureEvent(adapter, String(err.message || err)));
         session.status = 'error';
-        const w = session.window;
-        if (!w.isDestroyed()) {
-          w.webContents.send(IPC.SESSION_STATUS, id, 'error');
-        }
+        this.sendStatus(session, 'error');
         // Fire completion callback on error
         const errCb = this.completionCallbacks.get(id);
         if (errCb) {
@@ -337,9 +390,7 @@ class AgentSessionManager {
       console.error(`[runQuery] session=${session.id} FAILED on restart:`, err);
       emit(failureEvent(session.adapter, String(err?.message || err)));
       session.status = 'error';
-      if (!session.window.isDestroyed()) {
-        session.window.webContents.send(IPC.SESSION_STATUS, session.id, 'error');
-      }
+      this.sendStatus(session, 'error');
     });
   }
 
@@ -543,6 +594,9 @@ class AgentSessionManager {
     perfSteps.finish(id, 'agent start');
     session.queryHandle = handle;
     session.isStartingQuery = false;
+    // A new agent process: the previous one's background tasks went with it,
+    // and the agent only reports its set when it changes.
+    session.backgroundTasks = new Map();
     // Only a resumed conversation can turn out to be missing.
     session.promptsBeforeInit = resumingProviderSession ? { handle, prompts: [] } : null;
     // Before resolving queryReady below, so they go ahead of sends waiting on it.
@@ -618,6 +672,13 @@ class AgentSessionManager {
           turnActive(session.limits);
           this.watchTurnFiles(session);
         }
+        // The agent's whole set of running background tasks, for idle sleep.
+        // Taken as is each time rather than paired from task_started and
+        // task_notification, which can go missing and would keep a finished
+        // task running for good.
+        if (event.type === 'background_tasks_changed' && session.queryHandle === handle) {
+          session.backgroundTasks = new Map(event.tasks.map((t) => [t.taskId, t.taskType]));
+        }
         if (event.type === 'assistant_tool_use') {
           toolCallSeen(session.limits, event.toolUseId);
           const view = toolViewOf(event);
@@ -657,10 +718,7 @@ class AgentSessionManager {
             });
           }
 
-          const w = session.window;
-          if (!w.isDestroyed()) {
-            w.webContents.send(IPC.SESSION_STATUS, session.id, 'running');
-          }
+          this.sendStatus(session, 'running');
 
           // A resumed provider session (app restart, stop/restart, rewind
           // fork) keeps its refs in git: rebuild the uuid map and turn counter
@@ -767,6 +825,10 @@ class AgentSessionManager {
       }
     }
 
+    // A run that ended without a last event (an abort, a stop, a sleep)
+    // would leave the text it streamed last waiting on the timer. Those
+    // return below with no status, which would send it.
+    this.flushStream(session);
     if (session.turnHandle === handle) session.turnHandle = null;
     // A turn cut short by an error reports no files. Only this run's: once
     // stopped or put to sleep, a newer run may be watching its own turn.
@@ -798,10 +860,7 @@ class AgentSessionManager {
     // Query finished
     session.status = 'stopped';
     emit({ type: 'process_exit' });
-    const w = session.window;
-    if (!w.isDestroyed()) {
-      w.webContents.send(IPC.SESSION_STATUS, id, 'stopped');
-    }
+    this.sendStatus(session, 'stopped');
 
     // Fire completion callback if registered
     const cb = this.completionCallbacks.get(id);
@@ -1526,6 +1585,8 @@ class AgentSessionManager {
     }
 
     const emit = session.emit ?? this.createEmitter(session);
+    // What the agent wrote up to the stop shows now, not after the interrupt.
+    this.flushStream(session);
 
     // Resolve any pending permissions as denied first so the SDK isn't left
     // awaiting a tool decision.  The process is still alive, so these control
@@ -1624,6 +1685,8 @@ class AgentSessionManager {
     // Set up fresh abort controller for the next query
     session.abortController = new AbortController();
     session.queryHandle = null;
+    // The old run sends nothing more: what it streamed before the stop goes now.
+    this.flushStream(session);
 
     const emit = this.createEmitter(session);
 
@@ -1665,15 +1728,22 @@ class AgentSessionManager {
    * so the conversation keeps its place, mode, controls and always-allowed
    * tools. The terminal is left alone. It wakes (see wake()) when opened or
    * sent a message. Returns false, leaving it awake, unless the agent is up
-   * and not mid-turn or waiting on a permission or an MCP elicitation.
+   * and not mid-turn, running a background task, or waiting on a permission,
+   * an MCP elicitation or a limit question (see sleepRefusal).
    */
   async sleepSession(id: string): Promise<boolean> {
     const session = this.sessions.get(id);
     if (!session || session.destroying) return false;
-    if (session.status !== 'running' && session.status !== 'starting') return false;
-    const handle = session.queryHandle;
-    if (!handle || session.isStartingQuery || session.pendingPermissions.size > 0 || session.pendingElicitations.size > 0 || session.limits.pending) return false;
-    if (session.turnHandle === handle) return false;
+    const refusal = sleepRefusal(session);
+    if (refusal) {
+      // Once per reason: the renderer asks again each time the thread has
+      // been idle long enough.
+      if (session.sleepRefusal !== refusal) logger.debug(`[sleep] session=${id} stays awake: ${refusal}`);
+      session.sleepRefusal = refusal;
+      return false;
+    }
+    session.sleepRefusal = null;
+    const handle = session.queryHandle!;
 
     perfSteps.fail(id, 'put to sleep');
     session.statusBeforeSleep = session.status;
@@ -1685,9 +1755,7 @@ class AgentSessionManager {
     void this.endTurnFiles(session);
     const abortController = session.abortController;
     session.abortController = new AbortController();
-    if (!session.window.isDestroyed()) {
-      session.window.webContents.send(IPC.SESSION_STATUS, id, 'sleeping');
-    }
+    this.sendStatus(session, 'sleeping');
 
     const settled = (async () => {
       // Kill the tree while the agent is still running, as shutDown() does.
@@ -1720,9 +1788,7 @@ class AgentSessionManager {
     session.queryReady = new Promise<void>((resolve) => {
       session.resolveQueryReady = resolve;
     });
-    if (!session.window.isDestroyed()) {
-      session.window.webContents.send(IPC.SESSION_STATUS, id, 'running');
-    }
+    this.sendStatus(session, 'running');
     const emit = session.emit ?? this.createEmitter(session);
     const asleep = session.sleepSettled;
     perfSteps.begin(id, 'wake');
@@ -1737,9 +1803,7 @@ class AgentSessionManager {
       console.error(`[runQuery] session=${id} FAILED on wake:`, err);
       emit(failureEvent(session.adapter, String(err?.message || err)));
       session.status = 'error';
-      if (!session.window.isDestroyed()) {
-        session.window.webContents.send(IPC.SESSION_STATUS, id, 'error');
-      }
+      this.sendStatus(session, 'error');
     });
   }
 
@@ -1777,9 +1841,7 @@ class AgentSessionManager {
         await this.events.flush(session);
         this.events.forget(id);
         session.status = 'stopped';
-        if (!session.window.isDestroyed()) {
-          session.window.webContents.send(IPC.SESSION_STATUS, id, 'stopped');
-        }
+        this.sendStatus(session, 'stopped');
         this.closing.delete(id);
       }
     })();
@@ -1866,6 +1928,8 @@ class AgentSessionManager {
 
     // Abort any remaining in-flight operations
     session.abortController.abort();
+    // The run sends nothing more after the abort: send what it streamed last.
+    this.flushStream(session);
 
     // Resolve any pending permissions as denied
     denyPendingPermissions(session, reason, session.emit);
@@ -1901,6 +1965,17 @@ class AgentSessionManager {
       createdAt: s.createdAt,
       displayName: s.displayName,
     }));
+  }
+
+  /** Each thread's agent process while it runs, for the health line's
+   *  memory (process-memory.ts). Asleep and stopped threads have none. */
+  agentProcesses(): { thread: string; pid: number }[] {
+    const agents: { thread: string; pid: number }[] = [];
+    for (const s of this.sessions.values()) {
+      const pid = s.queryHandle?.processId?.();
+      if (pid) agents.push({ thread: s.id, pid });
+    }
+    return agents;
   }
 
   getSessionsByRepo(repoPath: string): ManagedSession[] {
@@ -1978,18 +2053,10 @@ class AgentSessionManager {
   injectEvent(id: string, event: AgentEvent): void {
     const session = this.sessions.get(id);
     if (!session) return;
+    // After the text streamed before it, as emit does.
+    this.flushStream(session);
     this.events.append(session, event);
-    const w = session.window;
-    if (!w.isDestroyed()) {
-      w.webContents.send(`${IPC.AGENT_EVENT}:${id}`, event);
-    }
-    // Notify internal listeners
-    const listeners = this.eventListeners.get(id);
-    if (listeners) {
-      for (const cb of listeners) {
-        try { cb(event); } catch { /* non-fatal */ }
-      }
-    }
+    this.deliver(session, event);
   }
 
   /** Start a search request (see SessionEventStore.beginSearch). Returns a
@@ -2350,10 +2417,7 @@ class AgentSessionManager {
         logger.warn(`[healthCheck] session ${id} has no queryHandle but status=running — marking stopped`);
         session.status = 'stopped';
         session.emit?.({ type: 'process_exit' });
-        const w = session.window;
-        if (!w.isDestroyed()) {
-          w.webContents.send(IPC.SESSION_STATUS, id, 'stopped');
-        }
+        this.sendStatus(session, 'stopped');
       }
     }
 

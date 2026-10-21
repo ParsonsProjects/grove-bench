@@ -122,6 +122,54 @@ describe('App unread flag', () => {
     expect(store.needsAttention.w).toBe(true);
   });
 
+  it('keeps the open thread unread when it is marked so, until it is opened again', async () => {
+    mockGroveBench.getSettings.mockResolvedValue(JSON.parse(JSON.stringify(settingsStore.current)));
+    mockGroveBench.listRepos.mockResolvedValue([]);
+    getOpenTabs.mockResolvedValue([]);
+    render(App);
+    await screen.findByText('Add a project to get started.', {}, { timeout: 5000 });
+
+    store.sessions = [
+      { id: 'a', branch: 'feat-a', repoPath: '/repo', status: 'running' },
+      { id: 'b', branch: 'feat-b', repoPath: '/repo', status: 'running' },
+    ] as any;
+    store.activeSessionId = 'a';
+    flushSync();
+    // What the sidebar's Mark as Unread does.
+    store.markNeedsAttention('a');
+    flushSync();
+    expect(store.needsAttention.a).toBe(true);
+
+    store.activeSessionId = 'b';
+    flushSync();
+    expect(store.needsAttention.a).toBe(true);
+    store.activeSessionId = 'a';
+    flushSync();
+    expect(store.needsAttention.a).toBeUndefined();
+  });
+
+  it('brings back last run\'s unread flags, but not on a thread opened while they load', async () => {
+    mockGroveBench.getSettings.mockResolvedValue(JSON.parse(JSON.stringify(settingsStore.current)));
+    mockGroveBench.listRepos.mockResolvedValue([]);
+    getOpenTabs.mockResolvedValue([]);
+    mockGroveBench.notifyRestoreComplete.mockClear();
+    mockGroveBench.getUnreadSessions.mockImplementationOnce(async () => {
+      // The projects have loaded and the user opened 'a' meanwhile.
+      store.sessions = [
+        { id: 'a', branch: 'feat-a', repoPath: '/repo', status: 'running' },
+        { id: 'b', branch: 'feat-b', repoPath: '/repo', status: 'running' },
+      ] as any;
+      store.activeSessionId = 'a';
+      return ['a', 'b'];
+    });
+    render(App);
+    await vi.waitFor(() => expect(mockGroveBench.notifyRestoreComplete).toHaveBeenCalled(), { timeout: 5000 });
+    flushSync();
+
+    expect(store.needsAttention.a).toBeUndefined();
+    expect(store.needsAttention.b).toBe(true);
+  });
+
   it('does not mark it unread when it is closed mid-turn', async () => {
     await renderWithWorkingConversation();
 

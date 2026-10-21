@@ -67,6 +67,23 @@ class GoalStore {
     }
   }
 
+  /** Read the goals of several conversations in one call (the sidebar's
+   *  tooltips), skipping ones already loaded or being read. An id main
+   *  leaves out has no entry yet, which is no goal so far, as in load. */
+  async loadMany(sessionIds: string[]): Promise<void> {
+    const missing = sessionIds.filter((id) => !this.isLoaded(id) && !this.loading.has(id));
+    if (missing.length === 0) return;
+    for (const id of missing) this.loading.add(id);
+    try {
+      const fetched = await window.groveBench.getConversationGoals(missing);
+      const added: Record<string, ConversationGoal> = {};
+      for (const id of missing) if (!this.isLoaded(id)) added[id] = fetched[id] ?? NO_GOAL;
+      this.goals = { ...this.goals, ...added };
+    } catch { /* not loaded: the next call tries again */ } finally {
+      for (const id of missing) this.loading.delete(id);
+    }
+  }
+
   /** After a turn ends: make the conversation's first goal, if it has never
    *  had one. Main decides; this only skips the call when the answer is known. */
   async autoGenerate(sessionId: string): Promise<void> {

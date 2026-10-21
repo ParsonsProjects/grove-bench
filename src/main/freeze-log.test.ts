@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import type { IpcMain } from 'electron';
 import { ChildProcess, execFile } from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import { constants as perfConstants, PerformanceObserver } from 'node:perf_hooks';
-import { createFreezeLog, launchLabel, sanitizeReport, startStallWatch, freezeLog, GC_MIN_MS, STALL_GAP_MS, TICK_MS, type GcEntry } from './freeze-log.js';
+import { createFreezeLog, formatBytes, launchLabel, sanitizeReport, startStallWatch, freezeLog, GC_MIN_MS, STALL_GAP_MS, TICK_MS, type GcEntry } from './freeze-log.js';
 import { logger } from './logger.js';
 
 /** A freeze log on a clock the test moves by hand. */
@@ -17,11 +18,18 @@ function setup() {
   };
 }
 
-/** A stand-in for ipcMain that keeps the listeners registered with it. */
+/** A stand-in for ipcMain: an EventEmitter, as ipcMain is, for the
+ *  messages the window sends, and the handlers registered with handle. */
 function fakeIpc() {
-  const listeners = new Map<string, (...args: unknown[]) => unknown>();
-  const ipc = { handle: (channel: string, listener: (...args: unknown[]) => unknown) => { listeners.set(channel, listener); } };
-  return { ipc: ipc as unknown as Pick<IpcMain, 'handle'>, invoke: (channel: string, ...args: unknown[]) => listeners.get(channel)!({ sender: null }, ...args) };
+  const handlers = new Map<string, (...args: unknown[]) => unknown>();
+  const emitter = Object.assign(new EventEmitter(), {
+    handle: (channel: string, listener: (...args: unknown[]) => unknown) => { handlers.set(channel, listener); },
+  });
+  return {
+    ipc: emitter as unknown as Pick<IpcMain, 'handle' | 'on' | 'once' | 'removeListener' | 'off' | 'listenerCount'>,
+    invoke: (channel: string, ...args: unknown[]) => handlers.get(channel)!({ sender: null }, ...args),
+    send: (channel: string, ...args: unknown[]) => emitter.emit(channel, { sender: null }, ...args),
+  };
 }
 
 afterEach(() => {
@@ -80,6 +88,89 @@ describe('main-process stalls', () => {
     log.tick();
     await expect(result).resolves.toBe('resumed abc');
     expect(lines).toEqual(["main process didn't run for 200 ms; IPC calls during it: session:resume (200 ms)"]);
+  });
+
+  it('names messages the window sent without waiting (ipc.on), with their arguments passed through', () => {
+    const { log, lines, advance } = setup();
+    const { ipc, send } = fakeIpc();
+    log.timeIpcHandlers(ipc);
+    const seen: unknown[] = [];
+    ipc.on('agent:send', (_event, id: unknown) => { seen.push(id); advance(260); });
+
+    send('agent:send', 'abc');
+    log.tick();
+    expect(seen).toEqual(['abc']);
+    expect(lines).toEqual(["main process didn't run for 260 ms; IPC messages during it: agent:send (260 ms)"]);
+  });
+
+  it('counts messages by channel, so a burst of them still leaves the slow call named', () => {
+    const { log, lines, advance } = setup();
+    const { ipc, invoke, send } = fakeIpc();
+    log.timeIpcHandlers(ipc);
+    ipc.handle('agent:historyPage', () => { advance(400); return 'page'; });
+    ipc.on('pty:write', () => {});
+    ipc.on('preview:setBounds', () => advance(2));
+
+    advance(TICK_MS); log.tick();
+    invoke('agent:historyPage');
+    // A paste queued behind the slow call: one message a keystroke.
+    for (let i = 0; i < 120; i++) send('pty:write', 'term-1', 'x');
+    for (let i = 0; i < 3; i++) send('preview:setBounds', { x: 0, y: 0, width: 800, height: 600 });
+    log.tick();
+    // The next stall counts only its own.
+    send('pty:write', 'term-1', 'y');
+    advance(300); log.tick();
+
+    expect(lines).toEqual([
+      "main process didn't run for 406 ms; IPC calls during it: agent:historyPage (400 ms); IPC messages during it: preview:setBounds ×3 (6 ms), pty:write ×120 (0 ms)",
+      "main process didn't run for 300 ms; IPC messages during it: pty:write (0 ms)",
+    ]);
+  });
+
+  it('removes a listener given to off or removeListener', () => {
+    const { log } = setup();
+    const { ipc, send } = fakeIpc();
+    log.timeIpcHandlers(ipc);
+    const listener = vi.fn();
+    ipc.on('app-state:set', listener);
+    ipc.on('app-state:set', listener);
+    send('app-state:set', 1);
+    expect(listener).toHaveBeenCalledTimes(2);
+
+    ipc.off('app-state:set', listener);
+    expect(ipc.listenerCount('app-state:set')).toBe(1);
+    ipc.removeListener('app-state:set', listener);
+    expect(ipc.listenerCount('app-state:set')).toBe(0);
+    send('app-state:set', 2);
+    expect(listener).toHaveBeenCalledTimes(2);
+  });
+
+  it('runs a once listener once, counts it, and leaves nothing behind', () => {
+    const { log, lines, advance } = setup();
+    const { ipc, send } = fakeIpc();
+    log.timeIpcHandlers(ipc);
+    const listener = vi.fn((_event: unknown, _value: unknown) => advance(200));
+    ipc.once('window:ready', listener);
+
+    send('window:ready', 'first');
+    send('window:ready', 'second');
+    log.tick();
+    expect(listener).toHaveBeenCalledOnce();
+    expect(listener).toHaveBeenCalledWith({ sender: null }, 'first');
+    expect(ipc.listenerCount('window:ready')).toBe(0);
+    expect(lines).toEqual(["main process didn't run for 200 ms; IPC messages during it: window:ready (200 ms)"]);
+  });
+
+  it('removes a once listener given to off before it runs', () => {
+    const { log } = setup();
+    const { ipc, send } = fakeIpc();
+    log.timeIpcHandlers(ipc);
+    const listener = vi.fn();
+    ipc.once('window:ready', listener);
+    ipc.off('window:ready', listener);
+    send('window:ready');
+    expect(listener).not.toHaveBeenCalled();
+    expect(ipc.listenerCount('window:ready')).toBe(0);
   });
 
   it('ignores the gap a system sleep leaves', () => {
@@ -191,6 +282,102 @@ describe('timed work', () => {
     expect(() => log.timeWork('event log rewrite, 900 events', () => { advance(200); throw new Error('EBUSY'); })).toThrow('EBUSY');
     log.tick();
     expect(lines).toEqual(["main process didn't run for 200 ms; other work: event log rewrite, 900 events (200 ms)"]);
+  });
+});
+
+describe('agent output', () => {
+  /** Let a tick queued from a microtask run. */
+  const settle = () => new Promise((r) => setImmediate(r));
+
+  it('names the agent events a stall handled, the output they came from and the time it took', async () => {
+    const { log, lines, advance } = setup();
+    log.timeAgentOutput(2048, () => {
+      advance(250);
+      log.noteAgentEvent();
+      log.noteAgentEvent();
+    });
+    await settle();
+    advance(30); log.tick();
+    expect(lines).toEqual(["main process didn't run for 280 ms; agent events: 2 from 2 KB of output (250 ms)"]);
+  });
+
+  it('times the promise chain a chunk sets off, as the agent SDK parses it', async () => {
+    const { log, lines, advance } = setup();
+    log.timeAgentOutput(100, () => {
+      void Promise.resolve()
+        .then(() => advance(120))
+        .then(() => Promise.resolve())
+        .then(() => { advance(80); log.noteAgentEvent(); });
+    });
+    await settle();
+    log.tick();
+    expect(lines).toEqual(["main process didn't run for 200 ms; agent events: 1 from 100 bytes of output (200 ms)"]);
+  });
+
+  it('counts only what came after the tick before the stall', async () => {
+    const { log, lines, advance } = setup();
+    log.timeAgentOutput(5 * 1024 * 1024, () => { log.noteAgentEvent(); });
+    await settle();
+    advance(TICK_MS); log.tick();
+    log.noteAgentEvent();
+    advance(400); log.tick();
+    expect(lines).toEqual(["main process didn't run for 400 ms; agent events: 1"]);
+  });
+
+  it('names how many changes the worktree watchers saw', () => {
+    const { log, lines, advance } = setup();
+    for (let i = 0; i < 3; i++) log.noteWorktreeChange();
+    advance(300); log.tick();
+    expect(lines).toEqual(["main process didn't run for 300 ms; worktree file changes: 3"]);
+  });
+
+  it('totals agent output for the health line', async () => {
+    const { log, advance } = setup();
+    log.timeAgentOutput(3 * 1024 * 1024, () => { advance(40); log.noteAgentEvent(); });
+    await settle();
+    expect(log.takeStats().agentOutput).toEqual({ events: 1, chars: 3 * 1024 * 1024, ms: 40 });
+    expect(log.takeStats().agentOutput).toEqual({ events: 0, chars: 0, ms: 0 });
+  });
+});
+
+describe('process CPU over a stall', () => {
+  it('says how much CPU the process used, when it is measured', () => {
+    let t = 1000;
+    let cpu = 5000;
+    const lines: string[] = [];
+    const log = createFreezeLog({ now: () => t, write: (line) => lines.push(line), cpuMs: () => cpu });
+    t += TICK_MS; cpu += 10; log.tick();
+    t += 900; cpu += 40; log.tick();
+    expect(lines).toEqual(["main process didn't run for 900 ms (process CPU, all threads: 40 ms)"]);
+  });
+
+  it('measures from where the clock starts again after a sleep', () => {
+    let t = 1000;
+    let cpu = 0;
+    const lines: string[] = [];
+    const log = createFreezeLog({ now: () => t, write: (line) => lines.push(line), cpuMs: () => cpu });
+    log.suspend();
+    t += 60_000; cpu += 3000;
+    log.resume();
+    t += 500; cpu += 450; log.tick();
+    expect(lines).toEqual(["main process didn't run for 500 ms (process CPU, all threads: 450 ms)"]);
+  });
+});
+
+describe('formatBytes', () => {
+  const MB = 1024 * 1024;
+
+  it('gives bytes, KB, MB or GB', () => {
+    expect(formatBytes(512)).toBe('512 bytes');
+    expect(formatBytes(2048)).toBe('2 KB');
+    expect(formatBytes(1.25 * MB)).toBe('1.3 MB');
+    expect(formatBytes(1229 * MB)).toBe('1.2 GB');
+  });
+
+  it('gives a whole number from 10 up', () => {
+    expect(formatBytes(12.3 * MB)).toBe('12 MB');
+    expect(formatBytes(410.4 * MB)).toBe('410 MB');
+    expect(formatBytes(12.5 * 1024 * MB)).toBe('13 GB');
   });
 });
 
@@ -346,8 +533,9 @@ describe('takeStats', () => {
     advance(200); log.tick();
     advance(300); log.tick();
     log.logWindowFreeze({ kind: 'frame', durationMs: 150 });
-    expect(log.takeStats()).toEqual({ stalls: 2, stallMs: 500, slowFrames: 1, launches: 0, launchMs: 0, slowestLaunch: null, loopDelay: { p50: 150, p99: 250, max: 250 } });
-    expect(log.takeStats()).toEqual({ stalls: 0, stallMs: 0, slowFrames: 0, launches: 0, launchMs: 0, slowestLaunch: null, loopDelay: null });
+    const noOutput = { events: 0, chars: 0, ms: 0 };
+    expect(log.takeStats()).toEqual({ stalls: 2, stallMs: 500, slowFrames: 1, launches: 0, launchMs: 0, slowestLaunch: null, agentOutput: noOutput, loopDelay: { p50: 150, p99: 250, max: 250 } });
+    expect(log.takeStats()).toEqual({ stalls: 0, stallMs: 0, slowFrames: 0, launches: 0, launchMs: 0, slowestLaunch: null, agentOutput: noOutput, loopDelay: null });
   });
 
   it('measures the event-loop delay from how late each tick ran', () => {

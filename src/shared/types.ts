@@ -462,7 +462,9 @@ export type CheckpointDiffScope = 'turn' | 'since' | 'full';
 export type FileDiffResult =
   | { kind: 'text'; patch: string }
   | { kind: 'binary' }
-  | { kind: 'image'; ext: string };
+  | { kind: 'image'; ext: string }
+  /** A new file too big to read whole into a diff. */
+  | { kind: 'tooLarge'; bytes: number };
 
 /** Base64 data URLs for an image file's working-tree and HEAD versions (either may be null). */
 export interface ImageDiffContent {
@@ -1220,6 +1222,9 @@ export interface GroveBenchAPI {
   autoNameBranch(sessionId: string): Promise<string | null>;
   /** A conversation's goal, or null for an unknown conversation. */
   getConversationGoal(sessionId: string): Promise<ConversationGoal | null>;
+  /** Several conversations' goals in one call (the sidebar's tooltips).
+   *  Unknown ids are left out. */
+  getConversationGoals(sessionIds: string[]): Promise<Record<string, ConversationGoal>>;
   /** Save a goal the user typed. Empty text clears it; either way it is
    *  never replaced automatically. */
   setConversationGoal(sessionId: string, text: string): Promise<ConversationGoal | null>;
@@ -1522,6 +1527,10 @@ export interface GroveBenchAPI {
    *  focused) when the app last ran, so the flag survives a restart. */
   getUnreadSessions(): Promise<string[]>;
   setUnreadSessions(ids: string[]): void;
+  /** Threads flagged To do, or null while app-state.json can't be read (a
+   *  passing lock), so "none" is never mistaken for the real list. */
+  getTodoSessions(): Promise<string[] | null>;
+  setTodoSessions(ids: string[]): void;
 
   // App lifecycle
   onAppClosing(callback: () => void): () => void;
@@ -2041,6 +2050,7 @@ export const IPC = {
   SESSION_EXPORT: 'session:export',
   SESSION_AUTO_NAME: 'session:autoName',
   SESSION_GOAL_GET: 'session:getGoal',
+  SESSION_GOALS_GET: 'session:getGoals',
   SESSION_GOAL_SET: 'session:setGoal',
   SESSION_GOAL_AUTO: 'session:autoGoal',
   SESSION_GOAL_REFRESH: 'session:refreshGoal',
@@ -2159,6 +2169,8 @@ export const IPC = {
   APP_STATE_SET_GROUPS: 'appState:setConversationGroups',
   APP_STATE_GET_UNREAD: 'appState:getUnreadSessions',
   APP_STATE_SET_UNREAD: 'appState:setUnreadSessions',
+  APP_STATE_GET_TODO: 'appState:getTodoSessions',
+  APP_STATE_SET_TODO: 'appState:setTodoSessions',
   /** Main → renderer: an uncaught main-process error. */
   APP_ERROR: 'app:error',
   /** Renderer → main: an uncaught renderer error, for the file log. */

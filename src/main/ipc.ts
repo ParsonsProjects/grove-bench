@@ -15,7 +15,7 @@ import { adapterRegistry, registerClaudeAccount } from './adapters/index.js';
 import { claudeAccounts, isClaudeAccountId, newClaudeAccount } from './adapters/claude-accounts.js';
 import type { AgentAdapter } from './adapters/types.js';
 import { agentForProject, recordedAgent } from './background-tasks.js';
-import { validateBranchName, branchExists, branchExistsAnywhere, worktreeBranches, listBranches, getDefaultBranch, git, fileDiff, fileDiffAgainst, resolveMergeBase, indexFileContent, hashWorkingFiles, listProjectFiles, revertFile, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, logCommits, rebaseOnto, cherryPick, squashSince, currentBranch, recentCheckouts, getGitIdentity, gitVersion } from './git.js';
+import { validateBranchName, branchExists, branchExistsAnywhere, worktreeBranches, listBranches, getDefaultBranch, git, fileDiff, fileDiffAgainst, isTracked, resolveMergeBase, indexFileContent, hashWorkingFiles, listProjectFiles, revertFile, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, logCommits, rebaseOnto, cherryPick, squashSince, currentBranch, recentCheckouts, getGitIdentity, gitVersion } from './git.js';
 import { inspectProjectFolder, projectKind } from './project-path.js';
 import { prsForBranches, prCreate, prReviewComments, ghLogin, isNetworkError, isRateLimitError, openPrs, GH_OFFLINE_COOLDOWN_MS, GH_OFFLINE_MESSAGE, GH_RATE_LIMITED_MESSAGE } from './gh.js';
 import { tempBranchName, isTempBranch, generateBranchName } from './branch-name.js';
@@ -41,7 +41,7 @@ import * as skillSuggestions from './skill-suggestions.js';
 import * as memory from './memory.js';
 import * as memoryCompact from './memory-compact.js';
 import * as bookmarks from './bookmarks.js';
-import { listProjects, rememberProject, forgetProject, loadAppState, saveOpenTabs, saveCollapsedRepos, saveSessionSort, saveSidebarWidth, saveCollapsedPanels, loadConversationGroups, saveConversationGroups, saveUnreadSessionIds, loadUnreadSessionIds, flushPendingSaves, loadPrerequisiteCache, savePrerequisiteCache, loadUsageSnapshot } from './app-state.js';
+import { listProjects, rememberProject, forgetProject, loadOpenTabs, saveOpenTabs, loadCollapsedRepos, saveCollapsedRepos, loadSessionSort, saveSessionSort, loadSidebarWidth, saveSidebarWidth, loadCollapsedPanels, saveCollapsedPanels, loadConversationGroups, saveConversationGroups, saveUnreadSessionIds, loadUnreadSessionIds, saveTodoSessionIds, loadTodoSessionIds, loadPrerequisiteCache, savePrerequisiteCache, loadUsageSnapshot } from './app-state.js';
 import { logRendererError } from './crash-handling.js';
 import { freezeLog } from './freeze-log.js';
 import { isThreadId } from './session-event-store.js';
@@ -108,6 +108,9 @@ const MAX_BRANCH_AUTO_NAME_ATTEMPTS = 2;
 const goalInFlight = new Set<string>();
 const goalAutoAttempts = new Map<string, number>();
 const MAX_GOAL_AUTO_ATTEMPTS = 2;
+
+/** Larger files aren't read whole to show in a diff or expand its context. */
+const MAX_TEXT_FILE_BYTES = 4 * 1024 * 1024;
 
 /** Generate a goal from a conversation's messages on its own agent and save
  *  it, unless the goal changed from `current` meanwhile. Resolves to the
@@ -726,6 +729,11 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.SESSION_GOAL_GET, async (_event, sessionId: string): Promise<ConversationGoal | null> => {
     return (await worktreeManager.getGoal(sessionId)) ?? null;
+  });
+
+  ipcMain.handle(IPC.SESSION_GOALS_GET, async (_event, sessionIds: unknown): Promise<Record<string, ConversationGoal>> => {
+    if (!Array.isArray(sessionIds)) return {};
+    return worktreeManager.getGoals(sessionIds.filter((id): id is string => typeof id === 'string'));
   });
 
   ipcMain.handle(IPC.SESSION_GOAL_SET, async (_event, sessionId: string, text: string): Promise<ConversationGoal | null> => {
@@ -1358,8 +1366,9 @@ export function registerHandlers() {
     // Branch scope: working tree vs the merge base with the base branch, so
     // commits the agent already made on the branch stay in the diff.
     // Otherwise staged diff = index vs HEAD; unstaged diff = working tree vs index.
+    let diff = '';
+    let diffError: unknown;
     try {
-      let diff: string;
       if (opts?.base) {
         const mb = await resolveMergeBase(worktree.path, opts.base);
         if (!mb) throw new Error(`no merge base with ${opts.base}`);
@@ -1367,24 +1376,28 @@ export function registerHandlers() {
       } else {
         diff = await fileDiff(worktree.path, relPath, { staged });
       }
-      if (detectBinaryDiff(diff)) return { kind: 'binary' };
-      if (diff) return { kind: 'text', patch: diff };
-      // A staged-but-empty diff genuinely has no changes; don't synthesize for it.
-      if (staged) return { kind: 'text', patch: '' };
-      // Empty unstaged diff often means an untracked file — read it (guarding binaries).
+    } catch (e) {
+      diffError = e;
+    }
+    if (detectBinaryDiff(diff)) return { kind: 'binary' };
+    if (diff) return { kind: 'text', patch: diff };
+    // A staged-but-empty diff genuinely has no changes; don't synthesize for it.
+    if (staged && !diffError) return { kind: 'text', patch: '' };
+    // An empty or failed diff means a new file only when git doesn't track
+    // it. A tracked file with an empty diff has no changes (reverted since
+    // the list was read), and a failed diff of one is a real error.
+    if (await isTracked(worktree.path, relPath)) {
+      if (diffError) throw diffError;
+      return { kind: 'text', patch: '' };
+    }
+    try {
+      const { size } = await fs.stat(resolved);
+      if (size > MAX_TEXT_FILE_BYTES) return { kind: 'tooLarge', bytes: size };
       const buf = await fs.readFile(resolved);
       if (looksBinary(buf)) return { kind: 'binary' };
-      const content = buf.toString('utf-8');
-      return { kind: 'text', patch: content ? synthesizeUntrackedDiff(relPath, content) : '' };
+      return { kind: 'text', patch: synthesizeUntrackedDiff(relPath, buf.toString('utf-8')) };
     } catch {
-      // File may be untracked (new file) — try to read and synthesize diff
-      try {
-        const buf = await fs.readFile(resolved);
-        if (looksBinary(buf)) return { kind: 'binary' };
-        return { kind: 'text', patch: synthesizeUntrackedDiff(relPath, buf.toString('utf-8')) };
-      } catch {
-        return { kind: 'text', patch: '' };
-      }
+      return { kind: 'text', patch: '' };
     }
   });
 
@@ -1399,7 +1412,7 @@ export function registerHandlers() {
       if (staged) {
         content = await indexFileContent(worktree.path, relPath);
       } else {
-        if ((await fs.stat(resolved)).size > 4 * 1024 * 1024) return null;
+        if ((await fs.stat(resolved)).size > MAX_TEXT_FILE_BYTES) return null;
         const buf = await fs.readFile(resolved);
         if (looksBinary(buf)) return null;
         content = buf.toString('utf-8');
@@ -2020,39 +2033,28 @@ export function registerHandlers() {
 
   // ─── App State ───
 
-  ipcMain.handle(IPC.APP_STATE_GET_OPEN_TABS, () => {
-    // Flush any debounced writes so the renderer always reads the latest state
-    // (prevents closed tabs from reopening after Vite hot-reload).
-    flushPendingSaves();
-    return loadAppState().openTabIds;
-  });
+  // Loads read the state in memory, which has every change, saved or not,
+  // so the renderer always gets the latest (closed tabs don't reopen after a
+  // Vite hot reload) without a write here.
+  ipcMain.handle(IPC.APP_STATE_GET_OPEN_TABS, () => loadOpenTabs());
 
   ipcMain.on(IPC.APP_STATE_SET_OPEN_TABS, (_event, ids: string[]) => {
     saveOpenTabs(ids);
   });
 
-  ipcMain.handle(IPC.APP_STATE_GET_COLLAPSED_REPOS, () => {
-    flushPendingSaves();
-    return loadAppState().collapsedRepos ?? {};
-  });
+  ipcMain.handle(IPC.APP_STATE_GET_COLLAPSED_REPOS, () => loadCollapsedRepos());
 
   ipcMain.on(IPC.APP_STATE_SET_COLLAPSED_REPOS, (_event, map: Record<string, boolean>) => {
     saveCollapsedRepos(map);
   });
 
-  ipcMain.handle(IPC.APP_STATE_GET_SESSION_SORT, () => {
-    flushPendingSaves();
-    return loadAppState().sessionSort ?? { key: 'name', dir: 'asc' };
-  });
+  ipcMain.handle(IPC.APP_STATE_GET_SESSION_SORT, () => loadSessionSort());
 
   ipcMain.on(IPC.APP_STATE_SET_SESSION_SORT, (_event, sort: import('../shared/types.js').SessionSortState) => {
     saveSessionSort(sort);
   });
 
-  ipcMain.handle(IPC.APP_STATE_GET_SIDEBAR_WIDTH, () => {
-    flushPendingSaves();
-    return loadAppState().sidebarWidth ?? null;
-  });
+  ipcMain.handle(IPC.APP_STATE_GET_SIDEBAR_WIDTH, () => loadSidebarWidth());
 
   ipcMain.on(IPC.APP_STATE_SET_SIDEBAR_WIDTH, (_event, width: number) => {
     if (typeof width === 'number' && Number.isFinite(width)) {
@@ -2060,10 +2062,7 @@ export function registerHandlers() {
     }
   });
 
-  ipcMain.handle(IPC.APP_STATE_GET_COLLAPSED_PANELS, () => {
-    flushPendingSaves();
-    return loadAppState().collapsedPanels ?? {};
-  });
+  ipcMain.handle(IPC.APP_STATE_GET_COLLAPSED_PANELS, () => loadCollapsedPanels());
 
   ipcMain.on(IPC.APP_STATE_SET_COLLAPSED_PANELS, (_event, panels: unknown) => {
     saveCollapsedPanels(panels);
@@ -2075,15 +2074,18 @@ export function registerHandlers() {
     saveConversationGroups(groups);
   });
 
-  ipcMain.handle(IPC.APP_STATE_GET_UNREAD, () => {
-    flushPendingSaves();
-    return loadUnreadSessionIds();
-  });
+  ipcMain.handle(IPC.APP_STATE_GET_UNREAD, () => loadUnreadSessionIds());
 
   ipcMain.on(IPC.APP_STATE_SET_UNREAD, (_event, ids: unknown) => {
     if (Array.isArray(ids) && ids.every((id) => typeof id === 'string')) {
       saveUnreadSessionIds(ids);
     }
+  });
+
+  ipcMain.handle(IPC.APP_STATE_GET_TODO, () => loadTodoSessionIds());
+
+  ipcMain.on(IPC.APP_STATE_SET_TODO, (_event, ids: unknown) => {
+    saveTodoSessionIds(ids);
   });
 
   // ─── Error reporting ───

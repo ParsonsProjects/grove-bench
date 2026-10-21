@@ -7,6 +7,7 @@ import Sidebar from './Sidebar.svelte';
 import { store } from '../stores/sessions.svelte.js';
 import { messageStore } from '../stores/messages.svelte.js';
 import { sessionPreviewStore } from '../stores/sessionPreviews.svelte.js';
+import { goalStore } from '../stores/goals.svelte.js';
 import { settingsStore } from '../stores/settings.svelte.js';
 import { prStore } from '../stores/pr.svelte.js';
 import { panelStore } from '../stores/panels.svelte.js';
@@ -15,6 +16,7 @@ import { DEFAULT_REPO_COLORS } from '../lib/repo-colors.js';
 import { AGENT_SPRITES } from '../lib/agent-sprite.js';
 import { agentsStore } from '../stores/agents.svelte.js';
 import { groupStore } from '../stores/groups.svelte.js';
+import { todoStore } from '../stores/todo.svelte.js';
 import { draftStore } from '../stores/draft.svelte.js';
 import { gitStatusStore } from '../stores/gitStatus.svelte.js';
 
@@ -319,6 +321,60 @@ describe('Sidebar session rows', () => {
     }
   });
 
+  describe('goal tooltip', () => {
+    const goal = (text: string | null, hidden = false) => ({ text, source: text ? 'auto' as const : null, hidden });
+    const row = (name: string) => screen.getAllByText(name)[0].closest('button')!;
+
+    beforeEach(() => {
+      goalStore.goals = {};
+      settingsStore.current.showConversationGoal = true;
+      store.sessions = [
+        { id: 's1', branch: 'feat-x', repoPath: '/repo-a', status: 'running', displayName: 'Sidebar revamp' },
+        { id: 's2', branch: 'feat-y', repoPath: '/repo-a', status: 'running', displayName: 'Parser fix' },
+        { id: 's3', branch: 'feat-z', repoPath: '/repo-a', status: 'running', displayName: 'Docs' },
+      ] as any;
+      mockGroveBench.getConversationGoals.mockResolvedValue({
+        s1: goal('Group threads by project in the sidebar'),
+        s2: goal('Fix the parser crash', true),
+        s3: goal(null),
+      });
+    });
+
+    afterEach(() => {
+      goalStore.goals = {};
+      settingsStore.current.showConversationGoal = false;
+      mockGroveBench.getConversationGoals.mockReset();
+      mockGroveBench.getConversationGoals.mockResolvedValue({});
+    });
+
+    it('adds the goal under the name, reading every thread in one call', async () => {
+      render(Sidebar);
+      await waitFor(() => expect(row('Sidebar revamp')).toHaveAttribute('title', 'Sidebar revamp\nGoal: Group threads by project in the sidebar'));
+      expect(mockGroveBench.getConversationGoals).toHaveBeenCalledTimes(1);
+      expect(mockGroveBench.getConversationGoals).toHaveBeenCalledWith(['s1', 's2', 's3']);
+      // A hidden goal stays hidden here too, and no goal adds no line.
+      expect(row('Parser fix')).toHaveAttribute('title', 'Parser fix');
+      expect(row('Docs')).toHaveAttribute('title', 'Docs');
+    });
+
+    it('follows an edit to the goal', async () => {
+      render(Sidebar);
+      await waitFor(() => expect(goalStore.isLoaded('s3')).toBe(true));
+      goalStore.goals = { ...goalStore.goals, s3: goal('Write the install guide') };
+      await tick();
+      expect(row('Docs')).toHaveAttribute('title', 'Docs\nGoal: Write the install guide');
+    });
+
+    it('reads and shows no goals while goals are off', async () => {
+      settingsStore.current.showConversationGoal = false;
+      goalStore.goals = { s1: goal('Group threads by project in the sidebar') };
+      render(Sidebar);
+      await tick();
+      expect(row('Sidebar revamp')).toHaveAttribute('title', 'Sidebar revamp');
+      expect(mockGroveBench.getConversationGoals).not.toHaveBeenCalled();
+    });
+  });
+
   it('opens the session finder from the search field', async () => {
     render(Sidebar);
     await fireEvent.click(screen.getByTitle('Search threads (Ctrl+R)'));
@@ -512,6 +568,146 @@ describe('Sidebar attention triage', () => {
 
     expect(screen.getByRole('menu')).toBeInTheDocument();
     expect(screen.queryByText('Close Thread')).toBeNull();
+  });
+});
+
+describe('Sidebar follow-up flags', () => {
+  beforeEach(() => {
+    store.repos = ['/repo-a', '/repo-b'];
+    store.sessions = [
+      { id: 'working', branch: 'feat-a', repoPath: '/repo-a', status: 'running', displayName: 'Working one' },
+      { id: 'finished', branch: 'feat-c', repoPath: '/repo-b', status: 'running', displayName: 'Finished one' },
+      { id: 'quiet', branch: 'feat-d', repoPath: '/repo-b', status: 'running', displayName: 'Quiet one' },
+    ] as any;
+    store.activeSessionId = 'quiet';
+    store.needsAttention = { finished: true };
+    messageStore.setIsRunning('working', true);
+    todoStore.ids = [];
+    todoStore.ready = true;
+  });
+
+  afterEach(() => {
+    store.needsAttention = {};
+    todoStore.ids = [];
+    todoStore.ready = false;
+  });
+
+  const chips = () => screen.getByRole('group', { name: 'Filter threads' });
+
+  it('flags a thread To do from its menu: the row shows it and the chip counts it', async () => {
+    render(Sidebar);
+    expect(chips()).toHaveTextContent('To do 0');
+
+    await fireEvent.contextMenu(screen.getByText('Quiet one'));
+    await fireEvent.click(screen.getByText('Mark as To Do'));
+
+    expect(todoStore.has('quiet')).toBe(true);
+    expect(mockGroveBench.setTodoSessions).toHaveBeenLastCalledWith(['quiet']);
+    expect(chips()).toHaveTextContent('To do 1');
+    // Under Threads and under its project.
+    expect(screen.getAllByRole('img', { name: 'To do' }).length).toBeGreaterThan(0);
+    // It is still counted under its state too.
+    expect(chips()).toHaveTextContent('Idle 1');
+  });
+
+  it('clears To do from the menu', async () => {
+    todoStore.ids = ['quiet'];
+    render(Sidebar);
+
+    await fireEvent.contextMenu(screen.getByText('Quiet one'));
+    expect(screen.queryByText('Mark as To Do')).toBeNull();
+    await fireEvent.click(screen.getByText('Clear To Do'));
+
+    expect(todoStore.has('quiet')).toBe(false);
+    expect(mockGroveBench.setTodoSessions).toHaveBeenLastCalledWith([]);
+    expect(screen.queryByRole('img', { name: 'To do' })).toBeNull();
+  });
+
+  it('lists flagged threads under the To do chip whatever their state, closed ones too', async () => {
+    store.sessions = [
+      ...store.sessions,
+      { id: 'closed', branch: 'feat-f', repoPath: '/repo-b', status: 'stopped', displayName: 'Closed one' },
+    ] as any;
+    todoStore.ids = ['working', 'closed'];
+    render(Sidebar);
+    // Closed, and its project starts folded: nowhere to be seen yet.
+    expect(screen.queryByText('Closed one')).not.toBeInTheDocument();
+
+    await fireEvent.click(screen.getByTitle('To do: 2'));
+    expect(screen.getAllByText('Working one').length).toBeGreaterThan(0);
+    // Under Threads, as the chip is on.
+    expect(screen.getByText('Closed one')).toBeInTheDocument();
+    expect(screen.queryByText('Quiet one')).not.toBeInTheDocument();
+    expect(screen.queryByText('Finished one')).not.toBeInTheDocument();
+  });
+
+  it('keeps the flag when the thread is opened, unlike unread', async () => {
+    todoStore.ids = ['finished'];
+    render(Sidebar);
+
+    await fireEvent.click(screen.getAllByText('Finished one')[0]);
+    expect(store.needsAttention['finished']).toBeUndefined();
+    expect(todoStore.has('finished')).toBe(true);
+    expect(chips()).toHaveTextContent('To do 1');
+  });
+
+  it('says how to add one when nothing is flagged', async () => {
+    render(Sidebar);
+    await fireEvent.click(screen.getByTitle('To do: 0'));
+    expect(screen.getByText(/Right-click one and choose Mark as To Do/)).toBeInTheDocument();
+  });
+
+  it('shows the To do count on the project header', () => {
+    todoStore.ids = ['quiet', 'finished'];
+    render(Sidebar);
+    expect(screen.getByTitle('2 to do')).toBeInTheDocument();
+  });
+
+  it('offers no To do until the saved flags are read', async () => {
+    todoStore.ready = false;
+    render(Sidebar);
+    expect(chips()).not.toHaveTextContent('To do');
+    await fireEvent.contextMenu(screen.getByText('Quiet one'));
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    expect(screen.queryByText('Mark as To Do')).toBeNull();
+  });
+
+  it('marks a thread unread from its menu, and read again', async () => {
+    render(Sidebar);
+
+    await fireEvent.contextMenu(screen.getAllByText('Working one')[0]);
+    await fireEvent.click(screen.getByText('Mark as Unread'));
+    expect(store.needsAttention['working']).toBe(true);
+
+    await fireEvent.contextMenu(screen.getAllByText('Finished one')[0]);
+    await fireEvent.click(screen.getByText('Mark as Read'));
+    expect(store.needsAttention['finished']).toBeUndefined();
+    expect(chips()).toHaveTextContent('Unread 0');
+  });
+
+  it('marks the open thread unread too, and it stays so while it is open', async () => {
+    render(Sidebar);
+    await fireEvent.contextMenu(screen.getAllByText('Quiet one')[0]);
+    await fireEvent.click(screen.getByText('Mark as Unread'));
+    expect(store.needsAttention['quiet']).toBe(true);
+    expect(chips()).toHaveTextContent('Unread 2');
+  });
+
+  it('offers no Mark as Unread on a closed thread, which counts as dealt with', async () => {
+    store.sessions = [...store.sessions, { id: 'closed', branch: 'feat-f', repoPath: '/repo-b', status: 'stopped', displayName: 'Closed one' }] as any;
+    mockGroveBench.getCollapsedRepos.mockResolvedValue({ '/repo-b': false });
+    render(Sidebar);
+    await fireEvent.contextMenu(await screen.findByText('Closed one'));
+    expect(screen.getByText('Mark as To Do')).toBeInTheDocument();
+    expect(screen.queryByText('Mark as Unread')).toBeNull();
+  });
+
+  it('offers no Mark as Unread on a red thread, where it would not show', async () => {
+    store.sessions = [...store.sessions, { id: 'broken', branch: 'feat-e', repoPath: '/repo-b', status: 'error', displayName: 'Broken one' }] as any;
+    render(Sidebar);
+    await fireEvent.contextMenu(screen.getAllByText('Broken one')[0]);
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    expect(screen.queryByText('Mark as Unread')).toBeNull();
   });
 });
 
@@ -861,6 +1057,47 @@ describe('Sidebar clean-up dialog', () => {
     expect(await screen.findByTestId('cleanup-pr-nopr')).toHaveTextContent('no PR');
     // Running sessions are not candidates, so no gh call is spent on them.
     expect(mockGroveBench.getPrs).not.toHaveBeenCalledWith('live');
+  });
+
+  describe('with threads marked To do', () => {
+    beforeEach(() => {
+      todoStore.ready = true;
+      todoStore.ids = ['nopr', 'merged'];
+    });
+
+    afterEach(() => {
+      todoStore.ids = [];
+      todoStore.ready = false;
+    });
+
+    it('leaves them unticked, and says why', async () => {
+      await openDialog();
+      await waitFor(() => expect(screen.getByLabelText(/Open one/)).toBeChecked());
+      expect(screen.getByLabelText(/No PR one/)).not.toBeChecked();
+      expect(screen.getByLabelText(/Merged one/)).not.toBeChecked();
+      expect(screen.getByTestId('cleanup-todo-nopr')).toHaveTextContent('to do');
+    });
+
+    it('keeps them unticked through "Select all" and "Select merged"', async () => {
+      await openDialog();
+      await waitFor(() => expect(screen.getByLabelText(/Open one/)).toBeChecked());
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Select all except 2 to do' }));
+      expect(screen.getByLabelText(/Open one/)).toBeChecked();
+      expect(screen.getByLabelText(/No PR one/)).not.toBeChecked();
+      expect(screen.getByLabelText(/Merged one/)).not.toBeChecked();
+
+      await fireEvent.click(await screen.findByRole('button', { name: 'Select merged (1)' }));
+      expect(screen.getByLabelText(/Merged one/)).not.toBeChecked();
+    });
+
+    it('says so before removing one the user ticked', async () => {
+      await openDialog();
+      await waitFor(() => expect(screen.getByLabelText(/Open one/)).toBeChecked());
+      await fireEvent.click(screen.getByLabelText(/No PR one/));
+      await fireEvent.click(screen.getByRole('button', { name: /^Remove \d+ threads?$/ }));
+      expect(await screen.findByText('1 of them is marked To do.')).toBeInTheDocument();
+    });
   });
 
   it('"Select merged" ticks only conversations whose PR has been merged', async () => {

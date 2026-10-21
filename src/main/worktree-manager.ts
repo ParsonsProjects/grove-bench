@@ -513,6 +513,18 @@ export class WorktreeManager {
     return entry && !entry.pendingRemoval ? goalOf(entry) : undefined;
   }
 
+  /** Several conversations' goals from one manifest read (the sidebar's
+   *  tooltips). Unknown ids are left out. */
+  async getGoals(worktreeIds: string[]): Promise<Record<string, ConversationGoal>> {
+    const manifest = await this.loadManifest();
+    const goals: Record<string, ConversationGoal> = {};
+    for (const id of worktreeIds) {
+      const entry = manifest[id];
+      if (entry && !entry.pendingRemoval) goals[id] = goalOf(entry);
+    }
+    return goals;
+  }
+
   /** Save a goal. With `expected`, only while the goal is still what it was
    *  when `expected` was read, so an edit made while one was being generated
    *  is never overwritten. Returns the saved goal, or null when nothing was

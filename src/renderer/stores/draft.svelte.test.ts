@@ -7,6 +7,7 @@ import { messageStore } from './messages.svelte.js';
 import { arrivalScene } from './arrivalScene.svelte.js';
 import { settingsStore } from './settings.svelte.js';
 import { groupStore } from './groups.svelte.js';
+import { todoStore } from './todo.svelte.js';
 import type { ControlDescriptor } from '../../shared/types.js';
 
 const modeControl: ControlDescriptor = {
@@ -309,6 +310,25 @@ describe('draftStore.start', () => {
     expect(store.error).toBeNull();
   });
 
+  it('drops the To do flag of a row flagged while it started, when main refuses', async () => {
+    let fail!: (e: Error) => void;
+    createSessionMock().mockReturnValueOnce(new Promise((_, reject) => { fail = reject; }));
+    draftStore.open('/repo/one');
+    await settle();
+    draftStore.setText('hello');
+    const started = draftStore.start();
+    todoStore.ready = true;
+    try {
+      todoStore.set('new1', true);
+      fail(new Error('Branch "feat/x" already exists'));
+      expect(await started).toBe(false);
+      expect(todoStore.has('new1')).toBe(false);
+    } finally {
+      todoStore.ids = [];
+      todoStore.ready = false;
+    }
+  });
+
   it('lets a thread closed before main replied go: no draft back, no message sent', async () => {
     let finish!: (v: unknown) => void;
     createSessionMock().mockReturnValueOnce(new Promise((r) => { finish = r; }));
@@ -595,5 +615,80 @@ describe('draft in a group', () => {
       expect(draftStore.draft?.newGroupName).toBeUndefined();
       expect(draftStore.draft?.groupId).toBe(billing);
     });
+  });
+});
+
+describe('draftStore.startThread', () => {
+  it('starts a thread with the given message, agent and model, and leaves the user\'s draft alone', async () => {
+    draftStore.open('/repo/two');
+    draftStore.setText('half typed');
+    await settle();
+
+    expect(await draftStore.startThread({
+      repoPath: '/repo/one', agentId: 'codex', model: 'o4', start: { kind: 'new', branchName: '', baseBranch: '' }, text: 'Write a skill',
+    })).toBe(true);
+    expect(createSessionMock()).toHaveBeenCalledWith(expect.objectContaining({
+      repoPath: '/repo/one', adapterType: 'codex', model: 'o4', branchName: '', baseBranch: 'main',
+    }));
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith('new1', 'Write a skill');
+    expect(store.activeSessionId).toBe('new1');
+    expect(draftStore.draft).toMatchObject({ repoPath: '/repo/two', text: 'half typed' });
+    arrivalScene.end('new1');
+  });
+
+  it('runs in the project folder when asked', async () => {
+    createSessionMock().mockResolvedValue({ id: 'new1', branch: 'main', agentType: 'claude-code' });
+    await draftStore.startThread({ repoPath: '/repo/one', start: { kind: 'folder' }, text: 'Write a skill' });
+    expect(createSessionMock()).toHaveBeenCalledWith(expect.objectContaining({ repoPath: '/repo/one', direct: true }));
+    expect(store.sessions.find((s) => s.id === 'new1')).toMatchObject({ direct: true, status: 'running' });
+    arrivalScene.end('new1');
+  });
+
+  it('runs in the folder of a project without git, whatever start says', async () => {
+    store.setFolderProject('/repo/two', true);
+    try {
+      createSessionMock().mockResolvedValue({ id: 'new1', branch: '', agentType: 'claude-code', noGit: true });
+      await draftStore.startThread({ repoPath: '/repo/two', start: { kind: 'new', branchName: '', baseBranch: '' }, text: 'Write a skill' });
+      expect(createSessionMock()).toHaveBeenCalledWith(expect.objectContaining({ direct: true }));
+      expect(mockGroveBench.getDefaultBranch).not.toHaveBeenCalled();
+    } finally {
+      store.setFolderProject('/repo/two', false);
+      arrivalScene.end('new1');
+    }
+  });
+
+  it('falls back to the default agent, without the model, when the agent asked for is not offered', async () => {
+    agentsStore.list = [...agentsStore.list, { id: 'opencode', displayName: 'OpenCode', capabilities: {}, stage: 'alpha' }];
+    await draftStore.startThread({ repoPath: '/repo/one', agentId: 'opencode', model: 'big', text: 'Write a skill' });
+    const opts = createSessionMock().mock.calls[0][0];
+    expect(opts.adapterType).toBe('claude-code');
+    expect(opts.model).toBeUndefined();
+    arrivalScene.end('new1');
+  });
+
+  it('says what went wrong in a toast when main refuses, and brings no draft back', async () => {
+    createSessionMock().mockRejectedValue(new Error('Branch "feat/x" already exists'));
+    expect(await draftStore.startThread({ repoPath: '/repo/one', text: 'Write a skill' })).toBe(false);
+    expect(store.error).toContain('already exists');
+    expect(store.sessions.find((s) => s.id === 'new1')).toBeUndefined();
+    expect(draftStore.draft).toBeNull();
+    store.clearError();
+  });
+
+  it('brings back the thread that was on screen when main refuses', async () => {
+    store.sessions = [{ id: 's1', branch: 'feat/x', repoPath: '/repo/one', status: 'running', agentType: 'claude-code' }];
+    store.activeSessionId = 's1';
+    createSessionMock().mockRejectedValue(new Error('Claude Agent isn\'t installed'));
+    expect(await draftStore.startThread({ repoPath: '/repo/one', text: 'Write a skill' })).toBe(false);
+    expect(store.activeSessionId).toBe('s1');
+    expect(store.error).toContain("isn't installed");
+    store.clearError();
+  });
+
+  it('refuses a project that was removed', async () => {
+    expect(await draftStore.startThread({ repoPath: '/repo/gone', text: 'Write a skill' })).toBe(false);
+    expect(createSessionMock()).not.toHaveBeenCalled();
+    expect(store.error).toContain('project was removed');
+    store.clearError();
   });
 });
