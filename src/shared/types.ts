@@ -284,7 +284,8 @@ export type AgentEvent =
   | { type: 'compact_boundary'; trigger: 'manual' | 'auto'; preTokens: number }
   | { type: 'tool_progress'; toolName: string; toolUseId: string; elapsedSeconds: number }
   | { type: 'activity'; activity: 'thinking' | 'tool_starting' | 'generating' | 'idle' ; toolName?: string }
-  | { type: 'user_message'; text: string; uuid?: string; images?: StoredImage[]; files?: StoredFile[] }
+  /** `at`: when it was sent (epoch ms). Older history has none. */
+  | { type: 'user_message'; text: string; uuid?: string; images?: StoredImage[]; files?: StoredFile[]; at?: number }
   /** `level: 'warning'` renders prominently (e.g. read-safe mode without a sandbox).
    *  `newConversation` marks where the agent started a new conversation: it
    *  doesn't remember the turns above, so a rewind can't fork from them. */

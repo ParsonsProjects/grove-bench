@@ -88,6 +88,8 @@ export interface ChatUserMessage {
   attachments?: ThreadFile[];
   /** SDK user message UUID — used as checkpoint ID for /rewind */
   uuid?: string;
+  /** When it was sent (epoch ms). Messages from older history have none. */
+  sentAt?: number;
 }
 
 export interface ChatSystemMessage {
@@ -265,7 +267,7 @@ function nextId(): string {
 
 /** A user message from the text as sent to the agent, plus its images and
  *  other files. */
-function userMessage(sent: string, images?: ThreadImage[], attachments?: ThreadFile[]): ChatUserMessage {
+function userMessage(sent: string, images?: ThreadImage[], attachments?: ThreadFile[], sentAt?: number): ChatUserMessage {
   const { files, typed } = attachedFilesFromSent(sent);
   return {
     kind: 'user',
@@ -274,6 +276,7 @@ function userMessage(sent: string, images?: ThreadImage[], attachments?: ThreadF
     ...(files.length > 0 ? { files } : {}),
     ...(images?.length ? { images } : {}),
     ...(attachments?.length ? { attachments } : {}),
+    ...(sentAt !== undefined ? { sentAt } : {}),
   };
 }
 
@@ -1520,7 +1523,7 @@ class MessageStore {
   /** Add a user message to the display. `sent` is the text as sent to the
    *  agent: attached files' content blocks come off it and show as chips. */
   addUserMessage(sessionId: string, sent: string, images?: ThreadImage[], attachments?: ThreadFile[]) {
-    this.pushMessage(sessionId, userMessage(sent, images, attachments));
+    this.pushMessage(sessionId, userMessage(sent, images, attachments, Date.now()));
     this.setIsRunning(sessionId, true);
     this.awaitingResponse[sessionId] = true;
     this.activityBySession[sessionId] = { activity: 'generating' };
@@ -2308,7 +2311,9 @@ class MessageStore {
         const saved = event.images?.length && event.images.length === msg.images?.length ? { images: event.images } : {};
         // Files show what main saved, so one it couldn't save drops off.
         const savedFiles = msg.attachments?.length ? { attachments: event.files ?? [] } : {};
-        updated[existingIdx] = { ...msg, uuid: event.uuid, ...saved, ...savedFiles };
+        // The time main logged, which the thread shows when reopened.
+        const sentAt = event.at !== undefined ? { sentAt: event.at } : {};
+        updated[existingIdx] = { ...msg, uuid: event.uuid, ...saved, ...savedFiles, ...sentAt };
         this.setMessagesForMutation(sessionId, updated);
         // Schedule checkpoint refresh so the Checkpoints tab picks up the new checkpoint
         if (this.sideEffects) checkpointStore.scheduleRefresh(sessionId);
@@ -2317,7 +2322,7 @@ class MessageStore {
     }
     // Replayed from history: the event holds the text as sent (file content
     // blocks first), so rebuild what the chat showed when it was sent.
-    this.pushMessage(sessionId, { ...userMessage(event.text, event.images, event.files), uuid: event.uuid });
+    this.pushMessage(sessionId, { ...userMessage(event.text, event.images, event.files, event.at), uuid: event.uuid });
     // Schedule checkpoint list refresh so the Checkpoints tab updates
     if (event.uuid && this.sideEffects) {
       checkpointStore.scheduleRefresh(sessionId);
@@ -2439,6 +2444,7 @@ class MessageStore {
       kind: 'user',
       id: nextId(),
       text: command,
+      sentAt: Date.now(),
     });
     this.setIsRunning(sessionId, true);
     this.awaitingResponse[sessionId] = true;

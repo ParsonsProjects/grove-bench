@@ -4,6 +4,7 @@
   import ImageAttachments from './ImageAttachments.svelte';
   import AttachmentIcon from './AttachmentIcon.svelte';
   import { formatFileSize } from '$lib/file-attachments.js';
+  import { formatSentTime } from '$lib/message-dates.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import type { SentBlock } from '../../shared/prompt-text.js';
   import type { ThreadFile, ThreadImage } from '../stores/messages.svelte.js';
@@ -14,6 +15,7 @@
     files,
     images,
     attachments,
+    sentAt,
     onRewind,
   }: {
     sessionId: string;
@@ -24,6 +26,8 @@
     /** Other files attached (PDFs, audio, ...), shown as chips that open the
      *  saved copy. */
     attachments?: ThreadFile[];
+    /** When it was sent (epoch ms), shown as a time. Older history has none. */
+    sentAt?: number;
     /** When set, a "Rewind to here" action is shown on hover. Only messages
      *  with a checkpoint (a uuid) get one. */
     onRewind?: () => void;
@@ -96,6 +100,17 @@
       <MarkdownBlock content={text} />
     {/if}
   </div>
+  {#if sentAt !== undefined}
+    <!-- The outer span takes the prompt's line height, so the smaller time
+         sits on the first line's baseline. -->
+    <span class="ml-2 shrink-0 leading-[1.6] select-none">
+      <time
+        class="text-caption text-muted-foreground tabular-nums"
+        datetime={new Date(sentAt).toISOString()}
+        title="Sent {new Date(sentAt).toLocaleString()}"
+      >{formatSentTime(sentAt)}</time>
+    </span>
+  {/if}
   {#if onRewind}
     <Button
       variant="quiet"

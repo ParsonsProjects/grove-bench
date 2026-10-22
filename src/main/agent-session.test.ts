@@ -2658,6 +2658,26 @@ describe('AgentSessionManager sleep and wake', () => {
     await sessionManager.destroySession('test-wake-send');
   });
 
+  it('keeps the time a message was sent, not when the wake let it through', async () => {
+    await startSession('test-wake-time');
+    await sessionManager.sleepSession('test-wake-time');
+    let now = 1_000;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+      const sending = sessionManager.sendMessage('test-wake-time', 'Are you there?');
+      // The wake takes a minute.
+      now = 61_000;
+      expect(await sending).toBe(true);
+    } finally {
+      clock.mockRestore();
+    }
+
+    const prompt = sessionManager.getEventHistory('test-wake-time').find((e) => e.type === 'user_message');
+    expect(prompt).toMatchObject({ text: 'Are you there?', at: 1_000 });
+
+    await sessionManager.destroySession('test-wake-time');
+  });
+
   it('wakes back into starting when the agent had not initialised yet', async () => {
     await sessionManager.createSession({
       id: 'test-wake-starting', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
@@ -2918,6 +2938,7 @@ describe('AgentSessionManager.sendMessage()', () => {
     mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 's', model: 'm', tools: [] });
     await new Promise((r) => setTimeout(r, 50));
 
+    const before = Date.now();
     const sent = await sessionManager.sendMessage('test-send', 'Hello agent');
     expect(sent).toBe(true);
 
@@ -2927,6 +2948,10 @@ describe('AgentSessionManager.sendMessage()', () => {
     expect(userMsgs).toHaveLength(1);
     expect(userMsgs[0]).toMatchObject({ type: 'user_message', text: 'Hello agent' });
     expect(userMsgs[0]).toHaveProperty('uuid');
+    // When it was sent, for the thread to show.
+    const at = (userMsgs[0] as Extract<AgentEvent, { type: 'user_message' }>).at!;
+    expect(at).toBeGreaterThanOrEqual(before);
+    expect(at).toBeLessThanOrEqual(Date.now());
 
     await sessionManager.destroySession('test-send');
   });
