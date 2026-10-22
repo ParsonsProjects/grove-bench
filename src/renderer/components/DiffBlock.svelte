@@ -3,6 +3,8 @@
   import { Button } from '$lib/components/ui/button/index.js';
   import { Pulse } from '$lib/components/ui/pulse/index.js';
   import DiffView, { computeDiffLines } from './DiffView.svelte';
+  import LargeDiffNotice from './LargeDiffNotice.svelte';
+  import { editSize, isLargeDiff } from '../lib/diff-highlight.js';
   import type { ToolView } from '../../shared/tool-view.js';
   import { isMarkdownFile } from '../../shared/attachments.js';
   import { openWorktreeFile } from '$lib/worktree-files.js';
@@ -29,7 +31,13 @@
   /** A whole-file write rather than replacements within the file. */
   let isWrite = $derived(!view.edits?.length && view.write !== undefined);
 
-  let diffLines = $derived(pending ? [] : computeDiffLines(view, filePath));
+  /** A large edit waits for "Show edit" before its diff is worked out:
+   *  createPatch and drawing every row would stall the window. */
+  let size = $derived(editSize(view));
+  let shown = $state(false);
+  let heldBack = $derived(!pending && !shown && isLargeDiff(size));
+
+  let diffLines = $derived(pending || heldBack ? [] : computeDiffLines(view, filePath));
 
   let copyContent = $derived(isWrite ? (view.write ?? '') : (view.edits ?? []).map((e) => e.newText).join('\n'));
 
@@ -81,7 +89,7 @@
         <Pulse />
       {:else if isError}
         <span class="text-destructive">error</span>
-      {:else if diffLines.length > 0}
+      {:else if heldBack || diffLines.length > 0}
         <div class="ml-auto flex items-center gap-1">
           <CopyButton text={copyContent} class="opacity-0 group-hover/diff-hdr:opacity-100" />
           {#if isMarkdown}
@@ -96,7 +104,7 @@
               preview
             </Button>
           {/if}
-          {#if !isWrite}
+          {#if !isWrite && !heldBack}
             <Button
               variant="quiet"
               size="inline"
@@ -110,7 +118,11 @@
       {/if}
     </div>
 
-    <DiffView lines={diffLines} {sideBySide} {filePath} deferHighlight />
+    {#if heldBack}
+      <LargeDiffNotice kind="edit" {size} label={`Show edit to ${filePath}`} onShow={() => (shown = true)} />
+    {:else}
+      <DiffView lines={diffLines} {sideBySide} {filePath} deferHighlight />
+    {/if}
 
     {#if isError && result}
       <div class="text-xs text-destructive mt-1">{result}</div>

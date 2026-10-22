@@ -2,6 +2,8 @@
   import { messageStore } from '../stores/messages.svelte.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import DiffView, { computeDiffLines } from './DiffView.svelte';
+  import LargeDiffNotice from './LargeDiffNotice.svelte';
+  import { editSize, isLargeDiff } from '../lib/diff-highlight.js';
   import { toolLabel } from '$lib/tool-names.js';
   import MarkdownBlock from './MarkdownBlock.svelte';
   import { markdownPreviewStore } from '../stores/markdownPreview.svelte.js';
@@ -64,7 +66,12 @@
    *  does): shown as its own description, not as the command. */
   let describedCommand = $derived(isBashTool && !bashCommand ? (view.summary ?? '') : '');
   let fetchUrl = $derived(isWebFetch ? (view.url ?? String(input?.url ?? '')) : '');
-  let diffLines = $derived(isEditTool ? computeDiffLines(view, filePath) : []);
+  /** A large edit waits for "Show edit" before its diff is worked out, as
+   *  in the thread; the decision buttons work either way. */
+  let editTextSize = $derived(editSize(view));
+  let editShown = $state(false);
+  let editHeldBack = $derived(isEditTool && !editShown && isLargeDiff(editTextSize));
+  let diffLines = $derived(isEditTool && !editHeldBack ? computeDiffLines(view, filePath) : []);
   let alwaysAllow = $derived(alwaysAllowLabel(toolName, toolCategory));
   /** What a call other than an edit or command is about, from the view, so
    *  any agent's reads, searches and fetches name their target. */
@@ -266,7 +273,11 @@
   {/if}
 
   <!-- Inline diff preview for Edit/Write (only while awaiting approval) -->
-  {#if !isResolved && isEditTool && diffLines.length > 0}
+  {#if !isResolved && editHeldBack}
+    <div class="mt-1">
+      <LargeDiffNotice kind="edit" size={editTextSize} label={filePath ? `Show edit to ${filePath}` : 'Show edit'} onShow={() => (editShown = true)} />
+    </div>
+  {:else if !isResolved && isEditTool && diffLines.length > 0}
     <div class="mt-1">
       <DiffView lines={diffLines} {sideBySide} maxHeight="200px" {filePath} deferHighlight />
     </div>

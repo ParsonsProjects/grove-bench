@@ -122,4 +122,27 @@ describe('PermissionBlock edit preview', () => {
     expect(container).toHaveTextContent('const port = 2;');
     await vi.waitFor(() => expect(container.querySelector('.hljs-keyword')).toHaveTextContent('const'));
   });
+
+  it('holds a large write back until asked, and can be answered either way', async () => {
+    const { container } = render(PermissionBlock, {
+      sessionId: 's1', requestId: 'r4', toolName: 'Write', resolved: false, toolCategory: 'edit',
+      toolInput: { file_path: 'dist/app.min.js', content: 'x'.repeat(150_000) + 'END' },
+    });
+    expect(screen.getByText(/Large edit \(1 line, 150,003 characters of text\)/)).toBeInTheDocument();
+    expect(container).not.toHaveTextContent('END');
+    expect(screen.getByRole('button', { name: 'Allow' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Deny' })).toBeEnabled();
+    await fireEvent.click(screen.getByRole('button', { name: 'Show edit to dist/app.min.js' }));
+    expect(container).toHaveTextContent('END');
+  });
+
+  it('offers side-by-side for a large edit once it is shown', async () => {
+    render(PermissionBlock, {
+      sessionId: 's1', requestId: 'r5', toolName: 'Edit', resolved: false, toolCategory: 'edit',
+      toolInput: {}, toolView: { kind: 'edit', path: 'src/data.ts', edits: [{ oldText: 'a', newText: 'x'.repeat(150_001) }] },
+    });
+    expect(screen.queryByRole('button', { name: 'side-by-side' })).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Show edit to src/data.ts' }));
+    expect(screen.getByRole('button', { name: 'side-by-side' })).toBeInTheDocument();
+  });
 });

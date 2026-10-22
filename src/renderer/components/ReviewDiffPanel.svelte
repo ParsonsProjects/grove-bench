@@ -13,6 +13,7 @@
   import { isMarkdownFile } from '../../shared/attachments.js';
   import { openWorktreeFile } from '$lib/worktree-files.js';
   import ImageDiffView from './ImageDiffView.svelte';
+  import LargeDiffNotice from './LargeDiffNotice.svelte';
   import SelectionMenu from './SelectionMenu.svelte';
   import { settingsStore } from '../stores/settings.svelte.js';
   import GroveEmptyState from './GroveEmptyState.svelte';
@@ -465,10 +466,6 @@
     return (info.lines ??= computeDiffLines(toolViewOf(edit), info.filePath));
   }
 
-  /** "2,500 lines, 15,000 characters", for the large-diff notices. */
-  function sizeText({ lines, chars }: { lines: number; chars: number }): string {
-    return `${lines.toLocaleString()} ${lines === 1 ? 'line' : 'lines'}, ${chars.toLocaleString()} ${chars === 1 ? 'character' : 'characters'}`;
-  }
   /** The selected diff's code lines and characters, hunk headers aside. */
   let selectedDiffSize = $derived.by(() => {
     let lines = 0;
@@ -731,13 +728,6 @@
 {/snippet}
 
 <svelte:window onkeydown={handleShortcuts} />
-
-{#snippet largeNotice(text: string, button: string, label: string, onShow: () => void)}
-  <Notice tone="neutral">
-    {#snippet actions()}<Button size="2xs" variant="subtle" aria-label={label} onclick={onShow}>{button}</Button>{/snippet}
-    <p>{text} Showing it can pause the app for a moment.</p>
-  </Notice>
-{/snippet}
 
 {#snippet emptyPane(title: string, hint: string | undefined)}
   <div class="pixel-bg flex-1 flex items-center justify-center text-muted-foreground text-sm relative overflow-hidden">
@@ -1052,7 +1042,7 @@
         {:else if diffResult?.kind === 'tooLarge'}
           <Notice tone="neutral"><p>Too large to show here ({(diffResult.bytes / 1024 / 1024).toFixed(1)} MB).</p></Notice>
         {:else if diffHeldBack}
-          {@render largeNotice(`Large diff (${sizeText(selectedDiffSize)}).`, 'Show diff', 'Show diff', () => (largeDiffShown = { ...largeDiffShown, [key]: true }))}
+          <LargeDiffNotice kind="diff" size={selectedDiffSize} onShow={() => (largeDiffShown = { ...largeDiffShown, [key]: true })} />
         {:else if diffLines.length > 0}
           <DiffView
             lines={displayLines}
@@ -1088,7 +1078,7 @@
                   </div>
                   {#if held}
                     <!-- Held back before its diff is even worked out. -->
-                    {@render largeNotice(`Large edit (${sizeText(info.size)} of text).`, 'Show edit', `Show ${edit.toolName} #${idx + 1}`, () => (largeEditShown = { ...largeEditShown, [edit.id]: true }))}
+                    <LargeDiffNotice kind="edit" size={info.size} label={`Show ${edit.toolName} #${idx + 1}`} onShow={() => (largeEditShown = { ...largeEditShown, [edit.id]: true })} />
                   {:else}
                     <!-- Idle-time colouring, as in the thread: a page of edits draws at once. -->
                     <DiffView lines={editDiffLines} sideBySide={false} maxHeight="300px" filePath={selectedEntry.filePath} deferHighlight />
