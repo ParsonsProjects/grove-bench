@@ -1487,6 +1487,32 @@ function describeAuthStatusFailure(err: unknown, stdout: string): string {
   return text.replace(/[^\s"'<>(),;:@\\/]+@[^\s"'<>(),;:@\\/]+\.[^\s"'<>(),;:@\\/]+/g, '<email>');
 }
 
+/**
+ * How a thread's title is looked up: the sessions in its own folder only.
+ * The SDK runs in Grove's main process, and looking in a folder's git
+ * worktrees too (getSessionInfo always does when the transcript isn't in
+ * the folder itself) starts `git worktree list` from there with its own
+ * execFile, which holds the window while it starts on Windows. A thread's
+ * transcript is in its own folder, as its agent runs there; one that isn't
+ * (deleted by Claude Code's cleanup) has no title to find elsewhere.
+ * Grove's own sessions are the SDK's ("programmatic"), so they're asked for
+ * by name rather than left to a default.
+ */
+export function titleListOptions(cwd: string): import('@anthropic-ai/claude-agent-sdk').ListSessionsOptions {
+  return { dir: cwd, includeWorktrees: false, includeProgrammatic: true };
+}
+
+/** A session's own title among the sessions listed: a /rename title, else
+ *  the one Claude Code generates from the conversation (its ai-title entry).
+ *  Not `summary`, which falls back to prompt text Grove derives itself. */
+export function titleFromSessions(
+  sessions: readonly import('@anthropic-ai/claude-agent-sdk').SDKSessionInfo[],
+  providerSessionId: string,
+): string | null {
+  const info = sessions.find((s) => s.sessionId === providerSessionId);
+  return info?.customTitle?.replace(/\s+/g, ' ').trim() || null;
+}
+
 /** The CLI to run from `where`/`which` output. An npm install on Windows puts
  *  a shell script named plain `claude` next to `claude.cmd`, and `where` can
  *  list it first; Windows can't run that script itself, so on Windows the
@@ -2324,11 +2350,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     // transcripts are elsewhere, so Grove names those threads itself.
     if (this.account) return null;
     const sdk = await getSdk();
-    const info = await sdk.getSessionInfo(providerSessionId, { dir: cwd });
-    // customTitle is the transcript's own title: a /rename title, else the
-    // one Claude Code generates from the conversation (its ai-title entry).
-    // `summary` falls back to prompt text, which Grove derives itself.
-    return info?.customTitle?.replace(/\s+/g, ' ').trim() || null;
+    return titleFromSessions(await sdk.listSessions(titleListOptions(cwd)), providerSessionId);
   }
 
   // ─── Worktree configuration ───
