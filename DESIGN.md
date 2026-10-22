@@ -525,6 +525,8 @@ The agents' programs start the same way, from a second utility process, the **ag
 
 A command's deadline (its timeout plus a minute) only restarts the host when it fires on time. Windows counts system sleep in timers, so a deadline set before sleep fires the moment the computer wakes, before the host has had a chance to answer; on 9 Oct that restarted the host. A deadline that fires 30 s or more late gives the command its full time again instead (`LATE_DEADLINE_MS`). A host killed for not answering takes no new commands until it has restarted (they wait for the restart, as above, and urgent ones run in the main process at once), and the command that found it out fails as timed out, or runs again in the main process if it is idempotent.
 
+One caller is outside Grove's code: the agent SDK's `getSessionInfo`, which Claude Code threads' titles come from, runs in the main process and, when a transcript isn't in the project's folder, starts `git worktree list` itself (Node's `execFile`) to search sibling worktrees. Startup refreshes every thread's name, and old threads' transcripts are often gone, so that was one git launch from the main process per old thread at every start. A stopped thread's lookup is now kept in its manifest entry (`providerTitleCheck`, title or none, with its provider session and `lastActiveAt` then) and reused until the thread changes (`providerTitle` in `ipc.ts`).
+
 ```typescript
 import { runProcess } from './process-host.js';
 

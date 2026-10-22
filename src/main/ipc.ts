@@ -5,7 +5,7 @@ import type { BranchSwitchResult, ClaudeAccountPreview, ClaudeAccountSetting, Br
 import { sessionManager } from './agent-session.js';
 import { todaySpend } from './session-limits.js';
 import { searchEvents, findEventIndexByUuid, extractSessionPreview, firstUserPrompt } from './event-search.js';
-import { decideAutoName } from './session-auto-name.js';
+import { decideAutoName, titleCheckHolds } from './session-auto-name.js';
 import { cleanUserGoal, generateGoal, goalInputFromEvents, type GoalInput } from './session-goal.js';
 import { launchEditor } from './editor-launch.js';
 import { worktreeManager } from './worktree-manager.js';
@@ -123,6 +123,46 @@ async function generateAndSaveGoal(sessionId: string, current: ConversationGoal,
   if (!cwd) throw new Error('The thread\'s folder could not be found');
   const text = await generateGoal(input, adapter, cwd);
   return worktreeManager.saveGoal(sessionId, text, 'auto', current);
+}
+
+/**
+ * A thread's title from its agent (AgentAdapter.getConversationTitle), or
+ * null. A stopped thread's lookup is remembered in its manifest entry and
+ * answers again until the thread changes (another provider session, or any
+ * activity), since the app refreshes every thread's name at startup. The
+ * lookup can be slow: when Claude Code's transcript isn't in the project's
+ * folder (deleted as old, or the thread moved), the agent SDK runs
+ * `git worktree list` from this process to search sibling worktrees, and
+ * never finds a transcript that is gone. A live thread is always looked up
+ * and not remembered: its agent may still write a title after the turn.
+ */
+async function providerTitle(sessionId: string): Promise<string | null> {
+  const live = sessionManager.getSession(sessionId);
+  const saved = await worktreeManager.getTitleLookup(sessionId);
+  // Stopped sessions have no live adapter: use the agent they ran on.
+  const adapter = live?.adapter ?? (saved ? adapterRegistry.get(saved.adapterType) : undefined);
+  const providerSessionId = live?.providerSessionId ?? saved?.providerSessionId;
+  if (!providerSessionId) return null;
+  const stopped = live ? undefined : saved;
+  if (stopped && titleCheckHolds(stopped.checked, providerSessionId, stopped.lastActiveAt)) return stopped.checked.title;
+  const cwd = live?.worktreePath ?? (await worktreeManager.getWorktreeOrManifest(sessionId))?.path;
+  if (!adapter?.getConversationTitle || !cwd) return null;
+  let title: string | null;
+  try {
+    title = await adapter.getConversationTitle(providerSessionId, cwd);
+  } catch (e) {
+    logger.debug(`[session-auto-name] no provider title for ${sessionId}:`, e);
+    return null;
+  }
+  if (stopped) {
+    // lastActiveAt as read before the lookup: activity during it means the
+    // next one looks again.
+    const check = { providerSessionId, lastActiveAt: stopped.lastActiveAt, title: title || null };
+    await worktreeManager.saveProviderTitleCheck(sessionId, check).catch((e) => {
+      logger.debug(`[session-auto-name] could not remember the title lookup for ${sessionId}:`, e);
+    });
+  }
+  return title;
 }
 
 /** Search a session in prelaunchPrefixedEvents' index space, using the cached
@@ -701,22 +741,8 @@ export function registerHandlers() {
   ipcMain.handle(IPC.SESSION_AUTO_NAME, async (_event, sessionId: string): Promise<string | null> => {
     const state = await worktreeManager.getDisplayNameState(sessionId);
     if (!state || state.source === 'user') return null;
-    const live = sessionManager.getSession(sessionId);
     const next = await decideAutoName(state, {
-      providerTitle: async () => {
-        // Stopped sessions have no live adapter: use the agent they ran on.
-        const adapterType = live ? undefined : await worktreeManager.getAdapterType(sessionId);
-        const adapter = live?.adapter ?? (adapterType ? adapterRegistry.get(adapterType) : undefined);
-        const providerSessionId = live?.providerSessionId ?? await worktreeManager.getProviderSessionId(sessionId);
-        const cwd = live?.worktreePath ?? (await worktreeManager.getWorktreeOrManifest(sessionId))?.path;
-        if (!adapter?.getConversationTitle || !providerSessionId || !cwd) return null;
-        try {
-          return await adapter.getConversationTitle(providerSessionId, cwd);
-        } catch (e) {
-          logger.debug(`[session-auto-name] no provider title for ${sessionId}:`, e);
-          return null;
-        }
-      },
+      providerTitle: () => providerTitle(sessionId),
       firstPrompt: () => firstUserPrompt(prelaunchPrefixedEvents(sessionId)),
     });
     if (!next || !(await worktreeManager.saveAutoDisplayName(sessionId, state, next))) return null;

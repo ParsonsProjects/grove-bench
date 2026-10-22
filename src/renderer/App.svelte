@@ -133,6 +133,8 @@
 
     // Bring stopped conversations' names up to date too (provider titles,
     // and names from the older heuristic). One at a time, in the background.
+    // Main returns at once for names the user gave, and looks up a title
+    // only for threads that changed since it last did.
     void refreshAutoNames(store.sessions.map((s) => s.id));
   }
 

@@ -27,7 +27,7 @@ const m = vi.hoisted(() => {
     worktreeManager: fns(
       'validateRepo', 'cleanupOrphans', 'getWorktreeOrManifest', 'registerDirect', 'create', 'getRepoConfig',
       'copyUntrackedFiles', 'getNpmCachePath', 'getProviderSessionId', 'getModel', 'getAdapterType', 'getThreadLimits', 'remove',
-      'saveDisplayName', 'getDisplayNameState', 'saveAutoDisplayName', 'renameBranch', 'switchBranch',
+      'saveDisplayName', 'getDisplayNameState', 'saveAutoDisplayName', 'getTitleLookup', 'saveProviderTitleCheck', 'renameBranch', 'switchBranch',
       'syncBranch', 'list', 'register', 'listRepos', 'getWorktree', 'assertRemovable', 'checkoutSharers',
       'getGoal', 'getGoals', 'saveGoal', 'setGoalHidden',
     ),
@@ -105,6 +105,7 @@ import { ipcMain, BrowserWindow, dialog, shell } from 'electron';
 import { execa } from 'execa';
 import { IPC } from '../shared/types.js';
 import type { AgentEvent } from '../shared/types.js';
+import type { AutoNameDecision, DisplayNameState, ProviderTitleCheck } from './session-auto-name.js';
 import * as git from './git.js';
 import * as gh from './gh.js';
 import { generateBranchName } from './branch-name.js';
@@ -622,6 +623,166 @@ describe('SESSION_AUTO_NAME', () => {
     expect(await invoke(IPC.SESSION_AUTO_NAME, 's1')).toBe('Fix the login redirect');
     expect(getConversationTitle).toHaveBeenCalledWith('prov-1', wt);
     expect(m.sessionManager.renameSession).toHaveBeenCalledWith('s1', 'Fix the login redirect');
+  });
+
+  describe('stopped threads at startup', () => {
+    /** Manifest entries, kept the way the worktree manager keeps them. */
+    interface Entry {
+      displayName: string | null;
+      source?: 'user' | 'auto';
+      providerSessionId: string;
+      lastActiveAt: number | null;
+      checked?: ProviderTitleCheck;
+    }
+    let entries: Record<string, Entry>;
+    /** Titles the agent's transcripts hold, by provider session; none for a
+     *  transcript that's gone (the lookup the SDK runs git for). */
+    let titles: Record<string, string>;
+    const getConversationTitle = vi.fn();
+
+    beforeEach(() => {
+      entries = {};
+      titles = {};
+      getConversationTitle.mockImplementation(async (providerSessionId: string) => titles[providerSessionId] ?? null);
+      m.adapterRegistry.get.mockReturnValue({ id: 'claude-code', getConversationTitle });
+      m.worktreeManager.getWorktreeOrManifest.mockImplementation(async (id: string) => ({ ...wtInfo(), id }));
+      m.worktreeManager.getDisplayNameState.mockImplementation(async (id: string) => {
+        const e = entries[id];
+        return e && { displayName: e.displayName, source: e.source };
+      });
+      m.worktreeManager.saveAutoDisplayName.mockImplementation(async (id: string, expected: DisplayNameState, next: AutoNameDecision) => {
+        const e = entries[id];
+        if (!e || e.displayName !== expected.displayName || e.source !== expected.source) return false;
+        e.displayName = next.displayName;
+        e.source = next.source;
+        return true;
+      });
+      m.worktreeManager.getTitleLookup.mockImplementation(async (id: string) => {
+        const e = entries[id];
+        return e && {
+          adapterType: 'claude-code', providerSessionId: e.providerSessionId, lastActiveAt: e.lastActiveAt,
+          ...(e.checked ? { checked: { ...e.checked } } : {}),
+        };
+      });
+      m.worktreeManager.saveProviderTitleCheck.mockImplementation(async (id: string, check: ProviderTitleCheck) => {
+        entries[id].checked = { ...check };
+      });
+    });
+
+    /** What the app does at startup: refresh every thread's name, one at a
+     *  time. Returns how many titles were looked up. */
+    async function startup(): Promise<number> {
+      const before = getConversationTitle.mock.calls.length;
+      for (const id of Object.keys(entries)) await invoke(IPC.SESSION_AUTO_NAME, id);
+      return getConversationTitle.mock.calls.length - before;
+    }
+
+    it('looks each thread up once, then not again at the next startup', async () => {
+      // 237 threads: most transcripts gone, some titled, a few named by the user.
+      for (let i = 0; i < 237; i++) {
+        const id = `t${i}`;
+        entries[id] = i < 7
+          ? { displayName: `Mine ${i}`, source: 'user', providerSessionId: `p${i}`, lastActiveAt: i }
+          : { displayName: `Thread ${i}`, source: 'auto', providerSessionId: `p${i}`, lastActiveAt: i };
+        if (i >= 200) titles[`p${i}`] = `Title ${i}`;
+      }
+
+      expect(await startup()).toBe(230);
+      expect(entries.t210).toMatchObject({ displayName: 'Title 210', checked: { providerSessionId: 'p210', lastActiveAt: 210, title: 'Title 210' } });
+      expect(entries.t20.checked).toEqual({ providerSessionId: 'p20', lastActiveAt: 20, title: null });
+
+      expect(await startup()).toBe(0);
+      expect(entries.t210.displayName).toBe('Title 210');
+      expect(entries.t20.displayName).toBe('Thread 20');
+      expect(entries.t3).toEqual({ displayName: 'Mine 3', source: 'user', providerSessionId: 'p3', lastActiveAt: 3 });
+    });
+
+    it('remembers that a thread had no title', async () => {
+      entries.gone = { displayName: 'Flaky e2e retries', source: 'auto', providerSessionId: 'p-gone', lastActiveAt: 100 };
+
+      expect(await startup()).toBe(1);
+      expect(entries.gone.checked).toEqual({ providerSessionId: 'p-gone', lastActiveAt: 100, title: null });
+      expect(await startup()).toBe(0);
+      expect(m.worktreeManager.saveProviderTitleCheck).toHaveBeenCalledTimes(1);
+      expect(entries.gone.displayName).toBe('Flaky e2e retries');
+    });
+
+    it('looks a thread up again once it has changed', async () => {
+      entries.a = { displayName: 'Flaky e2e retries', source: 'auto', providerSessionId: 'p-a', lastActiveAt: 100 };
+      entries.b = { displayName: 'Dark mode', source: 'auto', providerSessionId: 'p-b', lastActiveAt: 100 };
+      expect(await startup()).toBe(2);
+
+      // a: a turn ran (and Claude Code titled it); b: a new provider session.
+      entries.a.lastActiveAt = 200;
+      titles['p-a'] = 'Retry flaky e2e tests';
+      entries.b.providerSessionId = 'p-b2';
+      getConversationTitle.mockClear();
+      expect(await startup()).toBe(2);
+      expect(getConversationTitle.mock.calls.map(([p]) => p)).toEqual(['p-a', 'p-b2']);
+      expect(entries.a).toMatchObject({ displayName: 'Retry flaky e2e tests', checked: { lastActiveAt: 200, title: 'Retry flaky e2e tests' } });
+      expect(await startup()).toBe(0);
+    });
+
+    it('keeps a provider title it applied when the lookup is skipped', async () => {
+      entries.titled = {
+        displayName: 'Retry flaky e2e tests', source: 'auto', providerSessionId: 'p-t', lastActiveAt: 100,
+        checked: { providerSessionId: 'p-t', lastActiveAt: 100, title: 'Retry flaky e2e tests' },
+      };
+      // Named live from a title the agent no longer gives (an ACP agent's
+      // titles last only while it runs): the remembered "none" keeps it too.
+      entries.live = {
+        displayName: 'Sidebar sort order', source: 'auto', providerSessionId: 'p-l', lastActiveAt: 100,
+        checked: { providerSessionId: 'p-l', lastActiveAt: 100, title: null },
+      };
+      m.sessionManager.getEventHistory.mockReturnValue([{ type: 'user_message', text: 'can you look at the flaky e2e retries' }]);
+
+      expect(await startup()).toBe(0);
+      expect(entries.titled.displayName).toBe('Retry flaky e2e tests');
+      expect(entries.live.displayName).toBe('Sidebar sort order');
+      expect(m.worktreeManager.saveAutoDisplayName).not.toHaveBeenCalled();
+      expect(m.sessionManager.renameSession).not.toHaveBeenCalled();
+    });
+
+    it('looks up a thread from an older manifest once', async () => {
+      entries.old = { displayName: 'Dark mode', source: 'auto', providerSessionId: 'p-old', lastActiveAt: null };
+      titles['p-old'] = 'Add a dark mode toggle';
+
+      expect(await startup()).toBe(1);
+      expect(entries.old).toMatchObject({
+        displayName: 'Add a dark mode toggle',
+        checked: { providerSessionId: 'p-old', lastActiveAt: null, title: 'Add a dark mode toggle' },
+      });
+      expect(await startup()).toBe(0);
+    });
+
+    it('never looks up a thread the user named', async () => {
+      entries.mine = { displayName: 'Mine', source: 'user', providerSessionId: 'p-m', lastActiveAt: 100 };
+      expect(await startup()).toBe(0);
+      expect(m.worktreeManager.getTitleLookup).not.toHaveBeenCalled();
+    });
+
+    it('looks a live thread up after every turn, and doesn\'t remember it', async () => {
+      entries.s1 = {
+        displayName: 'Flaky e2e retries', source: 'auto', providerSessionId: 'p-1', lastActiveAt: 100,
+        checked: { providerSessionId: 'p-1', lastActiveAt: 100, title: null },
+      };
+      m.sessionManager.getSession.mockReturnValue({ id: 's1', adapter: { getConversationTitle }, providerSessionId: 'p-1', worktreePath: wt });
+      titles['p-1'] = 'Retry flaky e2e tests';
+
+      expect(await invoke(IPC.SESSION_AUTO_NAME, 's1')).toBe('Retry flaky e2e tests');
+      expect(await invoke(IPC.SESSION_AUTO_NAME, 's1')).toBeNull();
+      expect(getConversationTitle).toHaveBeenCalledTimes(2);
+      expect(m.worktreeManager.saveProviderTitleCheck).not.toHaveBeenCalled();
+    });
+
+    it('doesn\'t remember a lookup that failed', async () => {
+      entries.flaky = { displayName: 'Dark mode', source: 'auto', providerSessionId: 'p-f', lastActiveAt: 100 };
+      getConversationTitle.mockRejectedValueOnce(new Error('EBUSY'));
+      expect(await startup()).toBe(1);
+      expect(entries.flaky.checked).toBeUndefined();
+      expect(await startup()).toBe(1);
+      expect(entries.flaky.checked).toEqual({ providerSessionId: 'p-f', lastActiveAt: 100, title: null });
+    });
   });
 });
 
