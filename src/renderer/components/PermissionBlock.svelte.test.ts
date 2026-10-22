@@ -9,6 +9,14 @@ vi.mock('dompurify', async () => {
   return { default: actual.default(window) };
 });
 
+// Spied on, so a test can make the capped diffs give up as if out of time.
+vi.mock('diff', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('diff')>();
+  return { ...actual, createPatch: vi.fn(actual.createPatch) };
+});
+
+import { createPatch } from 'diff';
+const { createPatch: realCreatePatch } = await vi.importActual<typeof import('diff')>('diff');
 import PermissionBlock from './PermissionBlock.svelte';
 import { settingsStore } from '../stores/settings.svelte.js';
 import { messageStore } from '../stores/messages.svelte.js';
@@ -145,6 +153,23 @@ describe('PermissionBlock edit preview', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Allow' }));
     expect(resolve).toHaveBeenCalledWith('s1', 'r4', 'allow');
     resolve.mockRestore();
+  });
+
+  it('shows the old text, then the new, when a shown edit has too many changes to work out', async () => {
+    vi.mocked(createPatch).mockImplementation(((...args: Parameters<typeof realCreatePatch>) =>
+      Number.isFinite((args[5] as { timeout?: number } | undefined)?.timeout) ? undefined : realCreatePatch(...args)) as typeof createPatch);
+    try {
+      const { container } = render(PermissionBlock, {
+        sessionId: 's1', requestId: 'r8', toolName: 'Edit', resolved: false, toolCategory: 'edit',
+        toolInput: {}, toolView: { kind: 'edit', path: 'src/data.ts', edits: [{ oldText: 'the old line', newText: 'x'.repeat(150_000) + 'END' }] },
+      });
+      await fireEvent.click(screen.getByRole('button', { name: 'Show edit to src/data.ts' }));
+      expect(screen.getByText(/Too many changes to compare line by line/)).toBeInTheDocument();
+      expect(container).toHaveTextContent('the old line');
+      expect(container).toHaveTextContent('END');
+    } finally {
+      vi.mocked(createPatch).mockImplementation(realCreatePatch);
+    }
   });
 
   it('shows a small change to a large file at once', () => {

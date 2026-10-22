@@ -1,7 +1,9 @@
 <script lang="ts">
   import { messageStore } from '../stores/messages.svelte.js';
   import { Button } from '$lib/components/ui/button/index.js';
-  import DiffView, { computeDiffLines, quickEditDiff } from './DiffView.svelte';
+  import { Notice } from '$lib/components/ui/notice/index.js';
+  import DiffView from './DiffView.svelte';
+  import { fullEditDiff, quickEditDiff, OLD_THEN_NEW } from '../lib/edit-diff.js';
   import LargeDiffNotice from './LargeDiffNotice.svelte';
   import { editSize } from '../lib/diff-highlight.js';
   import { toolLabel } from '$lib/tool-names.js';
@@ -71,7 +73,8 @@
   let quickDiff = $derived(isEditTool ? quickEditDiff(view, filePath) : null);
   let editShown = $state(false);
   let editHeldBack = $derived(!!quickDiff?.large && !editShown);
-  let diffLines = $derived(!quickDiff || editHeldBack ? [] : (quickDiff.lines ?? computeDiffLines(view, filePath)));
+  let shownDiff = $derived(!quickDiff || editHeldBack ? null : fullEditDiff(view, filePath, quickDiff.lines));
+  let diffLines = $derived(shownDiff?.lines ?? []);
   let alwaysAllow = $derived(alwaysAllowLabel(toolName, toolCategory));
   /** What a call other than an edit or command is about, from the view, so
    *  any agent's reads, searches and fetches name their target. */
@@ -279,6 +282,7 @@
     </div>
   {:else if !isResolved && isEditTool && diffLines.length > 0}
     <div class="mt-1">
+      {#if shownDiff && !shownDiff.linedUp}<Notice tone="neutral" class="mb-1"><p>{OLD_THEN_NEW}</p></Notice>{/if}
       <DiffView lines={diffLines} {sideBySide} maxHeight="200px" {filePath} deferHighlight />
     </div>
   {/if}

@@ -1,8 +1,10 @@
 <script lang="ts">
   import CopyButton from './CopyButton.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
+  import { Notice } from '$lib/components/ui/notice/index.js';
   import { Pulse } from '$lib/components/ui/pulse/index.js';
-  import DiffView, { computeDiffLines, quickEditDiff } from './DiffView.svelte';
+  import DiffView from './DiffView.svelte';
+  import { fullEditDiff, quickEditDiff, OLD_THEN_NEW } from '../lib/edit-diff.js';
   import LargeDiffNotice from './LargeDiffNotice.svelte';
   import { editSize } from '../lib/diff-highlight.js';
   import type { ToolView } from '../../shared/tool-view.js';
@@ -37,7 +39,8 @@
   let shown = $state(false);
   let heldBack = $derived(!!quick?.large && !shown);
 
-  let diffLines = $derived(!quick || heldBack ? [] : (quick.lines ?? computeDiffLines(view, filePath)));
+  let shownDiff = $derived(!quick || heldBack ? null : fullEditDiff(view, filePath, quick.lines));
+  let diffLines = $derived(shownDiff?.lines ?? []);
 
   let copyContent = $derived(isWrite ? (view.write ?? '') : (view.edits ?? []).map((e) => e.newText).join('\n'));
 
@@ -104,7 +107,7 @@
               preview
             </Button>
           {/if}
-          {#if !isWrite && !heldBack}
+          {#if !isWrite && diffLines.length > 0}
             <Button
               variant="quiet"
               size="inline"
@@ -121,6 +124,7 @@
     {#if heldBack}
       <LargeDiffNotice kind="edit" size={editSize(view)} label={view.path ? `Show edit to ${view.path}` : undefined} onShow={() => (shown = true)} />
     {:else}
+      {#if shownDiff && !shownDiff.linedUp}<Notice tone="neutral" class="mb-1"><p>{OLD_THEN_NEW}</p></Notice>{/if}
       <DiffView lines={diffLines} {sideBySide} {filePath} deferHighlight />
     {/if}
 

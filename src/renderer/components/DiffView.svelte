@@ -1,6 +1,6 @@
 <script lang="ts" module>
   import type { DiffLine, SideBySideRow, ContextGap, ReviewComment } from '../lib/diff-types.js';
-  import { diffSize, editSize, intralineRanges, isLargeDiff } from '../lib/diff-highlight.js';
+  import { intralineRanges } from '../lib/diff-highlight.js';
   import { parseDiffLines } from '../lib/diff-parse.js';
   // Re-export so existing component consumers can keep importing from here.
   export type { DiffLine, SideBySideRow, ContextGap, ReviewComment };
@@ -75,64 +75,6 @@
       }
     }
     return out;
-  }
-
-  import { createPatch } from 'diff';
-  import type { ToolView } from '../../shared/tool-view.js';
-
-  /** Diff lines for an edit call: each replacement as a patch, or a whole-file
-   *  write as added lines. */
-  export function computeDiffLines(view: ToolView, filePath: string): DiffLine[] {
-    if (view.edits?.length) {
-      const out: DiffLine[] = [];
-      for (const edit of view.edits) {
-        if (!edit.oldText && !edit.newText) continue;
-        const patch = createPatch(filePath || 'file', edit.oldText, edit.newText, '', '', { context: 3 });
-        out.push(...parseDiffLines(patch));
-      }
-      return out;
-    }
-    if (view.write !== undefined) {
-      if (!view.write) return [];
-      return view.write.split('\n').map((line, i) => ({
-        type: 'add' as const,
-        text: line,
-        lineNum: i + 1,
-      }));
-    }
-    return [];
-  }
-
-  /** How far quickEditDiff goes on an edit with large text: changed lines
-   *  (jsdiff's maxEditLength), then milliseconds. ACP agents can send the
-   *  whole file before and after; a small change to one diffs in a few
-   *  milliseconds, while a heavy change to 20,000 lines gives up in about
-   *  40 (in Node) instead of taking over a minute. */
-  const QUICK_EDIT_LENGTH = 500;
-  const QUICK_DIFF_MS = 50;
-
-  /**
-   * An edit's diff lines, and whether they're large enough to wait for
-   * "Show edit" (isLargeDiff). An edit with large text (editSize) is diffed
-   * with capped effort first. `lines` is null when they weren't worked out
-   * (a large write, or the cap was hit): the caller works them out in full
-   * (computeDiffLines) only once asked.
-   */
-  export function quickEditDiff(view: ToolView, filePath: string): { lines: DiffLine[] | null; large: boolean } {
-    // A diff is no bigger than the text it's made from.
-    if (!isLargeDiff(editSize(view))) return { lines: computeDiffLines(view, filePath), large: false };
-    // A write's rows are its text.
-    if (!view.edits?.length) return { lines: null, large: true };
-    const deadline = performance.now() + QUICK_DIFF_MS;
-    const lines: DiffLine[] = [];
-    for (const edit of view.edits) {
-      if (!edit.oldText && !edit.newText) continue;
-      const timeout = Math.max(1, deadline - performance.now());
-      const patch = createPatch(filePath || 'file', edit.oldText, edit.newText, '', '', { context: 3, maxEditLength: QUICK_EDIT_LENGTH, timeout });
-      if (patch === undefined) return { lines: null, large: true };
-      lines.push(...parseDiffLines(patch));
-    }
-    return { lines, large: isLargeDiff(diffSize(lines)) };
   }
 </script>
 
