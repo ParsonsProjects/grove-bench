@@ -2,7 +2,8 @@ name: Release
 
 # Publishes main as a GitHub release, tagged v<version>:
 # - every Tuesday, when something that ships has changed since the last release
-# - when a push to main raises the package.json version
+# - when a push to main changes package.json and its version is higher than
+#   the last release
 # - when run from the Actions tab ("Run workflow"), optionally with a version
 # scripts/release-check.mjs picks the version (scripts/next-version.mjs): the
 # package.json version if it is higher than the last release, else the last
@@ -15,8 +16,8 @@ name: Release
 # version has been released; until then they are full releases, so GitHub's
 # "Latest" badge shows the newest build (scripts/release-type.mjs).
 #
-# To pause releases, set the repository variable AUTO_RELEASE to `off`. Runs
-# started from the Actions tab still release.
+# To pause releases, set the repository variable AUTO_RELEASE to `off` (or
+# `false`). Runs started from the Actions tab still release.
 
 on:
   schedule:

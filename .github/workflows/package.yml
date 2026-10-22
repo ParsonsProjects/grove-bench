@@ -33,7 +33,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: package-${{ github.event.pull_request.number || github.ref }}
+  # github.workflow is the caller's name when the Release workflow calls this
+  # one, so its build never waits in (or is replaced from) the same group as
+  # a Package run on main.
+  group: package-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:

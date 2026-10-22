@@ -100,7 +100,18 @@ describe('nextVersion', () => {
   });
 
   it('refuses versions that are not semver', () => {
-    expect(() => nextVersion({ base: '0.0.0-alpha.8', last: null, changed: true, override: 'patch' })).toThrow(/not a valid semver/);
-    expect(() => nextVersion({ base: 'next', last: null, changed: true })).toThrow(/not a valid semver/);
+    expect(() => nextVersion({ base: '0.0.0-alpha.8', last: null, changed: true, override: 'patch' })).toThrow(/not a valid version/);
+    expect(() => nextVersion({ base: 'next', last: null, changed: true })).toThrow(/not a valid version/);
+  });
+
+  it('refuses versions npm version would rewrite, so the tag matches the installer', () => {
+    for (const override of ['1.0.0+build.1', '1.0.0-alpha.01', '01.0.0']) {
+      expect(() => nextVersion({ base: '0.0.0-alpha.8', last: null, changed: true, override }), override).toThrow(/not a valid version/);
+    }
+    expect(() => nextVersion({ base: '0.0.0-alpha.8+x', last: null, changed: true })).toThrow(/not a valid version/);
+  });
+
+  it('accepts pre-release parts that only start with a digit', () => {
+    expect(nextVersion({ base: '0.0.0-alpha.8', last: null, changed: true, override: '1.0.0-0abc.0' })).toEqual({ version: '1.0.0-0abc.0' });
   });
 });

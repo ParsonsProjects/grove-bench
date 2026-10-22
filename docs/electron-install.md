@@ -38,9 +38,9 @@ Uses `electron-updater` with GitHub Releases as the update feed (`publish:` in `
 
 `.github/workflows/release.yml` publishes `main` as a GitHub release, tagged `v<version>`. It runs:
 
-- **Every Tuesday** (05:23 UTC), if anything that ships has changed since the last release: `src/` (not tests or mocks), `docs/help/`, `index.html`, `package.json`, `package-lock.json`, `electron-builder.yml`, the Vite and Svelte configs, `tsconfig.json` and `scripts/vite-csp.mjs`.
-- **When a push to `main` raises the `package.json` version.** Other `package.json` changes, such as dependency updates, don't release.
-- **From the Actions tab** (Release, then **Run workflow** on `main`). Leave the version empty to release the next one now, or name one, such as `1.0.0`.
+- **Every Tuesday** (05:23 UTC), if anything that ships has changed since the last release: `src/` (not tests, mocks, fixtures or the UI kit page), `docs/help/`, `index.html`, `package.json`, `package-lock.json`, `electron-builder.yml`, the Vite and Svelte configs, `tsconfig.json` and `scripts/vite-csp.mjs`.
+- **When a push to `main` changes `package.json`** and its version is higher than the last release. A dependency update on its own doesn't release.
+- **From the Actions tab** (Release, then **Run workflow** on `main`). Leave the version empty to release the next one now, if anything that ships has changed. Otherwise, or to release a full version, name one, such as `1.0.0`.
 
 `scripts/release-check.mjs` picks the version (`scripts/next-version.mjs`):
 
@@ -50,9 +50,9 @@ Uses `electron-updater` with GitHub Releases as the update feed (`publish:` in `
 
 So `package.json` on `main` is the lowest version to release next, not the released one. The Package workflow writes the picked version into `package.json` before it builds (`npm version --no-git-tag-version`), so the installer name, `latest.yml` and the app's version match the release. To start a new series or release a full version, raise `package.json` in a normal PR: `npm version 0.1.0-alpha.1 --no-git-tag-version` (updates `package.json` and `package-lock.json`). Merging it releases that version.
 
-Each run then builds and smoke tests the installer (the Package workflow: type check, tests, `npm run dist`, the smoke tests) and creates the GitHub release with generated notes, the installer, its `.blockmap` and `latest.yml`. The release and its tag are only created once everything has passed, so a failed run leaves nothing to clean up: fix it on `main`, then run the workflow again. Don't push `v*` tags by hand: the next run counts the highest tag as the last release, released or not.
+Each run then builds and smoke tests the installer (the Package workflow: type check, tests, `npm run dist`, the smoke tests) and creates the GitHub release with generated notes, the installer, its `.blockmap` and `latest.yml`. The release and its tag are only created once everything has passed, so a failed run leaves nothing to clean up: fix it on `main`, then run the workflow again. Don't push `v*` tags by hand: a tag makes no release now, and while the highest tag has no published release, every run fails until you delete it (`git push --delete origin vX`). Runs also fail on a commit older than the last release, so re-running an old run can't publish older code as a newer version.
 
-To pause releases (say, while `main` is broken), set the repository variable `AUTO_RELEASE` to `off` (Settings, Secrets and variables, Actions, Variables). Scheduled and push runs then do nothing; runs started from the Actions tab still release.
+To pause releases (say, while `main` is broken), set the repository variable `AUTO_RELEASE` to `off` or `false` (Settings, Secrets and variables, Actions, Variables). Scheduled and push runs then do nothing; runs started from the Actions tab still release.
 
 Plain `X.Y.Z` versions are published as full releases. Versions with a pre-release part (`-alpha.3`, `-beta.1`) are published as GitHub pre-releases once a plain version has a published full release (`scripts/release-type.mjs`). Until then they are full releases too: GitHub's "Latest" badge skips pre-releases, so it would otherwise stay on an old build and people would download that.
 
@@ -89,4 +89,4 @@ Until the installer is signed and has a reputation, check each release, and repo
 - **Vite externalization**: `electron-updater` must be in `rollupOptions.external` — it has native bindings that can't be bundled
 - **NSIS installer**: electron-builder uses NSIS for Windows installers — no Squirrel dependency
 - **Dev mode**: `app.isPackaged` guard is critical — `electron-updater` throws errors without a packaged app
-- **Tags**: The Release workflow creates the `v<version>` tags. Pushing one by hand makes no release, and the next run counts it as the last release
+- **Tags**: The Release workflow creates the `v<version>` tags. Pushing one by hand makes no release, and the next run fails until it is deleted

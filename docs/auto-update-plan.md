@@ -8,7 +8,7 @@
 > - Code signing is not a blocker.
 > - Add a 7-day minimum package age for npm installs.
 >
-> **Built:** Part 3 (minimum package age), Part 1 (in-app updater) and Part 2 (release automation). Part 2 follows the plan below, except: `scripts/release-check.mjs` stays as the release guard and calls the version rule in `scripts/next-version.mjs`; shipped files also include `docs/help/` (bundled into the app), `index.html`, `svelte.config.mjs`, `tsconfig.json` and `scripts/vite-csp.mjs`, but not tests or mocks; the pause switch leaves runs started by hand alone. Part 1 follows the plan below, with three additions:
+> **Built:** Part 3 (minimum package age), Part 1 (in-app updater) and Part 2 (release automation). Part 2 follows the plan below, except: `scripts/release-check.mjs` stays as the release guard and calls the version rule in `scripts/next-version.mjs`; shipped files also include `docs/help/` (bundled into the app), `index.html`, `svelte.config.mjs`, `tsconfig.json` and `scripts/vite-csp.mjs`, but not tests or mocks; the pause switch leaves runs started by hand alone; runs fail when the highest tag has no published release (a tag pushed by hand) or the commit is older than the last release; a version named by hand must be one `npm version` keeps as written. Part 1 follows the plan below, with three additions:
 > - The pill's old `hsl(var(--primary) / ...)` styles were invalid with the theme's `oklch` colours, so it showed with no background. It now uses Tailwind colour classes.
 > - A second restart request is ignored. Calling `quitAndInstall` twice makes electron-updater's quit hook start the installer again.
 > - Settings links to all releases rather than one release page.

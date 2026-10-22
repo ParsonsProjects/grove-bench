@@ -10,6 +10,19 @@ import { SEMVER } from './release-type.mjs';
 
 const NUMERIC = /^\d+$/;
 
+// A version `npm version` writes back as given: no leading zeros and no build
+// metadata (it turns 1.0.0-alpha.01 into 1.0.0-alpha.1, and drops +build.1).
+// Anything else would tag the release with one version and build the
+// installer as another.
+const IDENTIFIER = '(?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*)';
+const RELEASABLE = new RegExp(`^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-${IDENTIFIER}(?:\\.${IDENTIFIER})*)?$`);
+
+function checkReleasable(version, what) {
+  if (!RELEASABLE.test(version)) {
+    throw new Error(`${what} "${version}" is not a valid version to release. Use 1.2.3 or 1.2.3-alpha.4, with no leading zeros or build metadata.`);
+  }
+}
+
 function parse(version) {
   const match = SEMVER.exec(version);
   if (!match) return null;
@@ -81,11 +94,11 @@ export function incrementPrerelease(version) {
  * @returns {{ version: string } | { skip: string }}
  */
 export function nextVersion({ base, last, changed, bumpOnly = false, override }) {
-  if (!SEMVER.test(base)) throw new Error(`package.json version "${base}" is not a valid semver version.`);
+  checkReleasable(base, 'package.json version');
 
   if (override) {
     const version = override.replace(/^v/, '');
-    if (!SEMVER.test(version)) throw new Error(`"${override}" is not a valid semver version.`);
+    checkReleasable(version, 'Version');
     if (last !== null && compareVersions(version, last) <= 0) {
       throw new Error(`${version} is not higher than the last release, ${last}.`);
     }

@@ -3,14 +3,15 @@
  *
  * Picks the version to release from the package.json version, the `v*` tags
  * and whether anything shipped changed since the last one (nextVersion in
- * next-version.mjs), and fails unless the commit is on main. Writes `skip`,
+ * next-version.mjs). Fails unless the commit is on main and contains the last
+ * release, and when the highest tag has no published release. Writes `skip`,
  * `version` and `prerelease` to $GITHUB_OUTPUT (see isGitHubPrerelease in
  * release-type.mjs). Reads the repo's releases with gh, so it needs GH_TOKEN,
  * and the full history and tags (checkout with fetch-depth: 0).
  *
  * Env: GITHUB_EVENT_NAME (`push` runs only release a package.json bump),
- * VERSION (a version asked for by hand, optional), AUTO_RELEASE (`off` skips
- * every run but one started by hand).
+ * VERSION (a version asked for by hand, optional), AUTO_RELEASE (`off` or
+ * `false`, in any case, skips every run but one started by hand).
  *
  * Usage: GITHUB_EVENT_NAME=workflow_dispatch GH_TOKEN=... node scripts/release-check.mjs
  */
@@ -33,7 +34,10 @@ const SHIPPED = [
   'tsconfig.json',
   'scripts/vite-csp.mjs',
   ':(exclude)*.test.ts',
+  ':(exclude)*-fixture.*',
   ':(exclude)*/__mocks__/*',
+  // The UI kit page, served by the dev server only (ui-kit.html)
+  ':(exclude)src/renderer/ui-kit',
 ];
 
 function fail(message) {
@@ -52,24 +56,50 @@ function skip(reason) {
   process.exit(0);
 }
 
-const event = process.env.GITHUB_EVENT_NAME;
-if (process.env.AUTO_RELEASE === 'off' && event !== 'workflow_dispatch') {
-  skip('Releases are paused: the repository variable AUTO_RELEASE is off.');
+/** Whether `ancestor` is `commit` or comes before it. */
+function isAncestor(ancestor, commit) {
+  try {
+    execFileSync('git', ['merge-base', '--is-ancestor', ancestor, commit], { stdio: 'inherit' });
+    return true;
+  } catch (err) {
+    if (err.status === 1) return false;
+    throw err;
+  }
 }
 
-try {
-  execFileSync('git', ['merge-base', '--is-ancestor', 'HEAD', 'origin/main'], { stdio: 'inherit' });
-} catch (err) {
-  if (err.status === 1) fail('Releases are made from main, and this commit is not on main.');
-  throw err;
+const event = process.env.GITHUB_EVENT_NAME;
+// Any case, and `false` too, so a pause set in a hurry still pauses.
+const pause = process.env.AUTO_RELEASE?.trim() ?? '';
+if (/^(off|false)$/i.test(pause) && event !== 'workflow_dispatch') {
+  skip(`Releases are paused: the repository variable AUTO_RELEASE is ${pause}.`);
 }
+
+if (!isAncestor('HEAD', 'origin/main')) fail('Releases are made from main, and this commit is not on main.');
 
 const { version: base } = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 const tags = execFileSync('git', ['tag', '--list', 'v*'], { encoding: 'utf8' }).split('\n').filter(Boolean);
 const last = highestVersion(tags);
 
+// Published releases, pre-release or not. A draft has no tag until it is
+// published, so drafts don't count.
+const repo = process.env.GITHUB_REPOSITORY ? ['--repo', process.env.GITHUB_REPOSITORY] : [];
+const releases = JSON.parse(execFileSync('gh', [
+  'release', 'list', ...repo, '--exclude-drafts', '--json', 'tagName,isPrerelease', '--limit', '1000',
+], { encoding: 'utf8' }));
+
 let changed = true;
 if (last !== null) {
+  // This workflow only tags a release once it is published, so a tag without
+  // one was pushed by hand (or its release was deleted). Counting it as the
+  // last release would skip its version, or stop releases after a full one.
+  if (!releases.some((r) => r.tagName === `v${last}`)) {
+    fail(`Tag v${last} has no published release. The Release workflow makes its own tags: delete this one (git push --delete origin v${last}) or publish a release for it.`);
+  }
+  // Re-running an old run, or picking an old ref in "Run workflow", would
+  // otherwise publish older code as a newer version.
+  if (!isAncestor(`v${last}`, 'HEAD')) {
+    fail(`This commit is older than the last release, v${last}. Release from the head of main.`);
+  }
   try {
     execFileSync('git', ['diff', '--quiet', `v${last}`, 'HEAD', '--', ...SHIPPED]);
     changed = false;
@@ -86,14 +116,8 @@ try {
 }
 if ('skip' in picked) skip(picked.skip);
 
-// Published full releases only: a tag whose release failed, or was never
-// made, doesn't count.
-const repo = process.env.GITHUB_REPOSITORY ? ['--repo', process.env.GITHUB_REPOSITORY] : [];
-const released = JSON.parse(execFileSync('gh', [
-  'release', 'list', ...repo, '--exclude-drafts', '--exclude-pre-releases', '--json', 'tagName', '--limit', '1000',
-], { encoding: 'utf8' })).map((r) => r.tagName);
-
 const { version } = picked;
+const released = releases.filter((r) => !r.isPrerelease).map((r) => r.tagName);
 const prerelease = isGitHubPrerelease(version, released);
 console.log(`Releasing ${version}${prerelease ? ' as a pre-release' : ''}${last ? ` (last release ${last})` : ''}.`);
 output({ skip: false, version, prerelease });
