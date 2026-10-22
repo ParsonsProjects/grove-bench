@@ -20,6 +20,10 @@ export interface HostedOptions {
    *  the caller quotes them. */
   shell?: boolean;
   timeout?: number;
+  /** Fail, with `isMaxBuffer` set, once the command writes more than this
+   *  (characters, or bytes with `encoding: 'buffer'`). execa then closes
+   *  the command's output, so it ends when it next writes. */
+  maxBuffer?: number;
   reject?: boolean;
   input?: string;
   encoding?: 'utf8' | 'buffer';
@@ -173,7 +177,18 @@ export function serializeResult(result: unknown): ProcessResult<string | Uint8Ar
 export function serializeError(error: unknown): SerializedError {
   if (!(error instanceof Error)) return { name: 'Error', message: String(error) };
   const source = error as unknown as Record<string, unknown>;
-  return { ...pick(source, RESULT_FIELDS), ...pick(source, ERROR_FIELDS), name: error.name, message: error.message } as SerializedError;
+  const data = { ...pick(source, RESULT_FIELDS), ...pick(source, ERROR_FIELDS), name: error.name, message: error.message } as SerializedError;
+  // Past maxBuffer, execa's error holds the output it read, up to the
+  // limit, three times: in stdout, and again in message and stack. The
+  // caller set the limit because it didn't want that much, so none of it
+  // is sent.
+  if (data.isMaxBuffer) {
+    delete data.stdout;
+    delete data.stderr;
+    delete data.stack;
+    data.message = data.shortMessage ?? 'Output over maxBuffer';
+  }
+  return data;
 }
 
 /** An Error carrying the fields the host sent, so callers can read

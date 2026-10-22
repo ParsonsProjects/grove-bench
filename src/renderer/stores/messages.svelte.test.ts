@@ -1938,6 +1938,29 @@ describe('updateMcpServers', () => {
 });
 
 describe('ingestEvent — user_message UUID stamping', () => {
+  it('shows a sent prompt at once with its time, then the time main logged', () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: 5_000 });
+    try {
+      messageStore.addUserMessage(SID, 'hi');
+      expect((messageStore.getMessages(SID)[0] as ChatUserMessage).sentAt).toBe(5_000);
+
+      messageStore.ingestEvent(SID, { type: 'user_message', text: 'hi', uuid: 'u1', at: 5_020 });
+      expect((messageStore.getMessages(SID)[0] as ChatUserMessage).sentAt).toBe(5_020);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps the time from history, and gives older history none', () => {
+    messageStore.replayEvents(SID, [
+      { type: 'user_message', text: 'old', uuid: 'u1' },
+      { type: 'user_message', text: 'new', uuid: 'u2', at: 7_000 },
+    ]);
+    const [old, recent] = messageStore.getMessages(SID) as ChatUserMessage[];
+    expect(old).not.toHaveProperty('sentAt');
+    expect(recent.sentAt).toBe(7_000);
+  });
+
   it('swaps just-sent images for the saved copies once main has saved them', () => {
     messageStore.addUserMessage(SID, 'look', [{ name: 'shot.png', dataUrl: 'data:image/png;base64,AA' }]);
     const saved = [{ file: `${'a'.repeat(32)}.png`, name: 'shot.png' }];

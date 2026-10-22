@@ -1,7 +1,7 @@
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
-import { git, gitEnv, detectBinaryDiff, imageExtFor, patchResult } from './git.js';
+import { git, gitEnv, gitPatch, detectBinaryDiff, imageExtFor, patchResult, patchOverLimit } from './git.js';
 import { parseDiffRaw, parseNumstat as parseNumstatRows } from './git-status-parser.js';
 import { logger } from './logger.js';
 import type { CheckpointDiffScope, DiffHistoryEntry, DiffHistoryResult, DiffStats, FileDiffResult, FileLinesResult, GitStatusResult } from '../shared/types.js';
@@ -404,7 +404,8 @@ export class CheckpointManager {
     if (imgExt) return { kind: 'image', ext: imgExt };
     const range = await this.range(sessionId, cwd, uuid, scope);
     if (!range) return { kind: 'text', patch: '' };
-    const diff = await git(['diff', range.from, range.to, '--', relPath], cwd);
+    const diff = await gitPatch(['diff', range.from, range.to, '--', relPath], cwd);
+    if (diff === null) return patchOverLimit();
     if (detectBinaryDiff(diff)) return { kind: 'binary' };
     return patchResult(diff);
   }

@@ -1188,6 +1188,10 @@ describe('file handlers', () => {
     vi.mocked(git.fileDiff).mockResolvedValue('@@ -1 +1 @@\n-a\n+b\n');
     expect(await invoke(IPC.FILE_DIFF, 's1', 'bundle.js')).toEqual({ kind: 'text', patch: '@@ -1 +1 @@\n-a\n+b\n' });
 
+    // Git was stopped at the limit (gitPatch), so the size is only that.
+    vi.mocked(git.fileDiff).mockResolvedValue(null);
+    expect(await invoke(IPC.FILE_DIFF, 's1', 'bundle.js')).toEqual({ kind: 'tooLarge', bytes: git.MAX_TEXT_FILE_BYTES, atLeast: true });
+
     // A new file under the limit whose patch, a '+' on every line, is over it.
     write('lines.txt', 'a\n'.repeat(1_900_000));
     vi.mocked(git.fileDiff).mockResolvedValue('');

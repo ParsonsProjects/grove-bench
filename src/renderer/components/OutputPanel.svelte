@@ -16,6 +16,7 @@
   import { arrivalScene } from '../stores/arrivalScene.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
   import { filterVisibleMessages, foldNarration, hasAgentReply, narrationIds, threadMessages } from '$lib/message-view.js';
+  import { dayDividers, dayStart } from '$lib/message-dates.js';
   import { sessionRepoColor } from '$lib/session-repo-color.js';
   import { sessionSpriteState } from '$lib/session-sprite-state.js';
   import type { EventSearchHit } from '../../shared/types.js';
@@ -106,6 +107,22 @@
       : filteredMessages
   );
   let rows = $derived(foldNarration(messages, notes));
+
+  // ─── Day dividers above the first prompt of each day ───
+  // Over the messages drawn, so the first prompt drawn always has one and
+  // the top of the view says what day it is. "Today" and "Yesterday" move
+  // on at midnight: checked each minute while the pane shows, and when it
+  // is shown again.
+  let today = $state(dayStart(Date.now()));
+  $effect(() => {
+    if (!paneShown) return;
+    const check = () => { today = dayStart(Date.now()); };
+    check();
+    const timer = setInterval(check, 60_000);
+    return () => clearInterval(timer);
+  });
+  let dividers = $derived(dayDividers(messages, today));
+
   let olderCount = $derived(
     hasOlderMessages ? filteredMessages.length - visibleCount : 0
   );
@@ -523,6 +540,14 @@
   {/if}
 
   {#snippet messageRow(msg: ChatMessage)}
+    {@const day = dividers.get(msg.id)}
+    {#if day}
+      <div role="separator" aria-label={day} class="flex items-center gap-3 mt-3 mb-1 text-caption text-muted-foreground select-none">
+        <span class="flex-1 border-t border-border"></span>
+        {day}
+        <span class="flex-1 border-t border-border"></span>
+      </div>
+    {/if}
     <div
       data-msg-id={msg.id}
       class={currentMatchId === msg.id ? 'ring-1 ring-yellow-500/60 bg-yellow-500/10' : ''}

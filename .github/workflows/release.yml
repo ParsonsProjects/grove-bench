@@ -1,16 +1,37 @@
 name: Release
 
-# Push a tag named v<package.json version> on a commit in main. The tag is
-# checked, the Package workflow builds and smoke tests the installer, then it
-# is published as a GitHub release. Versions with a pre-release part
-# (0.1.0-alpha.3) are published as pre-releases once a full version has been
-# released; until then they are full releases, so GitHub's "Latest" badge
-# shows the newest build (scripts/release-type.mjs).
+# Publishes main as a GitHub release, tagged v<version>:
+# - every Tuesday, when something that ships has changed since the last release
+# - when a push to main changes package.json and its version is higher than
+#   the last release
+# - when run from the Actions tab ("Run workflow"), optionally with a version
+# scripts/release-check.mjs picks the version (scripts/next-version.mjs): the
+# package.json version if it is higher than the last release, else the last
+# pre-release plus one (0.1.0-alpha.3 to 0.1.0-alpha.4). A full version is
+# only released by raising package.json or by naming it in "Run workflow".
+# The Package workflow builds and smoke tests the installer as that version,
+# then it is published.
+#
+# Versions with a pre-release part are published as pre-releases once a full
+# version has been released; until then they are full releases, so GitHub's
+# "Latest" badge shows the newest build (scripts/release-type.mjs).
+#
+# To pause releases, set the repository variable AUTO_RELEASE to `off` (or
+# `false`). Runs started from the Actions tab still release.
 
 on:
+  schedule:
+    - cron: '23 5 * * 2'
   push:
-    tags:
-      - 'v*'
+    branches: [main]
+    paths:
+      - package.json
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to release, such as 1.0.0. Leave empty to pick the next one.
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -21,30 +42,37 @@ concurrency:
 
 jobs:
   check:
-    name: Check tag
+    name: Pick version
     runs-on: ubuntu-latest
     outputs:
+      skip: ${{ steps.check.outputs.skip }}
       version: ${{ steps.check.outputs.version }}
       prerelease: ${{ steps.check.outputs.prerelease }}
     steps:
       - uses: actions/checkout@v7
         with:
+          # The tags, and the history to compare the last one with
           fetch-depth: 0
 
       - uses: actions/setup-node@v7
         with:
           node-version: 24
 
-      - name: Check tag matches package.json and is on main
+      - name: Pick the version to release
         id: check
         env:
           # Lists the published releases (pre-release or not)
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          AUTO_RELEASE: ${{ vars.AUTO_RELEASE }}
         run: node scripts/release-check.mjs
 
   package:
     needs: check
+    if: needs.check.outputs.skip != 'true'
     uses: ./.github/workflows/package.yml
+    with:
+      version: ${{ needs.check.outputs.version }}
 
   publish:
     name: Publish release
@@ -61,16 +89,19 @@ jobs:
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
           VERSION: ${{ needs.check.outputs.version }}
           PRERELEASE: ${{ needs.check.outputs.prerelease }}
         run: |
           ls -l out
           flags=()
           if [ "$PRERELEASE" = "true" ]; then flags+=(--prerelease); fi
-          gh release create "$TAG" out/* \
+          # gh uploads the files to a draft and publishes it once they are all
+          # there, which creates the tag at the commit that was built. A failed
+          # upload deletes the draft, so clients never see a release without
+          # latest.yml.
+          gh release create "v$VERSION" out/* \
             --repo "$GITHUB_REPOSITORY" \
-            --verify-tag \
+            --target "$GITHUB_SHA" \
             --title "$VERSION" \
             --generate-notes \
             "${flags[@]}"

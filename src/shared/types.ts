@@ -285,7 +285,8 @@ export type AgentEvent =
   | { type: 'compact_boundary'; trigger: 'manual' | 'auto'; preTokens: number }
   | { type: 'tool_progress'; toolName: string; toolUseId: string; elapsedSeconds: number }
   | { type: 'activity'; activity: 'thinking' | 'tool_starting' | 'generating' | 'idle' ; toolName?: string }
-  | { type: 'user_message'; text: string; uuid?: string; images?: StoredImage[]; files?: StoredFile[] }
+  /** `at`: when it was sent (epoch ms). Older history has none. */
+  | { type: 'user_message'; text: string; uuid?: string; images?: StoredImage[]; files?: StoredFile[]; at?: number }
   /** `level: 'warning'` renders prominently (e.g. read-safe mode without a sandbox).
    *  `newConversation` marks where the agent started a new conversation: it
    *  doesn't remember the turns above, so a rewind can't fork from them. */
@@ -492,8 +493,9 @@ export type FileDiffResult =
   | { kind: 'text'; patch: string }
   | { kind: 'binary' }
   | { kind: 'image'; ext: string }
-  /** A diff too big to show: a new file over the size limit, or a patch over it. */
-  | { kind: 'tooLarge'; bytes: number };
+  /** A diff too big to show: a new file over the size limit, or a patch over
+   *  it. `atLeast`: git was stopped at the limit, so `bytes` is only that. */
+  | { kind: 'tooLarge'; bytes: number; atLeast?: boolean };
 
 /** Base64 data URLs for an image file's working-tree and HEAD versions (either may be null). */
 export interface ImageDiffContent {

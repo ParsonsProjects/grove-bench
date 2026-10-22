@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { resolveMergeBase, squashSince, branchCommits, excludeFromGit } from './git.js';
+import { resolveMergeBase, squashSince, branchCommits, excludeFromGit, fileDiff } from './git.js';
 
 // Real git is slow to start on Windows, and each test runs a dozen commands.
 vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
@@ -90,6 +90,21 @@ describe('squash', () => {
     expect(result.success).toBe(false);
     expect(run('rev-parse', 'HEAD')).toBe(before);
     expect(run('status', '--porcelain')).toBe('');
+  });
+});
+
+describe('a file diff', () => {
+  it('stops git once the patch is over the size limit, rather than reading it all', async () => {
+    // A 3.9 MB file with every line changed: a patch of about 8 MB.
+    const lines = (word: string) => Array.from({ length: 150_000 }, (_, i) => `${word} ${i} padding padding`).join('\n');
+    fs.writeFileSync(path.join(repo, 'big.txt'), lines('old'));
+    run('add', 'big.txt');
+    run('commit', '-qm', 'big');
+    fs.writeFileSync(path.join(repo, 'big.txt'), lines('new'));
+
+    expect(await fileDiff(repo, 'big.txt')).toBeNull();
+    fs.writeFileSync(path.join(repo, 'base.txt'), 'changed\n');
+    expect(await fileDiff(repo, 'base.txt')).toContain('+changed');
   });
 });
 

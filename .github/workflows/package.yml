@@ -4,8 +4,8 @@ name: Package
 # packaged app has every package main loads, and that node-pty and the agent
 # SDK's native binary work in it. Runs when packaging inputs change, weekly
 # (runner image updates have broken packaging before with no change in this
-# repo), and from the Release workflow, which publishes the installer
-# uploaded here.
+# repo), and from the Release workflow, which passes the version to build and
+# publishes the installer uploaded here.
 
 on:
   pull_request:
@@ -23,12 +23,20 @@ on:
     - cron: '17 6 * * 1'
   workflow_dispatch:
   workflow_call:
+    inputs:
+      version:
+        description: Version to build the installer as. Defaults to the package.json version.
+        required: false
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: package-${{ github.event.pull_request.number || github.ref }}
+  # github.workflow is the caller's name when the Release workflow calls this
+  # one, so its build never waits in (or is replaced from) the same group as
+  # a Package run on main.
+  group: package-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -54,6 +62,16 @@ jobs:
 
       - name: Run tests
         run: npm test
+
+      - name: Set the release version
+        # package.json on main holds the lowest version to release next, not
+        # the released one (scripts/next-version.mjs). The installer name,
+        # latest.yml and app.getVersion() all read it from package.json.
+        if: inputs.version
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: npm version "$VERSION" --no-git-tag-version --allow-same-version
 
       - name: Build installer
         run: npm run dist

@@ -15,6 +15,7 @@ vi.mock('./logger.js', () => ({
 
 import { logger } from './logger.js';
 import { CheckpointManager } from './checkpoints.js';
+import { MAX_TEXT_FILE_BYTES } from './git.js';
 
 // Real git is slow to start on Windows, and each test runs a dozen commands.
 vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
@@ -90,9 +91,8 @@ describe('checkpoints with real git', () => {
     write('dist/bundle.js', 'x'.repeat(5 * 1024 * 1024) + '\n');
     write('src/small.ts', 'small\n');
 
-    const big = await mgr.fileDiff('s1', wt, 'u1', 'turn', 'dist/bundle.js');
-    expect(big.kind).toBe('tooLarge');
-    expect(big.kind === 'tooLarge' && big.bytes).toBeGreaterThan(5 * 1024 * 1024);
+    // Git is stopped at the limit, rather than read to the end.
+    expect(await mgr.fileDiff('s1', wt, 'u1', 'turn', 'dist/bundle.js')).toEqual({ kind: 'tooLarge', bytes: MAX_TEXT_FILE_BYTES, atLeast: true });
     expect(await mgr.fileDiff('s1', wt, 'u1', 'turn', 'src/small.ts')).toMatchObject({ kind: 'text', patch: expect.stringContaining('+small') });
   });
 
