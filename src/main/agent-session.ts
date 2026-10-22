@@ -1065,6 +1065,9 @@ class AgentSessionManager {
     images?: import('../shared/types.js').ImageAttachment[],
     files?: import('../shared/types.js').FileAttachment[],
   ): Promise<boolean> {
+    // When it was sent, for the thread to show. Taken before the waits below
+    // (setup, a wake), which can take minutes.
+    const sentAt = Date.now();
     let session = this.sessions.get(id);
 
     // The session object is created at the end of setup; a prompt that
@@ -1119,7 +1122,7 @@ class AgentSessionManager {
     // Read before this message joins the history.
     const audioInHistory = savedFiles.length > 0 ? audioSentInline(session.eventHistory) : 0;
     const userEvent: Extract<AgentEvent, { type: 'user_message' }> = {
-      type: 'user_message', text: content, uuid, at: Date.now(),
+      type: 'user_message', text: content, uuid, at: sentAt,
       ...(storedImages.length > 0 && { images: storedImages }),
       ...(savedFiles.length > 0 && { files: savedFiles.map((f) => f.stored) }),
     };

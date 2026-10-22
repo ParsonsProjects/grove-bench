@@ -31,6 +31,20 @@ describe('dayLabel', () => {
   it('counts Yesterday across the start of a month', () => {
     expect(dayLabel(at(9, 30), dayStart(at(10, 1)))).toBe('Yesterday');
   });
+
+  it('counts Yesterday on a day DST starts at midnight', () => {
+    const tz = process.env.TZ;
+    // Cuba moved its clocks from midnight to 01:00 on 8 March 2026.
+    process.env.TZ = 'America/Havana';
+    try {
+      const today = dayStart(new Date(2026, 2, 8, 12).getTime());
+      expect(new Date(today).getHours()).toBe(1);
+      expect(dayLabel(new Date(2026, 2, 7, 15).getTime(), today)).toBe('Yesterday');
+    } finally {
+      if (tz === undefined) delete process.env.TZ;
+      else process.env.TZ = tz;
+    }
+  });
 });
 
 describe('formatSentTime', () => {

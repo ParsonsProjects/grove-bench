@@ -22,9 +22,10 @@ export function formatSentTime(at: number): string {
 export function dayLabel(at: number, today: number): string {
   const day = dayStart(at);
   if (day === today) return 'Today';
-  const yesterday = new Date(today);
-  yesterday.setDate(yesterday.getDate() - 1);
-  if (day === yesterday.getTime()) return 'Yesterday';
+  // The day the millisecond before today falls on. Not a calendar day back
+  // from `today`: where DST starts at midnight, today starts at 01:00, and
+  // a day back from that is 01:00 yesterday, not yesterday's start.
+  if (day === dayStart(today - 1)) return 'Yesterday';
   return new Date(at).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 }
 

@@ -2658,6 +2658,26 @@ describe('AgentSessionManager sleep and wake', () => {
     await sessionManager.destroySession('test-wake-send');
   });
 
+  it('keeps the time a message was sent, not when the wake let it through', async () => {
+    await startSession('test-wake-time');
+    await sessionManager.sleepSession('test-wake-time');
+    let now = 1_000;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+      const sending = sessionManager.sendMessage('test-wake-time', 'Are you there?');
+      // The wake takes a minute.
+      now = 61_000;
+      expect(await sending).toBe(true);
+    } finally {
+      clock.mockRestore();
+    }
+
+    const prompt = sessionManager.getEventHistory('test-wake-time').find((e) => e.type === 'user_message');
+    expect(prompt).toMatchObject({ text: 'Are you there?', at: 1_000 });
+
+    await sessionManager.destroySession('test-wake-time');
+  });
+
   it('wakes back into starting when the agent had not initialised yet', async () => {
     await sessionManager.createSession({
       id: 'test-wake-starting', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',

@@ -115,6 +115,38 @@ describe('OutputPanel: day dividers', () => {
     }
   });
 
+  it('marks the first prompt drawn when its day began above the messages drawn', async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: at(22, 12) });
+    try {
+      store.activeSessionId = SID;
+      // 60 messages: the day's first prompt is the oldest, and only the newest 50 draw.
+      const replies = Array.from({ length: 58 }, (_, i) => ({ kind: 'text' as const, id: `t${i}`, text: `reply ${i}`, uuid: `a${i}` }));
+      messageStore.messagesBySession = {
+        [SID]: [
+          { kind: 'user', id: 'u1', text: 'morning', sentAt: at(22, 8) },
+          ...replies.slice(0, 54),
+          { kind: 'user', id: 'u2', text: 'later', sentAt: at(22, 11) },
+          ...replies.slice(54),
+        ],
+      };
+      const { container, getAllByRole, getByRole } = render(OutputPanel, { sessionId: SID });
+      await vi.waitFor(() => expect(container.querySelectorAll('[data-msg-id]')).toHaveLength(50));
+
+      let dividers = getAllByRole('separator');
+      expect(dividers).toHaveLength(1);
+      expect(dividers[0]).toHaveTextContent('Today');
+      expect(dividers[0].nextElementSibling).toHaveAttribute('data-msg-id', 'u2');
+
+      // Loading the older messages moves it up to the day's first prompt.
+      await fireEvent.click(getByRole('button', { name: /Load 10 older messages/ }));
+      dividers = getAllByRole('separator');
+      expect(dividers).toHaveLength(1);
+      expect(dividers[0].nextElementSibling).toHaveAttribute('data-msg-id', 'u1');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('moves Today on to Yesterday at midnight', async () => {
     vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'], now: at(22, 23, 59) });
     try {

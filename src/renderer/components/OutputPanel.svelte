@@ -50,19 +50,6 @@
   const NO_NOTES = new Set<string>();
   let notes = $derived(viewMode === 'detailed' ? NO_NOTES : narrationIds(thread));
 
-  // ─── Day dividers above the first prompt of each day ───
-  // "Today" and "Yesterday" move on at midnight: checked each minute while
-  // the pane shows, and when it is shown again.
-  let today = $state(dayStart(Date.now()));
-  $effect(() => {
-    if (!paneShown) return;
-    const check = () => { today = dayStart(Date.now()); };
-    check();
-    const timer = setInterval(check, 60_000);
-    return () => clearInterval(timer);
-  });
-  let dividers = $derived(dayDividers(thread, today));
-
   // ─── Lazy loading: only render recent messages, load older on demand ───
   const PAGE_SIZE = 50;
   let visibleCount = $state(PAGE_SIZE);
@@ -120,6 +107,22 @@
       : filteredMessages
   );
   let rows = $derived(foldNarration(messages, notes));
+
+  // ─── Day dividers above the first prompt of each day ───
+  // Over the messages drawn, so the first prompt drawn always has one and
+  // the top of the view says what day it is. "Today" and "Yesterday" move
+  // on at midnight: checked each minute while the pane shows, and when it
+  // is shown again.
+  let today = $state(dayStart(Date.now()));
+  $effect(() => {
+    if (!paneShown) return;
+    const check = () => { today = dayStart(Date.now()); };
+    check();
+    const timer = setInterval(check, 60_000);
+    return () => clearInterval(timer);
+  });
+  let dividers = $derived(dayDividers(messages, today));
+
   let olderCount = $derived(
     hasOlderMessages ? filteredMessages.length - visibleCount : 0
   );
