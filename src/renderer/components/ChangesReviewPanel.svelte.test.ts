@@ -777,6 +777,13 @@ describe('ChangesReviewPanel — large diffs', () => {
     expect(await findByText(/Too large to show here \(5\.0 MB\)/)).toBeInTheDocument();
   });
 
+  it('says a diff git was stopped writing is over the limit', async () => {
+    mockGroveBench.getFileDiff.mockResolvedValue({ kind: 'tooLarge', bytes: 4 * 1024 * 1024, atLeast: true });
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('big.log')] } };
+    const { findByText } = render(ChangesReviewPanel, { sessionId: SID });
+    expect(await findByText('Too large to show here (over 4.0 MB).')).toBeInTheDocument();
+  });
+
   it('holds a long diff back until asked, then draws it', async () => {
     const body = Array.from({ length: 30 }, (_, i) => `+line ${i + 1}`).join('\n');
     mockGroveBench.getFileDiff.mockResolvedValue({ kind: 'text', patch: `--- a/big.ts\n+++ b/big.ts\n@@ -0,0 +1,30 @@\n${body}\n` });

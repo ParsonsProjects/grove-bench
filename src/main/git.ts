@@ -10,10 +10,17 @@ export const FETCH_TIMEOUT_MS = 30_000;
 export interface GitOptions {
   /** Kill the git process after this many ms (for network commands that can hang). */
   timeout?: number;
+  /** Fail, with `isMaxBuffer` set, once git has written more than this many
+   *  characters; git ends when it next writes. execa's own limit is 100 MB. */
+  maxBuffer?: number;
 }
 
 export async function git(args: string[], cwd: string, opts?: GitOptions): Promise<string> {
-  const result = await runProcess('git', args, opts?.timeout ? { cwd, timeout: opts.timeout } : { cwd });
+  const result = await runProcess('git', args, {
+    cwd,
+    ...(opts?.timeout ? { timeout: opts.timeout } : {}),
+    ...(opts?.maxBuffer ? { maxBuffer: opts.maxBuffer } : {}),
+  });
   return result.stdout;
 }
 
@@ -412,17 +419,18 @@ export async function checkoutBranch(
 /**
  * Diff a single file. `staged` selects the index-vs-HEAD diff (`--cached`);
  * otherwise the working-tree-vs-index diff is returned. Returns the raw unified
- * patch (possibly empty, e.g. for an untracked file — see synthesizeUntrackedDiff).
+ * patch (possibly empty, e.g. for an untracked file — see synthesizeUntrackedDiff),
+ * or null when it's too large to show (gitPatch).
  */
 export async function fileDiff(
   cwd: string,
   relPath: string,
   opts: { staged?: boolean } = {},
-): Promise<string> {
+): Promise<string | null> {
   const args = opts.staged
     ? ['diff', '--cached', '--', relPath]
     : ['diff', '--', relPath];
-  return git(args, cwd);
+  return gitPatch(args, cwd);
 }
 
 /** Whether git tracks a path (it is in the index), unlike a new or ignored file. */
@@ -435,9 +443,10 @@ export async function isTracked(cwd: string, relPath: string): Promise<boolean> 
   }
 }
 
-/** Diff a single file against an arbitrary ref (working tree vs `ref`). */
-export async function fileDiffAgainst(cwd: string, relPath: string, ref: string): Promise<string> {
-  return git(['diff', ref, '--', relPath], cwd);
+/** Diff a single file against an arbitrary ref (working tree vs `ref`), or
+ *  null when it's too large to show (gitPatch). */
+export async function fileDiffAgainst(cwd: string, relPath: string, ref: string): Promise<string | null> {
+  return gitPatch(['diff', ref, '--', relPath], cwd);
 }
 
 /**
@@ -498,6 +507,29 @@ export const MAX_TEXT_FILE_BYTES = 4 * 1024 * 1024;
 export function patchResult(patch: string): FileDiffResult {
   const bytes = Buffer.byteLength(patch);
   return bytes > MAX_TEXT_FILE_BYTES ? { kind: 'tooLarge', bytes } : { kind: 'text', patch };
+}
+
+/**
+ * `git <args>` for a patch to show in a diff, or null when it's too large.
+ * Git is stopped once it has written more than MAX_TEXT_FILE_BYTES
+ * characters, plus the final newline execa counts before taking it off: a
+ * character is at least one byte, so the patch is then over the limit and
+ * patchResult would turn it away. Reading on (execa reads up to 100 MB,
+ * then fails, which showed as "No diff available") would only move a patch
+ * that is thrown away into the main process.
+ */
+export async function gitPatch(args: string[], cwd: string): Promise<string | null> {
+  try {
+    return await git(args, cwd, { maxBuffer: MAX_TEXT_FILE_BYTES + 1 });
+  } catch (e) {
+    if ((e as { isMaxBuffer?: unknown } | null)?.isMaxBuffer === true) return null;
+    throw e;
+  }
+}
+
+/** What a patch gitPatch stopped gives: too large, of unknown size. */
+export function patchOverLimit(): FileDiffResult {
+  return { kind: 'tooLarge', bytes: MAX_TEXT_FILE_BYTES, atLeast: true };
 }
 
 /** True when a git diff describes a binary change rather than a text patch. */

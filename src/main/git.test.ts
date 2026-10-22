@@ -23,6 +23,7 @@ import {
   branchHasRemote,
   renameBranch,
   fileDiff,
+  MAX_TEXT_FILE_BYTES,
   isTracked,
   synthesizeUntrackedDiff,
   detectBinaryDiff,
@@ -430,21 +431,28 @@ describe('fileDiff()', () => {
   it('diffs the working tree against the index for unstaged changes', async () => {
     mockExeca.mockResolvedValue({ stdout: 'unstaged patch' } as any);
     const out = await fileDiff('/repo', 'src/a.ts', { staged: false });
-    expect(mockExeca).toHaveBeenCalledWith('git', ['diff', '--', 'src/a.ts'], { cwd: '/repo' });
+    expect(mockExeca).toHaveBeenCalledWith('git', ['diff', '--', 'src/a.ts'], { cwd: '/repo', maxBuffer: MAX_TEXT_FILE_BYTES + 1 });
     expect(out).toBe('unstaged patch');
   });
 
   it('diffs the index against HEAD for staged changes (--cached)', async () => {
     mockExeca.mockResolvedValue({ stdout: 'staged patch' } as any);
     const out = await fileDiff('/repo', 'src/a.ts', { staged: true });
-    expect(mockExeca).toHaveBeenCalledWith('git', ['diff', '--cached', '--', 'src/a.ts'], { cwd: '/repo' });
+    expect(mockExeca).toHaveBeenCalledWith('git', ['diff', '--cached', '--', 'src/a.ts'], { cwd: '/repo', maxBuffer: MAX_TEXT_FILE_BYTES + 1 });
     expect(out).toBe('staged patch');
   });
 
   it('defaults to the unstaged (working-tree) diff', async () => {
     mockExeca.mockResolvedValue({ stdout: '' } as any);
     await fileDiff('/repo', 'src/a.ts');
-    expect(mockExeca).toHaveBeenCalledWith('git', ['diff', '--', 'src/a.ts'], { cwd: '/repo' });
+    expect(mockExeca).toHaveBeenCalledWith('git', ['diff', '--', 'src/a.ts'], { cwd: '/repo', maxBuffer: MAX_TEXT_FILE_BYTES + 1 });
+  });
+
+  it('gives null for a patch git was stopped writing, and passes other failures on', async () => {
+    mockExeca.mockRejectedValueOnce(Object.assign(new Error("Command's stdout was larger than 4194304 characters"), { isMaxBuffer: true }));
+    expect(await fileDiff('/repo', 'src/a.ts')).toBeNull();
+    mockExeca.mockRejectedValueOnce(new Error('fatal: bad revision'));
+    await expect(fileDiff('/repo', 'src/a.ts')).rejects.toThrow('bad revision');
   });
 });
 
