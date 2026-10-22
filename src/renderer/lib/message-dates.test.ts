@@ -6,6 +6,24 @@ import type { ChatMessage } from '../stores/messages.svelte.js';
 const at = (month: number, day: number, hour = 12, minute = 0) => new Date(2026, month - 1, day, hour, minute).getTime();
 const TODAY = dayStart(at(10, 22));
 
+/**
+ * Runs `fn` in the time zone `tz`, then puts back the one before. Windows
+ * Node applies TZ only when it is set: deleting it leaves the zone as it
+ * was (Node's src/node_env_var.cc), so the old zone is set back by name
+ * first.
+ */
+function inTimeZone(tz: string, fn: () => void) {
+  const env = process.env.TZ;
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  process.env.TZ = tz;
+  try {
+    fn();
+  } finally {
+    process.env.TZ = env ?? zone;
+    if (env === undefined) delete process.env.TZ;
+  }
+}
+
 const prompt = (id: string, sentAt?: number): ChatMessage => ({ kind: 'user', id, text: id, ...(sentAt !== undefined ? { sentAt } : {}) });
 const reply = (id: string): ChatMessage => ({ kind: 'text', id, text: id, uuid: id });
 
@@ -33,17 +51,15 @@ describe('dayLabel', () => {
   });
 
   it('counts Yesterday on a day DST starts at midnight', () => {
-    const tz = process.env.TZ;
+    const offset = new Date(2026, 2, 8).getTimezoneOffset();
     // Cuba moved its clocks from midnight to 01:00 on 8 March 2026.
-    process.env.TZ = 'America/Havana';
-    try {
+    inTimeZone('America/Havana', () => {
       const today = dayStart(new Date(2026, 2, 8, 12).getTime());
       expect(new Date(today).getHours()).toBe(1);
       expect(dayLabel(new Date(2026, 2, 7, 15).getTime(), today)).toBe('Yesterday');
-    } finally {
-      if (tz === undefined) delete process.env.TZ;
-      else process.env.TZ = tz;
-    }
+    });
+    // Back in the zone the other tests run in (CI runs them in any order).
+    expect(new Date(2026, 2, 8).getTimezoneOffset()).toBe(offset);
   });
 });
 
