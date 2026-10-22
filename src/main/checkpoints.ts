@@ -352,7 +352,7 @@ export class CheckpointManager {
    *  then several per-file diffs within a few hundred ms; those calls opt in
    *  to reusing one tree object so they stay consistent with each other and
    *  don't re-add the whole tree each time. Everything else (history stats,
-   *  whole-diff previews) always snapshots fresh. */
+   *  the Rewind preview) always snapshots fresh. */
   private workingTreeMemo = new Map<string, { oid: string; at: number }>();
   private static WORKING_TREE_REUSE_MS = 1000;
 
