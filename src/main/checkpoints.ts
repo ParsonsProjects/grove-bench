@@ -12,6 +12,9 @@ const BASELINE_UUID = '__baseline__';
  *  Chromium, laying out a <pre> of 250 KB took about 0.1 s; of 1 MB, 0.5 s;
  *  of 4 MB, 3 s. */
 const PREVIEW_MAX_CHARS = 250_000;
+/** Past that, it lists up to this many of the files the rewind changes:
+ *  about 80 characters each, at git's --stat width. */
+const PREVIEW_MAX_FILES = 1000;
 
 /** Sentinel checkpoint captured when the conversation is cleared. It marks
  *  the boundary between conversations so earlier turns can be listed as
@@ -320,7 +323,9 @@ export class CheckpointManager {
   }
 
   /**
-   * Get a unified diff between a checkpoint and the current working tree.
+   * The Rewind preview: a unified diff between a checkpoint and the current
+   * working tree, or, when that is over PREVIEW_MAX_CHARS, a note and git's
+   * --stat list of the files it changes.
    *
    * Builds a tree object from the current working tree (incl. untracked files,
    * excl. ignored) in a temp index, then diffs the checkpoint ref against it.
@@ -333,13 +338,14 @@ export class CheckpointManager {
     if (!ref) return 'No checkpoint found for this message';
 
     const currentTree = await this.writeWorkingTree(sessionId, cwd);
-    const range = [ref, currentTree, '--', '.'];
+    // --no-color: the preview is plain text, whatever color.ui says.
+    const range = ['--no-color', ref, currentTree, '--', '.'];
     const patch = await gitPatch(['diff', ...range], cwd, PREVIEW_MAX_CHARS);
     if (patch !== null) return patch || '(no changes)';
-    // Too long to show: the files it changes and by how much, or only the totals.
-    const stat = await gitPatch(['diff', '--stat', ...range], cwd, PREVIEW_MAX_CHARS);
-    if (stat !== null) return `The full diff is too long to show here. The files it changes:\n\n${stat}`;
-    return `The full diff is too long to show here.\n\n${(await git(['diff', '--shortstat', ...range], cwd)).trim()}`;
+    // Too long to show: the files it changes and by how much. Git lists the
+    // first PREVIEW_MAX_FILES, then "...", and always the totals.
+    const stat = await git(['diff', '--stat', `--stat-count=${PREVIEW_MAX_FILES}`, ...range], cwd);
+    return `The full diff is too long to show here. The files it changes:\n\n${stat}`;
   }
 
   /** Recent working-tree snapshots. The review UI asks for the file list and

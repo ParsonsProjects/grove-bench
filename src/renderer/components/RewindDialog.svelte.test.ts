@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
-import { render, cleanup, waitFor, screen } from '@testing-library/svelte';
+import { render, cleanup, waitFor, screen, fireEvent } from '@testing-library/svelte';
 
 import RewindDialog from './RewindDialog.svelte';
 import { messageStore } from '../stores/messages.svelte.js';
@@ -43,6 +43,23 @@ describe('RewindDialog', () => {
     const rewindBtn = Array.from(document.querySelectorAll('button')).find((b) => b.textContent?.trim() === 'Rewind');
     expect(rewindBtn).toBeDefined();
     expect(rewindBtn!).not.toBeDisabled();
+  });
+
+  it('keeps the preview of the message picked last when an earlier one arrives after it', async () => {
+    let finishFirst!: (preview: string) => void;
+    groveBench().getCheckpointDiff
+      .mockImplementationOnce(() => new Promise<string>((resolve) => { finishFirst = resolve; }))
+      .mockResolvedValueOnce('preview of the second');
+    render(RewindDialog, { sessionId: SID });
+    messageStore.openRewindDialog(SID);
+
+    await fireEvent.click(await screen.findByText('first prompt'));
+    await fireEvent.click(screen.getByText('second prompt'));
+    expect(await screen.findByText('preview of the second')).toBeInTheDocument();
+    finishFirst('preview of the first');
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByText('preview of the first')).toBeNull();
+    expect(screen.getByText('preview of the second')).toBeInTheDocument();
   });
 
   it('opens with nothing selected when launched without a target (/rewind)', async () => {

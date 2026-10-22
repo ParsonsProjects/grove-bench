@@ -86,6 +86,8 @@ describe('checkpoints with real git', () => {
   });
 
   it('previews a rewind too long to show as the files it changes', async () => {
+    // Colour on even outside a terminal: the preview must still be plain text.
+    run(['config', 'color.ui', 'always'], wt);
     const mgr = new CheckpointManager();
     await mgr.capture('s1', wt, 'u1');
     // About 300 KB of new lines, past the preview's 250,000 characters.
@@ -97,6 +99,7 @@ describe('checkpoints with real git', () => {
     expect(preview).toMatch(/data\/big\.txt \| 10000 \+/);
     expect(preview).toMatch(/src\/small\.ts \| +1 \+/);
     expect(preview).not.toContain('row 1 of');
+    expect(preview).not.toContain('\x1b[');
   });
 
   it('does not send a turn\'s diff over the size limit to the window', async () => {

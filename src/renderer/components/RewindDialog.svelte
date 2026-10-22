@@ -51,13 +51,16 @@
     diffPreview = null;
     if (noGit) return;
     loadingDiff = true;
+    let preview: string;
     try {
-      diffPreview = await window.groveBench.getCheckpointDiff(sessionId, uuid);
+      preview = await window.groveBench.getCheckpointDiff(sessionId, uuid);
     } catch (e: any) {
-      diffPreview = e?.message || '(Failed to load preview)';
-    } finally {
-      loadingDiff = false;
+      preview = e?.message || '(Failed to load preview)';
     }
+    // A message picked since: its own preview is on the way.
+    if (selectedId !== uuid) return;
+    diffPreview = preview;
+    loadingDiff = false;
   }
 
   async function handleRewind() {
