@@ -7,6 +7,8 @@ import { migrateRaw, stampSchemaVersion, type Migration } from './persisted-stat
 import { readJsonFile, readJsonFileAsync, writeFileAtomic, writeFileAtomicSync, type AtomicWrite, type JsonFileRead } from './json-file.js';
 import { freezeLog } from './freeze-log.js';
 import { logger } from './logger.js';
+import { recipesSchema } from './recipe-schema.js';
+import type { Recipe } from '../shared/recipes.js';
 
 export interface PrerequisiteCache {
   status: PrerequisiteStatus;
@@ -77,6 +79,9 @@ export interface AppState {
    *  the daily spend limit, and where the limit stands once the user chose
    *  to continue past it that day. */
   dailySpend?: DailySpend;
+  /** Recipes: saved thread starts, run by hand or on a schedule
+   *  (recipes.ts). Absent until the first one. */
+  recipes?: Recipe[];
 }
 
 export interface DailySpend {
@@ -188,6 +193,7 @@ const appStateSchema = z.object({
     usd: z.number().finite().nonnegative(),
     allowanceUsd: z.number().finite().nonnegative().optional(),
   }).optional().catch(undefined),
+  recipes: recipesSchema.optional().catch(undefined),
 }) satisfies z.ZodType<AppState, unknown>;
 
 /** Normalize a raw object into a valid AppState. Never throws. */
@@ -695,6 +701,22 @@ export function loadConversationGroups(): ConversationGroup[] | null {
 export function saveConversationGroups(groups: unknown): void {
   const parsed = groupsSchema.safeParse(groups);
   if (parsed.success) setSoon('groups', parsed.data);
+}
+
+// ─── Recipes ───
+
+/** The saved recipes, or null when the file exists but can't be read right
+ *  now, so a passing lock isn't read as "none" and saved over them. */
+export function loadRecipes(): Recipe[] | null {
+  const state = currentState();
+  return state ? structuredClone(state.recipes ?? []) : null;
+}
+
+/** Saved straight away when the user changed them (`now`), else within
+ *  SAVE_DELAY_MS: a scheduled run's bookkeeping can wait half a second. */
+export function saveRecipes(recipes: Recipe[], now: boolean): void {
+  if (now) change((state) => { state.recipes = recipes; }, 0, 'recipes');
+  else setSoon('recipes', recipes);
 }
 
 // ─── Projects ───

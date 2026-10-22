@@ -717,6 +717,17 @@ describe('draftStore.startThread', () => {
     arrivalScene.end('new1');
   });
 
+  it('starts without taking the screen when asked, in the mode given, and returns its id', async () => {
+    store.activeSessionId = 'shown';
+    expect(await draftStore.startThreadFor({
+      repoPath: '/repo/one', text: 'Next issue', controls: { permissionMode: 'plan' }, focus: false,
+    })).toBe('new1');
+    expect(createSessionMock()).toHaveBeenCalledWith(expect.objectContaining({ repoPath: '/repo/one', permissionMode: 'plan' }));
+    expect(store.activeSessionId).toBe('shown');
+    expect(store.sessions.some((s) => s.id === 'new1')).toBe(true);
+    arrivalScene.end('new1');
+  });
+
   it('runs in the project folder when asked', async () => {
     createSessionMock().mockResolvedValue({ id: 'new1', branch: 'main', agentType: 'claude-code' });
     await draftStore.startThread({ repoPath: '/repo/one', start: { kind: 'folder' }, text: 'Write a skill' });

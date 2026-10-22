@@ -52,6 +52,19 @@ export interface Draft {
   newGroupName?: string;
 }
 
+/** A thread started for the caller (startThread): its project, first
+ *  message and, optionally, agent, model, where it runs and control values
+ *  (mode included). `focus: false` leaves the screen as it is. */
+export interface ThreadSetup {
+  repoPath: string;
+  text: string;
+  agentId?: string;
+  model?: string;
+  start?: DraftStart;
+  controls?: Record<string, string>;
+  focus?: boolean;
+}
+
 /** The group a draft joins, or the one it starts. */
 export type DraftGroup = { groupId: string } | { newGroupName: string };
 
@@ -386,7 +399,7 @@ class DraftStore {
       return false;
     }
     this.discard();
-    return this.launch(d, (message, onScreen) => {
+    const started = await this.launch(d, (message, onScreen) => {
       // Back to the draft, message and all, unless one with a message or
       // files has been opened since: that one is kept and the error goes in
       // a toast.
@@ -399,6 +412,7 @@ class DraftStore {
         sessionStore.setError(`The thread couldn't start: ${message}`);
       }
     });
+    return started !== null;
   }
 
   /**
@@ -410,11 +424,18 @@ class DraftStore {
    * `start` says. Returns whether it started; a refusal goes in a toast,
    * and the thread that was on screen comes back.
    */
-  async startThread(setup: { repoPath: string; text: string; agentId?: string; model?: string; start?: DraftStart }): Promise<boolean> {
+  async startThread(setup: ThreadSetup): Promise<boolean> {
+    return (await this.startThreadFor(setup)) !== null;
+  }
+
+  /** startThread, returning the new thread's id (null when it didn't start).
+   *  With `focus: false` the thread starts without taking the screen (a
+   *  recipe's scheduled run). */
+  async startThreadFor(setup: ThreadSetup): Promise<string | null> {
     const repo = setup.repoPath;
     if (!sessionStore.repos.includes(repo)) {
       sessionStore.setError("The thread couldn't start: its project was removed.");
-      return false;
+      return null;
     }
     const agentId = this.offeredAgent(setup.agentId) || agentsStore.defaultId || '';
     const d: Draft = {
@@ -422,7 +443,7 @@ class DraftStore {
       agentId,
       // The model belongs to the agent asked for.
       model: agentId === setup.agentId ? setup.model ?? '' : '',
-      controls: {},
+      controls: setup.controls ?? {},
       start: (!sessionStore.isFolderProject(repo) && setup.start) || defaultStart(repo),
       text: setup.text,
       attachments: [],
@@ -435,14 +456,14 @@ class DraftStore {
         sessionStore.activeSessionId = shown;
       }
       sessionStore.setError(`The thread couldn't start: ${message}`);
-    });
+    }, setup.focus ?? true);
   }
 
   /** Add the thread's row, create it in main and send `d.text` (with its
    *  attachments) as its first message once main has it. `refused` runs when
    *  main refuses a thread that is still open, with whether its row was on
-   *  screen. */
-  private async launch(d: Draft, refused: (message: string, onScreen: boolean) => void): Promise<boolean> {
+   *  screen. The new thread's id, or null when it didn't start. */
+  private async launch(d: Draft, refused: (message: string, onScreen: boolean) => void, focus = true): Promise<string | null> {
     const text = d.text.trim();
     // Text files go in the message text; images and other files alongside it.
     const { tags, images, files } = attachmentPayload(d.attachments);
@@ -472,7 +493,7 @@ class DraftStore {
       // What the renderer knows of the project; main's reply settles it.
       ...(direct && sessionStore.isFolderProject(d.repoPath) ? { noGit: true } : {}),
       ...(placeholderName ? { displayName: placeholderName } : {}),
-    });
+    }, focus);
     if (sent) {
       // The chat shows the agent walking to its bench until the first reply.
       arrivalScene.begin(id);
@@ -489,7 +510,7 @@ class DraftStore {
       // heard of it, so there is nothing to reopen.
       if (!this.stillOpen(id)) {
         dropRow(id);
-        return false;
+        return null;
       }
       const opts = { ...this.buildOpts(d, baseBranch), id };
       const result = await window.groveBench.createSession(opts);
@@ -517,7 +538,7 @@ class DraftStore {
       // for a thread closed or deleted meanwhile: main closes that one once
       // it's up.
       if (sent && this.stillOpen(id)) window.groveBench.sendMessage(id, sent.outgoing, sent.images, sent.files);
-      return true;
+      return id;
     } catch (e: any) {
       const message = e?.message || String(e);
       const onScreen = sessionStore.activeSessionId === id;
@@ -525,9 +546,9 @@ class DraftStore {
       // so the draft stays gone and nothing is reported.
       const dropped = !this.stillOpen(id);
       dropRow(id);
-      if (dropped) return false;
+      if (dropped) return null;
       refused(message, onScreen);
-      return false;
+      return null;
     }
   }
 

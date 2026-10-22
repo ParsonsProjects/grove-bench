@@ -170,7 +170,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [ ] `/btw` — Ephemeral side question that doesn't enter conversation history. Runs while agent is working, no tool access, shows in dismissible overlay. No SDK support — needs separate `query()` call with `maxTurns: 1`
 - [x] Commands (slash commands for common actions)
 - [x] Skills (reusable prompt templates / workflows)
-- [ ] Recipes on top of skills — collections, a one-click "Run in new session", and a main-process scheduler for on-demand or scheduled runs
+- [ ] Recipes on top of skills: a saved thread start (project, agent, mode, skill, first message) run by hand or on a schedule. Proof of concept done (`src/main/recipes.ts`, `RecipesDialog.svelte`, `docs/recipes-plan.md`); left to do: a run in the packaged Windows app, a help page, picking the skill from a list, and removing a project's recipes with it
 - [x] MCP server connections (connect to external MCP servers)
 - [x] A thread's tasks and files in the status bar: **Tasks** shows the agent's current to-do list (Claude Code's TodoWrite or TaskCreate/TaskUpdate, an ACP plan, OpenCode's todowrite) and **Files** lists the files you attached, the agent made and tools returned. Built in main from the whole history (`shared/thread-items.ts`), so a list started before the loaded page still shows; each item can jump to its message
 

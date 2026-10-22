@@ -41,6 +41,7 @@ import * as skillSuggestions from './skill-suggestions.js';
 import * as memory from './memory.js';
 import * as memoryCompact from './memory-compact.js';
 import * as bookmarks from './bookmarks.js';
+import { deleteRecipe, listRecipes, recordRecipeRun, saveRecipe } from './recipes.js';
 import { listProjects, rememberProject, forgetProject, loadOpenTabs, saveOpenTabs, loadCollapsedRepos, saveCollapsedRepos, loadSessionSort, saveSessionSort, loadSidebarWidth, saveSidebarWidth, loadCollapsedPanels, saveCollapsedPanels, loadConversationGroups, saveConversationGroups, saveUnreadSessionIds, loadUnreadSessionIds, saveTodoSessionIds, loadTodoSessionIds, loadPrerequisiteCache, savePrerequisiteCache, loadUsageSnapshot } from './app-state.js';
 import { logRendererError } from './crash-handling.js';
 import { freezeLog } from './freeze-log.js';
@@ -2088,6 +2089,16 @@ export function registerHandlers() {
   ipcMain.on(IPC.APP_STATE_SET_TODO, (_event, ids: unknown) => {
     saveTodoSessionIds(ids);
   });
+
+  // ─── Recipes ───
+
+  ipcMain.handle(IPC.RECIPES_LIST, () => listRecipes());
+  ipcMain.handle(IPC.RECIPES_SAVE, (_event, recipe: unknown) => saveRecipe(recipe));
+  ipcMain.handle(IPC.RECIPES_DELETE, (_event, id: unknown) => {
+    if (typeof id === 'string') deleteRecipe(id);
+  });
+  ipcMain.handle(IPC.RECIPES_RECORD_RUN, (_event, id: unknown, outcome: unknown) =>
+    typeof id === 'string' ? recordRecipeRun(id, outcome) : null);
 
   // ─── Error reporting ───
 

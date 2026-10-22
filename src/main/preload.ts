@@ -406,6 +406,28 @@ const api: GroveBenchAPI = {
   setUnreadSessions: (ids: string[]) => ipcRenderer.send(IPC.APP_STATE_SET_UNREAD, ids),
   getTodoSessions: () => ipcRenderer.invoke(IPC.APP_STATE_GET_TODO) as Promise<string[] | null>,
   setTodoSessions: (ids: string[]) => ipcRenderer.send(IPC.APP_STATE_SET_TODO, ids),
+
+  // Recipes
+  listRecipes: () => ipcRenderer.invoke(IPC.RECIPES_LIST) as Promise<import('../shared/recipes.js').Recipe[]>,
+  saveRecipe: (recipe: import('../shared/recipes.js').RecipeInput) =>
+    ipcRenderer.invoke(IPC.RECIPES_SAVE, recipe) as Promise<import('../shared/recipes.js').Recipe>,
+  deleteRecipe: (id: string) => ipcRenderer.invoke(IPC.RECIPES_DELETE, id) as Promise<void>,
+  recordRecipeRun: (id: string, outcome: Omit<import('../shared/recipes.js').RecipeOutcome, 'at'>) =>
+    ipcRenderer.invoke(IPC.RECIPES_RECORD_RUN, id, outcome) as Promise<import('../shared/recipes.js').Recipe | null>,
+  onRecipeDue: (callback: (id: string) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, id: string) => callback(id);
+    ipcRenderer.on(IPC.RECIPE_DUE, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC.RECIPE_DUE, handler);
+    };
+  },
+  onRecipesChanged: (callback: (recipes: import('../shared/recipes.js').Recipe[]) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, recipes: import('../shared/recipes.js').Recipe[]) => callback(recipes);
+    ipcRenderer.on(IPC.RECIPES_CHANGED, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC.RECIPES_CHANGED, handler);
+    };
+  },
   getSidebarWidth: () =>
     ipcRenderer.invoke(IPC.APP_STATE_GET_SIDEBAR_WIDTH) as Promise<number | null>,
   setSidebarWidth: (width: number) =>

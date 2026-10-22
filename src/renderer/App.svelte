@@ -35,6 +35,7 @@
   import { bookmarkStore } from './stores/bookmarks.svelte.js';
   import { groupStore } from './stores/groups.svelte.js';
   import { todoStore } from './stores/todo.svelte.js';
+  import { recipesStore } from './stores/recipes.svelte.js';
   import { goalStore } from './stores/goals.svelte.js';
   import { panelStore } from './stores/panels.svelte.js';
   import { previewStore } from './stores/preview.svelte.js';
@@ -384,6 +385,8 @@
     bookmarkStore.load();
     groupStore.load();
     todoStore.load();
+    // Listens before the restore ends: main's scheduler starts after it.
+    recipesStore.init();
     panelStore.load();
     memoryStore.init();
     previewStore.init();

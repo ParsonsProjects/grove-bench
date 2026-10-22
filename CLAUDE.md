@@ -30,6 +30,7 @@ src/
     window-state.ts    # Window position/size persistence
     memory.ts          # Project memory system
     memory-autosave.ts # Auto-save memory on interval
+    recipes.ts         # Recipes: saved thread starts, run by hand or on a schedule (docs/recipes-plan.md)
     settings.ts        # User settings
     prerequisites.ts   # Git/Claude detection & version checks
     catalogs.ts        # ACP Registry and models.dev, fetched daily (install commands, model sizes)

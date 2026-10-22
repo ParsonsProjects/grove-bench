@@ -1,6 +1,7 @@
 import type { ToolView } from './tool-view.js';
 import type { LimitKind } from './limits.js';
 import type { ThreadItems } from './thread-items.js';
+import type { Recipe, RecipeInput, RecipeOutcome } from './recipes.js';
 
 // ─── Worktree ───
 
@@ -1561,6 +1562,18 @@ export interface GroveBenchAPI {
   getTodoSessions(): Promise<string[] | null>;
   setTodoSessions(ids: string[]): void;
 
+  // Recipes (shared/recipes.ts)
+  listRecipes(): Promise<Recipe[]>;
+  /** Save a new recipe (no id) or an edited one; the recipe as saved. */
+  saveRecipe(recipe: RecipeInput): Promise<Recipe>;
+  deleteRecipe(id: string): Promise<void>;
+  /** Note what a run did; the recipe as saved, or null if it was deleted. */
+  recordRecipeRun(id: string, outcome: Omit<RecipeOutcome, 'at'>): Promise<Recipe | null>;
+  /** A recipe's scheduled time came: start its thread. */
+  onRecipeDue(callback: (id: string) => void): () => void;
+  /** The scheduler changed the recipes (a run taken or missed). */
+  onRecipesChanged(callback: (recipes: Recipe[]) => void): () => void;
+
   // App lifecycle
   onAppClosing(callback: () => void): () => void;
   onPowerResume(callback: (resumeIds: string[]) => void): () => void;
@@ -2203,6 +2216,14 @@ export const IPC = {
   APP_STATE_SET_UNREAD: 'appState:setUnreadSessions',
   APP_STATE_GET_TODO: 'appState:getTodoSessions',
   APP_STATE_SET_TODO: 'appState:setTodoSessions',
+  RECIPES_LIST: 'recipes:list',
+  RECIPES_SAVE: 'recipes:save',
+  RECIPES_DELETE: 'recipes:delete',
+  RECIPES_RECORD_RUN: 'recipes:recordRun',
+  /** Main → renderer: a recipe is due; the renderer starts its thread. */
+  RECIPE_DUE: 'recipes:due',
+  /** Main → renderer: the scheduler changed the recipes. */
+  RECIPES_CHANGED: 'recipes:changed',
   /** Main → renderer: an uncaught main-process error. */
   APP_ERROR: 'app:error',
   /** Renderer → main: an uncaught renderer error, for the file log. */

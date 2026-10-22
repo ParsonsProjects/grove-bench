@@ -5,6 +5,7 @@
  */
 
 import type { ThreadItems } from '../shared/thread-items.js';
+import type { Recipe, RecipeInput } from '../shared/recipes.js';
 
 // Capture uncaught errors (a template error can kill Svelte's effect loop).
 const errs: string[] = [];
@@ -32,6 +33,24 @@ const CLAUDE_MODE_OPTIONS = [
 
 const REPO_A = 'C:/dev/grove-bench';
 const REPO_B = 'C:/dev/api-service';
+
+/** Recipes, kept in memory: one on a schedule that ran, one run by hand. */
+let demoRecipes: Recipe[] = [
+  {
+    id: 'rcp-linear', repoPath: REPO_A, name: 'Work the next Linear issue', agentId: 'claude-code', start: 'new',
+    permissionMode: 'default', skill: 'work-linear-issue',
+    prompt: 'Take the top Linear issue labelled agent-ready, move it to In Progress, fix it and open a PR.',
+    schedule: { kind: 'every', hours: 2 }, maxOpen: 2, paused: false,
+    scheduledFrom: now - 5 * 60 * min, checkedThrough: now - 60 * min,
+    lastOutcome: { at: now - 60 * min, sessionId: 's-sidebar' }, sessionIds: ['s-sidebar'],
+  },
+  {
+    id: 'rcp-deps', repoPath: REPO_A, name: 'Dependency check', agentId: '', start: 'folder',
+    permissionMode: 'plan', skill: '', prompt: 'List outdated dependencies and what upgrading each would break. Change nothing.',
+    schedule: { kind: 'daily', time: '09:00', weekdaysOnly: true }, maxOpen: 1, paused: true,
+    scheduledFrom: now - 3 * 24 * 60 * min, checkedThrough: now - 3 * 24 * 60 * min, sessionIds: [],
+  },
+];
 
 const SETTINGS = {
   toolAllowRules: [],
@@ -398,6 +417,17 @@ const api: Record<string, unknown> = {
   setUnreadSessions: () => {},
   getTodoSessions: async () => [],
   setTodoSessions: () => {},
+  listRecipes: async () => structuredClone(demoRecipes),
+  saveRecipe: async (input: RecipeInput) => {
+    const old = demoRecipes.find((r) => r.id === input.id);
+    const recipe: Recipe = { ...input, id: old?.id ?? `rcp-${Date.now()}`, scheduledFrom: Date.now(), checkedThrough: Date.now(), sessionIds: old?.sessionIds ?? [] };
+    demoRecipes = old ? demoRecipes.map((r) => (r.id === recipe.id ? recipe : r)) : [...demoRecipes, recipe];
+    return structuredClone(recipe);
+  },
+  deleteRecipe: async (id: string) => { demoRecipes = demoRecipes.filter((r) => r.id !== id); },
+  recordRecipeRun: async () => null,
+  onRecipeDue: () => () => {},
+  onRecipesChanged: () => () => {},
   onAppError: () => () => {},
   reportError: () => {},
   reportFreeze: () => {},

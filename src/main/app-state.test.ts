@@ -56,6 +56,7 @@ import {
   mergeProjects, listProjects, rememberProject, forgetProject,
   loadConversationGroups, saveConversationGroups,
   loadTodoSessionIds, saveTodoSessionIds,
+  loadRecipes, saveRecipes,
   appStateSaved, resetAppStateForTests,
 } from './app-state.js';
 
@@ -787,6 +788,40 @@ describe('conversation groups', () => {
     flushPendingSaves();
     expect(syncWrites() + asyncWrites()).toBe(0);
     expect(loadConversationGroups()).toEqual([billing]);
+  });
+});
+
+describe('recipes', () => {
+  const recipe = {
+    id: 'r1', repoPath: '/repo', name: 'Next issue', agentId: '', start: 'new', permissionMode: 'plan',
+    skill: 'work-linear-issue', prompt: 'Go', schedule: { kind: 'daily', time: '09:00', weekdaysOnly: true },
+    maxOpen: 2, paused: false, scheduledFrom: 1, checkedThrough: 2, sessionIds: ['a'],
+    lastOutcome: { at: 3, sessionId: 'a' },
+  } as const;
+
+  it('saves a change by hand straight away', () => {
+    const file = useDisk({ schemaVersion: V });
+    saveRecipes([structuredClone(recipe) as never], true);
+    expect(syncWrites()).toBe(1);
+    expect(file.get()).toMatchObject({ recipes: [recipe] });
+    expect(loadRecipes()).toEqual([recipe]);
+  });
+
+  it("says it can't tell while the file can't be read, rather than \"none\"", () => {
+    useDisk({ schemaVersion: V, recipes: [recipe] });
+    lockReads();
+    expect(loadRecipes()).toBeNull();
+  });
+
+  it('drops a malformed recipe and keeps the rest', () => {
+    const state = validateAppState({ recipes: [
+      recipe,
+      { ...recipe, id: 'r2', schedule: { kind: 'daily', time: 'soon', weekdaysOnly: false } },
+      { ...recipe, id: 'r3', maxOpen: 0 },
+      'junk',
+    ] });
+    expect(state.recipes).toEqual([recipe]);
+    expect(validateAppState({ recipes: 'nope' }).recipes).toBeUndefined();
   });
 });
 
