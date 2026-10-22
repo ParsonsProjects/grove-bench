@@ -21,8 +21,8 @@ const m = vi.hoisted(() => {
       'beginSearch', 'clearEventHistory', 'sendMessage', 'setMode', 'setModel', 'getControls', 'getUsage', 'setControl',
       'listMcpServers', 'getMcpContextCost', 'reconnectMcpServer', 'setMcpServerEnabled', 'authenticateMcpServer', 'reconnectDownMcpServers',
       'getSessionAdapter', 'getWorktreePath', 'analyzeSkillSuggestionsForRepo', 'respondToPermission',
-      'respondToElicitation', 'rewindFiles', 'getCheckpointDiff', 'listCheckpoints', 'getDiffHistory', 'getTurnDiff',
-      'getFullThreadDiff', 'getCheckpointFiles', 'getCheckpointFileDiff', 'getCheckpointFileLines', 'threadUsage',
+      'respondToElicitation', 'rewindFiles', 'getCheckpointDiff', 'listCheckpoints', 'getDiffHistory',
+      'getCheckpointFiles', 'getCheckpointFileDiff', 'getCheckpointFileLines', 'threadUsage',
     ),
     worktreeManager: fns(
       'validateRepo', 'cleanupOrphans', 'getWorktreeOrManifest', 'registerDirect', 'create', 'getRepoConfig',
