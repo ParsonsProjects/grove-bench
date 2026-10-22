@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { decideAutoName, titleCheckHolds, type AutoNameSources } from './session-auto-name.js';
+import { decideAutoName, type AutoNameSources } from './session-auto-name.js';
 import { legacySessionName } from '../shared/session-name.js';
 
 function sources(opts: { title?: string | null | Error; prompt?: string | null } = {}): AutoNameSources & {
@@ -96,21 +96,5 @@ describe('decideAutoName', () => {
       expect(await decideAutoName({ displayName: 'Add dark mode' }, sources({ prompt: 'Add dark mode' })))
         .toEqual({ displayName: 'Add dark mode', source: 'auto' });
     });
-  });
-});
-
-describe('titleCheckHolds', () => {
-  const check = { providerSessionId: 'p-1', lastActiveAt: 5000, title: null };
-
-  it('holds for the same provider session with no activity since', () => {
-    expect(titleCheckHolds(check, 'p-1', 5000)).toBe(true);
-    expect(titleCheckHolds({ ...check, lastActiveAt: null }, 'p-1', null)).toBe(true);
-  });
-
-  it('lapses when the thread changed, and never holds without a check', () => {
-    expect(titleCheckHolds(check, 'p-1', 6000)).toBe(false);
-    expect(titleCheckHolds(check, 'p-2', 5000)).toBe(false);
-    expect(titleCheckHolds(check, 'p-1', null)).toBe(false);
-    expect(titleCheckHolds(undefined, 'p-1', 5000)).toBe(false);
   });
 });

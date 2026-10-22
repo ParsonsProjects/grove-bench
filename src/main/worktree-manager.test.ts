@@ -340,49 +340,6 @@ describe('saveAutoDisplayName', () => {
   });
 });
 
-describe('getTitleLookup / saveProviderTitleCheck', () => {
-  it('reads an older entry with no lookup recorded, and remembers one, title or none', async () => {
-    let stored = JSON.stringify({
-      'wt-1': { repoPath: '/repo', branch: 'a', createdAt: 1000, lastActiveAt: 5000, providerSessionId: 'p-1', displayName: 'Dark mode' },
-      'wt-2': { repoPath: '/repo', branch: 'b', createdAt: 1000, claudeSessionId: 'p-2', adapterType: 'gemini' },
-    });
-    mockFs.readFile.mockImplementation(async () => stored);
-    mockFs.writeFile.mockImplementation(async (_path: string, data: string) => { stored = data; });
-
-    expect(await manager.getTitleLookup('wt-1')).toEqual({ adapterType: 'claude-code', providerSessionId: 'p-1', lastActiveAt: 5000 });
-    expect(await manager.getTitleLookup('wt-2')).toEqual({ adapterType: 'gemini', providerSessionId: 'p-2', lastActiveAt: null });
-
-    await manager.saveProviderTitleCheck('wt-1', { providerSessionId: 'p-1', lastActiveAt: 5000, title: 'Add a dark mode toggle' });
-    await manager.saveProviderTitleCheck('wt-2', { providerSessionId: 'p-2', lastActiveAt: null, title: null });
-
-    expect((await manager.getTitleLookup('wt-1'))?.checked).toEqual({ providerSessionId: 'p-1', lastActiveAt: 5000, title: 'Add a dark mode toggle' });
-    expect((await manager.getTitleLookup('wt-2'))?.checked).toEqual({ providerSessionId: 'p-2', lastActiveAt: null, title: null });
-    // The rest of the entry is left as it was.
-    expect(JSON.parse(stored)['wt-1']).toMatchObject({ displayName: 'Dark mode', lastActiveAt: 5000, providerSessionId: 'p-1' });
-  });
-
-  it('ignores a recorded lookup that isn\'t one', async () => {
-    mockFs.readFile.mockResolvedValue(JSON.stringify({
-      'wt-1': { repoPath: '/repo', branch: 'a', createdAt: 1000, providerSessionId: 'p-1', providerTitleCheck: { providerSessionId: 'p-1', title: 7 } },
-      'wt-2': { repoPath: '/repo', branch: 'b', createdAt: 1000, providerSessionId: 'p-2', providerTitleCheck: 'yes' },
-    }));
-    expect((await manager.getTitleLookup('wt-1'))?.checked).toBeUndefined();
-    expect((await manager.getTitleLookup('wt-2'))?.checked).toBeUndefined();
-  });
-
-  it('has nothing for unknown threads or ones being removed, and records nothing for them', async () => {
-    mockFs.readFile.mockResolvedValue(JSON.stringify({
-      'wt-gone': { repoPath: '/repo', branch: 'a', createdAt: 1000, pendingRemoval: true },
-    }));
-    expect(await manager.getTitleLookup('wt-gone')).toBeUndefined();
-    expect(await manager.getTitleLookup('wt-unknown')).toBeUndefined();
-
-    await manager.saveProviderTitleCheck('wt-gone', { providerSessionId: 'p', lastActiveAt: null, title: null });
-    await manager.saveProviderTitleCheck('wt-unknown', { providerSessionId: 'p', lastActiveAt: null, title: null });
-    expect(mockFs.writeFile).not.toHaveBeenCalled();
-  });
-});
-
 describe('conversation goal', () => {
   it('reads an empty goal for entries without one, and undefined for unknown ids', async () => {
     mockFs.readFile.mockResolvedValue(JSON.stringify({

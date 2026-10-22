@@ -25,27 +25,6 @@ export interface AutoNameSources {
   firstPrompt(): string | null;
 }
 
-/** A stopped thread's last provider title lookup, kept in its manifest
- *  entry: what it found (null for no title) and the thread as it was then.
- *  It answers for the provider until the thread changes (see providerTitle
- *  in ipc.ts). */
-export interface ProviderTitleCheck {
-  providerSessionId: string;
-  /** The thread's lastActiveAt when it was looked up (null for none). */
-  lastActiveAt: number | null;
-  title: string | null;
-}
-
-/** Whether `check` still answers for the thread: the same provider session,
- *  and no activity since. */
-export function titleCheckHolds(
-  check: ProviderTitleCheck | undefined,
-  providerSessionId: string,
-  lastActiveAt: number | null,
-): check is ProviderTitleCheck {
-  return !!check && check.providerSessionId === providerSessionId && check.lastActiveAt === lastActiveAt;
-}
-
 /** Guard against a runaway provider title; generated ones are a few words. */
 const MAX_TITLE_LEN = 80;
 

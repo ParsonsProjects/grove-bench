@@ -7,7 +7,7 @@ import { logger } from './logger.js';
 import { removeDirectory, removeDirectoryWithRetry, pathExists, readFileWithRetry, writeFileAtomic } from './fs-utils.js';
 import type { BranchSwitchResult, BranchSyncResult, ConversationGoal, ConversationGoalSource, WorktreeConfig, WorktreeInfo, WorktreeRepoConfig } from '../shared/types.js';
 import { adapterRegistry } from './adapters/index.js';
-import type { AutoNameDecision, DisplayNameSource, DisplayNameState, ProviderTitleCheck } from './session-auto-name.js';
+import type { AutoNameDecision, DisplayNameSource, DisplayNameState } from './session-auto-name.js';
 import type { SavedThreadLimits } from './session-limits.js';
 
 const CONFIG_FILE = 'config.json';
@@ -57,10 +57,6 @@ interface ManifestEntry {
   /** Who set displayName. Auto-naming never replaces a 'user' name. Absent
    *  on entries saved before this was tracked (see decideAutoName). */
   displayNameSource?: DisplayNameSource;
-  /** The last provider title lookup made while the thread was stopped, so
-   *  the startup name refresh doesn't repeat it until the thread changes.
-   *  Absent on entries saved before this was kept, which are looked up once. */
-  providerTitleCheck?: ProviderTitleCheck;
   /** What the thread has spent over its life, as its agent estimated it,
    *  and how far the user let it go past its spend limit (session-limits.ts,
    *  SavedThreadLimits). Kept here because a rewind or /clear rewrites the
@@ -92,27 +88,6 @@ interface ManifestEntry {
 }
 
 type Manifest = Record<string, ManifestEntry>;
-
-/** What looking up a thread's provider title needs, read in one go (see
- *  WorktreeManager.getTitleLookup). */
-export interface TitleLookupState {
-  adapterType: string;
-  providerSessionId?: string;
-  lastActiveAt: number | null;
-  /** The last lookup made while the thread was stopped, if any. */
-  checked?: ProviderTitleCheck;
-}
-
-/** A recorded title lookup read back from the manifest, which is plain
- *  JSON: undefined when there is none or it isn't one. */
-function titleCheckOf(value: unknown): ProviderTitleCheck | undefined {
-  if (!value || typeof value !== 'object') return undefined;
-  const { providerSessionId, lastActiveAt, title } = value as Record<string, unknown>;
-  if (typeof providerSessionId !== 'string') return undefined;
-  if (lastActiveAt !== null && typeof lastActiveAt !== 'number') return undefined;
-  if (title !== null && typeof title !== 'string') return undefined;
-  return { providerSessionId, lastActiveAt, title };
-}
 
 function goalOf(entry: ManifestEntry): ConversationGoal {
   return { text: entry.goal || null, source: entry.goalSource ?? null, hidden: !!entry.goalHidden };
@@ -530,37 +505,6 @@ export class WorktreeManager {
       entry.displayNameSource = next.source;
       return true;
     });
-  }
-
-  /** A thread's agent, provider session and last activity, and its last
-   *  provider title lookup, from one read of the manifest (undefined for
-   *  unknown ids). */
-  async getTitleLookup(worktreeId: string): Promise<TitleLookupState | undefined> {
-    const entry = (await this.loadManifest())[worktreeId];
-    if (!entry || entry.pendingRemoval) return undefined;
-    const checked = titleCheckOf(entry.providerTitleCheck);
-    return {
-      adapterType: agentTypeOf(entry),
-      // Fall back to old claudeSessionId field for migration
-      providerSessionId: entry.providerSessionId ?? entry.claudeSessionId,
-      lastActiveAt: entry.lastActiveAt ?? null,
-      ...(checked ? { checked } : {}),
-    };
-  }
-
-  /** Remember a provider title lookup, title or none (see
-   *  ManifestEntry.providerTitleCheck). */
-  async saveProviderTitleCheck(worktreeId: string, check: ProviderTitleCheck): Promise<void> {
-    await this.withManifest((manifest) => {
-      const entry = manifest[worktreeId];
-      if (!entry || entry.pendingRemoval) return false;
-      entry.providerTitleCheck = {
-        providerSessionId: check.providerSessionId,
-        lastActiveAt: check.lastActiveAt,
-        title: check.title,
-      };
-      return true;
-    }, (written) => written);
   }
 
   /** A conversation's goal (undefined for unknown ids). */
