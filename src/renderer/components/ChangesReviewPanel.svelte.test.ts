@@ -142,6 +142,9 @@ import { fireEvent } from '@testing-library/svelte';
 import { reviewStore } from '../stores/review.svelte.js';
 import { panelStore } from '../stores/panels.svelte.js';
 
+/** A number as the notice shows it, spaced as Testing Library reads text. */
+const count = (n: number) => n.toLocaleString().replace(/\s/g, ' ');
+
 function hunkPatch(): string {
   // One hunk starting at line 10 of a longer file, so context can be expanded above and below.
   return [
@@ -785,7 +788,7 @@ describe('ChangesReviewPanel — large diffs', () => {
     mockGroveBench.getFileDiff.mockResolvedValue({ kind: 'text', patch: `--- a/app.min.js\n+++ b/app.min.js\n@@ -1 +1 @@\n-old\n+${minified}\n` });
     gitStatusStore.statusBySession = { [SID]: { entries: [entry('app.min.js')] } };
     const { findByText } = render(ChangesReviewPanel, { sessionId: SID });
-    expect(await findByText(/Large diff \(2 lines, 150,003 characters\)/)).toBeInTheDocument();
+    expect(await findByText(`Large diff (2 lines, ${count(150_003)} characters)`, { exact: false })).toBeInTheDocument();
   });
 
   /** A turn that edits notes.txt twice: a small Edit, then a 30-line Write.
@@ -813,6 +816,24 @@ describe('ChangesReviewPanel — large diffs', () => {
 
     await fireEvent.click(await findByRole('button', { name: 'Show Write #2' }));
     await waitFor(() => expect(diffText(container)).toContain('line 30'));
+  });
+
+  it('draws a small change to a large file in Edit History at once', async () => {
+    // ACP agents can send the whole file before and after. Large by text
+    // here (60 lines, scaled), but the diff it makes is a few lines.
+    const before = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`);
+    const after = [...before];
+    after[14] = 'the one changed line';
+    editTurn();
+    messageStore.messagesBySession[SID]!.splice(2, 1, {
+      kind: 'tool_call', id: 'a1', toolName: 'edit', toolInput: {}, toolUseId: 't1', uuid: 'u1', pending: false,
+      toolView: { kind: 'edit', path: 'notes.txt', edits: [{ oldText: before.join('\n'), newText: after.join('\n') }] },
+    } as any);
+    const { container, findByRole, queryByText } = render(ChangesReviewPanel, { sessionId: SID });
+
+    await fireEvent.click(await findByRole('button', { name: '2 edits' }));
+    await waitFor(() => expect(diffText(container)).toContain('the one changed line'));
+    expect(queryByText(/Large edit/)).toBeNull();
   });
 
   it('does not redraw shown edits when a status refresh brings back the same file', async () => {
