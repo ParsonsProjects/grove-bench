@@ -1,9 +1,12 @@
 import { CONTROL_IDS } from '../../shared/types.js';
 import { recipePrompt, type Recipe, type RecipeInput, type RecipeOutcome } from '../../shared/recipes.js';
 import { store as sessionStore } from './sessions.svelte.js';
-import { draftStore } from './draft.svelte.js';
-import { agentsStore } from './agents.svelte.js';
-import { settingsStore } from './settings.svelte.js';
+import { draftStore, type ThreadStart } from './draft.svelte.js';
+
+/** How often, and how many times, to ask again while app-state.json can't be
+ *  read (a passing lock, usually an antivirus scan). */
+const LOAD_RETRY_MS = 1000;
+const LOAD_ATTEMPTS = 5;
 
 /**
  * Recipes in the window: the list main keeps (main/recipes.ts), and running
@@ -20,21 +23,25 @@ class RecipesStore {
   init(): void {
     if (this.started) return;
     this.started = true;
-    // Main sends the list before a due id, so the recipe is here to run.
     window.groveBench.onRecipesChanged((list) => { this.list = list; });
-    window.groveBench.onRecipeDue((id) => {
-      const recipe = this.list.find((r) => r.id === id);
-      if (recipe) void this.run(recipe, { scheduled: true });
-    });
+    window.groveBench.onRecipeDue((id) => void this.runDue(id));
     void this.load();
   }
 
-  async load(): Promise<void> {
-    try {
-      this.list = await window.groveBench.listRecipes();
-    } catch (err) {
-      console.error('Failed to load recipes:', err);
+  async load(retryMs = LOAD_RETRY_MS): Promise<void> {
+    for (let attempt = 1; attempt <= LOAD_ATTEMPTS; attempt++) {
+      try {
+        const list = await window.groveBench.listRecipes();
+        if (list) {
+          this.list = list;
+          return;
+        }
+      } catch (err) {
+        console.warn('[recipes] could not load the recipes:', err);
+      }
+      if (attempt < LOAD_ATTEMPTS) await new Promise((r) => setTimeout(r, retryMs));
     }
+    console.warn('[recipes] app-state.json stayed unreadable; recipes show once one runs');
   }
 
   forRepo(repoPath: string): Recipe[] {
@@ -52,51 +59,66 @@ class RecipesStore {
     this.list = this.list.filter((r) => r.id !== id);
   }
 
-  /** The recipe's threads still in the Threads list: not closed or deleted. */
+  /** The recipe's threads still in the Threads list: not closed or deleted.
+   *  Threads waiting to reconnect after a restart or a wake count. */
   openThreads(recipe: Recipe): number {
     const ids = new Set(recipe.sessionIds);
-    return sessionStore.sessions.filter((s) => ids.has(s.id) && s.status !== 'stopped').length;
+    return sessionStore.sessions.filter((s) => ids.has(s.id) && sessionStore.isOpenTab(s)).length;
   }
 
-  /** Why the recipe can't run now, or null when it can. */
-  private blocker(recipe: Recipe, scheduled: boolean): Omit<RecipeOutcome, 'at'> | null {
-    if (!sessionStore.repos.includes(recipe.repoPath)) return { error: 'Its project was removed' };
-    // Not quietly swapped for the default agent: the recipe's tools (an MCP
-    // server for the issue tracker) may only be set up in this one.
-    const agent = agentsStore.get(recipe.agentId);
-    if (recipe.agentId && agentsStore.loaded && (!agent || !agentsStore.isOffered(agent.id, settingsStore.current.enabledAlphaAgents))) {
-      return { error: 'Its agent is turned off or was removed' };
+  /** A scheduled run main says is due. One for a recipe this window doesn't
+   *  have yet (the list failed to load) fetches the list first. */
+  private async runDue(id: string): Promise<void> {
+    let recipe = this.list.find((r) => r.id === id);
+    if (!recipe) {
+      await this.load(0);
+      recipe = this.list.find((r) => r.id === id);
+    }
+    if (recipe) await this.run(recipe, { scheduled: true });
+    else console.warn(`[recipes] ${id} is due but isn't in the list (deleted meanwhile?)`);
+  }
+
+  /** Start the recipe's thread, and note what happened. Returns whether a
+   *  thread started. */
+  async run(recipe: Recipe, { scheduled = false } = {}): Promise<boolean> {
+    if (this.starting[recipe.id]) {
+      // Run by hand twice: the second click does nothing. Due while a run by
+      // hand starts: that run stands in for it.
+      if (scheduled) await this.record(recipe.id, { skipped: 'a run by hand was starting' });
+      return false;
     }
     if (scheduled) {
       const open = this.openThreads(recipe);
-      if (open >= recipe.maxOpen) return { skipped: open === 1 ? '1 thread from it is still open' : `${open} threads from it are still open` };
-    }
-    return null;
-  }
-
-  /** Start the recipe's thread. Returns whether it started. */
-  async run(recipe: Recipe, { scheduled = false } = {}): Promise<boolean> {
-    if (this.starting[recipe.id]) return false;
-    const blocked = this.blocker(recipe, scheduled);
-    if (blocked) {
-      // A cap is the schedule working as set; anything else is worth a toast.
-      if (blocked.error) sessionStore.setError(`Recipe "${recipe.name}" didn't run: ${blocked.error}.`);
-      await this.record(recipe.id, blocked);
-      return false;
+      if (open >= recipe.maxOpen) {
+        // The cap working as set: noted, no toast.
+        await this.record(recipe.id, { skipped: open === 1 ? '1 thread from it is still open' : `${open} threads from it are still open` });
+        return false;
+      }
     }
     this.starting = { ...this.starting, [recipe.id]: true };
     try {
-      const id = await draftStore.startThreadFor({
-        repoPath: recipe.repoPath,
-        text: recipePrompt(recipe),
-        ...(recipe.agentId ? { agentId: recipe.agentId } : {}),
-        start: recipe.start === 'folder' ? { kind: 'folder' } : { kind: 'new', branchName: '', baseBranch: '' },
-        ...(recipe.permissionMode ? { controls: { [CONTROL_IDS.permissionMode]: recipe.permissionMode } } : {}),
-        focus: !scheduled,
-      });
-      // A refusal already went in a toast (startThreadFor).
-      await this.record(recipe.id, id ? { sessionId: id } : { error: "The thread couldn't start" });
-      return id !== null;
+      let result: ThreadStart;
+      try {
+        result = await draftStore.startThreadFor({
+          repoPath: recipe.repoPath,
+          text: recipePrompt(recipe),
+          ...(recipe.agentId ? { agentId: recipe.agentId } : {}),
+          start: recipe.start === 'folder' ? { kind: 'folder' } : { kind: 'new', branchName: '', baseBranch: '' },
+          ...(recipe.permissionMode ? { controls: { [CONTROL_IDS.permissionMode]: recipe.permissionMode } } : {}),
+          focus: !scheduled,
+          strictAgent: true,
+          quiet: true,
+        });
+      } catch (err) {
+        result = { error: err instanceof Error ? err.message : String(err) };
+      }
+      if ('error' in result) {
+        sessionStore.setError(`Recipe "${recipe.name}" didn't start a thread: ${result.error.replace(/\.+$/, '')}.`);
+        await this.record(recipe.id, { error: result.error });
+        return false;
+      }
+      await this.record(recipe.id, { sessionId: result.id });
+      return true;
     } finally {
       const { [recipe.id]: _, ...rest } = this.starting;
       this.starting = rest;

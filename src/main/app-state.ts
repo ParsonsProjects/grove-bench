@@ -719,6 +719,13 @@ export function saveRecipes(recipes: Recipe[], now: boolean): void {
   else setSoon('recipes', recipes);
 }
 
+/** Change the recipes as they are when the change applies: at once, or once
+ *  the file can be read again, so a run's record isn't lost to a passing
+ *  lock. Saved within SAVE_DELAY_MS. */
+export function updateRecipes(mutate: (recipes: Recipe[]) => Recipe[]): void {
+  change((state) => { state.recipes = mutate(structuredClone(state.recipes ?? [])); }, SAVE_DELAY_MS);
+}
+
 // ─── Projects ───
 
 /**

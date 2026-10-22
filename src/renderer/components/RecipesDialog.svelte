@@ -4,6 +4,7 @@
    * schedule (shared/recipes.ts). Lists them with when each runs next and
    * what its last run did, and adds or edits one.
    */
+  import { onMount } from 'svelte';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import * as Select from '$lib/components/ui/select/index.js';
   import * as Segmented from '$lib/components/ui/segmented/index.js';
@@ -17,6 +18,7 @@
   import { store } from '../stores/sessions.svelte.js';
   import { agentsStore } from '../stores/agents.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
+  import { stripIpcErrorPrefix } from '../lib/mcp-errors.js';
   import { describeSchedule, MAX_OPEN_LIMIT, recipeNextRun, type Recipe, type RecipeInput } from '../../shared/recipes.js';
   import type { PermissionMode } from '../../shared/types.js';
 
@@ -31,6 +33,12 @@
   const recipes = $derived(recipesStore.forRepo(repoPath));
   const folderProject = $derived(store.isFolderProject(repoPath));
   const agents = $derived(agentsStore.offered(settingsStore.current.enabledAlphaAgents));
+
+  // Agents load on first use, and nothing may have used them yet.
+  onMount(() => { void agentsStore.load(); });
+
+  /** An error from main, without Electron's "Error invoking remote method" wrapper. */
+  const message = (e: unknown) => stripIpcErrorPrefix(e instanceof Error ? e.message : String(e));
 
   /** The Select's value for "the default": an empty value reads as nothing picked. */
   const DEFAULT = '_default';
@@ -87,21 +95,20 @@
     try {
       await recipesStore.save(editing);
       editing = null;
-    } catch (e: any) {
-      // Main's message, without Electron's "Error invoking remote method" prefix.
-      formError = String(e?.message ?? e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+    } catch (e) {
+      formError = message(e);
     } finally {
       saving = false;
     }
   }
 
   async function togglePaused(recipe: Recipe) {
-    await recipesStore.save({ ...fieldsOf(recipe), paused: !recipe.paused }).catch((e) => store.setError(String(e?.message ?? e)));
+    await recipesStore.save({ ...fieldsOf(recipe), paused: !recipe.paused }).catch((e) => store.setError(message(e)));
   }
 
   async function remove(id: string) {
     confirmDeleteId = null;
-    await recipesStore.remove(id).catch((e) => store.setError(String(e?.message ?? e)));
+    await recipesStore.remove(id).catch((e) => store.setError(message(e)));
   }
 
   async function run(recipe: Recipe) {

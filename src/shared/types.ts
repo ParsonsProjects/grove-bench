@@ -1565,7 +1565,9 @@ export interface GroveBenchAPI {
   setTodoSessions(ids: string[]): void;
 
   // Recipes (shared/recipes.ts)
-  listRecipes(): Promise<Recipe[]>;
+  /** The recipes, or null while app-state.json can't be read (a passing
+   *  lock), so "none" is never mistaken for the real list. */
+  listRecipes(): Promise<Recipe[] | null>;
   /** Save a new recipe (no id) or an edited one; the recipe as saved. */
   saveRecipe(recipe: RecipeInput): Promise<Recipe>;
   deleteRecipe(id: string): Promise<void>;

@@ -54,7 +54,7 @@ export interface Draft {
 
 /** A thread started for the caller (startThread): its project, first
  *  message and, optionally, agent, model, where it runs and control values
- *  (mode included). `focus: false` leaves the screen as it is. */
+ *  (mode included). */
 export interface ThreadSetup {
   repoPath: string;
   text: string;
@@ -62,8 +62,18 @@ export interface ThreadSetup {
   model?: string;
   start?: DraftStart;
   controls?: Record<string, string>;
+  /** false: start without taking the screen. */
   focus?: boolean;
+  /** Refuse an agent that isn't offered (turned off, removed, unknown)
+   *  instead of using the default agent: a recipe's tools may only be set up
+   *  in the agent it names. */
+  strictAgent?: boolean;
+  /** Leave the refusal toast to the caller, which gets the reason back. */
+  quiet?: boolean;
 }
+
+/** What startThreadFor did: the new thread's id, or why it didn't start. */
+export type ThreadStart = { id: string } | { error: string };
 
 /** The group a draft joins, or the one it starts. */
 export type DraftGroup = { groupId: string } | { newGroupName: string };
@@ -425,17 +435,23 @@ class DraftStore {
    * and the thread that was on screen comes back.
    */
   async startThread(setup: ThreadSetup): Promise<boolean> {
-    return (await this.startThreadFor(setup)) !== null;
+    return 'id' in (await this.startThreadFor(setup));
   }
 
-  /** startThread, returning the new thread's id (null when it didn't start).
-   *  With `focus: false` the thread starts without taking the screen (a
-   *  recipe's scheduled run). */
-  async startThreadFor(setup: ThreadSetup): Promise<string | null> {
+  /** startThread, saying what it did: the new thread's id, or why it didn't
+   *  start (a recipe notes it). See ThreadSetup for the extra options. */
+  async startThreadFor(setup: ThreadSetup): Promise<ThreadStart> {
+    const refuse = (error: string): ThreadStart => {
+      if (!setup.quiet) sessionStore.setError(`The thread couldn't start: ${error}.`);
+      return { error };
+    };
     const repo = setup.repoPath;
-    if (!sessionStore.repos.includes(repo)) {
-      sessionStore.setError("The thread couldn't start: its project was removed.");
-      return null;
+    if (!sessionStore.repos.includes(repo)) return refuse('its project was removed');
+    if (setup.strictAgent && setup.agentId) {
+      // Agents load on first use; a recipe can run before anything used them.
+      await agentsStore.load();
+      if (!agentsStore.loaded) return refuse("its agent couldn't be checked");
+      if (!agentsStore.get(setup.agentId) || !this.offeredAgent(setup.agentId)) return refuse('its agent is turned off or was removed');
     }
     const agentId = this.offeredAgent(setup.agentId) || agentsStore.defaultId || '';
     const d: Draft = {
@@ -451,12 +467,16 @@ class DraftStore {
     // The new row takes the screen; a refusal shouldn't leave the landing
     // screen where the asking thread was.
     const shown = sessionStore.activeSessionId;
-    return this.launch(d, (message, onScreen) => {
+    // Kept when the thread is closed while it starts, which launch() doesn't report.
+    let error = 'it was closed while it started';
+    const id = await this.launch(d, (message, onScreen) => {
       if (onScreen && shown && sessionStore.sessions.some((s) => s.id === shown)) {
         sessionStore.activeSessionId = shown;
       }
-      sessionStore.setError(`The thread couldn't start: ${message}`);
+      error = message;
+      if (!setup.quiet) sessionStore.setError(`The thread couldn't start: ${message}`);
     }, setup.focus ?? true);
+    return id ? { id } : { error };
   }
 
   /** Add the thread's row, create it in main and send `d.text` (with its

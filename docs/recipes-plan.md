@@ -15,11 +15,12 @@ The aim is a small, supervised "software factory": a recipe such as "every 2 hou
 | Where recipes live | `app-state.json`, on this machine (`recipes` field) | A schedule kept in the repository would fire on every teammate's copy of Grove |
 | Who starts the thread | The renderer, through `draftStore.startThreadFor` | Every thread starts there, so a recipe's thread shows and behaves like one started by hand |
 | Who keeps time | Main (`src/main/recipes.ts`), checking once a minute | It keeps running state in one place and saves it with the recipe |
-| Missed times | Skipped, not caught up. A time found more than 15 minutes late counts as missed; several missed times count as one | Supervised: nothing should start a burst of threads when the laptop wakes |
-| When Grove is closed | Nothing runs (no tray mode) | Fine for supervised use |
+| Missed times | Only the latest time since the last check counts: it runs if it is at most 15 minutes late, and is skipped and noted otherwise. Earlier missed times are dropped, not caught up | Supervised: nothing should start a burst of threads when the laptop wakes, but a time just gone should still run |
+| When Grove is closed | Nothing runs (no tray mode). The scheduler starts once the window has restored its threads (60 seconds at most) and stops for good when shutdown starts, Restart to update included | Fine for supervised use, and no thread starts while the others are closing |
+| A run nobody answered | Main waits up to 5 minutes for the window to say what a due run did, then notes it as not started | A window reloading at the wrong moment doesn't leave the recipe showing its previous run |
 | Focus | A scheduled run starts without taking the screen; Run opens the thread | Not interrupting what you're reading |
-| Cap | A scheduled run is skipped while `maxOpen` of the recipe's threads are still open (not closed or deleted). Run by hand ignores the cap | Stops a recipe piling up threads you haven't looked at |
-| Agent | A recipe whose agent is turned off or removed doesn't run, rather than falling back to the default agent | The recipe's tools (an issue tracker's MCP server) may only be set up in that agent |
+| Cap | A scheduled run is skipped while `maxOpen` of the recipe's threads are still open (`isOpenTab`: not closed or deleted, threads waiting to reconnect after a restart or wake included). Run by hand ignores the cap | Stops a recipe piling up threads you haven't looked at |
+| Agent | A recipe whose agent is turned off or removed doesn't run, rather than falling back to the default agent (`startThreadFor`'s `strictAgent`, which loads the agents first) | The recipe's tools (an issue tracker's MCP server) may only be set up in that agent |
 | Issue tracker | Grove never talks to Linear. The first message tells the agent to fetch work with its own MCP tools; moving the issue to In Progress is the lock that stops the next run taking it | Works with GitHub Issues, Jira or anything else with an MCP server, by changing the message |
 | Name | "Recipe", as in TODO.md | Easy to rename while it is a POC; "Job" or "Schedule" may be clearer next to "skill" |
 
@@ -27,18 +28,18 @@ The aim is a small, supervised "software factory": a recipe such as "every 2 hou
 
 - `src/shared/recipes.ts`: types, `nextRunAt` (schedule maths, local time), `recipePrompt` (names the skill in plain words, so it works for any agent)
 - `src/main/recipe-schema.ts`: Zod checks for saved recipes and for what the renderer sends
-- `src/main/recipes.ts`: save, delete, note a run, `takeDue` and the scheduler (`RECIPES_CHANGED`, then `RECIPE_DUE` to the window)
+- `src/main/recipes.ts`: save, delete, note a run, `takeDue` and the scheduler (`RECIPES_CHANGED`, then `RECIPE_DUE` to the window). A run's record goes through `updateRecipes`, so a passing lock on app-state.json doesn't lose it
 - `src/main/app-state.ts`: `loadRecipes`, `saveRecipes`
 - `src/renderer/stores/recipes.svelte.ts`: the list, and `run()` with the cap and agent checks
 - `src/renderer/components/RecipesDialog.svelte`: opened from the clock button on a project's header in the sidebar (always shown once the project has a recipe, else on hover)
-- `src/renderer/stores/draft.svelte.ts`: `startThreadFor` returns the new thread's id and takes `controls` and `focus`
+- `src/renderer/stores/draft.svelte.ts`: `startThreadFor` returns the new thread's id or why it didn't start, and takes `controls`, `focus`, `strictAgent` and `quiet`
 
 ## Limits of the POC
 
 - If the agent dies partway, the issue it took stays In Progress in the tracker. Grove can't see the tracker, so it can't undo that.
 - Grove shows no queue of waiting issues; only the tracker knows what is next.
 - Each agent needs the tracker's MCP server set up in its own config. ACP agents only get Grove's own MCP servers from Grove (`acp-adapter.ts`).
-- Recipes for a removed project stay saved and fail with "Its project was removed" until deleted.
+- Recipes for a removed project stay saved and fail with "its project was removed" until deleted.
 - Number fields left empty fail to save with Zod's own message rather than a friendly one.
 
 ## What's left

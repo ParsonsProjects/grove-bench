@@ -120,6 +120,28 @@ export function recipeNextRun(recipe: Recipe): number | null {
   return nextRunAt(recipe.schedule, recipe.scheduledFrom, recipe.checkedThrough);
 }
 
+/**
+ * The latest scheduled time that has come since the recipe was last checked
+ * (after `checkedThrough`, at or before `now`), or null when none has. The
+ * latest rather than the first: after a long sleep, the time that matters is
+ * the one just gone, not one from hours ago.
+ */
+export function recipeDueAt(recipe: Recipe, now: number): number | null {
+  let due = recipeNextRun(recipe);
+  if (due === null || due > now) return null;
+  const { schedule, scheduledFrom } = recipe;
+  if (schedule.kind === 'every') {
+    const step = schedule.hours * HOUR_MS;
+    return scheduledFrom + Math.floor((now - scheduledFrom) / step) * step;
+  }
+  // Daily: one step a day, so even a year away is a few hundred.
+  for (;;) {
+    const next = nextRunAt(schedule, scheduledFrom, due);
+    if (next === null || next > now) return due;
+    due = next;
+  }
+}
+
 /** The schedule in a few words, for the recipe list. */
 export function describeSchedule(schedule: RecipeSchedule): string {
   switch (schedule.kind) {

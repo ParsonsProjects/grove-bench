@@ -8,13 +8,20 @@
 import { randomUUID } from 'node:crypto';
 import type { BrowserWindow } from 'electron';
 import { IPC } from '../shared/types.js';
-import { MAX_RECIPE_SESSIONS, MISSED_AFTER_MS, recipeNextRun, type Recipe } from '../shared/recipes.js';
-import { loadRecipes, saveRecipes } from './app-state.js';
+import { MAX_RECIPE_SESSIONS, MISSED_AFTER_MS, recipeDueAt, type Recipe, type RecipeOutcome } from '../shared/recipes.js';
+import { loadRecipes, saveRecipes, updateRecipes } from './app-state.js';
 import { outcomeInputSchema, recipeInputSchema } from './recipe-schema.js';
 import { logger } from './logger.js';
 
 /** How often the scheduler looks for due recipes. Schedules are to the minute. */
 const TICK_MS = 60_000;
+/** How long a due run waits for the window to say what it did (a new
+ *  worktree can take a while on Windows) before it is noted as not started. */
+const ANSWER_WAIT_MS = 5 * 60_000;
+
+/** Due runs sent to the window and not answered yet (recordRecipeRun), with
+ *  when they were sent. */
+const awaiting = new Map<string, number>();
 
 function readAll(): Recipe[] {
   const recipes = loadRecipes();
@@ -22,8 +29,10 @@ function readAll(): Recipe[] {
   return recipes;
 }
 
-export function listRecipes(): Recipe[] {
-  return loadRecipes() ?? [];
+/** The recipes, or null while app-state.json can't be read (a passing
+ *  lock), so "none" is never mistaken for the real list. */
+export function listRecipes(): Recipe[] | null {
+  return loadRecipes();
 }
 
 /** Save a new or edited recipe from the renderer. A new, changed or resumed
@@ -53,36 +62,42 @@ export function deleteRecipe(id: string): void {
   saveRecipes(recipes.filter((r) => r.id !== id), true);
 }
 
+/** Note a run's outcome, and the thread it started (which the open-thread
+ *  cap counts). Applied once app-state.json can be read, if it can't now. */
+function applyOutcome(id: string, outcome: Omit<RecipeOutcome, 'at'>, now: number): void {
+  updateRecipes((recipes) => recipes.map((r) => (r.id !== id ? r : {
+    ...r,
+    lastOutcome: { at: now, ...outcome },
+    sessionIds: outcome.sessionId ? [...r.sessionIds, outcome.sessionId].slice(-MAX_RECIPE_SESSIONS) : r.sessionIds,
+  })));
+}
+
 /** Note what a run did. The recipe as saved, or null when it was deleted
- *  while its thread started. */
+ *  while its thread started, or the file can't be read just now (the record
+ *  is saved once it can). */
 export function recordRecipeRun(id: string, raw: unknown, now = Date.now()): Recipe | null {
   const parsed = outcomeInputSchema.safeParse(raw);
   if (!parsed.success) return null;
+  awaiting.delete(id);
+  applyOutcome(id, parsed.data, now);
   const recipes = loadRecipes();
-  const old = recipes?.find((r) => r.id === id);
-  if (!recipes || !old) return null;
-  const { sessionId } = parsed.data;
-  const recipe: Recipe = {
-    ...old,
-    lastOutcome: { at: now, ...parsed.data },
-    sessionIds: sessionId ? [...old.sessionIds, sessionId].slice(-MAX_RECIPE_SESSIONS) : old.sessionIds,
-  };
-  saveRecipes(recipes.map((r) => (r.id === id ? recipe : r)), false);
-  return recipe;
+  if (!recipes) logger.warn(`[recipes] app-state.json can't be read; ${id}'s run is saved once it can`);
+  return recipes?.find((r) => r.id === id) ?? null;
 }
 
 /**
  * The recipes due at `now`: the ids to run, and the list with every due
- * recipe marked checked up to now. A time found more than MISSED_AFTER_MS
- * late is skipped and noted instead, and several missed times count as one.
- * Exported for tests.
+ * recipe marked checked up to now. Only the latest time since the last check
+ * counts: it runs if it is at most MISSED_AFTER_MS late, and is skipped and
+ * noted otherwise. Earlier times missed meanwhile are dropped. Exported for
+ * tests.
  */
 export function takeDue(recipes: Recipe[], now: number): { recipes: Recipe[]; run: string[]; changed: boolean } {
   const run: string[] = [];
   let changed = false;
   const next = recipes.map((recipe) => {
-    const due = recipeNextRun(recipe);
-    if (due === null || due > now) return recipe;
+    const due = recipeDueAt(recipe, now);
+    if (due === null) return recipe;
     changed = true;
     if (now - due <= MISSED_AFTER_MS) {
       run.push(recipe.id);
@@ -97,24 +112,43 @@ export function takeDue(recipes: Recipe[], now: number): { recipes: Recipe[]; ru
   return { recipes: next, run, changed };
 }
 
+/** Note the runs the window never answered (it was reloading, say), so the
+ *  recipe doesn't go on showing its previous run. Whether any were. */
+function expireUnanswered(now: number): boolean {
+  let any = false;
+  for (const [id, sentAt] of awaiting) {
+    if (now - sentAt < ANSWER_WAIT_MS) continue;
+    awaiting.delete(id);
+    logger.warn(`[recipes] no answer from the window about ${id}'s run`);
+    applyOutcome(id, { error: "The window didn't say it started a thread (it may have been reloading)" }, now);
+    any = true;
+  }
+  return any;
+}
+
 let timer: ReturnType<typeof setInterval> | null = null;
+/** Set once the app starts shutting down, so a restore that finishes late
+ *  can't start the scheduler again. */
+let stopped = false;
 
 /** Look for due recipes now and every minute after, and ask the window to
  *  start their threads. Nothing is taken while there is no window, so a run
  *  isn't marked done with nobody to start it. */
 export function startRecipeScheduler(getWindow: () => BrowserWindow | null): void {
-  if (timer) return;
+  if (timer || stopped) return;
   const tick = () => {
     const win = getWindow();
     if (!win || win.isDestroyed()) return;
+    const now = Date.now();
+    const expired = expireUnanswered(now);
     const recipes = loadRecipes();
     if (!recipes) return; // the file is locked for a moment: next tick
-    const due = takeDue(recipes, Date.now());
-    if (!due.changed) return;
-    saveRecipes(due.recipes, false);
-    win.webContents.send(IPC.RECIPES_CHANGED, due.recipes);
+    const due = takeDue(recipes, now);
+    if (due.changed) saveRecipes(due.recipes, false);
+    if (due.changed || expired) win.webContents.send(IPC.RECIPES_CHANGED, due.recipes);
     for (const id of due.run) {
       logger.info(`[recipes] ${id} is due`);
+      awaiting.set(id, now);
       win.webContents.send(IPC.RECIPE_DUE, id);
     }
   };
@@ -122,7 +156,15 @@ export function startRecipeScheduler(getWindow: () => BrowserWindow | null): voi
   tick();
 }
 
+/** Stop for good: the app is shutting down or restarting to update. */
 export function stopRecipeScheduler(): void {
+  stopped = true;
   if (timer) clearInterval(timer);
   timer = null;
+}
+
+export function resetRecipeSchedulerForTests(): void {
+  stopRecipeScheduler();
+  stopped = false;
+  awaiting.clear();
 }

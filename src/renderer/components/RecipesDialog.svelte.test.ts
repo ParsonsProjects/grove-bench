@@ -6,6 +6,7 @@ import { mockGroveBench } from '../__mocks__/setup.js';
 import RecipesDialog from './RecipesDialog.svelte';
 import { recipesStore } from '../stores/recipes.svelte.js';
 import { store } from '../stores/sessions.svelte.js';
+import { agentsStore } from '../stores/agents.svelte.js';
 import type { Recipe, RecipeInput } from '../../shared/recipes.js';
 
 const recipe: Recipe = {
@@ -61,6 +62,22 @@ describe('RecipesDialog', () => {
     await fireEvent.input(screen.getByLabelText('Name'), { target: { value: 'Empty' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     expect(await screen.findByText('Write a first message or name a skill')).toBeInTheDocument();
+  });
+
+  it('loads the agents for its picker, as nothing else may have yet', async () => {
+    agentsStore.loaded = false;
+    mockGroveBench.listAdapters.mockResolvedValue([{ id: 'gemini', displayName: 'Gemini CLI', capabilities: {} }]);
+    render(RecipesDialog, { repoPath: '/repo', onclose: () => {} });
+    await waitFor(() => expect(agentsStore.loaded).toBe(true));
+    expect(agentsStore.list.map((a) => a.id)).toEqual(['gemini']);
+  });
+
+  it("shows a refused pause in a toast without Electron's wrapper", async () => {
+    mockGroveBench.saveRecipe.mockRejectedValue(new Error("Error invoking remote method 'recipes:save': Error: Recipes can't be read right now."));
+    render(RecipesDialog, { repoPath: '/repo', onclose: () => {} });
+    await fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
+    await waitFor(() => expect(store.error).toBe("Recipes can't be read right now."));
+    store.clearError();
   });
 
   it('pauses a scheduled recipe', async () => {

@@ -56,7 +56,7 @@ import {
   mergeProjects, listProjects, rememberProject, forgetProject,
   loadConversationGroups, saveConversationGroups,
   loadTodoSessionIds, saveTodoSessionIds,
-  loadRecipes, saveRecipes,
+  loadRecipes, saveRecipes, updateRecipes,
   appStateSaved, resetAppStateForTests,
 } from './app-state.js';
 
@@ -811,6 +811,18 @@ describe('recipes', () => {
     useDisk({ schemaVersion: V, recipes: [recipe] });
     lockReads();
     expect(loadRecipes()).toBeNull();
+  });
+
+  it('applies a change made while the file is locked once it can be read', async () => {
+    const file = useDisk({ schemaVersion: V, recipes: [recipe] });
+    const unlock = lockReads();
+    updateRecipes((list) => list.map((r) => ({ ...r, sessionIds: [...r.sessionIds, 'b'] })));
+    expect(loadRecipes()).toBeNull();
+    unlock();
+    expect(loadRecipes()?.[0].sessionIds).toEqual(['a', 'b']);
+    await vi.advanceTimersByTimeAsync(500);
+    await appStateSaved();
+    expect(file.get().recipes[0].sessionIds).toEqual(['a', 'b']);
   });
 
   it('drops a malformed recipe and keeps the rest', () => {

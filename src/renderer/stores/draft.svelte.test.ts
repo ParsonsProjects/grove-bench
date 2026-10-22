@@ -721,7 +721,7 @@ describe('draftStore.startThread', () => {
     store.activeSessionId = 'shown';
     expect(await draftStore.startThreadFor({
       repoPath: '/repo/one', text: 'Next issue', controls: { permissionMode: 'plan' }, focus: false,
-    })).toBe('new1');
+    })).toEqual({ id: 'new1' });
     expect(createSessionMock()).toHaveBeenCalledWith(expect.objectContaining({ repoPath: '/repo/one', permissionMode: 'plan' }));
     expect(store.activeSessionId).toBe('shown');
     expect(store.sessions.some((s) => s.id === 'new1')).toBe(true);
@@ -775,6 +775,34 @@ describe('draftStore.startThread', () => {
     expect(store.activeSessionId).toBe('s1');
     expect(store.error).toContain("isn't installed");
     store.clearError();
+  });
+
+  it('with strictAgent, refuses an agent that is not offered instead of using the default', async () => {
+    agentsStore.list = [...agentsStore.list, { id: 'opencode', displayName: 'OpenCode', capabilities: {}, stage: 'alpha' }];
+    expect(await draftStore.startThreadFor({ repoPath: '/repo/one', agentId: 'opencode', text: 'Next issue', strictAgent: true }))
+      .toEqual({ error: 'its agent is turned off or was removed' });
+    expect(await draftStore.startThreadFor({ repoPath: '/repo/one', agentId: 'gone', text: 'Next issue', strictAgent: true }))
+      .toEqual({ error: 'its agent is turned off or was removed' });
+    expect(createSessionMock()).not.toHaveBeenCalled();
+    expect(store.error).toContain('turned off or was removed');
+    store.clearError();
+  });
+
+  it('with strictAgent, loads the agents first when nothing has yet', async () => {
+    agentsStore.list = [];
+    agentsStore.loaded = false;
+    mockGroveBench.listAdapters.mockResolvedValue([{ id: 'codex', displayName: 'Codex', capabilities: {} }]);
+    expect(await draftStore.startThreadFor({ repoPath: '/repo/one', agentId: 'codex', text: 'Next issue', strictAgent: true }))
+      .toEqual({ id: 'new1' });
+    expect(createSessionMock()).toHaveBeenCalledWith(expect.objectContaining({ adapterType: 'codex' }));
+    arrivalScene.end('new1');
+  });
+
+  it('when quiet, hands back main\'s reason without a toast', async () => {
+    createSessionMock().mockRejectedValue(new Error('Branch "feat/x" already exists'));
+    expect(await draftStore.startThreadFor({ repoPath: '/repo/one', text: 'Next issue', quiet: true }))
+      .toEqual({ error: 'Branch "feat/x" already exists' });
+    expect(store.error).toBeNull();
   });
 
   it('refuses a project that was removed', async () => {

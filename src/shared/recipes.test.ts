@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { describeSchedule, nextRunAt, parseTime, recipeNextRun, recipePrompt, type Recipe } from './recipes.js';
+import { describeSchedule, nextRunAt, parseTime, recipeDueAt, recipeNextRun, recipePrompt, type Recipe } from './recipes.js';
 
 const HOUR = 3_600_000;
 /** Local time, so the daily cases hold in any time zone. */
@@ -65,6 +65,30 @@ describe('recipeNextRun', () => {
 
   it('has no next run while paused', () => {
     expect(recipeNextRun(recipe({ paused: true }))).toBeNull();
+  });
+});
+
+describe('recipeDueAt', () => {
+  const recipe = (over: Partial<Recipe> = {}): Recipe => ({
+    id: 'r1', repoPath: '/repo', name: 'Nightly', agentId: '', start: 'new', permissionMode: '',
+    skill: '', prompt: 'Do it', schedule: { kind: 'every', hours: 2 }, maxOpen: 1, paused: false,
+    scheduledFrom: 0, checkedThrough: 0, sessionIds: [], ...over,
+  });
+
+  it('gives the latest time since the last check, not the first', () => {
+    expect(recipeDueAt(recipe(), 7 * HOUR)).toBe(6 * HOUR);
+    expect(recipeDueAt(recipe(), 6 * HOUR)).toBe(6 * HOUR);
+  });
+
+  it('walks daily times day by day', () => {
+    const daily = recipe({ schedule: { kind: 'daily', time: '09:00', weekdaysOnly: true }, checkedThrough: at(2026, 10, 22, 10) });
+    // Thursday 10:00 to Tuesday 12:00: Friday, Monday and Tuesday at 09:00 came; Tuesday is the latest.
+    expect(recipeDueAt(daily, at(2026, 10, 27, 12))).toBe(at(2026, 10, 27, 9));
+  });
+
+  it('is null before any time has come, and while paused', () => {
+    expect(recipeDueAt(recipe(), 2 * HOUR - 1)).toBeNull();
+    expect(recipeDueAt(recipe({ paused: true }), 10 * HOUR)).toBeNull();
   });
 });
 

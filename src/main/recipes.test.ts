@@ -2,8 +2,14 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Recipe, RecipeInput } from '../shared/recipes.js';
 import { MAX_RECIPE_SESSIONS, MISSED_AFTER_MS } from '../shared/recipes.js';
 
-/** app-state.json's recipes, as the scheduler and IPC see them. */
-const saved = vi.hoisted(() => ({ recipes: [] as Recipe[] | null, writes: [] as boolean[] }));
+/** app-state.json's recipes, as the scheduler and IPC see them. `recipes`
+ *  null is a locked file; `waiting` holds the changes made meanwhile, as
+ *  app-state does. */
+const saved = vi.hoisted(() => ({
+  recipes: [] as Recipe[] | null,
+  writes: [] as boolean[],
+  waiting: [] as ((recipes: Recipe[]) => Recipe[])[],
+}));
 
 vi.mock('./app-state.js', () => ({
   loadRecipes: () => (saved.recipes ? structuredClone(saved.recipes) : null),
@@ -11,12 +17,22 @@ vi.mock('./app-state.js', () => ({
     saved.recipes = structuredClone(recipes);
     saved.writes.push(now);
   },
+  updateRecipes: (mutate: (recipes: Recipe[]) => Recipe[]) => {
+    if (saved.recipes) saved.recipes = mutate(structuredClone(saved.recipes));
+    else saved.waiting.push(mutate);
+  },
 }));
+
+/** Unlock the file: the changes made while it was locked apply. */
+function unlock(recipes: Recipe[]): void {
+  saved.recipes = saved.waiting.reduce((list, mutate) => mutate(list), recipes);
+  saved.waiting = [];
+}
 vi.mock('./logger.js', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-import { deleteRecipe, listRecipes, recordRecipeRun, saveRecipe, startRecipeScheduler, stopRecipeScheduler, takeDue } from './recipes.js';
+import { deleteRecipe, listRecipes, recordRecipeRun, resetRecipeSchedulerForTests, saveRecipe, startRecipeScheduler, stopRecipeScheduler, takeDue } from './recipes.js';
 import { IPC } from '../shared/types.js';
 
 const HOUR = 3_600_000;
@@ -38,6 +54,7 @@ const input = (over: Partial<RecipeInput> = {}): RecipeInput => ({
 beforeEach(() => {
   saved.recipes = [];
   saved.writes = [];
+  saved.waiting = [];
 });
 
 describe('saveRecipe', () => {
@@ -77,23 +94,39 @@ describe('saveRecipe', () => {
   });
 });
 
+describe('listRecipes', () => {
+  it("says it can't tell while the file is locked, rather than \"none\"", () => {
+    saved.recipes = null;
+    expect(listRecipes()).toBeNull();
+  });
+});
+
 describe('deleteRecipe', () => {
   it('takes the recipe out', () => {
     const a = saveRecipe(input({ name: 'A' }), 1);
     const b = saveRecipe(input({ name: 'B' }), 1);
     deleteRecipe(a.id);
-    expect(listRecipes().map((r) => r.id)).toEqual([b.id]);
+    expect(listRecipes()!.map((r) => r.id)).toEqual([b.id]);
   });
 });
 
 describe('recordRecipeRun', () => {
-  it('notes the outcome and keeps the last threads, saved within a moment', () => {
+  it('notes the outcome and keeps the last threads', () => {
     const recipe = saveRecipe(input(), 1);
     for (let i = 0; i < MAX_RECIPE_SESSIONS + 2; i++) recordRecipeRun(recipe.id, { sessionId: `s${i}` }, 10 + i);
-    const after = listRecipes()[0];
+    const after = listRecipes()![0];
     expect(after.sessionIds).toHaveLength(MAX_RECIPE_SESSIONS);
     expect(after.sessionIds.at(-1)).toBe(`s${MAX_RECIPE_SESSIONS + 1}`);
-    expect(saved.writes.at(-1)).toBe(false);
+    expect(after.lastOutcome).toEqual({ at: 10 + MAX_RECIPE_SESSIONS + 1, sessionId: `s${MAX_RECIPE_SESSIONS + 1}` });
+  });
+
+  it('keeps the thread for the cap when the file is locked, and saves it once it can', () => {
+    const recipe = saveRecipe(input(), 1);
+    const before = saved.recipes!;
+    saved.recipes = null;
+    expect(recordRecipeRun(recipe.id, { sessionId: 's1' }, 5)).toBeNull();
+    unlock(before);
+    expect(listRecipes()![0]).toMatchObject({ sessionIds: ['s1'], lastOutcome: { at: 5, sessionId: 's1' } });
   });
 
   it('ignores a recipe deleted meanwhile and a malformed outcome', () => {
@@ -128,7 +161,8 @@ describe('takeDue', () => {
   });
 
   it('skips a time found too late, once for any number missed', () => {
-    const now = 10 * HOUR;
+    // Every 2 hours from 0: 2:00 to 10:00 all missed, and 10:00 is 30 minutes late.
+    const now = 10.5 * HOUR;
     const due = takeDue([recipe()], now);
     expect(due.run).toEqual([]);
     expect(due.recipes[0].lastOutcome?.skipped).toMatch(/closed or the computer was asleep/);
@@ -136,11 +170,24 @@ describe('takeDue', () => {
     // Just inside the grace period it still runs.
     expect(takeDue([recipe()], 2 * HOUR + MISSED_AFTER_MS).run).toEqual(['r1']);
   });
+
+  it('runs the latest time after a long sleep when that one is still in time', () => {
+    // Every 2 hours from 0; asleep from 0:30 to 6:05. 6:00 counts, not 2:00.
+    const due = takeDue([recipe({ checkedThrough: HOUR / 2 })], 6 * HOUR + 5 * 60_000);
+    expect(due.run).toEqual(['r1']);
+    expect(due.recipes[0].lastOutcome).toBeUndefined();
+  });
+
+  it('runs today\'s daily time when Grove opens just after it, days later', () => {
+    const local = (d: number, h: number, m = 0) => new Date(2026, 9, d, h, m).getTime();
+    const daily = recipe({ schedule: { kind: 'daily', time: '09:00', weekdaysOnly: false }, checkedThrough: local(19, 18) });
+    expect(takeDue([daily], local(22, 9, 5)).run).toEqual(['r1']);
+  });
 });
 
 describe('startRecipeScheduler', () => {
   afterEach(() => {
-    stopRecipeScheduler();
+    resetRecipeSchedulerForTests();
     vi.useRealTimers();
   });
 
@@ -173,5 +220,43 @@ describe('startRecipeScheduler', () => {
     win = fake.win;
     vi.advanceTimersByTime(60_000);
     expect(fake.send).toHaveBeenCalledWith(IPC.RECIPE_DUE, expect.any(String));
+  });
+
+  it('stays off once stopped, even if asked to start again', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    saveRecipe(input({ schedule: { kind: 'every', hours: 1 } }), 0);
+    const { send, win } = fakeWindow();
+    stopRecipeScheduler();
+    startRecipeScheduler(() => win);
+    vi.advanceTimersByTime(2 * HOUR);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('notes a due run the window never answered', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const recipe = saveRecipe(input({ schedule: { kind: 'every', hours: 1 } }), 0);
+    const { send, win } = fakeWindow();
+    startRecipeScheduler(() => win);
+    vi.advanceTimersByTime(HOUR);
+    expect(send).toHaveBeenLastCalledWith(IPC.RECIPE_DUE, recipe.id);
+    vi.advanceTimersByTime(4 * 60_000);
+    expect(saved.recipes![0].lastOutcome).toBeUndefined();
+    vi.advanceTimersByTime(60_000);
+    expect(saved.recipes![0].lastOutcome?.error).toMatch(/didn't say it started a thread/);
+    expect(send).toHaveBeenLastCalledWith(IPC.RECIPES_CHANGED, saved.recipes);
+  });
+
+  it('leaves a due run the window answered alone', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const recipe = saveRecipe(input({ schedule: { kind: 'every', hours: 1 } }), 0);
+    const { win } = fakeWindow();
+    startRecipeScheduler(() => win);
+    vi.advanceTimersByTime(HOUR);
+    recordRecipeRun(recipe.id, { sessionId: 's1' }, HOUR + 1);
+    vi.advanceTimersByTime(10 * 60_000);
+    expect(saved.recipes![0].lastOutcome).toEqual({ at: HOUR + 1, sessionId: 's1' });
   });
 });

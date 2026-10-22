@@ -193,8 +193,11 @@ app.whenReady().then(() => {
   scheduleSweep();
 
   // Recipes on a schedule (recipes.ts). Started once the window has its
-  // threads back, since it starts the recipes' threads.
-  appEvents.once('restore-complete', () => startRecipeScheduler(() => mainWindow));
+  // threads back, since it starts the recipes' threads, with a 60s fallback
+  // as for the sweep: a restore that fails never says it is done.
+  const startRecipes = () => startRecipeScheduler(() => mainWindow);
+  appEvents.once('restore-complete', startRecipes);
+  setTimeout(startRecipes, 60_000);
 
   // Note in the performance log whenever the main process stops
   // responding, and sum up how the app is doing every few minutes.
@@ -264,6 +267,9 @@ let shutdownDone: Promise<void> | null = null;
  */
 function shutdown(): Promise<void> {
   shutdownDone ??= (async () => {
+    // Restart to update comes here before before-quit: no recipe may start
+    // a thread while the others are closing.
+    stopRecipeScheduler();
     if (nothingRunning()) return;
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send(IPC.APP_CLOSING);

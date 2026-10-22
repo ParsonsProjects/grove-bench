@@ -408,7 +408,7 @@ const api: GroveBenchAPI = {
   setTodoSessions: (ids: string[]) => ipcRenderer.send(IPC.APP_STATE_SET_TODO, ids),
 
   // Recipes
-  listRecipes: () => ipcRenderer.invoke(IPC.RECIPES_LIST) as Promise<import('../shared/recipes.js').Recipe[]>,
+  listRecipes: () => ipcRenderer.invoke(IPC.RECIPES_LIST) as Promise<import('../shared/recipes.js').Recipe[] | null>,
   saveRecipe: (recipe: import('../shared/recipes.js').RecipeInput) =>
     ipcRenderer.invoke(IPC.RECIPES_SAVE, recipe) as Promise<import('../shared/recipes.js').Recipe>,
   deleteRecipe: (id: string) => ipcRenderer.invoke(IPC.RECIPES_DELETE, id) as Promise<void>,
