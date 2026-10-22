@@ -1,7 +1,8 @@
 <script lang="ts">
   import { untrack, type Snippet } from 'svelte';
   import { messageStore, type ChatToolCallMessage } from '../stores/messages.svelte.js';
-  import DiffView, { fullEditDiff, parseDiffLines, quickEditDiff } from './DiffView.svelte';
+  import DiffView, { parseDiffLines } from './DiffView.svelte';
+  import { fullEditDiff, quickEditDiff, OLD_THEN_NEW, type EditDiff } from '../lib/edit-diff.js';
   import { toolViewOf } from '../../shared/tool-view.js';
   import type { DiffLine, CommentAnchor, ContextGap } from './DiffView.svelte';
   import { diffSize, editSize, hunkLineIndices, isLargeDiff } from '../lib/diff-highlight.js';
@@ -453,7 +454,7 @@
    *  status refresh (which hands back a new entry object) doesn't redo
    *  createPatch and redraw every row of every shown edit. A changed edit is
    *  a new message with a new input object, so it's worked out again. */
-  interface EditInfo { input: unknown; filePath: string; size: { lines: number; chars: number }; quick?: ReturnType<typeof quickEditDiff>; lines?: DiffLine[] | null }
+  interface EditInfo { input: unknown; filePath: string; size: { lines: number; chars: number }; quick?: ReturnType<typeof quickEditDiff>; full?: EditDiff }
   const editInfo = new Map<string, EditInfo>();
   function editInfoFor(edit: ChatToolCallMessage, filePath: string): EditInfo {
     const known = editInfo.get(edit.id);
@@ -466,13 +467,9 @@
   function quickDiffFor(info: EditInfo, edit: ChatToolCallMessage): ReturnType<typeof quickEditDiff> {
     return (info.quick ??= quickEditDiff(toolViewOf(edit), info.filePath));
   }
-  /** Its lines, or null when, once shown, it had too many changes to work
-   *  out (fullEditDiff). */
-  function editLinesFor(info: EditInfo, edit: ChatToolCallMessage): DiffLine[] | null {
-    const quick = quickDiffFor(info, edit).lines;
-    if (quick) return quick;
-    if (info.lines === undefined) info.lines = fullEditDiff(toolViewOf(edit), info.filePath);
-    return info.lines;
+  /** Its diff once shown (fullEditDiff). */
+  function editDiffFor(info: EditInfo, edit: ChatToolCallMessage): EditDiff {
+    return (info.full ??= fullEditDiff(toolViewOf(edit), info.filePath, quickDiffFor(info, edit).lines));
   }
 
   let selectedDiffSize = $derived(diffSize(selectedDiffLines));
@@ -1069,8 +1066,8 @@
             {#each history.edits as edit, idx}
               {@const info = editInfoFor(edit, selectedEntry.filePath)}
               {@const held = quickDiffFor(info, edit).large && !largeEditShown[edit.id]}
-              {@const editDiffLines = held ? [] : editLinesFor(info, edit)}
-              {#if held || editDiffLines === null || editDiffLines.length > 0}
+              {@const editDiff = held ? null : editDiffFor(info, edit)}
+              {#if held || (editDiff && editDiff.lines.length > 0)}
                 <div class="mb-2 {idx > 0 ? 'border-t border-border/30 pt-2' : ''}">
                   <div class="text-micro text-muted-foreground mb-1">
                     {edit.toolName} #{idx + 1}
@@ -1078,11 +1075,10 @@
                   {#if held}
                     <!-- Held back before its diff is worked out in full. -->
                     <LargeDiffNotice kind="edit" size={info.size} label={`Show ${edit.toolName} #${idx + 1}`} onShow={() => (largeEditShown = { ...largeEditShown, [edit.id]: true })} />
-                  {:else if editDiffLines === null}
-                    <Notice tone="neutral"><p>Too many changes to show here.</p></Notice>
-                  {:else}
+                  {:else if editDiff}
+                    {#if !editDiff.linedUp}<Notice tone="neutral" class="mb-1"><p>{OLD_THEN_NEW}</p></Notice>{/if}
                     <!-- Idle-time colouring, as in the thread: a page of edits draws at once. -->
-                    <DiffView lines={editDiffLines} sideBySide={false} maxHeight="300px" filePath={selectedEntry.filePath} deferHighlight />
+                    <DiffView lines={editDiff.lines} sideBySide={false} maxHeight="300px" filePath={selectedEntry.filePath} deferHighlight />
                   {/if}
                 </div>
               {/if}

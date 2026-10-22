@@ -1,6 +1,6 @@
 <script lang="ts" module>
   import type { DiffLine, SideBySideRow, ContextGap, ReviewComment } from '../lib/diff-types.js';
-  import { diffSize, editSize, intralineRanges, isLargeDiff } from '../lib/diff-highlight.js';
+  import { intralineRanges } from '../lib/diff-highlight.js';
   import { parseDiffLines } from '../lib/diff-parse.js';
   // Re-export so existing component consumers can keep importing from here.
   export type { DiffLine, SideBySideRow, ContextGap, ReviewComment };
@@ -75,82 +75,6 @@
       }
     }
     return out;
-  }
-
-  import { createPatch } from 'diff';
-  import type { ToolView, ToolTextEdit } from '../../shared/tool-view.js';
-
-  /** Each replacement as a patch's diff lines. With limits, null once the
-   *  edits together take longer than `ms`, or one needs more than
-   *  `maxEditLength` changed lines (jsdiff gives up). */
-  function patchLines(edits: ToolTextEdit[], filePath: string): DiffLine[];
-  function patchLines(edits: ToolTextEdit[], filePath: string, limits: { maxEditLength?: number; ms: number }): DiffLine[] | null;
-  function patchLines(edits: ToolTextEdit[], filePath: string, limits?: { maxEditLength?: number; ms: number }): DiffLine[] | null {
-    const deadline = limits ? performance.now() + limits.ms : 0;
-    const out: DiffLine[] = [];
-    for (const edit of edits) {
-      if (!edit.oldText && !edit.newText) continue;
-      const patch = limits
-        ? createPatch(filePath || 'file', edit.oldText, edit.newText, '', '', {
-            context: 3,
-            timeout: Math.max(1, deadline - performance.now()),
-            ...(limits.maxEditLength ? { maxEditLength: limits.maxEditLength } : {}),
-          })
-        : createPatch(filePath || 'file', edit.oldText, edit.newText, '', '', { context: 3 });
-      if (patch === undefined) return null;
-      out.push(...parseDiffLines(patch));
-    }
-    return out;
-  }
-
-  /** Diff lines for an edit call: each replacement as a patch, or a whole-file
-   *  write as added lines. */
-  export function computeDiffLines(view: ToolView, filePath: string): DiffLine[] {
-    if (view.edits?.length) return patchLines(view.edits, filePath);
-    if (view.write !== undefined) {
-      if (!view.write) return [];
-      return view.write.split('\n').map((line, i) => ({
-        type: 'add' as const,
-        text: line,
-        lineNum: i + 1,
-      }));
-    }
-    return [];
-  }
-
-  /** How far quickEditDiff goes on an edit with large text: changed lines
-   *  (jsdiff's maxEditLength), then milliseconds. ACP agents can send the
-   *  whole file before and after; a small change to one diffs in a few
-   *  milliseconds, while a heavy change to 20,000 lines gives up in about
-   *  40 (in Node) instead of taking over a minute. */
-  const QUICK_EDIT_LENGTH = 500;
-  const QUICK_DIFF_MS = 50;
-
-  /**
-   * An edit's diff lines, and whether they're large enough to wait for
-   * "Show edit" (isLargeDiff). An edit with large text (editSize) is diffed
-   * with capped effort first. `lines` is null when they weren't worked out
-   * (a large write, or the cap was hit): the caller works them out in full
-   * (fullEditDiff) only once asked.
-   */
-  export function quickEditDiff(view: ToolView, filePath: string): { lines: DiffLine[] | null; large: boolean } {
-    // A diff is no bigger than the text it's made from.
-    if (!isLargeDiff(editSize(view))) return { lines: computeDiffLines(view, filePath), large: false };
-    // A write's rows are its text.
-    if (!view.edits?.length) return { lines: null, large: true };
-    const lines = patchLines(view.edits, filePath, { maxEditLength: QUICK_EDIT_LENGTH, ms: QUICK_DIFF_MS });
-    return { lines, large: !lines || isLargeDiff(diffSize(lines)) };
-  }
-
-  /** How long fullEditDiff works on an edit before giving up. In Node, a
-   *  rewrite of 2,000 lines took about a second to diff; of 10,000, 28 s. */
-  const FULL_DIFF_MS = 1000;
-
-  /** A large edit's diff lines in full, once asked for, or null when working
-   *  them out takes longer than FULL_DIFF_MS. "Show edit" warns of a pause,
-   *  not a window frozen for a minute. */
-  export function fullEditDiff(view: ToolView, filePath: string): DiffLine[] | null {
-    return view.edits?.length ? patchLines(view.edits, filePath, { ms: FULL_DIFF_MS }) : computeDiffLines(view, filePath);
   }
 </script>
 

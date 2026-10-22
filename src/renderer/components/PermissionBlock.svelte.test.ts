@@ -155,19 +155,18 @@ describe('PermissionBlock edit preview', () => {
     resolve.mockRestore();
   });
 
-  it('says when a shown edit has too many changes to work out', async () => {
+  it('shows the old text, then the new, when a shown edit has too many changes to work out', async () => {
     vi.mocked(createPatch).mockImplementation(((...args: Parameters<typeof realCreatePatch>) =>
-      (args[5] as { timeout?: number } | undefined)?.timeout ? undefined : realCreatePatch(...args)) as typeof createPatch);
+      Number.isFinite((args[5] as { timeout?: number } | undefined)?.timeout) ? undefined : realCreatePatch(...args)) as typeof createPatch);
     try {
-      render(PermissionBlock, {
+      const { container } = render(PermissionBlock, {
         sessionId: 's1', requestId: 'r8', toolName: 'Edit', resolved: false, toolCategory: 'edit',
-        toolInput: {}, toolView: { kind: 'edit', path: 'src/data.ts', edits: [{ oldText: 'a', newText: 'x'.repeat(150_001) }] },
+        toolInput: {}, toolView: { kind: 'edit', path: 'src/data.ts', edits: [{ oldText: 'the old line', newText: 'x'.repeat(150_000) + 'END' }] },
       });
       await fireEvent.click(screen.getByRole('button', { name: 'Show edit to src/data.ts' }));
-      expect(screen.getByText('Too many changes to show here.')).toBeInTheDocument();
-      // Not applied yet, so the editor would only show the file as it was.
-      expect(screen.queryByRole('button', { name: 'Open in editor' })).toBeNull();
-      expect(screen.getByRole('button', { name: 'Allow' })).toBeEnabled();
+      expect(screen.getByText(/Too many changes to compare line by line/)).toBeInTheDocument();
+      expect(container).toHaveTextContent('the old line');
+      expect(container).toHaveTextContent('END');
     } finally {
       vi.mocked(createPatch).mockImplementation(realCreatePatch);
     }
