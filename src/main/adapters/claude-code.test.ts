@@ -3,7 +3,7 @@ import path from 'node:path';
 import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS, thinkingConfigFor, parseMcpListOutput, mcpServerManager, claudeMcpOrigin, mcpToolServerKey, mcpContextCostByServer, toMcpElicitationRequest, withMcpjsonApproval, mcpjsonApprovalsFrom, withoutLegacyDenyRules, buildMcpAddArgs, quoteArg, validatePluginId, validateConfigScope, claudeControlsFor, supportsAdaptiveThinking, supportsFastMode, supportsAutoMode, claudeModelCaps, effortFor, reasoningOptionsFor, toSdkPermissionMode, fromSdkSyncMode, stripAnsi, mapClaudeUsage, thinkingDisplayFor, TEXT_GENERATION_OPTIONS, missingConversationError, userMessageContent, sandboxDecision } from './claude-code.js';
 import type { AgentEvent } from '../../shared/types.js';
 import { RunningCost, RunningTokens } from './running-cost.js';
-import { limitHook, LIMIT_STOP_REASON } from './claude-code.js';
+import { limitHook, LIMIT_STOP_REASON, titleListOptions, titleFromSessions } from './claude-code.js';
 import type { MessageFile } from './types.js';
 
 // ─── isPathInside (sandbox allowWrite containment) ───
@@ -1319,5 +1319,28 @@ describe('sandboxDecision()', () => {
     expect(sandboxDecision('Write', { file_path: path.resolve('/elsewhere/a.ts') }, { cwd, sandbox })).toMatchObject({ behavior: 'deny', reason: 'guard' });
     expect(sandboxDecision('NotebookEdit', { notebook_path: '../out.ipynb' }, { cwd, sandbox })).toMatchObject({ behavior: 'deny' });
     expect(sandboxDecision('Read', { file_path: path.resolve('/elsewhere/a.ts') }, { cwd, sandbox })).toBeNull();
+  });
+});
+
+describe('conversation titles', () => {
+  it("lists only the thread's own folder, so the SDK starts no git", () => {
+    // includeWorktrees would have the SDK run `git worktree list` from the
+    // main process; programmatic sessions are Grove's own.
+    expect(titleListOptions('C:\\wt\\a1')).toEqual({ dir: 'C:\\wt\\a1', includeWorktrees: false, includeProgrammatic: true });
+  });
+
+  it("takes the session's own title, tidied", () => {
+    const sessions = [
+      { sessionId: 'other', summary: 'x', lastModified: 2, customTitle: 'Not this one' },
+      { sessionId: 'prov-1', summary: 'Fix the login', lastModified: 1, customTitle: '  Fix the\n login   redirect ' },
+    ];
+    expect(titleFromSessions(sessions, 'prov-1')).toBe('Fix the login redirect');
+  });
+
+  it('has no title for a session without one, or one not listed', () => {
+    // `summary` falls back to prompt text, which Grove names threads from itself.
+    expect(titleFromSessions([{ sessionId: 'prov-1', summary: 'Fix the login', lastModified: 1 }], 'prov-1')).toBeNull();
+    expect(titleFromSessions([{ sessionId: 'prov-1', summary: '', lastModified: 1, customTitle: '   ' }], 'prov-1')).toBeNull();
+    expect(titleFromSessions([], 'prov-1')).toBeNull();
   });
 });
