@@ -36,18 +36,25 @@ Uses `electron-updater` with GitHub Releases as the update feed (`publish:` in `
 
 ## Release Workflow
 
-1. On a branch, set the new version: `npm version 0.0.0-alpha.3 --no-git-tag-version` (updates `package.json` and `package-lock.json`). Merge it to `main`.
-2. Tag that commit on `main` and push the tag:
-   ```bash
-   git checkout main && git pull
-   git tag v0.0.0-alpha.3 && git push origin v0.0.0-alpha.3
-   ```
-3. `.github/workflows/release.yml` then:
-   - checks the tag is `v` + the `package.json` version and the commit is on `main` (`scripts/release-check.mjs`)
-   - runs the Package workflow: type check, tests, `npm run dist`, the node-pty smoke test
-   - creates the GitHub release with generated notes and uploads the installer, its `.blockmap` and `latest.yml`
+`.github/workflows/release.yml` publishes `main` as a GitHub release, tagged `v<version>`. It runs:
 
-Plain `X.Y.Z` versions are published as full releases. Versions with a pre-release part (`-alpha.3`, `-beta.1`) are published as GitHub pre-releases once a plain version has a published full release (`scripts/release-type.mjs`). Until then they are full releases too: GitHub's "Latest" badge skips pre-releases, so it would otherwise stay on an old build and people would download that. The release is only created once everything has passed, so a failed run leaves nothing to clean up: fix it on `main`, then delete and re-push the tag (`git push --delete origin vX && git tag -d vX`).
+- **Every Tuesday** (05:23 UTC), if anything that ships has changed since the last release: `src/` (not tests, mocks, fixtures or the UI kit page), `docs/help/`, `index.html`, `package.json`, `package-lock.json`, `electron-builder.yml`, the Vite and Svelte configs, `tsconfig.json` and `scripts/vite-csp.mjs`.
+- **When a push to `main` changes `package.json`** and its version is higher than the last release. A dependency update on its own doesn't release.
+- **From the Actions tab** (Release, then **Run workflow** on `main`). Leave the version empty to release the next one now, if anything that ships has changed. Otherwise, or to release a full version, name one, such as `1.0.0`.
+
+`scripts/release-check.mjs` picks the version (`scripts/next-version.mjs`):
+
+1. A version named in **Run workflow**, if it is higher than the last release.
+2. The `package.json` version, if it is higher than the last release (the highest `v*` tag).
+3. Otherwise the last release plus one, if it is a pre-release: `0.0.0-alpha.9` to `0.0.0-alpha.10`. After a full version, nothing is released until you raise `package.json` or name a version.
+
+So `package.json` on `main` is the lowest version to release next, not the released one. The Package workflow writes the picked version into `package.json` before it builds (`npm version --no-git-tag-version`), so the installer name, `latest.yml` and the app's version match the release. To start a new series or release a full version, raise `package.json` in a normal PR: `npm version 0.1.0-alpha.1 --no-git-tag-version` (updates `package.json` and `package-lock.json`). Merging it releases that version.
+
+Each run then builds and smoke tests the installer (the Package workflow: type check, tests, `npm run dist`, the smoke tests) and creates the GitHub release with generated notes, the installer, its `.blockmap` and `latest.yml`. The release and its tag are only created once everything has passed, so a failed run leaves nothing to clean up: fix it on `main`, then run the workflow again. Don't push `v*` tags by hand: a tag makes no release now, and while the highest tag has no published release, every run fails until you delete it (`git push --delete origin vX`). Runs also fail on a commit older than the last release, so re-running an old run can't publish older code as a newer version.
+
+To pause releases (say, while `main` is broken), set the repository variable `AUTO_RELEASE` to `off` or `false` (Settings, Secrets and variables, Actions, Variables). Scheduled and push runs then do nothing; runs started from the Actions tab still release.
+
+Plain `X.Y.Z` versions are published as full releases. Versions with a pre-release part (`-alpha.3`, `-beta.1`) are published as GitHub pre-releases once a plain version has a published full release (`scripts/release-type.mjs`). Until then they are full releases too: GitHub's "Latest" badge skips pre-releases, so it would otherwise stay on an old build and people would download that.
 
 `electron-updater` reads `latest.yml` from the release to detect and download updates. Installs of a pre-release version also receive pre-releases (electron-updater turns `allowPrerelease` on when the running version has a pre-release part); installs of a full version only receive full releases.
 
@@ -82,4 +89,4 @@ Until the installer is signed and has a reputation, check each release, and repo
 - **Vite externalization**: `electron-updater` must be in `rollupOptions.external` — it has native bindings that can't be bundled
 - **NSIS installer**: electron-builder uses NSIS for Windows installers — no Squirrel dependency
 - **Dev mode**: `app.isPackaged` guard is critical — `electron-updater` throws errors without a packaged app
-- **Tag format**: Use `v` + the `package.json` version. The Release workflow rejects anything else
+- **Tags**: The Release workflow creates the `v<version>` tags. Pushing one by hand makes no release, and the next run fails until it is deleted
