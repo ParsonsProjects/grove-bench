@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import '@testing-library/jest-dom/vitest';
 import { render, screen, fireEvent } from '@testing-library/svelte';
 import { mockGroveBench } from '../__mocks__/setup.js';
@@ -18,6 +18,7 @@ vi.mock('diff', async (importOriginal) => {
 });
 
 import { createPatch } from 'diff';
+const { createPatch: realCreatePatch } = await vi.importActual<typeof import('diff')>('diff');
 import DiffBlock from './DiffBlock.svelte';
 import type { ToolView } from '../../shared/tool-view.js';
 
@@ -109,6 +110,40 @@ describe('DiffBlock large edits', () => {
     expect(container).toHaveTextContent('END');
     expect(screen.getByRole('button', { name: 'side-by-side' })).toBeInTheDocument();
     expect(createPatch).toHaveBeenCalledOnce();
+  });
+
+  /** Makes the capped diffs give up, as if out of time: the quick try only
+   *  (it has maxEditLength), or the full one after "Show edit" too. */
+  function capsGiveUp(which: 'quick' | 'all') {
+    vi.mocked(createPatch).mockImplementation(((...args: Parameters<typeof realCreatePatch>) => {
+      const opts = args[5] as { timeout?: number; maxEditLength?: number } | undefined;
+      if (opts?.timeout && (which === 'all' || opts.maxEditLength)) return undefined;
+      return realCreatePatch(...args);
+    }) as typeof createPatch);
+  }
+  afterEach(() => { vi.mocked(createPatch).mockImplementation(realCreatePatch); });
+
+  it('works out a held-back edit in full once asked', async () => {
+    capsGiveUp('quick');
+    const { container } = render(DiffBlock, { sessionId: 's1', view: { kind: 'edit', path: 'dist/app.min.js', edits: [{ oldText: 'a', newText: big }] }, pending: false });
+    await fireEvent.click(screen.getByRole('button', { name: 'Show edit to dist/app.min.js' }));
+    const full = vi.mocked(createPatch).mock.calls.at(-1)![5] as { timeout: number };
+    expect(full.timeout).toBeGreaterThan(500);
+    expect(full).not.toHaveProperty('maxEditLength');
+    expect(container).toHaveTextContent('END');
+  });
+
+  it('says when a shown edit has too many changes to work out, and offers the editor', async () => {
+    capsGiveUp('all');
+    mockGroveBench.openInEditor.mockClear();
+    render(DiffBlock, { sessionId: 's1', view: { kind: 'edit', path: 'docs/data.md', edits: [{ oldText: 'a', newText: big }] }, pending: false });
+    await fireEvent.click(screen.getByRole('button', { name: 'Show edit to docs/data.md' }));
+    expect(screen.getByText('Too many changes to show here.')).toBeInTheDocument();
+    // The header keeps its actions; side-by-side has nothing to show.
+    expect(screen.getByRole('button', { name: 'preview' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'side-by-side' })).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Open in editor' }));
+    expect(mockGroveBench.openInEditor).toHaveBeenCalledWith('s1', 'docs/data.md');
   });
 
   it('says nothing about size until the write has come in', async () => {

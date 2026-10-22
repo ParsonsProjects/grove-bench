@@ -1,7 +1,8 @@
 <script lang="ts">
   import { messageStore } from '../stores/messages.svelte.js';
   import { Button } from '$lib/components/ui/button/index.js';
-  import DiffView, { computeDiffLines, quickEditDiff } from './DiffView.svelte';
+  import { Notice } from '$lib/components/ui/notice/index.js';
+  import DiffView, { fullEditDiff, quickEditDiff } from './DiffView.svelte';
   import LargeDiffNotice from './LargeDiffNotice.svelte';
   import { editSize } from '../lib/diff-highlight.js';
   import { toolLabel } from '$lib/tool-names.js';
@@ -71,7 +72,9 @@
   let quickDiff = $derived(isEditTool ? quickEditDiff(view, filePath) : null);
   let editShown = $state(false);
   let editHeldBack = $derived(!!quickDiff?.large && !editShown);
-  let diffLines = $derived(!quickDiff || editHeldBack ? [] : (quickDiff.lines ?? computeDiffLines(view, filePath)));
+  /** Null when, once shown, it had too many changes to work out (fullEditDiff). */
+  let editLines = $derived(!quickDiff || editHeldBack ? [] : (quickDiff.lines ?? fullEditDiff(view, filePath)));
+  let diffLines = $derived(editLines ?? []);
   let alwaysAllow = $derived(alwaysAllowLabel(toolName, toolCategory));
   /** What a call other than an edit or command is about, from the view, so
    *  any agent's reads, searches and fetches name their target. */
@@ -276,6 +279,10 @@
   {#if !isResolved && editHeldBack}
     <div class="mt-1">
       <LargeDiffNotice kind="edit" size={editSize(view)} label={filePath ? `Show edit to ${filePath}` : 'Show edit'} onShow={() => (editShown = true)} />
+    </div>
+  {:else if !isResolved && editLines === null}
+    <div class="mt-1">
+      <Notice tone="neutral"><p>Too many changes to show here.</p></Notice>
     </div>
   {:else if !isResolved && isEditTool && diffLines.length > 0}
     <div class="mt-1">

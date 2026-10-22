@@ -4,6 +4,14 @@ import { render, cleanup, waitFor } from '@testing-library/svelte';
 import { tick } from 'svelte';
 
 import { mockGroveBench } from '../__mocks__/setup.js';
+// Spied on, so a test can make the capped diffs give up as if out of time.
+vi.mock('diff', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('diff')>();
+  return { ...actual, createPatch: vi.fn(actual.createPatch) };
+});
+
+import { createPatch } from 'diff';
+const { createPatch: realCreatePatch } = await vi.importActual<typeof import('diff')>('diff');
 import ChangesReviewPanel from './ChangesReviewPanel.svelte';
 import { messageStore } from '../stores/messages.svelte.js';
 import { gitStatusStore } from '../stores/gitStatus.svelte.js';
@@ -834,6 +842,26 @@ describe('ChangesReviewPanel — large diffs', () => {
     await fireEvent.click(await findByRole('button', { name: '2 edits' }));
     await waitFor(() => expect(diffText(container)).toContain('the one changed line'));
     expect(queryByText(/Large edit/)).toBeNull();
+  });
+
+  it('says when a shown edit in Edit History has too many changes to work out', async () => {
+    vi.mocked(createPatch).mockImplementation(((...args: Parameters<typeof realCreatePatch>) =>
+      (args[5] as { timeout?: number } | undefined)?.timeout ? undefined : realCreatePatch(...args)) as typeof createPatch);
+    try {
+      // Large by text here (30 lines, scaled), so it gets the capped diffs.
+      const side = (word: string) => Array.from({ length: 15 }, (_, i) => `${word} ${i}`).join('\n');
+      editTurn();
+      messageStore.messagesBySession[SID]!.splice(2, 1, {
+        kind: 'tool_call', id: 'b1', toolName: 'Edit', toolInput: { file_path: 'notes.txt', old_string: side('old'), new_string: side('new') }, toolUseId: 't1', uuid: 'u1', pending: false,
+      } as any);
+      const { findByRole, findByText } = render(ChangesReviewPanel, { sessionId: SID });
+
+      await fireEvent.click(await findByRole('button', { name: '2 edits' }));
+      await fireEvent.click(await findByRole('button', { name: 'Show Edit #2' }));
+      expect(await findByText('Too many changes to show here.')).toBeInTheDocument();
+    } finally {
+      vi.mocked(createPatch).mockImplementation(realCreatePatch);
+    }
   });
 
   it('does not redraw shown edits when a status refresh brings back the same file', async () => {

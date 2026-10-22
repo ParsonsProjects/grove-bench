@@ -1,8 +1,9 @@
 <script lang="ts">
   import CopyButton from './CopyButton.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
+  import { Notice } from '$lib/components/ui/notice/index.js';
   import { Pulse } from '$lib/components/ui/pulse/index.js';
-  import DiffView, { computeDiffLines, quickEditDiff } from './DiffView.svelte';
+  import DiffView, { fullEditDiff, quickEditDiff } from './DiffView.svelte';
   import LargeDiffNotice from './LargeDiffNotice.svelte';
   import { editSize } from '../lib/diff-highlight.js';
   import type { ToolView } from '../../shared/tool-view.js';
@@ -37,7 +38,10 @@
   let shown = $state(false);
   let heldBack = $derived(!!quick?.large && !shown);
 
-  let diffLines = $derived(!quick || heldBack ? [] : (quick.lines ?? computeDiffLines(view, filePath)));
+  /** Null when, once shown, it had too many changes to work out (fullEditDiff). */
+  let lines = $derived(!quick || heldBack ? [] : (quick.lines ?? fullEditDiff(view, filePath)));
+  let tooMany = $derived(lines === null);
+  let diffLines = $derived(lines ?? []);
 
   let copyContent = $derived(isWrite ? (view.write ?? '') : (view.edits ?? []).map((e) => e.newText).join('\n'));
 
@@ -89,7 +93,7 @@
         <Pulse />
       {:else if isError}
         <span class="text-destructive">error</span>
-      {:else if heldBack || diffLines.length > 0}
+      {:else if heldBack || tooMany || diffLines.length > 0}
         <div class="ml-auto flex items-center gap-1">
           <CopyButton text={copyContent} class="opacity-0 group-hover/diff-hdr:opacity-100" />
           {#if isMarkdown}
@@ -104,7 +108,7 @@
               preview
             </Button>
           {/if}
-          {#if !isWrite && !heldBack}
+          {#if !isWrite && diffLines.length > 0}
             <Button
               variant="quiet"
               size="inline"
@@ -120,6 +124,11 @@
 
     {#if heldBack}
       <LargeDiffNotice kind="edit" size={editSize(view)} label={view.path ? `Show edit to ${view.path}` : undefined} onShow={() => (shown = true)} />
+    {:else if tooMany}
+      <Notice tone="neutral">
+        {#snippet actions()}<Button size="2xs" variant="external" onclick={openInEditor}>Open in editor</Button>{/snippet}
+        <p>Too many changes to show here.</p>
+      </Notice>
     {:else}
       <DiffView lines={diffLines} {sideBySide} {filePath} deferHighlight />
     {/if}
