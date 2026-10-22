@@ -2,9 +2,9 @@
   import CopyButton from './CopyButton.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Pulse } from '$lib/components/ui/pulse/index.js';
-  import DiffView, { computeDiffLines } from './DiffView.svelte';
+  import DiffView, { computeDiffLines, quickEditDiff } from './DiffView.svelte';
   import LargeDiffNotice from './LargeDiffNotice.svelte';
-  import { editSize, isLargeDiff } from '../lib/diff-highlight.js';
+  import { editSize } from '../lib/diff-highlight.js';
   import type { ToolView } from '../../shared/tool-view.js';
   import { isMarkdownFile } from '../../shared/attachments.js';
   import { openWorktreeFile } from '$lib/worktree-files.js';
@@ -31,13 +31,13 @@
   /** A whole-file write rather than replacements within the file. */
   let isWrite = $derived(!view.edits?.length && view.write !== undefined);
 
-  /** A large edit waits for "Show edit" before its diff is worked out:
-   *  createPatch and drawing every row would stall the window. */
-  let size = $derived(editSize(view));
+  /** A large edit waits for "Show edit": working it out in full and drawing
+   *  every row would stall the window (quickEditDiff). */
+  let quick = $derived(pending ? null : quickEditDiff(view, filePath));
   let shown = $state(false);
-  let heldBack = $derived(!pending && !shown && isLargeDiff(size));
+  let heldBack = $derived(!!quick?.large && !shown);
 
-  let diffLines = $derived(pending || heldBack ? [] : computeDiffLines(view, filePath));
+  let diffLines = $derived(!quick || heldBack ? [] : (quick.lines ?? computeDiffLines(view, filePath)));
 
   let copyContent = $derived(isWrite ? (view.write ?? '') : (view.edits ?? []).map((e) => e.newText).join('\n'));
 
@@ -119,7 +119,7 @@
     </div>
 
     {#if heldBack}
-      <LargeDiffNotice kind="edit" {size} label={`Show edit to ${filePath}`} onShow={() => (shown = true)} />
+      <LargeDiffNotice kind="edit" size={editSize(view)} label={view.path ? `Show edit to ${view.path}` : undefined} onShow={() => (shown = true)} />
     {:else}
       <DiffView lines={diffLines} {sideBySide} {filePath} deferHighlight />
     {/if}

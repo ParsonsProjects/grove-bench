@@ -21,6 +21,9 @@ import { createPatch } from 'diff';
 import DiffBlock from './DiffBlock.svelte';
 import type { ToolView } from '../../shared/tool-view.js';
 
+/** A number as the notice shows it, spaced as Testing Library reads text. */
+const count = (n: number) => n.toLocaleString().replace(/\s/g, ' ');
+
 const edit: ToolView = { kind: 'edit', path: 'src/server.ts', edits: [{ oldText: 'let retries = 1;', newText: 'let retries = 3;' }] };
 
 describe('DiffBlock', () => {
@@ -64,30 +67,59 @@ describe('DiffBlock Markdown preview', () => {
 describe('DiffBlock large edits', () => {
   // One long line: large by characters, and quick to draw once shown.
   const big = 'x'.repeat(150_000) + 'END';
+  // 2,002 lines across both sides: large by lines, yet quick to diff.
+  const wide = Array.from({ length: 1001 }, (_, i) => `line ${i}`);
 
   it('holds a large write back until asked, then draws it', async () => {
     const { container } = render(DiffBlock, { sessionId: 's1', view: { kind: 'edit', path: 'dist/app.min.js', write: big }, pending: false });
-    expect(screen.getByText(/Large edit \(1 line, 150,003 characters of text\)/)).toBeInTheDocument();
+    expect(screen.getByText(`Large edit (1 line, ${count(150_003)} characters of text)`, { exact: false })).toBeInTheDocument();
     expect(container).not.toHaveTextContent('END');
     await fireEvent.click(screen.getByRole('button', { name: 'Show edit to dist/app.min.js' }));
     expect(container).toHaveTextContent('END');
     expect(screen.queryByText(/Large edit/)).toBeNull();
   });
 
-  it('works out a large edit\'s diff only once asked', async () => {
+  it('shows a small change to a large file at once', () => {
+    // ACP agents can send the whole file before and after.
+    const after = [...wide];
+    after[500] = 'the one changed line';
+    const { container } = render(DiffBlock, { sessionId: 's1', view: { kind: 'edit', path: 'notes.txt', edits: [{ oldText: wide.join('\n'), newText: after.join('\n') }] }, pending: false });
+    expect(screen.queryByText(/Large edit/)).toBeNull();
+    expect(container).toHaveTextContent('the one changed line');
+  });
+
+  it('gives a heavily changed large file one capped try before holding it back', () => {
     vi.mocked(createPatch).mockClear();
-    render(DiffBlock, { sessionId: 's1', view: { kind: 'edit', path: 'docs/data.md', edits: [{ oldText: 'a', newText: big }] }, pending: false });
-    expect(createPatch).not.toHaveBeenCalled();
+    const reversed = [...wide].reverse();
+    render(DiffBlock, { sessionId: 's1', view: { kind: 'edit', path: 'notes.txt', edits: [{ oldText: wide.join('\n'), newText: reversed.join('\n') }] }, pending: false });
+    expect(screen.getByText(/Large edit/)).toBeInTheDocument();
+    // Reversed, 1,001 lines need about 2,000 changes, past the cap.
+    expect(createPatch).toHaveBeenCalledOnce();
+    expect(vi.mocked(createPatch).mock.calls[0][5]).toMatchObject({ maxEditLength: 500 });
+  });
+
+  it('holds back a small diff with a huge line, then draws the lines it already has', async () => {
+    vi.mocked(createPatch).mockClear();
+    const { container } = render(DiffBlock, { sessionId: 's1', view: { kind: 'edit', path: 'docs/data.md', edits: [{ oldText: 'a', newText: big }] }, pending: false });
+    expect(screen.getByText(/Large edit/)).toBeInTheDocument();
     // The header keeps its actions, but side-by-side waits for the diff.
     expect(screen.getByRole('button', { name: 'preview' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'side-by-side' })).toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: 'Show edit to docs/data.md' }));
-    expect(createPatch).toHaveBeenCalledOnce();
+    expect(container).toHaveTextContent('END');
     expect(screen.getByRole('button', { name: 'side-by-side' })).toBeInTheDocument();
+    expect(createPatch).toHaveBeenCalledOnce();
   });
 
-  it('says nothing about size while the write is still coming in', () => {
-    render(DiffBlock, { sessionId: 's1', view: { kind: 'edit', path: 'dist/app.min.js', write: big }, pending: true });
+  it('says nothing about size until the write has come in', async () => {
+    const { rerender } = render(DiffBlock, { sessionId: 's1', view: { kind: 'edit', path: 'dist/app.min.js', write: big }, pending: true });
     expect(screen.queryByText(/Large edit/)).toBeNull();
+    await rerender({ pending: false });
+    expect(screen.getByText(/Large edit/)).toBeInTheDocument();
+  });
+
+  it('names the button plainly for an edit with no path', () => {
+    render(DiffBlock, { sessionId: 's1', view: { kind: 'edit', write: big }, pending: false });
+    expect(screen.getByRole('button', { name: 'Show edit' })).toBeInTheDocument();
   });
 });

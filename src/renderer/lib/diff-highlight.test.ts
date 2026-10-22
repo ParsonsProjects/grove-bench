@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { editSize, isLargeDiff, LARGE_DIFF_LINES, LARGE_DIFF_CHARS, RecentCache, languageForPath, highlightLine, highlightLineUncached, linesToColour, MAX_DEFERRED_LINE, MAX_DEFERRED_LINES, wordDiffSegments, hunkLineIndices } from './diff-highlight.js';
+import { diffSize, editSize, isLargeDiff, LARGE_DIFF_LINES, LARGE_DIFF_CHARS, RecentCache, languageForPath, highlightLine, highlightLineUncached, linesToColour, MAX_DEFERRED_LINE, MAX_DEFERRED_LINES, wordDiffSegments, hunkLineIndices } from './diff-highlight.js';
 import type { DiffLine } from './diff-types.js';
 
 describe('languageForPath', () => {
@@ -170,6 +170,17 @@ describe('isLargeDiff', () => {
     expect(isLargeDiff({ lines: LARGE_DIFF_LINES, chars: LARGE_DIFF_CHARS })).toBe(false);
     expect(isLargeDiff({ lines: LARGE_DIFF_LINES + 1, chars: 0 })).toBe(true);
     expect(isLargeDiff({ lines: 1, chars: LARGE_DIFF_CHARS + 1 })).toBe(true);
+  });
+});
+
+describe('diffSize', () => {
+  it('counts code lines and their characters, leaving out hunk headers', () => {
+    expect(diffSize([
+      { type: 'hunk', text: '@@ -1,2 +1,2 @@' },
+      { type: 'context', text: 'same', lineNum: 1 },
+      { type: 'del', text: 'old', lineNum: 2 },
+      { type: 'add', text: 'newer', lineNum: 2 },
+    ] as never)).toEqual({ lines: 3, chars: 12 });
   });
 });
 

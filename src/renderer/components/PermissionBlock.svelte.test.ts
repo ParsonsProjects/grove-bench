@@ -13,6 +13,9 @@ import PermissionBlock from './PermissionBlock.svelte';
 import { settingsStore } from '../stores/settings.svelte.js';
 import { messageStore } from '../stores/messages.svelte.js';
 
+/** A number as the notice shows it, spaced as Testing Library reads text. */
+const count = (n: number) => n.toLocaleString().replace(/\s/g, ' ');
+
 const props = { sessionId: 's1', requestId: 'r1', toolName: 'Bash', toolInput: { command: 'npm install zod' } };
 
 afterEach(() => {
@@ -123,22 +126,43 @@ describe('PermissionBlock edit preview', () => {
     await vi.waitFor(() => expect(container.querySelector('.hljs-keyword')).toHaveTextContent('const'));
   });
 
-  it('holds a large write back until asked, and can be answered either way', async () => {
-    const { container } = render(PermissionBlock, {
-      sessionId: 's1', requestId: 'r4', toolName: 'Write', resolved: false, toolCategory: 'edit',
-      toolInput: { file_path: 'dist/app.min.js', content: 'x'.repeat(150_000) + 'END' },
-    });
-    expect(screen.getByText(/Large edit \(1 line, 150,003 characters of text\)/)).toBeInTheDocument();
+  const largeWrite = {
+    sessionId: 's1', requestId: 'r4', toolName: 'Write', resolved: false, toolCategory: 'edit' as const,
+    toolInput: { file_path: 'dist/app.min.js', content: 'x'.repeat(150_000) + 'END' },
+  };
+
+  it('holds a large write back until asked', async () => {
+    const { container } = render(PermissionBlock, largeWrite);
+    expect(screen.getByText(`Large edit (1 line, ${count(150_003)} characters of text)`, { exact: false })).toBeInTheDocument();
     expect(container).not.toHaveTextContent('END');
-    expect(screen.getByRole('button', { name: 'Allow' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Deny' })).toBeEnabled();
     await fireEvent.click(screen.getByRole('button', { name: 'Show edit to dist/app.min.js' }));
     expect(container).toHaveTextContent('END');
   });
 
+  it('can be allowed without showing the edit', async () => {
+    const resolve = vi.spyOn(messageStore, 'resolvePermission').mockResolvedValue(true);
+    render(PermissionBlock, largeWrite);
+    await fireEvent.click(screen.getByRole('button', { name: 'Allow' }));
+    expect(resolve).toHaveBeenCalledWith('s1', 'r4', 'allow');
+    resolve.mockRestore();
+  });
+
+  it('shows a small change to a large file at once', () => {
+    // OpenCode asks with the whole file before and after.
+    const before = Array.from({ length: 1001 }, (_, i) => `line ${i}`);
+    const after = [...before];
+    after[500] = 'the one changed line';
+    const { container } = render(PermissionBlock, {
+      sessionId: 's1', requestId: 'r6', toolName: 'edit', resolved: false, toolCategory: 'edit', toolInput: {},
+      toolView: { kind: 'edit', path: 'notes.txt', edits: [{ oldText: before.join('\n'), newText: after.join('\n') }] },
+    });
+    expect(screen.queryByText(/Large edit/)).toBeNull();
+    expect(container).toHaveTextContent('the one changed line');
+  });
+
   it('offers side-by-side for a large edit once it is shown', async () => {
     render(PermissionBlock, {
-      sessionId: 's1', requestId: 'r5', toolName: 'Edit', resolved: false, toolCategory: 'edit',
+      sessionId: 's1', requestId: 'r7', toolName: 'Edit', resolved: false, toolCategory: 'edit',
       toolInput: {}, toolView: { kind: 'edit', path: 'src/data.ts', edits: [{ oldText: 'a', newText: 'x'.repeat(150_001) }] },
     });
     expect(screen.queryByRole('button', { name: 'side-by-side' })).toBeNull();
