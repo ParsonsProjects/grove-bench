@@ -7,6 +7,12 @@ import { logger } from './logger.js';
 import type { CheckpointDiffScope, DiffHistoryEntry, DiffHistoryResult, DiffStats, FileDiffResult, FileLinesResult, GitStatusResult } from '../shared/types.js';
 
 const BASELINE_UUID = '__baseline__';
+
+/** The Rewind preview shows a diff up to this many characters. In headless
+ *  Chromium, laying out a <pre> of 250 KB took about 0.1 s; of 1 MB, 0.5 s;
+ *  of 4 MB, 3 s. */
+const PREVIEW_MAX_CHARS = 250_000;
+
 /** Sentinel checkpoint captured when the conversation is cleared. It marks
  *  the boundary between conversations so earlier turns can be listed as
  *  "before /clear" (files restorable, conversation not rewindable), and it
@@ -327,8 +333,13 @@ export class CheckpointManager {
     if (!ref) return 'No checkpoint found for this message';
 
     const currentTree = await this.writeWorkingTree(sessionId, cwd);
-    const output = await git(['diff', ref, currentTree, '--', '.'], cwd);
-    return output || '(no changes)';
+    const range = [ref, currentTree, '--', '.'];
+    const patch = await gitPatch(['diff', ...range], cwd, PREVIEW_MAX_CHARS);
+    if (patch !== null) return patch || '(no changes)';
+    // Too long to show: the files it changes and by how much, or only the totals.
+    const stat = await gitPatch(['diff', '--stat', ...range], cwd, PREVIEW_MAX_CHARS);
+    if (stat !== null) return `The full diff is too long to show here. The files it changes:\n\n${stat}`;
+    return `The full diff is too long to show here.\n\n${(await git(['diff', '--shortstat', ...range], cwd)).trim()}`;
   }
 
   /** Recent working-tree snapshots. The review UI asks for the file list and

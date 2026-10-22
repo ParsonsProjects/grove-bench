@@ -23,6 +23,7 @@ import {
   branchHasRemote,
   renameBranch,
   fileDiff,
+  gitPatch,
   MAX_TEXT_FILE_BYTES,
   isTracked,
   synthesizeUntrackedDiff,
@@ -446,6 +447,12 @@ describe('fileDiff()', () => {
     mockExeca.mockResolvedValue({ stdout: '' } as any);
     await fileDiff('/repo', 'src/a.ts');
     expect(mockExeca).toHaveBeenCalledWith('git', ['diff', '--', 'src/a.ts'], { cwd: '/repo', maxBuffer: MAX_TEXT_FILE_BYTES + 1 });
+  });
+
+  it('stops git at a limit the caller gives', async () => {
+    mockExeca.mockResolvedValue({ stdout: 'patch' } as any);
+    await gitPatch(['diff'], '/repo', 1000);
+    expect(mockExeca).toHaveBeenCalledWith('git', ['diff'], { cwd: '/repo', maxBuffer: 1001 });
   });
 
   it('gives null for a patch git was stopped writing, and passes other failures on', async () => {

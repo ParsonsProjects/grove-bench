@@ -85,6 +85,20 @@ describe('checkpoints with real git', () => {
     expect(run(['diff', '--cached', '--name-only'], wt)).toBe('');
   });
 
+  it('previews a rewind too long to show as the files it changes', async () => {
+    const mgr = new CheckpointManager();
+    await mgr.capture('s1', wt, 'u1');
+    // About 300 KB of new lines, past the preview's 250,000 characters.
+    write('data/big.txt', Array.from({ length: 10_000 }, (_, i) => `row ${i} of the generated data`).join('\n') + '\n');
+    write('src/small.ts', 'small\n');
+
+    const preview = await mgr.diff('s1', wt, 'u1');
+    expect(preview).toMatch(/^The full diff is too long to show here\. The files it changes:\n\n/);
+    expect(preview).toMatch(/data\/big\.txt \| 10000 \+/);
+    expect(preview).toMatch(/src\/small\.ts \| +1 \+/);
+    expect(preview).not.toContain('row 1 of');
+  });
+
   it('does not send a turn\'s diff over the size limit to the window', async () => {
     const mgr = new CheckpointManager();
     await mgr.capture('s1', wt, 'u1');

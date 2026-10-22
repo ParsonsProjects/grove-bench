@@ -1,10 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock git module before importing
-vi.mock('./git.js', () => ({
-  git: vi.fn(),
-  gitEnv: vi.fn(),
-}));
+vi.mock('./git.js', () => {
+  const git = vi.fn();
+  // Straight through to the mocked git; a test makes it give null (over its limit) itself.
+  return { git, gitEnv: vi.fn(), gitPatch: vi.fn((args: string[], cwd: string) => git(args, cwd)) };
+});
 
 vi.mock('./logger.js', () => ({
   logger: { debug: vi.fn(), warn: vi.fn(), info: vi.fn(), error: vi.fn() },
@@ -22,7 +23,7 @@ vi.mock('node:fs', () => ({
   },
 }));
 
-import { git, gitEnv } from './git.js';
+import { git, gitEnv, gitPatch } from './git.js';
 import { CheckpointManager } from './checkpoints.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -297,6 +298,31 @@ describe('CheckpointManager', () => {
       expect(mockGit).toHaveBeenCalledWith(
         ['diff', expect.stringContaining('refs/grove/checkpoints/sess1/'), 'currentTreeOid', '--', '.'], '/repo'
       );
+    });
+
+    it('lists the files a rewind changes when its diff is too long to show, or only the totals', async () => {
+      mockGitEnv.mockResolvedValue('');
+      mockGit.mockResolvedValue('oid');
+      const mgr = new CheckpointManager();
+      await mgr.capture('sess1', '/repo', 'uuid-1');
+      const atDiff = () => {
+        mockGitEnv.mockResolvedValueOnce(''); // read-tree
+        mockGitEnv.mockResolvedValueOnce(''); // add -A
+        mockGitEnv.mockResolvedValueOnce('currentTreeOid'); // write-tree
+      };
+
+      atDiff();
+      vi.mocked(gitPatch).mockResolvedValueOnce(null); // the diff
+      vi.mocked(gitPatch).mockResolvedValueOnce(' big.txt | 20000 ++++----\n 1 file changed'); // --stat
+      expect(await mgr.diff('sess1', '/repo', 'uuid-1')).toBe('The full diff is too long to show here. The files it changes:\n\n big.txt | 20000 ++++----\n 1 file changed');
+      expect(gitPatch).toHaveBeenCalledWith(['diff', expect.stringContaining('refs/grove/checkpoints/sess1/'), 'currentTreeOid', '--', '.'], '/repo', 250_000);
+      expect(gitPatch).toHaveBeenCalledWith(['diff', '--stat', expect.any(String), 'currentTreeOid', '--', '.'], '/repo', 250_000);
+
+      atDiff();
+      vi.mocked(gitPatch).mockResolvedValueOnce(null).mockResolvedValueOnce(null);
+      mockGit.mockResolvedValueOnce(' 9000 files changed, 9000 insertions(+)\n');
+      expect(await mgr.diff('sess1', '/repo', 'uuid-1')).toBe('The full diff is too long to show here.\n\n9000 files changed, 9000 insertions(+)');
+      expect(mockGit).toHaveBeenLastCalledWith(['diff', '--shortstat', expect.any(String), 'currentTreeOid', '--', '.'], '/repo');
     });
 
     it('returns message when no checkpoint found', async () => {
