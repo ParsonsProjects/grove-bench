@@ -492,8 +492,9 @@ export type FileDiffResult =
   | { kind: 'text'; patch: string }
   | { kind: 'binary' }
   | { kind: 'image'; ext: string }
-  /** A diff too big to show: a new file over the size limit, or a patch over it. */
-  | { kind: 'tooLarge'; bytes: number };
+  /** A diff too big to show: a new file over the size limit, or a patch over
+   *  it. `atLeast`: git was stopped at the limit, so `bytes` is only that. */
+  | { kind: 'tooLarge'; bytes: number; atLeast?: boolean };
 
 /** Base64 data URLs for an image file's working-tree and HEAD versions (either may be null). */
 export interface ImageDiffContent {

@@ -20,6 +20,9 @@ export interface HostedOptions {
    *  the caller quotes them. */
   shell?: boolean;
   timeout?: number;
+  /** Fail once the command writes more than this (characters, or bytes
+   *  with `encoding: 'buffer'`), stopping it, with `isMaxBuffer` set. */
+  maxBuffer?: number;
   reject?: boolean;
   input?: string;
   encoding?: 'utf8' | 'buffer';

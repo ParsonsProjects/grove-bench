@@ -1036,7 +1036,7 @@
         {:else if diffResult?.kind === 'binary'}
           <Notice tone="neutral"><p>Binary file — no text diff to display.</p></Notice>
         {:else if diffResult?.kind === 'tooLarge'}
-          <Notice tone="neutral"><p>Too large to show here ({(diffResult.bytes / 1024 / 1024).toFixed(1)} MB).</p></Notice>
+          <Notice tone="neutral"><p>Too large to show here ({diffResult.atLeast ? 'over ' : ''}{(diffResult.bytes / 1024 / 1024).toFixed(1)} MB).</p></Notice>
         {:else if diffHeldBack}
           <LargeDiffNotice kind="diff" size={selectedDiffSize} onShow={() => (largeDiffShown = { ...largeDiffShown, [key]: true })} />
         {:else if diffLines.length > 0}
