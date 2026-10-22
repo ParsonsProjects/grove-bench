@@ -2918,6 +2918,7 @@ describe('AgentSessionManager.sendMessage()', () => {
     mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 's', model: 'm', tools: [] });
     await new Promise((r) => setTimeout(r, 50));
 
+    const before = Date.now();
     const sent = await sessionManager.sendMessage('test-send', 'Hello agent');
     expect(sent).toBe(true);
 
@@ -2927,6 +2928,10 @@ describe('AgentSessionManager.sendMessage()', () => {
     expect(userMsgs).toHaveLength(1);
     expect(userMsgs[0]).toMatchObject({ type: 'user_message', text: 'Hello agent' });
     expect(userMsgs[0]).toHaveProperty('uuid');
+    // When it was sent, for the thread to show.
+    const at = (userMsgs[0] as Extract<AgentEvent, { type: 'user_message' }>).at!;
+    expect(at).toBeGreaterThanOrEqual(before);
+    expect(at).toBeLessThanOrEqual(Date.now());
 
     await sessionManager.destroySession('test-send');
   });

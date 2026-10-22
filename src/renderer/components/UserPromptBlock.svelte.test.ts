@@ -103,3 +103,20 @@ describe('UserPromptBlock attachments', () => {
     expect(container.querySelector('.markdown-content')).toBeNull();
   });
 });
+
+describe('UserPromptBlock send time', () => {
+  it('shows when it was sent, with the full date on hover', () => {
+    const sentAt = new Date(2026, 9, 22, 14, 32).getTime();
+    render(UserPromptBlock, { sessionId: SID, text: 'fix it', sentAt });
+
+    const time = screen.getByText(new Date(sentAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }));
+    expect(time.tagName).toBe('TIME');
+    expect(time).toHaveAttribute('datetime', new Date(sentAt).toISOString());
+    expect(time).toHaveAttribute('title', `Sent ${new Date(sentAt).toLocaleString()}`);
+  });
+
+  it('shows no time for a prompt from older history', () => {
+    const { container } = render(UserPromptBlock, { sessionId: SID, text: 'fix it' });
+    expect(container.querySelector('time')).toBeNull();
+  });
+});

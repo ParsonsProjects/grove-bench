@@ -87,6 +87,51 @@ describe('OutputPanel — rewind from a user message', () => {
   });
 });
 
+describe('OutputPanel: day dividers', () => {
+  const at = (day: number, hour: number, minute = 0) => new Date(2026, 9, day, hour, minute).getTime();
+
+  it('marks the first prompt of each day, passing over prompts with no time', () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: at(22, 12) });
+    try {
+      store.activeSessionId = SID;
+      messageStore.messagesBySession = {
+        [SID]: [
+          { kind: 'user', id: 'u0', text: 'from before times were kept' },
+          { kind: 'user', id: 'u1', text: 'first', sentAt: at(21, 9) },
+          { kind: 'text', id: 't1', text: 'reply', uuid: 'a1' },
+          { kind: 'user', id: 'u2', text: 'same day', sentAt: at(21, 17) },
+          { kind: 'user', id: 'u3', text: 'next day', sentAt: at(22, 8) },
+        ],
+      };
+      const { getAllByRole } = render(OutputPanel, { sessionId: SID });
+
+      const dividers = getAllByRole('separator');
+      expect(dividers.map((d) => d.textContent?.trim())).toEqual(['Yesterday', 'Today']);
+      // Each sits just above its day's first prompt.
+      expect(dividers[0].nextElementSibling).toHaveAttribute('data-msg-id', 'u1');
+      expect(dividers[1].nextElementSibling).toHaveAttribute('data-msg-id', 'u3');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('moves Today on to Yesterday at midnight', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'], now: at(22, 23, 59) });
+    try {
+      store.activeSessionId = SID;
+      messageStore.messagesBySession = { [SID]: [{ kind: 'user', id: 'u1', text: 'late', sentAt: at(22, 23, 30) }] };
+      const { getByRole } = render(OutputPanel, { sessionId: SID });
+      expect(getByRole('separator')).toHaveTextContent('Today');
+
+      vi.advanceTimersByTime(60_000);
+      await tick();
+      expect(getByRole('separator')).toHaveTextContent('Yesterday');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe('OutputPanel: git identity notice', () => {
   it('shows the notice with its commands in the conversation', () => {
     store.activeSessionId = SID;

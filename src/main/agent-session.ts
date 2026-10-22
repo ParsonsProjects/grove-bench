@@ -1119,7 +1119,7 @@ class AgentSessionManager {
     // Read before this message joins the history.
     const audioInHistory = savedFiles.length > 0 ? audioSentInline(session.eventHistory) : 0;
     const userEvent: Extract<AgentEvent, { type: 'user_message' }> = {
-      type: 'user_message', text: content, uuid,
+      type: 'user_message', text: content, uuid, at: Date.now(),
       ...(storedImages.length > 0 && { images: storedImages }),
       ...(savedFiles.length > 0 && { files: savedFiles.map((f) => f.stored) }),
     };
