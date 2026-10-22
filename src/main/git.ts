@@ -10,8 +10,8 @@ export const FETCH_TIMEOUT_MS = 30_000;
 export interface GitOptions {
   /** Kill the git process after this many ms (for network commands that can hang). */
   timeout?: number;
-  /** Stop git once it has written more than this many characters: the
-   *  call then fails with `isMaxBuffer` set. execa's own limit is 100 MB. */
+  /** Fail, with `isMaxBuffer` set, once git has written more than this many
+   *  characters; git ends when it next writes. execa's own limit is 100 MB. */
   maxBuffer?: number;
 }
 
@@ -512,16 +512,17 @@ export function patchResult(patch: string): FileDiffResult {
 /**
  * `git <args>` for a patch to show in a diff, or null when it's too large.
  * Git is stopped once it has written more than MAX_TEXT_FILE_BYTES
- * characters: a character is at least one byte, so the patch is then over
- * the limit and patchResult would turn it away. Reading on (execa reads up to 100 MB,
+ * characters, plus the final newline execa counts before taking it off: a
+ * character is at least one byte, so the patch is then over the limit and
+ * patchResult would turn it away. Reading on (execa reads up to 100 MB,
  * then fails, which showed as "No diff available") would only move a patch
  * that is thrown away into the main process.
  */
 export async function gitPatch(args: string[], cwd: string): Promise<string | null> {
   try {
-    return await git(args, cwd, { maxBuffer: MAX_TEXT_FILE_BYTES });
+    return await git(args, cwd, { maxBuffer: MAX_TEXT_FILE_BYTES + 1 });
   } catch (e) {
-    if ((e as { isMaxBuffer?: unknown }).isMaxBuffer === true) return null;
+    if ((e as { isMaxBuffer?: unknown } | null)?.isMaxBuffer === true) return null;
     throw e;
   }
 }

@@ -57,6 +57,18 @@ describe('runRequest', () => {
     expect(reply).toMatchObject({ ok: false, launchMs: 0 });
   });
 
+  it('sends a command stopped at maxBuffer as that, without the output it read', async () => {
+    const node = process.execPath;
+    const reply = await runRequest({ id: 5, file: node, args: ['-e', 'process.stdout.write("x".repeat(100000))'], options: { maxBuffer: 1000 } }, (f, a, o) => execa(f, a, o));
+    if (reply.ok) throw new Error('expected the command to fail');
+    expect(reply.error).toMatchObject({ isMaxBuffer: true, message: expect.stringMatching(/^Command's stdout was larger than 1000 characters/) });
+    expect(reply.error).not.toHaveProperty('stdout');
+    expect(reply.error).not.toHaveProperty('stack');
+    // execa's own error held the 1,000 characters three times.
+    expect(JSON.stringify(reply.error).length).toBeLessThan(1000);
+    expect(reviveError(reply.error)).toMatchObject({ isMaxBuffer: true });
+  });
+
   it('carries real execa results and failures', async () => {
     const node = process.execPath;
     const ok = await runRequest({ id: 1, file: node, args: ['-e', 'process.stdout.write("hi")'] }, (f, a, o) => execa(f, a, o));
