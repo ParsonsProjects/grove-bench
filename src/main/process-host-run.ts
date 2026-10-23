@@ -1,7 +1,9 @@
 /**
  * Run a command to the end in the agent host and collect what it printed,
  * as runProcess does in the git host: for the claude CLI's auth, mcp and
- * plugin calls (claude-code.ts), and every gh call (gh.ts).
+ * plugin calls (claude-code.ts), every gh call (gh.ts), and typeperf for
+ * the health line (process-memory.ts), which hung once in the git host and
+ * got it restarted.
  *
  * Those can run long (a plugin install has no time limit) or hang (`mcp
  * list` health-checks every server, and a server it starts can hold the
@@ -19,26 +21,32 @@
  * never loads this one.
  */
 import {
-  HOST_STOPPED_MESSAGE, spawnProcess, type HostedOptions, type HostedProcess, type ProcessResult, type SpawnProcessOptions,
+  HOST_STOPPED_MESSAGE, spawnProcess, spawnProcessInHost, type HostedOptions, type HostedProcess, type ProcessResult,
+  type SpawnProcessOptions,
 } from './process-host.js';
 import { killTree } from './process-tree.js';
 import { logger } from './logger.js';
 
 /** The execa options runInAgentHost takes, read as execa reads them, and
  *  `findCommand` (SpawnProcessOptions): find `file` on PATH, .exe or .cmd,
- *  as execa does (cross-spawn), for a command run without a shell. */
+ *  as execa does (cross-spawn), for a command run without a shell; and
+ *  `hostOnly`: never in the main process. When the agent host isn't up (or
+ *  doesn't come up while it is starting), the command fails rather than run
+ *  there (spawnProcessInHost), for work that can be skipped, such as the
+ *  health line's process list (process-memory.ts). */
 export type AgentHostRunOptions = Pick<HostedOptions, 'cwd' | 'env' | 'extendEnv' | 'shell' | 'timeout' | 'idempotent' | 'input'>
-  & Pick<SpawnProcessOptions, 'findCommand'>;
+  & Pick<SpawnProcessOptions, 'findCommand'> & { hostOnly?: boolean };
 
 /** The process ended because its host died, not by itself. */
 class HostLostError extends Error {}
 
 /**
  * Run `file` with `args` like execa, in the agent host (spawnProcess: here
- * when it's down, after it when it's starting). Resolves with its output,
- * final newline stripped, when it exits with 0; otherwise rejects as execa
- * does, with `exitCode`, `stdout`, `stderr` and `timedOut`. One marked
- * `idempotent` runs once more if the host dies under it (not at quit).
+ * when it's down, unless `hostOnly`; after it when it's starting). Resolves
+ * with its output, final newline stripped, when it exits with 0; otherwise
+ * rejects as execa does, with `exitCode`, `stdout`, `stderr` and
+ * `timedOut`. One marked `idempotent` runs once more if the host dies under
+ * it (not at quit).
  */
 export async function runInAgentHost(file: string, args: string[], options: AgentHostRunOptions = {}): Promise<ProcessResult> {
   try {
@@ -46,14 +54,14 @@ export async function runInAgentHost(file: string, args: string[], options: Agen
   } catch (e) {
     if (!(e instanceof HostLostError) || !options.idempotent) throw e;
     // By now the host's exit has been handled, so this starts in the host
-    // once it has restarted, or here.
+    // once it has restarted, or here (host-only, it fails instead).
     return runOnce(file, args, options);
   }
 }
 
-function runOnce(file: string, args: string[], { cwd, env, extendEnv = true, shell, timeout, input, findCommand }: AgentHostRunOptions): Promise<ProcessResult> {
+function runOnce(file: string, args: string[], { cwd, env, extendEnv = true, shell, timeout, input, findCommand, hostOnly }: AgentHostRunOptions): Promise<ProcessResult> {
   const command = [file, ...args].join(' ');
-  const proc = spawnProcess(file, args, {
+  const proc = (hostOnly ? spawnProcessInHost : spawnProcess)(file, args, {
     ...(cwd !== undefined ? { cwd } : {}),
     // A spawn's env is the whole environment: execa adds `env` to this one
     // unless told not to.

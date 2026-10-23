@@ -1224,6 +1224,47 @@ describe('process host: spawned processes', () => {
     expect(stopped.local).toHaveLength(1);
   });
 
+  it('starts a host-only process in the host, and never here: it fails to start instead', async () => {
+    const errorsOf = (proc: HostedProcess) => {
+      const errors: string[] = [];
+      proc.on('error', (e: Error) => errors.push(e.message));
+      return errors;
+    };
+    const { host, local, fire, latest } = setup();
+    // Never started.
+    let proc = host.spawnInHost('typeperf', ['-sc', '1']);
+    let errors = errorsOf(proc);
+    let seen = watch(proc);
+    await settle();
+    expect(errors).toEqual(["The process host isn't running, so typeperf didn't start"]);
+    expect(seen).toEqual(['close', 'out end']);
+
+    // Starting: it waits for the host, and starts there.
+    host.start();
+    proc = host.spawnInHost('typeperf', ['-sc', '1']);
+    latest().ready();
+    expect(latest().sent).toEqual([{ type: 'spawn', id: 1, file: 'typeperf', args: ['-sc', '1'] }]);
+
+    // Up, but the message can't be sent.
+    latest().failPost = true;
+    errors = errorsOf(host.spawnInHost('typeperf', ['-sc', '1']));
+    await settle();
+    expect(errors).toEqual(["The process host isn't running, so typeperf didn't start"]);
+
+    // Restarting, and its start fails.
+    latest().failPost = false;
+    latest().exit(1);
+    proc = host.spawnInHost('typeperf', ['-sc', '1']);
+    errors = errorsOf(proc);
+    seen = watch(proc);
+    fire(RESTART_DELAY_MS);
+    fire(HOST_START_TIMEOUT_MS);
+    await settle();
+    expect(errors).toEqual(["The process host isn't running, so typeperf didn't start"]);
+    expect(seen).toEqual(['close', 'out end']);
+    expect(local).toEqual([]);
+  });
+
   it('reports a start that Node throws here to listeners added once spawn has returned', async () => {
     // The host down, the process starts in this process, inside spawn(); on
     // Windows Node throws EINVAL, EPERM or ENAMETOOLONG rather than emit them.

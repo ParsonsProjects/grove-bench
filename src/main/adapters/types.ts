@@ -280,6 +280,10 @@ export interface AgentQueryHandle {
    *  spawns and once it has exited. Closing the conversation kills this
    *  process tree so background tasks don't keep ports open. */
   processId?(): number | undefined;
+  /** The executable processId() names, lowercase, as Windows lists the
+   *  process (claude.exe), when the adapter knows it. The health line checks
+   *  its process list against it (process-memory.ts). */
+  processExe?(): string | undefined;
 
   // ─── Optional runtime controls — check adapter capabilities first ───
 

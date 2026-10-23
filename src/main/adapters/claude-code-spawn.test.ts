@@ -11,7 +11,7 @@ vi.mock('../logger.js', () => ({
   logger: { debug: vi.fn(), warn: vi.fn(), info: vi.fn(), error: vi.fn() },
 }));
 
-import { asarUnpackedPath, spawnClaudeCodeProcess } from './claude-code.js';
+import { asarUnpackedPath, claudeProcessExe, spawnClaudeCodeProcess } from './claude-code.js';
 
 const opts = (command: string, signal = new AbortController().signal) => ({ command, args: ['--x'], cwd: '/w', env: { A: '1' }, signal });
 
@@ -32,6 +32,16 @@ describe('asarUnpackedPath', () => {
     expect(asarUnpackedPath('/repo/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/claude')).toBe('/repo/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/claude');
     expect(asarUnpackedPath('/r/app.asar.unpacked/claude')).toBe('/r/app.asar.unpacked/claude');
     expect(asarUnpackedPath('/r/my-app.asar-files/claude')).toBe('/r/my-app.asar-files/claude');
+  });
+});
+
+describe('claudeProcessExe', () => {
+  it('names the executable as Windows lists the process, for the health line to check its process list against', () => {
+    expect(claudeProcessExe('C:\\Apps\\Grove Bench\\resources\\app.asar\\node_modules\\@anthropic-ai\\claude-agent-sdk-win32-x64\\Claude.exe')).toBe('claude.exe');
+    expect(claudeProcessExe('/repo/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/claude')).toBe('claude.exe');
+    // A node command runs as Electron.
+    const electron = process.execPath.split(/[\\/]/).pop()!.toLowerCase();
+    expect(claudeProcessExe('node')).toBe(/\.[^.]+$/.test(electron) ? electron : `${electron}.exe`);
   });
 });
 

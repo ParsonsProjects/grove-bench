@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { formatHealth, formatLargest, startHealthLog, type HealthInput } from './perf-health.js';
 import type { FreezeStats } from './freeze-log.js';
-import type { ProcessMemory } from './process-memory.js';
+import type { ProcessMemory, SkippedSample } from './process-memory.js';
 
 const noOutput = { events: 0, chars: 0, ms: 0 };
 const quiet: FreezeStats = { stalls: 0, stallMs: 0, slowFrames: 0, launches: 0, launchMs: 0, slowestLaunch: null, agentOutput: noOutput, loopDelay: null };
@@ -10,6 +10,8 @@ const metric = (type: string, cpu: number, kb: number, privateKb?: number) =>
   ({ type, cpu: { percentCPUUsage: cpu, idleWakeupsPerSecond: 0 }, memory: { workingSetSize: kb, peakWorkingSetSize: kb, ...(privateKb !== undefined ? { privateBytes: privateKb } : {}) } }) as HealthInput['metrics'][number];
 
 const MB = 1024 * 1024;
+/** A sample of the agents' processes that didn't hold together (process-memory.ts). */
+const SKIPPED: SkippedSample = { skipped: 'inconsistent' };
 
 const processes: ProcessMemory = {
   agents: {
@@ -90,6 +92,11 @@ describe('formatHealth', () => {
       .toBe('last 1 min: freezes: main 0, window 0; process launches 0; conversations 3, terminals 0');
   });
 
+  it("says when the agents' sample didn't hold together, rather than show its numbers", () => {
+    expect(formatHealth({ minutes: 10, freeze: quiet, metrics: [], conversations: 16, asleep: 0, terminals: 0, processes: SKIPPED }))
+      .toBe('last 10 min: freezes: main 0, window 0; process launches 0; agents: sample inconsistent, skipped; conversations 16, terminals 0');
+  });
+
   it('uses the working set where private bytes are not reported', () => {
     const line = formatHealth({ minutes: 1, freeze: quiet, metrics: [metric('Browser', 0, 102_400)], conversations: 1, asleep: 0, terminals: 0 });
     expect(line).toBe('last 1 min: freezes: main 0, window 0; process launches 0; CPU main 0%; memory main 100 MB; conversations 1, terminals 0');
@@ -134,7 +141,7 @@ describe('startHealthLog', () => {
     expect(lines).toHaveLength(2);
   });
 
-  const sources = (measure: () => Promise<ProcessMemory | null>) => ({
+  const sources = (measure: () => Promise<ProcessMemory | SkippedSample | null>) => ({
     takeFreezeStats: () => quiet,
     getAppMetrics: () => [metric('Browser', 1, 1024)],
     counts: () => ({ conversations: 23, asleep: 0, terminals: 0 }),
@@ -154,6 +161,14 @@ describe('startHealthLog', () => {
     expect(lines).toHaveLength(2);
     expect(lines[0]).toMatch(/; agents 21 \+ 2 not a thread's, 9\.4 GB: .*; dev server 1\.1 GB: .*; conversations 23, terminals 0$/);
     expect(lines[1]).toMatch(/^largest agent processes: node\.exe 1\.2 GB /);
+  });
+
+  it("writes only the line, saying so, for a sample that didn't hold together", async () => {
+    vi.useFakeTimers();
+    const lines: string[] = [];
+    startHealthLog(sources(async () => SKIPPED), { write: (l) => lines.push(l), firstMs: 1000, everyMs: 600_000 });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(lines).toEqual([expect.stringMatching(/; agents: sample inconsistent, skipped; conversations 23, terminals 0$/)]);
   });
 
   it('writes the line without them when they fail, or take too long', async () => {

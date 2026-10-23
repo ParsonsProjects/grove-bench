@@ -51,7 +51,9 @@
  *
  * A process spawned while the host is starting waits for it, rather than
  * starting here: at launch the open thread's agent starts within seconds,
- * and that is the launch that froze the window.
+ * and that is the launch that froze the window. One that can be skipped
+ * (spawnProcessInHost) fails to start when the host isn't up, rather than
+ * start here.
  */
 import { utilityProcess } from 'electron';
 import { execa } from 'execa';
@@ -61,7 +63,7 @@ import { freezeLog, launchLabel } from './freeze-log.js';
 import { logger } from './logger.js';
 import { perfLine } from './perf-log.js';
 import {
-  HOST_READY, isHostReply, isHostStarted, isSpawnEvent, reviveError,
+  HOST_READY, isHostReply, isHostStarted, isSpawnEvent, reviveError, serializeError,
   type HostedOptions, type HostReply, type HostRequest, type ProcessResult, type SpawnEvent, type SpawnRequest,
 } from './process-host-protocol.js';
 import { createSpawnRunner, HostedProcess, type SpawnRunner } from './process-host-spawn.js';
@@ -542,9 +544,10 @@ export function createProcessHost(deps: ProcessHostDeps) {
   /**
    * Start a long-running process, in the host when it's up or starting.
    * Returns at once, before the process exists: its input waits until then,
-   * and its pid, output and exit follow.
+   * and its pid, output and exit follow. `hostOnly`: never here; when the
+   * host can't take it, it fails to start instead ('error', then 'close').
    */
-  function spawn(file: string, args: string[], options: SpawnProcessOptions = {}): HostedProcess {
+  function spawn(file: string, args: string[], options: SpawnProcessOptions = {}, hostOnly = false): HostedProcess {
     const proc = new HostedProcess(launchLabel(file, [file, ...args]));
     const request: Omit<SpawnRequest, 'id'> = { type: 'spawn', file, args, ...options };
     const launch = (inHost: boolean) => {
@@ -554,13 +557,24 @@ export function createProcessHost(deps: ProcessHostDeps) {
         return;
       }
       const child = host;
+      if (hostOnly && !(inHost && state === 'ready' && child)) {
+        // On the next tick, as a start that fails here is reported: the
+        // caller adds its listeners once spawn has returned.
+        const error = serializeError(new Error(`The ${name} isn't running, so ${proc.label} didn't start`));
+        process.nextTick(() => {
+          deliver(proc, { type: 'error', id: 0, error });
+          deliver(proc, { type: 'close', id: 0 });
+        });
+        return;
+      }
       if (inHost && state === 'ready' && child) {
         const id = ++nextId;
         spawned.set(id, proc);
         try {
           child.postMessage({ ...request, id });
         } catch {
-          // Never delivered, so it can't have started: start it here instead.
+          // Never delivered, so it can't have started: start it here instead
+          // (or, host-only, not at all).
           spawned.delete(id);
           launch(false);
           return;
@@ -606,7 +620,10 @@ export function createProcessHost(deps: ProcessHostDeps) {
     /** Like run, but never in this process: fails when the host isn't up (or
      *  dies), for work that can be skipped rather than freeze the window. */
     runInHost: (file: string, args: string[], options?: HostedOptions) => run(file, args, options, true),
-    spawn,
+    spawn: (file: string, args: string[], options?: SpawnProcessOptions) => spawn(file, args, options),
+    /** Like spawn, but never in this process: when the host isn't up (or
+     *  doesn't come up while it is starting), the process fails to start. */
+    spawnInHost: (file: string, args: string[], options?: SpawnProcessOptions) => spawn(file, args, options, true),
     /** Whether commands go to the host right now. */
     get ready(): boolean { return state === 'ready'; },
     /** The host's process id while it's up. */
@@ -743,6 +760,16 @@ export function agentHostPid(): number | undefined {
  */
 export function spawnProcess(file: string, args: string[], options?: SpawnProcessOptions): HostedProcess {
   return agentHost.spawn(file, args, options);
+}
+
+/**
+ * spawnProcess, but only in the agent host: when it isn't up (or doesn't come
+ * up while it is starting), the process fails to start rather than start in
+ * the main process. For work that can be skipped, such as the health line's
+ * process list (process-memory.ts).
+ */
+export function spawnProcessInHost(file: string, args: string[], options?: SpawnProcessOptions): HostedProcess {
+  return agentHost.spawnInHost(file, args, options);
 }
 
 /** Start the process and agent hosts. Electron allows it once the app is ready. */

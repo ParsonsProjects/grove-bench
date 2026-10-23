@@ -297,6 +297,7 @@ class MockAdapter implements AgentAdapter {
       }),
       getSessionId: () => sessionId,
       processId: () => this.pid,
+      processExe: () => 'claude.exe',
       closeInput: vi.fn(),
       setModel: vi.fn(),
       setPermissionMode: vi.fn(),
@@ -2517,11 +2518,11 @@ describe('AgentSessionManager sleep and wake', () => {
     await sessionManager.destroySession('test-sleep');
   });
 
-  it("lists a thread's agent process while it runs, and not once asleep", async () => {
+  it("lists a thread's agent process, with its executable, while it runs, and not once asleep", async () => {
     mockAdapter.pid = 6150;
     await startSession('test-sleep-pids');
     const mine = () => sessionManager.agentProcesses().filter((a) => a.thread === 'test-sleep-pids');
-    expect(mine()).toEqual([{ thread: 'test-sleep-pids', pid: 6150 }]);
+    expect(mine()).toEqual([{ thread: 'test-sleep-pids', pid: 6150, exe: 'claude.exe' }]);
 
     await sessionManager.sleepSession('test-sleep-pids');
     expect(mine()).toEqual([]);
