@@ -26,9 +26,9 @@ All five agents Grove knows read the same Agent Skills format (a folder with a `
 | Agent | Project folders | User folders |
 |---|---|---|
 | Claude Code | `.claude/skills` | `~/.claude/skills` |
-| Gemini CLI | `.gemini/skills`, `.agents/skills` | `~/.gemini/skills`, `~/.agents/skills` |
+| Gemini CLI | `.agents/skills`, `.gemini/skills` | `~/.agents/skills`, `~/.gemini/skills` |
 | Copilot CLI | `.github/skills`, `.claude/skills`, `.agents/skills` | `~/.copilot/skills`, `~/.agents/skills` |
-| OpenCode | `.opencode/skills`, `.claude/skills`, `.agents/skills` | `~/.config/opencode/skills` |
+| OpenCode | `.opencode/skills`, `.claude/skills`, `.agents/skills` | `~/.config/opencode/skills`, `~/.claude/skills`, `~/.agents/skills` |
 | Custom agents (Codex through codex-acp, say) | `.agents/skills` | `~/.agents/skills` |
 
 Sources: [Claude Code](https://code.claude.com/docs/en/skills), [Gemini CLI](https://geminicli.com/docs/cli/skills/), [Copilot](https://docs.github.com/en/copilot/reference/customization-cheat-sheet), [OpenCode](https://opencode.ai/docs/skills/), [Codex](https://developers.openai.com/codex/skills).
@@ -43,7 +43,7 @@ Each ACP agent definition names its folders (`skillDirs` in `adapters/acp/preset
 | Who starts the thread | The renderer, through `draftStore.startThreadFor` | Every thread starts there, so a scheduled thread shows and behaves like one started by hand |
 | Who keeps time | Main (`src/main/skill-schedules.ts`), checking once a minute | Running state stays in one place and is saved with the schedule |
 | Missed times | Only the latest time since the last check counts: it runs if it is at most 15 minutes late, and is skipped and noted otherwise. Earlier missed times are dropped, not caught up | Supervised: nothing should start a burst of threads when the laptop wakes, but a time just gone should still run |
-| When Grove is closed | Nothing runs (no tray mode). The scheduler starts once the window has restored its threads (60 seconds at most) and stops for good when shutdown starts, Restart to update included | Fine for supervised use, and no thread starts while the others are closing |
+| When Grove is closed | Nothing runs (no tray mode). The scheduler starts once the window has restored its threads (60 seconds at most) and stops for good when shutdown starts, Restart to update included. A run due before the window has its threads back is skipped and noted | Fine for supervised use; no thread starts while the others are closing, or before the cap can count the threads a schedule already has |
 | A run nobody answered | Main waits up to 5 minutes for the window to say what a due run did, then notes it as not started | A window reloading at the wrong moment doesn't leave the schedule showing its previous run |
 | Focus | A scheduled run starts without taking the screen; Run and Run now open the thread | Not interrupting what you're reading |
 | Cap | A scheduled run is skipped while `maxOpen` of its threads are still open (`isOpenTab`: not closed or deleted, threads waiting to reconnect after a restart or wake included). Run now ignores it | Stops a schedule piling up threads you haven't looked at |
@@ -70,7 +70,10 @@ Each ACP agent definition names its folders (`skillDirs` in `adapters/acp/preset
 - If the agent dies partway, an issue it took stays In Progress in the tracker. Grove can't see the tracker, so it can't undo that.
 - Grove shows no queue of waiting issues; only the tracker knows what is next.
 - Each agent needs the tracker's MCP server set up in its own config. ACP agents only get Grove's own MCP servers from Grove (`acp-adapter.ts`).
-- The folder lists come from each agent's docs as of October 2026 and aren't checked against the agents themselves. OpenCode's user folder on Windows is assumed to be under the home folder like elsewhere.
+- The folder lists come from each agent's docs as of October 2026 and aren't checked against the agents themselves. Earlier folders win on a name clash: for OpenCode that follows its docs; for Gemini CLI, Google's docs don't say, and the order (`.agents/skills` first) follows third-party guides. OpenCode's user folders on Windows are assumed to be under the home folder like elsewhere.
+- Skills are listed from the project folder, on whatever branch it has checked out, but a "New branch" run's worktree starts from the base branch. A skill that exists only on a feature branch is listed, but the run's worktree doesn't have it, so the agent is told to use a skill it can't find. Checking each skill on the base branch would need git calls per listing; not worth it for this case.
+- If noting a run fails after its thread started (the IPC call itself failing, as main's handler doesn't throw), the thread isn't counted for the cap and main later notes the run as not started.
+- Loading the schedules while app-state.json is locked retries as the To do and group stores do; the three copies of that loop could become one helper.
 - Schedules for a removed project stay saved, skipped each time they're due, until deleted in the Scheduled tab.
 - Whether this raises throughput is unproven. Worth counting, per schedule, how many of its threads end in a merged PR against how many were closed.
 

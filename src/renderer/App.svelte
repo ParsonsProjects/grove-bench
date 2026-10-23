@@ -134,6 +134,9 @@
       }
     } catch { /* best-effort */ }
 
+    // Scheduled runs can count the threads they started from now on.
+    schedulesStore.markRestored();
+
     restored = true;
     window.groveBench.notifyRestoreComplete();
 

@@ -47,10 +47,12 @@ export const ACP_PRESETS: AcpAgentDefinition[] = [
     },
     verifyApiKey: (key) => verifyGeminiKey(key),
     installCommand: 'npm install -g @google/gemini-cli',
-    // https://geminicli.com/docs/cli/skills/
+    // https://geminicli.com/docs/cli/skills/. Google's docs don't say which
+    // of the two wins on a name clash; guides say the .agents alias does
+    // (https://dev.to/skillgild/how-to-add-skills-to-gemini-cli-12o0).
     skillDirs: {
-      project: [path.join('.gemini', 'skills'), path.join('.agents', 'skills')],
-      user: [path.join('.gemini', 'skills'), path.join('.agents', 'skills')],
+      project: [path.join('.agents', 'skills'), path.join('.gemini', 'skills')],
+      user: [path.join('.agents', 'skills'), path.join('.gemini', 'skills')],
     },
   },
   {
@@ -95,10 +97,11 @@ export const ACP_PRESETS: AcpAgentDefinition[] = [
     verifyApiKey: (key) => verifyOpenRouterKey(key),
     spawnEnv: openCodeEnv,
     installCommand: 'npm install -g opencode-ai',
-    // https://opencode.ai/docs/skills/
+    // https://opencode.ai/docs/skills/: its own folders win over the
+    // Claude- and agent-compatible ones.
     skillDirs: {
       project: [path.join('.opencode', 'skills'), path.join('.claude', 'skills'), path.join('.agents', 'skills')],
-      user: [path.join('.config', 'opencode', 'skills')],
+      user: [path.join('.config', 'opencode', 'skills'), path.join('.claude', 'skills'), path.join('.agents', 'skills')],
     },
   },
 ];

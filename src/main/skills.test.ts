@@ -51,13 +51,13 @@ describe('scanSkillsDir', () => {
     fs.writeFileSync(path.join(dir, folder, 'SKILL.md'), content);
   }
 
-  it('returns empty for a missing directory', () => {
-    expect(scanSkillsDir(path.join(dir, 'nope'), 'project')).toEqual([]);
+  it('returns empty for a missing directory', async () => {
+    expect(await scanSkillsDir(path.join(dir, 'nope'), 'project')).toEqual([]);
   });
 
-  it('lists skills with parsed metadata and manifest path', () => {
+  it('lists skills with parsed metadata and manifest path', async () => {
     addSkill('review', '---\nname: code-review\ndescription: Review diffs\n---\n');
-    const result = scanSkillsDir(dir, 'project');
+    const result = await scanSkillsDir(dir, 'project');
     expect(result).toEqual([{
       name: 'code-review',
       description: 'Review diffs',
@@ -66,16 +66,16 @@ describe('scanSkillsDir', () => {
     }]);
   });
 
-  it('falls back to the directory name when frontmatter has no name', () => {
+  it('falls back to the directory name when frontmatter has no name', async () => {
     addSkill('deploy', '---\ndescription: Ship\n---\n');
-    expect(scanSkillsDir(dir, 'user')[0]).toMatchObject({ name: 'deploy', source: 'user' });
+    expect((await scanSkillsDir(dir, 'user'))[0]).toMatchObject({ name: 'deploy', source: 'user' });
   });
 
-  it('skips directories without a SKILL.md and plain files', () => {
+  it('skips directories without a SKILL.md and plain files', async () => {
     fs.mkdirSync(path.join(dir, 'not-a-skill'));
     fs.writeFileSync(path.join(dir, 'stray.md'), 'x');
     addSkill('real', '---\nname: real\n---\n');
-    expect(scanSkillsDir(dir, 'project').map((s) => s.name)).toEqual(['real']);
+    expect((await scanSkillsDir(dir, 'project')).map((s) => s.name)).toEqual(['real']);
   });
 });
 
@@ -134,11 +134,11 @@ describe('writeSkill', () => {
 
   const def = { name: 'release-notes', description: 'Draft notes', instructions: 'Do the thing', scope: 'project' as const };
 
-  it('writes a project skill into the worktree and returns its info', () => {
+  it('writes a project skill into the worktree and returns its info', async () => {
     const info = writeSkill(worktree, def);
     const manifestPath = path.join(worktree, '.claude', 'skills', 'release-notes', 'SKILL.md');
     expect(info).toEqual({ name: 'release-notes', description: 'Draft notes', source: 'project', path: manifestPath });
-    expect(scanSkillsDir(path.join(worktree, '.claude', 'skills'), 'project')[0]).toMatchObject({
+    expect((await scanSkillsDir(path.join(worktree, '.claude', 'skills'), 'project'))[0]).toMatchObject({
       name: 'release-notes',
       description: 'Draft notes',
     });
@@ -150,16 +150,16 @@ describe('writeSkill', () => {
     expect(info.source).toBe('user');
   });
 
-  it("writes a user skill into a Claude account's own folder when given one", () => {
+  it("writes a user skill into a Claude account's own folder when given one", async () => {
     const accountSkills = path.join(fakeHome, '.claude-work', 'skills');
     const dirs = { ...CLAUDE_SKILL_DIRS, user: [accountSkills] };
     const info = writeSkill(worktree, { ...def, scope: 'user' }, dirs);
     expect(info.path).toBe(path.join(accountSkills, 'release-notes', 'SKILL.md'));
-    expect(listSkills(worktree, dirs).map((s) => s.name)).toEqual(['release-notes']);
-    expect(listSkills(worktree).map((s) => s.name)).toEqual([]);
+    expect((await listSkills(worktree, dirs)).map((s) => s.name)).toEqual(['release-notes']);
+    expect((await listSkills(worktree)).map((s) => s.name)).toEqual([]);
   });
 
-  it('reads every folder an agent lists, earlier folders and the project winning', () => {
+  it('reads every folder an agent lists, earlier folders and the project winning', async () => {
     const dirs = { project: ['.gemini/skills', '.agents/skills'], user: ['.gemini/skills', '.agents/skills'] };
     const add = (root: string, folder: string, name: string, description: string) => {
       fs.mkdirSync(path.join(root, folder, name), { recursive: true });
@@ -171,7 +171,7 @@ describe('writeSkill', () => {
     add(worktree, '.agents/skills', 'deploy', 'shared project');
     add(worktree, '.agents/skills', 'review', 'shared project');
     add(worktree, '.gemini/skills', 'review', 'own project');
-    expect(listSkills(worktree, dirs).map((s) => [s.name, s.description, s.source])).toEqual([
+    expect((await listSkills(worktree, dirs)).map((s) => [s.name, s.description, s.source])).toEqual([
       ['deploy', 'shared project', 'project'],
       ['review', 'own project', 'project'],
       ['triage', 'own user', 'user'],

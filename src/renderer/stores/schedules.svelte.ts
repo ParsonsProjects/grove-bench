@@ -16,9 +16,13 @@ const LOAD_ATTEMPTS = 5;
  */
 class SchedulesStore {
   list = $state<SkillSchedule[]>([]);
-  /** Schedules whose run is starting, so Run now can't start two at once. */
-  starting = $state<Record<string, boolean>>({});
+  /** Schedules whose run is starting, and who started it: Run now, or the
+   *  schedule. Run now can't start two at once. */
+  starting = $state<Record<string, 'hand' | 'schedule'>>({});
   private started = false;
+  /** The window has its threads back, so the open-thread cap can count them
+   *  (markRestored). */
+  restored = false;
 
   init(): void {
     if (this.started) return;
@@ -94,9 +98,21 @@ class SchedulesStore {
     return 'id' in result;
   }
 
-  /** A run main says is due. One for a schedule this window doesn't have yet
-   *  (the list failed to load) fetches the list first. */
+  /** Called once the window has restored its threads (App.svelte). */
+  markRestored(): void {
+    this.restored = true;
+  }
+
+  /** A run main says is due. Skipped until the window has its threads back;
+   *  one for a schedule this window doesn't have yet (the list failed to
+   *  load) fetches the list first. */
   private async runDue(id: string): Promise<void> {
+    // Main's fallback can start the scheduler before the restore is done
+    // (or when it failed): the cap would count none of the threads yet.
+    if (!this.restored) {
+      await this.record(id, { skipped: 'Grove was still restoring its threads' });
+      return;
+    }
     let schedule = this.list.find((s) => s.id === id);
     if (!schedule) {
       await this.load(0);
@@ -109,10 +125,11 @@ class SchedulesStore {
   /** Run a schedule now (Run now) or because it is due, and note what
    *  happened. Returns whether a thread started. */
   async run(schedule: SkillSchedule, { scheduled = false } = {}): Promise<boolean> {
-    if (this.starting[schedule.id]) {
-      // Run now twice: the second click does nothing. Due while a Run now
+    const already = this.starting[schedule.id];
+    if (already) {
+      // Run now twice: the second click does nothing. Due while a run still
       // starts: that run stands in for it.
-      if (scheduled) await this.record(schedule.id, { skipped: 'a run by hand was starting' });
+      if (scheduled) await this.record(schedule.id, { skipped: already === 'hand' ? 'a run by hand was starting' : 'the last run was still starting' });
       return false;
     }
     if (scheduled && !sessionStore.repos.includes(schedule.repoPath)) {
@@ -129,7 +146,7 @@ class SchedulesStore {
         return false;
       }
     }
-    this.starting = { ...this.starting, [schedule.id]: true };
+    this.starting = { ...this.starting, [schedule.id]: scheduled ? 'schedule' : 'hand' };
     try {
       const result = await this.startRun(schedule, !scheduled);
       if ('error' in result) {

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import { mockGroveBench } from '../__mocks__/setup.js';
 import type { SkillSchedule } from '../../shared/skill-schedules.js';
 
@@ -132,12 +132,28 @@ describe('schedulesStore.run', () => {
   });
 
   it('notes a scheduled run that came while Run now was starting', async () => {
-    schedulesStore.starting = { s1: true };
+    schedulesStore.starting = { s1: 'hand' };
     expect(await schedulesStore.run(schedule(), { scheduled: true })).toBe(false);
     expect(mockGroveBench.recordSkillScheduleRun).toHaveBeenCalledWith('s1', { skipped: 'a run by hand was starting' });
     mockGroveBench.recordSkillScheduleRun.mockClear();
     expect(await schedulesStore.run(schedule())).toBe(false);
     expect(mockGroveBench.recordSkillScheduleRun).not.toHaveBeenCalled();
+  });
+
+  it('says so when the last scheduled run is still starting, not that one was run by hand', async () => {
+    schedulesStore.starting = { s1: 'schedule' };
+    expect(await schedulesStore.run(schedule(), { scheduled: true })).toBe(false);
+    expect(mockGroveBench.recordSkillScheduleRun).toHaveBeenCalledWith('s1', { skipped: 'the last run was still starting' });
+  });
+
+  it('marks who started a run while it starts', async () => {
+    let finish!: (r: { id: string }) => void;
+    startThreadFor.mockReturnValue(new Promise((r) => { finish = r; }));
+    const running = schedulesStore.run(schedule(), { scheduled: true });
+    await vi.waitFor(() => expect(schedulesStore.starting).toEqual({ s1: 'schedule' }));
+    finish({ id: 'new1' });
+    await running;
+    expect(schedulesStore.starting).toEqual({});
   });
 });
 
@@ -151,13 +167,24 @@ describe('schedulesStore.load', () => {
 });
 
 describe('a due run', () => {
-  it('fetches the list when the schedule is missing from it, then runs', async () => {
-    let due: (id: string) => void = () => {};
+  // init() subscribes once for the whole file (hooks aren't shuffled).
+  let due: (id: string) => void = () => {};
+  beforeAll(() => {
     mockGroveBench.onSkillScheduleDue.mockImplementation((cb: (id: string) => void) => { due = cb; return () => {}; });
-    mockGroveBench.listSkillSchedules.mockResolvedValue([]);
     schedulesStore.init();
-    await vi.waitFor(() => expect(mockGroveBench.listSkillSchedules).toHaveBeenCalled());
+  });
 
+  it("is skipped and noted until the window has restored its threads, which the cap counts", async () => {
+    schedulesStore.restored = false;
+    schedulesStore.list = [schedule()];
+    due('s1');
+    await vi.waitFor(() => expect(mockGroveBench.recordSkillScheduleRun).toHaveBeenCalledWith('s1', { skipped: 'Grove was still restoring its threads' }));
+    expect(startThreadFor).not.toHaveBeenCalled();
+  });
+
+  it('fetches the list when the schedule is missing from it, then runs', async () => {
+    schedulesStore.markRestored();
+    schedulesStore.list = [];
     mockGroveBench.listSkillSchedules.mockResolvedValue([schedule({ id: 'late' })]);
     due('late');
     await vi.waitFor(() => expect(startThreadFor).toHaveBeenCalled());

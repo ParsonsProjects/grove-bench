@@ -61,35 +61,35 @@ export function parseSkillFrontmatter(content: string): { name?: string; descrip
   return result;
 }
 
-/** Scan one skills directory for `<name>/SKILL.md` manifests. */
-export function scanSkillsDir(dir: string, source: SkillInfo['source']): SkillInfo[] {
+/** Scan one skills directory for `<name>/SKILL.md` manifests, in directory
+ *  order. Reads without blocking: it runs on the main process each time a
+ *  thread's Skills count shows, across up to five folders per agent. */
+export async function scanSkillsDir(dir: string, source: SkillInfo['source']): Promise<SkillInfo[]> {
   let entries: fs.Dirent[];
   try {
-    entries = fs.readdirSync(dir, { withFileTypes: true });
+    entries = await fs.promises.readdir(dir, { withFileTypes: true });
   } catch {
     return []; // directory absent — no skills at this level
   }
-  const skills: SkillInfo[] = [];
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
+  const found = await Promise.all(entries.filter((e) => e.isDirectory()).map(async (entry): Promise<SkillInfo | null> => {
     const manifestPath = path.join(dir, entry.name, 'SKILL.md');
     let content: string;
     try {
-      content = fs.readFileSync(manifestPath, 'utf-8');
+      content = await fs.promises.readFile(manifestPath, 'utf-8');
     } catch {
-      continue; // no manifest — not a skill
+      return null; // no manifest — not a skill
     }
     const meta = parseSkillFrontmatter(content);
-    skills.push({
+    return {
       // The CLI identifies a skill by its frontmatter name, falling back to
       // the directory name.
       name: meta.name || entry.name,
       description: meta.description ?? '',
       source,
       path: manifestPath,
-    });
-  }
-  return skills;
+    };
+  }));
+  return found.filter((s) => s !== null);
 }
 
 /**
@@ -97,9 +97,11 @@ export function scanSkillsDir(dir: string, source: SkillInfo['source']): SkillIn
  * shadow user skills of the same name, matching the CLI's precedence, and an
  * earlier folder's shadow a later one's at the same level.
  */
-export function listSkills(worktreePath: string, dirs: SkillDirs = CLAUDE_SKILL_DIRS): SkillInfo[] {
-  const user = dirs.user.flatMap((dir) => scanSkillsDir(userSkillsDir(dir), 'user'));
-  const project = dirs.project.flatMap((dir) => scanSkillsDir(path.join(worktreePath, dir), 'project'));
+export async function listSkills(worktreePath: string, dirs: SkillDirs = CLAUDE_SKILL_DIRS): Promise<SkillInfo[]> {
+  const [user, project] = await Promise.all([
+    Promise.all(dirs.user.map((dir) => scanSkillsDir(userSkillsDir(dir), 'user'))).then((lists) => lists.flat()),
+    Promise.all(dirs.project.map((dir) => scanSkillsDir(path.join(worktreePath, dir), 'project'))).then((lists) => lists.flat()),
+  ]);
   const byName = new Map<string, SkillInfo>();
   // Lowest precedence first, so each later entry overwrites: later user
   // folders, then earlier ones, then project folders the same way.
