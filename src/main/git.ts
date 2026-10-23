@@ -484,9 +484,19 @@ async function isAncestor(cwd: string, ancestor: string, descendant: string): Pr
   }
 }
 
-/** Working-tree content of a file as the index sees it (`git show :path`). */
-export async function indexFileContent(cwd: string, relPath: string): Promise<string> {
-  return git(['show', `:${relPath}`], cwd);
+/**
+ * A text blob's lines, for expanding a diff's context: `object` is
+ * `:<path>` for the index's copy or `<tree>:<path>`. Null when it's over
+ * MAX_TEXT_FILE_BYTES, which cat-file -s tells without reading it, or binary
+ * (a NUL in its first 8,000 characters, as looksBinary checks).
+ */
+export async function blobLines(cwd: string, object: string): Promise<string[] | null> {
+  if (Number(await git(['cat-file', '-s', object], cwd)) > MAX_TEXT_FILE_BYTES) return null;
+  // Capped as well, in case the index changed since its size was read.
+  const content = await git(['show', object], cwd, { maxBuffer: MAX_TEXT_FILE_BYTES });
+  if (content.slice(0, 8000).includes('\0')) return null;
+  // execa has taken off the final newline, so a blank last line stays.
+  return content === '' ? [] : content.split('\n');
 }
 
 /** Blob hashes of the working-tree content of `relPaths`, in one git call,

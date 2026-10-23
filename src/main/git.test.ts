@@ -23,6 +23,7 @@ import {
   branchHasRemote,
   renameBranch,
   fileDiff,
+  blobLines,
   gitPatch,
   MAX_TEXT_FILE_BYTES,
   isTracked,
@@ -460,6 +461,34 @@ describe('fileDiff()', () => {
     expect(await fileDiff('/repo', 'src/a.ts')).toBeNull();
     mockExeca.mockRejectedValueOnce(new Error('fatal: bad revision'));
     await expect(fileDiff('/repo', 'src/a.ts')).rejects.toThrow('bad revision');
+  });
+});
+
+describe('blobLines()', () => {
+  it('reads a blob under the limit, with a cap in case it changed since', async () => {
+    mockExeca.mockResolvedValueOnce({ stdout: '12' } as any).mockResolvedValueOnce({ stdout: 'one\ntwo' } as any);
+    expect(await blobLines('/repo', ':a.ts')).toEqual(['one', 'two']);
+    expect(mockExeca).toHaveBeenNthCalledWith(1, 'git', ['cat-file', '-s', ':a.ts'], { cwd: '/repo' });
+    expect(mockExeca).toHaveBeenNthCalledWith(2, 'git', ['show', ':a.ts'], { cwd: '/repo', maxBuffer: MAX_TEXT_FILE_BYTES });
+  });
+
+  it("doesn't read a blob over the limit", async () => {
+    mockExeca.mockResolvedValueOnce({ stdout: String(MAX_TEXT_FILE_BYTES + 1) } as any);
+    expect(await blobLines('/repo', 'tree:big.json')).toBeNull();
+    expect(mockExeca).toHaveBeenCalledOnce();
+  });
+
+  it('gives null for a binary blob', async () => {
+    mockExeca.mockResolvedValueOnce({ stdout: '4' } as any).mockResolvedValueOnce({ stdout: 'P\0\x01\x02' } as any);
+    expect(await blobLines('/repo', ':logo.png')).toBeNull();
+  });
+
+  it('keeps a blank last line, the final newline being gone already', async () => {
+    // execa takes the final newline off git's output: "a\n\n" arrives as "a\n".
+    mockExeca.mockResolvedValueOnce({ stdout: '3' } as any).mockResolvedValueOnce({ stdout: 'a\n' } as any);
+    expect(await blobLines('/repo', ':a.txt')).toEqual(['a', '']);
+    mockExeca.mockResolvedValueOnce({ stdout: '0' } as any).mockResolvedValueOnce({ stdout: '' } as any);
+    expect(await blobLines('/repo', ':empty.txt')).toEqual([]);
   });
 });
 

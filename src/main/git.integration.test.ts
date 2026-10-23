@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { resolveMergeBase, squashSince, branchCommits, excludeFromGit, fileDiff } from './git.js';
+import { resolveMergeBase, squashSince, branchCommits, excludeFromGit, fileDiff, blobLines } from './git.js';
 
 // Real git is slow to start on Windows, and each test runs a dozen commands.
 vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
@@ -105,6 +105,25 @@ describe('a file diff', () => {
     expect(await fileDiff(repo, 'big.txt')).toBeNull();
     fs.writeFileSync(path.join(repo, 'base.txt'), 'changed\n');
     expect(await fileDiff(repo, 'base.txt')).toContain('+changed');
+  });
+});
+
+describe('a blob\'s lines', () => {
+  it('reads the index\'s copy and a tree\'s, keeping a blank last line', async () => {
+    fs.writeFileSync(path.join(repo, 'notes.txt'), 'one\ntwo\n\n');
+    run('add', 'notes.txt');
+    // Changed since it was staged: the index's copy is what's read.
+    fs.writeFileSync(path.join(repo, 'notes.txt'), 'changed\n');
+    expect(await blobLines(repo, ':notes.txt')).toEqual(['one', 'two', '']);
+    expect(await blobLines(repo, `${run('write-tree')}:notes.txt`)).toEqual(['one', 'two', '']);
+  });
+
+  it('gives null for one over the size limit or binary', async () => {
+    fs.writeFileSync(path.join(repo, 'big.txt'), 'x'.repeat(5 * 1024 * 1024));
+    fs.writeFileSync(path.join(repo, 'logo.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01]));
+    run('add', 'big.txt', 'logo.png');
+    expect(await blobLines(repo, ':big.txt')).toBeNull();
+    expect(await blobLines(repo, ':logo.png')).toBeNull();
   });
 });
 
