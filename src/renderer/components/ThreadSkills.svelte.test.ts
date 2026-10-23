@@ -67,12 +67,12 @@ describe('ThreadSkills', () => {
     expect(skillsPanelStore.form).toEqual({ repoPath: '/repo', initial: { agentId: 'gemini-cli', skill: 'triage' } });
   });
 
-  it("offers turning off, suggesting and adding skills only for an agent Grove manages them for", async () => {
+  it("offers turning off and suggesting skills only for an agent Grove manages them for, and adding for any", async () => {
     thread('gemini-cli');
     render(ThreadSkills, { sessionId: 't1' });
     await screen.findByRole('button', { name: 'Run triage in a new thread' });
     expect(screen.queryByRole('button', { name: 'Disable' })).toBeNull();
-    expect(screen.queryByRole('button', { name: /Add skill/ })).toBeNull();
+    expect(screen.getByRole('button', { name: /Add skill/ })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Suggest' })).toBeNull();
     expect(screen.getByText(/Gemini CLI's own folders/)).toBeInTheDocument();
     cleanup();
@@ -104,5 +104,49 @@ describe('ThreadSkills', () => {
     render(ThreadSkills, { sessionId: 't1' });
     expect(await screen.findByRole('button', { name: 'Enable' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Run triage in a new thread' })).toBeNull();
+  });
+
+  it('has no Share or Link to offer when every skill is shared and linked', async () => {
+    thread('claude-code');
+    render(ThreadSkills, { sessionId: 't1' });
+    await screen.findByRole('button', { name: 'Run triage in a new thread' });
+    expect(mockGroveBench.getSkillSharing).toHaveBeenCalledWith('t1', '/repo');
+    expect(screen.queryByRole('button', { name: /^Share/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Link/ })).toBeNull();
+  });
+
+  it("shares Claude Agent's own skills, then lists again and says what it couldn't move", async () => {
+    thread('claude-code');
+    mockGroveBench.getSkillSharing.mockResolvedValueOnce({
+      toShare: [{ name: 'triage', description: '', source: 'project' }, { name: 'deploy', description: '', source: 'user' }],
+      toLink: [],
+      broken: [],
+    });
+    mockGroveBench.shareSkills.mockResolvedValue({ done: ['triage'], skipped: [{ name: 'deploy', reason: 'a file in it is open in another program' }] });
+    render(ThreadSkills, { sessionId: 't1' });
+    expect(await screen.findByText('Share 2 skills with every agent')).toBeInTheDocument();
+    expect(screen.getByText(/triage and deploy are in/)).toBeInTheDocument();
+    mockGroveBench.listSkills.mockClear();
+    await fireEvent.click(screen.getByRole('button', { name: 'Share' }));
+    expect(mockGroveBench.shareSkills).toHaveBeenCalledWith('t1', '/repo');
+    await waitFor(() => expect(store.error).toBe(`Couldn't share "deploy" (a file in it is open in another program).`));
+    await waitFor(() => expect(screen.queryByText('Share 2 skills with every agent')).toBeNull());
+    expect(mockGroveBench.listSkills).toHaveBeenCalled();
+    store.setError(null);
+  });
+
+  it('adds, updates and removes Claude Agent links', async () => {
+    thread('claude-code');
+    mockGroveBench.getSkillSharing.mockResolvedValueOnce({
+      toShare: [],
+      toLink: [{ name: 'team', description: '', source: 'project' }],
+      broken: [{ name: 'gone', description: '', source: 'project' }],
+    });
+    render(ThreadSkills, { sessionId: 't1' });
+    expect(await screen.findByText(/adds or updates the links for team, and removes the links to gone, which was deleted\./)).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'Link' }));
+    expect(mockGroveBench.linkSkills).toHaveBeenCalledWith('t1', '/repo');
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Link' })).toBeNull());
+    expect(store.error).toBeNull();
   });
 });

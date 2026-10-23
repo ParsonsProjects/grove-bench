@@ -1,9 +1,11 @@
 <script lang="ts">
   /**
    * The Skills drawer's This thread tab: the skills the thread's agent can
-   * use, each with Run (in a new thread now) and Schedule. For Claude Code,
-   * whose skills Grove manages, also turning them off and on, suggestions
-   * mined from past threads, and the Add Skill dialog.
+   * use, each with Run (in a new thread now) and Schedule, and the Add Skill
+   * dialog, which writes to the shared `.agents/skills`. Share and Link keep
+   * skills usable by every agent (skill-sharing.ts). For Claude Code, whose
+   * skills Grove manages, also turning them off and on, and suggestions
+   * mined from past threads.
    */
   import { onMount } from 'svelte';
   import { messageStore } from '../stores/messages.svelte.js';
@@ -16,7 +18,7 @@
   import { startSkillThread } from '../lib/skill-thread.js';
   import type { SkillPromptOpts } from '../lib/skill-prompt.js';
   import { lazyComponent } from '../lib/lazy-component.js';
-  import type { SkillInfo, SkillSuggestion } from '../../shared/types.js';
+  import type { SkillChanges, SkillInfo, SkillSharing, SkillSuggestion } from '../../shared/types.js';
   import { Badge } from '$lib/components/ui/badge/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Notice } from '$lib/components/ui/notice/index.js';
@@ -36,9 +38,9 @@
   let repoPath = $derived(session?.repoPath ?? '');
   /** The thread's agent: the skills listed are its own. */
   let agentId = $derived(session?.agentType ?? agentsStore.defaultId ?? '');
-  /** Grove manages this agent's skills (turn off, suggest, add): Claude Code
+  /** Grove manages this agent's skills (turn off, suggest): Claude Code
    *  only, and only once the agent list says so. Any agent's skills can be
-   *  run and scheduled. */
+   *  run, scheduled and added. */
   let managed = $derived(agentsStore.loaded && agentsStore.supports(agentId, 'skills'));
 
   let addSkillOpen = $state(false);
@@ -60,6 +62,58 @@
     try {
       diskSkills = await window.groveBench.listSkills(sessionId, repoPath) ?? [];
     } catch { /* keep the last snapshot */ }
+  }
+
+  // ─── Share and Link (skills every agent can use) ───
+
+  let sharing = $state<SkillSharing>({ toShare: [], toLink: [], broken: [] });
+  let sharingBusy = $state<'share' | 'link' | null>(null);
+
+  async function refreshSharing() {
+    try {
+      sharing = await window.groveBench.getSkillSharing(sessionId, repoPath) ?? { toShare: [], toLink: [], broken: [] };
+    } catch { /* keep the last snapshot */ }
+  }
+
+  function refresh() {
+    void refreshSkills();
+    void refreshSharing();
+  }
+
+  /** Share or Link, then say what couldn't be done. Both change files in
+   *  the project, which show in the Changes tab. */
+  async function changeSharing(action: 'share' | 'link') {
+    if (sharingBusy) return;
+    sharingBusy = action;
+    const verb = action === 'share' ? 'share' : 'link';
+    try {
+      const result: SkillChanges = action === 'share'
+        ? await window.groveBench.shareSkills(sessionId, repoPath)
+        : await window.groveBench.linkSkills(sessionId, repoPath);
+      if (result.skipped.length > 0) {
+        store.setError(`Couldn't ${verb} ${result.skipped.map((s) => `"${s.name}" (${s.reason})`).join(', ')}.`);
+      }
+    } catch (err) {
+      store.setError(`Couldn't ${verb} the skills: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      sharingBusy = null;
+      refresh();
+    }
+  }
+
+  /** What Link will do, as a sentence. */
+  function linkPlan({ toLink, broken }: SkillSharing): string {
+    const parts = [];
+    if (toLink.length > 0) parts.push(`adds or updates the links for ${nameList(toLink)}`);
+    if (broken.length > 0) parts.push(`removes the links to ${nameList(broken)}, which ${broken.length === 1 ? 'was' : 'were'} deleted`);
+    return `Link ${parts.join(', and ')}.`;
+  }
+
+  /** Up to three names, then how many more. */
+  function nameList(skills: SkillInfo[]): string {
+    const names = skills.map((s) => s.name);
+    if (names.length <= 3) return names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
+    return `${names.slice(0, 3).join(', ')} and ${names.length - 3} more`;
   }
 
   async function setSkillEnabled(name: string, enabled: boolean) {
@@ -155,7 +209,7 @@
 
   onMount(() => {
     void agentsStore.load();
-    refreshSkills();
+    refresh();
     refreshSuggestions();
   });
 </script>
@@ -175,11 +229,48 @@
       {analyzingSuggestions ? 'Scanning…' : 'Suggest'}
     </Button>
   {/if}
-  <Button variant="quiet" size="inline" onclick={refreshSkills} title="Re-scan skill directories">Refresh</Button>
+  <Button variant="quiet" size="inline" onclick={refresh} title="Re-scan skill directories">Refresh</Button>
 </div>
 
 {#if settingsStore.error}
   <Notice tone="danger" class="mb-2 break-words">{settingsStore.error}</Notice>
+{/if}
+
+{#if sharing.toShare.length > 0}
+  {@const count = sharing.toShare.length}
+  <Notice class="mb-2" title="Share {count === 1 ? 'a skill' : `${count} skills`} with every agent">
+    {#snippet actions()}
+      <Button
+        variant="subtle"
+        size="2xs"
+        onclick={() => changeSharing('share')}
+        disabled={sharingBusy !== null}
+        title="Move these skills to .agents/skills and leave a link for Claude Agent"
+      >{sharingBusy === 'share' ? 'Sharing…' : 'Share'}</Button>
+    {/snippet}
+    <p>
+      {nameList(sharing.toShare)} {count === 1 ? 'is' : 'are'} in <span class="font-mono">.claude/skills</span>, which only some agents read. Share moves {count === 1 ? 'it' : 'them'}
+      to <span class="font-mono">.agents/skills</span>, where every agent looks, and leaves a link so Claude Agent still finds {count === 1 ? 'it' : 'them'}.
+    </p>
+  </Notice>
+{/if}
+
+{#if sharing.toLink.length > 0 || sharing.broken.length > 0}
+  <Notice class="mb-2" title="Claude Agent's links need updating">
+    {#snippet actions()}
+      <Button
+        variant="subtle"
+        size="2xs"
+        onclick={() => changeSharing('link')}
+        disabled={sharingBusy !== null}
+        title="Bring Claude Agent's links in line with .agents/skills"
+      >{sharingBusy === 'link' ? 'Linking…' : 'Link'}</Button>
+    {/snippet}
+    <p>
+      Claude Agent doesn't read <span class="font-mono">.agents/skills</span>, so it finds shared skills through links in <span class="font-mono">.claude/skills</span>.
+      {linkPlan(sharing)}
+    </p>
+  </Notice>
 {/if}
 
 {#if managed && suggestions.length > 0}
@@ -258,21 +349,19 @@
 </div>
 
 <div class="flex items-center gap-2 mt-3 pt-3 border-t border-border">
-  {#if managed}
-    <span class="text-muted-foreground text-micro flex-1">
+  <span class="text-muted-foreground text-micro flex-1">
+    {#if managed}
       Turning a skill off applies to all projects, when a thread's agent (re)starts. Running turns keep their current skills.
-    </span>
-    <Button
-      variant="subtle"
-      size="2xs"
-      onclick={() => { addSkillOpen = true; }}
-      title="Author a new skill — write it yourself or hand it to the agent"
-    ><PlusIcon />Add skill</Button>
-  {:else}
-    <span class="text-muted-foreground text-micro">
-      Skills from {agentsStore.get(agentId)?.displayName ?? 'this agent'}'s own folders. Add or turn them off there.
-    </span>
-  {/if}
+    {:else}
+      Skills from {agentsStore.get(agentId)?.displayName ?? 'this agent'}'s own folders. Turn them off there.
+    {/if}
+  </span>
+  <Button
+    variant="subtle"
+    size="2xs"
+    onclick={() => { addSkillOpen = true; }}
+    title="Author a new skill every agent can use — write it yourself or hand it to the agent"
+  ><PlusIcon />Add skill</Button>
 </div>
 
 {#if addSkillOpen}
@@ -282,7 +371,7 @@
       initial={addSkillInitial}
       onclose={() => { addSkillOpen = false; addSkillInitial = null; }}
       oncreated={(skill) => {
-        refreshSkills();
+        refresh();
         // A created suggestion is resolved — drop it from the list for good.
         const created = suggestions.find((s) => s.name === skill.name);
         if (created) dismissSkillSuggestion(created.id);

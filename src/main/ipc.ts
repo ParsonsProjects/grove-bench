@@ -42,6 +42,8 @@ import * as memory from './memory.js';
 import * as memoryCompact from './memory-compact.js';
 import * as bookmarks from './bookmarks.js';
 import { deleteSchedule, listSchedules, recordScheduleRun, saveSchedule } from './skill-schedules.js';
+import { linkSkills, shareSkills, skillSharing } from './skill-sharing.js';
+import { CLAUDE_SKILL_DIRS, readsSharedSkills, type SkillDirs } from './skills.js';
 import { listProjects, rememberProject, forgetProject, loadOpenTabs, saveOpenTabs, loadCollapsedRepos, saveCollapsedRepos, loadSessionSort, saveSessionSort, loadSidebarWidth, saveSidebarWidth, loadCollapsedPanels, saveCollapsedPanels, loadConversationGroups, saveConversationGroups, saveUnreadSessionIds, loadUnreadSessionIds, saveTodoSessionIds, loadTodoSessionIds, loadPrerequisiteCache, savePrerequisiteCache, loadUsageSnapshot } from './app-state.js';
 import { logRendererError } from './crash-handling.js';
 import { freezeLog } from './freeze-log.js';
@@ -1122,6 +1124,35 @@ export function registerHandlers() {
     const root = sessionManager.getWorktreePath(sessionId) ?? fallbackPath;
     if (!root) throw new Error('No project root available for this thread');
     return adapter.addSkill(root, def);
+  });
+
+  /** Where Share and Link work for a thread: its project root, and Claude
+   *  Code's folders — the thread's agent's when it needs links (a Claude
+   *  account's user folder is its own), else the default's, as Share still
+   *  helps other agents there. */
+  async function sharingTarget(sessionId: string, fallbackPath: string): Promise<{ root: string; dirs: SkillDirs; links: boolean }> {
+    const own = (await threadAgent(sessionId))?.skillDirs;
+    const links = !!own && (!readsSharedSkills(own, 'project') || !readsSharedSkills(own, 'user'));
+    const root = sessionManager.getWorktreePath(sessionId) ?? fallbackPath;
+    if (!root) throw new Error('No project root available for this thread');
+    return { root, dirs: links ? own : CLAUDE_SKILL_DIRS, links };
+  }
+
+  ipcMain.handle(IPC.SKILLS_SHARING, async (_event, sessionId: string, fallbackPath: string) => {
+    const { root, dirs, links } = await sharingTarget(sessionId, fallbackPath);
+    const sharing = await skillSharing(root, dirs);
+    // Links only where they help: in a Claude Code thread.
+    return links ? sharing : { ...sharing, toLink: [], broken: [] };
+  });
+
+  ipcMain.handle(IPC.SKILLS_SHARE, async (_event, sessionId: string, fallbackPath: string) => {
+    const { root, dirs } = await sharingTarget(sessionId, fallbackPath);
+    return shareSkills(root, dirs);
+  });
+
+  ipcMain.handle(IPC.SKILLS_LINK, async (_event, sessionId: string, fallbackPath: string) => {
+    const { root, dirs } = await sharingTarget(sessionId, fallbackPath);
+    return linkSkills(root, dirs);
   });
 
   ipcMain.handle(IPC.SKILLS_SUGGESTIONS_GET, (_event, repoPath: string) => {

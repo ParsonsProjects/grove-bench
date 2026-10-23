@@ -173,6 +173,12 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.SKILLS_LIST_FOR_AGENT, agentId, repoPath),
   addSkill: (sessionId: string, fallbackPath: string, def: unknown) =>
     ipcRenderer.invoke(IPC.SKILLS_ADD, sessionId, fallbackPath, def),
+  getSkillSharing: (sessionId: string, fallbackPath: string) =>
+    ipcRenderer.invoke(IPC.SKILLS_SHARING, sessionId, fallbackPath),
+  shareSkills: (sessionId: string, fallbackPath: string) =>
+    ipcRenderer.invoke(IPC.SKILLS_SHARE, sessionId, fallbackPath),
+  linkSkills: (sessionId: string, fallbackPath: string) =>
+    ipcRenderer.invoke(IPC.SKILLS_LINK, sessionId, fallbackPath),
   getSkillSuggestions: (repoPath: string) =>
     ipcRenderer.invoke(IPC.SKILLS_SUGGESTIONS_GET, repoPath),
   analyzeSkillSuggestions: (repoPath: string) =>

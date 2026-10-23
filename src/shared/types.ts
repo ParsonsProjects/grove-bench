@@ -808,16 +808,32 @@ export interface SkillInfo {
   /** Frontmatter `description` — empty when the manifest has none or the skill
    *  is only known from a session's init report. */
   description: string;
-  /** Where the skill was found: the worktree's `.claude/skills`, the user's
-   *  `~/.claude/skills`, or only reported by the running session (e.g. a
-   *  plugin-provided skill with no scannable location). */
+  /** Where the skill was found: one of the agent's folders in the worktree
+   *  (`.claude/skills`, `.agents/skills`), one in the home directory, or only
+   *  reported by the running session (e.g. a plugin-provided skill with no
+   *  scannable location). */
   source: 'project' | 'user' | 'session';
   /** Absolute path to SKILL.md for on-disk skills. */
   path?: string;
 }
 
-/** Provider-neutral definition for authoring a new skill. Each adapter
- *  serializes this into its native packaged-instructions format. */
+/** What Share and Link in the Skills drawer would change (skill-sharing.ts):
+ *  skills only Claude Code can see, shared skills it can't see yet (or sees
+ *  an old copy of), and its links to shared skills that were deleted. */
+export interface SkillSharing {
+  toShare: SkillInfo[];
+  toLink: SkillInfo[];
+  broken: SkillInfo[];
+}
+
+/** What Share or Link did, by skill name. */
+export interface SkillChanges {
+  done: string[];
+  skipped: { name: string; reason: string }[];
+}
+
+/** Provider-neutral definition for authoring a new skill, written to the
+ *  shared `.agents/skills` folder (skills.ts writeSkill). */
 export interface SkillDefinition {
   /** Kebab-case identifier, e.g. "release-notes". */
   name: string;
@@ -826,7 +842,7 @@ export interface SkillDefinition {
   /** Markdown instruction body. */
   instructions: string;
   /** 'project' writes into the session's worktree (ships with the branch);
-   *  'user' writes to the provider's global location (all repos). */
+   *  'user' writes under the home directory (all repos). */
   scope: 'project' | 'user';
 }
 
@@ -1389,16 +1405,24 @@ export interface GroveBenchAPI {
   /** Context-window cost of each MCP server's tools. Empty when the
    *  conversation has no live query or the agent can't report it. */
   getMcpContextCost(sessionId: string): Promise<McpServerContextCost[]>;
-  /** Skills visible to a session (project + user `.claude/skills` scan).
+  /** Skills visible to a session (its agent's project and user folders).
    *  Resolves the session's worktree when it is running; `fallbackPath`
    *  (typically the repo path) covers stopped sessions. */
   listSkills(sessionId: string, fallbackPath: string): Promise<SkillInfo[]>;
   /** The skills an agent can see in a project, without a thread: for running
    *  or scheduling one. Empty for an agent Grove can't list skills for. */
   listAgentSkills(agentId: string, repoPath: string): Promise<SkillInfo[]>;
-  /** Author a new skill for the session's agent provider. Project scope
-   *  writes into the session's worktree; user scope applies to all repos. */
+  /** Author a new skill in the shared folder, linked for Claude Code when
+   *  the session's agent is Claude Code. Project scope writes into the
+   *  session's worktree; user scope applies to all repos. */
   addSkill(sessionId: string, fallbackPath: string, def: SkillDefinition): Promise<SkillInfo>;
+  /** What Share and Link would change for the session's project. Links are
+   *  only offered in a Claude Code thread. */
+  getSkillSharing(sessionId: string, fallbackPath: string): Promise<SkillSharing>;
+  /** Move Claude Code's own skills to the shared folder, leaving links. */
+  shareSkills(sessionId: string, fallbackPath: string): Promise<SkillChanges>;
+  /** Bring Claude Code's links in line with the shared folder. */
+  linkSkills(sessionId: string, fallbackPath: string): Promise<SkillChanges>;
   /** Cached skill suggestions for a repo (last analysis result). */
   getSkillSuggestions(repoPath: string): Promise<SkillSuggestion[]>;
   /** Mine the repo's session history for patterns and refresh suggestions. */
@@ -2178,6 +2202,9 @@ export const IPC = {
   SKILLS_LIST: 'skills:list',
   SKILLS_LIST_FOR_AGENT: 'skills:listForAgent',
   SKILLS_ADD: 'skills:add',
+  SKILLS_SHARING: 'skills:sharing',
+  SKILLS_SHARE: 'skills:share',
+  SKILLS_LINK: 'skills:link',
   SKILLS_SUGGESTIONS_GET: 'skills:suggestionsGet',
   SKILLS_SUGGESTIONS_ANALYZE: 'skills:suggestionsAnalyze',
   SKILLS_SUGGESTION_DISMISS: 'skills:suggestionDismiss',

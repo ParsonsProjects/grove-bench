@@ -101,6 +101,14 @@ describe('AcpAdapter', () => {
     expect((await gemini.listSkills(cwd)).map((s) => s.name)).toEqual(['release', 'triage']);
   });
 
+  it('adds a skill to the shared folder, which it reads, with no link', async () => {
+    const gemini = new AcpAdapter({ ...def(), skillDirs: { project: ['.gemini/skills', '.agents/skills'], user: [] } });
+    const info = await gemini.addSkill(cwd, { name: 'notes', description: 'Draft notes', instructions: 'Do it', scope: 'project' });
+    expect(info.path).toBe(path.join(cwd, '.agents', 'skills', 'notes', 'SKILL.md'));
+    expect(fs.existsSync(path.join(cwd, '.claude'))).toBe(false);
+    expect((await gemini.listSkills(cwd)).map((s) => s.name)).toContain('notes');
+  });
+
   it('gives each turn its share of the session\'s running cost, and its output tokens', async () => {
     const adapter = new AcpAdapter(def());
     const handle = await adapter.start(config());

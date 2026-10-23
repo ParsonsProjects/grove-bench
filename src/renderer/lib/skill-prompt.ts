@@ -8,19 +8,19 @@ export interface SkillPromptOpts {
 
 /**
  * Build the first message of a thread started to have its agent author a
- * skill (startSkillThread). Provider-neutral on purpose: every agent knows
- * its own packaged-skill format better than Grove does (frontmatter
- * extensions, resource files), so beyond a Claude Code example the format is
- * left to the agent. A project skill's thread has a branch of its own
- * (`ownBranch`) unless the project has no git; a user skill's runs in the
- * project folder, which it should leave alone.
+ * skill (startSkillThread). The skill goes in the shared `.agents/skills`
+ * folder so every agent can use it; Claude Code then sees it once Link in
+ * the Skills drawer adds its link. A project skill's thread has a branch of
+ * its own (`ownBranch`) unless the project has no git; a user skill's runs in
+ * the project folder, which it should leave alone.
  */
 export function buildCreateSkillPrompt(opts: SkillPromptOpts, ownBranch = opts.scope === 'project'): string {
+  const file = `${opts.scope === 'user' ? '~/' : ''}.agents/skills/${opts.name}/SKILL.md`;
   const location = opts.scope === 'user'
-    ? "in your user-level skills location, so it applies across repositories. Don't change this repository's files"
+    ? `as \`${file}\` in your home folder, so it applies across repositories. Don't change this repository's files`
     : ownBranch
-      ? "inside this repository. This thread's branch is only for this skill, so change nothing else"
-      : 'inside this project folder. Change nothing else';
+      ? `as \`${file}\` in this repository. This thread's branch is only for this skill, so change nothing else`
+      : `as \`${file}\` in this project folder. Change nothing else`;
   const lines = [
     `Create a new agent skill named \`${opts.name}\` ${location}.`,
     '',
@@ -31,7 +31,7 @@ export function buildCreateSkillPrompt(opts: SkillPromptOpts, ownBranch = opts.s
   }
   lines.push(
     '',
-    "Use your platform's packaged-skill conventions (for Claude Code: `.claude/skills/<name>/SKILL.md` with YAML frontmatter `name` and `description`, then the markdown instruction body). Keep the body focused and actionable, then reply with the path of the file you created.",
+    "Use the Agent Skills format that coding agents share: YAML frontmatter with `name` and `description`, then the markdown instruction body, with any scripts or reference files in the skill's folder. Keep it to what every agent understands, as any of them may use it, and keep the body focused and actionable. Then reply with the path of the file you created.",
   );
   return lines.join('\n');
 }

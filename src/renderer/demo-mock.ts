@@ -170,6 +170,14 @@ const DEMO_SKILLS = [
   { name: 'worktree-doctor', description: 'Diagnose and repair broken git worktrees and stale locks', source: 'user', path: 'C:/Users/demo/.claude/skills/worktree-doctor/SKILL.md' },
 ];
 
+/** Two project skills only Claude Code can see, and a shared one it can't
+ *  see yet, so the drawer shows Share and Link. */
+let DEMO_SHARING = {
+  toShare: DEMO_SKILLS.filter((s) => s.name === 'code-review' || s.name === 'deploy-preview'),
+  toLink: [{ name: 'triage-issue', description: 'Pick the top agent-ready issue and move it to In Progress', source: 'project', path: 'C:/dev/grove-bench/.agents/skills/triage-issue/SKILL.md' }],
+  broken: [] as typeof DEMO_SKILLS,
+};
+
 let DEMO_SUGGESTIONS = [
   {
     id: 'a1b2c3',
@@ -362,10 +370,23 @@ const api: Record<string, unknown> = {
       name: def.name,
       description: def.description,
       source: def.scope,
-      path: `${root}/.claude/skills/${def.name}/SKILL.md`,
+      path: `${root}/.agents/skills/${def.name}/SKILL.md`,
     };
     DEMO_SKILLS.push(skill);
     return skill;
+  },
+  getSkillSharing: async () => DEMO_SHARING,
+  shareSkills: async () => {
+    const done = DEMO_SHARING.toShare.map((s) => s.name);
+    for (const s of DEMO_SKILLS) if (done.includes(s.name)) s.path = s.path.replace('/.claude/', '/.agents/');
+    DEMO_SHARING = { ...DEMO_SHARING, toShare: [] };
+    return { done, skipped: [] };
+  },
+  linkSkills: async () => {
+    DEMO_SKILLS.push(...DEMO_SHARING.toLink);
+    const done = DEMO_SHARING.toLink.map((s) => s.name);
+    DEMO_SHARING = { ...DEMO_SHARING, toLink: [], broken: [] };
+    return { done, skipped: [] };
   },
   getSkillSuggestions: async () => DEMO_SUGGESTIONS,
   analyzeSkillSuggestions: async () => DEMO_SUGGESTIONS,

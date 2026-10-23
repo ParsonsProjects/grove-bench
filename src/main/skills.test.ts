@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { parseSkillFrontmatter, scanSkillsDir, computeSkillsFilter, validateSkillName, skillManifestContent, writeSkill, listSkills, CLAUDE_SKILL_DIRS } from './skills.js';
+import { parseSkillFrontmatter, scanSkillsDir, computeSkillsFilter, validateSkillName, skillManifestContent, writeSkill, listSkills, CLAUDE_SKILL_DIRS, SHARED_SKILL_DIRS, readsSharedSkills, skillLinkContent, skillFrontmatter, isSkillLink } from './skills.js';
 
 describe('parseSkillFrontmatter', () => {
   it('reads name and description from a frontmatter block', () => {
@@ -134,29 +134,41 @@ describe('writeSkill', () => {
 
   const def = { name: 'release-notes', description: 'Draft notes', instructions: 'Do the thing', scope: 'project' as const };
 
-  it('writes a project skill into the worktree and returns its info', async () => {
+  const shared = (root: string, name = 'release-notes') => path.join(root, '.agents', 'skills', name, 'SKILL.md');
+  const link = (root: string, name = 'release-notes') => path.join(root, '.claude', 'skills', name, 'SKILL.md');
+
+  it('writes a project skill to the shared folder, linked for Claude Code, and returns its info', async () => {
     const info = writeSkill(worktree, def);
-    const manifestPath = path.join(worktree, '.claude', 'skills', 'release-notes', 'SKILL.md');
-    expect(info).toEqual({ name: 'release-notes', description: 'Draft notes', source: 'project', path: manifestPath });
-    expect((await scanSkillsDir(path.join(worktree, '.claude', 'skills'), 'project'))[0]).toMatchObject({
-      name: 'release-notes',
-      description: 'Draft notes',
-    });
+    expect(info).toEqual({ name: 'release-notes', description: 'Draft notes', source: 'project', path: shared(worktree) });
+    expect(fs.readFileSync(shared(worktree), 'utf-8')).toContain('Do the thing');
+    const linkText = fs.readFileSync(link(worktree), 'utf-8');
+    expect(isSkillLink(linkText)).toBe(true);
+    expect(linkText).toContain('Read that file now');
+    expect(linkText).toContain('`.agents/skills/release-notes/SKILL.md`');
+    expect(linkText).not.toContain('Do the thing');
+    // Claude Code lists the link under the skill's own name and description.
+    expect(await listSkills(worktree)).toEqual([{ name: 'release-notes', description: 'Draft notes', source: 'project', path: link(worktree) }]);
   });
 
-  it('writes a user skill under the home directory', () => {
+  it('writes a user skill under the home directory, its link pointing at the full path', () => {
     const info = writeSkill(worktree, { ...def, scope: 'user' });
-    expect(info.path).toBe(path.join(fakeHome, '.claude', 'skills', 'release-notes', 'SKILL.md'));
-    expect(info.source).toBe('user');
+    expect(info).toMatchObject({ source: 'user', path: shared(fakeHome) });
+    expect(fs.readFileSync(link(fakeHome), 'utf-8')).toContain(`\`${shared(fakeHome)}\``);
   });
 
-  it("writes a user skill into a Claude account's own folder when given one", async () => {
+  it("links a user skill into a Claude account's own folder when given one", async () => {
     const accountSkills = path.join(fakeHome, '.claude-work', 'skills');
     const dirs = { ...CLAUDE_SKILL_DIRS, user: [accountSkills] };
     const info = writeSkill(worktree, { ...def, scope: 'user' }, dirs);
-    expect(info.path).toBe(path.join(accountSkills, 'release-notes', 'SKILL.md'));
-    expect((await listSkills(worktree, dirs)).map((s) => s.name)).toEqual(['release-notes']);
-    expect((await listSkills(worktree)).map((s) => s.name)).toEqual([]);
+    expect(info.path).toBe(shared(fakeHome));
+    expect((await listSkills(worktree, dirs)).map((s) => s.path)).toEqual([path.join(accountSkills, 'release-notes', 'SKILL.md')]);
+    expect(await listSkills(worktree)).toEqual([]);
+  });
+
+  it('writes no link for an agent that reads the shared folder', () => {
+    writeSkill(worktree, def, SHARED_SKILL_DIRS);
+    expect(fs.existsSync(shared(worktree))).toBe(true);
+    expect(fs.existsSync(path.join(worktree, '.claude'))).toBe(false);
   });
 
   it('reads every folder an agent lists, earlier folders and the project winning', async () => {
@@ -176,19 +188,51 @@ describe('writeSkill', () => {
       ['review', 'own project', 'project'],
       ['triage', 'own user', 'user'],
     ]);
-    // A new skill goes in the first folder.
-    expect(writeSkill(worktree, { ...def, name: 'notes' }, dirs).path).toBe(path.join(worktree, '.gemini/skills', 'notes', 'SKILL.md'));
+    // A new skill goes in the shared folder, not the agent's own first one.
+    expect(writeSkill(worktree, { ...def, name: 'notes' }, dirs).path).toBe(shared(worktree, 'notes'));
   });
 
-  it('refuses to overwrite an existing skill at the same scope', () => {
+  it('refuses to overwrite an existing skill or link at the same scope', () => {
     writeSkill(worktree, def);
     expect(() => writeSkill(worktree, def)).toThrow(/already exists/);
+    // A Claude Code skill of the same name, not yet shared.
+    fs.mkdirSync(path.dirname(link(worktree, 'own')), { recursive: true });
+    fs.writeFileSync(link(worktree, 'own'), '---\nname: own\n---\n');
+    expect(() => writeSkill(worktree, { ...def, name: 'own' })).toThrow(/already exists/);
+    expect(fs.existsSync(shared(worktree, 'own'))).toBe(false);
   });
 
   it('rejects invalid names and blank description or instructions', () => {
     expect(() => writeSkill(worktree, { ...def, name: 'Bad Name' })).toThrow();
     expect(() => writeSkill(worktree, { ...def, description: '  ' })).toThrow(/description/);
     expect(() => writeSkill(worktree, { ...def, instructions: '' })).toThrow(/instructions/);
+  });
+});
+
+describe('links', () => {
+  it('knows which agents read the shared folder, per level', () => {
+    expect(readsSharedSkills(CLAUDE_SKILL_DIRS, 'project')).toBe(false);
+    expect(readsSharedSkills(SHARED_SKILL_DIRS, 'user')).toBe(true);
+    expect(readsSharedSkills({ project: ['.github/skills', '.agents/skills'], user: ['.copilot/skills'] }, 'project')).toBe(true);
+    expect(readsSharedSkills({ project: ['.github/skills', '.agents/skills'], user: ['.copilot/skills'] }, 'user')).toBe(false);
+  });
+
+  it("keeps the shared skill's whole frontmatter, so its settings carry over", () => {
+    const sharedText = '---\r\nname: deploy\r\ndescription: Ship it\r\ndisable-model-invocation: true\r\n---\r\nSteps\r\n';
+    const text = skillLinkContent(sharedText, 'deploy', '.agents/skills/deploy/SKILL.md');
+    expect(skillFrontmatter(text)).toBe('name: deploy\ndescription: Ship it\ndisable-model-invocation: true');
+    expect(parseSkillFrontmatter(text)).toEqual({ name: 'deploy', description: 'Ship it' });
+    expect(text).toContain('Paths in it are relative to `.agents/skills/deploy`.');
+    expect(text).not.toContain('Steps');
+  });
+
+  it('names a shared skill without frontmatter after its folder', () => {
+    expect(skillFrontmatter(skillLinkContent('Just steps', 'triage', '.agents/skills/triage/SKILL.md'))).toBe('name: triage');
+  });
+
+  it('tells a link from a skill', () => {
+    expect(isSkillLink(skillLinkContent('x', 'a', 'b'))).toBe(true);
+    expect(isSkillLink('---\nname: a\n---\nDo things')).toBe(false);
   });
 });
 
