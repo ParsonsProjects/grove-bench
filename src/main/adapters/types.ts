@@ -28,6 +28,11 @@ export interface AgentCapabilities {
   /** Can return a readable summary of the model's thinking, switched by the
    *  showThinkingSummaries setting (see AdapterConfig.thinkingSummaries). */
   thinkingSummaries?: boolean;
+  /** Guesses the user's next prompt itself after each turn, as a
+   *  prompt_suggestion event (see AdapterConfig.promptSuggestions). Grove
+   *  asks other agents for one with a background request instead
+   *  (session-prompt-suggestions.ts). */
+  promptSuggestions?: boolean;
   /** Supports plugins/extensions */
   plugins: boolean;
   /** Supports packaged skill instructions (discovery via listSkills, authoring
@@ -197,6 +202,9 @@ export interface AdapterConfig {
    *  Unset means true. Only adapters with the thinkingSummaries capability
    *  read it. */
   thinkingSummaries?: boolean;
+  /** Guess the user's next prompt after each turn (false: don't). Unset
+   *  means false. Only adapters with the promptSuggestions capability read it. */
+  promptSuggestions?: boolean;
   /** Memory operations for this session's repo. Adapters decide how to surface
    *  these to the agent (e.g. Claude Code registers them as an SDK MCP server). */
   memoryOperations?: MemoryOperations | null;

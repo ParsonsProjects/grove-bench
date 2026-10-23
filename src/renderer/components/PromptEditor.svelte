@@ -11,6 +11,7 @@
   import { canCompact } from '../lib/agent-commands.js';
   import MessageQueue from './MessageQueue.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
+  import { Kbd } from '$lib/components/ui/kbd/index.js';
   import * as Command from '$lib/components/ui/command/index.js';
   import ArrowUpIcon from '@lucide/svelte/icons/arrow-up';
   import ListPlusIcon from '@lucide/svelte/icons/list-plus';
@@ -57,7 +58,7 @@
     const observer = new ResizeObserver(() => {
       const wasShown = shown;
       shown = el.clientWidth > 0;
-      if (shown && !wasShown && value) autoResize();
+      if (shown && !wasShown && (value || showSuggestion)) autoResize();
     });
     observer.observe(el);
     return () => observer.disconnect();
@@ -136,7 +137,24 @@
   // or mid-turn) is queued in the store and sent when the turn finishes; the
   // queue is shown above the input so items can be removed before they go.
   let willQueue = $derived(!messageStore.canSendNow(sessionId));
-  let promptSuggestions = $derived(messageStore.getPromptSuggestions(sessionId));
+  // The agent's guess at the next prompt, shown as the empty box's
+  // placeholder until something is typed. Tab takes it.
+  let suggestion = $derived(
+    settingsStore.current.promptSuggestions && !isRunning ? messageStore.getPromptSuggestion(sessionId) : null,
+  );
+  let showSuggestion = $derived(!!suggestion && !value);
+
+  // Size the empty box to the suggestion, which may wrap, and back to one
+  // line when it goes. Chromium counts a placeholder in scrollHeight. Keyed
+  // on the text, so a newer suggestion of another length is sized too.
+  $effect(() => {
+    const shown = showSuggestion ? suggestion : null;
+    untrack(() => {
+      if (!textarea || value || userResized) return;
+      if (shown) autoResize();
+      else textarea.style.height = '';
+    });
+  });
 
   function handleSubmit() {
     const text = value.trim();
@@ -207,7 +225,7 @@
 
     value = '';
     attachedFiles = [];
-    messageStore.clearPromptSuggestions(sessionId);
+    messageStore.clearPromptSuggestion(sessionId);
     closePicker();
     closeCommandPicker();
     userResized = false;
@@ -218,9 +236,10 @@
     messageStore.setActiveTab(sessionId, 'activity');
   }
 
-  function useSuggestion(suggestion: string) {
-    value = suggestion;
-    messageStore.clearPromptSuggestions(sessionId);
+  /** Put the suggested prompt in the box, to send as it is or edit first. */
+  function useSuggestion(text: string) {
+    value = text;
+    messageStore.clearPromptSuggestion(sessionId);
     textarea?.focus();
     handleInput();
   }
@@ -300,6 +319,13 @@
         if (textarea) textarea.style.height = '';
         return;
       }
+    }
+
+    // Tab takes the suggested prompt. Without one, Tab moves focus as usual.
+    if (e.key === 'Tab' && showSuggestion && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      e.preventDefault();
+      useSuggestion(suggestion!);
+      return;
     }
 
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -571,23 +597,6 @@
     <AttachmentChips files={attachedFiles} onremove={removeAttachedFile} class="px-4 pt-2" />
   {/if}
 
-  <!-- Prompt suggestions -->
-  {#if promptSuggestions.length > 0 && !isRunning}
-    <div class="flex flex-wrap gap-1.5 px-4 pt-2">
-      {#each promptSuggestions as suggestion}
-        <Button
-          variant="subtle"
-          size="xs"
-          onclick={() => useSuggestion(suggestion)}
-          class="max-w-80"
-          title={suggestion}
-        >
-          <span class="truncate">{suggestion}</span>
-        </Button>
-      {/each}
-    </div>
-  {/if}
-
   <!-- Queued messages (waiting for the agent to be free) -->
   <MessageQueue {sessionId} />
 
@@ -612,21 +621,28 @@
       <PaperclipIcon />
     </Button>
 
-    <!-- py-[7px]: 1px border + 7px + one 20px line + 7px + 1px = 36px, the
-         height of the buttons beside it -->
-    <textarea
-      bind:this={textarea}
-      bind:value
-      spellcheck={settingsStore.current.spellcheck}
-      oninput={handleInput}
-      onkeydown={handleKeydown}
-      onpaste={handlePaste}
-      placeholder={willQueue ? 'Message (Enter to queue, sent when the agent is free)' : 'Message (Enter to send, @ for files, / for commands, ! for shell)'}
-      rows="1"
-      class="flex-1 bg-card border border-input px-3 py-[7px] text-sm text-foreground
-        placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-1 focus:ring-ring
-        disabled:opacity-50 disabled:cursor-not-allowed font-mono"
-    ></textarea>
+    <div class="relative flex-1 min-w-0 flex">
+      <!-- py-[7px]: 1px border + 7px + one 20px line + 7px + 1px = 36px, the
+           height of the buttons beside it -->
+      <textarea
+        bind:this={textarea}
+        bind:value
+        spellcheck={settingsStore.current.spellcheck}
+        oninput={handleInput}
+        onkeydown={handleKeydown}
+        onpaste={handlePaste}
+        placeholder={suggestion ?? (willQueue ? 'Message (Enter to queue, sent when the agent is free)' : 'Message (Enter to send, @ for files, / for commands, ! for shell)')}
+        aria-keyshortcuts={showSuggestion ? 'Tab' : undefined}
+        rows="1"
+        class="flex-1 min-w-0 bg-card border border-input px-3 py-[7px] text-sm text-foreground
+          placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-1 focus:ring-ring
+          disabled:opacity-50 disabled:cursor-not-allowed font-mono {showSuggestion ? 'pe-12' : ''}"
+      ></textarea>
+      {#if showSuggestion}
+        <!-- 1px border + 7px + (20px line - 16px key) / 2 = 10px: centred on the line -->
+        <Kbd variant="key" class="absolute end-2 top-2.5 pointer-events-none" aria-hidden="true">Tab</Kbd>
+      {/if}
+    </div>
 
     <Button
       variant="default"

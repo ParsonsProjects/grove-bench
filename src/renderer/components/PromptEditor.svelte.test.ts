@@ -5,6 +5,7 @@ import { tick } from 'svelte';
 
 import PromptEditor from './PromptEditor.svelte';
 import { messageStore } from '../stores/messages.svelte.js';
+import { settingsStore } from '../stores/settings.svelte.js';
 import { mockGroveBench } from '../__mocks__/setup.js';
 import type { AgentEvent } from '../../shared/types.js';
 
@@ -196,5 +197,86 @@ describe('PromptEditor: @ file picker', () => {
 
     expect(textarea.value).toContain('@src/app.ts');
     expect(screen.queryByRole('option')).not.toBeInTheDocument();
+  });
+});
+
+describe('PromptEditor: suggested next prompt', () => {
+  const DEFAULT_PLACEHOLDER = 'Message (Enter to send, @ for files, / for commands, ! for shell)';
+
+  beforeEach(() => {
+    messageStore.destroyAllSessions();
+    messageStore.messagesBySession = { [SID]: [] };
+    settingsStore.current.promptSuggestions = true;
+  });
+  afterEach(() => {
+    cleanup();
+    settingsStore.current.promptSuggestions = true;
+  });
+
+  const suggest = (suggestion: string) => messageStore.ingestEvent(SID, { type: 'prompt_suggestion', suggestion } as AgentEvent);
+  const tabKey = () => new KeyboardEvent('keydown', { key: 'Tab', cancelable: true, bubbles: true });
+
+  it('shows the suggestion in the empty box with a Tab hint', async () => {
+    const { container } = render(PromptEditor, { sessionId: SID });
+    const el = container.querySelector('textarea')!;
+    expect(el.placeholder).toBe(DEFAULT_PLACEHOLDER);
+
+    suggest('Run the tests');
+    await tick();
+
+    expect(el.placeholder).toBe('Run the tests');
+    expect(el).toHaveAttribute('aria-keyshortcuts', 'Tab');
+    expect(screen.getByText('Tab')).toBeInTheDocument();
+  });
+
+  it('hides the hint once something is typed, and Tab is left alone', async () => {
+    suggest('Run the tests');
+    const { container } = render(PromptEditor, { sessionId: SID });
+    const el = container.querySelector('textarea')!;
+    await fireEvent.input(el, { target: { value: 'fix' } });
+
+    expect(screen.queryByText('Tab')).not.toBeInTheDocument();
+    const tab = tabKey();
+    el.dispatchEvent(tab);
+    expect(tab.defaultPrevented).toBe(false);
+    expect(el.value).toBe('fix');
+  });
+
+  it('puts the suggestion in the box on Tab, to send or edit', async () => {
+    suggest('Run the tests');
+    const { container } = render(PromptEditor, { sessionId: SID });
+    const el = container.querySelector('textarea')!;
+
+    const tab = tabKey();
+    el.dispatchEvent(tab);
+    await tick();
+
+    expect(tab.defaultPrevented).toBe(true);
+    expect(el.value).toBe('Run the tests');
+    expect(messageStore.getPromptSuggestion(SID)).toBeNull();
+    expect(screen.queryByText('Tab')).not.toBeInTheDocument();
+  });
+
+  it('leaves Tab to move focus when there is no suggestion', async () => {
+    const { container } = render(PromptEditor, { sessionId: SID });
+    const tab = tabKey();
+    container.querySelector('textarea')!.dispatchEvent(tab);
+    expect(tab.defaultPrevented).toBe(false);
+  });
+
+  it('shows none while the agent is working or with the setting off', async () => {
+    suggest('Run the tests');
+    const { container } = render(PromptEditor, { sessionId: SID });
+    const el = container.querySelector('textarea')!;
+
+    settingsStore.current.promptSuggestions = false;
+    await tick();
+    expect(el.placeholder).toBe(DEFAULT_PLACEHOLDER);
+
+    settingsStore.current.promptSuggestions = true;
+    messageStore.setIsRunning(SID, true);
+    await tick();
+    expect(el.placeholder).not.toBe('Run the tests');
+    expect(screen.queryByText('Tab')).not.toBeInTheDocument();
   });
 });

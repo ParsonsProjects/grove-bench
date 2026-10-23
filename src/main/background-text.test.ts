@@ -42,6 +42,29 @@ describe('generateBackgroundText', () => {
     expect(signal?.aborted).toBe(true);
   });
 
+  it('aborts the request when the caller\'s signal aborts', async () => {
+    let signal: AbortSignal | undefined;
+    const generateText = vi.fn((_s: string, _u: string, opts: { abortSignal: AbortSignal }) => {
+      signal = opts.abortSignal;
+      return new Promise<string>((_resolve, reject) => {
+        opts.abortSignal.addEventListener('abort', () => reject(new Error('aborted')));
+      });
+    });
+    const caller = new AbortController();
+    const pending = generateBackgroundText(makeAdapter(generateText), 's', 'u', '/wt', 60_000, caller.signal);
+    caller.abort();
+    await expect(pending).rejects.toThrow('aborted');
+    expect(signal?.aborted).toBe(true);
+  });
+
+  it('does not ask at all when the caller\'s signal already aborted', async () => {
+    const generateText = vi.fn(async () => 'reply');
+    const caller = new AbortController();
+    caller.abort();
+    await expect(generateBackgroundText(makeAdapter(generateText), 's', 'u', '/wt', 60_000, caller.signal)).rejects.toThrow();
+    expect(generateText).not.toHaveBeenCalled();
+  });
+
   it('throws without asking an agent that cannot generate text', async () => {
     await expect(generateBackgroundText(makeAdapter(), 's', 'u', '/wt')).rejects.toThrow('does not support text generation');
   });

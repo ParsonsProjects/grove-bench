@@ -307,7 +307,8 @@ export type AgentEvent =
   | { type: 'auth_status'; isAuthenticating: boolean; output: string[]; authError?: string }
   // Tool use summary (after compaction)
   | { type: 'tool_use_summary'; summary: string; toolUseIds: string[] }
-  // Prompt suggestions
+  /** A guess at the user's next prompt, shown in the message box after a
+   *  turn (at most one per turn; live only, see TRANSIENT_EVENT_TYPES). */
   | { type: 'prompt_suggestion'; suggestion: string }
   // Hook execution
   | { type: 'hook_event'; subtype: 'started' | 'progress' | 'response'; hookId: string; hookName: string; hookEvent: string; output?: string; outcome?: string; exitCode?: number }
@@ -1780,6 +1781,14 @@ export interface GroveBenchSettings {
    *  conversation, plus one per Refresh). Off by default, as each goal is a
    *  model call the user didn't ask for. */
   showConversationGoal: boolean;
+  /** After each turn, show a guess at the user's next prompt in the message
+   *  box (Tab takes it), from agents that make their own (Claude Code, from
+   *  the thread's prompt cache). Default true. */
+  promptSuggestions: boolean;
+  /** Also ask agents that don't make their own, with a background model
+   *  call per turn (session-prompt-suggestions.ts). Needs promptSuggestions.
+   *  Off by default, as each is a model call the user didn't ask for. */
+  backgroundPromptSuggestions: boolean;
 
   // Agent Defaults
   /** Model new conversations start on, keyed by adapter id. Missing or empty

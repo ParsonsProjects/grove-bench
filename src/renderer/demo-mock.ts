@@ -57,6 +57,8 @@ const SETTINGS = {
   autoSkillSuggestions: false,
   // On here (off by default) so the demo shows the goal bar.
   showConversationGoal: true,
+  promptSuggestions: true,
+  backgroundPromptSuggestions: false,
   defaultModels: {},
   adapterDefaults: {},
   showThinkingSummaries: true,
