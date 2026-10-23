@@ -326,9 +326,8 @@
     </form>
 
     {#if mode === 'agent' && agent?.url}
-      <Button size="xs" variant="subtle" onclick={openAgentPageInYours} title="Open this address in your page, where you can click around">
+      <Button size="icon-xs" variant="subtle" onclick={openAgentPageInYours} title="Open in yours: load this address in your page, where you can click around" aria-label="Open in yours">
         <UserIcon />
-        Open in yours
       </Button>
     {/if}
     <Button size="icon-xs" variant="quiet" onclick={() => page?.url && window.groveBench.openExternal(page.url)} disabled={!canOpenExternally} title="Open in system browser" aria-label="Open in system browser">

@@ -26,12 +26,14 @@ describe('Button', () => {
     expect(button).not.toHaveClass('text-sm');
   });
 
-  it('has a square icon size as tall as the default size', () => {
+  it('has square icon sizes as tall as the default and sm sizes', () => {
     render(Button, { size: 'icon', 'aria-label': 'Send', children: text('↑') });
-    const button = screen.getByRole('button', { name: 'Send' });
-    expect(button).toHaveClass('size-9');
+    render(Button, { size: 'icon-sm', 'aria-label': 'Answer', children: text('↑') });
+    const icon = screen.getByRole('button', { name: 'Send' });
+    expect(icon).toHaveClass('size-9');
     // None of the default size's padding, which would squeeze the icon
-    expect(button).not.toHaveClass('px-4');
+    expect(icon).not.toHaveClass('px-4');
+    expect(screen.getByRole('button', { name: 'Answer' })).toHaveClass('size-8');
   });
 
   it('keeps hover events when disabled, so its tooltip can say why', () => {

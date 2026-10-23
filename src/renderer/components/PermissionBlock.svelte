@@ -1,6 +1,7 @@
 <script lang="ts">
   import { messageStore } from '../stores/messages.svelte.js';
   import { Button } from '$lib/components/ui/button/index.js';
+  import ArrowUpIcon from '@lucide/svelte/icons/arrow-up';
   import { Notice } from '$lib/components/ui/notice/index.js';
   import DiffView from './DiffView.svelte';
   import { fullEditDiff, quickEditDiff, OLD_THEN_NEW } from '../lib/edit-diff.js';
@@ -365,11 +366,13 @@
         />
         <Button
           variant="subtle"
-          size="sm"
+          size="icon-sm"
           onclick={sendReply}
           disabled={!replyText.trim()}
+          title="Send (Enter)"
+          aria-label="Send"
         >
-          Send
+          <ArrowUpIcon />
         </Button>
       </div>
     {:else}

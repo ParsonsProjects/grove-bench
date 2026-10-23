@@ -34,6 +34,9 @@
 				// As tall as default: icon-only buttons beside a 36px field (the
 				// composer's send and stop).
 				icon: "size-9",
+				// As tall as sm: icon-only buttons in a row of sm buttons or
+				// beside a 32px field (the plan and question replies).
+				"icon-sm": "size-8",
 				"icon-xs": "size-6 [&_svg:not([class*='size-'])]:size-3.5",
 				"icon-2xs": "size-5 [&_svg:not([class*='size-'])]:size-3",
 				// Sits in a line of text: no box, the text's own size.

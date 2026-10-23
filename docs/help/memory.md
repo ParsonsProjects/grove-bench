@@ -32,7 +32,7 @@ Thread notes are archived when they haven't been updated for 30 days, and at mos
 
 ## Compaction
 
-Memory grows as the agent saves notes across threads, and over time it collects duplicates, stale details, and statements that contradict newer discoveries. The **Compact** button cleans up the project selected in the panel. It only runs when you press it, and only on that project.
+Memory grows as the agent saves notes across threads, and over time it collects duplicates, stale details, and statements that contradict newer discoveries. The **Compact** button (two arrows pointing in, at the bottom of the panel) cleans up the project selected in the panel. It only runs when you press it, and only on that project.
 
 A run works in steps, each one model call:
 
@@ -41,11 +41,11 @@ A run works in steps, each one model call:
 
 If more groups are left, the summary says so: press **Compact** again to continue. Each step has its own timeout (**Compaction timeout** in Settings). If a step times out or fails, or you press **Cancel**, the run stops there; steps already finished stay applied and Undo still reverts them.
 
-Before a run changes anything, the previous contents are saved as a timestamped snapshot inside the memory folder (the 5 most recent snapshots are kept). A step whose result would destroy most of its files, or write a file over 16 KB, is rejected and the rest of the run carries on. After a run, a summary lists every file that was rewritten or removed with the reason, and **Undo** restores the snapshot, reverting the whole run in one click. **Backups** lists all snapshots: use **View** to inspect a snapshot's files before restoring it. Restoring takes a snapshot of the current state first, so the restore itself can be undone.
+Before a run changes anything, the previous contents are saved as a timestamped snapshot inside the memory folder (the 5 most recent snapshots are kept). A step whose result would destroy most of its files, or write a file over 16 KB, is rejected and the rest of the run carries on. After a run, a summary lists every file that was rewritten or removed with the reason, and **Undo** restores the snapshot, reverting the whole run in one click. **Backups** (the clock with an arrow, next to Compact) lists all snapshots: use **View** to inspect a snapshot's files before restoring it. Restoring takes a snapshot of the current state first, so the restore itself can be undone.
 
 The Memory panel shows a budget meter (**Agent prompt budget**): how much of the 16 KB memory budget the conventions and the index take in the agent's system prompt, and when the last compaction changed something. If the index outgrows the budget, the meter says how many files were left out of it. The agent can still find those with `memory_list`, but won't know to look, so compact or clean up when you see it.
 
-**Clean up notes** lists thread notes older than a chosen cutoff (any number of days) so you can review exactly what will be removed before deleting it. This deletes memory files only — your actual threads in the sidebar are never touched. Notes without a readable date are surfaced at the top as "unknown date" rather than deleted silently. Unlike compaction, thread-note deletion is permanent — thread notes are not included in backups. (To remove old *threads* themselves, use **Clean up old threads** in the sidebar.)
+**Clean up notes** (the broom, next to Backups) lists thread notes older than a chosen cutoff (any number of days) so you can review exactly what will be removed before deleting it. This deletes memory files only — your actual threads in the sidebar are never touched. Notes without a readable date are surfaced at the top as "unknown date" rather than deleted silently. Unlike compaction, thread-note deletion is permanent — thread notes are not included in backups. (To remove old *threads* themselves, use **Clean up old threads** in the sidebar.)
 
 **Auto-save project memory** (on by default) and **Compaction timeout** are in **Settings → Background work (Tending)**.
 

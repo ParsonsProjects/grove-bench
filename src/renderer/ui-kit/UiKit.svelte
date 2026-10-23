@@ -182,6 +182,7 @@
         <Button size="icon-2xs" variant="quiet" aria-label="Close"><XIcon /></Button>
         <Button size="icon-xs" variant="quiet" aria-label="Refresh"><RefreshIcon /></Button>
         <Button size="icon-xs" variant="subtle" aria-label="Refresh"><RefreshIcon /></Button>
+        <Button size="icon-sm" variant="subtle" aria-label="Send"><ArrowUpIcon /></Button>
         <Button size="icon" aria-label="Send"><ArrowUpIcon /></Button>
         
         <span class="text-xs">An inline <Button size="inline" variant="link">action</Button> in a sentence.</span>

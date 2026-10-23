@@ -1,6 +1,7 @@
 <script lang="ts">
   import { messageStore, type QuestionItem } from '../stores/messages.svelte.js';
   import { Button } from '$lib/components/ui/button/index.js';
+  import ArrowUpIcon from '@lucide/svelte/icons/arrow-up';
   import { settingsStore } from '../stores/settings.svelte.js';
   import AgentSprite from './AgentSprite.svelte';
   import { sessionRepoColor } from '../lib/session-repo-color.js';
@@ -164,12 +165,13 @@
       />
       <Button
         variant="outline-success"
-        size="sm"
+        size="icon-sm"
         onclick={submit}
         disabled={!canSubmit}
-        class="shrink-0"
+        title="Answer (Enter)"
+        aria-label="Answer"
       >
-        Answer
+        <ArrowUpIcon />
       </Button>
     </div>
   {/if}
