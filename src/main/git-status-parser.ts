@@ -11,53 +11,47 @@ function mapStatus(c: string): GitFileStatus {
   }
 }
 
+const isRenameOrCopy = (c: string) => c === 'R' || c === 'C';
+
+/** One record of `git status --porcelain=v1 -z`: its status code (index
+ *  column, then worktree column), its path, and a rename or copy's old path. */
+export interface PorcelainRecord { xy: string; path: string; origPath?: string }
+
 /**
- * Parse the output of `git status --porcelain=v1 -z` into GitStatusResult.
- * The -z flag produces NUL-delimited records where renames/copies have
- * two NUL-separated fields: "XY newpath\0oldpath".
+ * The records of `git status --porcelain=v1 -z`, "XY path\0". A rename or
+ * copy, in either column, has the old path as a field of its own:
+ * "XY newpath\0oldpath\0". A rename in the worktree column (" R") is a file
+ * added with `git add -N`.
  */
-export function parseGitStatusPorcelain(raw: string): GitStatusResult {
-  if (!raw) return { entries: [] };
-
-  const entries: GitStatusEntry[] = [];
-  const parts = raw.split('\0').filter(Boolean);
-
-  let i = 0;
-  while (i < parts.length) {
+export function porcelainRecords(raw: string): PorcelainRecord[] {
+  const parts = raw.split('\0');
+  const records: PorcelainRecord[] = [];
+  for (let i = 0; i < parts.length; i++) {
     const record = parts[i];
-    if (record.length < 3) { i++; continue; }
+    if (record.length < 3) continue;
+    const xy = record.slice(0, 2);
+    records.push({ xy, path: record.slice(3), ...(isRenameOrCopy(xy[0]) || isRenameOrCopy(xy[1]) ? { origPath: parts[++i] } : {}) });
+  }
+  return records;
+}
 
-    const x = record[0]; // index (staged) status
-    const y = record[1]; // worktree (unstaged) status
-    const filePath = record.slice(3);
-
-    if (x === '?' && y === '?') {
+/** Parse the output of `git status --porcelain=v1 -z` into GitStatusResult:
+ *  an entry for each column with a change. */
+export function parseGitStatusPorcelain(raw: string): GitStatusResult {
+  const entries: GitStatusEntry[] = [];
+  for (const { xy, path: filePath, origPath } of porcelainRecords(raw)) {
+    const [x, y] = xy; // index (staged), then worktree (unstaged)
+    if (xy === '??') {
       entries.push({ filePath, status: 'untracked', staged: false });
-      i++;
       continue;
     }
-
-    // Renames and copies have the old path as the next NUL-separated field
-    const isRenameOrCopy = x === 'R' || x === 'C';
-    let origPath: string | undefined;
-    if (isRenameOrCopy) {
-      i++;
-      origPath = parts[i];
-    }
-
-    // Staged change (index column)
     if (x !== ' ' && x !== '?') {
-      entries.push({ filePath, status: mapStatus(x), staged: true, ...(origPath ? { origPath } : {}) });
+      entries.push({ filePath, status: mapStatus(x), staged: true, ...(origPath && isRenameOrCopy(x) ? { origPath } : {}) });
     }
-
-    // Unstaged change (worktree column)
     if (y !== ' ' && y !== '?') {
-      entries.push({ filePath, status: mapStatus(y), staged: false });
+      entries.push({ filePath, status: mapStatus(y), staged: false, ...(origPath && isRenameOrCopy(y) ? { origPath } : {}) });
     }
-
-    i++;
   }
-
   return { entries };
 }
 
@@ -69,26 +63,26 @@ export interface DiffStat {
 }
 
 /**
- * Parse the output of `git diff --numstat`. Each line is "additions\tdeletions\tpath";
- * binary changes use "-" for both counts. Paths may themselves contain tabs.
+ * Parse the output of `git diff --numstat -z`. Each record is
+ * "additions\tdeletions\tpath\0"; a rename or copy leaves the path empty and
+ * follows it with "oldpath\0newpath\0", and is listed under its new path.
+ * Binary changes use "-" for both counts. Without -z, git quotes names
+ * outside ASCII and writes a rename as "a => b".
  */
 export function parseNumstat(raw: string): DiffStat[] {
-  if (!raw) return [];
+  const parts = raw.split('\0');
   const out: DiffStat[] = [];
-  for (const line of raw.split('\n')) {
-    if (!line.trim()) continue;
-    const parts = line.split('\t');
-    if (parts.length < 3) continue;
-    const addStr = parts[0];
-    const delStr = parts[1];
-    const path = parts.slice(2).join('\t');
-    const binary = addStr === '-' || delStr === '-';
-    out.push({
-      path,
-      additions: binary ? 0 : (parseInt(addStr, 10) || 0),
-      deletions: binary ? 0 : (parseInt(delStr, 10) || 0),
-      binary,
-    });
+  for (let i = 0; i < parts.length; i++) {
+    const m = /^(-|\d+)\t(-|\d+)\t(.*)$/s.exec(parts[i]);
+    if (!m) continue;
+    let path = m[3];
+    if (!path) {
+      path = parts[i + 2] ?? '';
+      i += 2;
+    }
+    if (!path) continue;
+    const binary = m[1] === '-' || m[2] === '-';
+    out.push({ path, additions: binary ? 0 : Number(m[1]), deletions: binary ? 0 : Number(m[2]), binary });
   }
   return out;
 }

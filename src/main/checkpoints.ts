@@ -406,7 +406,7 @@ export class CheckpointManager {
     const entries = parseDiffRaw(await git(['diff', '--raw', '-z', '--no-abbrev', range.from, range.to, '--', '.'], cwd));
     if (entries.length === 0) return { entries };
     try {
-      const stats = new Map(parseNumstatRows(await git(['diff', '--numstat', range.from, range.to, '--', '.'], cwd)).map(s => [s.path, s]));
+      const stats = new Map(parseNumstatRows(await git(['diff', '--numstat', '-z', range.from, range.to, '--', '.'], cwd)).map(s => [s.path, s]));
       for (const e of entries) {
         const st = stats.get(e.filePath);
         if (st && !st.binary) { e.additions = st.additions; e.deletions = st.deletions; }

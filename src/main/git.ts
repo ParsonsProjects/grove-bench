@@ -2,6 +2,7 @@ import { runProcess } from './process-host.js';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import type { BranchCommit, CommitEntry, FileDiffResult, GitOpResult, GitSyncStatus } from '../shared/types.js';
+import { porcelainRecords } from './git-status-parser.js';
 
 /** Cap on network git commands (fetch): a dead network must not leave git
  *  processes hanging or block what waits on them. */
@@ -179,6 +180,9 @@ export async function validateBranchName(name: string): Promise<boolean> {
   }
 }
 
+/** The status codes of a file left in conflict (git status, "Short Format"). */
+const CONFLICT_CODES = new Set(['UU', 'AA', 'DD', 'DU', 'UD', 'AU', 'UA']);
+
 /**
  * Work out which files a failed merge/rebase/cherry-pick left in conflict:
  * porcelain status first, then `diff --diff-filter=U`, then the CONFLICT
@@ -188,15 +192,16 @@ export async function validateBranchName(name: string): Promise<boolean> {
 async function detectConflicts(cwd: string, opErr: any): Promise<string[]> {
   const errMsg: string = opErr?.stderr || opErr?.message || String(opErr);
   try {
-    const status = await git(['status', '--porcelain'], cwd);
-    const conflicts = status.split('\n')
-      .filter(l => /^(UU|AA|DD|DU|UD|AU|UA)\s/.test(l))
-      .map(l => l.slice(3).trim());
+    // -z: names as they are. Without it git quotes and escapes any name
+    // outside ASCII ("caf\303\251.ts").
+    const conflicts = porcelainRecords(await git(['status', '--porcelain', '-z'], cwd))
+      .filter((r) => CONFLICT_CODES.has(r.xy))
+      .map((r) => r.path);
     if (conflicts.length > 0) return conflicts;
 
     // No UU lines — try to extract conflicted files from diff --name-only --diff-filter=U
-    const diffOutput = await git(['diff', '--name-only', '--diff-filter=U'], cwd).catch(() => '');
-    const diffConflicts = diffOutput.split('\n').map(l => l.trim()).filter(Boolean);
+    const diffOutput = await git(['diff', '--name-only', '--diff-filter=U', '-z'], cwd).catch(() => '');
+    const diffConflicts = diffOutput.split('\0').filter(Boolean);
     if (diffConflicts.length > 0) return diffConflicts;
 
     // Still nothing — extract info from the error message

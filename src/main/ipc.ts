@@ -172,8 +172,9 @@ async function attachNumstat(cwd: string, entries: GitStatusEntry[], base: strin
       paths.add(e.filePath);
       if (e.origPath) paths.add(e.origPath);
     }
-    // Unquoted paths, so non-ASCII names match the -z status entries.
-    const numstatArgs = ['-c', 'core.quotePath=false', 'diff', base, '--numstat'];
+    // -z: names as the -z status entries have them, a rename under its new
+    // name rather than "a => b", and a name outside ASCII unquoted.
+    const numstatArgs = ['diff', base, '--numstat', '-z'];
     if (paths.size <= 200) numstatArgs.push('--', ...paths);
     const numstatRaw = await git(numstatArgs, cwd);
     const stats = new Map(parseNumstat(numstatRaw).map(s => [s.path, s]));
