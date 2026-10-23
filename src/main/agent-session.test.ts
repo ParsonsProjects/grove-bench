@@ -1001,6 +1001,76 @@ describe('AgentSessionManager event processing', () => {
   });
 });
 
+describe('AgentSessionManager prompt suggestions', () => {
+  // As the settings mock at the top of this file returns them.
+  const baseSettings = () => ({ defaultSystemPromptAppend: null, toolAllowRules: [], toolDenyRules: [], cavemanMode: 'off' });
+  const withSuggestions = (on: boolean) => () => ({ ...baseSettings(), promptSuggestions: on });
+  const sentSuggestions = (win: ReturnType<typeof makeMockWindow>) =>
+    win._send.mock.calls.filter(([, event]: [string, AgentEvent]) => event?.type === 'prompt_suggestion');
+  afterEach(() => {
+    settingsMock.getSettings.mockImplementation(baseSettings);
+  });
+
+  it('asks the agent for them at start when the setting is on', async () => {
+    settingsMock.getSettings.mockImplementation(withSuggestions(true));
+    await sessionManager.createSession({ id: 'test-ps-start', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
+    await vi.waitFor(() => expect(mockAdapter.lastConfig).not.toBeNull());
+    expect(mockAdapter.lastConfig!.promptSuggestions).toBe(true);
+
+    await sessionManager.destroySession('test-ps-start');
+  });
+
+  it('passes on the agent\'s own suggestion after a turn, without keeping it in the history', async () => {
+    settingsMock.getSettings.mockImplementation(withSuggestions(true));
+    const win = makeMockWindow();
+    await sessionManager.createSession({ id: 'test-ps-native', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock' });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false });
+    mockAdapter.control!.emitEvent({ type: 'prompt_suggestion', suggestion: 'Run the tests' });
+
+    await vi.waitFor(() => expect(sentSuggestions(win)).toEqual([
+      [`${IPC.AGENT_EVENT}:test-ps-native`, { type: 'prompt_suggestion', suggestion: 'Run the tests' }],
+    ]));
+    expect(sessionManager.getEventHistory('test-ps-native').some((e) => e.type === 'prompt_suggestion')).toBe(false);
+
+    await sessionManager.destroySession('test-ps-native');
+  });
+
+  it('drops the agent\'s suggestion once the setting is turned off', async () => {
+    settingsMock.getSettings.mockImplementation(withSuggestions(true));
+    const win = makeMockWindow();
+    await sessionManager.createSession({ id: 'test-ps-off', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock' });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    settingsMock.getSettings.mockImplementation(withSuggestions(false));
+    mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false });
+    mockAdapter.control!.emitEvent({ type: 'prompt_suggestion', suggestion: 'Run the tests' });
+    // An event after it, to know the loop got past the suggestion.
+    mockAdapter.control!.emitEvent({ type: 'status', message: 'after' });
+
+    await vi.waitFor(() => expect(sessionManager.getEventHistory('test-ps-off').some((e) => e.type === 'status' && e.message === 'after')).toBe(true));
+    expect(sentSuggestions(win)).toEqual([]);
+
+    await sessionManager.destroySession('test-ps-off');
+  });
+
+  it('drops a suggestion that arrives once the next turn is under way', async () => {
+    settingsMock.getSettings.mockImplementation(withSuggestions(true));
+    const win = makeMockWindow();
+    await sessionManager.createSession({ id: 'test-ps-late', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock' });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false });
+    // The next turn's reply has started.
+    mockAdapter.control!.emitEvent({ type: 'assistant_text', text: 'Working on it', uuid: 'a1' });
+    mockAdapter.control!.emitEvent({ type: 'prompt_suggestion', suggestion: 'Run the tests' });
+    mockAdapter.control!.emitEvent({ type: 'status', message: 'after' });
+
+    await vi.waitFor(() => expect(sessionManager.getEventHistory('test-ps-late').some((e) => e.type === 'status' && e.message === 'after')).toBe(true));
+    expect(sentSuggestions(win)).toEqual([]);
+
+    await sessionManager.destroySession('test-ps-late');
+  });
+});
+
 describe('AgentSessionManager limits', () => {
   // As the settings mock at the top of this file returns them.
   const baseSettings = () => ({ defaultSystemPromptAppend: null, toolAllowRules: [], toolDenyRules: [], cavemanMode: 'off' });

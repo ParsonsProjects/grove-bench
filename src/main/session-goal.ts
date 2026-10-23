@@ -48,7 +48,7 @@ type UserMessage = Extract<AgentEvent, { type: 'user_message' }>;
 
 /** A user message as the chat shows it (attachments as a name label), or
  *  null for a slash command or an empty one. */
-function promptText(e: UserMessage): string | null {
+export function promptText(e: UserMessage): string | null {
   const { typed, names } = userEventParts(e);
   const text = typed.trim();
   if (!text || text.startsWith('/')) return null;
@@ -63,13 +63,13 @@ function looksTyped(e: UserMessage): boolean {
   return text.length > 0 && !text.startsWith('/');
 }
 
-function truncate(text: string, max: number): string {
+export function truncate(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max)}\n... (truncated)` : text;
 }
 
 /** Every text block of the agent's latest turn that has text: agents often
  *  split one answer across several (findings, then next steps). */
-function latestReply(events: readonly AgentEvent[]): string | null {
+export function latestReply(events: readonly AgentEvent[]): string | null {
   const parts: string[] = [];
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i];
@@ -166,7 +166,7 @@ const QUOTE_PAIRS: readonly (readonly [string, string])[] = [['"', '"'], ["'", "
 
 /** Take off one pair of quotes or backticks around the whole goal, when the
  *  mark isn't used inside too (`npm test` should pass keeps its backticks). */
-function unquote(text: string): string {
+export function unquote(text: string): string {
   for (const [open, close] of QUOTE_PAIRS) {
     if (text.length < 2 || !text.startsWith(open) || !text.endsWith(close)) continue;
     const inner = text.slice(open.length, -close.length);

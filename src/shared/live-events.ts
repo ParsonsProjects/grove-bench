@@ -1,8 +1,10 @@
 import type { AgentEvent } from './types.js';
 
-/** Event types that are never persisted or replayed: live UI feedback only. */
+/** Event types that are never persisted or replayed: live UI feedback only.
+ *  A prompt suggestion is for the turn that just ended: a reopened thread
+ *  shouldn't offer one from days ago. */
 export const TRANSIENT_EVENT_TYPES: ReadonlySet<AgentEvent['type']> = new Set<AgentEvent['type']>([
-  'partial_text', 'partial_thinking', 'activity', 'tool_progress', 'usage',
+  'partial_text', 'partial_thinking', 'activity', 'tool_progress', 'usage', 'prompt_suggestion',
 ]);
 
 /**

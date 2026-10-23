@@ -28,7 +28,7 @@ const MODE: ControlDescriptor = {
 
 function settings(adapterDefaults: GroveBenchSettings['adapterDefaults'] = {}): GroveBenchSettings {
   return {
-    toolAllowRules: [], toolDenyRules: [], disabledSkills: [], autoSkillSuggestions: false, showConversationGoal: true,
+    toolAllowRules: [], toolDenyRules: [], disabledSkills: [], autoSkillSuggestions: false, showConversationGoal: true, promptSuggestions: true,
     defaultModels: {}, adapterDefaults, showThinkingSummaries: true, cavemanMode: 'off', workingDirectories: [], defaultSystemPromptAppend: '', acpAgents: [], claudeAccounts: [], enabledAlphaAgents: [], defaultAgent: '',
     memoryAutoSave: true, memoryCompactTimeoutSeconds: 300, backgroundModels: {},
     autoInstallDeps: false, previewAgentTools: true, idleSleepMinutes: 30, defaultBaseBranch: '', branchNamingRule: '', theme: 'system', alwaysOnTop: false, autoDownloadUpdates: true,

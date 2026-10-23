@@ -15,6 +15,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   disabledSkills: [],
   autoSkillSuggestions: false,
   showConversationGoal: false,
+  promptSuggestions: true,
 
   // Agent Defaults
   defaultModels: {},
@@ -225,6 +226,7 @@ const settingsSchema = z.object({
   disabledSkills: z.array(z.string()).catch(DEFAULT_SETTINGS.disabledSkills),
   autoSkillSuggestions: z.boolean().catch(DEFAULT_SETTINGS.autoSkillSuggestions),
   showConversationGoal: z.boolean().catch(DEFAULT_SETTINGS.showConversationGoal),
+  promptSuggestions: z.boolean().catch(DEFAULT_SETTINGS.promptSuggestions),
 
   defaultModels: z.record(z.string(), z.string()).catch(DEFAULT_SETTINGS.defaultModels),
   adapterDefaults: z.record(z.string(), z.record(z.string(), z.string())).catch(DEFAULT_SETTINGS.adapterDefaults),

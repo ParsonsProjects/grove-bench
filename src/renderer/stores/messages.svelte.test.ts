@@ -35,7 +35,7 @@ beforeEach(() => {
   messageStore.usageBySession = {};
   messageStore.pendingClear = {};
   rateLimitStore.bySession = {};
-  messageStore.promptSuggestionsBySession = {};
+  messageStore.promptSuggestionBySession = {};
   backgroundTaskStore.tasksBySession = {};
   messageStore.contextWindowBySession = {};
   messageStore.turnsBySession = {};
@@ -913,11 +913,32 @@ describe('ingestEvent — background tasks', () => {
 });
 
 describe('ingestEvent — prompt_suggestion', () => {
-  it('accumulates suggestions', () => {
+  it('keeps the newest suggestion', () => {
     messageStore.ingestEvent(SID, { type: 'prompt_suggestion', suggestion: 'Try this' } as AgentEvent);
-    messageStore.ingestEvent(SID, { type: 'prompt_suggestion', suggestion: 'Or this' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'prompt_suggestion', suggestion: ' Or this\n' } as AgentEvent);
 
-    expect(messageStore.getPromptSuggestions(SID)).toEqual(['Try this', 'Or this']);
+    expect(messageStore.getPromptSuggestion(SID)).toBe('Or this');
+  });
+
+  it('ignores an empty suggestion', () => {
+    messageStore.ingestEvent(SID, { type: 'prompt_suggestion', suggestion: 'Try this' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'prompt_suggestion', suggestion: '  ' } as AgentEvent);
+
+    expect(messageStore.getPromptSuggestion(SID)).toBe('Try this');
+  });
+
+  it('drops one that arrives while the next turn is running', () => {
+    messageStore.addUserMessage(SID, 'Next prompt');
+    messageStore.ingestEvent(SID, { type: 'prompt_suggestion', suggestion: 'Stale' } as AgentEvent);
+
+    expect(messageStore.getPromptSuggestion(SID)).toBeNull();
+  });
+
+  it('is cleared by a slash command', () => {
+    messageStore.ingestEvent(SID, { type: 'prompt_suggestion', suggestion: 'Try this' } as AgentEvent);
+    messageStore.sendCommand(SID, '/compact');
+
+    expect(messageStore.getPromptSuggestion(SID)).toBeNull();
   });
 });
 
@@ -1326,10 +1347,10 @@ describe('addUserMessage', () => {
     expect(messageStore.getIsRunning(SID)).toBe(true);
   });
 
-  it('clears prompt suggestions on new message', () => {
-    messageStore.promptSuggestionsBySession[SID] = ['old suggestion'];
+  it('clears the prompt suggestion on new message', () => {
+    messageStore.promptSuggestionBySession[SID] = 'old suggestion';
     messageStore.addUserMessage(SID, 'New prompt');
-    expect(messageStore.getPromptSuggestions(SID)).toEqual([]);
+    expect(messageStore.getPromptSuggestion(SID)).toBeNull();
   });
 });
 

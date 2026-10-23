@@ -423,8 +423,9 @@ class MessageStore {
 
 
 
-  /** Prompt suggestions per session (from SDK) */
-  promptSuggestionsBySession = $state<Record<string, string[]>>({});
+  /** The agent's guess at each thread's next prompt, shown in the empty
+   *  message box until the next prompt goes (prompt_suggestion events). */
+  promptSuggestionBySession = $state<Record<string, string>>({});
 
 
 
@@ -1006,12 +1007,12 @@ class MessageStore {
     else delete this.attachmentsBySession[sessionId];
   }
 
-  getPromptSuggestions(sessionId: string): string[] {
-    return this.promptSuggestionsBySession[sessionId] ?? [];
+  getPromptSuggestion(sessionId: string): string | null {
+    return this.promptSuggestionBySession[sessionId] ?? null;
   }
 
-  clearPromptSuggestions(sessionId: string) {
-    this.promptSuggestionsBySession[sessionId] = [];
+  clearPromptSuggestion(sessionId: string) {
+    delete this.promptSuggestionBySession[sessionId];
   }
 
   // ── Outgoing message queue ───────────────────────────────────────────────
@@ -1527,8 +1528,8 @@ class MessageStore {
     this.setIsRunning(sessionId, true);
     this.awaitingResponse[sessionId] = true;
     this.activityBySession[sessionId] = { activity: 'generating' };
-    // Clear stale suggestions when user sends a new message
-    this.promptSuggestionsBySession[sessionId] = [];
+    // The suggestion was for the turn before this one.
+    this.clearPromptSuggestion(sessionId);
   }
 
   /** Ingest a raw AgentEvent from the main process */
@@ -1777,9 +1778,10 @@ class MessageStore {
         break;
 
       case 'prompt_suggestion':
-        if (event.suggestion) {
-          const existing = this.promptSuggestionsBySession[sessionId] ?? [];
-          this.promptSuggestionsBySession[sessionId] = [...existing, event.suggestion];
+        // At most one per turn, after its result: the newest replaces the
+        // last. One that arrives once the next turn is running is stale.
+        if (event.suggestion.trim() && !this.isRunning[sessionId]) {
+          this.promptSuggestionBySession[sessionId] = event.suggestion.trim();
         }
         break;
 
@@ -2376,6 +2378,8 @@ class MessageStore {
       }
       return;
     }
+    // The suggestion followed a turn the rewind takes away.
+    this.clearPromptSuggestion(sessionId);
     // Snapshot edit history before truncation if conversation-only rewind
     if (event.conversationOnly) {
       this.preservedEditHistory[sessionId] = this.getLastTurnFileChanges(sessionId);
@@ -2429,6 +2433,8 @@ class MessageStore {
     if (trimmed === '/clear') {
       this.pendingClear[sessionId] = true;
     }
+    // Like a prompt, a command moves the thread on from the suggestion.
+    this.clearPromptSuggestion(sessionId);
     // Sync mode when user issues mode-changing slash commands, for an agent
     // with Plan mode (Claude Code's). To another agent they are only text.
     // Before its controls have loaded, the agent is taken to have it, as
@@ -2722,7 +2728,7 @@ class MessageStore {
       this.toolProgressBySession, this.isReady, this.historyLoaded, this.modelBySession,
       this.modeBySession, this.controlsBySession, this.usageBySession,
       this.systemInfoBySession, this.mcpLiveBySession, this.contextWindowBySession, this.turnsBySession,
-      this.promptSuggestionsBySession,
+      this.promptSuggestionBySession,
       this.activeTabBySession, this.viewModeBySession,
       this.draftBySession, this.attachmentsBySession, this.preservedEditHistory, this.paginationBySession,
       this.rewindDialogOpen, this.rewindDialogTarget, this.pendingJumpBySession, this.promptInsertBySession,

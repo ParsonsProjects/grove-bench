@@ -40,6 +40,7 @@ import {
   awaitElicitation, respondToElicitation as answerElicitation, cancelElicitations,
 } from './session-permissions.js';
 import { SessionSkills } from './session-skills.js';
+import { SessionPromptSuggestions } from './session-prompt-suggestions.js';
 import {
   beforeToolUse, cancelLimit, limitsFromHistory, promptSent, respondToLimit as answerLimit,
   savedThreadLimits, toolCallSeen, turnActive, turnEnded, turnStopped, whileWaiting,
@@ -117,6 +118,7 @@ class AgentSessionManager {
 
   private events = new SessionEventStore();
   private skills = new SessionSkills();
+  private promptSuggestions = new SessionPromptSuggestions();
 
   /** Worktree path for a managed session, if it exists. */
   getWorktreePath(sessionId: string): string | null {
@@ -534,6 +536,7 @@ class AgentSessionManager {
       extraEnv: { ...gitIdentityEnv, ...(session.extraEnv ?? {}) },
       controls: session.controls,
       thinkingSummaries: currentSettings.showThinkingSummaries,
+      promptSuggestions: currentSettings.promptSuggestions,
       // An agent that can't resume starts a new conversation each time; the
       // thread still shows the earlier turns from Grove's own event log.
       resumeSessionId: caps.resume ? session.providerSessionId : null,
@@ -666,6 +669,12 @@ class AgentSessionManager {
           this.applyAgentControls(session, event.values);
           continue;
         }
+
+        // The agent's guess at the next prompt. Read at agent start, so the
+        // setting may have been turned off since; and one that lands once the
+        // next turn is under way is for the turn before.
+        if (event.type === 'prompt_suggestion'
+          && (!settings.getSettings().promptSuggestions || turnInFlight(session))) continue;
 
         // Plan usage is the account's, not the conversation's: keep the
         // latest for the next conversation and the next launch.
@@ -914,6 +923,10 @@ class AgentSessionManager {
 
       // A finished turn is new history — refresh skill suggestions soon.
       if (!event.isError) this.skills.scheduleSuggestions(session);
+      // Guess the next prompt, for an agent that doesn't itself. Before the
+      // interrupt check below clears the flag it reads.
+      this.promptSuggestions.afterTurn(session, event, emit,
+        () => this.sessions.get(id) === session && !session.destroying && !turnInFlight(session));
 
       // A turn ended by a user interrupt reports abort/teardown errors
       // (e.g. "Request was aborted", in-flight tool failures). The user
@@ -1088,6 +1101,9 @@ class AgentSessionManager {
     }
 
     if (!(await this.awaitQueryHandle(session)) || session.destroying) return false;
+
+    // The last turn's suggestion is no longer wanted.
+    this.promptSuggestions.cancel(id);
 
     // A new turn supersedes any pending interrupt: don't let a stale flag
     // sanitize this turn's genuine result.
@@ -1987,6 +2003,8 @@ class AgentSessionManager {
     // runQuery's event loop, whose tail would otherwise treat this as a normal
     // query end (see runQuery).
     session.destroying = true;
+    // Nothing may start in a folder that may be about to go.
+    this.promptSuggestions.forget(id);
 
     // A sleep still killing the agent: let it finish, so a reopen right after
     // the close can't start a second agent on the same transcript.

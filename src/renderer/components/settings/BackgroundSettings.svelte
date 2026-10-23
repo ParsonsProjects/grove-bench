@@ -36,6 +36,12 @@
 
 <SettingsGroup title="Threads">
   <CheckboxSetting
+    setting="prompt-suggestions"
+    label="Suggest the next prompt"
+    description="After each turn, show a guess at your next message in the empty message box. Press Tab to use it. Claude Code makes it from the thread's prompt cache, which costs little; a Claude Code thread that is already running picks up a change when its agent next starts. Other agents cost a model call per turn, on their background model."
+    bind:checked={settingsStore.draft.promptSuggestions}
+  />
+  <CheckboxSetting
     setting="skill-suggestions"
     label="Suggest skills automatically"
     description="After each finished turn, look for requests and commands you repeat and suggest skills for them. Costs a model call each time. The Suggest button in the status bar's Skills popover does the same on demand."

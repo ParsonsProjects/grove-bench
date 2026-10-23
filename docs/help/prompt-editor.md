@@ -8,6 +8,12 @@ Type your message and press **Enter** to send. The agent will begin processing i
 
 For multi-line messages, use **Shift+Enter** to add a new line without sending.
 
+## Suggested Next Prompt
+
+After a turn, the empty prompt editor may show a grey guess at your next message, such as "Run the tests". Press **Tab** to put it in the box, then **Enter** to send it or edit it first. Start typing to ignore it.
+
+Claude Code makes its own suggestion from the thread's prompt cache, which costs little. Other agents are asked once per turn on their background model, which costs a model call each time. There is no suggestion after a thread's first turn, in plan mode, or after a turn that failed. Claude Code also holds back while your plan is near its usage limit. Turn it off with **Suggest the next prompt** in **Settings → Background work (Tending)**.
+
 ## File References
 
 Type `@` followed by a filename to open the file picker. Select a file to reference it in your message — the agent will have that file's content as context.

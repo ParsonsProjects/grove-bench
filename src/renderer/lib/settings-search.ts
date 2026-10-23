@@ -9,7 +9,7 @@ export const SETTINGS_SECTIONS = [
   { id: 'git', grove: 'Branches & roots', label: 'Git & worktrees', description: 'How new threads get their branch and worktree.' },
   { id: 'notifications', grove: 'Bells', label: 'Notifications', description: 'Desktop notifications and taskbar alerts.' },
   { id: 'limits', grove: 'Fences', label: 'Limits & alerts', description: 'Plan usage alerts, and limits on spend and long turns that pause a thread to ask you.' },
-  { id: 'background', grove: 'Tending', label: 'Background work', description: 'Project memory, skill suggestions, thread goals and sleeping idle threads.' },
+  { id: 'background', grove: 'Tending', label: 'Background work', description: 'Project memory, prompt and skill suggestions, thread goals and sleeping idle threads.' },
   { id: 'mcp', grove: 'Tool shed', label: 'MCP servers', description: 'Servers that give agents extra tools.' },
   { id: 'plugins', grove: 'Seed packets', label: 'Plugins', description: 'Add and manage plugins.' },
   { id: 'privacy', grove: 'Hedges', label: 'Privacy', description: 'Usage data, crash reports and online lookups.' },
@@ -76,6 +76,7 @@ export const SETTINGS_INDEX: readonly SettingsEntry[] = [
 
   { id: 'memory-auto-save', section: 'background', label: 'Auto-save project memory' },
   { id: 'memory-compact-timeout', section: 'background', label: 'Compaction timeout', keywords: 'memory seconds' },
+  { id: 'prompt-suggestions', section: 'background', label: 'Suggest the next prompt', keywords: 'autocomplete ghost text tab message box' },
   { id: 'skill-suggestions', section: 'background', label: 'Suggest skills automatically' },
   { id: 'conversation-goal', section: 'background', label: 'Show the thread goal', keywords: 'summary thread pinned conversation' },
   { id: 'idle-sleep', section: 'background', label: 'Sleep idle threads', keywords: 'idle stop cpu memory minutes conversation' },
