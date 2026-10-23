@@ -89,15 +89,6 @@ describe('DiffBlock large edits', () => {
     expect(container).toHaveTextContent('the one changed line');
   });
 
-  it('shows a rewrite under the limits at once, as the old text then the new', () => {
-    // 600 lines across both sides; reversed, about 600 changes, past the quick cap.
-    const lines = Array.from({ length: 300 }, (_, i) => `row ${i}`);
-    const { container } = render(DiffBlock, { sessionId: 's1', view: { kind: 'edit', path: 'notes.txt', edits: [{ oldText: lines.join('\n'), newText: [...lines].reverse().join('\n') }] }, pending: false });
-    expect(screen.queryByRole('button', { name: /Show edit/ })).toBeNull();
-    expect(screen.getByText(/Too many changes to compare line by line/)).toBeInTheDocument();
-    expect(container).toHaveTextContent('row 299');
-  });
-
   it('gives a heavily changed large file one capped try before holding it back', () => {
     vi.mocked(createPatch).mockClear();
     const reversed = [...wide].reverse();
@@ -121,8 +112,8 @@ describe('DiffBlock large edits', () => {
     expect(createPatch).toHaveBeenCalledOnce();
   });
 
-  /** Makes the capped diffs give up, as if out of time: the quick try only
-   *  (it has maxEditLength), or the full one after "Show edit" too. */
+  /** Makes the capped diffs give up, as if out of time: a large edit's quick
+   *  try only (it has maxEditLength), or every try, "Show edit" too. */
   function capsGiveUp(which: 'quick' | 'all') {
     vi.mocked(createPatch).mockImplementation(((...args: Parameters<typeof realCreatePatch>) => {
       const opts = args[5] as { timeout?: number; maxEditLength?: number } | undefined;
@@ -131,6 +122,14 @@ describe('DiffBlock large edits', () => {
     }) as typeof createPatch);
   }
   afterEach(() => { vi.mocked(createPatch).mockImplementation(realCreatePatch); });
+
+  it('shows an edit under the limits that runs out of time at once, as the old text then the new', () => {
+    capsGiveUp('all');
+    const { container } = render(DiffBlock, { sessionId: 's1', view: { kind: 'edit', path: 'notes.txt', edits: [{ oldText: 'row 0\nrow 1', newText: 'row 1\nrow 0' }] }, pending: false });
+    expect(screen.queryByRole('button', { name: /Show edit/ })).toBeNull();
+    expect(screen.getByText(/Too many changes to compare line by line/)).toBeInTheDocument();
+    expect(container).toHaveTextContent('row 1');
+  });
 
   it('works out a held-back edit in full once asked', async () => {
     capsGiveUp('quick');

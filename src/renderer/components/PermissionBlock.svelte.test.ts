@@ -172,6 +172,22 @@ describe('PermissionBlock edit preview', () => {
     }
   });
 
+  it('shows a small edit that runs out of time at once, as the old text then the new', () => {
+    vi.mocked(createPatch).mockReturnValue(undefined as never);
+    try {
+      const { container } = render(PermissionBlock, {
+        sessionId: 's1', requestId: 'r9', toolName: 'Edit', resolved: false, toolCategory: 'edit',
+        toolInput: {}, toolView: { kind: 'edit', path: 'src/data.ts', edits: [{ oldText: 'the old line', newText: 'the new line' }] },
+      });
+      expect(screen.queryByRole('button', { name: /Show edit/ })).toBeNull();
+      expect(screen.getByText(/Too many changes to compare line by line/)).toBeInTheDocument();
+      expect(container).toHaveTextContent('the old line');
+      expect(container).toHaveTextContent('the new line');
+    } finally {
+      vi.mocked(createPatch).mockImplementation(realCreatePatch);
+    }
+  });
+
   it('shows a small change to a large file at once', () => {
     // OpenCode asks with the whole file before and after.
     const before = Array.from({ length: 1001 }, (_, i) => `line ${i}`);

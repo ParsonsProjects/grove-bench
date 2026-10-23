@@ -12,11 +12,13 @@ import { parseDiffLines } from './diff-parse.js';
  * waits for "Show edit"; fullEditDiff works it out once asked.
  */
 
-/** How far quickEditDiff goes on an edit: changed lines (jsdiff's
- *  maxEditLength), then milliseconds. ACP agents can send the whole file
- *  before and after; a small change to one diffs in a few milliseconds,
- *  while a heavy change to 20,000 lines gives up in about 40, and a rewrite
- *  of 1,000 lines in about 20 instead of taking 300. */
+/** How far quickEditDiff goes on an edit: lines added or removed (jsdiff's
+ *  maxEditLength, so a replaced line counts twice), then milliseconds. ACP
+ *  agents can send the whole file before and after; a small change to one
+ *  diffs in a few milliseconds, while a heavy change to 20,000 lines gives
+ *  up in about 40. Under the large-diff limits only the time is capped:
+ *  inserting 600 lines is 600 changes but takes a few milliseconds, while a
+ *  rewrite of 1,000 lines gives up in 50 instead of taking 200 or more. */
 const QUICK_EDIT_LENGTH = 500;
 const QUICK_DIFF_MS = 50;
 
@@ -43,9 +45,9 @@ export function quickEditDiff(view: ToolView, filePath: string): { diff: EditDif
   // A diff is no bigger than the text it's made from.
   const small = !isLargeDiff(editSize(view));
   if (!view.edits?.length) return small ? { diff: { lines: writeLines(view), linedUp: true }, large: false } : { diff: null, large: true };
-  const lines = patchLines(view.edits, filePath, { maxEditLength: QUICK_EDIT_LENGTH, ms: QUICK_DIFF_MS });
-  if (small) return { diff: lines ? { lines, linedUp: true } : { lines: oldThenNew(view.edits), linedUp: false }, large: false };
-  return { diff: lines && { lines, linedUp: true }, large: !lines || isLargeDiff(diffSize(lines)) };
+  const lines = patchLines(view.edits, filePath, small ? { ms: QUICK_DIFF_MS } : { maxEditLength: QUICK_EDIT_LENGTH, ms: QUICK_DIFF_MS });
+  if (lines) return { diff: { lines, linedUp: true }, large: !small && isLargeDiff(diffSize(lines)) };
+  return small ? { diff: { lines: oldThenNew(view.edits), linedUp: false }, large: false } : { diff: null, large: true };
 }
 
 /** A held-back edit's diff once asked for: what quickEditDiff already

@@ -36,17 +36,26 @@ describe('quickEditDiff', () => {
     expect(diff?.lines.filter((l) => l.type === 'add').map((l) => l.text)).toEqual(['changed']);
   });
 
-  it('shows a rewrite under the limits at once as the old text, then the new, after one capped try', () => {
-    // 1,200 lines across both sides, under the limit; reversed, about 1,200 changes, past the cap.
-    const lines600 = file.slice(0, 600);
+  it('lines up a plain insertion or deletion of more lines than the cap on changes', () => {
+    const block = file.slice(0, 600).join('\n');
+    const inserted = quickEditDiff(edit('export {}\n', `export {}\n${block}\n`), 'notes.txt').diff;
+    expect(inserted?.linedUp).toBe(true);
+    expect(inserted?.lines.filter((l) => l.type === 'context').map((l) => l.text)).toEqual(['export {}']);
+    expect(inserted?.lines.filter((l) => l.type === 'add')).toHaveLength(600);
+    expect(quickEditDiff(edit(`${block}\nend`, 'end'), 'notes.txt').diff?.linedUp).toBe(true);
+  });
+
+  it('shows an edit under the limits at once as the old text, then the new, after one capped try', () => {
+    vi.mocked(createPatch).mockReturnValue(undefined as never);
     vi.mocked(createPatch).mockClear();
-    const { diff, large } = quickEditDiff(edit(lines600.join('\n'), [...lines600].reverse().join('\n')), 'notes.txt');
+    const { diff, large } = quickEditDiff(edit('one\ntwo\n', 'uno\n'), 'notes.txt');
     expect(large).toBe(false);
     expect(diff?.linedUp).toBe(false);
-    expect(diff?.lines.filter((l) => l.type === 'del')).toHaveLength(600);
-    expect(diff?.lines.filter((l) => l.type === 'add')).toHaveLength(600);
+    expect(diff?.lines.map((l) => [l.type, l.text])).toEqual([['hunk', '@@ -1,2 +1,1 @@'], ['del', 'one'], ['del', 'two'], ['add', 'uno']]);
     expect(createPatch).toHaveBeenCalledOnce();
-    expect(vi.mocked(createPatch).mock.calls[0][5]).toMatchObject({ maxEditLength: 500 });
+    const opts = vi.mocked(createPatch).mock.calls[0][5] as { timeout?: number; maxEditLength?: number };
+    expect(opts.timeout).toBeLessThanOrEqual(50);
+    expect(opts.maxEditLength).toBeUndefined();
   });
 
   it('holds back a heavily changed large file, without working it out', () => {
