@@ -588,9 +588,18 @@ export async function listProjectFiles(cwd: string): Promise<string[]> {
  * Throw away one file's changes. Untracked files and files staged as new
  * (not in HEAD) are deleted, since they didn't exist before; a staged change
  * is reset to HEAD in both the index and the working tree; an unstaged change
- * is reset to the index.
+ * is reset to the index. A rename (`renamedFrom`, its old path) is undone:
+ * the old path comes back, from HEAD for a staged rename or from the index
+ * for one in the worktree (`git add -N`), and then the new path is deleted.
  */
-export async function revertFile(cwd: string, relPath: string, staged: boolean): Promise<void> {
+export async function revertFile(cwd: string, relPath: string, staged: boolean, renamedFrom?: string): Promise<void> {
+  if (renamedFrom) {
+    // Not by the status of relPath: on its own that reads as a new file, so
+    // the old path would stay deleted.
+    await git(staged ? ['checkout', 'HEAD', '--', renamedFrom] : ['checkout', '--', renamedFrom], cwd);
+    await git(['rm', '-f', '-q', '--', relPath], cwd);
+    return;
+  }
   const status = await git(['status', '--porcelain', '--', relPath], cwd);
   if (status.trimStart().startsWith('??')) {
     await fs.rm(path.join(cwd, relPath), { force: true, recursive: true });

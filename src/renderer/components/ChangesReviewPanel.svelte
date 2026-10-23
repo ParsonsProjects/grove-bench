@@ -189,7 +189,8 @@
     const key = `${entry.filePath}:${entry.staged}`;
     revertingFiles = new Set([...revertingFiles, key]);
     try {
-      await gitStatusStore.revertFile(sessionId, entry.filePath, entry.staged);
+      // A rename's old path comes back; a copy's source was never removed.
+      await gitStatusStore.revertFile(sessionId, entry.filePath, entry.staged, entry.status === 'renamed' ? entry.origPath : undefined);
     } catch (e) {
       console.error('Failed to revert file:', e);
     } finally {
@@ -396,6 +397,8 @@
           <Dialog.Description>
             {#if isUntracked}
               <span class="font-mono text-xs break-all">{confirmEntry.filePath}</span> will be permanently deleted from disk. This cannot be undone.
+            {:else if confirmEntry.status === 'renamed' && confirmEntry.origPath}
+              <span class="font-mono text-xs break-all">{confirmEntry.filePath}</span> was renamed from <span class="font-mono text-xs break-all">{confirmEntry.origPath}</span>. Reverting puts <span class="font-mono text-xs break-all">{confirmEntry.origPath}</span> back {confirmEntry.staged ? 'as last committed' : 'as staged'} and deletes <span class="font-mono text-xs break-all">{confirmEntry.filePath}</span>, with the changes shown here{alsoUnstaged ? ' and its unstaged edits' : ''}.
             {:else if isNewStaged}
               <span class="font-mono text-xs break-all">{confirmEntry.filePath}</span> is a new file, so reverting it deletes it from disk{alsoUnstaged ? ', including its unstaged edits' : ''}. This cannot be undone.
             {:else if alsoUnstaged}

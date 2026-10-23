@@ -1448,8 +1448,9 @@ export interface GroveBenchAPI {
   readFile(sessionId: string, filePath: string): Promise<string>;
   openInEditor(sessionId: string, filePath: string, line?: number): Promise<void>;
 
-  // File revert (for changes review)
-  revertFile(sessionId: string, filePath: string, staged?: boolean): Promise<void>;
+  // File revert (for changes review). `renamedFrom`: a rename's old path,
+  // which comes back (not a copy's: its source was never removed).
+  revertFile(sessionId: string, filePath: string, staged?: boolean, renamedFrom?: string): Promise<void>;
   getFileDiff(sessionId: string, filePath: string, staged?: boolean, opts?: FileDiffOptions): Promise<FileDiffResult>;
   getFileLines(sessionId: string, filePath: string, staged?: boolean): Promise<FileLinesResult>;
   getImageDiffContent(sessionId: string, filePath: string): Promise<ImageDiffContent>;

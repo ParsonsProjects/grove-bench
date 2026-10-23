@@ -168,9 +168,9 @@ class GitStatusStore {
 
   // ── Git write actions (proxy the CLI via IPC, then refresh status) ──
 
-  /** Revert a file via git checkout */
-  async revertFile(sessionId: string, filePath: string, staged?: boolean): Promise<void> {
-    await window.groveBench.revertFile(sessionId, filePath, staged);
+  /** Revert a file via git checkout, or undo a rename (`renamedFrom`, its old path). */
+  async revertFile(sessionId: string, filePath: string, staged?: boolean, renamedFrom?: string): Promise<void> {
+    await window.groveBench.revertFile(sessionId, filePath, staged, renamedFrom);
     this.scheduleRefresh(sessionId, 100);
   }
 

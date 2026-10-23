@@ -758,6 +758,24 @@ describe('revertFile()', () => {
     expect(lastArgs()).toEqual(['checkout', '--', 'new.ts']);
   });
 
+  it('undoes a staged rename: the old path back from HEAD, then the new one deleted', async () => {
+    mockExeca.mockResolvedValue({ stdout: '' } as any);
+    await revertFile('/repo', 'b.ts', true, 'a.ts');
+    expect(mockExeca.mock.calls.map((c) => c[1])).toEqual([['checkout', 'HEAD', '--', 'a.ts'], ['rm', '-f', '-q', '--', 'b.ts']]);
+  });
+
+  it('undoes a rename in the worktree from the index', async () => {
+    mockExeca.mockResolvedValue({ stdout: '' } as any);
+    await revertFile('/repo', 'b.ts', false, 'a.ts');
+    expect(mockExeca.mock.calls.map((c) => c[1])).toEqual([['checkout', '--', 'a.ts'], ['rm', '-f', '-q', '--', 'b.ts']]);
+  });
+
+  it("deletes nothing when the old path can't come back", async () => {
+    mockExeca.mockRejectedValueOnce(new Error("pathspec 'a.ts' did not match"));
+    await expect(revertFile('/repo', 'b.ts', true, 'a.ts')).rejects.toThrow();
+    expect(mockExeca).toHaveBeenCalledOnce();
+  });
+
   it('deletes an untracked file', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gb-revert-'));
     fs.writeFileSync(path.join(dir, 'scratch.ts'), 'x');

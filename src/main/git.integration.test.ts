@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { resolveMergeBase, squashSince, branchCommits, excludeFromGit, fileDiff, blobLines, mergeNoCommit, MAX_TEXT_FILE_BYTES } from './git.js';
+import { resolveMergeBase, squashSince, branchCommits, excludeFromGit, fileDiff, blobLines, mergeNoCommit, revertFile, MAX_TEXT_FILE_BYTES } from './git.js';
 import { parseGitStatusPorcelain, parseNumstat } from './git-status-parser.js';
 
 // Real git is slow to start on Windows, and each test runs a dozen commands.
@@ -127,6 +127,34 @@ describe('line counts', () => {
       { path: 'b.txt', additions: 1, deletions: 0, binary: false },
       { path: 'café.ts', additions: 1, deletions: 0, binary: false },
     ]);
+  });
+});
+
+describe('reverting a rename', () => {
+  beforeEach(() => commit('a.txt', 'original'));
+  const onDisk = () => fs.readdirSync(repo).filter((f) => f !== '.git').sort();
+
+  it('puts a staged rename back as committed, with its edits gone', async () => {
+    run('mv', 'a.txt', 'b.txt');
+    fs.appendFileSync(path.join(repo, 'b.txt'), 'staged\n');
+    run('add', 'b.txt');
+    fs.appendFileSync(path.join(repo, 'b.txt'), 'unstaged\n');
+
+    await revertFile(repo, 'b.txt', true, 'a.txt');
+
+    expect(onDisk()).toEqual(['a.txt', 'base.txt']);
+    expect(fs.readFileSync(path.join(repo, 'a.txt'), 'utf8')).toBe('original\n');
+    expect(run('status', '--porcelain')).toBe('');
+  });
+
+  it('puts back a file moved and added with git add -N', async () => {
+    fs.renameSync(path.join(repo, 'a.txt'), path.join(repo, 'b.txt'));
+    run('add', '-N', 'b.txt');
+
+    await revertFile(repo, 'b.txt', false, 'a.txt');
+
+    expect(onDisk()).toEqual(['a.txt', 'base.txt']);
+    expect(run('status', '--porcelain')).toBe('');
   });
 });
 
