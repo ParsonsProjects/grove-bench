@@ -48,7 +48,7 @@ Next to the activity, two lines show what the thread holds besides its messages.
 - **Made by the agent**: what each turn's **Files made** list shows.
 - **From tools**: images a tool returned, such as a screenshot.
 
-Click a file to open it the way its chip in the thread does: an image full size, a text file in the Focus panel, a web page in the Preview tab, and PDFs, media and documents in their default app. The target button beside it opens the Thread tab at the message the file came with. If that message is hidden in Summary or Focus view, the thread switches to Detailed to show it. A file that is gone (a rewind took its message, or the agent deleted it) is greyed out once you try to open it.
+Click a file to open it the way its chip in the thread does: an image full size, a text file in the Focus panel (Markdown rendered, anything else with line numbers), a web page in the Preview tab, and PDFs, media and documents in their default app. The target button beside it opens the Thread tab at the message the file came with. If that message is hidden in Summary or Focus view, the thread switches to Detailed to show it. A file that is gone (a rewind took its message, or the agent deleted it) is greyed out once you try to open it.
 
 A file that came in more than once is listed once, at the latest message. A subagent's own to-do list and screenshots stay in its thread.
 

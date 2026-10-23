@@ -1,10 +1,12 @@
 /**
  * The status bar's Files list (shared/thread-items.ts): what each file is
- * called, where its image loads from, how an attached text file opens, and
- * the jump to the message a task list or file came with.
+ * called, where its image loads from, an attached text file's text and how
+ * it shows (from here and its chip in the thread), and the jump to the
+ * message a task list or file came with.
  */
 import { messageStore } from '../stores/messages.svelte.js';
-import { attachmentImageUrl, worktreeFileUrl } from '../../shared/attachments.js';
+import { markdownPreviewStore } from '../stores/markdownPreview.svelte.js';
+import { attachmentImageUrl, isMarkdownFile, worktreeFileUrl } from '../../shared/attachments.js';
 import { attachedFilesFromSent } from '../../shared/prompt-text.js';
 import { toolLabel } from './tool-names.js';
 import type { ThreadFile } from '../../shared/thread-items.js';
@@ -50,19 +52,13 @@ export function threadImageSrc(sessionId: string, f: ThreadFile): string | null 
   return null;
 }
 
-/** A fence longer than any run of backticks in `text`, so it can't close early. */
-function fenceFor(text: string): string {
-  const longest = Math.max(0, ...(text.match(/`+/g) ?? []).map((run) => run.length));
-  return '`'.repeat(Math.max(3, longest + 1));
-}
-
-/** An attached text file as markdown for the Focus panel: a markdown file as
- *  it reads, anything else as a code block. */
-export function textFileMarkdown(name: string, content: string): string {
-  const ext = /\.([A-Za-z0-9]+)$/.exec(name)?.[1].toLowerCase() ?? '';
-  if (ext === 'md' || ext === 'markdown') return content;
-  const fence = fenceFor(content);
-  return `${fence}${ext}\n${content}\n${fence}`;
+/** Show an attached text file in the Focus panel: Markdown as it reads,
+ *  anything else as numbered lines. Not tied to the thread: the file came
+ *  from elsewhere, so the images and links its Markdown names aren't read
+ *  from the worktree, where a same-named file would be the wrong one. */
+export function showAttachedText(name: string, content: string): void {
+  if (isMarkdownFile(name)) markdownPreviewStore.show(content, name);
+  else markdownPreviewStore.showCode(content, name);
 }
 
 /** The content of a text file attached to the message at `eventIndex`, or

@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import { IDLE_TURN, mockGroveBench } from '../__mocks__/setup.js';
 import { messageStore } from '../stores/messages.svelte.js';
 import {
-  attachedTextContent, showInThread, textFileMarkdown, threadFileName, threadFileSize, threadImageSrc,
+  attachedTextContent, showInThread, threadFileName, threadFileSize, threadImageSrc,
 } from './thread-files.js';
 import { buildContentBlock } from '../../shared/prompt-text.js';
 import type { ThreadFile } from '../../shared/thread-items.js';
@@ -42,14 +42,6 @@ describe('threadImageSrc', () => {
       .toBe(`grove-attachment://worktree/${SID}/out%2Fc.png`);
     expect(threadImageSrc(SID, { kind: 'made', made: { path: 'r.pdf', kind: 'pdf', size: 1 }, eventIndex: 0 })).toBeNull();
     expect(threadImageSrc(SID, { kind: 'text', name: 'a.png', size: 1, eventIndex: 0 })).toBeNull();
-  });
-});
-
-describe('textFileMarkdown', () => {
-  it('shows markdown as it reads and fences anything else, past any backticks inside', () => {
-    expect(textFileMarkdown('README.md', '# Hi')).toBe('# Hi');
-    expect(textFileMarkdown('a.ts', 'const a = 1;')).toBe('```ts\nconst a = 1;\n```');
-    expect(textFileMarkdown('notes', 'a ```` b')).toBe('`````\na ```` b\n`````');
   });
 });
 

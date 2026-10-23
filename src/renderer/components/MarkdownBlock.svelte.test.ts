@@ -83,8 +83,8 @@ describe('MarkdownBlock links', () => {
       sessionId: 's1',
     });
     for (const a of container.querySelectorAll('a')) await fireEvent.click(a);
-    expect(open).toHaveBeenCalledTimes(1);
-    expect(open).toHaveBeenCalledWith('s1', 'out/test report.pdf');
+    // Main decides how each opens: source code and scripts are only read.
+    expect(open.mock.calls).toEqual([['s1', 'out/test report.pdf'], ['s1', 'src/app.ts'], ['s1', 'run.bat']]);
   });
 
   it('opens a link given as an absolute path or a file:// URL, which DOMPurify would drop', async () => {
@@ -132,6 +132,41 @@ describe('MarkdownBlock links', () => {
     expect(open).toHaveBeenLastCalledWith('s1', 'docs/api.md');
     await fireEvent.click(readme);
     expect(open).toHaveBeenLastCalledWith('s1', 'C:\\wt\\README.md');
+  });
+
+  it('opens a link with a line number after the path', async () => {
+    const open = vi.mocked(window.groveBench.openWorktreeFile);
+    open.mockClear();
+    const { container } = render(MarkdownBlock, { content: '[app.ts:42](app.ts:42) and [b](src/b.ts:7:3)', sessionId: 's1' });
+    const [a, b] = container.querySelectorAll('a');
+    await fireEvent.click(a);
+    await fireEvent.click(b);
+    expect(open.mock.calls).toEqual([['s1', 'app.ts'], ['s1', 'src/b.ts']]);
+  });
+
+  it('shows a text file a link opens at the lines it names', async () => {
+    const { markdownPreviewStore } = await import('../stores/markdownPreview.svelte.js');
+    vi.mocked(window.groveBench.openWorktreeFile).mockResolvedValueOnce({ kind: 'text', content: 'a\nb' });
+    const { container } = render(MarkdownBlock, { content: '[the fix](src/app.ts#L42-L44)', sessionId: 's1' });
+    await fireEvent.click(container.querySelector('a')!);
+    await waitFor(() => expect(markdownPreviewStore.code).toEqual({ path: 'src/app.ts', lines: { start: 42, end: 44 } }));
+    markdownPreviewStore.close();
+  });
+
+  it('marks a link whose file is not in the worktree, until a click finds it', async () => {
+    const open = vi.mocked(window.groveBench.openWorktreeFile);
+    open.mockClear().mockResolvedValueOnce({ kind: 'missing' });
+    const { container } = render(MarkdownBlock, { content: 'See [the code](src/gone.ts).', sessionId: 's1' });
+    const a = container.querySelector('a')!;
+
+    await fireEvent.click(a);
+    await waitFor(() => expect(a.hasAttribute('data-missing')).toBe(true));
+    // CSS draws the note, so the text (and a copy of it) stays as written.
+    expect(container.textContent?.trim()).toBe('See the code.');
+
+    // The agent wrote it since: the mark goes.
+    await fireEvent.click(a);
+    await waitFor(() => expect(a.hasAttribute('data-missing')).toBe(false));
   });
 
   it('opens no file without a thread', async () => {

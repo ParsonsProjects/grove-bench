@@ -165,9 +165,34 @@ describe('openWorktreeFile', () => {
     expect(shell.showItemInFolder).not.toHaveBeenCalled();
   });
 
+  it('hands another text file\'s text back to read in the Focus panel, so a click never runs it', async () => {
+    for (const rel of ['src/index.ts', 'run.bat', 'Makefile']) {
+      write(worktree, rel, 'echo hi\n');
+      expect(await openWorktreeFile(worktree, rel)).toEqual({ kind: 'text', content: 'echo hi\n' });
+    }
+    expect(shell.openPath).not.toHaveBeenCalled();
+    expect(shell.showItemInFolder).not.toHaveBeenCalled();
+  });
+
+  it('shows a text file it cannot read in its folder, rather than calling it missing', async () => {
+    const p = write(worktree, 'server.log', 'locked');
+    const read = vi.spyOn(fs.promises, 'readFile').mockRejectedValueOnce(Object.assign(new Error('EBUSY'), { code: 'EBUSY' }));
+    expect(await openWorktreeFile(worktree, 'server.log')).toEqual({ kind: 'shown' });
+    expect(shell.showItemInFolder).toHaveBeenLastCalledWith(p);
+    read.mockRestore();
+  });
+
+  it('shows a text file too large to draw in its folder instead', async () => {
+    const p = write(worktree, 'big.log', 'x'.repeat(256 * 1024 + 1));
+    expect(await openWorktreeFile(worktree, 'big.log')).toEqual({ kind: 'shown' });
+    expect(shell.showItemInFolder).toHaveBeenLastCalledWith(p);
+  });
+
   it('only shows anything else in its folder, so a click never runs it', async () => {
-    for (const rel of ['run.bat', 'chart.svg', 'macro.xlsm', 'index.ts']) {
-      const p = write(worktree, rel, 'x');
+    // Binary files (an .exe, a zipped .xlsm) aren't read as text.
+    const binary = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00, 0x00]);
+    for (const [rel, data] of [['tool.exe', binary], ['macro.xlsm', binary], ['chart.svg', '<svg/>']] as const) {
+      const p = write(worktree, rel, data);
       expect(await openWorktreeFile(worktree, rel)).toEqual({ kind: 'shown' });
       expect(shell.showItemInFolder).toHaveBeenLastCalledWith(p);
     }

@@ -14,11 +14,10 @@
   import StatusBarPopover from './StatusBarPopover.svelte';
   import AttachmentIcon from './AttachmentIcon.svelte';
   import ImageLightbox from './ImageLightbox.svelte';
-  import { markdownPreviewStore } from '../stores/markdownPreview.svelte.js';
   import { formatFileSize } from '$lib/file-attachments.js';
   import { openWorktreeFile } from '$lib/worktree-files.js';
   import {
-    attachedTextContent, showInThread, textFileMarkdown, threadFileName, threadFileSize, threadImageSrc,
+    attachedTextContent, showAttachedText, showInThread, threadFileName, threadFileSize, threadImageSrc,
   } from '$lib/thread-files.js';
   import { threadFileKey, type ThreadFile } from '../../shared/thread-items.js';
 
@@ -68,7 +67,7 @@
           return;
         }
         open = false;
-        markdownPreviewStore.show(textFileMarkdown(f.name, content), f.name, sessionId);
+        showAttachedText(f.name, content);
       } else if (f.kind === 'file') {
         if (!(await window.groveBench.openAttachedFile(sessionId, f.file.file))) missing[key] = true;
       } else if (f.kind === 'made') {
