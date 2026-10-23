@@ -852,8 +852,9 @@ describe('ChangesReviewPanel — large diffs', () => {
   });
 
   it('shows the old text, then the new, when an edit in Edit History has too many changes to work out', async () => {
+    // The large edit's capped diffs give up, as if out of time; the small one's don't.
     vi.mocked(createPatch).mockImplementation(((...args: Parameters<typeof realCreatePatch>) =>
-      Number.isFinite((args[5] as { timeout?: number } | undefined)?.timeout) ? undefined : realCreatePatch(...args)) as typeof createPatch);
+      Number.isFinite((args[5] as { timeout?: number } | undefined)?.timeout) && args[1].startsWith('old 0') ? undefined : realCreatePatch(...args)) as typeof createPatch);
     try {
       // Large by text here (30 lines, scaled), so it gets the capped diffs.
       const side = (word: string) => Array.from({ length: 15 }, (_, i) => `${word} ${i}`).join('\n');
@@ -868,6 +869,24 @@ describe('ChangesReviewPanel — large diffs', () => {
       expect(await findByText(/Too many changes to compare line by line/)).toBeInTheDocument();
       expect(diffText(container)).toContain('old 14');
       expect(diffText(container)).toContain('new 14');
+    } finally {
+      vi.mocked(createPatch).mockImplementation(realCreatePatch);
+    }
+  });
+
+  it('compares an edit in Edit History line by line once asked, when the quick try gave up', async () => {
+    // Only the small edit's quick try (50 ms at most) gives up.
+    vi.mocked(createPatch).mockImplementation(((...args: Parameters<typeof realCreatePatch>) =>
+      ((args[5] as { timeout?: number } | undefined)?.timeout ?? Infinity) <= 50 && args[1] === 'tiny old' ? undefined : realCreatePatch(...args)) as typeof createPatch);
+    try {
+      editTurn();
+      const { container, findByRole, findByText, queryByText } = render(ChangesReviewPanel, { sessionId: SID });
+
+      await fireEvent.click(await findByRole('button', { name: '2 edits' }));
+      expect(await findByText(/Too many changes to compare line by line without a pause/)).toBeInTheDocument();
+      await fireEvent.click(await findByRole('button', { name: 'Compare Edit #1 line by line' }));
+      await waitFor(() => expect(queryByText(/Too many changes/)).toBeNull());
+      expect(diffText(container)).toContain('tiny new');
     } finally {
       vi.mocked(createPatch).mockImplementation(realCreatePatch);
     }

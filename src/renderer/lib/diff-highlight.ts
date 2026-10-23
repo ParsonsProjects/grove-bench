@@ -86,9 +86,9 @@ export function diffSize(lines: DiffLine[]): { lines: number; chars: number } {
 }
 
 /** How much text an edit call carries: both sides of each replacement, or
- *  the whole write. Over the limits, quickEditDiff diffs it with capped
- *  effort first: createPatch slows down with how much changed, to seconds
- *  for a heavy change to a large file. */
+ *  the whole write. quickEditDiff caps the effort of diffing it, more
+ *  tightly over the limits: createPatch slows down with how much changed,
+ *  to seconds for a heavy change to a large file. */
 export function editSize(view: ToolView): { lines: number; chars: number } {
   const texts = view.edits?.length ? view.edits.flatMap((e) => [e.oldText, e.newText]) : [view.write ?? ''];
   let lines = 0;

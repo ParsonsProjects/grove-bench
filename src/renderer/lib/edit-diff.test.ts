@@ -22,32 +22,61 @@ afterEach(() => {
 
 describe('quickEditDiff', () => {
   it('diffs a small edit as it is', () => {
-    const { lines, large } = quickEditDiff(edit('a', 'b'), 'notes.txt');
+    const { diff, large } = quickEditDiff(edit('a', 'b'), 'notes.txt');
     expect(large).toBe(false);
-    expect(lines?.filter((l) => l.type !== 'hunk').map((l) => [l.type, l.text])).toEqual([['del', 'a'], ['add', 'b']]);
+    expect(diff?.linedUp).toBe(true);
+    expect(diff?.lines.filter((l) => l.type !== 'hunk').map((l) => [l.type, l.text])).toEqual([['del', 'a'], ['add', 'b']]);
   });
 
   it('shows a small change to a large file at once', () => {
     const after = [...file];
     after[500] = 'changed';
-    const { lines, large } = quickEditDiff(edit(file.join('\n'), after.join('\n')), 'notes.txt');
+    const { diff, large } = quickEditDiff(edit(file.join('\n'), after.join('\n')), 'notes.txt');
     expect(large).toBe(false);
-    expect(lines?.filter((l) => l.type === 'add').map((l) => l.text)).toEqual(['changed']);
+    expect(diff?.lines.filter((l) => l.type === 'add').map((l) => l.text)).toEqual(['changed']);
+  });
+
+  it('lines up a plain insertion or deletion of more lines than the cap on changes', () => {
+    const block = file.slice(0, 600).join('\n');
+    const inserted = quickEditDiff(edit('export {}\n', `export {}\n${block}\n`), 'notes.txt').diff;
+    expect(inserted?.linedUp).toBe(true);
+    expect(inserted?.lines.filter((l) => l.type === 'context').map((l) => l.text)).toEqual(['export {}']);
+    expect(inserted?.lines.filter((l) => l.type === 'add')).toHaveLength(600);
+    expect(quickEditDiff(edit(`${block}\nend`, 'end'), 'notes.txt').diff?.linedUp).toBe(true);
+  });
+
+  it('shows an edit under the limits at once as the old text, then the new, after one capped try', () => {
+    vi.mocked(createPatch).mockReturnValue(undefined as never);
+    vi.mocked(createPatch).mockClear();
+    const { diff, large } = quickEditDiff(edit('one\ntwo\n', 'uno\n'), 'notes.txt');
+    expect(large).toBe(false);
+    expect(diff?.linedUp).toBe(false);
+    // Only the quick try gave up, so a full one may line it up.
+    expect(diff?.quick).toBe(true);
+    expect(diff?.lines.map((l) => [l.type, l.text])).toEqual([['hunk', '@@ -1,2 +1,1 @@'], ['del', 'one'], ['del', 'two'], ['add', 'uno']]);
+    expect(createPatch).toHaveBeenCalledOnce();
+    const opts = vi.mocked(createPatch).mock.calls[0][5] as { timeout?: number; maxEditLength?: number };
+    expect(opts.timeout).toBeLessThanOrEqual(50);
+    expect(opts.maxEditLength).toBeUndefined();
   });
 
   it('holds back a heavily changed large file, without working it out', () => {
-    expect(quickEditDiff(edit(file.join('\n'), [...file].reverse().join('\n')), 'notes.txt')).toEqual({ lines: null, large: true });
+    expect(quickEditDiff(edit(file.join('\n'), [...file].reverse().join('\n')), 'notes.txt')).toEqual({ diff: null, large: true });
   });
 
   it('holds back a large write without splitting it', () => {
-    expect(quickEditDiff({ kind: 'edit', path: 'big.txt', write: file.join('\n') + '\n' + file.join('\n') }, 'big.txt')).toEqual({ lines: null, large: true });
+    expect(quickEditDiff({ kind: 'edit', path: 'big.txt', write: file.join('\n') + '\n' + file.join('\n') }, 'big.txt')).toEqual({ diff: null, large: true });
+  });
+
+  it('draws a small write as its lines', () => {
+    expect(quickEditDiff({ kind: 'edit', write: 'a\nb' }, 'f')).toEqual({ diff: { lines: [{ type: 'add', text: 'a', lineNum: 1 }, { type: 'add', text: 'b', lineNum: 2 }], linedUp: true }, large: false });
   });
 });
 
 describe('fullEditDiff', () => {
-  it('uses the lines already worked out', () => {
-    const known = [{ type: 'add' as const, text: 'x', lineNum: 1 }];
-    expect(fullEditDiff(edit('a', 'b'), 'notes.txt', known)).toEqual({ lines: known, linedUp: true });
+  it('uses what quickEditDiff already worked out', () => {
+    const known = { lines: [{ type: 'add' as const, text: 'x', lineNum: 1 }], linedUp: false };
+    expect(fullEditDiff(edit('a', 'b'), 'notes.txt', known)).toBe(known);
   });
 
   it('draws a write as its lines', () => {
@@ -56,8 +85,9 @@ describe('fullEditDiff', () => {
 
   it('shows the old text, then the new, when the diff runs out of time', () => {
     vi.mocked(createPatch).mockReturnValue(undefined as never);
-    const { lines, linedUp } = fullEditDiff(edit('one\ntwo\n', 'uno\n'), 'notes.txt', null);
+    const { lines, linedUp, quick } = fullEditDiff(edit('one\ntwo\n', 'uno\n'), 'notes.txt', null);
     expect(linedUp).toBe(false);
+    expect(quick).toBeUndefined();
     expect(lines).toEqual([
       { type: 'hunk', text: '@@ -1,2 +1,1 @@' },
       { type: 'del', text: 'one', lineNum: 1, oldLineNum: 1 },

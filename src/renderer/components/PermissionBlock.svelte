@@ -2,10 +2,10 @@
   import { messageStore } from '../stores/messages.svelte.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import ArrowUpIcon from '@lucide/svelte/icons/arrow-up';
-  import { Notice } from '$lib/components/ui/notice/index.js';
   import DiffView from './DiffView.svelte';
-  import { fullEditDiff, quickEditDiff, OLD_THEN_NEW } from '../lib/edit-diff.js';
+  import { fullEditDiff, quickEditDiff } from '../lib/edit-diff.js';
   import LargeDiffNotice from './LargeDiffNotice.svelte';
+  import OldThenNewNotice from './OldThenNewNotice.svelte';
   import { editSize } from '../lib/diff-highlight.js';
   import { toolLabel } from '$lib/tool-names.js';
   import MarkdownBlock from './MarkdownBlock.svelte';
@@ -74,7 +74,9 @@
   let quickDiff = $derived(isEditTool ? quickEditDiff(view, filePath) : null);
   let editShown = $state(false);
   let editHeldBack = $derived(!!quickDiff?.large && !editShown);
-  let shownDiff = $derived(!quickDiff || editHeldBack ? null : fullEditDiff(view, filePath, quickDiff.lines));
+  /** "Compare line by line" was clicked: work it out in full. */
+  let editCompared = $state(false);
+  let shownDiff = $derived(!quickDiff || editHeldBack ? null : fullEditDiff(view, filePath, editCompared ? null : quickDiff.diff));
   let diffLines = $derived(shownDiff?.lines ?? []);
   let alwaysAllow = $derived(alwaysAllowLabel(toolName, toolCategory));
   /** What a call other than an edit or command is about, from the view, so
@@ -283,7 +285,7 @@
     </div>
   {:else if !isResolved && isEditTool && diffLines.length > 0}
     <div class="mt-1">
-      {#if shownDiff && !shownDiff.linedUp}<Notice tone="neutral" class="mb-1"><p>{OLD_THEN_NEW}</p></Notice>{/if}
+      {#if shownDiff && !shownDiff.linedUp}<OldThenNewNotice diff={shownDiff} label={filePath ? `Compare edit to ${filePath} line by line` : undefined} onCompare={() => (editCompared = true)} />{/if}
       <DiffView lines={diffLines} {sideBySide} maxHeight="200px" {filePath} deferHighlight />
     </div>
   {/if}
