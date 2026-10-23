@@ -80,6 +80,12 @@ describe('openWorktreeFile', () => {
     expect(markdownPreviewStore).toMatchObject({ open: true, content: '# Plan', title: 'docs/plan.md', sessionId: 's1', baseDir: 'docs' });
   });
 
+  it('shows another text file in the Focus panel as a code block in its language', async () => {
+    mockGroveBench.openWorktreeFile.mockResolvedValueOnce({ kind: 'text', content: 'export const a = 1;' });
+    expect(await openWorktreeFile('s1', 'src/app.ts')).toBe(true);
+    expect(markdownPreviewStore).toMatchObject({ open: true, content: '```ts\nexport const a = 1;\n```', title: 'src/app.ts', sessionId: 's1' });
+  });
+
   it('says when the file is gone', async () => {
     mockGroveBench.openWorktreeFile.mockResolvedValueOnce({ kind: 'missing' });
     expect(await openWorktreeFile('s1', 'docs/plan.md')).toBe(false);

@@ -83,8 +83,8 @@ describe('MarkdownBlock links', () => {
       sessionId: 's1',
     });
     for (const a of container.querySelectorAll('a')) await fireEvent.click(a);
-    expect(open).toHaveBeenCalledTimes(1);
-    expect(open).toHaveBeenCalledWith('s1', 'out/test report.pdf');
+    // Main decides how each opens: source code and scripts are only read.
+    expect(open.mock.calls).toEqual([['s1', 'out/test report.pdf'], ['s1', 'src/app.ts'], ['s1', 'run.bat']]);
   });
 
   it('opens a link given as an absolute path or a file:// URL, which DOMPurify would drop', async () => {

@@ -12,12 +12,16 @@ import { shell } from 'electron';
 import type { OpenWorktreeFileResult } from '../shared/types.js';
 import { isMarkdownFile, madeFileKind, worktreeImageType } from '../shared/attachments.js';
 import { isPathInside } from './agent-utils.js';
+import { looksBinary } from './git.js';
 
 /** Larger images aren't served: a thumbnail doesn't need them. */
 const MAX_IMAGE_BYTES = 50 * 1024 * 1024;
 /** A Markdown file larger than this is shown in its folder instead: the
  *  Focus panel would be slow to draw it. */
 const MAX_MARKDOWN_BYTES = 1024 * 1024;
+/** The same for other text files, lower: the Focus panel colours one as a
+ *  single code block, in one go (about a quarter of a second for this much). */
+const MAX_TEXT_BYTES = 256 * 1024;
 
 /** A path as an agent writes it, as a path this OS can resolve: a file://
  *  URL, or on Windows a Git Bash drive path (`/c/Users/...`). */
@@ -96,8 +100,9 @@ const OPENS_IN_APP: ReadonlySet<string> = new Set(['pdf', 'video', 'audio', 'dat
  * (the renderer navigates to the URL returned), a Markdown file in the Focus
  * panel (its text is returned), a viewer's type (PDF, media,
  * spreadsheets, Office documents, raster images) in its default app, a
- * folder in Explorer, and anything else only shown in its folder, so a click
- * never runs a script.
+ * folder in Explorer, any other text file (source code, a script) read-only
+ * in the Focus panel (its text is returned), and anything else only shown in
+ * its folder, so a click never runs a script.
  */
 export async function openWorktreeFile(worktreePath: string, filePath: string): Promise<OpenWorktreeFileResult> {
   const real = await resolveWorktreeFile(worktreePath, filePath);
@@ -114,6 +119,10 @@ export async function openWorktreeFile(worktreePath: string, filePath: string): 
     }
     const raster = kind === 'image' && worktreeImageType(real) !== 'image/svg+xml';
     if ((raster || (kind && OPENS_IN_APP.has(kind))) && (await shell.openPath(real)) === '') return { kind: 'opened' };
+    if (!kind && stat.size <= MAX_TEXT_BYTES) {
+      const data = await fs.promises.readFile(real);
+      if (!looksBinary(data)) return { kind: 'text', content: data.toString('utf8') };
+    }
     shell.showItemInFolder(real);
     return { kind: 'shown' };
   } catch {

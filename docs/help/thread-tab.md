@@ -28,7 +28,7 @@ A checkpoint is taken every time you send a message, before the agent starts wor
 ### Assistant Responses
 The agent's text responses are rendered as markdown with syntax highlighting for code blocks.
 
-When a response shows an image saved in the thread's worktree (for example `![Home page](screenshots/home.png)`), the image appears in the response. A link to a web page, PDF, image, video, audio file, spreadsheet or document in the worktree opens it: a web page in the Preview tab, the rest in their default app. Links to other files, such as source code, do nothing, and paths outside the worktree don't load or open.
+When a response shows an image saved in the thread's worktree (for example `![Home page](screenshots/home.png)`), the image appears in the response. A link to a file in the worktree opens it: a web page in the Preview tab, a Markdown file or any other text file (such as source code or a script) read-only in the Focus panel, and a PDF, image, video, audio file, spreadsheet or document in its default app. Clicking a link never runs a file: anything else is shown in its folder. Paths outside the worktree don't load or open.
 
 Document-like responses — plans, reports, audits, anything with multiple headings, a table, or several code blocks — show a **Focus** button on hover. It opens the response rendered full-width in a slide-out panel, which is easier to read than the chat column (especially in Summary view). Plan-approval prompts have the same button so you can review a proposed plan full-width before approving. Press `Esc` or click outside the panel to close it.
 

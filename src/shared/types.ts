@@ -1083,6 +1083,8 @@ export type OpenWorktreeFileResult =
   | { kind: 'preview'; url: string }
   /** A Markdown file's text, for the Focus panel. */
   | { kind: 'markdown'; content: string }
+  /** Any other text file's text (source code, logs), read-only in the Focus panel. */
+  | { kind: 'text'; content: string }
   | { kind: 'missing' };
 
 // ─── File Attachment ───
