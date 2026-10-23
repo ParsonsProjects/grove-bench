@@ -11,6 +11,9 @@
   import { draftStore } from '../stores/draft.svelte.js';
   import { groupStore } from '../stores/groups.svelte.js';
   import { todoStore } from '../stores/todo.svelte.js';
+  import { schedulesStore } from '../stores/schedules.svelte.js';
+  import { skillsPanelStore } from '../stores/skillsPanel.svelte.js';
+  import WandSparklesIcon from '@lucide/svelte/icons/wand-sparkles';
   import SidebarGroups from './SidebarGroups.svelte';
   import SidebarSection from './SidebarSection.svelte';
   import AttentionCounts from './AttentionCounts.svelte';
@@ -48,7 +51,18 @@
   import type { SessionSortState, SessionStatus, PrInfo } from '../../shared/types.js';
   import { limitedQueue } from '../lib/limited-queue.js';
   import { stripIpcErrorPrefix } from '../lib/mcp-errors.js';
+  import { splitSkillLine } from '../../shared/skill-line.js';
+  import { deriveSessionName } from '../../shared/session-name.js';
   import { onMount, untrack } from 'svelte';
+
+  /** The draft's row: its first line, or for a skill run the name the
+   *  thread will get ("triage: Fix the login bug"), not the line every one
+   *  starts with. */
+  function draftTitle(text: string): string {
+    const trimmed = text.trim();
+    if (!trimmed) return 'New thread';
+    return (splitSkillLine(trimmed) && deriveSessionName(trimmed)) || trimmed.split('\n')[0];
+  }
 
   // Per-repo accordion collapse state, persisted via app-state. An explicit
   // entry wins; otherwise repos default to collapsed (see isRepoCollapsed).
@@ -910,7 +924,7 @@
 >
   <!-- Described once, for every row's ✕. -->
   <span id="close-conversation-hint" hidden>{CLOSE_HINT}</span>
-  <!-- Bookmarks, memory, clean-up and settings: in the footer, or down the rail -->
+  <!-- Bookmarks, memory, skills, clean-up and settings: in the footer, or down the rail -->
   {#snippet footerTools()}
     <Button
       onclick={() => bookmarkStore.toggleDrawer()}
@@ -929,6 +943,18 @@
       title="Project Memory"
     >
       <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2c-1.5 0-3 .8-4 2s-1.5 3-2.5 3.5C4 8.5 3 10 3 12c0 1.5.5 3 1.5 4s1 2.5.5 3.5c.5 1.5 2 2.5 3.5 2.5H12"/><path d="M12 2c1.5 0 3 .8 4 2s1.5 2.5 2.5 3c1.5 1 2 2.5 2 4"/><path d="M12 2v20"/><path d="M12 8h5"/><path d="M12 14h4"/><circle cx="17.5" cy="8" r="1.2" fill="currentColor"/><circle cx="16.5" cy="14" r="1.2" fill="currentColor"/></svg>
+    </Button>
+    <!-- Always here, so the drawer opens even when a narrow status bar
+         has dropped its Skills count. -->
+    <Button
+      onclick={() => (store.activeSessionId ? skillsPanelStore.showThread() : skillsPanelStore.showScheduled())}
+      variant="quiet"
+      size="sm"
+      class="px-2 shrink-0"
+      title="Skills: run, schedule and share them"
+      aria-label="Skills"
+    >
+      <WandSparklesIcon class="size-4" />
     </Button>
     <Button
       onclick={openCleanup}
@@ -1230,7 +1256,7 @@
         >
           <span class="w-full flex items-center gap-2 min-w-0">
             <span class="{markColumn.lead} shrink-0 flex"><span class="w-2 h-2 shrink-0 border border-dashed border-muted-foreground"></span></span>
-            <span class="text-sm truncate min-w-0 flex-1 italic text-muted-foreground">{draft.text.trim() ? draft.text.trim().split('\n')[0] : 'New thread'}</span>
+            <span class="text-sm truncate min-w-0 flex-1 italic text-muted-foreground">{draftTitle(draft.text)}</span>
             <span class="text-micro text-muted-foreground shrink-0">draft</span>
           </span>
           {#if store.repos.length > 1 || draftGroup}
@@ -1338,6 +1364,17 @@
                   aria-label="Remove project {store.repoDisplayName(repo)}"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+                </Button>
+                <!-- Shown when the project has scheduled skills, else on hover like the bin. -->
+                <Button
+                  variant="quiet"
+                  size="icon-2xs"
+                  onclick={() => skillsPanelStore.showScheduled(repo)}
+                  class={schedulesStore.forRepo(repo).length ? '' : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100'}
+                  title="Scheduled skills in {store.repoDisplayName(repo)}"
+                  aria-label="Scheduled skills in {store.repoDisplayName(repo)}"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
                 </Button>
                 <!-- Always shown: this is the main way to start a conversation in a project. -->
                 <Button

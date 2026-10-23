@@ -7,7 +7,7 @@ The Preview tab (`Alt+5`) is a browser inside each thread. Use it to look at you
 Each thread has two pages. Switch between them with **Yours** and **Agent's** at the top left of the tab.
 
 - **Yours** is a normal browser page you click around in. It opens any web address, and files inside the thread's worktree, such as a built HTML page.
-- **Agent's** is the page the agent drives with its browser tools. You see it update as the agent opens pages, clicks and types. It's view only. **Open in yours** loads the same address in your page.
+- **Agent's** is the page the agent drives with its browser tools. You see it update as the agent opens pages, clicks and types. It's view only. **Open in yours** (the person button beside the address) loads the same address in your page.
 
 The two pages share cookies and storage, so signing in on one signs in the other. Each thread's storage is separate from other threads and is cleared when the thread closes.
 

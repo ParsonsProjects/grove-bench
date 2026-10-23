@@ -27,7 +27,7 @@ import type {
   AdapterConfig, AdapterEvent, AdapterPrerequisiteStatus, AgentAdapter, AgentCapabilities, AgentQueryHandle,
   ApiKeyDescriptor, CliSignInDescriptor, ModelInfo, PermissionResponse, SignInCheck, UserMessage,
 } from '../types.js';
-import type { AgentStage, ControlDescriptor, ControlOption, PermissionMode, ImageMediaType, TokenCounts } from '../../../shared/types.js';
+import type { AgentStage, ControlDescriptor, ControlOption, PermissionMode, ImageMediaType, SkillDefinition, TokenCounts } from '../../../shared/types.js';
 import { CONTROL_IDS, isImageMediaType } from '../../../shared/types.js';
 import { cleanEnv } from '../../agent-utils.js';
 import { decideToolCall, groveServersOf } from '../../tool-policy.js';
@@ -44,6 +44,7 @@ import { AUDIO_INLINE_BUDGET_BYTES, inlineAudioType } from '../file-attachments.
 import { memoryServer, previewServer, type GroveServer } from '../grove-tools.js';
 import { startGroveMcpHttp, type GroveMcpHttp } from '../grove-mcp-http.js';
 import { stdioBridgeLaunch } from '../mcp-bridge/launch.js';
+import { listSkills as listSkillsIn, writeSkill, SHARED_SKILL_DIRS, type SkillDirs } from '../../skills.js';
 import { JsonRpcConnection, JsonRpcError, RPC_ERRORS } from './rpc.js';
 import {
   ACP_PROTOCOL_VERSION,
@@ -88,6 +89,10 @@ export interface AcpAgentDefinition {
   modelProvider?: string;
   /** 'alpha' to keep it out of the agent picker until the user turns it on. */
   stage?: AgentStage;
+  /** Where the agent reads Agent Skills (SKILL.md folders), so Grove can list
+   *  them to run or schedule. Without it, the shared `.agents/skills`. The
+   *  agent runs its skills itself; Grove only reads the list. */
+  skillDirs?: SkillDirs;
 }
 
 /** How long the agent gets to answer `initialize` and set up a session. */
@@ -314,6 +319,22 @@ export class AcpAdapter implements AgentAdapter {
     if (def.cliSignIn) this.checkSignIn = () => this.probeSignIn();
     // New model details from models.dev reach the pickers like a new list.
     catalogs.onChange(() => { for (const l of this.modelListeners) l(); });
+  }
+
+  get skillDirs(): SkillDirs {
+    return this.def.skillDirs ?? SHARED_SKILL_DIRS;
+  }
+
+  /** The skills the agent can see in `worktreePath`, read from its folders.
+   *  capabilities.skills stays off: Grove can't turn an ACP agent's skills
+   *  off. */
+  async listSkills(worktreePath: string) {
+    return listSkillsIn(worktreePath, this.skillDirs);
+  }
+
+  /** A new skill goes in the shared folder, which the agent reads. */
+  async addSkill(worktreePath: string, def: SkillDefinition) {
+    return writeSkill(worktreePath, def, this.skillDirs);
   }
 
   /** How to install the program: the ACP Registry's command when it has an

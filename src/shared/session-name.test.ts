@@ -103,6 +103,18 @@ describe('deriveSessionName', () => {
   });
 });
 
+describe('deriveSessionName for a skill run', () => {
+  it("names a skill run after the skill and its task, not the opener they share", () => {
+    expect(deriveSessionName('Use the `triage` skill for this task.\n\nTake the top agent-ready issue.')).toBe('triage: Take the top agent-ready issue');
+    expect(deriveSessionName('Use the `release-notes` skill.')).toBe('release-notes');
+    expect(deriveSessionName('Use the `deploy` skill for this task.\n\n')).toBe('deploy');
+  });
+
+  it('cuts a long one to length once', () => {
+    expect(deriveSessionName('Use the `work-linear-issue` skill for this task.\n\nTake the oldest bug labelled agent-ready and fix it')).toBe('work-linear-issue: Take the oldest bug…');
+  });
+});
+
 describe('legacySessionName', () => {
   it('reproduces the old names: cleaned prompt, no filler stripping or capitalising', () => {
     expect(legacySessionName('  fix the login bug  ')).toBe('fix the login bug');

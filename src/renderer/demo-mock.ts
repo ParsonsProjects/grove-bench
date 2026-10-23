@@ -5,6 +5,7 @@
  */
 
 import type { ThreadItems } from '../shared/thread-items.js';
+import type { SkillSchedule, SkillScheduleInput } from '../shared/skill-schedules.js';
 
 // Capture uncaught errors (a template error can kill Svelte's effect loop).
 const errs: string[] = [];
@@ -32,6 +33,22 @@ const CLAUDE_MODE_OPTIONS = [
 
 const REPO_A = 'C:/dev/grove-bench';
 const REPO_B = 'C:/dev/api-service';
+
+/** Scheduled skills, kept in memory: one that ran, one paused. */
+let demoSchedules: SkillSchedule[] = [
+  {
+    id: 'sch-review', repoPath: REPO_A, agentId: 'claude-code', skill: 'code-review', start: 'new',
+    note: 'Review the open PRs labelled agent-made and leave your findings as comments.',
+    permissionMode: 'default', timing: { kind: 'every', hours: 2 }, maxOpen: 2, paused: false,
+    scheduledFrom: now - 5 * 60 * min, checkedThrough: now - 60 * min,
+    lastOutcome: { at: now - 60 * min, sessionId: 's-sidebar' }, sessionIds: ['s-sidebar'],
+  },
+  {
+    id: 'sch-notes', repoPath: REPO_A, agentId: 'claude-code', skill: 'release-notes', start: 'folder', note: '',
+    permissionMode: 'plan', timing: { kind: 'daily', time: '09:00', weekdaysOnly: true }, maxOpen: 1, paused: true,
+    scheduledFrom: now - 3 * 24 * 60 * min, checkedThrough: now - 3 * 24 * 60 * min, sessionIds: [],
+  },
+];
 
 const SETTINGS = {
   toolAllowRules: [],
@@ -152,6 +169,14 @@ const DEMO_SKILLS = [
   { name: 'release-notes', description: 'Draft release notes from merged PRs since the last tag', source: 'user', path: 'C:/Users/demo/.claude/skills/release-notes/SKILL.md' },
   { name: 'worktree-doctor', description: 'Diagnose and repair broken git worktrees and stale locks', source: 'user', path: 'C:/Users/demo/.claude/skills/worktree-doctor/SKILL.md' },
 ];
+
+/** Two project skills only Claude Code can see, and a shared one it can't
+ *  see yet, so the drawer shows Share and Link. */
+let DEMO_SHARING = {
+  toShare: DEMO_SKILLS.filter((s) => s.name === 'code-review' || s.name === 'deploy-preview'),
+  toLink: [{ name: 'triage-issue', description: 'Pick the top agent-ready issue and move it to In Progress', source: 'project', path: 'C:/dev/grove-bench/.agents/skills/triage-issue/SKILL.md' }],
+  broken: [] as typeof DEMO_SKILLS,
+};
 
 let DEMO_SUGGESTIONS = [
   {
@@ -338,16 +363,30 @@ const api: Record<string, unknown> = {
     Object.assign(SETTINGS, next);
   },
   listSkills: async () => DEMO_SKILLS,
+  listAgentSkills: async () => DEMO_SKILLS,
   addSkill: async (_sid: string, _fallback: string, def: { name: string; description: string; scope: string }) => {
     const root = def.scope === 'project' ? 'C:/dev/grove-bench' : 'C:/Users/demo';
     const skill = {
       name: def.name,
       description: def.description,
       source: def.scope,
-      path: `${root}/.claude/skills/${def.name}/SKILL.md`,
+      path: `${root}/.agents/skills/${def.name}/SKILL.md`,
     };
     DEMO_SKILLS.push(skill);
     return skill;
+  },
+  getSkillSharing: async () => DEMO_SHARING,
+  shareSkills: async () => {
+    const done = DEMO_SHARING.toShare.map((s) => s.name);
+    for (const s of DEMO_SKILLS) if (done.includes(s.name)) s.path = s.path.replace('/.claude/', '/.agents/');
+    DEMO_SHARING = { ...DEMO_SHARING, toShare: [] };
+    return { done, skipped: [] };
+  },
+  linkSkills: async () => {
+    DEMO_SKILLS.push(...DEMO_SHARING.toLink);
+    const done = DEMO_SHARING.toLink.map((s) => s.name);
+    DEMO_SHARING = { ...DEMO_SHARING, toLink: [], broken: [] };
+    return { done, skipped: [] };
   },
   getSkillSuggestions: async () => DEMO_SUGGESTIONS,
   analyzeSkillSuggestions: async () => DEMO_SUGGESTIONS,
@@ -398,6 +437,17 @@ const api: Record<string, unknown> = {
   setUnreadSessions: () => {},
   getTodoSessions: async () => [],
   setTodoSessions: () => {},
+  listSkillSchedules: async () => structuredClone(demoSchedules),
+  saveSkillSchedule: async (input: SkillScheduleInput) => {
+    const old = demoSchedules.find((s) => s.id === input.id);
+    const schedule: SkillSchedule = { ...input, id: old?.id ?? `sch-${Date.now()}`, scheduledFrom: Date.now(), checkedThrough: Date.now(), sessionIds: old?.sessionIds ?? [] };
+    demoSchedules = old ? demoSchedules.map((s) => (s.id === schedule.id ? schedule : s)) : [...demoSchedules, schedule];
+    return structuredClone(schedule);
+  },
+  deleteSkillSchedule: async (id: string) => { demoSchedules = demoSchedules.filter((s) => s.id !== id); },
+  recordSkillScheduleRun: async () => null,
+  onSkillScheduleDue: () => () => {},
+  onSkillSchedulesChanged: () => () => {},
   onAppError: () => () => {},
   reportError: () => {},
   reportFreeze: () => {},
