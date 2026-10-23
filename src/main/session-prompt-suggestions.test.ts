@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('./background-tasks.js', () => ({ backgroundModelFor: () => 'small-model' }));
 vi.mock('./logger.js', () => ({ logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
-const settingsMock = vi.hoisted(() => ({ promptSuggestions: true }));
+const settingsMock = vi.hoisted(() => ({ promptSuggestions: true, backgroundPromptSuggestions: true }));
 vi.mock('./settings.js', () => ({ getSettings: () => settingsMock }));
 const goal = vi.hoisted(() => ({ text: null as string | null }));
 vi.mock('./worktree-manager.js', () => ({
@@ -152,6 +152,7 @@ describe('SessionPromptSuggestions', () => {
 
   beforeEach(() => {
     settingsMock.promptSuggestions = true;
+    settingsMock.backgroundPromptSuggestions = true;
     goal.text = null;
   });
 
@@ -173,6 +174,7 @@ describe('SessionPromptSuggestions', () => {
 
   it.each([
     ['the setting is off', {}, false, () => { settingsMock.promptSuggestions = false; }],
+    ['other agents\' suggestions are off (the default)', {}, false, () => { settingsMock.backgroundPromptSuggestions = false; }],
     ['the turn failed', {}, true, () => {}],
     ['the user stopped the turn', { interrupting: true }, false, () => {}],
     ['the thread is in Grove\'s plan mode', { permissionMode: 'plan' }, false, () => {}],
@@ -277,6 +279,9 @@ describe('SessionPromptSuggestions', () => {
     const suggestions = new SessionPromptSuggestions();
     const native = (overrides: Partial<ManagedSession> = {}) => makeSession(undefined, overrides, true);
     suggestions.afterTurn(native(), result(), vi.fn(), () => true);
+    expect(suggestions.acceptsOwn('s1')).toBe(true);
+    // Claude Code's own don't need other agents' setting.
+    settingsMock.backgroundPromptSuggestions = false;
     expect(suggestions.acceptsOwn('s1')).toBe(true);
 
     suggestions.afterTurn(native({ interrupting: true }), result(), vi.fn(), () => true);

@@ -11,6 +11,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   autoSkillSuggestions: false,
   showConversationGoal: true,
   promptSuggestions: true,
+  backgroundPromptSuggestions: false,
   defaultModels: {},
   adapterDefaults: {},
   showThinkingSummaries: true,

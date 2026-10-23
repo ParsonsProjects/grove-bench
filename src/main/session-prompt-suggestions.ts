@@ -1,7 +1,8 @@
 /**
  * The next prompt offered in the message box after a turn. Claude Code makes
  * its own (the promptSuggestions capability); every other agent is asked
- * here, once per finished turn, on its background model. A prompt sent
+ * here, once per finished turn, on its background model, when the user
+ * turned that on (backgroundPromptSuggestions). A prompt sent
  * meanwhile cancels the request, and a guess that arrives once the thread
  * has moved on is dropped, so one never lands on a newer turn.
  */
@@ -136,6 +137,13 @@ function lastUserMessage(events: readonly AgentEvent[]): AgentEvent | null {
   return null;
 }
 
+/** Whether the user wants agents that don't suggest prompts themselves
+ *  asked for one: each ask is a model call. */
+function wantsBackgroundSuggestions(): boolean {
+  const s = settings.getSettings();
+  return s.promptSuggestions && s.backgroundPromptSuggestions;
+}
+
 /** Whether the thread is in a plan mode: Grove's, or an ACP agent's own,
  *  where Claude Code holds back its suggestions too. */
 function inPlanMode(session: ManagedSession): boolean {
@@ -165,8 +173,9 @@ export class SessionPromptSuggestions {
     if (session.interrupting) this.stopped.add(id);
     else this.stopped.delete(id);
     // A closing thread's folder may be about to go: nothing may start there.
-    if (session.destroying || !settings.getSettings().promptSuggestions) return;
-    if (adapter.capabilities.promptSuggestions || !adapter.generateText) return;
+    if (session.destroying) return;
+    // An agent that makes its own needs nothing from here.
+    if (adapter.capabilities.promptSuggestions || !adapter.generateText || !wantsBackgroundSuggestions()) return;
     // Held back where Claude Code holds back its own: after an error and in
     // plan mode. And after a stop.
     if (event.isError || this.stopped.has(id) || inPlanMode(session)) return;
@@ -207,7 +216,7 @@ export class SessionPromptSuggestions {
       this.failures.delete(id);
       const suggestion = cleanSuggestion(reply);
       const current = !controller.signal.aborted && idle() && lastUserMessage(session.eventHistory) === askedAfter;
-      if (suggestion && current && settings.getSettings().promptSuggestions) {
+      if (suggestion && current && wantsBackgroundSuggestions()) {
         emit({ type: 'prompt_suggestion', suggestion });
       }
     } catch (err) {

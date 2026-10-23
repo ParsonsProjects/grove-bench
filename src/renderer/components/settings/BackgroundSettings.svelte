@@ -38,8 +38,15 @@
   <CheckboxSetting
     setting="prompt-suggestions"
     label="Suggest the next prompt"
-    description="After each turn, show a guess at your next message in the empty message box. Press Tab to use it. Claude Code makes it from the thread's prompt cache, which costs little; a Claude Code thread that is already running picks up a change when its agent next starts. Other agents cost a model call per turn, on their background model."
+    description="After each turn, show a guess at your next message in the empty message box. Press Tab to use it. Claude Code makes it from the thread's prompt cache, which costs little; a Claude Code thread that is already running picks up a change when its agent next starts."
     bind:checked={settingsStore.draft.promptSuggestions}
+  />
+  <CheckboxSetting
+    setting="background-prompt-suggestions"
+    label="Also suggest with other agents"
+    description="Other agents don't make their own, so ask each one after every turn, on its background model. Each suggestion is a model call and starts the agent once more."
+    disabled={!settingsStore.draft.promptSuggestions}
+    bind:checked={settingsStore.draft.backgroundPromptSuggestions}
   />
   <CheckboxSetting
     setting="skill-suggestions"

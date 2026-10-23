@@ -1739,10 +1739,13 @@ export interface GroveBenchSettings {
    *  model call the user didn't ask for. */
   showConversationGoal: boolean;
   /** After each turn, show a guess at the user's next prompt in the message
-   *  box (Tab takes it). Claude Code makes it itself from the thread's prompt
-   *  cache; other agents are asked with a background model call per turn.
-   *  Default true. */
+   *  box (Tab takes it), from agents that make their own (Claude Code, from
+   *  the thread's prompt cache). Default true. */
   promptSuggestions: boolean;
+  /** Also ask agents that don't make their own, with a background model
+   *  call per turn (session-prompt-suggestions.ts). Needs promptSuggestions.
+   *  Off by default, as each is a model call the user didn't ask for. */
+  backgroundPromptSuggestions: boolean;
 
   // Agent Defaults
   /** Model new conversations start on, keyed by adapter id. Missing or empty

@@ -77,6 +77,7 @@ export const SETTINGS_INDEX: readonly SettingsEntry[] = [
   { id: 'memory-auto-save', section: 'background', label: 'Auto-save project memory' },
   { id: 'memory-compact-timeout', section: 'background', label: 'Compaction timeout', keywords: 'memory seconds' },
   { id: 'prompt-suggestions', section: 'background', label: 'Suggest the next prompt', keywords: 'autocomplete ghost text tab message box' },
+  { id: 'background-prompt-suggestions', section: 'background', label: 'Also suggest with other agents', keywords: 'next prompt gemini copilot opencode acp' },
   { id: 'skill-suggestions', section: 'background', label: 'Suggest skills automatically' },
   { id: 'conversation-goal', section: 'background', label: 'Show the thread goal', keywords: 'summary thread pinned conversation' },
   { id: 'idle-sleep', section: 'background', label: 'Sleep idle threads', keywords: 'idle stop cpu memory minutes conversation' },

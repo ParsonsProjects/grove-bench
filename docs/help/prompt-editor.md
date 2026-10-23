@@ -12,7 +12,11 @@ For multi-line messages, use **Shift+Enter** to add a new line without sending.
 
 After a turn, the empty prompt editor may show a grey guess at your next message, such as "Run the tests". Press **Tab** to put it in the box, then **Enter** to send it or edit it first. Start typing to ignore it.
 
-Claude Code makes its own suggestion from the thread's prompt cache, which costs little. Other agents are asked once per turn on their background model, which costs a model call each time. They are sent the thread's goal (or your first message, if it has no goal or switched agents), your last three messages and the end of the agent's latest reply: no tool output and no file contents. There is no suggestion after a thread's first turn, in plan mode, or after a turn that failed. Claude Code also holds back while your plan is near its usage limit. Turn it off with **Suggest the next prompt** in **Settings → Background work (Tending)**.
+Claude Code makes its own suggestion from the thread's prompt cache, which costs little. Turn it off with **Suggest the next prompt** in **Settings → Background work (Tending)**.
+
+Other agents don't make their own. Tick **Also suggest with other agents** there to ask them once per turn on their background model, which costs a model call each time. They are sent the thread's goal (or your first message, if it has no goal or switched agents), your last three messages and the end of the agent's latest reply: no tool output and no file contents.
+
+There is no suggestion after a thread's first turn, in plan mode, after a turn that failed, or one you stopped. Claude Code also holds back while your plan is near its usage limit.
 
 ## File References
 
