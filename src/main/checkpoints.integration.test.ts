@@ -85,6 +85,16 @@ describe('checkpoints with real git', () => {
     expect(run(['diff', '--cached', '--name-only'], wt)).toBe('');
   });
 
+  it('gives a file\'s lines after a turn for expanding context, unless it\'s over the size limit', async () => {
+    const mgr = new CheckpointManager();
+    await mgr.capture('s1', wt, 'u1');
+    write('src/notes.ts', 'one\ntwo\n\n');
+    write('dist/bundle.js', 'x'.repeat(5 * 1024 * 1024));
+
+    expect(await mgr.fileLines('s1', wt, 'u1', 'since', 'src/notes.ts')).toEqual({ lines: ['one', 'two', ''] });
+    expect(await mgr.fileLines('s1', wt, 'u1', 'since', 'dist/bundle.js')).toBeNull();
+  });
+
   it('previews a rewind too long to show as the files it changes', async () => {
     // Colour on even outside a terminal: the preview must still be plain text.
     run(['config', 'color.ui', 'always'], wt);

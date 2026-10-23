@@ -23,6 +23,7 @@ import {
   branchHasRemote,
   renameBranch,
   fileDiff,
+  blobLines,
   gitPatch,
   MAX_TEXT_FILE_BYTES,
   isTracked,
@@ -460,6 +461,43 @@ describe('fileDiff()', () => {
     expect(await fileDiff('/repo', 'src/a.ts')).toBeNull();
     mockExeca.mockRejectedValueOnce(new Error('fatal: bad revision'));
     await expect(fileDiff('/repo', 'src/a.ts')).rejects.toThrow('bad revision');
+  });
+});
+
+describe('blobLines()', () => {
+  const bytes = (text: string) => ({ stdout: Buffer.from(text) }) as any;
+
+  it("reads a file's raw bytes, stopping git past the size limit", async () => {
+    mockExeca.mockResolvedValueOnce(bytes('one\ntwo\n'));
+    expect(await blobLines('/repo', '', 'a.ts')).toEqual(['one', 'two']);
+    expect(mockExeca).toHaveBeenCalledWith('git', ['cat-file', 'blob', ':a.ts'], { cwd: '/repo', encoding: 'buffer', stripFinalNewline: false, maxBuffer: MAX_TEXT_FILE_BYTES });
+  });
+
+  it('gives null for a file over the limit, and passes other failures on', async () => {
+    mockExeca.mockRejectedValueOnce(Object.assign(new Error("Command's stdout was larger than 4194304 bytes"), { isMaxBuffer: true }));
+    expect(await blobLines('/repo', 'tree', 'big.json')).toBeNull();
+    mockExeca.mockRejectedValueOnce(new Error("fatal: path 'gone.ts' does not exist in 'tree'"));
+    await expect(blobLines('/repo', 'tree', 'gone.ts')).rejects.toThrow('does not exist');
+  });
+
+  it('gives null for a binary file', async () => {
+    mockExeca.mockResolvedValueOnce({ stdout: Buffer.from([0x50, 0x00, 0x01]) } as any);
+    expect(await blobLines('/repo', '', 'logo.png')).toBeNull();
+  });
+
+  it('splits lines as the working-tree copy is split', async () => {
+    mockExeca.mockResolvedValueOnce(bytes('\n'));
+    expect(await blobLines('/repo', '', 'blank.txt')).toEqual(['']);
+    mockExeca.mockResolvedValueOnce(bytes(''));
+    expect(await blobLines('/repo', '', 'empty.txt')).toEqual([]);
+    mockExeca.mockResolvedValueOnce(bytes('a\r\nb\r\n'));
+    expect(await blobLines('/repo', '', 'crlf.txt')).toEqual(['a\r', 'b\r']);
+  });
+
+  it('names the file with forward slashes, as <rev>:<path> needs', async () => {
+    mockExeca.mockResolvedValueOnce(bytes('x\n'));
+    await blobLines('/repo', 'tree', 'src\\lib\\a.ts');
+    expect(mockExeca).toHaveBeenCalledWith('git', ['cat-file', 'blob', 'tree:src/lib/a.ts'], expect.anything());
   });
 });
 
