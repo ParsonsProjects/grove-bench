@@ -26,6 +26,14 @@ describe('Button', () => {
     expect(button).not.toHaveClass('text-sm');
   });
 
+  it('has a square icon size as tall as the default size', () => {
+    render(Button, { size: 'icon', 'aria-label': 'Send', children: text('↑') });
+    const button = screen.getByRole('button', { name: 'Send' });
+    expect(button).toHaveClass('size-9');
+    // None of the default size's padding, which would squeeze the icon
+    expect(button).not.toHaveClass('px-4');
+  });
+
   it('keeps hover events when disabled, so its tooltip can say why', () => {
     render(Button, { disabled: true, title: 'Nothing to commit', children: text('Commit') });
     expect(screen.getByRole('button', { name: 'Commit' })).not.toHaveClass('disabled:pointer-events-none');

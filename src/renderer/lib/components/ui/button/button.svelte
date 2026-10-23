@@ -31,6 +31,9 @@
 				// secondary actions, 2xs (20px) for status-bar and inline actions.
 				xs: "h-6 gap-1 px-2 text-xs font-normal has-[>svg]:px-1.5 [&_svg:not([class*='size-'])]:size-3.5",
 				"2xs": "h-5 gap-1 px-1.5 text-micro font-normal [&_svg:not([class*='size-'])]:size-3",
+				// As tall as default: icon-only buttons beside a 36px field (the
+				// composer's send and stop).
+				icon: "size-9",
 				"icon-xs": "size-6 [&_svg:not([class*='size-'])]:size-3.5",
 				"icon-2xs": "size-5 [&_svg:not([class*='size-'])]:size-3",
 				// Sits in a line of text: no box, the text's own size.

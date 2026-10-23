@@ -22,6 +22,7 @@
   import { Textarea } from '$lib/components/ui/textarea/index.js';
   import StatusDot from '../components/StatusDot.svelte';
   import type { AgentSpriteState } from '$lib/agent-sprite.js';
+  import ArrowUpIcon from '@lucide/svelte/icons/arrow-up';
   import RefreshIcon from '@lucide/svelte/icons/refresh-cw';
   import XIcon from '@lucide/svelte/icons/x';
 
@@ -181,6 +182,7 @@
         <Button size="icon-2xs" variant="quiet" aria-label="Close"><XIcon /></Button>
         <Button size="icon-xs" variant="quiet" aria-label="Refresh"><RefreshIcon /></Button>
         <Button size="icon-xs" variant="subtle" aria-label="Refresh"><RefreshIcon /></Button>
+        <Button size="icon" aria-label="Send"><ArrowUpIcon /></Button>
         
         <span class="text-xs">An inline <Button size="inline" variant="link">action</Button> in a sentence.</span>
       </div>
