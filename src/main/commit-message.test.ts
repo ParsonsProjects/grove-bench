@@ -9,6 +9,7 @@ import { git, gitPatch } from './git.js';
 import {
   buildCommitPrompt,
   cleanCommitMessage,
+  fitDiff,
   generateCommitMessage,
   COMMIT_MESSAGE_SYSTEM_PROMPT,
 } from './commit-message.js';
@@ -57,26 +58,81 @@ describe('cleanCommitMessage()', () => {
 });
 
 describe('buildCommitPrompt()', () => {
+  const shown = (diff: string, left: string[] = []) => ({ diff, left });
+
   it('includes recent subjects, stat, and diff', () => {
-    const prompt = buildCommitPrompt('1 file changed', 'diff --git a/x b/x', ['feat: one', 'fix: two']);
+    const prompt = buildCommitPrompt('1 file changed', shown('diff --git a/x b/x'), ['feat: one', 'fix: two']);
     expect(prompt).toContain('- feat: one');
     expect(prompt).toContain('1 file changed');
     expect(prompt).toContain('diff --git a/x b/x');
   });
 
   it('omits the subjects section when there are none', () => {
-    const prompt = buildCommitPrompt('stat', 'diff', []);
+    const prompt = buildCommitPrompt('stat', shown('diff'), []);
     expect(prompt).not.toContain('Recent commit subjects');
   });
 
   it('names the files left out of the diff, up to 20', () => {
     const left = Array.from({ length: 25 }, (_, i) => `gen/${i}.json`);
-    const prompt = buildCommitPrompt('stat summary', 'diff', [], left);
-    expect(prompt).toContain('Left out of the diff below, too large to include');
+    const prompt = buildCommitPrompt('stat summary', shown('diff', left), []);
+    expect(prompt).toContain('Left out of the diff below to keep it short');
     expect(prompt).toContain('gen/19.json and 5 more');
     expect(prompt).not.toContain('gen/20.json');
     expect(prompt).toContain('stat summary');
-    expect(buildCommitPrompt('stat', 'diff', [])).not.toContain('Left out');
+    expect(buildCommitPrompt('stat', shown('diff'), [])).not.toContain('Left out');
+  });
+
+  it('says to go by the summary when the diff was too large to read', () => {
+    const prompt = buildCommitPrompt('stat summary', { diff: '', left: [], overLimit: true }, []);
+    expect(prompt).toContain('too large to include, so describe the change from the summary above');
+    expect(prompt).not.toContain('Staged diff:');
+  });
+});
+
+describe('fitDiff()', () => {
+  const file = (name: string, body: string) => `diff --git a/${name} b/${name}\n--- a/${name}\n+++ b/${name}\n${body}\n`;
+
+  it('gives a diff that fits as it is', () => {
+    const patch = file('a.ts', '+x');
+    expect(fitDiff(patch)).toEqual({ diff: patch, left: [] });
+  });
+
+  it('keeps short files whole and cuts a file with long lines, wherever it sorts', () => {
+    const minified = file('dist/app.min.js', `+${'x'.repeat(200_000)}`);
+    const a = file('src/a.ts', Array.from({ length: 30 }, (_, i) => `+line ${i}`).join('\n'));
+    const c = file('src/c.ts', '+c');
+    const { diff, left } = fitDiff(minified + a + c);
+    expect(left).toEqual([]);
+    expect(diff).toContain(a);
+    expect(diff).toContain(c);
+    expect(diff).toContain('... (cut short)');
+    // Git's order: the cut file stays first.
+    expect(diff.indexOf('dist/app.min.js')).toBeLessThan(diff.indexOf('src/a.ts'));
+    expect(diff.length).toBeLessThanOrEqual(40_000);
+  });
+
+  it('shows how a change that is one large file starts', () => {
+    const big = file('src/big.ts', Array.from({ length: 2000 }, (_, i) => `+export const v${i} = ${i};`).join('\n'));
+    const { diff, left } = fitDiff(big);
+    expect(left).toEqual([]);
+    expect(diff.startsWith(big.slice(0, 1000))).toBe(true);
+    expect(diff.endsWith('... (cut short)\n')).toBe(true);
+    expect(diff.length).toBeLessThanOrEqual(40_000);
+  });
+
+  it('leaves out, by name, what has no room left', () => {
+    const sized = (name: string, n: number) => file(name, `+${'x'.repeat(n)}`);
+    const { diff, left } = fitDiff(sized('a.ts', 1000) + sized('b.ts', 3500) + sized('c.ts', 10_000) + sized('d.ts', 20_000), 5000);
+    expect(diff).toContain('+++ b/a.ts');
+    expect(diff).toContain('+++ b/b.ts');
+    // Under 2,000 characters left: too little to show part of c.ts.
+    expect(left).toEqual(['c.ts', 'd.ts']);
+  });
+
+  it('names a renamed file by both its paths', () => {
+    const renamed = 'diff --git a/src/old.ts b/lib/new.ts\nsimilarity index 90%\nrename from src/old.ts\nrename to lib/new.ts\n' + `+${'x'.repeat(50_000)}\n`;
+    const { left } = fitDiff(file('a.ts', '+x') + renamed, 1000);
+    expect(left).toEqual(['a/src/old.ts b/lib/new.ts']);
   });
 });
 
@@ -102,8 +158,9 @@ describe('generateCommitMessage()', () => {
     const result = await generateCommitMessage('/wt', makeAdapter(generateText));
 
     expect(result).toBe('feat: add new line');
-    // Git is stopped at the prompt's limit, rather than read whole.
-    expect(mockGitPatch).toHaveBeenCalledWith(['diff', '--cached'], '/wt', 40_000);
+    expect(mockGit).toHaveBeenNthCalledWith(1, ['diff', '--cached', '--no-color', '--stat', '--stat-count=500'], '/wt');
+    // Read once, with git stopped past gitPatch's limit; plain, whatever the user's config.
+    expect(mockGitPatch).toHaveBeenCalledWith(['diff', '--cached', '--no-color', '--no-ext-diff'], '/wt');
     const [sys, user, opts] = generateText.mock.calls[0];
     expect(sys).toBe(COMMIT_MESSAGE_SYSTEM_PROMPT);
     expect(user).toContain('+new line');
@@ -113,55 +170,12 @@ describe('generateCommitMessage()', () => {
     expect(opts.abortSignal).toBeInstanceOf(AbortSignal);
   });
 
-  it('leaves out a file too large for the prompt and names it, rather than letting it fill the prompt', async () => {
-    mockGit
-      .mockResolvedValueOnce(' package-lock.json | 12000 +\n src/a.ts | 4 +-') // --stat
-      .mockResolvedValueOnce('12000\t0\tpackage-lock.json\x003\t1\tsrc/a.ts\x00') // --numstat -z
-      .mockResolvedValueOnce(''); // log
-    mockGitPatch
-      .mockResolvedValueOnce(null) // the whole diff, over the limit
-      // Its 12,000 lines could, at two characters each, still fit; at a lockfile's length they don't.
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce('diff --git a/src/a.ts b/src/a.ts\n+fix');
-    const generateText = vi.fn().mockResolvedValue('fix: a');
-
-    await generateCommitMessage('/wt', makeAdapter(generateText));
-
-    expect(mockGitPatch).toHaveBeenLastCalledWith(['diff', '--cached', '--no-renames', '--', ':(literal)src/a.ts'], '/wt', 40_000);
-    const user = generateText.mock.calls[0][1];
-    expect(user).toContain('+fix');
-    expect(user).toContain('too large to include (the summary above counts their lines): package-lock.json');
-  });
-
-  it('searches for the most files whose diff fits', async () => {
-    const numstat = ['a.ts', 'b.ts', 'c.ts', 'd.ts'].map((f) => `1\t1\t${f}\x00`).join('');
-    mockGit.mockResolvedValueOnce('stat').mockResolvedValueOnce(numstat).mockResolvedValueOnce('');
-    mockGitPatch
-      .mockResolvedValueOnce(null) // whole
-      .mockResolvedValueOnce(null) // all four
-      .mockResolvedValueOnce('diff of a and b') // two
-      .mockResolvedValueOnce(null); // three
-    const generateText = vi.fn().mockResolvedValue('feat: a and b');
-
-    await generateCommitMessage('/wt', makeAdapter(generateText));
-
-    const tried = mockGitPatch.mock.calls.slice(1).map(([args]) => args.slice(4));
-    expect(tried).toEqual([
-      [':(literal)a.ts', ':(literal)b.ts', ':(literal)c.ts', ':(literal)d.ts'],
-      [':(literal)a.ts', ':(literal)b.ts'],
-      [':(literal)a.ts', ':(literal)b.ts', ':(literal)c.ts'],
-    ]);
-    const user = generateText.mock.calls[0][1];
-    expect(user).toContain('diff of a and b');
-    expect(user).toContain('too large to include (the summary above counts their lines): c.ts, d.ts');
-  });
-
-  it('names at most 200 files on one git command line', async () => {
-    const numstat = Array.from({ length: 250 }, (_, i) => `1\t0\tf${i}.ts\x00`).join('');
-    mockGit.mockResolvedValueOnce('stat').mockResolvedValueOnce(numstat).mockResolvedValueOnce('');
-    mockGitPatch.mockResolvedValueOnce(null).mockResolvedValueOnce('diff of 200');
-    await generateCommitMessage('/wt', makeAdapter(vi.fn().mockResolvedValue('chore: many')));
-    expect(mockGitPatch.mock.calls[1][0].slice(4)).toHaveLength(200);
+  it('goes by the summary when the staged diff is too large to read', async () => {
+    mockGit.mockResolvedValueOnce(' huge.bin | Bin').mockResolvedValueOnce('');
+    mockGitPatch.mockResolvedValueOnce(null);
+    const generateText = vi.fn().mockResolvedValue('chore: add data');
+    expect(await generateCommitMessage('/wt', makeAdapter(generateText))).toBe('chore: add data');
+    expect(generateText.mock.calls[0][1]).toContain('describe the change from the summary above');
   });
 
   it('rejects when nothing is staged', async () => {

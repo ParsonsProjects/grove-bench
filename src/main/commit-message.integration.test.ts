@@ -37,6 +37,8 @@ afterEach(() => {
 });
 
 describe('stagedDiff', () => {
+  const lockfile = () => Array.from({ length: 6000 }, (_, i) => `    "node_modules/pkg-${i}": { "version": "1.0.${i}" },`).join('\n') + '\n';
+
   it('gives the whole staged diff when it fits', async () => {
     write('src/a.ts', 'export const a = 1;\n');
     run('add', '.');
@@ -45,21 +47,47 @@ describe('stagedDiff', () => {
     expect(left).toEqual([]);
   });
 
-  it('leaves out a lockfile that would fill the prompt, keeping the change around it', async () => {
+  it('keeps the small changes whole and cuts a lockfile that would fill the prompt', async () => {
     // About 300 KB, and it sorts before src/.
-    write('package-lock.json', Array.from({ length: 6000 }, (_, i) => `    "node_modules/pkg-${i}": { "version": "1.0.${i}" },`).join('\n') + '\n');
+    write('package-lock.json', lockfile());
     write('src/a.ts', 'export const a = 1;\n');
-    // Glob characters in a name: as a plain pathspec, a[1].ts would match a1.ts too.
     write('src/a[1].ts', 'export const b = 2;\n');
     write('src/a1.ts', 'export const c = 3;\n');
     run('add', '.');
 
     const { diff, left } = await stagedDiff(repo);
-    expect(left).toEqual(['package-lock.json']);
-    expect(diff).not.toContain('node_modules/pkg-');
-    for (const name of ['src/a.ts', 'src/a[1].ts', 'src/a1.ts']) {
+    expect(left).toEqual([]);
+    for (const [name, line] of [['src/a.ts', 'a = 1'], ['src/a[1].ts', 'b = 2'], ['src/a1.ts', 'c = 3']]) {
       expect(diff.split(`+++ b/${name}\n`)).toHaveLength(2);
+      expect(diff).toContain(`+export const ${line};`);
     }
+    expect(diff).toContain('+++ b/package-lock.json');
+    expect(diff).toContain('... (cut short)');
     expect(diff.length).toBeLessThanOrEqual(40_000);
+  });
+
+  it('shows how a change that is one large file starts', async () => {
+    write('src/big.ts', Array.from({ length: 4000 }, (_, i) => `export const v${i} = ${i};`).join('\n') + '\n');
+    run('add', '.');
+    const { diff, left } = await stagedDiff(repo);
+    expect(left).toEqual([]);
+    expect(diff).toContain('+export const v0 = 0;');
+    expect(diff.length).toBeLessThanOrEqual(40_000);
+  });
+
+  it('keeps a moved file a rename, plain whatever the colour config, from any folder', async () => {
+    write('src/util.ts', Array.from({ length: 600 }, (_, i) => `export const u${i} = ${i};`).join('\n') + '\n');
+    run('add', '.');
+    run('commit', '-qm', 'util');
+    fs.mkdirSync(path.join(repo, 'lib'));
+    run('mv', 'src/util.ts', 'lib/util.ts');
+    write('package-lock.json', lockfile());
+    run('add', '.');
+    run('config', 'color.ui', 'always');
+
+    const { diff } = await stagedDiff(path.join(repo, 'lib'));
+    expect(diff).toContain('rename from src/util.ts');
+    expect(diff).not.toContain('+export const u1 = 1;');
+    expect(diff).not.toContain('\x1b[');
   });
 });
