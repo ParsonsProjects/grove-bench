@@ -13,8 +13,9 @@ function mapStatus(c: string): GitFileStatus {
 
 /**
  * Parse the output of `git status --porcelain=v1 -z` into GitStatusResult.
- * The -z flag produces NUL-delimited records where renames/copies have
- * two NUL-separated fields: "XY newpath\0oldpath".
+ * The -z flag produces NUL-delimited records where renames/copies, in either
+ * column, have two NUL-separated fields: "XY newpath\0oldpath". A rename in
+ * the worktree column (" R") is a file added with `git add -N`.
  */
 export function parseGitStatusPorcelain(raw: string): GitStatusResult {
   if (!raw) return { entries: [] };
@@ -38,9 +39,9 @@ export function parseGitStatusPorcelain(raw: string): GitStatusResult {
     }
 
     // Renames and copies have the old path as the next NUL-separated field
-    const isRenameOrCopy = x === 'R' || x === 'C';
+    const isRenameOrCopy = (c: string) => c === 'R' || c === 'C';
     let origPath: string | undefined;
-    if (isRenameOrCopy) {
+    if (isRenameOrCopy(x) || isRenameOrCopy(y)) {
       i++;
       origPath = parts[i];
     }
@@ -52,7 +53,7 @@ export function parseGitStatusPorcelain(raw: string): GitStatusResult {
 
     // Unstaged change (worktree column)
     if (y !== ' ' && y !== '?') {
-      entries.push({ filePath, status: mapStatus(y), staged: false });
+      entries.push({ filePath, status: mapStatus(y), staged: false, ...(origPath && isRenameOrCopy(y) ? { origPath } : {}) });
     }
 
     i++;

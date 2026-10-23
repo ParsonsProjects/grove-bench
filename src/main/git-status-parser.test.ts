@@ -106,6 +106,22 @@ describe('parseGitStatusPorcelain', () => {
     ]);
   });
 
+  it('parses a rename in the worktree column, from git add -N, with origPath', () => {
+    // As git 2.43 writes it: the old path follows here too.
+    const raw = ' R b.txt\0a.txt\0 M z.txt\0';
+    expect(parseGitStatusPorcelain(raw).entries).toEqual([
+      { filePath: 'b.txt', status: 'renamed', staged: false, origPath: 'a.txt' },
+      { filePath: 'z.txt', status: 'modified', staged: false },
+    ]);
+  });
+
+  it('gives origPath only to the column that renamed', () => {
+    expect(parseGitStatusPorcelain('RM new.ts\0old.ts\0').entries).toEqual([
+      { filePath: 'new.ts', status: 'renamed', staged: true, origPath: 'old.ts' },
+      { filePath: 'new.ts', status: 'modified', staged: false },
+    ]);
+  });
+
   it('handles rename with trailing NUL (no extra empty entry)', () => {
     const raw = 'R  new.ts\0old.ts\0M  other.ts\0';
     const result = parseGitStatusPorcelain(raw);
