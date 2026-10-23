@@ -123,6 +123,19 @@ Each server in the popover shows a status dot:
 | Gray | Disabled (disconnected) |
 | Red | Failed |
 
+## Skills
+
+**Skills** shows how many skills the thread's agent can use. Click it to open the Skills drawer on the right. **This thread** lists them, each with **Run** (a new thread that uses it now) and **Schedule**; **Scheduled** lists every project's schedules. The clock on a project's header in the sidebar opens Scheduled too, and **Skills** at the foot of the sidebar opens the drawer even when a narrow status bar has no room for its Skills count. The drawer keeps the keyboard inside it until you close it with `Esc` or **×**. To start a thread with a skill and your own instructions, type `/` in a new thread's message box or use **Skills** at its foot (see [Starting a Thread](getting-started.md#starting-a-thread)).
+
+Skills are folders with a `SKILL.md` file, a format every agent Grove Bench knows reads. **Add skill** saves a new one in `.agents/skills` (in the project, or in your home folder for a user skill), the folder they all look in except Claude Agent. Claude Agent finds it through a small link file in `.claude/skills` with the same name and description, which tells it to read the shared one. Links are plain files, so they work in git for your whole team, with or without Grove Bench.
+
+The drawer offers two buttons when skills need them:
+
+- **Share**: skills that are only in Claude Agent's folders move to `.agents/skills`, each leaving a link, so every agent can use them
+- **Link** (in a Claude Agent thread): adds links for shared skills Claude Agent can't see yet, updates a link when its skill's name or description changed, and removes links to skills that were deleted. Only links Grove Bench made are touched
+
+Both change files in the project, which show in the Changes tab for you to commit. For Claude Agent you can also turn skills off and get suggestions from your past threads.
+
 ## Context
 
 **Context N%** and a bar of pixel blocks show how much of the agent's context window has been used. Each block is 10% (5% in the popup), and the block the usage is partway through shows dimmed. Context is what the agent can hold in mind at once: your messages, its replies, files it read and command output. Near the limit, Claude Code clears old tool output first, then summarises the thread, so details from early on can be lost ([How Claude Code works](https://code.claude.com/docs/en/how-claude-code-works#when-context-fills-up)).

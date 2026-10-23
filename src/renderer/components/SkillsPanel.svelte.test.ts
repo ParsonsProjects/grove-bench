@@ -1,0 +1,126 @@
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import '@testing-library/jest-dom/vitest';
+import { render, cleanup, screen, fireEvent, waitFor } from '@testing-library/svelte';
+import { mockGroveBench } from '../__mocks__/setup.js';
+
+import SkillsPanel from './SkillsPanel.svelte';
+import { skillsPanelStore } from '../stores/skillsPanel.svelte.js';
+import { schedulesStore } from '../stores/schedules.svelte.js';
+import { store } from '../stores/sessions.svelte.js';
+import { agentsStore } from '../stores/agents.svelte.js';
+
+// jsdom has no Web Animations, which the drawer's slide runs through, and
+// no scrollIntoView, which a dropdown calls on its picked option.
+const realAnimate = Element.prototype.animate;
+const realScroll = Element.prototype.scrollIntoView;
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  Element.prototype.animate = vi.fn(() => ({ onfinish: null, cancel() {}, finished: Promise.resolve(), currentTime: 0 }) as unknown as Animation) as never;
+  Element.prototype.scrollIntoView = function scrollIntoView() {};
+  store.repos = ['/repo'];
+  store.sessions = [{ id: 't1', branch: 'b', repoPath: '/repo', status: 'running', agentType: 'gemini-cli', createdAt: 0 }] as typeof store.sessions;
+  store.activeSessionId = 't1';
+  agentsStore.list = [{ id: 'gemini-cli', displayName: 'Gemini CLI', capabilities: {} }];
+  agentsStore.loaded = true;
+  schedulesStore.list = [];
+  mockGroveBench.listSkills.mockResolvedValue([{ name: 'triage', description: 'Sort new issues', source: 'project' }]);
+});
+
+afterEach(() => {
+  cleanup();
+  skillsPanelStore.close();
+  store.sessions = [];
+  store.activeSessionId = null;
+  Element.prototype.animate = realAnimate;
+  Element.prototype.scrollIntoView = realScroll;
+});
+
+describe('SkillsPanel', () => {
+  it("shows the open thread's skills on This thread", async () => {
+    skillsPanelStore.showThread();
+    render(SkillsPanel);
+    expect(screen.getByRole('dialog', { name: 'Skills' })).toHaveAttribute('aria-modal', 'true');
+    expect(await screen.findByRole('button', { name: 'Run triage in a new thread' })).toBeInTheDocument();
+  });
+
+  it('opens on Scheduled from a project, and says when nothing is scheduled', () => {
+    skillsPanelStore.showScheduled('/repo');
+    render(SkillsPanel);
+    expect(screen.getByRole('tab', { name: /Scheduled/ })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByText('No scheduled skills in this project.')).toBeInTheDocument();
+  });
+
+  it('asks for a thread on This thread when none is open', () => {
+    store.activeSessionId = null;
+    skillsPanelStore.showThread();
+    render(SkillsPanel);
+    expect(screen.getByText("Open a thread to see its agent's skills.")).toBeInTheDocument();
+  });
+
+  /** Escape where the keyboard is. */
+  const escape = () => fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+
+  it('closes the form, then the drawer, on Escape', async () => {
+    skillsPanelStore.editSchedule('/repo', { agentId: 'gemini-cli', skill: 'triage' });
+    render(SkillsPanel);
+    await escape();
+    expect(skillsPanelStore.form).toBeNull();
+    expect(skillsPanelStore.open).toBe(true);
+    await escape();
+    expect(skillsPanelStore.open).toBe(false);
+  });
+
+  it('moves focus to the open tab, and keeps it in the drawer', async () => {
+    const outside = document.createElement('button');
+    document.body.appendChild(outside);
+    outside.focus();
+    skillsPanelStore.showThread();
+    render(SkillsPanel);
+    await waitFor(() => expect(screen.getByRole('tab', { name: 'This thread' })).toHaveFocus());
+    outside.focus();
+    await waitFor(() => expect(screen.getByRole('dialog', { name: 'Skills' }).contains(document.activeElement)).toBe(true));
+    outside.remove();
+  });
+
+  it('gives focus back on close, but not once Run has opened a new thread', async () => {
+    const opener = document.createElement('button');
+    document.body.appendChild(opener);
+    opener.focus();
+    skillsPanelStore.showThread();
+    render(SkillsPanel);
+    await waitFor(() => expect(opener).not.toHaveFocus());
+    skillsPanelStore.close();
+    await waitFor(() => expect(opener).toHaveFocus());
+    cleanup();
+
+    opener.focus();
+    skillsPanelStore.showThread();
+    render(SkillsPanel);
+    await waitFor(() => expect(opener).not.toHaveFocus());
+    store.activeSessionId = 'started-by-run';
+    skillsPanelStore.close();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(opener).not.toHaveFocus();
+    opener.remove();
+  });
+
+  it('leaves Escape to a dropdown open in it', async () => {
+    skillsPanelStore.editSchedule('/repo', { agentId: 'gemini-cli', skill: 'triage' });
+    render(SkillsPanel);
+    const mode = await screen.findByLabelText('Mode');
+    await fireEvent.keyDown(mode, { key: 'Enter' });
+    expect(await screen.findByRole('listbox')).toBeInTheDocument();
+    await escape();
+    await waitFor(() => expect(screen.queryByRole('listbox')).toBeNull());
+    expect(skillsPanelStore.form).not.toBeNull();
+    expect(skillsPanelStore.open).toBe(true);
+  });
+
+  it('closes from its close button', async () => {
+    skillsPanelStore.showThread();
+    render(SkillsPanel);
+    await fireEvent.click(screen.getByRole('button', { name: 'Close skills' }));
+    expect(skillsPanelStore.open).toBe(false);
+  });
+});

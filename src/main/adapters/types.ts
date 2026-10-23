@@ -5,6 +5,7 @@
  * plugged into Grove Bench by implementing the AgentAdapter interface.
  */
 import type { ToolView } from '../../shared/tool-view.js';
+import type { SkillDirs } from '../skills.js';
 import type { AgentStage, AgentEvent, MemoryEntry, TokenCounts, PermissionMode, ControlDescriptor, ProviderUsage, McpServerInfo, McpAuthStartResult, McpConfiguredServer, McpAddServerOpts, McpConfigScope, McpElicitationRequest, McpElicitationResponse, McpServerContextCost, McpSupport, SkillDefinition, SkillInfo, ToolCategory, ToolRule, ImageAttachment, ImageMediaType } from '../../shared/types.js';
 
 // ─── Capability Flags ───
@@ -470,14 +471,20 @@ export interface AgentAdapter {
   // ─── Optional skill management ───
 
   /** Skills visible to a session rooted at `worktreePath`, in whatever native
-   *  format the provider uses, mapped to neutral SkillInfo entries. Only
-   *  implement if capabilities.skills is true. */
+   *  format the provider uses, mapped to neutral SkillInfo entries. An agent
+   *  can list its skills (so they can be run and scheduled) without
+   *  capabilities.skills, which is for Grove managing them: turning them off,
+   *  and suggestions. */
   listSkills?(worktreePath: string): Promise<SkillInfo[]>;
-  /** Author a new skill from the neutral definition, serialized into the
-   *  provider's native format (e.g. Claude Code writes
-   *  `.claude/skills/<name>/SKILL.md`). Project scope writes into the
-   *  worktree so the skill travels with the branch; user scope writes to the
-   *  provider's global location. Rejects if the skill already exists. */
+  /** The folders listSkills reads. One without the shared `.agents/skills`
+   *  (Claude Code) sees shared skills through links in its first folder. */
+  readonly skillDirs?: SkillDirs;
+  /** Author a new skill from the neutral definition as
+   *  `.agents/skills/<name>/SKILL.md`, which every agent can use, plus a
+   *  link for an agent that doesn't read that folder (skills.ts writeSkill).
+   *  Project scope writes into the worktree so the skill travels with the
+   *  branch; user scope under the home directory. Rejects if the skill
+   *  already exists. */
   addSkill?(worktreePath: string, def: SkillDefinition): Promise<SkillInfo>;
 
   // ─── Optional text generation (used by memory auto-save) ───

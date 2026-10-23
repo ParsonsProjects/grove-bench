@@ -94,7 +94,7 @@
     <Dialog.Header>
       <Dialog.Title>Add Skill</Dialog.Title>
       <Dialog.Description>
-        Package instructions the agent can invoke by name. Loaded when a thread's agent (re)starts.
+        Package instructions any agent can invoke by name. Saved in <span class="font-mono">.agents/skills</span>, which every agent reads (Claude Agent through a link). Loaded when a thread's agent (re)starts.
       </Dialog.Description>
     </Dialog.Header>
 
@@ -127,7 +127,7 @@
             </Segmented.Item>
             <Segmented.Item
               value="user"
-              title="Written to your user profile — applies to every project immediately"
+              title="Written to .agents/skills in your user folder — applies to every project immediately"
             >
               User
             </Segmented.Item>

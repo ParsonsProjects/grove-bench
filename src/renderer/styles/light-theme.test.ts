@@ -26,35 +26,48 @@ const HUES = 'red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indi
 /** Shades that read on both backgrounds and need no light override. */
 const BOTH = new Set(['600', '700', '800']);
 
-/** WCAG relative luminance of a #rrggbb or oklch() colour. */
-function luminance(colour: string): number {
-  let rgb: number[];
+/** A #rrggbb or oklch() colour as linear sRGB. */
+function linearRgb(colour: string): number[] {
   const hex = colour.match(/^#([0-9a-f]{6})$/i);
   const ok = colour.match(/^oklch\(([\d.]+)%\s+([\d.]+)\s+([\d.]+)\)$/);
   if (hex) {
-    rgb = [0, 2, 4].map((i) => {
+    return [0, 2, 4].map((i) => {
       const c = parseInt(hex[1].slice(i, i + 2), 16) / 255;
       return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
     });
-  } else if (ok) {
+  }
+  if (ok) {
     // OKLCH to linear sRGB (Björn Ottosson's OKLab matrices)
     const L = Number(ok[1]) / 100, C = Number(ok[2]), h = (Number(ok[3]) * Math.PI) / 180;
     const a = C * Math.cos(h), b = C * Math.sin(h);
     const l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3;
     const m = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3;
     const s = (L - 0.0894841775 * a - 1.291485548 * b) ** 3;
-    rgb = [
+    return [
       4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
       -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
       -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s,
     ].map((v) => Math.min(1, Math.max(0, v)));
-  } else {
-    throw new Error(`Can't read colour ${colour}`);
   }
+  throw new Error(`Can't read colour ${colour}`);
+}
+
+/** WCAG relative luminance of a #rrggbb or oklch() colour, or of linear sRGB. */
+function luminance(colour: string | number[]): number {
+  const rgb = typeof colour === 'string' ? linearRgb(colour) : colour;
   return 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
 }
 
-function contrast(a: string, b: string): number {
+/** `top` at `alpha` over `base`, blended in gamma-encoded sRGB as browsers
+ *  do, as linear sRGB. */
+function over(base: string, top: string, alpha: number): number[] {
+  const encode = (v: number) => (v <= 0.0031308 ? 12.92 * v : 1.055 * v ** (1 / 2.4) - 0.055);
+  const decode = (c: number) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+  const [b, t] = [linearRgb(base).map(encode), linearRgb(top).map(encode)];
+  return b.map((c, i) => decode(c * (1 - alpha) + t[i] * alpha));
+}
+
+function contrast(a: string | number[], b: string | number[]): number {
   const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
   return (hi + 0.05) / (lo + 0.05);
 }
@@ -101,5 +114,17 @@ describe('light theme', () => {
     }
     // Muted text also sits on the muted background
     expect(contrast(vars.get('--muted-foreground')!, vars.get('--muted')!)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("keeps each Notice tone's title at 4.5:1 on its own tinted background", () => {
+    const vars = lightVars();
+    const colour = (name: string) => vars.get(/-\d+$/.test(name) ? `--color-${name}` : `--${name}`)!;
+    const source = readFileSync(path.join(RENDERER, 'lib/components/ui/notice/variants.ts'), 'utf8');
+    const tones = [...source.matchAll(/(\w+): \{ root: "[^"]*\bbg-([a-z]+(?:-[a-z]+)*?(?:-\d+)?)\/(\d+)[^"]*", title: "text-([a-z]+-\d+)" \}/g)];
+    expect(tones.map((m) => m[1])).toEqual(['info', 'success', 'warning', 'danger']);
+    for (const [, tone, bg, alpha, title] of tones) {
+      const tint = over(vars.get('--card')!, colour(bg), Number(alpha) / 100);
+      expect({ tone, ok: contrast(colour(title), tint) >= 4.5 }).toEqual({ tone, ok: true });
+    }
   });
 });

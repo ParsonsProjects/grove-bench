@@ -7,6 +7,8 @@ import { migrateRaw, stampSchemaVersion, type Migration } from './persisted-stat
 import { readJsonFile, readJsonFileAsync, writeFileAtomic, writeFileAtomicSync, type AtomicWrite, type JsonFileRead } from './json-file.js';
 import { freezeLog } from './freeze-log.js';
 import { logger } from './logger.js';
+import { skillSchedulesSchema } from './skill-schedule-schema.js';
+import type { SkillSchedule } from '../shared/skill-schedules.js';
 
 export interface PrerequisiteCache {
   status: PrerequisiteStatus;
@@ -77,6 +79,8 @@ export interface AppState {
    *  the daily spend limit, and where the limit stands once the user chose
    *  to continue past it that day. */
   dailySpend?: DailySpend;
+  /** Skills run on a schedule (skill-schedules.ts). Absent until the first. */
+  skillSchedules?: SkillSchedule[];
 }
 
 export interface DailySpend {
@@ -188,6 +192,7 @@ const appStateSchema = z.object({
     usd: z.number().finite().nonnegative(),
     allowanceUsd: z.number().finite().nonnegative().optional(),
   }).optional().catch(undefined),
+  skillSchedules: skillSchedulesSchema.optional().catch(undefined),
 }) satisfies z.ZodType<AppState, unknown>;
 
 /** Normalize a raw object into a valid AppState. Never throws. */
@@ -695,6 +700,29 @@ export function loadConversationGroups(): ConversationGroup[] | null {
 export function saveConversationGroups(groups: unknown): void {
   const parsed = groupsSchema.safeParse(groups);
   if (parsed.success) setSoon('groups', parsed.data);
+}
+
+// ─── Skill schedules ───
+
+/** The saved schedules, or null when the file exists but can't be read right
+ *  now, so a passing lock isn't read as "none" and saved over them. */
+export function loadSkillSchedules(): SkillSchedule[] | null {
+  const state = currentState();
+  return state ? structuredClone(state.skillSchedules ?? []) : null;
+}
+
+/** Saved straight away when the user changed them (`now`), else within
+ *  SAVE_DELAY_MS: a scheduled run's bookkeeping can wait half a second. */
+export function saveSkillSchedules(schedules: SkillSchedule[], now: boolean): void {
+  if (now) change((state) => { state.skillSchedules = schedules; }, 0, 'skillSchedules');
+  else setSoon('skillSchedules', schedules);
+}
+
+/** Change the schedules as they are when the change applies: at once, or
+ *  once the file can be read again, so a run's record isn't lost to a
+ *  passing lock. Saved within SAVE_DELAY_MS. */
+export function updateSkillSchedules(mutate: (schedules: SkillSchedule[]) => SkillSchedule[]): void {
+  change((state) => { state.skillSchedules = mutate(structuredClone(state.skillSchedules ?? [])); }, SAVE_DELAY_MS);
 }
 
 // ─── Projects ───

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { messageStore } from '../stores/messages.svelte.js';
   import { Button } from '$lib/components/ui/button/index.js';
+  import ArrowUpIcon from '@lucide/svelte/icons/arrow-up';
   import { Notice } from '$lib/components/ui/notice/index.js';
   import DiffView from './DiffView.svelte';
   import { fullEditDiff, quickEditDiff, OLD_THEN_NEW } from '../lib/edit-diff.js';
@@ -361,15 +362,17 @@
           bind:value={replyText}
           onkeydown={handleReplyKeydown}
           placeholder="Reply to continue planning..."
-          class="flex-1 text-xs bg-card border border-border px-2 py-1 text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary"
+          class="flex-1 text-xs bg-card border border-border h-8 px-2 py-1 text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary"
         />
         <Button
           variant="subtle"
-          size="sm"
+          size="icon-sm"
           onclick={sendReply}
           disabled={!replyText.trim()}
+          title="Send (Enter)"
+          aria-label="Send"
         >
-          Send
+          <ArrowUpIcon />
         </Button>
       </div>
     {:else}

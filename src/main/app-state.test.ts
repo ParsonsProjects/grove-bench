@@ -56,6 +56,7 @@ import {
   mergeProjects, listProjects, rememberProject, forgetProject,
   loadConversationGroups, saveConversationGroups,
   loadTodoSessionIds, saveTodoSessionIds,
+  loadSkillSchedules, saveSkillSchedules, updateSkillSchedules,
   appStateSaved, resetAppStateForTests,
 } from './app-state.js';
 
@@ -787,6 +788,54 @@ describe('conversation groups', () => {
     flushPendingSaves();
     expect(syncWrites() + asyncWrites()).toBe(0);
     expect(loadConversationGroups()).toEqual([billing]);
+  });
+});
+
+describe('skill schedules', () => {
+  const schedule = {
+    id: 's1', repoPath: '/repo', agentId: 'gemini-cli', skill: 'work-linear-issue', note: 'Go', start: 'new', permissionMode: 'plan',
+    timing: { kind: 'daily', time: '09:00', weekdaysOnly: true },
+    maxOpen: 2, paused: false, scheduledFrom: 1, checkedThrough: 2, sessionIds: ['a'],
+    lastOutcome: { at: 3, sessionId: 'a' },
+  } as const;
+
+  it('saves a change by hand straight away', () => {
+    const file = useDisk({ schemaVersion: V });
+    saveSkillSchedules([structuredClone(schedule) as never], true);
+    expect(syncWrites()).toBe(1);
+    expect(file.get()).toMatchObject({ skillSchedules: [schedule] });
+    expect(loadSkillSchedules()).toEqual([schedule]);
+  });
+
+  it("says it can't tell while the file can't be read, rather than \"none\"", () => {
+    useDisk({ schemaVersion: V, skillSchedules: [schedule] });
+    lockReads();
+    expect(loadSkillSchedules()).toBeNull();
+  });
+
+  it('applies a change made while the file is locked once it can be read', async () => {
+    const file = useDisk({ schemaVersion: V, skillSchedules: [schedule] });
+    const unlock = lockReads();
+    updateSkillSchedules((list) => list.map((s) => ({ ...s, sessionIds: [...s.sessionIds, 'b'] })));
+    expect(loadSkillSchedules()).toBeNull();
+    unlock();
+    expect(loadSkillSchedules()?.[0].sessionIds).toEqual(['a', 'b']);
+    await vi.advanceTimersByTimeAsync(500);
+    await appStateSaved();
+    expect(file.get().skillSchedules[0].sessionIds).toEqual(['a', 'b']);
+  });
+
+  it('drops a malformed schedule and keeps the rest', () => {
+    const state = validateAppState({ skillSchedules: [
+      schedule,
+      { ...schedule, id: 's2', timing: { kind: 'daily', time: 'soon', weekdaysOnly: false } },
+      { ...schedule, id: 's3', maxOpen: 0 },
+      { ...schedule, id: 's4', skill: '' },
+      { ...schedule, id: 's5', timing: { kind: 'manual' } },
+      'junk',
+    ] });
+    expect(state.skillSchedules).toEqual([schedule]);
+    expect(validateAppState({ skillSchedules: 'nope' }).skillSchedules).toBeUndefined();
   });
 });
 

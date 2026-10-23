@@ -62,7 +62,7 @@ In **Plan** mode the agent explores and writes a plan instead of changing files.
 
 - **Approve**: the agent starts making the changes. The thread switches to **Edit** mode, so the plan's file edits don't each ask; commands still do.
 - **Approve and start fresh…**: clears this thread's messages and sends the plan as a new first message, so the agent starts with a clean context. It asks you to confirm first. Your files are not changed.
-- **Keep planning**: don't start yet. To say what to change, type in the box under the buttons and press **Send**.
+- **Keep planning**: don't start yet. To say what to change, type in the box under the buttons and press **Enter**.
 
 ### MCP Input Requests
 An MCP server can ask you for input while the agent uses one of its tools. A block appears with the server's question. It is either a short form (fill it in and click **Submit**, or **Decline**) or a page to open in your browser, for example to sign in (**Open page**, or **Decline**). Your answers go to that server, so don't type passwords or API keys into a form. If the agent stops or the server gives up waiting, the block closes as cancelled.
