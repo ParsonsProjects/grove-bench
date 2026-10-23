@@ -8,6 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { resolveMergeBase, squashSince, branchCommits, excludeFromGit, fileDiff, blobLines, mergeNoCommit, MAX_TEXT_FILE_BYTES } from './git.js';
+import { parseGitStatusPorcelain, parseNumstat } from './git-status-parser.js';
 
 // Real git is slow to start on Windows, and each test runs a dozen commands.
 vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
@@ -104,6 +105,28 @@ describe('a merge conflict', () => {
     const result = await mergeNoCommit(repo, 'other');
 
     expect(result).toEqual({ success: false, conflicts: ['café.ts'] });
+  });
+});
+
+describe('line counts', () => {
+  it('reads a rename and a name outside ASCII as git status names them', () => {
+    fs.writeFileSync(path.join(repo, 'a.txt'), 'one\ntwo\n');
+    fs.writeFileSync(path.join(repo, 'café.ts'), 'x\n');
+    run('add', '.');
+    run('commit', '-qm', 'files');
+    run('mv', 'a.txt', 'b.txt');
+    fs.appendFileSync(path.join(repo, 'b.txt'), 'three\n');
+    run('add', 'b.txt');
+    fs.appendFileSync(path.join(repo, 'café.ts'), 'y\n');
+
+    const status = parseGitStatusPorcelain(execFileSync('git', ['status', '--porcelain=v1', '-z'], { cwd: repo, encoding: 'utf8' }));
+    const counts = parseNumstat(execFileSync('git', ['diff', 'HEAD', '--numstat', '-z', '--', 'b.txt', 'a.txt', 'café.ts'], { cwd: repo, encoding: 'utf8' }));
+
+    expect(status.entries.map((e) => e.filePath).sort()).toEqual(['b.txt', 'café.ts']);
+    expect(counts).toEqual([
+      { path: 'b.txt', additions: 1, deletions: 0, binary: false },
+      { path: 'café.ts', additions: 1, deletions: 0, binary: false },
+    ]);
   });
 });
 

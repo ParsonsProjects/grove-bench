@@ -95,6 +95,21 @@ describe('checkpoints with real git', () => {
     expect(await mgr.fileLines('s1', wt, 'u1', 'since', 'dist/bundle.js')).toBeNull();
   });
 
+  it('counts the lines of a renamed file and one named outside ASCII', async () => {
+    const mgr = new CheckpointManager();
+    await mgr.capture('s1', wt, 'u1');
+    fs.renameSync(path.join(wt, 'a.ts'), path.join(wt, 'b.ts'));
+    write('b.ts', 'one\ntwo\n');
+    write('café.ts', 'x\n');
+
+    const { entries } = await mgr.files('s1', wt, 'u1', 'since');
+
+    expect(entries.map(({ filePath, additions, deletions }) => ({ filePath, additions, deletions }))).toEqual([
+      { filePath: 'b.ts', additions: 1, deletions: 0 },
+      { filePath: 'café.ts', additions: 1, deletions: 0 },
+    ]);
+  });
+
   it('previews a rewind too long to show as the files it changes', async () => {
     // Colour on even outside a terminal: the preview must still be plain text.
     run(['config', 'color.ui', 'always'], wt);

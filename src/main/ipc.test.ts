@@ -1290,7 +1290,7 @@ describe('git handlers', () => {
     vi.mocked(git.git).mockImplementation(async (args: string[]) => {
       if (args[0] === 'diff' && args[1] === '--name-status') return 'M\0src/a.ts\0';
       if (args[0] === 'status') return '?? new.ts\0';
-      if (args[0] === '-c') return '3\t1\tsrc/a.ts\n';
+      if (args[0] === 'diff' && args.includes('--numstat')) return '3\t1\tsrc/a.ts\0';
       return '';
     });
     vi.mocked(git.hashWorkingFiles).mockResolvedValue('h1\nh2\n');
@@ -1303,7 +1303,7 @@ describe('git handlers', () => {
       expect.objectContaining({ filePath: 'new.ts', status: 'untracked', contentHash: 'h2' }),
     ]);
     expect(git.git).toHaveBeenCalledWith(
-      ['-c', 'core.quotePath=false', 'diff', 'mb', '--numstat', '--', 'src/a.ts', 'new.ts'], wt,
+      ['diff', 'mb', '--numstat', '-z', '--', 'src/a.ts', 'new.ts'], wt,
     );
   });
 

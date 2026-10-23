@@ -137,29 +137,39 @@ describe('parseNumstat', () => {
   });
 
   it('parses additions and deletions per file', () => {
-    const raw = '12\t3\tsrc/a.ts\n0\t5\tsrc/b.ts\n';
+    const raw = '12\t3\tsrc/a.ts\x000\t5\tsrc/b.ts\x00';
     expect(parseNumstat(raw)).toEqual([
       { path: 'src/a.ts', additions: 12, deletions: 3, binary: false },
       { path: 'src/b.ts', additions: 0, deletions: 5, binary: false },
     ]);
   });
 
+  it('lists a rename under its new path', () => {
+    // -z: the path is empty, then the old and new paths follow.
+    const raw = '1\t0\t\x00src/a.ts\x00src/b.ts\x002\t2\tc.ts\x00';
+    expect(parseNumstat(raw)).toEqual([
+      { path: 'src/b.ts', additions: 1, deletions: 0, binary: false },
+      { path: 'c.ts', additions: 2, deletions: 2, binary: false },
+    ]);
+  });
+
   it('marks binary changes (- / -) with zero counts', () => {
-    const raw = '-\t-\tassets/logo.png\n';
+    const raw = '-\t-\tassets/logo.png\x00';
     expect(parseNumstat(raw)).toEqual([
       { path: 'assets/logo.png', additions: 0, deletions: 0, binary: true },
     ]);
   });
 
-  it('preserves paths containing tabs', () => {
-    const raw = '1\t1\tweird\tname.ts\n';
+  it('preserves paths containing tabs and newlines', () => {
+    const raw = '1\t1\tweird\tname.ts\x002\t0\tline\nbreak.ts\x00';
     expect(parseNumstat(raw)).toEqual([
       { path: 'weird\tname.ts', additions: 1, deletions: 1, binary: false },
+      { path: 'line\nbreak.ts', additions: 2, deletions: 0, binary: false },
     ]);
   });
 
-  it('skips malformed lines', () => {
-    const raw = 'garbage\n3\t4\tok.ts\n';
+  it('skips malformed records', () => {
+    const raw = 'garbage\x003\t4\tok.ts\x00';
     expect(parseNumstat(raw)).toEqual([
       { path: 'ok.ts', additions: 3, deletions: 4, binary: false },
     ]);
