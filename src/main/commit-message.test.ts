@@ -32,10 +32,8 @@ function makeAdapter(generateText?: (sys: string, user: string, opts?: any) => P
 }
 
 beforeEach(() => {
-  vi.clearAllMocks();
-  // clearAllMocks keeps queued answers a test didn't use.
-  mockGit.mockReset();
-  mockGitPatch.mockReset();
+  // Resets queued answers too, which clearAllMocks would keep for the next test.
+  vi.resetAllMocks();
 });
 
 describe('cleanCommitMessage()', () => {
@@ -75,7 +73,7 @@ describe('buildCommitPrompt()', () => {
   it('names the files left out of the diff, up to 20', () => {
     const left = Array.from({ length: 25 }, (_, i) => `gen/${i}.json`);
     const prompt = buildCommitPrompt('stat summary', shown('diff', left), []);
-    expect(prompt).toContain('Left out of the diff below to keep it short');
+    expect(prompt).toContain('Left out of the diff below to keep it short: gen/0.json, gen/1.json');
     expect(prompt).toContain('gen/19.json and 5 more');
     expect(prompt).not.toContain('gen/20.json');
     expect(prompt).toContain('stat summary');
@@ -130,13 +128,23 @@ describe('fitDiff()', () => {
   });
 
   it('names a renamed file by both its paths', () => {
-    const renamed = 'diff --git a/src/old.ts b/lib/new.ts\nsimilarity index 90%\nrename from src/old.ts\nrename to lib/new.ts\n' + `+${'x'.repeat(50_000)}\n`;
+    const renamed = 'diff --git a/src/my old.ts b/lib/my new.ts\nsimilarity index 90%\nrename from src/my old.ts\nrename to lib/my new.ts\n' + `+${'x'.repeat(50_000)}\n`;
     const { left } = fitDiff(file('a.ts', '+x') + renamed, 1000);
-    expect(left).toEqual(['a/src/old.ts b/lib/new.ts']);
+    expect(left).toEqual(['src/my old.ts → lib/my new.ts']);
+  });
+
+  it("splits files only at a line's start, not after a lone carriage return", () => {
+    // A CR-ended line holding "diff --git": split there, its tail would be a file of its own.
+    const crEnded = file('a.ts', `+foo\rdiff --git a/fake b/fake\n+${'z'.repeat(3000)}`);
+    const { diff, left } = fitDiff(crEnded + file('b.ts', '+b'), 1000);
+    expect(left).toEqual(['a.ts']);
+    expect(diff).toBe(file('b.ts', '+b'));
   });
 });
 
 describe('generateCommitMessage()', () => {
+  const PLAIN = ['diff', '--cached', '--no-color', '--no-ext-diff', '--no-textconv', '--find-renames', '--src-prefix=a/', '--dst-prefix=b/'];
+
   it("asks for the agent's background model", async () => {
     mockGit.mockResolvedValueOnce(' x | 1 +').mockResolvedValueOnce('');
     mockGitPatch.mockResolvedValueOnce('diff --git a/x b/x\n+new line');
@@ -159,8 +167,8 @@ describe('generateCommitMessage()', () => {
 
     expect(result).toBe('feat: add new line');
     expect(mockGit).toHaveBeenNthCalledWith(1, ['diff', '--cached', '--no-color', '--stat', '--stat-count=500'], '/wt');
-    // Read once, with git stopped past gitPatch's limit; plain, whatever the user's config.
-    expect(mockGitPatch).toHaveBeenCalledWith(['diff', '--cached', '--no-color', '--no-ext-diff'], '/wt');
+    // Read once, with git stopped past gitPatch's limit, as plain as git can give it.
+    expect(mockGitPatch).toHaveBeenCalledWith(PLAIN, '/wt');
     const [sys, user, opts] = generateText.mock.calls[0];
     expect(sys).toBe(COMMIT_MESSAGE_SYSTEM_PROMPT);
     expect(user).toContain('+new line');
@@ -170,8 +178,27 @@ describe('generateCommitMessage()', () => {
     expect(opts.abortSignal).toBeInstanceOf(AbortSignal);
   });
 
+  it('reads a diff over the limit again without the files with the most changed lines', async () => {
+    mockGit
+      .mockResolvedValueOnce(' app/x.ts | 22 ++-\n package-lock.json | 30000 +++') // --stat
+      .mockResolvedValueOnce('') // log
+      .mockResolvedValueOnce('30000\t0\tpackage-lock.json\x0020\t2\tapp/x.ts\x00'); // --numstat -z
+    mockGitPatch.mockResolvedValueOnce(null).mockResolvedValueOnce('diff --git a/app/x.ts b/app/x.ts\n+fix\n');
+    const generateText = vi.fn().mockResolvedValue('fix: x');
+
+    await generateCommitMessage('/wt', makeAdapter(generateText));
+
+    expect(mockGitPatch).toHaveBeenLastCalledWith([...PLAIN, '--', ':(top,exclude,literal)package-lock.json'], '/wt');
+    const user = generateText.mock.calls[0][1];
+    expect(user).toContain('+fix');
+    expect(user).toContain('Left out of the diff below to keep it short: package-lock.json');
+  });
+
   it('goes by the summary when the staged diff is too large to read', async () => {
-    mockGit.mockResolvedValueOnce(' huge.bin | Bin').mockResolvedValueOnce('');
+    mockGit
+      .mockResolvedValueOnce(' huge.bin | Bin')
+      .mockResolvedValueOnce('')
+      .mockResolvedValueOnce('-\t-\thuge.bin\x00');
     mockGitPatch.mockResolvedValueOnce(null);
     const generateText = vi.fn().mockResolvedValue('chore: add data');
     expect(await generateCommitMessage('/wt', makeAdapter(generateText))).toBe('chore: add data');
@@ -179,10 +206,10 @@ describe('generateCommitMessage()', () => {
   });
 
   it('rejects when nothing is staged', async () => {
-    mockGit.mockResolvedValueOnce('  ');
+    mockGit.mockResolvedValueOnce('  ').mockResolvedValueOnce('');
+    mockGitPatch.mockResolvedValueOnce('');
     await expect(generateCommitMessage('/wt', makeAdapter(vi.fn())))
       .rejects.toThrow('No staged changes');
-    expect(mockGitPatch).not.toHaveBeenCalled();
   });
 
   it('rejects when the adapter lacks generateText', async () => {

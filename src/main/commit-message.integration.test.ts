@@ -26,6 +26,7 @@ beforeEach(() => {
   run('config', 'user.name', 't');
   run('config', 'user.email', 't@t');
   run('config', 'core.autocrlf', 'false');
+  run('config', 'commit.gpgsign', 'false');
   write('README.md', 'readme\n');
   run('add', '.');
   run('commit', '-qm', 'base');
@@ -73,6 +74,28 @@ describe('stagedDiff', () => {
     expect(left).toEqual([]);
     expect(diff).toContain('+export const v0 = 0;');
     expect(diff.length).toBeLessThanOrEqual(40_000);
+  });
+
+  it("doesn't run a textconv program on the content", async () => {
+    // git-crypt's textconv decrypts; its output mustn't go to a model.
+    write('.gitattributes', 'secret.txt diff=reveal\n');
+    run('config', 'diff.reveal.textconv', 'sed s/sealed/DECRYPTED/');
+    write('secret.txt', 'sealed\n');
+    run('add', '.');
+    const { diff } = await stagedDiff(repo);
+    expect(diff).toContain('+sealed');
+    expect(diff).not.toContain('DECRYPTED');
+  });
+
+  it('reads a diff over 4 MB again without the lockfile, keeping the change beside it', async () => {
+    write('package-lock.json', Array.from({ length: 70_000 }, (_, i) => `    "node_modules/some-package-${i}": { "version": "1.0.${i}" },`).join('\n') + '\n');
+    write('app/x.ts', 'export const fixed = true;\n');
+    run('add', '.');
+    const { diff, left, overLimit } = await stagedDiff(repo);
+    expect(overLimit).toBeUndefined();
+    expect(left).toEqual(['package-lock.json']);
+    expect(diff).toContain('+export const fixed = true;');
+    expect(diff).not.toContain('some-package');
   });
 
   it('keeps a moved file a rename, plain whatever the colour config, from any folder', async () => {
