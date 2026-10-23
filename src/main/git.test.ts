@@ -405,7 +405,7 @@ describe('stageFile()', () => {
   it('calls git add for the given path', async () => {
     mockExeca.mockResolvedValue({ stdout: '' } as any);
     await stageFile('/repo', 'src/a.ts');
-    expect(mockExeca).toHaveBeenCalledWith('git', ['add', '--', 'src/a.ts'], { cwd: '/repo' });
+    expect(mockExeca).toHaveBeenCalledWith('git', ['add', '--', ':(literal)src/a.ts'], { cwd: '/repo' });
   });
 });
 
@@ -413,7 +413,7 @@ describe('unstageFile()', () => {
   it('calls git reset HEAD for the given path', async () => {
     mockExeca.mockResolvedValue({ stdout: '' } as any);
     await unstageFile('/repo', 'src/a.ts');
-    expect(mockExeca).toHaveBeenCalledWith('git', ['reset', '-q', 'HEAD', '--', 'src/a.ts'], { cwd: '/repo' });
+    expect(mockExeca).toHaveBeenCalledWith('git', ['reset', '-q', 'HEAD', '--', ':(literal)src/a.ts'], { cwd: '/repo' });
   });
 });
 
@@ -734,46 +734,95 @@ describe('listProjectFiles()', () => {
 });
 
 describe('revertFile()', () => {
-  const status = (line: string) => mockExeca.mockResolvedValueOnce({ stdout: line } as any);
-  const lastArgs = () => mockExeca.mock.calls.at(-1)![1];
+  /** What `git status --porcelain=v1 -z` says now. */
+  const status = (...records: string[]) => mockExeca.mockResolvedValueOnce({ stdout: records.map((r) => `${r}\0`).join('') } as any);
+  const ok = () => mockExeca.mockResolvedValue({ stdout: '' } as any);
+  const gitCalls = () => mockExeca.mock.calls.map((c) => c[1]);
+
+  it('reads the whole tree, where a rename shows as one', async () => {
+    status('M  a.ts');
+    ok();
+    await revertFile('/repo', 'a.ts', true);
+    expect(gitCalls()[0]).toEqual(['status', '--porcelain=v1', '-z']);
+  });
 
   it('deletes a file staged as new, which isn\'t in HEAD', async () => {
     status('A  new.ts');
-    mockExeca.mockResolvedValueOnce({ stdout: '' } as any);
+    ok();
     await revertFile('/repo', 'new.ts', true);
-    expect(lastArgs()).toEqual(['rm', '-f', '-q', '--', 'new.ts']);
+    expect(gitCalls().at(-1)).toEqual(['rm', '-f', '-q', '--', ':(literal)new.ts']);
+  });
+
+  it("deletes a staged copy, leaving its source alone", async () => {
+    status('C  copy.ts', 'orig.ts');
+    ok();
+    await revertFile('/repo', 'copy.ts', true);
+    expect(gitCalls().slice(1)).toEqual([['rm', '-f', '-q', '--', ':(literal)copy.ts']]);
   });
 
   it('resets a staged change to HEAD', async () => {
     status('M  a.ts');
-    mockExeca.mockResolvedValueOnce({ stdout: '' } as any);
+    ok();
     await revertFile('/repo', 'a.ts', true);
-    expect(lastArgs()).toEqual(['checkout', 'HEAD', '--', 'a.ts']);
+    expect(gitCalls().at(-1)).toEqual(['checkout', 'HEAD', '--', ':(literal)a.ts']);
   });
 
   it('resets an unstaged change to the index, keeping a staged new file', async () => {
     status('AM new.ts');
-    mockExeca.mockResolvedValueOnce({ stdout: '' } as any);
+    ok();
     await revertFile('/repo', 'new.ts', false);
-    expect(lastArgs()).toEqual(['checkout', '--', 'new.ts']);
+    expect(gitCalls().at(-1)).toEqual(['checkout', '--', ':(literal)new.ts']);
   });
 
   it('undoes a staged rename: the old path back from HEAD, then the new one deleted', async () => {
-    mockExeca.mockResolvedValue({ stdout: '' } as any);
+    status('R  b.ts', 'a.ts');
+    ok();
     await revertFile('/repo', 'b.ts', true, 'a.ts');
-    expect(mockExeca.mock.calls.map((c) => c[1])).toEqual([['checkout', 'HEAD', '--', 'a.ts'], ['rm', '-f', '-q', '--', 'b.ts']]);
+    expect(gitCalls().slice(1)).toEqual([['checkout', 'HEAD', '--', ':(literal)a.ts'], ['rm', '-f', '-q', '--', ':(literal)b.ts']]);
   });
 
   it('undoes a rename in the worktree from the index', async () => {
-    mockExeca.mockResolvedValue({ stdout: '' } as any);
+    status(' R b.ts', 'a.ts');
+    ok();
     await revertFile('/repo', 'b.ts', false, 'a.ts');
-    expect(mockExeca.mock.calls.map((c) => c[1])).toEqual([['checkout', '--', 'a.ts'], ['rm', '-f', '-q', '--', 'b.ts']]);
+    expect(gitCalls().slice(1)).toEqual([['checkout', '--', ':(literal)a.ts'], ['rm', '-f', '-q', '--', ':(literal)b.ts']]);
   });
 
   it("deletes nothing when the old path can't come back", async () => {
+    status('R  b.ts', 'a.ts');
     mockExeca.mockRejectedValueOnce(new Error("pathspec 'a.ts' did not match"));
     await expect(revertFile('/repo', 'b.ts', true, 'a.ts')).rejects.toThrow();
-    expect(mockExeca).toHaveBeenCalledOnce();
+    expect(gitCalls()).toHaveLength(2);
+  });
+
+  it('does nothing when git no longer shows the rename it was told of', async () => {
+    // The rename was unstaged while the dialog was open.
+    status(' D a.ts', '?? b.ts');
+    await expect(revertFile('/repo', 'b.ts', true, 'a.ts')).rejects.toThrow('b.ts has changed since the list was read');
+    expect(gitCalls()).toHaveLength(1);
+  });
+
+  it("does nothing to a rename it wasn't told of", async () => {
+    status('R  b.ts', 'a.ts');
+    await expect(revertFile('/repo', 'b.ts', true)).rejects.toThrow('has changed since the list was read');
+    expect(gitCalls()).toHaveLength(1);
+  });
+
+  it('does nothing while something is at the old path', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gb-revert-'));
+    fs.writeFileSync(path.join(dir, 'a.ts'), 'a new file');
+    status('R  b.ts', 'a.ts');
+    await expect(revertFile(dir, 'b.ts', true, 'a.ts')).rejects.toThrow("Can't undo the rename while something is at a.ts");
+    expect(gitCalls()).toHaveLength(1);
+  });
+
+  it('says so for a rename of letter case only, where the old name finds the file itself', async () => {
+    // As on Windows: the old name, Foo.ts, opens foo.ts.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gb-revert-'));
+    fs.writeFileSync(path.join(dir, 'Foo.ts'), 'x');
+    status('R  foo.ts', 'Foo.ts');
+    await expect(revertFile(dir, 'foo.ts', true, 'Foo.ts')).rejects.toThrow('only changes letter case');
+    expect(gitCalls()).toHaveLength(1);
   });
 
   it('deletes an untracked file', async () => {

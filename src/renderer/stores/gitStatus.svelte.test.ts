@@ -208,3 +208,14 @@ describe('gitStatusStore — default branch view', () => {
     expect(mockGroveBench.getGitStatus).toHaveBeenLastCalledWith('chosen', { scope: 'branch', base: 'main' });
   });
 });
+
+describe('gitStatusStore — revertFile', () => {
+  it('refreshes the list even when the revert fails, as it may be half done', async () => {
+    const refresh = vi.spyOn(gitStatusStore, 'scheduleRefresh').mockImplementation(() => {});
+    mockGroveBench.revertFile.mockRejectedValueOnce(new Error('rm failed'));
+    await expect(gitStatusStore.revertFile('s', 'b.ts', true, 'a.ts')).rejects.toThrow('rm failed');
+    expect(mockGroveBench.revertFile).toHaveBeenCalledWith('s', 'b.ts', true, 'a.ts');
+    expect(refresh).toHaveBeenCalledWith('s', 100);
+    refresh.mockRestore();
+  });
+});

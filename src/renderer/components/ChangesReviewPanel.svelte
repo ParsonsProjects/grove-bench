@@ -14,6 +14,7 @@
   import * as Segmented from '$lib/components/ui/segmented/index.js';
   import { Pulse } from '$lib/components/ui/pulse/index.js';
   import { Notice } from '$lib/components/ui/notice/index.js';
+  import { stripIpcErrorPrefix } from '$lib/mcp-errors.js';
 
   /**
    * The Changes tab: git status (the whole branch since its base, by
@@ -178,6 +179,9 @@
   // ── Revert / discard (destructive, confirmed first) ──
   let confirmEntry = $state<GitStatusEntry | null>(null);
   let revertingFiles = $state<Set<string>>(new Set());
+  /** Why the last revert failed, by the entry's key: git refuses, or main
+   *  does (a rename whose old path is taken, or a file that changed since). */
+  let revertError = $state<{ key: string; message: string } | null>(null);
 
   function confirmRevert() {
     const entry = confirmEntry;
@@ -188,11 +192,12 @@
   async function revertFile(entry: GitStatusEntry) {
     const key = `${entry.filePath}:${entry.staged}`;
     revertingFiles = new Set([...revertingFiles, key]);
+    revertError = null;
     try {
       // A rename's old path comes back; a copy's source was never removed.
       await gitStatusStore.revertFile(sessionId, entry.filePath, entry.staged, entry.status === 'renamed' ? entry.origPath : undefined);
     } catch (e) {
-      console.error('Failed to revert file:', e);
+      revertError = { key, message: stripIpcErrorPrefix(e instanceof Error ? e.message : String(e)) };
     } finally {
       const next = new Set(revertingFiles);
       next.delete(key);
@@ -377,8 +382,13 @@
         {isUntracked ? 'Discard' : 'Revert'}
       {/if}
     </Button>
+    {#if revertError?.key === `${entry.filePath}:${entry.staged}`}
+      <span role="alert" class="text-micro text-destructive min-w-0">{revertError.message}</span>
+    {/if}
   {/if}
 {/snippet}
+
+{#snippet pathName(p: string)}<span class="font-mono text-xs break-all">{p}</span>{/snippet}
 
 {#snippet dialogs()}
   <!-- Confirmation for destructive revert/discard -->
@@ -396,15 +406,15 @@
           <Dialog.Title>{isUntracked || isNewStaged ? 'Discard file?' : 'Revert file?'}</Dialog.Title>
           <Dialog.Description>
             {#if isUntracked}
-              <span class="font-mono text-xs break-all">{confirmEntry.filePath}</span> will be permanently deleted from disk. This cannot be undone.
+              {@render pathName(confirmEntry.filePath)} will be permanently deleted from disk. This cannot be undone.
             {:else if confirmEntry.status === 'renamed' && confirmEntry.origPath}
-              <span class="font-mono text-xs break-all">{confirmEntry.filePath}</span> was renamed from <span class="font-mono text-xs break-all">{confirmEntry.origPath}</span>. Reverting puts <span class="font-mono text-xs break-all">{confirmEntry.origPath}</span> back {confirmEntry.staged ? 'as last committed' : 'as staged'} and deletes <span class="font-mono text-xs break-all">{confirmEntry.filePath}</span>, with the changes shown here{alsoUnstaged ? ' and its unstaged edits' : ''}.
+              {@render pathName(confirmEntry.filePath)} was renamed from {@render pathName(confirmEntry.origPath)}. Reverting puts {@render pathName(confirmEntry.origPath)} back {confirmEntry.staged ? 'as last committed' : 'as staged'} and deletes {@render pathName(confirmEntry.filePath)}, with the changes shown here{alsoUnstaged ? ' and its unstaged edits' : ''}. This cannot be undone.
             {:else if isNewStaged}
-              <span class="font-mono text-xs break-all">{confirmEntry.filePath}</span> is a new file, so reverting it deletes it from disk{alsoUnstaged ? ', including its unstaged edits' : ''}. This cannot be undone.
+              {@render pathName(confirmEntry.filePath)} is a new file, so reverting it deletes it from disk{alsoUnstaged ? ', including its unstaged edits' : ''}. This cannot be undone.
             {:else if alsoUnstaged}
-              <span class="font-mono text-xs break-all">{confirmEntry.filePath}</span> will be reset to its last committed state. That discards the staged changes shown here and its unstaged edits too.
+              {@render pathName(confirmEntry.filePath)} will be reset to its last committed state. That discards the staged changes shown here and its unstaged edits too.
             {:else}
-              <span class="font-mono text-xs break-all">{confirmEntry.filePath}</span> will be reset to its last committed state, discarding the changes shown here.
+              {@render pathName(confirmEntry.filePath)} will be reset to its last committed state, discarding the changes shown here.
             {/if}
           </Dialog.Description>
         </Dialog.Header>

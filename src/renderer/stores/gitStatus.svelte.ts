@@ -170,8 +170,13 @@ class GitStatusStore {
 
   /** Revert a file via git checkout, or undo a rename (`renamedFrom`, its old path). */
   async revertFile(sessionId: string, filePath: string, staged?: boolean, renamedFrom?: string): Promise<void> {
-    await window.groveBench.revertFile(sessionId, filePath, staged, renamedFrom);
-    this.scheduleRefresh(sessionId, 100);
+    // Refreshed even when it fails: a rename may be half undone, or the
+    // file may have changed under the list.
+    try {
+      await window.groveBench.revertFile(sessionId, filePath, staged, renamedFrom);
+    } finally {
+      this.scheduleRefresh(sessionId, 100);
+    }
   }
 
   /** Stage a file (git add) */

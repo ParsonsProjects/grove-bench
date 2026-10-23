@@ -59,3 +59,5 @@ GitHub doesn't let you approve or request changes on your own PR, so for a PR yo
 ## Reverting Changes
 
 Each modified file has a **Revert** button that resets it to its last committed state. Use this if the agent made an unwanted change to a specific file. New (untracked) files show **Discard** instead, which deletes the file. Both ask you to confirm first.
+
+Reverting a renamed file undoes the rename: the old name comes back and the new one is deleted. If something else is at the old name by then, such as a new file or a folder, Revert stops and says so rather than overwrite it. Move it, then try again.
