@@ -12,7 +12,8 @@
  *
  * Launching a process blocks the main process until the OS has created it,
  * which on Windows can take tens of milliseconds, so every launch is timed.
- * (git and gh launch from the process host instead: process-host.ts.)
+ * (git launches from the process host instead, and gh from the agent host:
+ * process-host.ts.)
  *
  * A stall with nothing named used to be a mystery, so two more things are
  * named: synchronous work the app marks with timeWork (reading an event log,

@@ -1,14 +1,15 @@
 /**
- * Process host: git and gh run from an Electron utility process
- * (process-host-child.ts), so starting them never blocks the main process,
+ * Process host: git runs from an Electron utility process
+ * (process-host-child.ts), so starting it never blocks the main process,
  * as do the main process's other short commands (taskkill, ps, where, the
  * editor CLIs).
  * So do the agents' programs (claude, ACP agents), which keep running and
  * stream their input and output through a second host of their own, the agent host
- * (process-host-spawn.ts), and the claude CLI's auth, mcp and plugin calls,
- * which can run long or hang (runInAgentHost, process-host-run.ts). Kept
- * apart because the git host is restarted when a command goes unanswered,
- * and a restart stops whatever the host started.
+ * (process-host-spawn.ts), and the commands that can run long or hang
+ * (runInAgentHost, process-host-run.ts): the claude CLI's auth, mcp and
+ * plugin calls, and gh, which waits on the network. Kept apart because the
+ * git host is restarted when a command goes unanswered, and a restart stops
+ * whatever the host started.
  *
  * Starting a process holds whichever process asks for it until the OS has
  * created it. On Windows that is execa's PATH search (cross-spawn stats every
@@ -20,13 +21,14 @@
  * Before the app is ready (the host isn't started yet), once it has failed
  * MAX_FAILURES times in a row, and after it has stopped at quit, commands run
  * in the main process as they did before, except those that can be skipped
- * (runProcessInHost), which fail instead. Tests never start it, so their
- * execa mocks see every call.
+ * (runProcessInHost: typeperf once the agent host has given up), which fail
+ * instead. Tests never
+ * start it, so their execa mocks see every call.
  *
  * A command asked for while the host starts, or restarts after a crash or a
  * kill, waits for it (in order) rather than run here: at launch the app
- * restores every project and thread at once, dozens of git and gh calls in
- * the first seconds, which ran here and froze the window. It waits at most
+ * restores every project and thread at once, dozens of git calls in the
+ * first seconds, which ran here and froze the window. It waits at most
  * HOST_WAIT_MS, and no longer once that start has failed: then it runs here
  * (or, host-only, fails) as it did before. Its timeout, and the deadline for
  * the host's answer, count from when it is sent, not from when it was asked
@@ -50,7 +52,9 @@
  *
  * A process spawned while the host is starting waits for it, rather than
  * starting here: at launch the open thread's agent starts within seconds,
- * and that is the launch that froze the window.
+ * and that is the launch that froze the window. One that can be skipped
+ * (spawnProcessInHost) fails to start when the host isn't up, rather than
+ * start here.
  */
 import { utilityProcess } from 'electron';
 import { execa } from 'execa';
@@ -60,7 +64,7 @@ import { freezeLog, launchLabel } from './freeze-log.js';
 import { logger } from './logger.js';
 import { perfLine } from './perf-log.js';
 import {
-  HOST_READY, isHostReply, isHostStarted, isSpawnEvent, reviveError,
+  HOST_READY, isHostReply, isHostStarted, isSpawnEvent, reviveError, serializeError,
   type HostedOptions, type HostReply, type HostRequest, type ProcessResult, type SpawnEvent, type SpawnRequest,
 } from './process-host-protocol.js';
 import { createSpawnRunner, HostedProcess, type SpawnRunner } from './process-host-spawn.js';
@@ -78,6 +82,11 @@ export interface SpawnProcessOptions {
   stdout?: 'pipe' | 'ignore';
   /** Run `file` and `args` as one command line in a shell (SpawnRequest). */
   shell?: boolean;
+  /** false: its output isn't an agent's (the commands runInAgentHost runs:
+   *  gh, typeperf, the claude CLI's calls), so it is handed on without
+   *  timeOutput, and the health line's "agent output" leaves it out. Kept in
+   *  the main process: the host never sees it. */
+  agentOutput?: boolean;
 }
 
 /** The host's file name next to the main bundle (vite.main.config.mjs). */
@@ -150,7 +159,7 @@ export interface ProcessHostDeps {
   note?: (line: string) => void;
   /** Hand on a chunk of a spawned process's output (`deliver`), timing it
    *  for the freeze log (freezeLog.timeAgentOutput). By default it's only
-   *  handed on. */
+   *  handed on. Not for a process spawned with `agentOutput: false`. */
   timeOutput?: (chars: number, deliver: () => void) => void;
   /** What the notes call the host, and what it runs. */
   name?: string;
@@ -217,6 +226,8 @@ export function createProcessHost(deps: ProcessHostDeps) {
   const spawned = new Map<number, HostedProcess>();
   /** Spawns waiting for a starting host: told whether it came up. */
   const waitingForHost: ((ready: boolean) => void)[] = [];
+  /** Processes whose output isn't an agent's (`agentOutput: false`). */
+  const notAgents = new WeakSet<HostedProcess>();
 
   function start(): void {
     if (state !== 'idle') return;
@@ -296,7 +307,7 @@ export function createProcessHost(deps: ProcessHostDeps) {
     waitedOut = false;
     if (failures >= MAX_FAILURES) {
       state = 'failed';
-      note(`${name} ${reason}; ${deps.runs ?? 'git and gh'} run in the main process from now on`);
+      note(`${name} ${reason}; ${deps.runs ?? 'git commands'} run in the main process from now on`);
       runQueuedHere();
       return;
     }
@@ -397,9 +408,9 @@ export function createProcessHost(deps: ProcessHostDeps) {
     deliver(proc, event);
   }
 
-  /** Pass what a spawned process did on to it, timing its output. */
+  /** Pass what a spawned process did on to it, timing an agent's output. */
   function deliver(proc: HostedProcess, event: SpawnEvent): void {
-    if (event.type === 'stdout' || event.type === 'stderr') timeOutput(event.data.length, () => proc.receive(event));
+    if ((event.type === 'stdout' || event.type === 'stderr') && !notAgents.has(proc)) timeOutput(event.data.length, () => proc.receive(event));
     else proc.receive(event);
   }
 
@@ -541,11 +552,15 @@ export function createProcessHost(deps: ProcessHostDeps) {
   /**
    * Start a long-running process, in the host when it's up or starting.
    * Returns at once, before the process exists: its input waits until then,
-   * and its pid, output and exit follow.
+   * and its pid, output and exit follow. `hostOnly`: never here; when the
+   * host can't take it, it fails to start instead ('error', then 'close').
    */
-  function spawn(file: string, args: string[], options: SpawnProcessOptions = {}): HostedProcess {
+  function spawn(file: string, args: string[], options: SpawnProcessOptions = {}, hostOnly = false): HostedProcess {
     const proc = new HostedProcess(launchLabel(file, [file, ...args]));
-    const request: Omit<SpawnRequest, 'id'> = { type: 'spawn', file, args, ...options };
+    // `agentOutput` stays here; the host gets the rest.
+    const { agentOutput = true, ...spawnOptions } = options;
+    if (!agentOutput) notAgents.add(proc);
+    const request: Omit<SpawnRequest, 'id'> = { type: 'spawn', file, args, ...spawnOptions };
     const launch = (inHost: boolean) => {
       // Stopped before it started: there's nothing to start.
       if (proc.killed) {
@@ -553,13 +568,24 @@ export function createProcessHost(deps: ProcessHostDeps) {
         return;
       }
       const child = host;
+      if (hostOnly && !(inHost && state === 'ready' && child)) {
+        // On the next tick, as a start that fails here is reported: the
+        // caller adds its listeners once spawn has returned.
+        const error = serializeError(new Error(`The ${name} isn't running, so ${proc.label} didn't start`));
+        process.nextTick(() => {
+          deliver(proc, { type: 'error', id: 0, error });
+          deliver(proc, { type: 'close', id: 0 });
+        });
+        return;
+      }
       if (inHost && state === 'ready' && child) {
         const id = ++nextId;
         spawned.set(id, proc);
         try {
           child.postMessage({ ...request, id });
         } catch {
-          // Never delivered, so it can't have started: start it here instead.
+          // Never delivered, so it can't have started: start it here instead
+          // (or, host-only, not at all).
           spawned.delete(id);
           launch(false);
           return;
@@ -605,11 +631,17 @@ export function createProcessHost(deps: ProcessHostDeps) {
     /** Like run, but never in this process: fails when the host isn't up (or
      *  dies), for work that can be skipped rather than freeze the window. */
     runInHost: (file: string, args: string[], options?: HostedOptions) => run(file, args, options, true),
-    spawn,
+    spawn: (file: string, args: string[], options?: SpawnProcessOptions) => spawn(file, args, options),
+    /** Like spawn, but never in this process: when the host isn't up (or
+     *  doesn't come up while it is starting), the process fails to start. */
+    spawnInHost: (file: string, args: string[], options?: SpawnProcessOptions) => spawn(file, args, options, true),
     /** Whether commands go to the host right now. */
     get ready(): boolean { return state === 'ready'; },
     /** The host's process id while it's up. */
     get pid(): number | undefined { return state === 'ready' ? host?.pid : undefined; },
+    /** Whether it has given up for good (MAX_FAILURES): what it ran runs in
+     *  this process from then on, and host-only work fails. */
+    get gaveUp(): boolean { return state === 'failed'; },
   };
 }
 
@@ -638,8 +670,9 @@ const GH_API_WRITE_FLAGS = /^(-[XfF]|--(method|field|raw-field|input)(=|$))/;
 
 /**
  * Whether running this git or gh command a second time changes nothing, so it
- * can run again in the main process when the host dies under it. Anything
- * not known to be read-only isn't.
+ * can run again when its host dies under it: a git command in the restarted
+ * host or the main process, a gh call in the agent host (gh.ts marks those
+ * `idempotent` for runInAgentHost). Anything not known to be read-only isn't.
  */
 export function isReadOnly(file: string, args: readonly string[]): boolean {
   const program = (file.split(/[\\/]/).pop() ?? '').toLowerCase().replace(/\.exe$/, '');
@@ -721,8 +754,9 @@ export function runProcess(file: string, args: string[], options?: HostedOptions
  * runProcess, but only in the process host: rejects when the host isn't up
  * (before it is started, once it has given up or stopped, or when it doesn't
  * come up within HOST_WAIT_MS), rather than run the command in the main
- * process. For work that can be skipped, such as the health
- * line's process list (process-memory.ts).
+ * process. For work that can be skipped: the health line's typeperf
+ * (process-memory.ts), once the agent host, where it normally runs, has
+ * given up for good (agentHostGaveUp).
  */
 export function runProcessInHost(file: string, args: string[], options?: HostedOptions): Promise<ProcessResult> {
   return processHost.runInHost(file, args, options) as Promise<ProcessResult>;
@@ -734,6 +768,13 @@ export function agentHostPid(): number | undefined {
   return agentHost.pid;
 }
 
+/** Whether the agent host has given up for good (MAX_FAILURES in a row):
+ *  the agents' programs start in the main process from then on, and what
+ *  runs only there (spawnProcessInHost) fails. */
+export function agentHostGaveUp(): boolean {
+  return agentHost.gaveUp;
+}
+
 /**
  * Start `file` with `args` like Node's spawn (piped stdio, no console
  * window), in the agent host when it's up or starting, so the window never
@@ -741,6 +782,16 @@ export function agentHostPid(): number | undefined {
  */
 export function spawnProcess(file: string, args: string[], options?: SpawnProcessOptions): HostedProcess {
   return agentHost.spawn(file, args, options);
+}
+
+/**
+ * spawnProcess, but only in the agent host: when it isn't up (or doesn't come
+ * up while it is starting), the process fails to start rather than start in
+ * the main process. For work that can be skipped, such as the health line's
+ * process list (process-memory.ts).
+ */
+export function spawnProcessInHost(file: string, args: string[], options?: SpawnProcessOptions): HostedProcess {
+  return agentHost.spawnInHost(file, args, options);
 }
 
 /** Start the process and agent hosts. Electron allows it once the app is ready. */

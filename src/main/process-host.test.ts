@@ -234,9 +234,25 @@ describe('process host', () => {
       fire(RESTART_DELAY_MS);
     }
     expect(hosts).toHaveLength(MAX_FAILURES);
-    expect(notes.at(-1)).toBe('process host exited with code 1; git and gh run in the main process from now on');
+    expect(notes.at(-1)).toBe('process host exited with code 1; git commands run in the main process from now on');
     await host.run('git', ['status']);
     expect(runHere).toHaveBeenCalledTimes(1);
+  });
+
+  it('says when it has given up for good, and only then', () => {
+    const { host, fire, latest } = setup();
+    expect(host.gaveUp).toBe(false);
+    host.start();
+    for (let i = 0; i < MAX_FAILURES; i++) {
+      latest().ready();
+      expect(host.gaveUp).toBe(false);
+      latest().exit(1);
+      // Down, but starting again.
+      if (i < MAX_FAILURES - 1) expect(host.gaveUp).toBe(false);
+      fire(RESTART_DELAY_MS);
+    }
+    expect(host.gaveUp).toBe(true);
+    expect(host.ready).toBe(false);
   });
 
   it('kills a host that never says it is ready, and counts it as a failure', () => {
@@ -920,7 +936,7 @@ describe('process host: commands safe to repeat, in flight when it dies', () => 
     expect(runHere).not.toHaveBeenCalled();
 
     latest().exit(15);
-    expect(notes.at(-1)).toBe('process host exited with code 15; git and gh run in the main process from now on');
+    expect(notes.at(-1)).toBe('process host exited with code 15; git commands run in the main process from now on');
     expect(runHere.mock.calls.map(([file, args]) => `${file} ${args[0]}`)).toEqual(['git status', 'taskkill.exe /PID', 'git log']);
     await expect(status).resolves.toEqual({ stdout: 'here: git status' });
     await expect(kill).resolves.toEqual({ stdout: 'here: taskkill.exe /PID 4242 /T /F' });
@@ -1131,6 +1147,39 @@ describe('process host: spawned processes', () => {
     expect(timed).toEqual([8, 4, 3]);
   });
 
+  it("hands on the output of a process that isn't an agent (agentOutput: false) without timeOutput, and keeps the option from the host", async () => {
+    const timeOutput = vi.fn((_chars: number, deliver: () => void) => deliver());
+    const { host, latest } = setup({ timeOutput });
+    host.start();
+    latest().ready();
+    const gh = host.spawn('gh', ['pr', 'view'], { findCommand: true, agentOutput: false });
+    const seen = watch(gh);
+    const agent = host.spawn('claude.exe', [], { agentOutput: true });
+    watch(agent);
+    expect(spawnOf(latest())).toEqual([
+      { type: 'spawn', id: 1, file: 'gh', args: ['pr', 'view'], findCommand: true },
+      { type: 'spawn', id: 2, file: 'claude.exe', args: [] },
+    ]);
+    latest().emit('message', { type: 'stdout', id: 1, data: '{"number":7}' });
+    latest().emit('message', { type: 'stderr', id: 1, data: 'warn' });
+    latest().emit('message', { type: 'stdout', id: 2, data: '{"a":1}\n' });
+    await settle();
+    expect(seen).toEqual(['out {"number":7}']);
+    expect(timeOutput.mock.calls.map(([chars]) => chars)).toEqual([8]);
+
+    // Started here, the host never having come up, the same way.
+    const down = setup({ timeOutput });
+    down.host.start();
+    const typeperf = down.host.spawn('typeperf.exe', [], { agentOutput: false });
+    const here = watch(typeperf);
+    down.fire(HOST_START_TIMEOUT_MS);
+    expect(down.local[0].requests).toEqual([{ type: 'spawn', id: 0, file: 'typeperf.exe', args: [] }]);
+    down.local[0].post({ type: 'stdout', id: 0, data: '"(PDH-CSV 4.0)"' });
+    await settle();
+    expect(here).toEqual(['out "(PDH-CSV 4.0)"']);
+    expect(timeOutput).toHaveBeenCalledOnce();
+  });
+
   it('passes output on as strings, as the host decoded it', async () => {
     const { host, latest } = setup();
     host.start();
@@ -1222,6 +1271,47 @@ describe('process host: spawned processes', () => {
     stopped.host.stop();
     stopped.host.spawn('claude.exe', []);
     expect(stopped.local).toHaveLength(1);
+  });
+
+  it('starts a host-only process in the host, and never here: it fails to start instead', async () => {
+    const errorsOf = (proc: HostedProcess) => {
+      const errors: string[] = [];
+      proc.on('error', (e: Error) => errors.push(e.message));
+      return errors;
+    };
+    const { host, local, fire, latest } = setup();
+    // Never started.
+    let proc = host.spawnInHost('typeperf', ['-sc', '1']);
+    let errors = errorsOf(proc);
+    let seen = watch(proc);
+    await settle();
+    expect(errors).toEqual(["The process host isn't running, so typeperf didn't start"]);
+    expect(seen).toEqual(['close', 'out end']);
+
+    // Starting: it waits for the host, and starts there.
+    host.start();
+    proc = host.spawnInHost('typeperf', ['-sc', '1']);
+    latest().ready();
+    expect(latest().sent).toEqual([{ type: 'spawn', id: 1, file: 'typeperf', args: ['-sc', '1'] }]);
+
+    // Up, but the message can't be sent.
+    latest().failPost = true;
+    errors = errorsOf(host.spawnInHost('typeperf', ['-sc', '1']));
+    await settle();
+    expect(errors).toEqual(["The process host isn't running, so typeperf didn't start"]);
+
+    // Restarting, and its start fails.
+    latest().failPost = false;
+    latest().exit(1);
+    proc = host.spawnInHost('typeperf', ['-sc', '1']);
+    errors = errorsOf(proc);
+    seen = watch(proc);
+    fire(RESTART_DELAY_MS);
+    fire(HOST_START_TIMEOUT_MS);
+    await settle();
+    expect(errors).toEqual(["The process host isn't running, so typeperf didn't start"]);
+    expect(seen).toEqual(['close', 'out end']);
+    expect(local).toEqual([]);
   });
 
   it('reports a start that Node throws here to listeners added once spawn has returned', async () => {

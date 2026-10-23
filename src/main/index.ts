@@ -22,7 +22,7 @@ import { freezeLog, startStallWatch } from './freeze-log.js';
 import { closePerfLog } from './perf-log.js';
 import { startHealthLog } from './perf-health.js';
 import { agentHostPid, startProcessHost, stopProcessHost } from './process-host.js';
-import { measureProcesses } from './process-memory.js';
+import { measureProcesses, windowsExeName } from './process-memory.js';
 import { startSkillScheduler, stopSkillScheduler } from './skill-schedules.js';
 import { ChildProcess } from 'node:child_process';
 
@@ -158,7 +158,7 @@ app.on('second-instance', () => {
 app.whenReady().then(() => {
   // A second copy only hands over (above), and opens nothing.
   if (!isFirstCopy) return;
-  // git and gh launch from here on in a utility process, so a slow launch
+  // git and gh launch from here on in utility processes, so a slow launch
   // can't freeze the window (process-host.ts). First, before the window
   // starts asking for git status: what it asks for before the host is up
   // waits for it.
@@ -214,11 +214,12 @@ app.whenReady().then(() => {
       };
     },
     // The agents' processes aren't Electron's (Windows only, listed in the
-    // process host). In dev mode, also the npm and Vite processes above us.
+    // agent host). In dev mode, also the npm and Vite processes above us.
     processes: () => measureProcesses({
       agents: () => sessionManager.agentProcesses(),
       agentHostPid,
-      appPid: app.isPackaged ? undefined : process.pid,
+      main: { pid: process.pid, exe: windowsExeName(process.execPath) },
+      devServer: !app.isPackaged,
     }),
   });
 

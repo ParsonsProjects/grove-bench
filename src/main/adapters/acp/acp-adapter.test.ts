@@ -486,6 +486,27 @@ describe('AcpAdapter', () => {
     expect((await adapter.checkPrerequisites()).available).toBe(false);
   }, SPAWNS_TIMEOUT_MS);
 
+  it('reports no pid once its process is lost with its host, as Claude Code does: Windows may give the pid to another', async () => {
+    const received = vi.spyOn(HostedProcess.prototype, 'receive');
+    let pid: number | undefined;
+    try {
+      const handle = await new AcpAdapter(def()).start(config());
+      await until(handle, 'system_init');
+      pid = handle.processId!();
+      expect(pid).toEqual(expect.any(Number));
+      const proc = (received.mock.contexts as HostedProcess[]).find((p) => p.pid === pid)!;
+      // As when the agent host dies: no exit code, stopped by SIGKILL.
+      proc.lost(true);
+      expect([proc.exitCode, proc.signalCode]).toEqual([null, 'SIGKILL']);
+      expect(handle.processId!()).toBeUndefined();
+      handle.close();
+    } finally {
+      received.mockRestore();
+      // lost() only ends it here; the host's exit kills it in the app.
+      if (pid !== undefined) try { process.kill(pid); } catch { /* already gone */ }
+    }
+  }, SPAWNS_TIMEOUT_MS);
+
   it('keeps the agent\'s own defaults when a conversation changes a control', async () => {
     const adapter = new AcpAdapter(def());
     const handle = await adapter.start(config());

@@ -35,6 +35,7 @@ import { writeFileAtomic } from '../fs-utils.js';
 import { RunningCost, RunningTokens } from './running-cost.js';
 import { runProcess, spawnProcess, type HostedOptions, type ProcessResult } from '../process-host.js';
 import { runInAgentHost, type AgentHostRunOptions } from '../process-host-run.js';
+import { windowsExeName } from '../process-memory.js';
 import { extractJsonObject } from '../extract-json.js';
 import * as path from 'node:path';
 
@@ -95,7 +96,7 @@ export function spawnClaudeCodeProcess(
   opts: SpawnOptions,
   onStderr?: (data: string) => void,
 ): SpawnedProcess & { readonly pid?: number } {
-  const isNode = /^node(\.exe)?$/i.test(path.basename(opts.command));
+  const isNode = isNodeCommand(opts.command);
   const command = isNode ? process.execPath : asarUnpackedPath(opts.command);
   const env = isNode
     ? { ...opts.env, ELECTRON_RUN_AS_NODE: '1' }
@@ -117,6 +118,17 @@ export function spawnClaudeCodeProcess(
     child.stderr.resume();
   }
   return child;
+}
+
+function isNodeCommand(command: string): boolean {
+  return /^node(\.exe)?$/i.test(path.basename(command));
+}
+
+/** The executable spawnClaudeCodeProcess starts for the SDK's `command`, as
+ *  the health line's process list names it (windowsExeName): claude.exe, or
+ *  Electron's own binary for a `node` command. */
+export function claudeProcessExe(command: string): string {
+  return windowsExeName(isNodeCommand(command) ? process.execPath : command);
 }
 
 const dynamicImport = new Function('specifier', 'return import(specifier)') as
@@ -1881,6 +1893,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     const abortController = new AbortController();
     let sessionId: string | null = null;
     let agentProcess: ReturnType<typeof spawnClaudeCodeProcess> | undefined;
+    let agentExe: string | undefined;
 
     // Build the canUseTool callback from the adapter config.
     const groveServers = groveServersOf(config);
@@ -2002,6 +2015,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         } : {}),
         spawnClaudeCodeProcess: (o: SpawnOptions) => {
           agentProcess = spawnClaudeCodeProcess(o, (data) => logger.debug(`[ClaudeCodeAdapter] SDK stderr: ${data}`));
+          agentExe = claudeProcessExe(o.command);
           return agentProcess;
         },
         env: {
@@ -2101,6 +2115,10 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         // an unrelated process.
         const running = agentProcess?.exitCode === null && agentProcess.signalCode == null;
         return running ? agentProcess?.pid : undefined;
+      },
+
+      processExe() {
+        return agentExe;
       },
 
       closeInput() {

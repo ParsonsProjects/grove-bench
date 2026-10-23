@@ -2088,13 +2088,16 @@ class AgentSessionManager {
     }));
   }
 
-  /** Each thread's agent process while it runs, for the health line's
-   *  memory (process-memory.ts). Asleep and stopped threads have none. */
-  agentProcesses(): { thread: string; pid: number }[] {
-    const agents: { thread: string; pid: number }[] = [];
+  /** Each thread's agent process while it runs, with its executable when
+   *  the adapter knows it, for the health line's memory (process-memory.ts).
+   *  Asleep and stopped threads have none. */
+  agentProcesses(): { thread: string; pid: number; exe?: string }[] {
+    const agents: { thread: string; pid: number; exe?: string }[] = [];
     for (const s of this.sessions.values()) {
       const pid = s.queryHandle?.processId?.();
-      if (pid) agents.push({ thread: s.id, pid });
+      if (!pid) continue;
+      const exe = s.queryHandle?.processExe?.();
+      agents.push({ thread: s.id, pid, ...(exe ? { exe } : {}) });
     }
     return agents;
   }

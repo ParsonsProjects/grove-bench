@@ -508,7 +508,7 @@ export class AcpAdapter implements AgentAdapter {
     }
     const lookup = process.platform === 'win32' ? 'where.exe' : 'which';
     try {
-      // In the process host, like git and gh, so the lookup never holds up the
+      // In the process host, like git, so the lookup never holds up the
       // window. It only reads, so it runs again if the host dies under it.
       const { stdout, exitCode } = await runProcess(lookup, [this.def.command], { reject: false, timeout: 10_000, idempotent: true });
       const found = exitCode === 0 ? String(stdout).trim().split(/\r?\n/)[0] : '';
@@ -700,7 +700,10 @@ class AcpQuery {
       interrupt: () => this.interrupt(),
       getSessionId: () => this.sessionId,
       closeInput: () => { /* prompts are sent one at a time; nothing to close */ },
-      processId: () => (this.proc && this.proc.exitCode === null ? this.proc.pid : undefined),
+      // Only while it runs, as for Claude Code: once it has exited, been
+      // killed or lost with its host (exit code null, signal SIGKILL),
+      // Windows can give its pid to an unrelated process.
+      processId: () => (this.proc && this.proc.exitCode === null && this.proc.signalCode == null ? this.proc.pid : undefined),
       setModel: (model) => this.setModel(model),
       setPermissionMode: (mode) => { this.groveMode = mode; },
       setControl: (id, value) => this.setControl(id, value),
