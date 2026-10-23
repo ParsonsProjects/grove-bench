@@ -361,7 +361,7 @@
           bind:value={replyText}
           onkeydown={handleReplyKeydown}
           placeholder="Reply to continue planning..."
-          class="flex-1 text-xs bg-card border border-border px-2 py-1 text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary"
+          class="flex-1 text-xs bg-card border border-border h-8 px-2 py-1 text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary"
         />
         <Button
           variant="subtle"

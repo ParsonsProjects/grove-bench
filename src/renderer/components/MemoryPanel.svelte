@@ -378,7 +378,7 @@
           Clean up notes
         </Button>
       </div>
-      <Button variant="secondary" onclick={onclose}>Close</Button>
+      <Button size="sm" variant="secondary" onclick={onclose}>Close</Button>
     </Dialog.Footer>
   </Dialog.Content>
 </Dialog.Root>

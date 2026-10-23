@@ -321,7 +321,7 @@
         autocomplete="off"
         placeholder={mode === 'user' ? 'localhost:3000, a URL, or a file in this worktree (Ctrl+L)' : "Local URL for the agent's page, e.g. localhost:5173"}
         aria-label="Address"
-        class="w-full bg-background border border-border px-2 py-0.5 text-xs font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/60"
+        class="block w-full h-6 bg-background border border-border px-2 py-0.5 text-xs font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/60"
       />
     </form>
 
