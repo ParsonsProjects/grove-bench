@@ -53,10 +53,12 @@ export function threadImageSrc(sessionId: string, f: ThreadFile): string | null 
 }
 
 /** Show an attached text file in the Focus panel: Markdown as it reads,
- *  anything else as numbered lines. */
-export function showAttachedText(sessionId: string, name: string, content: string): void {
-  if (isMarkdownFile(name)) markdownPreviewStore.show(content, name, sessionId);
-  else markdownPreviewStore.showCode(content, name, sessionId);
+ *  anything else as numbered lines. Not tied to the thread: the file came
+ *  from elsewhere, so the images and links its Markdown names aren't read
+ *  from the worktree, where a same-named file would be the wrong one. */
+export function showAttachedText(name: string, content: string): void {
+  if (isMarkdownFile(name)) markdownPreviewStore.show(content, name);
+  else markdownPreviewStore.showCode(content, name);
 }
 
 /** The content of a text file attached to the message at `eventIndex`, or

@@ -25,10 +25,11 @@ describe('UserPromptBlock attachments', () => {
     // Not shown inline.
     expect(screen.queryByText('const a = 1;')).toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: 'src/a.ts' }));
-    expect(markdownPreviewStore).toMatchObject({ open: true, title: 'src/a.ts', content: 'const a = 1;', sessionId: SID, code: { path: 'src/a.ts', lines: null } });
+    expect(markdownPreviewStore).toMatchObject({ open: true, title: 'src/a.ts', content: 'const a = 1;', code: { path: 'src/a.ts', lines: null } });
     // Markdown as it reads.
     await fireEvent.click(screen.getByRole('button', { name: 'notes.md' }));
-    expect(markdownPreviewStore).toMatchObject({ open: true, title: 'notes.md', content: '# Notes', code: null });
+    // Not tied to the thread, so its relative images don't load from the worktree.
+    expect(markdownPreviewStore).toMatchObject({ open: true, title: 'notes.md', content: '# Notes', code: null, sessionId: undefined });
   });
 
   it('shows a just-sent image and enlarges it on click', async () => {

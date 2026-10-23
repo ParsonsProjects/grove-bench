@@ -24,8 +24,12 @@ export interface LocalFileTarget {
  *  (`src/app.ts:42`, `app.ts:42:7`). Windows file names can't hold a `:`. */
 const LINE_SUFFIX = /:(\d+)(?::\d+)?$/;
 /** A file name with no folder and a line, which would otherwise read as a
- *  scheme: `app.ts:42`, but not `tel:123` or `localhost:3000`. */
-const NAME_WITH_LINE = /^[^:/\\]+\.[a-z0-9]*[a-z][a-z0-9]*:\d+(?::\d+)?(?:[?#].*)?$/i;
+ *  scheme: `app.ts:42`, but not `tel:123` or `localhost:3000`. A dotted
+ *  host and port (`example.com:8080`) reads as one too; without `http://`
+ *  it was never a link that worked. The extension is a lookahead for a
+ *  letter then one run, so a long name that doesn't match fails in linear
+ *  time (`[a-z0-9]*[a-z][a-z0-9]*` backtracked quadratically). */
+const NAME_WITH_LINE = /^[^:/\\]+\.(?=[a-z0-9]*[a-z])[a-z0-9]+:\d+(?::\d+)?(?:[?#].*)?$/i;
 /** GitHub's and VS Code's anchor for a line or lines: `#L42`, `#L42-L50`,
  *  `#L42-50`, with or without a column (`#L42C7`). */
 const LINE_ANCHOR = /^#L(\d+)(?:C\d+)?(?:-L?(\d+)(?:C\d+)?)?$/i;

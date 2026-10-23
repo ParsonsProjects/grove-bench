@@ -54,7 +54,7 @@
         {#each files as file, i (i)}
           <button
             type="button"
-            onclick={() => showAttachedText(sessionId, file.path, file.content)}
+            onclick={() => showAttachedText(file.path, file.content)}
             class="inline-flex items-center gap-1 max-w-full bg-primary/15 text-primary text-xs px-2 py-1 font-mono border
               border-primary/25 hover:border-primary/50 transition-colors"
             title="Open {file.path}"

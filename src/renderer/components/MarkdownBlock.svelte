@@ -113,19 +113,10 @@
   const copySvg = COPY_SVG;
 
   /** Say next to a link that the file it names isn't in the worktree (gone,
-   *  or outside it), once, or take that back when a later click finds it. */
+   *  or outside it), or take that back when a later click finds it. */
   function showLinkMissing(anchor: HTMLAnchorElement, missing: boolean) {
-    const next = anchor.nextSibling;
-    const note = next instanceof HTMLElement && next.classList.contains('local-link-missing') ? next : null;
-    if (!missing) {
-      note?.remove();
-      return;
-    }
-    if (note) return;
-    const added = document.createElement('span');
-    added.className = 'local-link-missing';
-    added.textContent = "(not found in this thread's worktree)";
-    anchor.after(added);
+    // CSS draws the note (a[data-missing]::after), so a copy leaves it out.
+    anchor.toggleAttribute('data-missing', missing);
   }
 
   /** `markdown`: a table copies its Markdown source instead (Shift+click). */
@@ -297,13 +288,17 @@
     max-width: 100%;
     max-height: 32rem;
   }
-  .markdown-content :global(.local-image-missing),
-  .markdown-content :global(.local-link-missing) {
+  .markdown-content :global(.local-image-missing) {
     font-size: 0.85em;
     color: var(--muted-foreground);
   }
-  .markdown-content :global(.local-link-missing) {
+  /* inline-block keeps the link's underline off it. */
+  .markdown-content :global(a[data-missing])::after {
+    content: "(not found in this thread's worktree)";
+    display: inline-block;
     margin-left: 0.3em;
+    font-size: 0.85em;
+    color: var(--muted-foreground);
   }
   .markdown-content :global(blockquote) {
     border-left: 3px solid var(--quote-border);

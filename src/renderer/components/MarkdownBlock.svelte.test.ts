@@ -153,26 +153,20 @@ describe('MarkdownBlock links', () => {
     markdownPreviewStore.close();
   });
 
-  it('says next to a link when its file is not in the worktree, once, until a click finds it', async () => {
+  it('marks a link whose file is not in the worktree, until a click finds it', async () => {
     const open = vi.mocked(window.groveBench.openWorktreeFile);
-    open.mockClear().mockResolvedValueOnce({ kind: 'missing' }).mockResolvedValueOnce({ kind: 'missing' });
+    open.mockClear().mockResolvedValueOnce({ kind: 'missing' });
     const { container } = render(MarkdownBlock, { content: 'See [the code](src/gone.ts).', sessionId: 's1' });
     const a = container.querySelector('a')!;
-    const notes = () => container.querySelectorAll('.local-link-missing');
 
     await fireEvent.click(a);
-    await waitFor(() => expect(notes()).toHaveLength(1));
-    expect(a.nextSibling).toBe(notes()[0]);
-    expect(notes()[0].textContent).toBe("(not found in this thread's worktree)");
+    await waitFor(() => expect(a.hasAttribute('data-missing')).toBe(true));
+    // CSS draws the note, so the text (and a copy of it) stays as written.
+    expect(container.textContent?.trim()).toBe('See the code.');
 
+    // The agent wrote it since: the mark goes.
     await fireEvent.click(a);
-    await waitFor(() => expect(open).toHaveBeenCalledTimes(2));
-    await new Promise((resolve) => setTimeout(resolve));
-    expect(notes()).toHaveLength(1);
-
-    // The agent wrote it since: the note goes.
-    await fireEvent.click(a);
-    await waitFor(() => expect(notes()).toHaveLength(0));
+    await waitFor(() => expect(a.hasAttribute('data-missing')).toBe(false));
   });
 
   it('opens no file without a thread', async () => {

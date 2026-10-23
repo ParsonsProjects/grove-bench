@@ -174,6 +174,14 @@ describe('openWorktreeFile', () => {
     expect(shell.showItemInFolder).not.toHaveBeenCalled();
   });
 
+  it('shows a text file it cannot read in its folder, rather than calling it missing', async () => {
+    const p = write(worktree, 'server.log', 'locked');
+    const read = vi.spyOn(fs.promises, 'readFile').mockRejectedValueOnce(Object.assign(new Error('EBUSY'), { code: 'EBUSY' }));
+    expect(await openWorktreeFile(worktree, 'server.log')).toEqual({ kind: 'shown' });
+    expect(shell.showItemInFolder).toHaveBeenLastCalledWith(p);
+    read.mockRestore();
+  });
+
   it('shows a text file too large to draw in its folder instead', async () => {
     const p = write(worktree, 'big.log', 'x'.repeat(256 * 1024 + 1));
     expect(await openWorktreeFile(worktree, 'big.log')).toEqual({ kind: 'shown' });

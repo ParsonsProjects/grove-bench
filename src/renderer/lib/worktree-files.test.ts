@@ -55,6 +55,14 @@ describe('localFileTarget', () => {
     }
   });
 
+  it('gives up on a long name that is not a file with a line in linear time', () => {
+    // The old pattern backtracked quadratically: seconds at this length.
+    const href = `a.${'b'.repeat(50_000)}:1x`;
+    const start = performance.now();
+    expect(localFileTarget(href)).toBeNull();
+    expect(performance.now() - start).toBeLessThan(200);
+  });
+
   it('still reads a scheme, or a host and port, with digits after it as no file', () => {
     for (const href of ['tel:5551234', 'localhost:3000', 'sms:123']) {
       expect(localFileTarget(href)).toBeNull();

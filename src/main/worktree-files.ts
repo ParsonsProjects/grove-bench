@@ -120,8 +120,10 @@ export async function openWorktreeFile(worktreePath: string, filePath: string): 
     const raster = kind === 'image' && worktreeImageType(real) !== 'image/svg+xml';
     if ((raster || (kind && OPENS_IN_APP.has(kind))) && (await shell.openPath(real)) === '') return { kind: 'opened' };
     if (!kind && stat.size <= MAX_TEXT_BYTES) {
-      const data = await fs.promises.readFile(real);
-      if (!looksBinary(data)) return { kind: 'text', content: data.toString('utf8') };
+      // One it can't read (locked, or no permission) is still there: shown
+      // in its folder below, not reported missing.
+      const data = await fs.promises.readFile(real).catch(() => null);
+      if (data && !looksBinary(data)) return { kind: 'text', content: data.toString('utf8') };
     }
     shell.showItemInFolder(real);
     return { kind: 'shown' };
