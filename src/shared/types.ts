@@ -1450,8 +1450,6 @@ export interface GroveBenchAPI {
 
   // Diff history tracking
   getDiffHistory(sessionId: string): Promise<DiffHistoryResult>;
-  getTurnDiff(sessionId: string, userMessageId: string): Promise<string>;
-  getFullThreadDiff(sessionId: string): Promise<string>;
   getCheckpointFiles(sessionId: string, uuid: string, scope: CheckpointDiffScope): Promise<GitStatusResult>;
   getCheckpointFileDiff(sessionId: string, uuid: string, scope: CheckpointDiffScope, filePath: string): Promise<FileDiffResult>;
   getCheckpointFileLines(sessionId: string, uuid: string, scope: CheckpointDiffScope, filePath: string): Promise<FileLinesResult>;
@@ -2256,8 +2254,6 @@ export const IPC = {
   AGENT_CHECKPOINT_DIFF: 'agent:checkpointDiff',
   AGENT_LIST_CHECKPOINTS: 'agent:listCheckpoints',
   AGENT_DIFF_HISTORY: 'agent:diffHistory',
-  AGENT_TURN_DIFF: 'agent:turnDiff',
-  AGENT_FULL_THREAD_DIFF: 'agent:fullThreadDiff',
   AGENT_CHECKPOINT_FILES: 'agent:checkpointFiles',
   AGENT_CHECKPOINT_FILE_DIFF: 'agent:checkpointFileDiff',
   AGENT_CHECKPOINT_FILE_LINES: 'agent:checkpointFileLines',

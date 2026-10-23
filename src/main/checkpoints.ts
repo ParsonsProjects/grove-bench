@@ -352,7 +352,7 @@ export class CheckpointManager {
    *  then several per-file diffs within a few hundred ms; those calls opt in
    *  to reusing one tree object so they stay consistent with each other and
    *  don't re-add the whole tree each time. Everything else (history stats,
-   *  whole-diff previews) always snapshots fresh. */
+   *  the Rewind preview) always snapshots fresh. */
   private workingTreeMemo = new Map<string, { oid: string; at: number }>();
   private static WORKING_TREE_REUSE_MS = 1000;
 
@@ -545,47 +545,6 @@ export class CheckpointManager {
       logger.warn(`[checkpoints] history failed session=${sessionId}:`, err);
       return empty;
     }
-  }
-
-  /**
-   * Unified diff of what a single turn changed: the checkpoint captured for
-   * this user message vs the next checkpoint, or vs the current working tree
-   * when it's the latest turn.
-   */
-  async turnDiff(sessionId: string, cwd: string, uuid: string): Promise<string> {
-    const ref = await this.resolveRef(sessionId, cwd, uuid);
-    if (!ref) return 'No checkpoint found for this message';
-
-    let refs: CheckpointRef[] = [];
-    try {
-      refs = await this.listRefs(sessionId, cwd);
-    } catch { /* fall through to working-tree diff */ }
-
-    const idx = refs.findIndex(r => r.ref === ref);
-    const next = idx >= 0 ? refs[idx + 1] : undefined;
-    const to = next ? next.ref : await this.writeWorkingTree(sessionId, cwd);
-
-    const output = await git(['diff', ref, to, '--', '.'], cwd);
-    return output || '(no changes)';
-  }
-
-  /**
-   * Cumulative full-thread diff: everything that changed from the session's
-   * oldest checkpoint (the baseline for new sessions) to the current working
-   * tree, across all turns.
-   */
-  async fullThreadDiff(sessionId: string, cwd: string): Promise<string> {
-    await this.waitForPending(sessionId);
-
-    let refs: CheckpointRef[] = [];
-    try {
-      refs = await this.listRefs(sessionId, cwd);
-    } catch { /* no refs */ }
-    if (refs.length === 0) return 'No checkpoints found for this thread';
-
-    const currentTree = await this.writeWorkingTree(sessionId, cwd);
-    const output = await git(['diff', refs[0].ref, currentTree, '--', '.'], cwd);
-    return output || '(no changes)';
   }
 
   /**
