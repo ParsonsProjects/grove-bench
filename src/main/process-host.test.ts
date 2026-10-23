@@ -239,6 +239,22 @@ describe('process host', () => {
     expect(runHere).toHaveBeenCalledTimes(1);
   });
 
+  it('says when it has given up for good, and only then', () => {
+    const { host, fire, latest } = setup();
+    expect(host.gaveUp).toBe(false);
+    host.start();
+    for (let i = 0; i < MAX_FAILURES; i++) {
+      latest().ready();
+      expect(host.gaveUp).toBe(false);
+      latest().exit(1);
+      // Down, but starting again.
+      if (i < MAX_FAILURES - 1) expect(host.gaveUp).toBe(false);
+      fire(RESTART_DELAY_MS);
+    }
+    expect(host.gaveUp).toBe(true);
+    expect(host.ready).toBe(false);
+  });
+
   it('kills a host that never says it is ready, and counts it as a failure', () => {
     const { host, hosts, notes, fire, latest } = setup();
     host.start();

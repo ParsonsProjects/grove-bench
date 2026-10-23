@@ -31,7 +31,11 @@
  * line waits for it, up to PROCESSES_WAIT_MS, and is written without them
  * when they can't be had (or on other platforms). A list that didn't hold
  * together is skipped, and the line says so: "agents: sample inconsistent,
- * skipped". Their CPU isn't measured.
+ * skipped". Where Windows has no Process V2 counters (Windows 10), the list
+ * can only vouch for the agents themselves, and the line gives just those,
+ * with no largest processes: "agents 3, their own processes 1.2 GB (legacy
+ * Process counters: what they started not listed)". Their CPU isn't
+ * measured.
  */
 import type { ProcessMetric } from 'electron';
 import { formatBytes, type FreezeStats } from './freeze-log.js';
@@ -113,6 +117,11 @@ export function formatHealth(h: HealthInput): string {
 
   if (h.processes && 'skipped' in h.processes) {
     parts.push('agents: sample inconsistent, skipped');
+  } else if (h.processes?.counters === 'Process') {
+    // All its checks vouch for (process-memory.ts).
+    const a = h.processes.agents;
+    parts.push(`agents ${a.agents}${a.agents > 0 ? `, their own processes ${formatBytes(a.ownBytes)}` : ''}`
+      + ' (legacy Process counters: what they started not listed)');
   } else if (h.processes) {
     const a = h.processes.agents;
     parts.push(`agents ${a.agents}${a.untracked > 0 ? ` + ${a.untracked} not a thread's` : ''}${a.byExe.length > 0
@@ -188,7 +197,9 @@ export function startHealthLog(
       if (stopped) return;
       const processes = inTime ? measured : null;
       write(formatHealth({ ...input, processes }));
-      if (processes && 'agents' in processes && processes.agents.largest.length > 0) write(formatLargest(processes.agents.largest));
+      if (processes && 'agents' in processes && processes.counters === 'Process V2' && processes.agents.largest.length > 0) {
+        write(formatLargest(processes.agents.largest));
+      }
     });
   };
 

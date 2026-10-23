@@ -628,6 +628,9 @@ export function createProcessHost(deps: ProcessHostDeps) {
     get ready(): boolean { return state === 'ready'; },
     /** The host's process id while it's up. */
     get pid(): number | undefined { return state === 'ready' ? host?.pid : undefined; },
+    /** Whether it has given up for good (MAX_FAILURES): what it ran runs in
+     *  this process from then on, and host-only work fails. */
+    get gaveUp(): boolean { return state === 'failed'; },
   };
 }
 
@@ -740,8 +743,9 @@ export function runProcess(file: string, args: string[], options?: HostedOptions
  * runProcess, but only in the process host: rejects when the host isn't up
  * (before it is started, once it has given up or stopped, or when it doesn't
  * come up within HOST_WAIT_MS), rather than run the command in the main
- * process. For work that can be skipped, such as the health
- * line's process list (process-memory.ts).
+ * process. For work that can be skipped: the health line's typeperf
+ * (process-memory.ts), once the agent host, where it normally runs, has
+ * given up for good (agentHostGaveUp).
  */
 export function runProcessInHost(file: string, args: string[], options?: HostedOptions): Promise<ProcessResult> {
   return processHost.runInHost(file, args, options) as Promise<ProcessResult>;
@@ -751,6 +755,13 @@ export function runProcessInHost(file: string, args: string[], options?: HostedO
  *  children. */
 export function agentHostPid(): number | undefined {
   return agentHost.pid;
+}
+
+/** Whether the agent host has given up for good (MAX_FAILURES in a row):
+ *  the agents' programs start in the main process from then on, and what
+ *  runs only there (spawnProcessInHost) fails. */
+export function agentHostGaveUp(): boolean {
+  return agentHost.gaveUp;
 }
 
 /**

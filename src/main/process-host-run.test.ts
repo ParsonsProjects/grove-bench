@@ -17,7 +17,7 @@ vi.mock('./logger.js', () => ({
 import { execa } from 'execa';
 import { killTree } from './process-tree.js';
 import { HOST_STOPPED_MESSAGE } from './process-host.js';
-import { runInAgentHost } from './process-host-run.js';
+import { recordCommandPids, runInAgentHost } from './process-host-run.js';
 
 /** The next command spawnProcess starts, driven by the test as the host
  *  would drive it. */
@@ -257,5 +257,62 @@ describe('runInAgentHost', () => {
     cmd.proc.lost(true);
     await expect(done).rejects.toThrow(`${HOST_STOPPED_MESSAGE}: claude plugin install x`);
     expect(hosted.spawnProcess).toHaveBeenCalledOnce();
+  });
+});
+
+describe('recordCommandPids', () => {
+  // Pids no other test's commands have: a command another test left running
+  // is in every recording.
+  it('records the pids of the commands it runs, from when they start, until stopped, closed or not', async () => {
+    const before = nextCommand();
+    const gh = runInAgentHost('gh', ['--version']);
+    before.started(71_001);
+    const stop = recordCommandPids();
+
+    const during = nextCommand();
+    const typeperf = runInAgentHost('typeperf.exe', ['-sc', '1']);
+    during.started(71_002);
+    during.exit(0);
+    await typeperf;
+    // One that never starts has no pid.
+    const failed = nextCommand();
+    const missing = runInAgentHost('nope', []);
+    failed.proc.receive({ type: 'error', id: 1, error: { name: 'Error', message: 'spawn nope ENOENT' } });
+    failed.exit(null);
+    await expect(missing).rejects.toThrow('ENOENT');
+    const pids = stop();
+
+    const after = nextCommand();
+    const auth = runInAgentHost('gh', ['auth', 'status']);
+    after.started(71_003);
+    before.exit(0);
+    after.exit(0);
+    await Promise.all([gh, auth]);
+
+    // Running when it started, and started and closed while it ran: typeperf.
+    expect(pids).toContain(71_001);
+    expect(pids).toContain(71_002);
+    expect(pids).not.toContain(71_003);
+    // Once closed, they are in no later recording.
+    const later = recordCommandPids()();
+    for (const pid of [71_001, 71_002, 71_003]) expect(later).not.toContain(pid);
+  });
+
+  it('keeps a pid that a later command has by the time an earlier one with it closes', async () => {
+    const first = nextCommand();
+    const gh = runInAgentHost('gh', ['pr', 'view']);
+    first.started(72_001);
+    // It exited, and its pid went to the next, while a process it started
+    // held its output open.
+    first.exited(0);
+    const second = nextCommand();
+    const next = runInAgentHost('gh', ['pr', 'checks']);
+    second.started(72_001);
+    first.exit(0);
+    await gh;
+    expect(recordCommandPids()()).toContain(72_001);
+    second.exit(0);
+    await next;
+    expect(recordCommandPids()()).not.toContain(72_001);
   });
 });
