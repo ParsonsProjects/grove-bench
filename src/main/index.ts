@@ -22,7 +22,7 @@ import { freezeLog, startStallWatch } from './freeze-log.js';
 import { closePerfLog } from './perf-log.js';
 import { startHealthLog } from './perf-health.js';
 import { agentHostPid, startProcessHost, stopProcessHost } from './process-host.js';
-import { measureProcesses } from './process-memory.js';
+import { measureProcesses, windowsExeName } from './process-memory.js';
 import { ChildProcess } from 'node:child_process';
 
 // Time every process launch from the start: on Windows each one blocks the
@@ -210,7 +210,7 @@ app.whenReady().then(() => {
     processes: () => measureProcesses({
       agents: () => sessionManager.agentProcesses(),
       agentHostPid,
-      main: { pid: process.pid, exe: path.win32.basename(process.execPath).toLowerCase() },
+      main: { pid: process.pid, exe: windowsExeName(process.execPath) },
       devServer: !app.isPackaged,
     }),
   });

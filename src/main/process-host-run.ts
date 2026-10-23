@@ -85,6 +85,7 @@ function runOnce(file: string, args: string[], { cwd, env, extendEnv = true, she
     // Not an agent: the health line's "agent output" leaves it out.
     agentOutput: false,
   });
+  noteCommand(proc);
   if (input !== undefined) {
     // Written to its stdin, which then ends, as execa's `input` does. One
     // that exits before reading it all fails the write (EPIPE), which execa
@@ -170,4 +171,44 @@ function failure(prefix: string, command: string, output: { stdout: string; stde
 /** What execa's stripFinalNewline does: one trailing newline goes. */
 function stripFinalNewline(text: string): string {
   return text.replace(/\r?\n$/, '');
+}
+
+// ─── The commands' pids, for the health line ───
+
+/** The commands runInAgentHost started that haven't closed, by pid. */
+const commandsRunning = new Map<number, HostedProcess>();
+/** The pids each recording has seen (recordCommandPids). */
+const recordings = new Set<Set<number>>();
+
+/** Keep a command's pid from its start to its close. */
+function noteCommand(proc: HostedProcess): void {
+  proc.once('spawn', () => {
+    const { pid } = proc;
+    if (pid === undefined) return;
+    commandsRunning.set(pid, proc);
+    for (const pids of recordings) pids.add(pid);
+    proc.once('close', () => {
+      // Unless a later command has its pid by now.
+      if (commandsRunning.get(pid) === proc) commandsRunning.delete(pid);
+    });
+  });
+}
+
+/**
+ * Record the pids of the commands runInAgentHost runs: those running now,
+ * and every one that starts until the function this returns is called,
+ * which stops recording and returns them, closed or not. They are the agent
+ * host's children (or, when it is down, the main process's) but aren't
+ * agents: gh and the git it starts, the claude CLI's calls, typeperf. The
+ * health line's process list (process-memory.ts) leaves them out of the
+ * agents. Not just those running when it is read: typeperf, which lists the
+ * processes, has closed by then.
+ */
+export function recordCommandPids(): () => ReadonlySet<number> {
+  const pids = new Set(commandsRunning.keys());
+  recordings.add(pids);
+  return () => {
+    recordings.delete(pids);
+    return pids;
+  };
 }

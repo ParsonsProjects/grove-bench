@@ -13,7 +13,9 @@ const MB = 1024 * 1024;
 /** A sample of the agents' processes that didn't hold together (process-memory.ts). */
 const SKIPPED: SkippedSample = { skipped: 'inconsistent' };
 
-const processes: ProcessMemory = {
+/** A sample of Process V2: every process as listed. */
+const processes: Extract<ProcessMemory, { counters: 'Process V2' }> = {
+  counters: 'Process V2',
   agents: {
     agents: 21,
     untracked: 2,
@@ -80,16 +82,25 @@ describe('formatHealth', () => {
 
   it('names a sixth executable rather than call it other', () => {
     const six = { ...processes.agents, untracked: 0, byExe: processes.agents.byExe.slice(0, 6) };
-    const line = formatHealth({ minutes: 10, freeze: quiet, metrics: [], conversations: 21, asleep: 0, terminals: 0, processes: { agents: six, devServer: null } });
+    const line = formatHealth({ minutes: 10, freeze: quiet, metrics: [], conversations: 21, asleep: 0, terminals: 0, processes: { counters: 'Process V2', agents: six, devServer: null } });
     expect(line).toContain('cmd.exe 30 (45 MB), esbuild.exe 2 (30 MB); conversations');
   });
 
   it('says when no agent is running, and leaves out what could not be measured', () => {
-    const none = { agents: { agents: 0, untracked: 0, byExe: [], largest: [] }, devServer: [] };
+    const none: ProcessMemory = { counters: 'Process V2', agents: { agents: 0, untracked: 0, byExe: [], largest: [] }, devServer: [] };
     expect(formatHealth({ minutes: 1, freeze: quiet, metrics: [], conversations: 3, asleep: 3, terminals: 0, processes: none }))
       .toBe('last 1 min: freezes: main 0, window 0; process launches 0; agents 0; conversations 3 (3 asleep), terminals 0');
     expect(formatHealth({ minutes: 1, freeze: quiet, metrics: [], conversations: 3, asleep: 0, terminals: 0, processes: null }))
       .toBe('last 1 min: freezes: main 0, window 0; process launches 0; conversations 3, terminals 0');
+  });
+
+  it('gives only the agents themselves from the legacy Process counters, and says so', () => {
+    const legacy = (agents: number, ownBytes: number): ProcessMemory => ({ counters: 'Process', agents: { agents, ownBytes }, devServer: null });
+    expect(formatHealth({ minutes: 10, freeze: quiet, metrics: [], conversations: 6, asleep: 1, terminals: 0, processes: legacy(5, 1750 * MB) }))
+      .toBe('last 10 min: freezes: main 0, window 0; process launches 0; '
+        + 'agents 5, their own processes 1.7 GB (legacy Process counters: what they started not listed); conversations 6 (1 asleep), terminals 0');
+    expect(formatHealth({ minutes: 10, freeze: quiet, metrics: [], conversations: 1, asleep: 1, terminals: 0, processes: legacy(0, 0) }))
+      .toContain('; agents 0 (legacy Process counters: what they started not listed); ');
   });
 
   it("says when the agents' sample didn't hold together, rather than show its numbers", () => {
@@ -161,6 +172,15 @@ describe('startHealthLog', () => {
     expect(lines).toHaveLength(2);
     expect(lines[0]).toMatch(/; agents 21 \+ 2 not a thread's, 9\.4 GB: .*; dev server 1\.1 GB: .*; conversations 23, terminals 0$/);
     expect(lines[1]).toMatch(/^largest agent processes: node\.exe 1\.2 GB /);
+  });
+
+  it('writes no largest processes from the legacy Process counters, which can mix them up', async () => {
+    vi.useFakeTimers();
+    const lines: string[] = [];
+    startHealthLog(sources(async () => ({ counters: 'Process', agents: { agents: 2, ownBytes: 900 * MB }, devServer: null })),
+      { write: (l) => lines.push(l), firstMs: 1000, everyMs: 600_000 });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(lines).toEqual([expect.stringMatching(/; agents 2, their own processes 900 MB \(legacy Process counters: what they started not listed\); conversations 23, terminals 0$/)]);
   });
 
   it("writes only the line, saying so, for a sample that didn't hold together", async () => {

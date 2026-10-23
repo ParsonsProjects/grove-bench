@@ -35,6 +35,7 @@ import { writeFileAtomic } from '../fs-utils.js';
 import { RunningCost, RunningTokens } from './running-cost.js';
 import { runProcess, spawnProcess, type HostedOptions, type ProcessResult } from '../process-host.js';
 import { runInAgentHost, type AgentHostRunOptions } from '../process-host-run.js';
+import { windowsExeName } from '../process-memory.js';
 import { extractJsonObject } from '../extract-json.js';
 import * as path from 'node:path';
 
@@ -123,13 +124,11 @@ function isNodeCommand(command: string): boolean {
   return /^node(\.exe)?$/i.test(path.basename(command));
 }
 
-/** The executable spawnClaudeCodeProcess starts for the SDK's `command`,
- *  lowercase, as Windows lists the process: claude.exe, or Electron's own
- *  binary for a `node` command. */
+/** The executable spawnClaudeCodeProcess starts for the SDK's `command`, as
+ *  the health line's process list names it (windowsExeName): claude.exe, or
+ *  Electron's own binary for a `node` command. */
 export function claudeProcessExe(command: string): string {
-  const name = path.win32.basename(isNodeCommand(command) ? process.execPath : command).toLowerCase();
-  // Windows runs a program named without an extension as .exe.
-  return /\.[^.]+$/.test(name) ? name : `${name}.exe`;
+  return windowsExeName(isNodeCommand(command) ? process.execPath : command);
 }
 
 const dynamicImport = new Function('specifier', 'return import(specifier)') as

@@ -21,7 +21,8 @@
  * Before the app is ready (the host isn't started yet), once it has failed
  * MAX_FAILURES times in a row, and after it has stopped at quit, commands run
  * in the main process as they did before, except those that can be skipped
- * (runProcessInHost, unused at present), which fail instead. Tests never
+ * (runProcessInHost: typeperf once the agent host has given up), which fail
+ * instead. Tests never
  * start it, so their execa mocks see every call.
  *
  * A command asked for while the host starts, or restarts after a crash or a
@@ -638,6 +639,9 @@ export function createProcessHost(deps: ProcessHostDeps) {
     get ready(): boolean { return state === 'ready'; },
     /** The host's process id while it's up. */
     get pid(): number | undefined { return state === 'ready' ? host?.pid : undefined; },
+    /** Whether it has given up for good (MAX_FAILURES): what it ran runs in
+     *  this process from then on, and host-only work fails. */
+    get gaveUp(): boolean { return state === 'failed'; },
   };
 }
 
@@ -750,12 +754,9 @@ export function runProcess(file: string, args: string[], options?: HostedOptions
  * runProcess, but only in the process host: rejects when the host isn't up
  * (before it is started, once it has given up or stopped, or when it doesn't
  * come up within HOST_WAIT_MS), rather than run the command in the main
- * process. For work that can be skipped rather than hold the window.
- * Nothing calls it at present: its one caller, the health line's process
- * list (typeperf, process-memory.ts), now runs in the agent host
- * (runInAgentHost with `hostOnly`). It is kept, with run()'s host-only path
- * (Pending.hostOnly) and their tests, for skippable work that belongs in
- * the git host.
+ * process. For work that can be skipped: the health line's typeperf
+ * (process-memory.ts), once the agent host, where it normally runs, has
+ * given up for good (agentHostGaveUp).
  */
 export function runProcessInHost(file: string, args: string[], options?: HostedOptions): Promise<ProcessResult> {
   return processHost.runInHost(file, args, options) as Promise<ProcessResult>;
@@ -765,6 +766,13 @@ export function runProcessInHost(file: string, args: string[], options?: HostedO
  *  children. */
 export function agentHostPid(): number | undefined {
   return agentHost.pid;
+}
+
+/** Whether the agent host has given up for good (MAX_FAILURES in a row):
+ *  the agents' programs start in the main process from then on, and what
+ *  runs only there (spawnProcessInHost) fails. */
+export function agentHostGaveUp(): boolean {
+  return agentHost.gaveUp;
 }
 
 /**

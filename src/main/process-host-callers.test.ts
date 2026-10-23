@@ -348,6 +348,30 @@ describe('typeperf, for the health line, starts in the agent host', () => {
     expect(freezeLog.takeStats().agentOutput.chars).toBe(agentLine.length);
   });
 
+  it("which leaves itself out of the agents: it's the agent host's child, but a command it ran (recordCommandPids)", async () => {
+    // The agent host (5151), a thread's agent under it, and typeperf (999,
+    // as the fake host starts every process) with its console host.
+    const instances: [string, number, number, number, number][] = [
+      ['Grove Bench:5151', 5151, 5150, 40, 1000],
+      ['claude:2210', 2210, 5151, 500, 600],
+      ['typeperf:999', 999, 5151, 3, 1],
+      ['conhost:1000', 1000, 999, 6, 1],
+    ];
+    const counters = ['Process ID', 'Creating Process ID', 'Private Bytes', 'Elapsed Time'];
+    const csv = (fields: string[]) => fields.map((f) => `"${f}"`).join(',');
+    respondSpawn = () => ({
+      stdout: ['', csv(['(PDH-CSV 4.0)', ...counters.flatMap((c) => instances.map(([name]) => `\\\\PC\\Process V2(${name})\\${c}`))]),
+        csv(['10/23/2026 09:00:01.234', ...counters.flatMap((_, i) => instances.map(([, ...values]) => (values[i] * (i === 2 ? 1024 * 1024 : 1)).toFixed(6)))]), ''].join('\r\n'),
+    });
+    expect(await measureProcesses({
+      agents: () => [{ thread: 'aaaa1111', pid: 2210, exe: 'claude.exe' }], agentHostPid: () => 5151, platform: 'win32', note: () => {},
+    })).toEqual({
+      counters: 'Process V2',
+      agents: { agents: 1, untracked: 0, byExe: [{ name: 'claude.exe', count: 1, bytes: 500 * 1024 * 1024 }], largest: [expect.objectContaining({ pid: 2210 })] },
+      devServer: null,
+    });
+  });
+
   it('at its time limit, its whole tree is killed, by taskkill from the process host', async () => {
     setPlatform('win32');
     respondSpawn = () => ({ hold: true });
