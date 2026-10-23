@@ -20,17 +20,22 @@ export function assertTextGeneration(adapter: AgentAdapter): asserts adapter is 
 }
 
 /** Ask the agent for one reply on its background model, giving up after
- *  `timeoutMs`. Throws when the agent can't generate text. */
+ *  `timeoutMs` or when `signal` aborts. Throws when the agent can't generate
+ *  text. */
 export async function generateBackgroundText(
   adapter: AgentAdapter,
   systemPrompt: string,
   userMessage: string,
   cwd: string,
   timeoutMs = BACKGROUND_TEXT_TIMEOUT_MS,
+  signal?: AbortSignal,
 ): Promise<string> {
   assertTextGeneration(adapter);
+  signal?.throwIfAborted();
   const abortController = new AbortController();
   const timeout = setTimeout(() => abortController.abort(), timeoutMs);
+  const abort = () => abortController.abort();
+  signal?.addEventListener('abort', abort, { once: true });
   try {
     return await adapter.generateText(systemPrompt, userMessage, {
       cwd,
@@ -39,6 +44,7 @@ export async function generateBackgroundText(
     });
   } finally {
     clearTimeout(timeout);
+    signal?.removeEventListener('abort', abort);
   }
 }
 

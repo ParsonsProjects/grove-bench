@@ -1603,6 +1603,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     modelSwitching: true,
     thinking: true,
     thinkingSummaries: true,
+    promptSuggestions: true,
     plugins: true,
     skills: true,
     usage: true,
@@ -1965,6 +1966,10 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         ...(supportsLargeContext(config.model) ? { betas: [CONTEXT_1M_BETA] } : {}),
         ...(config.skills ? { skills: config.skills } : {}),
         ...(config.outputFormat ? { outputFormat: config.outputFormat } : {}),
+        // One suggestion after each turn's result, made from the turn's
+        // prompt cache. The CLI still holds it back on a thread's first
+        // turn, in plan mode and near the plan's usage limit.
+        ...(config.promptSuggestions ? { promptSuggestions: true } : {}),
         ...(thinking ? { thinking } : {}),
         ...(effort ? { effort } : {}),
         ...(fastMode ? { settings: { fastMode: true } } : {}),
