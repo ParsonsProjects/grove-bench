@@ -874,6 +874,24 @@ describe('ChangesReviewPanel — large diffs', () => {
     }
   });
 
+  it('compares an edit in Edit History line by line once asked, when the quick try gave up', async () => {
+    // Only the small edit's quick try (50 ms at most) gives up.
+    vi.mocked(createPatch).mockImplementation(((...args: Parameters<typeof realCreatePatch>) =>
+      ((args[5] as { timeout?: number } | undefined)?.timeout ?? Infinity) <= 50 && args[1] === 'tiny old' ? undefined : realCreatePatch(...args)) as typeof createPatch);
+    try {
+      editTurn();
+      const { container, findByRole, findByText, queryByText } = render(ChangesReviewPanel, { sessionId: SID });
+
+      await fireEvent.click(await findByRole('button', { name: '2 edits' }));
+      expect(await findByText(/Too many changes to compare line by line without a pause/)).toBeInTheDocument();
+      await fireEvent.click(await findByRole('button', { name: 'Compare Edit #1 line by line' }));
+      await waitFor(() => expect(queryByText(/Too many changes/)).toBeNull());
+      expect(diffText(container)).toContain('tiny new');
+    } finally {
+      vi.mocked(createPatch).mockImplementation(realCreatePatch);
+    }
+  });
+
   it('does not redraw shown edits when a status refresh brings back the same file', async () => {
     editTurn();
     const { container, findByRole } = render(ChangesReviewPanel, { sessionId: SID });

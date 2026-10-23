@@ -51,6 +51,8 @@ describe('quickEditDiff', () => {
     const { diff, large } = quickEditDiff(edit('one\ntwo\n', 'uno\n'), 'notes.txt');
     expect(large).toBe(false);
     expect(diff?.linedUp).toBe(false);
+    // Only the quick try gave up, so a full one may line it up.
+    expect(diff?.quick).toBe(true);
     expect(diff?.lines.map((l) => [l.type, l.text])).toEqual([['hunk', '@@ -1,2 +1,1 @@'], ['del', 'one'], ['del', 'two'], ['add', 'uno']]);
     expect(createPatch).toHaveBeenCalledOnce();
     const opts = vi.mocked(createPatch).mock.calls[0][5] as { timeout?: number; maxEditLength?: number };
@@ -83,8 +85,9 @@ describe('fullEditDiff', () => {
 
   it('shows the old text, then the new, when the diff runs out of time', () => {
     vi.mocked(createPatch).mockReturnValue(undefined as never);
-    const { lines, linedUp } = fullEditDiff(edit('one\ntwo\n', 'uno\n'), 'notes.txt', null);
+    const { lines, linedUp, quick } = fullEditDiff(edit('one\ntwo\n', 'uno\n'), 'notes.txt', null);
     expect(linedUp).toBe(false);
+    expect(quick).toBeUndefined();
     expect(lines).toEqual([
       { type: 'hunk', text: '@@ -1,2 +1,1 @@' },
       { type: 'del', text: 'one', lineNum: 1, oldLineNum: 1 },

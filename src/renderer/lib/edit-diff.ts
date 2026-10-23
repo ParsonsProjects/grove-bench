@@ -27,12 +27,11 @@ const QUICK_DIFF_MS = 50;
  *  diff; of 10,000, 28 s. */
 const FULL_DIFF_MS = 1000;
 
-/** What a shown edit says when it is the old text, then the new. */
-export const OLD_THEN_NEW = 'Too many changes to compare line by line, so this shows the old text, then the new.';
-
 /** An edit's diff, ready to draw. `linedUp` is false when it had too many
- *  changes to work out in time, so `lines` are the old text, then the new. */
-export interface EditDiff { lines: DiffLine[]; linedUp: boolean }
+ *  changes to work out in time, so `lines` are the old text, then the new.
+ *  `quick` marks one only quickEditDiff gave up on: fullEditDiff with no
+ *  known diff may still line it up ("Compare line by line"). */
+export interface EditDiff { lines: DiffLine[]; linedUp: boolean; quick?: boolean }
 
 /**
  * An edit's diff, worked out with capped effort, and whether it's large
@@ -47,13 +46,14 @@ export function quickEditDiff(view: ToolView, filePath: string): { diff: EditDif
   if (!view.edits?.length) return small ? { diff: { lines: writeLines(view), linedUp: true }, large: false } : { diff: null, large: true };
   const lines = patchLines(view.edits, filePath, small ? { ms: QUICK_DIFF_MS } : { maxEditLength: QUICK_EDIT_LENGTH, ms: QUICK_DIFF_MS });
   if (lines) return { diff: { lines, linedUp: true }, large: !small && isLargeDiff(diffSize(lines)) };
-  return small ? { diff: { lines: oldThenNew(view.edits), linedUp: false }, large: false } : { diff: null, large: true };
+  return small ? { diff: { lines: oldThenNew(view.edits), linedUp: false, quick: true }, large: false } : { diff: null, large: true };
 }
 
-/** A held-back edit's diff once asked for: what quickEditDiff already
- *  worked out, else worked out in full. Past FULL_DIFF_MS it's the old text,
- *  then the new, which takes no time to work out. "Show edit" warns of a
- *  pause, not a window frozen for a minute. */
+/** An edit's diff once shown: what quickEditDiff already worked out, else
+ *  worked out in full (a held-back edit's "Show edit", or "Compare line by
+ *  line" with `known` null). Past FULL_DIFF_MS it's the old text, then the
+ *  new, which takes no time to work out. Both buttons warn of a pause, not
+ *  a window frozen for a minute. */
 export function fullEditDiff(view: ToolView, filePath: string, known: EditDiff | null): EditDiff {
   if (known) return known;
   if (!view.edits?.length) return { lines: writeLines(view), linedUp: true };

@@ -2,7 +2,8 @@
   import { untrack, type Snippet } from 'svelte';
   import { messageStore, type ChatToolCallMessage } from '../stores/messages.svelte.js';
   import DiffView, { parseDiffLines } from './DiffView.svelte';
-  import { fullEditDiff, quickEditDiff, OLD_THEN_NEW, type EditDiff } from '../lib/edit-diff.js';
+  import { fullEditDiff, quickEditDiff, type EditDiff } from '../lib/edit-diff.js';
+  import OldThenNewNotice from './OldThenNewNotice.svelte';
   import { toolViewOf } from '../../shared/tool-view.js';
   import type { DiffLine, CommentAnchor, ContextGap } from './DiffView.svelte';
   import { diffSize, editSize, hunkLineIndices, isLargeDiff } from '../lib/diff-highlight.js';
@@ -450,6 +451,8 @@
   let largeDiffShown = $state<Record<string, true>>({});
   /** Edit ids whose large edit the user chose to see in Edit History. */
   let largeEditShown = $state<Record<string, true>>({});
+  /** Edit ids the user chose to compare line by line in Edit History. */
+  let editCompared = $state<Record<string, true>>({});
 
   /** An edit's size and, once worked out, its diff lines. Kept per edit, so a
    *  status refresh (which hands back a new entry object) doesn't redo
@@ -468,9 +471,11 @@
   function quickDiffFor(info: EditInfo, edit: ChatToolCallMessage): ReturnType<typeof quickEditDiff> {
     return (info.quick ??= quickEditDiff(toolViewOf(edit), info.filePath));
   }
-  /** Its diff once shown (fullEditDiff). */
-  function editDiffFor(info: EditInfo, edit: ChatToolCallMessage): EditDiff {
-    return (info.full ??= fullEditDiff(toolViewOf(edit), info.filePath, quickDiffFor(info, edit).diff));
+  /** Its diff once shown (fullEditDiff), worked out in full once compared. */
+  function editDiffFor(info: EditInfo, edit: ChatToolCallMessage, compared: boolean): EditDiff {
+    info.full ??= fullEditDiff(toolViewOf(edit), info.filePath, quickDiffFor(info, edit).diff);
+    if (compared && info.full.quick) info.full = fullEditDiff(toolViewOf(edit), info.filePath, null);
+    return info.full;
   }
 
   let selectedDiffSize = $derived(diffSize(selectedDiffLines));
@@ -1067,7 +1072,7 @@
             {#each history.edits as edit, idx}
               {@const info = editInfoFor(edit, selectedEntry.filePath)}
               {@const held = quickDiffFor(info, edit).large && !largeEditShown[edit.id]}
-              {@const editDiff = held ? null : editDiffFor(info, edit)}
+              {@const editDiff = held ? null : editDiffFor(info, edit, !!editCompared[edit.id])}
               {#if held || (editDiff && editDiff.lines.length > 0)}
                 <div class="mb-2 {idx > 0 ? 'border-t border-border/30 pt-2' : ''}">
                   <div class="text-micro text-muted-foreground mb-1">
@@ -1077,7 +1082,7 @@
                     <!-- Held back before its diff is worked out in full. -->
                     <LargeDiffNotice kind="edit" size={info.size} label={`Show ${edit.toolName} #${idx + 1}`} onShow={() => (largeEditShown = { ...largeEditShown, [edit.id]: true })} />
                   {:else if editDiff}
-                    {#if !editDiff.linedUp}<Notice tone="neutral" class="mb-1"><p>{OLD_THEN_NEW}</p></Notice>{/if}
+                    {#if !editDiff.linedUp}<OldThenNewNotice diff={editDiff} label={`Compare ${edit.toolName} #${idx + 1} line by line`} onCompare={() => (editCompared = { ...editCompared, [edit.id]: true })} />{/if}
                     <!-- Idle-time colouring, as in the thread: a page of edits draws at once. -->
                     <DiffView lines={editDiff.lines} sideBySide={false} maxHeight="300px" filePath={selectedEntry.filePath} deferHighlight />
                   {/if}

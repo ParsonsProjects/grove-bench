@@ -112,23 +112,44 @@ describe('DiffBlock large edits', () => {
     expect(createPatch).toHaveBeenCalledOnce();
   });
 
-  /** Makes the capped diffs give up, as if out of time: a large edit's quick
-   *  try only (it has maxEditLength), or every try, "Show edit" too. */
+  /** Makes the capped diffs give up, as if out of time: the quick try only
+   *  (50 ms at most), or every try, "Show edit" and "Compare line by line"
+   *  too. */
   function capsGiveUp(which: 'quick' | 'all') {
     vi.mocked(createPatch).mockImplementation(((...args: Parameters<typeof realCreatePatch>) => {
-      const opts = args[5] as { timeout?: number; maxEditLength?: number } | undefined;
-      if (Number.isFinite(opts?.timeout) && (which === 'all' || opts?.maxEditLength)) return undefined;
+      const timeout = (args[5] as { timeout?: number } | undefined)?.timeout;
+      if (timeout !== undefined && Number.isFinite(timeout) && (which === 'all' || timeout <= 50)) return undefined;
       return realCreatePatch(...args);
     }) as typeof createPatch);
   }
   afterEach(() => { vi.mocked(createPatch).mockImplementation(realCreatePatch); });
 
+  const swapped: ToolView = { kind: 'edit', path: 'notes.txt', edits: [{ oldText: 'row 0\nrow 1\n', newText: 'row 1\nrow 0\n' }] };
+
   it('shows an edit under the limits that runs out of time at once, as the old text then the new', () => {
-    capsGiveUp('all');
-    const { container } = render(DiffBlock, { sessionId: 's1', view: { kind: 'edit', path: 'notes.txt', edits: [{ oldText: 'row 0\nrow 1', newText: 'row 1\nrow 0' }] }, pending: false });
+    capsGiveUp('quick');
+    const { container } = render(DiffBlock, { sessionId: 's1', view: swapped, pending: false });
     expect(screen.queryByRole('button', { name: /Show edit/ })).toBeNull();
-    expect(screen.getByText(/Too many changes to compare line by line/)).toBeInTheDocument();
-    expect(container).toHaveTextContent('row 1');
+    expect(screen.getByText(/Too many changes to compare line by line without a pause/)).toBeInTheDocument();
+    expect(container.querySelectorAll('.diff-del')).toHaveLength(2);
+  });
+
+  it('compares such an edit line by line once asked', async () => {
+    capsGiveUp('quick');
+    const { container } = render(DiffBlock, { sessionId: 's1', view: swapped, pending: false });
+    vi.mocked(createPatch).mockClear();
+    await fireEvent.click(screen.getByRole('button', { name: 'Compare edit to notes.txt line by line' }));
+    expect(screen.queryByText(/Too many changes/)).toBeNull();
+    expect(container.querySelectorAll('.diff-del')).toHaveLength(1);
+    expect(createPatch).toHaveBeenCalledOnce();
+  });
+
+  it('stops offering to compare once the full try gives up too', async () => {
+    capsGiveUp('all');
+    render(DiffBlock, { sessionId: 's1', view: swapped, pending: false });
+    await fireEvent.click(screen.getByRole('button', { name: 'Compare edit to notes.txt line by line' }));
+    expect(screen.getByText('Too many changes to compare line by line, so this shows the old text, then the new.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Compare/ })).toBeNull();
   });
 
   it('works out a held-back edit in full once asked', async () => {

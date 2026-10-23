@@ -1,11 +1,11 @@
 <script lang="ts">
   import CopyButton from './CopyButton.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
-  import { Notice } from '$lib/components/ui/notice/index.js';
   import { Pulse } from '$lib/components/ui/pulse/index.js';
   import DiffView from './DiffView.svelte';
-  import { fullEditDiff, quickEditDiff, OLD_THEN_NEW } from '../lib/edit-diff.js';
+  import { fullEditDiff, quickEditDiff } from '../lib/edit-diff.js';
   import LargeDiffNotice from './LargeDiffNotice.svelte';
+  import OldThenNewNotice from './OldThenNewNotice.svelte';
   import { editSize } from '../lib/diff-highlight.js';
   import type { ToolView } from '../../shared/tool-view.js';
   import { isMarkdownFile } from '../../shared/attachments.js';
@@ -38,8 +38,10 @@
   let quick = $derived(pending ? null : quickEditDiff(view, filePath));
   let shown = $state(false);
   let heldBack = $derived(!!quick?.large && !shown);
+  /** "Compare line by line" was clicked: work it out in full. */
+  let compared = $state(false);
 
-  let shownDiff = $derived(!quick || heldBack ? null : fullEditDiff(view, filePath, quick.diff));
+  let shownDiff = $derived(!quick || heldBack ? null : fullEditDiff(view, filePath, compared ? null : quick.diff));
   let diffLines = $derived(shownDiff?.lines ?? []);
 
   let copyContent = $derived(isWrite ? (view.write ?? '') : (view.edits ?? []).map((e) => e.newText).join('\n'));
@@ -124,7 +126,7 @@
     {#if heldBack}
       <LargeDiffNotice kind="edit" size={editSize(view)} label={view.path ? `Show edit to ${view.path}` : undefined} onShow={() => (shown = true)} />
     {:else}
-      {#if shownDiff && !shownDiff.linedUp}<Notice tone="neutral" class="mb-1"><p>{OLD_THEN_NEW}</p></Notice>{/if}
+      {#if shownDiff && !shownDiff.linedUp}<OldThenNewNotice diff={shownDiff} label={view.path ? `Compare edit to ${view.path} line by line` : undefined} onCompare={() => (compared = true)} />{/if}
       <DiffView lines={diffLines} {sideBySide} {filePath} deferHighlight />
     {/if}
 
