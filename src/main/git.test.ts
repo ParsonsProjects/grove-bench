@@ -760,6 +760,20 @@ describe('revertFile()', () => {
     expect(gitCalls().slice(1)).toEqual([['rm', '-f', '-q', '--', ':(literal)copy.ts']]);
   });
 
+  it('deletes a file added with git add -N, whose content git never had', async () => {
+    status(' A new.ts');
+    ok();
+    await revertFile('/repo', 'new.ts', false);
+    expect(gitCalls().slice(1)).toEqual([['rm', '-f', '-q', '--', ':(literal)new.ts']]);
+  });
+
+  it("resets a conflict where both sides added the file, rather than deleting it", async () => {
+    status('AA both.ts');
+    ok();
+    await revertFile('/repo', 'both.ts', false);
+    expect(gitCalls().slice(1)).toEqual([['checkout', '--', ':(literal)both.ts']]);
+  });
+
   it('resets a staged change to HEAD', async () => {
     status('M  a.ts');
     ok();

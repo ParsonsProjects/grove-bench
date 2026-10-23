@@ -593,10 +593,11 @@ const gitPath = (relPath: string) => (path.sep === '\\' ? relPath.replaceAll('\\
 const literal = (relPath: string) => `:(literal)${gitPath(relPath)}`;
 
 /**
- * Throw away one file's changes, by git status as it is now. Untracked files
- * and files staged as new or as a copy are deleted, since they didn't exist
- * before; a staged change is reset to HEAD in both the index and the working
- * tree; an unstaged change is reset to the index.
+ * Throw away one file's changes, by git status as it is now. Untracked files,
+ * files added with `git add -N`, and files staged as new or as a copy are
+ * deleted, since they didn't exist before; a staged change is reset to HEAD
+ * in both the index and the working tree; an unstaged change is reset to the
+ * index.
  *
  * A rename is undone: its old path comes back, from HEAD for a staged rename
  * or from the index for one in the worktree (`git add -N`), and then the new
@@ -624,8 +625,10 @@ export async function revertFile(cwd: string, relPath: string, staged: boolean, 
     await git(['rm', '-f', '-q', '--', literal(relPath)], cwd);
   } else if (record?.xy === '??') {
     await fs.rm(path.join(cwd, relPath), { force: true, recursive: true });
-  } else if (staged && (code === 'A' || code === 'C')) {
-    // `git checkout HEAD -- <path>` fails here: the path isn't in HEAD.
+  } else if ((staged && (code === 'A' || code === 'C')) || record?.xy === ' A') {
+    // `git checkout HEAD -- <path>` fails here: the path isn't in HEAD. And
+    // a file added with `git add -N` (" A") has no content in the index, so
+    // `git checkout -- <path>` would empty it.
     await git(['rm', '-f', '-q', '--', literal(relPath)], cwd);
   } else if (staged) {
     await git(['checkout', 'HEAD', '--', literal(relPath)], cwd);

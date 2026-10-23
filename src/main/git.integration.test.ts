@@ -206,6 +206,18 @@ describe('reverting a rename', () => {
   });
 });
 
+describe('reverting a file added with git add -N', () => {
+  it('deletes it, rather than emptying it', async () => {
+    fs.writeFileSync(path.join(repo, 'new.txt'), 'new work\n');
+    run('add', '-N', 'new.txt');
+
+    await revertFile(repo, 'new.txt', false);
+
+    expect(fs.existsSync(path.join(repo, 'new.txt'))).toBe(false);
+    expect(run('status', '--porcelain')).toBe('');
+  });
+});
+
 describe('a name with pattern characters', () => {
   it('is taken as it is, never as a pattern that names other files', async () => {
     fs.mkdirSync(path.join(repo, 'pages'));

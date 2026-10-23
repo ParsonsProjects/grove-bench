@@ -373,6 +373,19 @@ describe('ChangesReviewPanel — revert warnings', () => {
     expect(await view.findByText(/its unstaged edits too/)).toBeInTheDocument();
   });
 
+  it('says reverting a file added with git add -N deletes it', async () => {
+    const view = await openRevertFor([entry('src/new.ts', { staged: false, status: 'added' })]);
+    const dialog = within(await view.findByRole('dialog'));
+    expect(dialog.getByText('Discard file?')).toBeInTheDocument();
+    expect(dialog.getByText(/is a new file, so reverting it deletes it from disk/)).toHaveTextContent(/This cannot be undone\.$/);
+    expect(dialog.getByRole('button', { name: 'Discard' })).toBeInTheDocument();
+  });
+
+  it('treats the unstaged side of a both-added conflict as a revert, not a new file', async () => {
+    const view = await openRevertFor([entry('src/both.ts', { staged: false, status: 'added' }), entry('src/both.ts', { staged: true, status: 'added' })]);
+    expect(within(await view.findByRole('dialog')).getByText('Revert file?')).toBeInTheDocument();
+  });
+
   it('undoes a rename: says the old path comes back, and passes it', async () => {
     const view = await openRevertFor([entry('src/new.ts', { staged: true, status: 'renamed', origPath: 'src/old.ts' })]);
     const dialog = within(await view.findByRole('dialog'));
