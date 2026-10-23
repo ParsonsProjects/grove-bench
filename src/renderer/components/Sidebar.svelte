@@ -50,7 +50,18 @@
   import type { SessionSortState, SessionStatus, PrInfo } from '../../shared/types.js';
   import { limitedQueue } from '../lib/limited-queue.js';
   import { stripIpcErrorPrefix } from '../lib/mcp-errors.js';
+  import { splitSkillLine } from '../../shared/skill-line.js';
+  import { deriveSessionName } from '../../shared/session-name.js';
   import { onMount, untrack } from 'svelte';
+
+  /** The draft's row: its first line, or for a skill run the name the
+   *  thread will get ("triage: Fix the login bug"), not the line every one
+   *  starts with. */
+  function draftTitle(text: string): string {
+    const trimmed = text.trim();
+    if (!trimmed) return 'New thread';
+    return (splitSkillLine(trimmed) && deriveSessionName(trimmed)) || trimmed.split('\n')[0];
+  }
 
   // Per-repo accordion collapse state, persisted via app-state. An explicit
   // entry wins; otherwise repos default to collapsed (see isRepoCollapsed).
@@ -1232,7 +1243,7 @@
         >
           <span class="w-full flex items-center gap-2 min-w-0">
             <span class="{markColumn.lead} shrink-0 flex"><span class="w-2 h-2 shrink-0 border border-dashed border-muted-foreground"></span></span>
-            <span class="text-sm truncate min-w-0 flex-1 italic text-muted-foreground">{draft.text.trim() ? draft.text.trim().split('\n')[0] : 'New thread'}</span>
+            <span class="text-sm truncate min-w-0 flex-1 italic text-muted-foreground">{draftTitle(draft.text)}</span>
             <span class="text-micro text-muted-foreground shrink-0">draft</span>
           </span>
           {#if store.repos.length > 1 || draftGroup}

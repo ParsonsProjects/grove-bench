@@ -782,6 +782,21 @@ describe('Sidebar new conversation row', () => {
     expect(draftRow()).toHaveTextContent('draft');
   });
 
+  it("shows a draft's first line, or for a skill run the name its thread will get", async () => {
+    render(Sidebar);
+    draftStore.open('/repo-a');
+    draftStore.setText('Fix the login bug\nIt crashes on submit');
+    await tick();
+    expect(draftRow()).toHaveTextContent('Fix the login bug');
+    draftStore.setText('');
+    draftStore.useSkill('triage');
+    draftStore.setText(`${draftStore.draft?.text}Take the top issue`);
+    await tick();
+    expect(draftRow()).toHaveTextContent('triage: Take the top issue');
+    expect(draftRow()).not.toHaveTextContent('Use the');
+    draftStore.discard();
+  });
+
   it('goes back to the draft, in its own project, when one is open', async () => {
     store.repos = ['/repo-a', '/repo-b'];
     render(Sidebar);

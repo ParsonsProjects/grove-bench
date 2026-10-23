@@ -1,4 +1,5 @@
 import type { PermissionMode } from './types.js';
+import { skillLine } from './skill-line.js';
 
 /**
  * Scheduled skills: an agent's skill run in a new thread of a project on a
@@ -159,5 +160,5 @@ export function describeTiming(timing: ScheduleTiming): string {
  *  agent's command syntax. */
 export function skillRunPrompt(run: Pick<SkillRun, 'skill' | 'note'>): string {
   const note = run.note.trim();
-  return note ? `Use the \`${run.skill}\` skill for this task.\n\n${note}` : `Use the \`${run.skill}\` skill.`;
+  return note ? `${skillLine(run.skill)}\n\n${note}` : `Use the \`${run.skill}\` skill.`;
 }

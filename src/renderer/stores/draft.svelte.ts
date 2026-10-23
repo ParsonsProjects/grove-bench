@@ -1,7 +1,8 @@
-import type { ControlDescriptor, CreateSessionOpts } from '../../shared/types.js';
+import type { ControlDescriptor, CreateSessionOpts, SkillInfo } from '../../shared/types.js';
 import { CONTROL_IDS } from '../../shared/types.js';
 import { deriveSessionName } from '../../shared/session-name.js';
 import { tempBranchName } from '../../shared/temp-branch.js';
+import { withSkill } from '../../shared/skill-line.js';
 import { store as sessionStore } from './sessions.svelte.js';
 import { groupStore } from './groups.svelte.js';
 import { todoStore } from './todo.svelte.js';
@@ -110,8 +111,14 @@ class DraftStore {
   models = $state<DraftModelOption[]>([]);
   descriptors = $state<ControlDescriptor[]>([]);
 
+  /** The draft agent's skills in its project, for the / menu and the
+   *  Skills button, without Claude Code's turned-off ones. */
+  skills = $state<SkillInfo[]>([]);
+
   /** Guards against an older agent-info load landing after a newer one. */
   private infoRequest = 0;
+  /** The agent and project `skills` is being loaded for. */
+  private skillsFor = '';
 
   /** Whether the main pane shows the draft: one exists and no conversation
    *  is open over it. */
@@ -172,10 +179,38 @@ class DraftStore {
     this.error = '';
     this.models = [];
     this.descriptors = [];
+    this.skills = [];
+    this.skillsFor = '';
   }
 
   setText(text: string): void {
     if (this.draft) this.draft.text = text;
+  }
+
+  /** List the draft agent's skills in its project: when either changes, and
+   *  again as a skill menu opens. Another agent's go at once; an answer for
+   *  an agent or project the draft has since left is dropped. */
+  async loadSkills(): Promise<void> {
+    const d = this.draft;
+    const key = d?.agentId && d.repoPath ? `${d.agentId}\n${d.repoPath}` : '';
+    if (key !== this.skillsFor) this.skills = [];
+    this.skillsFor = key;
+    if (!d || !key) return;
+    const { agentId, repoPath } = d;
+    try {
+      const list = await window.groveBench.listAgentSkills(agentId, repoPath);
+      if (this.skillsFor !== key) return;
+      const off = agentsStore.supports(agentId, 'skills') ? settingsStore.current.disabledSkills ?? [] : [];
+      this.skills = list.filter((s) => !off.includes(s.name));
+    } catch (err) {
+      console.warn('[draft] could not list the agent\'s skills:', err);
+    }
+  }
+
+  /** Start the first message by asking for `skill` (null: for none), keeping
+   *  what follows. */
+  useSkill(skill: string | null): void {
+    if (this.draft) this.draft.text = withSkill(this.draft.text, skill);
   }
 
   addAttachments(files: AttachedFile[]): void {
