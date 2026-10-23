@@ -373,6 +373,22 @@ describe('ChangesReviewPanel — revert warnings', () => {
     expect(await view.findByText(/its unstaged edits too/)).toBeInTheDocument();
   });
 
+  it('says reverting a file added with git add -N deletes it', async () => {
+    const view = await openRevertFor([entry('src/new.ts', { staged: false, status: 'added' })]);
+    const dialog = within(await view.findByRole('dialog'));
+    expect(dialog.getByText('Discard file?')).toBeInTheDocument();
+    expect(dialog.getByText(/was added with/)).toHaveTextContent('src/new.ts was added with git add -N, so git has none of its content, and reverting it deletes it from disk. This cannot be undone.');
+    await fireEvent.click(dialog.getByRole('button', { name: 'Discard' }));
+    expect(mockGroveBench.revertFile).toHaveBeenCalledWith(SID, 'src/new.ts', false, undefined);
+  });
+
+  it('says reverting a staged copy deletes it', async () => {
+    const view = await openRevertFor([entry('src/copy.ts', { staged: true, status: 'copied', origPath: 'src/orig.ts' })]);
+    const dialog = within(await view.findByRole('dialog'));
+    expect(dialog.getByText('Discard file?')).toBeInTheDocument();
+    expect(dialog.getByText(/is a new file, so reverting it deletes it from disk/)).toBeInTheDocument();
+  });
+
   it('undoes a rename: says the old path comes back, and passes it', async () => {
     const view = await openRevertFor([entry('src/new.ts', { staged: true, status: 'renamed', origPath: 'src/old.ts' })]);
     const dialog = within(await view.findByRole('dialog'));
@@ -390,7 +406,7 @@ describe('ChangesReviewPanel — revert warnings', () => {
 
   it("leaves a copy's source alone", async () => {
     const view = await openRevertFor([entry('src/copy.ts', { staged: true, status: 'copied', origPath: 'src/orig.ts' })]);
-    await fireEvent.click(within(await view.findByRole('dialog')).getByRole('button', { name: 'Revert' }));
+    await fireEvent.click(within(await view.findByRole('dialog')).getByRole('button', { name: 'Discard' }));
     expect(mockGroveBench.revertFile).toHaveBeenCalledWith(SID, 'src/copy.ts', true, undefined);
   });
 
