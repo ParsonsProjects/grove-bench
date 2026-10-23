@@ -36,7 +36,9 @@ One message's attachments can add up to 50 MB. Hover a file's chip to see its si
 
 ## While the Agent is Working
 
-While the agent is processing, the prompt editor shows a **Stop** button. Click it (or press **Escape**) to interrupt the agent mid-response.
+While the agent is processing, the prompt editor shows a stop button (the red square). Click it to interrupt the agent mid-response.
+
+You can keep typing while it works. **Enter**, or the send button (a list with a plus while the agent works), adds your message to the queue, and it is sent once the agent is free.
 
 ## Tips
 

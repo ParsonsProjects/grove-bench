@@ -13,6 +13,8 @@
   import { SectionLabel } from '$lib/components/ui/section-label/index.js';
   import * as Segmented from '$lib/components/ui/segmented/index.js';
   import PlusIcon from '@lucide/svelte/icons/plus';
+  import HistoryIcon from '@lucide/svelte/icons/history';
+  import Minimize2Icon from '@lucide/svelte/icons/minimize-2';
 
   interface Props {
     open: boolean;
@@ -360,25 +362,24 @@
     <Dialog.Footer class="sm:justify-between">
       <div class="flex items-center gap-1">
         <Button
-          size="sm"
+          size="icon-sm"
           variant="secondary"
           onclick={() => memoryStore.compact()}
           disabled={memoryStore.compacting || memoryStore.files.length === 0}
-          title="Merge overlapping notes, resolve contradictions, and describe files that have no description. Each run merges up to 6 groups; press again to continue. Shows a summary you can undo."
+          title="Compact: merge overlapping notes, resolve contradictions, and describe files that have no description. Each run merges up to 6 groups; press again to continue. Shows a summary you can undo."
+          aria-label={memoryStore.compacting ? 'Compacting…' : 'Compact'}
         >
-          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
-          {memoryStore.compacting ? 'Compacting…' : 'Compact'}
+          <Minimize2Icon />
         </Button>
-        <Button size="sm" variant="quiet" onclick={openBackups} title="View and restore snapshots taken before each compaction">
-          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>
-          Backups
+        <Button size="icon-sm" variant="quiet" onclick={openBackups} title="Backups: view and restore snapshots taken before each compaction" aria-label="Backups">
+          <HistoryIcon />
         </Button>
-        <Button size="sm" variant="quiet" onclick={() => showPrune = true} title="Review and delete old thread notes (memory files only, never your actual threads)">
-          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m13 11 9-9"/><path d="M14.6 12.6c.8.8.9 2.1.2 3L10 22l-8-8 6.4-4.8c.9-.7 2.2-.6 3 .2Z"/><path d="m6.8 10.4 6.8 6.8"/><path d="m5 17 1.4-1.4"/></svg>
-          Clean up notes
+        <!-- The same broom as the sidebar's "Clean up old threads" -->
+        <Button size="icon-sm" variant="quiet" onclick={() => showPrune = true} title="Clean up notes: review and delete old thread notes (memory files only, never your actual threads)" aria-label="Clean up notes">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m13 11 9-9"/><path d="M14.6 12.6c.8.8.9 2.1.2 3L10 22l-8-8 6.4-4.8c.9-.7 2.2-.6 3 .2Z"/><path d="m6.8 10.4 6.8 6.8"/><path d="m5 17 1.4-1.4"/></svg>
         </Button>
       </div>
-      <Button variant="secondary" onclick={onclose}>Close</Button>
+      <Button size="sm" variant="secondary" onclick={onclose}>Close</Button>
     </Dialog.Footer>
   </Dialog.Content>
 </Dialog.Root>
