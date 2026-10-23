@@ -7,8 +7,8 @@ import { migrateRaw, stampSchemaVersion, type Migration } from './persisted-stat
 import { readJsonFile, readJsonFileAsync, writeFileAtomic, writeFileAtomicSync, type AtomicWrite, type JsonFileRead } from './json-file.js';
 import { freezeLog } from './freeze-log.js';
 import { logger } from './logger.js';
-import { recipesSchema } from './recipe-schema.js';
-import type { Recipe } from '../shared/recipes.js';
+import { skillSchedulesSchema } from './skill-schedule-schema.js';
+import type { SkillSchedule } from '../shared/skill-schedules.js';
 
 export interface PrerequisiteCache {
   status: PrerequisiteStatus;
@@ -79,9 +79,8 @@ export interface AppState {
    *  the daily spend limit, and where the limit stands once the user chose
    *  to continue past it that day. */
   dailySpend?: DailySpend;
-  /** Recipes: saved thread starts, run by hand or on a schedule
-   *  (recipes.ts). Absent until the first one. */
-  recipes?: Recipe[];
+  /** Skills run on a schedule (skill-schedules.ts). Absent until the first. */
+  skillSchedules?: SkillSchedule[];
 }
 
 export interface DailySpend {
@@ -193,7 +192,7 @@ const appStateSchema = z.object({
     usd: z.number().finite().nonnegative(),
     allowanceUsd: z.number().finite().nonnegative().optional(),
   }).optional().catch(undefined),
-  recipes: recipesSchema.optional().catch(undefined),
+  skillSchedules: skillSchedulesSchema.optional().catch(undefined),
 }) satisfies z.ZodType<AppState, unknown>;
 
 /** Normalize a raw object into a valid AppState. Never throws. */
@@ -703,27 +702,27 @@ export function saveConversationGroups(groups: unknown): void {
   if (parsed.success) setSoon('groups', parsed.data);
 }
 
-// ─── Recipes ───
+// ─── Skill schedules ───
 
-/** The saved recipes, or null when the file exists but can't be read right
+/** The saved schedules, or null when the file exists but can't be read right
  *  now, so a passing lock isn't read as "none" and saved over them. */
-export function loadRecipes(): Recipe[] | null {
+export function loadSkillSchedules(): SkillSchedule[] | null {
   const state = currentState();
-  return state ? structuredClone(state.recipes ?? []) : null;
+  return state ? structuredClone(state.skillSchedules ?? []) : null;
 }
 
 /** Saved straight away when the user changed them (`now`), else within
  *  SAVE_DELAY_MS: a scheduled run's bookkeeping can wait half a second. */
-export function saveRecipes(recipes: Recipe[], now: boolean): void {
-  if (now) change((state) => { state.recipes = recipes; }, 0, 'recipes');
-  else setSoon('recipes', recipes);
+export function saveSkillSchedules(schedules: SkillSchedule[], now: boolean): void {
+  if (now) change((state) => { state.skillSchedules = schedules; }, 0, 'skillSchedules');
+  else setSoon('skillSchedules', schedules);
 }
 
-/** Change the recipes as they are when the change applies: at once, or once
- *  the file can be read again, so a run's record isn't lost to a passing
- *  lock. Saved within SAVE_DELAY_MS. */
-export function updateRecipes(mutate: (recipes: Recipe[]) => Recipe[]): void {
-  change((state) => { state.recipes = mutate(structuredClone(state.recipes ?? [])); }, SAVE_DELAY_MS);
+/** Change the schedules as they are when the change applies: at once, or
+ *  once the file can be read again, so a run's record isn't lost to a
+ *  passing lock. Saved within SAVE_DELAY_MS. */
+export function updateSkillSchedules(mutate: (schedules: SkillSchedule[]) => SkillSchedule[]): void {
+  change((state) => { state.skillSchedules = mutate(structuredClone(state.skillSchedules ?? [])); }, SAVE_DELAY_MS);
 }
 
 // ─── Projects ───

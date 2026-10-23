@@ -152,11 +152,32 @@ describe('writeSkill', () => {
 
   it("writes a user skill into a Claude account's own folder when given one", () => {
     const accountSkills = path.join(fakeHome, '.claude-work', 'skills');
-    const dirs = { ...CLAUDE_SKILL_DIRS, user: accountSkills };
+    const dirs = { ...CLAUDE_SKILL_DIRS, user: [accountSkills] };
     const info = writeSkill(worktree, { ...def, scope: 'user' }, dirs);
     expect(info.path).toBe(path.join(accountSkills, 'release-notes', 'SKILL.md'));
     expect(listSkills(worktree, dirs).map((s) => s.name)).toEqual(['release-notes']);
     expect(listSkills(worktree).map((s) => s.name)).toEqual([]);
+  });
+
+  it('reads every folder an agent lists, earlier folders and the project winning', () => {
+    const dirs = { project: ['.gemini/skills', '.agents/skills'], user: ['.gemini/skills', '.agents/skills'] };
+    const add = (root: string, folder: string, name: string, description: string) => {
+      fs.mkdirSync(path.join(root, folder, name), { recursive: true });
+      fs.writeFileSync(path.join(root, folder, name, 'SKILL.md'), `---\nname: ${name}\ndescription: ${description}\n---\n`);
+    };
+    add(fakeHome, '.agents/skills', 'triage', 'shared user');
+    add(fakeHome, '.gemini/skills', 'triage', 'own user');
+    add(fakeHome, '.agents/skills', 'deploy', 'shared user');
+    add(worktree, '.agents/skills', 'deploy', 'shared project');
+    add(worktree, '.agents/skills', 'review', 'shared project');
+    add(worktree, '.gemini/skills', 'review', 'own project');
+    expect(listSkills(worktree, dirs).map((s) => [s.name, s.description, s.source])).toEqual([
+      ['deploy', 'shared project', 'project'],
+      ['review', 'own project', 'project'],
+      ['triage', 'own user', 'user'],
+    ]);
+    // A new skill goes in the first folder.
+    expect(writeSkill(worktree, { ...def, name: 'notes' }, dirs).path).toBe(path.join(worktree, '.gemini/skills', 'notes', 'SKILL.md'));
   });
 
   it('refuses to overwrite an existing skill at the same scope', () => {

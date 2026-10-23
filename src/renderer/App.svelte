@@ -35,7 +35,7 @@
   import { bookmarkStore } from './stores/bookmarks.svelte.js';
   import { groupStore } from './stores/groups.svelte.js';
   import { todoStore } from './stores/todo.svelte.js';
-  import { recipesStore } from './stores/recipes.svelte.js';
+  import { schedulesStore } from './stores/schedules.svelte.js';
   import { goalStore } from './stores/goals.svelte.js';
   import { panelStore } from './stores/panels.svelte.js';
   import { previewStore } from './stores/preview.svelte.js';
@@ -54,6 +54,7 @@
   const loadSessionFinder = lazyComponent(() => import('./components/SessionFinder.svelte'));
   const loadSubagentPanel = lazyComponent(() => import('./components/SubagentPanel.svelte'));
   const loadBackgroundAgentDialog = lazyComponent(() => import('./components/BackgroundAgentDialog.svelte'));
+  const loadSchedulesDialog = lazyComponent(() => import('./components/SchedulesDialog.svelte'));
 
   // ── Global error handling ──
   // Uncaught renderer errors (window.onerror / unhandledrejection / a Svelte
@@ -386,7 +387,7 @@
     groupStore.load();
     todoStore.load();
     // Listens before the restore ends: main's scheduler starts after it.
-    recipesStore.init();
+    schedulesStore.init();
     panelStore.load();
     memoryStore.init();
     previewStore.init();
@@ -616,6 +617,16 @@
 {#if backgroundAgentStore.ask}
   {#await loadBackgroundAgentDialog() then BackgroundAgentDialog}
     <BackgroundAgentDialog />
+  {/await}
+{/if}
+
+<!-- Opened from a project's clock in the sidebar, or Schedule in the Skills popover. -->
+{#if schedulesStore.dialog}
+  {@const dialog = schedulesStore.dialog}
+  {#await loadSchedulesDialog() then SchedulesDialog}
+    {#key dialog}
+      <SchedulesDialog repoPath={dialog.repoPath} prefill={dialog.prefill ?? null} onclose={() => schedulesStore.closeDialog()} />
+    {/key}
   {/await}
 {/if}
 

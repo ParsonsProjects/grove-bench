@@ -65,7 +65,7 @@ export interface ThreadSetup {
   /** false: start without taking the screen. */
   focus?: boolean;
   /** Refuse an agent that isn't offered (turned off, removed, unknown)
-   *  instead of using the default agent: a recipe's tools may only be set up
+   *  instead of using the default agent: a skill's tools may only be set up
    *  in the agent it names. */
   strictAgent?: boolean;
   /** Leave the refusal toast to the caller, which gets the reason back. */
@@ -439,7 +439,7 @@ class DraftStore {
   }
 
   /** startThread, saying what it did: the new thread's id, or why it didn't
-   *  start (a recipe notes it). See ThreadSetup for the extra options. */
+   *  start (a scheduled skill notes it). See ThreadSetup for the extra options. */
   async startThreadFor(setup: ThreadSetup): Promise<ThreadStart> {
     const refuse = (error: string): ThreadStart => {
       if (!setup.quiet) sessionStore.setError(`The thread couldn't start: ${error}.`);
@@ -448,7 +448,7 @@ class DraftStore {
     const repo = setup.repoPath;
     if (!sessionStore.repos.includes(repo)) return refuse('its project was removed');
     if (setup.strictAgent && setup.agentId) {
-      // Agents load on first use; a recipe can run before anything used them.
+      // Agents load on first use; a schedule can run before anything used them.
       await agentsStore.load();
       if (!agentsStore.loaded) return refuse("its agent couldn't be checked");
       if (!agentsStore.get(setup.agentId) || !this.offeredAgent(setup.agentId)) return refuse('its agent is turned off or was removed');

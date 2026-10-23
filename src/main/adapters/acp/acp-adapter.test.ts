@@ -86,6 +86,21 @@ async function until(handle: AgentQueryHandle, type: AdapterEvent['type'], seen:
 }
 
 describe('AcpAdapter', () => {
+  it('lists the skills in its folders, or the shared .agents/skills, while Grove still manages none', async () => {
+    fs.mkdirSync(path.join(cwd, '.agents', 'skills', 'triage'), { recursive: true });
+    fs.writeFileSync(path.join(cwd, '.agents', 'skills', 'triage', 'SKILL.md'), '---\nname: triage\ndescription: Sort new issues\n---\n');
+    fs.mkdirSync(path.join(cwd, '.gemini', 'skills', 'release'), { recursive: true });
+    fs.writeFileSync(path.join(cwd, '.gemini', 'skills', 'release', 'SKILL.md'), '---\nname: release\ndescription: Cut a release\n---\n');
+
+    const custom = new AcpAdapter(def());
+    // Also reads ~/.agents/skills, which may hold skills on this machine.
+    expect((await custom.listSkills(cwd)).map((s) => s.name)).toContain('triage');
+    expect(custom.capabilities.skills).toBe(false);
+
+    const gemini = new AcpAdapter({ ...def(), skillDirs: { project: ['.gemini/skills', '.agents/skills'], user: [] } });
+    expect((await gemini.listSkills(cwd)).map((s) => s.name)).toEqual(['release', 'triage']);
+  });
+
   it('gives each turn its share of the session\'s running cost, and its output tokens', async () => {
     const adapter = new AcpAdapter(def());
     const handle = await adapter.start(config());

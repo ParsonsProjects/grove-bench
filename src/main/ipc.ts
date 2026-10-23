@@ -41,7 +41,7 @@ import * as skillSuggestions from './skill-suggestions.js';
 import * as memory from './memory.js';
 import * as memoryCompact from './memory-compact.js';
 import * as bookmarks from './bookmarks.js';
-import { deleteRecipe, listRecipes, recordRecipeRun, saveRecipe } from './recipes.js';
+import { deleteSchedule, listSchedules, recordScheduleRun, saveSchedule } from './skill-schedules.js';
 import { listProjects, rememberProject, forgetProject, loadOpenTabs, saveOpenTabs, loadCollapsedRepos, saveCollapsedRepos, loadSessionSort, saveSessionSort, loadSidebarWidth, saveSidebarWidth, loadCollapsedPanels, saveCollapsedPanels, loadConversationGroups, saveConversationGroups, saveUnreadSessionIds, loadUnreadSessionIds, saveTodoSessionIds, loadTodoSessionIds, loadPrerequisiteCache, savePrerequisiteCache, loadUsageSnapshot } from './app-state.js';
 import { logRendererError } from './crash-handling.js';
 import { freezeLog } from './freeze-log.js';
@@ -1106,6 +1106,13 @@ export function registerHandlers() {
     return adapter.listSkills(root);
   });
 
+  ipcMain.handle(IPC.SKILLS_LIST_FOR_AGENT, async (_event, agentId: unknown, repoPath: unknown) => {
+    if (typeof agentId !== 'string' || typeof repoPath !== 'string' || !repoPath) return [];
+    // A gone agent lists nothing rather than the default agent's skills.
+    const adapter = adapterRegistry.get(agentId);
+    return adapter?.listSkills ? adapter.listSkills(repoPath) : [];
+  });
+
   ipcMain.handle(IPC.SKILLS_ADD, async (_event, sessionId: string, fallbackPath: string, def: SkillDefinition) => {
     const adapter = await threadAgent(sessionId);
     if (!adapter) throw new Error("This thread's agent isn't available any more, so skills can't be added for it");
@@ -2091,15 +2098,15 @@ export function registerHandlers() {
     saveTodoSessionIds(ids);
   });
 
-  // ─── Recipes ───
+  // ─── Skill schedules ───
 
-  ipcMain.handle(IPC.RECIPES_LIST, () => listRecipes());
-  ipcMain.handle(IPC.RECIPES_SAVE, (_event, recipe: unknown) => saveRecipe(recipe));
-  ipcMain.handle(IPC.RECIPES_DELETE, (_event, id: unknown) => {
-    if (typeof id === 'string') deleteRecipe(id);
+  ipcMain.handle(IPC.SKILL_SCHEDULES_LIST, () => listSchedules());
+  ipcMain.handle(IPC.SKILL_SCHEDULES_SAVE, (_event, schedule: unknown) => saveSchedule(schedule));
+  ipcMain.handle(IPC.SKILL_SCHEDULES_DELETE, (_event, id: unknown) => {
+    if (typeof id === 'string') deleteSchedule(id);
   });
-  ipcMain.handle(IPC.RECIPES_RECORD_RUN, (_event, id: unknown, outcome: unknown) =>
-    typeof id === 'string' ? recordRecipeRun(id, outcome) : null);
+  ipcMain.handle(IPC.SKILL_SCHEDULES_RECORD_RUN, (_event, id: unknown, outcome: unknown) =>
+    typeof id === 'string' ? recordScheduleRun(id, outcome) : null);
 
   // ─── Error reporting ───
 

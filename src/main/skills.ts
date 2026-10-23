@@ -2,11 +2,12 @@
  * Skill discovery for agent sessions.
  *
  * Skills follow the open Agent Skills format: a `<name>/SKILL.md` folder
- * with YAML frontmatter. Agents keep them under their own folder name at two
- * levels: the user's home directory and the project (which for a Grove Bench
- * session is the worktree — project skills are checked into git, so every
- * worktree carries them). Each adapter passes its folder (SkillDirs); Claude
- * Code's is `.claude/skills`. Plugin-provided skills have no stable on-disk
+ * with YAML frontmatter, which Claude Code, Gemini CLI, Copilot, OpenCode and
+ * Codex all read. Each keeps them under its own folder names at two levels:
+ * the user's home directory and the project (which for a Grove Bench session
+ * is the worktree — project skills are checked into git, so every worktree
+ * carries them). Each adapter passes its folders (SkillDirs); Claude Code's
+ * is `.claude/skills`. Plugin-provided skills have no stable on-disk
  * location we can scan; those are learned from the agent's system_init
  * message instead (see AgentSessionManager's known-skills registry).
  */
@@ -15,23 +16,26 @@ import os from 'node:os';
 import path from 'node:path';
 import type { SkillDefinition, SkillInfo } from '../shared/types.js';
 
-/** Where an agent keeps skills, relative to the project and to the user's
- *  home directory (often the same, e.g. `.claude/skills`). `user` may be an
- *  absolute path instead, such as a Claude account's own folder. */
+/** Where an agent looks for skills, relative to the project and to the
+ *  user's home directory (often the same, e.g. `.claude/skills`). A user
+ *  folder may be an absolute path instead, such as a Claude account's own.
+ *  Most agents read several (their own and the shared `.agents/skills`): the
+ *  first is where Grove writes a new skill, and an earlier folder's skill
+ *  wins over a later one of the same name. */
 export interface SkillDirs {
-  project: string;
-  user: string;
+  project: readonly string[];
+  user: readonly string[];
 }
 
-/** The user-level skills folder of `dirs`. */
-function userSkillsDir(dirs: SkillDirs): string {
-  return path.isAbsolute(dirs.user) ? dirs.user : path.join(os.homedir(), dirs.user);
+/** A user-level skills folder, made absolute. */
+function userSkillsDir(dir: string): string {
+  return path.isAbsolute(dir) ? dir : path.join(os.homedir(), dir);
 }
 
 /** Claude Code's skill folders. */
 export const CLAUDE_SKILL_DIRS: SkillDirs = {
-  project: path.join('.claude', 'skills'),
-  user: path.join('.claude', 'skills'),
+  project: [path.join('.claude', 'skills')],
+  user: [path.join('.claude', 'skills')],
 };
 
 /**
@@ -90,14 +94,17 @@ export function scanSkillsDir(dir: string, source: SkillInfo['source']): SkillIn
 
 /**
  * List the skills a session at `worktreePath` can see on disk. Project skills
- * shadow user skills of the same name, matching the CLI's precedence.
+ * shadow user skills of the same name, matching the CLI's precedence, and an
+ * earlier folder's shadow a later one's at the same level.
  */
 export function listSkills(worktreePath: string, dirs: SkillDirs = CLAUDE_SKILL_DIRS): SkillInfo[] {
-  const project = scanSkillsDir(path.join(worktreePath, dirs.project), 'project');
-  const user = scanSkillsDir(userSkillsDir(dirs), 'user');
+  const user = dirs.user.flatMap((dir) => scanSkillsDir(userSkillsDir(dir), 'user'));
+  const project = dirs.project.flatMap((dir) => scanSkillsDir(path.join(worktreePath, dir), 'project'));
   const byName = new Map<string, SkillInfo>();
-  for (const skill of [...user, ...project]) {
-    byName.set(skill.name, skill); // project entries overwrite user entries
+  // Lowest precedence first, so each later entry overwrites: later user
+  // folders, then earlier ones, then project folders the same way.
+  for (const skill of [...user.reverse(), ...project.reverse()]) {
+    byName.set(skill.name, skill);
   }
   return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -140,7 +147,7 @@ export function writeSkill(worktreePath: string, def: SkillDefinition, dirs: Ski
   if (!def.description.trim()) throw new Error('Skill description is required');
   if (!def.instructions.trim()) throw new Error('Skill instructions are required');
 
-  const root = def.scope === 'project' ? path.join(worktreePath, dirs.project) : userSkillsDir(dirs);
+  const root = def.scope === 'project' ? path.join(worktreePath, dirs.project[0]) : userSkillsDir(dirs.user[0]);
   const skillDir = path.join(root, def.name);
   const manifestPath = path.join(skillDir, 'SKILL.md');
   if (fs.existsSync(manifestPath)) {

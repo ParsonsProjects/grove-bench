@@ -44,6 +44,7 @@ import { AUDIO_INLINE_BUDGET_BYTES, inlineAudioType } from '../file-attachments.
 import { memoryServer, previewServer, type GroveServer } from '../grove-tools.js';
 import { startGroveMcpHttp, type GroveMcpHttp } from '../grove-mcp-http.js';
 import { stdioBridgeLaunch } from '../mcp-bridge/launch.js';
+import { listSkills as listSkillsIn, type SkillDirs } from '../../skills.js';
 import { JsonRpcConnection, JsonRpcError, RPC_ERRORS } from './rpc.js';
 import {
   ACP_PROTOCOL_VERSION,
@@ -88,7 +89,17 @@ export interface AcpAgentDefinition {
   modelProvider?: string;
   /** 'alpha' to keep it out of the agent picker until the user turns it on. */
   stage?: AgentStage;
+  /** Where the agent reads Agent Skills (SKILL.md folders), so Grove can list
+   *  them to run or schedule. Without it, the shared `.agents/skills`. The
+   *  agent runs its skills itself; Grove only reads the list. */
+  skillDirs?: SkillDirs;
 }
+
+/** The Agent Skills folder most agents other than Claude Code also read. */
+export const SHARED_SKILL_DIRS: SkillDirs = {
+  project: [path.join('.agents', 'skills')],
+  user: [path.join('.agents', 'skills')],
+};
 
 /** How long the agent gets to answer `initialize` and set up a session. */
 const STARTUP_TIMEOUT_MS = 60_000;
@@ -314,6 +325,13 @@ export class AcpAdapter implements AgentAdapter {
     if (def.cliSignIn) this.checkSignIn = () => this.probeSignIn();
     // New model details from models.dev reach the pickers like a new list.
     catalogs.onChange(() => { for (const l of this.modelListeners) l(); });
+  }
+
+  /** The skills the agent can see in `worktreePath`, read from its folders.
+   *  capabilities.skills stays off: Grove can't turn an ACP agent's skills
+   *  off or write new ones for it. */
+  async listSkills(worktreePath: string) {
+    return listSkillsIn(worktreePath, this.def.skillDirs ?? SHARED_SKILL_DIRS);
   }
 
   /** How to install the program: the ACP Registry's command when it has an

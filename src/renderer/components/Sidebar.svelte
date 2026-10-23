@@ -11,7 +11,7 @@
   import { draftStore } from '../stores/draft.svelte.js';
   import { groupStore } from '../stores/groups.svelte.js';
   import { todoStore } from '../stores/todo.svelte.js';
-  import { recipesStore } from '../stores/recipes.svelte.js';
+  import { schedulesStore } from '../stores/schedules.svelte.js';
   import SidebarGroups from './SidebarGroups.svelte';
   import SidebarSection from './SidebarSection.svelte';
   import AttentionCounts from './AttentionCounts.svelte';
@@ -264,9 +264,6 @@
   // Settings and Memory load when first opened, then stay mounted.
   const loadSettingsPanel = lazyComponent(() => import('./SettingsPanel.svelte'));
   const loadMemoryPanel = lazyComponent(() => import('./MemoryPanel.svelte'));
-  const loadRecipesDialog = lazyComponent(() => import('./RecipesDialog.svelte'));
-  /** The project whose Recipes dialog is open. */
-  let recipesRepo = $state<string | null>(null);
   let settingsOpened = $state(false);
   let memoryOpened = $state(false);
   $effect(() => { if (settingsStore.panelOpen) settingsOpened = true; });
@@ -1343,14 +1340,14 @@
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
                 </Button>
-                <!-- Shown when the project has recipes, else on hover like the bin. -->
+                <!-- Shown when the project has scheduled skills, else on hover like the bin. -->
                 <Button
                   variant="quiet"
                   size="icon-2xs"
-                  onclick={() => { recipesRepo = repo; }}
-                  class={recipesStore.forRepo(repo).length ? '' : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100'}
-                  title="Recipes in {store.repoDisplayName(repo)}"
-                  aria-label="Recipes in {store.repoDisplayName(repo)}"
+                  onclick={() => schedulesStore.openDialog(repo)}
+                  class={schedulesStore.forRepo(repo).length ? '' : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100'}
+                  title="Scheduled skills in {store.repoDisplayName(repo)}"
+                  aria-label="Scheduled skills in {store.repoDisplayName(repo)}"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
                 </Button>
@@ -1693,12 +1690,6 @@
       </Dialog.Footer>
     </Dialog.Content>
   </Dialog.Root>
-{/if}
-
-{#if recipesRepo}
-  {#await loadRecipesDialog() then RecipesDialog}
-    <RecipesDialog repoPath={recipesRepo} onclose={() => { recipesRepo = null; }} />
-  {/await}
 {/if}
 
 <!-- Remove project confirmation: deletes its conversations too, with the same checks as deleting one -->

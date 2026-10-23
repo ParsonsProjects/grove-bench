@@ -23,7 +23,7 @@ import { closePerfLog } from './perf-log.js';
 import { startHealthLog } from './perf-health.js';
 import { agentHostPid, startProcessHost, stopProcessHost } from './process-host.js';
 import { measureProcesses } from './process-memory.js';
-import { startRecipeScheduler, stopRecipeScheduler } from './recipes.js';
+import { startSkillScheduler, stopSkillScheduler } from './skill-schedules.js';
 import { ChildProcess } from 'node:child_process';
 
 // Time every process launch from the start: on Windows each one blocks the
@@ -192,12 +192,12 @@ app.whenReady().then(() => {
   const scheduleSweep = () => setTimeout(() => { runSweep(); scheduleSweep(); }, 15 * 60_000);
   scheduleSweep();
 
-  // Recipes on a schedule (recipes.ts). Started once the window has its
-  // threads back, since it starts the recipes' threads, with a 60s fallback
-  // as for the sweep: a restore that fails never says it is done.
-  const startRecipes = () => startRecipeScheduler(() => mainWindow);
-  appEvents.once('restore-complete', startRecipes);
-  setTimeout(startRecipes, 60_000);
+  // Skills on a schedule (skill-schedules.ts). Started once the window has
+  // its threads back, since it starts the scheduled threads, with a 60s
+  // fallback as for the sweep: a restore that fails never says it is done.
+  const startSchedules = () => startSkillScheduler(() => mainWindow);
+  appEvents.once('restore-complete', startSchedules);
+  setTimeout(startSchedules, 60_000);
 
   // Note in the performance log whenever the main process stops
   // responding, and sum up how the app is doing every few minutes.
@@ -267,9 +267,9 @@ let shutdownDone: Promise<void> | null = null;
  */
 function shutdown(): Promise<void> {
   shutdownDone ??= (async () => {
-    // Restart to update comes here before before-quit: no recipe may start
-    // a thread while the others are closing.
-    stopRecipeScheduler();
+    // Restart to update comes here before before-quit: no schedule may
+    // start a thread while the others are closing.
+    stopSkillScheduler();
     if (nothingRunning()) return;
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send(IPC.APP_CLOSING);
@@ -286,8 +286,8 @@ app.on('before-quit', (event) => {
   // be saved or on their way in the background: written synchronously, since
   // a background save might not finish before the process exits.
   flushPendingSaves();
-  // No recipe starts a thread while the app shuts down.
-  stopRecipeScheduler();
+  // No schedule starts a thread while the app shuts down.
+  stopSkillScheduler();
   if (isQuitting) return;
   if (!shutdownDone && nothingRunning()) {
     logger.close();

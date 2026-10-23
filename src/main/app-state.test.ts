@@ -56,7 +56,7 @@ import {
   mergeProjects, listProjects, rememberProject, forgetProject,
   loadConversationGroups, saveConversationGroups,
   loadTodoSessionIds, saveTodoSessionIds,
-  loadRecipes, saveRecipes, updateRecipes,
+  loadSkillSchedules, saveSkillSchedules, updateSkillSchedules,
   appStateSaved, resetAppStateForTests,
 } from './app-state.js';
 
@@ -791,49 +791,51 @@ describe('conversation groups', () => {
   });
 });
 
-describe('recipes', () => {
-  const recipe = {
-    id: 'r1', repoPath: '/repo', name: 'Next issue', agentId: '', start: 'new', permissionMode: 'plan',
-    skill: 'work-linear-issue', prompt: 'Go', schedule: { kind: 'daily', time: '09:00', weekdaysOnly: true },
+describe('skill schedules', () => {
+  const schedule = {
+    id: 's1', repoPath: '/repo', agentId: 'gemini-cli', skill: 'work-linear-issue', note: 'Go', start: 'new', permissionMode: 'plan',
+    timing: { kind: 'daily', time: '09:00', weekdaysOnly: true },
     maxOpen: 2, paused: false, scheduledFrom: 1, checkedThrough: 2, sessionIds: ['a'],
     lastOutcome: { at: 3, sessionId: 'a' },
   } as const;
 
   it('saves a change by hand straight away', () => {
     const file = useDisk({ schemaVersion: V });
-    saveRecipes([structuredClone(recipe) as never], true);
+    saveSkillSchedules([structuredClone(schedule) as never], true);
     expect(syncWrites()).toBe(1);
-    expect(file.get()).toMatchObject({ recipes: [recipe] });
-    expect(loadRecipes()).toEqual([recipe]);
+    expect(file.get()).toMatchObject({ skillSchedules: [schedule] });
+    expect(loadSkillSchedules()).toEqual([schedule]);
   });
 
   it("says it can't tell while the file can't be read, rather than \"none\"", () => {
-    useDisk({ schemaVersion: V, recipes: [recipe] });
+    useDisk({ schemaVersion: V, skillSchedules: [schedule] });
     lockReads();
-    expect(loadRecipes()).toBeNull();
+    expect(loadSkillSchedules()).toBeNull();
   });
 
   it('applies a change made while the file is locked once it can be read', async () => {
-    const file = useDisk({ schemaVersion: V, recipes: [recipe] });
+    const file = useDisk({ schemaVersion: V, skillSchedules: [schedule] });
     const unlock = lockReads();
-    updateRecipes((list) => list.map((r) => ({ ...r, sessionIds: [...r.sessionIds, 'b'] })));
-    expect(loadRecipes()).toBeNull();
+    updateSkillSchedules((list) => list.map((s) => ({ ...s, sessionIds: [...s.sessionIds, 'b'] })));
+    expect(loadSkillSchedules()).toBeNull();
     unlock();
-    expect(loadRecipes()?.[0].sessionIds).toEqual(['a', 'b']);
+    expect(loadSkillSchedules()?.[0].sessionIds).toEqual(['a', 'b']);
     await vi.advanceTimersByTimeAsync(500);
     await appStateSaved();
-    expect(file.get().recipes[0].sessionIds).toEqual(['a', 'b']);
+    expect(file.get().skillSchedules[0].sessionIds).toEqual(['a', 'b']);
   });
 
-  it('drops a malformed recipe and keeps the rest', () => {
-    const state = validateAppState({ recipes: [
-      recipe,
-      { ...recipe, id: 'r2', schedule: { kind: 'daily', time: 'soon', weekdaysOnly: false } },
-      { ...recipe, id: 'r3', maxOpen: 0 },
+  it('drops a malformed schedule and keeps the rest', () => {
+    const state = validateAppState({ skillSchedules: [
+      schedule,
+      { ...schedule, id: 's2', timing: { kind: 'daily', time: 'soon', weekdaysOnly: false } },
+      { ...schedule, id: 's3', maxOpen: 0 },
+      { ...schedule, id: 's4', skill: '' },
+      { ...schedule, id: 's5', timing: { kind: 'manual' } },
       'junk',
     ] });
-    expect(state.recipes).toEqual([recipe]);
-    expect(validateAppState({ recipes: 'nope' }).recipes).toBeUndefined();
+    expect(state.skillSchedules).toEqual([schedule]);
+    expect(validateAppState({ skillSchedules: 'nope' }).skillSchedules).toBeUndefined();
   });
 });
 

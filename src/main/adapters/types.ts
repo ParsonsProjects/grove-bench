@@ -470,8 +470,10 @@ export interface AgentAdapter {
   // ─── Optional skill management ───
 
   /** Skills visible to a session rooted at `worktreePath`, in whatever native
-   *  format the provider uses, mapped to neutral SkillInfo entries. Only
-   *  implement if capabilities.skills is true. */
+   *  format the provider uses, mapped to neutral SkillInfo entries. An agent
+   *  can list its skills (so they can be run and scheduled) without
+   *  capabilities.skills, which is for Grove managing them: turning them off,
+   *  and suggestions. */
   listSkills?(worktreePath: string): Promise<SkillInfo[]>;
   /** Author a new skill from the neutral definition, serialized into the
    *  provider's native format (e.g. Claude Code writes

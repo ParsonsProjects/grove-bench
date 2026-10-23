@@ -1637,7 +1637,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       setupUrl: 'https://code.claude.com/docs/en/setup',
     };
     this.skillDirs = account
-      ? { ...skillsModule.CLAUDE_SKILL_DIRS, user: path.join(account.configDir, 'skills') }
+      ? { ...skillsModule.CLAUDE_SKILL_DIRS, user: [path.join(account.configDir, 'skills')] }
       : skillsModule.CLAUDE_SKILL_DIRS;
   }
 

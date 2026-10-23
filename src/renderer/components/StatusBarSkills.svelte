@@ -1,6 +1,7 @@
 <script lang="ts">
   /**
-   * The Skills badge and its popover: the skills agents can use, with
+   * The Skills badge and its popover: the skills the thread's agent can use,
+   * each with Run (in a new thread now) and Schedule. For Claude Code, also
    * enable / disable, suggestions mined from past conversations, and the
    * Add Skill dialog. Reports its skill count to the bar.
    */
@@ -8,6 +9,8 @@
   import { messageStore } from '../stores/messages.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
+  import { agentsStore } from '../stores/agents.svelte.js';
+  import { schedulesStore } from '../stores/schedules.svelte.js';
   import { mergeSkills } from '../lib/skills-merge.js';
   import { startSkillThread } from '../lib/skill-thread.js';
   import type { SkillPromptOpts } from '../lib/skill-prompt.js';
@@ -19,6 +22,8 @@
   import { SectionLabel } from '$lib/components/ui/section-label/index.js';
   import XIcon from '@lucide/svelte/icons/x';
   import PlusIcon from '@lucide/svelte/icons/plus';
+  import PlayIcon from '@lucide/svelte/icons/play';
+  import ClockIcon from '@lucide/svelte/icons/clock';
   import StatusBarPopover from './StatusBarPopover.svelte';
 
   let { sessionId, count = $bindable(0) }: { sessionId: string; count?: number } = $props();
@@ -75,6 +80,33 @@
   let analyzingSuggestions = $state(false);
   let addSkillInitial = $state<{ name: string; description: string; instructions: string; scope?: 'project' | 'user' } | null>(null);
   let sessionRepoPath = $derived(store.sessions.find((s) => s.id === sessionId)?.repoPath ?? '');
+  /** The thread's agent: the skills listed are its own. */
+  let agentId = $derived(store.sessions.find((s) => s.id === sessionId)?.agentType ?? agentsStore.defaultId ?? '');
+  /** Grove manages this agent's skills (turn off, suggest, add): Claude Code
+   *  only. Any agent's skills can be run and scheduled. */
+  let managed = $derived(agentsStore.supports(agentId, 'skills'));
+
+  /** Run a skill now in a new thread on this thread's agent and model. */
+  async function runSkill(skill: SkillInfo) {
+    if (!sessionRepoPath || !agentId) return;
+    skillsExpanded = false;
+    await schedulesStore.runSkill({
+      repoPath: sessionRepoPath,
+      agentId,
+      model: messageStore.getModel(sessionId) || undefined,
+      skill: skill.name,
+      note: '',
+      start: store.isFolderProject(sessionRepoPath) ? 'folder' : 'new',
+      permissionMode: '',
+    });
+  }
+
+  /** Open the project's scheduled skills on a new schedule for this skill. */
+  function scheduleSkill(skill: SkillInfo) {
+    if (!sessionRepoPath) return;
+    skillsExpanded = false;
+    schedulesStore.openDialog(sessionRepoPath, { agentId, skill: skill.name });
+  }
 
   async function refreshSuggestions() {
     if (!sessionRepoPath) return;
@@ -155,7 +187,7 @@
              colours here (MCP's are for real failures): grey with none on. -->
         <span class="w-1.5 h-1.5 {enabledSkillCount === 0 ? 'bg-muted-foreground/40' : 'bg-green-500'}"></span>
         Skills {disabledSkillCount > 0 ? `${enabledSkillCount}/${allSkills.length}` : allSkills.length}
-        {#if suggestions.length > 0}
+        {#if managed && suggestions.length > 0}
           <span class="text-blue-400" title="{suggestions.length} suggested skill{suggestions.length === 1 ? '' : 's'} from your threads">+{suggestions.length}</span>
         {/if}
       </button>
@@ -164,15 +196,17 @@
     <div class="flex items-center justify-between mb-2">
       <span class="font-medium text-foreground">Skills</span>
       <div class="flex items-center gap-2.5">
-        <Button
-          variant="link"
-          size="inline"
-          onclick={analyzeSuggestions}
-          disabled={analyzingSuggestions}
-          title="Mine this project's thread history for recurring workflows and suggest skills"
-        >
-          {analyzingSuggestions ? 'Scanning…' : 'Suggest'}
-        </Button>
+        {#if managed}
+          <Button
+            variant="link"
+            size="inline"
+            onclick={analyzeSuggestions}
+            disabled={analyzingSuggestions}
+            title="Mine this project's thread history for recurring workflows and suggest skills"
+          >
+            {analyzingSuggestions ? 'Scanning…' : 'Suggest'}
+          </Button>
+        {/if}
         <Button
           variant="quiet"
           size="inline"
@@ -188,7 +222,7 @@
       <Notice tone="danger" class="mb-2 break-words">{settingsStore.error}</Notice>
     {/if}
 
-    {#if suggestions.length > 0}
+    {#if managed && suggestions.length > 0}
       <div class="mb-2 pb-2 border-b border-border">
         <SectionLabel class="mb-1.5">
           Suggested from your threads
@@ -258,45 +292,75 @@
               </div>
             {/if}
           </div>
-          {#if disabled}
+          {#if !disabled}
             <Button
-              variant="outline-success"
-              size="2xs"
-              onclick={() => setSkillEnabled(skill.name, true)}
-              disabled={skillsBusy[skill.name]}
-              title="Re-enable this skill"
+              variant="quiet"
+              size="icon-2xs"
+              onclick={() => runSkill(skill)}
+              title={store.isFolderProject(sessionRepoPath)
+                ? 'Run this skill now in a new thread in the project folder'
+                : 'Run this skill now in a new thread on a branch of its own'}
+              aria-label="Run {skill.name} in a new thread"
             >
-              Enable
+              <PlayIcon />
             </Button>
-          {:else}
             <Button
-              variant="outline-destructive"
-              size="2xs"
-              onclick={() => setSkillEnabled(skill.name, false)}
-              disabled={skillsBusy[skill.name]}
-              title="Hide this skill from agents"
+              variant="quiet"
+              size="icon-2xs"
+              onclick={() => scheduleSkill(skill)}
+              title="Run this skill on a schedule"
+              aria-label="Schedule {skill.name}"
             >
-              Disable
+              <ClockIcon />
             </Button>
+          {/if}
+          {#if managed}
+            {#if disabled}
+              <Button
+                variant="outline-success"
+                size="2xs"
+                onclick={() => setSkillEnabled(skill.name, true)}
+                disabled={skillsBusy[skill.name]}
+                title="Re-enable this skill"
+              >
+                Enable
+              </Button>
+            {:else}
+              <Button
+                variant="outline-destructive"
+                size="2xs"
+                onclick={() => setSkillEnabled(skill.name, false)}
+                disabled={skillsBusy[skill.name]}
+                title="Hide this skill from agents"
+              >
+                Disable
+              </Button>
+            {/if}
           {/if}
         </div>
       {/each}
     </div>
 
-    <div class="flex items-center gap-2 mt-2 pt-2 border-t border-border">
-      <span class="text-muted-foreground text-micro flex-1">
-        Applies to all projects, when a thread's agent (re)starts. Running turns keep their current skills.
-      </span>
-      <Button
-        variant="subtle"
-        size="2xs"
-        onclick={() => { skillsExpanded = false; addSkillOpen = true; }}
-        title="Author a new skill — write it yourself or hand it to the agent"
-      >
-        <PlusIcon />
-        Add skill
-      </Button>
-    </div>
+    {#if managed}
+      <div class="flex items-center gap-2 mt-2 pt-2 border-t border-border">
+        <span class="text-muted-foreground text-micro flex-1">
+          Applies to all projects, when a thread's agent (re)starts. Running turns keep their current skills.
+        </span>
+        <Button
+          variant="subtle"
+          size="2xs"
+          onclick={() => { skillsExpanded = false; addSkillOpen = true; }}
+          title="Author a new skill — write it yourself or hand it to the agent"
+        >
+          <PlusIcon />
+          Add skill
+        </Button>
+      </div>
+    {:else}
+      <div class="mt-2 pt-2 border-t border-border text-muted-foreground text-micro">
+        Skills from {agentsStore.get(agentId)?.displayName ?? 'this agent'}'s own folders. Add or turn them off there.
+      </div>
+    {/if}
   </StatusBarPopover>
 {/if}
 

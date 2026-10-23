@@ -5,7 +5,7 @@
  */
 
 import type { ThreadItems } from '../shared/thread-items.js';
-import type { Recipe, RecipeInput } from '../shared/recipes.js';
+import type { SkillSchedule, SkillScheduleInput } from '../shared/skill-schedules.js';
 
 // Capture uncaught errors (a template error can kill Svelte's effect loop).
 const errs: string[] = [];
@@ -34,20 +34,18 @@ const CLAUDE_MODE_OPTIONS = [
 const REPO_A = 'C:/dev/grove-bench';
 const REPO_B = 'C:/dev/api-service';
 
-/** Recipes, kept in memory: one on a schedule that ran, one run by hand. */
-let demoRecipes: Recipe[] = [
+/** Scheduled skills, kept in memory: one that ran, one paused. */
+let demoSchedules: SkillSchedule[] = [
   {
-    id: 'rcp-linear', repoPath: REPO_A, name: 'Work the next Linear issue', agentId: 'claude-code', start: 'new',
-    permissionMode: 'default', skill: 'work-linear-issue',
-    prompt: 'Take the top Linear issue labelled agent-ready, move it to In Progress, fix it and open a PR.',
-    schedule: { kind: 'every', hours: 2 }, maxOpen: 2, paused: false,
+    id: 'sch-review', repoPath: REPO_A, agentId: 'claude-code', skill: 'code-review', start: 'new',
+    note: 'Review the open PRs labelled agent-made and leave your findings as comments.',
+    permissionMode: 'default', timing: { kind: 'every', hours: 2 }, maxOpen: 2, paused: false,
     scheduledFrom: now - 5 * 60 * min, checkedThrough: now - 60 * min,
     lastOutcome: { at: now - 60 * min, sessionId: 's-sidebar' }, sessionIds: ['s-sidebar'],
   },
   {
-    id: 'rcp-deps', repoPath: REPO_A, name: 'Dependency check', agentId: '', start: 'folder',
-    permissionMode: 'plan', skill: '', prompt: 'List outdated dependencies and what upgrading each would break. Change nothing.',
-    schedule: { kind: 'daily', time: '09:00', weekdaysOnly: true }, maxOpen: 1, paused: true,
+    id: 'sch-notes', repoPath: REPO_A, agentId: 'claude-code', skill: 'release-notes', start: 'folder', note: '',
+    permissionMode: 'plan', timing: { kind: 'daily', time: '09:00', weekdaysOnly: true }, maxOpen: 1, paused: true,
     scheduledFrom: now - 3 * 24 * 60 * min, checkedThrough: now - 3 * 24 * 60 * min, sessionIds: [],
   },
 ];
@@ -357,6 +355,7 @@ const api: Record<string, unknown> = {
     Object.assign(SETTINGS, next);
   },
   listSkills: async () => DEMO_SKILLS,
+  listAgentSkills: async () => DEMO_SKILLS,
   addSkill: async (_sid: string, _fallback: string, def: { name: string; description: string; scope: string }) => {
     const root = def.scope === 'project' ? 'C:/dev/grove-bench' : 'C:/Users/demo';
     const skill = {
@@ -417,17 +416,17 @@ const api: Record<string, unknown> = {
   setUnreadSessions: () => {},
   getTodoSessions: async () => [],
   setTodoSessions: () => {},
-  listRecipes: async () => structuredClone(demoRecipes),
-  saveRecipe: async (input: RecipeInput) => {
-    const old = demoRecipes.find((r) => r.id === input.id);
-    const recipe: Recipe = { ...input, id: old?.id ?? `rcp-${Date.now()}`, scheduledFrom: Date.now(), checkedThrough: Date.now(), sessionIds: old?.sessionIds ?? [] };
-    demoRecipes = old ? demoRecipes.map((r) => (r.id === recipe.id ? recipe : r)) : [...demoRecipes, recipe];
-    return structuredClone(recipe);
+  listSkillSchedules: async () => structuredClone(demoSchedules),
+  saveSkillSchedule: async (input: SkillScheduleInput) => {
+    const old = demoSchedules.find((s) => s.id === input.id);
+    const schedule: SkillSchedule = { ...input, id: old?.id ?? `sch-${Date.now()}`, scheduledFrom: Date.now(), checkedThrough: Date.now(), sessionIds: old?.sessionIds ?? [] };
+    demoSchedules = old ? demoSchedules.map((s) => (s.id === schedule.id ? schedule : s)) : [...demoSchedules, schedule];
+    return structuredClone(schedule);
   },
-  deleteRecipe: async (id: string) => { demoRecipes = demoRecipes.filter((r) => r.id !== id); },
-  recordRecipeRun: async () => null,
-  onRecipeDue: () => () => {},
-  onRecipesChanged: () => () => {},
+  deleteSkillSchedule: async (id: string) => { demoSchedules = demoSchedules.filter((s) => s.id !== id); },
+  recordSkillScheduleRun: async () => null,
+  onSkillScheduleDue: () => () => {},
+  onSkillSchedulesChanged: () => () => {},
   onAppError: () => () => {},
   reportError: () => {},
   reportFreeze: () => {},

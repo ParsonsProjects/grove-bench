@@ -17,6 +17,7 @@
 import crypto from 'node:crypto';
 import type { AcpAgentSetting } from '../../../shared/types.js';
 import { slugify } from '../../../shared/slug.js';
+import path from 'node:path';
 import type { AcpAgentDefinition } from './acp-adapter.js';
 import { openCodeEnv, verifyOpenRouterKey } from './opencode.js';
 import { verifyGeminiKey } from './gemini.js';
@@ -46,6 +47,11 @@ export const ACP_PRESETS: AcpAgentDefinition[] = [
     },
     verifyApiKey: (key) => verifyGeminiKey(key),
     installCommand: 'npm install -g @google/gemini-cli',
+    // https://geminicli.com/docs/cli/skills/
+    skillDirs: {
+      project: [path.join('.gemini', 'skills'), path.join('.agents', 'skills')],
+      user: [path.join('.gemini', 'skills'), path.join('.agents', 'skills')],
+    },
   },
   {
     id: 'copilot-cli',
@@ -61,6 +67,11 @@ export const ACP_PRESETS: AcpAgentDefinition[] = [
       setupUrl: 'https://github.com/github/copilot-cli',
     },
     installCommand: 'npm install -g @github/copilot',
+    // https://docs.github.com/en/copilot/reference/customization-cheat-sheet
+    skillDirs: {
+      project: [path.join('.github', 'skills'), path.join('.claude', 'skills'), path.join('.agents', 'skills')],
+      user: [path.join('.copilot', 'skills'), path.join('.agents', 'skills')],
+    },
   },
   {
     id: 'opencode',
@@ -84,6 +95,11 @@ export const ACP_PRESETS: AcpAgentDefinition[] = [
     verifyApiKey: (key) => verifyOpenRouterKey(key),
     spawnEnv: openCodeEnv,
     installCommand: 'npm install -g opencode-ai',
+    // https://opencode.ai/docs/skills/
+    skillDirs: {
+      project: [path.join('.opencode', 'skills'), path.join('.claude', 'skills'), path.join('.agents', 'skills')],
+      user: [path.join('.config', 'opencode', 'skills')],
+    },
   },
 ];
 

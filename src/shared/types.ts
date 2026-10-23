@@ -1,7 +1,7 @@
 import type { ToolView } from './tool-view.js';
 import type { LimitKind } from './limits.js';
 import type { ThreadItems } from './thread-items.js';
-import type { Recipe, RecipeInput, RecipeOutcome } from './recipes.js';
+import type { ScheduleOutcome, SkillSchedule, SkillScheduleInput } from './skill-schedules.js';
 
 // ─── Worktree ───
 
@@ -1393,6 +1393,9 @@ export interface GroveBenchAPI {
    *  Resolves the session's worktree when it is running; `fallbackPath`
    *  (typically the repo path) covers stopped sessions. */
   listSkills(sessionId: string, fallbackPath: string): Promise<SkillInfo[]>;
+  /** The skills an agent can see in a project, without a thread: for running
+   *  or scheduling one. Empty for an agent Grove can't list skills for. */
+  listAgentSkills(agentId: string, repoPath: string): Promise<SkillInfo[]>;
   /** Author a new skill for the session's agent provider. Project scope
    *  writes into the session's worktree; user scope applies to all repos. */
   addSkill(sessionId: string, fallbackPath: string, def: SkillDefinition): Promise<SkillInfo>;
@@ -1564,19 +1567,20 @@ export interface GroveBenchAPI {
   getTodoSessions(): Promise<string[] | null>;
   setTodoSessions(ids: string[]): void;
 
-  // Recipes (shared/recipes.ts)
-  /** The recipes, or null while app-state.json can't be read (a passing
+  // Skill schedules (shared/skill-schedules.ts)
+  /** The schedules, or null while app-state.json can't be read (a passing
    *  lock), so "none" is never mistaken for the real list. */
-  listRecipes(): Promise<Recipe[] | null>;
-  /** Save a new recipe (no id) or an edited one; the recipe as saved. */
-  saveRecipe(recipe: RecipeInput): Promise<Recipe>;
-  deleteRecipe(id: string): Promise<void>;
-  /** Note what a run did; the recipe as saved, or null if it was deleted. */
-  recordRecipeRun(id: string, outcome: Omit<RecipeOutcome, 'at'>): Promise<Recipe | null>;
-  /** A recipe's scheduled time came: start its thread. */
-  onRecipeDue(callback: (id: string) => void): () => void;
-  /** The scheduler changed the recipes (a run taken or missed). */
-  onRecipesChanged(callback: (recipes: Recipe[]) => void): () => void;
+  listSkillSchedules(): Promise<SkillSchedule[] | null>;
+  /** Save a new schedule (no id) or an edited one; the schedule as saved. */
+  saveSkillSchedule(schedule: SkillScheduleInput): Promise<SkillSchedule>;
+  deleteSkillSchedule(id: string): Promise<void>;
+  /** Note what a run did; the schedule as saved, or null if it was deleted
+   *  or the file can't be read just now. */
+  recordSkillScheduleRun(id: string, outcome: Omit<ScheduleOutcome, 'at'>): Promise<SkillSchedule | null>;
+  /** A schedule's time came: start its thread. */
+  onSkillScheduleDue(callback: (id: string) => void): () => void;
+  /** The scheduler changed the schedules (a run taken or missed). */
+  onSkillSchedulesChanged(callback: (schedules: SkillSchedule[]) => void): () => void;
 
   // App lifecycle
   onAppClosing(callback: () => void): () => void;
@@ -2174,6 +2178,7 @@ export const IPC = {
   AGENT_GET_CACHED_USAGE: 'agent:getCachedUsage',
   AGENT_MCP_LIST: 'agent:mcpList',
   SKILLS_LIST: 'skills:list',
+  SKILLS_LIST_FOR_AGENT: 'skills:listForAgent',
   SKILLS_ADD: 'skills:add',
   SKILLS_SUGGESTIONS_GET: 'skills:suggestionsGet',
   SKILLS_SUGGESTIONS_ANALYZE: 'skills:suggestionsAnalyze',
@@ -2220,14 +2225,14 @@ export const IPC = {
   APP_STATE_SET_UNREAD: 'appState:setUnreadSessions',
   APP_STATE_GET_TODO: 'appState:getTodoSessions',
   APP_STATE_SET_TODO: 'appState:setTodoSessions',
-  RECIPES_LIST: 'recipes:list',
-  RECIPES_SAVE: 'recipes:save',
-  RECIPES_DELETE: 'recipes:delete',
-  RECIPES_RECORD_RUN: 'recipes:recordRun',
-  /** Main → renderer: a recipe is due; the renderer starts its thread. */
-  RECIPE_DUE: 'recipes:due',
-  /** Main → renderer: the scheduler changed the recipes. */
-  RECIPES_CHANGED: 'recipes:changed',
+  SKILL_SCHEDULES_LIST: 'skillSchedules:list',
+  SKILL_SCHEDULES_SAVE: 'skillSchedules:save',
+  SKILL_SCHEDULES_DELETE: 'skillSchedules:delete',
+  SKILL_SCHEDULES_RECORD_RUN: 'skillSchedules:recordRun',
+  /** Main → renderer: a schedule is due; the renderer starts its thread. */
+  SKILL_SCHEDULE_DUE: 'skillSchedules:due',
+  /** Main → renderer: the scheduler changed the schedules. */
+  SKILL_SCHEDULES_CHANGED: 'skillSchedules:changed',
   /** Main → renderer: an uncaught main-process error. */
   APP_ERROR: 'app:error',
   /** Renderer → main: an uncaught renderer error, for the file log. */
