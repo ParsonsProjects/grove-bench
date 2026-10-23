@@ -18,7 +18,7 @@
   import { startSkillThread } from '../lib/skill-thread.js';
   import type { SkillPromptOpts } from '../lib/skill-prompt.js';
   import { lazyComponent } from '../lib/lazy-component.js';
-  import type { SkillChanges, SkillInfo, SkillSharing, SkillSuggestion } from '../../shared/types.js';
+  import type { SkillInfo, SkillSharing, SkillSuggestion } from '../../shared/types.js';
   import { Badge } from '$lib/components/ui/badge/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Notice } from '$lib/components/ui/notice/index.js';
@@ -67,7 +67,9 @@
   // ─── Share and Link (skills every agent can use) ───
 
   let sharing = $state<SkillSharing>({ toShare: [], toLink: [], broken: [] });
-  let sharingBusy = $state<'share' | 'link' | null>(null);
+  let sharingBusy = $state(false);
+  const toShareCount = $derived(sharing.toShare.length);
+  const linkCount = $derived(sharing.toLink.length + sharing.broken.length);
 
   async function refreshSharing() {
     try {
@@ -80,23 +82,33 @@
     void refreshSharing();
   }
 
-  /** Share or Link, then say what couldn't be done. Both change files in
-   *  the project, which show in the Changes tab. */
-  async function changeSharing(action: 'share' | 'link') {
+  /** What Share and Link would change, in one line; the details are under it. */
+  const sharingSummary = $derived([
+    toShareCount === 0 ? '' : toShareCount === 1 ? "1 skill isn't shared with every agent" : `${toShareCount} skills aren't shared with every agent`,
+    linkCount === 0 ? '' : linkCount === 1 ? '1 Claude Agent link needs updating' : `${linkCount} Claude Agent links need updating`,
+  ].filter(Boolean).join(' · '));
+  const sharingAction = $derived(toShareCount > 0 && linkCount > 0 ? 'Share and link' : toShareCount > 0 ? 'Share' : 'Link');
+
+  /** Share, then Link, as needed, and say what couldn't be done. Both change
+   *  files in the project, which show in the Changes tab. */
+  async function fixSharing() {
     if (sharingBusy) return;
-    sharingBusy = action;
-    const verb = action === 'share' ? 'share' : 'link';
+    sharingBusy = true;
+    const failed: string[] = [];
     try {
-      const result: SkillChanges = action === 'share'
-        ? await window.groveBench.shareSkills(sessionId, repoPath)
-        : await window.groveBench.linkSkills(sessionId, repoPath);
-      if (result.skipped.length > 0) {
-        store.setError(`Couldn't ${verb} ${result.skipped.map((s) => `"${s.name}" (${s.reason})`).join(', ')}.`);
+      if (toShareCount > 0) {
+        const result = await window.groveBench.shareSkills(sessionId, repoPath);
+        failed.push(...result.skipped.map((s) => `share "${s.name}" (${s.reason})`));
       }
+      if (linkCount > 0) {
+        const result = await window.groveBench.linkSkills(sessionId, repoPath);
+        failed.push(...result.skipped.map((s) => `link "${s.name}" (${s.reason})`));
+      }
+      if (failed.length > 0) store.setError(`Couldn't ${failed.join(', ')}.`);
     } catch (err) {
-      store.setError(`Couldn't ${verb} the skills: ${err instanceof Error ? err.message : String(err)}`);
+      store.setError(`Couldn't ${sharingAction.toLowerCase()} the skills: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
-      sharingBusy = null;
+      sharingBusy = false;
       refresh();
     }
   }
@@ -230,74 +242,47 @@
     </Button>
   {/if}
   <Button variant="quiet" size="inline" onclick={refresh} title="Re-scan skill directories">Refresh</Button>
+  <Button
+    variant="subtle"
+    size="2xs"
+    onclick={() => { addSkillOpen = true; }}
+    title="Author a new skill every agent can use — write it yourself or hand it to the agent"
+  ><PlusIcon />Add skill</Button>
 </div>
 
 {#if settingsStore.error}
   <Notice tone="danger" class="mb-2 break-words">{settingsStore.error}</Notice>
 {/if}
 
-{#if sharing.toShare.length > 0}
-  {@const count = sharing.toShare.length}
-  <Notice class="mb-2" title="Share {count === 1 ? 'a skill' : `${count} skills`} with every agent">
+{#if toShareCount > 0 || linkCount > 0}
+  <Notice class="mb-3">
     {#snippet actions()}
       <Button
-        variant="subtle"
+        variant="secondary"
         size="2xs"
-        onclick={() => changeSharing('share')}
-        disabled={sharingBusy !== null}
-        title="Move these skills to .agents/skills and leave a link for Claude Agent"
-      >{sharingBusy === 'share' ? 'Sharing…' : 'Share'}</Button>
+        onclick={fixSharing}
+        disabled={sharingBusy}
+        title="Move skills only Claude Agent's folder has to .agents/skills, and bring Claude Agent's links in line with it"
+      >{sharingBusy ? 'Working…' : sharingAction}</Button>
     {/snippet}
-    <p>
-      {nameList(sharing.toShare)} {count === 1 ? 'is' : 'are'} in <span class="font-mono">.claude/skills</span>, which only some agents read. Share moves {count === 1 ? 'it' : 'them'}
-      to <span class="font-mono">.agents/skills</span>, where every agent looks, and leaves a link so Claude Agent still finds {count === 1 ? 'it' : 'them'}.
-    </p>
+    <details>
+      <summary class="cursor-pointer">{sharingSummary}</summary>
+      <div class="mt-1 space-y-1 text-muted-foreground">
+        {#if toShareCount > 0}
+          <p>
+            {nameList(sharing.toShare)} {toShareCount === 1 ? 'is' : 'are'} in <span class="font-mono">.claude/skills</span>, which only some agents read.
+            Share moves {toShareCount === 1 ? 'it' : 'them'} to <span class="font-mono">.agents/skills</span>, where every agent looks, and leaves a link so Claude Agent still finds {toShareCount === 1 ? 'it' : 'them'}.
+          </p>
+        {/if}
+        {#if linkCount > 0}
+          <p>
+            Claude Agent doesn't read <span class="font-mono">.agents/skills</span>, so it finds shared skills through links in <span class="font-mono">.claude/skills</span>.
+            {linkPlan(sharing)}
+          </p>
+        {/if}
+      </div>
+    </details>
   </Notice>
-{/if}
-
-{#if sharing.toLink.length > 0 || sharing.broken.length > 0}
-  <Notice class="mb-2" title="Claude Agent's links need updating">
-    {#snippet actions()}
-      <Button
-        variant="subtle"
-        size="2xs"
-        onclick={() => changeSharing('link')}
-        disabled={sharingBusy !== null}
-        title="Bring Claude Agent's links in line with .agents/skills"
-      >{sharingBusy === 'link' ? 'Linking…' : 'Link'}</Button>
-    {/snippet}
-    <p>
-      Claude Agent doesn't read <span class="font-mono">.agents/skills</span>, so it finds shared skills through links in <span class="font-mono">.claude/skills</span>.
-      {linkPlan(sharing)}
-    </p>
-  </Notice>
-{/if}
-
-{#if managed && suggestions.length > 0}
-  <div class="mb-3 pb-3 border-b border-border">
-    <SectionLabel class="mb-1.5">Suggested from your threads</SectionLabel>
-    <div class="space-y-2">
-      {#each suggestions as suggestion (suggestion.id)}
-        <div>
-          <div class="flex items-center gap-1.5">
-            <span class="w-1.5 h-1.5 bg-blue-400 shrink-0"></span>
-            <span class="font-mono text-xs truncate text-foreground flex-1 min-w-0" title={suggestion.description}>{suggestion.name}</span>
-            <Button variant="outline-success" size="2xs" onclick={() => createFromSuggestion(suggestion)} title="Open the Add Skill dialog prefilled with this suggestion">Create</Button>
-            <Button
-              variant="subtle"
-              size="2xs"
-              onclick={() => askAgentFromSuggestion(suggestion)}
-              title={store.isFolderProject(repoPath)
-                ? 'Start a new thread in the project folder where the agent writes this skill, with the mined evidence as notes'
-                : 'Start a new thread on a branch of its own where the agent writes this skill, with the mined evidence as notes'}
-            >Agent</Button>
-            <Button variant="subtle" size="icon-2xs" onclick={() => dismissSkillSuggestion(suggestion.id)} title="Dismiss — this suggestion won't come back" aria-label="Dismiss suggestion"><XIcon /></Button>
-          </div>
-          <div class="text-muted-foreground text-micro ml-3" title={suggestion.evidence.join('\n')}>{suggestion.rationale}</div>
-        </div>
-      {/each}
-    </div>
-  </div>
 {/if}
 
 <div class="space-y-2">
@@ -333,10 +318,12 @@
         {/if}
         <span class="flex-1"></span>
         {#if managed}
+          <!-- Turning a skill off is reversible, so it stays quiet; red is
+               for what can't be undone. -->
           {#if disabled}
             <Button variant="outline-success" size="2xs" onclick={() => setSkillEnabled(skill.name, true)} disabled={skillsBusy[skill.name]} title="Re-enable this skill">Enable</Button>
           {:else}
-            <Button variant="outline-destructive" size="2xs" onclick={() => setSkillEnabled(skill.name, false)} disabled={skillsBusy[skill.name]} title="Hide this skill from agents">Disable</Button>
+            <Button variant="quiet" size="2xs" onclick={() => setSkillEnabled(skill.name, false)} disabled={skillsBusy[skill.name]} title="Hide this skill from agents">Disable</Button>
           {/if}
         {/if}
       </div>
@@ -348,21 +335,40 @@
   {/each}
 </div>
 
-<div class="flex items-center gap-2 mt-3 pt-3 border-t border-border">
-  <span class="text-muted-foreground text-micro flex-1">
-    {#if managed}
-      Turning a skill off applies to all projects, when a thread's agent (re)starts. Running turns keep their current skills.
-    {:else}
-      Skills from {agentsStore.get(agentId)?.displayName ?? 'this agent'}'s own folders. Turn them off there.
-    {/if}
-  </span>
-  <Button
-    variant="subtle"
-    size="2xs"
-    onclick={() => { addSkillOpen = true; }}
-    title="Author a new skill every agent can use — write it yourself or hand it to the agent"
-  ><PlusIcon />Add skill</Button>
-</div>
+{#if managed && suggestions.length > 0}
+  <div class="mt-3 pt-3 border-t border-border">
+    <SectionLabel class="mb-1.5">Suggested from your threads</SectionLabel>
+    <div class="space-y-2">
+      {#each suggestions as suggestion (suggestion.id)}
+        <div>
+          <div class="flex items-center gap-1.5">
+            <span class="w-1.5 h-1.5 bg-blue-400 shrink-0"></span>
+            <span class="font-mono text-xs truncate text-foreground flex-1 min-w-0" title={suggestion.description}>{suggestion.name}</span>
+            <Button variant="outline-success" size="2xs" onclick={() => createFromSuggestion(suggestion)} title="Open the Add Skill dialog prefilled with this suggestion">Create</Button>
+            <Button
+              variant="subtle"
+              size="2xs"
+              onclick={() => askAgentFromSuggestion(suggestion)}
+              title={store.isFolderProject(repoPath)
+                ? 'Start a new thread in the project folder where the agent writes this skill, with the mined evidence as notes'
+                : 'Start a new thread on a branch of its own where the agent writes this skill, with the mined evidence as notes'}
+            >Ask agent</Button>
+            <Button variant="subtle" size="icon-2xs" onclick={() => dismissSkillSuggestion(suggestion.id)} title="Dismiss — this suggestion won't come back" aria-label="Dismiss suggestion"><XIcon /></Button>
+          </div>
+          <div class="text-muted-foreground text-micro ml-3" title={suggestion.evidence.join('\n')}>{suggestion.rationale}</div>
+        </div>
+      {/each}
+    </div>
+  </div>
+{/if}
+
+<p class="text-muted-foreground text-caption mt-3 pt-3 border-t border-border">
+  {#if managed}
+    Turning a skill off applies to all projects, when a thread's agent (re)starts. Running turns keep their current skills.
+  {:else}
+    Skills from {agentsStore.get(agentId)?.displayName ?? 'this agent'}'s own folders. Turn them off there.
+  {/if}
+</p>
 
 {#if addSkillOpen}
   {#await loadAddSkillDialog() then AddSkillDialog}

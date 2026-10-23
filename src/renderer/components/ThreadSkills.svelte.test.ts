@@ -122,15 +122,16 @@ describe('ThreadSkills', () => {
       toLink: [],
       broken: [],
     });
-    mockGroveBench.shareSkills.mockResolvedValue({ done: ['triage'], skipped: [{ name: 'deploy', reason: 'a file in it is open in another program' }] });
+    mockGroveBench.shareSkills.mockResolvedValueOnce({ done: ['triage'], skipped: [{ name: 'deploy', reason: 'a file in it is open in another program' }] });
     render(ThreadSkills, { sessionId: 't1' });
-    expect(await screen.findByText('Share 2 skills with every agent')).toBeInTheDocument();
+    expect(await screen.findByText("2 skills aren't shared with every agent")).toBeInTheDocument();
     expect(screen.getByText(/triage and deploy are in/)).toBeInTheDocument();
+    expect(mockGroveBench.linkSkills).not.toHaveBeenCalled();
     mockGroveBench.listSkills.mockClear();
     await fireEvent.click(screen.getByRole('button', { name: 'Share' }));
     expect(mockGroveBench.shareSkills).toHaveBeenCalledWith('t1', '/repo');
     await waitFor(() => expect(store.error).toBe(`Couldn't share "deploy" (a file in it is open in another program).`));
-    await waitFor(() => expect(screen.queryByText('Share 2 skills with every agent')).toBeNull());
+    await waitFor(() => expect(screen.queryByText("2 skills aren't shared with every agent")).toBeNull());
     expect(mockGroveBench.listSkills).toHaveBeenCalled();
     store.setError(null);
   });
@@ -143,10 +144,45 @@ describe('ThreadSkills', () => {
       broken: [{ name: 'gone', description: '', source: 'project' }],
     });
     render(ThreadSkills, { sessionId: 't1' });
-    expect(await screen.findByText(/adds or updates the links for team, and removes the links to gone, which was deleted\./)).toBeInTheDocument();
+    expect(await screen.findByText('2 Claude Agent links need updating')).toBeInTheDocument();
+    expect(screen.getByText(/adds or updates the links for team, and removes the links to gone, which was deleted\./)).toBeInTheDocument();
     await fireEvent.click(screen.getByRole('button', { name: 'Link' }));
     expect(mockGroveBench.linkSkills).toHaveBeenCalledWith('t1', '/repo');
+    expect(mockGroveBench.shareSkills).not.toHaveBeenCalled();
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Link' })).toBeNull());
     expect(store.error).toBeNull();
+  });
+
+  it('shares, then links, from one line when both are needed, and says what failed in each', async () => {
+    thread('claude-code');
+    mockGroveBench.getSkillSharing.mockResolvedValueOnce({
+      toShare: [{ name: 'own', description: '', source: 'project' }],
+      toLink: [{ name: 'team', description: '', source: 'project' }],
+      broken: [],
+    });
+    const order: string[] = [];
+    mockGroveBench.shareSkills.mockImplementationOnce(async () => { order.push('share'); return { done: ['own'], skipped: [] }; });
+    mockGroveBench.linkSkills.mockImplementationOnce(async () => { order.push('link'); return { done: [], skipped: [{ name: 'team', reason: 'denied' }] }; });
+    render(ThreadSkills, { sessionId: 't1' });
+    expect(await screen.findByText("1 skill isn't shared with every agent · 1 Claude Agent link needs updating")).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'Share and link' }));
+    await waitFor(() => expect(order).toEqual(['share', 'link']));
+    await waitFor(() => expect(store.error).toBe(`Couldn't link "team" (denied).`));
+    store.setError(null);
+  });
+
+  it('puts Add skill at the top and the skills before suggestions, with a quiet Disable', async () => {
+    thread('claude-code');
+    mockGroveBench.getSkillSuggestions.mockResolvedValueOnce([
+      { id: 's1', name: 'smoke-test', description: 'd', rationale: 'Same command in 5 threads', evidence: [], draftInstructions: '', sessionCount: 5 },
+    ]);
+    render(ThreadSkills, { sessionId: 't1' });
+    const ask = await screen.findByRole('button', { name: 'Ask agent' });
+    const run = screen.getByRole('button', { name: 'Run triage in a new thread' });
+    const add = screen.getByRole('button', { name: /Add skill/ });
+    expect(add.compareDocumentPosition(run) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(run.compareDocumentPosition(ask) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // Not red: only the base's aria-invalid styles name destructive.
+    expect(screen.getByRole('button', { name: 'Disable' }).className).not.toMatch(/(^|\s)(text|border)-destructive/);
   });
 });

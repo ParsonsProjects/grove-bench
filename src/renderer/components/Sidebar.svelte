@@ -13,6 +13,7 @@
   import { todoStore } from '../stores/todo.svelte.js';
   import { schedulesStore } from '../stores/schedules.svelte.js';
   import { skillsPanelStore } from '../stores/skillsPanel.svelte.js';
+  import WandSparklesIcon from '@lucide/svelte/icons/wand-sparkles';
   import SidebarGroups from './SidebarGroups.svelte';
   import SidebarSection from './SidebarSection.svelte';
   import AttentionCounts from './AttentionCounts.svelte';
@@ -923,7 +924,7 @@
 >
   <!-- Described once, for every row's ✕. -->
   <span id="close-conversation-hint" hidden>{CLOSE_HINT}</span>
-  <!-- Bookmarks, memory, clean-up and settings: in the footer, or down the rail -->
+  <!-- Bookmarks, memory, skills, clean-up and settings: in the footer, or down the rail -->
   {#snippet footerTools()}
     <Button
       onclick={() => bookmarkStore.toggleDrawer()}
@@ -942,6 +943,18 @@
       title="Project Memory"
     >
       <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2c-1.5 0-3 .8-4 2s-1.5 3-2.5 3.5C4 8.5 3 10 3 12c0 1.5.5 3 1.5 4s1 2.5.5 3.5c.5 1.5 2 2.5 3.5 2.5H12"/><path d="M12 2c1.5 0 3 .8 4 2s1.5 2.5 2.5 3c1.5 1 2 2.5 2 4"/><path d="M12 2v20"/><path d="M12 8h5"/><path d="M12 14h4"/><circle cx="17.5" cy="8" r="1.2" fill="currentColor"/><circle cx="16.5" cy="14" r="1.2" fill="currentColor"/></svg>
+    </Button>
+    <!-- Always here, so the drawer opens even when a narrow status bar
+         has dropped its Skills count. -->
+    <Button
+      onclick={() => (store.activeSessionId ? skillsPanelStore.showThread() : skillsPanelStore.showScheduled())}
+      variant="quiet"
+      size="sm"
+      class="px-2 shrink-0"
+      title="Skills: run, schedule and share them"
+      aria-label="Skills"
+    >
+      <WandSparklesIcon class="size-4" />
     </Button>
     <Button
       onclick={openCleanup}

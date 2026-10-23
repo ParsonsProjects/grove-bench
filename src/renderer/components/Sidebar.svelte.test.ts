@@ -19,6 +19,7 @@ import { groupStore } from '../stores/groups.svelte.js';
 import { todoStore } from '../stores/todo.svelte.js';
 import { draftStore } from '../stores/draft.svelte.js';
 import { gitStatusStore } from '../stores/gitStatus.svelte.js';
+import { skillsPanelStore } from '../stores/skillsPanel.svelte.js';
 
 beforeEach(() => {
   // Call counts start from zero in every test, whatever ran before it.
@@ -821,6 +822,26 @@ describe('Sidebar new conversation row', () => {
   it('leaves no new conversation button at the bottom', () => {
     render(Sidebar);
     expect(screen.getAllByRole('button', { name: 'New thread' })).toHaveLength(1);
+  });
+});
+
+describe('Sidebar Skills button', () => {
+  afterEach(() => {
+    skillsPanelStore.close();
+    store.activeSessionId = null;
+  });
+
+  it("opens the Skills drawer on the open thread's skills, or on Scheduled with none open", async () => {
+    store.activeSessionId = null;
+    render(Sidebar);
+    await fireEvent.click(screen.getByRole('button', { name: 'Skills' }));
+    expect(skillsPanelStore).toMatchObject({ open: true, tab: 'scheduled' });
+    skillsPanelStore.close();
+
+    store.activeSessionId = store.sessions[0]?.id ?? 's1';
+    await tick();
+    await fireEvent.click(screen.getByRole('button', { name: 'Skills' }));
+    expect(skillsPanelStore).toMatchObject({ open: true, tab: 'thread' });
   });
 });
 

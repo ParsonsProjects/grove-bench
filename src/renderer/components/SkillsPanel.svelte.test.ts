@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
-import { render, cleanup, screen, fireEvent } from '@testing-library/svelte';
+import { render, cleanup, screen, fireEvent, waitFor } from '@testing-library/svelte';
 import { mockGroveBench } from '../__mocks__/setup.js';
 
 import SkillsPanel from './SkillsPanel.svelte';
@@ -9,12 +9,15 @@ import { schedulesStore } from '../stores/schedules.svelte.js';
 import { store } from '../stores/sessions.svelte.js';
 import { agentsStore } from '../stores/agents.svelte.js';
 
-// jsdom has no Web Animations; the drawer's slide runs through them.
+// jsdom has no Web Animations, which the drawer's slide runs through, and
+// no scrollIntoView, which a dropdown calls on its picked option.
 const realAnimate = Element.prototype.animate;
+const realScroll = Element.prototype.scrollIntoView;
 
 beforeEach(() => {
   vi.clearAllMocks();
   Element.prototype.animate = vi.fn(() => ({ onfinish: null, cancel() {}, finished: Promise.resolve(), currentTime: 0 }) as unknown as Animation) as never;
+  Element.prototype.scrollIntoView = function scrollIntoView() {};
   store.repos = ['/repo'];
   store.sessions = [{ id: 't1', branch: 'b', repoPath: '/repo', status: 'running', agentType: 'gemini-cli', createdAt: 0 }] as typeof store.sessions;
   store.activeSessionId = 't1';
@@ -29,15 +32,15 @@ afterEach(() => {
   skillsPanelStore.close();
   store.sessions = [];
   store.activeSessionId = null;
-  document.querySelectorAll('[data-test-listbox]').forEach((el) => el.remove());
   Element.prototype.animate = realAnimate;
+  Element.prototype.scrollIntoView = realScroll;
 });
 
 describe('SkillsPanel', () => {
   it("shows the open thread's skills on This thread", async () => {
     skillsPanelStore.showThread();
     render(SkillsPanel);
-    expect(screen.getByRole('complementary', { name: 'Skills' })).toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: 'Skills' })).toHaveAttribute('aria-modal', 'true');
     expect(await screen.findByRole('button', { name: 'Run triage in a new thread' })).toBeInTheDocument();
   });
 
@@ -55,24 +58,62 @@ describe('SkillsPanel', () => {
     expect(screen.getByText("Open a thread to see its agent's skills.")).toBeInTheDocument();
   });
 
+  /** Escape where the keyboard is. */
+  const escape = () => fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+
   it('closes the form, then the drawer, on Escape', async () => {
     skillsPanelStore.editSchedule('/repo', { agentId: 'gemini-cli', skill: 'triage' });
     render(SkillsPanel);
-    await fireEvent.keyDown(window, { key: 'Escape' });
+    await escape();
     expect(skillsPanelStore.form).toBeNull();
     expect(skillsPanelStore.open).toBe(true);
-    await fireEvent.keyDown(window, { key: 'Escape' });
+    await escape();
     expect(skillsPanelStore.open).toBe(false);
   });
 
-  it('leaves Escape to an open dropdown', async () => {
+  it('moves focus to the open tab, and keeps it in the drawer', async () => {
+    const outside = document.createElement('button');
+    document.body.appendChild(outside);
+    outside.focus();
     skillsPanelStore.showThread();
     render(SkillsPanel);
-    const listbox = document.createElement('div');
-    listbox.setAttribute('role', 'listbox');
-    listbox.setAttribute('data-test-listbox', '');
-    document.body.appendChild(listbox);
-    await fireEvent.keyDown(window, { key: 'Escape' });
+    await waitFor(() => expect(screen.getByRole('tab', { name: 'This thread' })).toHaveFocus());
+    outside.focus();
+    await waitFor(() => expect(screen.getByRole('dialog', { name: 'Skills' }).contains(document.activeElement)).toBe(true));
+    outside.remove();
+  });
+
+  it('gives focus back on close, but not once Run has opened a new thread', async () => {
+    const opener = document.createElement('button');
+    document.body.appendChild(opener);
+    opener.focus();
+    skillsPanelStore.showThread();
+    render(SkillsPanel);
+    await waitFor(() => expect(opener).not.toHaveFocus());
+    skillsPanelStore.close();
+    await waitFor(() => expect(opener).toHaveFocus());
+    cleanup();
+
+    opener.focus();
+    skillsPanelStore.showThread();
+    render(SkillsPanel);
+    await waitFor(() => expect(opener).not.toHaveFocus());
+    store.activeSessionId = 'started-by-run';
+    skillsPanelStore.close();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(opener).not.toHaveFocus();
+    opener.remove();
+  });
+
+  it('leaves Escape to a dropdown open in it', async () => {
+    skillsPanelStore.editSchedule('/repo', { agentId: 'gemini-cli', skill: 'triage' });
+    render(SkillsPanel);
+    const mode = await screen.findByLabelText('Mode');
+    await fireEvent.keyDown(mode, { key: 'Enter' });
+    expect(await screen.findByRole('listbox')).toBeInTheDocument();
+    await escape();
+    await waitFor(() => expect(screen.queryByRole('listbox')).toBeNull());
+    expect(skillsPanelStore.form).not.toBeNull();
     expect(skillsPanelStore.open).toBe(true);
   });
 
