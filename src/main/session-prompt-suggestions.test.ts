@@ -4,6 +4,10 @@ vi.mock('./background-tasks.js', () => ({ backgroundModelFor: () => 'small-model
 vi.mock('./logger.js', () => ({ logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
 const settingsMock = vi.hoisted(() => ({ promptSuggestions: true }));
 vi.mock('./settings.js', () => ({ getSettings: () => settingsMock }));
+const goal = vi.hoisted(() => ({ text: null as string | null }));
+vi.mock('./worktree-manager.js', () => ({
+  worktreeManager: { getGoal: vi.fn(async () => ({ text: goal.text, source: goal.text ? 'auto' : null, hidden: false })) },
+}));
 
 import {
   suggestionInputFromEvents,
@@ -36,8 +40,19 @@ describe('suggestionInputFromEvents', () => {
     ];
     expect(suggestionInputFromEvents(events)).toEqual({
       prompts: ['Also Excel', 'Fix the header row', 'Now the footer'],
+      first: 'Add CSV export',
       reply: 'Footer fixed. Want me to run the tests?',
     });
+  });
+
+  it('leaves the first message out when it is one of the latest three', () => {
+    const events = [user('/model x'), user('Add CSV export'), reply('Done.'), user('Also Excel'), reply('Added.')];
+    expect(suggestionInputFromEvents(events).first).toBeNull();
+  });
+
+  it('caps a long first message', () => {
+    const events = [user('a'.repeat(5_000)), user('b'), user('c'), user('d'), reply('ok')];
+    expect(suggestionInputFromEvents(events).first).toBe(`${'a'.repeat(1_000)}\n... (truncated)`);
   });
 
   it('reads only the part since the last agent switch', () => {
@@ -48,14 +63,14 @@ describe('suggestionInputFromEvents', () => {
       user('New agent work'),
       reply('New reply'),
     ];
-    expect(suggestionInputFromEvents(events)).toEqual({ prompts: ['New agent work'], reply: 'New reply' });
+    expect(suggestionInputFromEvents(events)).toEqual({ prompts: ['New agent work'], first: null, reply: 'New reply' });
   });
 });
 
 describe('buildSuggestionPrompt', () => {
   it('fences the messages and keeps the end of a long reply', () => {
     const long = `${'x'.repeat(5_000)}Shall I commit?`;
-    const prompt = buildSuggestionPrompt({ prompts: ['Fix it', 'Thanks'], reply: long });
+    const prompt = buildSuggestionPrompt({ prompts: ['Fix it', 'Thanks'], first: null, reply: long });
     expect(prompt).toContain('<message>\nFix it\n</message>\n<message>\nThanks\n</message>');
     expect(prompt).toContain('Shall I commit?\n</reply>');
     expect(prompt).not.toContain('x'.repeat(3_001));
@@ -63,7 +78,15 @@ describe('buildSuggestionPrompt', () => {
   });
 
   it('leaves the reply out when there is none', () => {
-    expect(buildSuggestionPrompt({ prompts: ['Fix it'], reply: null })).not.toContain('<reply>');
+    expect(buildSuggestionPrompt({ prompts: ['Fix it'], first: null, reply: null })).not.toContain('<reply>');
+  });
+
+  it('leads with the thread\'s goal, else the first message', () => {
+    const input = { prompts: ['Fix it'], first: 'Add CSV export', reply: null };
+    const withGoal = buildSuggestionPrompt(input, 'Add CSV and Excel export to reports');
+    expect(withGoal.startsWith('The thread\'s goal:\n<goal>\nAdd CSV and Excel export to reports\n</goal>')).toBe(true);
+    expect(withGoal).not.toContain('Add CSV export\n');
+    expect(buildSuggestionPrompt(input).startsWith('The user\'s first message, which set the task:\n<message>\nAdd CSV export\n</message>')).toBe(true);
   });
 });
 
@@ -118,6 +141,7 @@ describe('SessionPromptSuggestions', () => {
 
   beforeEach(() => {
     settingsMock.promptSuggestions = true;
+    goal.text = null;
   });
 
   it('asks the agent on its background model and emits the suggestion', async () => {
@@ -162,6 +186,7 @@ describe('SessionPromptSuggestions', () => {
     let answer!: (text: string) => void;
     const session = makeSession(() => new Promise<string>((resolve) => { answer = resolve; }));
     new SessionPromptSuggestions().afterTurn(session, result(), emit, () => true);
+    await settle();
     // A rewind cut the thread back to an earlier message.
     session.eventHistory = history.slice(0, 2);
     answer('Run the tests');
@@ -180,10 +205,43 @@ describe('SessionPromptSuggestions', () => {
     });
     const suggestions = new SessionPromptSuggestions();
     suggestions.afterTurn(makeSession(generateText), result(), emit, () => true);
+    await settle();
     suggestions.cancel('s1');
     await settle();
     expect(signal?.aborted).toBe(true);
     expect(emit).not.toHaveBeenCalled();
+  });
+
+  it('does not start the agent when a prompt is sent before the request is made', async () => {
+    const generateText = vi.fn(async () => 'Run the tests');
+    const suggestions = new SessionPromptSuggestions();
+    suggestions.afterTurn(makeSession(generateText), result(), vi.fn(), () => true);
+    suggestions.cancel('s1');
+    await settle();
+    expect(generateText).not.toHaveBeenCalled();
+  });
+
+  it('sends the thread\'s goal when it has one', async () => {
+    goal.text = 'Add CSV and Excel export to reports';
+    const generateText = vi.fn(async () => 'Run the tests');
+    new SessionPromptSuggestions().afterTurn(makeSession(generateText), result(), vi.fn(), () => true);
+    await settle();
+    expect(generateText).toHaveBeenCalledWith(SUGGESTION_SYSTEM_PROMPT, expect.stringContaining('<goal>\nAdd CSV and Excel export to reports\n</goal>'), expect.anything());
+  });
+
+  it('does not send the goal of a thread that switched agents', async () => {
+    goal.text = 'Summary of the old agent\'s work';
+    const generateText = vi.fn(async (_system: string, _user: string) => 'Run the tests');
+    const switched = [
+      user('Old work'), reply('Old reply'),
+      { type: 'agent_changed', from: 'a', to: 'gemini', fromName: 'A', toName: 'Gemini', transcript: false } as AgentEvent,
+      ...history,
+    ];
+    new SessionPromptSuggestions().afterTurn(makeSession(generateText, { eventHistory: switched }), result(), vi.fn(), () => true);
+    await settle();
+    const sent = generateText.mock.calls[0][1];
+    expect(sent).not.toContain('<goal>');
+    expect(sent).not.toContain('Old work');
   });
 
   it('stops asking a thread after two failures in a row', async () => {
