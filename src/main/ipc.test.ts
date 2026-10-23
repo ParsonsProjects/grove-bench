@@ -82,7 +82,7 @@ vi.mock('./git.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./git.js')>();
   const runsGit = [
     'git', 'validateBranchName', 'branchExists', 'branchExistsAnywhere', 'listBranches', 'getDefaultBranch', 'fileDiff',
-    'fileDiffAgainst', 'resolveMergeBase', 'indexFileContent', 'hashWorkingFiles', 'listProjectFiles', 'revertFile',
+    'fileDiffAgainst', 'resolveMergeBase', 'blobLines', 'hashWorkingFiles', 'listProjectFiles', 'revertFile',
     'stageFile', 'unstageFile', 'commit', 'push', 'syncStatus', 'branchCommits', 'logCommits', 'rebaseOnto', 'cherryPick',
     'squashSince', 'currentBranch', 'recentCheckouts', 'worktreeBranches', 'isTracked',
   ];
@@ -1140,9 +1140,12 @@ describe('file handlers', () => {
     write('bin.dat', Buffer.from([0x50, 0x00, 0x01, 0x02]));
     expect(await invoke(IPC.FILE_LINES, 's1', 'bin.dat')).toBeNull();
 
-    vi.mocked(git.indexFileContent).mockResolvedValue('x\ny');
+    vi.mocked(git.blobLines).mockResolvedValue(['x', 'y']);
     expect(await invoke(IPC.FILE_LINES, 's1', 'lines.ts', true)).toEqual({ lines: ['x', 'y'] });
-    expect(git.indexFileContent).toHaveBeenCalledWith(wt, 'lines.ts');
+    expect(git.blobLines).toHaveBeenCalledWith(wt, '', 'lines.ts');
+    // Over the limit or binary in the index too.
+    vi.mocked(git.blobLines).mockResolvedValue(null);
+    expect(await invoke(IPC.FILE_LINES, 's1', 'lines.ts', true)).toBeNull();
   });
 
   it('FILE_DIFF: images get a thumbnail view, untracked files a synthesized diff', async () => {

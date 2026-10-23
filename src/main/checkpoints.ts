@@ -1,7 +1,7 @@
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
-import { git, gitEnv, gitPatch, detectBinaryDiff, imageExtFor, patchResult, patchOverLimit } from './git.js';
+import { git, gitEnv, gitPatch, blobLines, detectBinaryDiff, imageExtFor, patchResult, patchOverLimit } from './git.js';
 import { parseDiffRaw, parseNumstat as parseNumstatRows } from './git-status-parser.js';
 import { logger } from './logger.js';
 import type { CheckpointDiffScope, DiffHistoryEntry, DiffHistoryResult, DiffStats, FileDiffResult, FileLinesResult, GitStatusResult } from '../shared/types.js';
@@ -432,11 +432,8 @@ export class CheckpointManager {
     const range = await this.range(sessionId, cwd, uuid, scope);
     if (!range) return null;
     try {
-      const content = await git(['show', `${range.to}:${relPath}`], cwd);
-      if (content.includes('\0')) return null;
-      const lines = content.split('\n');
-      if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
-      return { lines };
+      const lines = await blobLines(cwd, range.to, relPath);
+      return lines ? { lines } : null;
     } catch {
       return null;
     }

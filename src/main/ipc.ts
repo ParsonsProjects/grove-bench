@@ -15,7 +15,7 @@ import { adapterRegistry, registerClaudeAccount } from './adapters/index.js';
 import { claudeAccounts, isClaudeAccountId, newClaudeAccount } from './adapters/claude-accounts.js';
 import type { AgentAdapter } from './adapters/types.js';
 import { agentForProject, recordedAgent } from './background-tasks.js';
-import { validateBranchName, branchExists, branchExistsAnywhere, worktreeBranches, listBranches, getDefaultBranch, git, fileDiff, fileDiffAgainst, isTracked, patchResult, patchOverLimit, MAX_TEXT_FILE_BYTES, resolveMergeBase, indexFileContent, hashWorkingFiles, listProjectFiles, revertFile, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, logCommits, rebaseOnto, cherryPick, squashSince, currentBranch, recentCheckouts, getGitIdentity, gitVersion } from './git.js';
+import { validateBranchName, branchExists, branchExistsAnywhere, worktreeBranches, listBranches, getDefaultBranch, git, fileDiff, fileDiffAgainst, isTracked, patchResult, patchOverLimit, MAX_TEXT_FILE_BYTES, resolveMergeBase, blobLines, hashWorkingFiles, listProjectFiles, revertFile, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, textLines, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, logCommits, rebaseOnto, cherryPick, squashSince, currentBranch, recentCheckouts, getGitIdentity, gitVersion } from './git.js';
 import { inspectProjectFolder, projectKind } from './project-path.js';
 import { prsForBranches, prCreate, prReviewComments, ghLogin, isNetworkError, isRateLimitError, openPrs, GH_OFFLINE_COOLDOWN_MS, GH_OFFLINE_MESSAGE, GH_RATE_LIMITED_MESSAGE } from './gh.js';
 import { tempBranchName, isTempBranch, generateBranchName } from './branch-name.js';
@@ -1418,19 +1418,14 @@ export function registerHandlers() {
     if (!worktree) return null;
     const { relPath, resolved } = sanitizeWorktreeRelPath(worktree.path, filePath);
     try {
-      let content: string;
+      // The index's copy for a staged diff, under the same limits.
       if (staged) {
-        content = await indexFileContent(worktree.path, relPath);
-      } else {
-        if ((await fs.stat(resolved)).size > MAX_TEXT_FILE_BYTES) return null;
-        const buf = await fs.readFile(resolved);
-        if (looksBinary(buf)) return null;
-        content = buf.toString('utf-8');
+        const lines = await blobLines(worktree.path, '', relPath);
+        return lines ? { lines } : null;
       }
-      const lines = content.split('\n');
-      // A trailing newline yields an empty final element that is not a real line.
-      if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
-      return { lines };
+      if ((await fs.stat(resolved)).size > MAX_TEXT_FILE_BYTES) return null;
+      const lines = textLines(await fs.readFile(resolved));
+      return lines ? { lines } : null;
     } catch {
       return null;
     }

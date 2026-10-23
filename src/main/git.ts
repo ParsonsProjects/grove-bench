@@ -484,9 +484,24 @@ async function isAncestor(cwd: string, ancestor: string, descendant: string): Pr
   }
 }
 
-/** Working-tree content of a file as the index sees it (`git show :path`). */
-export async function indexFileContent(cwd: string, relPath: string): Promise<string> {
-  return git(['show', `:${relPath}`], cwd);
+/**
+ * The lines of a file as `rev` (a tree or commit, or '' for the index)
+ * holds it, for expanding a diff's context. Null when it's over
+ * MAX_TEXT_FILE_BYTES, where git is stopped before the rest is read, or
+ * binary; throws when `rev` has no such file. Read as raw bytes, so the
+ * limit and textLines treat it as they do the working-tree copy.
+ */
+export async function blobLines(cwd: string, rev: string, relPath: string): Promise<string[] | null> {
+  // <rev>:<path> takes forward slashes only.
+  const object = `${rev}:${relPath.replace(/\\/g, '/')}`;
+  let stdout: Uint8Array;
+  try {
+    ({ stdout } = await runProcess('git', ['cat-file', 'blob', object], { cwd, encoding: 'buffer', stripFinalNewline: false, maxBuffer: MAX_TEXT_FILE_BYTES }));
+  } catch (e) {
+    if ((e as { isMaxBuffer?: unknown } | null)?.isMaxBuffer === true) return null;
+    throw e;
+  }
+  return textLines(Buffer.from(stdout));
 }
 
 /** Blob hashes of the working-tree content of `relPaths`, in one git call,
@@ -722,6 +737,15 @@ export function looksBinary(buf: Buffer): boolean {
     if (buf[i] === 0) return true;
   }
   return false;
+}
+
+/** A text file's lines, or null when it looks binary. A final newline ends
+ *  the last line rather than starting another. */
+export function textLines(buf: Buffer): string[] | null {
+  if (looksBinary(buf)) return null;
+  const lines = buf.toString('utf-8').split('\n');
+  if (lines[lines.length - 1] === '') lines.pop();
+  return lines;
 }
 
 /** Build an all-add unified diff for an untracked file from its content. */
