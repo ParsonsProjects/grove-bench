@@ -112,6 +112,22 @@
   const checkSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
   const copySvg = COPY_SVG;
 
+  /** Say next to a link that the file it names isn't in the worktree (gone,
+   *  or outside it), once, or take that back when a later click finds it. */
+  function showLinkMissing(anchor: HTMLAnchorElement, missing: boolean) {
+    const next = anchor.nextSibling;
+    const note = next instanceof HTMLElement && next.classList.contains('local-link-missing') ? next : null;
+    if (!missing) {
+      note?.remove();
+      return;
+    }
+    if (note) return;
+    const added = document.createElement('span');
+    added.className = 'local-link-missing';
+    added.textContent = "(not found in this thread's worktree)";
+    anchor.after(added);
+  }
+
   /** `markdown`: a table copies its Markdown source instead (Shift+click). */
   async function copy(btn: HTMLElement, markdown: boolean) {
     try {
@@ -165,7 +181,7 @@
       if (local !== null && sessionId) {
         const sid = sessionId;
         openWorktreeFile(sid, pathFrom(baseDir, local.path), local.hash)
-          .then((found) => { if (!found) anchor.title = `${local.path} isn't in this thread's worktree`; })
+          .then((found) => showLinkMissing(anchor, !found))
           .catch((err) => console.warn(`Could not open ${local.path}:`, err));
       }
     };
@@ -281,9 +297,13 @@
     max-width: 100%;
     max-height: 32rem;
   }
-  .markdown-content :global(.local-image-missing) {
+  .markdown-content :global(.local-image-missing),
+  .markdown-content :global(.local-link-missing) {
     font-size: 0.85em;
     color: var(--muted-foreground);
+  }
+  .markdown-content :global(.local-link-missing) {
+    margin-left: 0.3em;
   }
   .markdown-content :global(blockquote) {
     border-left: 3px solid var(--quote-border);

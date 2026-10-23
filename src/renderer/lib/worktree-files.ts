@@ -13,22 +13,30 @@ export interface LocalFileTarget {
   hash: string;
 }
 
+/** A line, or a line and column, an agent writes after a path
+ *  (`src/app.ts:42`, `app.ts:42:7`). Windows file names can't hold a `:`. */
+const LINE_SUFFIX = /:\d+(?::\d+)?$/;
+/** A file name with no folder and a line, which would otherwise read as a
+ *  scheme: `app.ts:42`, but not `tel:123` or `localhost:3000`. */
+const NAME_WITH_LINE = /^[^:/\\]+\.[a-z0-9]*[a-z][a-z0-9]*:\d+(?::\d+)?(?:[?#].*)?$/i;
+
 /**
  * The local file a link or image source in a reply names (a path, absolute
  * or relative to the worktree, or a file:// URL), else null for a web address
  * or an in-page link. A `?query` or `#anchor` at the end is split off, but
- * only when no path follows it, so a folder named `C#` stays in the path.
- * Percent-escapes are decoded after that (marked encodes the links it
- * writes, and `%23` is a `#` in the name); a file:// URL is left encoded for
- * main to read.
+ * only when no path follows it, so a folder named `C#` stays in the path. A
+ * line number after the path (`:42`) is dropped. Percent-escapes are decoded after that
+ * (marked encodes the links it writes, and `%23` is a `#` in the name); a
+ * file:// URL is left encoded for main to read.
  */
 export function localFileTarget(href: string | null | undefined): LocalFileTarget | null {
   const h = href?.trim();
   if (!h || h.startsWith('#') || h.startsWith('?') || h.startsWith('//')) return null;
   const isFileUrl = /^file:/i.test(h);
   // A scheme (http:, mailto:, data:), but not a Windows drive letter (C:\).
-  if (!isFileUrl && /^[a-z][a-z0-9+.-]*:/i.test(h) && !/^[a-z]:[\\/]/i.test(h)) return null;
-  const [, raw, suffix = ''] = /^(.*?)([?#][^/\\]*)?$/.exec(h)!;
+  if (!isFileUrl && /^[a-z][a-z0-9+.-]*:/i.test(h) && !/^[a-z]:[\\/]/i.test(h) && !NAME_WITH_LINE.test(h)) return null;
+  const [, withLine, suffix = ''] = /^(.*?)([?#][^/\\]*)?$/.exec(h)!;
+  const raw = withLine.replace(LINE_SUFFIX, '');
   if (!raw) return null;
   const hashAt = suffix.indexOf('#');
   const hash = hashAt >= 0 ? suffix.slice(hashAt) : '';

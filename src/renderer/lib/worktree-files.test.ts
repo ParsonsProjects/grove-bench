@@ -27,6 +27,23 @@ describe('localFileTarget', () => {
     expect(localFileTarget('file:///C:/wt/r.html#top')).toEqual({ path: 'file:///C:/wt/r.html', hash: '#top' });
   });
 
+  it('drops a line number, or a line and column, after the path', () => {
+    expect(localFileTarget('src/app.ts:42')).toEqual({ path: 'src/app.ts', hash: '' });
+    expect(localFileTarget('src/app.ts:42:7')).toEqual({ path: 'src/app.ts', hash: '' });
+    expect(localFileTarget('C:\\wt\\src\\app.ts:42')).toEqual({ path: 'C:\\wt\\src\\app.ts', hash: '' });
+    expect(localFileTarget('file:///C:/wt/app.ts:42')).toEqual({ path: 'file:///C:/wt/app.ts', hash: '' });
+    expect(localFileTarget('report.html:3#top')).toEqual({ path: 'report.html', hash: '#top' });
+    // No folder: read as a file with a line, not a scheme named app.ts.
+    expect(localFileTarget('app.ts:42')).toEqual({ path: 'app.ts', hash: '' });
+    expect(localFileTarget('README.md:12:1')).toEqual({ path: 'README.md', hash: '' });
+  });
+
+  it('still reads a scheme, or a host and port, with digits after it as no file', () => {
+    for (const href of ['tel:5551234', 'localhost:3000', 'sms:123']) {
+      expect(localFileTarget(href)).toBeNull();
+    }
+  });
+
   it('keeps a # that a path follows, as in a folder named C#', () => {
     expect(localFileTarget('docs/C#/notes.pdf')).toEqual({ path: 'docs/C#/notes.pdf', hash: '' });
     expect(localFileTarget('docs\\C#\\notes.pdf')).toEqual({ path: 'docs\\C#\\notes.pdf', hash: '' });

@@ -134,6 +134,38 @@ describe('MarkdownBlock links', () => {
     expect(open).toHaveBeenLastCalledWith('s1', 'C:\\wt\\README.md');
   });
 
+  it('opens a link with a line number after the path', async () => {
+    const open = vi.mocked(window.groveBench.openWorktreeFile);
+    open.mockClear();
+    const { container } = render(MarkdownBlock, { content: '[app.ts:42](app.ts:42) and [b](src/b.ts:7:3)', sessionId: 's1' });
+    const [a, b] = container.querySelectorAll('a');
+    await fireEvent.click(a);
+    await fireEvent.click(b);
+    expect(open.mock.calls).toEqual([['s1', 'app.ts'], ['s1', 'src/b.ts']]);
+  });
+
+  it('says next to a link when its file is not in the worktree, once, until a click finds it', async () => {
+    const open = vi.mocked(window.groveBench.openWorktreeFile);
+    open.mockClear().mockResolvedValueOnce({ kind: 'missing' }).mockResolvedValueOnce({ kind: 'missing' });
+    const { container } = render(MarkdownBlock, { content: 'See [the code](src/gone.ts).', sessionId: 's1' });
+    const a = container.querySelector('a')!;
+    const notes = () => container.querySelectorAll('.local-link-missing');
+
+    await fireEvent.click(a);
+    await waitFor(() => expect(notes()).toHaveLength(1));
+    expect(a.nextSibling).toBe(notes()[0]);
+    expect(notes()[0].textContent).toBe("(not found in this thread's worktree)");
+
+    await fireEvent.click(a);
+    await waitFor(() => expect(open).toHaveBeenCalledTimes(2));
+    await new Promise((resolve) => setTimeout(resolve));
+    expect(notes()).toHaveLength(1);
+
+    // The agent wrote it since: the note goes.
+    await fireEvent.click(a);
+    await waitFor(() => expect(notes()).toHaveLength(0));
+  });
+
   it('opens no file without a thread', async () => {
     const open = vi.mocked(window.groveBench.openWorktreeFile);
     open.mockClear();
