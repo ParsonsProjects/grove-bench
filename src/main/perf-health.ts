@@ -27,14 +27,16 @@
  * aren't Electron's: on Windows their memory is summed apart
  * (process-memory.ts), every process under each thread's agent by
  * executable, and in dev mode the npm and Vite processes above the app too.
- * Listing them takes typeperf a second or two in the process host, so the
+ * Listing them takes typeperf a second or two in the agent host, so the
  * line waits for it, up to PROCESSES_WAIT_MS, and is written without them
- * when they can't be had (or on other platforms). Their CPU isn't measured.
+ * when they can't be had (or on other platforms). A list that didn't hold
+ * together is skipped, and the line says so: "agents: sample inconsistent,
+ * skipped". Their CPU isn't measured.
  */
 import type { ProcessMetric } from 'electron';
 import { formatBytes, type FreezeStats } from './freeze-log.js';
 import { perfLine } from './perf-log.js';
-import type { AgentTreeProcess, ExeTotal, ProcessMemory } from './process-memory.js';
+import type { AgentTreeProcess, ExeTotal, ProcessMemory, SkippedSample } from './process-memory.js';
 import { within } from './within.js';
 
 /** Time between health lines. */
@@ -59,8 +61,9 @@ export interface HealthInput {
   conversations: number;
   asleep: number;
   terminals: number;
-  /** The agents' processes, and the dev server's (Windows only). */
-  processes?: ProcessMemory | null;
+  /** The agents' processes, and the dev server's (Windows only), or a
+   *  sample of them that was skipped. */
+  processes?: ProcessMemory | SkippedSample | null;
 }
 
 const ms = (v: number) => (v >= 1000 ? `${(v / 1000).toFixed(1)} s` : `${Math.round(v)} ms`);
@@ -108,7 +111,9 @@ export function formatHealth(h: HealthInput): string {
     parts.push(`memory ${groups.map((g) => `${g} ${Math.round(mem.get(g)! / 1024)} MB`).join(', ')}`);
   }
 
-  if (h.processes) {
+  if (h.processes && 'skipped' in h.processes) {
+    parts.push('agents: sample inconsistent, skipped');
+  } else if (h.processes) {
     const a = h.processes.agents;
     parts.push(`agents ${a.agents}${a.untracked > 0 ? ` + ${a.untracked} not a thread's` : ''}${a.byExe.length > 0
       ? `, ${formatBytes(total(a.byExe))}: ${exeList(a.byExe)}`
@@ -137,7 +142,7 @@ export interface HealthSources {
   counts: () => Pick<HealthInput, 'conversations' | 'asleep' | 'terminals'>;
   /** The agents' processes (process-memory.ts). Null, a failure or a wait
    *  past PROCESSES_WAIT_MS leaves them out of the line. */
-  processes?: () => Promise<ProcessMemory | null>;
+  processes?: () => Promise<ProcessMemory | SkippedSample | null>;
 }
 
 /** Write a health line now and then. Returns a function that stops it. */
@@ -168,7 +173,7 @@ export function startHealthLog(
       metrics: sources.getAppMetrics(),
       ...sources.counts(),
     };
-    let measuring: Promise<ProcessMemory | null> | undefined;
+    let measuring: Promise<ProcessMemory | SkippedSample | null> | undefined;
     try {
       measuring = sources.processes?.();
     } catch { /* left out */ }
@@ -178,12 +183,12 @@ export function startHealthLog(
     }
     // The rest of the line is as of now; the processes follow within seconds,
     // or are left out if measuring them fails or takes too long.
-    let measured: ProcessMemory | null = null;
+    let measured: ProcessMemory | SkippedSample | null = null;
     void within(measuring.then((m) => { measured = m; }), processesWaitMs).catch(() => false).then((inTime) => {
       if (stopped) return;
       const processes = inTime ? measured : null;
       write(formatHealth({ ...input, processes }));
-      if (processes && processes.agents.largest.length > 0) write(formatLargest(processes.agents.largest));
+      if (processes && 'agents' in processes && processes.agents.largest.length > 0) write(formatLargest(processes.agents.largest));
     });
   };
 

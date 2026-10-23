@@ -95,7 +95,7 @@ export function spawnClaudeCodeProcess(
   opts: SpawnOptions,
   onStderr?: (data: string) => void,
 ): SpawnedProcess & { readonly pid?: number } {
-  const isNode = /^node(\.exe)?$/i.test(path.basename(opts.command));
+  const isNode = isNodeCommand(opts.command);
   const command = isNode ? process.execPath : asarUnpackedPath(opts.command);
   const env = isNode
     ? { ...opts.env, ELECTRON_RUN_AS_NODE: '1' }
@@ -117,6 +117,19 @@ export function spawnClaudeCodeProcess(
     child.stderr.resume();
   }
   return child;
+}
+
+function isNodeCommand(command: string): boolean {
+  return /^node(\.exe)?$/i.test(path.basename(command));
+}
+
+/** The executable spawnClaudeCodeProcess starts for the SDK's `command`,
+ *  lowercase, as Windows lists the process: claude.exe, or Electron's own
+ *  binary for a `node` command. */
+export function claudeProcessExe(command: string): string {
+  const name = path.win32.basename(isNodeCommand(command) ? process.execPath : command).toLowerCase();
+  // Windows runs a program named without an extension as .exe.
+  return /\.[^.]+$/.test(name) ? name : `${name}.exe`;
 }
 
 const dynamicImport = new Function('specifier', 'return import(specifier)') as
@@ -1880,6 +1893,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     const abortController = new AbortController();
     let sessionId: string | null = null;
     let agentProcess: ReturnType<typeof spawnClaudeCodeProcess> | undefined;
+    let agentExe: string | undefined;
 
     // Build the canUseTool callback from the adapter config.
     const groveServers = groveServersOf(config);
@@ -1997,6 +2011,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         } : {}),
         spawnClaudeCodeProcess: (o: SpawnOptions) => {
           agentProcess = spawnClaudeCodeProcess(o, (data) => logger.debug(`[ClaudeCodeAdapter] SDK stderr: ${data}`));
+          agentExe = claudeProcessExe(o.command);
           return agentProcess;
         },
         env: {
@@ -2096,6 +2111,10 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         // an unrelated process.
         const running = agentProcess?.exitCode === null && agentProcess.signalCode == null;
         return running ? agentProcess?.pid : undefined;
+      },
+
+      processExe() {
+        return agentExe;
       },
 
       closeInput() {

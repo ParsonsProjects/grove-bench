@@ -1,8 +1,8 @@
 /**
  * The commands the main process runs (taskkill, ps, the editor CLIs, where)
- * go to the process host, and npm install and the claude CLI to the agent
- * host: none starts in the main process, where a slow launch freezes the
- * window.
+ * go to the process host, and npm install, the claude CLI and typeperf to
+ * the agent host: none starts in the main process, where a slow launch
+ * freezes the window.
  *
  * The real hosts (process-host.ts) run here on stand-in utility processes.
  * execa and Node's child_process are mocked, so a command that started in
@@ -25,6 +25,7 @@ import { killTree, listProcesses } from './process-tree.js';
 import { launchEditor } from './editor-launch.js';
 import { installDependencies } from './deps-install.js';
 import { ClaudeCodeAdapter } from './adapters/claude-code.js';
+import { measureProcesses, resetForTests, typeperfArgs, PROCESS_V2, TYPEPERF_TIMEOUT_MS } from './process-memory.js';
 
 /** A stand-in for a utility process: keeps what it is sent (as it would
  *  arrive, so data that can't be posted fails here) and answers it. */
@@ -287,6 +288,45 @@ describe('the claude CLI starts in the agent host, its lookup in the process hos
     held.splice(0)[0](0);
     await expect(install).resolves.toBeUndefined();
     expect(commands()).toEqual([]);
+  });
+});
+
+describe('typeperf, for the health line, starts in the agent host', () => {
+  const v2Sample = [
+    '',
+    '"(PDH-CSV 4.0) (GMT Daylight Time)(-60)","\\\\PC\\Process V2(claude:2210)\\Process ID","\\\\PC\\Process V2(claude:2210)\\Creating Process ID","\\\\PC\\Process V2(claude:2210)\\Private Bytes","\\\\PC\\Process V2(claude:2210)\\Elapsed Time"',
+    '"10/23/2026 09:00:01.234","2210.000000","5151.000000","524288000.000000","600.000000"',
+    '',
+  ].join('\r\n');
+  const measure = () => measureProcesses({ agents: () => [{ thread: 'aaaa1111', pid: 2210, exe: 'claude.exe' }], platform: 'win32', note: () => {} });
+
+  beforeEach(() => resetForTests());
+
+  it('to list the processes (measureProcesses), so a hang there never restarts the git host', async () => {
+    respondSpawn = () => ({ stdout: v2Sample });
+    expect(await measure()).toMatchObject({ agents: { agents: 1, byExe: [{ name: 'claude.exe', count: 1 }] } });
+    expect(commands()).toEqual([]);
+    expect(spawns()).toEqual([{ type: 'spawn', id: expect.any(Number), file: expect.stringMatching(/\\System32\\typeperf\.exe$/i), args: typeperfArgs(PROCESS_V2) }]);
+  });
+
+  it('at its time limit, its whole tree is killed, by taskkill from the process host', async () => {
+    setPlatform('win32');
+    respondSpawn = () => ({ hold: true });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const measured = measure();
+      await vi.advanceTimersByTimeAsync(TYPEPERF_TIMEOUT_MS);
+      expect(await measured).toBeNull();
+      // 999: typeperf.exe.
+      expect(commands()).toEqual([{
+        file: expect.stringMatching(/\\System32\\taskkill\.exe$/i),
+        args: ['/PID', '999', '/T', '/F'],
+        options: { timeout: 10_000, reject: false },
+      }]);
+    } finally {
+      vi.useRealTimers();
+      for (const finish of held.splice(0)) finish(1);
+    }
   });
 });
 

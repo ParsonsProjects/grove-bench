@@ -206,11 +206,12 @@ app.whenReady().then(() => {
       };
     },
     // The agents' processes aren't Electron's (Windows only, listed in the
-    // process host). In dev mode, also the npm and Vite processes above us.
+    // agent host). In dev mode, also the npm and Vite processes above us.
     processes: () => measureProcesses({
       agents: () => sessionManager.agentProcesses(),
       agentHostPid,
-      appPid: app.isPackaged ? undefined : process.pid,
+      main: { pid: process.pid, exe: path.win32.basename(process.execPath).toLowerCase() },
+      devServer: !app.isPackaged,
     }),
   });
 

@@ -2,10 +2,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { HostedProcess } from './process-host-spawn.js';
 
 // The command starts in the agent host (spawnProcess), never here.
-const hosted = vi.hoisted(() => ({ spawnProcess: vi.fn() }));
+const hosted = vi.hoisted(() => ({ spawnProcess: vi.fn(), spawnProcessInHost: vi.fn() }));
 vi.mock('./process-host.js', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   spawnProcess: hosted.spawnProcess,
+  spawnProcessInHost: hosted.spawnProcessInHost,
 }));
 vi.mock('execa', () => ({ execa: vi.fn() }));
 vi.mock('./process-tree.js', () => ({ killTree: vi.fn(async () => {}) }));
@@ -41,6 +42,7 @@ function nextCommand() {
 beforeEach(() => {
   vi.clearAllMocks();
   hosted.spawnProcess.mockReset();
+  hosted.spawnProcessInHost.mockReset();
 });
 
 afterEach(() => {
@@ -84,6 +86,18 @@ describe('runInAgentHost', () => {
     cmd.exit(0);
     await done;
     expect(hosted.spawnProcess).toHaveBeenLastCalledWith('claude', ['auth', 'status'], { env: { ...process.env, EXTRA: '1' } });
+  });
+
+  it('starts a host-only command with spawnProcessInHost, which never starts it here', async () => {
+    const proc = new HostedProcess('typeperf.exe');
+    hosted.spawnProcessInHost.mockReturnValueOnce(proc);
+    const done = runInAgentHost('typeperf.exe', ['-sc', '1'], { timeout: 30_000, hostOnly: true });
+    expect(hosted.spawnProcessInHost).toHaveBeenCalledWith('typeperf.exe', ['-sc', '1'], {});
+    expect(hosted.spawnProcess).not.toHaveBeenCalled();
+    // The agent host isn't up: it didn't start.
+    proc.receive({ type: 'error', id: 0, error: { name: 'Error', message: "The agent host isn't running, so typeperf.exe didn't start" } });
+    proc.receive({ type: 'close', id: 0 });
+    await expect(done).rejects.toThrow("The agent host isn't running, so typeperf.exe didn't start");
   });
 
   it('rejects as execa did when it exits non-zero', async () => {
