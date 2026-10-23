@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
-import { render, cleanup, waitFor } from '@testing-library/svelte';
+import { render, cleanup, waitFor, within } from '@testing-library/svelte';
 import { tick } from 'svelte';
 
 import { mockGroveBench } from '../__mocks__/setup.js';
@@ -371,6 +371,27 @@ describe('ChangesReviewPanel — revert warnings', () => {
   it('says a staged revert also drops the file\'s unstaged edits', async () => {
     const view = await openRevertFor([entry('src/a.ts', { staged: true }), entry('src/a.ts', { staged: false })]);
     expect(await view.findByText(/its unstaged edits too/)).toBeInTheDocument();
+  });
+
+  it('undoes a rename: says the old path comes back, and passes it', async () => {
+    const view = await openRevertFor([entry('src/new.ts', { staged: true, status: 'renamed', origPath: 'src/old.ts' })]);
+    const dialog = within(await view.findByRole('dialog'));
+    expect(dialog.getByText(/was renamed from/)).toHaveTextContent('src/new.ts was renamed from src/old.ts. Reverting puts src/old.ts back as last committed and deletes src/new.ts, with the changes shown here. This cannot be undone.');
+    await fireEvent.click(dialog.getByRole('button', { name: 'Revert' }));
+    expect(mockGroveBench.revertFile).toHaveBeenCalledWith(SID, 'src/new.ts', true, 'src/old.ts');
+  });
+
+  it('shows why a revert failed, next to its button', async () => {
+    mockGroveBench.revertFile.mockRejectedValueOnce(new Error("Error invoking remote method 'file:revert': Error: Can't undo the rename while something is at src/old.ts. Move it, then try again."));
+    const view = await openRevertFor([entry('src/new.ts', { staged: true, status: 'renamed', origPath: 'src/old.ts' })]);
+    await fireEvent.click(within(await view.findByRole('dialog')).getByRole('button', { name: 'Revert' }));
+    expect(await view.findByRole('alert')).toHaveTextContent(/^Can't undo the rename while something is at src\/old\.ts\. Move it, then try again\.$/);
+  });
+
+  it("leaves a copy's source alone", async () => {
+    const view = await openRevertFor([entry('src/copy.ts', { staged: true, status: 'copied', origPath: 'src/orig.ts' })]);
+    await fireEvent.click(within(await view.findByRole('dialog')).getByRole('button', { name: 'Revert' }));
+    expect(mockGroveBench.revertFile).toHaveBeenCalledWith(SID, 'src/copy.ts', true, undefined);
   });
 
   it('says reverting a staged new file deletes it', async () => {

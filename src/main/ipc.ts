@@ -1387,11 +1387,12 @@ export function registerHandlers() {
 
   // ─── File revert & diff (for changes review panel) ───
 
-  ipcMain.handle(IPC.FILE_REVERT, async (_event, sessionId: string, filePath: string, staged?: boolean) => {
+  ipcMain.handle(IPC.FILE_REVERT, async (_event, sessionId: string, filePath: string, staged?: boolean, renamedFrom?: string) => {
     const worktree = worktreeManager.getWorktree(sessionId);
     if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
     const { relPath } = sanitizeWorktreeRelPath(worktree.path, filePath);
-    await revertFile(worktree.path, relPath, staged === true);
+    const oldPath = typeof renamedFrom === 'string' && renamedFrom ? sanitizeWorktreeRelPath(worktree.path, renamedFrom).relPath : undefined;
+    await revertFile(worktree.path, relPath, staged === true, oldPath);
   });
 
   ipcMain.handle(IPC.FILE_DIFF, async (_event, sessionId: string, filePath: string, staged?: boolean, opts?: { base?: string }): Promise<FileDiffResult> => {

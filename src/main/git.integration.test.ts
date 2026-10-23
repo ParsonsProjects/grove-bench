@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { resolveMergeBase, squashSince, branchCommits, excludeFromGit, fileDiff, blobLines, mergeNoCommit, MAX_TEXT_FILE_BYTES } from './git.js';
+import { resolveMergeBase, squashSince, branchCommits, excludeFromGit, fileDiff, blobLines, mergeNoCommit, revertFile, stageFile, MAX_TEXT_FILE_BYTES } from './git.js';
 import { parseGitStatusPorcelain, parseNumstat } from './git-status-parser.js';
 
 // Real git is slow to start on Windows, and each test runs a dozen commands.
@@ -127,6 +127,97 @@ describe('line counts', () => {
       { path: 'b.txt', additions: 1, deletions: 0, binary: false },
       { path: 'café.ts', additions: 1, deletions: 0, binary: false },
     ]);
+  });
+});
+
+describe('reverting a rename', () => {
+  beforeEach(() => commit('a.txt', 'original'));
+  const onDisk = () => fs.readdirSync(repo).filter((f) => f !== '.git').sort();
+
+  it('puts a staged rename back as committed, with its edits gone', async () => {
+    run('mv', 'a.txt', 'b.txt');
+    fs.appendFileSync(path.join(repo, 'b.txt'), 'staged\n');
+    run('add', 'b.txt');
+    fs.appendFileSync(path.join(repo, 'b.txt'), 'unstaged\n');
+
+    await revertFile(repo, 'b.txt', true, 'a.txt');
+
+    expect(onDisk()).toEqual(['a.txt', 'base.txt']);
+    expect(fs.readFileSync(path.join(repo, 'a.txt'), 'utf8')).toBe('original\n');
+    expect(run('status', '--porcelain')).toBe('');
+  });
+
+  it('overwrites nothing at the old path: a new file there', async () => {
+    run('mv', 'a.txt', 'b.txt');
+    fs.writeFileSync(path.join(repo, 'a.txt'), 'a new file\n');
+
+    await expect(revertFile(repo, 'b.txt', true, 'a.txt')).rejects.toThrow('something is at a.txt');
+
+    expect(fs.readFileSync(path.join(repo, 'a.txt'), 'utf8')).toBe('a new file\n');
+    expect(run('status', '--porcelain')).toBe('R  a.txt -> b.txt\n?? a.txt');
+  });
+
+  it('overwrites nothing at the old path: a folder the file was moved into', async () => {
+    fs.mkdirSync(path.join(repo, 'a.tmp'));
+    run('mv', 'a.txt', 'a.tmp/index.txt');
+    fs.renameSync(path.join(repo, 'a.tmp'), path.join(repo, 'a.txt'));
+    run('add', '-A');
+    fs.writeFileSync(path.join(repo, 'a.txt', 'helper.txt'), 'untracked\n');
+
+    await expect(revertFile(repo, 'a.txt/index.txt', true, 'a.txt')).rejects.toThrow('something is at a.txt');
+
+    expect(fs.readdirSync(path.join(repo, 'a.txt')).sort()).toEqual(['helper.txt', 'index.txt']);
+  });
+
+  it('undoes a rename of letter case only where names are case sensitive, and refuses where they are not', async () => {
+    run('mv', 'a.txt', 'A.txt');
+    const insensitive = fs.existsSync(path.join(repo, 'a.txt'));
+
+    const reverting = revertFile(repo, 'A.txt', true, 'a.txt');
+
+    if (insensitive) {
+      // Windows and macOS: the old name opens the renamed file itself.
+      await expect(reverting).rejects.toThrow('only changes letter case');
+      expect(onDisk()).toEqual(['A.txt', 'base.txt']);
+    } else {
+      await reverting;
+      expect(onDisk()).toEqual(['a.txt', 'base.txt']);
+      expect(run('status', '--porcelain')).toBe('');
+    }
+  });
+
+  it('does nothing when the rename was unstaged after the list was read', async () => {
+    run('mv', 'a.txt', 'b.txt');
+    run('reset', '-q');
+
+    await expect(revertFile(repo, 'b.txt', true, 'a.txt')).rejects.toThrow('has changed since the list was read');
+
+    expect(onDisk()).toEqual(['b.txt', 'base.txt']);
+  });
+
+  it('puts back a file moved and added with git add -N', async () => {
+    fs.renameSync(path.join(repo, 'a.txt'), path.join(repo, 'b.txt'));
+    run('add', '-N', 'b.txt');
+
+    await revertFile(repo, 'b.txt', false, 'a.txt');
+
+    expect(onDisk()).toEqual(['a.txt', 'base.txt']);
+    expect(run('status', '--porcelain')).toBe('');
+  });
+});
+
+describe('a name with pattern characters', () => {
+  it('is taken as it is, never as a pattern that names other files', async () => {
+    fs.mkdirSync(path.join(repo, 'pages'));
+    commit('pages/i.tsx', 'i');
+    fs.appendFileSync(path.join(repo, 'pages', 'i.tsx'), 'edited\n');
+
+    // A list read before [id].tsx went: as a pattern it would match i.tsx.
+    await expect(revertFile(repo, 'pages/[id].tsx', false)).rejects.toThrow();
+    await stageFile(repo, 'pages/[id].tsx').catch(() => {});
+
+    expect(fs.readFileSync(path.join(repo, 'pages', 'i.tsx'), 'utf8')).toBe('i\nedited\n');
+    expect(run('status', '--porcelain')).toBe('M pages/i.tsx');
   });
 });
 

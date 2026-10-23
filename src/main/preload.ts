@@ -193,8 +193,8 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.FILE_OPEN_IN_EDITOR, sessionId, filePath, line),
 
   // File revert & diff (for changes review)
-  revertFile: (sessionId: string, filePath: string, staged?: boolean) =>
-    ipcRenderer.invoke(IPC.FILE_REVERT, sessionId, filePath, staged),
+  revertFile: (sessionId: string, filePath: string, staged?: boolean, renamedFrom?: string) =>
+    ipcRenderer.invoke(IPC.FILE_REVERT, sessionId, filePath, staged, renamedFrom),
   getFileDiff: (sessionId: string, filePath: string, staged?: boolean, opts?: { base?: string }) =>
     ipcRenderer.invoke(IPC.FILE_DIFF, sessionId, filePath, staged, opts),
   getFileLines: (sessionId: string, filePath: string, staged?: boolean) =>

@@ -1215,15 +1215,24 @@ describe('file handlers', () => {
 
   it('FILE_REVERT strips container and host prefixes and passes staged as a boolean', async () => {
     await invoke(IPC.FILE_REVERT, 's1', '/workspace/src/a.ts');
-    expect(git.revertFile).toHaveBeenLastCalledWith(wt, 'src/a.ts', false);
+    expect(git.revertFile).toHaveBeenLastCalledWith(wt, 'src/a.ts', false, undefined);
 
     await invoke(IPC.FILE_REVERT, 's1', path.join(wt, 'src', 'b.ts'), 'yes');
-    expect(git.revertFile).toHaveBeenLastCalledWith(wt, path.join('src', 'b.ts'), false);
+    expect(git.revertFile).toHaveBeenLastCalledWith(wt, path.join('src', 'b.ts'), false, undefined);
 
     await invoke(IPC.FILE_REVERT, 's1', 'src/c.ts', true);
-    expect(git.revertFile).toHaveBeenLastCalledWith(wt, 'src/c.ts', true);
+    expect(git.revertFile).toHaveBeenLastCalledWith(wt, 'src/c.ts', true, undefined);
 
     await expect(invoke(IPC.FILE_REVERT, 's1', '../../etc/passwd')).rejects.toThrow('Path traversal');
+  });
+
+  it("FILE_REVERT checks a rename's old path like the new one", async () => {
+    await invoke(IPC.FILE_REVERT, 's1', 'src/new.ts', true, '/workspace/src/old.ts');
+    expect(git.revertFile).toHaveBeenLastCalledWith(wt, 'src/new.ts', true, 'src/old.ts');
+
+    vi.mocked(git.revertFile).mockClear();
+    await expect(invoke(IPC.FILE_REVERT, 's1', 'src/new.ts', true, '../../etc/passwd')).rejects.toThrow('Path traversal');
+    expect(git.revertFile).not.toHaveBeenCalled();
   });
 
   it('FILE_OPEN_IN_EDITOR tries VS Code, then Cursor, then the OS opener', async () => {

@@ -584,34 +584,64 @@ export async function listProjectFiles(cwd: string): Promise<string[]> {
   return [...new Set(out.split('\0').filter(Boolean))];
 }
 
+/** A relative path as git writes it: on Windows, path.relative gives
+ *  backslashes. */
+const gitPath = (relPath: string) => (path.sep === '\\' ? relPath.replaceAll('\\', '/') : relPath);
+
+/** A path for a pathspec, read as it is: `[id].tsx` or `*.ts` names that
+ *  one file, never others it would match as a pattern. */
+const literal = (relPath: string) => `:(literal)${gitPath(relPath)}`;
+
 /**
- * Throw away one file's changes. Untracked files and files staged as new
- * (not in HEAD) are deleted, since they didn't exist before; a staged change
- * is reset to HEAD in both the index and the working tree; an unstaged change
- * is reset to the index.
+ * Throw away one file's changes, by git status as it is now. Untracked files
+ * and files staged as new or as a copy are deleted, since they didn't exist
+ * before; a staged change is reset to HEAD in both the index and the working
+ * tree; an unstaged change is reset to the index.
+ *
+ * A rename is undone: its old path comes back, from HEAD for a staged rename
+ * or from the index for one in the worktree (`git add -N`), and then the new
+ * path is deleted. `renamedFrom` is the old path the caller showed; if git
+ * now says otherwise (an agent changed the index since), nothing is done.
+ * Nor while anything is at the old path, which the restore would overwrite:
+ * a new file there, a folder the file was moved into, or on Windows the file
+ * itself, when only the letter case changed.
  */
-export async function revertFile(cwd: string, relPath: string, staged: boolean): Promise<void> {
-  const status = await git(['status', '--porcelain', '--', relPath], cwd);
-  if (status.trimStart().startsWith('??')) {
+export async function revertFile(cwd: string, relPath: string, staged: boolean, renamedFrom?: string): Promise<void> {
+  // The whole tree: a rename only reads as one with both its paths in view.
+  const record = porcelainRecords(await git(['status', '--porcelain=v1', '-z'], cwd)).find((r) => r.path === gitPath(relPath));
+  const code = record?.xy[staged ? 0 : 1];
+  const renamedNow = code === 'R' ? record?.origPath : undefined;
+  if (renamedNow !== (renamedFrom && gitPath(renamedFrom))) {
+    throw new Error(`${relPath} has changed since the list was read. Check it and try again.`);
+  }
+  if (renamedNow) {
+    if (await fs.lstat(path.join(cwd, renamedNow)).then(() => true, () => false)) {
+      throw new Error(renamedNow.toLowerCase() === relPath.toLowerCase()
+        ? `Can't undo a rename that only changes letter case here. Use git mv in the terminal.`
+        : `Can't undo the rename while something is at ${renamedNow}. Move it, then try again.`);
+    }
+    await git(staged ? ['checkout', 'HEAD', '--', literal(renamedNow)] : ['checkout', '--', literal(renamedNow)], cwd);
+    await git(['rm', '-f', '-q', '--', literal(relPath)], cwd);
+  } else if (record?.xy === '??') {
     await fs.rm(path.join(cwd, relPath), { force: true, recursive: true });
-  } else if (staged && status.startsWith('A')) {
+  } else if (staged && (code === 'A' || code === 'C')) {
     // `git checkout HEAD -- <path>` fails here: the path isn't in HEAD.
-    await git(['rm', '-f', '-q', '--', relPath], cwd);
+    await git(['rm', '-f', '-q', '--', literal(relPath)], cwd);
   } else if (staged) {
-    await git(['checkout', 'HEAD', '--', relPath], cwd);
+    await git(['checkout', 'HEAD', '--', literal(relPath)], cwd);
   } else {
-    await git(['checkout', '--', relPath], cwd);
+    await git(['checkout', '--', literal(relPath)], cwd);
   }
 }
 
 /** Stage a single path (git add). */
 export async function stageFile(cwd: string, relPath: string): Promise<void> {
-  await git(['add', '--', relPath], cwd);
+  await git(['add', '--', literal(relPath)], cwd);
 }
 
 /** Unstage a single path, leaving working-tree changes intact (git reset HEAD). */
 export async function unstageFile(cwd: string, relPath: string): Promise<void> {
-  await git(['reset', '-q', 'HEAD', '--', relPath], cwd);
+  await git(['reset', '-q', 'HEAD', '--', literal(relPath)], cwd);
 }
 
 /** Commit the staged changes with the given message. Rejects an empty message. */
