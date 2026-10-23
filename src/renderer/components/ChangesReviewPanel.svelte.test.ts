@@ -37,6 +37,8 @@ vi.mock('../lib/diff-highlight.js', async (importOriginal) => {
 });
 
 const SID = 'changes-session';
+/** A second thread, whose panel shows the same files. */
+const OTHER = 'other-session';
 
 function entry(filePath: string, over: Partial<GitStatusEntry> = {}): GitStatusEntry {
   return { filePath, status: 'modified', staged: false, ...over } as GitStatusEntry;
@@ -62,7 +64,14 @@ beforeEach(() => {
   messageStore.setActiveTab(SID, 'changes');
 });
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  // The store outlives each test: a refresh it scheduled (after a revert, a
+  // scope change...) would otherwise fire in the next one and replace that
+  // test's files with the mock's, in whatever order the tests are shuffled.
+  gitStatusStore.clear(SID);
+  gitStatusStore.clear(OTHER);
+});
 
 describe('ChangesReviewPanel — live diff while the agent is running', () => {
   it('shows the empty state while running instead of a "wait for the turn" placeholder', async () => {
@@ -266,7 +275,6 @@ describe('ChangesReviewPanel — review features', () => {
   });
 
   it('scrolls its own file list, not a hidden panel showing the same file', async () => {
-    const OTHER = 'other-session';
     messageStore.messagesBySession[OTHER] = [];
     gitStatusStore.statusBySession = { ...gitStatusStore.statusBySession, [OTHER]: gitStatusStore.statusBySession[SID] };
     const scrolled: Element[] = [];
@@ -613,8 +621,6 @@ describe('ChangesReviewPanel — commit and push errors', () => {
 });
 
 describe('ChangesReviewPanel — Branch view by default', () => {
-  afterEach(() => gitStatusStore.clear(SID));
-
   it('opens on the Branch view, listed first, against the default base', async () => {
     // Start fresh: a refresh from an earlier test would throttle this one's.
     gitStatusStore.clear(SID);
