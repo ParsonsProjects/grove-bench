@@ -1329,7 +1329,16 @@ describe('isReadOnly', () => {
       ['check-ignore', '-q', '--', 'x'], ['check-ref-format', '--branch', 'feat'], ['show-ref', '--verify', '--quiet', 'refs/heads/x'],
       ['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'], ['reflog', 'show', 'HEAD'],
       ['branch', '-r', '--format=%(refname:short)'], ['remote'], ['config', 'user.name'], ['worktree', 'list', '--porcelain'],
+      ['-c', 'core.quotePath=false', 'diff', 'HEAD', '--numstat'],
     ]) expect(isReadOnly('git', args), args.join(' ')).toBe(true);
+  });
+
+  it('reads past only the -c settings that change how git writes its output', () => {
+    expect(isReadOnly('git', ['-c', 'core.quotePath=false', 'commit', '-m', 'x'])).toBe(false);
+    // These can run a program.
+    expect(isReadOnly('git', ['-c', 'core.fsmonitor=hook.sh', 'status'])).toBe(false);
+    expect(isReadOnly('git', ['-c', 'diff.external=tool', 'diff'])).toBe(false);
+    expect(isReadOnly('git', ['-c'])).toBe(false);
   });
 
   it('leaves out every git command that writes, or might', () => {

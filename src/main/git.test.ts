@@ -268,16 +268,27 @@ describe('mergeNoCommit()', () => {
     // merge fails
     mockExeca.mockRejectedValueOnce(new Error('merge conflict'));
     // status --porcelain returns UU lines
-    mockExeca.mockResolvedValueOnce({ stdout: 'UU src/file1.ts\nUU src/file2.ts\nM  src/clean.ts' } as any);
+    mockExeca.mockResolvedValueOnce({ stdout: 'UU src/file1.ts\0UU src/file2.ts\0M  src/clean.ts\0' } as any);
 
     const result = await mergeNoCommit('/repo', 'feat/x');
     expect(result.success).toBe(false);
     expect(result.conflicts).toEqual(['src/file1.ts', 'src/file2.ts']);
   });
 
+  it('reads the names whole, past a rename and its old name', async () => {
+    mockExeca.mockRejectedValueOnce(new Error('merge conflict'));
+    // -z: no quoting, and a rename's old name is a record of its own. This
+    // one starts like a conflict, so reading it as a status would find one.
+    mockExeca.mockResolvedValueOnce({ stdout: 'R  docs/new name.md\0UU old\0UU src/café.ts\0 R b.ts\0AA x\0' } as any);
+
+    const result = await mergeNoCommit('/repo', 'feat/x');
+    expect(result.conflicts).toEqual(['src/café.ts']);
+    expect(mockExeca.mock.calls[1][1]).toEqual(['status', '--porcelain', '-z']);
+  });
+
   it('detects conflicts from AA/DD/DU/UD/AU/UA patterns', async () => {
     mockExeca.mockRejectedValueOnce(new Error('merge conflict'));
-    mockExeca.mockResolvedValueOnce({ stdout: 'AA src/both-added.ts\nDD src/both-deleted.ts' } as any);
+    mockExeca.mockResolvedValueOnce({ stdout: 'AA src/both-added.ts\0DD src/both-deleted.ts\0' } as any);
 
     const result = await mergeNoCommit('/repo', 'feat/x');
     expect(result.success).toBe(false);
@@ -288,13 +299,14 @@ describe('mergeNoCommit()', () => {
   it('falls back to diff --name-only when no UU lines', async () => {
     mockExeca.mockRejectedValueOnce(new Error('merge conflict'));
     // status shows no conflict markers
-    mockExeca.mockResolvedValueOnce({ stdout: 'M  src/clean.ts' } as any);
+    mockExeca.mockResolvedValueOnce({ stdout: 'M  src/clean.ts\0' } as any);
     // diff --name-only returns conflicts
-    mockExeca.mockResolvedValueOnce({ stdout: 'src/conflicted.ts' } as any);
+    mockExeca.mockResolvedValueOnce({ stdout: 'src/conflicted.ts\0src/café.ts\0' } as any);
 
     const result = await mergeNoCommit('/repo', 'feat/x');
     expect(result.success).toBe(false);
-    expect(result.conflicts).toContain('src/conflicted.ts');
+    expect(result.conflicts).toEqual(['src/conflicted.ts', 'src/café.ts']);
+    expect(mockExeca.mock.calls[2][1]).toEqual(['diff', '--name-only', '--diff-filter=U', '-z']);
   });
 
   it('falls back to parsing error message when all else fails', async () => {
@@ -779,7 +791,7 @@ describe('branch operations', () => {
     it('aborts and reports conflicting files', async () => {
       clean();
       mockExeca.mockRejectedValueOnce(Object.assign(new Error('rebase failed'), { stderr: 'CONFLICT (content): Merge conflict in src/a.ts' }));
-      mockExeca.mockResolvedValueOnce({ stdout: 'UU src/a.ts\nUU src/b.ts' } as any); // status
+      mockExeca.mockResolvedValueOnce({ stdout: 'UU src/a.ts\0UU src/b.ts\0' } as any); // status
       mockExeca.mockResolvedValueOnce({ stdout: '' } as any); // rebase --abort
       const r = await rebaseOnto('/repo', 'main');
       expect(r).toEqual({ success: false, conflicts: ['src/a.ts', 'src/b.ts'] });
@@ -815,7 +827,7 @@ describe('branch operations', () => {
     it('aborts on conflict', async () => {
       clean();
       mockExeca.mockRejectedValueOnce(Object.assign(new Error('x'), { stderr: 'error: could not apply abc1234... subject\nCONFLICT (content): Merge conflict in src/c.ts' }));
-      mockExeca.mockResolvedValueOnce({ stdout: 'UU src/c.ts' } as any);
+      mockExeca.mockResolvedValueOnce({ stdout: 'UU src/c.ts\0' } as any);
       mockExeca.mockResolvedValueOnce({ stdout: '' } as any); // abort
       const r = await cherryPick('/repo', 'abc1234');
       expect(r).toEqual({ success: false, conflicts: ['src/c.ts'] });

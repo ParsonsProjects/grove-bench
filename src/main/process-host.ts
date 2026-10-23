@@ -635,6 +635,10 @@ const READ_ONLY_GIT = new Set([
 const BRANCH_WRITE_FLAGS = /^(-[dDmMcCfu]|--(delete|move|copy|force|set-upstream-to|unset-upstream|edit-description)(=|$))/;
 /** Flags that make `gh api` send something other than a GET. */
 const GH_API_WRITE_FLAGS = /^(-[XfF]|--(method|field|raw-field|input)(=|$))/;
+/** git settings, given with `-c` before the subcommand, that only change how
+ *  it writes its output. Others can make it run a program (core.fsmonitor,
+ *  diff.external). */
+const OUTPUT_ONLY_GIT_CONFIG = /^core\.quotepath=/i;
 
 /**
  * Whether running this git or gh command a second time changes nothing, so it
@@ -643,6 +647,7 @@ const GH_API_WRITE_FLAGS = /^(-[XfF]|--(method|field|raw-field|input)(=|$))/;
  */
 export function isReadOnly(file: string, args: readonly string[]): boolean {
   const program = (file.split(/[\\/]/).pop() ?? '').toLowerCase().replace(/\.exe$/, '');
+  if (program === 'git' && args[0] === '-c' && OUTPUT_ONLY_GIT_CONFIG.test(args[1] ?? '')) return isReadOnly(file, args.slice(2));
   const [sub, next] = args;
   const flags = args.slice(1).filter((a) => a.startsWith('-'));
   const positional = args.slice(1).filter((a) => !a.startsWith('-'));

@@ -188,15 +188,21 @@ export async function validateBranchName(name: string): Promise<boolean> {
 async function detectConflicts(cwd: string, opErr: any): Promise<string[]> {
   const errMsg: string = opErr?.stderr || opErr?.message || String(opErr);
   try {
-    const status = await git(['status', '--porcelain'], cwd);
-    const conflicts = status.split('\n')
-      .filter(l => /^(UU|AA|DD|DU|UD|AU|UA)\s/.test(l))
-      .map(l => l.slice(3).trim());
+    // -z: names as they are. Without it git quotes and escapes any name
+    // outside ASCII ("caf\303\251.ts").
+    const records = (await git(['status', '--porcelain', '-z'], cwd)).split('\0');
+    const conflicts: string[] = [];
+    for (let i = 0; i < records.length; i++) {
+      const record = records[i];
+      if (/^(UU|AA|DD|DU|UD|AU|UA) /.test(record)) conflicts.push(record.slice(3));
+      // A rename or copy's old name follows as a record of its own.
+      else if (/^([RC].|.[RC]) /.test(record)) i++;
+    }
     if (conflicts.length > 0) return conflicts;
 
     // No UU lines — try to extract conflicted files from diff --name-only --diff-filter=U
-    const diffOutput = await git(['diff', '--name-only', '--diff-filter=U'], cwd).catch(() => '');
-    const diffConflicts = diffOutput.split('\n').map(l => l.trim()).filter(Boolean);
+    const diffOutput = await git(['diff', '--name-only', '--diff-filter=U', '-z'], cwd).catch(() => '');
+    const diffConflicts = diffOutput.split('\0').filter(Boolean);
     if (diffConflicts.length > 0) return diffConflicts;
 
     // Still nothing — extract info from the error message

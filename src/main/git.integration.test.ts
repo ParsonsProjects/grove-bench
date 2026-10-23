@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { resolveMergeBase, squashSince, branchCommits, excludeFromGit, fileDiff, blobLines, MAX_TEXT_FILE_BYTES } from './git.js';
+import { resolveMergeBase, squashSince, branchCommits, excludeFromGit, fileDiff, blobLines, mergeNoCommit, MAX_TEXT_FILE_BYTES } from './git.js';
 
 // Real git is slow to start on Windows, and each test runs a dozen commands.
 vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
@@ -90,6 +90,20 @@ describe('squash', () => {
     expect(result.success).toBe(false);
     expect(run('rev-parse', 'HEAD')).toBe(before);
     expect(run('status', '--porcelain')).toBe('');
+  });
+});
+
+describe('a merge conflict', () => {
+  it('names a conflicted file outside ASCII as it is', async () => {
+    commit('café.ts', 'one');
+    run('checkout', '-q', '-b', 'other');
+    commit('café.ts', 'two');
+    run('checkout', '-q', 'main');
+    commit('café.ts', 'three');
+
+    const result = await mergeNoCommit(repo, 'other');
+
+    expect(result).toEqual({ success: false, conflicts: ['café.ts'] });
   });
 });
 
