@@ -767,11 +767,20 @@ describe('revertFile()', () => {
     expect(gitCalls().slice(1)).toEqual([['rm', '-f', '-q', '--', ':(literal)new.ts']]);
   });
 
-  it("resets a conflict where both sides added the file, rather than deleting it", async () => {
-    status('AA both.ts');
+  it('deletes a file put back with git add -N after git rm --cached (DA)', async () => {
+    status('DA f.ts');
     ok();
-    await revertFile('/repo', 'both.ts', false);
-    expect(gitCalls().slice(1)).toEqual([['checkout', '--', ':(literal)both.ts']]);
+    await revertFile('/repo', 'f.ts', false);
+    expect(gitCalls().slice(1)).toEqual([['rm', '-f', '-q', '--', ':(literal)f.ts']]);
+  });
+
+  it('refuses a file with a merge conflict, on either side', async () => {
+    for (const staged of [true, false]) {
+      mockExeca.mockReset();
+      status('AA both.ts');
+      await expect(revertFile('/repo', 'both.ts', staged)).rejects.toThrow('both.ts has a merge conflict');
+      expect(gitCalls()).toHaveLength(1);
+    }
   });
 
   it('resets a staged change to HEAD', async () => {

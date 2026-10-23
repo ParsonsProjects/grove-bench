@@ -597,7 +597,7 @@ const literal = (relPath: string) => `:(literal)${gitPath(relPath)}`;
  * files added with `git add -N`, and files staged as new or as a copy are
  * deleted, since they didn't exist before; a staged change is reset to HEAD
  * in both the index and the working tree; an unstaged change is reset to the
- * index.
+ * index. A file with a merge conflict is refused.
  *
  * A rename is undone: its old path comes back, from HEAD for a staged rename
  * or from the index for one in the worktree (`git add -N`), and then the new
@@ -610,6 +610,11 @@ const literal = (relPath: string) => `:(literal)${gitPath(relPath)}`;
 export async function revertFile(cwd: string, relPath: string, staged: boolean, renamedFrom?: string): Promise<void> {
   // The whole tree: a rename only reads as one with both its paths in view.
   const record = porcelainRecords(await git(['status', '--porcelain=v1', '-z'], cwd)).find((r) => r.path === gitPath(relPath));
+  if (record && CONFLICT_CODES.has(record.xy)) {
+    // Neither side is safe: checkout refuses an unmerged path, and rm would
+    // delete a file both branches added, HEAD's copy included.
+    throw new Error(`${relPath} has a merge conflict. Resolve it, or abort the merge, before reverting.`);
+  }
   const code = record?.xy[staged ? 0 : 1];
   const renamedNow = code === 'R' ? record?.origPath : undefined;
   if (renamedNow !== (renamedFrom && gitPath(renamedFrom))) {
@@ -625,10 +630,11 @@ export async function revertFile(cwd: string, relPath: string, staged: boolean, 
     await git(['rm', '-f', '-q', '--', literal(relPath)], cwd);
   } else if (record?.xy === '??') {
     await fs.rm(path.join(cwd, relPath), { force: true, recursive: true });
-  } else if ((staged && (code === 'A' || code === 'C')) || record?.xy === ' A') {
+  } else if (code === 'A' || (staged && code === 'C')) {
     // `git checkout HEAD -- <path>` fails here: the path isn't in HEAD. And
-    // a file added with `git add -N` (" A") has no content in the index, so
-    // `git checkout -- <path>` would empty it.
+    // an add in the worktree column is a file added with `git add -N`
+    // (" A", or "DA" after `git rm --cached`), which has no content in the
+    // index, so `git checkout -- <path>` would empty it.
     await git(['rm', '-f', '-q', '--', literal(relPath)], cwd);
   } else if (staged) {
     await git(['checkout', 'HEAD', '--', literal(relPath)], cwd);

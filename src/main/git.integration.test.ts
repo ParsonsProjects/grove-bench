@@ -216,6 +216,36 @@ describe('reverting a file added with git add -N', () => {
     expect(fs.existsSync(path.join(repo, 'new.txt'))).toBe(false);
     expect(run('status', '--porcelain')).toBe('');
   });
+
+  it('deletes one put back with git add -N after git rm --cached, leaving the delete staged', async () => {
+    commit('f.txt', 'committed');
+    run('rm', '-q', '--cached', 'f.txt');
+    fs.appendFileSync(path.join(repo, 'f.txt'), 'edited\n');
+    run('add', '-N', 'f.txt');
+
+    await revertFile(repo, 'f.txt', false);
+
+    expect(fs.existsSync(path.join(repo, 'f.txt'))).toBe(false);
+    expect(run('status', '--porcelain')).toBe('D  f.txt');
+  });
+});
+
+describe('reverting a file with a merge conflict', () => {
+  it('refuses, on either side, and changes nothing', async () => {
+    run('checkout', '-q', '-b', 'other');
+    commit('both.txt', 'theirs');
+    run('checkout', '-q', 'main');
+    commit('both.txt', 'ours');
+    expect(() => run('merge', '-q', 'other')).toThrow();
+    const before = fs.readFileSync(path.join(repo, 'both.txt'), 'utf8');
+
+    for (const staged of [true, false]) {
+      await expect(revertFile(repo, 'both.txt', staged)).rejects.toThrow('has a merge conflict');
+    }
+
+    expect(fs.readFileSync(path.join(repo, 'both.txt'), 'utf8')).toBe(before);
+    expect(run('status', '--porcelain')).toBe('AA both.txt');
+  });
 });
 
 describe('a name with pattern characters', () => {

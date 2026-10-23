@@ -398,21 +398,25 @@
         {@const isUntracked = confirmEntry.status === 'untracked'}
         <!-- Revert on a staged entry runs `git checkout HEAD`, which also
              drops edits not staged yet, and on a new file `git rm -f`, which
-             deletes it: one staged as new, or one added with `git add -N`
-             (an unstaged add with nothing staged; with a staged add too, it's
-             a conflict). Say so, rather than "the changes shown here". -->
+             deletes it: one staged as new or as a copy, or an unstaged add,
+             which is a file added with `git add -N` (revertFile reads both
+             the same way, and refuses a conflict). Say so, rather than "the
+             changes shown here". -->
         {@const entryPath = confirmEntry.filePath}
-        {@const isNewFile = confirmEntry.status === 'added' && (confirmEntry.staged || !gitStatus.entries.some((e) => e.staged && e.filePath === entryPath))}
+        {@const isNewStaged = confirmEntry.staged && (confirmEntry.status === 'added' || confirmEntry.status === 'copied')}
+        {@const isIntentToAdd = !confirmEntry.staged && confirmEntry.status === 'added'}
         {@const alsoUnstaged = confirmEntry.staged && gitStatus.entries.some((e) => !e.staged && e.filePath === entryPath)}
         <Dialog.Header>
-          <Dialog.Title>{isUntracked || isNewFile ? 'Discard file?' : 'Revert file?'}</Dialog.Title>
+          <Dialog.Title>{isUntracked || isNewStaged || isIntentToAdd ? 'Discard file?' : 'Revert file?'}</Dialog.Title>
           <Dialog.Description>
             {#if isUntracked}
               {@render pathName(confirmEntry.filePath)} will be permanently deleted from disk. This cannot be undone.
             {:else if confirmEntry.status === 'renamed' && confirmEntry.origPath}
               {@render pathName(confirmEntry.filePath)} was renamed from {@render pathName(confirmEntry.origPath)}. Reverting puts {@render pathName(confirmEntry.origPath)} back {confirmEntry.staged ? 'as last committed' : 'as staged'} and deletes {@render pathName(confirmEntry.filePath)}, with the changes shown here{alsoUnstaged ? ' and its unstaged edits' : ''}. This cannot be undone.
-            {:else if isNewFile}
+            {:else if isNewStaged}
               {@render pathName(confirmEntry.filePath)} is a new file, so reverting it deletes it from disk{alsoUnstaged ? ', including its unstaged edits' : ''}. This cannot be undone.
+            {:else if isIntentToAdd}
+              {@render pathName(confirmEntry.filePath)} was added with <span class="font-mono text-xs">git add -N</span>, so git has none of its content, and reverting it deletes it from disk. This cannot be undone.
             {:else if alsoUnstaged}
               {@render pathName(confirmEntry.filePath)} will be reset to its last committed state. That discards the staged changes shown here and its unstaged edits too.
             {:else}
@@ -422,7 +426,7 @@
         </Dialog.Header>
         <Dialog.Footer>
           <Button variant="subtle" onclick={() => confirmEntry = null}>Cancel</Button>
-          <Button variant="destructive" onclick={confirmRevert}>{isUntracked || isNewFile ? 'Discard' : 'Revert'}</Button>
+          <Button variant="destructive" onclick={confirmRevert}>{isUntracked || isNewStaged || isIntentToAdd ? 'Discard' : 'Revert'}</Button>
         </Dialog.Footer>
       {/if}
     </Dialog.Content>
