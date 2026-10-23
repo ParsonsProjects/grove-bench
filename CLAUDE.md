@@ -30,6 +30,8 @@ src/
     window-state.ts    # Window position/size persistence
     memory.ts          # Project memory system
     memory-autosave.ts # Auto-save memory on interval
+    skill-schedules.ts # Skills run in a new thread on a schedule (docs/skill-schedules-plan.md)
+    skill-sharing.ts   # Skills every agent can use: .agents/skills, with links in .claude/skills for Claude Code
     settings.ts        # User settings
     prerequisites.ts   # Git/Claude detection & version checks
     catalogs.ts        # ACP Registry and models.dev, fetched daily (install commands, model sizes)

@@ -201,6 +201,61 @@ describe('draftStore choices', () => {
   });
 });
 
+describe('draftStore skills', () => {
+  const skill = (name: string) => ({ name, description: `About ${name}`, source: 'project' as const });
+
+  beforeEach(async () => {
+    draftStore.open('/repo/one');
+    await settle();
+  });
+
+  afterEach(() => {
+    settingsStore.current = { ...settingsStore.current, disabledSkills: [] };
+  });
+
+  it("lists the agent's skills in the project, leaving out Claude Code's turned-off ones only", async () => {
+    agentsStore.list = [
+      { id: 'claude-code', displayName: 'Claude Agent', capabilities: { skills: true }, isDefault: true },
+      { id: 'codex', displayName: 'Codex', capabilities: { skills: false } },
+    ];
+    settingsStore.current = { ...settingsStore.current, disabledSkills: ['old'] };
+    mockGroveBench.listAgentSkills.mockResolvedValue([skill('triage'), skill('old')]);
+    await draftStore.loadSkills();
+    expect(mockGroveBench.listAgentSkills).toHaveBeenLastCalledWith('claude-code', '/repo/one');
+    expect(draftStore.skills.map((s) => s.name)).toEqual(['triage']);
+
+    draftStore.setAgent('codex');
+    await draftStore.loadSkills();
+    expect(draftStore.skills.map((s) => s.name)).toEqual(['triage', 'old']);
+  });
+
+  it("drops another agent's skills at once, and an answer that comes back too late", async () => {
+    mockGroveBench.listAgentSkills.mockResolvedValueOnce([skill('triage')]);
+    await draftStore.loadSkills();
+    let answer!: (list: ReturnType<typeof skill>[]) => void;
+    mockGroveBench.listAgentSkills.mockReturnValueOnce(new Promise((r) => { answer = r; }));
+    draftStore.setAgent('codex');
+    const late = draftStore.loadSkills();
+    expect(draftStore.skills).toEqual([]);
+    draftStore.setRepo('/repo/two');
+    mockGroveBench.listAgentSkills.mockResolvedValueOnce([skill('deploy')]);
+    await draftStore.loadSkills();
+    answer([skill('stale')]);
+    await late;
+    expect(draftStore.skills.map((s) => s.name)).toEqual(['deploy']);
+  });
+
+  it('starts the message by asking for a skill, swapping one already there', () => {
+    draftStore.setText('Fix the login bug');
+    draftStore.useSkill('triage');
+    expect(draftStore.draft?.text).toBe('Use the `triage` skill for this task.\n\nFix the login bug');
+    draftStore.useSkill('deploy');
+    expect(draftStore.draft?.text).toBe('Use the `deploy` skill for this task.\n\nFix the login bug');
+    draftStore.useSkill(null);
+    expect(draftStore.draft?.text).toBe('Fix the login bug');
+  });
+});
+
 describe('draftStore.buildOpts', () => {
   beforeEach(async () => {
     draftStore.open('/repo/one');
@@ -717,6 +772,17 @@ describe('draftStore.startThread', () => {
     arrivalScene.end('new1');
   });
 
+  it('starts without taking the screen when asked, in the mode given, and returns its id', async () => {
+    store.activeSessionId = 'shown';
+    expect(await draftStore.startThreadFor({
+      repoPath: '/repo/one', text: 'Next issue', controls: { permissionMode: 'plan' }, focus: false,
+    })).toEqual({ id: 'new1' });
+    expect(createSessionMock()).toHaveBeenCalledWith(expect.objectContaining({ repoPath: '/repo/one', permissionMode: 'plan' }));
+    expect(store.activeSessionId).toBe('shown');
+    expect(store.sessions.some((s) => s.id === 'new1')).toBe(true);
+    arrivalScene.end('new1');
+  });
+
   it('runs in the project folder when asked', async () => {
     createSessionMock().mockResolvedValue({ id: 'new1', branch: 'main', agentType: 'claude-code' });
     await draftStore.startThread({ repoPath: '/repo/one', start: { kind: 'folder' }, text: 'Write a skill' });
@@ -764,6 +830,34 @@ describe('draftStore.startThread', () => {
     expect(store.activeSessionId).toBe('s1');
     expect(store.error).toContain("isn't installed");
     store.clearError();
+  });
+
+  it('with strictAgent, refuses an agent that is not offered instead of using the default', async () => {
+    agentsStore.list = [...agentsStore.list, { id: 'opencode', displayName: 'OpenCode', capabilities: {}, stage: 'alpha' }];
+    expect(await draftStore.startThreadFor({ repoPath: '/repo/one', agentId: 'opencode', text: 'Next issue', strictAgent: true }))
+      .toEqual({ error: 'its agent is turned off or was removed' });
+    expect(await draftStore.startThreadFor({ repoPath: '/repo/one', agentId: 'gone', text: 'Next issue', strictAgent: true }))
+      .toEqual({ error: 'its agent is turned off or was removed' });
+    expect(createSessionMock()).not.toHaveBeenCalled();
+    expect(store.error).toContain('turned off or was removed');
+    store.clearError();
+  });
+
+  it('with strictAgent, loads the agents first when nothing has yet', async () => {
+    agentsStore.list = [];
+    agentsStore.loaded = false;
+    mockGroveBench.listAdapters.mockResolvedValue([{ id: 'codex', displayName: 'Codex', capabilities: {} }]);
+    expect(await draftStore.startThreadFor({ repoPath: '/repo/one', agentId: 'codex', text: 'Next issue', strictAgent: true }))
+      .toEqual({ id: 'new1' });
+    expect(createSessionMock()).toHaveBeenCalledWith(expect.objectContaining({ adapterType: 'codex' }));
+    arrivalScene.end('new1');
+  });
+
+  it('when quiet, hands back main\'s reason without a toast', async () => {
+    createSessionMock().mockRejectedValue(new Error('Branch "feat/x" already exists'));
+    expect(await draftStore.startThreadFor({ repoPath: '/repo/one', text: 'Next issue', quiet: true }))
+      .toEqual({ error: 'Branch "feat/x" already exists' });
+    expect(store.error).toBeNull();
   });
 
   it('refuses a project that was removed', async () => {

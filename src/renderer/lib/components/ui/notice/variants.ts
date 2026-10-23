@@ -7,7 +7,9 @@ import type { VariantProps } from "tailwind-variants";
  * A message inside a panel or dialog: a failed save, a missing git
  * identity, a tip. Not a toast: it stays until what it describes changes.
  * The tone marks the left edge and the title; the body stays in the
- * normal text colour so it reads easily.
+ * normal text colour so it reads easily. Titles use the 300 shade, which
+ * keeps 4.5:1 on the tinted background in both themes (400 drops to about
+ * 4.1:1 in the light one; light-theme.test.ts checks).
  */
 export const noticeVariants = tv({
 	slots: {
@@ -18,10 +20,10 @@ export const noticeVariants = tv({
 	},
 	variants: {
 		tone: {
-			info: { root: "border-blue-400 bg-blue-400/10", title: "text-blue-400" },
-			success: { root: "border-green-400 bg-green-400/10", title: "text-green-400" },
-			warning: { root: "border-amber-500 bg-amber-500/10", title: "text-amber-500" },
-			danger: { root: "border-destructive bg-destructive/10", title: "text-destructive" },
+			info: { root: "border-blue-400 bg-blue-400/10", title: "text-blue-300" },
+			success: { root: "border-green-400 bg-green-400/10", title: "text-green-300" },
+			warning: { root: "border-amber-500 bg-amber-500/10", title: "text-amber-300" },
+			danger: { root: "border-destructive bg-destructive/10", title: "text-red-300" },
 			neutral: { root: "border-border bg-muted/50", title: "text-foreground" },
 		},
 	},

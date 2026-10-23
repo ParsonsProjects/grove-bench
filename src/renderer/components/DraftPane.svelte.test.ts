@@ -130,6 +130,97 @@ describe('DraftPane', () => {
   });
 });
 
+describe('DraftPane skills', () => {
+  const skills = [
+    { name: 'triage', description: 'Sort new issues', source: 'project' as const },
+    { name: 'release-notes', description: 'Draft release notes', source: 'user' as const },
+  ];
+
+  // jsdom has neither: the menus fade, and the list scrolls to the pick.
+  const realAnimate = Element.prototype.animate;
+  const realScroll = Element.prototype.scrollIntoView;
+  beforeEach(() => {
+    mockGroveBench.listAgentSkills.mockResolvedValue(skills);
+    // Each animation ends straight away, so a menu that fades out goes.
+    Element.prototype.animate = vi.fn(() => {
+      const animation = { onfinish: null as null | (() => void), cancel() {}, finished: Promise.resolve(), currentTime: 0 };
+      queueMicrotask(() => animation.onfinish?.());
+      return animation as unknown as Animation;
+    }) as never;
+    Element.prototype.scrollIntoView = function scrollIntoView() {};
+  });
+
+  afterEach(() => {
+    cleanup();
+    Element.prototype.animate = realAnimate;
+    Element.prototype.scrollIntoView = realScroll;
+  });
+
+  it("lists the agent's skills on /, and Enter starts the message with the one picked", async () => {
+    render(DraftPane);
+    const box = screen.getByLabelText('First message') as HTMLTextAreaElement;
+    await waitFor(() => expect(box.placeholder).toMatch(/type \/ to use a skill/));
+    await fireEvent.input(box, { target: { value: '/' } });
+    expect(await screen.findByText('/triage')).toBeInTheDocument();
+    expect(screen.getByText('/release-notes')).toBeInTheDocument();
+    await fireEvent.keyDown(box, { key: 'ArrowDown' });
+    await fireEvent.keyDown(box, { key: 'Enter' });
+    expect(draftStore.draft?.text).toBe('Use the `release-notes` skill for this task.\n\n');
+    expect(screen.queryByText('/triage')).toBeNull();
+    expect(createSessionMock()).not.toHaveBeenCalled();
+    await waitFor(() => expect(box.selectionStart).toBe(box.value.length));
+  });
+
+  it('narrows the list as you type, and starts as usual when nothing matches', async () => {
+    render(DraftPane);
+    const box = screen.getByLabelText('First message');
+    await fireEvent.input(box, { target: { value: '/rel' } });
+    expect(await screen.findByText('/release-notes')).toBeInTheDocument();
+    expect(screen.queryByText('/triage')).toBeNull();
+    await fireEvent.input(box, { target: { value: '/compact' } });
+    expect(await screen.findByText('No skill matches.')).toBeInTheDocument();
+    await fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(createSessionMock()).toHaveBeenCalled());
+  });
+
+  it('closes on Escape and on a space, keeping the text', async () => {
+    render(DraftPane);
+    const box = screen.getByLabelText('First message');
+    await fireEvent.input(box, { target: { value: '/' } });
+    await screen.findByText('/triage');
+    await fireEvent.keyDown(box, { key: 'Escape' });
+    expect(screen.queryByText('/triage')).toBeNull();
+    expect(draftStore.draft?.text).toBe('/');
+    await fireEvent.input(box, { target: { value: '/t' } });
+    await screen.findByText('/triage');
+    await fireEvent.input(box, { target: { value: '/t x' } });
+    expect(screen.queryByText('/triage')).toBeNull();
+  });
+
+  it('says so when the agent has no skills', async () => {
+    mockGroveBench.listAgentSkills.mockResolvedValue([]);
+    render(DraftPane);
+    await fireEvent.input(screen.getByLabelText('First message'), { target: { value: '/' } });
+    expect(await screen.findByText('Claude Agent has no skills in this project.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Skills/ })).toBeNull();
+  });
+
+  it('picks a skill from the Skills button too, shows it, and can take it off', async () => {
+    render(DraftPane);
+    const box = screen.getByLabelText('First message');
+    await fireEvent.input(box, { target: { value: 'Fix the login bug' } });
+    await fireEvent.click(await screen.findByRole('button', { name: /^Skills\s*2/ }));
+    await fireEvent.click(screen.getByRole('menuitem', { name: /triage/ }));
+    expect(draftStore.draft?.text).toBe('Use the `triage` skill for this task.\n\nFix the login bug');
+    await waitFor(() => expect(screen.queryByRole('menu', { name: 'Skills' })).toBeNull());
+    await waitFor(() => expect(box).toHaveFocus());
+
+    await fireEvent.click(screen.getByRole('button', { name: /Skill\s*triage/ }));
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'No skill' }));
+    expect(draftStore.draft?.text).toBe('Fix the login bug');
+  });
+});
+
 describe('DraftPane drag and drop', () => {
   // jsdom has no DataTransfer: fireEvent puts this object on the event.
   const dropped = (...files: File[]) => ({ dataTransfer: { types: ['Files'], files } });

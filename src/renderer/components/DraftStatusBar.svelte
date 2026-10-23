@@ -14,10 +14,14 @@
   import { draftStore } from '../stores/draft.svelte.js';
   import DraftAgentControl from './DraftAgentControl.svelte';
   import DraftStartPicker from './DraftStartPicker.svelte';
+  import DraftSkillsButton from './DraftSkillsButton.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
   import { menuItem, menuPanel } from '$lib/components/ui/menu/index.js';
   import { placeInPane } from '../lib/keep-in-viewport.js';
   import XIcon from '@lucide/svelte/icons/x';
+
+  /** After a skill is picked, so the message box takes the cursor back. */
+  let { onskill }: { onskill?: () => void } = $props();
 
   let pickerOpen = $state(false);
   let projectMenuOpen = $state(false);
@@ -153,6 +157,8 @@
       </Button>
     </span>
   {/if}
+
+  <DraftSkillsButton onpick={onskill} />
 
 </div>
 {/if}

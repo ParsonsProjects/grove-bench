@@ -172,6 +172,27 @@ describe('PermissionBlock edit preview', () => {
     }
   });
 
+  it('shows a small edit that runs out of time at once, as the old text then the new, and compares it once asked', async () => {
+    // The quick try (50 ms at most) gives up; the full one doesn't.
+    vi.mocked(createPatch).mockImplementation(((...args: Parameters<typeof realCreatePatch>) =>
+      ((args[5] as { timeout?: number } | undefined)?.timeout ?? Infinity) <= 50 ? undefined : realCreatePatch(...args)) as typeof createPatch);
+    try {
+      const { container } = render(PermissionBlock, {
+        sessionId: 's1', requestId: 'r9', toolName: 'Edit', resolved: false, toolCategory: 'edit',
+        toolInput: {}, toolView: { kind: 'edit', path: 'src/data.ts', edits: [{ oldText: 'kept\nthe old line\n', newText: 'kept\nthe new line\n' }] },
+      });
+      expect(screen.queryByRole('button', { name: /Show edit/ })).toBeNull();
+      expect(screen.getByText(/Too many changes to compare line by line/)).toBeInTheDocument();
+      expect(container.querySelectorAll('.diff-del')).toHaveLength(2);
+      await fireEvent.click(screen.getByRole('button', { name: 'Compare edit to src/data.ts line by line' }));
+      expect(screen.queryByText(/Too many changes/)).toBeNull();
+      expect(container.querySelectorAll('.diff-del')).toHaveLength(1);
+      expect(container).toHaveTextContent('the new line');
+    } finally {
+      vi.mocked(createPatch).mockImplementation(realCreatePatch);
+    }
+  });
+
   it('shows a small change to a large file at once', () => {
     // OpenCode asks with the whole file before and after.
     const before = Array.from({ length: 1001 }, (_, i) => `line ${i}`);

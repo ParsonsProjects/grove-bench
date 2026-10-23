@@ -169,8 +169,16 @@ const api: GroveBenchAPI = {
   // Skills
   listSkills: (sessionId: string, fallbackPath: string) =>
     ipcRenderer.invoke(IPC.SKILLS_LIST, sessionId, fallbackPath),
+  listAgentSkills: (agentId: string, repoPath: string) =>
+    ipcRenderer.invoke(IPC.SKILLS_LIST_FOR_AGENT, agentId, repoPath),
   addSkill: (sessionId: string, fallbackPath: string, def: unknown) =>
     ipcRenderer.invoke(IPC.SKILLS_ADD, sessionId, fallbackPath, def),
+  getSkillSharing: (sessionId: string, fallbackPath: string) =>
+    ipcRenderer.invoke(IPC.SKILLS_SHARING, sessionId, fallbackPath),
+  shareSkills: (sessionId: string, fallbackPath: string) =>
+    ipcRenderer.invoke(IPC.SKILLS_SHARE, sessionId, fallbackPath),
+  linkSkills: (sessionId: string, fallbackPath: string) =>
+    ipcRenderer.invoke(IPC.SKILLS_LINK, sessionId, fallbackPath),
   getSkillSuggestions: (repoPath: string) =>
     ipcRenderer.invoke(IPC.SKILLS_SUGGESTIONS_GET, repoPath),
   analyzeSkillSuggestions: (repoPath: string) =>
@@ -402,6 +410,29 @@ const api: GroveBenchAPI = {
   setUnreadSessions: (ids: string[]) => ipcRenderer.send(IPC.APP_STATE_SET_UNREAD, ids),
   getTodoSessions: () => ipcRenderer.invoke(IPC.APP_STATE_GET_TODO) as Promise<string[] | null>,
   setTodoSessions: (ids: string[]) => ipcRenderer.send(IPC.APP_STATE_SET_TODO, ids),
+
+  // Skill schedules
+  listSkillSchedules: () =>
+    ipcRenderer.invoke(IPC.SKILL_SCHEDULES_LIST) as Promise<import('../shared/skill-schedules.js').SkillSchedule[] | null>,
+  saveSkillSchedule: (schedule: import('../shared/skill-schedules.js').SkillScheduleInput) =>
+    ipcRenderer.invoke(IPC.SKILL_SCHEDULES_SAVE, schedule) as Promise<import('../shared/skill-schedules.js').SkillSchedule>,
+  deleteSkillSchedule: (id: string) => ipcRenderer.invoke(IPC.SKILL_SCHEDULES_DELETE, id) as Promise<void>,
+  recordSkillScheduleRun: (id: string, outcome: Omit<import('../shared/skill-schedules.js').ScheduleOutcome, 'at'>) =>
+    ipcRenderer.invoke(IPC.SKILL_SCHEDULES_RECORD_RUN, id, outcome) as Promise<import('../shared/skill-schedules.js').SkillSchedule | null>,
+  onSkillScheduleDue: (callback: (id: string) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, id: string) => callback(id);
+    ipcRenderer.on(IPC.SKILL_SCHEDULE_DUE, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC.SKILL_SCHEDULE_DUE, handler);
+    };
+  },
+  onSkillSchedulesChanged: (callback: (schedules: import('../shared/skill-schedules.js').SkillSchedule[]) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, schedules: import('../shared/skill-schedules.js').SkillSchedule[]) => callback(schedules);
+    ipcRenderer.on(IPC.SKILL_SCHEDULES_CHANGED, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC.SKILL_SCHEDULES_CHANGED, handler);
+    };
+  },
   getSidebarWidth: () =>
     ipcRenderer.invoke(IPC.APP_STATE_GET_SIDEBAR_WIDTH) as Promise<number | null>,
   setSidebarWidth: (width: number) =>

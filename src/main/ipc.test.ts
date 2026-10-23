@@ -69,6 +69,8 @@ vi.mock('./memory.js', () => ({
   listMemoryFiles: vi.fn(), readMemoryFile: vi.fn(), writeMemoryFile: vi.fn(), deleteMemoryFile: vi.fn(), getMemoryStats: vi.fn(),
 }));
 vi.mock('./skill-suggestions.js', () => ({ getCachedSuggestions: vi.fn(), dismissSuggestion: vi.fn() }));
+const sharing = vi.hoisted(() => ({ skillSharing: vi.fn(), shareSkills: vi.fn(), linkSkills: vi.fn() }));
+vi.mock('./skill-sharing.js', () => sharing);
 vi.mock('./background-tasks.js', () => ({ agentForProject: vi.fn(), recordedAgent: vi.fn(), backgroundModelFor: vi.fn() }));
 vi.mock('./editor-launch.js', () => ({ launchEditor: vi.fn() }));
 vi.mock('./deps-install.js', () => ({ installDependencies: vi.fn() }));
@@ -1588,6 +1590,29 @@ describe('adapters, skills and MCP config', () => {
     m.worktreeManager.getAdapterType.mockResolvedValue('removed-agent');
     expect(await invoke(IPC.SKILLS_LIST, 's1', '/repo')).toEqual([]);
     await expect(invoke(IPC.SKILLS_ADD, 's1', '/repo', { name: 'x' })).rejects.toThrow("isn't available any more");
+  });
+
+  it("shares and links in Claude Code's folders: the thread's agent's when it needs links, else the default's", async () => {
+    const found = { toShare: [{ name: 'own' }], toLink: [{ name: 'team' }], broken: [{ name: 'gone' }] };
+    sharing.skillSharing.mockResolvedValue(found);
+    m.sessionManager.getSessionAdapter.mockReturnValue(undefined);
+    m.sessionManager.getWorktreePath.mockReturnValue('/wt');
+    const accountDirs = { project: ['.claude/skills'], user: ['/home/me/.claude-work/skills'] };
+    m.worktreeManager.getAdapterType.mockResolvedValue('claude-work');
+    m.adapterRegistry.get.mockImplementation((id: string) => (id === 'claude-work'
+      ? { displayName: 'Claude (work)', skillDirs: accountDirs }
+      : { displayName: 'Gemini CLI', skillDirs: { project: ['.agents/skills'], user: ['.agents/skills'] } }));
+    expect(await invoke(IPC.SKILLS_SHARING, 's1', '/repo')).toEqual(found);
+    expect(sharing.skillSharing).toHaveBeenCalledWith('/wt', accountDirs);
+    await invoke(IPC.SKILLS_LINK, 's1', '/repo');
+    expect(sharing.linkSkills).toHaveBeenCalledWith('/wt', accountDirs);
+
+    // Another agent's thread can share Claude Code's skills, but isn't offered links.
+    m.worktreeManager.getAdapterType.mockResolvedValue('gemini-cli');
+    expect(await invoke(IPC.SKILLS_SHARING, 's1', '/repo')).toEqual({ toShare: [{ name: 'own' }], toLink: [], broken: [] });
+    expect(sharing.skillSharing).toHaveBeenLastCalledWith('/wt', { project: [path.join('.claude', 'skills')], user: [path.join('.claude', 'skills')] });
+    await invoke(IPC.SKILLS_SHARE, 's1', '/repo');
+    expect(sharing.shareSkills).toHaveBeenLastCalledWith('/wt', { project: [path.join('.claude', 'skills')], user: [path.join('.claude', 'skills')] });
   });
 
   it("refuses MCP and plugin calls for an agent that isn't registered, rather than change the default's", async () => {
