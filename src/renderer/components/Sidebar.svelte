@@ -12,6 +12,7 @@
   import { groupStore } from '../stores/groups.svelte.js';
   import { todoStore } from '../stores/todo.svelte.js';
   import { schedulesStore } from '../stores/schedules.svelte.js';
+  import { skillsPanelStore } from '../stores/skillsPanel.svelte.js';
   import SidebarGroups from './SidebarGroups.svelte';
   import SidebarSection from './SidebarSection.svelte';
   import AttentionCounts from './AttentionCounts.svelte';
@@ -1344,7 +1345,7 @@
                 <Button
                   variant="quiet"
                   size="icon-2xs"
-                  onclick={() => schedulesStore.openDialog(repo)}
+                  onclick={() => skillsPanelStore.showScheduled(repo)}
                   class={schedulesStore.forRepo(repo).length ? '' : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100'}
                   title="Scheduled skills in {store.repoDisplayName(repo)}"
                   aria-label="Scheduled skills in {store.repoDisplayName(repo)}"

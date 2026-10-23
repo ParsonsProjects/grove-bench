@@ -36,7 +36,6 @@ beforeEach(() => {
   sessionStore.error = null;
   schedulesStore.list = [];
   schedulesStore.starting = {};
-  schedulesStore.dialog = null;
   startThreadFor.mockResolvedValue({ id: 'new1' });
   mockGroveBench.recordSkillScheduleRun.mockImplementation(async (id: string, outcome: object) => ({ ...schedule({ id }), lastOutcome: { at: 1, ...outcome } }));
 });
@@ -102,6 +101,14 @@ describe('schedulesStore.run', () => {
     expect(await schedulesStore.run(capped)).toBe(true);
   });
 
+  it("skips a removed project's scheduled run quietly", async () => {
+    sessionStore.repos = [];
+    expect(await schedulesStore.run(schedule(), { scheduled: true })).toBe(false);
+    expect(startThreadFor).not.toHaveBeenCalled();
+    expect(mockGroveBench.recordSkillScheduleRun).toHaveBeenCalledWith('s1', { skipped: 'its project was removed' });
+    expect(sessionStore.error).toBeNull();
+  });
+
   it('counts a thread waiting to reconnect after a restart or wake, not a closed one', async () => {
     sessionStore.sessions = [thread('waiting', 'stopped'), thread('closed', 'stopped')];
     sessionStore.deferResume('waiting');
@@ -131,17 +138,6 @@ describe('schedulesStore.run', () => {
     mockGroveBench.recordSkillScheduleRun.mockClear();
     expect(await schedulesStore.run(schedule())).toBe(false);
     expect(mockGroveBench.recordSkillScheduleRun).not.toHaveBeenCalled();
-  });
-});
-
-describe('schedulesStore dialog', () => {
-  it('opens on a project, with a new schedule to fill in when given one', () => {
-    schedulesStore.openDialog('/repo');
-    expect(schedulesStore.dialog).toEqual({ repoPath: '/repo' });
-    schedulesStore.openDialog('/repo', { agentId: 'gemini-cli', skill: 'triage' });
-    expect(schedulesStore.dialog).toEqual({ repoPath: '/repo', prefill: { agentId: 'gemini-cli', skill: 'triage' } });
-    schedulesStore.closeDialog();
-    expect(schedulesStore.dialog).toBeNull();
   });
 });
 

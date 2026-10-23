@@ -12,8 +12,12 @@ The aim is a small, supervised "software factory": for example, every 2 hours ru
 
 ## Where you see it
 
-- **Skills popover** (status bar): each skill has **Run** (a new thread now, on this thread's agent and model) and **Schedule** (the project's scheduled skills, open on a new schedule for this skill).
-- **Clock on a project's header** (sidebar): the project's schedules, with Run now, Pause, Edit and Delete, and Schedule a skill. Always shown once the project has one, on hover before that.
+A **Skills drawer** slides out on the right (`SkillsPanel.svelte`), in place of the Skills popover and the Scheduled skills dialog, which ran out of room. It has two tabs:
+
+- **This thread:** the open thread's skills, each with **Run** (a new thread now, on this thread's agent and model) and **Schedule** (the Scheduled tab, on a new schedule for the skill). For Claude Code, also Disable and Enable, suggestions and Add skill.
+- **Scheduled:** every project's schedules, grouped by project, with Run now, Pause, Edit and Delete, and Schedule a skill per project. The form opens in the tab. A removed project's schedules stay listed (skipped and noted when due, without a toast) so they can be deleted, and run again if the project comes back.
+
+**Skills** in the status bar opens This thread; the **clock on a project's header** in the sidebar opens Scheduled with that project first. Escape closes the form, then the drawer. MCP stays a popover: its job is a glance and a reconnect, and its setup lives in Settings.
 
 ## Skills across agents
 
@@ -55,9 +59,10 @@ Each ACP agent definition names its folders (`skillDirs` in `adapters/acp/preset
 - `src/main/skills.ts`: `SkillDirs` lists several folders per level; the first is where a new skill is written
 - `src/main/adapters/acp/`: `skillDirs` per agent, `AcpAdapter.listSkills`
 - `skills:listForAgent` IPC: an agent's skills in a project, without a thread (the schedule form's picker)
-- `src/renderer/stores/schedules.svelte.ts`: the list, `runSkill` (once, by hand) and `run` (a schedule, with the cap), and the dialog's open state
-- `src/renderer/components/SchedulesDialog.svelte`: the project's schedules and the form; mounted in `App.svelte`
-- `src/renderer/components/StatusBarSkills.svelte`: Run and Schedule per skill
+- `src/renderer/stores/schedules.svelte.ts`: the list, `runSkill` (once, by hand) and `run` (a schedule, with the cap)
+- `src/renderer/stores/skillsPanel.svelte.ts`: the drawer's state (open, tab, the project listed first, the form)
+- `src/renderer/components/SkillsPanel.svelte`: the drawer, mounted in `App.svelte`; `ThreadSkills.svelte` and `ScheduledSkills.svelte` are its tabs, `ScheduleForm.svelte` the form (the agent's own modes only, no turned-off Claude Code skills)
+- `src/renderer/components/StatusBarSkills.svelte`: the status bar's Skills count, which opens the drawer
 - `src/renderer/stores/draft.svelte.ts`: `startThreadFor` returns the new thread's id or why it didn't start, and takes `controls`, `focus`, `strictAgent` and `quiet`
 
 ## Limits of the POC
@@ -66,7 +71,7 @@ Each ACP agent definition names its folders (`skillDirs` in `adapters/acp/preset
 - Grove shows no queue of waiting issues; only the tracker knows what is next.
 - Each agent needs the tracker's MCP server set up in its own config. ACP agents only get Grove's own MCP servers from Grove (`acp-adapter.ts`).
 - The folder lists come from each agent's docs as of October 2026 and aren't checked against the agents themselves. OpenCode's user folder on Windows is assumed to be under the home folder like elsewhere.
-- Schedules for a removed project stay saved and fail with "its project was removed" until deleted.
+- Schedules for a removed project stay saved, skipped each time they're due, until deleted in the Scheduled tab.
 - Whether this raises throughput is unproven. Worth counting, per schedule, how many of its threads end in a merged PR against how many were closed.
 
 ## What's left

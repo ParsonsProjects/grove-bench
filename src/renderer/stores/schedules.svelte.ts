@@ -8,13 +8,6 @@ import { draftStore, type ThreadStart } from './draft.svelte.js';
 const LOAD_RETRY_MS = 1000;
 const LOAD_ATTEMPTS = 5;
 
-/** The Scheduled skills dialog: its project, and a new schedule's fields
- *  when it opens on the form (Schedule in the Skills popover). */
-export interface SchedulesDialogState {
-  repoPath: string;
-  prefill?: Partial<SkillScheduleInput>;
-}
-
 /**
  * Skills run in a new thread: once, by hand (Run in the Skills popover), or
  * on a schedule main keeps (main/skill-schedules.ts). By hand, the thread
@@ -25,8 +18,6 @@ class SchedulesStore {
   list = $state<SkillSchedule[]>([]);
   /** Schedules whose run is starting, so Run now can't start two at once. */
   starting = $state<Record<string, boolean>>({});
-  /** The open Scheduled skills dialog, or null. */
-  dialog = $state<SchedulesDialogState | null>(null);
   private started = false;
 
   init(): void {
@@ -55,14 +46,6 @@ class SchedulesStore {
 
   forRepo(repoPath: string): SkillSchedule[] {
     return this.list.filter((s) => s.repoPath === repoPath);
-  }
-
-  openDialog(repoPath: string, prefill?: Partial<SkillScheduleInput>): void {
-    this.dialog = { repoPath, ...(prefill ? { prefill } : {}) };
-  }
-
-  closeDialog(): void {
-    this.dialog = null;
   }
 
   async save(input: SkillScheduleInput): Promise<SkillSchedule> {
@@ -130,6 +113,12 @@ class SchedulesStore {
       // Run now twice: the second click does nothing. Due while a Run now
       // starts: that run stands in for it.
       if (scheduled) await this.record(schedule.id, { skipped: 'a run by hand was starting' });
+      return false;
+    }
+    if (scheduled && !sessionStore.repos.includes(schedule.repoPath)) {
+      // Kept until deleted in the Scheduled tab, and runs again if the
+      // project comes back: noted each time, no toast.
+      await this.record(schedule.id, { skipped: 'its project was removed' });
       return false;
     }
     if (scheduled) {
