@@ -432,7 +432,7 @@ export class CheckpointManager {
     const range = await this.range(sessionId, cwd, uuid, scope);
     if (!range) return null;
     try {
-      const lines = await blobLines(cwd, `${range.to}:${relPath}`);
+      const lines = await blobLines(cwd, range.to, relPath);
       return lines ? { lines } : null;
     } catch {
       return null;

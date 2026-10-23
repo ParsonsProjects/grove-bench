@@ -27,6 +27,8 @@ export interface HostedOptions {
   reject?: boolean;
   input?: string;
   encoding?: 'utf8' | 'buffer';
+  /** false: keep the final newline, which execa otherwise takes off. */
+  stripFinalNewline?: boolean;
   /** Safe to run again: it only reads, or doing it twice does no harm
    *  (taskkill). runProcess runs it again when the host fails it: in the
    *  restarted host if it died (or in the main process, as a command

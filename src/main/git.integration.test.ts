@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { resolveMergeBase, squashSince, branchCommits, excludeFromGit, fileDiff, blobLines } from './git.js';
+import { resolveMergeBase, squashSince, branchCommits, excludeFromGit, fileDiff, blobLines, MAX_TEXT_FILE_BYTES } from './git.js';
 
 // Real git is slow to start on Windows, and each test runs a dozen commands.
 vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
@@ -109,21 +109,32 @@ describe('a file diff', () => {
 });
 
 describe('a blob\'s lines', () => {
-  it('reads the index\'s copy and a tree\'s, keeping a blank last line', async () => {
+  it('reads the index\'s copy and a tree\'s, as the working-tree copy is read', async () => {
     fs.writeFileSync(path.join(repo, 'notes.txt'), 'one\ntwo\n\n');
-    run('add', 'notes.txt');
+    fs.writeFileSync(path.join(repo, 'blank.txt'), '\n');
+    run('add', 'notes.txt', 'blank.txt');
     // Changed since it was staged: the index's copy is what's read.
     fs.writeFileSync(path.join(repo, 'notes.txt'), 'changed\n');
-    expect(await blobLines(repo, ':notes.txt')).toEqual(['one', 'two', '']);
-    expect(await blobLines(repo, `${run('write-tree')}:notes.txt`)).toEqual(['one', 'two', '']);
+    expect(await blobLines(repo, '', 'notes.txt')).toEqual(['one', 'two', '']);
+    expect(await blobLines(repo, run('write-tree'), 'notes.txt')).toEqual(['one', 'two', '']);
+    expect(await blobLines(repo, '', 'blank.txt')).toEqual(['']);
   });
 
-  it('gives null for one over the size limit or binary', async () => {
-    fs.writeFileSync(path.join(repo, 'big.txt'), 'x'.repeat(5 * 1024 * 1024));
+  it('gives null over the size limit, to the byte, or for a binary file', async () => {
+    fs.writeFileSync(path.join(repo, 'at.txt'), 'x'.repeat(MAX_TEXT_FILE_BYTES));
+    fs.writeFileSync(path.join(repo, 'over.txt'), 'x'.repeat(MAX_TEXT_FILE_BYTES + 1));
     fs.writeFileSync(path.join(repo, 'logo.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01]));
-    run('add', 'big.txt', 'logo.png');
-    expect(await blobLines(repo, ':big.txt')).toBeNull();
-    expect(await blobLines(repo, ':logo.png')).toBeNull();
+    run('add', 'at.txt', 'over.txt', 'logo.png');
+    expect(await blobLines(repo, '', 'at.txt')).toHaveLength(1);
+    expect(await blobLines(repo, '', 'over.txt')).toBeNull();
+    expect(await blobLines(repo, '', 'logo.png')).toBeNull();
+  });
+
+  it("refuses a folder, which isn't a file's lines", async () => {
+    fs.mkdirSync(path.join(repo, 'src'));
+    fs.writeFileSync(path.join(repo, 'src', 'a.ts'), 'a\n');
+    run('add', 'src/a.ts');
+    await expect(blobLines(repo, run('write-tree'), 'src')).rejects.toThrow();
   });
 });
 

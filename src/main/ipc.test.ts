@@ -1142,7 +1142,7 @@ describe('file handlers', () => {
 
     vi.mocked(git.blobLines).mockResolvedValue(['x', 'y']);
     expect(await invoke(IPC.FILE_LINES, 's1', 'lines.ts', true)).toEqual({ lines: ['x', 'y'] });
-    expect(git.blobLines).toHaveBeenCalledWith(wt, ':lines.ts');
+    expect(git.blobLines).toHaveBeenCalledWith(wt, '', 'lines.ts');
     // Over the limit or binary in the index too.
     vi.mocked(git.blobLines).mockResolvedValue(null);
     expect(await invoke(IPC.FILE_LINES, 's1', 'lines.ts', true)).toBeNull();

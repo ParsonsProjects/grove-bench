@@ -465,30 +465,39 @@ describe('fileDiff()', () => {
 });
 
 describe('blobLines()', () => {
-  it('reads a blob under the limit, with a cap in case it changed since', async () => {
-    mockExeca.mockResolvedValueOnce({ stdout: '12' } as any).mockResolvedValueOnce({ stdout: 'one\ntwo' } as any);
-    expect(await blobLines('/repo', ':a.ts')).toEqual(['one', 'two']);
-    expect(mockExeca).toHaveBeenNthCalledWith(1, 'git', ['cat-file', '-s', ':a.ts'], { cwd: '/repo' });
-    expect(mockExeca).toHaveBeenNthCalledWith(2, 'git', ['show', ':a.ts'], { cwd: '/repo', maxBuffer: MAX_TEXT_FILE_BYTES });
+  const bytes = (text: string) => ({ stdout: Buffer.from(text) }) as any;
+
+  it("reads a file's raw bytes, stopping git past the size limit", async () => {
+    mockExeca.mockResolvedValueOnce(bytes('one\ntwo\n'));
+    expect(await blobLines('/repo', '', 'a.ts')).toEqual(['one', 'two']);
+    expect(mockExeca).toHaveBeenCalledWith('git', ['cat-file', 'blob', ':a.ts'], { cwd: '/repo', encoding: 'buffer', stripFinalNewline: false, maxBuffer: MAX_TEXT_FILE_BYTES });
   });
 
-  it("doesn't read a blob over the limit", async () => {
-    mockExeca.mockResolvedValueOnce({ stdout: String(MAX_TEXT_FILE_BYTES + 1) } as any);
-    expect(await blobLines('/repo', 'tree:big.json')).toBeNull();
-    expect(mockExeca).toHaveBeenCalledOnce();
+  it('gives null for a file over the limit, and passes other failures on', async () => {
+    mockExeca.mockRejectedValueOnce(Object.assign(new Error("Command's stdout was larger than 4194304 bytes"), { isMaxBuffer: true }));
+    expect(await blobLines('/repo', 'tree', 'big.json')).toBeNull();
+    mockExeca.mockRejectedValueOnce(new Error("fatal: path 'gone.ts' does not exist in 'tree'"));
+    await expect(blobLines('/repo', 'tree', 'gone.ts')).rejects.toThrow('does not exist');
   });
 
-  it('gives null for a binary blob', async () => {
-    mockExeca.mockResolvedValueOnce({ stdout: '4' } as any).mockResolvedValueOnce({ stdout: 'P\0\x01\x02' } as any);
-    expect(await blobLines('/repo', ':logo.png')).toBeNull();
+  it('gives null for a binary file', async () => {
+    mockExeca.mockResolvedValueOnce({ stdout: Buffer.from([0x50, 0x00, 0x01]) } as any);
+    expect(await blobLines('/repo', '', 'logo.png')).toBeNull();
   });
 
-  it('keeps a blank last line, the final newline being gone already', async () => {
-    // execa takes the final newline off git's output: "a\n\n" arrives as "a\n".
-    mockExeca.mockResolvedValueOnce({ stdout: '3' } as any).mockResolvedValueOnce({ stdout: 'a\n' } as any);
-    expect(await blobLines('/repo', ':a.txt')).toEqual(['a', '']);
-    mockExeca.mockResolvedValueOnce({ stdout: '0' } as any).mockResolvedValueOnce({ stdout: '' } as any);
-    expect(await blobLines('/repo', ':empty.txt')).toEqual([]);
+  it('splits lines as the working-tree copy is split', async () => {
+    mockExeca.mockResolvedValueOnce(bytes('\n'));
+    expect(await blobLines('/repo', '', 'blank.txt')).toEqual(['']);
+    mockExeca.mockResolvedValueOnce(bytes(''));
+    expect(await blobLines('/repo', '', 'empty.txt')).toEqual([]);
+    mockExeca.mockResolvedValueOnce(bytes('a\r\nb\r\n'));
+    expect(await blobLines('/repo', '', 'crlf.txt')).toEqual(['a\r', 'b\r']);
+  });
+
+  it('names the file with forward slashes, as <rev>:<path> needs', async () => {
+    mockExeca.mockResolvedValueOnce(bytes('x\n'));
+    await blobLines('/repo', 'tree', 'src\\lib\\a.ts');
+    expect(mockExeca).toHaveBeenCalledWith('git', ['cat-file', 'blob', 'tree:src/lib/a.ts'], expect.anything());
   });
 });
 
