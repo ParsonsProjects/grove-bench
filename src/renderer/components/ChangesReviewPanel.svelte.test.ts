@@ -852,8 +852,9 @@ describe('ChangesReviewPanel — large diffs', () => {
   });
 
   it('shows the old text, then the new, when an edit in Edit History has too many changes to work out', async () => {
+    // The large edit's capped diffs give up, as if out of time; the small one's don't.
     vi.mocked(createPatch).mockImplementation(((...args: Parameters<typeof realCreatePatch>) =>
-      Number.isFinite((args[5] as { timeout?: number } | undefined)?.timeout) ? undefined : realCreatePatch(...args)) as typeof createPatch);
+      Number.isFinite((args[5] as { timeout?: number } | undefined)?.timeout) && args[1].startsWith('old 0') ? undefined : realCreatePatch(...args)) as typeof createPatch);
     try {
       // Large by text here (30 lines, scaled), so it gets the capped diffs.
       const side = (word: string) => Array.from({ length: 15 }, (_, i) => `${word} ${i}`).join('\n');

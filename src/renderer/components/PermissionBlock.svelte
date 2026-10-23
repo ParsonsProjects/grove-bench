@@ -73,7 +73,7 @@
   let quickDiff = $derived(isEditTool ? quickEditDiff(view, filePath) : null);
   let editShown = $state(false);
   let editHeldBack = $derived(!!quickDiff?.large && !editShown);
-  let shownDiff = $derived(!quickDiff || editHeldBack ? null : fullEditDiff(view, filePath, quickDiff.lines));
+  let shownDiff = $derived(!quickDiff || editHeldBack ? null : fullEditDiff(view, filePath, quickDiff.diff));
   let diffLines = $derived(shownDiff?.lines ?? []);
   let alwaysAllow = $derived(alwaysAllowLabel(toolName, toolCategory));
   /** What a call other than an edit or command is about, from the view, so

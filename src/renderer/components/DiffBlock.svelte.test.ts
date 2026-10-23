@@ -89,6 +89,15 @@ describe('DiffBlock large edits', () => {
     expect(container).toHaveTextContent('the one changed line');
   });
 
+  it('shows a rewrite under the limits at once, as the old text then the new', () => {
+    // 600 lines across both sides; reversed, about 600 changes, past the quick cap.
+    const lines = Array.from({ length: 300 }, (_, i) => `row ${i}`);
+    const { container } = render(DiffBlock, { sessionId: 's1', view: { kind: 'edit', path: 'notes.txt', edits: [{ oldText: lines.join('\n'), newText: [...lines].reverse().join('\n') }] }, pending: false });
+    expect(screen.queryByRole('button', { name: /Show edit/ })).toBeNull();
+    expect(screen.getByText(/Too many changes to compare line by line/)).toBeInTheDocument();
+    expect(container).toHaveTextContent('row 299');
+  });
+
   it('gives a heavily changed large file one capped try before holding it back', () => {
     vi.mocked(createPatch).mockClear();
     const reversed = [...wide].reverse();

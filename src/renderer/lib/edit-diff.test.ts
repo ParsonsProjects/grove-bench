@@ -22,32 +22,50 @@ afterEach(() => {
 
 describe('quickEditDiff', () => {
   it('diffs a small edit as it is', () => {
-    const { lines, large } = quickEditDiff(edit('a', 'b'), 'notes.txt');
+    const { diff, large } = quickEditDiff(edit('a', 'b'), 'notes.txt');
     expect(large).toBe(false);
-    expect(lines?.filter((l) => l.type !== 'hunk').map((l) => [l.type, l.text])).toEqual([['del', 'a'], ['add', 'b']]);
+    expect(diff?.linedUp).toBe(true);
+    expect(diff?.lines.filter((l) => l.type !== 'hunk').map((l) => [l.type, l.text])).toEqual([['del', 'a'], ['add', 'b']]);
   });
 
   it('shows a small change to a large file at once', () => {
     const after = [...file];
     after[500] = 'changed';
-    const { lines, large } = quickEditDiff(edit(file.join('\n'), after.join('\n')), 'notes.txt');
+    const { diff, large } = quickEditDiff(edit(file.join('\n'), after.join('\n')), 'notes.txt');
     expect(large).toBe(false);
-    expect(lines?.filter((l) => l.type === 'add').map((l) => l.text)).toEqual(['changed']);
+    expect(diff?.lines.filter((l) => l.type === 'add').map((l) => l.text)).toEqual(['changed']);
+  });
+
+  it('shows a rewrite under the limits at once as the old text, then the new, after one capped try', () => {
+    // 1,200 lines across both sides, under the limit; reversed, about 1,200 changes, past the cap.
+    const lines600 = file.slice(0, 600);
+    vi.mocked(createPatch).mockClear();
+    const { diff, large } = quickEditDiff(edit(lines600.join('\n'), [...lines600].reverse().join('\n')), 'notes.txt');
+    expect(large).toBe(false);
+    expect(diff?.linedUp).toBe(false);
+    expect(diff?.lines.filter((l) => l.type === 'del')).toHaveLength(600);
+    expect(diff?.lines.filter((l) => l.type === 'add')).toHaveLength(600);
+    expect(createPatch).toHaveBeenCalledOnce();
+    expect(vi.mocked(createPatch).mock.calls[0][5]).toMatchObject({ maxEditLength: 500 });
   });
 
   it('holds back a heavily changed large file, without working it out', () => {
-    expect(quickEditDiff(edit(file.join('\n'), [...file].reverse().join('\n')), 'notes.txt')).toEqual({ lines: null, large: true });
+    expect(quickEditDiff(edit(file.join('\n'), [...file].reverse().join('\n')), 'notes.txt')).toEqual({ diff: null, large: true });
   });
 
   it('holds back a large write without splitting it', () => {
-    expect(quickEditDiff({ kind: 'edit', path: 'big.txt', write: file.join('\n') + '\n' + file.join('\n') }, 'big.txt')).toEqual({ lines: null, large: true });
+    expect(quickEditDiff({ kind: 'edit', path: 'big.txt', write: file.join('\n') + '\n' + file.join('\n') }, 'big.txt')).toEqual({ diff: null, large: true });
+  });
+
+  it('draws a small write as its lines', () => {
+    expect(quickEditDiff({ kind: 'edit', write: 'a\nb' }, 'f')).toEqual({ diff: { lines: [{ type: 'add', text: 'a', lineNum: 1 }, { type: 'add', text: 'b', lineNum: 2 }], linedUp: true }, large: false });
   });
 });
 
 describe('fullEditDiff', () => {
-  it('uses the lines already worked out', () => {
-    const known = [{ type: 'add' as const, text: 'x', lineNum: 1 }];
-    expect(fullEditDiff(edit('a', 'b'), 'notes.txt', known)).toEqual({ lines: known, linedUp: true });
+  it('uses what quickEditDiff already worked out', () => {
+    const known = { lines: [{ type: 'add' as const, text: 'x', lineNum: 1 }], linedUp: false };
+    expect(fullEditDiff(edit('a', 'b'), 'notes.txt', known)).toBe(known);
   });
 
   it('draws a write as its lines', () => {

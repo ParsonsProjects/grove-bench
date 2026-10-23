@@ -39,7 +39,7 @@
   let shown = $state(false);
   let heldBack = $derived(!!quick?.large && !shown);
 
-  let shownDiff = $derived(!quick || heldBack ? null : fullEditDiff(view, filePath, quick.lines));
+  let shownDiff = $derived(!quick || heldBack ? null : fullEditDiff(view, filePath, quick.diff));
   let diffLines = $derived(shownDiff?.lines ?? []);
 
   let copyContent = $derived(isWrite ? (view.write ?? '') : (view.edits ?? []).map((e) => e.newText).join('\n'));

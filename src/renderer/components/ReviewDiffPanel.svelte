@@ -470,7 +470,7 @@
   }
   /** Its diff once shown (fullEditDiff). */
   function editDiffFor(info: EditInfo, edit: ChatToolCallMessage): EditDiff {
-    return (info.full ??= fullEditDiff(toolViewOf(edit), info.filePath, quickDiffFor(info, edit).lines));
+    return (info.full ??= fullEditDiff(toolViewOf(edit), info.filePath, quickDiffFor(info, edit).diff));
   }
 
   let selectedDiffSize = $derived(diffSize(selectedDiffLines));
