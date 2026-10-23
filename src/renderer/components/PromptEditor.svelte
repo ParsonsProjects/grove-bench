@@ -141,9 +141,10 @@
   let showSuggestion = $derived(!!suggestion && !value);
 
   // Size the empty box to the suggestion, which may wrap, and back to one
-  // line when it goes. Chromium counts a placeholder in scrollHeight.
+  // line when it goes. Chromium counts a placeholder in scrollHeight. Keyed
+  // on the text, so a newer suggestion of another length is sized too.
   $effect(() => {
-    const shown = showSuggestion;
+    const shown = showSuggestion ? suggestion : null;
     untrack(() => {
       if (!textarea || value || userResized) return;
       if (shown) autoResize();
@@ -317,9 +318,9 @@
     }
 
     // Tab takes the suggested prompt. Without one, Tab moves focus as usual.
-    if (e.key === 'Tab' && suggestion && !value && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+    if (e.key === 'Tab' && showSuggestion && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
       e.preventDefault();
-      useSuggestion(suggestion);
+      useSuggestion(suggestion!);
       return;
     }
 

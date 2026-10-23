@@ -1053,6 +1053,23 @@ describe('AgentSessionManager prompt suggestions', () => {
     await sessionManager.destroySession('test-ps-off');
   });
 
+  it('drops the agent\'s suggestion for a turn the user stopped', async () => {
+    settingsMock.getSettings.mockImplementation(withSuggestions(true));
+    const win = makeMockWindow();
+    await sessionManager.createSession({ id: 'test-ps-stop', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock' });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    // As interruptQuery leaves it for the turn's result.
+    sessionManager.getSession('test-ps-stop')!.interrupting = true;
+    mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false });
+    mockAdapter.control!.emitEvent({ type: 'prompt_suggestion', suggestion: 'Run the tests' });
+    mockAdapter.control!.emitEvent({ type: 'status', message: 'after' });
+
+    await vi.waitFor(() => expect(sessionManager.getEventHistory('test-ps-stop').some((e) => e.type === 'status' && e.message === 'after')).toBe(true));
+    expect(sentSuggestions(win)).toEqual([]);
+
+    await sessionManager.destroySession('test-ps-stop');
+  });
+
   it('drops a suggestion that arrives once the next turn is under way', async () => {
     settingsMock.getSettings.mockImplementation(withSuggestions(true));
     const win = makeMockWindow();

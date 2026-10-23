@@ -42,7 +42,17 @@ describe('suggestionInputFromEvents', () => {
       prompts: ['Also Excel', 'Fix the header row', 'Now the footer'],
       first: 'Add CSV export',
       reply: 'Footer fixed. Want me to run the tests?',
+      switched: false,
     });
+  });
+
+  it('leaves out notes Grove sent in the user\'s place', () => {
+    const events = [
+      user('Add CSV export'), reply('Done.'),
+      user('[System] Context was just compacted. Use memory_read to restore your progress.'), reply('Restored.'),
+      user('Also Excel'), reply('Added.'),
+    ];
+    expect(suggestionInputFromEvents(events).prompts).toEqual(['Add CSV export', 'Also Excel']);
   });
 
   it('leaves the first message out when it is one of the latest three', () => {
@@ -63,14 +73,14 @@ describe('suggestionInputFromEvents', () => {
       user('New agent work'),
       reply('New reply'),
     ];
-    expect(suggestionInputFromEvents(events)).toEqual({ prompts: ['New agent work'], first: null, reply: 'New reply' });
+    expect(suggestionInputFromEvents(events)).toEqual({ prompts: ['New agent work'], first: null, reply: 'New reply', switched: true });
   });
 });
 
 describe('buildSuggestionPrompt', () => {
   it('fences the messages and keeps the end of a long reply', () => {
     const long = `${'x'.repeat(5_000)}Shall I commit?`;
-    const prompt = buildSuggestionPrompt({ prompts: ['Fix it', 'Thanks'], first: null, reply: long });
+    const prompt = buildSuggestionPrompt({ prompts: ['Fix it', 'Thanks'], first: null, reply: long, switched: false });
     expect(prompt).toContain('<message>\nFix it\n</message>\n<message>\nThanks\n</message>');
     expect(prompt).toContain('Shall I commit?\n</reply>');
     expect(prompt).not.toContain('x'.repeat(3_001));
@@ -78,11 +88,11 @@ describe('buildSuggestionPrompt', () => {
   });
 
   it('leaves the reply out when there is none', () => {
-    expect(buildSuggestionPrompt({ prompts: ['Fix it'], first: null, reply: null })).not.toContain('<reply>');
+    expect(buildSuggestionPrompt({ prompts: ['Fix it'], first: null, reply: null, switched: false })).not.toContain('<reply>');
   });
 
   it('leads with the thread\'s goal, else the first message', () => {
-    const input = { prompts: ['Fix it'], first: 'Add CSV export', reply: null };
+    const input = { prompts: ['Fix it'], first: 'Add CSV export', reply: null, switched: false };
     const withGoal = buildSuggestionPrompt(input, 'Add CSV and Excel export to reports');
     expect(withGoal.startsWith('The thread\'s goal:\n<goal>\nAdd CSV and Excel export to reports\n</goal>')).toBe(true);
     expect(withGoal).not.toContain('Add CSV export\n');
@@ -101,6 +111,7 @@ describe('cleanSuggestion', () => {
     expect(cleanSuggestion('Next message: Commit these changes')).toBe('Commit these changes');
     expect(cleanSuggestion('**Suggestion:** Commit')).toBe('Commit');
     expect(cleanSuggestion('```\nRun the tests\n```')).toBe('Run the tests');
+    expect(cleanSuggestion('```text\r\nRun the tests\r\n```')).toBe('Run the tests');
     expect(cleanSuggestion('Here is the likely next message:\nYes, go ahead')).toBe('Yes, go ahead');
   });
 
@@ -164,7 +175,9 @@ describe('SessionPromptSuggestions', () => {
     ['the setting is off', {}, false, () => { settingsMock.promptSuggestions = false; }],
     ['the turn failed', {}, true, () => {}],
     ['the user stopped the turn', { interrupting: true }, false, () => {}],
-    ['the thread is in plan mode', { permissionMode: 'plan' }, false, () => {}],
+    ['the thread is in Grove\'s plan mode', { permissionMode: 'plan' }, false, () => {}],
+    ['the agent is in its own plan mode', { controls: { 'acp:mode': 'plan' } }, false, () => {}],
+    ['the thread is closing', { destroying: true }, false, () => {}],
     ['it is the thread\'s first turn', { eventHistory: [user('Add CSV export'), reply('Done.')] }, false, () => {}],
   ] as const)('does not ask when %s', async (_name, overrides, isError, setup) => {
     setup();
@@ -258,6 +271,20 @@ describe('SessionPromptSuggestions', () => {
     suggestions.afterTurn(session, result(), vi.fn(), () => true);
     await settle();
     expect(generateText).toHaveBeenCalledTimes(3);
+  });
+
+  it('lets the agent\'s own suggestion show unless the user stopped the turn or turned it off', () => {
+    const suggestions = new SessionPromptSuggestions();
+    const native = (overrides: Partial<ManagedSession> = {}) => makeSession(undefined, overrides, true);
+    suggestions.afterTurn(native(), result(), vi.fn(), () => true);
+    expect(suggestions.acceptsOwn('s1')).toBe(true);
+
+    suggestions.afterTurn(native({ interrupting: true }), result(), vi.fn(), () => true);
+    expect(suggestions.acceptsOwn('s1')).toBe(false);
+
+    suggestions.afterTurn(native(), result(), vi.fn(), () => true);
+    settingsMock.promptSuggestions = false;
+    expect(suggestions.acceptsOwn('s1')).toBe(false);
   });
 
   it('emits nothing for a NONE answer', async () => {

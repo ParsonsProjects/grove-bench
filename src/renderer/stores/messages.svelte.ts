@@ -715,6 +715,9 @@ class MessageStore {
     // sidebar, the session finder) re-runs per token.
     if (this.isRunning[sessionId] === value) return;
     this.isRunning = { ...this.isRunning, [sessionId]: value };
+    // A turn starting moves the thread on from the suggestion, however it
+    // starts: a prompt, or the agent on its own (a background task ended).
+    if (value) this.clearPromptSuggestion(sessionId);
   }
 
   // ─── Streaming delta coalescing ───
@@ -1777,13 +1780,18 @@ class MessageStore {
         }
         break;
 
-      case 'prompt_suggestion':
+      case 'prompt_suggestion': {
         // At most one per turn, after its result: the newest replaces the
         // last. One that arrives once the next turn is running is stale.
-        if (event.suggestion.trim() && !this.isRunning[sessionId]) {
-          this.promptSuggestionBySession[sessionId] = event.suggestion.trim();
+        // Never one the box would run as a shell or slash command: the model
+        // writes it from the agent's reply, which can quote anything, and
+        // Tab, Enter would send it.
+        const suggestion = event.suggestion.trim();
+        if (suggestion && !/^[!/]/.test(suggestion) && !this.isRunning[sessionId]) {
+          this.promptSuggestionBySession[sessionId] = suggestion;
         }
         break;
+      }
 
       case 'task_started':
         if (this.sideEffects) backgroundTaskStore.start(sessionId, event);
@@ -2785,6 +2793,11 @@ class MessageStore {
     for (const event of page ? liveEventsMissingFrom(page, held) : held) {
       this.ingestEvent(sessionId, event);
     }
+    // Dropped above as stale like other live-only events, but a suggestion
+    // stands until the next turn (ingesting it checks that) and the page
+    // never has it.
+    const suggestion = page && held.findLast((e) => e.type === 'prompt_suggestion');
+    if (suggestion) this.ingestEvent(sessionId, suggestion);
   }
 
   /** Unsubscribe from session events */

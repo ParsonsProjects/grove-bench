@@ -671,10 +671,11 @@ class AgentSessionManager {
         }
 
         // The agent's guess at the next prompt. Read at agent start, so the
-        // setting may have been turned off since; and one that lands once the
-        // next turn is under way is for the turn before.
+        // setting may have been turned off since; none for a turn the user
+        // stopped; and one that lands once the next turn is under way is for
+        // the turn before.
         if (event.type === 'prompt_suggestion'
-          && (!settings.getSettings().promptSuggestions || turnInFlight(session))) continue;
+          && (!this.promptSuggestions.acceptsOwn(id) || turnInFlight(session))) continue;
 
         // Plan usage is the account's, not the conversation's: keep the
         // latest for the next conversation and the next launch.
@@ -924,9 +925,14 @@ class AgentSessionManager {
       // A finished turn is new history — refresh skill suggestions soon.
       if (!event.isError) this.skills.scheduleSuggestions(session);
       // Guess the next prompt, for an agent that doesn't itself. Before the
-      // interrupt check below clears the flag it reads.
-      this.promptSuggestions.afterTurn(session, event, emit,
-        () => this.sessions.get(id) === session && !session.destroying && !turnInFlight(session));
+      // interrupt check below clears the flag it reads. A failure here must
+      // not cost the turn its result.
+      try {
+        this.promptSuggestions.afterTurn(session, event, emit,
+          () => this.sessions.get(id) === session && !session.destroying && !turnInFlight(session));
+      } catch (err) {
+        logger.warn(`[prompt-suggestions] could not ask for ${id}:`, err);
+      }
 
       // A turn ended by a user interrupt reports abort/teardown errors
       // (e.g. "Request was aborted", in-flight tool failures). The user
@@ -2222,6 +2228,9 @@ class AgentSessionManager {
       session.adapter = adapter;
       session.agentType = adapter.id;
       session.model = model;
+      // A guess the old agent is still writing isn't wanted, and its
+      // failures say nothing about the new one.
+      this.promptSuggestions.forget(id);
       session.permissionMode = startingPermissionMode(adapter, model, session.permissionMode, defaults?.[CONTROL_IDS.permissionMode]);
       session.controls = initialControls(adapter, model, defaults);
       // Tool names are the old agent's: an "always allow" for its Bash says

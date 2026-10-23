@@ -10,9 +10,10 @@ import { logger } from './logger.js';
 import { worktreeManager } from './worktree-manager.js';
 import type { AgentEvent } from '../shared/types.js';
 import type { Emit, ManagedSession } from './session-types.js';
-import { BACKGROUND_TEXT_TIMEOUT_MS, generateBackgroundText, unwrapFence } from './background-text.js';
-import { eventsSinceAgentChange, lastAgentChange } from './agent-handoff.js';
+import { BACKGROUND_TEXT_TIMEOUT_MS, generateBackgroundText } from './background-text.js';
+import { eventsSinceAgentChange } from './agent-handoff.js';
 import { latestReply, promptText, truncate, unquote } from './session-goal.js';
+import { AGENT_MODE_CONTROL } from './adapters/acp/mapping.js';
 
 /** The user's latest messages in the prompt: where the thread is heading now. */
 const RECENT_PROMPTS = 3;
@@ -50,6 +51,16 @@ export interface SuggestionInput {
   first: string | null;
   /** The agent's text in its latest turn that has any. */
   reply: string | null;
+  /** The thread switched agents at some point. */
+  switched: boolean;
+}
+
+/** A user message's text as the chat shows it, or null for one the user
+ *  didn't type: a slash command, or a note Grove sent ("[System] ...", as
+ *  skill-suggestions.ts skips). */
+function typedText(e: Extract<AgentEvent, { type: 'user_message' }>): string | null {
+  const text = promptText(e);
+  return text === null || text.startsWith('[System]') ? null : text;
 }
 
 /** What a suggestion is written from, taken from a thread's history: only
@@ -61,7 +72,7 @@ export function suggestionInputFromEvents(allEvents: readonly AgentEvent[]): Sug
   for (let i = events.length - 1; i >= 0 && prompts.length < RECENT_PROMPTS; i--) {
     const e = events[i];
     if (e.type !== 'user_message') continue;
-    const text = promptText(e);
+    const text = typedText(e);
     if (text === null) continue;
     prompts.unshift(truncate(text, MAX_PROMPT_CHARS));
     oldest = i;
@@ -69,9 +80,15 @@ export function suggestionInputFromEvents(allEvents: readonly AgentEvent[]): Sug
   let first: string | null = null;
   for (let i = 0; i < oldest && first === null; i++) {
     const e = events[i];
-    if (e.type === 'user_message') first = promptText(e);
+    if (e.type === 'user_message') first = typedText(e);
   }
-  return { prompts, first: first === null ? null : truncate(first, MAX_PROMPT_CHARS), reply: latestReply(events) };
+  return {
+    prompts,
+    first: first === null ? null : truncate(first, MAX_PROMPT_CHARS),
+    reply: latestReply(events),
+    // The part since a switch leaves out at least the switch itself.
+    switched: events.length < allEvents.length,
+  };
 }
 
 /** Assemble the user message: what the thread is for (its goal, else the
@@ -101,7 +118,9 @@ const NONE = /^none\.?$/i;
 /** Turn model output into the one-line suggestion, or '' when there is none
  *  to offer (NONE, nothing usable, or too long to be a quick reply). */
 export function cleanSuggestion(raw: string): string {
-  const lines = unwrapFence(raw.trim()).split('\n').map((line) => line.trim()).filter(Boolean);
+  // Fence lines dropped rather than unwrapped, so a ```lang fence or CRLF
+  // line ends can't leave the fence itself as the suggestion.
+  const lines = raw.split('\n').map((line) => line.trim()).filter((line) => line && !line.startsWith('```'));
   // Drop a lead-in line ("Here is the likely next message:") when the message follows.
   if (lines.length > 1 && lines[0].endsWith(':')) lines.shift();
   const text = unquote((lines[0] ?? '').replace(LABEL, '').trim());
@@ -117,6 +136,12 @@ function lastUserMessage(events: readonly AgentEvent[]): AgentEvent | null {
   return null;
 }
 
+/** Whether the thread is in a plan mode: Grove's, or an ACP agent's own,
+ *  where Claude Code holds back its suggestions too. */
+function inPlanMode(session: ManagedSession): boolean {
+  return session.permissionMode === 'plan' || session.controls?.[AGENT_MODE_CONTROL] === 'plan';
+}
+
 type ResultEvent = Extract<AgentEvent, { type: 'result' }>;
 
 export class SessionPromptSuggestions {
@@ -124,6 +149,9 @@ export class SessionPromptSuggestions {
   private inFlight = new Map<string, AbortController>();
   /** Failed requests in a row, per thread. */
   private failures = new Map<string, number>();
+  /** Threads whose latest turn the user stopped: no suggestion for it from
+   *  either path, as they are about to say what's next. */
+  private stopped = new Set<string>();
 
   /**
    * A turn ended: ask the thread's agent for the user's next prompt, unless
@@ -134,11 +162,14 @@ export class SessionPromptSuggestions {
   afterTurn(session: ManagedSession, event: ResultEvent, emit: Emit, idle: () => boolean): void {
     const { id, adapter } = session;
     this.cancel(id);
-    if (!settings.getSettings().promptSuggestions) return;
+    if (session.interrupting) this.stopped.add(id);
+    else this.stopped.delete(id);
+    // A closing thread's folder may be about to go: nothing may start there.
+    if (session.destroying || !settings.getSettings().promptSuggestions) return;
     if (adapter.capabilities.promptSuggestions || !adapter.generateText) return;
     // Held back where Claude Code holds back its own: after an error and in
-    // plan mode. And after a stop: the user is about to say what's next.
-    if (event.isError || session.interrupting || session.permissionMode === 'plan') return;
+    // plan mode. And after a stop.
+    if (event.isError || this.stopped.has(id) || inPlanMode(session)) return;
     if ((this.failures.get(id) ?? 0) >= MAX_FAILURES) return;
     const input = suggestionInputFromEvents(session.eventHistory);
     // Nor on a thread's first turn, as Claude Code doesn't: one message is
@@ -147,7 +178,7 @@ export class SessionPromptSuggestions {
 
     // The goal may sum up turns from before an agent switch, which never
     // reach the new agent except as the transcript the user agreed to.
-    const goalAllowed = lastAgentChange(session.eventHistory) === null;
+    const goalAllowed = !input.switched;
     const controller = new AbortController();
     this.inFlight.set(id, controller);
     void this.request(session, input, goalAllowed, lastUserMessage(session.eventHistory), controller, emit, idle);
@@ -188,6 +219,12 @@ export class SessionPromptSuggestions {
     }
   }
 
+  /** Whether the agent's own suggestion for the turn that just ended may
+   *  show: the setting is on and the user didn't stop the turn. */
+  acceptsOwn(id: string): boolean {
+    return settings.getSettings().promptSuggestions && !this.stopped.has(id);
+  }
+
   /** Drop the request a thread is waiting on: a prompt was sent, or the
    *  thread is closing (its folder may be about to go). */
   cancel(id: string): void {
@@ -195,9 +232,11 @@ export class SessionPromptSuggestions {
     this.inFlight.delete(id);
   }
 
-  /** Forget a thread that was closed or deleted. */
+  /** Forget a thread that was closed or deleted, or switched to another
+   *  agent (whose failures are its own). */
   forget(id: string): void {
     this.cancel(id);
     this.failures.delete(id);
+    this.stopped.delete(id);
   }
 }
