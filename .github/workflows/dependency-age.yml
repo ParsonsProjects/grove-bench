@@ -1,0 +1,44 @@
+name: Dependency age
+
+# Fails a pull request whose package-lock.json adds or changes a package
+# version published less than min-release-age days ago (set in the .npmrc next
+# to the lockfile). npm applies that setting only when it picks a version, and
+# `npm ci` installs whatever the lockfile pins, so this checks lockfile changes
+# however they were made. Separate from CI because CI skips landing/ changes.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '**/package-lock.json'
+      - '**/.npmrc'
+      - scripts/check-release-age.mjs
+      - .github/workflows/dependency-age.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependency-age-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Check package ages
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Fetch base branch
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: git fetch --no-tags --depth=1 origin "$BASE_REF"
+
+      # No npm install: the script only uses Node built-ins.
+      - name: Check package ages
+        run: node scripts/check-release-age.mjs FETCH_HEAD

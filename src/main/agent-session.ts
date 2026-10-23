@@ -1,150 +1,207 @@
-import { BrowserWindow, app } from 'electron';
+import type { BrowserWindow } from 'electron';
 import { IPC } from '../shared/types.js';
-import type { SessionInfo, SessionStatus, AgentEvent, PermissionDecision } from '../shared/types.js';
+import type { SessionInfo, SessionStatus, AgentEvent, ThreadUsage, PermissionDecision, PermissionMode, McpServerInfo, McpAuthStartResult, McpElicitationResponse, McpServerContextCost, ProviderUsage, SessionControls, ThreadTurnState, EventHistoryPage } from '../shared/types.js';
+import { CONTROL_IDS, MCP_SIGN_IN_TIMEOUT_MS, PERMISSION_MODES, isMcpServerDown, subagentParent } from '../shared/types.js';
+import { userEventText } from '../shared/prompt-text.js';
+import { applyRateLimit } from '../shared/usage.js';
+import { loadUsageSnapshot, saveUsageSnapshot } from './app-state.js';
+import { handoffTranscript, isSlashCommand, lastAgentChange, pendingHandoff } from './agent-handoff.js';
+import { attachmentsFolder, imagePath, pruneAttachments, removeAttachments, saveFiles, saveImages, storeMadeFiles, storeToolImages } from './attachments.js';
+import { TurnFiles } from './turn-files.js';
+import { toolViewOf } from '../shared/tool-view.js';
 import { logger } from './logger.js';
+import { freezeLog } from './freeze-log.js';
+import { perfSteps } from './perf-steps.js';
+import { perfLine } from './perf-log.js';
 import { worktreeManager } from './worktree-manager.js';
-import { killProcessOnPort } from './port-killer.js';
-import { DevServer } from './dev-server.js';
-import { detectDevCommand } from './dev-command-detector.js';
 import * as settings from './settings.js';
 import * as memory from './memory.js';
 import * as memoryAutosave from './memory-autosave.js';
-import * as fs from 'node:fs';
-import * as path from 'node:path';
+import * as memoryCompact from './memory-compact.js';
 import { adapterRegistry } from './adapters/index.js';
-import type { AgentAdapter, AgentQueryHandle, PermissionResponse } from './adapters/types.js';
+import { isClaudeAccountId, removedAccountMessage } from './adapters/claude-accounts.js';
+import type { AgentAdapter, AgentQueryHandle, UserMessage } from './adapters/types.js';
+import { audioSentInline, inlineAudioType } from './adapters/file-attachments.js';
+import { ResumeNotFoundError } from './adapters/types.js';
+import { lastRunningCost, lastRunningTokens } from './adapters/running-cost.js';
 import { getGitIdentity } from './git.js';
+import { capToolResult, findRewindForkPoint, isAuthFailure, lastTurnUuid } from './agent-utils.js';
+import { hasApiKey, isApiKeyRejected, markApiKeyRejected } from './credentials.js';
 import { CheckpointManager } from './checkpoints.js';
+import type { EventSearchHit } from './event-search.js';
+import { noGitCheckpoints } from './no-git-checkpoints.js';
+import { killTree } from './process-tree.js';
+import { previewManager } from './preview.js';
+import type { Emit, ManagedSession, SessionCompletionResult } from './session-types.js';
+import { SessionEventStore, TRANSIENT_EVENT_TYPES, eventLogPath } from './session-event-store.js';
+import { StreamDeltas, isStreamDelta } from './session-stream.js';
+import {
+  requestPermission, respondToPermission as answerPermission, denyPendingPermissions,
+  awaitElicitation, respondToElicitation as answerElicitation, cancelElicitations,
+} from './session-permissions.js';
+import { SessionSkills } from './session-skills.js';
+import { SessionPromptSuggestions } from './session-prompt-suggestions.js';
+import {
+  beforeToolUse, cancelLimit, limitsFromHistory, promptSent, respondToLimit as answerLimit,
+  savedThreadLimits, toolCallSeen, turnActive, turnEnded, turnStopped, whileWaiting,
+  type LimitDecision, type LimitGateContext, type SavedThreadLimits,
+} from './session-limits.js';
+import {
+  readSafeWarning, readSafeSandbox, hasSandboxWarning, startingPermissionMode,
+  initialControls, normalizeModelId, appendedSystemPrompt,
+} from './session-config.js';
 
-interface PendingPermission {
-  requestId: string;
-  toolName: string;
-  toolUseId: string;
-  toolInput: Record<string, unknown>;
-  resolve: (result: PermissionResponse) => void;
+export type { SessionCompletionResult } from './session-types.js';
+
+// SDK teardown rejections (a query closed with control responses in flight)
+// are filtered in crash-handling.ts, which owns the process-wide handler.
+
+// The agent SDK registers a global process 'exit' handler per query() to
+// SIGTERM its child process on shutdown, but never removes it when the query
+// closes — so each session/restart leaks one listener.  They are harmless
+// (the child is already dead by then), but accumulate past Node's default
+// limit of 10 and trigger a MaxListenersExceededWarning.  Raise the cap so the
+// warning doesn't fire under normal multi-session use.
+process.setMaxListeners(50);
+
+/** The error event for an agent that failed to run: the adapter's sign-in
+ *  help when the failure reads as a sign-in problem, else the error itself. */
+function failureEvent(adapter: AgentAdapter, detail: string): AgentEvent {
+  return isAuthFailure(detail)
+    ? { type: 'error', message: adapter.authErrorMessage, auth: true }
+    : { type: 'error', message: detail };
 }
 
-interface ManagedSession {
-  id: string;
-  branch: string;
-  worktreePath: string;
-  repoPath: string;
-  status: SessionStatus;
-  agentType: string;
-  createdAt: number;
-  adapter: AgentAdapter;
-  queryHandle: AgentQueryHandle | null;
-  abortController: AbortController;
-  pendingPermissions: Map<string, PendingPermission>;
-  /** Tools the user has chosen to always allow for this session */
-  alwaysAllowedTools: Set<string>;
-  providerSessionId: string | null;
-  window: BrowserWindow;
-  /** Buffered events for replay after renderer reload */
-  eventHistory: AgentEvent[];
-  /** Ports where dev servers were detected — cleaned up on session destroy */
-  detectedPorts: Set<number>;
-  /** Maps toolUseId → toolName for matching tool_results back to Bash calls */
-  toolUseMap: Map<string, string>;
-  /** Last result data for completion callback */
-  lastResult: { isError: boolean; totalCostUsd?: number; durationMs?: number } | null;
-  /** Permission mode for the SDK query. */
-  permissionMode: 'default' | 'plan' | 'acceptEdits';
-  /** Extra system prompt appended to the adapter's default prompt. */
-  appendSystemPrompt: string | null;
-  /** Fully custom system prompt — overrides the adapter's default entirely. */
-  customSystemPrompt: string | null;
-  /** If set, only these tools are allowed — everything else is auto-denied. */
-  allowedTools: Set<string> | null;
-  /** Force structured JSON output via json_schema. */
-  outputFormat: { type: 'json_schema'; schema: Record<string, unknown> } | null;
-  /** Sandbox settings for restricted Bash execution. */
-  sandbox: Record<string, unknown> | null;
-  /** Extra environment variables merged into the adapter query env. */
-  extraEnv: Record<string, string> | null;
-  /** Path to append-only event log on disk. */
-  eventLogPath: string;
-  /** User-assigned display name — shown instead of branch when set. */
-  displayName: string | null;
-  /** Host-managed dev server instance. */
-  devServer: DevServer | null;
-  /** Set when the user clicks Stop — prevents runQuery from sending SESSION_STATUS 'stopped'. */
-  stoppedByUser: boolean;
-  /** Whether a memory auto-save is currently in progress. */
-  autoSaveInProgress: boolean;
-  /** Emit function for sending events to the renderer — set by createEmitter. */
-  emit: ((event: AgentEvent) => void) | null;
-  /** Monotonic counter for permission request IDs — persists across stopQuery restarts
-   *  to avoid ID collisions with resolved permissions from previous query loops. */
-  permRequestCounter: number;
-  /** Guard against concurrent runQuery calls (e.g. rapid double-stop). */
-  isStartingQuery: boolean;
-  /** Resolves when the current runQuery() finishes initializing queryHandle.
-   *  sendMessage() awaits this so messages sent right after stop aren't lost. */
-  queryReady: Promise<void> | null;
-  /** Resolver for queryReady — called in runQuery after queryHandle is set. */
-  resolveQueryReady: (() => void) | null;
-  /** Git-based checkpoint manager for rewind functionality. */
-  checkpoints: CheckpointManager;
+/** Whether `session` is in a turn: from the prompt's user_message (still on
+ *  its way to the agent, see unsentPrompts) or the agent starting to reply,
+ *  until the turn's result is in the history (see resultLogging). So the
+ *  history and this agree at every point. An agent still starting up isn't,
+ *  until a prompt goes to it. */
+function turnInFlight(session: ManagedSession): boolean {
+  if (session.unsentPrompts?.size || session.resultLogging) return true;
+  return !!session.turnHandle && session.turnHandle === session.queryHandle;
 }
 
-export interface SessionCompletionResult {
-  sessionId: string;
-  isError: boolean;
-  totalCostUsd?: number;
-  durationMs?: number;
-}
-
-const getEventsDir = () => path.join(app.getPath('userData'), 'worktrees', 'events');
-
-// Suppress "Operation aborted" unhandled rejections from agent SDKs.
-// When we abort a running query, internal async operations may reject after
-// the abort signal fires.  These are expected and safe to ignore.
-process.on('unhandledRejection', (reason: unknown) => {
-  if (reason instanceof Error && reason.message === 'Operation aborted') {
-    logger.debug('[unhandledRejection] Suppressed expected SDK abort error');
-    return;
+/** Why idle sleep must leave `session` awake for now, or null when it can
+ *  sleep. Checked here rather than trusting the renderer's view alone. */
+function sleepRefusal(session: ManagedSession): string | null {
+  if (session.status !== 'running' && session.status !== 'starting') return `status is ${session.status}`;
+  if (!session.queryHandle || session.isStartingQuery) return 'its agent is starting';
+  if (turnInFlight(session)) return 'mid-turn';
+  if (session.pendingPermissions.size > 0) return 'waiting on a permission';
+  if (session.pendingElicitations.size > 0) return 'waiting on an MCP server question';
+  if (session.limits.pending) return 'waiting on a limit question';
+  // Their count and types only: this goes to the app log, and a task's
+  // description is its command line, secrets and all (OPENAI_API_KEY=sk-...).
+  const tasks = session.backgroundTasks;
+  if (tasks && tasks.size > 0) {
+    const types = [...new Set(tasks.values())].filter((t): t is string => !!t && /^\w{1,40}$/.test(t));
+    return `${tasks.size} background task${tasks.size > 1 ? 's' : ''} running${types.length > 0 ? ` (${types.join(', ')})` : ''}`;
   }
-  // Re-throw anything else so it surfaces normally
-  console.error('Unhandled promise rejection:', reason);
-});
+  return null;
+}
 
 class AgentSessionManager {
   private sessions = new Map<string, ManagedSession>();
   private completionCallbacks = new Map<string, (result: SessionCompletionResult) => void>();
+  /** Session setups (worktree, dependency install, adapter start) still in
+   *  flight, keyed by the id the renderer already holds. The renderer opens
+   *  the pane and its input the moment it has an id, so sendMessage() waits
+   *  on these instead of bouncing a prompt typed before the session exists. */
+  private pendingSetups = new Map<string, Promise<void>>();
+  /** Cancels a pending setup, for setups that can stop part-way. */
+  private pendingSetupAborts = new Map<string, AbortController>();
+  /** Sessions closeSession() is still shutting down, keyed by id. They are
+   *  already out of `sessions`; reopening or destroying one waits on this. */
+  private closing = new Map<string, Promise<void>>();
   private eventListeners = new Map<string, ((event: AgentEvent) => void)[]>();
 
+  private events = new SessionEventStore();
+  private skills = new SessionSkills();
+  private promptSuggestions = new SessionPromptSuggestions();
+
+  /** Worktree path for a managed session, if it exists. */
+  getWorktreePath(sessionId: string): string | null {
+    return this.sessions.get(sessionId)?.worktreePath ?? null;
+  }
+
+  /** Adapter for a managed session, if it exists (used by IPC to route
+   *  provider-specific operations like skill discovery). */
+  getSessionAdapter(sessionId: string): AgentAdapter | null {
+    return this.sessions.get(sessionId)?.adapter ?? null;
+  }
+
+  /** Mine the project's conversations for skill suggestions (see SessionSkills). */
+  analyzeSkillSuggestionsForRepo(repoPath: string) {
+    return this.skills.analyzeRepo(repoPath);
+  }
+
   /** Create an emit function bound to a session — buffers events and persists them to JSONL on disk. */
-  private createEmitter(session: ManagedSession): (event: AgentEvent) => void {
-    const id = session.id;
+  private createEmitter(session: ManagedSession): Emit {
+    const streamDeltas = session.streamDeltas ??= new StreamDeltas((delta) => this.deliver(session, delta));
     const emit = (event: AgentEvent) => {
-      logger.debug(`[emit] session=${id} event.type=${event.type}`);
-      session.eventHistory.push(event);
+      // Counted for the freeze log, which names how many a stall handled.
+      freezeLog.noteAgentEvent();
 
-      // Persist to disk (fire-and-forget, non-blocking)
-      try {
-        fs.appendFileSync(session.eventLogPath, JSON.stringify(event) + '\n');
-      } catch { /* non-fatal */ }
+      // Streamed text and thinking go out merged, a few times a frame at most
+      // (session-stream.ts). Anything else sends them first, keeping order.
+      if (isStreamDelta(event)) {
+        streamDeltas.add(event);
+        return;
+      }
+      streamDeltas.flush();
 
-      // Notify registered listeners (used for progress events)
-      const listeners = this.eventListeners.get(id);
-      if (listeners) {
-        for (const cb of listeners) {
-          try { cb(event); } catch { /* non-fatal */ }
-        }
+      // The provider refused the credentials. A saved key is used instead of
+      // any other sign-in, so when one is saved it is the bad one: flag it so
+      // new conversations ask for another.
+      if (event.type === 'error' && event.keyRejected) markApiKeyRejected(session.adapter.id);
+
+      // Streaming deltas and activity ticks are only useful live: the renderer
+      // drops them on replay, search ignores them, and memory extraction never
+      // reads them. Keeping them would grow eventHistory and the JSONL log by
+      // one entry per token.
+      if (!TRANSIENT_EVENT_TYPES.has(event.type)) {
+        this.events.append(session, event);
       }
 
-      const w = session.window;
-      if (!w.isDestroyed()) {
-        const channel = `${IPC.AGENT_EVENT}:${id}`;
-        logger.debug(`[emit] sending on channel=${channel}`);
-        w.webContents.send(channel, event);
-      } else {
-        logger.debug(`[emit] window is destroyed, dropping event`);
-      }
+      this.deliver(session, event);
     };
     session.emit = emit;
     return emit;
+  }
+
+  /** Pass an event to the session's listeners and its window. */
+  private deliver(session: ManagedSession, event: AgentEvent): void {
+    const { id } = session;
+    // Notify registered listeners (used for progress events)
+    const listeners = this.eventListeners.get(id);
+    if (listeners) {
+      for (const cb of listeners) {
+        try { cb(event); } catch { /* non-fatal */ }
+      }
+    }
+
+    const w = session.window;
+    if (!w.isDestroyed()) {
+      w.webContents.send(`${IPC.AGENT_EVENT}:${id}`, event);
+    }
+  }
+
+  /** Send the streamed text and thinking a session still holds. The session's
+   *  next event does it anyway, and sendStatus before a status; this is for
+   *  the ways a run ends that may send nothing more. */
+  private flushStream(session: ManagedSession): void {
+    session.streamDeltas?.flush();
+  }
+
+  /** Tell the window a session's status. Every status goes through here: it
+   *  has its own channel rather than going through emit, so the streamed text
+   *  and thinking the session still holds go first, or it would overtake them. */
+  private sendStatus(session: ManagedSession, status: SessionStatus): void {
+    this.flushStream(session);
+    if (!session.window.isDestroyed()) {
+      session.window.webContents.send(IPC.SESSION_STATUS, session.id, status);
+    }
   }
 
   async createSession(opts: {
@@ -154,7 +211,7 @@ class AgentSessionManager {
     repoPath: string;
     window: BrowserWindow;
     resumeSessionId?: string;
-    permissionMode?: 'default' | 'plan' | 'acceptEdits';
+    permissionMode?: PermissionMode;
     appendSystemPrompt?: string | null;
     customSystemPrompt?: string | null;
     allowedTools?: string[] | null;
@@ -162,35 +219,69 @@ class AgentSessionManager {
     sandbox?: Record<string, unknown> | null;
     extraEnv?: Record<string, string> | null;
     adapterType?: string;
+    /** Model to run this session with. Falls back to the default when omitted. */
+    model?: string | null;
+    /** Starting control values (effort, thinking, …) chosen for this
+     *  conversation. Laid over the saved defaults; a value the model doesn't
+     *  offer is ignored. */
+    controls?: Record<string, string> | null;
+    /** Runs in a folder without git (the worktree entry's `noGit`): no
+     *  checkpoints and no commit identity. */
+    noGit?: boolean;
+    /** Hands over events already shown while the conversation was being set
+     *  up ("Creating worktree…"), to start its history with. Called once, in
+     *  the same tick the session becomes visible, so the caller can drop its
+     *  own copy then and a history read never sees them twice. */
+    adoptSetupEvents?: () => AgentEvent[];
+    /** The thread's spend and spend allowance when last saved (worktree manifest). */
+    savedLimits?: SavedThreadLimits;
   }): Promise<SessionInfo> {
     const { id, branch, cwd, repoPath, window: win } = opts;
+
+    // Reopened while still closing: let the old agent process finish shutting
+    // down before a new one resumes the same transcript.
+    await this.closing.get(id);
 
     // Look up the adapter (fall back to the registry default)
     const adapterType = opts.adapterType ?? adapterRegistry.getDefault().id;
     const adapter = adapterRegistry.get(adapterType);
-    if (!adapter) throw new Error(`Unknown agent adapter: ${adapterType}`);
+    if (!adapter) {
+      throw new Error(isClaudeAccountId(adapterType) ? removedAccountMessage(adapterType) : `Unknown agent adapter: ${adapterType}`);
+    }
+    // Record the agent so a restart resumes this conversation on it and its
+    // background tasks (memory notes, commit messages) use it.
+    worktreeManager.saveAdapterType(id, adapterType).catch((e) => {
+      logger.warn(`Failed to record agent for ${id}:`, e);
+    });
 
     const abortController = new AbortController();
 
     // Apply settings defaults for values not explicitly provided
     const appSettings = settings.getSettings();
-    const effectivePermissionMode = opts.permissionMode
-      || (appSettings.defaultPermissionMode === 'bypassPermissions' ? 'default' : appSettings.defaultPermissionMode)
-      || 'default';
-    // Inject project memory into the system prompt
-    const memoryPrompt = memory.getMemoryForSystemPrompt(repoPath);
-    const userAppend = opts.appendSystemPrompt ?? (appSettings.defaultSystemPromptAppend || null);
-    const builtInPrompt = [
-      'IMPORTANT PATH RULES — you are already in your project directory. Follow these strictly:',
-      '- Use RELATIVE paths (e.g. "src/foo.ts") for ALL file operations: Read, Edit, Write, Grep, Glob. NEVER use absolute paths like "' + cwd.replace(/\\/g, '/').slice(0, 30) + '..." — just use paths relative to the project root.',
-      '- When running Bash commands, use short command names (npm, npx, node, git) not absolute paths to binaries.',
-      '- Do NOT use `cd` to navigate to your current working directory before running commands — you are already there.',
-      '- If you see an absolute path in tool output or environment info, do NOT repeat it back in your tool calls. Convert it to a relative path from the project root.',
-    ].join('\n');
-    const effectiveAppendPrompt = [builtInPrompt, memoryPrompt, userAppend].filter(Boolean).join('\n\n') || null;
+    const initialModel = opts.model ?? (appSettings.defaultModels?.[adapter.id] || adapter.getModels()[0]?.id || null);
+    // The saved default mode is kept per agent with its other control defaults.
+    const effectivePermissionMode = startingPermissionMode(
+      adapter, initialModel, opts.permissionMode, appSettings.adapterDefaults?.[adapter.id]?.[CONTROL_IDS.permissionMode],
+    );
+    // Archive expired thread notes first, so the memory index never lists them.
+    memoryCompact.expireSessionNotes(repoPath);
+    // Path rules, project memory, caveman mode and the user's own addition.
+    const effectiveAppendPrompt = appendedSystemPrompt({
+      cwd,
+      repoPath,
+      userAppend: opts.appendSystemPrompt ?? (appSettings.defaultSystemPromptAppend || null),
+      cavemanMode: appSettings.cavemanMode,
+    });
 
     // Ensure memory directory exists for this repo
     memory.ensureRepoMemory(repoPath);
+
+    // A folder project isn't a git repository: no checkpoints, no commits.
+    const gitBacked = !opts.noGit;
+
+    // The log a stopped thread's pane already read, if still cached. The
+    // store keeps no copy from now on: the session's own history is read.
+    const eventHistory = this.events.startLive(id);
 
     const session: ManagedSession = {
       id,
@@ -204,12 +295,17 @@ class AgentSessionManager {
       queryHandle: null,
       abortController,
       pendingPermissions: new Map(),
+      pendingElicitations: new Map(),
       alwaysAllowedTools: new Set(),
       providerSessionId: opts.resumeSessionId || null,
+      pendingResumeAt: null,
+      model: initialModel,
       window: win,
-      eventHistory: this.loadEventHistory(id),
-      detectedPorts: new Set(),
-      toolUseMap: new Map(),
+      eventHistory,
+      logBuffer: [],
+      logBufferBytes: 0,
+      logFlushTimer: null,
+      destroying: false,
       lastResult: null,
       permissionMode: effectivePermissionMode,
       appendSystemPrompt: effectiveAppendPrompt,
@@ -218,38 +314,59 @@ class AgentSessionManager {
       outputFormat: opts.outputFormat ?? null,
       sandbox: opts.sandbox ?? null,
       extraEnv: opts.extraEnv ?? null,
-      eventLogPath: path.join(getEventsDir(), `${id}.jsonl`),
+      eventLogPath: eventLogPath(id),
       displayName: null,
-      devServer: null,
+      controls: initialControls(adapter, initialModel, appSettings.adapterDefaults?.[adapter.id], opts.controls),
       stoppedByUser: false,
+      interrupting: false,
       autoSaveInProgress: false,
       emit: null,
       permRequestCounter: 0,
       isStartingQuery: false,
+      restartRequested: false,
       queryReady: null,
       resolveQueryReady: null,
-      checkpoints: new CheckpointManager(),
+      checkpoints: gitBacked ? new CheckpointManager() : noGitCheckpoints,
+      gitBacked,
+      statusBeforeSleep: null,
+      sleepSettled: null,
+      turnHandle: null,
+      promptsBeforeInit: null,
+      limits: limitsFromHistory(eventHistory, opts.savedLimits),
     };
 
     this.sessions.set(id, session);
 
-    // Ensure events directory exists
-    try { fs.mkdirSync(getEventsDir(), { recursive: true }); } catch { /* already exists */ }
+    this.events.ensureDir();
+
+    // Keep the setup steps in the history: they were only held until now,
+    // and a pane that loads the history later would otherwise miss them.
+    for (const event of opts.adoptSetupEvents?.() ?? []) this.events.append(session, event);
 
     const emit = this.createEmitter(session);
 
+    // Tell the renderer which mode the conversation starts in. It shows
+    // 'default' until a mode_sync arrives, and adapters don't report the
+    // mode a query starts in.
+    emit({ type: 'mode_sync', mode: session.permissionMode, source: 'session' });
+
+    // Let sendMessage() wait for the first queryHandle instead of dropping a
+    // prompt that arrives while adapter.start() is still in flight (the
+    // renderer's input is live from the moment the pane mounts). runQuery
+    // resolves this once the handle is set, or on start failure.
+    session.queryReady = new Promise<void>((resolve) => {
+      session.resolveQueryReady = resolve;
+    });
+
+    // Setting up the session (memory, prompt, history) ends here; the agent's
+    // own steps follow in runQuery.
+    perfSteps.step(id, 'session');
     this.runQuery(session, emit).catch((err) => {
+        perfSteps.fail(id, 'agent failed to start');
         console.error(`[runQuery] session=${id} FAILED:`, err);
-        const errMsg = String(err.message || err);
-        const isAuthError = /auth|unauthorized|401|403|invalid.*key|not.*logged|credential/i.test(errMsg);
-        emit({ type: 'error', message: isAuthError
-          ? adapter.authErrorMessage
-          : errMsg });
+        emit(failureEvent(adapter, String(err.message || err)));
         session.status = 'error';
-        const w = session.window;
-        if (!w.isDestroyed()) {
-          w.webContents.send(IPC.SESSION_STATUS, id, 'error');
-        }
+        this.sendStatus(session, 'error');
         // Fire completion callback on error
         const errCb = this.completionCallbacks.get(id);
         if (errCb) {
@@ -269,20 +386,45 @@ class AgentSessionManager {
     };
   }
 
+  /** Relaunch a query loop after a stop/restart that arrived during startup.
+   *  Clears the startup guard first so the new run isn't itself deferred.
+   *  `resend` goes to the new query first (see runQuery). */
+  private relaunchQuery(session: ManagedSession, resend: UserMessage[] = []): void {
+    session.isStartingQuery = false;
+    session.restartRequested = false;
+    // The stop that triggered this relaunch is now being consumed by starting a
+    // fresh run, so clear the flag — otherwise it would suppress process_exit on
+    // the next natural completion of the new run.
+    session.stoppedByUser = false;
+    const emit = session.emit ?? this.createEmitter(session);
+    this.runQuery(session, emit, resend).catch((err) => {
+      perfSteps.fail(session.id, 'agent failed to start');
+      console.error(`[runQuery] session=${session.id} FAILED on restart:`, err);
+      emit(failureEvent(session.adapter, String(err?.message || err)));
+      session.status = 'error';
+      this.sendStatus(session, 'error');
+    });
+  }
+
+  /** `resend`: prompts to send the new query before any other, carried over
+   *  from a run whose conversation turned out to be gone. */
   private async runQuery(
     session: ManagedSession,
     emit: (event: AgentEvent) => void,
+    resend: UserMessage[] = [],
   ) {
     const { id, abortController } = session;
 
-    // Guard against concurrent runQuery calls (e.g. rapid double-stop)
+    // Guard against concurrent runQuery calls (e.g. rapid double-stop).
+    // A stop that arrives mid-startup must not be dropped: flag a restart so the
+    // in-flight run relaunches once it finishes starting up (see below).
     if (session.isStartingQuery) {
-      logger.warn(`[runQuery] session=${id} already starting — skipping duplicate`);
+      logger.warn(`[runQuery] session=${id} already starting — deferring restart`);
+      session.restartRequested = true;
       return;
     }
     session.isStartingQuery = true;
-
-    const pendingPermissions = session.pendingPermissions;
+    session.restartRequested = false;
 
     logger.debug(`[runQuery] session=${id} starting`);
     // Build adapter config from session state + app settings
@@ -291,82 +433,145 @@ class AgentSessionManager {
     // Read the user's git identity so we can force it via env vars.
     // Environment variables take highest precedence in git's identity
     // resolution, ensuring commits are attributed to the user even if
-    // the agent SDK sets its own git config.
+    // the agent SDK sets its own git config. With no identity configured
+    // the vars stay unset and git's own rules apply (usually it refuses to
+    // commit and asks for one) rather than us inventing an author.
     let gitIdentityEnv: Record<string, string> = {};
-    try {
+    if (session.gitBacked) try {
       const identity = await getGitIdentity(session.worktreePath);
-      gitIdentityEnv = {
-        GIT_AUTHOR_NAME: identity.name,
-        GIT_AUTHOR_EMAIL: identity.email,
-        GIT_COMMITTER_NAME: identity.name,
-        GIT_COMMITTER_EMAIL: identity.email,
-      };
+      if (identity) {
+        gitIdentityEnv = {
+          GIT_AUTHOR_NAME: identity.name,
+          GIT_AUTHOR_EMAIL: identity.email,
+          GIT_COMMITTER_NAME: identity.name,
+          GIT_COMMITTER_EMAIL: identity.email,
+        };
+      } else {
+        logger.warn(`[runQuery] session=${id} git user.name/user.email not set; agent commits use git's own identity rules`);
+        // Tell the user once per conversation. eventHistory is reloaded from
+        // disk, so this also holds across restarts and app relaunches.
+        if (!session.eventHistory.some((e) => e.type === 'git_identity_missing')) {
+          emit({ type: 'git_identity_missing' });
+        }
+      }
     } catch { /* best effort */ }
 
+    // Settings an older Grove wrote into the worktree (its deny rules hid
+    // every file from Claude Code's Grep and Glob). A direct thread's folder
+    // is the user's.
+    if (session.worktreePath !== session.repoPath && session.adapter.updateWorktreeSettings) {
+      await session.adapter.updateWorktreeSettings(session.worktreePath)
+        .catch((e) => logger.warn(`[runQuery] session=${id} could not update the worktree's agent settings:`, e));
+    }
+
+    // Snapshot the rewind fork target for this start attempt. It stays set on
+    // the session until a query successfully starts with it, so a stop that
+    // lands mid-startup (restartRequested) retries the same truncated resume.
+    const resumeAtUuid = session.pendingResumeAt;
+
+    const skillsFilter = await this.skills.filterFor(session, currentSettings.disabledSkills ?? []);
+
+    // Read-safe mode leans on a sandbox that may not start: say so once per
+    // conversation (eventHistory is reloaded from disk, so across restarts too).
+    if (session.permissionMode === 'readSafe' && !session.sandbox && !hasSandboxWarning(session.eventHistory)) {
+      emit({ type: 'status', level: 'warning', message: readSafeWarning(session.adapter.capabilities.sandbox === true) });
+    }
+
+    // Fresh conversation: snapshot the working tree as the session's baseline
+    // before the query can accept a prompt, so the baseline is always the
+    // oldest checkpoint and the first turn's diff is measured from it. The
+    // manager skips it if the session already has turns (rewind restart).
+    // Resumed sessions rebuild their checkpoint state on system_init instead.
+    const resumingProviderSession = !!session.providerSessionId;
+    if (!resumingProviderSession && session.gitBacked) {
+      const baselineStart = performance.now();
+      session.checkpoints.captureBaseline(id, session.worktreePath).then((written) => {
+        if (!written) {
+          logger.warn(`Checkpoint baseline not captured for ${id}`);
+          return;
+        }
+        // Runs beside the agent starting, so it has its own line.
+        perfLine('steps', `checkpoint baseline ${id}: ${Math.round(performance.now() - baselineStart)} ms`);
+      });
+    }
+
+    // Only hand the agent what it says it supports (AgentCapabilities).
+    const caps = session.adapter.capabilities;
+    if (session.outputFormat && !caps.structuredOutput) {
+      logger.warn(`[runQuery] ${id}: ${session.adapter.id} has no structured output; the output format is ignored`);
+    }
+
+    // Git identity, skills and the baseline above.
+    perfSteps.step(id, 'agent setup');
     let handle: AgentQueryHandle;
     try {
     handle = await session.adapter.start({
       cwd: session.worktreePath,
+      attachmentsDir: attachmentsFolder(id),
+      // session.model is the source of truth — it survives stop/restart and
+      // resume cycles, so the user's selected model isn't lost when the query
+      // is torn down and recreated.
+      model: session.model,
       permissionMode: session.permissionMode,
       appendSystemPrompt: session.appendSystemPrompt,
       customSystemPrompt: session.customSystemPrompt,
       allowedTools: session.allowedTools,
-      outputFormat: session.outputFormat,
-      sandbox: session.sandbox,
+      skills: skillsFilter ?? null,
+      outputFormat: caps.structuredOutput ? session.outputFormat : null,
+      // Read-safe mode gets OS-level sandbox enforcement as a backstop beneath
+      // the read-only classifier (explicit per-session sandbox settings win).
+      // Mode is read at query start: switching into read-safe mid-query keeps
+      // classifier-only protection until the next query (re)start.
+      sandbox: !caps.sandbox ? null
+        : session.sandbox ?? (session.permissionMode === 'readSafe' ? readSafeSandbox(session.worktreePath) : null),
       memoryOperations: {
         list: () => memory.listMemoryFiles(session.repoPath),
         read: (p) => memory.readMemoryFile(session.repoPath, p),
         write: (p, c) => memory.writeMemoryFile(session.repoPath, p, c),
         delete: (p) => memory.deleteMemoryFile(session.repoPath, p),
       },
+      previewOperations: currentSettings.previewAgentTools
+        ? previewManager.operationsFor(id, session.worktreePath)
+        : null,
       extraEnv: { ...gitIdentityEnv, ...(session.extraEnv ?? {}) },
-      resumeSessionId: session.providerSessionId,
+      controls: session.controls,
+      thinkingSummaries: currentSettings.showThinkingSummaries,
+      promptSuggestions: currentSettings.promptSuggestions,
+      // An agent that can't resume starts a new conversation each time; the
+      // thread still shows the earlier turns from Grove's own event log.
+      resumeSessionId: caps.resume ? session.providerSessionId : null,
+      resumeAtUuid: caps.resume && caps.rewind ? resumeAtUuid : null,
+      priorCostUsd: caps.resume && session.providerSessionId ? lastRunningCost(session.eventHistory) : null,
+      priorTokens: caps.resume && session.providerSessionId ? lastRunningTokens(session.eventHistory) : null,
       toolAllowRules: currentSettings.toolAllowRules,
       toolDenyRules: currentSettings.toolDenyRules,
       alwaysAllowedTools: session.alwaysAllowedTools,
-      onPermissionRequest: async (request) => {
-        const PERMISSION_TIMEOUT_MS = 30 * 60 * 1000;
-        const requestId = `perm_${id}_${++session.permRequestCounter}`;
-        return new Promise<PermissionResponse>((resolve) => {
-          const timer = setTimeout(() => {
-            pendingPermissions.delete(requestId);
-            emit({
-              type: 'permission_resolved',
-              requestId,
-              toolUseId: request.toolUseId,
-              decision: 'deny',
-            });
-            resolve({ behavior: 'deny', message: 'Permission request timed out' });
-          }, PERMISSION_TIMEOUT_MS);
-
-          pendingPermissions.set(requestId, {
-            requestId,
-            toolName: request.toolName,
-            toolUseId: request.toolUseId,
-            toolInput: request.toolInput,
-            resolve: (result) => {
-              clearTimeout(timer);
-              resolve(result);
-            },
-          });
-          emit({
-            type: 'permission_request',
-            toolName: request.toolName,
-            toolInput: request.toolInput,
-            toolUseId: request.toolUseId,
-            requestId,
-            decisionReason: request.decisionReason,
-            suggestions: request.suggestions,
-            isPlanExecution: request.isPlanExecution,
-            toolCategory: request.toolCategory,
-            planText: request.planText,
-          });
-        });
-      },
+      // Time spent waiting on the user doesn't count toward a turn's minutes.
+      onElicitation: (request, signal) => whileWaiting(session.limits, awaitElicitation(session, request, signal)),
+      onPermissionRequest: (request) => whileWaiting(session.limits, requestPermission(session, request, emit)),
+      beforeToolUse: ({ toolUseId }) => beforeToolUse(this.limitGate(session), toolUseId),
     });
 
     } catch (startErr) {
       session.isStartingQuery = false;
+      // A stop arrived mid-startup (which can be what made start() fail). Honour
+      // the restart instead of surfacing the error or resolving queryReady with
+      // no handle — stopQuery has already prepared a fresh abortController/queryReady.
+      if (session.restartRequested) {
+        this.relaunchQuery(session);
+        return;
+      }
+      // A truncated (rewind) resume failed to start — fall back to a fresh
+      // conversation rather than wedging the session. The retry cannot loop:
+      // both resume fields are cleared before relaunching.
+      if (resumeAtUuid) {
+        logger.warn(`[runQuery] session=${id} truncated resume failed, falling back to fresh conversation:`, startErr);
+        session.pendingResumeAt = null;
+        session.providerSessionId = null;
+        worktreeManager.saveProviderSessionId(id, '').catch(() => { /* non-fatal */ });
+        this.relaunchQuery(session);
+        return;
+      }
       // Reject any pending sendMessage() waiters
       if (session.resolveQueryReady) {
         session.resolveQueryReady();
@@ -376,8 +581,51 @@ class AgentSessionManager {
       throw startErr;
     }
 
+    // If a stop arrived while start() was in flight, discard this now-stale
+    // handle and relaunch cleanly rather than installing a handle on an already
+    // aborted run (which would leave the session wedged and queryReady resolved
+    // against a dead query).
+    if (session.restartRequested) {
+      try { handle.close(); } catch { /* may already be closed */ }
+      this.relaunchQuery(session);
+      return;
+    }
+
+    // Closed or destroyed while start() was in flight: nothing will read this
+    // handle, so shut its process down now rather than leave it running.
+    if (session.destroying) {
+      try { handle.close(); } catch { /* may already be closed */ }
+      session.isStartingQuery = false;
+      session.resolveQueryReady?.();
+      session.resolveQueryReady = null;
+      session.queryReady = null;
+      return;
+    }
+
+    // The agent's process is up: the app's part is done. (Its first message,
+    // system_init, only comes with the first prompt, so it isn't waited for.)
+    perfSteps.finish(id, 'agent start');
     session.queryHandle = handle;
     session.isStartingQuery = false;
+    // A new agent process: the previous one's background tasks went with it,
+    // and the agent only reports its set when it changes.
+    session.backgroundTasks = new Map();
+    // Only a resumed conversation can turn out to be missing.
+    session.promptsBeforeInit = resumingProviderSession ? { handle, prompts: [] } : null;
+    // Before resolving queryReady below, so they go ahead of sends waiting on it.
+    for (const prompt of resend) {
+      session.turnHandle = handle;
+      try {
+        handle.sendMessage(prompt);
+      } catch (e) {
+        logger.warn(`[runQuery] session=${id} failed to resend a prompt:`, e);
+      }
+    }
+    // The truncated resume (if any) has been consumed by this start — later
+    // restarts must resume the forked conversation normally.
+    if (resumeAtUuid && session.pendingResumeAt === resumeAtUuid) {
+      session.pendingResumeAt = null;
+    }
     // Signal any pending sendMessage() that the queryHandle is ready
     if (session.resolveQueryReady) {
       session.resolveQueryReady();
@@ -387,21 +635,104 @@ class AgentSessionManager {
     logger.debug(`[runQuery] session=${id} query created, entering event loop`);
 
     // Show a connecting message in the thread while waiting for system_init
-    emit({ type: 'status', message: `Connecting to ${session.adapter.displayName} — ${session.branch} · ${session.permissionMode}` });
+    emit({ type: 'status', message: `Connecting to ${session.adapter.displayName} — ${session.branch || 'project folder'} · ${session.permissionMode}` });
 
     // Process event stream from the adapter
     try {
-      for await (const event of handle.events) {
-        logger.debug(`[runQuery] session=${id} event type=${event.type}`);
+      for await (const adapterEvent of handle.events) {
+        if (!TRANSIENT_EVENT_TYPES.has(adapterEvent.type)) {
+          logger.debug(`[runQuery] session=${id} event type=${adapterEvent.type}`);
+        }
+        if (abortController.signal.aborted) break;
+
+        // Cap what a tool returned, and save the images it returned; the
+        // event passes on references.
+        const cappedContent = adapterEvent.type === 'tool_result' && typeof adapterEvent.content === 'string'
+          ? capToolResult(adapterEvent.content)
+          : undefined;
+        const capped = adapterEvent.type === 'tool_result' && cappedContent !== undefined && cappedContent !== adapterEvent.content
+          ? { ...adapterEvent, content: cappedContent }
+          : adapterEvent;
+        const event: AgentEvent = capped.type === 'tool_result' && capped.imageData
+          ? await storeToolImages(id, capped)
+          : capped;
+        // Stopped or closed while they were saved: dropped like anything it
+        // sends after, so nothing lands after a close's process_exit.
         if (abortController.signal.aborted) break;
 
         // Skip adapter user_message events — we emit our own with UUIDs in sendMessage
         if (event.type === 'user_message') continue;
 
+        // The agent switched a control itself: record it so the badge, the
+        // next start and the renderer agree with the agent.
+        if (event.type === 'agent_controls') {
+          this.applyAgentControls(session, event.values);
+          continue;
+        }
+
+        // The agent's guess at the next prompt. Read at agent start, so the
+        // setting may have been turned off since; none for a turn the user
+        // stopped; and one that lands once the next turn is under way is for
+        // the turn before.
+        if (event.type === 'prompt_suggestion'
+          && (!this.promptSuggestions.acceptsOwn(id) || turnInFlight(session))) continue;
+
+        // Plan usage is the account's, not the conversation's: keep the
+        // latest for the next conversation and the next launch.
+        if (event.type === 'rate_limit') {
+          const adapterId = session.adapter.id;
+          const current = loadUsageSnapshot(adapterId);
+          const next = applyRateLimit(current, event);
+          if (next && next !== current) saveUsageSnapshot(adapterId, next);
+        }
+
+        // A reply means a turn is running, including ones the agent starts
+        // itself (e.g. when a background task finishes). A subagent's work
+        // doesn't: a background one carries on after the turn ends.
+        if ((event.type === 'assistant_text' || event.type === 'assistant_tool_use'
+          || event.type === 'thinking' || event.type === 'partial_text') && !subagentParent(event)) {
+          session.turnHandle = handle;
+          turnActive(session.limits);
+          this.watchTurnFiles(session);
+        }
+        // The agent's whole set of running background tasks, for idle sleep.
+        // Taken as is each time rather than paired from task_started and
+        // task_notification, which can go missing and would keep a finished
+        // task running for good.
+        if (event.type === 'background_tasks_changed' && session.queryHandle === handle) {
+          session.backgroundTasks = new Map(event.tasks.map((t) => [t.taskId, t.taskType]));
+        }
+        if (event.type === 'assistant_tool_use') {
+          toolCallSeen(session.limits, event.toolUseId);
+          const view = toolViewOf(event);
+          if (view.kind === 'edit' && view.edits?.length && view.path) session.turnFiles?.noteEdited(view.path);
+        }
+
         // Intercept system_init to capture provider session ID and update status
         if (event.type === 'system_init') {
           session.status = 'running';
           session.providerSessionId = handle.getSessionId();
+          if (session.promptsBeforeInit?.handle === handle) session.promptsBeforeInit = null;
+          // Remember reported skills so the disabled-skills allowlist can
+          // include plugin skills the on-disk scan can't see.
+          if (event.skills && event.skills.length > 0) {
+            this.skills.record(session.repoPath, event.skills);
+          }
+          // Record the model the provider resolved, normalised back to a known
+          // picker id. The SDK reports a dated alias (e.g. "claude-opus-4-8-
+          // 20260101") which must not leak into session.model, or it would
+          // break picker highlighting and round-trip the wrong string on
+          // restart. Only overwrite when we recognise it.
+          const normalized = normalizeModelId(event.model, session.adapter);
+          if (normalized && normalized !== session.model) {
+            session.model = normalized;
+            worktreeManager.saveModel(session.id, normalized).catch((e) => {
+              logger.warn(`Failed to persist model for ${session.id}:`, e);
+            });
+          }
+          // The resolved model decides which controls are valid — tell the
+          // renderer what to render now that the query is up.
+          emit({ type: 'controls_sync', ...this.reconcileControls(session) });
 
           // Persist provider session ID so we can resume after app restart
           if (session.providerSessionId) {
@@ -410,47 +741,19 @@ class AgentSessionManager {
             });
           }
 
-          const w = session.window;
-          if (!w.isDestroyed()) {
-            w.webContents.send(IPC.SESSION_STATUS, session.id, 'running');
-          }
+          this.sendStatus(session, 'running');
 
-          // Resume existing checkpoint state if this is a resumed session,
-          // otherwise capture a baseline checkpoint for new sessions.
-          // These are mutually exclusive to avoid turn counter collisions.
-          if (session.providerSessionId) {
+          // A resumed provider session (app restart, stop/restart, rewind
+          // fork) keeps its refs in git: rebuild the uuid map and turn counter
+          // from them. Fresh conversations already captured their baseline
+          // before the query started. providerSessionId is set above from the
+          // handle on every init, so the decision has to use what it was
+          // before this query started.
+          if (resumingProviderSession) {
             session.checkpoints.resume(id, session.worktreePath).catch(err => {
               logger.warn(`Checkpoint resume failed for ${id}:`, err);
             });
-          } else {
-            session.checkpoints.capture(id, session.worktreePath, '__baseline__').catch(err => {
-              logger.warn(`Checkpoint baseline failed for ${id}:`, err);
-            });
           }
-        }
-
-        // Intercept tool_result to track tool names and detect dev server URLs
-        if (event.type === 'tool_result') {
-          // Dev server URL detection (from Bash output)
-          const toolName = session.toolUseMap.get(event.toolUseId);
-          if (toolName === 'Bash' && event.content) {
-            const portMatches = event.content.matchAll(
-              /https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::\]):(\d+)/g
-            );
-            for (const m of portMatches) {
-              const port = parseInt(m[1], 10);
-              if (!session.detectedPorts.has(port)) {
-                session.detectedPorts.add(port);
-                logger.info(`Dev server detected on port ${port} in session ${session.id}`);
-                emit({ type: 'devserver_detected', port, url: `http://localhost:${port}` });
-              }
-            }
-          }
-        }
-
-        // Track tool use IDs for matching tool_results
-        if (event.type === 'assistant_tool_use') {
-          session.toolUseMap.set(event.toolUseId, event.toolName);
         }
 
         // Auto-save memories before compaction wipes context
@@ -479,20 +782,26 @@ class AgentSessionManager {
 
         // Track result for completion callback
         if (event.type === 'result') {
-          session.lastResult = {
-            isError: event.isError,
-            totalCostUsd: event.totalCostUsd,
-            durationMs: event.durationMs,
-          };
+          await this.logResult(session, handle, event, emit);
+          continue;
         }
 
         emit(event);
       }
       logger.debug(`[runQuery] session=${id} event loop ended normally`);
     } catch (err: any) {
-      // Abort errors are expected when the user stops a query — don't surface them
-      if (err?.message === 'Operation aborted' || abortController.signal.aborted) {
+      // Abort errors are expected when the user stops a query — don't surface them.
+      // interrupting covers an in-place interrupt that tears down the event loop
+      // (the SDK throws "Request was aborted" rather than yielding a result).
+      // destroying covers a close or delete, which kills the agent process
+      // before closing its query. A handle that is no longer the session's
+      // belongs to a run that was put to sleep, which also kills the process.
+      if (err?.message === 'Operation aborted' || abortController.signal.aborted || session.interrupting || session.destroying || session.queryHandle !== handle) {
+        session.interrupting = false;
         logger.debug(`[runQuery] session=${id} event loop aborted (expected)`);
+      } else if (err instanceof ResumeNotFoundError && resumingProviderSession) {
+        this.replaceMissingConversation(session, handle, emit, err.message);
+        return;
       } else {
         const errMsg = err?.message || String(err);
         const stderr = err?.stderr || err?.cause?.stderr || '';
@@ -500,34 +809,54 @@ class AgentSessionManager {
         const detail = stderr ? `${errMsg}\n${stderr}` : errMsg;
         logger.error(`[runQuery] session=${id} event loop error (exit=${exitCode}):`, detail);
 
-        const isAuthError = /auth|unauthorized|401|403|invalid.*key|not.*logged|credential/i.test(detail);
+        const isAuthError = isAuthFailure(detail);
         if (isAuthError) {
-          emit({ type: 'error', message: session.adapter.authErrorMessage });
+          emit(failureEvent(session.adapter, detail));
         } else {
           emit({ type: 'error', message: detail.slice(0, 500) });
         }
       }
     }
 
+    // A run that ended without a last event (an abort, a stop, a sleep)
+    // would leave the text it streamed last waiting on the timer. Those
+    // return below with no status, which would send it.
+    this.flushStream(session);
+    // A close or delete decides itself, once the agent is dead, whether the
+    // turn ended (see shutDown).
+    if (session.turnHandle === handle && !session.destroying) session.turnHandle = null;
+    // A turn cut short by an error reports no files. Only this run's: once
+    // stopped or put to sleep, a newer run may be watching its own turn.
+    if (session.queryHandle === handle || session.destroying) void this.endTurnFiles(session);
+
     // If the user clicked Stop, don't mark the session as stopped or fire
     // process_exit — stopQuery will restart the query loop.
-    // Dev servers are preserved so they survive stop/continue cycles.
     if (session.stoppedByUser) {
       session.stoppedByUser = false;
       return;
     }
 
-    // Kill any dev servers that were detected during this session
-    // (only on natural query completion, not user-initiated stop)
-    await this.killDetectedPorts(session);
+    // destroySession closed the query: the session is being torn down and its
+    // worktree removed. Don't flip status, fire callbacks, or start a memory
+    // extraction (which would spawn a subprocess with cwd inside the worktree
+    // and hold it locked while removal runs). A turn the close or delete cut
+    // short gets its process_exit from shutDown.
+    if (session.destroying) {
+      logger.debug(`[runQuery] session=${id} event loop ended during destroy`);
+      return;
+    }
+
+    // Put to sleep (or already replaced by a newer run): the conversation
+    // stays open, so this is not the end of it. Nothing to report.
+    if (session.queryHandle !== handle) {
+      logger.debug(`[runQuery] session=${id} event loop ended for a retired query`);
+      return;
+    }
 
     // Query finished
     session.status = 'stopped';
     emit({ type: 'process_exit' });
-    const w = session.window;
-    if (!w.isDestroyed()) {
-      w.webContents.send(IPC.SESSION_STATUS, id, 'stopped');
-    }
+    this.sendStatus(session, 'stopped');
 
     // Fire completion callback if registered
     const cb = this.completionCallbacks.get(id);
@@ -557,22 +886,185 @@ class AgentSessionManager {
     });
   }
 
-  async sendMessage(id: string, content: string, images?: import('../shared/types.js').ImageAttachment[]): Promise<boolean> {
-    const session = this.sessions.get(id);
-    if (!session) {
-      logger.debug(`[sendMessage] session=${id} no session`);
-      return false;
-    }
+  /** A turn's result from `handle`'s run: list the files the turn made, count
+   *  what it cost and log the result. The turn counts as in flight until the
+   *  result is in the history (see turnInFlight), so a history page read
+   *  meanwhile has both or neither. */
+  private async logResult(
+    session: ManagedSession,
+    handle: AgentQueryHandle,
+    event: Extract<AgentEvent, { type: 'result' }>,
+    emit: Emit,
+  ): Promise<void> {
+    const { id } = session;
+    let logged!: () => void;
+    const logging = new Promise<void>((resolve) => { logged = resolve; });
+    session.resultLogging = logging;
+    // A prompt sent from here on starts the next turn.
+    if (session.turnHandle === handle) session.turnHandle = null;
+    try {
+      // A finished turn is activity too, as much as a prompt sent.
+      worktreeManager.updateLastActive(id).catch((e) => {
+        logger.warn(`Failed to persist last activity for ${id}:`, e);
+      });
+      // The files the turn made go just ahead of its result.
+      await this.endTurnFiles(session, emit);
+      // Adds the turn's cost to the thread's and today's spend and its
+      // tokens to the thread's, and saves the thread's, which its history
+      // won't keep through a rewind.
+      const { threadSpendUsd: spent, threadTokens: { input, output } } = session.limits;
+      turnEnded(session.limits, event);
+      const { threadSpendUsd, threadTokens } = session.limits;
+      if (threadSpendUsd !== spent || threadTokens.input !== input || threadTokens.output !== output) this.saveThreadLimits(session);
+      session.lastResult = {
+        isError: event.isError,
+        totalCostUsd: event.totalCostUsd,
+        durationMs: event.durationMs,
+      };
 
-    // If queryHandle is not yet available but a new query is being initialized
-    // (e.g. right after stop), wait for it to become ready.
+      // A finished turn is new history — refresh skill suggestions soon.
+      if (!event.isError) this.skills.scheduleSuggestions(session);
+      // Guess the next prompt, for an agent that doesn't itself. Before the
+      // interrupt check below clears the flag it reads. A failure here must
+      // not cost the turn its result.
+      try {
+        this.promptSuggestions.afterTurn(session, event, emit,
+          () => this.sessions.get(id) === session && !session.destroying && !turnInFlight(session));
+      } catch (err) {
+        logger.warn(`[prompt-suggestions] could not ask for ${id}:`, err);
+      }
+
+      // A turn ended by a user interrupt reports abort/teardown errors
+      // (e.g. "Request was aborted", in-flight tool failures). The user
+      // asked to stop, so present a clean result instead of dumping them.
+      if (session.interrupting) {
+        session.interrupting = false;
+        emit({ ...event, isError: false, errors: undefined });
+      } else {
+        emit(event);
+      }
+    } finally {
+      if (session.resultLogging === logging) session.resultLogging = undefined;
+      logged();
+    }
+    this.runHeldMcpReconnects(session);
+  }
+
+  /** Watch the worktree for the files this turn makes, unless a watch for
+   *  it is already running (a second message mid-turn). */
+  private watchTurnFiles(session: ManagedSession): void {
+    if (session.turnFiles || session.destroying || !session.worktreePath) return;
+    session.turnFiles = new TurnFiles(session.worktreePath);
+  }
+
+  /**
+   * The turn is over: stop watching the worktree for the files it made. With
+   * `emit`, list them in the thread first (a turn that ended, or one the user
+   * interrupted); without, drop them (a stop or rewind that restarts the
+   * agent, a sleep, a close). Every way a turn ends comes through here, so a
+   * watch never carries over into the next turn. Never fails the turn.
+   */
+  private async endTurnFiles(session: ManagedSession, emit?: Emit): Promise<void> {
+    const turnFiles = session.turnFiles;
+    session.turnFiles = null;
+    if (!turnFiles) return;
+    if (!emit) {
+      turnFiles.close();
+      return;
+    }
+    try {
+      const { files, more } = await turnFiles.finish();
+      if (files.length === 0) return;
+      const made = await storeMadeFiles(session.id, files);
+      emit({ type: 'files_made', files: made, ...(more > 0 && { more }) });
+    } catch (err) {
+      logger.warn(`[turn-files] session=${session.id} could not list the turn's files:`, err);
+    }
+  }
+
+  /**
+   * The conversation `handle` resumed is gone from the agent (its transcript
+   * was deleted or moved). Forget it, or every restart would resume it and
+   * fail the same way, and start a new conversation in its place. Reporting
+   * the agent stopped instead would make the renderer resume the same missing
+   * conversation again, in a loop. The new run can't end up here: it has no
+   * provider session to resume.
+   */
+  private replaceMissingConversation(session: ManagedSession, handle: AgentQueryHandle, emit: Emit, reason: string): void {
+    const { id } = session;
+    logger.warn(`[runQuery] session=${id} provider session ${session.providerSessionId} not found, starting a new conversation: ${reason}`);
+    session.providerSessionId = null;
+    session.pendingResumeAt = null;
+    worktreeManager.saveProviderSessionId(id, '').catch(() => { /* non-fatal */ });
+
+    // Prompts sent while it was starting went nowhere; the new one gets them.
+    const unanswered = session.promptsBeforeInit?.handle === handle ? session.promptsBeforeInit.prompts : [];
+    session.promptsBeforeInit = null;
+    if (session.turnHandle === handle) session.turnHandle = null;
+    session.queryHandle = null;
+    try { handle.close(); } catch { /* may already be closed */ }
+
+    emit({
+      type: 'status',
+      level: 'warning',
+      newConversation: true,
+      message: `${session.adapter.displayName} couldn't find its record of this thread any more, so it starts afresh. The thread above stays, but the agent won't remember it.`,
+    });
+    // Prompts sent meanwhile wait for the new run (see awaitQueryHandle).
+    if (!session.resolveQueryReady) {
+      session.queryReady = new Promise<void>((resolve) => {
+        session.resolveQueryReady = resolve;
+      });
+    }
+    this.relaunchQuery(session, unanswered);
+  }
+
+  /**
+   * Register an in-flight session setup so prompts sent for `id` before
+   * createSession() has run are held until it settles. The entry clears
+   * itself once the setup resolves or rejects. `abort`, when given, is how
+   * deleting the conversation stops the setup.
+   */
+  trackPendingSetup(id: string, setup: Promise<unknown>, abort?: AbortController): void {
+    const settled = setup.then(() => undefined, () => undefined);
+    this.pendingSetups.set(id, settled);
+    if (abort) this.pendingSetupAborts.set(id, abort);
+    else this.pendingSetupAborts.delete(id);
+    settled.then(() => {
+      if (this.pendingSetups.get(id) !== settled) return;
+      this.pendingSetups.delete(id);
+      if (this.pendingSetupAborts.get(id) === abort) this.pendingSetupAborts.delete(id);
+    });
+  }
+
+  /** Whether a setup for `id` is still in flight (see trackPendingSetup). */
+  hasPendingSetup(id: string): boolean {
+    return this.pendingSetups.has(id);
+  }
+
+  /**
+   * Resolve once the session has a live query handle. If none is installed
+   * but a new query is being initialized (e.g. right after stop), waits for it
+   * to become ready. Returns false when there is nothing to send to.
+   */
+  private async awaitQueryHandle(session: ManagedSession): Promise<boolean> {
+    const id = session.id;
+    // A message for a sleeping conversation wakes it; the send then waits for
+    // the restarted agent like a send right after a stop does.
+    if (session.status === 'sleeping') this.wake(session);
     if (!session.queryHandle && session.queryReady) {
       logger.debug(`[sendMessage] session=${id} waiting for queryHandle after stop`);
       const QUERY_READY_TIMEOUT_MS = 30_000;
-      const timeout = new Promise<'timeout'>((resolve) =>
-        setTimeout(() => resolve('timeout'), QUERY_READY_TIMEOUT_MS),
-      );
-      const result = await Promise.race([session.queryReady, timeout]);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<'timeout'>((resolve) => {
+        timer = setTimeout(() => resolve('timeout'), QUERY_READY_TIMEOUT_MS);
+      });
+      let result: unknown;
+      try {
+        result = await Promise.race([session.queryReady, timeout]);
+      } finally {
+        clearTimeout(timer);
+      }
       if (result === 'timeout' || !session.queryHandle) {
         logger.warn(`[sendMessage] session=${id} timed out waiting for queryHandle`);
         return false;
@@ -583,31 +1075,159 @@ class AgentSessionManager {
       logger.debug(`[sendMessage] session=${id} no queryHandle`);
       return false;
     }
+    return true;
+  }
+
+  async sendMessage(
+    id: string,
+    content: string,
+    images?: import('../shared/types.js').ImageAttachment[],
+    files?: import('../shared/types.js').FileAttachment[],
+  ): Promise<boolean> {
+    // When it was sent, for the thread to show. Taken before the waits below
+    // (setup, a wake), which can take minutes.
+    const sentAt = Date.now();
+    let session = this.sessions.get(id);
+
+    // The session object is created at the end of setup; a prompt that
+    // arrives during worktree creation or dependency install has nowhere to
+    // go yet. Wait for setup to settle and look the session up again.
+    if (!session) {
+      const setup = this.pendingSetups.get(id);
+      if (setup) {
+        logger.debug(`[sendMessage] session=${id} waiting for session setup`);
+        await setup;
+        session = this.sessions.get(id);
+      }
+    }
+
+    if (!session) {
+      logger.debug(`[sendMessage] session=${id} no session`);
+      return false;
+    }
+
+    if (!(await this.awaitQueryHandle(session)) || session.destroying) return false;
+
+    // The last turn's suggestion is no longer wanted.
+    this.promptSuggestions.cancel(id);
+
+    // A new turn supersedes any pending interrupt: don't let a stale flag
+    // sanitize this turn's genuine result.
+    session.interrupting = false;
 
     // Record in event history with UUID for checkpoint tracking.
     // Use emit() which handles eventHistory, disk persistence, and renderer notification.
+    // Attached images and files are saved to disk and the event refers to
+    // them, so the thread can show them again when the conversation is
+    // reopened, and an agent can be given a file's path.
     const uuid = crypto.randomUUID();
-    const userEvent: AgentEvent = { type: 'user_message', text: content, uuid };
-    session.emit?.(userEvent);
-
-    // Capture checkpoint (fire-and-forget), include message text for display
-    session.checkpoints.capture(id, session.worktreePath, uuid, content).catch(err => {
-      logger.warn(`Checkpoint capture failed for ${id}:`, err);
-    });
-
-    const sessionId = session.providerSessionId ?? '';
-    logger.debug(`[sendMessage] session=${id} sending to adapter, providerSessionId=${sessionId || '(not yet initialized)'}${images?.length ? ` with ${images.length} image(s)` : ''}`);
+    // The composer only offers attachments to agents that take images; this
+    // catches any that arrive anyway (a paste racing an agent switch).
+    if (images?.length && !session.adapter.capabilities.imageAttachments) {
+      session.emit?.({ type: 'status', level: 'warning', message: `${session.adapter.displayName} can't take images, so the attached image${images.length > 1 ? 's were' : ' was'} left out.` });
+      images = undefined;
+    }
+    const storedImages = images?.length ? await saveImages(id, images) : [];
+    const savedFiles = files?.length ? await saveFiles(id, files) : [];
+    // Closed or deleted meanwhile: its history has ended (see shutDown).
+    if (session.destroying) return false;
+    if (files && savedFiles.length < files.length) {
+      const lost = files.length - savedFiles.length;
+      session.emit?.({ type: 'status', level: 'warning', message: `${lost === 1 ? 'An attached file' : `${lost} attached files`} could not be saved, so ${lost === 1 ? 'it was' : 'they were'} left out. See the log for details.` });
+    }
+    // After a switch the user wanted a transcript for, messages carry it
+    // ahead of what they typed until the new agent replies; the thread shows
+    // only theirs. A slash command is left alone (it must lead the text) and
+    // the transcript waits for the next message.
+    const handoff = isSlashCommand(content) ? null : pendingHandoff(session.eventHistory);
+    const handoffNote = handoff ? handoffTranscript(session.eventHistory.slice(0, handoff.index), handoff.event, attachmentsFolder(id)) : null;
+    // Read before this message joins the history.
+    const audioInHistory = savedFiles.length > 0 ? audioSentInline(session.eventHistory) : 0;
+    const userEvent: Extract<AgentEvent, { type: 'user_message' }> = {
+      type: 'user_message', text: content, uuid, at: sentAt,
+      ...(storedImages.length > 0 && { images: storedImages }),
+      ...(savedFiles.length > 0 && { files: savedFiles.map((f) => f.stored) }),
+    };
+    // The thread is mid-turn from here, as its history now says, though the
+    // prompt reaches the agent only after the checkpoint (see turnInFlight).
+    const unsent = session.unsentPrompts ??= new Set();
+    unsent.add(uuid);
     try {
-      session.queryHandle.sendMessage({
-        text: content,
-        images: images,
-      });
-      logger.debug(`[sendMessage] session=${id} sent successfully`);
-      return true;
-    } catch (e) {
-      console.error(`[sendMessage] session=${id} send FAILED:`, e);
-      logger.warn(`Failed to send message to session ${id}:`, e);
-      return false;
+      session.emit?.(userEvent);
+
+      // Snapshot the working tree before the agent gets the prompt. The capture
+      // is awaited on purpose: fired concurrently, the agent could start editing
+      // files while `git add -A` is still scanning, and the "before this turn"
+      // checkpoint would silently include part of the turn. capture() never
+      // throws; a false result means there is no checkpoint for this message,
+      // which the thread shows so a later rewind attempt is not a surprise.
+      // Label the checkpoint with what the chat shows, not attached file content.
+      const captured = await session.checkpoints.capture(id, session.worktreePath, uuid, userEventText(userEvent));
+      if (session.destroying) return false;
+      // Without git there are no checkpoints to capture, so nothing failed.
+      if (captured) {
+        session.checkpointFailing = false;
+      } else if (session.gitBacked) {
+        logger.warn(`Checkpoint capture failed for ${id} uuid=${uuid}`);
+        if (!session.checkpointFailing) {
+          session.checkpointFailing = true;
+          session.emit?.({
+            type: 'error',
+            message: 'Checkpoint could not be captured for this message, so rewinding to it will not be available. Later messages won\'t get one either until git works again. See the log for the git error.',
+          });
+        }
+      }
+      // The query may have been torn down while the snapshot ran (stop, model
+      // switch); if a replacement is starting, hand the prompt to that one.
+      if (!(await this.awaitQueryHandle(session)) || session.destroying) return false;
+      const queryHandle = session.queryHandle!;
+
+      const sessionId = session.providerSessionId ?? '';
+      logger.debug(`[sendMessage] session=${id} sending to adapter, providerSessionId=${sessionId || '(not yet initialized)'}${images?.length ? ` with ${images.length} image(s)` : ''}${savedFiles.length ? ` with ${savedFiles.length} file(s)` : ''}`);
+      // Whether the agent was already in a turn, which a failed send leaves running.
+      const turnRunning = session.turnHandle === queryHandle;
+      try {
+        // Takes over from unsentPrompts (cleared below, in the same tick).
+        session.turnHandle = queryHandle;
+        promptSent(session.limits);
+        this.watchTurnFiles(session);
+        // Once per query: a second message before the reply doesn't repeat it,
+        // but a query that failed to start and was replaced gets it again.
+        const withNote = handoffNote !== null && session.handoffSentTo !== queryHandle;
+        const message: UserMessage = {
+          text: withNote ? `${handoffNote}\n${content}` : content,
+          // With the path of each saved copy when every one was saved (so the
+          // lists line up), for an agent that can't take images.
+          images: images?.map((img, i) => {
+            const saved = storedImages.length === images!.length ? imagePath(id, storedImages[i].file) : null;
+            return saved ? { ...img, path: saved.path } : img;
+          }),
+          // Only a clip that may go inline carries its data; the rest go by path.
+          ...(savedFiles.length > 0 && {
+            files: savedFiles.map(({ stored, path, data }) => ({
+              name: stored.name, mediaType: stored.mediaType, size: stored.size, path,
+              ...(inlineAudioType(stored) ? { data } : {}),
+            })),
+            ...(audioInHistory > 0 && { audioInHistory }),
+          }),
+        };
+        if (withNote) session.handoffSentTo = queryHandle;
+        queryHandle.sendMessage(message);
+        if (session.promptsBeforeInit?.handle === queryHandle) session.promptsBeforeInit.prompts.push(message);
+        logger.debug(`[sendMessage] session=${id} sent successfully`);
+        // Update last-active timestamp (fire-and-forget)
+        worktreeManager.updateLastActive(id).catch(() => {});
+        return true;
+      } catch (e) {
+        console.error(`[sendMessage] session=${id} send FAILED:`, e);
+        logger.warn(`Failed to send message to session ${id}:`, e);
+        // It never reached the agent, so it started no turn.
+        if (!turnRunning && session.turnHandle === queryHandle) session.turnHandle = null;
+        return false;
+      }
+    } finally {
+      // Gone to the agent (turnHandle has it now), or given up on.
+      unsent.delete(uuid);
     }
   }
 
@@ -618,46 +1238,52 @@ class AgentSessionManager {
    */
   respondToPermission(id: string, decision: PermissionDecision): boolean {
     const session = this.sessions.get(id);
-    if (!session) return false;
+    return !!session && answerPermission(session, decision);
+  }
 
-    const pending = session.pendingPermissions.get(decision.requestId);
-    if (!pending) return false;
+  /** Answer a pending MCP elicitation. Returns false when it already
+   *  resolved (answered, cancelled or timed out). */
+  respondToElicitation(id: string, requestId: string, response: McpElicitationResponse): boolean {
+    const session = this.sessions.get(id);
+    return !!session && answerElicitation(session, requestId, response);
+  }
 
-    session.pendingPermissions.delete(decision.requestId);
+  /** Continue past a reached limit, or stop the turn. False when the
+   *  question already ended (answered, stopped or timed out). */
+  respondToLimit(id: string, requestId: string, decision: LimitDecision): boolean {
+    const session = this.sessions.get(id);
+    return !!session && answerLimit(session.limits, requestId, decision);
+  }
 
-    const resolvedDecision = (decision.behavior === 'allow' || decision.behavior === 'allowAlways') ? 'allow' : 'deny';
-
-    if (resolvedDecision === 'allow') {
-      if (decision.behavior === 'allowAlways') {
-        session.alwaysAllowedTools.add(pending.toolName);
-      }
-      const result: PermissionResponse = {
-        behavior: 'allow',
-        updatedInput: pending.toolInput,
-        ...(decision.updatedPermissions ? { updatedPermissions: decision.updatedPermissions } : {}),
-      };
-      pending.resolve(result);
-    } else {
-      pending.resolve({
-        behavior: 'deny',
-        message: decision.message || 'User denied permission',
-      });
-    }
-
-    // Notify renderer authoritatively
-    session.emit?.({
-      type: 'permission_resolved',
-      requestId: decision.requestId,
-      toolUseId: pending.toolUseId,
-      decision: resolvedDecision,
-    });
-
-    return true;
+  /** What the limit gate needs for a tool call in `session`. Settings are
+   *  read each time, so a changed limit applies to the next tool call. */
+  private limitGate(session: ManagedSession): LimitGateContext {
+    const emit = session.emit ?? this.createEmitter(session);
+    return {
+      limits: session.limits,
+      settings: settings.getSettings(),
+      emit: (event) => {
+        emit(event);
+        // Letting the thread past its spend limit is saved with its spend.
+        if (event.type === 'limit_resolved' && event.limit === 'threadSpend' && event.decision === 'continue') {
+          this.saveThreadLimits(session);
+        }
+      },
+      stopTurn: () => {
+        this.interruptQuery(session.id).catch((e) => logger.warn(`[limits] could not stop ${session.id}:`, e));
+      },
+    };
   }
 
   setMode(id: string, mode: string): void {
     const session = this.sessions.get(id);
     if (!session) return;
+    // Only modes the app offers. The value comes over IPC, and anything else
+    // (e.g. the SDK's bypassPermissions) would be passed to the SDK as-is.
+    if (!(PERMISSION_MODES as readonly string[]).includes(mode)) {
+      logger.warn(`[setMode] session=${id} ignored unknown permission mode: ${mode}`);
+      return;
+    }
 
     const prevMode = session.permissionMode;
 
@@ -665,12 +1291,33 @@ class AgentSessionManager {
     // stop/restart cycles — even when queryHandle is temporarily null.
     session.permissionMode = mode as ManagedSession['permissionMode'];
 
-    // When leaving acceptEdits mode, clear always-allowed edit tools so
-    // switching back to default/plan re-enables permission prompts for edits.
-    // These tool names must match the adapter's 'edit' category (see categorizeToolName).
-    if (prevMode === 'acceptEdits' && mode !== 'acceptEdits') {
-      for (const tool of ['Edit', 'Write', 'MultiEdit']) {
+    // When leaving an edit-accepting mode (acceptEdits, readSafe or auto),
+    // clear always-allowed edit tools so switching back to default/plan
+    // re-enables permission prompts for edits.
+    // Claude Code's edit tools, plus whatever tools this agent has asked to
+    // run as edits (the 'edit' category, recorded by requestPermission).
+    const acceptsEdits = (m: string) => m === 'acceptEdits' || m === 'readSafe' || m === 'auto';
+    if (acceptsEdits(prevMode) && !acceptsEdits(mode)) {
+      for (const tool of ['Edit', 'Write', 'MultiEdit', ...(session.editToolNames ?? [])]) {
         session.alwaysAllowedTools.delete(tool);
+      }
+    }
+
+    // Entering read-safe mode with a live query: the sandbox is only applied
+    // at query start, so until the next (re)start the read-only classifier is
+    // the sole protection layer. Surface that honestly.
+    // An agent Grove can't sandbox never gets one, restart or not.
+    if (mode === 'readSafe' && prevMode !== 'readSafe' && session.queryHandle && !session.sandbox) {
+      const canSandbox = session.adapter.capabilities.sandbox === true;
+      if (canSandbox) {
+        session.emit?.({
+          type: 'status',
+          level: 'warning',
+          message: 'Read-safe mode on: read-only tool calls run without asking. The sandbox only applies once the agent restarts, and may not start at all on this machine.',
+        });
+      }
+      if (!hasSandboxWarning(session.eventHistory)) {
+        session.emit?.({ type: 'status', level: 'warning', message: readSafeWarning(canSandbox) });
       }
     }
 
@@ -686,27 +1333,327 @@ class AgentSessionManager {
 
   async setModel(id: string, model?: string): Promise<void> {
     const session = this.sessions.get(id);
-    if (!session?.queryHandle?.setModel) return;
+    if (!session || !model) return;
+    // No live query to update yet (idle/not started) — just record the choice
+    // so the next runQuery picks it up.
+    if (!session.queryHandle?.setModel) {
+      session.model = model;
+      worktreeManager.saveModel(id, model).catch((e) => {
+        logger.warn(`Failed to persist model for ${id}:`, e);
+      });
+      return;
+    }
     try {
-      await session.queryHandle.setModel(model as string);
+      await session.queryHandle.setModel(model);
+      // Persist only after the live switch succeeds so it survives
+      // stop/restart and resume cycles without diverging from the SDK.
+      session.model = model;
+      worktreeManager.saveModel(id, model).catch((e) => {
+        logger.warn(`Failed to persist model for ${id}:`, e);
+      });
+      const before = session.controls;
+      const controls = this.reconcileControls(session);
+      // Values reset for the new model (e.g. an effort level it doesn't
+      // offer) must reach the live query too, or the badge and the
+      // provider disagree until the next query start.
+      for (const [controlId, value] of Object.entries(controls.values)) {
+        if (before[controlId] === value || !session.queryHandle.setControl) continue;
+        try {
+          await session.queryHandle.setControl(controlId, value);
+        } catch (e) {
+          logger.warn(`Failed to apply ${controlId}=${value} after model switch for ${id}:`, e);
+        }
+      }
+      session.emit?.({ type: 'controls_sync', ...controls });
     } catch (e) {
       logger.warn(`Failed to set model for session ${id}:`, e);
       throw e;
     }
   }
 
-  async setThinking(id: string, enabled: boolean): Promise<void> {
+  /**
+   * Descriptors for the session's current model plus recorded values. Values
+   * that are no longer offered (e.g. after switching to a model without fast
+   * mode) are reset to the descriptor default so the renderer and the next
+   * query start never see an option the provider can't honour.
+   */
+  private reconcileControls(session: ManagedSession): SessionControls {
+    const descriptors = session.adapter.getControls(session.model);
+    const values: Record<string, string> = {};
+    for (const d of descriptors) {
+      if (d.id === CONTROL_IDS.permissionMode) {
+        // The permission mode lives in its own field, but it is still a
+        // per-model option (native auto mode is not offered on every model),
+        // so it falls back the same way — and the SDK and renderer are told.
+        if (!d.options.some((o) => o.value === session.permissionMode)) {
+          this.setMode(session.id, d.default);
+          session.emit?.({ type: 'mode_sync', mode: session.permissionMode, source: 'session' });
+        }
+        continue;
+      }
+      const current = session.controls[d.id];
+      values[d.id] = current !== undefined && d.options.some((o) => o.value === current) ? current : d.default;
+    }
+    session.controls = values;
+    return { descriptors, values };
+  }
+
+  /** Record control values the agent changed by itself. Only values its
+   *  descriptors offer count; nothing is sent back to the agent. */
+  private applyAgentControls(session: ManagedSession, values: Record<string, string>): void {
+    const descriptors = session.adapter.getControls(session.model);
+    let changed = false;
+    for (const [controlId, value] of Object.entries(values)) {
+      if (controlId === CONTROL_IDS.permissionMode || session.controls[controlId] === value) continue;
+      const d = descriptors.find((x) => x.id === controlId);
+      if (!d?.options.some((o) => o.value === value)) continue;
+      session.controls = { ...session.controls, [controlId]: value };
+      changed = true;
+    }
+    if (changed) session.emit?.({ type: 'controls_sync', ...this.reconcileControls(session) });
+  }
+
+  /** Controls for a session. One that isn't running (asleep, closed, or never
+   *  restored) gets the descriptors of the agent and model its manifest
+   *  records, so a Gemini CLI conversation doesn't show Claude Code's
+   *  controls. Only an unknown id falls back to the default agent, so the
+   *  status bar still has something to render. */
+  async getControls(id: string): Promise<SessionControls> {
+    const live = this.sessions.get(id);
+    if (live) return this.reconcileControls(live);
+    const { adapterType, model } = await worktreeManager.getAgentAndModel(id).catch(() => ({ adapterType: undefined, model: undefined }));
+    // It may have started while the manifest was read.
+    const started = this.sessions.get(id);
+    if (started) return this.reconcileControls(started);
+    // An agent that is gone has no controls; another agent's would mislead.
+    const adapter = adapterType ? adapterRegistry.get(adapterType) : adapterRegistry.getDefault();
+    return { descriptors: adapter?.getControls(model ?? null) ?? [], values: {} };
+  }
+
+  async setControl(id: string, controlId: string, value: string): Promise<void> {
     const session = this.sessions.get(id);
-    if (!session?.queryHandle?.setMaxThinkingTokens) return;
+    if (!session) return;
+    if (controlId === CONTROL_IDS.permissionMode) {
+      throw new Error('permissionMode is set through setMode');
+    }
+    const descriptor = session.adapter.getControls(session.model).find((d) => d.id === controlId);
+    if (!descriptor) throw new Error(`Unknown control "${controlId}" for ${session.adapter.displayName}`);
+    if (!descriptor.options.some((o) => o.value === value)) {
+      throw new Error(`"${value}" is not a valid ${descriptor.label} option for ${session.model ?? 'the default model'}`);
+    }
+    // Record even without a live handle so the next query start picks it up
+    session.controls = { ...session.controls, [controlId]: value };
+    if (session.queryHandle?.setControl) {
+      try {
+        await session.queryHandle.setControl(controlId, value);
+      } catch (e) {
+        logger.warn(`Failed to set ${controlId} for session ${id}:`, e);
+        throw e;
+      }
+    }
+    session.emit?.({ type: 'controls_sync', ...this.reconcileControls(session) });
+  }
+
+  /** Plan usage for the session's provider; null without a live query or when
+   *  the adapter cannot report it. Failures are logged, never surfaced — the
+   *  popover treats null as "nothing to show". Each answer is saved for
+   *  getCachedUsage. */
+  async getUsage(id: string): Promise<ProviderUsage | null> {
+    const session = this.sessions.get(id);
+    if (!session?.queryHandle?.getUsage || session.adapter.capabilities.usage !== true) return null;
     try {
-      await session.queryHandle.setMaxThinkingTokens(enabled ? null : 0);
+      const usage = await session.queryHandle.getUsage();
+      if (usage) saveUsageSnapshot(session.adapter.id, usage);
+      return usage;
     } catch (e) {
-      logger.warn(`Failed to set thinking for session ${id}:`, e);
+      logger.warn(`Failed to fetch usage for session ${id}:`, e);
+      return null;
+    }
+  }
+
+  async listMcpServers(id: string): Promise<McpServerInfo[]> {
+    const session = this.sessions.get(id);
+    if (!session?.queryHandle?.listMcpServers) return [];
+    try {
+      return await session.queryHandle.listMcpServers();
+    } catch (e) {
+      logger.warn(`Failed to list MCP servers for session ${id}:`, e);
+      return [];
+    }
+  }
+
+  async getMcpContextCost(id: string): Promise<McpServerContextCost[]> {
+    const session = this.sessions.get(id);
+    if (!session?.queryHandle?.getMcpContextCost) return [];
+    try {
+      return await session.queryHandle.getMcpContextCost();
+    } catch (e) {
+      logger.warn(`Failed to read MCP context cost for session ${id}:`, e);
+      return [];
+    }
+  }
+
+  async reconnectMcpServer(id: string, serverName: string): Promise<void> {
+    const session = this.sessions.get(id);
+    if (!session?.queryHandle?.reconnectMcpServer) {
+      throw new Error('MCP server control is not available for this thread');
+    }
+    const handle = session.queryHandle;
+    try {
+      await this.inMcpReconnectQueue(session, () => handle.reconnectMcpServer!(serverName));
+    } catch (e) {
+      logger.warn(`Failed to reconnect MCP server "${serverName}" for session ${id}:`, e);
       throw e;
     }
   }
 
-  renameBranch(id: string, newBranch: string): void {
+  async authenticateMcpServer(id: string, serverName: string): Promise<McpAuthStartResult> {
+    const session = this.sessions.get(id);
+    if (!session?.queryHandle?.authenticateMcpServer) {
+      throw new Error('MCP sign-in is not available for this thread');
+    }
+    try {
+      const result = await session.queryHandle.authenticateMcpServer(serverName);
+      if (result.authUrl && result.callbackExpected) {
+        (session.mcpSignInsStarted ??= new Map()).set(serverName, Date.now());
+      }
+      return result;
+    } catch (e) {
+      logger.warn(`Failed to start sign-in for MCP server "${serverName}" in session ${id}:`, e);
+      throw e;
+    }
+  }
+
+  async setMcpServerEnabled(id: string, serverName: string, enabled: boolean): Promise<void> {
+    const session = this.sessions.get(id);
+    if (!session?.queryHandle?.setMcpServerEnabled) {
+      throw new Error('MCP server control is not available for this thread');
+    }
+    try {
+      await session.queryHandle.setMcpServerEnabled(serverName, enabled);
+    } catch (e) {
+      logger.warn(`Failed to ${enabled ? 'enable' : 'disable'} MCP server "${serverName}" for session ${id}:`, e);
+      throw e;
+    }
+  }
+
+  /**
+   * Reconnect the MCP servers that are down (needs-auth or failed) in every
+   * live thread on the same agent as thread `id`. Threads on one agent share
+   * its sign-ins, so a server signed in to in one thread can come back in the
+   * others without restarting them. With `serverName`, only that server, and
+   * only in the other threads: it was just brought back in this one.
+   *
+   * Resolves once thread `id` is done. The other threads go on in the
+   * background, one at a time, and send their new status with
+   * AGENT_MCP_STATUS. A thread in the middle of a turn, or starting up,
+   * waits for the turn to end, so its tools don't change under it. A server
+   * with a browser sign-in under way is left alone. Failures are logged, not
+   * thrown: a server that still can't connect just stays down.
+   */
+  async reconnectDownMcpServers(id: string, serverName?: string): Promise<void> {
+    const origin = this.sessions.get(id);
+    if (!origin) return;
+    const only = serverName === undefined ? 'all' : new Set([serverName]);
+    if (only === 'all') await this.reconnectDownMcpServersIn(origin, only);
+    const others = [...this.sessions.values()].filter((s) => s !== origin && s.adapter.id === origin.adapter.id);
+    void (async () => {
+      for (const session of others) await this.reconnectDownMcpServersIn(session, only);
+    })();
+  }
+
+  /** Reconnect `session`'s down servers out of `only`, or hold them until its
+   *  turn ends. Never throws. */
+  private async reconnectDownMcpServersIn(session: ManagedSession, only: Set<string> | 'all'): Promise<void> {
+    // Closing, or no agent running (its handle may still be set).
+    if (session.destroying || this.sessions.get(session.id) !== session) return;
+    if (session.status === 'stopped' || session.status === 'error') return;
+    // A thread starting up counts as mid-turn: its agent may have tried its
+    // servers before the sign-in was saved.
+    if (this.isMidTurn(session.id)) {
+      if (session.adapter.mcp?.controls.reconnect) this.holdMcpReconnects(session, only);
+      return;
+    }
+    const handle = session.queryHandle;
+    if (!handle?.listMcpServers || !handle.reconnectMcpServer) return;
+    await this.inMcpReconnectQueue(session, async () => {
+      try {
+        const now = Date.now();
+        const down = (await handle.listMcpServers!()).filter((s) =>
+          isMcpServerDown(s.status) && (only === 'all' || only.has(s.name))
+          // A reconnect could cancel a browser sign-in still under way.
+          && now - (session.mcpSignInsStarted?.get(s.name) ?? 0) >= MCP_SIGN_IN_TIMEOUT_MS);
+        if (down.length === 0) return;
+        for (const [i, server] of down.entries()) {
+          if (session.destroying || session.queryHandle !== handle) return;
+          // A turn started meanwhile: the rest wait for it to end.
+          if (this.isMidTurn(session.id)) {
+            this.holdMcpReconnects(session, new Set(down.slice(i).map((s) => s.name)));
+            return;
+          }
+          await handle.reconnectMcpServer!(server.name).catch((e) => {
+            logger.debug(`MCP server "${server.name}" is still down in session ${session.id}:`, e);
+          });
+        }
+        if (session.destroying || session.queryHandle !== handle) return;
+        const servers = await handle.listMcpServers!();
+        if (!session.window.isDestroyed()) session.window.webContents.send(IPC.AGENT_MCP_STATUS, session.id, servers);
+      } catch (e) {
+        logger.warn(`Failed to reconnect MCP servers for session ${session.id}:`, e);
+      }
+    });
+  }
+
+  /** Add `only` to the reconnects `session` runs once its turn ends. */
+  private holdMcpReconnects(session: ManagedSession, only: Set<string> | 'all'): void {
+    const held = session.mcpReconnectsAfterTurn;
+    session.mcpReconnectsAfterTurn = held === 'all' || only === 'all' ? 'all' : new Set([...(held ?? []), ...only]);
+  }
+
+  /** Run the reconnects held back while a turn ran, now that it has ended. */
+  private runHeldMcpReconnects(session: ManagedSession): void {
+    const held = session.mcpReconnectsAfterTurn;
+    if (!held || this.isMidTurn(session.id)) return;
+    session.mcpReconnectsAfterTurn = undefined;
+    void this.reconnectDownMcpServersIn(session, held);
+  }
+
+  /** Run `work` after the session's earlier MCP reconnects, so two never
+   *  reconnect the same server at once. */
+  private inMcpReconnectQueue<T>(session: ManagedSession, work: () => Promise<T>): Promise<T> {
+    const run = (session.mcpReconnectQueue ?? Promise.resolve()).then(work);
+    session.mcpReconnectQueue = run.then(() => {}, () => {});
+    return run;
+  }
+
+  /** Whether the agent is in the middle of a turn (a message sent or a reply
+   *  under way). Same test idle sleep uses. */
+  isMidTurn(id: string): boolean {
+    const session = this.sessions.get(id);
+    return !!session && (session.isStartingQuery || turnInFlight(session));
+  }
+
+  /** Where `id`'s turn stands, for a pane loading its history: an agent
+   *  starting up counts as idle here (unlike isMidTurn), as it has nothing
+   *  to show as working on until a prompt goes to it. A thread without a
+   *  live session (closed, or still being set up) runs no turn and asks
+   *  nothing. Its agent is live while its process is up: not asleep (no
+   *  handle), and not ended by itself (stopped, the handle kept). */
+  turnState(id: string): ThreadTurnState {
+    const session = this.sessions.get(id);
+    if (!session) return { midTurn: false, pendingPromptIds: [], agentLive: false };
+    return {
+      midTurn: turnInFlight(session),
+      pendingPromptIds: [
+        ...session.pendingPermissions.keys(),
+        ...session.pendingElicitations.keys(),
+        ...(session.limits.pending ? [session.limits.pending.requestId] : []),
+      ],
+      agentLive: !!session.queryHandle && session.status !== 'stopped',
+    };
+  }
+
+  setBranch(id: string, newBranch: string): void {
     const session = this.sessions.get(id);
     if (session) {
       session.branch = newBranch;
@@ -720,63 +1667,108 @@ class AgentSessionManager {
     }
   }
 
-  /** Start a host-managed dev server for the given session. */
-  async startDevServer(sessionId: string, overrideCommand?: string): Promise<import('../shared/types.js').DevServerResult> {
-    const session = this.sessions.get(sessionId);
-    if (!session) throw new Error(`Session not found: ${sessionId}`);
+  /**
+   * Stop the current turn the user-facing way: interrupt it in place while
+   * keeping the agent process alive, so the next message is instant (no cold
+   * respawn + resume).  Falls back to the heavier stopQuery() teardown when the
+   * adapter can't interrupt or there's no live query to interrupt (e.g. a stop
+   * that lands mid-startup).
+   */
+  async interruptQuery(id: string): Promise<void> {
+    const session = this.sessions.get(id);
+    if (!session) return;
 
-    // Stop existing dev server if any
-    await this.stopDevServer(sessionId);
+    const handle = session.queryHandle;
 
-    // Resolve command via fallback chain: override → settings → auto-detect
-    const command = overrideCommand
-      || settings.getSettings().devCommand
-      || await detectDevCommand(session.worktreePath);
+    // No live handle (still starting up, already torn down) or an adapter that
+    // doesn't support in-place interrupt → fall back to the teardown+respawn
+    // path, which already handles the startup race via restartRequested.
+    if (!handle || typeof handle.interrupt !== 'function') {
+      return this.stopQuery(id);
+    }
 
-    if (!command) throw new Error('No dev command configured and none detected from package.json');
+    const emit = session.emit ?? this.createEmitter(session);
+    // What the agent wrote up to the stop shows now, not after the interrupt.
+    this.flushStream(session);
 
-    const devServer = new DevServer(sessionId, session.worktreePath, command, (info) => {
-      // Emit devserver_detected event through the existing channel
-      session.detectedPorts.add(info.port);
-      const event: AgentEvent = { type: 'devserver_detected', port: info.port, url: info.url };
-      session.eventHistory.push(event);
-      try { fs.appendFileSync(session.eventLogPath, JSON.stringify(event) + '\n'); } catch { /* non-fatal */ }
-      const w = session.window;
-      if (!w.isDestroyed()) {
-        w.webContents.send(`${IPC.AGENT_EVENT}:${sessionId}`, event);
-      }
-    });
+    // Resolve any pending permissions as denied first so the SDK isn't left
+    // awaiting a tool decision.  The process is still alive, so these control
+    // responses write cleanly (unlike stopQuery, which closes the transport
+    // before resolving and trips "ProcessTransport is not ready for writing").
+    denyPendingPermissions(session, 'Query stopped by user', emit);
+    cancelElicitations(session);
+    cancelLimit(session.limits);
+    turnStopped(session.limits);
 
-    session.devServer = devServer;
-    return devServer.start();
+    // Interrupt the current turn.  The event loop in runQuery stays parked on
+    // handle.events and simply waits for the next user message — no respawn.
+    // Flag the interrupt so the resulting turn's abort/teardown noise (reported
+    // via the result's errors or a thrown abort) is treated as a clean stop.
+    session.interrupting = true;
+    try {
+      await handle.interrupt();
+    } catch (err) {
+      session.interrupting = false;
+      logger.warn(`[interruptQuery] session=${id} interrupt failed, falling back to teardown:`, err);
+      return this.stopQuery(id);
+    }
+    // The turn is over even if the agent never reports a result for it.
+    if (session.turnHandle === handle) session.turnHandle = null;
+    // Its files too, unless its result (handled in runQuery) listed them already.
+    await this.endTurnFiles(session, emit);
+    this.runHeldMcpReconnects(session);
+
+    // Re-sync the renderer with the current permission mode (parity with
+    // stopQuery) — this also clears the renderer's stoppingSession guard so
+    // permission requests from the continuing query aren't suppressed.
+    emit({ type: 'mode_sync', mode: session.permissionMode, source: 'session' });
   }
 
-  /** Stop the host-managed dev server for the given session. */
-  async stopDevServer(sessionId: string): Promise<void> {
-    const session = this.sessions.get(sessionId);
-    if (!session?.devServer) return;
-    await session.devServer.stop();
-    session.devServer = null;
-  }
-
-  /** Kill dev servers detected during this session and clear the port set. */
-  private async killDetectedPorts(session: ManagedSession): Promise<void> {
-    if (session.detectedPorts.size === 0) return;
-    const ports = [...session.detectedPorts];
-    session.detectedPorts.clear();
-    logger.info(`Killing ${ports.length} dev server(s) for session ${session.id}: ports ${ports.join(', ')}`);
-    await Promise.all(
-      ports.map((port) => killProcessOnPort(port).catch(() => {}))
-    );
+  /**
+   * Stop a single background task without touching the current turn. Throws
+   * when the session has no live handle or the adapter can't stop tasks, so
+   * the renderer can surface the failure instead of silently doing nothing.
+   */
+  async stopTask(id: string, taskId: string): Promise<void> {
+    const session = this.sessions.get(id);
+    if (!session) throw new Error(`Session not found: ${id}`);
+    const handle = session.queryHandle;
+    if (!handle || typeof handle.stopTask !== 'function') {
+      throw new Error('This session cannot stop background tasks');
+    }
+    await handle.stopTask(taskId);
   }
 
   /**
    * Stop the current query but keep the session alive so the user can send
-   * follow-up messages without losing state or remounting the UI.
+   * follow-up messages without losing state or remounting the UI: a new
+   * query starts at once. `beforeRestart` runs in between, once the old
+   * query is closed and aborted (its event loop drops anything it still
+   * sends), and also for a sleeping session, whose wake starts the new one.
    */
-  async stopQuery(id: string): Promise<void> {
+  async stopQuery(id: string, beforeRestart?: () => Promise<void>): Promise<void> {
     const session = this.sessions.get(id);
     if (!session) return;
+    // Asleep: there is no query to stop. A rewind's fork point (set before
+    // this is called) is picked up when the session wakes.
+    if (session.status === 'sleeping') {
+      await beforeRestart?.();
+      return;
+    }
+    // Waking while the sleep is still killing the old agent: starting a run
+    // now would put a second agent on the transcript beside it, and the
+    // wake would then start a third. Wait for the wake's run to begin; this
+    // stop then restarts it through restartRequested like any stop during
+    // startup.
+    if (session.sleepSettled) {
+      await session.sleepSettled;
+      // Re-read after the wait (TypeScript keeps the check above's narrowing)
+      if (session.destroying || !this.sessions.has(id)) return;
+      if ((session.status as SessionStatus) === 'sleeping') {
+        await beforeRestart?.();
+        return;
+      }
+    }
 
     // Tell runQuery not to emit process_exit / SESSION_STATUS 'stopped'
     session.stoppedByUser = true;
@@ -796,96 +1788,291 @@ class AgentSessionManager {
     // Set up fresh abort controller for the next query
     session.abortController = new AbortController();
     session.queryHandle = null;
+    // The old run sends nothing more: what it streamed before the stop goes now.
+    this.flushStream(session);
 
     const emit = this.createEmitter(session);
 
     // Resolve any pending permissions as denied — done after emit is rebuilt
     // so the permission_resolved events reach the renderer.
-    for (const [, pending] of session.pendingPermissions) {
-      pending.resolve({ behavior: 'deny', message: 'Query stopped by user' });
-      emit({
-        type: 'permission_resolved',
-        requestId: pending.requestId,
-        toolUseId: pending.toolUseId,
-        decision: 'deny',
+    denyPendingPermissions(session, 'Query stopped by user', emit);
+    cancelElicitations(session);
+    cancelLimit(session.limits);
+    turnStopped(session.limits);
+    // The old run's loop can't drop the watch: the handle is no longer its.
+    // Nothing is listed: a rewind may be about to put the files back.
+    void this.endTurnFiles(session);
+
+    // Create a deferred promise so sendMessage() can wait for the new
+    // queryHandle. Keep one that's still pending (e.g. a wake's): messages
+    // already waiting on it would otherwise never be delivered.
+    if (!session.resolveQueryReady) {
+      session.queryReady = new Promise<void>((resolve) => {
+        session.resolveQueryReady = resolve;
       });
     }
-    session.pendingPermissions.clear();
+
+    await beforeRestart?.();
 
     // Re-sync the renderer with the current permission mode so the status bar
     // reflects the correct state after a stop/restart cycle.
     emit({ type: 'mode_sync', mode: session.permissionMode, source: 'session' });
 
-    // Create a deferred promise so sendMessage() can wait for the new queryHandle
-    session.queryReady = new Promise<void>((resolve) => {
-      session.resolveQueryReady = resolve;
-    });
-
     // Start a new query loop — the session stays in the map so sendMessage works
     this.runQuery(session, emit).catch((err) => {
       console.error(`[runQuery] session=${id} FAILED after stop:`, err);
-      const errMsg = String(err.message || err);
-      const isAuthError = /auth|unauthorized|401|403|invalid.*key|not.*logged|credential/i.test(errMsg);
-      emit({ type: 'error', message: isAuthError
-        ? session.adapter.authErrorMessage
-        : errMsg });
+      emit(failureEvent(session.adapter, String(err.message || err)));
     });
   }
 
-  async destroySession(id: string): Promise<void> {
+  /**
+   * Put an idle conversation to sleep to free its agent process. The agent
+   * and everything under it (MCP servers) are killed, but the session stays,
+   * so the conversation keeps its place, mode, controls and always-allowed
+   * tools. The terminal is left alone. It wakes (see wake()) when opened or
+   * sent a message. Returns false, leaving it awake, unless the agent is up
+   * and not mid-turn, running a background task, or waiting on a permission,
+   * an MCP elicitation or a limit question (see sleepRefusal).
+   */
+  async sleepSession(id: string): Promise<boolean> {
     const session = this.sessions.get(id);
-    if (!session) return;
+    if (!session || session.destroying) return false;
+    const refusal = sleepRefusal(session);
+    if (refusal) {
+      // Once per reason: the renderer asks again each time the thread has
+      // been idle long enough.
+      if (session.sleepRefusal !== refusal) logger.debug(`[sleep] session=${id} stays awake: ${refusal}`);
+      session.sleepRefusal = refusal;
+      return false;
+    }
+    session.sleepRefusal = null;
+    const handle = session.queryHandle!;
+
+    perfSteps.fail(id, 'put to sleep');
+    session.statusBeforeSleep = session.status;
+    session.status = 'sleeping';
+    // Detach the query first: runQuery treats a run whose handle is no longer
+    // the session's as retired, so the agent exiting below is neither an error
+    // nor the end of the conversation.
+    session.queryHandle = null;
+    void this.endTurnFiles(session);
+    const abortController = session.abortController;
+    session.abortController = new AbortController();
+    this.sendStatus(session, 'sleeping');
+
+    const settled = (async () => {
+      // Kill the tree while the agent is still running, as shutDown() does.
+      const pid = handle.processId?.();
+      if (pid) {
+        await killTree(pid);
+        logger.info(`Put session ${id} to sleep: killed agent pid=${pid}`);
+      }
+      try { handle.close(); } catch { /* may already be closed */ }
+      abortController.abort();
+    })();
+    session.sleepSettled = settled;
+    await settled;
+    if (session.sleepSettled === settled) session.sleepSettled = null;
+    return true;
+  }
+
+  /** Wake a sleeping conversation. No-op for any other state. */
+  wakeSession(id: string): void {
+    const session = this.sessions.get(id);
+    if (session?.status === 'sleeping') this.wake(session);
+  }
+
+  /** Restart a sleeping session's agent on the same provider transcript.
+   *  Messages sent meanwhile wait on queryReady (see awaitQueryHandle). */
+  private wake(session: ManagedSession): void {
+    const { id } = session;
+    session.status = session.statusBeforeSleep ?? 'running';
+    session.statusBeforeSleep = null;
+    session.queryReady = new Promise<void>((resolve) => {
+      session.resolveQueryReady = resolve;
+    });
+    this.sendStatus(session, 'running');
+    const emit = session.emit ?? this.createEmitter(session);
+    const asleep = session.sleepSettled;
+    perfSteps.begin(id, 'wake');
+    (async () => {
+      await asleep;
+      perfSteps.step(id, 'finish sleeping');
+      // Closed or deleted while the sleep was still finishing.
+      if (session.destroying) { perfSteps.fail(id, 'closed'); return; }
+      await this.runQuery(session, emit);
+    })().catch((err) => {
+      perfSteps.fail(id, 'agent failed to start');
+      console.error(`[runQuery] session=${id} FAILED on wake:`, err);
+      emit(failureEvent(session.adapter, String(err?.message || err)));
+      session.status = 'error';
+      this.sendStatus(session, 'error');
+    });
+  }
+
+  /**
+   * Close a conversation without deleting it: stop the agent process and
+   * everything it started (background tasks, dev servers and the ports they
+   * hold), and drop the live session. Opening the conversation again resumes
+   * it from the provider's transcript, as after an app restart. Checkpoint
+   * refs and the worktree are kept.
+   */
+  closeSession(id: string): Promise<void> {
+    // Closed before it was up: say so, rather than leave the run waiting.
+    perfSteps.fail(id, 'closed');
+    const inFlight = this.closing.get(id);
+    if (inFlight) return inFlight;
+    const session = this.sessions.get(id);
+    if (!session) {
+      // Still being set up (new worktree, dependency install, resume): close
+      // it once it exists, or setup would start an agent after the close.
+      const setup = this.pendingSetups.get(id);
+      return setup ? setup.then(() => this.closeSession(id)) : Promise.resolve();
+    }
+
+    // Out of the map at once so a reopen can't reattach to the dying agent;
+    // createSession() waits on `closing` instead.
+    this.sessions.delete(id);
+    const closed = (async () => {
+      try {
+        await this.shutDown(session, 'Conversation closed');
+      } catch (err) {
+        logger.warn(`Closing session ${id} failed:`, err);
+      } finally {
+        // Written before the close settles: a resume waits on it, then reads
+        // the log back from disk.
+        await this.events.flush(session);
+        this.events.forget(id);
+        session.status = 'stopped';
+        this.sendStatus(session, 'stopped');
+        this.closing.delete(id);
+      }
+    })();
+    this.closing.set(id, closed);
+    return closed;
+  }
+
+  async destroySession(id: string): Promise<void> {
+    perfSteps.fail(id, 'deleted');
+    // Setup still running (new worktree, dependency install, resume): stop
+    // it where it can stop (a deleted conversation needs no install or agent)
+    // and wait for it, so it can't start an agent afterwards.
+    this.pendingSetupAborts.get(id)?.abort();
+    await this.pendingSetups.get(id);
+    // A close still shutting the agent down finishes first.
+    await this.closing.get(id);
+    const session = this.sessions.get(id);
+    if (!session) {
+      // A closed conversation has no live session, but a memory auto-save may
+      // still be pending, its metadata hasn't been saved, and its checkpoint
+      // refs are still in the repository.
+      memoryAutosave.cancelAutoSave(id);
+      const worktree = await worktreeManager.getWorktreeOrManifest(id).catch(() => undefined);
+      if (worktree) {
+        memoryAutosave.saveSessionMetadata(worktree.repoPath, id, this.getEventHistory(id), worktree.branch);
+        if (!worktree.noGit) await new CheckpointManager().cleanup(id, worktree.path).catch(err => {
+          logger.warn(`Checkpoint cleanup failed for ${id}:`, err);
+        });
+      }
+      this.events.forget(id);
+      return;
+    }
 
     // Cancel any pending auto-save debounce and save heuristic metadata
     memoryAutosave.cancelAutoSave(id);
     memoryAutosave.saveSessionMetadata(session.repoPath, id, session.eventHistory, session.branch);
 
-    // Close the query and input stream before aborting to allow graceful cleanup
-    try {
-      session.queryHandle?.close();
-    } catch { /* may already be closed */ }
-
-    // Abort any remaining in-flight operations
-    session.abortController.abort();
-
-    // Resolve any pending permissions as denied
-    for (const [, pending] of session.pendingPermissions) {
-      pending.resolve({ behavior: 'deny', message: 'Session destroyed' });
-      session.emit?.({
-        type: 'permission_resolved',
-        requestId: pending.requestId,
-        toolUseId: pending.toolUseId,
-        decision: 'deny',
-      });
-    }
-
-    // Stop host-managed dev server
-    if (session.devServer) {
-      await session.devServer.stop();
-      session.devServer = null;
-    }
-
-    // Kill any dev servers not already cleaned up on query completion
-    await this.killDetectedPorts(session);
+    await this.shutDown(session, 'Session destroyed');
 
     // Clean up checkpoint refs
     await session.checkpoints.cleanup(id, session.worktreePath).catch(err => {
       logger.warn(`Checkpoint cleanup failed for ${id}:`, err);
     });
 
-    // Clean up completion callback and event listeners
-    this.completionCallbacks.delete(id);
-    this.eventListeners.delete(id);
-
     // Wait for Windows file handles to release
     await new Promise((r) => setTimeout(r, 500));
 
+    await this.events.flush(session);
+    this.events.forget(id);
     this.sessions.delete(id);
   }
 
-  async destroyAll(): Promise<void> {
-    const ids = [...this.sessions.keys()];
-    await Promise.all(ids.map((id) => this.destroySession(id)));
+  /**
+   * Stop a session's agent for good: kill the agent process and everything
+   * under it (background tasks, dev servers, MCP servers), close its query
+   * and deny pending permissions.
+   */
+  private async shutDown(session: ManagedSession, reason: string): Promise<void> {
+    const { id } = session;
+
+    // Must be set before the agent is killed or its query closed: either ends
+    // runQuery's event loop, whose tail would otherwise treat this as a normal
+    // query end (see runQuery).
+    session.destroying = true;
+    // Nothing may start in a folder that may be about to go.
+    this.promptSuggestions.forget(id);
+
+    // A sleep still killing the agent: let it finish, so a reopen right after
+    // the close can't start a second agent on the same transcript.
+    await session.sleepSettled;
+
+    // Kill the agent's process tree while the agent is still running. Once it
+    // exits, whatever it left running can no longer be traced back to it.
+    const pid = session.queryHandle?.processId?.();
+    if (pid) {
+      await killTree(pid);
+      logger.info(`Killed agent process tree for ${id}: pid=${pid}`);
+    }
+
+    // Close the query and input stream before aborting so the SDK tidies up its side
+    try {
+      session.queryHandle?.close();
+    } catch { /* may already be closed */ }
+    // Before the worktree can be removed: on Windows a watch holds its folder.
+    void this.endTurnFiles(session);
+
+    // Abort any remaining in-flight operations
+    session.abortController.abort();
+    // The run sends nothing more after the abort: send what it streamed last.
+    this.flushStream(session);
+
+    // Resolve any pending permissions as denied
+    denyPendingPermissions(session, reason, session.emit);
+    cancelElicitations(session);
+    cancelLimit(session.limits);
+
+    // A result the agent sent before it died may still be on its way into
+    // the history (the files its turn made go first). Once it's in, nothing
+    // more from the run can be: anything it sends after the abort is dropped.
+    await session.resultLogging;
+
+    // The turn under way ends here, and runQuery's tail writes no
+    // process_exit for a close or a delete (see there). Without one the
+    // history ends mid-turn, as if the turn were still running. Decided only
+    // now, with the agent dead: a turn can end or start during the kill (the
+    // run's tail leaves the turn as it is for this). Before the caller
+    // flushes the log.
+    if (turnInFlight(session)) session.emit?.({ type: 'process_exit' });
+    // That ends the turn. Sends still on their way give up (see sendMessage).
+    session.turnHandle = null;
+    session.unsentPrompts?.clear();
+
+    // Clean up completion callback and event listeners
+    this.completionCallbacks.delete(id);
+    this.eventListeners.delete(id);
+  }
+
+  /** App quit: stop every live agent the way closing its conversation does.
+   *  Worktrees, branches and checkpoints stay, so the conversations reopen
+   *  on the next launch. */
+  async closeAll(): Promise<void> {
+    for (const id of [...this.sessions.keys()]) void this.closeSession(id);
+    await this.waitForCloses();
+  }
+
+  /** Resolves once every conversation being closed has finished shutting down. */
+  async waitForCloses(): Promise<void> {
+    await Promise.all(this.closing.values());
   }
 
   listSessions(): SessionInfo[] {
@@ -901,12 +2088,54 @@ class AgentSessionManager {
     }));
   }
 
+  /** Each thread's agent process while it runs, with its executable when
+   *  the adapter knows it, for the health line's memory (process-memory.ts).
+   *  Asleep and stopped threads have none. */
+  agentProcesses(): { thread: string; pid: number; exe?: string }[] {
+    const agents: { thread: string; pid: number; exe?: string }[] = [];
+    for (const s of this.sessions.values()) {
+      const pid = s.queryHandle?.processId?.();
+      if (!pid) continue;
+      const exe = s.queryHandle?.processExe?.();
+      agents.push({ thread: s.id, pid, ...(exe ? { exe } : {}) });
+    }
+    return agents;
+  }
+
   getSessionsByRepo(repoPath: string): ManagedSession[] {
     return [...this.sessions.values()].filter((s) => s.repoPath === repoPath);
   }
 
   getSession(id: string): ManagedSession | undefined {
     return this.sessions.get(id);
+  }
+
+  /** What a thread has used over its life, as its agent reported it: its
+   *  spend (the figure its spend limit counts, session-limits.ts) and its
+   *  tokens. For a thread that isn't loaded, the larger of what was saved
+   *  when it last ran and its history added up, as a resume would start from. */
+  async threadUsage(id: string): Promise<ThreadUsage> {
+    const session = this.sessions.get(id);
+    const limits = session?.limits ?? limitsFromHistory(this.events.load(id), await worktreeManager.getThreadLimits(id).catch((e) => {
+      logger.warn(`Could not read the saved usage of ${id}:`, e);
+      return undefined;
+    }));
+    return { spendUsd: limits.threadSpendUsd, tokens: { ...limits.threadTokens } };
+  }
+
+  /** Save a thread's spend and spend allowance, which its history may not
+   *  keep (a rewind or /clear rewrites it). */
+  private saveThreadLimits(session: ManagedSession): void {
+    worktreeManager.saveThreadLimits(session.id, savedThreadLimits(session.limits))
+      .catch((e) => logger.warn(`Failed to save the spend of ${session.id}:`, e));
+  }
+
+  /** Before turns are cut from the history: save the limit state they count
+   *  toward, for a thread that has some (one from before this was saved may
+   *  not have been yet). */
+  private saveThreadLimitsBeforeCut(session: ManagedSession): void {
+    const { threadSpendUsd, threadAllowanceUsd, threadTokens } = session.limits;
+    if (threadSpendUsd > 0 || threadAllowanceUsd !== null || threadTokens.input > 0 || threadTokens.output > 0) this.saveThreadLimits(session);
   }
 
   /**
@@ -948,49 +2177,138 @@ class AgentSessionManager {
   injectEvent(id: string, event: AgentEvent): void {
     const session = this.sessions.get(id);
     if (!session) return;
-    session.eventHistory.push(event);
-    try { fs.appendFileSync(session.eventLogPath, JSON.stringify(event) + '\n'); } catch { /* non-fatal */ }
-    const w = session.window;
-    if (!w.isDestroyed()) {
-      w.webContents.send(`${IPC.AGENT_EVENT}:${id}`, event);
-    }
-    // Notify internal listeners
-    const listeners = this.eventListeners.get(id);
-    if (listeners) {
-      for (const cb of listeners) {
-        try { cb(event); } catch { /* non-fatal */ }
-      }
-    }
+    // After the text streamed before it, as emit does.
+    this.flushStream(session);
+    this.events.append(session, event);
+    this.deliver(session, event);
   }
 
-  /** Load event history from the disk JSONL log for a session.
-   *  Parses each line individually so a single corrupt line (e.g. from a
-   *  crash mid-write) doesn't discard the entire history. */
-  private loadEventHistory(id: string): AgentEvent[] {
-    const logPath = path.join(getEventsDir(), `${id}.jsonl`);
-    try {
-      const data = fs.readFileSync(logPath, 'utf-8');
-      const events: AgentEvent[] = [];
-      for (const line of data.split('\n')) {
-        if (!line) continue;
-        try {
-          events.push(JSON.parse(line));
-        } catch {
-          logger.warn(`[loadEventHistory] skipping corrupt line in ${id}.jsonl`);
-        }
-      }
-      return events;
-    } catch {
-      return [];
+  /** Start a search request (see SessionEventStore.beginSearch). Returns a
+   *  function that ends it. */
+  beginSearch(opts: { sweep?: boolean } = {}): () => void {
+    return this.events.beginSearch(opts);
+  }
+
+  /** Search a session's history, newest match first (see searchEvents). */
+  searchEventHistory(id: string, query: string, limit: number): EventSearchHit[] {
+    return this.events.search(id, this.sessions.get(id)?.eventHistory, query, limit);
+  }
+
+  /**
+   * Hand a conversation to another agent. The thread, worktree and
+   * checkpoints stay; the new agent starts a session of its own, on its
+   * default model, keeping the conversation's mode where it offers it. With
+   * `transcript`, the next message carries a short transcript of the
+   * conversation (agent-handoff.ts); the user agreed to that in the dialog.
+   */
+  async switchAgent(id: string, adapterId: string, opts: { transcript: boolean }): Promise<void> {
+    const session = this.sessions.get(id);
+    if (!session) throw new Error(`Thread ${id} not found`);
+    if (session.agentType === adapterId) return;
+    const adapter = adapterRegistry.get(adapterId);
+    if (!adapter) throw new Error(`Unknown agent: ${adapterId}`);
+
+    // Don't stop a working agent for one that can't run: the same check a
+    // draft makes before its first message.
+    const ready = await adapter.checkPrerequisites().catch(() => null);
+    const keyOk = !!adapter.apiKey && hasApiKey(adapter.id) && !isApiKeyRejected(adapter.id);
+    if (!ready || (!ready.available && ready.installRequired)) {
+      throw new Error(`${adapter.displayName} isn't installed. Install it (Settings > Agents shows how), then switch.`);
     }
+    if (ready.authenticated === false && !keyOk) {
+      throw new Error(`${adapter.displayName} isn't signed in. Sign in (Settings > Agents), then switch.`);
+    }
+
+    // The old agent mustn't keep editing while the new one starts.
+    if (this.isMidTurn(id)) await this.interruptQuery(id);
+    memoryAutosave.cancelAutoSave(id);
+
+    const previous = session.adapter;
+    const swap = async () => {
+      const appSettings = settings.getSettings();
+      const defaults = appSettings.adapterDefaults?.[adapter.id];
+      const model = appSettings.defaultModels?.[adapter.id] || adapter.getModels()[0]?.id || null;
+      session.adapter = adapter;
+      session.agentType = adapter.id;
+      session.model = model;
+      // A guess the old agent is still writing isn't wanted, and its
+      // failures say nothing about the new one.
+      this.promptSuggestions.forget(id);
+      session.permissionMode = startingPermissionMode(adapter, model, session.permissionMode, defaults?.[CONTROL_IDS.permissionMode]);
+      session.controls = initialControls(adapter, model, defaults);
+      // Tool names are the old agent's: an "always allow" for its Bash says
+      // nothing about the new one's commands.
+      session.alwaysAllowedTools.clear();
+      session.editToolNames = undefined;
+      // Its session belongs to the old agent.
+      session.providerSessionId = null;
+      session.pendingResumeAt = null;
+      session.handoffSentTo = undefined;
+
+      worktreeManager.saveAdapterType(id, adapter.id).catch((e) => logger.warn(`Failed to record agent for ${id}:`, e));
+      worktreeManager.saveProviderSessionId(id, '').catch(() => { /* non-fatal */ });
+      // No model yet (an agent never run): clear the old agent's.
+      worktreeManager.saveModel(id, model).catch((e) => logger.warn(`Failed to persist model for ${id}:`, e));
+      // A worktree of its own may need the new agent's files (Claude Code's
+      // local settings); a direct thread's folder is the user's.
+      if (session.worktreePath !== session.repoPath) {
+        await worktreeManager.writeAgentSettings(session.worktreePath, session.repoPath, adapter.id)
+          .catch((e) => logger.warn(`Could not write ${adapter.displayName}'s worktree settings for ${id}:`, e));
+      }
+
+      session.emit?.({
+        type: 'agent_changed',
+        from: previous.id,
+        to: adapter.id,
+        fromName: previous.displayName,
+        toName: adapter.displayName,
+        transcript: opts.transcript,
+      });
+      // A rewind must not fork into the old agent's session.
+      session.emit?.({
+        type: 'status',
+        newConversation: true,
+        message: opts.transcript
+          ? `Switched from ${previous.displayName} to ${adapter.displayName}. It gets a short transcript of this thread with your next message.`
+          : `Switched from ${previous.displayName} to ${adapter.displayName}. It starts without the thread so far, which stays above.`,
+      });
+    };
+
+    // The swap happens once the old agent is closed and its event loop has
+    // stopped, so nothing it still sends is taken for the new agent's; then
+    // the new agent starts in its place (or on wake, for a sleeping thread).
+    await this.stopQuery(id, swap);
   }
 
   /** Rewind files on disk to their state at a specific user message checkpoint.
    *  When options.conversationOnly is true, only truncate the conversation
-   *  without restoring files on disk. */
-  async rewindFiles(id: string, userMessageId: string, options?: { conversationOnly?: boolean }): Promise<void> {
+   *  without restoring files on disk. When options.filesOnly is true, only
+   *  restore the files: the conversation, event history and later checkpoint
+   *  refs are untouched (used for checkpoints from before a /clear, whose
+   *  messages are gone). */
+  async rewindFiles(id: string, userMessageId: string, options?: import('../shared/types.js').RewindOptions): Promise<void> {
     const session = this.sessions.get(id);
-    if (!session) throw new Error(`Session ${id} not found`);
+    if (!session) throw new Error(`Thread ${id} not found`);
+
+    // A running turn would keep editing files while, and after, they are
+    // restored. Stop it first; the query itself is restarted at the end.
+    if (this.isMidTurn(id)) await this.interruptQuery(id);
+
+    // A checkpoint whose message is no longer in the conversation (rewound
+    // away earlier, or from before a /clear) can only have its files restored.
+    // Without this guard the fork point below would come back null and the
+    // "rewind" would silently start a brand-new conversation.
+    const inConversation = session.eventHistory.some(
+      (e) => e.type === 'user_message' && e.uuid === userMessageId,
+    );
+    if (options?.filesOnly || !inConversation) {
+      if (options?.conversationOnly) {
+        throw new Error('That message is no longer part of the thread, so there is nothing to rewind. Its files can still be restored.');
+      }
+      await session.checkpoints.restore(id, session.worktreePath, userMessageId);
+      session.emit?.({ type: 'rewind', toMessageId: userMessageId, filesOnly: true });
+      return;
+    }
 
     if (!options?.conversationOnly) {
       await session.checkpoints.restore(id, session.worktreePath, userMessageId);
@@ -999,27 +2317,85 @@ class AgentSessionManager {
     // Remove orphaned checkpoint refs for turns after the rewind point
     await session.checkpoints.pruneAfter(id, session.worktreePath, userMessageId);
 
+    // Cancel any pending memory auto-save so notes about the turns being
+    // rewound away aren't extracted and persisted after the truncation.
+    memoryAutosave.cancelAutoSave(id);
+
+    // Fork point for a truncating resume: the provider uuid of the last
+    // assistant event before the rewind target. Must be computed before the
+    // event history is truncated below.
+    const forkPoint = session.providerSessionId
+      ? findRewindForkPoint(session.eventHistory, userMessageId)
+      : null;
+    // Without a truncating resume the agent would keep the rewound turns in
+    // its memory, so it starts over instead (the else branch below).
+    const canFork = session.adapter.capabilities.resume && session.adapter.capabilities.rewind === true;
+
     // Truncate event history to the rewind point so replays after refresh
     // don't resurrect events that occurred after the rewound turn.
     const rewindIdx = session.eventHistory.findLastIndex(
       (e) => e.type === 'user_message' && e.uuid === userMessageId,
     );
+    const cutEvents = rewindIdx >= 0 ? session.eventHistory.slice(rewindIdx) : [];
     if (rewindIdx >= 0) {
-      session.eventHistory = session.eventHistory.slice(0, rewindIdx + 1);
-      // Rewrite the disk log to match
-      try {
-        const lines = session.eventHistory.map(e => JSON.stringify(e)).join('\n') + '\n';
-        fs.writeFileSync(session.eventLogPath, lines);
-      } catch { /* non-fatal */ }
+      // Exclude the rewind target message — it gets placed back into the
+      // input. The disk log is rewritten to match, so save what the cut
+      // turns cost first.
+      this.saveThreadLimitsBeforeCut(session);
+      this.events.replace(session, session.eventHistory.slice(0, rewindIdx));
     }
 
     session.emit?.({ type: 'rewind', toMessageId: userMessageId, conversationOnly: options?.conversationOnly });
+    // Rewinding to before a switch takes its marker out of the log, which is
+    // what keeps the earlier agent's turns away from this agent's background
+    // tasks (agent-handoff.ts): put it back, after the rewind point.
+    const removedSwitch = rewindIdx >= 0 ? lastAgentChange(cutEvents) : null;
+    if (removedSwitch) session.emit?.({ ...removedSwitch, transcript: false });
+    // Starting over below turns the agent could fork from: mark where the new
+    // conversation begins, so a later rewind can't fork into the old one.
+    if (!(forkPoint && canFork) && lastTurnUuid(session.eventHistory)) {
+      session.emit?.({
+        type: 'status',
+        level: 'warning',
+        newConversation: true,
+        message: canFork
+          ? `${session.adapter.displayName} starts afresh from here. The thread above stays, but the agent won't remember it.`
+          : `${session.adapter.displayName} can't forget part of a thread, so it starts afresh from here. The thread above stays, but the agent won't remember it.`,
+      });
+    }
+
+    if (forkPoint && canFork) {
+      // True rewind: resume the same conversation truncated at the last kept
+      // chain entry, forked to a new provider session — the agent keeps the
+      // turns before the rewind point and genuinely forgets everything after.
+      session.pendingResumeAt = forkPoint;
+    } else {
+      // No provider content to keep (rewind to the first message, or the
+      // provider session never initialised) — start a fresh conversation.
+      session.providerSessionId = null;
+      session.pendingResumeAt = null;
+    }
+
+    // Persist an empty provider session id in both cases. If the app dies
+    // before the restarted query's system_init persists the forked session's
+    // new id, an app-restart resume of the OLD id would bring the rewound
+    // messages back; degrading to a fresh conversation is the safe fallback.
+    worktreeManager.saveProviderSessionId(id, '').catch(() => { /* non-fatal */ });
+
+    // Restart the query. stopQuery() tears down the current handle and calls
+    // runQuery(), which picks up pendingResumeAt (truncated fork resume) or —
+    // with providerSessionId null — starts a fresh conversation.
+    await this.stopQuery(id);
+
+    // After the stop, so a tool result from the old query can't save an image
+    // after the check. The rewound turns' images and files are no longer shown.
+    void pruneAttachments(id, session.eventHistory);
   }
 
   /** Dry-run rewind to get the diff of what would change. */
   async getCheckpointDiff(id: string, userMessageId: string): Promise<string> {
     const session = this.sessions.get(id);
-    if (!session) throw new Error(`Session ${id} not found`);
+    if (!session) throw new Error(`Thread ${id} not found`);
 
     return session.checkpoints.diff(id, session.worktreePath, userMessageId);
   }
@@ -1031,30 +2407,50 @@ class AgentSessionManager {
     return session.checkpoints.list(id, session.worktreePath);
   }
 
+  /** Per-turn diff history (what each turn changed) plus cumulative stats. */
+  async getDiffHistory(id: string): Promise<import('../shared/types.js').DiffHistoryResult> {
+    const session = this.sessions.get(id);
+    if (!session) return { entries: [], total: { filesChanged: 0, additions: 0, deletions: 0 } };
+    return session.checkpoints.history(id, session.worktreePath);
+  }
+
+  /** Files changed across a checkpoint comparison (for the review panel). */
+  async getCheckpointFiles(id: string, uuid: string, scope: import('../shared/types.js').CheckpointDiffScope): Promise<import('../shared/types.js').GitStatusResult> {
+    const session = this.sessions.get(id);
+    if (!session) return { entries: [], scopeError: 'Thread not found' };
+    return session.checkpoints.files(id, session.worktreePath, uuid, scope);
+  }
+
+  async getCheckpointFileDiff(id: string, uuid: string, scope: import('../shared/types.js').CheckpointDiffScope, relPath: string): Promise<import('../shared/types.js').FileDiffResult> {
+    const session = this.sessions.get(id);
+    if (!session) throw new Error(`Thread ${id} not found`);
+    return session.checkpoints.fileDiff(id, session.worktreePath, uuid, scope, relPath);
+  }
+
+  async getCheckpointFileLines(id: string, uuid: string, scope: import('../shared/types.js').CheckpointDiffScope, relPath: string): Promise<import('../shared/types.js').FileLinesResult> {
+    const session = this.sessions.get(id);
+    if (!session) return null;
+    return session.checkpoints.fileLines(id, session.worktreePath, uuid, scope, relPath);
+  }
+
   /** Return all buffered events for replay after renderer reload. Falls back to disk log. */
   getEventHistory(id: string): AgentEvent[] {
     const session = this.sessions.get(id);
     if (session) return session.eventHistory;
-    return this.loadEventHistory(id);
+    return this.events.load(id);
   }
 
   /** Return the total number of events for a session. */
   getEventHistoryCount(id: string): number {
     const session = this.sessions.get(id);
     if (session) return session.eventHistory.length;
-    const logPath = path.join(getEventsDir(), `${id}.jsonl`);
-    try {
-      const data = fs.readFileSync(logPath, 'utf-8');
-      return data.split('\n').filter(Boolean).length;
-    } catch {
-      return 0;
-    }
+    return this.events.load(id).length;
   }
 
   /** Return a page of events from the end of the history.
    *  Returns `limit` events ending before `beforeIndex` (exclusive).
    *  If beforeIndex is undefined, returns the last `limit` events. */
-  getEventHistoryPage(id: string, limit: number, beforeIndex?: number): { events: AgentEvent[]; totalCount: number; startIndex: number } {
+  getEventHistoryPage(id: string, limit: number, beforeIndex?: number): EventHistoryPage {
     const all = this.getEventHistory(id);
     const totalCount = all.length;
     const end = beforeIndex !== undefined ? Math.min(beforeIndex, totalCount) : totalCount;
@@ -1063,6 +2459,7 @@ class AgentSessionManager {
       events: all.slice(start, end),
       totalCount,
       startIndex: start,
+      turn: this.turnState(id),
     };
   }
 
@@ -1086,23 +2483,45 @@ class AgentSessionManager {
           },
         });
       }
-      session.eventHistory = [];
-      try {
-        fs.writeFileSync(session.eventLogPath, '');
-      } catch { /* non-fatal */ }
+      this.saveThreadLimitsBeforeCut(session);
+      this.events.replace(session, []);
+      // Keep the checkpoint refs — the user can still restore files to any
+      // earlier turn — but capture a clear sentinel so the Checkpoints tab can
+      // separate the cleared conversation's turns from the new one's (the
+      // post-/clear system_init's resume() re-reads all refs).
+      session.checkpoints.markCleared(id, session.worktreePath).catch((err) => {
+        logger.warn(`[clearEventHistory] checkpoint clear marker failed for ${id}:`, err);
+      });
     } else {
       // Session not running — clear disk log directly
-      const logPath = path.join(getEventsDir(), `${id}.jsonl`);
-      try { fs.writeFileSync(logPath, ''); } catch { /* non-fatal */ }
+      this.events.clearStored(id);
     }
+    // No event refers to the thread's images or files any more.
+    void removeAttachments(id);
+  }
+
+  /** Session ids that were running when the system suspended. Captured on
+   *  'suspend' so that on 'resume' we can bring back exactly the tabs that were
+   *  live before sleep (their SDK queries usually die during suspend). */
+  private runningAtSuspend = new Set<string>();
+
+  /** Snapshot the running sessions at suspend so wake-from-sleep can resume them. */
+  captureSuspendState(): void {
+    const ids = new Set<string>();
+    for (const [id, session] of this.sessions) {
+      if (session.status === 'running') ids.add(id);
+    }
+    this.runningAtSuspend = ids;
   }
 
   /**
-   * Health-check all sessions after system resume.
-   * Detects sessions whose SDK query died silently (e.g. during sleep)
-   * and emits process_exit + SESSION_STATUS so the renderer updates.
+   * Health-check all sessions after system resume. Detects sessions whose SDK
+   * query died silently (e.g. during sleep) and emits process_exit +
+   * SESSION_STATUS so the renderer updates. Returns the ids of sessions that
+   * were running before sleep but are no longer running — the tabs the renderer
+   * should resume so they don't silently close.
    */
-  healthCheckAll(): void {
+  healthCheckAll(): string[] {
     for (const [id, session] of this.sessions) {
       if (session.status !== 'running') continue;
 
@@ -1112,16 +2531,28 @@ class AgentSessionManager {
         logger.warn(`[healthCheck] session ${id} has no queryHandle but status=running — marking stopped`);
         session.status = 'stopped';
         session.emit?.({ type: 'process_exit' });
-        const w = session.window;
-        if (!w.isDestroyed()) {
-          w.webContents.send(IPC.SESSION_STATUS, id, 'stopped');
-        }
+        this.sendStatus(session, 'stopped');
       }
     }
+
+    // Tabs to bring back: those that were running before sleep but whose query
+    // didn't survive it. Sessions that stayed running are left alone.
+    const toResume: string[] = [];
+    for (const id of this.runningAtSuspend) {
+      const session = this.sessions.get(id);
+      if (session && session.status !== 'running') toResume.push(id);
+    }
+    this.runningAtSuspend.clear();
+    return toResume;
   }
 
   get count(): number {
     return this.sessions.size;
+  }
+
+  /** Conversations still shutting down after closeSession(). */
+  get closingCount(): number {
+    return this.closing.size;
   }
 }
 

@@ -48,7 +48,7 @@
 
 ## Configuration & Settings
 
-31. **As a developer, I want to set a default permission mode** (default, plan, acceptEdits, bypassPermissions) so sessions start with my preferred safety level.
+31. **As a developer, I want to set a default permission mode per agent** (Ask, Plan, Edit, Auto, Read-safe) so sessions start with my preferred safety level.
 32. **As a developer, I want to configure tool allow/deny rules** (e.g., allow `Bash(npm run *)`) so I can pre-approve common safe patterns.
 33. **As a developer, I want untracked config files (.env, .npmrc, etc.) auto-detected and copied into new worktrees** so agents have the config they need to build and run. *(Auto-detected from a default pattern list; no UI to customize per-repo.)*
 34. ~~**As a developer, I want to set task timeouts for orchestration** so I can control how long each subtask runs.~~ *(Removed — orchestration engine not present.)*
@@ -57,12 +57,12 @@
 
 ## Prerequisites & Onboarding
 
-37. **As a new user, I want a prerequisite check on startup** (Git version >= 2.17, Claude Code installed, auth status) so I know exactly what's missing before I try to use the app.
-38. **As a new user, I want the app to block interaction with a clear overlay when prerequisites aren't met** so I'm guided toward fixing the issue.
+37. **As a new user, I want the app to load straight away, even before everything is set up,** and tell me what's missing (for example Git 2.17+) without blocking me.
+38. **As a new user, I want to add my API key when I start my first conversation** so I don't need a terminal to get going, and can change it later in Settings.
 
 ## Persistence & Window Management
 
-39. **As a developer, I want the app to remember my window position, size, and active tab across restarts** so I can pick up where I left off.
+39. **As a developer, I want the app to remember my window position, size, and open tabs across restarts** so I can pick up where I left off.
 
 ## Debugging
 

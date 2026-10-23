@@ -1,21 +1,38 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { tick, untrack } from 'svelte';
   import { messageStore } from '../stores/messages.svelte.js';
+  import { arrivalScene } from '../stores/arrivalScene.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
   import { terminalStore } from '../stores/terminal.svelte.js';
-  import FilePickerPopup from './FilePickerPopup.svelte';
+  import { agentsStore } from '../stores/agents.svelte.js';
+  import { store as sessionStore } from '../stores/sessions.svelte.js';
+  import type FilePickerPopup from './FilePickerPopup.svelte';
+  import { lazyComponent } from '../lib/lazy-component.js';
+  import { canCompact } from '../lib/agent-commands.js';
+  import MessageQueue from './MessageQueue.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
+  import { Kbd } from '$lib/components/ui/kbd/index.js';
   import * as Command from '$lib/components/ui/command/index.js';
+  import ArrowUpIcon from '@lucide/svelte/icons/arrow-up';
+  import ListPlusIcon from '@lucide/svelte/icons/list-plus';
+  import PaperclipIcon from '@lucide/svelte/icons/paperclip';
+  import SquareIcon from '@lucide/svelte/icons/square';
+  import {
+    type AttachedFile,
+    processFiles,
+    extractClipboardImages,
+    attachmentPayload,
+  } from '$lib/file-attachments.js';
+  import AttachmentChips from './AttachmentChips.svelte';
+  import { extractAtRefs, buildRefTags, buildOutgoingMessage } from '$lib/prompt-file-refs.js';
 
   let { sessionId }: { sessionId: string } = $props();
 
-  let value = $state('');
+  // Restore the draft before the first render (sessionId is stable per
+  // instance). Set in onMount instead, the resize below would measure the
+  // textarea before bind:value had written the draft into it.
+  let value = $state(untrack(() => messageStore.getDraft(sessionId)));
   let textarea: HTMLTextAreaElement;
-
-  // Restore draft on mount (sessionId is stable per instance)
-  onMount(() => {
-    value = messageStore.getDraft(sessionId);
-  });
 
   // Sync draft to store whenever value changes
   $effect(() => {
@@ -28,15 +45,56 @@
       autoResize();
     }
   });
+
+  // A pane that mounts hidden (another conversation or the draft is open)
+  // can't size its prompt box: autoResize skips it while there is no layout.
+  // Showing the pane gives the textarea a width, so size it then. Resizing
+  // inside the callback lands before paint; the browser then reports a
+  // "ResizeObserver loop" error, which is benign (error-handling.ts skips it).
+  $effect(() => {
+    const el = textarea;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    let shown = el.clientWidth > 0;
+    const observer = new ResizeObserver(() => {
+      const wasShown = shown;
+      shown = el.clientWidth > 0;
+      if (shown && !wasShown && (value || showSuggestion)) autoResize();
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  });
+
+  // Insert text pushed from elsewhere (e.g. the activity thread's "copy
+  // selection to prompt", or a rewind's message text, which replaces it).
+  // Initialised from the current nonce so a stale request doesn't re-fire
+  // when this editor (re)mounts.
+  let lastInsertNonce = untrack(() => messageStore.promptInsertBySession[sessionId]?.nonce ?? 0);
+  $effect(() => {
+    const req = messageStore.promptInsertBySession[sessionId];
+    if (!req || req.nonce === lastInsertNonce) return;
+    lastInsertNonce = req.nonce;
+    value = req.replace ? req.text : value ? `${value}\n${req.text}` : req.text;
+    if (req.attachments?.length) attachedFiles = [...attachedFiles, ...req.attachments];
+    tick().then(() => { textarea?.focus(); autoResize(); });
+  });
   let userResized = $state(false);
   let pickerOpen = $state(false);
   let pickerQuery = $state('');
   let atStartIndex = $state(-1);
   let pickerRef: FilePickerPopup | undefined = $state();
+  // The @ file picker (and fuse.js, which only it uses here) loads the first
+  // time @ is typed.
+  const loadFilePicker = lazyComponent(() => import('./FilePickerPopup.svelte'));
 
-  // Drag-and-drop file attachments
-  type AttachedFile = { name: string; content: string; type: 'text' } | { name: string; dataUrl: string; type: 'image' };
-  let attachedFiles = $state<AttachedFile[]>([]);
+  // File attachments (drag-drop, paste, file picker), restored and kept in
+  // the store like the draft so they outlive this editor.
+  /** Whether this conversation's agent takes image attachments. */
+  let allowImages = $derived(agentsStore.supports(sessionStore.sessions.find((s) => s.id === sessionId)?.agentType, 'imageAttachments'));
+
+  let attachedFiles = $state<AttachedFile[]>(untrack(() => [...messageStore.getAttachments(sessionId)]));
+  $effect(() => {
+    messageStore.setAttachments(sessionId, $state.snapshot(attachedFiles));
+  });
   let dragOver = $state(false);
   let dropMessage = $state<{ text: string; isError: boolean } | null>(null);
   let dropMessageTimer: ReturnType<typeof setTimeout> | undefined;
@@ -46,11 +104,12 @@
   let commandQuery = $state('');
   let commandSelectedIndex = $state(0);
 
-  const builtinCommands = [
-    { name: '/compact', description: 'Compact conversation to free context space' },
-    { name: '/clear', description: 'Clear conversation and start fresh' },
+  // /compact only for an agent that can summarise the thread.
+  let builtinCommands = $derived([
+    ...(canCompact(sessionId) ? [{ name: '/compact', description: 'Compact thread to free context space' }] : []),
+    { name: '/clear', description: 'Clear thread and start fresh' },
     { name: '/rewind', description: 'Rewind to a previous checkpoint' },
-  ];
+  ]);
 
   // Include custom slash commands from session info
   let customCommands = $derived.by(() => {
@@ -70,17 +129,36 @@
 
   let isRunning = $derived(messageStore.getIsRunning(sessionId));
 
-  // The input is always usable once mounted — no need to wait for system_init.
-  // The SDK's system_init can take 30+ seconds (or never arrive for the first
-  // query) but messages are queued in the ReadableStream and processed once
-  // the SDK connects.  Gating on system_init left worktree inputs permanently
-  // disabled.
-  let canSend = $derived(!isRunning);
-  let promptSuggestions = $derived(messageStore.getPromptSuggestions(sessionId));
+  // The input is always usable — never gated on system_init or on a running
+  // turn. The SDK's system_init can take 30+ seconds (or never arrive for a
+  // fresh query until it has a prompt to process), so the first prompt goes
+  // straight to main, where it waits in the SDK's input stream until the
+  // agent connects. Anything submitted while the agent is busy (connecting
+  // or mid-turn) is queued in the store and sent when the turn finishes; the
+  // queue is shown above the input so items can be removed before they go.
+  let willQueue = $derived(!messageStore.canSendNow(sessionId));
+  // The agent's guess at the next prompt, shown as the empty box's
+  // placeholder until something is typed. Tab takes it.
+  let suggestion = $derived(
+    settingsStore.current.promptSuggestions && !isRunning ? messageStore.getPromptSuggestion(sessionId) : null,
+  );
+  let showSuggestion = $derived(!!suggestion && !value);
+
+  // Size the empty box to the suggestion, which may wrap, and back to one
+  // line when it goes. Chromium counts a placeholder in scrollHeight. Keyed
+  // on the text, so a newer suggestion of another length is sized too.
+  $effect(() => {
+    const shown = showSuggestion ? suggestion : null;
+    untrack(() => {
+      if (!textarea || value || userResized) return;
+      if (shown) autoResize();
+      else textarea.style.height = '';
+    });
+  });
 
   function handleSubmit() {
     const text = value.trim();
-    if (!text || !canSend) return;
+    if (!text) return;
 
     // Shell command: ! prefix runs directly in terminal
     if (text.startsWith('!')) {
@@ -92,10 +170,10 @@
         userResized = false;
         if (textarea) textarea.style.height = '';
         messageStore.setActiveTab(sessionId, 'terminal');
-        // Ensure PTY is alive, then write the command + Enter
+        // Ensure PTY is alive, then write the command + Enter. Shares the
+        // in-flight check with the terminal panel mounting on tab switch.
         (async () => {
-          const alive = await terminalStore.checkAlive(sessionId);
-          if (!alive) await terminalStore.spawn(sessionId);
+          await terminalStore.ensureAlive(sessionId);
           terminalStore.write(sessionId, cmd + '\r');
         })();
       }
@@ -104,91 +182,85 @@
 
     // Check if it's a slash command
     if (text.startsWith('/')) {
-      messageStore.sendCommand(sessionId, text);
+      messageStore.submitCommand(sessionId, text);
       value = '';
       closePicker();
       closeCommandPicker();
       userResized = false;
       if (textarea) textarea.style.height = '';
+      // Sending from the Changes tab returns to Activity so the response shows.
+      messageStore.setActiveTab(sessionId, 'activity');
       return;
     }
 
-    const atPattern = /@([\w.\/\-]+)/g;
-    const refs: string[] = [];
-    let match;
-    while ((match = atPattern.exec(text)) !== null) {
-      refs.push(match[1]);
-    }
+    const refs = extractAtRefs(text);
 
-    // Separate text files and image attachments
-    const textFiles = attachedFiles.filter((f): f is AttachedFile & { type: 'text' } => f.type === 'text');
-    const imageFiles = attachedFiles.filter((f): f is AttachedFile & { type: 'image' } => f.type === 'image');
-
-    // Build file tags from text attachments
-    const droppedTags = textFiles.map(
-      (f) => `<file path="${f.name}">\n${f.content}\n</file>`,
-    );
-
-    // Extract base64 image data for the API
-    const images = imageFiles.map((f) => {
-      // dataUrl format: "data:image/png;base64,iVBOR..."
-      const [header, data] = f.dataUrl.split(',');
-      const mediaType = header.match(/data:(image\/\w+)/)?.[1] ?? 'image/png';
-      return { data, mediaType: mediaType as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp', name: f.name };
-    });
+    // Text files go in the message text; images and other files alongside it
+    const { tags: droppedTags, images, files } = attachmentPayload(attachedFiles);
 
     const displayText = attachedFiles.length > 0
       ? `[${attachedFiles.map((f) => f.name).join(', ')}] ${text}`
       : text;
+    // Kept on a queued prompt so Edit can restore it as typed.
+    const typed = { text, attachments: $state.snapshot(attachedFiles) };
 
-    function send(prefix: string) {
-      messageStore.addUserMessage(sessionId, displayText);
-      window.groveBench.sendMessage(sessionId, prefix + text, images.length > 0 ? images : undefined);
+    // Sends now if the agent is idle, otherwise parks the prompt in the queue.
+    function send(outgoing: string) {
+      messageStore.submitMessage(sessionId, {
+        displayText,
+        outgoing,
+        images: images.length > 0 ? images : undefined,
+        files: files.length > 0 ? files : undefined,
+        typed,
+      });
     }
 
     if (refs.length > 0) {
-      Promise.all(
-        refs.map(async (ref) => {
-          try {
-            const content = await window.groveBench.readFile(sessionId, ref);
-            const isDir = ref.endsWith('/');
-            const tag = isDir ? 'folder' : 'file';
-            return `<${tag} path="${ref}">\n${content}\n</${tag}>`;
-          } catch {
-            const tag = ref.endsWith('/') ? 'folder' : 'file';
-            return `<${tag} path="${ref}">\n(could not read)\n</${tag}>`;
-          }
-        })
-      ).then((refTags) => {
-        const allTags = [...droppedTags, ...refTags];
-        const prefix = allTags.length > 0 ? allTags.join('\n') + '\n\n' : '';
-        send(prefix);
+      buildRefTags(refs, (ref) => window.groveBench.readFile(sessionId, ref)).then((refTags) => {
+        send(buildOutgoingMessage([...droppedTags, ...refTags], text));
       });
     } else {
-      const prefix = droppedTags.length > 0 ? droppedTags.join('\n') + '\n\n' : '';
-      send(prefix);
+      send(buildOutgoingMessage(droppedTags, text));
     }
 
     value = '';
     attachedFiles = [];
-    messageStore.clearPromptSuggestions(sessionId);
+    messageStore.clearPromptSuggestion(sessionId);
     closePicker();
     closeCommandPicker();
     userResized = false;
     if (container) container.style.height = '';
     if (textarea) textarea.style.height = '';
+    // Sending from the Changes tab returns to Activity so the response shows
+    // (no-op when already on Activity).
+    messageStore.setActiveTab(sessionId, 'activity');
   }
 
-  function useSuggestion(suggestion: string) {
-    value = suggestion;
-    messageStore.clearPromptSuggestions(sessionId);
+  /** Put the suggested prompt in the box, to send as it is or edit first. */
+  function useSuggestion(text: string) {
+    value = text;
+    messageStore.clearPromptSuggestion(sessionId);
     textarea?.focus();
     handleInput();
   }
 
+  /** Keys the @ picker takes. Held while its code is still loading, so
+   *  Enter can't send a half-typed @ reference (Escape closes it). */
+  const PICKER_KEYS = new Set(['Enter', 'Tab', 'ArrowUp', 'ArrowDown', 'PageUp', 'PageDown']);
+
   function handleKeydown(e: KeyboardEvent) {
     if (pickerOpen && pickerRef) {
       if (pickerRef.handleKeydown(e)) return;
+    } else if (pickerOpen) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        closePicker();
+        return;
+      }
+      if (PICKER_KEYS.has(e.key) && !e.shiftKey) {
+        e.preventDefault();
+        return;
+      }
     }
 
     // Command picker navigation
@@ -249,6 +321,13 @@
       }
     }
 
+    // Tab takes the suggested prompt. Without one, Tab moves focus as usual.
+    if (e.key === 'Tab' && showSuggestion && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      e.preventDefault();
+      useSuggestion(suggestion!);
+      return;
+    }
+
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSubmit();
@@ -257,8 +336,14 @@
 
   function autoResize() {
     if (!textarea || userResized) return;
+    // Hidden: no layout, so scrollHeight reads 0 and the box would collapse
+    // to its padding. The observer above sizes it once it is shown.
+    if (textarea.clientWidth === 0) return;
     textarea.style.height = '0';
-    const scrollH = textarea.scrollHeight;
+    // scrollHeight leaves out the border, and the box is border-box, so add
+    // it back or the box comes out 2px short (and shrinks on the first key)
+    const border = textarea.offsetHeight - textarea.clientHeight;
+    const scrollH = textarea.scrollHeight + border;
     // Cap textarea itself at 150px, let container flex naturally
     textarea.style.height = Math.min(scrollH, 150) + 'px';
   }
@@ -277,7 +362,8 @@
 
     const pos = textarea?.selectionStart ?? 0;
     const textBefore = value.slice(0, pos);
-    const atMatch = textBefore.match(/@([\w.\/\-]*)$/);
+    // Same characters extractAtRefs accepts: anything but whitespace.
+    const atMatch = textBefore.match(/@(\S*)$/);
 
     if (atMatch) {
       pickerOpen = true;
@@ -338,6 +424,8 @@
 
   function handleStop() {
     messageStore.markSessionStopped(sessionId);
+    // A stopped turn may report no result, so nothing else would end it.
+    arrivalScene.end(sessionId);
     window.groveBench.stopSession(sessionId);
   }
 
@@ -365,68 +453,66 @@
     dropMessageTimer = setTimeout(() => { dropMessage = null; }, 3000);
   }
 
-  function handleDrop(e: DragEvent) {
+  async function handleDrop(e: DragEvent) {
     e.preventDefault();
     dragOver = false;
     const files = e.dataTransfer?.files;
     if (!files || files.length === 0) return;
 
-    const MAX_TEXT_SIZE = 100 * 1024; // 100KB
-    const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB
-    const imageTypes = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
-    const textExtensions = new Set([
-      'ts', 'tsx', 'js', 'jsx', 'svelte', 'vue', 'html', 'css', 'scss', 'less',
-      'json', 'yaml', 'yml', 'toml', 'xml', 'md', 'txt', 'csv', 'sql', 'sh',
-      'bash', 'zsh', 'py', 'rb', 'go', 'rs', 'java', 'kt', 'c', 'cpp', 'h',
-      'hpp', 'cs', 'swift', 'php', 'r', 'lua', 'pl', 'ex', 'exs', 'elm',
-      'hs', 'ml', 'fs', 'clj', 'scala', 'dart', 'conf', 'ini', 'env',
-      'gitignore', 'dockerignore', 'dockerfile', 'makefile', 'cmake',
-      'lock', 'log', 'diff', 'patch', 'svg',
-    ]);
-
-    const skipped: string[] = [];
-
-    for (const file of Array.from(files)) {
-      const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
-      const nameLC = file.name.toLowerCase();
-      const isImage = imageTypes.has(file.type);
-      const isText = textExtensions.has(ext) || textExtensions.has(nameLC) || file.type.startsWith('text/');
-
-      if (isImage) {
-        if (file.size > MAX_IMAGE_SIZE) {
-          skipped.push(`${file.name} (too large, max 5MB)`);
-          continue;
-        }
-        const reader = new FileReader();
-        reader.onload = () => {
-          const dataUrl = reader.result as string;
-          if (!attachedFiles.some((f) => f.name === file.name)) {
-            attachedFiles = [...attachedFiles, { name: file.name, dataUrl, type: 'image' }];
-          }
-        };
-        reader.readAsDataURL(file);
-      } else if (isText) {
-        if (file.size > MAX_TEXT_SIZE) {
-          skipped.push(`${file.name} (too large, max 100KB)`);
-          continue;
-        }
-        const reader = new FileReader();
-        reader.onload = () => {
-          const content = reader.result as string;
-          if (!attachedFiles.some((f) => f.name === file.name)) {
-            attachedFiles = [...attachedFiles, { name: file.name, content, type: 'text' }];
-          }
-        };
-        reader.readAsText(file);
-      } else {
-        skipped.push(`${file.name} (unsupported type)`);
-      }
+    const { files: newFiles, skipped } = await processFiles(files, attachedFiles, { allowImages });
+    if (newFiles.length > 0) {
+      attachedFiles = [...attachedFiles, ...newFiles];
     }
-
     if (skipped.length > 0) {
       showDropMessage(`Skipped: ${skipped.join(', ')}`, true);
     }
+    textarea?.focus();
+  }
 
+  // ─── Clipboard paste ───
+
+  async function handlePaste(e: ClipboardEvent) {
+    if (!e.clipboardData) return;
+
+    const images = extractClipboardImages(e.clipboardData);
+    if (images.length === 0) return;
+
+    // Prevent default only when we have images to handle (preserve normal text paste)
+    e.preventDefault();
+
+    // Clipboard images all arrive named "image.png" — rename collisions so
+    // pasting several screenshots attaches each one instead of only the first.
+    const { files: newFiles, skipped } = await processFiles(images, attachedFiles, { renameDuplicates: true, allowImages });
+    if (newFiles.length > 0) {
+      attachedFiles = [...attachedFiles, ...newFiles];
+    }
+    if (skipped.length > 0) {
+      showDropMessage(`Skipped: ${skipped.join(', ')}`, true);
+    }
+    textarea?.focus();
+  }
+
+  // ─── File picker ───
+
+  let fileInput: HTMLInputElement;
+
+  function openFilePicker() {
+    fileInput?.click();
+  }
+
+  async function handleFileInputChange() {
+    const files = fileInput?.files;
+    if (!files || files.length === 0) return;
+
+    const { files: newFiles, skipped } = await processFiles(files, attachedFiles, { allowImages });
+    if (newFiles.length > 0) {
+      attachedFiles = [...attachedFiles, ...newFiles];
+    }
+    if (skipped.length > 0) {
+      showDropMessage(`Skipped: ${skipped.join(', ')}`, true);
+    }
+    // Reset so the same file can be re-selected
+    fileInput.value = '';
     textarea?.focus();
   }
 
@@ -455,13 +541,15 @@
   ></div>
 
   {#if pickerOpen}
-    <FilePickerPopup
-      bind:this={pickerRef}
-      {sessionId}
-      query={pickerQuery}
-      onselect={selectFile}
-      onclose={closePicker}
-    />
+    {#await loadFilePicker() then Picker}
+      <Picker
+        bind:this={pickerRef}
+        {sessionId}
+        query={pickerQuery}
+        onselect={selectFile}
+        onclose={closePicker}
+      />
+    {/await}
   {/if}
 
   <!-- Slash command autocomplete -->
@@ -479,7 +567,7 @@
               >
                 <span class="font-mono text-primary">{cmd.name}</span>
                 {#if cmd.description}
-                  <Command.Shortcut class="text-muted-foreground text-xs truncate">{cmd.description}</Command.Shortcut>
+                  <span class="ms-auto truncate text-xs text-muted-foreground">{cmd.description}</span>
                 {/if}
               </Command.Item>
             {/each}
@@ -506,69 +594,69 @@
 
   <!-- Attached file chips -->
   {#if attachedFiles.length > 0}
-    <div class="flex flex-wrap gap-1.5 px-4 pt-2 max-h-24 overflow-y-auto">
-      {#each attachedFiles as file, i}
-        <span class="inline-flex items-center gap-1 bg-primary/15 text-primary text-xs px-2 py-1 font-mono border border-primary/25">
-          {#if file.type === 'image'}
-            <img src={file.dataUrl} alt={file.name} class="w-5 h-5 object-cover shrink-0" />
-          {:else}
-            <svg class="w-3 h-3 shrink-0" viewBox="0 0 16 16" fill="currentColor">
-              <path d="M3.5 1A1.5 1.5 0 002 2.5v11A1.5 1.5 0 003.5 15h9a1.5 1.5 0 001.5-1.5V5.621a1 1 0 00-.293-.707l-3.621-3.621A1 1 0 009.379 1H3.5z"/>
-            </svg>
-          {/if}
-          {file.name}
-          <button
-            onclick={() => removeAttachedFile(i)}
-            class="text-primary/50 hover:text-primary transition-colors ml-0.5"
-            title="Remove"
-          >&times;</button>
-        </span>
-      {/each}
-    </div>
+    <AttachmentChips files={attachedFiles} onremove={removeAttachedFile} class="px-4 pt-2" />
   {/if}
 
-  <!-- Prompt suggestions -->
-  {#if promptSuggestions.length > 0 && !isRunning}
-    <div class="flex flex-wrap gap-1.5 px-4 pt-2">
-      {#each promptSuggestions as suggestion}
-        <button
-          onclick={() => useSuggestion(suggestion)}
-          class="text-xs px-2.5 py-1 border border-border text-muted-foreground hover:text-foreground hover:border-primary transition-colors truncate max-w-80"
-          title={suggestion}
-        >
-          {suggestion}
-        </button>
-      {/each}
-    </div>
-  {/if}
+  <!-- Queued messages (waiting for the agent to be free) -->
+  <MessageQueue {sessionId} />
 
   <div class="flex gap-2 items-end px-4 pb-3 pt-2">
-    <textarea
-      bind:this={textarea}
-      bind:value
-      spellcheck={settingsStore.current.spellcheck}
-      oninput={handleInput}
-      onkeydown={handleKeydown}
-      placeholder={isRunning ? 'Waiting for agent...' : 'Message (Enter to send, @ for files, / for commands, ! for shell)'}
-      rows="1"
-      class="flex-1 bg-card border px-3 py-2 text-sm text-foreground
-        placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-1 focus:ring-ring
-        disabled:opacity-50 disabled:cursor-not-allowed font-mono
-        {isRunning ? 'border-muted opacity-60' : 'border-input'}"
-    ></textarea>
+    <!-- Hidden file input for picker -->
+    <input
+      bind:this={fileInput}
+      type="file"
+      multiple
+      onchange={handleFileInputChange}
+      class="hidden"
+    />
 
+    <Button
+      variant="quiet"
+      size="icon-xs"
+      onclick={openFilePicker}
+      title="Attach files"
+      aria-label="Attach files"
+      class="self-center disabled:cursor-not-allowed"
+    >
+      <PaperclipIcon />
+    </Button>
+
+    <div class="relative flex-1 min-w-0 flex">
+      <!-- py-[7px]: 1px border + 7px + one 20px line + 7px + 1px = 36px, the
+           height of the buttons beside it -->
+      <textarea
+        bind:this={textarea}
+        bind:value
+        spellcheck={settingsStore.current.spellcheck}
+        oninput={handleInput}
+        onkeydown={handleKeydown}
+        onpaste={handlePaste}
+        placeholder={suggestion ?? (willQueue ? 'Message (Enter to queue, sent when the agent is free)' : 'Message (Enter to send, @ for files, / for commands, ! for shell)')}
+        aria-keyshortcuts={showSuggestion ? 'Tab' : undefined}
+        rows="1"
+        class="flex-1 min-w-0 bg-card border border-input px-3 py-[7px] text-sm text-foreground
+          placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-1 focus:ring-ring
+          disabled:opacity-50 disabled:cursor-not-allowed font-mono {showSuggestion ? 'pe-12' : ''}"
+      ></textarea>
+      {#if showSuggestion}
+        <!-- 1px border + 7px + (20px line - 16px key) / 2 = 10px: centred on the line -->
+        <Kbd variant="key" class="absolute end-2 top-2.5 pointer-events-none" aria-hidden="true">Tab</Kbd>
+      {/if}
+    </div>
+
+    <Button
+      variant="default"
+      size="icon"
+      onclick={handleSubmit}
+      disabled={!value.trim()}
+      title={willQueue ? 'Add to the queue; sent once the agent is free' : 'Send now'}
+      aria-label={willQueue ? 'Queue' : 'Send'}
+    >
+      {#if willQueue}<ListPlusIcon />{:else}<ArrowUpIcon />{/if}
+    </Button>
     {#if isRunning}
-      <Button variant="outline" onclick={handleStop} class="text-destructive border-destructive hover:bg-destructive/10 h-auto">
-        Stop
-      </Button>
-    {:else}
-      <Button
-        variant="outline"
-        onclick={handleSubmit}
-        disabled={!value.trim() || !canSend}
-        class="text-primary border-primary hover:bg-primary/10 h-auto"
-      >
-        Send
+      <Button variant="outline-destructive" size="icon" onclick={handleStop} title="Stop the agent" aria-label="Stop">
+        <SquareIcon class="size-3" fill="currentColor" />
       </Button>
     {/if}
   </div>

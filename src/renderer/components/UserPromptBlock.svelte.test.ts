@@ -1,0 +1,125 @@
+import { describe, it, expect, afterEach, vi } from 'vitest';
+import '@testing-library/jest-dom/vitest';
+import { render, cleanup, screen, fireEvent, waitFor } from '@testing-library/svelte';
+import { mockGroveBench } from '../__mocks__/setup.js';
+import { markdownPreviewStore } from '../stores/markdownPreview.svelte.js';
+
+import UserPromptBlock from './UserPromptBlock.svelte';
+
+const SID = 's1';
+const DATA_URL = 'data:image/png;base64,iVBOR';
+
+afterEach(() => {
+  cleanup();
+  markdownPreviewStore.close();
+});
+
+describe('UserPromptBlock attachments', () => {
+  it('shows attached text files as chips that open them in the Focus panel', async () => {
+    render(UserPromptBlock, {
+      sessionId: SID,
+      text: 'fix it',
+      files: [{ path: 'src/a.ts', content: 'const a = 1;' }, { path: 'notes.md', content: '# Notes' }],
+    });
+
+    // Not shown inline.
+    expect(screen.queryByText('const a = 1;')).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'src/a.ts' }));
+    expect(markdownPreviewStore).toMatchObject({ open: true, title: 'src/a.ts', content: 'const a = 1;', code: { path: 'src/a.ts', lines: null } });
+    // Markdown as it reads.
+    await fireEvent.click(screen.getByRole('button', { name: 'notes.md' }));
+    // Not tied to the thread, so its relative images don't load from the worktree.
+    expect(markdownPreviewStore).toMatchObject({ open: true, title: 'notes.md', content: '# Notes', code: null, sessionId: undefined });
+  });
+
+  it('shows a just-sent image and enlarges it on click', async () => {
+    render(UserPromptBlock, { sessionId: SID, text: 'what is this?', images: [{ name: 'shot.png', dataUrl: DATA_URL }] });
+
+    expect(screen.getByRole('img', { name: 'shot.png' })).toHaveAttribute('src', DATA_URL);
+    await fireEvent.click(screen.getByRole('button', { name: 'View shot.png' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog.querySelector('img')).toHaveAttribute('src', DATA_URL);
+  });
+
+  it('loads a saved image from the conversation, lazily', () => {
+    const file = `${'a'.repeat(32)}.png`;
+    render(UserPromptBlock, { sessionId: SID, text: 'look', images: [{ file, name: 'shot.png' }] });
+
+    const img = screen.getByRole('img', { name: 'shot.png' });
+    expect(img).toHaveAttribute('src', `grove-attachment://image/${SID}/${file}`);
+    expect(img).toHaveAttribute('loading', 'lazy');
+  });
+
+  it('says so when a saved image is gone', async () => {
+    render(UserPromptBlock, { sessionId: SID, text: 'look', images: [{ file: `${'b'.repeat(32)}.png`, name: 'shot.png' }] });
+    await fireEvent.error(screen.getByRole('img', { name: 'shot.png' }));
+    expect(screen.getByText('Image not available')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'View shot.png' })).toBeNull();
+  });
+
+  it('shows other attached files as chips that open the saved copy', async () => {
+    const file = `${'c'.repeat(32)}.pdf`;
+    render(UserPromptBlock, {
+      sessionId: SID, text: 'summarise', attachments: [{ file, name: 'spec.pdf', mediaType: 'application/pdf', size: 2048 }],
+    });
+
+    const chip = screen.getByRole('button', { name: 'spec.pdf' });
+    expect(chip).toHaveAttribute('title', 'spec.pdf (2 KB)');
+    await fireEvent.click(chip);
+    expect(mockGroveBench.openAttachedFile).toHaveBeenCalledWith(SID, file);
+  });
+
+  it('turns a chip off when its file is gone', async () => {
+    vi.mocked(mockGroveBench.openAttachedFile).mockResolvedValueOnce(false);
+    render(UserPromptBlock, {
+      sessionId: SID, text: 'look', attachments: [{ file: `${'d'.repeat(32)}.zip`, name: 'logs.zip', mediaType: 'application/zip', size: 10 }],
+    });
+
+    const chip = screen.getByRole('button', { name: 'logs.zip' });
+    await fireEvent.click(chip);
+    await waitFor(() => expect(chip).toBeDisabled());
+    expect(chip).toHaveAttribute('title', 'logs.zip is no longer available');
+  });
+
+  it('keeps the chip usable when opening the file fails in main', async () => {
+    vi.mocked(mockGroveBench.openAttachedFile).mockRejectedValueOnce(new Error('shell failed'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    render(UserPromptBlock, {
+      sessionId: SID, text: 'look', attachments: [{ file: `${'e'.repeat(32)}.pdf`, name: 'spec.pdf', mediaType: 'application/pdf', size: 10 }],
+    });
+
+    const chip = screen.getByRole('button', { name: 'spec.pdf' });
+    await fireEvent.click(chip);
+    await waitFor(() => expect(warn).toHaveBeenCalled());
+    expect(chip).not.toBeDisabled();
+    warn.mockRestore();
+  });
+
+  it('shows a file main has not saved yet without a way to open it', () => {
+    render(UserPromptBlock, { sessionId: SID, text: 'look', attachments: [{ name: 'memo.mp3', mediaType: 'audio/mpeg', size: 10 }] });
+    expect(screen.getByRole('button', { name: 'memo.mp3' })).toBeDisabled();
+  });
+
+  it('shows an image sent without text', () => {
+    const { container } = render(UserPromptBlock, { sessionId: SID, text: '', images: [{ name: 'shot.png', dataUrl: DATA_URL }] });
+    expect(screen.getByRole('img', { name: 'shot.png' })).toBeInTheDocument();
+    expect(container.querySelector('.markdown-content')).toBeNull();
+  });
+});
+
+describe('UserPromptBlock send time', () => {
+  it('shows when it was sent, with the full date on hover', () => {
+    const sentAt = new Date(2026, 9, 22, 14, 32).getTime();
+    render(UserPromptBlock, { sessionId: SID, text: 'fix it', sentAt });
+
+    const time = screen.getByText(new Date(sentAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }));
+    expect(time.tagName).toBe('TIME');
+    expect(time).toHaveAttribute('datetime', new Date(sentAt).toISOString());
+    expect(time).toHaveAttribute('title', `Sent ${new Date(sentAt).toLocaleString()}`);
+  });
+
+  it('shows no time for a prompt from older history', () => {
+    const { container } = render(UserPromptBlock, { sessionId: SID, text: 'fix it' });
+    expect(container.querySelector('time')).toBeNull();
+  });
+});

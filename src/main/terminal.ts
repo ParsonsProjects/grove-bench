@@ -3,6 +3,7 @@ import type { IPty } from 'node-pty';
 import type { WebContents } from 'electron';
 import { IPC } from '../shared/types.js';
 import { logger } from './logger.js';
+import { killDescendants } from './process-tree.js';
 
 interface PtySession {
   pty: IPty;
@@ -16,9 +17,9 @@ export class TerminalManager {
 
   /** Spawn a persistent PTY shell for a session. Returns true if spawned. */
   spawnPty(sessionId: string, cwd: string, sender: WebContents): boolean {
-    // Kill existing PTY if any
+    // Kill existing PTY if any (it leaves the map synchronously)
     if (this.sessions.has(sessionId)) {
-      this.killPty(sessionId);
+      void this.killPty(sessionId);
     }
 
     const isWin = process.platform === 'win32';
@@ -52,10 +53,10 @@ export class TerminalManager {
           buffer = '';
           return;
         }
-        if (buffer && !sender.isDestroyed()) {
-          sender.send(dataChannel, buffer);
-          buffer = '';
-        }
+        // Drop it when the window is gone too, or a chatty shell (a dev
+        // server) would grow it for as long as it runs.
+        if (buffer && !sender.isDestroyed()) sender.send(dataChannel, buffer);
+        buffer = '';
       };
 
       ptyProcess.onData((data: string) => {
@@ -120,44 +121,23 @@ export class TerminalManager {
     }
   }
 
-  /** Kill a session's PTY. */
-  killPty(sessionId: string): void {
+  /** Kill a session's PTY and everything started from it (dev servers,
+   *  watchers), so their ports and file handles are released. */
+  async killPty(sessionId: string): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (!session) return;
     // Remove from map BEFORE killing so that if onExit fires synchronously
     // during kill(), it won't find this session and won't send a stale exit event.
     this.sessions.delete(sessionId);
+    // Children first: once the shell is gone they can't be traced back to it,
+    // and on Windows they would keep running.
+    const children = await killDescendants(session.pty.pid);
     try {
       session.pty.kill();
     } catch {
       // Already dead
     }
-    logger.info(`PTY killed: session=${sessionId}`);
-  }
-
-  // ─── Legacy shell execution (replaced by PTY) ───
-
-  /** @deprecated Spawn a one-off command. Use PTY instead. */
-  spawnCommand(sessionId: string, command: string, cwd: string, sender: WebContents): string {
-    // Legacy: run command via PTY write. Return a fake execId.
-    if (!this.sessions.has(sessionId)) {
-      this.spawnPty(sessionId, cwd, sender);
-    }
-    const execId = `exec-${Date.now()}`;
-    this.write(sessionId, command + '\n');
-    return execId;
-  }
-
-  /** @deprecated Kill a spawned command execution. */
-  killExecution(_execId: string): void {
-    // No-op: legacy shell executions are not individually tracked.
-    logger.debug(`[TerminalManager] killExecution called for ${_execId} (legacy no-op)`);
-  }
-
-  /** @deprecated Send input to a running command execution. */
-  sendInput(execId: string, data: string): void {
-    // Legacy: route to PTY write. The execId prefix maps to a session.
-    logger.debug(`[TerminalManager] sendInput called for ${execId} (legacy)`);
+    logger.info(`PTY killed: session=${sessionId}, child processes killed=${children.length}`);
   }
 
   /** Check if a session has a live PTY. */
@@ -165,16 +145,19 @@ export class TerminalManager {
     return this.sessions.has(sessionId);
   }
 
-  /** Kill all PTYs for cleanup (app quit). */
-  async killAll(): Promise<void> {
-    for (const sessionId of [...this.sessions.keys()]) {
-      this.killPty(sessionId);
-    }
+  /** Number of live PTYs. */
+  get count(): number {
+    return this.sessions.size;
   }
 
-  /** Kill PTY for a specific session (session destroy). */
+  /** Kill all PTYs for cleanup (app quit). */
+  async killAll(): Promise<void> {
+    await Promise.all([...this.sessions.keys()].map((sessionId) => this.killPty(sessionId)));
+  }
+
+  /** Kill PTY for a specific session (conversation close or destroy). */
   async killAllForSession(sessionId: string): Promise<void> {
-    this.killPty(sessionId);
+    await this.killPty(sessionId);
   }
 }
 

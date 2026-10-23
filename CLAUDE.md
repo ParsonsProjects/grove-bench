@@ -19,57 +19,79 @@ src/
     index.ts           # App entry point
     preload.ts         # Context bridge (IPC exposure)
     ipc.ts             # IPC handler registration
-    git.ts             # Git CLI wrapper (execa)
+    git.ts             # Git CLI wrapper (execa, through the process host)
+    process-host*.ts   # Utility processes git, gh and the agents' programs (claude, ACP agents) launch from, so launches can't freeze the window (3rd Vite entry)
     worktree-manager.ts
     agent-session.ts   # Session lifecycle management
+    session-*.ts       # Session types, event log + history, permission prompts, limits, skills, agent config, streamed text merged before IPC
     agent-utils.ts     # Agent helper utilities
     terminal.ts        # node-pty management
     app-state.ts       # Persistent app state
     window-state.ts    # Window position/size persistence
     memory.ts          # Project memory system
     memory-autosave.ts # Auto-save memory on interval
+    skill-schedules.ts # Skills run in a new thread on a schedule (docs/skill-schedules-plan.md)
+    skill-sharing.ts   # Skills every agent can use: .agents/skills, with links in .claude/skills for Claude Code
     settings.ts        # User settings
     prerequisites.ts   # Git/Claude detection & version checks
+    catalogs.ts        # ACP Registry and models.dev, fetched daily (install commands, model sizes)
+    credentials.ts     # Encrypted API key storage (safeStorage)
     logger.ts          # File-based logging
-    dev-server.ts      # Dev server management
-    dev-command-detector.ts
+    rotating-log.ts    # Size-rotated log file (app log and performance.log share it)
+    freeze-log.ts      # Main-process stalls, slow window frames (100 ms+), process launches, timed work, GC pauses, agent output, process CPU
+    perf-*.ts          # performance.log, step timings (new/resume/wake), health line, traces
     git-status-parser.ts
-    port-killer.ts
+    preview.ts         # Preview tab: your page (WebContentsView) + the agent's (offscreen)
+    preview-*.ts       # Preview URL rules, console log, in-page scripts, keys
+    attachments.ts     # Attached files and images tools return, served over grove-attachment://
+    worktree-files.ts  # Worktree files the thread shows or opens (agent's images, links, files made)
+    turn-files.ts      # Watches the worktree during a turn for the files it makes ("Files made")
     adapters/          # Agent adapter pattern
       index.ts         # Adapter exports
       types.ts         # Adapter interfaces
       registry.ts      # Adapter registry
       claude-code.ts   # Claude Code adapter implementation
+      claude-accounts.ts # Other Claude accounts: one adapter each, with its own CLAUDE_CONFIG_DIR
+      acp/             # Agent Client Protocol adapter (Gemini CLI, Copilot CLI, OpenCode, custom agents)
+      file-attachments.ts # How attached files reach each agent (by path; audio inline for ACP agents that take it)
+      grove-tools.ts   # Grove's memory and Preview tools, defined once
+      grove-mcp-http.ts # Those tools over MCP HTTP, for agents other than Claude Code
+      mcp-bridge/      # stdio bridge to that server, for agents without HTTP MCP (2nd Vite entry)
+      preview-mcp-server.ts # Agent browser tools (grove-preview)
   renderer/            # Electron renderer (Svelte UI)
     App.svelte         # Root component
     main.ts            # Renderer entry
     components/        # Svelte components (~34 files)
+      settings/        # Settings panel sections and shared setting rows
     lib/               # Utilities
     stores/            # Svelte stores (sessions, messages, settings, etc.)
     styles/            # CSS
   shared/
     types.ts           # Shared types between main/renderer
-docs/                  # Design docs, user stories
+    brand.ts           # Brand palette, status colours, fonts (app, landing, window)
+docs/                  # Design docs, user stories, ui-kit.md, brand/ (logo files)
+BRAND.md               # Brand: logo, palette, type, voice
 DESIGN.md              # Architecture & design document
 TODO.md                # Gap analysis vs competitors
 ```
 
 ## Config Files
 
-- `electron-builder.yml` — electron-builder config (NSIS installer, signing, publish)
+- `electron-builder.yml` — electron-builder config (NSIS installer, update feed)
 - `vite.main.config.mjs` — Vite config for main process
 - `vite.renderer.config.mjs` — Vite config for renderer
 - `vite.preload.config.mjs` — Vite config for preload script
 - `vitest.config.mts` — Test config (projects: main, renderer)
 - `svelte.config.mjs` — Svelte compiler config
+- `.npmrc`: npm settings. `min-release-age=7` only installs versions published 7+ days ago; `engine-strict` makes the `engines.npm` range (>=11.10.0, the first npm with that setting) a hard error. `landing/.npmrc` and `scripts/acp-spike/.npmrc` repeat them. `scripts/check-release-age.mjs` checks lockfile changes in the Dependency age workflow
 
 ## Commands
 
 ```bash
 npm start              # Run in dev mode (Vite dev server + Electron)
 npm run build          # Build main, preload, and renderer
-npm run dist           # Build + package NSIS installer (unsigned)
-npm run dist:publish   # Build + package + publish to GitHub (CI only)
+npm run dist           # Build + package NSIS installer into out/ (unsigned, never publishes)
+npm run typecheck      # tsc, then svelte-check for .svelte components (CI runs both)
 npm test               # Run all tests (vitest run)
 npm run test:watch     # Watch mode
 npm run test:coverage  # Run tests with coverage
@@ -77,18 +99,67 @@ npm run test:main      # Tests for main process only
 npm run test:renderer  # Tests for renderer only
 ```
 
+## Terminology
+
+User-facing names and internal names differ on purpose:
+
+- **Thread** (UI, help, docs) = `AgentSession` / `session:*` IPC / `sessions` store in code. It was called Conversation before, and some code names still say so (`ConversationGoal`, `showConversationGoal`, `getConversationGroups`); keep them so saved settings keep working. Keep "session" internally: it also names the provider's own resumable session (`providerSessionId`). Text sent to the model (prompts, tool descriptions) may still say "conversation".
+- **Thread tab** (UI, help, docs) = the `'activity'` workspace tab in code (`WorkspaceTab`, `setActiveTab`), and its view modes are `ActivityViewMode` / `defaultActivityView`. It was called Activity before; the code names stay so saved settings keep working. Where "thread" and "Thread tab" would clash in a sentence, name the tab.
+- **Project** (UI, help, docs) = `repoPath` in code. Keep "repo" internally: `'project'` is already a Claude Code config scope (`'project' | 'user' | 'local'`) for MCP servers, skills and plugins.
+
+Use the user-facing words in any new UI text, help page or doc. See `docs/projects-plan.md` for where projects are heading.
+
 ## Architecture Notes
 
 - Main process manages AgentSessions, each with a node-pty instance and git worktree
 - IPC bridge via Electron contextBridge (preload.ts)
-- Git operations use `execa` calling `git` CLI directly (not simple-git)
+- Git operations use `execa` calling `git` CLI directly (not simple-git), via
+  `runProcess` (`src/main/process-host.ts`), which runs git in a utility
+  process so launching it never blocks the main process. The agents'
+  programs (claude, ACP agents) start in a second one, the agent host
+  (`spawnProcess`), and stream their stdio through it. Commands that can
+  hang (gh, the claude CLI's auth, mcp and plugin calls) run there too
+  (`runInAgentHost`, `process-host-run.ts`), whose timeout kills the whole
+  tree, so a hung one can't get the git host restarted
 - Multiple concurrent agent sessions per repository
 - Worktrees stored in a managed directory with short IDs (PATH_MAX safety)
 - Windows-only (no cross-platform support in v1)
+- Adapters describe tool calls with a provider-neutral `ToolView`
+  (`src/shared/tool-view.ts`); the UI and Read-safe mode read that, never a
+  provider's tool names. Events without one are read as Claude Code tools
+- Colours come from the theme tokens in `src/renderer/styles/globals.css`,
+  built from the brand palette in `src/shared/brand.ts` (dark: Night,
+  light: Paper; BRAND.md). Light applies under `prefers-color-scheme: light`,
+  which main sets from the Theme setting (`nativeTheme.themeSource`). Thread
+  status uses the `status-*` tokens (`bg-status-working`), never `bg-primary`:
+  blue is in progress, green done, amber needs you, red failed. Other
+  colours use Tailwind's palette (`text-green-400`) in seven hues (red,
+  amber, yellow, green, cyan, blue, purple); light mode swaps those shades
+  for darker ones, and `light-theme.test.ts` fails if a component uses one
+  with no light value or another hue. `brand.test.ts` fails if
+  `globals.css` drifts from `brand.ts`
+- UI is built from the kit in `src/renderer/lib/components/ui` (docs/ui-kit.md,
+  drawn live at `/ui-kit.html` on the dev server): `Button` sizes `2xs`/`xs`
+  for the app's dense rows (variants include `quiet-destructive` for delete
+  icons and `external` for links that leave the app: green acts, blue goes),
+  `Badge`, `Kbd`, `Tabs`, `Segmented`, `Notice`,
+  `SectionLabel`, `PanelHeader`, `Pulse`, `Logo`. Font sizes come from the
+  scale (`text-micro` 10px, `text-caption` 11px, then Tailwind's), never
+  `text-[10px]`. Import `tv` from `$lib/utils.js`, which knows those sizes
+- Panels, dialogs and tabs that open on demand load on first use via
+  `lazyComponent` (`src/renderer/lib/lazy-component.ts`), keeping their code
+  (and libraries only they use, such as xterm) out of the startup bundle
 
 ## Key Dependencies
 
+Vite bundles the renderer and nearly all of the main process, so
+`dependencies` in package.json holds only what main loads from
+`node_modules` at run time: the agent SDK, `electron-updater` and `node-pty`.
+Everything else goes in `devDependencies`, or it ships in the installer
+unused. `scripts/smoke-deps.mjs` checks the packaged app (Package workflow).
+
 - `@anthropic-ai/claude-agent-sdk` — Claude Code agent integration
+- `@modelcontextprotocol/sdk`: serves Grove's tools over MCP HTTP (bundled)
 - `@xterm/xterm` — Terminal emulation in renderer
 - `node-pty` — PTY spawning in main process
 - `bits-ui` — UI component library

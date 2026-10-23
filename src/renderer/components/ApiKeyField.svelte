@@ -1,0 +1,125 @@
+<script lang="ts">
+  import { store } from '../stores/sessions.svelte.js';
+  import { prerequisitesStore } from '../stores/prerequisites.svelte.js';
+  import { Button } from '$lib/components/ui/button/index.js';
+  import { Input } from '$lib/components/ui/input/index.js';
+  import { Label } from '$lib/components/ui/label/index.js';
+  import { Notice } from '$lib/components/ui/notice/index.js';
+
+  /** API key entry for one agent. Used by the New Conversation dialog and
+   *  Settings > Agents. The saved key never comes back to the renderer; only
+   *  whether one is saved. */
+  let { adapterId, autofocus = false }: { adapterId: string; autofocus?: boolean } = $props();
+
+  const apiKey = $derived(store.prerequisites?.agents[adapterId]?.apiKey);
+  const inputId = $derived(`api-key-${adapterId}`);
+
+  let value = $state('');
+  let busy = $state(false);
+  /** Saving, which first asks the provider whether it takes the key. */
+  let checking = $state(false);
+  let error = $state('');
+  let inputEl = $state<HTMLInputElement | null>(null);
+
+  // Svelte's autofocus only fires when nothing has focus, and a dialog has
+  // already focused its close button by the time this field shows.
+  $effect(() => {
+    if (!autofocus || !inputEl) return;
+    const frame = requestAnimationFrame(() => inputEl?.focus());
+    return () => cancelAnimationFrame(frame);
+  });
+
+  async function save() {
+    if (!value.trim() || busy) return;
+    busy = true;
+    checking = true;
+    error = '';
+    try {
+      await prerequisitesStore.saveApiKey(adapterId, value);
+      value = '';
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    } finally {
+      busy = false;
+      checking = false;
+    }
+  }
+
+  async function remove() {
+    if (busy) return;
+    busy = true;
+    error = '';
+    try {
+      await prerequisitesStore.clearApiKey(adapterId);
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    } finally {
+      busy = false;
+    }
+  }
+</script>
+
+{#if apiKey}
+  <div class="flex flex-col gap-1">
+    <div class="flex items-baseline justify-between">
+      <Label for={inputId}>{apiKey.label}</Label>
+      <Button
+        variant="external"
+        size="inline"
+        class="text-xs"
+        onclick={() => window.groveBench.openExternal(apiKey.helpUrl)}
+      >
+        Get a key
+      </Button>
+    </div>
+
+    {#if apiKey.canStore}
+      <div class="flex items-center gap-2 max-w-xl">
+        <Input
+          id={inputId}
+          type="password"
+          autocomplete="off"
+          spellcheck={false}
+          bind:ref={inputEl}
+          bind:value
+          placeholder={apiKey.saved ? 'Saved. Paste a new key to replace it.' : 'Paste your key'}
+          onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') save(); }}
+        />
+        <Button onclick={save} disabled={!value.trim() || busy}>
+          {checking ? 'Checking…' : 'Save key'}
+        </Button>
+      </div>
+      {#if apiKey.saved && apiKey.rejected}
+        <p class="text-xs text-destructive" role="alert">
+          The saved key was refused when a thread used it. Paste a new key, or remove it to use your CLI sign-in instead.
+        </p>
+      {:else if apiKey.saved && apiKey.unverified}
+        <p class="text-xs text-muted-foreground" role="status">
+          Saved, but it couldn't be checked: Grove Bench couldn't reach the provider. Your first thread will show if it works.
+        </p>
+      {/if}
+      <p class="text-xs text-muted-foreground">
+        {#if apiKey.billingNote}{apiKey.billingNote}{' '}{/if}Stored encrypted on this computer. While saved, it is used instead of a CLI sign-in.
+      </p>
+      {#if apiKey.saved}
+        <Button
+          variant="quiet-destructive"
+          size="inline"
+          class="self-start text-xs"
+          disabled={busy}
+          onclick={remove}
+        >
+          Remove saved key
+        </Button>
+      {/if}
+    {:else}
+      <p class="text-xs text-muted-foreground">
+        This computer has no secure storage, so the app can't save a key. Sign in from a terminal instead, then re-check.
+      </p>
+    {/if}
+
+    {#if error}
+      <Notice tone="danger"><p>{error}</p></Notice>
+    {/if}
+  </div>
+{/if}

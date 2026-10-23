@@ -1,0 +1,302 @@
+<script lang="ts">
+  import { onMount, untrack } from 'svelte';
+  import * as Dialog from '$lib/components/ui/dialog/index.js';
+  import { Button } from '$lib/components/ui/button/index.js';
+  import { Input } from '$lib/components/ui/input/index.js';
+  import { Label } from '$lib/components/ui/label/index.js';
+  import { Notice } from '$lib/components/ui/notice/index.js';
+  import { Pulse } from '$lib/components/ui/pulse/index.js';
+  import * as Tabs from '$lib/components/ui/tabs/index.js';
+  import { store } from '../stores/sessions.svelte.js';
+  import { messageStore } from '../stores/messages.svelte.js';
+  import { gitStatusStore } from '../stores/gitStatus.svelte.js';
+  import { prStore } from '../stores/pr.svelte.js';
+  import { checkpointStore } from '../stores/checkpoints.svelte.js';
+  import { resolveBaseBranch } from '../lib/base-branch.js';
+  import { candidateBranches, squashMessageFrom, describeOpResult, type BranchCandidate } from '../lib/git-ops.js';
+  import type { CommitEntry } from '../../shared/types.js';
+
+  export type GitOpMode = 'rebase' | 'squash' | 'cherry-pick';
+
+  let { sessionId, onclose, initialMode = 'rebase' }: { sessionId: string; onclose: () => void; initialMode?: GitOpMode } = $props();
+
+  let open = $state(true);
+  // The prop only seeds the tab; switching tabs afterwards is local state.
+  let mode = $state<GitOpMode>(untrack(() => initialMode));
+  let baseBranch = $state('');
+  let candidates = $state<BranchCandidate[]>([]);
+  let busy = $state(false);
+  let result = $state<{ ok: boolean; text: string } | null>(null);
+
+  // Rebase
+  let rebaseOnto = $state('');
+
+  // Squash
+  let squashBase = $state('');
+  let squashCommits = $state<CommitEntry[]>([]);
+  let squashMessage = $state('');
+  let squashLoading = $state(false);
+
+  // Cherry-pick
+  let pickSource = $state('');
+  let pickCommits = $state<CommitEntry[]>([]);
+  let pickSha = $state('');
+  let pickLoading = $state(false);
+
+  let session = $derived(store.sessions.find((s) => s.id === sessionId));
+
+  // These rewrite the checkout under an agent that may be editing it, so
+  // they wait while any conversation working there is mid-turn (branch
+  // switching has the same rule).
+  let sharers = $state<string[]>(untrack(() => [sessionId]));
+  let agentBusy = $derived(sharers.some((id) => messageStore.getIsRunning(id)));
+  let sessionBranch = $derived(session?.branch ?? '');
+
+  const MODES: { id: GitOpMode; label: string }[] = [
+    { id: 'rebase', label: 'Rebase' },
+    { id: 'squash', label: 'Squash' },
+    { id: 'cherry-pick', label: 'Cherry-pick' },
+  ];
+
+  onMount(async () => {
+    window.groveBench.getCheckoutSharers(sessionId)
+      .then((ids) => { if (ids.length > 0) sharers = ids; })
+      .catch(() => { /* keep this conversation's own check */ });
+    baseBranch = await resolveBaseBranch(session?.repoPath ?? '');
+    candidates = candidateBranches(store.sessions, sessionId, baseBranch);
+    rebaseOnto = candidates[0]?.branch ?? baseBranch;
+    squashBase = baseBranch;
+    pickSource = candidates.find((c) => c.sessionId)?.branch ?? '';
+  });
+
+  // Each field edit starts a lookup; only the latest one's reply counts, so
+  // a slow reply for what was typed earlier can't replace the list.
+  let squashReq = 0;
+  let pickReq = 0;
+
+  // Squash preview: the commits that would be folded together
+  $effect(() => {
+    const base = squashBase.trim();
+    const req = ++squashReq;
+    if (mode !== 'squash' || !base) { squashCommits = []; squashLoading = false; return; }
+    squashLoading = true;
+    window.groveBench.gitLogCommits(sessionId, 'HEAD', base)
+      .then((commits) => {
+        if (req !== squashReq) return;
+        squashCommits = commits;
+        if (!squashMessage.trim()) squashMessage = squashMessageFrom(commits);
+      })
+      .catch(() => { if (req === squashReq) squashCommits = []; })
+      .finally(() => { if (req === squashReq) squashLoading = false; });
+  });
+
+  // Cherry-pick: commits on the source branch that this branch doesn't have.
+  // The selection goes with the list, so Cherry-pick never applies a commit
+  // that isn't shown.
+  $effect(() => {
+    const source = pickSource.trim();
+    const req = ++pickReq;
+    if (mode !== 'cherry-pick' || !source) { pickCommits = []; pickSha = ''; pickLoading = false; return; }
+    pickLoading = true;
+    window.groveBench.gitLogCommits(sessionId, source, 'HEAD')
+      .then((commits) => { if (req === pickReq) { pickCommits = commits; pickSha = commits[0]?.sha ?? ''; } })
+      .catch(() => { if (req === pickReq) { pickCommits = []; pickSha = ''; } })
+      .finally(() => { if (req === pickReq) pickLoading = false; });
+  });
+
+  function afterChange() {
+    gitStatusStore.refresh(sessionId);
+    prStore.refresh(sessionId, true).catch(() => {});
+    checkpointStore.scheduleRefresh(sessionId);
+  }
+
+  async function run() {
+    if (busy || agentBusy) return;
+    busy = true;
+    result = null;
+    try {
+      if (mode === 'rebase') {
+        const r = await window.groveBench.gitRebase(sessionId, rebaseOnto.trim());
+        result = describeOpResult(r, 'Rebase');
+      } else if (mode === 'squash') {
+        const r = await window.groveBench.gitSquash(sessionId, squashBase.trim(), squashMessage);
+        result = describeOpResult(r, 'Squash');
+        if (r.success) { squashCommits = []; squashMessage = ''; }
+      } else {
+        const r = await window.groveBench.gitCherryPick(sessionId, pickSha);
+        result = describeOpResult(r, 'Cherry-pick');
+        if (r.success) {
+          pickCommits = pickCommits.filter((c) => c.sha !== pickSha);
+          pickSha = pickCommits[0]?.sha ?? '';
+        }
+      }
+      if (result.ok) afterChange();
+    } catch (e: any) {
+      result = { ok: false, text: e?.message || String(e) };
+    } finally {
+      busy = false;
+    }
+  }
+
+  let canRun = $derived.by(() => {
+    if (busy || agentBusy) return false;
+    if (mode === 'rebase') return !!rebaseOnto.trim();
+    if (mode === 'squash') return !!squashBase.trim() && !!squashMessage.trim() && squashCommits.length >= 2;
+    return !!pickSha;
+  });
+
+  function handleOpenChange(isOpen: boolean) {
+    if (!isOpen) {
+      open = false;
+      onclose();
+    }
+  }
+</script>
+
+<Dialog.Root bind:open onOpenChange={handleOpenChange}>
+  <Dialog.Content class="max-w-lg">
+    <Dialog.Header>
+      <Dialog.Title>Branch operations</Dialog.Title>
+      <Dialog.Description>
+        Rewrite <span class="font-mono text-foreground">{sessionBranch}</span> against another branch. A conflicting
+        operation is aborted and the branch left as it was.
+      </Dialog.Description>
+    </Dialog.Header>
+
+    <!-- Picking a tab (even the open one) clears the last result. -->
+    <Tabs.Root
+      bind:value={() => mode, (v) => { if (v !== mode) { mode = v as GitOpMode; result = null; } }}
+      class="mt-3"
+    >
+      <Tabs.List>
+        {#each MODES as m (m.id)}
+          <Tabs.Trigger value={m.id} onclick={() => { result = null; }}>{m.label}</Tabs.Trigger>
+        {/each}
+      </Tabs.List>
+
+      <div class="flex flex-col gap-3 mt-7">
+        <!-- Each panel mounts only while its tab is open, so the other
+             modes' commit lists aren't in the page. -->
+        <Tabs.Content value="rebase" class="flex flex-col gap-3">
+          {#if mode === 'rebase'}
+            <div>
+              <Label for="gitops-onto" class="mb-1 block">Rebase onto</Label>
+              <Input id="gitops-onto" type="text" bind:value={rebaseOnto} placeholder={baseBranch || 'main'} list="gitops-branches" />
+              <p class="text-micro text-muted-foreground mt-1">
+                Replays this branch's commits on top of the target. Pick the base branch to catch up, or another
+                thread's branch to build on its work.
+              </p>
+            </div>
+          {/if}
+        </Tabs.Content>
+        <Tabs.Content value="squash" class="flex flex-col gap-3">
+          {#if mode === 'squash'}
+            <div>
+              <Label for="gitops-squash-base" class="mb-1 block">Squash commits since</Label>
+              <Input id="gitops-squash-base" type="text" bind:value={squashBase} placeholder={baseBranch || 'main'} list="gitops-branches" />
+            </div>
+            <div>
+              <div class="text-micro text-muted-foreground mb-1">
+                {#if squashLoading}
+                  Loading commits…
+                {:else if squashCommits.length === 0}
+                  No commits since {squashBase || 'the base'}.
+                {:else if squashCommits.length === 1}
+                  Only one commit since {squashBase} — nothing to squash.
+                {:else}
+                  {squashCommits.length} commits will become one:
+                {/if}
+              </div>
+              {#if squashCommits.length > 1}
+                <ul class="max-h-28 overflow-y-auto border border-border/50 bg-background/50 text-xs font-mono px-2 py-1 space-y-0.5">
+                  {#each squashCommits as c (c.sha)}
+                    <li class="truncate"><span class="text-muted-foreground">{c.shortSha}</span> {c.subject}</li>
+                  {/each}
+                </ul>
+              {/if}
+            </div>
+            <div>
+              <Label for="gitops-squash-msg" class="mb-1 block">New commit message</Label>
+              <textarea
+                id="gitops-squash-msg"
+                bind:value={squashMessage}
+                rows="4"
+                class="w-full text-sm bg-background border border-input px-3 py-2 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring resize-y"
+              ></textarea>
+            </div>
+          {/if}
+        </Tabs.Content>
+        <Tabs.Content value="cherry-pick" class="flex flex-col gap-3">
+          {#if mode === 'cherry-pick'}
+            <div>
+              <Label for="gitops-source" class="mb-1 block">Pick from branch</Label>
+              <Input id="gitops-source" type="text" bind:value={pickSource} placeholder="another thread's branch" list="gitops-branches" />
+            </div>
+            <div>
+              <div class="text-micro text-muted-foreground mb-1">
+                {#if pickLoading}
+                  Loading commits…
+                {:else if !pickSource.trim()}
+                  Enter a branch to see its commits.
+                {:else if pickCommits.length === 0}
+                  {pickSource} has no commits that this branch is missing.
+                {:else}
+                  Commits on {pickSource} not on this branch:
+                {/if}
+              </div>
+              {#if pickCommits.length > 0}
+                <div class="max-h-40 overflow-y-auto border border-border/50 bg-background/50">
+                  {#each pickCommits as c (c.sha)}
+                    <label class="flex items-center gap-2 px-2 py-1 text-xs cursor-pointer hover:bg-accent/30 {pickSha === c.sha ? 'bg-sidebar-accent' : ''}">
+                      <input type="radio" name="gitops-pick" value={c.sha} bind:group={pickSha} class="shrink-0" />
+                      <span class="font-mono text-muted-foreground shrink-0">{c.shortSha}</span>
+                      <span class="truncate">{c.subject}</span>
+                    </label>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+          {/if}
+        </Tabs.Content>
+
+        <datalist id="gitops-branches">
+          {#each candidates as c (c.branch)}
+            <option value={c.branch}>{c.label}</option>
+          {/each}
+        </datalist>
+
+        {#if agentBusy}
+          <Notice tone="neutral">
+            <p>An agent is working in this checkout. Wait for its turn to finish, then try again.</p>
+          </Notice>
+        {/if}
+
+        {#if result}
+          <Notice tone={result.ok ? 'success' : 'danger'}>
+            <p class="whitespace-pre-wrap">{result.text}</p>
+          </Notice>
+        {/if}
+
+        <Dialog.Footer>
+          <Button variant="secondary" onclick={() => { open = false; onclose(); }}>
+            Close
+          </Button>
+          <Button onclick={run} disabled={!canRun}>
+            {#if busy}
+              <span class="inline-flex items-center gap-1.5">
+                <Pulse motion="spin" size="sm" tone="current" />
+                Working…
+              </span>
+            {:else if mode === 'rebase'}
+              Rebase
+            {:else if mode === 'squash'}
+              Squash {squashCommits.length > 1 ? squashCommits.length : ''} commits
+            {:else}
+              Cherry-pick
+            {/if}
+          </Button>
+        </Dialog.Footer>
+      </div>
+    </Tabs.Root>
+  </Dialog.Content>
+</Dialog.Root>

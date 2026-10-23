@@ -1,0 +1,947 @@
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import '@testing-library/jest-dom/vitest';
+import { render, cleanup, waitFor, within } from '@testing-library/svelte';
+import { tick } from 'svelte';
+
+import { mockGroveBench } from '../__mocks__/setup.js';
+// Spied on, so a test can make the capped diffs give up as if out of time.
+vi.mock('diff', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('diff')>();
+  return { ...actual, createPatch: vi.fn(actual.createPatch) };
+});
+
+import { createPatch } from 'diff';
+const { createPatch: realCreatePatch } = await vi.importActual<typeof import('diff')>('diff');
+import ChangesReviewPanel from './ChangesReviewPanel.svelte';
+import { messageStore } from '../stores/messages.svelte.js';
+import { gitStatusStore } from '../stores/gitStatus.svelte.js';
+import { store } from '../stores/sessions.svelte.js';
+import { settingsStore } from '../stores/settings.svelte.js';
+import { prStore } from '../stores/pr.svelte.js';
+import type { GitStatusEntry } from '../../shared/types.js';
+
+// Counts syntax-highlight calls; otherwise the real module. The real
+// large-diff rule decides, with line counts scaled by 100 so that over 20
+// lines counts as large and a test needn't draw thousands of rows.
+const highlights = vi.hoisted(() => ({ count: 0 }));
+vi.mock('../lib/diff-highlight.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/diff-highlight.js')>();
+  return {
+    ...actual,
+    isLargeDiff: (size: { lines: number; chars: number }) => actual.isLargeDiff({ lines: size.lines * 100, chars: size.chars }),
+    highlightLine: (...args: Parameters<typeof actual.highlightLine>) => {
+      highlights.count++;
+      return actual.highlightLine(...args);
+    },
+  };
+});
+
+const SID = 'changes-session';
+
+function entry(filePath: string, over: Partial<GitStatusEntry> = {}): GitStatusEntry {
+  return { filePath, status: 'modified', staged: false, ...over } as GitStatusEntry;
+}
+
+function patch(line: string): string {
+  return `--- a/f\n+++ b/f\n@@ -1 +1 @@\n-old\n+${line}\n`;
+}
+
+/** Diff lines render through highlight.js (tokens split into spans), so match on text content. */
+function diffText(container: HTMLElement): string {
+  return container.textContent ?? '';
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  gitStatusStore.statusBySession = {};
+  gitStatusStore.scopeBySession = { [SID]: { scope: 'working' } };
+  messageStore.messagesBySession = { [SID]: [] };
+  messageStore.setIsRunning(SID, false);
+  // The panel under test is on screen.
+  store.activeSessionId = SID;
+  messageStore.setActiveTab(SID, 'changes');
+});
+
+afterEach(() => cleanup());
+
+describe('ChangesReviewPanel — live diff while the agent is running', () => {
+  it('shows the empty state while running instead of a "wait for the turn" placeholder', async () => {
+    messageStore.setIsRunning(SID, true);
+    const { getByText, queryByText } = render(ChangesReviewPanel, { sessionId: SID });
+    await tick();
+
+    expect(getByText('Working tree clean')).toBeInTheDocument();
+    expect(getByText('Edits show up here as the agent makes them')).toBeInTheDocument();
+    expect(queryByText(/changes will appear when the turn completes/i)).toBeNull();
+  });
+
+  it('renders changed files and their diff while running', async () => {
+    messageStore.setIsRunning(SID, true);
+    mockGroveBench.getFileDiff.mockResolvedValue({ kind: 'text', patch: patch('first') });
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('src/a.ts')] } };
+
+    const { container, queryByText } = render(ChangesReviewPanel, { sessionId: SID });
+
+    await waitFor(() => expect(diffText(container)).toContain('first'));
+    expect(container.querySelector('[data-file-key="src/a.ts:false"]')).not.toBeNull();
+    expect(queryByText('Working tree clean')).toBeNull();
+  });
+
+  it('keeps the current diff on screen while a status refresh reloads it', async () => {
+    let resolveSecond: ((v: { kind: 'text'; patch: string }) => void) | undefined;
+    mockGroveBench.getFileDiff
+      .mockResolvedValueOnce({ kind: 'text', patch: patch('first') })
+      .mockImplementationOnce(() => new Promise((res) => { resolveSecond = res; }));
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('src/a.ts')] } };
+
+    const { container, queryByText } = render(ChangesReviewPanel, { sessionId: SID });
+    await waitFor(() => expect(diffText(container)).toContain('first'));
+
+    // A git status refresh mid-turn hands back a fresh entries array for the same file.
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('src/a.ts', { additions: 1 })] } };
+    await tick();
+
+    // Old content stays visible until the new patch arrives — no "No diff available" flash.
+    expect(diffText(container)).toContain('first');
+    expect(queryByText('No diff available')).toBeNull();
+    expect(mockGroveBench.getFileDiff).toHaveBeenCalledTimes(2);
+
+    resolveSecond!({ kind: 'text', patch: patch('second') });
+    await waitFor(() => expect(diffText(container)).toContain('second'));
+    expect(diffText(container)).not.toContain('first');
+  });
+
+  it('drops cached diffs for files that left the status and moves the selection', async () => {
+    mockGroveBench.getFileDiff.mockImplementation(async (_sid, filePath) =>
+      ({ kind: 'text' as const, patch: patch(`content of ${filePath}`) }));
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('src/a.ts'), entry('src/b.ts')] } };
+
+    const { container } = render(ChangesReviewPanel, { sessionId: SID });
+    await waitFor(() => expect(diffText(container)).toContain('content of src/a.ts'));
+
+    // a.ts reverted by the agent; only b.ts remains.
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('src/b.ts')] } };
+    await waitFor(() => expect(diffText(container)).toContain('content of src/b.ts'));
+    expect(container.querySelector('[data-file-key="src/a.ts:false"]')).toBeNull();
+    expect(diffText(container)).not.toContain('content of src/a.ts');
+  });
+
+  it('ignores a stale diff response that lands after a newer one', async () => {
+    let resolveFirst: ((v: { kind: 'text'; patch: string }) => void) | undefined;
+    mockGroveBench.getFileDiff
+      .mockImplementationOnce(() => new Promise((res) => { resolveFirst = res; }))
+      .mockResolvedValueOnce({ kind: 'text', patch: patch('newer') });
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('src/a.ts')] } };
+
+    const { container } = render(ChangesReviewPanel, { sessionId: SID });
+    await tick();
+    // Refresh before the first fetch resolves.
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('src/a.ts', { additions: 2 })] } };
+    await waitFor(() => expect(diffText(container)).toContain('newer'));
+
+    resolveFirst!({ kind: 'text', patch: patch('stale') });
+    await tick();
+    expect(diffText(container)).not.toContain('stale');
+    expect(diffText(container)).toContain('newer');
+  });
+});
+
+import { fireEvent } from '@testing-library/svelte';
+import { reviewStore } from '../stores/review.svelte.js';
+import { panelStore } from '../stores/panels.svelte.js';
+
+/** A number as the notice shows it, spaced as Testing Library reads text. */
+const count = (n: number) => n.toLocaleString().replace(/\s/g, ' ');
+
+function hunkPatch(): string {
+  // One hunk starting at line 10 of a longer file, so context can be expanded above and below.
+  return [
+    '--- a/src/a.ts', '+++ b/src/a.ts',
+    '@@ -10,3 +10,3 @@',
+    ' const keep = 1;',
+    '-const value = foo(1);',
+    '+const value = bar(1);',
+    ' const tail = 2;',
+    '',
+  ].join('\n');
+}
+
+describe('ChangesReviewPanel — review features', () => {
+  beforeEach(() => {
+    panelStore.collapsed = {};
+    reviewStore.clear(SID);
+    localStorage.clear();
+    gitStatusStore.scopeBySession = { [SID]: { scope: 'working' } };
+    mockGroveBench.getFileDiff.mockResolvedValue({ kind: 'text', patch: hunkPatch() });
+    mockGroveBench.getGitStatus.mockResolvedValue({ entries: [] });
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('src/a.ts', { contentHash: 'h1' }), entry('src/b.ts', { contentHash: 'h2' })] } };
+  });
+
+  it('highlights changed words inside a paired del/add line', async () => {
+    const { container } = render(ChangesReviewPanel, { sessionId: SID });
+    await waitFor(() => expect(container.querySelectorAll('mark.diff-mark').length).toBeGreaterThan(0));
+    const marks = [...container.querySelectorAll('mark.diff-mark')].map(m => m.textContent);
+    expect(marks).toEqual(['foo', 'bar']);
+  });
+
+  it('offers expandable context and splices in file lines on expand', async () => {
+    const file = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`);
+    mockGroveBench.getFileLines.mockResolvedValue({ lines: file });
+    const { container } = render(ChangesReviewPanel, { sessionId: SID });
+    await waitFor(() => expect(container.querySelectorAll('[data-expander]').length).toBe(2));
+
+    // The gap above the hunk is 9 lines: a single "show all" control.
+    const above = container.querySelector('[data-expander] button') as HTMLButtonElement;
+    expect(above.textContent).toContain('9 hidden lines');
+    await fireEvent.click(above);
+    await waitFor(() => expect(diffText(container)).toContain('line 9'));
+    expect(mockGroveBench.getFileLines).toHaveBeenCalledWith(SID, 'src/a.ts', false);
+    expect(diffText(container)).toContain('line 1');
+    // Below the hunk the file has 30 lines, so 18 remain hidden.
+    expect(container.querySelectorAll('[data-expander]').length).toBe(1);
+    expect(container.querySelector('[data-expander]')!.textContent).toContain('18 hidden lines');
+  });
+
+  it('tracks viewed files, clears on content change, and advances to the next file', async () => {
+    const { container, getByLabelText } = render(ChangesReviewPanel, { sessionId: SID });
+    await waitFor(() => expect(diffText(container)).toContain('bar'));
+
+    const box = container.querySelector('input[type="checkbox"]') as HTMLInputElement;
+    expect(box.checked).toBe(false);
+    await fireEvent.click(box);
+    await tick();
+    expect(container.querySelector('[data-file-key="src/a.ts:false"]')!.getAttribute('data-viewed')).toBe('true');
+    // Selection moved on to the next unviewed file.
+    expect(container.querySelector('[data-file-key="src/b.ts:false"]')!.className).toContain('border-primary');
+    expect(diffText(container)).toContain('1 of 2 viewed');
+
+    // Agent edits a.ts again: the hash changes, viewed clears, marker appears.
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('src/a.ts', { contentHash: 'h1-changed' }), entry('src/b.ts', { contentHash: 'h2' })] } };
+    await tick();
+    const a = container.querySelector('[data-file-key="src/a.ts:false"]')!;
+    expect(a.getAttribute('data-viewed')).toBeNull();
+    expect(a.getAttribute('data-changed-since-viewed')).toBe('true');
+    expect(getByLabelText('Changed files')).toBeInTheDocument();
+  });
+
+  it('collects line comments and sends them as one prompt', async () => {
+    const submit = vi.spyOn(messageStore, 'submitMessage').mockReturnValue('sent');
+    const { container, getByText, getByPlaceholderText } = render(ChangesReviewPanel, { sessionId: SID });
+    await waitFor(() => expect(diffText(container)).toContain('bar'));
+
+    await fireEvent.click(container.querySelector('button[data-side="new"][aria-label="Add comment on line 11"]')!);
+    await tick();
+    const box = getByPlaceholderText('What should the agent change here?') as HTMLTextAreaElement;
+    await fireEvent.input(box, { target: { value: 'Use baz instead' } });
+    await fireEvent.click(getByText('Add comment'));
+    await tick();
+
+    expect(container.querySelectorAll('[data-review-comment]').length).toBe(1);
+    expect(getByText('1 review comment')).toBeInTheDocument();
+    expect(container.querySelector('[data-file-key="src/a.ts:false"]')!.textContent).toContain('1');
+
+    await fireEvent.click(getByText('Send to agent'));
+    expect(submit).toHaveBeenCalledTimes(1);
+    const prompt = submit.mock.calls[0][1].outgoing;
+    expect(prompt).toContain('### src/a.ts:11');
+    expect(prompt).toContain('const value = bar(1);');
+    expect(prompt).toContain('Use baz instead');
+    expect(reviewStore.getComments(SID)).toEqual([]);
+    submit.mockRestore();
+  });
+
+  it('closes an open comment box when another file is selected', async () => {
+    const { container, getByPlaceholderText, queryByPlaceholderText } = render(ChangesReviewPanel, { sessionId: SID });
+    await waitFor(() => expect(diffText(container)).toContain('bar'));
+    await fireEvent.click(container.querySelector('button[data-side="new"][aria-label="Add comment on line 11"]')!);
+    await tick();
+    await fireEvent.input(getByPlaceholderText('What should the agent change here?'), { target: { value: 'meant for a.ts' } });
+
+    await fireEvent.click(container.querySelector('[data-file-key="src/b.ts:false"]')!);
+    await tick();
+    await waitFor(() => expect(container.querySelector('[data-file-key="src/b.ts:false"]')!.className).toContain('border-primary'));
+
+    expect(queryByPlaceholderText('What should the agent change here?')).toBeNull();
+    expect(reviewStore.getComments(SID)).toEqual([]);
+  });
+
+  it('scrolls its own file list, not a hidden panel showing the same file', async () => {
+    const OTHER = 'other-session';
+    messageStore.messagesBySession[OTHER] = [];
+    gitStatusStore.statusBySession = { ...gitStatusStore.statusBySession, [OTHER]: gitStatusStore.statusBySession[SID] };
+    const scrolled: Element[] = [];
+    Element.prototype.scrollIntoView = function (this: Element) { scrolled.push(this); };
+    try {
+      render(ChangesReviewPanel, { sessionId: OTHER }); // first in the page
+      const { container } = render(ChangesReviewPanel, { sessionId: SID });
+      await waitFor(() => expect(diffText(container)).toContain('bar'));
+
+      // Ticking "Viewed" moves on to b.ts and scrolls it into view.
+      await fireEvent.click(container.querySelector('input[type="checkbox"]')!);
+      await waitFor(() => expect(scrolled.length).toBeGreaterThan(0));
+      const mine = container.querySelector('[data-file-key="src/b.ts:false"]')!;
+
+      expect(scrolled.at(-1)).toBe(mine);
+    } finally {
+      Reflect.deleteProperty(Element.prototype, 'scrollIntoView');
+    }
+  });
+
+  it('keeps the typed comment when Shift+click widens its range', async () => {
+    const { container, getByPlaceholderText } = render(ChangesReviewPanel, { sessionId: SID });
+    await waitFor(() => expect(diffText(container)).toContain('bar'));
+    await fireEvent.click(container.querySelector('button[data-side="new"][aria-label="Add comment on line 10"]')!);
+    await tick();
+    await fireEvent.input(getByPlaceholderText('What should the agent change here?'), { target: { value: 'both lines' } });
+
+    await fireEvent.click(container.querySelector('button[data-side="new"][aria-label="Add comment on line 11"]')!, { shiftKey: true });
+    await tick();
+
+    expect(container.textContent).toContain('Comment on line 10–11');
+    expect((getByPlaceholderText('What should the agent change here?') as HTMLTextAreaElement).value).toBe('both lines');
+  });
+
+  it('switches to branch scope: resolves the base, refetches, and hides staging', async () => {
+    mockGroveBench.getDefaultBranch.mockResolvedValue('main');
+    mockGroveBench.getGitStatus.mockResolvedValue({ entries: [entry('src/committed.ts', { contentHash: 'c1' })], baseRef: 'main' });
+    const { container, getByText, queryByText } = render(ChangesReviewPanel, { sessionId: SID });
+    await waitFor(() => expect(getByText('Stage')).toBeInTheDocument());
+
+    await fireEvent.click(getByText('Branch'));
+    await waitFor(() => expect(mockGroveBench.getGitStatus).toHaveBeenCalledWith(SID, { scope: 'branch', base: 'main' }));
+    await waitFor(() => expect(container.querySelector('[data-file-key="src/committed.ts:false"]')).not.toBeNull());
+    expect(queryByText('Stage')).toBeNull();
+    expect(queryByText('Revert')).toBeNull();
+    expect(getByText('vs main')).toBeInTheDocument();
+    expect(getByText('Changed on branch')).toBeInTheDocument();
+    // Per-file diffs are fetched against the base in branch scope.
+    await waitFor(() => expect(mockGroveBench.getFileDiff).toHaveBeenCalledWith(SID, 'src/committed.ts', false, { base: 'main' }));
+  });
+
+  it('folds the file list to a rail of status letters, remembered per tab', async () => {
+    const { container, getByLabelText, queryByPlaceholderText } = render(ChangesReviewPanel, { sessionId: SID });
+    await waitFor(() => expect(diffText(container)).toContain('bar'));
+    const sidebar = getByLabelText('Changed files');
+
+    await fireEvent.click(getByLabelText('Collapse file list'));
+    expect(mockGroveBench.setCollapsedPanels).toHaveBeenCalledWith({ changesFiles: true });
+    expect(queryByPlaceholderText('Filter files...')).toBeNull();
+    expect(getByLabelText('Changed files')).toBe(sidebar);
+    const b = sidebar.querySelector('[data-file-key="src/b.ts:false"]') as HTMLButtonElement;
+    expect(b.textContent?.trim()).toBe('M');
+    expect(b.title).toBe('src/b.ts');
+
+    // Still a working file list: picking a letter opens that file, arrows walk the rail.
+    await fireEvent.click(b);
+    expect(b.className).toContain('border-primary');
+    await fireEvent.keyDown(sidebar, { key: 'ArrowUp' });
+    expect(sidebar.querySelector('[data-file-key="src/a.ts:false"]')!.className).toContain('border-primary');
+
+    await fireEvent.click(getByLabelText('Expand file list'));
+    expect(queryByPlaceholderText('Filter files...')).not.toBeNull();
+  });
+
+  it('shows the scope toggle and a branch message in the empty state', async () => {
+    gitStatusStore.statusBySession = { [SID]: { entries: [] } };
+    mockGroveBench.getDefaultBranch.mockResolvedValue('main');
+    mockGroveBench.getGitStatus.mockResolvedValue({ entries: [], scopeError: 'No merge base with main' });
+    const { getByText } = render(ChangesReviewPanel, { sessionId: SID });
+    expect(getByText('Working tree clean')).toBeInTheDocument();
+    await fireEvent.click(getByText('Branch'));
+    await waitFor(() => expect(getByText('No merge base with main')).toBeInTheDocument());
+  });
+});
+
+describe('ChangesReviewPanel — revert warnings', () => {
+  async function openRevertFor(entries: GitStatusEntry[]) {
+    mockGroveBench.getFileDiff.mockResolvedValue({ kind: 'text', patch: patch('x') });
+    gitStatusStore.scopeBySession = { [SID]: { scope: 'working' } }; // branch scope hides Revert
+    gitStatusStore.statusBySession = { [SID]: { entries } };
+    const view = render(ChangesReviewPanel, { sessionId: SID });
+    const button = await waitFor(() => {
+      const b = view.getAllByRole('button').find((el) => /^(Revert|Discard)$/.test(el.textContent?.trim() ?? ''));
+      if (!b) throw new Error('no revert button yet');
+      return b;
+    });
+    button.click();
+    await tick();
+    return view;
+  }
+
+  it('says a staged revert also drops the file\'s unstaged edits', async () => {
+    const view = await openRevertFor([entry('src/a.ts', { staged: true }), entry('src/a.ts', { staged: false })]);
+    expect(await view.findByText(/its unstaged edits too/)).toBeInTheDocument();
+  });
+
+  it('undoes a rename: says the old path comes back, and passes it', async () => {
+    const view = await openRevertFor([entry('src/new.ts', { staged: true, status: 'renamed', origPath: 'src/old.ts' })]);
+    const dialog = within(await view.findByRole('dialog'));
+    expect(dialog.getByText(/was renamed from/)).toHaveTextContent('src/new.ts was renamed from src/old.ts. Reverting puts src/old.ts back as last committed and deletes src/new.ts, with the changes shown here. This cannot be undone.');
+    await fireEvent.click(dialog.getByRole('button', { name: 'Revert' }));
+    expect(mockGroveBench.revertFile).toHaveBeenCalledWith(SID, 'src/new.ts', true, 'src/old.ts');
+  });
+
+  it('shows why a revert failed, next to its button', async () => {
+    mockGroveBench.revertFile.mockRejectedValueOnce(new Error("Error invoking remote method 'file:revert': Error: Can't undo the rename while something is at src/old.ts. Move it, then try again."));
+    const view = await openRevertFor([entry('src/new.ts', { staged: true, status: 'renamed', origPath: 'src/old.ts' })]);
+    await fireEvent.click(within(await view.findByRole('dialog')).getByRole('button', { name: 'Revert' }));
+    expect(await view.findByRole('alert')).toHaveTextContent(/^Can't undo the rename while something is at src\/old\.ts\. Move it, then try again\.$/);
+  });
+
+  it("leaves a copy's source alone", async () => {
+    const view = await openRevertFor([entry('src/copy.ts', { staged: true, status: 'copied', origPath: 'src/orig.ts' })]);
+    await fireEvent.click(within(await view.findByRole('dialog')).getByRole('button', { name: 'Revert' }));
+    expect(mockGroveBench.revertFile).toHaveBeenCalledWith(SID, 'src/copy.ts', true, undefined);
+  });
+
+  it('says reverting a staged new file deletes it', async () => {
+    const view = await openRevertFor([entry('src/new.ts', { staged: true, status: 'added' })]);
+    expect(await view.findByText(/is a new file, so reverting it deletes it from disk/)).toBeInTheDocument();
+  });
+});
+
+describe('ChangesReviewPanel — diff cache', () => {
+  beforeEach(() => {
+    reviewStore.clear(SID);
+    localStorage.clear();
+    gitStatusStore.scopeBySession = { [SID]: { scope: 'working' } };
+  });
+
+  it('refetches a file that changed while it was not selected', async () => {
+    const version: Record<string, number> = { 'src/d.ts': 1 };
+    mockGroveBench.getFileDiff.mockImplementation(async (_sid, filePath) =>
+      ({ kind: 'text' as const, patch: patch(`${filePath} v${version[filePath] ?? 1}`) }));
+    const files = (dHash: string) => ['a', 'b', 'c', 'd'].map(n => entry(`src/${n}.ts`, { contentHash: n === 'd' ? dHash : n }));
+    gitStatusStore.statusBySession = { [SID]: { entries: files('d1') } };
+    const { container } = render(ChangesReviewPanel, { sessionId: SID });
+    const row = (n: string) => container.querySelector(`[data-file-key="src/${n}.ts:false"]`)!;
+
+    await fireEvent.click(row('d'));
+    await waitFor(() => expect(diffText(container)).toContain('src/d.ts v1'));
+    await fireEvent.click(row('a'));
+    await waitFor(() => expect(diffText(container)).toContain('src/a.ts v1'));
+
+    // The agent edits d.ts; the refresh reloads only a.ts and its neighbour.
+    version['src/d.ts'] = 2;
+    gitStatusStore.statusBySession = { [SID]: { entries: files('d2') } };
+    await tick();
+    await fireEvent.click(row('d'));
+
+    await waitFor(() => expect(diffText(container)).toContain('src/d.ts v2'));
+  });
+
+  it('drops a reply for the previous scope that lands after the switch', async () => {
+    let finishOld: ((v: { kind: 'text'; patch: string }) => void) | undefined;
+    // The mock's declared type omits the fourth (options) argument.
+    mockGroveBench.getFileDiff.mockImplementation(((_sid: string, filePath: string, _staged?: boolean, opts?: { base?: string }) => {
+      const scope = opts?.base ? 'branch' : 'working';
+      if (filePath === 'src/b.ts' && scope === 'working') return new Promise((res) => { finishOld = res; });
+      return Promise.resolve({ kind: 'text' as const, patch: patch(`${filePath} ${scope}`) });
+    }) as never);
+    mockGroveBench.getDefaultBranch.mockResolvedValue('main');
+    const files = ['a', 'b', 'c', 'd', 'e'].map(n => entry(`src/${n}.ts`));
+    gitStatusStore.statusBySession = { [SID]: { entries: files } };
+    const { container, getByText } = render(ChangesReviewPanel, { sessionId: SID });
+    const row = (n: string) => container.querySelector(`[data-file-key="src/${n}.ts:false"]`)!;
+    // b.ts is fetched as a.ts's neighbour; move away while that is still out.
+    await waitFor(() => expect(finishOld).toBeDefined());
+    await fireEvent.click(row('e'));
+    await waitFor(() => expect(diffText(container)).toContain('src/e.ts working'));
+
+    mockGroveBench.getGitStatus.mockResolvedValue({ entries: files, baseRef: 'main' });
+    await fireEvent.click(getByText('Branch'));
+    await waitFor(() => expect(diffText(container)).toContain('src/e.ts branch'));
+    finishOld!({ kind: 'text', patch: patch('src/b.ts working') });
+    await tick();
+
+    await fireEvent.click(row('b'));
+    await waitFor(() => expect(diffText(container)).toContain('src/b.ts branch'));
+    expect(diffText(container)).not.toContain('src/b.ts working');
+  });
+});
+
+describe('ChangesReviewPanel — rendering cost', () => {
+  beforeEach(() => {
+    reviewStore.clear(SID);
+    localStorage.clear();
+    gitStatusStore.scopeBySession = { [SID]: { scope: 'working' } };
+  });
+
+  it('does not redraw the diff when a status refresh brings back the same patch', async () => {
+    mockGroveBench.getFileDiff.mockResolvedValue({ kind: 'text', patch: hunkPatch() });
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('src/a.ts', { contentHash: 'h1' })] } };
+    const { container } = render(ChangesReviewPanel, { sessionId: SID });
+    await waitFor(() => expect(diffText(container)).toContain('bar'));
+    const calls = mockGroveBench.getFileDiff.mock.calls.length;
+    highlights.count = 0;
+
+    // Same file, same content, new objects (as every refresh returns).
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('src/a.ts', { contentHash: 'h1' })] } };
+    await waitFor(() => expect(mockGroveBench.getFileDiff.mock.calls.length).toBeGreaterThan(calls));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(highlights.count).toBe(0);
+    expect(diffText(container)).toContain('bar');
+  });
+
+  it('fetches no diffs while hidden, and catches up when shown', async () => {
+    mockGroveBench.getFileDiff.mockImplementation(async (_sid, filePath) => ({ kind: 'text' as const, patch: patch(`${filePath} now`) }));
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('src/a.ts', { contentHash: 'h1' })] } };
+    const { container } = render(ChangesReviewPanel, { sessionId: SID });
+    await waitFor(() => expect(diffText(container)).toContain('src/a.ts now'));
+
+    messageStore.setActiveTab(SID, 'activity');
+    await tick();
+    mockGroveBench.getFileDiff.mockClear();
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('src/a.ts', { contentHash: 'h2' }), entry('src/b.ts')] } };
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mockGroveBench.getFileDiff).not.toHaveBeenCalled();
+
+    messageStore.setActiveTab(SID, 'changes');
+    await waitFor(() => expect(mockGroveBench.getFileDiff).toHaveBeenCalledWith(SID, 'src/a.ts', false, undefined));
+  });
+});
+
+describe('ChangesReviewPanel with grove characters', () => {
+  beforeEach(() => {
+    store.sessions = [{ id: SID, branch: 'feat', repoPath: '/r', status: 'running' }] as any;
+    gitStatusStore.scopeBySession = { [SID]: { scope: 'working' } };
+  });
+
+  afterEach(() => {
+    store.sessions = [];
+    settingsStore.current.groveCharacters = true;
+  });
+
+  it("puts the conversation's agent on its bench above the empty message, typing while it works", async () => {
+    const { getByText, getByRole, findByRole, container } = render(ChangesReviewPanel, { sessionId: SID });
+    expect(getByText('Working tree clean')).toBeInTheDocument();
+    expect(getByRole('img', { name: 'Ready' })).toBeInTheDocument();
+    expect(container.querySelector('[data-scenery="watering-can"]')).not.toBeNull();
+
+    messageStore.setIsRunning(SID, true);
+    expect(await findByRole('img', { name: 'Working' })).toBeInTheDocument();
+    expect(getByText('Edits show up here as the agent makes them')).toBeInTheDocument();
+    // The scope toggle stays in the sidebar.
+    expect(getByText('Branch')).toBeInTheDocument();
+  });
+
+  it('keeps the file sidebar with nothing to list, so the first change does not move the layout', async () => {
+    mockGroveBench.getFileDiff.mockResolvedValue({ kind: 'text', patch: patch('first') });
+    gitStatusStore.statusBySession = { [SID]: { entries: [] } };
+    const { getByText, getByLabelText, queryByText, container } = render(ChangesReviewPanel, { sessionId: SID });
+
+    const sidebar = getByLabelText('Changed files');
+    expect(getByText('0 changes')).toBeInTheDocument();
+    // The scene sits in the diff pane, next to the sidebar.
+    expect(sidebar.contains(getByText('Working tree clean'))).toBe(false);
+    expect(container.querySelector('[data-scenery="watering-can"]')).not.toBeNull();
+
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('src/a.ts')] } };
+    await waitFor(() => expect(diffText(container)).toContain('first'));
+    // Same sidebar element: it was not torn down and rebuilt.
+    expect(getByLabelText('Changed files')).toBe(sidebar);
+    expect(getByText('1 change')).toBeInTheDocument();
+    expect(queryByText('Working tree clean')).toBeNull();
+    expect(container.querySelector('[data-scenery="watering-can"]')).toBeNull();
+  });
+
+  it('shows only the message when grove characters are off', () => {
+    settingsStore.current.groveCharacters = false;
+    const { getByText, queryByRole } = render(ChangesReviewPanel, { sessionId: SID });
+    expect(getByText('Working tree clean')).toBeInTheDocument();
+    expect(queryByRole('img', { name: 'Ready' })).toBeNull();
+  });
+});
+
+describe('ChangesReviewPanel — commit and push errors', () => {
+  afterEach(() => {
+    prStore.clear(SID);
+    // A good commit schedules a git status refresh. Cancel it, or it lands in
+    // a later test and swaps that test's files for the mock's empty list.
+    gitStatusStore.clear(SID);
+  });
+
+  function renderStaged() {
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('src/a.ts', { staged: true })] } };
+    return render(ChangesReviewPanel, { sessionId: SID });
+  }
+
+  it('hands a push that fails after a good commit to the status bar, not the commit box', async () => {
+    mockGroveBench.push.mockRejectedValueOnce(new Error('! [rejected] feat -> feat (fetch first)'));
+    const { getByPlaceholderText, getByRole, queryByText } = renderStaged();
+
+    await fireEvent.input(getByPlaceholderText('Commit message…'), { target: { value: 'Fix it' } });
+    await fireEvent.click(getByRole('button', { name: '& Push' }));
+
+    await waitFor(() => expect(prStore.getPushError(SID)).toContain('rejected'));
+    expect(mockGroveBench.commit).toHaveBeenCalledWith(SID, 'Fix it');
+    expect(queryByText(/rejected/)).toBeNull();
+  });
+
+  it('drops a commit error once nothing is staged, so it cannot come back with the next file', async () => {
+    mockGroveBench.commit.mockRejectedValueOnce(new Error('pre-commit hook failed'));
+    const { getByPlaceholderText, getByRole, findByText, queryByText } = renderStaged();
+
+    await fireEvent.input(getByPlaceholderText('Commit message…'), { target: { value: 'Fix it' } });
+    await fireEvent.click(getByRole('button', { name: 'Commit 1 file' }));
+    expect(await findByText('pre-commit hook failed')).toBeInTheDocument();
+
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('src/a.ts')] } };
+    await tick();
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('src/b.ts', { staged: true })] } };
+    await tick();
+
+    expect(queryByText('pre-commit hook failed')).toBeNull();
+  });
+});
+
+describe('ChangesReviewPanel — Branch view by default', () => {
+  afterEach(() => gitStatusStore.clear(SID));
+
+  it('opens on the Branch view, listed first, against the default base', async () => {
+    // Start fresh: a refresh from an earlier test would throttle this one's.
+    gitStatusStore.clear(SID);
+    gitStatusStore.scopeBySession = {};
+    store.sessions = [{ id: SID, branch: 'feat', repoPath: '/repo', status: 'running' }] as never;
+    mockGroveBench.getDefaultBranch.mockResolvedValue('main');
+    mockGroveBench.getGitStatus.mockResolvedValue({ entries: [], baseRef: 'main' });
+    const { getAllByRole, findByText } = render(ChangesReviewPanel, { sessionId: SID });
+    void gitStatusStore.refresh(SID);
+
+    const options = getAllByRole('radio');
+    expect(options.map((o) => o.textContent?.trim())).toEqual(['Branch', 'Uncommitted']);
+    expect(options[0]).toHaveAttribute('data-state', 'checked');
+    expect(await findByText('No changes on this branch vs main')).toBeInTheDocument();
+    expect(mockGroveBench.getGitStatus).toHaveBeenCalledWith(SID, { scope: 'branch', base: 'main' });
+  });
+});
+
+describe('ChangesReviewPanel — reviewing the PR', () => {
+  const BRANCH_CONTEXT = 'branch vs main';
+
+  beforeEach(() => {
+    localStorage.clear();
+    reviewStore.clear(SID);
+    gitStatusStore.scopeBySession = { [SID]: { scope: 'branch', base: 'main' } };
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('src/a.ts')], baseRef: 'main' } };
+    mockGroveBench.getGitStatus.mockResolvedValue({ entries: [entry('src/a.ts')], baseRef: 'main' });
+    mockGroveBench.getFileDiff.mockResolvedValue({ kind: 'text', patch: patch('new') });
+    const pr = { number: 7, url: 'https://github.com/o/r/pull/7', state: 'OPEN' as const, title: 'Add a thing' };
+    prStore.prsBySession = { [SID]: [pr] };
+    // A posted review refetches the PR list.
+    mockGroveBench.getPrs.mockResolvedValue([pr]);
+  });
+
+  afterEach(() => {
+    mockGroveBench.getPrs.mockResolvedValue([]);
+    prStore.clear(SID);
+    reviewStore.clear(SID);
+    gitStatusStore.clear(SID);
+  });
+
+  function addComment(context: string | undefined, body: string) {
+    reviewStore.addComment(SID, { filePath: 'src/a.ts', side: 'new', startLine: 1, endLine: 1, snippet: 'new', body, context });
+  }
+
+  it('approves with the Branch view\'s comments, then drops them and says so', async () => {
+    addComment(BRANCH_CONTEXT, 'Rename this');
+    addComment(undefined, 'Written on the Uncommitted view');
+    mockGroveBench.submitPrReview.mockResolvedValueOnce({ url: 'https://github.com/o/r/pull/7#pullrequestreview-1', inline: 1, quoted: 0 });
+    const { getByRole, findByText } = render(ChangesReviewPanel, { sessionId: SID });
+
+    await fireEvent.click(getByRole('button', { name: /Review changes… \(1 comment\)/ }));
+    expect(await findByText('Review PR #7')).toBeInTheDocument();
+    await fireEvent.click(getByRole('radio', { name: 'Approve' }));
+    await fireEvent.click(getByRole('button', { name: 'Submit review' }));
+
+    await waitFor(() => expect(mockGroveBench.submitPrReview).toHaveBeenCalledWith(SID, {
+      prNumber: 7,
+      event: 'APPROVE',
+      body: '',
+      comments: [{ filePath: 'src/a.ts', side: 'new', startLine: 1, endLine: 1, snippet: 'new', body: 'Rename this' }],
+    }));
+    expect(await findByText(/Approved PR #7/)).toBeInTheDocument();
+    expect(await findByText('1 line comment on its line')).toBeInTheDocument();
+    expect(reviewStore.getComments(SID).map((c) => c.body)).toEqual(['Written on the Uncommitted view']);
+  });
+
+  it('only lets an author comment on their own PR, and a comment needs a summary', async () => {
+    prStore.prsBySession = { [SID]: [{ number: 7, url: 'u', state: 'OPEN', viewerIsAuthor: true }] };
+    const { getByRole, findByText, getByPlaceholderText } = render(ChangesReviewPanel, { sessionId: SID });
+
+    await fireEvent.click(getByRole('button', { name: /Review changes…/ }));
+    expect(await findByText(/This is your own PR/)).toBeInTheDocument();
+    expect(getByRole('radio', { name: 'Approve' })).toBeDisabled();
+    expect(getByRole('radio', { name: 'Request changes' })).toBeDisabled();
+
+    const submit = getByRole('button', { name: 'Submit review' });
+    expect(submit).toBeDisabled();
+    await fireEvent.input(getByPlaceholderText(/What should the author know/), { target: { value: 'Self-review notes' } });
+    expect(submit).toBeEnabled();
+  });
+
+  it('keeps the dialog open with GitHub\'s reason when it refuses', async () => {
+    mockGroveBench.submitPrReview.mockRejectedValueOnce(new Error("Error invoking remote method 'pr:submitReview': Error: Can not approve your own pull request"));
+    const { getByRole, findByText } = render(ChangesReviewPanel, { sessionId: SID });
+
+    await fireEvent.click(getByRole('button', { name: /Review changes…/ }));
+    await findByText('Review PR #7');
+    await fireEvent.click(getByRole('radio', { name: 'Approve' }));
+    await fireEvent.click(getByRole('button', { name: 'Submit review' }));
+
+    expect(await findByText('Can not approve your own pull request')).toBeInTheDocument();
+    expect(getByRole('button', { name: 'Submit review' })).toBeInTheDocument();
+  });
+
+  it('stays open, and can\'t be cancelled, until GitHub answers', async () => {
+    let answer!: (v: { url: null; inline: number; quoted: number }) => void;
+    mockGroveBench.submitPrReview.mockReturnValueOnce(new Promise((r) => { answer = r; }));
+    const { getByRole, findByText, queryByText } = render(ChangesReviewPanel, { sessionId: SID });
+
+    await fireEvent.click(getByRole('button', { name: /Review changes…/ }));
+    await findByText('Review PR #7');
+    await fireEvent.click(getByRole('radio', { name: 'Approve' }));
+    await fireEvent.click(getByRole('button', { name: 'Submit review' }));
+
+    expect(getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    await fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+    await tick();
+    expect(queryByText('Review PR #7')).not.toBeNull();
+
+    answer({ url: null, inline: 0, quoted: 0 });
+    await waitFor(() => expect(queryByText('Review PR #7')).toBeNull());
+    expect(await findByText(/Approved PR #7/)).toBeInTheDocument();
+  });
+
+  it('offers no review on the Uncommitted view or for a PR that is no longer open', async () => {
+    const { queryByRole, unmount } = render(ChangesReviewPanel, { sessionId: SID });
+    expect(queryByRole('button', { name: /Review changes…/ })).not.toBeNull();
+    unmount();
+
+    gitStatusStore.scopeBySession = { [SID]: { scope: 'working' } };
+    const working = render(ChangesReviewPanel, { sessionId: SID });
+    expect(working.queryByRole('button', { name: /Review changes…/ })).toBeNull();
+    working.unmount();
+
+    gitStatusStore.scopeBySession = { [SID]: { scope: 'branch', base: 'main' } };
+    prStore.prsBySession = { [SID]: [{ number: 7, url: 'u', state: 'MERGED' }] };
+    const merged = render(ChangesReviewPanel, { sessionId: SID });
+    expect(merged.queryByRole('button', { name: /Review changes…/ })).toBeNull();
+  });
+
+  it('offers no review for a PR from a branch other than the one checked out', async () => {
+    store.sessions = [{ id: SID, branch: 'feat/now', repoPath: '/repo', status: 'running' }] as never;
+    prStore.prsBySession = { [SID]: [{ number: 7, url: 'u', state: 'OPEN', headRefName: 'feat/earlier' }] };
+    const other = render(ChangesReviewPanel, { sessionId: SID });
+    expect(other.queryByRole('button', { name: /Review changes…/ })).toBeNull();
+    other.unmount();
+
+    prStore.prsBySession = { [SID]: [
+      { number: 7, url: 'u', state: 'OPEN', headRefName: 'feat/earlier' },
+      { number: 9, url: 'u', state: 'OPEN', headRefName: 'feat/now', title: 'The current one' },
+    ] };
+    const current = render(ChangesReviewPanel, { sessionId: SID });
+    expect(current.getByText('PR #9')).toBeInTheDocument();
+    store.sessions = [];
+  });
+
+  it('offers to post batched comments to the PR from the review bar', async () => {
+    addComment(BRANCH_CONTEXT, 'Rename this');
+    const { findByRole, findByText } = render(ChangesReviewPanel, { sessionId: SID });
+    await fireEvent.click(await findByRole('button', { name: 'Post to PR #7…' }));
+    expect(await findByText('Review PR #7')).toBeInTheDocument();
+  });
+});
+
+describe('ChangesReviewPanel — Markdown preview', () => {
+  it('offers to read a changed Markdown file as it renders', async () => {
+    mockGroveBench.getFileDiff.mockResolvedValue({ kind: 'text', patch: patch('# Plan') });
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('docs/plan.md')] } };
+    mockGroveBench.openWorktreeFile.mockResolvedValueOnce({ kind: 'markdown', content: '# Plan' });
+    const { findByRole } = render(ChangesReviewPanel, { sessionId: SID });
+
+    (await findByRole('button', { name: 'Preview' })).click();
+    await waitFor(() => expect(mockGroveBench.openWorktreeFile).toHaveBeenCalledWith(SID, 'docs/plan.md'));
+  });
+
+  it('says when the file is no longer there to read', async () => {
+    mockGroveBench.getFileDiff.mockResolvedValue({ kind: 'text', patch: patch('# Plan') });
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('docs/plan.md')] } };
+    mockGroveBench.openWorktreeFile.mockResolvedValueOnce({ kind: 'missing' });
+    const { findByRole } = render(ChangesReviewPanel, { sessionId: SID });
+
+    const preview = await findByRole('button', { name: 'Preview' });
+    await fireEvent.click(preview);
+    await waitFor(() => expect(preview).toBeDisabled());
+    expect(preview.title).toBe('docs/plan.md is no longer in the worktree');
+  });
+
+  // One file each, so the file checked is the one shown
+  it.each([
+    ['a deleted Markdown file', entry('old.md', { status: 'deleted' })],
+    ['another type', entry('src/a.ts')],
+  ])('doesn\'t offer it for %s', async (_what, file) => {
+    mockGroveBench.getFileDiff.mockResolvedValue({ kind: 'text', patch: patch('x') });
+    gitStatusStore.statusBySession = { [SID]: { entries: [file] } };
+    const { container, queryByRole } = render(ChangesReviewPanel, { sessionId: SID });
+    await waitFor(() => expect(diffText(container)).toContain('x'));
+    expect(queryByRole('button', { name: 'Preview' })).toBeNull();
+  });
+});
+
+describe('ChangesReviewPanel — large diffs', () => {
+  it('says a diff is too large to show instead of drawing it', async () => {
+    mockGroveBench.getFileDiff.mockResolvedValue({ kind: 'tooLarge', bytes: 5 * 1024 * 1024 });
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('big.log', { status: 'untracked' })] } };
+    const { findByText } = render(ChangesReviewPanel, { sessionId: SID });
+    expect(await findByText(/Too large to show here \(5\.0 MB\)/)).toBeInTheDocument();
+  });
+
+  it('says a diff git was stopped writing is over the limit', async () => {
+    mockGroveBench.getFileDiff.mockResolvedValue({ kind: 'tooLarge', bytes: 4 * 1024 * 1024, atLeast: true });
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('big.log')] } };
+    const { findByText } = render(ChangesReviewPanel, { sessionId: SID });
+    expect(await findByText('Too large to show here (over 4.0 MB).')).toBeInTheDocument();
+  });
+
+  it('holds a long diff back until asked, then draws it', async () => {
+    const body = Array.from({ length: 30 }, (_, i) => `+line ${i + 1}`).join('\n');
+    mockGroveBench.getFileDiff.mockResolvedValue({ kind: 'text', patch: `--- a/big.ts\n+++ b/big.ts\n@@ -0,0 +1,30 @@\n${body}\n` });
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('big.ts')] } };
+    const { container, findByText, getByRole } = render(ChangesReviewPanel, { sessionId: SID });
+
+    // The count is code lines; the hunk header isn't one.
+    expect(await findByText(/Large diff \(30 lines/)).toBeInTheDocument();
+    expect(diffText(container)).not.toContain('line 30');
+
+    await fireEvent.click(getByRole('button', { name: 'Show diff' }));
+    await waitFor(() => expect(diffText(container)).toContain('line 30'));
+  });
+
+  it('holds back a short diff with a huge line, such as minified code', async () => {
+    const minified = 'x'.repeat(150_000);
+    mockGroveBench.getFileDiff.mockResolvedValue({ kind: 'text', patch: `--- a/app.min.js\n+++ b/app.min.js\n@@ -1 +1 @@\n-old\n+${minified}\n` });
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('app.min.js')] } };
+    const { findByText } = render(ChangesReviewPanel, { sessionId: SID });
+    expect(await findByText(`Large diff (2 lines, ${count(150_003)} characters)`, { exact: false })).toBeInTheDocument();
+  });
+
+  /** A turn that edits notes.txt twice: a small Edit, then a 30-line Write.
+   *  Plain text, so no idle-time colouring runs to muddle the highlight count. */
+  function editTurn() {
+    const content = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`).join('\n');
+    messageStore.messagesBySession[SID] = [
+      { kind: 'user', id: 'm1', text: 'write it' },
+      { kind: 'tool_call', id: 'e1', toolName: 'Edit', toolInput: { file_path: 'notes.txt', old_string: 'tiny old', new_string: 'tiny new' }, toolUseId: 't0', uuid: 'u0', pending: false },
+      { kind: 'tool_call', id: 'w1', toolName: 'Write', toolInput: { file_path: 'notes.txt', content }, toolUseId: 't1', uuid: 'u1', pending: false },
+      { kind: 'result', id: 'm2', subtype: 'success', isError: false },
+    ] as any;
+    mockGroveBench.getFileDiff.mockResolvedValue({ kind: 'text', patch: patch('small') });
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('notes.txt', { contentHash: 'h1' })] } };
+  }
+
+  it('holds a large edit back in Edit History until asked, and draws a small one', async () => {
+    editTurn();
+    const { container, findByRole, findByText } = render(ChangesReviewPanel, { sessionId: SID });
+
+    await fireEvent.click(await findByRole('button', { name: '2 edits' }));
+    expect(await findByText(/Large edit \(30 lines, \d[\d,]* characters of text\)/)).toBeInTheDocument();
+    await waitFor(() => expect(diffText(container)).toContain('tiny new'));
+    expect(diffText(container)).not.toContain('line 30');
+
+    await fireEvent.click(await findByRole('button', { name: 'Show Write #2' }));
+    await waitFor(() => expect(diffText(container)).toContain('line 30'));
+  });
+
+  it('draws a small change to a large file in Edit History at once', async () => {
+    // ACP agents can send the whole file before and after. Large by text
+    // here (60 lines, scaled), but the diff it makes is a few lines.
+    const before = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`);
+    const after = [...before];
+    after[14] = 'the one changed line';
+    editTurn();
+    messageStore.messagesBySession[SID]!.splice(2, 1, {
+      kind: 'tool_call', id: 'a1', toolName: 'edit', toolInput: {}, toolUseId: 't1', uuid: 'u1', pending: false,
+      toolView: { kind: 'edit', path: 'notes.txt', edits: [{ oldText: before.join('\n'), newText: after.join('\n') }] },
+    } as any);
+    const { container, findByRole, queryByText } = render(ChangesReviewPanel, { sessionId: SID });
+
+    await fireEvent.click(await findByRole('button', { name: '2 edits' }));
+    await waitFor(() => expect(diffText(container)).toContain('the one changed line'));
+    expect(queryByText(/Large edit/)).toBeNull();
+  });
+
+  it('shows the old text, then the new, when an edit in Edit History has too many changes to work out', async () => {
+    // The large edit's capped diffs give up, as if out of time; the small one's don't.
+    vi.mocked(createPatch).mockImplementation(((...args: Parameters<typeof realCreatePatch>) =>
+      Number.isFinite((args[5] as { timeout?: number } | undefined)?.timeout) && args[1].startsWith('old 0') ? undefined : realCreatePatch(...args)) as typeof createPatch);
+    try {
+      // Large by text here (30 lines, scaled), so it gets the capped diffs.
+      const side = (word: string) => Array.from({ length: 15 }, (_, i) => `${word} ${i}`).join('\n');
+      editTurn();
+      messageStore.messagesBySession[SID]!.splice(2, 1, {
+        kind: 'tool_call', id: 'b1', toolName: 'Edit', toolInput: { file_path: 'notes.txt', old_string: side('old'), new_string: side('new') }, toolUseId: 't1', uuid: 'u1', pending: false,
+      } as any);
+      const { container, findByRole, findByText } = render(ChangesReviewPanel, { sessionId: SID });
+
+      await fireEvent.click(await findByRole('button', { name: '2 edits' }));
+      await fireEvent.click(await findByRole('button', { name: 'Show Edit #2' }));
+      expect(await findByText(/Too many changes to compare line by line/)).toBeInTheDocument();
+      expect(diffText(container)).toContain('old 14');
+      expect(diffText(container)).toContain('new 14');
+    } finally {
+      vi.mocked(createPatch).mockImplementation(realCreatePatch);
+    }
+  });
+
+  it('compares an edit in Edit History line by line once asked, when the quick try gave up', async () => {
+    // Only the small edit's quick try (50 ms at most) gives up.
+    vi.mocked(createPatch).mockImplementation(((...args: Parameters<typeof realCreatePatch>) =>
+      ((args[5] as { timeout?: number } | undefined)?.timeout ?? Infinity) <= 50 && args[1] === 'tiny old' ? undefined : realCreatePatch(...args)) as typeof createPatch);
+    try {
+      editTurn();
+      const { container, findByRole, findByText, queryByText } = render(ChangesReviewPanel, { sessionId: SID });
+
+      await fireEvent.click(await findByRole('button', { name: '2 edits' }));
+      expect(await findByText(/Too many changes to compare line by line without a pause/)).toBeInTheDocument();
+      await fireEvent.click(await findByRole('button', { name: 'Compare Edit #1 line by line' }));
+      await waitFor(() => expect(queryByText(/Too many changes/)).toBeNull());
+      expect(diffText(container)).toContain('tiny new');
+    } finally {
+      vi.mocked(createPatch).mockImplementation(realCreatePatch);
+    }
+  });
+
+  it('does not redraw shown edits when a status refresh brings back the same file', async () => {
+    editTurn();
+    const { container, findByRole } = render(ChangesReviewPanel, { sessionId: SID });
+    await fireEvent.click(await findByRole('button', { name: '2 edits' }));
+    await fireEvent.click(await findByRole('button', { name: 'Show Write #2' }));
+    await waitFor(() => expect(diffText(container)).toContain('line 30'));
+    const calls = mockGroveBench.getFileDiff.mock.calls.length;
+    highlights.count = 0;
+
+    // Same file, same content, a new entry object (as every refresh returns).
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('notes.txt', { contentHash: 'h1' })] } };
+    await waitFor(() => expect(mockGroveBench.getFileDiff.mock.calls.length).toBeGreaterThan(calls));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(highlights.count).toBe(0);
+    expect(diffText(container)).toContain('line 30');
+  });
+
+  it('asks again after switching to another comparison', async () => {
+    const body = Array.from({ length: 30 }, (_, i) => `+line ${i + 1}`).join('\n');
+    mockGroveBench.getFileDiff.mockResolvedValue({ kind: 'text', patch: `--- a/big.ts\n+++ b/big.ts\n@@ -0,0 +1,30 @@\n${body}\n` });
+    mockGroveBench.getGitStatus.mockResolvedValue({ entries: [entry('big.ts')], baseRef: 'main' });
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('big.ts')] } };
+    const { container, findByRole } = render(ChangesReviewPanel, { sessionId: SID });
+    await fireEvent.click(await findByRole('button', { name: 'Show diff' }));
+    await waitFor(() => expect(diffText(container)).toContain('line 30'));
+
+    gitStatusStore.scopeBySession = { [SID]: { scope: 'branch', base: 'main' } };
+    expect(await findByRole('button', { name: 'Show diff' })).toBeInTheDocument();
+    expect(diffText(container)).not.toContain('line 30');
+  });
+});

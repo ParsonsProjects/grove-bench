@@ -1,8 +1,11 @@
 <script lang="ts">
   import { messageStore } from '../stores/messages.svelte.js';
+  import { store } from '../stores/sessions.svelte.js';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Checkbox } from '$lib/components/ui/checkbox/index.js';
+  import { agentsStore } from '../stores/agents.svelte.js';
+  import { canRewindThread } from '../lib/agent-commands.js';
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -15,6 +18,23 @@
   let conversationOnly = $state(false);
 
   let rewindPoints = $derived(messageStore.getRewindPoints(sessionId));
+  let target = $derived(messageStore.getRewindDialogTarget(sessionId));
+  /** A conversation in a folder without git has no checkpoints, so only the
+   *  conversation can be rewound; its files stay as they are. */
+  let noGit = $derived(!!store.sessions.find((s) => s.id === sessionId)?.noGit);
+  /** An agent that can't forget part of a thread starts afresh after a rewind. */
+  let canForget = $derived(canRewindThread(sessionId));
+  let agentName = $derived(agentsStore.get(store.sessions.find((s) => s.id === sessionId)?.agentType)?.displayName ?? 'The agent');
+
+  // Opened from a message in the Activity thread: preselect it and load its
+  // preview so the user only has to confirm. Runs once per open; a manual
+  // selection afterwards is left alone.
+  $effect(() => {
+    if (!open || !target) return;
+    if (selectedId !== null) return;
+    if (!rewindPoints.some((p) => p.uuid === target)) return;
+    handleSelect(target);
+  });
 
   function handleOpenChange(value: boolean) {
     if (!value) {
@@ -29,14 +49,18 @@
   async function handleSelect(uuid: string) {
     selectedId = uuid;
     diffPreview = null;
+    if (noGit) return;
     loadingDiff = true;
+    let preview: string;
     try {
-      diffPreview = await window.groveBench.getCheckpointDiff(sessionId, uuid);
+      preview = await window.groveBench.getCheckpointDiff(sessionId, uuid);
     } catch (e: any) {
-      diffPreview = e?.message || '(Failed to load preview)';
-    } finally {
-      loadingDiff = false;
+      preview = e?.message || '(Failed to load preview)';
     }
+    // A message picked since: its own preview is on the way.
+    if (selectedId !== uuid) return;
+    diffPreview = preview;
+    loadingDiff = false;
   }
 
   async function handleRewind() {
@@ -44,7 +68,7 @@
     rewinding = true;
     error = '';
     try {
-      await messageStore.executeRewind(sessionId, selectedId, { conversationOnly });
+      await messageStore.executeRewind(sessionId, selectedId, { conversationOnly: noGit || conversationOnly });
       messageStore.closeRewindDialog(sessionId);
       selectedId = null;
       diffPreview = null;
@@ -67,10 +91,20 @@
     <Dialog.Header>
       <Dialog.Title>Rewind to Checkpoint</Dialog.Title>
       <Dialog.Description>
-        Select a message to rewind to. Files on disk will be restored to their state at that point.
-        <span class="text-muted-foreground text-xs block mt-1">
-          Captures full working tree state including all file changes.
-        </span>
+        {#if noGit}
+          Select a message to rewind the thread to. This thread runs without git, so files on disk stay as
+          they are: the agent's edits after that point are not undone.
+        {:else}
+          Select a message to rewind to. Files on disk will be restored to their state at that point.
+          <span class="text-muted-foreground text-xs block mt-1">
+            Captures full working tree state including all file changes.
+          </span>
+        {/if}
+        {#if !canForget}
+          <span class="text-muted-foreground text-xs block mt-1" data-testid="rewind-starts-afresh">
+            {agentName} can't forget part of a thread, so it starts afresh from there: it won't remember the earlier turns either.
+          </span>
+        {/if}
       </Dialog.Description>
     </Dialog.Header>
 
@@ -82,10 +116,11 @@
       <div class="max-h-64 overflow-y-auto -mx-1 px-1 space-y-1">
         {#each rewindPoints as point, i}
           <button
-            class="w-full text-left px-3 py-2 rounded-md text-sm transition-colors
+            class="w-full text-left px-3 py-2 text-sm transition-colors
               {selectedId === point.uuid
                 ? 'bg-accent text-accent-foreground'
                 : 'hover:bg-muted'}"
+            aria-pressed={selectedId === point.uuid}
             onclick={() => handleSelect(point.uuid)}
           >
             <span class="text-muted-foreground mr-2 font-mono text-xs">
@@ -97,7 +132,7 @@
       </div>
 
       {#if selectedId && (loadingDiff || diffPreview)}
-        <div class="mt-3 border rounded-md p-2 text-xs font-mono bg-muted/50 max-h-32 overflow-y-auto">
+        <div class="mt-3 border p-2 text-xs font-mono bg-muted/50 max-h-32 overflow-y-auto">
           {#if loadingDiff}
             <span class="text-muted-foreground">Loading diff preview…</span>
           {:else if diffPreview}
@@ -111,15 +146,17 @@
       <div class="text-destructive text-sm mt-2">{error}</div>
     {/if}
 
-    <div class="flex items-center gap-2 mt-2">
-      <Checkbox bind:checked={conversationOnly} id="conversation-only" />
-      <label for="conversation-only" class="text-sm text-muted-foreground cursor-pointer select-none">
-        Conversation only (keep file changes on disk)
-      </label>
-    </div>
+    {#if !noGit}
+      <div class="flex items-center gap-2 mt-2">
+        <Checkbox bind:checked={conversationOnly} id="conversation-only" />
+        <label for="conversation-only" class="text-sm text-muted-foreground cursor-pointer select-none">
+          Thread only (keep file changes on disk)
+        </label>
+      </div>
+    {/if}
 
     <Dialog.Footer>
-      <Button variant="outline" onclick={() => handleOpenChange(false)}>
+      <Button variant="subtle" onclick={() => handleOpenChange(false)}>
         Cancel
       </Button>
       <Button

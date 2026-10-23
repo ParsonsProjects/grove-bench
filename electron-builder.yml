@@ -1,6 +1,6 @@
 appId: com.parsonsprojects.grove-bench
 productName: Grove Bench
-copyright: Copyright © 2025 Alan Parsons
+copyright: Copyright © 2026 Alan Parsons
 
 directories:
   output: out
@@ -16,10 +16,6 @@ files:
   - "!docs/**"
 
 extraResources:
-  - from: src/main/docker/worker.mjs
-    to: worker.mjs
-  - from: src/main/docker/Dockerfile
-    to: Dockerfile
   - from: src/main/icon.ico
     to: icon.ico
   - from: resources/grove-filter.js
@@ -27,11 +23,22 @@ extraResources:
   - from: resources/grove-filter-hook.js
     to: grove-filter/grove-filter-hook.js
 
+# Don't rebuild native modules. node-pty (the only one) ships Node-API
+# prebuilds that load in any Electron version, and rebuilding it from source
+# needs a Visual Studio release that @electron/node-gyp recognises.
+npmRebuild: false
+
 asar: true
 asarUnpack:
   - "**/*.node"
   - "**/*.dll"
   - "**/node-pty/**"
+  # The agent SDK's native `claude` binary: the OS can't run a file inside
+  # app.asar, so the app runs it from app.asar.unpacked (claude-code.ts).
+  - "**/@anthropic-ai/claude-agent-sdk-*/**"
+  # The MCP stdio bridge, which agents start as a separate process
+  # (adapters/mcp-bridge/launch.ts).
+  - "dist/main/mcp-stdio-bridge.js"
 
 win:
   target:
@@ -39,19 +46,24 @@ win:
       arch:
         - x64
   icon: src/main/icon.ico
-  # Signing is configured via env vars in CI (Azure Trusted Signing).
-  # Local builds are unsigned — electron-builder skips signing automatically.
+  # Installers are unsigned, so Windows SmartScreen warns on first run and
+  # antivirus tools can flag them. "Code signing" in docs/electron-install.md
+  # covers the options, how to add azureSignOptions here, and how to report
+  # a false positive.
 
 nsis:
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
   deleteAppDataOnUninstall: false
-  artifactName: ${productName}-Setup-${version}.${ext}
+  # No spaces: GitHub release asset names can't contain them, and latest.yml
+  # has to match the uploaded file name for auto-update to find the installer.
+  artifactName: Grove-Bench-Setup-${version}.${ext}
 
+# Feeds the in-app updater (app-update.yml) and latest.yml. electron-builder
+# never uploads (`--publish never`); the Release workflow publishes with gh.
 publish:
   provider: github
   owner: ParsonsProjects
   repo: grove-bench
-  releaseType: release
   vPrefixedTagName: true

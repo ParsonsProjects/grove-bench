@@ -1,15 +1,21 @@
 <script lang="ts">
   import CopyButton from './CopyButton.svelte';
+  import { Button } from '$lib/components/ui/button/index.js';
+  import { Pulse } from '$lib/components/ui/pulse/index.js';
   import { linkifyLocalhost, hasLocalhostUrl } from '$lib/linkify.js';
+  import { openLink } from '$lib/preview-links.js';
 
   let {
     toolInput,
+    command: commandProp,
     result,
     isError,
     pending,
     summaryMode = false,
   }: {
     toolInput: unknown;
+    /** The command, when the caller already knows it (from the tool's view). */
+    command?: string;
     result?: string;
     isError?: boolean;
     pending: boolean;
@@ -19,16 +25,38 @@
   let expanded = $state(true);
 
   let command = $derived(
-    (typeof toolInput === 'object' && toolInput !== null && 'command' in toolInput)
+    commandProp !== undefined ? commandProp
+    : (typeof toolInput === 'object' && toolInput !== null && 'command' in toolInput)
       ? String((toolInput as Record<string, unknown>).command)
       : ''
   );
 
-  let outputLines = $derived(result ? result.split('\n') : []);
-  let isLong = $derived(outputLines.length > 20);
+  const PREVIEW_LINES = 20;
+
+  /** Number of lines without materializing a split array of the whole output. */
+  function countLines(text: string): number {
+    let n = 1;
+    for (let i = text.indexOf('\n'); i !== -1; i = text.indexOf('\n', i + 1)) n++;
+    return n;
+  }
+
+  /** The first `count` lines of `text`. */
+  function firstLines(text: string, count: number): string {
+    let idx = -1;
+    for (let i = 0; i < count; i++) {
+      idx = text.indexOf('\n', idx + 1);
+      if (idx === -1) return text;
+    }
+    return text.slice(0, idx);
+  }
+
+  let lineCount = $derived(result ? countLines(result) : 0);
+  let isLong = $derived(lineCount > PREVIEW_LINES);
   let collapsed = $state(true);
   let summaryOutputExpanded = $state(false);
   let hasLinks = $derived(result ? hasLocalhostUrl(result) : false);
+  // Only computed while the collapsed preview is actually shown.
+  let preview = $derived(result && isLong && collapsed && !summaryMode ? firstLines(result, PREVIEW_LINES) : '');
 
   function escapeHtml(text: string): string {
     return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -45,7 +73,7 @@
     if (link) {
       e.preventDefault();
       const url = link.dataset.url || link.href;
-      window.groveBench.openExternal(url);
+      openLink(url, e);
     }
   }
 </script>
@@ -57,25 +85,29 @@
     <code class="text-xs text-foreground flex-1 break-all">{command}</code>
     <CopyButton text={command} class="opacity-0 group-hover/cmd:opacity-100 shrink-0" />
     {#if pending}
-      <span class="w-2.5 h-2.5 bg-primary animate-pulse shrink-0"></span>
+      <Pulse />
     {:else if isError}
       <span class="text-xs text-destructive">error</span>
       {#if summaryMode && result !== undefined}
-        <button
+        <Button
+          variant="quiet"
+          size="inline"
           onclick={() => summaryOutputExpanded = !summaryOutputExpanded}
-          class="text-xs text-muted-foreground hover:text-foreground shrink-0"
+          class="text-xs shrink-0"
         >
-          {summaryOutputExpanded ? 'hide' : 'show'} ({outputLines.length} lines)
-        </button>
+          {summaryOutputExpanded ? 'hide' : 'show'} ({lineCount} lines)
+        </Button>
       {/if}
     {:else if result !== undefined}
       {#if summaryMode}
-        <button
+        <Button
+          variant="quiet"
+          size="inline"
           onclick={() => summaryOutputExpanded = !summaryOutputExpanded}
-          class="text-xs text-muted-foreground hover:text-foreground shrink-0"
+          class="text-xs shrink-0"
         >
-          {summaryOutputExpanded ? 'hide' : 'show'} ({outputLines.length} lines)
-        </button>
+          {summaryOutputExpanded ? 'hide' : 'show'} ({lineCount} lines)
+        </Button>
       {:else}
         <span class="text-xs text-muted-foreground">done</span>
       {/if}
@@ -95,12 +127,14 @@
         {:else}
           <pre class="text-xs text-muted-foreground overflow-x-auto max-h-[300px] overflow-y-auto whitespace-pre-wrap {isError ? 'text-red-300' : ''}">{result}</pre>
         {/if}
-        <button
+        <Button
+          variant="link"
+          size="inline"
           onclick={() => summaryOutputExpanded = false}
-          class="text-xs text-primary hover:text-primary/80 mt-1"
+          class="text-xs mt-1"
         >
           hide
-        </button>
+        </Button>
       </div>
     {/if}
   {:else if result !== undefined}
@@ -110,16 +144,18 @@
       <CopyButton text={result} class="absolute top-1 right-1 opacity-0 group-hover/out:opacity-100" />
       {#if isLong && collapsed}
         {#if hasLinks}
-          <pre class="text-xs text-muted-foreground overflow-x-auto max-h-[300px] overflow-y-auto whitespace-pre-wrap {isError ? 'text-red-300' : ''}">{@html linkifyOutput(outputLines.slice(0, 20).join('\n'))}</pre>
+          <pre class="text-xs text-muted-foreground overflow-x-auto max-h-[300px] overflow-y-auto whitespace-pre-wrap {isError ? 'text-red-300' : ''}">{@html linkifyOutput(preview)}</pre>
         {:else}
-          <pre class="text-xs text-muted-foreground overflow-x-auto max-h-[300px] overflow-y-auto whitespace-pre-wrap {isError ? 'text-red-300' : ''}">{outputLines.slice(0, 20).join('\n')}</pre>
+          <pre class="text-xs text-muted-foreground overflow-x-auto max-h-[300px] overflow-y-auto whitespace-pre-wrap {isError ? 'text-red-300' : ''}">{preview}</pre>
         {/if}
-        <button
+        <Button
+          variant="link"
+          size="inline"
           onclick={() => collapsed = false}
-          class="text-xs text-primary hover:text-primary/80 mt-1"
+          class="text-xs mt-1"
         >
-          Show all {outputLines.length} lines
-        </button>
+          Show all {lineCount} lines
+        </Button>
       {:else}
         {#if hasLinks}
           <pre class="text-xs text-muted-foreground overflow-x-auto max-h-[300px] overflow-y-auto whitespace-pre-wrap {isError ? 'text-red-300' : ''}">{@html linkifyOutput(result)}</pre>
@@ -127,12 +163,14 @@
           <pre class="text-xs text-muted-foreground overflow-x-auto max-h-[300px] overflow-y-auto whitespace-pre-wrap {isError ? 'text-red-300' : ''}">{result}</pre>
         {/if}
         {#if isLong}
-          <button
+          <Button
+            variant="link"
+            size="inline"
             onclick={() => collapsed = true}
-            class="text-xs text-primary hover:text-primary/80 mt-1"
+            class="text-xs mt-1"
           >
             Collapse
-          </button>
+          </Button>
         {/if}
       {/if}
     </div>
@@ -141,11 +179,11 @@
 
 <style>
   :global(a.localhost-link) {
-    color: #4ade80;
+    color: var(--ok);
     text-decoration: underline;
     cursor: pointer;
   }
   :global(a.localhost-link:hover) {
-    color: #86efac;
+    color: var(--ok-hover);
   }
 </style>

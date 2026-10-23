@@ -1,6 +1,24 @@
-import type { AgentEvent, PermissionDecision, PermissionMode } from '../../shared/types.js';
+import type { AgentEvent, ControlDescriptor, FileAttachment, ImageAttachment, MadeFile, McpElicitationRequest, McpElicitationResponse, McpServerInfo, PermissionDecision, PermissionMode, SessionControls, StoredFile, StoredImage, ThreadTurnState } from '../../shared/types.js';
+import { CONTROL_IDS, DEFAULT_DENY_MESSAGE, subagentParent } from '../../shared/types.js';
+import { attachedFilesFromSent, type SentBlock } from '../../shared/prompt-text.js';
+import { userMessageLabel } from '../lib/message-label.js';
 import { gitStatusStore } from './gitStatus.svelte.js';
+import { notifyOs } from '../lib/os-notify.js';
 import { checkpointStore } from './checkpoints.svelte.js';
+import { backgroundTaskStore } from './backgroundTask.svelte.js';
+import { threadItemsStore } from './threadItems.svelte.js';
+import { rateLimitStore } from './rateLimit.svelte.js';
+import { usageStore } from './usage.svelte.js';
+import { store as sessionStore } from './sessions.svelte.js';
+import { settingsStore } from './settings.svelte.js';
+import { previewStore } from './preview.svelte.js';
+import { prerequisitesStore } from './prerequisites.svelte.js';
+import { base64Size, type AttachedFile } from '../lib/file-attachments.js';
+import { approvalRequest } from '../lib/tool-names.js';
+import { changesFiles, toolViewOf, toolViewSummary, type ToolView } from '../../shared/tool-view.js';
+import { liveEventsMissingFrom } from '../../shared/live-events.js';
+import { agentCallInput, isAgentCall, subagentOf } from '../lib/message-view.js';
+import { limitName, type LimitKind } from '../../shared/limits.js';
 
 // ─── Chat message types ───
 
@@ -9,6 +27,9 @@ export interface ChatTextMessage {
   id: string;
   text: string;
   uuid: string;
+  /** Set on a subagent's messages: the Agent call that started it. They show
+   *  in that subagent's panel, not the conversation's thread. */
+  parentToolUseId?: string;
 }
 
 export interface ChatToolCallMessage {
@@ -25,26 +46,71 @@ export interface ChatToolCallMessage {
   awaitingPermission?: boolean;
   /** Adapter-agnostic tool category for display logic. */
   toolCategory?: import('../../shared/types.js').ToolCategory;
+  /** What the call does, when the adapter described it (see shared/tool-view.ts). */
+  toolView?: ToolView;
+  /** Images the tool returned (a screenshot, an image file it read). */
+  images?: StoredImage[];
+  /** See ChatTextMessage.parentToolUseId. */
+  parentToolUseId?: string;
 }
+
+/** A tool call still running, as the status bar lists it. */
+export interface PendingTool {
+  toolName: string;
+  toolUseId: string;
+  summary: string;
+  elapsedSeconds?: number;
+  /** The Agent call whose subagent's thread shows this call: the subagent it
+   *  runs in, or the one it starts. */
+  subagentCall?: string;
+  /** The kind of subagent it runs in (Explore, ...), for a subagent's own call. */
+  inSubagent?: string;
+}
+
+/** An image shown in the thread: inline while the app still has its data
+ *  (just sent), a file in the conversation's attachments folder, or (`url`)
+ *  one the agent saved in its worktree, loaded from there. */
+export type ThreadImage = { name: string; dataUrl: string } | { name: string; url: string } | StoredImage;
+
+/** Another file attached to a message (a PDF, audio, ...). `file` is its name
+ *  in the attachments folder, once main has saved it. */
+export type ThreadFile = Omit<StoredFile, 'file'> & { file?: string };
 
 export interface ChatUserMessage {
   kind: 'user';
   id: string;
+  /** What the user typed. Attachments are in `files`, `images` and `attachments`. */
   text: string;
+  /** Text files attached to the message, with their content. */
+  files?: SentBlock[];
+  images?: ThreadImage[];
+  /** Other files attached to the message (the event's `files`). */
+  attachments?: ThreadFile[];
   /** SDK user message UUID — used as checkpoint ID for /rewind */
   uuid?: string;
+  /** When it was sent (epoch ms). Messages from older history have none. */
+  sentAt?: number;
 }
 
 export interface ChatSystemMessage {
   kind: 'system';
   id: string;
   text: string;
+  level?: 'warning';
 }
 
 export interface ChatErrorMessage {
   kind: 'error';
   id: string;
   text: string;
+  /** A sign-in failure: the thread offers a way to fix the credentials. */
+  auth?: boolean;
+}
+
+/** Git has no name/email for this conversation's checkout. */
+export interface ChatGitIdentityMessage {
+  kind: 'git_identity_missing';
+  id: string;
 }
 
 export interface ChatResultMessage {
@@ -67,12 +133,16 @@ export interface ChatPermissionMessage {
   toolUseId: string;
   resolved: boolean;
   decision?: 'allow' | 'deny';
+  /** Denied because nobody answered in time, not by the user. */
+  timedOut?: boolean;
   decisionReason?: string;
   suggestions?: unknown[];
   /** Set by the adapter when this permission is for executing a plan. */
   isPlanExecution?: boolean;
   /** Adapter-agnostic tool category for display logic. */
   toolCategory?: import('../../shared/types.js').ToolCategory;
+  /** What the call does, when the adapter described it (see shared/tool-view.ts). */
+  toolView?: ToolView;
   /** Plan text extracted by the adapter for plan execution permissions. */
   planText?: string;
 }
@@ -81,6 +151,8 @@ export interface ChatThinkingMessage {
   kind: 'thinking';
   id: string;
   thinking: string;
+  /** See ChatTextMessage.parentToolUseId. */
+  parentToolUseId?: string;
 }
 
 export interface QuestionOption {
@@ -105,6 +177,43 @@ export interface ChatQuestionMessage {
   response?: string;
   /** Exact labels that were selected, for accurate resolved-state rendering */
   selectedLabels?: string[];
+  /** Closed because nobody answered in time. */
+  timedOut?: boolean;
+}
+
+/** An MCP server asking the user for input (a form or a page to open). */
+export interface ChatElicitationMessage {
+  kind: 'elicitation';
+  id: string;
+  requestId: string;
+  request: McpElicitationRequest;
+  resolved: boolean;
+  /** How it ended, once resolved. */
+  action?: McpElicitationResponse['action'];
+}
+
+/** The thread paused at a limit (shared/limits.ts) and asks whether to go on. */
+export interface ChatLimitMessage {
+  kind: 'limit';
+  id: string;
+  requestId: string;
+  limit: LimitKind;
+  /** In the limit's units: USD, tool calls or minutes. */
+  used: number;
+  reachedAt: number;
+  resolved: boolean;
+  decision?: 'continue' | 'stop';
+  /** Stopped because nobody answered in time. */
+  timedOut?: boolean;
+}
+
+/** The files the agent made in a turn, listed just before its result
+ *  (FilesMadeBlock). `more`: how many others weren't listed. */
+export interface ChatFilesMadeMessage {
+  kind: 'files_made';
+  id: string;
+  files: MadeFile[];
+  more?: number;
 }
 
 export type ChatMessage =
@@ -113,19 +222,145 @@ export type ChatMessage =
   | ChatUserMessage
   | ChatSystemMessage
   | ChatErrorMessage
+  | ChatGitIdentityMessage
   | ChatResultMessage
   | ChatPermissionMessage
   | ChatThinkingMessage
-  | ChatQuestionMessage;
+  | ChatQuestionMessage
+  | ChatElicitationMessage
+  | ChatLimitMessage
+  | ChatFilesMadeMessage;
 
 // ─── Store ───
 
 let msgCounter = 0;
+/** A prompt the user submitted while the agent was busy (connecting or mid-turn).
+ *  Held in the renderer until the session is idle so it can still be removed. */
+const NOTHING_PENDING = Object.freeze({ permission: false, question: false });
+
+export interface PromptInsert {
+  text: string;
+  nonce: number;
+  replace?: boolean;
+  attachments?: AttachedFile[];
+}
+
+export interface QueuedMessage {
+  id: string;
+  /** Text shown in the thread once sent (includes attachment names). */
+  displayText: string;
+  /** Prepared outgoing text sent to main (file tags + prompt), or the slash command. */
+  outgoing: string;
+  images?: ImageAttachment[];
+  /** Other files attached (PDFs, audio, ...), sent alongside like images. */
+  files?: FileAttachment[];
+  /** Slash command — dispatched through sendCommand rather than as a prompt. */
+  isCommand?: boolean;
+  /** The prompt as typed and attached, so Edit can put it back as it was
+   *  (displayText carries the attachment names, outgoing their contents). */
+  typed?: { text: string; attachments: AttachedFile[] };
+}
+
 function nextId(): string {
   return `msg_${++msgCounter}_${Date.now()}`;
 }
 
+/** A user message from the text as sent to the agent, plus its images and
+ *  other files. */
+function userMessage(sent: string, images?: ThreadImage[], attachments?: ThreadFile[], sentAt?: number): ChatUserMessage {
+  const { files, typed } = attachedFilesFromSent(sent);
+  return {
+    kind: 'user',
+    id: nextId(),
+    text: typed,
+    ...(files.length > 0 ? { files } : {}),
+    ...(images?.length ? { images } : {}),
+    ...(attachments?.length ? { attachments } : {}),
+    ...(sentAt !== undefined ? { sentAt } : {}),
+  };
+}
+
+/**
+ * Settle the prompts in `msgs` that nothing answered, the way one that
+ * ended unanswered reads: permission prompts denied, the agent's questions
+ * closed, MCP questions cancelled, limit questions stopped. Those `keep`
+ * names (by requestId: main still waits on them) stay open, and so do the
+ * tool calls waiting on them. Other tool calls stop waiting for a
+ * permission, and with `toolCalls` stop running too (their turn is over).
+ * Returns `msgs` itself when nothing changed.
+ */
+export function settlePrompts(
+  msgs: ChatMessage[],
+  keep: (requestId: string) => boolean = () => false,
+  { toolCalls = false }: { toolCalls?: boolean } = {},
+): ChatMessage[] {
+  const stillAwaited = new Set<string>();
+  for (const m of msgs) {
+    if ((m.kind === 'permission' || m.kind === 'question') && !m.resolved && keep(m.requestId)) stillAwaited.add(m.toolUseId);
+  }
+  const settled = (m: ChatMessage): ChatMessage => {
+    switch (m.kind) {
+      case 'permission':
+        return m.resolved || keep(m.requestId) ? m : { ...m, resolved: true, decision: 'deny' };
+      case 'question':
+        return m.resolved || keep(m.requestId) ? m : { ...m, resolved: true };
+      case 'elicitation':
+        return m.resolved || keep(m.requestId) ? m : { ...m, resolved: true, action: 'cancel' };
+      case 'limit':
+        return m.resolved || keep(m.requestId) ? m : { ...m, resolved: true, decision: 'stop' };
+      case 'tool_call':
+        if (stillAwaited.has(m.toolUseId) || !(m.awaitingPermission || (toolCalls && m.pending))) return m;
+        return { ...m, awaitingPermission: false, ...(toolCalls ? { pending: false } : {}) };
+      default:
+        return m;
+    }
+  };
+  const updated = msgs.map(settled);
+  return updated.some((m, i) => m !== msgs[i]) ? updated : msgs;
+}
+
+/**
+ * The prompt a thread waits on a reply to, as the chat knows it (see
+ * MessageStore.pendingPrompt): `nth` prompts after the one main logged as
+ * `after` (null: from the history's start). 0 when it is that one: main
+ * has echoed it.
+ */
+export interface PendingPrompt {
+  after: string | null;
+  nth: number;
+}
+
+/**
+ * Whether `events`, a history page read after `prompt` was sent, holds the
+ * end of its turn (or of a later prompt's): main had it and finished it
+ * before reading the page. A page doesn't start before the history the chat
+ * showed, so a logged prompt missing from it is older than all of it.
+ */
+function promptAnsweredIn(events: readonly AgentEvent[], prompt: PendingPrompt): boolean {
+  const isPrompt = (e: AgentEvent) => e.type === 'user_message' && !subagentParent(e);
+  let i = prompt.after === null ? 0 : events.findIndex((e) => isPrompt(e) && (e as { uuid?: string }).uuid === prompt.after) + 1;
+  for (let left = prompt.nth; left > 0; i++) {
+    // Not in the page: main hadn't logged it yet.
+    if (i >= events.length) return false;
+    if (isPrompt(events[i])) left--;
+  }
+  let ended = false;
+  for (; i < events.length; i++) {
+    const e = events[i];
+    if (subagentParent(e)) continue;
+    if (e.type === 'user_message') ended = false;
+    else if (e.type === 'result' || e.type === 'process_exit') ended = true;
+  }
+  return ended;
+}
+
 class MessageStore {
+  /** False for the scratch store an older history page is built in (see
+   *  loadOlderEvents): it only makes messages, so it must not touch other
+   *  stores (background tasks, rate limits, usage, git status, checkpoints,
+   *  the Preview tab). This store's own state is the scratch instance's. */
+  constructor(private readonly sideEffects = true) {}
+
   /** All finalized messages per session */
   messagesBySession = $state<Record<string, ChatMessage[]>>({});
 
@@ -149,6 +384,7 @@ class MessageStore {
 
   /** Whether the session has initialized (received system_init) and can accept messages */
   isReady = $state<Record<string, boolean>>({});
+  historyLoaded = $state<Record<string, boolean>>({});
 
   /** Model name per session */
   modelBySession = $state<Record<string, string>>({});
@@ -156,11 +392,15 @@ class MessageStore {
   /** Current permission mode per session */
   modeBySession = $state<Record<string, PermissionMode>>({});
 
-  /** Whether thinking/extended reasoning is enabled per session */
-  thinkingBySession = $state<Record<string, boolean>>({});
+  /** Adapter-declared controls (descriptors for the current model + recorded
+   *  values) per session, fed by controls_sync events and loadControls(). */
+  controlsBySession = $state<Record<string, SessionControls>>({});
 
-  /** Token usage per session — inputTokens is latest (= current context size), outputTokens is cumulative */
-  usageBySession = $state<Record<string, { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number }>>({});
+  /** The context each session's latest reply read (its input, as the
+   *  context meter shows it). The thread's output total comes from main
+   *  (getThreadUsage): a reply's output count here is a placeholder from
+   *  when it began, repeated on each of its messages. */
+  usageBySession = $state<Record<string, { inputTokens: number; cacheReadTokens: number; cacheCreationTokens: number }>>({});
 
   /** System info per session (from system_init) */
   systemInfoBySession = $state<Record<string, {
@@ -171,33 +411,44 @@ class MessageStore {
     mcpServers: { name: string; status: string }[];
   }>>({});
 
+  /** Live MCP status per session (listMcpServers, or a background reconnect
+   *  in main), with tools and errors. Absent until fetched. */
+  mcpLiveBySession = $state<Record<string, McpServerInfo[]>>({});
+
   /** Context window size per session (from result's modelUsage, or default 200k) */
   contextWindowBySession = $state<Record<string, number>>({});
 
   /** Number of turns per session */
   turnsBySession = $state<Record<string, number>>({});
 
-  /** Detected dev server ports per session */
-  devServersBySession = $state<Record<string, { port: number; url: string; status?: 'ok' | 'error' }[]>>({});
 
-  /** Rate limit state per session */
-  rateLimitBySession = $state<Record<string, { status: 'allowed' | 'allowed_warning' | 'rejected'; resetsAt?: number; utilization?: number; rateLimitType?: string }>>({});
 
-  /** Prompt suggestions per session (from SDK) */
-  promptSuggestionsBySession = $state<Record<string, string[]>>({});
+  /** The agent's guess at each thread's next prompt, shown in the empty
+   *  message box until the next prompt goes (prompt_suggestion events). */
+  promptSuggestionBySession = $state<Record<string, string>>({});
 
-  /** Background task tracking per session */
-  backgroundTasksBySession = $state<Record<string, Record<string, { taskId: string; description: string; taskType?: string; summary?: string; lastToolName?: string; status: 'running' | 'completed' | 'failed' | 'stopped'; totalTokens: number; toolUses: number; durationMs: number }>>>({});
 
 
   /** Active tab per session (survives component remount) */
-  activeTabBySession = $state<Record<string, 'activity' | 'changes' | 'checkpoints' | 'plan' | 'terminal'>>({});
+  activeTabBySession = $state<Record<string, 'activity' | 'changes' | 'checkpoints' | 'plan' | 'terminal' | 'preview'>>({});
 
-  /** Whether to show detailed tool calls & thinking per session (default: false = summary mode) */
-  showDetailsBySession = $state<Record<string, boolean>>({});
+  /** Activity view mode per session. Unset = the global default
+   *  (settings.defaultActivityView). Not persisted across restarts. */
+  viewModeBySession = $state<Record<string, import('../lib/message-view.js').MessageViewMode>>({});
 
   /** Draft input text per session (survives tab switches and component remounts) */
   draftBySession = $state<Record<string, string>>({});
+  /** Files attached to the draft, kept for the same reason: the prompt box
+   *  unmounts on the Terminal and Checkpoints tabs. */
+  attachmentsBySession = $state<Record<string, AttachedFile[]>>({});
+
+  /** Prompts waiting to be sent, oldest first. Dispatched one per turn once the
+   *  session is connected and idle. See submitMessage / flushQueue. */
+  queuedBySession = $state<Record<string, QueuedMessage[]>>({});
+
+  /** Set when the user intervened (Stop, rewind). Queued prompts stay put until
+   *  the user clicks Resume, so a stale follow-up doesn't fire right after a stop. */
+  queuePausedBySession = $state<Record<string, boolean>>({});
 
   /** Preserved edit history after conversation-only rewind (keyed by session) */
   preservedEditHistory = $state<Record<string, { filePath: string; toolName: string; toolInput: unknown; edits: ChatToolCallMessage[] }[]>>({});
@@ -209,6 +460,13 @@ class MessageStore {
    *  from the dying query until the next system_init re-initializes the session. */
   private stoppingSession: Record<string, boolean> = {};
 
+  /** Set when a user message has been submitted but the agent hasn't responded
+   *  yet. Lets onSystemInit know not to clear isRunning — otherwise a query that
+   *  (re)initializes *after* the user sent a message (e.g. the respawn following
+   *  a Stop) would flip the optimistic "working" indicator back off until the
+   *  first token streams. Cleared on result / process_exit / error / stop. */
+  private awaitingResponse: Record<string, boolean> = {};
+
   /** Set when the user explicitly changes mode via UI (cycleMode / setMode).
    *  Prevents stale SDK mode_sync events from overwriting the user's choice.
    *  Cleared on system_init (new query) or authoritative session mode_sync. */
@@ -218,7 +476,22 @@ class MessageStore {
 
   /** When true, pushMessage appends to a temporary array instead of triggering reactive updates. */
   private _replayBuffer: ChatMessage[] | null = null;
+  /** Replayed tool results and permission answers whose tool call or prompt
+   *  was not loaded (it sits in an older history page). Applied when that
+   *  page is loaded; cleared once the whole history is. */
+  private orphanReplayEvents = new Map<string, AgentEvent[]>();
   private _replaySessionId: string | null = null;
+
+  /** Absolute (prelaunch-prefixed) index of the event currently being replayed,
+   *  or null for live events. Used to stamp messages so full-history search hits
+   *  can be mapped back to the message they produced. */
+  private _currentEventIndex: number | null = null;
+
+  /** Per-session map of messageId → source event index, populated during replay.
+   *  Lets click-to-jump locate the message for a search hit's eventIndex. Stale
+   *  entries (after rewind/clear) are harmless since ids are unique and we only
+   *  ever look up ids of currently-present messages. */
+  private sourceIndexBySession = new Map<string, Map<string, number>>();
 
   /** Pagination state per session — tracks how far back we've loaded from the event log. */
   paginationBySession = $state<Record<string, { totalCount: number; loadedFromIndex: number; loading: boolean }>>({});
@@ -245,7 +518,13 @@ class MessageStore {
     this.paginationBySession[sessionId] = { totalCount, loadedFromIndex, loading: false };
   }
 
-  /** Load an older page of events and prepend them to the message list. */
+  /**
+   * Load an older page of events and prepend its messages. The page is
+   * replayed in a scratch store, so only its messages come back: replaying
+   * old events here would set this conversation's running state, mode, model,
+   * usage and background tasks back to what they were then. Tool results and
+   * answers from newer events whose calls are in this page are applied to it.
+   */
   async loadOlderEvents(sessionId: string, pageSize = 200) {
     const p = this.paginationBySession[sessionId];
     if (!p || p.loadedFromIndex <= 0 || p.loading) return;
@@ -253,33 +532,49 @@ class MessageStore {
     this.paginationBySession[sessionId] = { ...p, loading: true };
     try {
       const skipDuringReplay = new Set([
-        'partial_text', 'activity', 'tool_progress', 'usage', 'devserver_detected',
+        'partial_text', 'activity', 'tool_progress', 'usage',
       ]);
       const page = await window.groveBench.getEventHistoryPage(sessionId, pageSize, p.loadedFromIndex);
+      // Cleared (/clear, delete, a fresh replay) while this loaded: the page
+      // no longer fits. (State reads come back as proxies, so compare fields.)
+      const now = this.paginationBySession[sessionId];
+      if (!now?.loading || now.loadedFromIndex !== p.loadedFromIndex) return;
 
-      // Process the older events in batch mode to build messages
-      this._replayBuffer = [];
-      this._replaySessionId = sessionId;
-      try {
-        for (const event of page.events) {
-          if (skipDuringReplay.has(event.type)) continue;
-          this.ingestEvent(sessionId, event);
-        }
-      } finally {
-        const buffer = this._replayBuffer;
-        this._replayBuffer = null;
-        this._replaySessionId = null;
-        if (buffer && buffer.length > 0) {
-          // Prepend older messages before existing ones
-          const existing = this.messagesBySession[sessionId] ?? [];
-          this.messagesBySession[sessionId] = [...buffer, ...existing];
-        }
+      const scratch = new MessageStore(false);
+      scratch._replayBuffer = [];
+      scratch._replaySessionId = sessionId;
+      for (let i = 0; i < page.events.length; i++) {
+        const event = page.events[i];
+        if (skipDuringReplay.has(event.type)) continue;
+        scratch._currentEventIndex = page.startIndex + i;
+        scratch.ingestEvent(sessionId, event);
+      }
+      scratch._currentEventIndex = null;
+      // Newer results and answers, in order, after this page's own events.
+      for (const event of this.orphanReplayEvents.get(sessionId) ?? []) {
+        scratch.ingestEvent(sessionId, event);
+      }
+      const older = scratch._replayBuffer;
+
+      // What still has no match waits for the next page.
+      const stillOrphaned = page.startIndex > 0 ? scratch.orphanReplayEvents.get(sessionId) : undefined;
+      if (stillOrphaned?.length) this.orphanReplayEvents.set(sessionId, stillOrphaned);
+      else this.orphanReplayEvents.delete(sessionId);
+
+      const stamps = scratch.sourceIndexBySession.get(sessionId);
+      if (stamps) {
+        let own = this.sourceIndexBySession.get(sessionId);
+        if (!own) { own = new Map(); this.sourceIndexBySession.set(sessionId, own); }
+        for (const [id, index] of stamps) own.set(id, index);
       }
 
-      // Resolve stale tool calls/permissions in the prepended messages
-      this.resolveStaleToolCalls(sessionId);
-      this.resolveReplayedPermissions(sessionId);
-
+      const existing = this.messagesBySession[sessionId] ?? [];
+      if (older.length > 0) {
+        // Main's prompts still waiting, as of this page (none from a main
+        // that doesn't say: then all of them are settled, as before).
+        const pending = new Set(page.turn?.pendingPromptIds ?? []);
+        this.messagesBySession[sessionId] = [...this.settleOlderPage(sessionId, older, existing, pending), ...existing];
+      }
       this.paginationBySession[sessionId] = { totalCount: p.totalCount, loadedFromIndex: page.startIndex, loading: false };
     } finally {
       // Ensure loading is cleared even on error
@@ -290,8 +585,67 @@ class MessageStore {
     }
   }
 
+  /**
+   * Tool calls, prompts and questions in an older page that nothing answered
+   * are over: they were stopped, timed out or cut off, except the prompts
+   * main still waits on (`stillPending`, by requestId). The exception is a
+   * page that may hold the start of a turn that is still running, which is
+   * when no user message has been loaded after it yet.
+   */
+  private settleOlderPage(sessionId: string, older: ChatMessage[], newer: ChatMessage[], stillPending: ReadonlySet<string>): ChatMessage[] {
+    const liveTurnMayBeHere = this.getIsRunning(sessionId) && !newer.some((m) => m.kind === 'user');
+    if (liveTurnMayBeHere) return older;
+    return settlePrompts(older, (id) => stillPending.has(id), { toolCalls: true });
+  }
+
+  /** Replace the loaded messages with the last page of the history as main
+   *  now has it, keeping this conversation's live state (see loadOlderEvents). */
+  private async reloadHistoryTail(sessionId: string) {
+    try {
+      const { totalCount } = await window.groveBench.getEventHistoryPage(sessionId, 1);
+      // Cleared only now: events that arrived live until this point are in
+      // the history below the count, so the page brings them back once;
+      // later ones stay after it.
+      this.messagesBySession[sessionId] = [];
+      this.sourceIndexBySession.delete(sessionId);
+      this.orphanReplayEvents.delete(sessionId);
+      this.setPagination(sessionId, totalCount, totalCount);
+      await this.loadOlderEvents(sessionId);
+    } catch { /* keeps what it shows until the conversation is reopened */ }
+  }
+
+  /** Remember a replayed result or answer that matched nothing loaded. */
+  private noteOrphan(sessionId: string, event: AgentEvent) {
+    const list = this.orphanReplayEvents.get(sessionId);
+    if (list) list.push(event);
+    else this.orphanReplayEvents.set(sessionId, [event]);
+  }
+
+  /** Page older events until the given absolute event index is loaded into the
+   *  store. Used by click-to-jump from a search result — loads only as deep as
+   *  the chosen match, not the whole history. */
+  async loadOlderUntil(sessionId: string, eventIndex: number) {
+    let guard = 0;
+    // olderEventCount() === loadedFromIndex; load until it's at/below the target.
+    while (this.olderEventCount(sessionId) > eventIndex && guard < 1000) {
+      const before = this.olderEventCount(sessionId);
+      await this.loadOlderEvents(sessionId);
+      if (this.olderEventCount(sessionId) >= before) break; // no progress — stop
+      guard++;
+    }
+  }
+
   getMessages(sessionId: string): ChatMessage[] {
     return this.messagesBySession[sessionId] ?? [];
+  }
+
+  /** The result that ended the thread's latest turn, or null before one. */
+  lastResult(sessionId: string): ChatResultMessage | null {
+    const msgs = this.getMessages(sessionId);
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i].kind === 'result') return msgs[i] as ChatResultMessage;
+    }
+    return null;
   }
 
   getStreamingText(sessionId: string): string {
@@ -306,11 +660,134 @@ class MessageStore {
     return this.isRunning[sessionId] ?? false;
   }
 
+  /** The user sent a prompt that has had no reply yet (see awaitingResponse). */
+  isAwaitingResponse(sessionId: string): boolean {
+    return !!this.awaitingResponse[sessionId];
+  }
+
+  /** The prompt waiting on a reply, or null when none is, as the chat
+   *  shows it: the last prompt, counted from the last one main echoed (by
+   *  its uuid). Read before a pane reloads the history, which clears the
+   *  chat (see stillAwaitingResponse). */
+  pendingPrompt(sessionId: string): PendingPrompt | null {
+    if (!this.awaitingResponse[sessionId]) return null;
+    const msgs = this.messagesBySession[sessionId] ?? [];
+    let nth = 0;
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const m = msgs[i];
+      if (m.kind !== 'user') continue;
+      if (m.uuid) return { after: m.uuid, nth };
+      nth++;
+    }
+    return nth > 0 ? { after: null, nth } : null;
+  }
+
+  /**
+   * Whether the thread still waits on a reply to a prompt, given the history
+   * page a pane loaded (before it is replayed, whose results clear the
+   * flag). `before` is pendingPrompt() from before the chat was cleared for
+   * the page. Main may have had that prompt and finished its turn before it
+   * read the page: then the page holds the end, and nothing waits. One sent
+   * while the page loaded (it shows in the cleared chat) waits: main read
+   * the page before it got it.
+   */
+  stillAwaitingResponse(sessionId: string, before: PendingPrompt | null, page: readonly AgentEvent[]): boolean {
+    if (!this.awaitingResponse[sessionId]) return false;
+    if ((this.messagesBySession[sessionId] ?? []).some((m) => m.kind === 'user')) return true;
+    return !before || !promptAnsweredIn(page, before);
+  }
+
+  /** The thread's pane closed for good: the thread was closed or deleted,
+   *  or its agent stopped, so a prompt sent to it gets no reply. The events
+   *  that would say so (main's close) come after the pane stopped
+   *  listening, and a prompt left waiting would show the thread working
+   *  when it is opened again. */
+  dropAwaitingResponse(sessionId: string) {
+    delete this.awaitingResponse[sessionId];
+  }
+
   /** Set isRunning for a session using full object reassignment so Svelte 5
    *  reliably notifies all $derived subscribers (key-level mutations on
    *  $state<Record> proxies can silently fail to propagate). */
   setIsRunning(sessionId: string, value: boolean) {
+    // Called on every streamed delta; an unchanged value must not reassign the
+    // record, or every derived reading isRunning (in every mounted pane, the
+    // sidebar, the session finder) re-runs per token.
+    if (this.isRunning[sessionId] === value) return;
     this.isRunning = { ...this.isRunning, [sessionId]: value };
+    // A turn starting moves the thread on from the suggestion, however it
+    // starts: a prompt, or the agent on its own (a background task ended).
+    if (value) this.clearPromptSuggestion(sessionId);
+  }
+
+  // ─── Streaming delta coalescing ───
+  //
+  // Main sends a thread's partial_text / partial_thinking merged, up to
+  // ~30 a second (session-stream.ts), so one event may carry many tokens.
+  // Appending each one to streamingText would still re-render the whole
+  // markdown block that often. Deltas are buffered here and applied at most
+  // once per STREAM_FLUSH_MS; any non-streaming event settles the buffer
+  // first so ordering relative to finalized messages is preserved.
+  private static readonly STREAM_FLUSH_MS = 80;
+  private streamBuf = new Map<string, { text: string; thinking: string }>();
+  private streamFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+  private bufferStreamDelta(sessionId: string, kind: 'text' | 'thinking', delta: string) {
+    let buf = this.streamBuf.get(sessionId);
+    if (!buf) {
+      buf = { text: '', thinking: '' };
+      this.streamBuf.set(sessionId, buf);
+    }
+    if (kind === 'text') {
+      // Text starting means any pending thinking preview is obsolete.
+      buf.thinking = '';
+      buf.text += delta;
+    } else {
+      buf.thinking += delta;
+    }
+    if (!this.streamFlushTimer) {
+      this.streamFlushTimer = setTimeout(() => this.flushStreamBuffers(), MessageStore.STREAM_FLUSH_MS);
+    }
+  }
+
+  /** Apply all buffered deltas to the reactive streaming fields. */
+  flushStreamBuffers() {
+    if (this.streamFlushTimer) {
+      clearTimeout(this.streamFlushTimer);
+      this.streamFlushTimer = null;
+    }
+    if (this.streamBuf.size === 0) return;
+    for (const [sessionId, buf] of this.streamBuf) {
+      if (buf.text) {
+        this.streamingText[sessionId] = (this.streamingText[sessionId] ?? '') + buf.text;
+      }
+      if (buf.thinking) {
+        this.streamingThinking[sessionId] = (this.streamingThinking[sessionId] ?? '') + buf.thinking;
+      }
+    }
+    this.streamBuf.clear();
+  }
+
+  /** Called before a non-streaming event is processed. Deltas that the event
+   *  itself supersedes (a finalized text/thinking block) are dropped instead
+   *  of rendered once more; everything else is applied first. A subagent's
+   *  events (null) supersede nothing: the stream is the main agent's. */
+  private settleStreamBuffer(sessionId: string, eventType: AgentEvent['type'] | null) {
+    const buf = this.streamBuf.get(sessionId);
+    if (!buf) return;
+    if (eventType === 'assistant_text') buf.text = '';
+    else if (eventType === 'thinking') buf.thinking = '';
+    if (!buf.text && !buf.thinking) {
+      this.streamBuf.delete(sessionId);
+      return;
+    }
+    if (buf.text) {
+      this.streamingText[sessionId] = (this.streamingText[sessionId] ?? '') + buf.text;
+    }
+    if (buf.thinking) {
+      this.streamingThinking[sessionId] = (this.streamingThinking[sessionId] ?? '') + buf.thinking;
+    }
+    this.streamBuf.delete(sessionId);
   }
 
   getIsReady(sessionId: string): boolean {
@@ -321,14 +798,61 @@ class MessageStore {
    *  reliably notifies all $derived subscribers (key-level mutations on
    *  $state<Record> proxies can silently fail to propagate). */
   setIsReady(sessionId: string, value: boolean) {
+    if (this.isReady[sessionId] === value) return;
     this.isReady = { ...this.isReady, [sessionId]: value };
+  }
+
+  /** Whether the conversation's chat has loaded its history since it last
+   *  mounted. Until then it is empty because it is loading, not because
+   *  nothing has been said. */
+  isHistoryLoaded(sessionId: string): boolean {
+    return this.historyLoaded[sessionId] ?? false;
+  }
+
+  setHistoryLoaded(sessionId: string, value: boolean) {
+    if (this.historyLoaded[sessionId] === value) return;
+    this.historyLoaded = { ...this.historyLoaded, [sessionId]: value };
+  }
+
+  /** What a message list is waiting on, per list. A list is replaced on
+   *  every change, never edited in place, so each is scanned once however
+   *  often it's asked: the taskbar badge and the sidebar ask for every
+   *  conversation each time any of them gets a message. */
+  private pendingInputByList = new WeakMap<ChatMessage[], { permission: boolean; question: boolean }>();
+
+  private pendingInput(sessionId: string): { permission: boolean; question: boolean } {
+    const msgs = this.messagesBySession[sessionId];
+    if (!msgs) return NOTHING_PENDING;
+    let pending = this.pendingInputByList.get(msgs);
+    if (!pending) {
+      pending = { permission: false, question: false };
+      for (const m of msgs) {
+        if (m.kind === 'permission') {
+          if (!(m as ChatPermissionMessage).resolved) pending.permission = true;
+        } else if (m.kind === 'question' || m.kind === 'elicitation' || m.kind === 'limit') {
+          if (!m.resolved) pending.question = true;
+        }
+        if (pending.permission && pending.question) break;
+      }
+      this.pendingInputByList.set(msgs, pending);
+    }
+    return pending;
   }
 
   /** Whether a session has any unresolved permission requests */
   hasPendingPermission(sessionId: string): boolean {
-    return (this.messagesBySession[sessionId] ?? []).some(
-      (m) => m.kind === 'permission' && !(m as ChatPermissionMessage).resolved,
-    );
+    return this.pendingInput(sessionId).permission;
+  }
+
+  /** Whether the agent is blocked on an unanswered question, MCP elicitation
+   *  or limit */
+  hasPendingQuestion(sessionId: string): boolean {
+    return this.pendingInput(sessionId).question;
+  }
+
+  /** Whether the session is waiting on the user for anything (permission or question) */
+  needsInput(sessionId: string): boolean {
+    return this.hasPendingPermission(sessionId) || this.hasPendingQuestion(sessionId);
   }
 
   getModel(sessionId: string): string {
@@ -343,21 +867,102 @@ class MessageStore {
     return this.modeBySession[sessionId] ?? 'default';
   }
 
-  getThinking(sessionId: string): boolean {
-    return this.thinkingBySession[sessionId] ?? true;
+  getControlDescriptors(sessionId: string): ControlDescriptor[] {
+    return this.controlsBySession[sessionId]?.descriptors ?? [];
   }
 
-  async setThinking(sessionId: string, enabled: boolean) {
-    this.thinkingBySession[sessionId] = enabled;
-    await window.groveBench.setThinking(sessionId, enabled);
+  /** Current value of a control. permissionMode reads the mode store (kept
+   *  in sync by mode_sync); anything else reads the last controls_sync value
+   *  or the descriptor default. */
+  getControlValue(sessionId: string, controlId: string): string {
+    if (controlId === CONTROL_IDS.permissionMode) return this.getMode(sessionId);
+    const controls = this.controlsBySession[sessionId];
+    return controls?.values[controlId]
+      ?? controls?.descriptors.find((d) => d.id === controlId)?.default
+      ?? '';
+  }
+
+  async setControl(sessionId: string, controlId: string, value: string) {
+    if (controlId === CONTROL_IDS.permissionMode) {
+      await this.setMode(sessionId, value as PermissionMode);
+      return;
+    }
+    const controls = this.controlsBySession[sessionId];
+    if (!controls) return;
+    const previous = controls.values[controlId];
+    // Reflect the choice immediately; main's controls_sync confirms it, and
+    // the catch below rolls back if the adapter rejected it.
+    this.controlsBySession[sessionId] = { ...controls, values: { ...controls.values, [controlId]: value } };
+    try {
+      await window.groveBench.setControl(sessionId, controlId, value);
+    } catch (e) {
+      console.warn(`[setControl] ${controlId} failed, rolling back:`, e);
+      const current = this.controlsBySession[sessionId];
+      if (!current) return;
+      const values = { ...current.values };
+      if (previous === undefined) delete values[controlId];
+      else values[controlId] = previous;
+      this.controlsBySession[sessionId] = { ...current, values };
+    }
+  }
+
+  /** Advance a control to its next declared option (status-bar badge /
+   *  Alt+M, Alt+T). Falls back to the built-in mode cycle when no descriptors
+   *  have arrived yet so the shortcut never goes dead. */
+  cycleControl(sessionId: string, controlId: string) {
+    const descriptors = this.getControlDescriptors(sessionId);
+    // A control may stand in for a well-known one (an ACP agent's effort).
+    const descriptor = descriptors.find((d) => d.id === controlId) ?? descriptors.find((d) => d.role === controlId);
+    if (descriptor && descriptor.id !== controlId) controlId = descriptor.id;
+    if (!descriptor || descriptor.options.length === 0) {
+      if (controlId === CONTROL_IDS.permissionMode) this.cycleMode(sessionId);
+      return;
+    }
+    const current = this.getControlValue(sessionId, controlId);
+    const idx = descriptor.options.findIndex((o) => o.value === current);
+    const next = descriptor.options[(idx + 1) % descriptor.options.length].value;
+    this.setControl(sessionId, controlId, next).catch((e) => console.error(`Failed to set ${controlId}:`, e));
+  }
+
+  /** Fetch descriptors for a session that hasn't reported controls_sync yet
+   *  (e.g. restored but idle). A sync that lands mid-fetch wins. */
+  async loadControls(sessionId: string) {
+    if (this.controlsBySession[sessionId]) return;
+    try {
+      const controls = await window.groveBench.getControls(sessionId);
+      if (!this.controlsBySession[sessionId]) this.controlsBySession[sessionId] = controls;
+    } catch (e) {
+      console.warn('[loadControls] failed:', e);
+    }
   }
 
   getUsage(sessionId: string) {
-    return this.usageBySession[sessionId] ?? { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 };
+    return this.usageBySession[sessionId] ?? { inputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 };
   }
 
   getSystemInfo(sessionId: string) {
     return this.systemInfoBySession[sessionId] ?? { tools: [], agents: [], skills: [], slashCommands: [], mcpServers: [] };
+  }
+
+  /** Replace the MCP server list with a live status snapshot (from listMcpServers). */
+  updateMcpServers(sessionId: string, servers: McpServerInfo[]) {
+    // An agent that doesn't report its servers at startup has no entry yet.
+    const info = this.getSystemInfo(sessionId);
+    this.systemInfoBySession[sessionId] = {
+      ...info,
+      mcpServers: servers.map((s) => ({ name: s.name, status: s.status })),
+    };
+    this.mcpLiveBySession[sessionId] = servers;
+  }
+
+  /** The last live MCP status, or empty when there is none. */
+  getLiveMcpServers(sessionId: string): McpServerInfo[] {
+    return this.mcpLiveBySession[sessionId] ?? [];
+  }
+
+  /** Forget the live status (the agent stopped), leaving the last known one. */
+  clearLiveMcpServers(sessionId: string) {
+    delete this.mcpLiveBySession[sessionId];
   }
 
   getContextWindow(sessionId: string): number {
@@ -372,20 +977,20 @@ class MessageStore {
     return this.activityBySession[sessionId] ?? { activity: 'idle' as const };
   }
 
-  getActiveTab(sessionId: string): 'activity' | 'changes' | 'checkpoints' | 'plan' | 'terminal' {
+  getActiveTab(sessionId: string): 'activity' | 'changes' | 'checkpoints' | 'plan' | 'terminal' | 'preview' {
     return this.activeTabBySession[sessionId] ?? 'activity';
   }
 
-  setActiveTab(sessionId: string, tab: 'activity' | 'changes' | 'checkpoints' | 'plan' | 'terminal') {
+  setActiveTab(sessionId: string, tab: 'activity' | 'changes' | 'checkpoints' | 'plan' | 'terminal' | 'preview') {
     this.activeTabBySession[sessionId] = tab;
   }
 
-  getShowDetails(sessionId: string): boolean {
-    return this.showDetailsBySession[sessionId] ?? false;
+  getViewMode(sessionId: string): import('../lib/message-view.js').MessageViewMode {
+    return this.viewModeBySession[sessionId] ?? settingsStore.current.defaultActivityView ?? 'summary';
   }
 
-  setShowDetails(sessionId: string, show: boolean) {
-    this.showDetailsBySession[sessionId] = show;
+  setViewMode(sessionId: string, mode: import('../lib/message-view.js').MessageViewMode) {
+    this.viewModeBySession[sessionId] = mode;
   }
 
   getDraft(sessionId: string): string {
@@ -396,63 +1001,176 @@ class MessageStore {
     this.draftBySession[sessionId] = text;
   }
 
-  getDevServers(sessionId: string): { port: number; url: string; status?: 'ok' | 'error' }[] {
-    return this.devServersBySession[sessionId] ?? [];
+  getAttachments(sessionId: string): AttachedFile[] {
+    return this.attachmentsBySession[sessionId] ?? [];
   }
 
-  getRateLimit(sessionId: string) {
-    return this.rateLimitBySession[sessionId] ?? null;
+  setAttachments(sessionId: string, files: AttachedFile[]) {
+    if (files.length > 0) this.attachmentsBySession[sessionId] = files;
+    else delete this.attachmentsBySession[sessionId];
   }
 
-  getPromptSuggestions(sessionId: string): string[] {
-    return this.promptSuggestionsBySession[sessionId] ?? [];
+  getPromptSuggestion(sessionId: string): string | null {
+    return this.promptSuggestionBySession[sessionId] ?? null;
   }
 
-  clearPromptSuggestions(sessionId: string) {
-    this.promptSuggestionsBySession[sessionId] = [];
+  clearPromptSuggestion(sessionId: string) {
+    delete this.promptSuggestionBySession[sessionId];
   }
 
-  getBackgroundTasks(sessionId: string) {
-    return Object.values(this.backgroundTasksBySession[sessionId] ?? {});
+  // ── Outgoing message queue ───────────────────────────────────────────────
+  // The input never locks. A prompt submitted while the agent is busy —
+  // still connecting after the first send, mid-turn, or waiting on a
+  // permission — is parked here and sent when the turn finishes. The first
+  // prompt of a fresh session is never queued: the SDK only reports
+  // system_init once it has something to process, so holding it would
+  // deadlock the "connecting" state.
+
+  getQueue(sessionId: string): QueuedMessage[] {
+    return this.queuedBySession[sessionId] ?? [];
   }
 
-  /** Remove a completed/failed/stopped background task from the list */
-  removeBackgroundTask(sessionId: string, taskId: string) {
-    const tasks = this.backgroundTasksBySession[sessionId];
-    if (!tasks?.[taskId]) return;
-    const { [taskId]: _, ...rest } = tasks;
-    this.backgroundTasksBySession[sessionId] = rest;
+  isQueuePaused(sessionId: string): boolean {
+    return this.queuePausedBySession[sessionId] ?? false;
+  }
+
+  /** Whether a submission right now would be sent immediately (vs queued).
+   *  Idle with nothing queued: send. Idle with a paused queue: the user is
+   *  intervening, so their new prompt goes ahead of the held items. Idle with
+   *  an unpaused, non-empty queue (transient, e.g. after a process exit before
+   *  the restart connects): queue behind to keep order. */
+  canSendNow(sessionId: string): boolean {
+    if (this.getIsRunning(sessionId)) return false;
+    return this.getQueue(sessionId).length === 0 || this.isQueuePaused(sessionId);
+  }
+
+  /** Submit a prompt: send it now if the agent is idle, otherwise queue it. */
+  submitMessage(sessionId: string, msg: Pick<QueuedMessage, 'displayText' | 'outgoing' | 'images' | 'files' | 'typed'>): 'sent' | 'queued' {
+    return this.submitOrQueue(sessionId, { ...msg, isCommand: false });
+  }
+
+  /** Submit a slash command. /rewind is client-side and always immediate;
+   *  everything else follows the same send-or-queue rule as prompts. */
+  submitCommand(sessionId: string, command: string): 'sent' | 'queued' {
+    const trimmed = command.trim();
+    if (trimmed === '/rewind') {
+      this.openRewindDialog(sessionId);
+      return 'sent';
+    }
+    return this.submitOrQueue(sessionId, { displayText: trimmed, outgoing: trimmed, isCommand: true });
+  }
+
+  private submitOrQueue(sessionId: string, item: Omit<QueuedMessage, 'id'>): 'sent' | 'queued' {
+    if (this.canSendNow(sessionId)) {
+      // A paused queue stays paused: the held items only go out on Resume.
+      this.dispatch(sessionId, item);
+      return 'sent';
+    }
+    this.queuedBySession = {
+      ...this.queuedBySession,
+      [sessionId]: [...this.getQueue(sessionId), { ...item, id: nextId() }],
+    };
+    return 'queued';
+  }
+
+  removeQueuedMessage(sessionId: string, id: string) {
+    const remaining = this.getQueue(sessionId).filter((m) => m.id !== id);
+    this.queuedBySession = { ...this.queuedBySession, [sessionId]: remaining };
+    if (remaining.length === 0) delete this.queuePausedBySession[sessionId];
+  }
+
+  clearQueue(sessionId: string) {
+    this.queuedBySession = { ...this.queuedBySession, [sessionId]: [] };
+    delete this.queuePausedBySession[sessionId];
+  }
+
+  /** Put a queued item's text back into the input (and drop it from the queue)
+   *  so it can be edited before sending. Returns false for nothing to edit. */
+  editQueuedMessage(sessionId: string, id: string): boolean {
+    const item = this.getQueue(sessionId).find((m) => m.id === id);
+    if (!item) return false;
+    this.removeQueuedMessage(sessionId, id);
+    this.appendToPrompt(sessionId, item.typed?.text ?? item.displayText, item.typed?.attachments);
+    return true;
+  }
+
+  /** Lift a pause set by Stop/rewind and send the next queued item if idle. */
+  resumeQueue(sessionId: string) {
+    delete this.queuePausedBySession[sessionId];
+    this.flushQueue(sessionId);
+  }
+
+  /** Send the oldest queued item if the session is idle and not paused.
+   *  Only one is sent per call — the next goes out when its turn's result
+   *  arrives, so each queued prompt gets its own turn. */
+  flushQueue(sessionId: string) {
+    // Never fire from replayed history: those results are old news.
+    if (this._replayBuffer !== null) return;
+    if (this.getIsRunning(sessionId) || this.isQueuePaused(sessionId)) return;
+    const queue = this.getQueue(sessionId);
+    if (queue.length === 0) return;
+    const [next, ...rest] = queue;
+    this.queuedBySession = { ...this.queuedBySession, [sessionId]: rest };
+    this.dispatch(sessionId, next);
+  }
+
+  private pauseQueue(sessionId: string) {
+    if (this.getQueue(sessionId).length === 0) return;
+    this.queuePausedBySession = { ...this.queuePausedBySession, [sessionId]: true };
+  }
+
+  private dispatch(sessionId: string, item: Omit<QueuedMessage, 'id'>) {
+    if (item.isCommand) {
+      this.sendCommand(sessionId, item.outgoing);
+      return;
+    }
+    this.addSentMessage(sessionId, item);
+    window.groveBench.sendMessage(
+      sessionId,
+      item.outgoing,
+      item.images?.length ? item.images : undefined,
+      item.files?.length ? item.files : undefined,
+    );
+    sessionStore.updateLastActive(sessionId);
   }
 
   /** Get all currently pending tool calls with their progress info. */
-  getPendingTools(sessionId: string): { toolName: string; toolUseId: string; summary: string; elapsedSeconds?: number }[] {
+  getPendingTools(sessionId: string): PendingTool[] {
     const msgs = this.messagesBySession[sessionId] ?? [];
     const progress = this.toolProgressBySession[sessionId] ?? {};
-    const pending: { toolName: string; toolUseId: string; summary: string; elapsedSeconds?: number }[] = [];
+    const pending: PendingTool[] = [];
     for (const m of msgs) {
       if (m.kind === 'tool_call' && m.pending) {
         const p = progress[m.toolUseId];
         pending.push({
           toolName: m.toolName,
           toolUseId: m.toolUseId,
-          summary: this.summarizeToolInput(m.toolName, m.toolInput),
+          summary: this.summarizeToolInput(m),
           elapsedSeconds: p?.elapsedSeconds,
+          ...this.subagentOfPendingTool(msgs, m),
         });
       }
     }
     return pending;
   }
 
-  private summarizeToolInput(toolName: string, input: unknown, toolCategory?: import('../../shared/types.js').ToolCategory): string {
-    if (typeof input !== 'object' || input === null) return '';
-    const obj = input as Record<string, unknown>;
-    // Use toolCategory when available (adapter-agnostic), fall back to tool name heuristics
-    if ((toolCategory === 'bash' || obj.command) && obj.command) return String(obj.command).slice(0, 60);
-    if ((toolCategory === 'agent' || obj.prompt) && obj.prompt) return String(obj.prompt).slice(0, 60);
-    if (obj.file_path) return String(obj.file_path);
-    if (obj.pattern) return String(obj.pattern);
-    if (obj.description) return String(obj.description).slice(0, 60);
-    return '';
+  /** The subagent a pending call opens: the one it runs in, or the one it
+   *  starts (an Agent call). */
+  private subagentOfPendingTool(msgs: ChatMessage[], call: ChatToolCallMessage): Pick<PendingTool, 'subagentCall' | 'inSubagent'> {
+    const parent = call.parentToolUseId;
+    if (parent) {
+      const agentCall = msgs.find((m) => m.kind === 'tool_call' && m.toolUseId === parent) as ChatToolCallMessage | undefined;
+      return { subagentCall: parent, inSubagent: agentCallInput(agentCall).agentType ?? 'subagent' };
+    }
+    return isAgentCall(call) ? { subagentCall: call.toolUseId } : {};
+  }
+
+  private summarizeToolInput(call: { toolName: string; toolInput: unknown; toolView?: ToolView }): string {
+    const view = toolViewOf(call);
+    // Commands and summaries can run long; paths and patterns show whole.
+    if (view.command) return view.command.slice(0, 60);
+    if (view.path || view.pattern) return toolViewSummary(view);
+    return toolViewSummary(view).slice(0, 60);
   }
 
   /**
@@ -462,7 +1180,8 @@ class MessageStore {
    * until the file is updated by newer edits.
    */
   getLastTurnFileChanges(sessionId: string): { filePath: string; toolName: string; toolInput: unknown; edits: ChatToolCallMessage[] }[] {
-    const msgs = this.messagesBySession[sessionId] ?? [];
+    // During replay the messages are in the replay buffer, not the store.
+    const msgs = this.getMessagesForMutation(sessionId);
     if (msgs.length === 0) return [];
 
     // Must have at least one completed turn (result message)
@@ -489,14 +1208,11 @@ class MessageStore {
         continue;
       }
 
-      if (
-        inTurn &&
-        m.kind === 'tool_call' &&
-        (m.toolName === 'Edit' || m.toolName === 'Write') &&
-        !m.isError
-      ) {
-        const input = m.toolInput as Record<string, unknown>;
-        const fp = String(input?.file_path ?? input?.filePath ?? '');
+      if (inTurn && m.kind === 'tool_call' && !m.isError) {
+        // Edits Grove can show as a diff: replacements or a whole-file write.
+        const view = toolViewOf(m);
+        if (view.kind !== 'edit' || (!view.edits?.length && view.write === undefined)) continue;
+        const fp = view.path ?? '';
         if (!fp) continue;
 
         const existing = byFile.get(fp);
@@ -532,17 +1248,6 @@ class MessageStore {
     return merged;
   }
 
-  /** Revert a file via git checkout */
-  async revertFile(sessionId: string, filePath: string, staged?: boolean) {
-    await window.groveBench.revertFile(sessionId, filePath, staged);
-    gitStatusStore.scheduleRefresh(sessionId, 100);
-  }
-
-  removeDevServer(sessionId: string, port: number) {
-    const servers = this.devServersBySession[sessionId] ?? [];
-    this.devServersBySession[sessionId] = servers.filter((s) => s.port !== port);
-  }
-
   async setMode(sessionId: string, mode: PermissionMode) {
     const previousMode = this.modeBySession[sessionId] ?? 'default';
     this.modeBySession[sessionId] = mode;
@@ -560,13 +1265,27 @@ class MessageStore {
 
   cycleMode(sessionId: string) {
     const current = this.getMode(sessionId);
-    const modes = ['default', 'plan', 'acceptEdits'] as const;
-    const idx = modes.indexOf(current as typeof modes[number]);
+    // Cycle through the modes the adapter declared for this session. Before
+    // they arrive, only the modes every agent offers: Plan and Auto are
+    // Claude Code's, and an ACP agent would take them as Ask.
+    const declared = this.getControlDescriptors(sessionId)
+      .find((d) => d.id === CONTROL_IDS.permissionMode)
+      ?.options.map((o) => o.value as PermissionMode);
+    const modes: readonly PermissionMode[] = declared && declared.length > 0
+      ? declared
+      : ['default', 'acceptEdits', 'readSafe'];
+    const idx = modes.indexOf(current);
     const next = modes[(idx + 1) % modes.length];
     this.setMode(sessionId, next);
   }
 
   private pushMessage(sessionId: string, msg: ChatMessage) {
+    // Stamp the source event index (replay only) so search hits map to messages.
+    if (this._currentEventIndex != null) {
+      let idx = this.sourceIndexBySession.get(sessionId);
+      if (!idx) { idx = new Map(); this.sourceIndexBySession.set(sessionId, idx); }
+      idx.set(msg.id, this._currentEventIndex);
+    }
     // During batch replay, append to the buffer without triggering reactivity
     if (this._replayBuffer && this._replaySessionId === sessionId) {
       this._replayBuffer.push(msg);
@@ -574,6 +1293,122 @@ class MessageStore {
     }
     const current = this.messagesBySession[sessionId] ?? [];
     this.messagesBySession[sessionId] = [...current, msg];
+  }
+
+  /** Find the message a search hit's event index maps to: the message with the
+   *  largest stamped source index ≤ eventIndex (handles events that update an
+   *  existing message rather than creating one, e.g. tool_result → tool_call).
+   *  Only the conversation's own: a subagent's are not in its thread. */
+  findMessageIdForEventIndex(sessionId: string, eventIndex: number): string | null {
+    const idx = this.sourceIndexBySession.get(sessionId);
+    if (!idx) return null;
+    const msgs = this.messagesBySession[sessionId] ?? [];
+    let bestId: string | null = null;
+    let bestIdx = -1;
+    for (const m of msgs) {
+      if (subagentOf(m)) continue;
+      const ei = idx.get(m.id);
+      if (ei != null && ei <= eventIndex && ei > bestIdx) {
+        bestIdx = ei;
+        bestId = m.id;
+      }
+    }
+    return bestId;
+  }
+
+  /**
+   * The message a search hit points at. Messages built from history carry
+   * their event index; one that arrived live doesn't, so for a hit past the
+   * last stamped index the event is fetched and matched by its uuid or tool
+   * use id (and stamped, so the next jump needs no fetch). Falls back to
+   * findMessageIdForEventIndex when nothing matches.
+   */
+  async findMessageForEvent(sessionId: string, eventIndex: number): Promise<string | null> {
+    const idx = this.sourceIndexBySession.get(sessionId);
+    let lastStamped = -1;
+    for (const ei of idx?.values() ?? []) if (ei > lastStamped) lastStamped = ei;
+    if (eventIndex > lastStamped) {
+      try {
+        const page = await window.groveBench.getEventHistoryPage(sessionId, 1, eventIndex + 1);
+        const event = page.startIndex === eventIndex ? page.events[0] : undefined;
+        const uuid = event && 'uuid' in event ? event.uuid : undefined;
+        const toolUseId = event && 'toolUseId' in event ? event.toolUseId : undefined;
+        // A turn's files carry neither: match the list by its first file.
+        const madePath = event?.type === 'files_made' ? event.files[0]?.path : undefined;
+        const match = (uuid || toolUseId || madePath)
+          ? (this.messagesBySession[sessionId] ?? []).findLast((m) =>
+            (!!uuid && 'uuid' in m && m.uuid === uuid) || (!!toolUseId && 'toolUseId' in m && m.toolUseId === toolUseId)
+            || (!!madePath && m.kind === 'files_made' && m.files[0]?.path === madePath))
+          : undefined;
+        if (match) {
+          let map = this.sourceIndexBySession.get(sessionId);
+          if (!map) { map = new Map(); this.sourceIndexBySession.set(sessionId, map); }
+          map.set(match.id, eventIndex);
+          return match.id;
+        }
+      } catch { /* fall back below */ }
+    }
+    return this.findMessageIdForEventIndex(sessionId, eventIndex);
+  }
+
+  /** Inverse of findMessageIdForEventIndex: the stable source event index a
+   *  message was stamped with during replay/pagination, or null for live or
+   *  otherwise unstamped messages. Lets bookmark capture anchor a selection to
+   *  a durable eventIndex. */
+  getEventIndexForMessageId(sessionId: string, messageId: string): number | null {
+    const idx = this.sourceIndexBySession.get(sessionId);
+    const ei = idx?.get(messageId);
+    return ei ?? null;
+  }
+
+  /** Cross-session bookmark jump requests, consumed by the active OutputPanel's
+   *  $effect. Keyed by sessionId; the panel resolves the anchor (cached
+   *  eventIndex → uuid re-resolution → text fallback) and then clears the entry. */
+  pendingJumpBySession = $state<Record<string, { eventIndex: number | null; uuid: string | null; bookmarkId: string }>>({});
+
+  requestJump(sessionId: string, req: { eventIndex: number | null; uuid: string | null; bookmarkId: string }) {
+    this.pendingJumpBySession = { ...this.pendingJumpBySession, [sessionId]: req };
+  }
+
+  clearJump(sessionId: string) {
+    if (!(sessionId in this.pendingJumpBySession)) return;
+    const next = { ...this.pendingJumpBySession };
+    delete next[sessionId];
+    this.pendingJumpBySession = next;
+  }
+
+  /** One-shot "insert this text into the prompt" requests (e.g. the activity
+   *  thread's "copy selection to prompt" action). The mounted PromptEditor
+   *  appends `text` to its input whenever `nonce` increments, or puts it in
+   *  place of the input when `replace` is set. `attachments` join the
+   *  editor's own. */
+  promptInsertBySession = $state<Record<string, PromptInsert>>({});
+
+  requestPromptInsert(sessionId: string, text: string, opts: Omit<PromptInsert, 'text' | 'nonce'> = {}) {
+    const prev = this.promptInsertBySession[sessionId]?.nonce ?? 0;
+    this.promptInsertBySession = {
+      ...this.promptInsertBySession,
+      [sessionId]: { text, nonce: prev + 1, ...opts },
+    };
+  }
+
+  /** Append `text` to the session's prompt whether or not a PromptEditor is
+   *  mounted right now (it is not on the Terminal / Checkpoints tabs). The
+   *  draft is updated for an editor that mounts later, and an insert request
+   *  is raised for one that is already showing; the mounted editor's own
+   *  draft sync then writes the same combined text back, so the two paths
+   *  never double up. */
+  appendToPrompt(sessionId: string, text: string, attachments?: AttachedFile[]) {
+    const draft = this.getDraft(sessionId);
+    this.setDraft(sessionId, draft ? `${draft}\n${text}` : text);
+    // Attachments live only in a mounted editor; the draft can't carry them.
+    this.requestPromptInsert(sessionId, text, attachments?.length ? { attachments } : {});
+  }
+
+  /** Like appendToPrompt, but `text` takes the place of the prompt. */
+  replacePrompt(sessionId: string, text: string) {
+    this.setDraft(sessionId, text);
+    this.requestPromptInsert(sessionId, text, { replace: true });
   }
 
   private flushStreamingText(sessionId: string) {
@@ -621,17 +1456,22 @@ class MessageStore {
    * This turns the O(n²) replay (pushMessage spreads on every event) into
    * O(n) and avoids hundreds of intermediate Svelte re-renders.
    */
-  replayEvents(sessionId: string, events: AgentEvent[], skipSet?: Set<string>) {
+  replayEvents(sessionId: string, events: AgentEvent[], skipSet?: Set<string>, baseIndex = 0) {
     // Start batch mode
     this._replayBuffer = [];
     this._replaySessionId = sessionId;
 
     try {
-      for (const event of events) {
+      for (let i = 0; i < events.length; i++) {
+        const event = events[i];
         if (skipSet && skipSet.has(event.type)) continue;
+        // Absolute event index = page base + position (every event counts,
+        // including skipped ones, so indices stay aligned with the backend).
+        this._currentEventIndex = baseIndex + i;
         this.ingestEvent(sessionId, event);
       }
     } finally {
+      this._currentEventIndex = null;
       // Flush the accumulated messages in one reactive assignment
       const buffer = this._replayBuffer;
       this._replayBuffer = null;
@@ -647,94 +1487,72 @@ class MessageStore {
 
   /** Reset running state for a session (e.g. after stop is clicked) */
   markSessionStopped(sessionId: string) {
+    // Apply deltas still waiting on the stream timer first, or they would
+    // show up after the stop as a new fragment of the stopped reply.
+    this.settleStreamBuffer(sessionId, 'process_exit');
     this.flushStreamingText(sessionId);
     this.streamingThinking[sessionId] = '';
     this.setIsRunning(sessionId, false);
+    delete this.awaitingResponse[sessionId];
     this.activityBySession[sessionId] = { activity: 'idle' };
 
     // Suppress late permission_request events from the dying query.
     // Cleared on the next system_init when the new query connects.
     this.stoppingSession[sessionId] = true;
 
-    // Resolve any pending tool calls and permissions so spinners/buttons don't linger
+    // Stop is an intervention: hold queued follow-ups until the user resumes,
+    // rather than firing the next one into the restarted query.
+    this.pauseQueue(sessionId);
+
+    // Resolve any pending tool calls and prompts so spinners/buttons don't linger
     const msgs = this.messagesBySession[sessionId] ?? [];
-    let changed = false;
-    const updated = msgs.map((m) => {
-      if (m.kind === 'tool_call' && (m.pending || m.awaitingPermission)) {
-        changed = true;
-        return { ...m, pending: false, awaitingPermission: false };
-      }
-      if (m.kind === 'permission' && !m.resolved) {
-        changed = true;
-        return { ...m, resolved: true, decision: 'deny' as const };
-      }
-      return m;
-    });
-    if (changed) {
+    const updated = settlePrompts(msgs, undefined, { toolCalls: true });
+    if (updated !== msgs) {
       this.messagesBySession[sessionId] = updated;
     }
   }
 
-  /** Add a user message to the display */
-  addUserMessage(sessionId: string, text: string) {
-    this.pushMessage(sessionId, {
-      kind: 'user',
-      id: nextId(),
-      text,
-    });
+  /** Add a prompt to the display as it goes to main, with its images and
+   *  other files. */
+  addSentMessage(sessionId: string, msg: Pick<QueuedMessage, 'outgoing' | 'images' | 'files'>) {
+    this.addUserMessage(
+      sessionId,
+      msg.outgoing,
+      msg.images?.map((img) => ({ name: img.name, dataUrl: `data:${img.mediaType};base64,${img.data}` })),
+      // Shown by name until main has saved them.
+      msg.files?.map((f) => ({ name: f.name, mediaType: f.mediaType, size: base64Size(f.data) })),
+    );
+  }
+
+  /** Add a user message to the display. `sent` is the text as sent to the
+   *  agent: attached files' content blocks come off it and show as chips. */
+  addUserMessage(sessionId: string, sent: string, images?: ThreadImage[], attachments?: ThreadFile[]) {
+    this.pushMessage(sessionId, userMessage(sent, images, attachments, Date.now()));
     this.setIsRunning(sessionId, true);
+    this.awaitingResponse[sessionId] = true;
     this.activityBySession[sessionId] = { activity: 'generating' };
-    // Clear stale suggestions when user sends a new message
-    this.promptSuggestionsBySession[sessionId] = [];
+    // The suggestion was for the turn before this one.
+    this.clearPromptSuggestion(sessionId);
   }
 
   /** Ingest a raw AgentEvent from the main process */
   ingestEvent(sessionId: string, event: AgentEvent) {
+    // Main holds the whole history the Tasks and Files chips are built
+    // from: a live event may change them; a replayed one is already in.
+    if (this.sideEffects && this._replayBuffer === null) threadItemsStore.noteEvent(sessionId, event);
+    const parentToolUseId = subagentParent(event);
+    if (event.type !== 'partial_text' && event.type !== 'partial_thinking') {
+      this.settleStreamBuffer(sessionId, parentToolUseId ? null : event.type);
+    }
+    // A subagent's result settles its call like any other (onToolResult).
+    if (parentToolUseId && event.type !== 'tool_result') {
+      this.onSubagentEvent(sessionId, parentToolUseId, event);
+      return;
+    }
     switch (event.type) {
-      case 'system_init': {
-        // If /clear was issued, wipe all messages for a fresh start
-        const wasCleared = !!this.pendingClear[sessionId];
-        if (wasCleared) {
-          this.setMessagesForMutation(sessionId, []);
-          this.streamingText[sessionId] = '';
-          delete this.usageBySession[sessionId];
-          delete this.turnsBySession[sessionId];
-          delete this.paginationBySession[sessionId];
-          delete this.pendingClear[sessionId];
-          // Reset checkpoint store so stale checkpoints don't linger in the UI
-          checkpointStore.clear(sessionId);
-          // Truncate event history on disk so old messages don't reappear on restart
-          window.groveBench.clearEventHistory(sessionId).catch(() => {});
-        }
-        this.setIsReady(sessionId, true);
-        this.setIsRunning(sessionId, false);
-        delete this.stoppingSession[sessionId];
-        delete this.userExplicitMode[sessionId];
-        this.modelBySession[sessionId] = event.model;
-        this.systemInfoBySession[sessionId] = {
-          tools: event.tools ?? [],
-          agents: event.agents ?? [],
-          skills: event.skills ?? [],
-          slashCommands: event.slashCommands ?? [],
-          mcpServers: event.mcpServers ?? [],
-        };
-        this.pushMessage(sessionId, {
-          kind: 'system',
-          id: nextId(),
-          text: wasCleared
-            ? `Conversation cleared — connected to ${event.model}`
-            : `Connected to ${event.model}`,
-        });
-
-        // If a message was queued to send after clear, fire it now
-        const pendingMsg = this.pendingMessageAfterClear[sessionId];
-        if (wasCleared && pendingMsg) {
-          delete this.pendingMessageAfterClear[sessionId];
-          this.addUserMessage(sessionId, pendingMsg);
-          window.groveBench.sendMessage(sessionId, pendingMsg);
-        }
+      case 'system_init':
+        this.onSystemInit(sessionId, event);
         break;
-      }
 
       case 'assistant_text':
         // assistant_text is the finalized version of what partial_text was streaming.
@@ -751,14 +1569,16 @@ class MessageStore {
 
       case 'partial_text':
         this.setIsRunning(sessionId, true);
-        this.streamingThinking[sessionId] = '';
-        this.streamingText[sessionId] = (this.streamingText[sessionId] ?? '') + event.text;
+        if (this.streamingThinking[sessionId]) this.streamingThinking[sessionId] = '';
+        this.bufferStreamDelta(sessionId, 'text', event.text);
         break;
 
       case 'partial_thinking':
         this.setIsRunning(sessionId, true);
-        this.activityBySession[sessionId] = { activity: 'thinking' };
-        this.streamingThinking[sessionId] = (this.streamingThinking[sessionId] ?? '') + event.text;
+        if (this.activityBySession[sessionId]?.activity !== 'thinking') {
+          this.activityBySession[sessionId] = { activity: 'thinking' };
+        }
+        this.bufferStreamDelta(sessionId, 'thinking', event.text);
         break;
 
       case 'assistant_tool_use':
@@ -775,7 +1595,7 @@ class MessageStore {
         this.activityBySession[sessionId] = {
           activity: 'tool_starting',
           toolName: event.toolName,
-          toolSummary: this.summarizeToolInput(event.toolName, event.toolInput, event.toolCategory),
+          toolSummary: this.summarizeToolInput(event),
         };
         this.pushMessage(sessionId, {
           kind: 'tool_call',
@@ -786,129 +1606,35 @@ class MessageStore {
           uuid: event.uuid,
           pending: true,
           toolCategory: event.toolCategory,
+          ...(event.toolView ? { toolView: event.toolView } : {}),
         });
         break;
 
-      case 'tool_result': {
-        // Build a single updated array that handles both the tool_call result
-        // and any matching permission/question resolution in one pass.
-        const msgs = this.getMessagesForMutation(sessionId);
-        let changed = false;
-        let matchedToolName: string | undefined;
-        const updated = msgs.map((m) => {
-          // Update the matching tool_call (also clear awaitingPermission)
-          if (m.kind === 'tool_call' && m.toolUseId === event.toolUseId) {
-            changed = true;
-            matchedToolName = m.toolName;
-            return { ...m, result: event.content, isError: event.isError, pending: false, awaitingPermission: false };
-          }
-          // Fallback: if a tool_result exists, the tool ran, so the permission
-          // was allowed. permission_resolved is the primary path but this catches
-          // cases where that event is lost or from pre-refactor history.
-          if (m.kind === 'permission' && m.toolUseId === event.toolUseId && !m.resolved) {
-            changed = true;
-            return { ...m, resolved: true as const, decision: 'allow' as const };
-          }
-          if (m.kind === 'question' && m.toolUseId === event.toolUseId && !m.resolved) {
-            changed = true;
-            return { ...m, resolved: true as const };
-          }
-          return m;
-        });
-        if (changed) {
-          this.setMessagesForMutation(sessionId, updated);
-        }
-        // Clear tool progress for this tool
-        const prog = this.toolProgressBySession[sessionId];
-        if (prog?.[event.toolUseId]) {
-          delete prog[event.toolUseId];
-          this.toolProgressBySession[sessionId] = { ...prog };
-        }
-        // Refresh git status after file-modifying tool calls
-        if (matchedToolName && ['Edit', 'Write', 'Bash', 'MultiEdit'].includes(matchedToolName)) {
-          gitStatusStore.scheduleRefresh(sessionId, 300);
-        }
+      case 'tool_update':
+        this.onToolUpdate(sessionId, event);
         break;
-      }
 
-      case 'permission_request': {
-        // Drop stale permission requests from a dying query after the user
-        // clicked Stop. The new query will re-request if needed.
-        if (this.stoppingSession[sessionId]) break;
-
-        this.flushStreamingText(sessionId);
-        // Mark the matching tool_call as awaiting permission so it doesn't
-        // render before the user has approved/denied.
-        const permMsgs = this.getMessagesForMutation(sessionId);
-        const toolIdx = permMsgs.findIndex(
-          (m) => m.kind === 'tool_call' && m.toolUseId === event.toolUseId,
-        );
-        if (toolIdx >= 0) {
-          const updated = { ...(permMsgs[toolIdx] as ChatToolCallMessage), awaitingPermission: true };
-          this.setMessagesForMutation(sessionId, [
-            ...permMsgs.slice(0, toolIdx),
-            updated,
-            ...permMsgs.slice(toolIdx + 1),
-          ]);
-        }
-        // Detect question tools — render as an interactive question, not a permission gate
-        if (event.toolCategory === 'question') {
-          const input = event.toolInput as Record<string, unknown>;
-          const questions = (Array.isArray(input?.questions) ? input.questions : []) as QuestionItem[];
-          this.pushMessage(sessionId, {
-            kind: 'question',
-            id: nextId(),
-            requestId: event.requestId,
-            toolUseId: event.toolUseId,
-            questions,
-            resolved: false,
-          });
-        } else {
-          this.pushMessage(sessionId, {
-            kind: 'permission',
-            id: nextId(),
-            requestId: event.requestId,
-            toolName: event.toolName,
-            toolInput: event.toolInput,
-            toolUseId: event.toolUseId,
-            resolved: false,
-            decisionReason: event.decisionReason,
-            suggestions: event.suggestions,
-            isPlanExecution: event.isPlanExecution,
-            toolCategory: event.toolCategory,
-            planText: event.planText,
-          });
-        }
+      case 'tool_result':
+        this.onToolResult(sessionId, event);
+        // Dev servers print their URL; offer it in the Preview tab.
+        if (this.sideEffects) previewStore.noteText(sessionId, event.content);
         break;
-      }
 
-      case 'permission_resolved': {
-        const msgs = this.getMessagesForMutation(sessionId);
-        let changed = false;
-        const updated = msgs.map((m) => {
-          if (m.kind === 'permission' && (m as ChatPermissionMessage).requestId === event.requestId && !m.resolved) {
-            changed = true;
-            return { ...m, resolved: true as const, decision: event.decision };
-          }
-          if (m.kind === 'question' && 'requestId' in m && (m as any).requestId === event.requestId && !m.resolved) {
-            changed = true;
-            return { ...m, resolved: true as const };
-          }
-          if (m.kind === 'tool_call' && m.toolUseId === event.toolUseId && m.awaitingPermission) {
-            changed = true;
-            return { ...m, awaitingPermission: false };
-          }
-          return m;
-        });
-        if (changed) {
-          this.setMessagesForMutation(sessionId, updated);
-        }
+      case 'permission_request':
+        this.onPermissionRequest(sessionId, event);
         break;
-      }
+
+      case 'permission_resolved':
+        this.onPermissionResolved(sessionId, event);
+        break;
 
       case 'thinking':
         this.setIsRunning(sessionId, true);
         this.streamingThinking[sessionId] = '';
+        // Thinking the API returned without text (display 'omitted', e.g.
+        // conversations recorded before we asked for summaries) has nothing
+        // to show.
+        if (!event.thinking.trim()) break;
         this.pushMessage(sessionId, {
           kind: 'thinking',
           id: nextId(),
@@ -916,29 +1642,22 @@ class MessageStore {
         });
         break;
 
-      case 'result':
+      case 'files_made':
         this.flushStreamingText(sessionId);
-        this.setIsRunning(sessionId, false);
-        this.activityBySession[sessionId] = { activity: 'idle' };
-        this.toolProgressBySession[sessionId] = {};
-        if (event.contextWindow) {
-          this.contextWindowBySession[sessionId] = event.contextWindow;
-        }
-        if (event.numTurns) {
-          this.turnsBySession[sessionId] = event.numTurns;
-        }
         this.pushMessage(sessionId, {
-          kind: 'result',
+          kind: 'files_made',
           id: nextId(),
-          subtype: event.subtype,
-          result: event.result,
-          totalCostUsd: event.totalCostUsd,
-          durationMs: event.durationMs,
-          isError: event.isError,
-          errors: event.errors,
+          files: event.files,
+          ...(event.more ? { more: event.more } : {}),
         });
-        this.resolveStaleBackgroundTasks(sessionId);
-        gitStatusStore.scheduleRefresh(sessionId, 100);
+        break;
+
+      case 'result':
+        this.settleReplayedToolCalls(sessionId, false);
+        this.onResult(sessionId, event);
+        // A finished turn is the cheapest moment to learn what it cost the
+        // plan; the store throttles so back-to-back turns don't spam the SDK.
+        if (this.sideEffects && this._replayBuffer === null) usageStore.refresh(sessionId).catch(() => {});
         break;
 
       case 'error':
@@ -947,12 +1666,19 @@ class MessageStore {
           kind: 'error',
           id: nextId(),
           text: event.message,
+          ...(event.auth ? { auth: true } : {}),
         });
+        // Main has flagged a refused key, or the agent turned the sign-in
+        // down: re-check so a new conversation asks for credentials instead
+        // of failing the same way. Live only, not when an old failure is
+        // replayed.
+        if ((event.keyRejected || event.auth) && this.sideEffects && this._replayBuffer === null) void prerequisitesStore.refresh();
         // If the session never initialized (system_init never arrived),
         // unlock the input so the user can see the error and retry.
         if (!this.getIsReady(sessionId)) {
           this.setIsReady(sessionId, true);
           this.setIsRunning(sessionId, false);
+          delete this.awaitingResponse[sessionId];
         }
         break;
 
@@ -961,16 +1687,18 @@ class MessageStore {
           kind: 'system',
           id: nextId(),
           text: event.message,
+          ...(event.level ? { level: event.level } : {}),
         });
         break;
 
+      case 'git_identity_missing':
+        this.pushMessage(sessionId, { kind: 'git_identity_missing', id: nextId() });
+        break;
+
       case 'usage': {
-        const prev = this.usageBySession[sessionId] ?? { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 };
         this.usageBySession[sessionId] = {
           // input_tokens = current context window usage (latest value, not cumulative)
           inputTokens: event.inputTokens,
-          // output_tokens accumulate across turns
-          outputTokens: prev.outputTokens + event.outputTokens,
           cacheReadTokens: event.cacheReadTokens ?? 0,
           cacheCreationTokens: event.cacheCreationTokens ?? 0,
         };
@@ -1010,147 +1738,81 @@ class MessageStore {
         };
         break;
 
-      case 'user_message': {
-        // When replay-user-messages is enabled, the SDK replays user messages
-        // with UUIDs. We stamp the UUID onto the most recent user message
-        // that doesn't already have one. Text matching is unreliable because
-        // the SDK sees the full message (with @-ref file tags prepended) while
-        // the store has the display text. So we match by position: the most
-        // recent UUID-less user message is the one the SDK is replaying.
-        if (event.uuid) {
-          const msgs = this.getMessagesForMutation(sessionId);
-          const existingIdx = msgs.findLastIndex(
-            (m) => m.kind === 'user' && !(m as ChatUserMessage).uuid,
-          );
-          if (existingIdx >= 0) {
-            const updated = [...msgs];
-            updated[existingIdx] = { ...updated[existingIdx], uuid: event.uuid } as ChatUserMessage;
-            this.setMessagesForMutation(sessionId, updated);
-            // Schedule checkpoint refresh so the Checkpoints tab picks up the new checkpoint
-            checkpointStore.scheduleRefresh(sessionId);
-            break;
-          }
-        }
-        this.pushMessage(sessionId, {
-          kind: 'user',
-          id: nextId(),
-          text: event.text,
-          uuid: event.uuid,
-        });
-        // Schedule checkpoint list refresh so the Checkpoints tab updates
-        if (event.uuid) {
-          checkpointStore.scheduleRefresh(sessionId);
-        }
+      case 'user_message':
+        this.onUserMessage(sessionId, event);
         break;
-      }
-
-      case 'devserver_detected': {
-        const servers = this.devServersBySession[sessionId] ?? [];
-        if (!servers.some((s) => s.port === event.port)) {
-          this.devServersBySession[sessionId] = [...servers, { port: event.port, url: event.url, status: 'ok' }];
-        }
-        break;
-      }
 
       case 'process_exit':
+        this.settleReplayedToolCalls(sessionId, true);
         this.flushStreamingText(sessionId);
         this.streamingThinking[sessionId] = '';
+        this.dropPendingClear(sessionId);
         this.setIsRunning(sessionId, false);
+        delete this.awaitingResponse[sessionId];
         // If the agent exited before system_init, unlock the input
         if (!this.getIsReady(sessionId)) {
           this.setIsReady(sessionId, true);
         }
         this.activityBySession[sessionId] = { activity: 'idle' };
-        this.resolveStaleBackgroundTasks(sessionId);
-        gitStatusStore.scheduleRefresh(sessionId, 100);
+        if (this.sideEffects) {
+          backgroundTaskStore.resolveStale(sessionId, false);
+          gitStatusStore.scheduleRefresh(sessionId, 100);
+        }
         break;
 
       case 'rate_limit':
-        this.rateLimitBySession[sessionId] = {
-          status: event.status,
-          resetsAt: event.resetsAt,
-          utilization: event.utilization,
-          rateLimitType: event.rateLimitType,
-        };
+        if (this.sideEffects) {
+          rateLimitStore.set(sessionId, {
+            status: event.status,
+            resetsAt: event.resetsAt,
+            utilization: event.utilization,
+            rateLimitType: event.rateLimitType,
+          });
+          // Live only: a replayed one is from whenever that turn ran.
+          if (this._replayBuffer === null) usageStore.applyRateLimitEvent(sessionId, event);
+        }
         if (event.status === 'rejected') {
           this.pushMessage(sessionId, {
             kind: 'system',
             id: nextId(),
-            text: `Rate limited${event.rateLimitType ? ` (${event.rateLimitType})` : ''}${event.resetsAt ? ` — resets ${new Date(event.resetsAt * 1000).toLocaleTimeString()}` : ''}`,
+            text: `Rate limited${event.rateLimitType ? ` (${event.rateLimitType})` : ''}${event.resetsAt ? ` — resets ${new Date(event.resetsAt * 1000).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}` : ''}`,
           });
         }
         break;
 
-      case 'prompt_suggestion':
-        if (event.suggestion) {
-          const existing = this.promptSuggestionsBySession[sessionId] ?? [];
-          this.promptSuggestionsBySession[sessionId] = [...existing, event.suggestion];
+      case 'prompt_suggestion': {
+        // At most one per turn, after its result: the newest replaces the
+        // last. One that arrives once the next turn is running is stale.
+        // Never one the box would run as a shell or slash command: the model
+        // writes it from the agent's reply, which can quote anything, and
+        // Tab, Enter would send it.
+        const suggestion = event.suggestion.trim();
+        if (suggestion && !/^[!/]/.test(suggestion) && !this.isRunning[sessionId]) {
+          this.promptSuggestionBySession[sessionId] = suggestion;
         }
         break;
+      }
 
-      case 'task_started': {
-        const tasks = this.backgroundTasksBySession[sessionId] ?? {};
-        tasks[event.taskId] = {
-          taskId: event.taskId,
-          description: event.description,
-          taskType: event.taskType,
-          status: 'running',
-          totalTokens: 0,
-          toolUses: 0,
-          durationMs: 0,
-        };
-        this.backgroundTasksBySession[sessionId] = { ...tasks };
+      case 'task_started':
+        if (this.sideEffects) backgroundTaskStore.start(sessionId, event);
         this.pushMessage(sessionId, {
           kind: 'system',
           id: nextId(),
           text: `Background task started: ${event.description}${event.taskType ? ` (${event.taskType})` : ''}`,
         });
         break;
-      }
 
-      case 'task_progress': {
-        const tasks2 = this.backgroundTasksBySession[sessionId] ?? {};
-        const existing = tasks2[event.taskId];
-        tasks2[event.taskId] = {
-          ...(existing ?? { taskId: event.taskId, status: 'running' }),
-          description: event.description,
-          summary: event.summary,
-          lastToolName: event.lastToolName,
-          totalTokens: event.totalTokens,
-          toolUses: event.toolUses,
-          durationMs: event.durationMs,
-        };
-        this.backgroundTasksBySession[sessionId] = { ...tasks2 };
+      case 'task_progress':
+        if (this.sideEffects) backgroundTaskStore.progress(sessionId, event);
         break;
-      }
 
-      case 'task_notification': {
-        const tasks3 = this.backgroundTasksBySession[sessionId] ?? {};
-        const prev = tasks3[event.taskId];
-        tasks3[event.taskId] = {
-          ...(prev ?? { taskId: event.taskId, description: '' }),
-          status: event.taskStatus,
-          summary: event.summary,
-          totalTokens: event.totalTokens ?? prev?.totalTokens ?? 0,
-          toolUses: event.toolUses ?? prev?.toolUses ?? 0,
-          durationMs: event.durationMs ?? prev?.durationMs ?? 0,
-        };
-        this.backgroundTasksBySession[sessionId] = { ...tasks3 };
-        const label = event.taskStatus === 'completed' ? 'completed' : event.taskStatus === 'failed' ? 'failed' : 'stopped';
-        this.pushMessage(sessionId, {
-          kind: 'system',
-          id: nextId(),
-          text: `Background task ${label}: ${event.summary || prev?.description || event.taskId}`,
-        });
-        // Auto-remove finished tasks after a short delay
-        {
-          const taskId = event.taskId;
-          setTimeout(() => {
-            this.removeBackgroundTask(sessionId, taskId);
-          }, 3000);
-        }
+      case 'background_tasks_changed':
+        if (this.sideEffects) backgroundTaskStore.reconcile(sessionId, event);
         break;
-      }
+
+      case 'task_notification':
+        this.onTaskNotification(sessionId, event);
+        break;
 
       case 'auth_status':
         if (event.authError) {
@@ -1190,6 +1852,22 @@ class MessageStore {
         }
         break;
 
+      case 'elicitation_request':
+        this.onElicitationRequest(sessionId, event);
+        break;
+
+      case 'limit_request':
+        this.onLimitRequest(sessionId, event);
+        break;
+
+      case 'limit_resolved':
+        this.onLimitResolved(sessionId, event);
+        break;
+
+      case 'elicitation_resolved':
+        this.markElicitationResolved(sessionId, event.requestId, event.action);
+        break;
+
       case 'elicitation_complete':
         // Informational — log to system messages
         this.pushMessage(sessionId, {
@@ -1210,58 +1888,546 @@ class MessageStore {
         }
         break;
 
-      case 'mode_sync':
-        // Session-sourced mode_sync (from stopQuery) is authoritative — always apply.
-        // SDK-sourced mode_sync may be stale (e.g. the SDK was in 'default' while
-        // the app showed 'acceptEdits', and emitted a stale 'default' after the
-        // user already cycled to 'plan').  Only apply SDK mode_sync when the user
-        // hasn't explicitly set a different mode since the last query start.
-        if (event.source === 'session') {
-          this.modeBySession[sessionId] = event.mode;
-          delete this.userExplicitMode[sessionId];
-        } else if (!this.userExplicitMode[sessionId]) {
-          this.modeBySession[sessionId] = event.mode;
+      case 'agent_changed': {
+        // The conversation runs on another agent from here. The last switch
+        // in the log wins, so a replay ends on the right one too.
+        const entry = sessionStore.sessions.find((s) => s.id === sessionId);
+        if (entry) entry.agentType = event.to;
+        if (this._replayBuffer === null) {
+          // The old agent's model and controls no longer apply; the new
+          // agent's arrive with its controls_sync.
+          delete this.controlsBySession[sessionId];
+          delete this.modelBySession[sessionId];
         }
-        // mode_sync is emitted by stopQuery after all old pending permissions
-        // have been resolved and before the new query loop starts.  Clear the
-        // stoppingSession flag here so permission_request events from the new
-        // query are not suppressed.  (system_init also clears it, but it
-        // arrives later — after the SDK initialises — leaving a window where
-        // early permission requests from the new query would be silently
-        // dropped, causing the agent to hang.)
-        if (this.stoppingSession[sessionId]) {
-          delete this.stoppingSession[sessionId];
-        }
-        break;
-
-      case 'rewind': {
-        // Snapshot edit history before truncation if conversation-only rewind
-        if (event.conversationOnly) {
-          this.preservedEditHistory[sessionId] = this.getLastTurnFileChanges(sessionId);
-        } else {
-          // Full rewind restores files — clear any preserved history
-          delete this.preservedEditHistory[sessionId];
-        }
-
-        // Truncate messages after the rewind point.
-        // Use getMessagesForMutation/setMessagesForMutation so this works
-        // during replay (when messages are in _replayBuffer, not messagesBySession).
-        const msgs = this.getMessagesForMutation(sessionId);
-        const rewindIdx = msgs.findLastIndex(
-          (m) => m.kind === 'user' && (m as ChatUserMessage).uuid === event.toMessageId,
-        );
-        if (rewindIdx >= 0) {
-          // Keep everything up to and including the rewind target user message
-          this.setMessagesForMutation(sessionId, msgs.slice(0, rewindIdx + 1));
-        }
-        this.isRunning[sessionId] = false;
-        this.streamingText[sessionId] = '';
-        this.streamingThinking[sessionId] = '';
-        // Refresh git status since files may have changed on disk
-        gitStatusStore.refresh(sessionId);
         break;
       }
+
+      case 'controls_sync':
+        this.controlsBySession[sessionId] = { descriptors: event.descriptors, values: event.values };
+        break;
+      case 'mode_sync':
+        this.onModeSync(sessionId, event);
+        break;
+
+      case 'rewind':
+        this.onRewind(sessionId, event);
+        break;
     }
+  }
+
+  // ── Per-event handlers (dispatched from ingestEvent) ─────────────────────
+  // The trivial event cases stay inline in ingestEvent; the multi-branch ones
+  // live here as named methods so each is readable and testable in isolation.
+
+  private onSystemInit(sessionId: string, event: Extract<AgentEvent, { type: 'system_init' }>) {
+    // If /clear was issued, wipe all messages for a fresh start
+    const wasCleared = !!this.pendingClear[sessionId];
+    if (wasCleared) {
+      this.setMessagesForMutation(sessionId, []);
+      this.streamingText[sessionId] = '';
+      delete this.usageBySession[sessionId];
+      delete this.turnsBySession[sessionId];
+      delete this.paginationBySession[sessionId];
+      this.orphanReplayEvents.delete(sessionId);
+      delete this.pendingClear[sessionId];
+      // Drop the checkpoint selection (its message is gone) but keep the
+      // list: main keeps the git refs and flags earlier turns as
+      // beforeClear so their files stay restorable. The refresh runs after
+      // clearEventHistory has captured the clear marker.
+      checkpointStore.clearSelection(sessionId);
+      // Truncate event history on disk so old messages don't reappear on restart
+      window.groveBench.clearEventHistory(sessionId)
+        .catch(() => {})
+        .finally(() => checkpointStore.scheduleRefresh(sessionId));
+    }
+    this.setIsReady(sessionId, true);
+    // Don't clear isRunning if the user already submitted a message that this
+    // (re)initialized query is about to process — otherwise the "working"
+    // indicator flickers off between system_init and the first streamed token.
+    if (!this.awaitingResponse[sessionId]) {
+      this.setIsRunning(sessionId, false);
+    }
+    delete this.stoppingSession[sessionId];
+    delete this.userExplicitMode[sessionId];
+    this.modelBySession[sessionId] = event.model;
+    this.systemInfoBySession[sessionId] = {
+      tools: event.tools ?? [],
+      agents: event.agents ?? [],
+      skills: event.skills ?? [],
+      slashCommands: event.slashCommands ?? [],
+      mcpServers: event.mcpServers ?? [],
+    };
+    this.pushMessage(sessionId, {
+      kind: 'system',
+      id: nextId(),
+      text: wasCleared
+        ? `Thread cleared. Connected to ${event.model}`
+        : `Connected to ${event.model}`,
+    });
+
+    // If a message was queued to send after clear, fire it now
+    const pendingMsg = this.pendingMessageAfterClear[sessionId];
+    if (wasCleared && pendingMsg) {
+      delete this.pendingMessageAfterClear[sessionId];
+      this.addUserMessage(sessionId, pendingMsg);
+      window.groveBench.sendMessage(sessionId, pendingMsg);
+    }
+
+    // Connected and idle (e.g. after a stop/restart or /clear) — send the
+    // next queued prompt. No-op while a turn is already pending or paused.
+    this.flushQueue(sessionId);
+  }
+
+  /** Fill in a tool call the agent reported earlier (see the tool_update event). */
+  private onToolUpdate(sessionId: string, event: Extract<AgentEvent, { type: 'tool_update' }>) {
+    const msgs = this.getMessagesForMutation(sessionId);
+    let changed = false;
+    const patch = {
+      ...(event.toolName !== undefined ? { toolName: event.toolName } : {}),
+      ...(event.toolInput !== undefined ? { toolInput: event.toolInput } : {}),
+      ...(event.toolCategory !== undefined ? { toolCategory: event.toolCategory } : {}),
+      ...(event.toolView !== undefined ? { toolView: event.toolView } : {}),
+    };
+    const updated = msgs.map((m) => {
+      // The permission prompt for the call shows the same details.
+      if ((m.kind === 'tool_call' || m.kind === 'permission') && m.toolUseId === event.toolUseId) {
+        changed = true;
+        return { ...m, ...patch };
+      }
+      return m;
+    });
+    if (changed) this.setMessagesForMutation(sessionId, updated);
+  }
+
+  /**
+   * A subagent's text, thinking or tool call, kept under the Agent call that
+   * started it for that subagent's panel. The conversation's own turn is left
+   * alone: no streaming flush, running state or activity, as a background
+   * subagent works on after the turn ends.
+   */
+  private onSubagentEvent(sessionId: string, parentToolUseId: string, event: AgentEvent) {
+    switch (event.type) {
+      case 'assistant_text':
+        this.pushMessage(sessionId, { kind: 'text', id: nextId(), text: event.text, uuid: event.uuid, parentToolUseId });
+        break;
+      case 'thinking':
+        if (!event.thinking.trim()) break;
+        this.pushMessage(sessionId, { kind: 'thinking', id: nextId(), thinking: event.thinking, parentToolUseId });
+        break;
+      case 'assistant_tool_use':
+        this.pushMessage(sessionId, {
+          kind: 'tool_call',
+          id: nextId(),
+          toolName: event.toolName,
+          toolInput: event.toolInput,
+          toolUseId: event.toolUseId,
+          uuid: event.uuid,
+          pending: true,
+          toolCategory: event.toolCategory,
+          ...(event.toolView ? { toolView: event.toolView } : {}),
+          parentToolUseId,
+        });
+        break;
+    }
+  }
+
+  private onToolResult(sessionId: string, event: Extract<AgentEvent, { type: 'tool_result' }>) {
+    // Build a single updated array that handles both the tool_call result
+    // and any matching permission/question resolution in one pass.
+    const msgs = this.getMessagesForMutation(sessionId);
+    let changed = false;
+    let matchedCall: ChatToolCallMessage | undefined;
+    const updated = msgs.map((m) => {
+      // Update the matching tool_call (also clear awaitingPermission)
+      if (m.kind === 'tool_call' && m.toolUseId === event.toolUseId) {
+        changed = true;
+        matchedCall = m;
+        return {
+          ...m, result: event.content, isError: event.isError, pending: false, awaitingPermission: false,
+          ...(event.images?.length ? { images: event.images } : {}),
+        };
+      }
+      // Fallback: if a tool_result exists, the tool ran, so the permission
+      // was allowed. permission_resolved is the primary path but this catches
+      // cases where that event is lost or from pre-refactor history.
+      if (m.kind === 'permission' && m.toolUseId === event.toolUseId && !m.resolved) {
+        changed = true;
+        return { ...m, resolved: true as const, decision: 'allow' as const };
+      }
+      if (m.kind === 'question' && m.toolUseId === event.toolUseId && !m.resolved) {
+        changed = true;
+        return { ...m, resolved: true as const };
+      }
+      return m;
+    });
+    if (changed) {
+      this.setMessagesForMutation(sessionId, updated);
+    } else if (this._replayBuffer !== null) {
+      this.noteOrphan(sessionId, event);
+    }
+    // Clear tool progress for this tool
+    const prog = this.toolProgressBySession[sessionId];
+    if (prog?.[event.toolUseId]) {
+      delete prog[event.toolUseId];
+      this.toolProgressBySession[sessionId] = { ...prog };
+    }
+    // Refresh git status after file-modifying tool calls
+    if (this.sideEffects && matchedCall && changesFiles(toolViewOf(matchedCall), matchedCall.toolCategory)) {
+      gitStatusStore.scheduleRefresh(sessionId, 300);
+    }
+  }
+
+  private onPermissionRequest(sessionId: string, event: Extract<AgentEvent, { type: 'permission_request' }>) {
+    // Drop stale permission requests from a dying query after the user
+    // clicked Stop. The new query will re-request if needed.
+    if (this.stoppingSession[sessionId]) return;
+
+    // Desktop notification for live requests only — replayed history must not
+    // re-notify. Main gates on window focus and settings.
+    if (this._replayBuffer === null) {
+      notifyOs('permission_request', sessionId, permissionNotificationBody(event));
+    }
+
+    this.flushStreamingText(sessionId);
+    // Mark the matching tool_call as awaiting permission so it doesn't
+    // render before the user has approved/denied.
+    const permMsgs = this.getMessagesForMutation(sessionId);
+    const toolIdx = permMsgs.findIndex(
+      (m) => m.kind === 'tool_call' && m.toolUseId === event.toolUseId,
+    );
+    if (toolIdx >= 0) {
+      const updated = { ...(permMsgs[toolIdx] as ChatToolCallMessage), awaitingPermission: true };
+      this.setMessagesForMutation(sessionId, [
+        ...permMsgs.slice(0, toolIdx),
+        updated,
+        ...permMsgs.slice(toolIdx + 1),
+      ]);
+    }
+    // Detect question tools: render as an interactive question, not a permission gate.
+    // The answer goes back as a deny carrying it (resolveQuestion), which is
+    // how an adapter hands it to its agent.
+    if (event.toolCategory === 'question') {
+      const questions: QuestionItem[] = (toolViewOf(event).questions ?? []).map((q) => ({
+        question: q.question,
+        header: q.header ?? '',
+        options: q.options.map((o) => ({ label: o.label, description: o.description ?? '' })),
+        multiSelect: q.multiSelect === true,
+      }));
+      this.pushMessage(sessionId, {
+        kind: 'question',
+        id: nextId(),
+        requestId: event.requestId,
+        toolUseId: event.toolUseId,
+        questions,
+        resolved: false,
+      });
+    } else {
+      this.pushMessage(sessionId, {
+        kind: 'permission',
+        id: nextId(),
+        requestId: event.requestId,
+        toolName: event.toolName,
+        toolInput: event.toolInput,
+        toolUseId: event.toolUseId,
+        resolved: false,
+        decisionReason: event.decisionReason,
+        suggestions: event.suggestions,
+        isPlanExecution: event.isPlanExecution,
+        toolCategory: event.toolCategory,
+        ...(event.toolView ? { toolView: event.toolView } : {}),
+        planText: event.planText,
+      });
+    }
+  }
+
+  private onElicitationRequest(sessionId: string, event: Extract<AgentEvent, { type: 'elicitation_request' }>) {
+    if (this.stoppingSession[sessionId]) return;
+    if (this._replayBuffer === null) {
+      notifyOs('permission_request', sessionId, `${event.request.serverName} needs your input`);
+    }
+    this.flushStreamingText(sessionId);
+    this.pushMessage(sessionId, {
+      kind: 'elicitation',
+      id: nextId(),
+      requestId: event.requestId,
+      request: event.request,
+      resolved: false,
+    });
+  }
+
+  private markElicitationResolved(sessionId: string, requestId: string, action: McpElicitationResponse['action']) {
+    const msgs = this.getMessagesForMutation(sessionId);
+    const idx = msgs.findIndex((m) => m.kind === 'elicitation' && m.requestId === requestId && !m.resolved);
+    if (idx < 0) return;
+    this.setMessagesForMutation(sessionId, [
+      ...msgs.slice(0, idx),
+      { ...(msgs[idx] as ChatElicitationMessage), resolved: true, action },
+      ...msgs.slice(idx + 1),
+    ]);
+  }
+
+  /** Answer an MCP elicitation. Main confirms with elicitation_resolved; when
+   *  it already ended (stopped or timed out) the block is closed here. */
+  async respondToElicitation(sessionId: string, requestId: string, response: McpElicitationResponse) {
+    let accepted = false;
+    try {
+      accepted = await window.groveBench.respondToElicitation(sessionId, requestId, response);
+    } catch { /* treated as already resolved */ }
+    if (!accepted) this.markElicitationResolved(sessionId, requestId, 'cancel');
+  }
+
+  private onLimitRequest(sessionId: string, event: Extract<AgentEvent, { type: 'limit_request' }>) {
+    if (this.stoppingSession[sessionId]) return;
+    if (this._replayBuffer === null) {
+      notifyOs('permission_request', sessionId, `Paused at your ${limitName(event.limit)}`);
+    }
+    this.flushStreamingText(sessionId);
+    this.pushMessage(sessionId, {
+      kind: 'limit',
+      id: nextId(),
+      requestId: event.requestId,
+      limit: event.limit,
+      used: event.used,
+      reachedAt: event.reachedAt,
+      resolved: false,
+    });
+  }
+
+  private markLimitResolved(sessionId: string, requestId: string, decision: 'continue' | 'stop', timedOut = false): boolean {
+    const msgs = this.getMessagesForMutation(sessionId);
+    const idx = msgs.findIndex((m) => m.kind === 'limit' && m.requestId === requestId && !m.resolved);
+    if (idx < 0) return false;
+    this.setMessagesForMutation(sessionId, [
+      ...msgs.slice(0, idx),
+      { ...(msgs[idx] as ChatLimitMessage), resolved: true, decision, ...(timedOut ? { timedOut: true } : {}) },
+      ...msgs.slice(idx + 1),
+    ]);
+    return true;
+  }
+
+  private onLimitResolved(sessionId: string, event: Extract<AgentEvent, { type: 'limit_resolved' }>) {
+    const changed = this.markLimitResolved(sessionId, event.requestId, event.decision, event.reason === 'timeout');
+    // Stopping at a limit is a stop like the Stop button's: hold queued
+    // prompts until the user resumes. Main is stopping the turn already.
+    if (changed && event.decision === 'stop' && this._replayBuffer === null && this.sideEffects) {
+      this.markSessionStopped(sessionId);
+    }
+  }
+
+  /** Continue past a limit or stop the turn. Main confirms with
+   *  limit_resolved; when the question already ended it is closed here. */
+  async respondToLimit(sessionId: string, requestId: string, decision: 'continue' | 'stop') {
+    let accepted = false;
+    try {
+      accepted = await window.groveBench.respondToLimit(sessionId, requestId, decision);
+    } catch { /* treated as already resolved */ }
+    if (!accepted) this.markLimitResolved(sessionId, requestId, 'stop');
+  }
+
+  private onPermissionResolved(sessionId: string, event: Extract<AgentEvent, { type: 'permission_resolved' }>) {
+    const msgs = this.getMessagesForMutation(sessionId);
+    let changed = false;
+    const updated = msgs.map((m) => {
+      if (m.kind === 'permission' && (m as ChatPermissionMessage).requestId === event.requestId && !m.resolved) {
+        changed = true;
+        return { ...m, resolved: true as const, decision: event.decision, ...(event.reason === 'timeout' ? { timedOut: true } : {}) };
+      }
+      if (m.kind === 'question' && m.requestId === event.requestId && !m.resolved) {
+        changed = true;
+        // On replay the optimistic resolveQuestion() update never ran, so the
+        // reply only exists on the event.
+        return {
+          ...m,
+          resolved: true as const,
+          ...(event.reason === 'timeout' ? { timedOut: true } : { response: m.response ?? event.message }),
+        };
+      }
+      if (m.kind === 'tool_call' && m.toolUseId === event.toolUseId && m.awaitingPermission) {
+        changed = true;
+        return { ...m, awaitingPermission: false };
+      }
+      return m;
+    });
+    if (changed) {
+      this.setMessagesForMutation(sessionId, updated);
+    } else if (this._replayBuffer !== null) {
+      this.noteOrphan(sessionId, event);
+    }
+  }
+
+  private onResult(sessionId: string, event: Extract<AgentEvent, { type: 'result' }>) {
+    // Desktop notification anchored to the SDK's authoritative end-of-turn
+    // event (live only) — a crashed or stopped session never produces one, so
+    // it can't claim a turn "finished" that actually died. Main gates on
+    // window focus and settings.
+    if (this._replayBuffer === null) {
+      notifyOs(
+        'turn_complete',
+        sessionId,
+        event.isError ? 'Agent turn ended with an error' : 'Agent finished a turn',
+      );
+    }
+
+    this.flushStreamingText(sessionId);
+    this.setIsRunning(sessionId, false);
+    delete this.awaitingResponse[sessionId];
+    this.activityBySession[sessionId] = { activity: 'idle' };
+    this.toolProgressBySession[sessionId] = {};
+    if (event.contextWindow) {
+      this.contextWindowBySession[sessionId] = event.contextWindow;
+    }
+    if (event.numTurns) {
+      this.turnsBySession[sessionId] = event.numTurns;
+    }
+    this.pushMessage(sessionId, {
+      kind: 'result',
+      id: nextId(),
+      subtype: event.subtype,
+      result: event.result,
+      totalCostUsd: event.totalCostUsd,
+      durationMs: event.durationMs,
+      isError: event.isError,
+      errors: event.errors,
+    });
+    // Background tasks are not resolved here: they outlive the turn (and an
+    // interrupt), and the SDK reports their end via task_notification /
+    // background_tasks_changed. Only process_exit drops them as stale.
+    if (this.sideEffects) gitStatusStore.scheduleRefresh(sessionId, 100);
+    // The age on its row counts from here, as main now saves (live only:
+    // an old turn played back from history isn't new activity).
+    if (this.sideEffects && this._replayBuffer === null) sessionStore.updateLastActive(sessionId);
+
+    // Turn finished — the agent is free for the next queued prompt.
+    this.flushQueue(sessionId);
+  }
+
+  private onUserMessage(sessionId: string, event: Extract<AgentEvent, { type: 'user_message' }>) {
+    // When replay-user-messages is enabled, the SDK replays user messages
+    // with UUIDs. We stamp the UUID onto the most recent user message
+    // that doesn't already have one. Text matching is unreliable because
+    // the SDK sees the full message (with @-ref file tags prepended) while
+    // the store has the display text. So we match by position: the most
+    // recent UUID-less user message is the one the SDK is replaying.
+    if (event.uuid) {
+      const msgs = this.getMessagesForMutation(sessionId);
+      const existingIdx = msgs.findLastIndex(
+        (m) => m.kind === 'user' && !(m as ChatUserMessage).uuid,
+      );
+      if (existingIdx >= 0) {
+        const updated = [...msgs];
+        const msg = updated[existingIdx] as ChatUserMessage;
+        // Main has saved the images: show them from disk and let go of the
+        // inline data. Only when every one was saved, so the two lists line up.
+        const saved = event.images?.length && event.images.length === msg.images?.length ? { images: event.images } : {};
+        // Files show what main saved, so one it couldn't save drops off.
+        const savedFiles = msg.attachments?.length ? { attachments: event.files ?? [] } : {};
+        // The time main logged, which the thread shows when reopened.
+        const sentAt = event.at !== undefined ? { sentAt: event.at } : {};
+        updated[existingIdx] = { ...msg, uuid: event.uuid, ...saved, ...savedFiles, ...sentAt };
+        this.setMessagesForMutation(sessionId, updated);
+        // Schedule checkpoint refresh so the Checkpoints tab picks up the new checkpoint
+        if (this.sideEffects) checkpointStore.scheduleRefresh(sessionId);
+        return;
+      }
+    }
+    // Replayed from history: the event holds the text as sent (file content
+    // blocks first), so rebuild what the chat showed when it was sent.
+    this.pushMessage(sessionId, { ...userMessage(event.text, event.images, event.files, event.at), uuid: event.uuid });
+    // Schedule checkpoint list refresh so the Checkpoints tab updates
+    if (event.uuid && this.sideEffects) {
+      checkpointStore.scheduleRefresh(sessionId);
+    }
+  }
+
+  private onTaskNotification(sessionId: string, event: Extract<AgentEvent, { type: 'task_notification' }>) {
+    // The scratch store for an older page only needs the wording, not to
+    // mark a long-finished task done again.
+    const { label, text } = this.sideEffects
+      ? backgroundTaskStore.notify(sessionId, event)
+      : { label: event.taskStatus === 'completed' ? 'completed' : event.taskStatus === 'failed' ? 'failed' : 'stopped', text: event.summary || event.taskId };
+    this.pushMessage(sessionId, {
+      kind: 'system',
+      id: nextId(),
+      text: `Background task ${label}: ${text}`,
+    });
+  }
+
+  private onModeSync(sessionId: string, event: Extract<AgentEvent, { type: 'mode_sync' }>) {
+    // Session-sourced mode_sync (from stopQuery) is authoritative — always apply.
+    // SDK-sourced mode_sync may be stale (e.g. the SDK was in 'default' while
+    // the app showed 'acceptEdits', and emitted a stale 'default' after the
+    // user already cycled to 'plan').  Only apply SDK mode_sync when the user
+    // hasn't explicitly set a different mode since the last query start.
+    if (event.source === 'session') {
+      this.modeBySession[sessionId] = event.mode;
+      delete this.userExplicitMode[sessionId];
+    } else if (!this.userExplicitMode[sessionId]) {
+      this.modeBySession[sessionId] = event.mode;
+    }
+    // mode_sync is emitted by stopQuery after all old pending permissions
+    // have been resolved and before the new query loop starts.  Clear the
+    // stoppingSession flag here so permission_request events from the new
+    // query are not suppressed.  (system_init also clears it, but it
+    // arrives later — after the SDK initialises — leaving a window where
+    // early permission requests from the new query would be silently
+    // dropped, causing the agent to hang.)
+    if (this.stoppingSession[sessionId]) {
+      delete this.stoppingSession[sessionId];
+    }
+  }
+
+  private onRewind(sessionId: string, event: Extract<AgentEvent, { type: 'rewind' }>) {
+    // Files-only restore (a checkpoint from before /clear): the conversation
+    // is untouched, only the working tree moved.
+    if (event.filesOnly) {
+      if (this.sideEffects) {
+        gitStatusStore.refresh(sessionId);
+        checkpointStore.scheduleRefresh(sessionId);
+      }
+      return;
+    }
+    // The suggestion followed a turn the rewind takes away.
+    this.clearPromptSuggestion(sessionId);
+    // Snapshot edit history before truncation if conversation-only rewind
+    if (event.conversationOnly) {
+      this.preservedEditHistory[sessionId] = this.getLastTurnFileChanges(sessionId);
+    } else {
+      // Full rewind restores files — clear any preserved history
+      delete this.preservedEditHistory[sessionId];
+    }
+
+    // Truncate messages after the rewind point.
+    // Use getMessagesForMutation/setMessagesForMutation so this works
+    // during replay (when messages are in _replayBuffer, not messagesBySession).
+    const msgs = this.getMessagesForMutation(sessionId);
+    const rewindIdx = msgs.findLastIndex(
+      (m) => m.kind === 'user' && (m as ChatUserMessage).uuid === event.toMessageId,
+    );
+    if (rewindIdx >= 0) {
+      // Remove the rewind target message and place its text into the input
+      const rewindMsg = msgs[rewindIdx] as ChatUserMessage;
+      this.setMessagesForMutation(sessionId, msgs.slice(0, rewindIdx));
+      // Live, the prompt box may be showing: it keeps its own copy of the
+      // text, so tell it too. A replayed rewind is old news: only the draft.
+      if (this._replayBuffer === null && this.sideEffects) this.replacePrompt(sessionId, rewindMsg.text);
+      else this.setDraft(sessionId, rewindMsg.text);
+      this.setActiveTab(sessionId, 'activity');
+    } else if (this._replayBuffer === null && this.sideEffects) {
+      // A live rewind to a message in a history page not loaded yet: every
+      // loaded message comes after it, and main has cut them all. Show the
+      // now shorter history from its end instead.
+      const text = checkpointStore.getCheckpoints(sessionId).find((c) => c.uuid === event.toMessageId)?.text;
+      if (text) this.replacePrompt(sessionId, text);
+      this.setActiveTab(sessionId, 'activity');
+      void this.reloadHistoryTail(sessionId);
+    }
+    this.isRunning[sessionId] = false;
+    this.streamingText[sessionId] = '';
+    this.streamingThinking[sessionId] = '';
+    // A rewind rewrites history; queued follow-ups may no longer make sense.
+    this.pauseQueue(sessionId);
+    // Refresh git status since files may have changed on disk
+    if (this.sideEffects) gitStatusStore.refresh(sessionId);
   }
 
   /** Send a slash command (e.g. /compact, /clear, /rewind) */
@@ -1275,19 +2441,43 @@ class MessageStore {
     if (trimmed === '/clear') {
       this.pendingClear[sessionId] = true;
     }
-    // Sync mode when user issues mode-changing slash commands
-    if (trimmed === '/plan') {
+    // Like a prompt, a command moves the thread on from the suggestion.
+    this.clearPromptSuggestion(sessionId);
+    // Sync mode when user issues mode-changing slash commands, for an agent
+    // with Plan mode (Claude Code's). To another agent they are only text.
+    // Before its controls have loaded, the agent is taken to have it, as
+    // before agents could differ.
+    const modeControl = this.getControlDescriptors(sessionId).find((d) => d.id === CONTROL_IDS.permissionMode);
+    const hasPlanMode = !modeControl || modeControl.options.some((o) => o.value === 'plan');
+    if (hasPlanMode && trimmed === '/plan') {
       this.modeBySession[sessionId] = 'plan';
-    } else if (trimmed === '/code') {
+    } else if (hasPlanMode && trimmed === '/code') {
       this.modeBySession[sessionId] = 'default';
     }
     this.pushMessage(sessionId, {
       kind: 'user',
       id: nextId(),
       text: command,
+      sentAt: Date.now(),
     });
     this.setIsRunning(sessionId, true);
+    this.awaitingResponse[sessionId] = true;
     window.groveBench.sendMessage(sessionId, command);
+  }
+
+  /** The agent stopped with a /clear still pending: it was not delivered (main
+   *  reports that with error + process_exit), or the agent ended before the
+   *  cleared conversation started. Either way it didn't happen, so the next
+   *  system_init (a restart or wake, maybe much later) must not wipe the chat.
+   *  A message meant for after the clear goes back to the prompt. */
+  private dropPendingClear(sessionId: string) {
+    if (!this.pendingClear[sessionId]) return;
+    delete this.pendingClear[sessionId];
+    const message = this.pendingMessageAfterClear[sessionId];
+    if (message) {
+      delete this.pendingMessageAfterClear[sessionId];
+      this.appendToPrompt(sessionId, message);
+    }
   }
 
   /** Clear the conversation and send a message once the new session is ready. */
@@ -1301,8 +2491,10 @@ class MessageStore {
    *  tool error output, which is how it receives the user's answer. */
   resolveQuestion(sessionId: string, requestId: string, response: string, selectedLabels?: string[]) {
     const msgs = this.messagesBySession[sessionId] ?? [];
-    const idx = msgs.findIndex(
-      (m) => m.kind === 'question' && m.requestId === requestId,
+    // The open one: older history can hold an answered question with the
+    // same id (ids once restarted with the conversation's process).
+    const idx = msgs.findLastIndex(
+      (m) => m.kind === 'question' && m.requestId === requestId && !m.resolved,
     );
     if (idx >= 0) {
       const updated = { ...(msgs[idx] as ChatQuestionMessage) };
@@ -1398,7 +2590,7 @@ class MessageStore {
     const permDecision: PermissionDecision = {
       requestId,
       behavior: decision,
-      message: decision === 'deny' ? (opts?.message || 'User denied permission') : undefined,
+      message: decision === 'deny' ? (opts?.message || DEFAULT_DENY_MESSAGE) : undefined,
       updatedPermissions: opts?.updatedPermissions,
     };
 
@@ -1431,6 +2623,9 @@ class MessageStore {
 
   /** Whether the rewind dialog is open for a session */
   rewindDialogOpen = $state<Record<string, boolean>>({});
+  /** Message the rewind dialog should open preselected on (set when the
+   *  dialog is opened from a message in the Activity thread). */
+  rewindDialogTarget = $state<Record<string, string | null>>({});
 
   /** Get available rewind points (user messages with UUIDs) for a session */
   getRewindPoints(sessionId: string): { uuid: string; text: string; index: number }[] {
@@ -1441,7 +2636,7 @@ class MessageStore {
       if (m.kind === 'user' && (m as ChatUserMessage).uuid) {
         points.push({
           uuid: (m as ChatUserMessage).uuid!,
-          text: m.text,
+          text: userMessageLabel(m),
           index: i,
         });
       }
@@ -1452,19 +2647,27 @@ class MessageStore {
 
   /** Execute a rewind to a specific user message checkpoint.
    *  When conversationOnly is true, only truncate messages without restoring files. */
-  async executeRewind(sessionId: string, userMessageId: string, options?: { conversationOnly?: boolean }): Promise<void> {
+  async executeRewind(sessionId: string, userMessageId: string, options?: import('../../shared/types.js').RewindOptions): Promise<void> {
     await window.groveBench.rewindSession(sessionId, userMessageId, options);
     // The rewind event from main will handle message truncation
   }
 
-  /** Open the rewind dialog for a session */
-  openRewindDialog(sessionId: string) {
+  /** Open the rewind dialog for a session, optionally preselecting the
+   *  checkpoint of one user message (its uuid). */
+  openRewindDialog(sessionId: string, targetUuid?: string) {
+    this.rewindDialogTarget[sessionId] = targetUuid ?? null;
     this.rewindDialogOpen[sessionId] = true;
   }
 
   /** Close the rewind dialog for a session */
   closeRewindDialog(sessionId: string) {
     this.rewindDialogOpen[sessionId] = false;
+    this.rewindDialogTarget[sessionId] = null;
+  }
+
+  /** The message the rewind dialog was opened on, if any. */
+  getRewindDialogTarget(sessionId: string): string | null {
+    return this.rewindDialogTarget[sessionId] ?? null;
   }
 
   /** Clear all in-memory state for a session so history can be replayed cleanly.
@@ -1480,11 +2683,76 @@ class MessageStore {
     this.streamingThinking[sessionId] = '';
     this.activityBySession[sessionId] = { activity: 'idle' };
     this.toolProgressBySession[sessionId] = {};
-    delete this.backgroundTasksBySession[sessionId];
+    backgroundTaskStore.clear(sessionId);
+    this.sourceIndexBySession.delete(sessionId);
+    this.orphanReplayEvents.delete(sessionId);
+    // The replay that follows sets it again; an older page still loading
+    // for the old history sees it gone and is dropped.
+    delete this.paginationBySession[sessionId];
     delete this.stoppingSession[sessionId];
     delete this.userExplicitMode[sessionId];
-    // Preserve isRunning and isReady — caller controls these based on history/status
+    this.streamBuf.delete(sessionId);
+    // Preserve isRunning and isReady — caller controls these based on main's
+    // turn state and the session's status (applyTurnState). And
+    // awaitingResponse: a prompt sent before the history loads (a new
+    // thread's first) still waits for its reply, unless the page ends its
+    // turn (stillAwaitingResponse). A pane closing with its thread drops it
+    // (dropAwaitingResponse).
   }
+
+  /** Tear down ALL state for a session that is being permanently destroyed.
+   *  Unlike clearSession (which clears history for replay but keeps the session
+   *  alive), this unsubscribes the IPC listener, cancels pending timers, and
+   *  deletes every per-session entry so nothing leaks for the app's lifetime. */
+  destroySession(sessionId: string) {
+    this.unsubscribe(sessionId);
+
+    // Delete every per-session entry. Reassign each $state record so Svelte
+    // reliably drops derived subscriptions referencing this session.
+    for (const record of this.perSessionRecords()) delete record[sessionId];
+    for (const map of this.perSessionMaps()) map.delete(sessionId);
+
+    // Extracted stores own their own per-session teardown.
+    backgroundTaskStore.destroy(sessionId);
+    rateLimitStore.destroy(sessionId);
+    threadItemsStore.destroy(sessionId);
+  }
+
+  /** destroySession for every conversation the store holds anything for.
+   *  Tests share this one store, so each starts from a clean one. */
+  destroyAllSessions() {
+    const ids = new Set<string>();
+    for (const record of this.perSessionRecords()) for (const id of Object.keys(record)) ids.add(id);
+    for (const map of this.perSessionMaps()) for (const id of map.keys()) ids.add(id);
+    for (const id of this.cleanups.keys()) ids.add(id);
+    for (const id of ids) this.destroySession(id);
+  }
+
+  /** Every record keyed by session id, reactive and plain. */
+  private perSessionRecords(): Record<string, unknown>[] {
+    return [
+      this.messagesBySession, this.streamingText, this.streamingThinking,
+      this.isRunning, this.pendingClear, this.activityBySession,
+      this.toolProgressBySession, this.isReady, this.historyLoaded, this.modelBySession,
+      this.modeBySession, this.controlsBySession, this.usageBySession,
+      this.systemInfoBySession, this.mcpLiveBySession, this.contextWindowBySession, this.turnsBySession,
+      this.promptSuggestionBySession,
+      this.activeTabBySession, this.viewModeBySession,
+      this.draftBySession, this.attachmentsBySession, this.preservedEditHistory, this.paginationBySession,
+      this.rewindDialogOpen, this.rewindDialogTarget, this.pendingJumpBySession, this.promptInsertBySession,
+      this.queuedBySession, this.queuePausedBySession,
+      // Plain (non-reactive) bookkeeping
+      this.pendingMessageAfterClear, this.stoppingSession, this.awaitingResponse, this.userExplicitMode,
+    ] as Record<string, unknown>[];
+  }
+
+  private perSessionMaps(): Map<string, unknown>[] {
+    return [this.sourceIndexBySession, this.orphanReplayEvents, this.streamBuf];
+  }
+
+  /** Live events that arrived while a pane was loading the history page,
+   *  by session (see holdLiveEvents). */
+  private heldLive = new Map<string, AgentEvent[]>();
 
   /** Subscribe to events from the main process for a session */
   subscribe(sessionId: string) {
@@ -1497,19 +2765,66 @@ class MessageStore {
       this.setIsReady(sessionId, false);
     }
     const cleanup = window.groveBench.onAgentEvent(sessionId, (event) => {
-      this.ingestEvent(sessionId, event);
+      const held = this.heldLive.get(sessionId);
+      if (held) held.push(event);
+      else this.ingestEvent(sessionId, event);
     });
     this.cleanups.set(sessionId, cleanup);
   }
 
+  /** Hold this session's live events instead of showing them, while its
+   *  history page loads. Shown straight away they would come first, and then
+   *  again when the page (which has them too) is replayed. */
+  holdLiveEvents(sessionId: string) {
+    this.heldLive.set(sessionId, []);
+  }
+
+  /** Stop holding and show the held events the replayed page doesn't have.
+   *  Without a page (it failed to load), show them all. */
+  releaseLiveEvents(sessionId: string, page: readonly AgentEvent[] | null) {
+    const held = this.heldLive.get(sessionId);
+    this.heldLive.delete(sessionId);
+    if (!held?.length) return;
+    // A turn that finished while the page loaded is in the page, so its
+    // result was replayed (not counted as activity) and its live copy is
+    // dropped here. It did finish just now: count it, or the idle loop goes
+    // by the lastActiveAt from before the turn and sleeps the thread at once.
+    if (this.sideEffects && held.some((e) => e.type === 'result')) sessionStore.updateLastActive(sessionId);
+    for (const event of page ? liveEventsMissingFrom(page, held) : held) {
+      this.ingestEvent(sessionId, event);
+    }
+    // Dropped above as stale like other live-only events, but a suggestion
+    // stands until the next turn (ingesting it checks that) and the page
+    // never has it.
+    const suggestion = page && held.findLast((e) => e.type === 'prompt_suggestion');
+    if (suggestion) this.ingestEvent(sessionId, suggestion);
+  }
+
   /** Unsubscribe from session events */
   unsubscribe(sessionId: string) {
+    this.heldLive.delete(sessionId);
     const cleanup = this.cleanups.get(sessionId);
     if (cleanup) {
       cleanup();
       this.cleanups.delete(sessionId);
     }
     window.groveBench.offAgentEvent(sessionId);
+  }
+
+  /** A replayed turn's end (its result, or the agent's exit): the tool
+   *  calls before it that nothing answered were cut off then, whatever main
+   *  says of the turn under way now (applyTurnState). Not those of a
+   *  subagent working on in the background, which outlives the turn, unless
+   *  the agent exited (`exited`). */
+  private settleReplayedToolCalls(sessionId: string, exited: boolean) {
+    const buffer = this._replayBuffer;
+    if (!buffer || this._replaySessionId !== sessionId) return;
+    for (let i = 0; i < buffer.length; i++) {
+      const m = buffer[i];
+      if (m.kind !== 'tool_call' || !m.pending) continue;
+      if (!exited && m.parentToolUseId && backgroundTaskStore.isRunningFor(sessionId, m.parentToolUseId)) continue;
+      buffer[i] = { ...m, pending: false };
+    }
   }
 
   /** After replaying event history, mark any tool_calls still pending as resolved.
@@ -1531,55 +2846,55 @@ class MessageStore {
     }
   }
 
-  /** Remove background tasks that are still marked 'running' after the session
-   *  has gone idle. This handles cases where the agent exited without sending
-   *  a task_notification for in-flight background tasks. */
-  resolveStaleBackgroundTasks(sessionId: string) {
-    if (this.getIsRunning(sessionId)) return;
-    const tasks = this.backgroundTasksBySession[sessionId];
-    if (!tasks) return;
-    const remaining: Record<string, (typeof tasks)[string]> = {};
-    let changed = false;
-    for (const [id, task] of Object.entries(tasks)) {
-      if (task.status === 'running') {
-        changed = true; // drop stale running tasks
-      } else {
-        remaining[id] = task;
-      }
-    }
-    if (changed) {
-      this.backgroundTasksBySession[sessionId] = Object.keys(remaining).length > 0 ? remaining : {};
-    }
+
+  /**
+   * After the pane replays the newest history page: set the turn state from
+   * main (`turn`, read with the page) rather than from how the page ends. A
+   * history cut off mid-turn (the app quit or was killed then) ends just
+   * like a turn still running, and left the thread working and its prompts
+   * open until its next turn. Live events held while the page loaded are
+   * shown after this (releaseLiveEvents), so a turn or a prompt that came
+   * after main answered still shows.
+   *
+   * `promptSent`: the user sent a prompt whose turn the page doesn't end
+   * (stillAwaitingResponse): main didn't have it when it answered (a new
+   * thread's first, sent once main has the thread, after the pane asked for
+   * the page; or one sent while the page loaded), or is still on it. The
+   * thread is working on that one. Replayed tool calls a turn's end cut off
+   * are settled during the replay (settleReplayedToolCalls), whatever this
+   * says.
+   */
+  applyTurnState(sessionId: string, turn: ThreadTurnState, promptSent: boolean) {
+    const running = turn.midTurn || promptSent;
+    this.setIsRunning(sessionId, running);
+    // Replayed results and exits clear it, but they are older than its turn.
+    if (promptSent) this.awaitingResponse[sessionId] = true;
+    if (!running) this.activityBySession[sessionId] = { activity: 'idle' };
+    this.resolveStaleToolCalls(sessionId);
+    this.resolveReplayedPermissions(sessionId, new Set(turn.pendingPromptIds));
   }
 
-  /** After replaying event history, resolve any permission/question messages
-   *  that were not resolved by a permission_resolved or tool_result event.
-   *  If the session is still running, leave them unresolved (genuinely pending).
-   *  Otherwise, mark as denied (timeout/stop/destroy happened before replay). */
-  resolveReplayedPermissions(sessionId: string) {
-    if (this.getIsRunning(sessionId)) return;
+  /** After replaying event history, settle the permission prompts,
+   *  questions, MCP questions and limit questions it left unanswered, except
+   *  those main still waits on (`stillPending`, by requestId). The rest
+   *  ended without an answer in the log: the agent stopped, the thread was
+   *  closed, or the app quit or was killed, while they waited. */
+  resolveReplayedPermissions(sessionId: string, stillPending: ReadonlySet<string>) {
     const msgs = this.messagesBySession[sessionId] ?? [];
-    let changed = false;
-    const updated = msgs.map((m) => {
-      if (m.kind === 'permission' && !m.resolved) {
-        changed = true;
-        return { ...m, resolved: true as const, decision: 'deny' as const };
-      }
-      if (m.kind === 'question' && !m.resolved) {
-        changed = true;
-        return { ...m, resolved: true as const };
-      }
-      if (m.kind === 'tool_call' && m.awaitingPermission) {
-        changed = true;
-        return { ...m, awaitingPermission: false };
-      }
-      return m;
-    });
-    if (changed) {
+    const updated = settlePrompts(msgs, (id) => stillPending.has(id));
+    if (updated !== msgs) {
       this.messagesBySession[sessionId] = updated;
     }
   }
 
+}
+
+/** User-facing body for a blocked-agent notification — plan approvals and
+ *  questions get plain language instead of internal tool names. */
+function permissionNotificationBody(event: Extract<AgentEvent, { type: 'permission_request' }>): string {
+  if (event.isPlanExecution) return 'A plan is ready for review';
+  if (event.toolCategory === 'question') return 'Agent is waiting for an answer';
+  return `The agent ${approvalRequest(event.toolName, toolViewOf(event))}`;
 }
 
 export const messageStore = new MessageStore();

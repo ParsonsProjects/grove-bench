@@ -7,6 +7,12 @@ export const app = {
   isReady: vi.fn(() => true),
   on: vi.fn(),
   quit: vi.fn(),
+  setBadgeCount: vi.fn(),
+  dock: { setBadge: vi.fn() },
+};
+
+export const nativeImage = {
+  createFromDataURL: vi.fn(() => ({ isEmpty: () => false })),
 };
 
 export const BrowserWindow = vi.fn().mockImplementation(() => ({
@@ -21,6 +27,22 @@ export const BrowserWindow = vi.fn().mockImplementation(() => ({
     on: vi.fn(),
   },
 }));
+
+export const WebContentsView = vi.fn();
+
+export const Menu = Object.assign(vi.fn(), {
+  buildFromTemplate: vi.fn(() => ({ popup: vi.fn() })),
+});
+
+export const clipboard = {
+  writeText: vi.fn(),
+  readText: vi.fn(() => ''),
+};
+
+export const session = {
+  fromPartition: vi.fn(),
+  defaultSession: {},
+};
 
 export const ipcMain = {
   handle: vi.fn(),
@@ -37,11 +59,27 @@ export const ipcRenderer = {
 
 export const dialog = {
   showOpenDialog: vi.fn(),
+  showSaveDialog: vi.fn(),
   showMessageBox: vi.fn(),
 };
 
 export const shell = {
   openExternal: vi.fn(),
+  openPath: vi.fn(async () => ''),
+  showItemInFolder: vi.fn(),
+};
+
+export const protocol = {
+  registerSchemesAsPrivileged: vi.fn(),
+  handle: vi.fn(),
+};
+
+// Reversible stand-in for OS encryption so tests can check nothing is stored
+// in plain text.
+export const safeStorage = {
+  isEncryptionAvailable: vi.fn(() => true),
+  encryptString: vi.fn((plain: string) => Buffer.from(`enc:${plain}`).reverse()),
+  decryptString: vi.fn((cipher: Buffer) => Buffer.from(cipher).reverse().toString().replace(/^enc:/, '')),
 };
 
 export const nativeTheme = {
@@ -54,13 +92,45 @@ export const contextBridge = {
   exposeInMainWorld: vi.fn(),
 };
 
+export const Notification = Object.assign(
+  vi.fn(function (this: Record<string, unknown>, opts: unknown) {
+    this.opts = opts;
+    this.show = vi.fn();
+    this.on = vi.fn();
+  }),
+  { isSupported: vi.fn(() => true) },
+);
+
+export const contentTracing = {
+  startRecording: vi.fn(),
+  stopRecording: vi.fn(),
+};
+
 export default {
   app,
   BrowserWindow,
+  WebContentsView,
+  Menu,
+  clipboard,
+  session,
   ipcMain,
   ipcRenderer,
   dialog,
   shell,
   nativeTheme,
   contextBridge,
+  Notification,
+  contentTracing,
+};
+
+// Network requests made from main (e.g. checking an API key). Tests that
+// care pass their own fetch; this keeps anything else off the network.
+export const net = {
+  fetch: vi.fn(async () => ({ ok: false, status: 0 })),
+};
+
+// The process host (process-host.ts). Tests never start it: commands run in
+// the test's own process, where execa mocks see them.
+export const utilityProcess = {
+  fork: vi.fn(),
 };

@@ -14,26 +14,79 @@
   }
 </script>
 
+<!-- A bar in the app's own look (its dark theme): dark, square, 1px edges,
+     a brand green button. -->
 {#if visible}
-  <div class="fixed bottom-0 left-0 right-0 z-[100] border-t border-border bg-card/95 backdrop-blur-sm">
-    <div class="max-w-5xl mx-auto px-6 py-4 flex flex-col sm:flex-row items-center justify-between gap-3">
-      <p class="text-xs text-muted-foreground text-center sm:text-left">
-        We use analytics to understand how visitors find Grove Bench. No personal data is collected.
-      </p>
-      <div class="flex items-center gap-2 shrink-0">
-        <button
-          onclick={handleDecline}
-          class="px-3 py-1.5 text-xs border border-border text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-        >
-          Decline
-        </button>
-        <button
-          onclick={handleAccept}
-          class="px-3 py-1.5 text-xs bg-primary text-primary-foreground font-medium hover:brightness-110 transition-all cursor-pointer"
-        >
-          Accept
-        </button>
+  <div class="consent" role="region" aria-label="Analytics consent">
+    <div class="in">
+      <p>We use analytics to understand how visitors find Grove Bench. No personal data is collected.</p>
+      <div class="btns">
+        <button type="button" class="decline" onclick={handleDecline}>Decline</button>
+        <button type="button" class="accept" onclick={handleAccept}>Accept</button>
       </div>
     </div>
   </div>
 {/if}
+
+<style>
+  .consent {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 100;
+    color: var(--night-foreground);
+    background: color-mix(in srgb, var(--night-card) 96%, transparent);
+    border-top: 1px solid var(--night-border);
+    backdrop-filter: blur(6px);
+    font-family: var(--font-mono);
+  }
+  .in {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px 20px;
+    max-width: 1120px;
+    margin: 0 auto;
+    padding: 14px 20px;
+  }
+  p {
+    flex: 1 1 320px;
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: var(--night-muted-foreground);
+  }
+  .btns {
+    display: flex;
+    gap: 8px;
+  }
+  button {
+    min-height: 34px;
+    padding: 6px 14px;
+    font: inherit;
+    font-size: 12.5px;
+    cursor: pointer;
+    border: 1px solid var(--night-input);
+  }
+  .decline {
+    color: var(--night-muted-foreground);
+    background: transparent;
+  }
+  .decline:hover {
+    color: var(--night-bright);
+  }
+  .accept {
+    font-weight: 600;
+    color: var(--canopy);
+    background: var(--leaf);
+    border-color: var(--leaf);
+  }
+  .accept:hover {
+    filter: brightness(1.1);
+  }
+  button:focus-visible {
+    outline: 2px solid var(--leaf);
+    outline-offset: 2px;
+  }
+</style>

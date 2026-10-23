@@ -4,6 +4,14 @@
   import { FitAddon } from '@xterm/addon-fit';
   import { WebLinksAddon } from '@xterm/addon-web-links';
   import { terminalStore } from '../stores/terminal.svelte.js';
+  import { messageStore } from '../stores/messages.svelte.js';
+  import { collectTailLines, formatTerminalContext, DEFAULT_TAIL_LINES } from '$lib/terminal-context.js';
+  import { openLink } from '$lib/preview-links.js';
+  import { terminalColors, prefersLight, onColorSchemeChange } from '$lib/terminal-theme.js';
+  import { FONTS } from '../../shared/brand.js';
+  import { PanelHeader } from '$lib/components/ui/panel-header/index.js';
+  import { Button } from '$lib/components/ui/button/index.js';
+  import { Pulse } from '$lib/components/ui/pulse/index.js';
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -11,6 +19,15 @@
   let terminal: Terminal | null = null;
   let fitAddon: FitAddon | null = null;
   let resizeObserver: ResizeObserver | null = null;
+  // Recolour the terminal when the Theme setting or Windows switches theme.
+  let colors = $state.raw(terminalColors(prefersLight()));
+  const stopSchemeListener = onColorSchemeChange((light) => {
+    colors = terminalColors(light);
+    if (terminal) {
+      terminal.options.theme = colors.theme;
+      terminal.options.minimumContrastRatio = colors.minimumContrastRatio;
+    }
+  });
 
   let isAlive = $derived(terminalStore.isAlive(sessionId));
 
@@ -21,29 +38,10 @@
       cursorBlink: true,
       cursorStyle: 'block',
       fontSize: 13,
-      fontFamily: "'JetBrains Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace",
-      theme: {
-        background: '#1f1f1f',
-        foreground: '#cccccc',
-        cursor: '#cccccc',
-        selectionBackground: '#04395e',
-        black: '#000000',
-        red: '#cd3131',
-        green: '#0dbc79',
-        yellow: '#e5e510',
-        blue: '#2472c8',
-        magenta: '#bc3fbc',
-        cyan: '#11a8cd',
-        white: '#e5e5e5',
-        brightBlack: '#666666',
-        brightRed: '#f14c4c',
-        brightGreen: '#23d18b',
-        brightYellow: '#f5f543',
-        brightBlue: '#3b8eea',
-        brightMagenta: '#d670d6',
-        brightCyan: '#29b8db',
-        brightWhite: '#e5e5e5',
-      },
+      // The app's own face, bundled (styles/fonts.ts). The window is drawn
+      // in it before any terminal opens, so xterm measures the loaded font.
+      fontFamily: FONTS.mono,
+      ...colors,
       allowProposedApi: true,
       scrollback: 10000,
     });
@@ -51,8 +49,8 @@
     fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
 
-    const webLinksAddon = new WebLinksAddon((_event, uri) => {
-      window.groveBench.openExternal(uri);
+    const webLinksAddon = new WebLinksAddon((event, uri) => {
+      openLink(uri, event);
     });
     terminal.loadAddon(webLinksAddon);
 
@@ -91,13 +89,11 @@
   }
 
   async function ensurePty() {
-    const alive = await terminalStore.checkAlive(sessionId);
-    if (!alive) {
-      await terminalStore.spawn(sessionId);
-      // After spawning, send initial resize
-      if (terminal) {
-        terminalStore.resize(sessionId, terminal.cols, terminal.rows);
-      }
+    const wasAlive = terminalStore.isAlive(sessionId);
+    const ok = await terminalStore.ensureAlive(sessionId);
+    if (ok && !wasAlive && terminal) {
+      // Freshly spawned (or first seen): send the current dimensions
+      terminalStore.resize(sessionId, terminal.cols, terminal.rows);
     }
   }
 
@@ -117,6 +113,21 @@
     terminal?.clear();
   }
 
+  /** Attach the terminal selection (or the tail of the scrollback) to the
+   *  prompt as fenced context, and jump to the Activity tab to send it. */
+  function handleAttachToPrompt() {
+    if (!terminal) return;
+    const selection = terminal.getSelection();
+    const selected = selection.trim().length > 0;
+    const raw = selected ? selection : collectTailLines(terminal.buffer.active, DEFAULT_TAIL_LINES).join('\n');
+    const context = formatTerminalContext(raw, { selected });
+    if (!context) return;
+    // The prompt editor is not mounted while the Terminal tab is showing, so
+    // go through the draft as well as the live insert request.
+    messageStore.appendToPrompt(sessionId, context);
+    messageStore.setActiveTab(sessionId, 'activity');
+  }
+
   onMount(async () => {
     terminalStore.subscribe(sessionId);
     createTerminal();
@@ -124,6 +135,7 @@
   });
 
   onDestroy(() => {
+    stopSchemeListener();
     resizeObserver?.disconnect();
     resizeObserver = null;
     terminal?.dispose();
@@ -135,46 +147,43 @@
 
 <div class="flex flex-col h-full">
   <!-- Terminal toolbar -->
-  <div class="border-b border-border flex items-center gap-2 px-3 py-1 shrink-0 bg-card/50">
-    <span class="text-[10px] text-muted-foreground flex items-center gap-1.5">
+  <PanelHeader>
+    <span class="text-micro text-muted-foreground flex items-center gap-1.5">
       {#if isAlive}
-        <span class="inline-block w-1.5 h-1.5 bg-green-500"></span>
+        <Pulse size="xs" motion="none" />
         Running
       {:else}
-        <span class="inline-block w-1.5 h-1.5 bg-muted-foreground/50"></span>
+        <Pulse tone="muted" size="xs" motion="none" />
         Stopped
       {/if}
     </span>
-    <div class="flex-1"></div>
-    {#if isAlive}
-      <button
-        onclick={handleKill}
-        class="text-[10px] px-2 py-0.5 border border-destructive text-destructive hover:bg-destructive/10 transition-colors"
-        title="Kill terminal process"
+    {#snippet actions()}
+      <Button
+        size="2xs"
+        variant="subtle"
+        onclick={handleAttachToPrompt}
+        title="Attach the selected text (or the last {DEFAULT_TAIL_LINES} lines of output) to the next message"
       >
-        Kill
-      </button>
-    {/if}
-    <button
-      onclick={handleRestart}
-      class="text-[10px] px-2 py-0.5 border border-border text-muted-foreground hover:text-foreground hover:border-muted-foreground/50 transition-colors"
-      title="Restart terminal"
-    >
-      Restart
-    </button>
-    <button
-      onclick={handleClear}
-      class="text-[10px] px-2 py-0.5 border border-border text-muted-foreground hover:text-foreground hover:border-muted-foreground/50 transition-colors"
-      title="Clear terminal output"
-    >
-      Clear
-    </button>
-  </div>
+        To prompt
+      </Button>
+      {#if isAlive}
+        <Button size="2xs" variant="outline-destructive" onclick={handleKill} title="Kill terminal process">
+          Kill
+        </Button>
+      {/if}
+      <Button size="2xs" variant="subtle" onclick={handleRestart} title="Restart terminal">
+        Restart
+      </Button>
+      <Button size="2xs" variant="subtle" onclick={handleClear} title="Clear terminal output">
+        Clear
+      </Button>
+    {/snippet}
+  </PanelHeader>
 
   <!-- xterm.js container -->
   <div
     class="flex-1 overflow-hidden"
     bind:this={containerEl}
-    style="background: #1f1f1f;"
+    style="background: {colors.theme.background};"
   ></div>
 </div>

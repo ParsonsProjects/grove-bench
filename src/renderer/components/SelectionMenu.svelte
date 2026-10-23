@@ -1,0 +1,144 @@
+<script lang="ts">
+  import { messageStore } from '../stores/messages.svelte.js';
+  import { store } from '../stores/sessions.svelte.js';
+  import { selectionIn } from '$lib/activity-menu.js';
+  import { bookmarkSelection } from '$lib/bookmark-selection.js';
+  import { menuItem, menuPanel } from '$lib/components/ui/menu/index.js';
+
+  // A floating "Bookmark / To prompt" menu shown when the user selects text
+  // inside `container`. Works for any scroll container — the activity thread
+  // (where selections can anchor to a message via [data-msg-id]) and the diff
+  // view (where they become text-only bookmarks).
+  let {
+    sessionId,
+    container,
+  }: { sessionId: string; container: HTMLElement | null | undefined } = $props();
+
+  // selAnchor is the raw selection rect; selMenuPos is the clamped on-screen
+  // position computed once the menu has rendered (so it never floats off-screen).
+  let selAnchor = $state<{ left: number; top: number; bottom: number } | null>(null);
+  let selMenuPos = $state<{ left: number; top: number }>({ left: 0, top: 0 });
+  let selMenuEl = $state<HTMLDivElement>();
+  let pendingSelection: { text: string; msgId: string | null } | null = null;
+
+  function clear() {
+    selAnchor = null;
+    pendingSelection = null;
+  }
+
+  function handleSelectionUp() {
+    if (store.activeSessionId !== sessionId) return;
+    // Anchored to the message the selection starts in, when there is one
+    // (handles multi-message spans). The diff view has no [data-msg-id] → text-only.
+    const sel = container ? selectionIn(container) : null;
+    if (!sel) { clear(); return; }
+    pendingSelection = { text: sel.text, msgId: sel.msgId };
+    const rect = sel.range.getBoundingClientRect();
+    selAnchor = { left: rect.left, top: rect.top, bottom: rect.bottom };
+    // Rough initial position; the clamp effect refines it once measured.
+    selMenuPos = { left: rect.left, top: Math.max(6, rect.top - 38) };
+  }
+
+  // Clamp the menu inside the viewport: prefer above the selection, fall back to
+  // below it, and keep it within the left/right edges. Reads measured size after
+  // render so it adapts to the menu's actual shape.
+  $effect(() => {
+    const a = selAnchor;
+    const el = selMenuEl;
+    if (!a || !el) return;
+    const w = el.offsetWidth;
+    const h = el.offsetHeight;
+    let left = Math.min(a.left, window.innerWidth - w - 6);
+    if (left < 6) left = 6;
+    let top = a.top - h - 6;
+    if (top < 6) top = Math.min(a.bottom + 6, window.innerHeight - h - 6);
+    if (top < 6) top = 6;
+    selMenuPos = { left, top };
+  });
+
+  // Watch the container for selections and scrolling. Re-runs when `container`
+  // is (re)bound.
+  $effect(() => {
+    const el = container;
+    if (!el) return;
+    // Only a left-button release: a right-click opens the context menu, which
+    // has the same actions, so this popup stays out of its way.
+    const onUp = (e: MouseEvent) => { if (e.button === 0) handleSelectionUp(); };
+    const onScroll = () => { if (selAnchor) clear(); };
+    el.addEventListener('mouseup', onUp);
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      el.removeEventListener('mouseup', onUp);
+      el.removeEventListener('scroll', onScroll);
+    };
+  });
+
+  // Hide when attention moves on: a press anywhere but the popup (the prompt
+  // box, the sidebar, another tab), the window losing focus, or the selection
+  // changing or going away.
+  function handleDocumentMouseDown(e: MouseEvent) {
+    if (selAnchor && !selMenuEl?.contains(e.target as Node)) clear();
+  }
+
+  function handleSelectionChange() {
+    if (!selAnchor || !container) return;
+    if (selectionIn(container)?.text !== pendingSelection?.text) clear();
+  }
+
+  function handleBlur() {
+    if (selAnchor) clear();
+  }
+
+  function handleKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape' && selAnchor) clear();
+  }
+
+  async function addBookmark() {
+    if (!pendingSelection) return;
+    const { text, msgId } = pendingSelection;
+    await bookmarkSelection(sessionId, text, msgId);
+    clear();
+    window.getSelection()?.removeAllRanges();
+  }
+
+  function copyToPrompt() {
+    if (!pendingSelection) return;
+    // Into the draft too: the Checkpoints tab's diff has no prompt input
+    // showing, and one that mounts later only reads the draft.
+    messageStore.appendToPrompt(sessionId, pendingSelection.text);
+    clear();
+    window.getSelection()?.removeAllRanges();
+  }
+</script>
+
+<svelte:window onkeydown={handleKeydown} onblur={handleBlur} />
+<svelte:document onmousedowncapture={handleDocumentMouseDown} onselectionchange={handleSelectionChange} />
+
+{#if selAnchor}
+  <!-- mousedown is cancelled so pressing a button never clears the selection
+       (which would hide the popup before the click lands). -->
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div
+    bind:this={selMenuEl}
+    style="position: fixed; top: {selMenuPos.top}px; left: {selMenuPos.left}px;"
+    class="{menuPanel()} z-50 flex flex-col items-stretch"
+    onmousedown={(e) => e.preventDefault()}
+  >
+    <button
+      onclick={addBookmark}
+      class={menuItem()}
+      title="Bookmark selection"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></svg>
+      Bookmark
+    </button>
+    <button
+      onclick={copyToPrompt}
+      class={menuItem()}
+      title="Copy selection to the prompt input"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 10 4 15 9 20"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></svg>
+      To prompt
+    </button>
+  </div>
+{/if}

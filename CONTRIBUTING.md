@@ -30,7 +30,9 @@ See [CLAUDE.md](./CLAUDE.md) for full project structure and commands.
 
 - Keep PRs focused — one feature or fix per PR
 - Include a clear description of what changed and why
-- Run `npm test` before submitting
+- Run `npm run typecheck` and `npm test` before submitting. CI runs the
+  tests in a random order and prints the seed; to repeat a failing order
+  locally, run `npx vitest run --sequence.shuffle --sequence.seed=<seed>`
 - Follow the existing code style (no linter config — just match what's there)
 
 ## Issues
@@ -41,4 +43,4 @@ See [CLAUDE.md](./CLAUDE.md) for full project structure and commands.
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the [MIT License](./LICENSE).
+By contributing, you agree to license your contributions under the [MIT License](https://opensource.org/license/mit). This lets them ship as part of Grove Bench under its current [license](./LICENSE) (FSL-1.1-MIT).

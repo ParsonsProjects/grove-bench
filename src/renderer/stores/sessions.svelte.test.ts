@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { localStorageMock } from '../__mocks__/setup.js';
+import { localStorageMock, mockGroveBench } from '../__mocks__/setup.js';
 import { store } from './sessions.svelte.js';
 import type { SessionStatus } from '../../shared/types.js';
 
@@ -28,6 +28,8 @@ describe('SessionStore', () => {
     store.error = null;
     store.creating = false;
     store.repos = [];
+    store.deferredResume = {};
+    store.sessionSort = { key: 'name', dir: 'asc' };
     localStorageMock.clear();
   });
 
@@ -84,7 +86,7 @@ describe('SessionStore', () => {
       expect(store.count).toBe(2);
     });
 
-    it('removeSession removes and picks next active', () => {
+    it('removeSession removes the active one and returns to the landing screen', () => {
       const s1 = makeSession({ id: 's1', status: 'stopped' });
       const s2 = makeSession({ id: 's2', status: 'running' });
       store.addSession(s1);
@@ -94,8 +96,8 @@ describe('SessionStore', () => {
       store.removeSession('s1');
 
       expect(store.sessions).toHaveLength(1);
-      // Prefers running session
-      expect(store.activeSessionId).toBe('s2');
+      // No other conversation is opened in its place, even a running one.
+      expect(store.activeSessionId).toBeNull();
     });
 
     it('removeSession sets null when no sessions left', () => {
@@ -125,87 +127,100 @@ describe('SessionStore', () => {
     it('activeSession returns null when no active', () => {
       expect(store.activeSession).toBeNull();
     });
-  });
 
-  describe('reorderByIds', () => {
-    it('reorders sessions to match the given ID order', () => {
-      const s1 = makeSession({ id: 's1' });
-      const s2 = makeSession({ id: 's2' });
-      const s3 = makeSession({ id: 's3' });
-      store.addSession(s1, false);
-      store.addSession(s2, false);
-      store.addSession(s3, false);
-
-      store.reorderByIds(['s3', 's1', 's2']);
-
-      expect(store.sessions.map(s => s.id)).toEqual(['s3', 's1', 's2']);
-    });
-
-    it('places sessions not in orderedIds at the end in original order', () => {
-      const s1 = makeSession({ id: 's1' });
-      const s2 = makeSession({ id: 's2' });
-      const s3 = makeSession({ id: 's3' });
-      const s4 = makeSession({ id: 's4' });
-      store.addSession(s1, false);
-      store.addSession(s2, false);
-      store.addSession(s3, false);
-      store.addSession(s4, false);
-
-      // Only specify order for s3 and s1; s2 and s4 should keep original order at end
-      store.reorderByIds(['s3', 's1']);
-
-      expect(store.sessions.map(s => s.id)).toEqual(['s3', 's1', 's2', 's4']);
-    });
-
-    it('ignores IDs not present in sessions', () => {
-      const s1 = makeSession({ id: 's1' });
-      const s2 = makeSession({ id: 's2' });
-      store.addSession(s1, false);
-      store.addSession(s2, false);
-
-      store.reorderByIds(['missing', 's2', 's1']);
-
-      expect(store.sessions.map(s => s.id)).toEqual(['s2', 's1']);
-    });
-
-    it('no-ops with empty orderedIds', () => {
-      const s1 = makeSession({ id: 's1' });
-      const s2 = makeSession({ id: 's2' });
-      store.addSession(s1, false);
-      store.addSession(s2, false);
-
-      store.reorderByIds([]);
-
-      expect(store.sessions.map(s => s.id)).toEqual(['s1', 's2']);
+    // The idle loop's grace counts from these (idle-manager.ts).
+    it('notes when each thread was left, the moment focus moves off it', () => {
+      vi.useFakeTimers({ toFake: ['Date'], now: 1_000 });
+      try {
+        store.lastLeftAt.clear();
+        store.addSession(makeSession({ id: 's1' }));
+        store.addSession(makeSession({ id: 's2' }), false);
+        expect(store.lastLeftAt.size).toBe(0);
+        vi.setSystemTime(2_000);
+        store.activeSessionId = 's1'; // no move: nothing noted
+        store.activeSessionId = 's2';
+        expect(store.lastLeftAt.get('s1')).toBe(2_000);
+        vi.setSystemTime(3_000);
+        store.activeSessionId = null; // to the landing
+        expect(store.lastLeftAt.get('s2')).toBe(3_000);
+        expect(store.lastLeftAt.get('s1')).toBe(2_000);
+        store.removeSession('s1');
+        expect(store.lastLeftAt.has('s1')).toBe(false);
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 
-  describe('reorderSession', () => {
-    it('moves a session to a new position', () => {
-      const s1 = makeSession({ id: 's1' });
-      const s2 = makeSession({ id: 's2' });
-      const s3 = makeSession({ id: 's3' });
-      store.addSession(s1, false);
-      store.addSession(s2, false);
-      store.addSession(s3, false);
-
-      store.reorderSession('s3', 's1');
-
-      expect(store.sessions.map(s => s.id)).toEqual(['s3', 's1', 's2']);
+  describe('deferredResume', () => {
+    it('counts a stopped session as an open tab only while its reconnect is deferred', () => {
+      const s = makeSession({ id: 'a', status: 'stopped' });
+      store.addSession(s, false);
+      expect(store.isOpenTab(s)).toBe(false);
+      store.deferResume('a');
+      expect(store.isOpenTab(s)).toBe(true);
+      store.clearDeferredResume('a');
+      expect(store.isOpenTab(s)).toBe(false);
     });
 
-    it('no-ops when fromId equals toId', () => {
-      const s1 = makeSession({ id: 's1' });
-      store.addSession(s1, false);
-      store.reorderSession('s1', 's1');
-      expect(store.sessions.map(s => s.id)).toEqual(['s1']);
+    it('treats live sessions as open tabs', () => {
+      expect(store.isOpenTab(makeSession({ status: 'running' }))).toBe(true);
+      expect(store.isOpenTab(makeSession({ status: 'error' }))).toBe(true);
     });
 
-    it('no-ops when id not found', () => {
+    it('drops the mark when the session is removed', () => {
+      store.addSession(makeSession({ id: 'a', status: 'stopped' }), false);
+      store.deferResume('a');
+      store.removeSession('a');
+      expect(store.deferredResume['a']).toBeUndefined();
+    });
+
+    it('keeps deferred tabs out of clean-up candidates', () => {
+      store.sessions = [
+        { ...makeSession({ id: 'a', status: 'stopped' }), lastActiveAt: 1 },
+        { ...makeSession({ id: 'b', status: 'stopped' }), lastActiveAt: 1 },
+      ];
+      store.deferResume('a');
+      expect(store.stoppedSessionsOlderThan(14).map((s) => s.id)).toEqual(['b']);
+    });
+  });
+
+  describe('openConversations', () => {
+    it('lists open tabs only, in the sidebar sort order', () => {
+      store.sessions = [
+        { ...makeSession({ id: 'b', branch: 'bravo', status: 'running' }), lastActiveAt: 1 },
+        { ...makeSession({ id: 'gone', branch: 'alpha', status: 'stopped' }), lastActiveAt: 9 },
+        { ...makeSession({ id: 'c', branch: 'charlie', status: 'stopped' }), lastActiveAt: 3 },
+        { ...makeSession({ id: 'a', branch: 'able', status: 'sleeping' }), lastActiveAt: 2 },
+      ];
+      store.deferResume('c');
+
+      expect(store.openConversations.map((s) => s.id)).toEqual(['a', 'b', 'c']);
+      store.sessionSort = { key: 'age', dir: 'desc' };
+      expect(store.openConversations.map((s) => s.id)).toEqual(['c', 'a', 'b']);
+    });
+  });
+
+  describe('needsAttention', () => {
+    it('marks and clears the attention flag', () => {
       const s1 = makeSession({ id: 's1' });
       store.addSession(s1, false);
-      store.reorderSession('missing', 's1');
-      expect(store.sessions.map(s => s.id)).toEqual(['s1']);
+
+      store.markNeedsAttention('s1');
+      expect(store.needsAttention['s1']).toBe(true);
+
+      store.clearNeedsAttention('s1');
+      expect(store.needsAttention['s1']).toBeUndefined();
+    });
+
+    it('clears the attention flag when a session is removed', () => {
+      const s1 = makeSession({ id: 's1' });
+      store.addSession(s1, false);
+      store.markNeedsAttention('s1');
+
+      store.removeSession('s1');
+
+      expect(store.needsAttention['s1']).toBeUndefined();
     });
   });
 
@@ -236,6 +251,43 @@ describe('SessionStore', () => {
     });
   });
 
+  describe('syncBranch', () => {
+    it('moves every loaded conversation on the checkout to the branch it switched to', async () => {
+      store.addSession(makeSession({ id: 's1', branch: 'feat/a' }), false);
+      store.addSession(makeSession({ id: 's2', branch: 'feat/a', direct: true }), false);
+      store.addSession(makeSession({ id: 'other', branch: 'feat/other' }), false);
+      // s3 shares the checkout but isn't loaded in this window.
+      mockGroveBench.syncBranch.mockResolvedValueOnce({ branch: 'feat/b', sessionIds: ['s1', 's2', 's3'] });
+
+      await store.syncBranch('s1');
+
+      expect(mockGroveBench.syncBranch).toHaveBeenCalledWith('s1');
+      expect(store.sessions.map((s) => [s.id, s.branch])).toEqual([
+        ['s1', 'feat/b'], ['s2', 'feat/b'], ['other', 'feat/other'],
+      ]);
+    });
+
+    it('leaves the store alone when the branch did not move', async () => {
+      store.addSession(makeSession({ id: 's1', branch: 'feat/a' }), false);
+      const before = store.sessions;
+      mockGroveBench.syncBranch.mockResolvedValueOnce(null);
+
+      await store.syncBranch('s1');
+
+      expect(store.sessions).toBe(before);
+    });
+
+    it('swallows a failed sync', async () => {
+      store.addSession(makeSession({ id: 's1', branch: 'feat/a' }), false);
+      const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+      mockGroveBench.syncBranch.mockRejectedValueOnce(new Error('ipc down'));
+
+      await expect(store.syncBranch('s1')).resolves.toBeUndefined();
+      expect(store.sessions[0].branch).toBe('feat/a');
+      err.mockRestore();
+    });
+  });
+
   describe('filtering', () => {
     it('sessionsForRepo returns sessions for a specific repo', () => {
       store.addSession(makeSession({ id: 's1', repoPath: '/repo/a' }), false);
@@ -245,17 +297,6 @@ describe('SessionStore', () => {
       const result = store.sessionsForRepo('/repo/a');
       expect(result).toHaveLength(2);
       expect(result.every(s => s.repoPath === '/repo/a')).toBe(true);
-    });
-
-    it('canRemoveRepo returns true when no sessions', () => {
-      store.addRepo('/repo/a');
-      expect(store.canRemoveRepo('/repo/a')).toBe(true);
-    });
-
-    it('canRemoveRepo returns false when sessions exist', () => {
-      store.addRepo('/repo/a');
-      store.addSession(makeSession({ repoPath: '/repo/a' }), false);
-      expect(store.canRemoveRepo('/repo/a')).toBe(false);
     });
   });
 
@@ -270,6 +311,60 @@ describe('SessionStore', () => {
 
     it('returns full path if no separator', () => {
       expect(store.repoDisplayName('my-project')).toBe('my-project');
+    });
+  });
+
+  describe('recentlyClosed', () => {
+    it('pushRecentlyClosed adds to stack', () => {
+      store.pushRecentlyClosed('s1');
+      expect(store.popRecentlyClosed()).toBe('s1');
+    });
+
+    it('popRecentlyClosed returns most recently closed first (LIFO)', () => {
+      store.pushRecentlyClosed('s1');
+      store.pushRecentlyClosed('s2');
+      store.pushRecentlyClosed('s3');
+      expect(store.popRecentlyClosed()).toBe('s3');
+      expect(store.popRecentlyClosed()).toBe('s2');
+      expect(store.popRecentlyClosed()).toBe('s1');
+    });
+
+    it('forgets a conversation once it is deleted', () => {
+      store.sessions = [{ id: 's1', branch: 'b', repoPath: '/r', status: 'stopped' }] as never;
+      store.pushRecentlyClosed('s1');
+      store.removeSession('s1');
+      expect(store.popRecentlyClosed()).toBeNull();
+    });
+
+    it('popRecentlyClosed returns null when empty', () => {
+      expect(store.popRecentlyClosed()).toBeNull();
+    });
+
+    it('does not duplicate consecutive entries for the same id', () => {
+      store.pushRecentlyClosed('s1');
+      store.pushRecentlyClosed('s1');
+      expect(store.popRecentlyClosed()).toBe('s1');
+      expect(store.popRecentlyClosed()).toBeNull();
+    });
+
+    it('caps stack size at 20', () => {
+      for (let i = 0; i < 25; i++) {
+        store.pushRecentlyClosed(`s${i}`);
+      }
+      // Should only keep 20, oldest dropped
+      let count = 0;
+      while (store.popRecentlyClosed() !== null) count++;
+      expect(count).toBe(20);
+    });
+
+    it('removes id from stack when session is re-opened via removeFromRecentlyClosed', () => {
+      store.pushRecentlyClosed('s1');
+      store.pushRecentlyClosed('s2');
+      store.pushRecentlyClosed('s3');
+      store.removeFromRecentlyClosed('s2');
+      expect(store.popRecentlyClosed()).toBe('s3');
+      expect(store.popRecentlyClosed()).toBe('s1');
+      expect(store.popRecentlyClosed()).toBeNull();
     });
   });
 
@@ -290,5 +385,54 @@ describe('SessionStore', () => {
       store.setError(null);
       expect(store.error).toBeNull();
     });
+  });
+
+  describe('stoppedSessionsOlderThan', () => {
+    const DAY = 86_400_000;
+
+    it('returns only stopped sessions past the cutoff, oldest first', () => {
+      store.sessions = [
+        makeSession({ id: 'running-old', status: 'running', lastActiveAt: Date.now() - 60 * DAY } as never),
+        makeSession({ id: 'stopped-old', status: 'stopped', lastActiveAt: Date.now() - 60 * DAY } as never),
+        makeSession({ id: 'stopped-ancient', status: 'stopped', lastActiveAt: Date.now() - 200 * DAY } as never),
+        makeSession({ id: 'stopped-fresh', status: 'stopped', lastActiveAt: Date.now() - 2 * DAY } as never),
+      ] as never;
+
+      const result = store.stoppedSessionsOlderThan(14);
+
+      expect(result.map((s) => s.id)).toEqual(['stopped-ancient', 'stopped-old']);
+    });
+
+    it('falls back to createdAt, and surfaces unknown-age sessions first', () => {
+      store.sessions = [
+        makeSession({ id: 'by-created', status: 'stopped', createdAt: Date.now() - 30 * DAY } as never),
+        makeSession({ id: 'no-timestamps', status: 'stopped' }),
+      ] as never;
+
+      const result = store.stoppedSessionsOlderThan(14);
+
+      expect(result.map((s) => s.id)).toEqual(['no-timestamps', 'by-created']);
+      expect(result[0].ts).toBe(0);
+    });
+
+    it('returns empty when nothing qualifies', () => {
+      store.sessions = [makeSession({ id: 'fresh', status: 'stopped', lastActiveAt: Date.now() } as never)] as never;
+      expect(store.stoppedSessionsOlderThan(14)).toEqual([]);
+    });
+  });
+});
+
+describe('loadRepos', () => {
+  it('moves projects from the old localStorage list into the remembered list', async () => {
+    localStorage.setItem('grove-bench:repos', JSON.stringify(['/repo/known', '/repo/legacy']));
+    mockGroveBench.listRepos.mockResolvedValueOnce(['/repo/known']);
+
+    await store.loadRepos();
+
+    expect(store.repos).toEqual(['/repo/known', '/repo/legacy']);
+    expect(mockGroveBench.rememberRepo).toHaveBeenCalledTimes(1);
+    expect(mockGroveBench.rememberRepo).toHaveBeenCalledWith('/repo/legacy');
+    expect(localStorage.getItem('grove-bench:repos')).toBeNull();
+    store.repos = [];
   });
 });

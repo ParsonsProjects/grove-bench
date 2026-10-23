@@ -1,0 +1,103 @@
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { execa } from 'execa';
+import { inspectProjectFolder, projectKind } from './project-path.js';
+
+// Real git in a temp folder: what counts as "in a repository" is git's call.
+
+let root: string;
+let savedEnv: Record<string, string | undefined>;
+const ENV_KEYS = ['GIT_CEILING_DIRECTORIES', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM', 'GIT_TEST_ASSUME_DIFFERENT_OWNER'];
+
+beforeEach(async () => {
+  // realpath: git reports long, resolved paths (Windows 8.3 temp names, macOS /private).
+  root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'grove-project-')));
+  // Stop git looking above the temp folder, in case it sits inside a repo
+  // (a dotfiles home, a checkout used as TMPDIR).
+  savedEnv = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
+  process.env.GIT_CEILING_DIRECTORIES = path.dirname(root);
+});
+
+/** Turn on git's ownership check for `root`, whatever this machine's git
+ *  config says. The Windows CI image sets `safe.directory = *` system-wide,
+ *  which switches the check off, so skip system config and use an empty
+ *  global one. */
+function assumeDifferentOwner() {
+  const config = path.join(root, '.test-gitconfig');
+  fs.writeFileSync(config, '');
+  process.env.GIT_CONFIG_NOSYSTEM = '1';
+  process.env.GIT_CONFIG_GLOBAL = config;
+  // git's own switch for testing its ownership check.
+  process.env.GIT_TEST_ASSUME_DIFFERENT_OWNER = '1';
+}
+
+afterEach(() => {
+  for (const [k, v] of Object.entries(savedEnv)) {
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+describe('inspectProjectFolder', () => {
+  it('keeps a repository\'s top-level folder as picked', async () => {
+    await execa('git', ['init', '-q'], { cwd: root });
+    expect(await inspectProjectFolder(root)).toEqual({ kind: 'git', path: root });
+  });
+
+  it('turns a folder inside a repository into its top-level folder', async () => {
+    await execa('git', ['init', '-q'], { cwd: root });
+    const sub = path.join(root, 'src', 'lib');
+    fs.mkdirSync(sub, { recursive: true });
+    const picked = await inspectProjectFolder(sub);
+    expect(picked.kind).toBe('git');
+    expect(path.resolve(picked.path)).toBe(path.resolve(root));
+  });
+
+  it('adds a folder outside any repository as a plain folder', async () => {
+    expect(await inspectProjectFolder(root)).toEqual({ kind: 'folder', path: root });
+  });
+
+  it('turns down a .git folder and says to pick the folder that contains it', async () => {
+    await execa('git', ['init', '-q'], { cwd: root });
+    await expect(inspectProjectFolder(path.join(root, '.git'))).rejects.toThrow(/inside a \.git folder/);
+    await expect(inspectProjectFolder(path.join(root, '.git', 'hooks'))).rejects.toThrow(/inside a \.git folder/);
+  });
+
+  it('still accepts a bare repository, as before', async () => {
+    await execa('git', ['init', '-q', '--bare'], { cwd: root });
+    expect(await inspectProjectFolder(root)).toEqual({ kind: 'git', path: root });
+  });
+
+  it('passes on git\'s own words when it refuses a real repository', async () => {
+    await execa('git', ['init', '-q'], { cwd: root });
+    assumeDifferentOwner();
+    await expect(inspectProjectFolder(root)).rejects.toThrow(/Git won't open this repository\. Detected dubious ownership.*safe\.directory/s);
+  });
+});
+
+describe('projectKind', () => {
+  it('tells a repository, a plain folder and a missing path apart', async () => {
+    expect(await projectKind(root)).toBe('folder');
+    await execa('git', ['init', '-q'], { cwd: root });
+    expect(await projectKind(root)).toBe('git');
+    expect(await projectKind(path.join(root, 'gone'))).toBe('missing');
+  });
+
+  it('treats a broken .git as a plain folder, as when it was added', async () => {
+    // A leftover .git file from a deleted worktree.
+    fs.writeFileSync(path.join(root, '.git'), 'gitdir: /nowhere/.git/worktrees/gone\n');
+    expect((await inspectProjectFolder(root)).kind).toBe('folder');
+    expect(await projectKind(root)).toBe('folder');
+  });
+
+  it('keeps a repository git refuses as a git project, so its error shows instead of editing in place', async () => {
+    await execa('git', ['init', '-q'], { cwd: root });
+    assumeDifferentOwner();
+    // Refused, not opened: the check above must be what makes this 'git'.
+    await expect(execa('git', ['rev-parse', '--git-dir'], { cwd: root })).rejects.toThrow(/dubious ownership/);
+    expect(await projectKind(root)).toBe('git');
+  });
+});

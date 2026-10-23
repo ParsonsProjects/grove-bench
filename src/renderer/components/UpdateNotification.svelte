@@ -1,61 +1,95 @@
 <script lang="ts">
   import type { UpdateStatus } from '../../shared/types.js';
+  import { store } from '../stores/sessions.svelte.js';
+  import { messageStore } from '../stores/messages.svelte.js';
+  import { releaseNotesUrl } from '../lib/release-notes.js';
+  import { Button } from '$lib/components/ui/button/index.js';
+  import { Badge } from '$lib/components/ui/badge/index.js';
 
   let status = $state<UpdateStatus | null>(null);
+  let restarting = $state(false);
 
   $effect(() => {
+    let heard = false;
     const unsub = window.groveBench.onUpdateStatus((s: UpdateStatus) => {
+      heard = true;
       status = s;
     });
+    // Pick up an update found before this window loaded (or reloaded).
+    window.groveBench.getUpdateState()
+      .then((state) => { if (!heard) status = state.status; })
+      .catch(() => {});
     return unsub;
   });
+
+  async function restart() {
+    const working = store.sessions.filter((s) => messageStore.getIsRunning(s.id)).length;
+    if (working > 0) {
+      const message = working === 1
+        ? '1 thread is still working. Restarting stops it; it reopens after the update.'
+        : `${working} threads are still working. Restarting stops them; they reopen after the update.`;
+      if (!confirm(`${message}\n\nRestart now?`)) return;
+    }
+    restarting = true;
+    try {
+      await window.groveBench.restartToUpdate();
+    } finally {
+      restarting = false;
+    }
+  }
 </script>
 
-{#if status?.state === 'available'}
-  <button
-    class="update-pill"
-    onclick={() => window.groveBench.downloadUpdate()}
-    title="Click to download update"
-  >
-    Update v{status.info.version} available
-  </button>
-{:else if status?.state === 'downloading'}
-  <span class="update-pill downloading">
-    Downloading {Math.round(status.percent)}%
-  </span>
-{:else if status?.state === 'downloaded'}
-  <button
-    class="update-pill downloaded"
-    onclick={() => window.groveBench.installUpdate()}
-    title="Quit and install update"
-  >
-    Restart to update
-  </button>
-{/if}
+<!-- Inside the title bar's drag region: clicks need it switched off here. -->
+<div class="update-notification ml-2 flex items-center gap-1.5">
+  {#if status?.state === 'available'}
+    <Button
+      variant="default"
+      size="2xs"
+      onclick={() => window.groveBench.downloadUpdate()}
+      title="Download version {status.info.version}"
+    >
+      Update v{status.info.version} available
+    </Button>
+  {:else if status?.state === 'downloading' && status.manual}
+    <Badge tone="primary" variant="soft">
+      Downloading v{status.info.version} {Math.round(status.percent)}%
+    </Badge>
+  {:else if status?.state === 'downloaded'}
+    {@const version = status.info.version}
+    <Button
+      variant="default"
+      size="2xs"
+      onclick={restart}
+      disabled={restarting}
+      title="Version {version} is ready. Restart now to install it, or it installs when you next quit."
+    >
+      {restarting ? 'Restarting...' : 'Restart to update'}
+    </Button>
+    <!-- Opens the release notes page. -->
+    <Button
+      variant="quiet"
+      size="2xs"
+      class="underline"
+      onclick={() => window.groveBench.openExternal(releaseNotesUrl(version))}
+    >
+      What's new
+    </Button>
+  {:else if status?.state === 'error' && (status.manual || status.during === 'download')}
+    <!-- Background checks stay out of the title bar, but a failed download
+         shows: an update exists and isn't arriving. -->
+    <Button
+      variant="outline-destructive"
+      size="2xs"
+      onclick={() => window.groveBench.checkForUpdate()}
+      title={status.message}
+    >
+      Update failed, retry
+    </Button>
+  {/if}
+</div>
 
 <style>
-  .update-pill {
+  .update-notification {
     -webkit-app-region: no-drag;
-    display: inline-flex;
-    align-items: center;
-    font-size: 10px;
-    padding: 1px 8px;
-    border-radius: 9999px;
-    cursor: pointer;
-    border: none;
-    background: hsl(var(--primary) / 0.12);
-    color: hsl(var(--primary));
-    transition: background 0.15s;
-  }
-  .update-pill:hover {
-    background: hsl(var(--primary) / 0.2);
-  }
-  .update-pill.downloading {
-    cursor: default;
-    opacity: 0.8;
-  }
-  .update-pill.downloaded {
-    background: hsl(var(--primary) / 0.18);
-    font-weight: 500;
   }
 </style>

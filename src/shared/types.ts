@@ -1,3 +1,8 @@
+import type { ToolView } from './tool-view.js';
+import type { LimitKind } from './limits.js';
+import type { ThreadItems } from './thread-items.js';
+import type { ScheduleOutcome, SkillSchedule, SkillScheduleInput } from './skill-schedules.js';
+
 // ─── Worktree ───
 
 export interface WorktreeConfig {
@@ -11,14 +16,34 @@ export interface WorktreeConfig {
   adapterType?: string;
 }
 
+/** A folder the user picked to add as a project. A folder outside any git
+ *  repository comes back as `folder` and is added as a plain folder. */
+export type PickedProject =
+  | { kind: 'git'; path: string }
+  | { kind: 'folder'; path: string };
+
+/** What a project path is now: a git repository, a plain folder (projects
+ *  without git), or gone. */
+export type ProjectKind = 'git' | 'folder' | 'missing';
+
 export interface WorktreeInfo {
   id: string;
   path: string;
   branch: string;
   repoPath: string;
   createdAt: number;
+  /** Timestamp (ms) of the last activity: a message sent, or a turn the
+   *  agent finished. Rows show their age from it and sort by it. */
+  lastActiveAt?: number;
   /** True when session runs directly on the repo (no worktree created). */
   direct?: boolean;
+  /** The conversation runs in a folder that isn't a git repository (always
+   *  direct). Checkpoints, branches and the Changes tab don't apply. */
+  noGit?: boolean;
+  /** User-assigned or auto-generated display name, persisted across restart. */
+  displayName?: string | null;
+  /** Adapter id of the agent the session runs, from the manifest. */
+  agentType?: string;
 }
 
 export interface WorktreeRepoConfig {
@@ -28,17 +53,37 @@ export interface WorktreeRepoConfig {
 // ─── Session ───
 
 export interface CreateSessionOpts {
+  /** Id picked by the renderer (8 hex characters), so the thread's row can
+   *  show before main's checks and setup are done. Main refuses one that is
+   *  malformed or already in use. */
+  id?: string;
   repoPath: string;
   branchName: string;
   baseBranch?: string;
   useExisting?: boolean;
+  /** A new branch named after the group the conversation joins: when the
+   *  project has that branch already, continue on it instead of refusing the
+   *  name. Refused when another checkout has it. */
+  continueBranch?: boolean;
   /** Run directly on the repo checkout — no worktree is created. */
   direct?: boolean;
   /** Which adapter to use for this session (defaults to registry default). */
   adapterType?: string;
+  /** Mode to start in instead of the agent's saved default (e.g. 'plan' for
+   *  a review). Falls back to the default when the agent doesn't offer it. */
+  permissionMode?: PermissionMode;
+  /** Model to start on instead of the agent's default model. */
+  model?: string;
+  /** Starting values for the agent's other controls (effort, thinking, …),
+   *  keyed by control id. Values the model doesn't offer are ignored. */
+  controls?: Record<string, string>;
 }
 
-export type SessionStatus = 'starting' | 'installing' | 'running' | 'stopped' | 'error';
+/** 'sleeping': an open conversation whose agent process was shut down after
+ *  it sat idle. It keeps its place in the Conversations list and its live
+ *  state (mode, controls, always-allowed tools) and wakes when opened or sent
+ *  a message. The terminal is left running. */
+export type SessionStatus = 'starting' | 'installing' | 'running' | 'sleeping' | 'stopped' | 'error';
 
 export interface SessionInfo {
   id: string;
@@ -52,7 +97,108 @@ export interface SessionInfo {
   displayName?: string | null;
 }
 
+/** Who wrote a conversation's goal: generated ('auto') or typed ('user').
+ *  A goal is only generated once; Refresh makes a new one on request. */
+export type ConversationGoalSource = 'auto' | 'user';
+
+/** Longest goal the user can type. */
+export const MAX_USER_GOAL_LENGTH = 500;
+
+/** The one-line goal pinned at the top of a conversation's Thread tab. */
+export interface ConversationGoal {
+  /** What the conversation is trying to get done, or null when there is
+   *  none yet (or the user cleared it). */
+  text: string | null;
+  /** Null until a goal has been generated or typed. */
+  source: ConversationGoalSource | null;
+  /** The bar was closed for this conversation. */
+  hidden: boolean;
+}
+
 // ─── Prerequisites ───
+
+/** How finished an agent's support in Grove Bench is. An alpha agent stays
+ *  out of the agent picker until the user turns it on in Settings
+ *  (`enabledAlphaAgents`), and is labelled Alpha where it shows. */
+export type AgentStage = 'alpha';
+
+/** A registered agent as the renderer sees it. */
+export interface AgentSummary {
+  id: string;
+  displayName: string;
+  /** Set for an agent that is still being tested (see AgentStage). */
+  stage?: AgentStage;
+  capabilities: Record<string, boolean>;
+  /** The built-in default agent, for when the user hasn't picked one
+   *  (settings.defaultAgent; see agentsStore.defaultId). */
+  isDefault?: boolean;
+  /** The adapter's own model for background tasks, if it declares one. */
+  backgroundModel?: string;
+  /** How the agent handles MCP servers. Absent: no MCP support Grove can drive. */
+  mcp?: McpSupport;
+  /** Untracked files Grove writes into the agent's worktrees for it. */
+  generatedFiles?: string[];
+  /** Set for one of the user's other Claude accounts. `removed`: taken out of
+   *  Settings this run, so it isn't offered any more; threads already on it
+   *  keep it until Grove Bench restarts. */
+  account?: { name: string; configDir: string; removed?: boolean };
+}
+
+/** The folder an account being added would use, or why it can't be added. */
+export type ClaudeAccountPreview = { ok: true; configDir: string } | { ok: false; error: string };
+
+/** One agent's install and sign-in state. */
+export interface AgentPrerequisiteStatus {
+  available: boolean;
+  path?: string;
+  authenticated?: boolean;
+  /** Signing in can't be checked before a conversation starts, so
+   *  `authenticated` only means nothing says it is missing. */
+  authUnchecked?: boolean;
+  authMethod?: string;
+  email?: string;
+  /** Adapter-provided error message when not available (e.g. install instructions). */
+  errorMessage?: string;
+  /** Adapter-provided message when not authenticated. */
+  authErrorMessage?: string;
+  /** The agent's own words the last time it turned Grove down for sign-in. */
+  authMessage?: string;
+  /** The agent can be asked whether it is signed in (checkAgentSignIn). */
+  signInCheckable?: boolean;
+  /** When the agent isn't installed: the command that installs it, for the
+   *  user to copy and run (Grove never runs it). */
+  installCommand?: string;
+  /** Conversations run the installed program, so a saved key alone isn't
+   *  enough (ACP agents; Claude Code runs on the SDK's own copy). */
+  installRequired?: boolean;
+  /** Present when the provider accepts an API key entered in the app. The
+   *  key itself never reaches the renderer. */
+  apiKey?: {
+    label: string;
+    helpUrl: string;
+    /** How using a key is paid for, shown under the field. */
+    billingNote?: string;
+    /** A key is saved. While saved it is used instead of any CLI sign-in. */
+    saved: boolean;
+    /** The OS can encrypt a key. Without it no key can be saved. */
+    canStore: boolean;
+    /** The provider refused the saved key the last time it was used. Cleared
+     *  when a key is saved or removed. */
+    rejected?: boolean;
+    /** The key was saved without being checked: the provider couldn't be
+     *  reached. It is checked for real by the first conversation. */
+    unverified?: boolean;
+  };
+  /** Present when the user can sign in with the provider's CLI instead of a
+   *  key. `available` above says whether that CLI is installed. */
+  cliSignIn?: {
+    accountLabel: string;
+    accountDetail?: string;
+    cliName: string;
+    command: string;
+    setupUrl: string;
+  };
+}
 
 export interface PrerequisiteStatus {
   git: {
@@ -60,16 +206,13 @@ export interface PrerequisiteStatus {
     version?: string;
     meetsMinimum?: boolean;
   };
-  agent: {
+  /** One entry per registered agent, keyed by adapter id. */
+  agents: Record<string, AgentPrerequisiteStatus>;
+  /** GitHub CLI — optional; only gates PR automation, never blocks the app. */
+  gh?: {
     available: boolean;
-    path?: string;
+    version?: string;
     authenticated?: boolean;
-    authMethod?: string;
-    email?: string;
-    /** Adapter-provided error message when not available (e.g. install instructions). */
-    errorMessage?: string;
-    /** Adapter-provided message when not authenticated. */
-    authErrorMessage?: string;
   };
 }
 
@@ -80,7 +223,30 @@ export interface PrerequisiteStatus {
  * Adapters map their provider-specific tool names to these categories
  * so the renderer doesn't need to know provider-specific tool names.
  */
-export type ToolCategory = 'edit' | 'bash' | 'question' | 'web_fetch' | 'agent' | 'other';
+export type ToolCategory = 'edit' | 'read' | 'bash' | 'question' | 'web_fetch' | 'agent' | 'other';
+
+/** How long a permission request waits for an answer before it is denied,
+ *  so a query can't hang forever on a prompt nobody sees. */
+export const PERMISSION_TIMEOUT_MINUTES = 30;
+
+/** Tokens the model read and wrote. `input` counts all it read, prompt
+ *  caching included (cache reads and writes). */
+export interface TokenCounts {
+  input: number;
+  output: number;
+}
+
+/** What a thread has used over its life, as its agent reported it. */
+export interface ThreadUsage {
+  spendUsd: number;
+  tokens: TokenCounts;
+}
+
+/** What a denied tool call tells the agent when the user typed no reply. */
+export const DEFAULT_DENY_MESSAGE = 'User denied permission';
+/** What "Approve and start fresh…" tells the agent as it declines the plan
+ *  prompt to clear the thread and start the plan afresh. */
+export const PLAN_RESTART_MESSAGE = 'Clearing and restarting with the plan.';
 
 // ─── Agent Events (renderer-side, serializable) ───
 
@@ -91,22 +257,43 @@ export type ToolCategory = 'edit' | 'bash' | 'question' | 'web_fetch' | 'agent' 
  */
 export type AgentEvent =
   | { type: 'system_init'; sessionId: string; model: string; tools: string[]; agents?: string[]; skills?: string[]; slashCommands?: string[]; mcpServers?: { name: string; status: string }[] }
-  | { type: 'assistant_text'; text: string; uuid: string }
-  | { type: 'assistant_tool_use'; toolName: string; toolInput: unknown; toolUseId: string; uuid: string; toolCategory?: ToolCategory }
-  | { type: 'tool_result'; toolUseId: string; content: string; isError?: boolean }
-  | { type: 'result'; subtype: string; result?: string; structured_output?: unknown; totalCostUsd?: number; durationMs?: number; isError: boolean; errors?: string[]; numTurns?: number; contextWindow?: number }
-  | { type: 'permission_request'; toolName: string; toolInput: unknown; toolUseId: string; requestId: string; decisionReason?: string; suggestions?: unknown[]; isPlanExecution?: boolean; toolCategory?: ToolCategory; planText?: string }
-  | { type: 'thinking'; thinking: string; uuid: string }
+  // parentToolUseId: set when a subagent produced the event, to the id of the
+  // Agent call that started it. See subagentParent().
+  | { type: 'assistant_text'; text: string; uuid: string; parentToolUseId?: string }
+  | { type: 'assistant_tool_use'; toolName: string; toolInput: unknown; toolUseId: string; uuid: string; toolCategory?: ToolCategory; toolView?: ToolView; parentToolUseId?: string }
+  /** More about a tool call the agent already reported: a title, its input
+   *  or its edits once known (ACP agents fill a call in as it runs). Only
+   *  the fields present change. */
+  | { type: 'tool_update'; toolUseId: string; toolName?: string; toolInput?: unknown; toolCategory?: ToolCategory; toolView?: ToolView }
+  | { type: 'tool_result'; toolUseId: string; content: string; isError?: boolean; images?: StoredImage[]; parentToolUseId?: string }
+  /** Files the agent made during the turn, sent just before its result.
+   *  `more`: how many others were left off the list. */
+  | { type: 'files_made'; files: MadeFile[]; more?: number }
+  /** `totalCostUsd`: what this turn cost, in USD as the agent estimates it
+   *  (absent when it doesn't say). `sessionCostUsd`: the conversation's
+   *  running total the agent reported with it, when it reports one; a turn
+   *  carrying it counts toward spend limits (older history has none).
+   *  `turnTokens`: the tokens this turn used, when the agent says;
+   *  `sessionTokens`: the conversation's running total it came from (Claude
+   *  Code reports totals, which a resume starts from). */
+  | { type: 'result'; subtype: string; result?: string; structured_output?: unknown; totalCostUsd?: number; sessionCostUsd?: number; turnTokens?: TokenCounts; sessionTokens?: TokenCounts; durationMs?: number; isError: boolean; errors?: string[]; numTurns?: number; contextWindow?: number }
+  | { type: 'permission_request'; toolName: string; toolInput: unknown; toolUseId: string; requestId: string; decisionReason?: string; suggestions?: unknown[]; isPlanExecution?: boolean; toolCategory?: ToolCategory; toolView?: ToolView; planText?: string }
+  | { type: 'thinking'; thinking: string; uuid: string; parentToolUseId?: string }
   | { type: 'partial_text'; text: string }
   | { type: 'partial_thinking'; text: string }
   | { type: 'usage'; inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheCreationTokens?: number }
   | { type: 'compact_boundary'; trigger: 'manual' | 'auto'; preTokens: number }
   | { type: 'tool_progress'; toolName: string; toolUseId: string; elapsedSeconds: number }
   | { type: 'activity'; activity: 'thinking' | 'tool_starting' | 'generating' | 'idle' ; toolName?: string }
-  | { type: 'user_message'; text: string; uuid?: string }
-  | { type: 'devserver_detected'; port: number; url: string }
-  | { type: 'status'; message: string }
-  | { type: 'error'; message: string }
+  /** `at`: when it was sent (epoch ms). Older history has none. */
+  | { type: 'user_message'; text: string; uuid?: string; images?: StoredImage[]; files?: StoredFile[]; at?: number }
+  /** `level: 'warning'` renders prominently (e.g. read-safe mode without a sandbox).
+   *  `newConversation` marks where the agent started a new conversation: it
+   *  doesn't remember the turns above, so a rewind can't fork from them. */
+  | { type: 'status'; message: string; level?: 'warning'; newConversation?: true }
+  /** `auth`: a sign-in failure, so the UI offers a way to fix it. `keyRejected`:
+   *  the provider refused the credentials outright (a bad or revoked key). */
+  | { type: 'error'; message: string; auth?: boolean; keyRejected?: boolean }
   | { type: 'process_exit'; exitCode?: number }
   // Rate limiting
   | { type: 'rate_limit'; status: 'allowed' | 'allowed_warning' | 'rejected'; resetsAt?: number; utilization?: number; rateLimitType?: string }
@@ -114,14 +301,20 @@ export type AgentEvent =
   | { type: 'task_started'; taskId: string; toolUseId?: string; description: string; taskType?: string }
   | { type: 'task_progress'; taskId: string; toolUseId?: string; description: string; summary?: string; lastToolName?: string; totalTokens: number; toolUses: number; durationMs: number }
   | { type: 'task_notification'; taskId: string; toolUseId?: string; taskStatus: 'completed' | 'failed' | 'stopped'; summary: string; outputFile: string; totalTokens?: number; toolUses?: number; durationMs?: number }
+  /** Authoritative list of every live background task (replace semantics). */
+  | { type: 'background_tasks_changed'; tasks: Array<{ taskId: string; taskType?: string; description: string }> }
   // Auth status
   | { type: 'auth_status'; isAuthenticating: boolean; output: string[]; authError?: string }
   // Tool use summary (after compaction)
   | { type: 'tool_use_summary'; summary: string; toolUseIds: string[] }
-  // Prompt suggestions
+  /** A guess at the user's next prompt, shown in the message box after a
+   *  turn (at most one per turn; live only, see TRANSIENT_EVENT_TYPES). */
   | { type: 'prompt_suggestion'; suggestion: string }
   // Hook execution
   | { type: 'hook_event'; subtype: 'started' | 'progress' | 'response'; hookId: string; hookName: string; hookEvent: string; output?: string; outcome?: string; exitCode?: number }
+  // MCP elicitation: a server asks the user for input mid-tool-call
+  | { type: 'elicitation_request'; requestId: string; request: McpElicitationRequest }
+  | { type: 'elicitation_resolved'; requestId: string; action: McpElicitationResponse['action'] }
   // MCP elicitation complete
   | { type: 'elicitation_complete'; serverName: string; elicitationId: string }
   // Files persisted to disk
@@ -129,23 +322,109 @@ export type AgentEvent =
   // Permission mode sync — source is required so the renderer knows whether to
   // respect user-explicit overrides ('sdk' may be stale, 'session' is authoritative)
   | { type: 'mode_sync'; mode: PermissionMode; source: 'sdk' | 'session' }
+  // Adapter-declared session controls (descriptors depend on the model) and
+  // their current values — emitted on query start, model switch, and control change
+  | { type: 'controls_sync'; descriptors: ControlDescriptor[]; values: Record<string, string> }
+  // The user switched the conversation to another agent. Kept in the log:
+  // it marks who answered which turns, and `transcript` says whether the new
+  // agent gets a short transcript with the next message (agent-handoff.ts).
+  | { type: 'agent_changed'; from: string; to: string; fromName: string; toName: string; transcript: boolean }
+  // The agent changed its own controls (an ACP agent leaving plan mode by
+  // itself). Main records the values and sends controls_sync instead, so this
+  // never reaches the renderer or the event log.
+  | { type: 'agent_controls'; values: Record<string, string> }
   // Permission resolved (authoritative — emitted by main for all resolution paths)
-  | { type: 'permission_resolved'; requestId: string; toolUseId: string; decision: 'allow' | 'deny' }
+  | {
+      type: 'permission_resolved';
+      requestId: string;
+      toolUseId: string;
+      decision: 'allow' | 'deny';
+      /** The user's typed reply for a question (AskUserQuestion) or deny
+       *  reason, so replayed history can still show what was answered. */
+      message?: string;
+      /** Set when nobody answered: the request waited
+       *  PERMISSION_TIMEOUT_MINUTES and was denied. */
+      reason?: 'timeout';
+    }
+  // A limit was reached (shared/limits.ts): the thread waits before its next
+  // tool call until the user continues or stops. `used` and `reachedAt` are
+  // in the limit's units (USD, tool calls, minutes).
+  | { type: 'limit_request'; requestId: string; limit: LimitKind; used: number; reachedAt: number; nextAllowance: number }
+  // How it ended. `allowance`: the new point to stop at after Continue, kept
+  // in the log so a thread's spend allowance survives a restart.
+  | { type: 'limit_resolved'; requestId: string; limit: LimitKind; decision: 'continue' | 'stop'; allowance?: number; reason?: 'timeout' }
   // Memory auto-save status
   | { type: 'memory_autosave'; status: 'started' | 'completed' | 'skipped'; filesWritten?: string[] }
   // Rewind checkpoint
-  | { type: 'rewind'; toMessageId: string; conversationOnly?: boolean };
+  | { type: 'rewind'; toMessageId: string; conversationOnly?: boolean; filesOnly?: boolean }
+  // Git has no user.name/user.email for this conversation's checkout, so the
+  // agent's commits will likely fail. Emitted at most once per conversation.
+  | { type: 'git_identity_missing' };
+
+/** The Agent call whose subagent produced this event, or undefined for the
+ *  conversation's own events. A subagent's work belongs to its own thread,
+ *  not the conversation's turn: it can carry on after the turn ends. */
+export function subagentParent(event: AgentEvent): string | undefined {
+  return 'parentToolUseId' in event ? event.parentToolUseId : undefined;
+}
+
+/**
+ * Where a thread's agent is as its history ends, from main: whether a turn is
+ * under way, and the requestIds of the prompts still waiting on the user
+ * (permission prompts and the agent's questions, MCP questions, limit
+ * questions). The history alone can't tell: one cut off mid-turn (the app
+ * quit or was killed then) ends just like a turn still running. A thread
+ * with no live agent (closed, or still being set up) runs no turn and asks
+ * nothing.
+ */
+export interface ThreadTurnState {
+  midTurn: boolean;
+  pendingPromptIds: string[];
+  /** The agent's process is up, between turns too. Background tasks it
+   *  started (a dev server) run on until it stops, so the history's
+   *  running ones are still running; without it they are gone. */
+  agentLive: boolean;
+}
+
+/** A page of a thread's history. `turn` is read in the same step as the
+ *  events, so it fits the end of the history as main had it then: an event
+ *  logged later is in neither. */
+export interface EventHistoryPage {
+  events: AgentEvent[];
+  totalCount: number;
+  startIndex: number;
+  turn: ThreadTurnState;
+}
+
+/** A single full-history search match (main-process search over event history). */
+export interface EventSearchHit {
+  /** Index of the matching event in the session's (prelaunch-prefixed) history. */
+  eventIndex: number;
+  /** Display category for the dropdown (user / assistant / thinking / tool / …). */
+  kind: string;
+  /** Whitespace-collapsed text window around the match, ellipsised when truncated. */
+  snippet: string;
+}
+
+/** A search match from the cross-session search (SessionFinder "in conversations"). */
+export interface CrossSessionSearchHit extends EventSearchHit {
+  /** Session whose history contained the match. */
+  sessionId: string;
+}
+
+/** Lightweight conversation context for a session, derived from its event history.
+ *  Used for sidebar subtitles / search entries when the renderer hasn't loaded
+ *  the session's messages (e.g. stopped sessions). */
+export interface SessionPreview {
+  /** First real user prompt (slash commands skipped), whitespace-collapsed. */
+  firstPrompt: string;
+  /** Most recent user/assistant text, whitespace-collapsed. */
+  lastText: string;
+}
 
 // ─── PTY / Terminal ───
 
 /** @deprecated Legacy shell output event — replaced by PTY data stream. */
-export interface ShellOutputEvent {
-  execId: string;
-  stream: 'stdout' | 'stderr' | 'exit';
-  data?: string;
-  exitCode?: number;
-}
-
 /** Permission decision from renderer → main */
 export interface PermissionDecision {
   requestId: string;
@@ -163,10 +442,75 @@ export interface GitStatusEntry {
   status: GitFileStatus;
   staged: boolean;
   origPath?: string;
+  /** Line counts from `git diff --numstat` (combined vs HEAD); absent for untracked files. */
+  additions?: number;
+  deletions?: number;
+  /** Blob hash of the working-tree content (`git hash-object`), or 'deleted'.
+   *  Lets the UI tell when a file changed since the user last viewed it. */
+  contentHash?: string;
+}
+
+/** What the Changes tab compares against: the uncommitted working tree
+ *  (staged / unstaged / untracked, like a git client) or everything on the
+ *  branch since it diverged from the base (like a pull request). */
+export type DiffScope = 'working' | 'branch';
+
+export interface GitStatusOptions {
+  scope?: DiffScope;
+  /** Base branch for `scope: 'branch'` (merge-base with HEAD is the comparison point). */
+  base?: string;
 }
 
 export interface GitStatusResult {
   entries: GitStatusEntry[];
+  /** The ref the branch scope resolved (`main` or `origin/main`). */
+  baseRef?: string;
+  /** Set when the branch scope could not find a merge base with `base`. */
+  scopeError?: string;
+  /** Branch scope: how many entries the uncommitted view would list, so
+   *  places that mean "changed in the worktree" can still say so. */
+  uncommitted?: number;
+  /** Set when git could not read the status: `entries` being empty then
+   *  does not mean the tree is clean. */
+  error?: string;
+}
+
+export interface FileDiffOptions {
+  /** Diff against the merge-base with this branch instead of HEAD/index. */
+  base?: string;
+}
+
+/** Lines of the "new side" of a file (working tree, or the index for a staged
+ *  diff), used to expand context around hunks. Null when unreadable / binary. */
+export type FileLinesResult = { lines: string[] } | null;
+
+/** Which checkpoint comparison to show: what one turn changed, everything
+ *  since a checkpoint (rewind preview), or the whole session. */
+export type CheckpointDiffScope = 'turn' | 'since' | 'full';
+
+/** Result of a single-file diff request. Text files carry a unified patch; binary
+ *  and image files are flagged so the UI can show a card / thumbnails instead of garbled text. */
+export type FileDiffResult =
+  | { kind: 'text'; patch: string }
+  | { kind: 'binary' }
+  | { kind: 'image'; ext: string }
+  /** A diff too big to show: a new file over the size limit, or a patch over
+   *  it. `atLeast`: git was stopped at the limit, so `bytes` is only that. */
+  | { kind: 'tooLarge'; bytes: number; atLeast?: boolean };
+
+/** Base64 data URLs for an image file's working-tree and HEAD versions (either may be null). */
+export interface ImageDiffContent {
+  working: string | null;
+  head: string | null;
+}
+
+/** How far a rewind reaches. Default (neither flag) restores files AND
+ *  truncates the conversation. `conversationOnly` keeps the files on disk;
+ *  `filesOnly` keeps the conversation (used for checkpoints from before a
+ *  `/clear`, whose messages no longer exist to rewind to). */
+export interface RewindOptions {
+  conversationOnly?: boolean;
+  filesOnly?: boolean;
 }
 
 export interface CheckpointListItem {
@@ -174,22 +518,617 @@ export interface CheckpointListItem {
   turn: number;
   ref: string;
   text?: string;
+  /** True when this checkpoint was captured before the most recent `/clear`.
+   *  Its files can still be restored, but its message is no longer part of
+   *  the conversation, so a conversation rewind to it is not offered. */
+  beforeClear?: boolean;
+}
+
+/** Aggregate diff statistics (git diff --numstat totals). */
+export interface DiffStats {
+  filesChanged: number;
+  additions: number;
+  deletions: number;
+}
+
+/** One turn in the session's diff history: what that turn changed on disk. */
+export interface DiffHistoryEntry extends DiffStats {
+  uuid: string;
+  turn: number;
+  text?: string;
+}
+
+/** Per-turn diff history plus the cumulative stats across the whole session. */
+export interface DiffHistoryResult {
+  entries: DiffHistoryEntry[];
+  total: DiffStats;
 }
 
 // ─── PR Info ───
 
+/** Rollup of a PR's status checks (CI). Null when the PR has no checks. */
+export interface PrChecksSummary {
+  total: number;
+  passed: number;
+  failed: number;
+  pending: number;
+}
+
+/** An open pull request, as listed for picking one to review. */
+export interface OpenPrSummary {
+  number: number;
+  title: string;
+  /** The PR's head branch. */
+  headRefName: string;
+  /** Login of the PR's author; empty when gh didn't report one. */
+  author: string;
+  isDraft: boolean;
+  /** Head branch lives in a fork, so it isn't a branch of this repo. */
+  isCrossRepository: boolean;
+  url: string;
+}
+
 export interface PrInfo {
   number: number;
   url: string;
+  state?: 'OPEN' | 'MERGED' | 'CLOSED';
+  isDraft?: boolean;
+  title?: string;
+  /** APPROVED | CHANGES_REQUESTED | REVIEW_REQUIRED | '' (no reviews requested). */
+  reviewDecision?: string;
+  checks?: PrChecksSummary | null;
+  /** Head commit the checks ran against. */
+  headSha?: string;
+  /** Names of the currently failing checks. */
+  failingChecks?: string[];
+  /** Opaque ids of conversation comments + submitted reviews — diffed to detect new feedback. */
+  commentSignature?: string[];
+  /** Branch the PR merges from. Not always the session's recorded branch: the
+   *  agent may open a PR from another branch it checked out in the session. */
+  headRefName?: string;
+  /** Branch the PR merges into. Two open PRs from one head differ only here. */
+  baseRefName?: string;
+  /** Whether the gh account opened this PR. GitHub doesn't let an author
+   *  approve or request changes on their own PR. Absent when either login
+   *  is unknown. */
+  viewerIsAuthor?: boolean;
+}
+
+export type PrReviewEvent = 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT';
+
+/** A line comment from the Changes tab, to post with a PR review. Lines are
+ *  numbered as in the Branch view's diff: `old` is the base side. */
+export interface PrReviewLineComment {
+  filePath: string;
+  side: 'old' | 'new';
+  startLine: number;
+  endLine: number;
+  /** The commented lines' text, quoted when the comment can't go on its lines. */
+  snippet: string;
+  body: string;
+}
+
+export interface PrReviewSubmit {
+  prNumber: number;
+  event: PrReviewEvent;
+  /** The review summary (Markdown). GitHub needs one to comment or request changes. */
+  body: string;
+  comments: PrReviewLineComment[];
+}
+
+export interface PrReviewSubmitResult {
+  /** The review on GitHub, when it said. */
+  url: string | null;
+  /** Comments posted on their lines. */
+  inline: number;
+  /** Comments quoted in the summary instead: their lines aren't in the PR's
+   *  diff, or read differently there than when the comment was written. */
+  quoted: number;
+}
+
+/** A review comment or review body on a PR (flattened for prompts/UI). */
+export interface PrReviewComment {
+  id: string;
+  author: string;
+  /** OWNER | MEMBER | COLLABORATOR | CONTRIBUTOR | NONE | ... */
+  authorAssociation: string;
+  /** File the comment is anchored to (absent for review bodies / conversation comments). */
+  path?: string;
+  line?: number;
+  body: string;
+}
+
+export interface PrCreateOpts {
+  title: string;
+  body: string;
+  base: string;
+  draft?: boolean;
+}
+
+/** Local branch position vs its upstream. Upstream null = branch never pushed. */
+export interface GitSyncStatus {
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+}
+
+/** One commit on the session branch that isn't on the base branch. */
+export interface BranchCommit {
+  subject: string;
+  body: string;
+}
+
+/** A commit with its id, for pickers (cherry-pick source lists). */
+export interface CommitEntry {
+  sha: string;
+  shortSha: string;
+  subject: string;
+}
+
+/** Outcome of a branch operation (rebase / cherry-pick / squash). A failed
+ *  operation is always unwound (`--abort`) before returning, so the worktree
+ *  is never left mid-operation; `conflicts` lists the files that clashed. */
+export interface GitOpResult {
+  success: boolean;
+  conflicts?: string[];
+  error?: string;
+}
+
+/** Outcome of switching a conversation's checkout to another branch. Every
+ *  conversation sharing that checkout moves with it, so `sessionIds` lists
+ *  all of them (the one that asked included). */
+export type BranchSwitchResult =
+  | { success: true; branch: string; sessionIds: string[] }
+  | { success: false; error: string };
+
+/** The recorded branch moved to follow the checkout (the agent or a terminal
+ *  ran `git checkout`). `sessionIds` are every conversation sharing it. */
+export interface BranchSyncResult {
+  branch: string;
+  sessionIds: string[];
+}
+
+// ─── Thinking Level ───
+
+/** Provider-agnostic thinking/reasoning effort level. Each adapter maps these
+ *  to its own mechanism (token budgets, effort params, on/off, ...).
+ *  'high' means the provider's default/maximum reasoning behavior.
+ *  'adaptive' lets the model decide when and how much to think. */
+export type ThinkingLevel = 'off' | 'low' | 'medium' | 'high' | 'adaptive';
+
+/** Canonical order of the Claude adapter's thinking options. */
+export const THINKING_LEVELS: ThinkingLevel[] = ['off', 'low', 'medium', 'high', 'adaptive'];
+
+// ─── Session Controls ───
+
+/** Visual weight for a control option's status-bar badge. Adapters pick a
+ *  tone; the renderer maps it to theme colours so providers never hardcode
+ *  CSS. */
+export type ControlTone = 'muted' | 'neutral' | 'info' | 'warning' | 'accent' | 'accent-soft' | 'success' | 'highlight' | 'danger';
+
+export interface ControlOption {
+  value: string;
+  /** Short badge text, e.g. "Plan" or "Think: Low". */
+  label: string;
+  /** Longer explanation for settings UIs and tooltips. */
+  description?: string;
+  tone?: ControlTone;
+  /** Options that belong to a different source than the provider's own
+   *  (e.g. an app-level mode) name it here. The UI draws a divider and this
+   *  heading where the group changes, so ungrouped options come first. */
+  group?: string;
+}
+
+/**
+ * A runtime toggle an adapter exposes for a session (permission mode, effort,
+ * speed, ...). Adapters declare these per model so the status bar renders
+ * exactly the options a provider supports instead of forcing every provider
+ * into one fixed enum. Well-known ids get app-level keyboard shortcuts (see
+ * CONTROL_SHORTCUTS); any other id is rendered as a plain cycling badge.
+ */
+export interface ControlDescriptor {
+  id: string;
+  /** Human label for tooltips and settings, e.g. "Mode", "Thinking". */
+  label: string;
+  /** Ordered options; the badge cycles through them in this order. */
+  options: ControlOption[];
+  /** Value applied when the session has no recorded choice. */
+  default: string;
+  /** A well-known control this one stands in for, so its shortcut applies:
+   *  an ACP agent's thought level ('acp:effort') is its Effort. */
+  role?: 'thinking' | 'effort' | 'speed';
+}
+
+/** Control ids the app knows about. Permission mode is special-cased because
+ *  the session manager implements app-level behaviour (read-safe mode) on top of
+ *  the adapter's mapping; everything else is opaque to the app. */
+export const CONTROL_IDS = {
+  permissionMode: 'permissionMode',
+  thinking: 'thinking',
+  effort: 'effort',
+  speed: 'speed',
+} as const;
+
+/** App-level shortcuts bound to well-known control ids. */
+export const CONTROL_SHORTCUTS: Record<string, string> = {
+  [CONTROL_IDS.permissionMode]: 'Alt+M',
+  [CONTROL_IDS.thinking]: 'Alt+T',
+  [CONTROL_IDS.effort]: 'Alt+E',
+};
+
+/** The shortcut for a control: its own id's, or the one of the well-known
+ *  control it stands in for. */
+export function controlShortcut(d: Pick<ControlDescriptor, 'id' | 'role'>): string | undefined {
+  return CONTROL_SHORTCUTS[d.id] ?? (d.role ? CONTROL_SHORTCUTS[d.role] : undefined);
+}
+
+// ─── Provider usage ("runway") ───
+
+/** One plan rate-limit window as reported by a provider. */
+export interface UsageWindow {
+  /** Provider-defined id, e.g. 'five_hour', 'seven_day', 'model:Fable'. */
+  id: string;
+  /** Short display label, e.g. "5-hour", "Weekly · Opus". */
+  label: string;
+  /** Fraction of the window consumed, 0–1. */
+  utilization: number;
+  /** Epoch seconds when the window resets. */
+  resetsAt?: number;
+}
+
+/** Account-level usage for a provider. Not per session: every session on the
+ *  same sign-in shares these windows. */
+export interface ProviderUsage {
+  /** False when the sign-in has no plan limits to report (API key, Bedrock,
+   *  Vertex, ...). `windows` is empty in that case. */
+  available: boolean;
+  /** Subscription name when known, e.g. 'pro', 'max'. */
+  plan?: string | null;
+  windows: UsageWindow[];
+  /** Epoch ms of the fetch that produced this snapshot. */
+  fetchedAt: number;
+  /** Epoch ms of the latest rate-limit event folded in since that fetch. */
+  updatedAt?: number;
+}
+
+/** Snapshot of a session's controls: the descriptors valid for its current
+ *  model plus the recorded value for each. `values` never carries
+ *  permissionMode — that flows through mode_sync so stale-SDK handling stays
+ *  in one place. */
+export interface SessionControls {
+  descriptors: ControlDescriptor[];
+  values: Record<string, string>;
+}
+
+// ─── Skills ───
+
+/** A skill discovered on disk or reported by a running session. */
+export interface SkillInfo {
+  /** Skill name (SKILL.md frontmatter `name`, falling back to the directory name). */
+  name: string;
+  /** Frontmatter `description` — empty when the manifest has none or the skill
+   *  is only known from a session's init report. */
+  description: string;
+  /** Where the skill was found: one of the agent's folders in the worktree
+   *  (`.claude/skills`, `.agents/skills`), one in the home directory, or only
+   *  reported by the running session (e.g. a plugin-provided skill with no
+   *  scannable location). */
+  source: 'project' | 'user' | 'session';
+  /** Absolute path to SKILL.md for on-disk skills. */
+  path?: string;
+}
+
+/** What Share and Link in the Skills drawer would change (skill-sharing.ts):
+ *  skills only Claude Code can see, shared skills it can't see yet (or sees
+ *  an old copy of), and its links to shared skills that were deleted. */
+export interface SkillSharing {
+  toShare: SkillInfo[];
+  toLink: SkillInfo[];
+  broken: SkillInfo[];
+}
+
+/** What Share or Link did, by skill name. */
+export interface SkillChanges {
+  done: string[];
+  skipped: { name: string; reason: string }[];
+}
+
+/** Provider-neutral definition for authoring a new skill, written to the
+ *  shared `.agents/skills` folder (skills.ts writeSkill). */
+export interface SkillDefinition {
+  /** Kebab-case identifier, e.g. "release-notes". */
+  name: string;
+  /** When the agent should invoke the skill. */
+  description: string;
+  /** Markdown instruction body. */
+  instructions: string;
+  /** 'project' writes into the session's worktree (ships with the branch);
+   *  'user' writes under the home directory (all repos). */
+  scope: 'project' | 'user';
+}
+
+/** A proposed skill mined from recurring session patterns. */
+export interface SkillSuggestion {
+  /** Stable id derived from the underlying pattern — dismissals key on it. */
+  id: string;
+  /** Proposed kebab-case skill name. */
+  name: string;
+  /** Proposed trigger description. */
+  description: string;
+  /** Draft instruction body to prefill the Add Skill dialog with. */
+  draftInstructions: string;
+  /** One-line human-readable why (e.g. "Similar requests in 4 sessions"). */
+  rationale: string;
+  /** Example prompt/command excerpts the pattern was mined from. */
+  evidence: string[];
+  /** Distinct sessions the pattern appeared in. */
+  sessionCount: number;
+}
+
+// ─── MCP Servers ───
+
+/** Provider-agnostic snapshot of an agent's MCP server connection. */
+export interface McpServerInfo {
+  name: string;
+  status: 'connected' | 'failed' | 'needs-auth' | 'pending' | 'disabled';
+  /** Error message when status is 'failed'. */
+  error?: string;
+  /** Config scope (e.g. project, user, local) when the provider reports one. */
+  scope?: string;
+  /** Where the server comes from, as a short label for display (e.g. user,
+   *  project, a plugin). Worked out by the adapter. */
+  origin?: string;
+  /** Number of tools the server exposes, when connected. */
+  toolCount?: number;
+  /** The server's tools, when connected. */
+  tools?: McpToolInfo[];
+}
+
+/** A server that is down: it needs a sign-in, or it failed to connect. The
+ *  MCP badge counts these, and a reconnect across threads retries them. */
+export function isMcpServerDown(status: string): boolean {
+  return status === 'needs-auth' || status === 'failed';
+}
+
+export interface McpToolInfo {
+  name: string;
+  description?: string;
+  /** Server-declared hints (MCP tool annotations). */
+  readOnly?: boolean;
+  destructive?: boolean;
+}
+
+/** An MCP server asking the user for input during a tool call (MCP
+ *  elicitation). Form mode asks for fields; URL mode asks the user to open a
+ *  page, e.g. to sign in. */
+export interface McpElicitationRequest {
+  serverName: string;
+  message: string;
+  mode: 'form' | 'url';
+  /** Page to open (URL mode). */
+  url?: string;
+  /** JSON Schema of the requested fields (form mode). The MCP spec limits it
+   *  to a flat object of string, number, integer, boolean and enum fields. */
+  requestedSchema?: Record<string, unknown>;
+  /** Heading the server supplied, if any. */
+  title?: string;
+}
+
+export interface McpElicitationResponse {
+  action: 'accept' | 'decline' | 'cancel';
+  content?: Record<string, string | number | boolean | string[]>;
+}
+
+/** How much of the context window one MCP server's tool definitions use. */
+export interface McpServerContextCost {
+  serverName: string;
+  /** Tokens of tool definitions loaded into the context window. */
+  tokens: number;
+  /** Tokens of tool definitions held back until the agent searches for them. */
+  deferredTokens: number;
+}
+
+/** How long a browser sign-in the agent finishes by itself is waited on.
+ *  A reconnect across threads leaves the server alone meanwhile, as a
+ *  reconnect could cancel the sign-in. */
+export const MCP_SIGN_IN_TIMEOUT_MS = 3 * 60 * 1000;
+
+/** Result of kicking off an OAuth sign-in for an MCP server. */
+export interface McpAuthStartResult {
+  /** URL the user must open to authorize. Absent when no user action is needed. */
+  authUrl?: string;
+  /** True when the provider will redirect back to the agent, which then
+   *  finishes the flow and reconnects on its own. False means the user must
+   *  reconnect manually after authorizing (e.g. claude.ai connectors). */
+  callbackExpected: boolean;
+}
+
+/** An MCP server from the agent CLI's configuration (settings page view).
+ *  Unlike McpServerInfo this is config-level, not tied to a running session. */
+export interface McpConfiguredServer {
+  name: string;
+  /** Command line (stdio) or URL (http/sse) the server is configured with. */
+  target: string;
+  /** Transport when the CLI reports one (e.g. HTTP, SSE). */
+  transport?: string;
+  /** `needs-approval` and `rejected` are project (.mcp.json) servers the user
+   *  hasn't approved, or has turned down. Neither is connected. */
+  status: McpServerInfo['status'] | 'needs-approval' | 'rejected';
+  /** Set when something else owns the server (e.g. a plugin), so it can't be
+   *  removed from Grove. */
+  managedBy?: McpServerManager;
+}
+
+/** The owner of an MCP server Grove can't remove, as the adapter describes it. */
+export interface McpServerManager {
+  /** Short tag shown in place of Remove, e.g. "figma plugin". */
+  label: string;
+  /** How to turn the server off instead. */
+  hint: string;
+}
+
+/**
+ * How an agent handles MCP servers, and the wording and rules the UI uses
+ * for them. Each adapter describes its own, so nothing in the UI assumes
+ * one agent's behaviour.
+ */
+export interface McpSupport {
+  /** Controls on a running conversation. Each needs the matching optional
+   *  AgentQueryHandle method. */
+  controls: {
+    /** Live server status (listMcpServers). */
+    list: boolean;
+    reconnect: boolean;
+    /** Connect / Disconnect (setMcpServerEnabled). */
+    toggle: boolean;
+    /** Browser sign-in for a server that needs it (authenticateMcpServer). */
+    signIn: boolean;
+    /** Context-window cost per server (getMcpContextCost). */
+    contextCost: boolean;
+  };
+  /** Tooltip for Disconnect: how long it lasts and what it affects. */
+  disconnectHint: string;
+  /** Editing configured servers (Settings > MCP servers). Absent: not supported. */
+  config?: {
+    /** Scopes a server can be added to. */
+    scopes: { value: McpConfigScope; label: string; description: string }[];
+    /** Server names the agent accepts, as a RegExp source, and the rule in words. */
+    namePattern: string;
+    nameRule: string;
+    /** Set when project servers must be approved before they connect: the
+     *  explanation shown next to Approve. */
+    approvalHint?: string;
+  };
+}
+
+export type McpConfigScope = 'local' | 'user' | 'project';
+
+/** Options for registering a new MCP server in the agent CLI's config. */
+export interface McpAddServerOpts {
+  name: string;
+  transport: 'stdio' | 'http' | 'sse';
+  /** Command (stdio) or URL (http/sse). */
+  commandOrUrl: string;
+  /** Extra command arguments (stdio only). */
+  args?: string[];
+  /** Environment variables (stdio only). */
+  env?: Record<string, string>;
+  /** Request headers, e.g. "Authorization: Bearer ..." (http/sse only). */
+  headers?: string[];
+  scope: McpConfigScope;
+  /** Repo directory the scope is resolved against (local/project scopes). */
+  cwd?: string;
+}
+
+// ─── OS Notifications ───
+
+/** Renderer → main request to show a desktop notification. Main gates on
+ *  window focus and the per-kind settings, so callers can fire unconditionally. */
+export interface OsNotificationRequest {
+  kind: 'turn_complete' | 'permission_request' | 'pr_alert' | 'plan_usage';
+  /** Session to focus when the notification is clicked. */
+  sessionId: string;
+  title: string;
+  body: string;
+}
+
+/** How Settings' test notification went: handed to the OS, refused by it
+ *  (Windows reports this), or not possible on this system. */
+export type TestNotificationResult = 'sent' | 'failed' | 'unsupported';
+
+// ─── Spell check ───
+
+/** Main → renderer: the user right-clicked a misspelled word. The renderer
+ *  draws the suggestion menu in the app's own style. */
+export interface SpellcheckMenuRequest {
+  /** Where the click landed, in window coordinates (fallback position). */
+  x: number;
+  y: number;
+  misspelledWord: string;
+  suggestions: string[];
 }
 
 // ─── Image Attachment ───
 
+export const IMAGE_MEDIA_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'] as const;
+export type ImageMediaType = (typeof IMAGE_MEDIA_TYPES)[number];
+
+/** Whether `mediaType` is an image type agents take inline (ImageMediaType). */
+export function isImageMediaType(mediaType: unknown): mediaType is ImageMediaType {
+  return (IMAGE_MEDIA_TYPES as readonly unknown[]).includes(mediaType);
+}
+
 export interface ImageAttachment {
   /** base64-encoded image data (no data: prefix) */
   data: string;
-  mediaType: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
+  mediaType: ImageMediaType;
   name: string;
+}
+
+/** An image saved in a conversation's attachments folder (main/attachments.ts).
+ *  Events carry this instead of the image data so the event log stays small. */
+export interface StoredImage {
+  /** File name in the attachments folder. */
+  file: string;
+  /** The name it was attached under. Absent for images a tool returned. */
+  name?: string;
+}
+
+// ─── Files the agent made ───
+
+/** What kind of file the agent made in a turn, which decides how the thread
+ *  shows it: images as thumbnails, the rest as chips that open them. */
+export type MadeFileKind = 'image' | 'pdf' | 'html' | 'video' | 'audio' | 'data' | 'document';
+
+/** A file the agent created or changed in its worktree during a turn, by any
+ *  route: a script it ran, an MCP tool, Write (main/turn-files.ts). */
+export interface MadeFile {
+  /** Path relative to the worktree, with forward slashes. */
+  path: string;
+  kind: MadeFileKind;
+  size: number;
+  /** A copy of an image, saved like a tool's images, so the thread shows it
+   *  as it was that turn. Images without one load from the worktree. */
+  image?: StoredImage;
+}
+
+/** What opening a worktree file did: opened it in its default app, showed it
+ *  in its folder, or (a web page) handed back the URL to open in the Preview
+ *  tab. `missing` when it's gone or outside the worktree. */
+export type OpenWorktreeFileResult =
+  | { kind: 'opened' }
+  | { kind: 'shown' }
+  | { kind: 'preview'; url: string }
+  /** A Markdown file's text, for the Focus panel. */
+  | { kind: 'markdown'; content: string }
+  /** Any other text file's text (source code, logs), read-only in the Focus panel. */
+  | { kind: 'text'; content: string }
+  | { kind: 'missing' };
+
+// ─── File Attachment ───
+
+/** A file attached to a message that goes neither as text nor as an image:
+ *  a PDF, an audio clip, or any other file. Agents get it inline where they
+ *  can take that type, otherwise the path of the saved copy. */
+export interface FileAttachment {
+  /** base64-encoded file content (no data: prefix) */
+  data: string;
+  /** MIME type, or '' when unknown. */
+  mediaType: string;
+  name: string;
+}
+
+/** A file attachment saved in a conversation's attachments folder
+ *  (main/attachments.ts). Events carry this instead of the file's data. */
+export interface StoredFile {
+  /** File name in the attachments folder. */
+  file: string;
+  /** The name it was attached under. */
+  name: string;
+  /** MIME type, or '' when unknown. */
+  mediaType: string;
+  /** Size in bytes. */
+  size: number;
 }
 
 // ─── Plugins ───
@@ -220,36 +1159,135 @@ export interface PluginListResult {
   available: AvailablePlugin[];
 }
 
-// ─── Dev Server ───
-
-export interface DevServerSuccess {
-  port: number;
-  url: string;
+/** Sidebar session ordering: key + direction (persisted via app-state). */
+export interface SessionSortState {
+  key: 'name' | 'age';
+  dir: 'asc' | 'desc';
 }
 
-export interface DevServerFailure {
-  reason: 'exited' | 'error' | 'timeout';
-  exitCode: number | null;
-  lastOutput: string;
-  errorMessage?: string;
+/** Conversations that belong to one piece of work, usually in different
+ *  projects (an API change and the web change that uses it). Short-lived:
+ *  the group goes when its last conversation leaves it. Each conversation
+ *  still runs in its own project; the group only lists them together.
+ *  Persisted via app-state. */
+export interface ConversationGroup {
+  id: string;
+  name: string;
+  /** Conversation ids, in the order they joined. Never empty, and a
+   *  conversation is in at most one group. */
+  sessionIds: string[];
 }
 
-export type DevServerResult = DevServerSuccess | DevServerFailure;
+/** Panels that fold: sidebars down to a thin rail, and the sidebar's Groups
+ *  and Projects sections down to their heading. The Changes and Checkpoints
+ *  file lists are separate so each tab keeps its own. */
+export const COLLAPSIBLE_PANELS = ['sidebar', 'changesFiles', 'checkpointList', 'checkpointFiles', 'groupsSection', 'projectsSection'] as const;
+export type CollapsiblePanel = (typeof COLLAPSIBLE_PANELS)[number];
+/** Which panels are collapsed (persisted via app-state). Absent = open. */
+export type CollapsedPanels = Partial<Record<CollapsiblePanel, boolean>>;
 
 // ─── IPC API (exposed via contextBridge) ───
 
+// ─── Preview tab ───
+
+/** The two pages behind a conversation's Preview tab: yours (an interactive
+ *  browser view) and Claude's (an offscreen page the agent's browser tools
+ *  drive). They share cookies and storage. */
+export type PreviewPageKind = 'user' | 'agent';
+
+/** Where your page sits in the window, in CSS pixels from the top-left. */
+export interface PreviewBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface PreviewPageState {
+  /** '' until something is loaded. */
+  url: string;
+  title: string;
+  loading: boolean;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  /** Last main-frame load failure; cleared by the next successful load. */
+  error: { code: number; description: string; url: string } | null;
+  /** The page's process died. Reload to recover. */
+  crashed: boolean;
+  /** The agent's page only: its last action and when it happened. */
+  lastAction?: { text: string; at: number } | null;
+  /** The agent's page only: viewport size in CSS pixels. */
+  size?: { width: number; height: number };
+}
+
+export type PreviewCommand = 'back' | 'forward' | 'reload' | 'hardReload' | 'stop' | 'devtools';
+
+/** A key pressed in your page that Grove should handle. */
+export type PreviewKeyForward =
+  | { action: 'focusAddress' }
+  | { action: 'key'; key: string; ctrlKey: boolean; shiftKey: boolean; altKey: boolean; metaKey: boolean };
+
 export interface GroveBenchAPI {
   // Repo operations
-  addRepo(): Promise<string | null>;
+  /** Pick a folder to add as a project. Null when cancelled. */
+  addRepo(): Promise<PickedProject | null>;
+  /** Whether a project path is a git repository, a plain folder, or gone. */
+  repoKind(path: string): Promise<ProjectKind>;
+  /** Keep a project in the remembered list (one found some other way than
+   *  the folder picker, such as the old localStorage list). */
+  rememberRepo(path: string): Promise<void>;
+  /** Whether git has a user.name and user.email for commits in this folder. */
+  hasGitIdentity(path: string): Promise<boolean>;
   removeRepo(repoPath: string): Promise<void>;
   validateRepo(path: string): Promise<boolean>;
 
   // Session operations
-  createSession(opts: CreateSessionOpts): Promise<{ id: string; branch: string }>;
+  /** `noGit` when the conversation runs in a folder without git. */
+  createSession(opts: CreateSessionOpts): Promise<{ id: string; branch: string; agentType: string; noGit?: boolean }>;
   resumeSession(id: string, repoPath: string): Promise<{ id: string; branch: string }>;
+  /** Stop the current turn; the agent process stays up for the next message. */
   stopSession(id: string): Promise<void>;
+  /** Close a conversation: shut down its agent, background tasks and
+   *  terminal (and the ports they hold), keeping it resumable. */
+  closeSession(id: string): Promise<void>;
+  /** Put an idle conversation to sleep: shut down its agent process but keep
+   *  it open. Resolves false when it is busy or not live, and stays awake. */
+  sleepSession(id: string): Promise<boolean>;
+  /** Wake a sleeping conversation (restart its agent on the same transcript). */
+  wakeSession(id: string): Promise<void>;
+  /** Stop one running background task (Agent tool sub-task) without
+   *  interrupting the session's current turn. */
+  stopBackgroundTask(sessionId: string, taskId: string): Promise<void>;
   destroySession(id: string, deleteBranch?: boolean): Promise<void>;
   renameSession(sessionId: string, displayName: string): Promise<void>;
+  /** Save the thread to a file the user picks (Markdown or JSON); the path, or null if cancelled. */
+  exportThread(sessionId: string): Promise<string | null>;
+  /** Refresh a conversation's automatic name (provider title, else a name
+   *  from the first prompt). Resolves to the new name, or null when it is
+   *  unchanged or was set by the user. */
+  autoNameSession(sessionId: string): Promise<string | null>;
+  /** Rename a conversation's placeholder branch (see tempBranchName) to one
+   *  generated from its task. Returns the new name, or null when nothing
+   *  changed (already named, pushed, no prompt yet, or generation failed). */
+  autoNameBranch(sessionId: string): Promise<string | null>;
+  /** A conversation's goal, or null for an unknown conversation. */
+  getConversationGoal(sessionId: string): Promise<ConversationGoal | null>;
+  /** Several conversations' goals in one call (the sidebar's tooltips).
+   *  Unknown ids are left out. */
+  getConversationGoals(sessionIds: string[]): Promise<Record<string, ConversationGoal>>;
+  /** Save a goal the user typed. Empty text clears it; either way it is
+   *  never replaced automatically. */
+  setConversationGoal(sessionId: string, text: string): Promise<ConversationGoal | null>;
+  /** Generate a goal for a conversation that has never had one, after a
+   *  turn ends. Resolves to the new goal, or null when nothing changed (goals
+   *  turned off, one exists already, no reply yet, or generation failed). */
+  autoConversationGoal(sessionId: string): Promise<ConversationGoal | null>;
+  /** Generate a new goal now, replacing the current one, typed or not.
+   *  Rejects when generation fails. `substituteAgent`: the agent to use when
+   *  the conversation's own agent is gone (backgroundAgentStore asks). */
+  refreshConversationGoal(sessionId: string, substituteAgent?: string): Promise<ConversationGoal | null>;
+  /** Close (or reopen) the goal bar for one conversation. */
+  setConversationGoalHidden(sessionId: string, hidden: boolean): Promise<ConversationGoal | null>;
   listSessions(): Promise<SessionInfo[]>;
 
   // Worktree operations
@@ -257,23 +1295,87 @@ export interface GroveBenchAPI {
   listRepos(): Promise<string[]>;
 
   // Branch operations
-  listBranches(repoPath: string): Promise<string[]>;
+  /** Local and remote branch names (remote prefix stripped). Fetches first
+   *  unless `fetch` is false. */
+  listBranches(repoPath: string, opts?: { fetch?: boolean }): Promise<string[]>;
+  /** The repo's default branch (origin/HEAD, falling back to main/master). */
+  getDefaultBranch(repoPath: string): Promise<string>;
   renameBranch(sessionId: string, newBranchName: string): Promise<{ branch: string }>;
+  /** Check out another branch in the conversation's checkout, or with
+   *  `create` a new one at HEAD. `busySessionIds` are conversations mid-turn;
+   *  the switch is refused if any of them shares the checkout. */
+  switchBranch(sessionId: string, branch: string, opts: { create: boolean; busySessionIds: string[] }): Promise<BranchSwitchResult>;
+  /** Record the branch the conversation's checkout is on now, if it moved
+   *  outside the app. Null when nothing changed. */
+  syncBranch(sessionId: string): Promise<BranchSyncResult | null>;
+  /** The conversations working in this conversation's checkout, itself
+   *  included (another conversation can be attached to the same one). */
+  getCheckoutSharers(sessionId: string): Promise<string[]>;
 
   // Agent I/O (replaces terminal I/O)
-  sendMessage(sessionId: string, content: string, images?: ImageAttachment[]): void;
+  sendMessage(sessionId: string, content: string, images?: ImageAttachment[], files?: FileAttachment[]): void;
+  /** Open a file attached to a message (PDFs and audio in their default app),
+   *  or show it in its folder for other types. False when it's gone. */
+  openAttachedFile(sessionId: string, file: string): Promise<boolean>;
+  /** Open a file in the conversation's worktree that the agent made or
+   *  linked to (main/worktree-files.ts). */
+  openWorktreeFile(sessionId: string, filePath: string): Promise<OpenWorktreeFileResult>;
   respondToPermission(sessionId: string, decision: PermissionDecision): Promise<boolean>;
+  /** Answer an MCP elicitation. False when it already resolved or timed out. */
+  respondToElicitation(sessionId: string, requestId: string, response: McpElicitationResponse): Promise<boolean>;
+  /** Continue past a limit or stop the turn. False when it already resolved. */
+  respondToLimit(sessionId: string, requestId: string, decision: 'continue' | 'stop'): Promise<boolean>;
+  /** Today's estimated spend across threads, in USD, as the daily limit counts it. */
+  getDailySpend(): Promise<number>;
+  /** What one thread has used over its life: spend and tokens, as its agent reported them. */
+  getThreadUsage(sessionId: string): Promise<ThreadUsage>;
   onAgentEvent(sessionId: string, callback: (event: AgentEvent) => void): () => void;
   offAgentEvent(sessionId: string): void;
   getEventHistory(sessionId: string): Promise<AgentEvent[]>;
-  /** Load the last `limit` events, optionally ending before `beforeIndex`. */
-  getEventHistoryPage(sessionId: string, limit: number, beforeIndex?: number): Promise<{ events: AgentEvent[]; totalCount: number; startIndex: number }>;
+  /** Load the last `limit` events, optionally ending before `beforeIndex`,
+   *  with where the thread's turn stands (see ThreadTurnState). */
+  getEventHistoryPage(sessionId: string, limit: number, beforeIndex?: number): Promise<EventHistoryPage>;
   /** Get the total number of persisted events for a session. */
   getEventHistoryCount(sessionId: string): Promise<number>;
+  /** The thread's to-do list and files, from its whole history
+   *  (shared/thread-items.ts). */
+  getThreadItems(sessionId: string): Promise<ThreadItems>;
+  /** Search the full event history (main-process), newest match first. */
+  searchEventHistory(sessionId: string, query: string, limit?: number): Promise<EventSearchHit[]>;
+  /** Search every given session's full history (main-process), in the given
+   *  order. Hits are capped per session and tagged with their sessionId, newest
+   *  match first per session; the search stops once `maxHits` are found. */
+  searchAllEventHistory(sessionIds: string[], query: string, limitPerSession?: number, maxHits?: number): Promise<CrossSessionSearchHit[]>;
+  /** First-prompt / last-message previews for the given sessions (main-process). */
+  getSessionPreviews(sessionIds: string[]): Promise<Record<string, SessionPreview>>;
   clearEventHistory(sessionId: string): Promise<void>;
+  /** Resolve a message's stable SDK uuid to its absolute event index (or null). */
+  findEventIndexByUuid(sessionId: string, uuid: string): Promise<number | null>;
+
+  // Bookmarks
+  listBookmarks(): Promise<Bookmark[]>;
+  addBookmark(bookmark: Omit<Bookmark, 'id' | 'createdAt'>): Promise<Bookmark>;
+  removeBookmark(id: string): Promise<void>;
+  updateBookmark(id: string, patch: Partial<Pick<Bookmark, 'note' | 'eventIndex'>>): Promise<void>;
 
   // Prerequisites
+  /** Full check of git + agent CLI (spawns processes; excludes gh). */
   checkPrerequisites(): Promise<PrerequisiteStatus>;
+  /** Last check result, from this or a previous launch, or null. Instant. */
+  getCachedPrerequisites(): Promise<PrerequisiteStatus | null>;
+  /** GitHub CLI availability/auth — may hit the network, never gates the app. */
+  checkGhPrerequisite(): Promise<NonNullable<PrerequisiteStatus['gh']>>;
+  /** Encrypt and save an API key for one agent. Rejects with a user-facing
+   *  message when the key is malformed or can't be stored. Resolves with the
+   *  updated status. */
+  setApiKey(adapterId: string, key: string): Promise<PrerequisiteStatus>;
+  /** Remove an agent's saved API key. Resolves with the updated status. */
+  clearApiKey(adapterId: string): Promise<PrerequisiteStatus>;
+  /** Start an agent briefly to find out whether it is signed in
+   *  (signInCheckable agents). Resolves with the updated status. */
+  checkAgentSignIn(adapterId: string): Promise<PrerequisiteStatus>;
+  /** Tell main that startup session restore has finished. */
+  notifyRestoreComplete(): void;
 
   // Session status updates (from main → renderer)
   onSessionStatus(callback: (sessionId: string, status: SessionStatus) => void): () => void;
@@ -284,38 +1386,151 @@ export interface GroveBenchAPI {
   // Model control
   setModel(sessionId: string, model?: string): Promise<void>;
 
-  // Thinking control
-  setThinking(sessionId: string, enabled: boolean): Promise<void>;
+  // Session controls (adapter-declared: thinking, speed, ...)
+  /** Descriptors for the session's current model plus recorded values. Falls
+   *  back to the default adapter's descriptors for an unknown session. */
+  getControls(sessionId: string): Promise<SessionControls>;
+  /** Set a non-permission control; rejects unknown ids/values. */
+  setControl(sessionId: string, controlId: string, value: string): Promise<void>;
+  /** Switch a conversation to another agent. It starts a session of its own;
+   *  with `transcript` its first message carries a short transcript of the
+   *  conversation so far. */
+  switchAgent(sessionId: string, adapterId: string, transcript: boolean): Promise<void>;
+  /** Plan usage windows for the session's provider, or null when the session
+   *  has no live query or the adapter cannot report usage. */
+  getUsage(sessionId: string): Promise<ProviderUsage | null>;
+  /** The plan usage an agent last reported, saved across conversations and
+   *  launches, or null when it never has. */
+  getCachedUsage(adapterId: string): Promise<ProviderUsage | null>;
+
+  // MCP server control
+  listMcpServers(sessionId: string): Promise<McpServerInfo[]>;
+  /** Context-window cost of each MCP server's tools. Empty when the
+   *  conversation has no live query or the agent can't report it. */
+  getMcpContextCost(sessionId: string): Promise<McpServerContextCost[]>;
+  /** Skills visible to a session (its agent's project and user folders).
+   *  Resolves the session's worktree when it is running; `fallbackPath`
+   *  (typically the repo path) covers stopped sessions. */
+  listSkills(sessionId: string, fallbackPath: string): Promise<SkillInfo[]>;
+  /** The skills an agent can see in a project, without a thread: for running
+   *  or scheduling one. Empty for an agent Grove can't list skills for. */
+  listAgentSkills(agentId: string, repoPath: string): Promise<SkillInfo[]>;
+  /** Author a new skill in the shared folder, linked for Claude Code when
+   *  the session's agent is Claude Code. Project scope writes into the
+   *  session's worktree; user scope applies to all repos. */
+  addSkill(sessionId: string, fallbackPath: string, def: SkillDefinition): Promise<SkillInfo>;
+  /** What Share and Link would change for the session's project. Links are
+   *  only offered in a Claude Code thread. */
+  getSkillSharing(sessionId: string, fallbackPath: string): Promise<SkillSharing>;
+  /** Move Claude Code's own skills to the shared folder, leaving links. */
+  shareSkills(sessionId: string, fallbackPath: string): Promise<SkillChanges>;
+  /** Bring Claude Code's links in line with the shared folder. */
+  linkSkills(sessionId: string, fallbackPath: string): Promise<SkillChanges>;
+  /** Cached skill suggestions for a repo (last analysis result). */
+  getSkillSuggestions(repoPath: string): Promise<SkillSuggestion[]>;
+  /** Mine the repo's session history for patterns and refresh suggestions. */
+  analyzeSkillSuggestions(repoPath: string): Promise<SkillSuggestion[]>;
+  /** Permanently dismiss one suggestion for a repo. */
+  dismissSkillSuggestion(repoPath: string, suggestionId: string): Promise<void>;
+  reconnectMcpServer(sessionId: string, serverName: string): Promise<void>;
+  setMcpServerEnabled(sessionId: string, serverName: string, enabled: boolean): Promise<void>;
+  /** Start OAuth sign-in for a `needs-auth` server and open the auth URL in the browser. */
+  authenticateMcpServer(sessionId: string, serverName: string): Promise<McpAuthStartResult>;
+  /** Reconnect the MCP servers that are down (needs-auth or failed) in every
+   *  live thread on this thread's agent, which share its sign-ins. With
+   *  `serverName`, only that server and only in the other threads. Resolves
+   *  once this thread is done; the others carry on in the background and
+   *  report through onMcpStatus. A thread mid-turn waits for the turn to end. */
+  reconnectDownMcpServers(sessionId: string, serverName?: string): Promise<void>;
+  /** A thread's live MCP status, sent after a background reconnect. */
+  onMcpStatus(callback: (sessionId: string, servers: McpServerInfo[]) => void): () => void;
 
   // File operations (for @ file picker)
   listFiles(sessionId: string): Promise<string[]>;
   readFile(sessionId: string, filePath: string): Promise<string>;
   openInEditor(sessionId: string, filePath: string, line?: number): Promise<void>;
 
-  // File revert (for changes review)
-  revertFile(sessionId: string, filePath: string, staged?: boolean): Promise<void>;
-  getFileDiff(sessionId: string, filePath: string): Promise<string>;
+  // File revert (for changes review). `renamedFrom`: a rename's old path,
+  // which comes back (not a copy's: its source was never removed).
+  revertFile(sessionId: string, filePath: string, staged?: boolean, renamedFrom?: string): Promise<void>;
+  getFileDiff(sessionId: string, filePath: string, staged?: boolean, opts?: FileDiffOptions): Promise<FileDiffResult>;
+  getFileLines(sessionId: string, filePath: string, staged?: boolean): Promise<FileLinesResult>;
+  getImageDiffContent(sessionId: string, filePath: string): Promise<ImageDiffContent>;
+  stageFile(sessionId: string, filePath: string): Promise<void>;
+  unstageFile(sessionId: string, filePath: string): Promise<void>;
+  commit(sessionId: string, message: string): Promise<void>;
+  /** Ask the agent to write a commit message for the staged changes.
+   *  `substituteAgent`: the agent to use when the conversation's own agent
+   *  is gone (backgroundAgentStore asks). */
+  generateCommitMessage(sessionId: string, substituteAgent?: string): Promise<string>;
+  push(sessionId: string): Promise<void>;
+  getGitSyncStatus(sessionId: string): Promise<GitSyncStatus>;
+  getBranchCommits(sessionId: string, base: string): Promise<BranchCommit[]>;
+  /** Commits on `ref` (a branch name or commit) that aren't on `base`, newest first, with ids. */
+  gitLogCommits(sessionId: string, ref: string, base: string): Promise<CommitEntry[]>;
+  /** Rebase the session branch onto another branch. Conflicts are aborted and reported. */
+  gitRebase(sessionId: string, onto: string): Promise<GitOpResult>;
+  /** Apply one commit onto the session branch. Conflicts are aborted and reported. */
+  gitCherryPick(sessionId: string, sha: string): Promise<GitOpResult>;
+  /** Squash every commit since the merge base with `base` into one. */
+  gitSquash(sessionId: string, base: string, message: string): Promise<GitOpResult>;
 
   // Checkpoint rewind
-  rewindSession(sessionId: string, userMessageId: string, options?: { conversationOnly?: boolean }): Promise<void>;
+  rewindSession(sessionId: string, userMessageId: string, options?: RewindOptions): Promise<void>;
   getCheckpointDiff(sessionId: string, userMessageId: string): Promise<string>;
   listCheckpoints(sessionId: string): Promise<CheckpointListItem[]>;
 
+  // Diff history tracking
+  getDiffHistory(sessionId: string): Promise<DiffHistoryResult>;
+  getCheckpointFiles(sessionId: string, uuid: string, scope: CheckpointDiffScope): Promise<GitStatusResult>;
+  getCheckpointFileDiff(sessionId: string, uuid: string, scope: CheckpointDiffScope, filePath: string): Promise<FileDiffResult>;
+  getCheckpointFileLines(sessionId: string, uuid: string, scope: CheckpointDiffScope, filePath: string): Promise<FileLinesResult>;
+
   // Git status
-  getGitStatus(sessionId: string): Promise<GitStatusResult>;
+  getGitStatus(sessionId: string, opts?: GitStatusOptions): Promise<GitStatusResult>;
 
   // PR info
-  getPrInfo(sessionId: string): Promise<PrInfo | null>;
+  /** Every PR tied to the session — its branch plus branches checked out in
+   *  it since it started — ordered primary first (open before closed/merged,
+   *  newest first within each). Empty when none exist. */
+  getPrs(sessionId: string): Promise<PrInfo[]>;
+  /** Open PRs in a project, newest first. Throws when gh can't list them. */
+  listOpenPrs(repoPath: string): Promise<OpenPrSummary[]>;
+  createPr(sessionId: string, opts: PrCreateOpts): Promise<PrInfo>;
+  getPrReviewComments(sessionId: string, prNumber: number): Promise<PrReviewComment[]>;
+  /** Post a review (approve, request changes or comment) on one of the
+   *  session's PRs, with line comments placed inline where GitHub can take them. */
+  submitPrReview(sessionId: string, review: PrReviewSubmit): Promise<PrReviewSubmitResult>;
 
   // External links
   openExternal(url: string): Promise<void>;
 
-  // Localhost process cleanup
-  killPort(port: number): Promise<void>;
+  // Preview tab
+  /** Load a URL in one of the conversation's Preview pages. Rejects with a
+   *  readable reason when the URL isn't allowed there. */
+  previewNavigate(sessionId: string, page: PreviewPageKind, url: string): Promise<void>;
+  previewCommand(sessionId: string, page: PreviewPageKind, command: PreviewCommand): Promise<void>;
+  /** Show your page at these bounds, or hide it (null). */
+  previewSetViewport(sessionId: string, bounds: PreviewBounds | null): void;
+  /** A picture of your page (JPEG data URL), shown while an overlay covers it. */
+  previewSnapshot(sessionId: string): Promise<string | null>;
+  /** The agent's page as a JPEG data URL, or null when it hasn't changed since
+   *  `sinceVersion` (or doesn't exist). */
+  previewAgentFrame(sessionId: string, sinceVersion: number): Promise<{ version: number; dataUrl: string } | null>;
+  /** Every conversation's open pages, for the renderer to catch up after a reload. */
+  previewGetStates(): Promise<Record<string, { user: PreviewPageState | null; agent: PreviewPageState | null }>>;
+  /** A page's state changed; null means the page was closed. */
+  onPreviewState(callback: (sessionId: string, page: PreviewPageKind, state: PreviewPageState | null) => void): () => void;
+  onPreviewKey(callback: (sessionId: string, key: PreviewKeyForward) => void): () => void;
 
-  // Dev server
-  startDevServer(sessionId: string, command?: string): Promise<DevServerResult>;
-  stopDevServer(sessionId: string): Promise<void>;
+  // MCP server configuration (agent CLI config, not per-session). `adapterType`
+  // picks the agent; the default agent when omitted.
+  mcpConfigList(cwd?: string, adapterType?: string): Promise<McpConfiguredServer[]>;
+  mcpConfigAdd(opts: McpAddServerOpts, adapterType?: string): Promise<void>;
+  mcpConfigRemove(name: string, scope?: McpConfigScope, cwd?: string, adapterType?: string): Promise<void>;
+  /** Approve a project server that must be approved before it connects, for
+   *  the project at `repoPath` and its conversations' worktrees. */
+  mcpConfigApprove(name: string, repoPath: string, adapterType?: string): Promise<void>;
 
   // Plugins
   pluginList(): Promise<PluginListResult>;
@@ -332,12 +1547,14 @@ export interface GroveBenchAPI {
   memoryRead(repoPath: string, relativePath: string): Promise<string | null>;
   memoryWrite(repoPath: string, relativePath: string, content: string): Promise<void>;
   memoryDelete(repoPath: string, relativePath: string): Promise<boolean>;
-
-  // Shell / Terminal (legacy)
-  shellRun(sessionId: string, command: string): Promise<string>;
-  shellKill(execId: string): Promise<void>;
-  shellInput(execId: string, data: string): void;
-  onShellOutput(sessionId: string, callback: (event: ShellOutputEvent) => void): () => void;
+  memoryCompact(repoPath: string): Promise<MemoryCompactionStatus>;
+  memoryCompactCancel(repoPath: string): Promise<boolean>;
+  onMemoryCompactEvent(callback: (event: MemoryCompactionEvent) => void): () => void;
+  memoryListBackups(repoPath: string): Promise<MemoryBackupInfo[]>;
+  memoryRestoreBackup(repoPath: string, backupId: string): Promise<MemoryRestoreStatus>;
+  memoryStats(repoPath: string): Promise<MemoryStatsResult>;
+  memoryBackupPreview(repoPath: string, backupId: string): Promise<MemoryBackupFile[]>;
+  memoryReadBackupFile(repoPath: string, backupId: string, relativePath: string): Promise<string | null>;
 
   // PTY Terminal (per-session persistent shell)
   ptySpawn(sessionId: string): Promise<boolean>;
@@ -353,14 +1570,79 @@ export interface GroveBenchAPI {
   saveSettings(settings: GroveBenchSettings): Promise<void>;
 
   // App state persistence
-  getActiveTab(): Promise<string | null>;
-  setActiveTab(id: string | null): void;
   getOpenTabs(): Promise<string[]>;
   setOpenTabs(ids: string[]): void;
+  getCollapsedRepos(): Promise<Record<string, boolean>>;
+  setCollapsedRepos(map: Record<string, boolean>): void;
+  getSessionSort(): Promise<SessionSortState>;
+  setSessionSort(sort: SessionSortState): void;
+  getSidebarWidth(): Promise<number | null>;
+  setSidebarWidth(width: number): void;
+  getCollapsedPanels(): Promise<CollapsedPanels>;
+  setCollapsedPanels(panels: CollapsedPanels): void;
+  /** The saved groups, or null while app-state.json can't be read (a
+   *  passing lock), so "none" is never mistaken for the real list. */
+  getConversationGroups(): Promise<ConversationGroup[] | null>;
+  setConversationGroups(groups: ConversationGroup[]): void;
+  /** Sessions flagged unread (finished a turn / got a PR alert while not
+   *  focused) when the app last ran, so the flag survives a restart. */
+  getUnreadSessions(): Promise<string[]>;
+  setUnreadSessions(ids: string[]): void;
+  /** Threads flagged To do, or null while app-state.json can't be read (a
+   *  passing lock), so "none" is never mistaken for the real list. */
+  getTodoSessions(): Promise<string[] | null>;
+  setTodoSessions(ids: string[]): void;
+
+  // Skill schedules (shared/skill-schedules.ts)
+  /** The schedules, or null while app-state.json can't be read (a passing
+   *  lock), so "none" is never mistaken for the real list. */
+  listSkillSchedules(): Promise<SkillSchedule[] | null>;
+  /** Save a new schedule (no id) or an edited one; the schedule as saved. */
+  saveSkillSchedule(schedule: SkillScheduleInput): Promise<SkillSchedule>;
+  deleteSkillSchedule(id: string): Promise<void>;
+  /** Note what a run did; the schedule as saved, or null if it was deleted
+   *  or the file can't be read just now. */
+  recordSkillScheduleRun(id: string, outcome: Omit<ScheduleOutcome, 'at'>): Promise<SkillSchedule | null>;
+  /** A schedule's time came: start its thread. */
+  onSkillScheduleDue(callback: (id: string) => void): () => void;
+  /** The scheduler changed the schedules (a run taken or missed). */
+  onSkillSchedulesChanged(callback: (schedules: SkillSchedule[]) => void): () => void;
 
   // App lifecycle
   onAppClosing(callback: () => void): () => void;
-  onPowerResume(callback: () => void): () => void;
+  onPowerResume(callback: (resumeIds: string[]) => void): () => void;
+  /** An agent's model list changed (it reported its current models). */
+  onModelsChanged(callback: (adapterId: string) => void): () => void;
+
+  // Error reporting
+  /** Uncaught main-process errors, forwarded so the UI can surface them. */
+  onAppError(callback: (report: AppErrorReport) => void): () => void;
+  /** Send an uncaught renderer error to main for the file log. */
+  reportError(report: AppErrorReport): void;
+  /** Send a frame the window took long over to main for the file log. */
+  reportFreeze(report: FreezeReport): void;
+  /** Send step timings from the window to main for the performance log. */
+  reportTiming(report: TimingReport): void;
+  /** Send a line from the idle sleep loop (why a thread was or wasn't put
+   *  to sleep) to main for the app log. Thread ids only. */
+  logIdle(line: string): void;
+  /** Record a performance trace for a few seconds; resolves once it's saved. */
+  recordPerformanceTrace(): Promise<TraceResult>;
+  /** Show the performance log, or the last trace saved, in the file manager. */
+  showPerformanceFile(which: 'log' | 'trace'): Promise<void>;
+
+  // Taskbar attention badge
+  /** Overlay `count` on the taskbar icon (Windows overlay icon, macOS dock
+   *  badge, Linux badge count). `dataUrl` is a renderer-drawn PNG used for the
+   *  Windows overlay; 0 clears the badge. */
+  setAttentionBadge(count: number, dataUrl: string | null): void;
+
+  // OS notifications
+  notify(req: OsNotificationRequest): void;
+  /** Show a sample notification now, whatever the focus and settings. */
+  testNotification(): Promise<TestNotificationResult>;
+  /** Fired when the user clicks an OS notification — jump to that session. */
+  onFocusSession(callback: (sessionId: string) => void): () => void;
 
   // Window controls
   winMinimize(): void;
@@ -368,64 +1650,274 @@ export interface GroveBenchAPI {
   winClose(): void;
   winIsMaximized(): Promise<boolean>;
 
+  // Spell check
+  /** Fired when the user right-clicks a misspelled word. */
+  onSpellcheckMenu(callback: (req: SpellcheckMenuRequest) => void): () => void;
+  /** Replace the misspelled word with one of the offered suggestions. */
+  spellcheckReplace(suggestion: string): void;
+  /** Add the misspelled word to the user's dictionary. */
+  spellcheckAddWord(): void;
+
   // Agent adapters
-  listAdapters(): Promise<Array<{ id: string; displayName: string; capabilities: Record<string, boolean> }>>;
-  getModels(adapterType?: string): Promise<Array<{ id: string; label: string; family?: string }>>;
+  /** Registered agents, in registration order. `isDefault` marks the
+   *  built-in default, which new threads use when the user hasn't picked one
+   *  (settings.defaultAgent). */
+  listAdapters(): Promise<AgentSummary[]>;
+  /** Check a Claude account the user is typing in (name and optional
+   *  folder) without adding it. */
+  previewClaudeAccount(input: { name: string; configDir: string }): Promise<ClaudeAccountPreview>;
+  /** Register another Claude account as its own agent, straight away.
+   *  Returns the entry for the caller to save in settings.claudeAccounts and
+   *  the new agent's id. Rejects with a user-facing message. */
+  addClaudeAccount(input: { name: string; configDir: string }): Promise<{ setting: ClaudeAccountSetting; adapterId: string }>;
+  /** Agents in the ACP Registry, from the last copy Grove downloaded. */
+  listRegistryAgents(): Promise<RegistryAgentSummary[]>;
+  /** A registry agent's icon as an SVG data URL, or null. */
+  getRegistryIcon(id: string): Promise<string | null>;
+  /** Download the ACP Registry and models.dev again now (when allowed). */
+  refreshCatalogs(): Promise<{ fetchedAt: number | null }>;
+  /** Control descriptors an adapter declares for `model` (null = its default
+   *  model), without needing a session. Used by Settings for per-adapter
+   *  defaults. Unknown adapter = []. */
+  getAdapterControls(adapterType?: string, model?: string | null): Promise<ControlDescriptor[]>;
+  getModels(adapterType?: string): Promise<Array<{ id: string; label: string; family?: string; contextWindow?: number }>>;
 
   // Auto-update
-  checkForUpdate(): Promise<void>;
+  getUpdateState(): Promise<UpdateState>;
+  /** Check now, on the user's behalf. Resolves to the status once the check
+   *  is done (null in dev builds). */
+  checkForUpdate(): Promise<UpdateStatus | null>;
   downloadUpdate(): Promise<void>;
-  installUpdate(): void;
+  /** Stop every agent and shell the way quitting does, then install the
+   *  downloaded update and reopen the app. */
+  restartToUpdate(): Promise<void>;
   onUpdateStatus(callback: (status: UpdateStatus) => void): () => void;
 }
 
+// ─── Caveman ───
+
+export type CavemanMode = 'off' | 'lite' | 'full' | 'ultra';
+
 // ─── Settings ───
 
+/**
+ * A tool allow/deny rule: `<tool>` or `<tool>(<glob>)`.
+ *
+ * `<tool>` is preferably one of the adapter-neutral keywords below (so the
+ * same rule works for every agent), or a provider tool name for anything the
+ * keywords don't cover (Claude: `Bash`, `NotebookEdit`, `mcp__github__*`).
+ * The glob matches the call's specifier — the command for `shell`, the file
+ * path for `edit`/`read`, the URL for `web`, the prompt for `agent`, and the
+ * server/tool name after `mcp__` for `mcp`. `*` matches anything.
+ *
+ *   shell(npm run *)   edit(src/**)   read(**\/.env*)   web(*github.com*)
+ *   mcp(github__*)     question       Bash(git push *)
+ */
 export interface ToolRule {
-  pattern: string; // e.g. "Bash(npm run *)", "Read(/src/**)", "mcp__*"
+  pattern: string;
 }
 
-export type SettingsPermissionMode = 'default' | 'plan' | 'acceptEdits' | 'bypassPermissions';
+/** Neutral rule keywords → the tool category they stand for. `mcp` is
+ *  special-cased by the matcher (provider tools prefixed `mcp__`). */
+export const TOOL_RULE_KEYWORDS: Record<string, ToolCategory> = {
+  shell: 'bash',
+  bash: 'bash',
+  edit: 'edit',
+  write: 'edit',
+  read: 'read',
+  web: 'web_fetch',
+  fetch: 'web_fetch',
+  agent: 'agent',
+  question: 'question',
+};
+
+/** One agent in the ACP Registry, as Settings lists it. */
+export interface RegistryAgentSummary {
+  id: string;
+  name: string;
+  version: string;
+  description?: string;
+  website?: string;
+  /** A command to copy (npm or uv), or a download for this computer. */
+  install: { command: string } | { download: string } | null;
+  /** How Grove would start it (npx or uvx), or null for downloads. */
+  launch: { command: string; args: string[] } | null;
+  /** Grove has it built in (Gemini CLI, Copilot CLI, OpenCode). */
+  builtIn: boolean;
+}
+
+/** An agent the user added that speaks the Agent Client Protocol over stdio. */
+export interface AcpAgentSetting {
+  /** Stable id (the adapter id is `acp-<id>`); defaults from the name. */
+  id: string;
+  name: string;
+  /** Program to run, on PATH or a full path. */
+  command: string;
+  args: string[];
+}
+
+/** Another Claude account, such as work next to personal. Claude Code keeps
+ *  each account's sign-in, history and settings in its own folder
+ *  (CLAUDE_CONFIG_DIR); the default account keeps `~/.claude`. */
+export interface ClaudeAccountSetting {
+  /** Stable id (the adapter id is `claude-account-<id>`); defaults from the name. */
+  id: string;
+  name: string;
+  /** The account's Claude Code folder. Empty for `~/.claude-<id>`. */
+  configDir: string;
+}
 
 export interface GroveBenchSettings {
   // Permission & Security
-  defaultPermissionMode: SettingsPermissionMode;
   toolAllowRules: ToolRule[];
   toolDenyRules: ToolRule[];
-  disableBypassMode: boolean;
+  /** Skill names hidden from agent sessions. Applied when a session's query
+   *  (re)starts — the SDK receives an allowlist of every known skill minus
+   *  these. Empty = all skills enabled (the CLI default). */
+  disabledSkills: string[];
+  /** Auto-analyze finished sessions for recurring workflows and surface skill
+   *  suggestions in the status bar. Off by default — each analysis is a model
+   *  call, so the status bar's manual "Suggest" button is the main route. */
+  autoSkillSuggestions: boolean;
+  /** Pin a one-line goal at the top of each conversation's Thread tab,
+   *  generated after its first reply (one background model call per
+   *  conversation, plus one per Refresh). Off by default, as each goal is a
+   *  model call the user didn't ask for. */
+  showConversationGoal: boolean;
+  /** After each turn, show a guess at the user's next prompt in the message
+   *  box (Tab takes it), from agents that make their own (Claude Code, from
+   *  the thread's prompt cache). Default true. */
+  promptSuggestions: boolean;
+  /** Also ask agents that don't make their own, with a background model
+   *  call per turn (session-prompt-suggestions.ts). Needs promptSuggestions.
+   *  Off by default, as each is a model call the user didn't ask for. */
+  backgroundPromptSuggestions: boolean;
 
   // Agent Defaults
-  defaultModel: string;
-  extendedThinking: boolean;
+  /** Model new conversations start on, keyed by adapter id. Missing or empty
+   *  means the adapter's first model. */
+  defaultModels: Record<string, string>;
+  /** Default values for each adapter's declared session controls (permission
+   *  mode, thinking, speed, ...), keyed by adapter id then control id. Only
+   *  ids the adapter actually offers for the session's model are applied;
+   *  anything else is ignored, so a stale entry never breaks a session. */
+  adapterDefaults: Record<string, Record<string, string>>;
+  /** Ask agents that support it (the `thinkingSummaries` capability) for a
+   *  readable summary of the model's thinking. Off asks for none. Applies
+   *  when a conversation's agent next starts. Default true. */
+  showThinkingSummaries: boolean;
+  /** Caveman mode — terse output to reduce token usage. Default 'off'. */
+  cavemanMode: CavemanMode;
   workingDirectories: string[];
   defaultSystemPromptAppend: string;
-
-  // Dev Server
-  /** Default dev command (e.g. 'npm run dev'). Auto-detected from package.json if blank. */
-  devCommand: string;
+  /** The user's own ACP agents. Read at launch, so a change applies after a restart. */
+  acpAgents: AcpAgentSetting[];
+  /** Claude accounts besides the default one, each offered as its own agent.
+   *  Read at launch, so a change applies after a restart. */
+  claudeAccounts: ClaudeAccountSetting[];
+  /** Ids of alpha agents (AgentSummary.stage) the user turned on. Others
+   *  stay out of the agent picker; their existing conversations still work. */
+  enabledAlphaAgents: string[];
+  /** Adapter id new threads start on (Settings > Agents). Empty: the open
+   *  thread's agent, else the built-in default (AgentSummary.isDefault).
+   *  Ignored while that agent isn't offered for new threads (offeredForNew),
+   *  so turning an alpha agent off or removing an account can't strand it. */
+  defaultAgent: string;
 
   // Memory
   /** Enable auto-save of memories at end of session / compaction. Default true. */
   memoryAutoSave: boolean;
+  /** Abort each model call of a memory compaction (planning, each merge
+   *  step) after this many seconds. 30 to 3600, default 300 (5 minutes);
+   *  see shared/compact-timeout.ts. */
+  memoryCompactTimeoutSeconds: number;
+  /** Model for background tasks (memory notes and compaction, commit
+   *  messages, skill suggestions), keyed by adapter id. Missing or empty
+   *  means the adapter's own cheap default (Haiku for Claude). */
+  backgroundModels: Record<string, string>;
 
   // Worktree
   /** Automatically run npm install in new worktrees. Default false. */
   autoInstallDeps: boolean;
 
+  // Preview
+  /** Give the agent browser tools that drive its own page in the Preview tab
+   *  (local URLs only). Applies when a conversation's agent next starts.
+   *  Default true. */
+  previewAgentTools: boolean;
+
+  // Sessions
+  /** Put a conversation to sleep after this many minutes idle (not focused,
+   *  not running a turn or background task, no pending permission) to free
+   *  its agent process. It stays open and wakes when opened. 0 disables.
+   *  Default 30. */
+  idleSleepMinutes: number;
+
   // General
+  /** Base branch for new worktrees and PRs. Empty = auto-detect the
+   *  repository's default branch (origin/HEAD, falling back to main/master). */
   defaultBaseBranch: string;
+  /** How to name branches that are named automatically, in the user's own
+   *  words (e.g. "<type>/<ticket>-<short-description>"). Empty = copy the
+   *  pattern of the repo's recent branch names. */
+  branchNamingRule: string;
   theme: 'system' | 'dark' | 'light';
   alwaysOnTop: boolean;
+
+  // Updates
+  /** Download new versions in the background as soon as they're found; they
+   *  install on the next quit, or sooner from the title bar. Off = show the
+   *  update and wait for a click to download. Default true. */
+  autoDownloadUpdates: boolean;
 
   // Appearance
   /** Custom accent color per repository path. Keys are repo paths, values are hex colors. */
   repoColors: Record<string, string>;
+  /** Show small pixel characters for conversation status: in the sidebar in
+   *  place of the status dot, in permission and question prompts, in the
+   *  empty states, and walking through the grove while a stopped conversation
+   *  starts up again.
+   *  Each status gets its own pose as well as its colour. Default true. */
+  groveCharacters: boolean;
 
   // Editor
   /** Default diff view mode in the Changes tab. */
   diffViewMode: 'unified' | 'side-by-side';
+  /** Activity view a session starts in. Each session can still switch from
+   *  the status bar; that choice is per session and not persisted. Default 'summary'. */
+  defaultActivityView: ActivityViewMode;
   /** Enable spell checking in the prompt textarea. */
   spellcheck: boolean;
+
+  // Notifications (OS-level; shown only while the window is unfocused)
+  /** Notify when an agent finishes a turn. Default true. */
+  notifyOnTurnComplete: boolean;
+  /** Notify when an agent is blocked waiting on a permission decision. Default true. */
+  notifyOnPermission: boolean;
+  /** Notify on PR-watch alerts (new CI failure, review comments, needs-human). Default true. */
+  notifyOnPrAlert: boolean;
+  /** Flash the taskbar button alongside a notification. Default true. */
+  notifyTaskbarFlash: boolean;
+  /** Overlay a badge on the taskbar icon with the number of sessions that
+   *  need attention (blocked on input, or finished while unfocused). Default true. */
+  notifyTaskbarBadge: boolean;
+  /** Notify when plan usage passes planUsageAlertPercent. Default true. */
+  notifyOnPlanUsage: boolean;
+
+  // Limits and alerts (shared/limits.ts). 0 turns each one off.
+  /** Alert when a plan usage window (5-hour, weekly) reaches this percent.
+   *  Only agents that report plan usage can raise it. Default 80. */
+  planUsageAlertPercent: number;
+  /** Pause a thread once its estimated spend reaches this many USD. Default 0. */
+  threadSpendLimitUsd: number;
+  /** Pause every thread once today's estimated spend, across threads,
+   *  reaches this many USD. The day starts at local midnight. Default 0. */
+  dailySpendLimitUsd: number;
+  /** Pause a turn after this many tool calls. Default 0. */
+  turnToolCallLimit: number;
+  /** Pause a turn after it has run this many minutes, not counting time
+   *  spent waiting on the user. Default 0. */
+  turnMinutesLimit: number;
 
   // Token Optimization
   /** Enable command output filtering to reduce token usage. Default true. */
@@ -436,6 +1928,74 @@ export interface GroveBenchSettings {
   analyticsEnabled: boolean;
   /** Whether the user has been shown the analytics consent prompt. */
   analyticsPrompted: boolean;
+  /** Send uncaught exceptions (message + stack, no code or paths beyond the
+   *  stack itself) to the analytics backend. Only effective while
+   *  analyticsEnabled is on. Off by default. */
+  crashReportsEnabled: boolean;
+  /** Fetch the ACP Registry and models.dev (at most once a day) for agent
+   *  install commands and model details. On by default. */
+  onlineCatalogs: boolean;
+}
+
+/**
+ * Activity panel view modes:
+ * - 'detailed': everything (tool calls, thinking, system, ...)
+ * - 'summary':  hides thinking and non-essential tool calls
+ * - 'focus':    only user prompts, assistant text, question blocks (with
+ *               the answer given), unanswered permission blocks, errors,
+ *               turn results and the calls that start subagents
+ */
+export type ActivityViewMode = 'detailed' | 'summary' | 'focus';
+export const ACTIVITY_VIEW_MODES: readonly ActivityViewMode[] = ['detailed', 'summary', 'focus'];
+
+// ─── Error reporting ───
+
+/** An uncaught error captured in either process. Main-process errors are
+ *  forwarded to the renderer for display; renderer errors are forwarded to
+ *  main for the file log. */
+export interface AppErrorReport {
+  source: 'main' | 'renderer';
+  /** What surfaced it: 'uncaughtException', 'unhandledRejection', 'error',
+   *  'boundary', ... */
+  kind: string;
+  message: string;
+  stack?: string;
+  /** Session whose view raised it, when known (renderer error boundaries). */
+  sessionId?: string;
+  timestamp: number;
+}
+
+/** A frame (or, where the browser can't time frames, a task) the window
+ *  took over 100 ms on, sent to main for the freeze log. */
+export interface FreezeReport {
+  kind: 'frame' | 'task';
+  durationMs: number;
+  /** Of that, style and layout, when the browser says. */
+  renderMs?: number;
+  /** The scripts that ran longest in it, longest first, as text. */
+  scripts?: string[];
+}
+
+/** How long a performance trace records (Settings → Diagnostics). */
+export const PERFORMANCE_TRACE_SECONDS = 10;
+
+/** A performance trace that was saved (Settings → Diagnostics). */
+export interface TraceResult {
+  /** The file's name in the logs folder's traces folder. */
+  name: string;
+  sizeBytes: number;
+  seconds: number;
+}
+
+/** How long something in the window took, step by step, sent to main for
+ *  the performance log. */
+export interface TimingReport {
+  /** What was timed, such as "conversation view". */
+  label: string;
+  sessionId?: string;
+  steps: { name: string; ms: number }[];
+  /** A short note on the size of the work, such as "200 events". */
+  detail?: string;
 }
 
 // ─── Memory ───
@@ -443,8 +2003,75 @@ export interface GroveBenchSettings {
 export interface MemoryEntry {
   relativePath: string;  // e.g. "repo/overview.md"
   title: string;         // from frontmatter
+  /** One line from frontmatter, shown in the agent's memory index. */
+  description?: string;
   updatedAt: string;     // ISO date from frontmatter
   folder: string;        // e.g. "repo", "conventions", "sessions"
+}
+
+export interface MemoryCompactionStatus {
+  compacted: boolean;
+  skippedReason?: string;   // why compaction was skipped, when it was
+  error?: string;           // the pass was attempted but failed — not a no-op
+  filesChanged: string[];   // paths written, rewritten, or deleted
+  /** Per-file summary of what the pass did (action, path, model's reason). */
+  changes?: Array<{ action: 'update' | 'delete'; path: string; reason: string }>;
+  /** Snapshot taken before applying — restore it to undo the compaction. */
+  backupId?: string;
+  /** Files that got a description from the planning step. */
+  descriptionsAdded?: number;
+  /** Merge groups planned but left for the next run. */
+  remainingGroups?: number;
+}
+
+export type MemoryCompactionStage = 'pruning' | 'planning' | 'merging';
+
+/** Pushed from main over MEMORY_COMPACT_EVENT while a compaction pass runs.
+ *  A merging stage says which step of how many it is. */
+export type MemoryCompactionEvent =
+  | { kind: 'stage'; repoPath: string; stage: MemoryCompactionStage; step?: number; total?: number }
+  | { kind: 'done'; repoPath: string; status: MemoryCompactionStatus };
+
+export interface MemoryStatsResult {
+  promptBytes: number;       // what memory adds to the system prompt: conventions in full plus the index
+  budgetBytes: number;       // system-prompt budget
+  fileCount: number;         // non-session files
+  sessionNoteCount: number;
+  fullFiles: string[];       // conventions/ files loaded in full
+  unlistedFiles: string[];   // files past the budget, left out of the index
+  lastCompactedAt: string | null;
+  lastFilesChanged?: number;
+}
+
+export interface MemoryBackupFile {
+  path: string;
+  bytes: number;
+}
+
+export interface MemoryBackupInfo {
+  id: string;               // snapshot folder name, sortable
+  createdAt: string;        // ISO timestamp
+  fileCount: number;
+}
+
+export interface MemoryRestoreStatus {
+  restored: boolean;
+  error?: string;
+  filesChanged: string[];   // paths written or deleted by the restore
+}
+
+// ─── Bookmarks ───
+
+export interface Bookmark {
+  id: string;                 // randomUUID, assigned in main on add
+  sessionId: string;          // per-run session id: fast same-run jump + grouping
+  repoPath: string;           // durable grouping/label key
+  sessionLabel: string;       // snapshot of displayName/branch for headings
+  messageUuid: string | null; // primary durable anchor (SDK event uuid); null if unavailable
+  eventIndex: number | null;  // cached fast-jump hint; may go stale -> re-resolve via uuid
+  selectedText: string;       // the bookmarked snippet (preview + ultimate fallback)
+  note?: string;              // optional user note
+  createdAt: number;
 }
 
 // ─── Auto-Update ───
@@ -456,55 +2083,162 @@ export interface UpdateInfo {
   releaseDate?: string;
 }
 
+/** Where the updater is. `manual` marks what the user asked for (Check for
+ *  updates, or a click to download) as opposed to the background schedule,
+ *  so the UI can stay quiet about background work. */
 export type UpdateStatus =
-  | { state: 'checking' }
+  | { state: 'checking'; manual: boolean }
+  /** Found, waiting for the user to download it (automatic download off). */
   | { state: 'available'; info: UpdateInfo }
-  | { state: 'not-available' }
-  | { state: 'downloading'; percent: number }
+  | { state: 'not-available'; manual: boolean }
+  | { state: 'downloading'; info: UpdateInfo; percent: number; manual: boolean }
+  /** Ready: installs on the next quit, or now via restartToUpdate(). */
   | { state: 'downloaded'; info: UpdateInfo }
-  | { state: 'error'; message: string };
+  | { state: 'error'; message: string; during: 'check' | 'download'; manual: boolean };
+
+export interface UpdateState {
+  /** The running app's version. */
+  currentVersion: string;
+  /** False in dev builds: updates are only checked in the installed app. */
+  enabled: boolean;
+  /** The latest status, or null before the first check. */
+  status: UpdateStatus | null;
+}
 
 // ─── IPC Channel Names ───
 
-export type PermissionMode = 'default' | 'plan' | 'acceptEdits';
+/** Session permission modes.
+ *
+ *  'readSafe' is Grove Bench's own mode (not an SDK mode): edits are
+ *  auto-accepted like acceptEdits, and read-only tool calls scoped to the
+ *  worktree (git status/log/diff, ls, grep, …) run without prompting —
+ *  mutating, out-of-worktree, network-fetching, or unrecognized calls prompt.
+ *  Adapters map it to their closest native mode.
+ *
+ *  'auto' is the provider's native auto mode (Claude Code's model classifier
+ *  approves or blocks each action instead of prompting). It is passed
+ *  through to the adapter untouched. */
+export const PERMISSION_MODES = ['default', 'plan', 'acceptEdits', 'readSafe', 'auto'] as const;
+export type PermissionMode = (typeof PERMISSION_MODES)[number];
 
 export const IPC = {
   FILE_OPEN_IN_EDITOR: 'file:openInEditor',
   REPO_SELECT: 'repo:select',
   REPO_REMOVE: 'repo:remove',
   REPO_VALIDATE: 'repo:validate',
+  REPO_KIND: 'repo:kind',
+  REPO_REMEMBER: 'repo:remember',
+  GIT_HAS_IDENTITY: 'git:hasIdentity',
   SESSION_CREATE: 'session:create',
   SESSION_RESUME: 'session:resume',
   SESSION_STOP: 'session:stop',
+  SESSION_CLOSE: 'session:close',
+  SESSION_SLEEP: 'session:sleep',
+  SESSION_WAKE: 'session:wake',
+  SESSION_STOP_TASK: 'session:stopTask',
   SESSION_DESTROY: 'session:destroy',
   SESSION_RENAME: 'session:rename',
+  SESSION_EXPORT: 'session:export',
+  SESSION_AUTO_NAME: 'session:autoName',
+  SESSION_GOAL_GET: 'session:getGoal',
+  SESSION_GOALS_GET: 'session:getGoals',
+  SESSION_GOAL_SET: 'session:setGoal',
+  SESSION_GOAL_AUTO: 'session:autoGoal',
+  SESSION_GOAL_REFRESH: 'session:refreshGoal',
+  SESSION_GOAL_HIDE: 'session:setGoalHidden',
   SESSION_LIST: 'session:list',
   WORKTREE_LIST: 'worktree:list',
   WORKTREE_LIST_REPOS: 'worktree:listRepos',
   BRANCH_LIST: 'branch:list',
+  BRANCH_DEFAULT: 'branch:default',
   BRANCH_RENAME: 'branch:rename',
+  BRANCH_SWITCH: 'branch:switch',
+  BRANCH_SYNC: 'branch:sync',
+  CHECKOUT_SHARERS: 'branch:checkoutSharers',
+  BRANCH_AUTO_NAME: 'branch:autoName',
   PREREQUISITES_CHECK: 'prerequisites:check',
+  PREREQUISITES_CACHED: 'prerequisites:cached',
+  PREREQUISITES_GH: 'prerequisites:gh',
+  PREREQUISITES_CHECK_SIGN_IN: 'prerequisites:checkSignIn',
+  CREDENTIALS_SET_API_KEY: 'credentials:setApiKey',
+  CREDENTIALS_CLEAR_API_KEY: 'credentials:clearApiKey',
+  /** Renderer → main: session restore finished; deferred background work may start. */
+  APP_RESTORE_COMPLETE: 'app:restoreComplete',
   AGENT_EVENT: 'agent:event',          // agent:event:{sessionId}
   AGENT_SEND: 'agent:send',
+  ATTACHMENT_OPEN: 'attachment:open',
+  WORKTREE_FILE_OPEN: 'worktree:openFile',
   AGENT_PERMISSION: 'agent:permission',
   AGENT_HISTORY: 'agent:history',
   AGENT_HISTORY_PAGE: 'agent:history-page',
   AGENT_HISTORY_COUNT: 'agent:history-count',
+  AGENT_THREAD_ITEMS: 'agent:thread-items',
+  AGENT_HISTORY_SEARCH: 'agent:history-search',
+  AGENT_HISTORY_SEARCH_ALL: 'agent:history-search-all',
+  SESSION_PREVIEWS: 'session:previews',
   AGENT_CLEAR_HISTORY: 'agent:clear-history',
   SESSION_STATUS: 'session:status',
   APP_CLOSING: 'app:closing',
   POWER_RESUME: 'power:resume',
+  NOTIFY_SHOW: 'notify:show',
+  NOTIFY_TEST: 'notify:test',
+  NOTIFY_FOCUS_SESSION: 'notify:focusSession',
   FILE_LIST: 'file:list',
   FILE_READ: 'file:read',
   AGENT_SET_MODE: 'agent:setMode',
   OPEN_EXTERNAL: 'shell:openExternal',
-  KILL_PORT: 'process:killPort',
   FILE_REVERT: 'file:revert',
   FILE_DIFF: 'file:diff',
+  FILE_LINES: 'file:lines',
+  FILE_CONTENT_DATA_URL: 'file:contentDataUrl',
+  FILE_STAGE: 'file:stage',
+  FILE_UNSTAGE: 'file:unstage',
   GIT_STATUS: 'git:status',
-  PR_INFO: 'pr:info',
+  GIT_COMMIT: 'git:commit',
+  GIT_PUSH: 'git:push',
+  GIT_SYNC_STATUS: 'git:syncStatus',
+  GIT_BRANCH_COMMITS: 'git:branchCommits',
+  GIT_LOG_COMMITS: 'git:logCommits',
+  GIT_REBASE: 'git:rebase',
+  GIT_CHERRY_PICK: 'git:cherryPick',
+  GIT_SQUASH: 'git:squash',
+  GIT_GENERATE_COMMIT_MESSAGE: 'git:generateCommitMessage',
+  PR_LIST: 'pr:list',
+  PR_LIST_OPEN: 'pr:listOpen',
+  PR_CREATE: 'pr:create',
+  PR_REVIEW_COMMENTS: 'pr:reviewComments',
+  PR_SUBMIT_REVIEW: 'pr:submitReview',
   AGENT_SET_MODEL: 'agent:setModel',
-  AGENT_SET_THINKING: 'agent:setThinking',
+  AGENT_SET_CONTROL: 'agent:setControl',
+  AGENT_GET_CONTROLS: 'agent:getControls',
+  AGENT_GET_USAGE: 'agent:getUsage',
+  AGENT_SWITCH: 'agent:switch',
+  AGENT_GET_CACHED_USAGE: 'agent:getCachedUsage',
+  AGENT_MCP_LIST: 'agent:mcpList',
+  SKILLS_LIST: 'skills:list',
+  SKILLS_LIST_FOR_AGENT: 'skills:listForAgent',
+  SKILLS_ADD: 'skills:add',
+  SKILLS_SHARING: 'skills:sharing',
+  SKILLS_SHARE: 'skills:share',
+  SKILLS_LINK: 'skills:link',
+  SKILLS_SUGGESTIONS_GET: 'skills:suggestionsGet',
+  SKILLS_SUGGESTIONS_ANALYZE: 'skills:suggestionsAnalyze',
+  SKILLS_SUGGESTION_DISMISS: 'skills:suggestionDismiss',
+  AGENT_MCP_RECONNECT: 'agent:mcpReconnect',
+  AGENT_MCP_TOGGLE: 'agent:mcpToggle',
+  AGENT_MCP_AUTHENTICATE: 'agent:mcpAuthenticate',
+  AGENT_MCP_CONTEXT_COST: 'agent:mcpContextCost',
+  AGENT_MCP_RECONNECT_DOWN: 'agent:mcpReconnectDown',
+  /** main → renderer: a thread's live MCP status after a background reconnect. */
+  AGENT_MCP_STATUS: 'agent:mcpStatus',
+  AGENT_ELICITATION: 'agent:elicitation',
+  AGENT_LIMIT: 'agent:limit',
+  LIMITS_DAILY_SPEND: 'limits:dailySpend',
+  LIMITS_THREAD_USAGE: 'limits:threadUsage',
+  MCP_CONFIG_LIST: 'mcpConfig:list',
+  MCP_CONFIG_ADD: 'mcpConfig:add',
+  MCP_CONFIG_REMOVE: 'mcpConfig:remove',
+  MCP_CONFIG_APPROVE: 'mcpConfig:approve',
   PLUGIN_LIST: 'plugin:list',
   PLUGIN_INSTALL: 'plugin:install',
   PLUGIN_UNINSTALL: 'plugin:uninstall',
@@ -514,23 +2248,71 @@ export const IPC = {
   WIN_MAXIMIZE: 'win:maximize',
   WIN_CLOSE: 'win:close',
   WIN_IS_MAXIMIZED: 'win:isMaximized',
-  DEV_SERVER_START: 'devServer:start',
-  DEV_SERVER_STOP: 'devServer:stop',
   SETTINGS_GET: 'settings:get',
   SETTINGS_SAVE: 'settings:save',
-  APP_STATE_GET_ACTIVE_TAB: 'appState:getActiveTab',
-  APP_STATE_SET_ACTIVE_TAB: 'appState:setActiveTab',
   APP_STATE_GET_OPEN_TABS: 'appState:getOpenTabs',
   APP_STATE_SET_OPEN_TABS: 'appState:setOpenTabs',
+  APP_STATE_GET_COLLAPSED_REPOS: 'appState:getCollapsedRepos',
+  APP_STATE_SET_COLLAPSED_REPOS: 'appState:setCollapsedRepos',
+  APP_STATE_GET_SESSION_SORT: 'appState:getSessionSort',
+  APP_STATE_SET_SESSION_SORT: 'appState:setSessionSort',
+  APP_STATE_GET_SIDEBAR_WIDTH: 'appState:getSidebarWidth',
+  APP_STATE_SET_SIDEBAR_WIDTH: 'appState:setSidebarWidth',
+  APP_STATE_GET_COLLAPSED_PANELS: 'appState:getCollapsedPanels',
+  APP_STATE_SET_COLLAPSED_PANELS: 'appState:setCollapsedPanels',
+  APP_STATE_GET_GROUPS: 'appState:getConversationGroups',
+  APP_STATE_SET_GROUPS: 'appState:setConversationGroups',
+  APP_STATE_GET_UNREAD: 'appState:getUnreadSessions',
+  APP_STATE_SET_UNREAD: 'appState:setUnreadSessions',
+  APP_STATE_GET_TODO: 'appState:getTodoSessions',
+  APP_STATE_SET_TODO: 'appState:setTodoSessions',
+  SKILL_SCHEDULES_LIST: 'skillSchedules:list',
+  SKILL_SCHEDULES_SAVE: 'skillSchedules:save',
+  SKILL_SCHEDULES_DELETE: 'skillSchedules:delete',
+  SKILL_SCHEDULES_RECORD_RUN: 'skillSchedules:recordRun',
+  /** Main → renderer: a schedule is due; the renderer starts its thread. */
+  SKILL_SCHEDULE_DUE: 'skillSchedules:due',
+  /** Main → renderer: the scheduler changed the schedules. */
+  SKILL_SCHEDULES_CHANGED: 'skillSchedules:changed',
+  /** Main → renderer: an uncaught main-process error. */
+  APP_ERROR: 'app:error',
+  /** Renderer → main: an uncaught renderer error, for the file log. */
+  APP_REPORT_ERROR: 'app:reportError',
+  /** Renderer → main: a frame the window took long over, for the file log. */
+  APP_REPORT_FREEZE: 'app:reportFreeze',
+  /** Renderer → main: step timings from the window, for the performance log. */
+  APP_REPORT_TIMING: 'app:reportTiming',
+  /** Renderer → main: a line from the idle sleep loop, for the app log. */
+  APP_LOG_IDLE: 'app:logIdle',
+  /** Record a performance trace for a few seconds and save it. */
+  PERF_RECORD_TRACE: 'perf:recordTrace',
+  /** Show the performance log, or the last trace, in the file manager. */
+  PERF_SHOW_FILE: 'perf:showFile',
+  WIN_SET_ATTENTION_BADGE: 'win:setAttentionBadge',
+  /** Main → renderer: show the spell check menu for a misspelled word. */
+  SPELLCHECK_MENU: 'spellcheck:menu',
+  /** Renderer → main: replace the misspelled word with a suggestion. */
+  SPELLCHECK_REPLACE: 'spellcheck:replace',
+  /** Renderer → main: add the misspelled word to the dictionary. */
+  SPELLCHECK_ADD_WORD: 'spellcheck:addWord',
   OPEN_SESSION_FOLDER: 'session:openFolder',
+  BOOKMARKS_LIST: 'bookmarks:list',
+  BOOKMARK_ADD: 'bookmarks:add',
+  BOOKMARK_REMOVE: 'bookmarks:remove',
+  BOOKMARK_UPDATE: 'bookmarks:update',
+  FIND_EVENT_INDEX_BY_UUID: 'agent:findEventIndexByUuid',
   MEMORY_LIST: 'memory:list',
   MEMORY_READ: 'memory:read',
   MEMORY_WRITE: 'memory:write',
   MEMORY_DELETE: 'memory:delete',
-  SHELL_RUN: 'shell:run',
-  SHELL_KILL: 'shell:kill',
-  SHELL_INPUT: 'shell:input',
-  SHELL_OUTPUT: 'shell:output',
+  MEMORY_COMPACT: 'memory:compact',
+  MEMORY_COMPACT_CANCEL: 'memory:compactCancel',
+  MEMORY_COMPACT_EVENT: 'memory:compactEvent',
+  MEMORY_LIST_BACKUPS: 'memory:listBackups',
+  MEMORY_RESTORE_BACKUP: 'memory:restoreBackup',
+  MEMORY_STATS: 'memory:stats',
+  MEMORY_BACKUP_PREVIEW: 'memory:backupPreview',
+  MEMORY_BACKUP_READ_FILE: 'memory:backupReadFile',
   // PTY channels (per-session persistent terminal)
   PTY_SPAWN: 'pty:spawn',
   PTY_WRITE: 'pty:write',
@@ -542,11 +2324,35 @@ export const IPC = {
   AGENT_REWIND: 'agent:rewind',
   AGENT_CHECKPOINT_DIFF: 'agent:checkpointDiff',
   AGENT_LIST_CHECKPOINTS: 'agent:listCheckpoints',
+  AGENT_DIFF_HISTORY: 'agent:diffHistory',
+  AGENT_CHECKPOINT_FILES: 'agent:checkpointFiles',
+  AGENT_CHECKPOINT_FILE_DIFF: 'agent:checkpointFileDiff',
+  AGENT_CHECKPOINT_FILE_LINES: 'agent:checkpointFileLines',
   AGENT_LIST_ADAPTERS: 'agent:listAdapters',
+  CLAUDE_ACCOUNT_PREVIEW: 'claudeAccount:preview',
+  CLAUDE_ACCOUNT_ADD: 'claudeAccount:add',
+  CATALOGS_REGISTRY: 'catalogs:registry',
+  CATALOGS_ICON: 'catalogs:icon',
+  CATALOGS_REFRESH: 'catalogs:refresh',
+  AGENT_MODELS_CHANGED: 'agent:modelsChanged',
+  AGENT_GET_ADAPTER_CONTROLS: 'agent:getAdapterControls',
   AGENT_GET_MODELS: 'agent:getModels',
   // Auto-updater
+  UPDATE_GET_STATE: 'update:get-state',
   UPDATE_CHECK: 'update:check',
   UPDATE_DOWNLOAD: 'update:download',
-  UPDATE_INSTALL: 'update:install',
+  UPDATE_RESTART: 'update:restart',
   UPDATE_STATUS: 'update:status',
+  // Preview tab
+  PREVIEW_NAVIGATE: 'preview:navigate',
+  PREVIEW_COMMAND: 'preview:command',
+  PREVIEW_SET_VIEWPORT: 'preview:setViewport',
+  PREVIEW_SNAPSHOT: 'preview:snapshot',
+  PREVIEW_AGENT_FRAME: 'preview:agentFrame',
+  PREVIEW_GET_STATES: 'preview:getStates',
+  /** Main → renderer: (sessionId, page, state | null). */
+  PREVIEW_STATE: 'preview:state',
+  /** Main → renderer: (sessionId, PreviewKeyForward). */
+  PREVIEW_KEY: 'preview:key',
 } as const;
+

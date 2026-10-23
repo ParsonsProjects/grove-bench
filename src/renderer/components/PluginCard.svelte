@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Badge } from '$lib/components/ui/badge/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import type { InstalledPlugin, AvailablePlugin } from '../../shared/types.js';
 
@@ -22,6 +23,9 @@
   const enabled = $derived(installed?.enabled ?? true);
   const installCount = $derived(available?.installCount);
 
+  /** Remove asks once more before uninstalling. */
+  let confirmingRemove = $state(false);
+
   function formatCount(n: number): string {
     if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
     return String(n);
@@ -33,12 +37,12 @@
     <div class="min-w-0">
       <div class="flex items-center gap-2">
         <span class="text-sm font-medium text-foreground truncate">{name}</span>
-        <span class="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 shrink-0">v{version}</span>
+        <Badge tone="muted" variant="solid">v{version}</Badge>
         {#if scope}
-          <span class="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 shrink-0">{scope}</span>
+          <Badge tone="muted" variant="solid">{scope}</Badge>
         {/if}
         {#if installed && !enabled}
-          <span class="text-[10px] text-amber-500 bg-amber-500/10 px-1.5 py-0.5 shrink-0">disabled</span>
+          <Badge tone="warning" variant="soft">disabled</Badge>
         {/if}
       </div>
       {#if description}
@@ -46,47 +50,56 @@
       {/if}
       <div class="flex items-center gap-3 mt-1.5">
         {#if marketplace}
-          <span class="text-[10px] text-muted-foreground/70">{marketplace}</span>
+          <span class="text-xs text-muted-foreground">{marketplace}</span>
         {/if}
         {#if installCount != null}
-          <span class="text-[10px] text-muted-foreground/70">{formatCount(installCount)} installs</span>
+          <span class="text-xs text-muted-foreground">{formatCount(installCount)} installs</span>
         {/if}
       </div>
     </div>
 
     <div class="flex items-center gap-1 shrink-0">
-      {#if installed}
+      {#if installed && confirmingRemove}
+        <span class="text-xs text-foreground">Remove {name}?</span>
+        <Button
+          variant="destructive"
+          size="xs"
+          disabled={busy}
+          onclick={() => { confirmingRemove = false; onuninstall?.(installed!.id); }}
+        >Remove</Button>
+        <Button
+          variant="quiet"
+          size="xs"
+          onclick={() => (confirmingRemove = false)}
+        >Cancel</Button>
+      {:else if installed}
         {#if enabled}
           <Button
-            variant="ghost"
-            size="sm"
+            variant="quiet"
+            size="xs"
             disabled={busy}
             onclick={() => ondisable?.(installed!.id)}
-            class="text-xs h-7 px-2"
           >Disable</Button>
         {:else}
           <Button
-            variant="ghost"
-            size="sm"
+            variant="quiet"
+            size="xs"
             disabled={busy}
             onclick={() => onenable?.(installed!.id)}
-            class="text-xs h-7 px-2"
           >Enable</Button>
         {/if}
         <Button
-          variant="ghost"
-          size="sm"
+          variant="outline-destructive"
+          size="xs"
           disabled={busy}
-          onclick={() => onuninstall?.(installed!.id)}
-          class="text-xs h-7 px-2 text-destructive hover:text-destructive"
+          onclick={() => (confirmingRemove = true)}
         >Remove</Button>
       {:else if available}
         <Button
           variant="secondary"
-          size="sm"
+          size="xs"
           disabled={busy}
           onclick={() => oninstall?.(available!.pluginId)}
-          class="text-xs h-7 px-3"
         >Install</Button>
       {/if}
     </div>

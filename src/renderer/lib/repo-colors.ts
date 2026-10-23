@@ -36,18 +36,6 @@ export function getRepoColor(
 }
 
 /**
- * Get the CSS class for a pending-permission tab.
- *
- * When active, the repo accent color should take priority over the orange
- * border, so we use a quieter class with a static shadow instead of the
- * flashing animation.
- */
-export function getTabPendingClass(isActive: boolean, hasPending: boolean): string {
-  if (!hasPending) return '';
-  return isActive ? 'tab-action-required-active' : 'tab-action-required';
-}
-
-/**
  * Get a CSS `border-color` style string for a repo, or empty string if no color.
  */
 export function getRepoColorStyle(

@@ -1,0 +1,745 @@
+/**
+ * Demo harness (screenshots only — served via /demo.html, never bundled into
+ * the app). Installs a mock window.groveBench IPC bridge and seeds the stores
+ * with representative sessions so the renderer can run in a plain browser.
+ */
+
+import type { ThreadItems } from '../shared/thread-items.js';
+import type { SkillSchedule, SkillScheduleInput } from '../shared/skill-schedules.js';
+
+// Capture uncaught errors (a template error can kill Svelte's effect loop).
+const errs: string[] = [];
+(window as never as Record<string, unknown>).__demoErrs = errs;
+window.addEventListener('error', (e) => {
+  errs.push(String((e.error && (e.error as Error).stack) || e.message).slice(0, 800));
+});
+window.addEventListener('unhandledrejection', (e) => {
+  errs.push('rejection: ' + String((e.reason && (e.reason as Error).stack) || e.reason).slice(0, 800));
+});
+
+const now = Date.now();
+const min = 60_000;
+
+// The Claude Code adapter's mode options (PERMISSION_MODE_OPTIONS in
+// src/main/adapters/claude-code.ts), for both the draft and the live
+// conversation, so the two don't drift apart.
+const CLAUDE_MODE_OPTIONS = [
+  { value: 'default', label: 'Ask', tone: 'info', description: 'Check with you before each edit or command (reading files and read-only commands run freely)' },
+  { value: 'plan', label: 'Plan', tone: 'warning', description: 'Explore and plan without editing files' },
+  { value: 'acceptEdits', label: 'Edit', tone: 'accent', description: 'Auto-accept file edits inside the worktree; commands still ask' },
+  { value: 'auto', label: 'Auto', tone: 'highlight', description: "Claude's classifier approves or blocks each action instead of asking" },
+  { value: 'readSafe', label: 'Read-safe', tone: 'success', group: 'Grove Bench', description: 'Auto-accept edits and read-only commands; everything else asks (sandbox-backed)' },
+];
+
+const REPO_A = 'C:/dev/grove-bench';
+const REPO_B = 'C:/dev/api-service';
+
+/** Scheduled skills, kept in memory: one that ran, one paused. */
+let demoSchedules: SkillSchedule[] = [
+  {
+    id: 'sch-review', repoPath: REPO_A, agentId: 'claude-code', skill: 'code-review', start: 'new',
+    note: 'Review the open PRs labelled agent-made and leave your findings as comments.',
+    permissionMode: 'default', timing: { kind: 'every', hours: 2 }, maxOpen: 2, paused: false,
+    scheduledFrom: now - 5 * 60 * min, checkedThrough: now - 60 * min,
+    lastOutcome: { at: now - 60 * min, sessionId: 's-sidebar' }, sessionIds: ['s-sidebar'],
+  },
+  {
+    id: 'sch-notes', repoPath: REPO_A, agentId: 'claude-code', skill: 'release-notes', start: 'folder', note: '',
+    permissionMode: 'plan', timing: { kind: 'daily', time: '09:00', weekdaysOnly: true }, maxOpen: 1, paused: true,
+    scheduledFrom: now - 3 * 24 * 60 * min, checkedThrough: now - 3 * 24 * 60 * min, sessionIds: [],
+  },
+];
+
+const SETTINGS = {
+  toolAllowRules: [],
+  toolDenyRules: [],
+  disabledSkills: ['legacy-deploy'] as string[],
+  autoSkillSuggestions: false,
+  // On here (off by default) so the demo shows the goal bar.
+  showConversationGoal: true,
+  promptSuggestions: true,
+  backgroundPromptSuggestions: false,
+  defaultModels: {},
+  adapterDefaults: {},
+  showThinkingSummaries: true,
+  cavemanMode: 'off',
+  workingDirectories: [],
+  defaultSystemPromptAppend: '',
+  acpAgents: [],
+  claudeAccounts: [],
+  enabledAlphaAgents: [],
+  defaultAgent: '',
+  memoryAutoSave: true,
+  memoryCompactTimeoutSeconds: 300,
+  backgroundModels: {},
+  autoInstallDeps: false,
+  previewAgentTools: true,
+  idleSleepMinutes: 30,
+  defaultBaseBranch: '',
+  branchNamingRule: '',
+  theme: 'dark',
+  alwaysOnTop: false,
+  autoDownloadUpdates: true,
+  repoColors: {},
+  groveCharacters: true,
+  diffViewMode: 'unified',
+  defaultActivityView: 'summary',
+  spellcheck: true,
+  notifyOnTurnComplete: true,
+  notifyOnPermission: true,
+  notifyOnPrAlert: true,
+  notifyTaskbarFlash: true,
+  notifyTaskbarBadge: true,
+  notifyOnPlanUsage: true,
+  planUsageAlertPercent: 80,
+  threadSpendLimitUsd: 0,
+  dailySpendLimitUsd: 0,
+  turnToolCallLimit: 0,
+  turnMinutesLimit: 0,
+  analyticsEnabled: false,
+  analyticsPrompted: true,
+  crashReportsEnabled: false,
+  onlineCatalogs: true,
+  outputFiltering: true,
+};
+
+const GOALS: Record<string, string> = {
+  's-sidebar': 'Redesign the sidebar so threads group by project and show their status at a glance',
+  's-oauth': 'Fix the OAuth refresh flow so sessions stop dropping after one hour',
+};
+
+function demoGoal(id: string) {
+  const text = GOALS[id] ?? null;
+  return { text, source: text ? 'auto' as const : null, hidden: false };
+}
+
+// The status bar's Tasks and Files for the working thread: a to-do list part
+// done, and files of each kind (no images: grove-attachment:// doesn't load
+// in a plain browser).
+const THREAD_ITEMS: Record<string, ThreadItems> = {
+  's-sidebar': {
+    tasks: [
+      { id: '0', content: 'Widen the sidebar and make room for a second line', status: 'completed' },
+      { id: '1', content: 'Show live context under each thread name', status: 'completed' },
+      { id: '2', content: 'Run the test suite', activeForm: 'Running the test suite', status: 'in_progress' },
+      { id: '3', content: 'Add search across threads', status: 'pending' },
+      { id: '4', content: 'Update the sidebar help page', status: 'pending' },
+    ],
+    tasksEventIndex: 12,
+    files: [
+      { kind: 'made', made: { path: 'out/sidebar-report.html', kind: 'html', size: 18_432 }, eventIndex: 14 },
+      { kind: 'made', made: { path: 'out/row-heights.csv', kind: 'data', size: 2_310 }, eventIndex: 14 },
+      { kind: 'file', file: { file: `${'a'.repeat(32)}.pdf`, name: 'sidebar-spec.pdf', mediaType: 'application/pdf', size: 248_000 }, eventIndex: 0 },
+      { kind: 'text', name: 'src/renderer/components/Sidebar.svelte', size: 41_200, eventIndex: 0 },
+    ],
+  },
+};
+
+const PREVIEWS: Record<string, { firstPrompt: string; lastText: string }> = {
+  's-readme': {
+    firstPrompt: 'Update the README with the new worktree setup steps and screenshots',
+    lastText: 'README updated — added the quick-start section and two screenshots',
+  },
+  's-perf': {
+    firstPrompt: 'Audit the request pipeline for N+1 queries and add caching where it pays off',
+    lastText: 'Found 3 N+1 spots; fixed two, the third needs a schema change (see notes)',
+  },
+};
+
+const GIT_STATUS: Record<string, { entries: { filePath: string; status: string; staged: boolean; additions?: number; deletions?: number }[] }> = {
+  's-sidebar': { entries: [
+    { filePath: 'src/renderer/components/Sidebar.svelte', status: 'modified', staged: false, additions: 96, deletions: 14 },
+    { filePath: 'src/renderer/lib/session-subtitle.ts', status: 'added', staged: false, additions: 88, deletions: 0 },
+    { filePath: 'src/shared/types.ts', status: 'modified', staged: false, additions: 27, deletions: 0 },
+    { filePath: 'src/main/ipc.ts', status: 'modified', staged: false, additions: 31, deletions: 1 },
+  ] },
+  's-oauth': { entries: [
+    { filePath: 'src/auth/refresh.ts', status: 'modified', staged: false, additions: 12, deletions: 7 },
+    { filePath: 'src/auth/refresh.test.ts', status: 'added', staged: false, additions: 41, deletions: 0 },
+  ] },
+  's-e2e': { entries: [{ filePath: 'e2e/retry-helper.ts', status: 'modified', staged: false, additions: 9, deletions: 4 }] },
+  // Stopped session with uncommitted work — exercises the clean-up dialog's dirty flag
+  's-perf': { entries: [
+    { filePath: 'src/middleware/cache.ts', status: 'modified', staged: false, additions: 22, deletions: 3 },
+    { filePath: 'src/db/query-plan.md', status: 'added', staged: false, additions: 54, deletions: 0 },
+  ] },
+};
+
+const DEMO_SKILLS = [
+  { name: 'code-review', description: 'Review the current diff for correctness bugs and cleanups at a given effort level', source: 'project', path: 'C:/dev/grove-bench/.claude/skills/code-review/SKILL.md' },
+  { name: 'deploy-preview', description: 'Build the app and publish a preview channel for this branch', source: 'project', path: 'C:/dev/grove-bench/.claude/skills/deploy-preview/SKILL.md' },
+  { name: 'legacy-deploy', description: 'Old NSIS deploy pipeline — superseded by deploy-preview', source: 'project', path: 'C:/dev/grove-bench/.claude/skills/legacy-deploy/SKILL.md' },
+  { name: 'release-notes', description: 'Draft release notes from merged PRs since the last tag', source: 'user', path: 'C:/Users/demo/.claude/skills/release-notes/SKILL.md' },
+  { name: 'worktree-doctor', description: 'Diagnose and repair broken git worktrees and stale locks', source: 'user', path: 'C:/Users/demo/.claude/skills/worktree-doctor/SKILL.md' },
+];
+
+/** Two project skills only Claude Code can see, and a shared one it can't
+ *  see yet, so the drawer shows Share and Link. */
+let DEMO_SHARING = {
+  toShare: DEMO_SKILLS.filter((s) => s.name === 'code-review' || s.name === 'deploy-preview'),
+  toLink: [{ name: 'triage-issue', description: 'Pick the top agent-ready issue and move it to In Progress', source: 'project', path: 'C:/dev/grove-bench/.agents/skills/triage-issue/SKILL.md' }],
+  broken: [] as typeof DEMO_SKILLS,
+};
+
+let DEMO_SUGGESTIONS = [
+  {
+    id: 'a1b2c3',
+    name: 'nsis-smoke-test',
+    description: 'Use after packaging changes to build the NSIS installer and smoke-test it',
+    draftInstructions: 'This command ran in 5 sessions (11 times total):\n\n```\nnpm run dist && start dist/grove-bench-setup.exe /S\n```\n\nDocument when to run it, what to check first, and how to verify the result.',
+    rationale: 'Same command run in 5 sessions (11 times)',
+    evidence: ['npm run dist && start dist/grove-bench-setup.exe /S'],
+    sessionCount: 5,
+  },
+  {
+    id: 'd4e5f6',
+    name: 'changelog-update',
+    description: 'Use when asked to update the changelog from merged PRs since the last tag',
+    draftInstructions: 'Recurring request across 4 sessions. Examples:\n- Update CHANGELOG.md with everything merged since v0.3\n- Add the worktree fixes to the changelog\n\nDocument the proven steps for this task here.',
+    rationale: 'Similar requests in 4 sessions (6 prompts)',
+    evidence: ['Update CHANGELOG.md with everything merged since v0.3', 'Add the worktree fixes to the changelog'],
+    sessionCount: 4,
+  },
+];
+
+const CONTENT_HITS = [
+  { sessionId: 's-oauth', eventIndex: 14, kind: 'assistant', snippet: '…the OAuth refresh token was being rotated twice per request, which invalidated the second…' },
+  { sessionId: 's-oauth', eventIndex: 6, kind: 'user', snippet: 'Fix the OAuth refresh flow — sessions drop after exactly one hour…' },
+  { sessionId: 's-perf', eventIndex: 41, kind: 'tool', snippet: 'Grep: pattern "refreshOAuthToken" — 7 matches across src/auth and src/middleware…' },
+  { sessionId: 's-readme', eventIndex: 3, kind: 'assistant', snippet: '…documented the OAuth setup env vars in the README configuration table…' },
+];
+
+// ─── Memory demo data (stateful, so panel actions visibly work) ───
+
+const day = 24 * 60 * min;
+
+function memFile(relativePath: string, title: string, ageMs: number | null, body: string) {
+  const updatedAt = ageMs === null ? '' : new Date(now - ageMs).toISOString();
+  return {
+    relativePath,
+    title,
+    updatedAt,
+    folder: relativePath.split('/').slice(0, -1).join('/') || '.',
+    content: `---\ntitle: "${title}"\nupdatedAt: "${updatedAt}"\n---\n\n${body}\n`,
+  };
+}
+
+let memoryFiles = [
+  memFile('repo/overview.md', 'Project Overview', 2 * 60 * min,
+    'Electron 33 desktop app orchestrating multiple Claude Code sessions, each in an isolated git worktree with a dedicated PTY terminal.\n\n- UI: Svelte 5 + Tailwind v4 (renderer)\n- Main process: Node, node-pty, execa git wrapper\n- Windows-native (NSIS installer), no cross-platform support in v1'),
+  memFile('repo/tech-stack.md', 'Tech Stack', 9 * day,
+    'Uses Electron with a Svelte UI. Terminals via xterm.js. Git operations shell out to the git CLI via execa (not simple-git). Tests run on Vitest.'),
+  memFile('conventions/naming.md', 'Naming Conventions', 6 * day,
+    '- Svelte stores live in `src/renderer/stores/*.svelte.ts` and export a singleton instance\n- IPC channels are namespaced strings, e.g. `memory:list`\n- Main-process modules are flat files under `src/main/`'),
+  memFile('architecture/ipc-flow.md', 'IPC Flow', 4 * day,
+    'Renderer calls `window.groveBench.*` (exposed by preload contextBridge) → `ipcMain.handle` in `ipc.ts` → main-process module. Events stream back via `webContents.send`.'),
+  memFile('sessions/sidebar-revamp.md', 'Session: sidebar-revamp', 60 * min,
+    'Widened sidebar, two-line session cards, cross-chat search. Tests green.'),
+  memFile('sessions/fix-oauth-refresh.md', 'Session: fix-oauth-refresh', 2 * day,
+    'Root cause: refresh token rotated twice per request. Patched refresh.ts to reuse rotation result.'),
+  memFile('sessions/perf-audit.md', 'Session: perf-audit', 5 * day,
+    'Found 3 N+1 query spots; fixed two, third needs a schema change.'),
+  memFile('sessions/update-readme.md', 'Session: update-readme', 45 * day,
+    'Added quick-start section and screenshots to README.'),
+  memFile('sessions/legacy-migration.md', 'Session: legacy-migration', 120 * day,
+    'Migrated settings storage from JSON blobs to per-key files. Obsolete now.'),
+  memFile('sessions/spike-notes.md', 'Session: spike notes', null,
+    'Scratch notes from an early spike. No timestamp recorded.'),
+];
+
+const memoryBackups = [
+  { id: '2026-08-29T09-15-02-541Z', createdAt: new Date(now - 7 * 60 * min).toISOString(), fileCount: 4 },
+  { id: '2026-08-27T18-40-11-102Z', createdAt: new Date(now - 2 * day).toISOString(), fileCount: 5 },
+];
+
+const compactListeners = new Set<(e: unknown) => void>();
+let compactCancelled = false;
+
+// Update pill and Settings > Updates: start in a state with
+// ?update=available|downloading|downloaded|error|up-to-date, or send more
+// from the console with __demoUpdate({ state: ... }).
+const DEMO_UPDATE_INFO = { version: '0.0.0-alpha.3' };
+const DEMO_UPDATES: Record<string, unknown> = {
+  available: { state: 'available', info: DEMO_UPDATE_INFO },
+  downloading: { state: 'downloading', info: DEMO_UPDATE_INFO, percent: 42, manual: true },
+  downloaded: { state: 'downloaded', info: DEMO_UPDATE_INFO },
+  error: { state: 'error', message: 'net::ERR_INTERNET_DISCONNECTED', during: 'download', manual: false },
+  'up-to-date': { state: 'not-available', manual: true },
+};
+let demoUpdateStatus: unknown = DEMO_UPDATES[new URLSearchParams(location.search).get('update') ?? ''] ?? null;
+const updateListeners = new Set<(status: unknown) => void>();
+(window as never as Record<string, unknown>).__demoUpdate = (status: unknown) => {
+  demoUpdateStatus = status;
+  updateListeners.forEach((l) => l(status));
+};
+
+const api: Record<string, unknown> = {
+  memoryList: async () => memoryFiles.map(({ content: _c, ...entry }) => entry),
+  memoryRead: async (_repo: string, p: string) => memoryFiles.find(f => f.relativePath === p)?.content ?? null,
+  memoryWrite: async (_repo: string, p: string, content: string) => {
+    const existing = memoryFiles.find(f => f.relativePath === p);
+    if (existing) existing.content = content;
+    else memoryFiles.push({ ...memFile(p, p.split('/').pop()!.replace('.md', ''), 0, ''), content });
+  },
+  memoryDelete: async (_repo: string, p: string) => {
+    memoryFiles = memoryFiles.filter(f => f.relativePath !== p);
+    return true;
+  },
+  memoryCompact: async (repoPath: string) => {
+    // Simulate a real pass: staged progress events, cancellable, then the merge
+    compactCancelled = false;
+    const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+    const stage = (s: string, step?: number, total?: number) =>
+      compactListeners.forEach(l => l({ kind: 'stage', repoPath, stage: s, ...(step ? { step, total } : {}) }));
+    const finish = (status: Record<string, unknown>) => {
+      compactListeners.forEach(l => l({ kind: 'done', repoPath, status }));
+      return status;
+    };
+
+    stage('pruning');
+    await sleep(600);
+    stage('planning');
+    for (let i = 0; i < 4; i++) {
+      await sleep(500);
+      if (compactCancelled) return finish({ compacted: false, skippedReason: 'cancelled', filesChanged: [] });
+    }
+    // A bounded run: 3 merge steps, with more groups left for the next run
+    for (let step = 1; step <= 3; step++) {
+      stage('merging', step, 3);
+      for (let i = 0; i < 4; i++) {
+        await sleep(500);
+        if (compactCancelled) return finish({ compacted: false, skippedReason: 'cancelled', filesChanged: [] });
+      }
+    }
+
+    // Merge the duplicated tech-stack file into the overview
+    memoryFiles = memoryFiles.filter(f => f.relativePath !== 'repo/tech-stack.md');
+    return finish({
+      compacted: true,
+      filesChanged: ['repo/overview.md', 'repo/tech-stack.md', 'conventions/naming.md', 'architecture/ipc-flow.md'],
+      changes: [
+        { action: 'update', path: 'repo/overview.md', reason: 'Merged the tech stack details in; dropped the duplicated Electron/Svelte facts' },
+        { action: 'delete', path: 'repo/tech-stack.md', reason: 'Fully covered by repo/overview.md after the merge' },
+      ],
+      descriptionsAdded: 2,
+      remainingGroups: 2,
+      backupId: memoryBackups[0].id,
+    });
+  },
+  memoryCompactCancel: async () => {
+    compactCancelled = true;
+    return true;
+  },
+  onMemoryCompactEvent: (cb: (e: unknown) => void) => {
+    compactListeners.add(cb);
+    return () => compactListeners.delete(cb);
+  },
+  memoryListBackups: async () => memoryBackups,
+  memoryRestoreBackup: async () => ({ restored: true, filesChanged: ['repo/overview.md', 'repo/tech-stack.md'] }),
+  memoryStats: async () => {
+    const nonSession = memoryFiles.filter(f => !f.folder.startsWith('sessions'));
+    const conventions = nonSession.filter(f => f.folder === 'conventions');
+    // Conventions in full plus an index line per other file, as main counts it
+    const promptBytes = conventions.reduce((sum, f) => sum + f.content.length, 0)
+      + (memoryFiles.length - conventions.length) * 90;
+    return {
+      promptBytes,
+      budgetBytes: 16 * 1024,
+      fileCount: nonSession.length,
+      sessionNoteCount: memoryFiles.length - nonSession.length,
+      fullFiles: conventions.map(f => f.relativePath),
+      unlistedFiles: [],
+      lastCompactedAt: new Date(now - 7 * 60 * min).toISOString(),
+      lastFilesChanged: 2,
+    };
+  },
+  memoryBackupPreview: async (_repo: string, id: string) =>
+    memoryFiles
+      .filter(f => !f.folder.startsWith('sessions'))
+      .map(f => ({ path: f.relativePath, bytes: f.content.length }))
+      .concat(id === memoryBackups[1].id ? [{ path: 'repo/tech-stack.md', bytes: 212 }] : []),
+  memoryReadBackupFile: async (_repo: string, _id: string, p: string) =>
+    memoryFiles.find(f => f.relativePath === p)?.content
+      ?? `---\ntitle: "Tech Stack"\n---\n\nArchived copy from before the last compaction.\n`,
+  getSettings: async () => SETTINGS,
+  saveSettings: async (next: typeof SETTINGS) => {
+    Object.assign(SETTINGS, next);
+  },
+  listSkills: async () => DEMO_SKILLS,
+  listAgentSkills: async () => DEMO_SKILLS,
+  addSkill: async (_sid: string, _fallback: string, def: { name: string; description: string; scope: string }) => {
+    const root = def.scope === 'project' ? 'C:/dev/grove-bench' : 'C:/Users/demo';
+    const skill = {
+      name: def.name,
+      description: def.description,
+      source: def.scope,
+      path: `${root}/.agents/skills/${def.name}/SKILL.md`,
+    };
+    DEMO_SKILLS.push(skill);
+    return skill;
+  },
+  getSkillSharing: async () => DEMO_SHARING,
+  shareSkills: async () => {
+    const done = DEMO_SHARING.toShare.map((s) => s.name);
+    for (const s of DEMO_SKILLS) if (done.includes(s.name)) s.path = s.path.replace('/.claude/', '/.agents/');
+    DEMO_SHARING = { ...DEMO_SHARING, toShare: [] };
+    return { done, skipped: [] };
+  },
+  linkSkills: async () => {
+    DEMO_SKILLS.push(...DEMO_SHARING.toLink);
+    const done = DEMO_SHARING.toLink.map((s) => s.name);
+    DEMO_SHARING = { ...DEMO_SHARING, toLink: [], broken: [] };
+    return { done, skipped: [] };
+  },
+  getSkillSuggestions: async () => DEMO_SUGGESTIONS,
+  analyzeSkillSuggestions: async () => DEMO_SUGGESTIONS,
+  dismissSkillSuggestion: async (_repo: string, id: string) => {
+    DEMO_SUGGESTIONS = DEMO_SUGGESTIONS.filter((s) => s.id !== id);
+  },
+  checkPrerequisites: async () => ({
+    git: { available: true, version: '2.47.0', meetsMinimum: true },
+    gh: { available: true, version: '2.65.0', authenticated: true },
+    agents: {
+      'claude-code': { available: true, authenticated: true, authMethod: 'oauth', email: 'demo@example.com' },
+      codex: { available: true, authenticated: true },
+    },
+  }),
+  checkGhPrerequisite: async () => ({ available: true, version: '2.65.0', authenticated: true }),
+  checkAgentSignIn: async () => ({ git: { available: true, version: '2.47.1', meetsMinimum: true }, agents: {} }),
+  listRepos: async () => [],
+  // Adding a project picks a folder without git.
+  addRepo: async () => ({ kind: 'folder', path: 'C:\\Users\\sam\\notes' }),
+  repoKind: async (p: string) => (p.endsWith('notes') ? 'folder' : 'git'),
+  hasGitIdentity: async () => true,
+  listSessions: async () => [],
+  resumeSession: async (id: string) => ({ id, branch: '' }),
+  // Main reports a woken conversation 'running' straight away.
+  wakeSession: async (id: string) => {
+    const { store } = await import('./stores/sessions.svelte.js');
+    store.updateStatus(id, 'running');
+  },
+  listWorktrees: async () => [],
+  listFiles: async () => [],
+  // restoreApp's last IPC call. Seed only after it, so the restore pass can't
+  // stop the seeded sessions (it stops "running" sessions it doesn't
+  // recognize as open tabs).
+  notifyRestoreComplete: () => {
+    setTimeout(seedSessions, 150);
+  },
+  listBookmarks: async () => [],
+  getOpenTabs: async () => [],
+  getCollapsedRepos: async () => ({ [REPO_A]: false, [REPO_B]: false }),
+  getSessionSort: async () => ({ key: 'age', dir: 'desc' }),
+  getSidebarWidth: async () => 320,
+  getCollapsedPanels: async () => ({}),
+  // One piece of work across both projects: the API fix and the sign-in UI that uses it.
+  getConversationGroups: async () => [
+    { id: 'g-oauth', name: 'OAuth refresh', sessionIds: ['s-oauth', 's-oauth-ui'] },
+  ],
+  getUnreadSessions: async () => [],
+  setUnreadSessions: () => {},
+  getTodoSessions: async () => [],
+  setTodoSessions: () => {},
+  listSkillSchedules: async () => structuredClone(demoSchedules),
+  saveSkillSchedule: async (input: SkillScheduleInput) => {
+    const old = demoSchedules.find((s) => s.id === input.id);
+    const schedule: SkillSchedule = { ...input, id: old?.id ?? `sch-${Date.now()}`, scheduledFrom: Date.now(), checkedThrough: Date.now(), sessionIds: old?.sessionIds ?? [] };
+    demoSchedules = old ? demoSchedules.map((s) => (s.id === schedule.id ? schedule : s)) : [...demoSchedules, schedule];
+    return structuredClone(schedule);
+  },
+  deleteSkillSchedule: async (id: string) => { demoSchedules = demoSchedules.filter((s) => s.id !== id); },
+  recordSkillScheduleRun: async () => null,
+  onSkillScheduleDue: () => () => {},
+  onSkillSchedulesChanged: () => () => {},
+  onAppError: () => () => {},
+  reportError: () => {},
+  reportFreeze: () => {},
+  reportTiming: () => {},
+  logIdle: () => {},
+  recordPerformanceTrace: () => new Promise((resolve) => setTimeout(() => resolve({ name: 'trace-2026-10-01T12-00-00-000Z.json', sizeBytes: 12_582_912, seconds: 10 }), 10_000)),
+  setAttentionBadge: () => {},
+  getEventHistoryPage: async () => ({ events: [], totalCount: 0, startIndex: 0, turn: { midTurn: false, pendingPromptIds: [], agentLive: false } }),
+  getEventHistoryCount: async () => 0,
+  getThreadItems: async (id: string) => THREAD_ITEMS[id] ?? { tasks: [], tasksEventIndex: null, files: [] },
+  searchEventHistory: async () => [],
+  searchAllEventHistory: async (_ids: string[], q: string) =>
+    q.toLowerCase().includes('oauth') ? CONTENT_HITS : [],
+  getSessionPreviews: async (ids: string[]) =>
+    Object.fromEntries(ids.filter((id) => PREVIEWS[id]).map((id) => [id, PREVIEWS[id]])),
+  // The goal pinned at the top of the Thread tab.
+  getConversationGoal: async (id: string) => demoGoal(id),
+  getConversationGoals: async (ids: string[]) => Object.fromEntries(ids.map((id) => [id, demoGoal(id)])),
+  getDefaultBranch: async () => 'main',
+  // Branch picker: `main` is checked out in the project folder, so picking it
+  // from a worktree conversation shows the refusal.
+  listBranches: async (repoPath: string) => repoPath === REPO_B
+    ? ['main', 'develop', 'claude/fix-oauth-refresh', 'claude/flaky-e2e-retries', 'claude/perf-audit', 'feat/checkout-v2', 'release/1.4']
+    : ['main', 'claude/sidebar-revamp', 'claude/update-readme', 'feat/branch-picker'],
+  switchBranch: async (id: string, branch: string) => branch === 'main'
+    ? { success: false, error: `"main" is already checked out in ${REPO_B}. A branch can only be checked out in one place.` }
+    : { success: true, branch, sessionIds: [id] },
+  syncBranch: async () => null,
+  autoNameBranch: async () => null,
+  // Existing-branch picker in the New Conversation dialog.
+  listOpenPrs: async (repoPath: string) => repoPath === REPO_B
+    ? [
+      { number: 51, title: 'Checkout v2: split payment step', headRefName: 'feat/checkout-v2', author: 'jo-dev', isDraft: false, isCrossRepository: false, url: '' },
+      { number: 50, title: 'Bump node to 22', headRefName: 'patch-1', author: 'outside-contributor', isDraft: false, isCrossRepository: true, url: '' },
+    ]
+    : [
+      { number: 12, title: 'Branch picker in the status bar', headRefName: 'feat/branch-picker', author: 'sam-k', isDraft: true, isCrossRepository: false, url: '' },
+    ],
+  gitLogCommits: async () => [
+    { sha: 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0', shortSha: 'a1b2c3d', subject: 'Add OAuth callback route' },
+    { sha: 'b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1', shortSha: 'b2c3d4e', subject: 'Wire token refresh' },
+  ],
+  gitRebase: async () => ({ success: true }),
+  gitCherryPick: async () => ({ success: false, conflicts: ['src/auth/session.ts'] }),
+  gitSquash: async () => ({ success: true }),
+  // The Branch view (the default) names its base; Uncommitted doesn't.
+  getGitStatus: async (id: string, opts?: { scope?: string }) => ({
+    ...(GIT_STATUS[id] ?? { entries: [] }),
+    ...(opts?.scope === 'branch' ? { baseRef: 'main' } : {}),
+  }),
+  getFileDiff: async (_id: string, filePath: string) => ({
+    kind: 'text',
+    patch: [
+      `--- a/${filePath}`,
+      `+++ b/${filePath}`,
+      '@@ -10,6 +10,8 @@ export async function refreshToken(session: Session) {',
+      '   const stored = await tokenStore.get(session.id);',
+      '   if (!stored) return null;',
+      '-  const fresh = await oauth.refresh(stored.refreshToken);',
+      '-  await tokenStore.set(session.id, fresh);',
+      '+  // Rotate once per request: a second rotation invalidates the first.',
+      '+  const fresh = await refreshOnce(session.id, () => oauth.refresh(stored.refreshToken));',
+      '+  await tokenStore.set(session.id, fresh, { expiresIn: fresh.expiresIn });',
+      '+  metrics.increment(\'oauth.refresh\');',
+      '   return fresh;',
+      ' }',
+    ].join('\n'),
+  }),
+  submitPrReview: async (_id: string, review: { comments: unknown[] }) => ({
+    url: 'https://github.com/example/api-service/pull/42#pullrequestreview-1',
+    inline: review.comments.length,
+    quoted: 0,
+  }),
+  // Branch stack states: s-oauth has an open PR with a failing check plus an
+  // earlier, merged PR on the same branch; the others show the "Create PR"
+  // link (s-sidebar with unpushed commits).
+  getPrs: async (id: string) => id === 's-oauth'
+    ? [
+      { number: 42, url: 'https://github.com/example/api-service/pull/42', state: 'OPEN', title: 'Fix OAuth token refresh', reviewDecision: 'REVIEW_REQUIRED', checks: { total: 3, passed: 2, failed: 1, pending: 0 }, failingChecks: ['e2e'], headSha: 'b2c3d4e', headRefName: 'claude/fix-oauth-refresh', baseRefName: 'main' },
+      { number: 38, url: 'https://github.com/example/api-service/pull/38', state: 'MERGED', title: 'OAuth: add refresh token storage', reviewDecision: 'APPROVED', checks: { total: 3, passed: 3, failed: 0, pending: 0 }, failingChecks: [], headSha: 'a1b2c3d', headRefName: 'claude/fix-oauth-refresh', baseRefName: 'main' },
+    ]
+    : [],
+  getGitSyncStatus: async (id: string) => ({ upstream: id === 's-readme' ? null : 'origin', ahead: id === 's-sidebar' ? 3 : id === 's-oauth' ? 1 : 0, behind: id === 's-oauth' ? 2 : 0 }),
+  listCheckpoints: async () => [],
+  getCheckpointDiff: async () => [
+    'diff --git a/src/renderer/components/Sidebar.svelte b/src/renderer/components/Sidebar.svelte',
+    '--- a/src/renderer/components/Sidebar.svelte',
+    '+++ b/src/renderer/components/Sidebar.svelte',
+    '@@ -12,7 +12,9 @@',
+    '-  <div class="w-56 flex flex-col">',
+    '+  <div class="w-72 flex flex-col">',
+    '+    <SessionSearch />',
+  ].join('\n'),
+  listMcpServers: async () => [],
+  // A second agent so screenshots can show agent choice. Only Claude Code is
+  // registered in the app itself.
+  listRegistryAgents: async () => [],
+  getRegistryIcon: async () => null,
+  refreshCatalogs: async () => ({ fetchedAt: null }),
+  listAdapters: async () => [{
+    id: 'claude-code', displayName: 'Claude Agent', capabilities: { mcpConfig: true, plugins: true, permissionModes: true }, isDefault: true, backgroundModel: 'claude-haiku-4-5-20251001',
+    // The MCP popover only offers controls the agent declares.
+    mcp: {
+      controls: { list: true, reconnect: true, toggle: true, signIn: true, contextCost: true },
+      disconnectHint: 'Disconnect this server in this project. New threads here also start without it until you connect it again.',
+    },
+  }, {
+    id: 'codex', displayName: 'Codex', capabilities: { permissionModes: true },
+  }],
+  previewClaudeAccount: async ({ name }: { name: string }) => name.trim()
+    ? { ok: true as const, configDir: `C:\\Users\\demo\\.claude-${name.trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-')}` }
+    : { ok: false as const, error: 'Enter a name for the account, such as Work.' },
+  addClaudeAccount: async (): Promise<never> => { throw new Error('Adding accounts is not available in the demo.'); },
+  getAdapterControls: async (adapterType?: string) => adapterType === 'codex' ? [
+    { id: 'permissionMode', label: 'Mode', default: 'default', options: [
+      { value: 'default', label: 'Ask', tone: 'info' }, { value: 'acceptEdits', label: 'Auto edit', tone: 'accent' },
+    ] },
+  ] : [
+    { id: 'permissionMode', label: 'Mode', default: 'default', options: [
+      ...CLAUDE_MODE_OPTIONS,
+    ] },
+    { id: 'effort', label: 'Effort', default: 'medium', options: [
+      { value: 'low', label: 'Low', description: 'Fastest and cheapest; brief reasoning' },
+      { value: 'medium', label: 'Medium', description: 'Balanced speed and depth' },
+      { value: 'high', label: 'High', description: 'Deep reasoning' },
+      { value: 'xhigh', label: 'Extra', description: 'Deeper than High; suits long coding and agentic work' },
+      { value: 'max', label: 'Max', description: 'Uncapped reasoning; slow and token-hungry, for the hardest tasks' },
+    ] },
+  ],
+  getModels: async (adapterType?: string) => adapterType === 'codex' ? [
+    { id: 'codex-default', label: 'Default model', contextWindow: 400_000 },
+  ] : [
+    { id: 'claude-opus-5-5', label: 'Opus 5.5', contextWindow: 1_000_000 },
+    { id: 'claude-opus-5', label: 'Opus 5', contextWindow: 1_000_000 },
+    { id: 'claude-fable-5', label: 'Fable 5', contextWindow: 1_000_000 },
+    { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6', contextWindow: 1_000_000 },
+    { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5', contextWindow: 200_000 },
+  ],
+  setModel: async () => {},
+  setMode: async () => {},
+  getUsage: async () => ({
+    available: true,
+    plan: 'max',
+    fetchedAt: now,
+    windows: [
+      { id: 'five_hour', label: '5-hour', utilization: 0.42, resetsAt: Math.round((now + 95 * min) / 1000) },
+      { id: 'seven_day', label: 'Weekly', utilization: 0.18, resetsAt: Math.round((now + 3 * 24 * 60 * min) / 1000) },
+      { id: 'seven_day_opus', label: 'Weekly · Opus', utilization: 0.71, resetsAt: Math.round((now + 3 * 24 * 60 * min) / 1000) },
+    ],
+  }),
+  getCachedUsage: async () => null,
+  getDailySpend: async () => 3.42,
+  getThreadUsage: async () => ({ spendUsd: 1.84, tokens: { input: 1_240_000, output: 45_300 } }),
+  exportThread: async () => null,
+  switchAgent: async () => {},
+  // Mirrors the Claude Code adapter's declared controls (for Opus 5.5, the
+  // default model) so the status bar
+  // renders its badges in the browser demo.
+  getControls: async () => ({
+    descriptors: [
+      { id: 'permissionMode', label: 'Mode', default: 'default', options: [
+        ...CLAUDE_MODE_OPTIONS,
+      ] },
+      { id: 'effort', label: 'Effort', default: 'medium', options: [
+        { value: 'low', label: 'Low', tone: 'muted' }, { value: 'medium', label: 'Medium', tone: 'accent-soft' },
+        { value: 'high', label: 'High', tone: 'accent' }, { value: 'xhigh', label: 'Extra', tone: 'accent' },
+        { value: 'max', label: 'Max', tone: 'highlight' },
+      ] },
+      { id: 'speed', label: 'Speed', default: 'standard', options: [
+        { value: 'standard', label: 'Standard', tone: 'neutral' }, { value: 'fast', label: 'Fast', tone: 'highlight' },
+      ] },
+    ],
+    values: { effort: 'medium', speed: 'standard' },
+  }),
+  setControl: async () => {},
+  pluginList: async () => ({ installed: [], available: [] }),
+  checkForUpdate: async () => demoUpdateStatus,
+  getUpdateState: async () => ({ currentVersion: '0.0.0-alpha.2', enabled: true, status: demoUpdateStatus }),
+  onUpdateStatus: (cb: (status: unknown) => void) => {
+    updateListeners.add(cb);
+    return () => updateListeners.delete(cb);
+  },
+  ptyIsAlive: async () => false,
+  winIsMaximized: async () => false,
+  // The MCP settings tab reads `.length` of this list.
+  mcpConfigList: async () => [],
+  testNotification: async () => 'sent',
+};
+
+(window as unknown as { groveBench: unknown }).groveBench = new Proxy(api, {
+  get(target, prop) {
+    if (typeof prop !== 'string') return undefined;
+    if (prop in target) return target[prop];
+    // Event subscriptions return an unsubscribe fn; everything else resolves quietly.
+    if (/^on[A-Z]/.test(prop)) return () => () => {};
+    return () => Promise.resolve(undefined);
+  },
+});
+
+// ─── Phase 1: seed sessions once the app has mounted and restored (empty) state ───
+async function seedSessions() {
+  const { store } = await import('./stores/sessions.svelte.js');
+  (window as never as Record<string, unknown>).__demoStore = store;
+
+  store.addSession({ id: 's-sidebar', branch: 'claude/sidebar-revamp', repoPath: REPO_A, status: 'running', displayName: 'Sidebar revamp', createdAt: now - 52 * min, lastActiveAt: now - 1 * min }, false);
+  store.addSession({ id: 's-oauth', branch: 'claude/fix-oauth-refresh', repoPath: REPO_B, status: 'running', createdAt: now - 3 * 60 * min, lastActiveAt: now - 4 * min }, false);
+  store.addSession({ id: 's-oauth-ui', branch: 'claude/fix-oauth-refresh', repoPath: REPO_A, status: 'running', displayName: 'Sign-in retry banner', createdAt: now - 2 * 60 * min, lastActiveAt: now - 9 * min }, false);
+  store.addSession({ id: 's-e2e', branch: 'claude/flaky-e2e-retries', repoPath: REPO_B, status: 'running', displayName: 'Flaky e2e retries', createdAt: now - 26 * 60 * min, lastActiveAt: now - 38 * min }, false);
+  store.addSession({ id: 's-readme', branch: 'claude/update-readme', repoPath: REPO_A, status: 'stopped', createdAt: now - 2 * 24 * 60 * min, lastActiveAt: now - 26 * 60 * min }, false);
+  store.addSession({ id: 's-perf', branch: 'claude/perf-audit', repoPath: REPO_B, status: 'stopped', createdAt: now - 5 * 24 * 60 * min, lastActiveAt: now - 3 * 24 * 60 * min }, false);
+  store.activeSessionId = 's-sidebar';
+  // Phase 2 after the panes have mounted and replayed (their onMount clears messages).
+  setTimeout(seedConversations, 650);
+}
+
+// ─── Phase 2: seed conversations after the panes have mounted and replayed ───
+async function seedConversations() {
+  const { messageStore } = await import('./stores/messages.svelte.js');
+
+  // Full-object reassignment: key-level mutations on $state<Record> proxies
+  // can silently fail to propagate (see the store's own setIsRunning note).
+  messageStore.messagesBySession = {
+    ...messageStore.messagesBySession,
+    // Working: mid-turn, running a test command
+    's-sidebar': [
+      { kind: 'user', id: 'd1', text: 'Improve the left menu — richer context per agent, search across chats, and more space like the Grok side panel', uuid: 'demo-uuid-1' },
+      { kind: 'text', id: 'd2', text: 'I\'ve widened the sidebar and turned each session row into a two-line card: name on top, live context underneath. Running the test suite now to verify the new subtitle logic.', uuid: '' },
+      { kind: 'tool_call', id: 'd3', toolName: 'Bash', toolInput: { command: 'npm test' }, toolUseId: 'dt1', uuid: '', pending: true },
+    ],
+    // Waiting: blocked on a Write approval
+    's-oauth': [
+      { kind: 'user', id: 'd4', text: 'Fix the OAuth refresh flow — sessions drop after exactly one hour' },
+      { kind: 'text', id: 'd5', text: 'Found it: the refresh token is rotated twice per request. I need to patch src/auth/refresh.ts to reuse the rotation result.', uuid: '' },
+      { kind: 'permission', id: 'd6', requestId: 'dr1', toolName: 'Write', toolInput: { file_path: 'src/auth/refresh.ts' }, toolUseId: 'dt2', toolCategory: 'edit', resolved: false },
+    ],
+    // Idle: finished its turn with a document-style report (exercises the
+    // markdown preview affordance in screenshots)
+    's-e2e': [
+      { kind: 'user', id: 'd7', text: 'The checkout e2e suite is flaky on CI — investigate and stabilize' },
+      { kind: 'text', id: 'd8', text: [
+        '## Investigation summary',
+        '',
+        'The flakiness came from two independent causes, both timing-related:',
+        '',
+        '| Test | Failure rate | Root cause |',
+        '| --- | --- | --- |',
+        '| checkout-guest.spec | 18% | fixed 500ms wait races the cart API |',
+        '| checkout-saved-card.spec | 7% | stale session cookie between retries |',
+        '',
+        '## Changes made',
+        '',
+        '1. Replaced the fixed 500ms wait in `retry-helper.ts` with a network-idle wait',
+        '2. Cleared the session cookie jar between retry attempts',
+        '3. Added a `flake-report` CI step that uploads per-test retry counts',
+        '',
+        '## Verification',
+        '',
+        '40 consecutive green runs on CI, and the flake-report step shows zero retries for both specs.',
+      ].join('\n'), uuid: '' },
+    ],
+  } as never;
+  messageStore.activityBySession = {
+    ...messageStore.activityBySession,
+    's-sidebar': { activity: 'tool_starting', toolName: 'Bash', toolSummary: 'npm test' },
+  };
+  messageStore.modelBySession = { ...messageStore.modelBySession, 's-sidebar': 'claude-fable-5' };
+  // System init snapshot for the active session — includes a plugin-provided
+  // skill the on-disk scan can't see, so the Skills popover shows all sources.
+  messageStore.systemInfoBySession = {
+    ...messageStore.systemInfoBySession,
+    's-sidebar': {
+      tools: ['Bash', 'Read', 'Edit', 'Write', 'Grep', 'Glob', 'Agent', 'WebFetch'],
+      agents: ['Explore', 'Plan', 'general-purpose'],
+      skills: ['code-review', 'deploy-preview', 'release-notes', 'worktree-doctor', 'changelog-bot'],
+      slashCommands: ['compact', 'clear', 'code-review', 'release-notes'],
+      mcpServers: [{ name: 'grove-memory', status: 'connected' }],
+    },
+  };
+  messageStore.usageBySession = {
+    ...messageStore.usageBySession,
+    's-sidebar': { inputTokens: 24_312, cacheReadTokens: 210_450, cacheCreationTokens: 12_300 },
+  };
+  messageStore.contextWindowBySession = { ...messageStore.contextWindowBySession, 's-sidebar': 1_000_000 };
+  messageStore.setIsRunning('s-sidebar', true);
+  messageStore.setIsReady('s-sidebar', true);
+  messageStore.setIsRunning('s-oauth', true);
+  messageStore.setIsReady('s-oauth', true);
+  messageStore.setIsRunning('s-e2e', false);
+  messageStore.setIsReady('s-e2e', true);
+}
+
+export {};

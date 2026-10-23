@@ -1,192 +1,247 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { store } from './stores/sessions.svelte.js';
   import { messageStore } from './stores/messages.svelte.js';
   import { settingsStore } from './stores/settings.svelte.js';
-  import { setAnalyticsEnabled, trackEvent } from './lib/analytics.js';
-  import { getRepoColor, getTabPendingClass } from './lib/repo-colors.js';
+  import { prStore } from './stores/pr.svelte.js';
+  import { setAnalyticsEnabled, setCrashReportsEnabled, trackEvent, reportCrash } from './lib/analytics.js';
+  import { installRendererErrorHandlers, reportFromError, shortMessage, ErrorDeduper } from './lib/error-handling.js';
+  import { installFreezeWatch } from './lib/freeze-watch.js';
+  import { attentionCount, renderBadgeDataUrl } from './lib/attention-badge.js';
   import { restoreWorktrees } from './lib/restore-worktrees.js';
+  import { startIdleManager } from './lib/idle-manager.js';
+  import { wakeScene } from './stores/wakeScene.svelte.js';
+  import { arrivalScene } from './stores/arrivalScene.svelte.js';
+  import { installTooltips } from './lib/tooltip.js';
+  import { sessionRepoColor } from './lib/session-repo-color.js';
+  import { sessionSpriteState } from './lib/session-sprite-state.js';
+  import { TurnEndWatcher, flagsUnread } from './lib/turn-end.js';
   import Sidebar from './components/Sidebar.svelte';
   import WorkspacePane from './components/WorkspacePane.svelte';
   import ErrorToast from './components/ErrorToast.svelte';
-  import PrerequisiteCheck from './components/PrerequisiteCheck.svelte';
-  import SessionFinder from './components/SessionFinder.svelte';
+  import MemoryToast from './components/MemoryToast.svelte';
+  import PlanUsageToast from './components/PlanUsageToast.svelte';
+  import { memoryStore } from './stores/memory.svelte.js';
+  import { prerequisitesStore } from './stores/prerequisites.svelte.js';
+  import { lazyComponent } from './lib/lazy-component.js';
+  import GroveEmptyState from './components/GroveEmptyState.svelte';
+  import FirstSteps from './components/FirstSteps.svelte';
+  import GroveWalk from './components/GroveWalk.svelte';
   import TitleBar from './components/TitleBar.svelte';
-  import SessionContextMenu from './components/SessionContextMenu.svelte';
   import AnalyticsConsent from './components/AnalyticsConsent.svelte';
-  import * as Dialog from '$lib/components/ui/dialog/index.js';
+  import BookmarksDrawer from './components/BookmarksDrawer.svelte';
+  import MarkdownPreviewPanel from './components/MarkdownPreviewPanel.svelte';
+  import SpellcheckMenu from './components/SpellcheckMenu.svelte';
+  import { bookmarkStore } from './stores/bookmarks.svelte.js';
+  import { groupStore } from './stores/groups.svelte.js';
+  import { todoStore } from './stores/todo.svelte.js';
+  import { schedulesStore } from './stores/schedules.svelte.js';
+  import { skillsPanelStore } from './stores/skillsPanel.svelte.js';
+  import { goalStore } from './stores/goals.svelte.js';
+  import { panelStore } from './stores/panels.svelte.js';
+  import { previewStore } from './stores/preview.svelte.js';
+  import { subagentPanelStore } from './stores/subagentPanel.svelte.js';
+  import { backgroundAgentStore } from './stores/background-agent.svelte.js';
+  import type { AppErrorReport } from '../shared/types.js';
+  import { isTempBranch } from '../shared/temp-branch.js';
+  import { draftStore } from './stores/draft.svelte.js';
+  import DraftPane from './components/DraftPane.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
+  import { Notice } from '$lib/components/ui/notice/index.js';
+  import { Pulse } from '$lib/components/ui/pulse/index.js';
 
   let showAnalyticsConsent = $state(false);
+  // Loaded the first time it opens (Ctrl+R or the search button).
+  const loadSessionFinder = lazyComponent(() => import('./components/SessionFinder.svelte'));
+  const loadSubagentPanel = lazyComponent(() => import('./components/SubagentPanel.svelte'));
+  const loadBackgroundAgentDialog = lazyComponent(() => import('./components/BackgroundAgentDialog.svelte'));
+  const loadSkillsPanel = lazyComponent(() => import('./components/SkillsPanel.svelte'));
+  // The Skills drawer stays mounted once opened, as Settings and Memory do.
+  let skillsPanelOpened = $state(false);
+  $effect(() => { if (skillsPanelStore.open) skillsPanelOpened = true; });
 
-  let contextMenu = $state<{ x: number; y: number; sessionId: string } | null>(null);
-
-  function openContextMenu(e: MouseEvent, sessionId: string) {
-    e.preventDefault();
-    contextMenu = { x: e.clientX, y: e.clientY, sessionId };
-  }
-
-  function getContextMenuItems(sessionId: string) {
-    const session = store.sessions.find(s => s.id === sessionId);
-    if (!session) return [];
-    return [
-      { label: 'New Session', icon: 'add' as const, action: () => newSessionForRepo(session.repoPath, session.branch) },
-      { label: 'Rename', icon: 'rename' as const, action: () => startTabRename(sessionId) },
-      { label: 'Open Folder', icon: 'folder' as const, action: () => window.groveBench.openSessionFolder(sessionId) },
-      { label: 'Close Tab', icon: 'close' as const, action: () => closeTab(sessionId), separator: true },
-      { label: 'Destroy Agent', icon: 'destroy' as const, action: () => closeTab(sessionId), variant: 'destructive' as const },
-    ];
-  }
-
-  async function newSessionForRepo(repoPath: string, branch: string) {
-    try {
-      const result = await window.groveBench.createSession({ repoPath, branchName: branch, direct: true });
-      store.addSession({ id: result.id, branch: result.branch, repoPath, status: 'running', direct: true });
-      store.activeSessionId = result.id;
-    } catch (e: any) {
-      store.setError(e.message || String(e));
+  // ── Global error handling ──
+  // Uncaught renderer errors (window.onerror / unhandledrejection / a Svelte
+  // error boundary) and forwarded main-process errors all land here: one
+  // toast, one file-log line, and an opt-in crash report.
+  const errorDeduper = new ErrorDeduper();
+  function handleErrorReport(report: AppErrorReport) {
+    if (!errorDeduper.accept(report)) return;
+    console.error(`[${report.source}:${report.kind}]`, report.message, report.stack ?? '');
+    store.setError(shortMessage(report));
+    if (report.source === 'renderer') {
+      try { window.groveBench.reportError(report); } catch { /* main may be gone */ }
     }
+    reportCrash(report);
   }
 
-  let tabRenamingId = $state<string | null>(null);
-  let tabRenameValue = $state('');
-  let tabRenameError = $state<string | null>(null);
-
-  function startTabRename(sessionId: string) {
-    const session = store.sessions.find(s => s.id === sessionId);
-    if (!session) return;
-    tabRenamingId = sessionId;
-    tabRenameValue = session.displayName || session.branch;
-    tabRenameError = null;
+  /** onerror callback for a session pane's <svelte:boundary>. */
+  function paneError(sessionId: string) {
+    return (error: unknown) => {
+      // Nothing more will load: drop the loading walk so the error shows.
+      messageStore.setHistoryLoaded(sessionId, true);
+      handleErrorReport(reportFromError('boundary', error, sessionId));
+    };
   }
-
-  async function confirmTabRename() {
-    if (!tabRenamingId) return;
-    const newName = tabRenameValue.trim();
-    if (!newName) { tabRenamingId = null; return; }
-    const session = store.sessions.find(s => s.id === tabRenamingId);
-    if (session && newName === (session.displayName || session.branch)) { tabRenamingId = null; return; }
-    try {
-      await window.groveBench.renameSession(tabRenamingId, newName);
-      store.updateDisplayName(tabRenamingId, newName);
-      tabRenamingId = null;
-      tabRenameError = null;
-    } catch (e: any) {
-      tabRenameError = e.message || String(e);
-    }
-  }
-
-  function handleRenameDialogKeydown(e: KeyboardEvent) {
-    if (e.key === 'Enter') { e.preventDefault(); confirmTabRename(); }
-  }
-
-  /** Return '#n' suffix when multiple sessions share the same branch, empty string otherwise */
-  function branchIndex(session: { id: string; repoPath: string; branch: string }): string {
-    const siblings = store.sessionsForRepo(session.repoPath).filter(s => s.branch === session.branch);
-    if (siblings.length <= 1) return '';
-    const idx = siblings.findIndex(s => s.id === session.id);
-    return `#${idx + 1} `;
+  function sidebarError(error: unknown) {
+    handleErrorReport(reportFromError('boundary', error));
   }
 
   let restored = $state(false);
 
-  async function restoreApp() {
-    await restoreWorktrees();
+  // Open tabs: live sessions (have a connection) plus restored tabs still
+  // waiting to reconnect on first focus. These are persisted so they reopen
+  // on restart.
+  let openTabs = $derived(store.sessions.filter((s) => store.isOpenTab(s)));
 
-    // Resume all previously-open tabs, not just the active one
+  async function restoreApp() {
+    const restoredIds = await restoreWorktrees();
+
+    // Previously-open tabs come back in the Conversations list
     const persistedOpenTabs = await window.groveBench.getOpenTabs();
     const openSet = new Set(persistedOpenTabs);
 
-    // Stop sessions that the main process still considers running but
-    // that were closed before reload (stopQuery keeps them alive).
+    // Close sessions that the main process still considers live (running or
+    // asleep) but that were closed before reload. Only restored ones: a
+    // thread started while the restore ran isn't in the saved tabs yet, and
+    // closing it here dropped it from the Threads list.
     for (const session of store.sessions) {
-      if (session.status === 'running' && !openSet.has(session.id)) {
+      if (!restoredIds.has(session.id)) continue;
+      if ((session.status === 'running' || session.status === 'sleeping') && !openSet.has(session.id)) {
         store.updateStatus(session.id, 'stopped');
-        window.groveBench.stopSession(session.id).catch(() => {});
+        window.groveBench.closeSession(session.id).catch(() => {});
       }
     }
 
-    for (const tabId of persistedOpenTabs) {
-      const session = store.sessions.find((s) => s.id === tabId);
-      if (session && session.status === 'stopped') {
-        window.groveBench.resumeSession(tabId, session.repoPath).then((result) => {
-          store.updateStatus(result.id, 'running');
-        }).catch((e: any) => {
-          store.setError(e.message || String(e));
-          failedResumeIds.add(tabId);
-        });
-      }
+    // Startup opens no conversation: it lands on the picker, which lists the
+    // open tabs. None of them starts its agent until the user opens it, so
+    // startup doesn't boot one agent subprocess per tab. The deferred marks
+    // are set before `restored` flips so the open-tabs persistence effect
+    // never writes a partial list.
+    for (const id of openSet) {
+      const session = store.sessions.find((s) => s.id === id);
+      if (session?.status === 'stopped') store.deferResume(id);
     }
 
-    // Restore persisted tab order
-    if (persistedOpenTabs.length) {
-      store.reorderByIds(persistedOpenTabs);
-    }
-
-    // Restore persisted active tab, or fall back to first running session
-    const persistedTabId = await window.groveBench.getActiveTab();
-    if (persistedTabId && store.sessions.find((s) => s.id === persistedTabId)) {
-      store.activeSessionId = persistedTabId;
-    } else {
-      const firstRunning = store.sessions.find((s) => s.status === 'running');
-      if (firstRunning) {
-        store.activeSessionId = firstRunning.id;
+    // Bring back the unread flags from the previous run. Not the open
+    // thread's: it was opened while the projects loaded, so it has been read.
+    // Nor a closed thread's, which counts as dealt with.
+    try {
+      const unread = await window.groveBench.getUnreadSessions();
+      for (const id of unread) {
+        const session = store.sessions.find((s) => s.id === id);
+        if (id !== store.activeSessionId && session && store.isOpenTab(session)) store.markNeedsAttention(id);
       }
-    }
+    } catch { /* best-effort */ }
+
+    // Scheduled runs can count the threads they started from now on.
+    schedulesStore.markRestored();
 
     restored = true;
+    window.groveBench.notifyRestoreComplete();
+
+    // Bring stopped conversations' names up to date too (provider titles,
+    // and names from the older heuristic). One at a time, in the background.
+    void refreshAutoNames(store.sessions.map((s) => s.id));
   }
 
-  let showSessionFinder = $state(false);
-
-  // Track which inactive tabs had a turn complete
-  let sessionCompletedWhileInactive = $state<Record<string, boolean>>({});
-  let prevRunningState = $state<Record<string, boolean>>({});
-
-  // Detect when a non-active session transitions from running → idle
+  // Detect a completed turn: running, then idle for a moment, so a turn that
+  // carries on straight after a result doesn't flag the conversation unread
+  // (its sidebar character would wave mid-turn). The flag lives in the store
+  // so the sidebar can read it.
+  const turnEnds = new TurnEndWatcher((sessionId) => {
+    const session = store.sessions.find((s) => s.id === sessionId);
+    if (!session) return;
+    if (flagsUnread(session, store.activeSessionId)) {
+      store.markNeedsAttention(sessionId);
+    }
+    void autoNameSession(sessionId).then(() => autoNameBranch(sessionId));
+    // Alongside, as it needs neither name: the goal, written once after the
+    // first reply (main skips the rest).
+    void goalStore.autoGenerate(sessionId);
+  });
   $effect(() => {
     for (const session of store.sessions) {
-      const running = messageStore.getIsRunning(session.id);
-      const wasRunning = prevRunningState[session.id] ?? false;
-      if (wasRunning && !running && store.activeSessionId !== session.id) {
-        sessionCompletedWhileInactive[session.id] = true;
-      }
-      prevRunningState[session.id] = running;
+      turnEnds.update(session.id, messageStore.getIsRunning(session.id));
     }
   });
 
-  // Clear flash when switching to a session
+  /** Refresh a session's automatic name: the provider's title when it has
+   *  one, else a name from the first prompt. Main decides whether it changes
+   *  and never replaces a name the user set. */
+  async function autoNameSession(sessionId: string): Promise<void> {
+    try {
+      const name = await window.groveBench.autoNameSession(sessionId);
+      if (name) store.updateDisplayName(sessionId, name);
+    } catch { /* non-fatal — naming is best-effort */ }
+  }
+
+  /** Rename a placeholder branch (a conversation started without a branch
+   *  name) from its task. Runs after the auto name so the title can help.
+   *  Main does nothing for a branch that is already named. */
+  async function autoNameBranch(sessionId: string): Promise<void> {
+    const branch = store.sessions.find((s) => s.id === sessionId)?.branch;
+    if (!branch || !isTempBranch(branch)) return;
+    try {
+      const named = await window.groveBench.autoNameBranch(sessionId);
+      if (named) store.updateBranch(sessionId, named);
+    } catch { /* non-fatal — the placeholder stays and can be renamed by hand */ }
+  }
+
+  async function refreshAutoNames(sessionIds: string[]): Promise<void> {
+    for (const id of sessionIds) await autoNameSession(id);
+  }
+
+  // Clear flash when switching to a session. Only on the switch: Mark as
+  // Unread on the open thread keeps it unread until it is opened again.
   $effect(() => {
     const activeId = store.activeSessionId;
-    if (activeId && sessionCompletedWhileInactive[activeId]) {
-      delete sessionCompletedWhileInactive[activeId];
+    if (activeId) {
+      untrack(() => store.clearNeedsAttention(activeId));
     }
   });
 
-  // Persist active tab across restarts — skip until restore completes
-  // to avoid overwriting the persisted value with null on hot reload
+  // Persist live session IDs so they reopen/resume on restart
   $effect(() => {
     if (restored) {
-      window.groveBench.setActiveTab(store.activeSessionId);
+      window.groveBench.setOpenTabs(openTabs.map((s) => s.id));
     }
   });
 
-  // Persist open tab IDs so all tabs reopen on restart
+  // Persist the unread flags so they survive a restart
   $effect(() => {
+    const ids = Object.keys(store.needsAttention);
     if (restored) {
-      const ids = store.sessions
-        .filter((s) => s.status === 'running' || s.status === 'starting' || s.status === 'installing' || s.status === 'error')
-        .map((s) => s.id);
-      window.groveBench.setOpenTabs(ids);
+      window.groveBench.setUnreadSessions(ids);
     }
+  });
+
+  // Taskbar badge: sessions blocked on input or finished while unfocused.
+  // Reads the same signals as the sidebar's triage so the numbers agree.
+  let lastBadgeCount = -1;
+  $effect(() => {
+    const enabled = settingsStore.current.notifyTaskbarBadge;
+    const count = enabled
+      ? attentionCount(
+        store.sessions,
+        (s) => messageStore.needsInput(s.id),
+        (s) => store.isUnread(s),
+      )
+      : 0;
+    if (count === lastBadgeCount) return;
+    lastBadgeCount = count;
+    try {
+      window.groveBench.setAttentionBadge(count, renderBadgeDataUrl(count));
+    } catch { /* badge is cosmetic */ }
   });
 
   // Sync analytics opt-in/out when setting changes (no restart needed).
   // Also fires app_launched once after consent has been resolved.
   let appLaunchedTracked = false;
   $effect(() => {
-    const { analyticsEnabled, analyticsPrompted } = settingsStore.current;
+    const { analyticsEnabled, analyticsPrompted, crashReportsEnabled } = settingsStore.current;
     setAnalyticsEnabled(analyticsEnabled);
+    setCrashReportsEnabled(crashReportsEnabled);
     if (analyticsEnabled && analyticsPrompted && !appLaunchedTracked) {
       trackEvent('app_launched');
       appLaunchedTracked = true;
@@ -200,24 +255,79 @@
     }
   });
 
-  function handleGlobalKeydown(e: KeyboardEvent) {
-    if ((e.ctrlKey || e.metaKey) && e.key === 'r') {
-      e.preventDefault();
-      showSessionFinder = !showSessionFinder;
+  function reopenLastClosedTab() {
+    // Skip entries reopened since they were closed, so one press always
+    // reopens something when anything is left to reopen.
+    for (let id = store.popRecentlyClosed(); id; id = store.popRecentlyClosed()) {
+      const session = store.sessions.find((s) => s.id === id);
+      if (session?.status !== 'stopped') continue;
+      // Setting it as active triggers the existing $effect that auto-resumes stopped sessions
+      store.activeSessionId = id;
+      return;
     }
   }
 
-  let resumingId: string | null = null;
+  /** Any key skips the wake-up scene, and still does its usual job. Runs in
+   *  the capture phase: the chat under the scene may have focus and keep
+   *  keys to itself. */
+  function skipWakeScene() {
+    if (wakeScene.current) wakeScene.end();
+  }
+
+  function handleGlobalKeydown(e: KeyboardEvent) {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'r') {
+      e.preventDefault();
+      store.finderOpen = !store.finderOpen;
+    }
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'T') {
+      e.preventDefault();
+      reopenLastClosedTab();
+    }
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === 'b') {
+      e.preventDefault();
+      bookmarkStore.toggleDrawer();
+    }
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key === ',') {
+      e.preventDefault();
+      settingsStore.panelOpen = !settingsStore.panelOpen;
+    }
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key === 'n') {
+      e.preventDefault();
+      // A draft in the project of the conversation being looked at.
+      draftStore.open(store.activeSession?.repoPath ?? '');
+    }
+  }
+
+  // Sessions with a resume in flight (Set, not a single id, so resumes of
+  // different sessions don't clobber each other's tracking).
+  let resumingIds = new Set<string>();
+  // Sessions whose last auto-resume failed. A failure here used to block the
+  // tab's auto-resume permanently; instead we clear it when the user navigates
+  // (back) to the tab, so a transient failure retries on explicit re-selection.
   let failedResumeIds = new Set<string>();
+  // Resumed sessions whose agent hasn't connected yet (no status from main
+  // since). One that stops first failed to start, so it counts as a failed
+  // resume: resuming it again at once would fail the same way, in a loop.
+  let connectingIds = new Set<string>();
+  // Sleeping sessions with a wake in flight, so the effect below wakes each
+  // once while its status catches up.
+  let wakingIds = new Set<string>();
+  let prevActiveResumeId: string | null = null;
 
-  $effect(() => {
-    const session = store.activeSession;
-    if (!session || session.status !== 'stopped' || resumingId === session.id || failedResumeIds.has(session.id)) return;
-
-    resumingId = session.id;
+  /** Resume a stopped session, deduped against in-flight and recently-failed
+   *  resumes. Used by the active-session auto-resume effect and the
+   *  wake-from-sleep handler (each only for the focused tab). */
+  function resumeStoppedSession(session: { id: string; repoPath: string; status: string } | null | undefined) {
+    if (!session || session.status !== 'stopped') return;
+    if (resumingIds.has(session.id) || failedResumeIds.has(session.id)) return;
     const sessionId = session.id;
-    window.groveBench.resumeSession(session.id, session.repoPath).then((result) => {
+    resumingIds.add(sessionId);
+    // Its agent is shown asleep, so the walk opens with it waking up.
+    if (sessionId === store.activeSessionId) untrack(() => wakeScene.start(sessionId, 'stopped'));
+    window.groveBench.resumeSession(sessionId, session.repoPath).then((result) => {
       store.updateStatus(result.id, 'running');
+      store.clearDeferredResume(sessionId);
+      connectingIds.add(sessionId);
       // Don't subscribe here — WorkspacePane handles history replay + subscription
       // on mount. Subscribing here would race with mount and cause isReady to be
       // set before history replay, resulting in an empty chat.
@@ -226,73 +336,97 @@
       store.setError(e.message || String(e));
       failedResumeIds.add(sessionId);
     }).finally(() => {
-      resumingId = null;
+      resumingIds.delete(sessionId);
     });
+  }
+
+  $effect(() => {
+    const session = store.activeSession;
+    const activeId = session?.id ?? null;
+
+    // The wake-up scene belongs to the open conversation. Untracked: the
+    // scene starting below must not re-run this effect.
+    untrack(() => {
+      if (wakeScene.current && wakeScene.current.sessionId !== activeId) wakeScene.end();
+    });
+
+    // Treat navigating to a (different) session as explicit retry intent:
+    // drop any prior failure so the resume below can be attempted again.
+    if (activeId !== prevActiveResumeId) {
+      prevActiveResumeId = activeId;
+      if (activeId) failedResumeIds.delete(activeId);
+    }
+
+    resumeStoppedSession(session);
+    // A sleeping conversation wakes when opened. Main reports it 'running'
+    // straight away and restarts its agent in the background; a prompt sent
+    // meanwhile waits for it.
+    if (session?.status === 'sleeping' && !wakingIds.has(session.id)) {
+      const sessionId = session.id;
+      wakingIds.add(sessionId);
+      untrack(() => wakeScene.start(sessionId, 'sleeping'));
+      window.groveBench.wakeSession(sessionId)
+        .catch(() => { /* a send wakes it too */ })
+        .finally(() => wakingIds.delete(sessionId));
+    }
   });
 
-  // Tab drag-and-drop reordering
-  let dragTabId = $state<string | null>(null);
-  let dropTargetId = $state<string | null>(null);
-
-  function handleTabDragStart(e: DragEvent, id: string) {
-    dragTabId = id;
-    if (e.dataTransfer) {
-      e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData('text/plain', id);
-    }
-  }
-
-  function handleTabDragOver(e: DragEvent, id: string) {
-    if (!dragTabId || dragTabId === id) return;
-    e.preventDefault();
-    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
-    dropTargetId = id;
-  }
-
-  function handleTabDrop(e: DragEvent, id: string) {
-    e.preventDefault();
-    if (dragTabId && dragTabId !== id) {
-      store.reorderSession(dragTabId, id);
-    }
-    dragTabId = null;
-    dropTargetId = null;
-  }
-
-  function handleTabDragEnd() {
-    dragTabId = null;
-    dropTargetId = null;
-  }
-
-  async function closeTab(id: string) {
-    const session = store.sessions.find((s) => s.id === id);
-    // Remove from tab bar immediately (prevents flicker)
-    if (store.activeSessionId === id) {
-      const next = store.sessions.find((s) => s.id !== id && s.status === 'running');
-      store.activeSessionId = next?.id ?? null;
-    }
-
-    store.updateStatus(id, 'stopped');
-    try {
-      await window.groveBench.stopSession(id);
-    } catch { /* session may already be dead */ }
-  }
+  // PR status polls at the full rate for the conversation on screen and ones
+  // seen recently; the rest slow down (see prStore.setViewing). Untracked: the
+  // refresh it may start reads store state that must not re-run this effect.
+  $effect(() => {
+    const activeId = store.activeSessionId;
+    untrack(() => prStore.setViewing(activeId));
+  });
 
   onMount(() => {
+    const uninstallErrors = installRendererErrorHandlers(handleErrorReport);
+    const uninstallTooltips = installTooltips();
+    const unsubAppError = window.groveBench.onAppError(handleErrorReport);
+    // Slow frames go to main's freeze log, so a reported freeze can be traced.
+    const uninstallFreezeWatch = installFreezeWatch((report) => window.groveBench.reportFreeze(report));
+
+    // Git and agent checks run in the background and never block the app.
+    // Credentials are asked for when the user starts a conversation.
+    prerequisitesStore.init();
     settingsStore.load();
+    bookmarkStore.load();
+    groupStore.load();
+    todoStore.load();
+    // Listens before the restore ends: main's scheduler starts after it.
+    schedulesStore.init();
+    panelStore.load();
+    memoryStore.init();
+    previewStore.init();
     store.loadRepos().then(() => restoreApp()).catch((e) => {
       console.error('Failed to load repos:', e);
     });
     window.addEventListener('keydown', handleGlobalKeydown);
+    window.addEventListener('keydown', skipWakeScene, true);
+
+    // Watch every open session's PR (checks, reviews) — not just the focused
+    // tab. Stopped sessions are excluded: their alerts have no agent to act,
+    // and a pile of old worktrees shouldn't each spawn a gh poll per sweep.
+    prStore.startGlobalPolling(() =>
+      store.sessions.filter((s) => store.isOpenTab(s)).map((s) => s.id));
 
     const unsub = window.groveBench.onSessionStatus((sessionId, status) => {
+      // Before the status update, which re-runs the auto-resume effect.
+      if (connectingIds.delete(sessionId) && status === 'stopped') failedResumeIds.add(sessionId);
+      const wasSleeping = store.sessions.find((s) => s.id === sessionId)?.status === 'sleeping';
       store.updateStatus(sessionId, status);
+      // Waking keeps the conversation's turn state: the message that woke it
+      // may already be running.
+      if (status === 'running' && wasSleeping) return;
       if (status === 'running') {
         // SESSION_STATUS 'running' fires when system_init arrives on the main side.
         // Ensure the input unlocks even if system_init was missed due to a
         // subscribe/replay race. system_init will fill in model/tools info
         // when it arrives; this just guarantees the input is usable.
         messageStore.setIsReady(sessionId, true);
-        messageStore.setIsRunning(sessionId, false);
+        // A prompt waiting on its reply (a new thread's first) keeps it
+        // working, as system_init does: the agent starts on it now.
+        if (!messageStore.isAwaitingResponse(sessionId)) messageStore.setIsRunning(sessionId, false);
       } else if (status === 'error') {
         messageStore.setIsReady(sessionId, true);
         messageStore.setIsRunning(sessionId, false);
@@ -302,52 +436,95 @@
       }
     });
 
-    // After system resume (laptop wake), re-check session liveness.
-    // The main process runs healthCheckAll() and sends SESSION_STATUS
-    // for dead sessions, but we also re-verify subscriptions are live
-    // by listing sessions and reconciling with our local state.
-    const unsubPower = window.groveBench.onPowerResume(async () => {
-      try {
-        const runningSessions = await window.groveBench.listSessions();
-        const runningIds = new Set(
-          runningSessions.filter((s) => s.status === 'running').map((s) => s.id),
-        );
-        // Mark any locally-running sessions that the main process says are stopped
-        for (const session of store.sessions) {
-          if (session.status === 'running' && !runningIds.has(session.id)) {
-            store.updateStatus(session.id, 'stopped');
-            messageStore.markSessionStopped(session.id);
-          }
+    // After system resume (laptop wake), keep every tab that was running before
+    // sleep. The main process reports which sessions died during suspend
+    // (their SDK query usually doesn't survive). Only the focused tab
+    // reconnects now; the others stay in the Active list and reconnect when
+    // the user focuses them, as at startup. (The focused session is also
+    // covered by the auto-resume effect; resumingIds dedupes.)
+    const unsubPower = window.groveBench.onPowerResume((resumeIds) => {
+      for (const id of resumeIds) {
+        const session = store.sessions.find((s) => s.id === id);
+        if (!session || session.status === 'running') continue;
+        // healthCheckAll already emits SESSION_STATUS 'stopped'; guard in case
+        // that event hasn't been applied yet.
+        if (session.status !== 'stopped') {
+          store.updateStatus(id, 'stopped');
+          messageStore.markSessionStopped(id);
         }
-      } catch { /* main process may be busy — SESSION_STATUS events will catch up */ }
+        if (id === store.activeSessionId) {
+          resumeStoppedSession(store.sessions.find((s) => s.id === id));
+        } else {
+          store.deferResume(id);
+        }
+      }
     });
+
+    // Clicking an OS notification jumps to the session it was about. (The
+    // activeSessionId effect above clears its needs-attention flash.)
+    const unsubFocus = window.groveBench.onFocusSession((sessionId) => {
+      if (store.sessions.find((s) => s.id === sessionId)) {
+        store.activeSessionId = sessionId;
+      }
+    });
+
+    // A reconnect main ran in the background (a sign-in or Refresh in
+    // another thread) changed this thread's MCP servers.
+    const unsubMcp = window.groveBench.onMcpStatus((sessionId, servers) => {
+      // Not for a thread closed or deleted meanwhile.
+      if (store.sessions.some((s) => s.id === sessionId)) messageStore.updateMcpServers(sessionId, servers);
+    });
+
+    // Put idle conversations to sleep to free their agent processes.
+    const stopIdleManager = startIdleManager();
 
     return () => {
       unsub();
       unsubPower();
+      unsubFocus();
+      unsubMcp();
+      unsubAppError();
+      uninstallErrors();
+      uninstallTooltips();
+      uninstallFreezeWatch();
+      stopIdleManager();
       window.removeEventListener('keydown', handleGlobalKeydown);
+      window.removeEventListener('keydown', skipWakeScene, true);
     };
   });
 
-  let openSessions = $derived(store.sessions.filter((s) => s.status === 'running' || s.status === 'starting' || s.status === 'installing' || s.status === 'error'));
-  let hasTabContent = $derived(openSessions.length > 0);
-
-  // Track pending permissions per session reactively via $derived so the tab
-  // glow updates immediately when a permission is resolved.
-  let pendingBySession = $derived(
-    Object.fromEntries(openSessions.map((s) => [s.id, messageStore.hasPendingPermission(s.id)])),
-  );
 </script>
 
-<PrerequisiteCheck />
+{#snippet crashed(what: string, error: unknown, reset: () => void)}
+  <div class="flex-1 h-full flex items-center justify-center p-6 text-center">
+    <Notice tone="danger" title="{what} hit an error." class="max-w-md text-left">
+      {#snippet actions()}
+        <Button size="xs" onclick={reset}>Reload view</Button>
+      {/snippet}
+      <p class="break-words">{error instanceof Error ? error.message : String(error)}</p>
+    </Notice>
+  </div>
+{/snippet}
 
 <div class="flex flex-col h-screen bg-background text-foreground font-mono">
 <TitleBar />
 <div class="flex flex-1 min-h-0">
-  <Sidebar />
+  <svelte:boundary onerror={sidebarError}>
+    <Sidebar />
+    {#snippet failed(error, reset)}
+      {@render crashed('The sidebar', error, reset)}
+    {/snippet}
+  </svelte:boundary>
 
   <main class="flex-1 flex flex-col min-w-0 min-h-0">
-    {#if !hasTabContent && store.sessions.length === 0}
+    {#if draftStore.visible}
+      <svelte:boundary onerror={(e) => console.error('Draft pane crashed:', e)}>
+        <DraftPane />
+        {#snippet failed(error, reset)}
+          {@render crashed('The new thread', error, reset)}
+        {/snippet}
+      </svelte:boundary>
+    {:else if store.sessions.length === 0}
       <div class="pixel-bg flex-1 flex items-center justify-center text-muted-foreground relative overflow-hidden">
         {#each Array(20) as _, i}
           <span
@@ -355,179 +532,125 @@
             style="width:4px;height:4px;top:{Math.round((8+(((i*37+13)*7)%84))/100*800/6)*6}px;left:{Math.round((5+(((i*53+7)*11)%90))/100*1400/6)*6}px;animation-delay:{(i*1.3)%6}s;"
           ></span>
         {/each}
-        <div class="text-center relative z-10">
-          <p class="text-sm mb-2">No active agents</p>
-          <p class="text-xs">Add a repository and create an agent to get started.</p>
-        </div>
-      </div>
-    {:else if !hasTabContent}
-      <div class="pixel-bg flex-1 flex items-center justify-center text-muted-foreground relative overflow-hidden">
-        {#each Array(20) as _, i}
-          <span
-            class="blue-pixel absolute"
-            style="width:4px;height:4px;top:{Math.round((8+(((i*37+13)*7)%84))/100*800/6)*6}px;left:{Math.round((5+(((i*53+7)*11)%90))/100*1400/6)*6}px;animation-delay:{(i*1.3)%6}s;"
-          ></span>
-        {/each}
-        <div class="text-center relative z-10">
-          <p class="text-sm mb-2">No open sessions</p>
-          <p class="text-xs">Click a session in the sidebar to open it.</p>
-        </div>
-      </div>
-    {:else}
-      <!-- Tab bar -->
-      <div class="flex items-center bg-card border-b border-border shrink-0 overflow-x-auto">
-        {#each openSessions as session (session.id)}
-          {@const isActive = store.activeSessionId === session.id}
-          {@const running = messageStore.getIsRunning(session.id)}
-          {@const needsAttention = !isActive && !running && (sessionCompletedWhileInactive[session.id] ?? false)}
-          {@const isDragOver = dropTargetId === session.id && dragTabId !== session.id}
-          {@const tabColor = getRepoColor(store.repos, session.repoPath, settingsStore.current.repoColors)}
-          <button
-            draggable="true"
-            ondragstart={(e) => handleTabDragStart(e, session.id)}
-            ondragover={(e) => handleTabDragOver(e, session.id)}
-            ondrop={(e) => handleTabDrop(e, session.id)}
-            ondragend={handleTabDragEnd}
-            ondragleave={() => { if (dropTargetId === session.id) dropTargetId = null; }}
-            onclick={() => { store.activeSessionId = session.id; delete sessionCompletedWhileInactive[session.id]; }}
-            onauxclick={(e) => { if (e.button === 1) { e.preventDefault(); closeTab(session.id); } }}
-            oncontextmenu={(e) => openContextMenu(e, session.id)}
-            class="flex items-center gap-2 px-3 py-1.5 text-xs border-r border-border last:border-r-0 transition-colors group/tab shrink-0
-              {isActive ? 'bg-background text-foreground/80 border-b-2' : 'bg-card text-muted-foreground hover:text-foreground border-b-2 border-b-transparent'}
-              {getTabPendingClass(isActive, !!pendingBySession[session.id])}
-              {dragTabId === session.id ? 'opacity-40' : ''}
-              {isDragOver ? 'border-l-2 border-l-primary' : ''}"
-            style={isActive && tabColor ? `border-bottom-color: ${tabColor}` : isActive ? 'border-bottom-color: var(--primary)' : ''}
-          >
-            {#if session.status === 'error'}
-              <span class="w-2 h-2 shrink-0 bg-red-500"></span>
-            {:else if session.status === 'starting' || session.status === 'installing'}
-              <span class="w-2 h-2 shrink-0 bg-yellow-500 animate-pulse"></span>
-            {:else if pendingBySession[session.id]}
-              <span class="w-2 h-2 shrink-0 {isActive ? 'bg-orange-500' : 'bg-orange-500 animate-pulse'}"></span>
-            {:else if !isActive && running}
-              <span class="w-2 h-2 shrink-0 bg-primary animate-pulse"></span>
-            {:else if needsAttention}
-              <span class="w-1.5 h-1.5 shrink-0 bg-green-400 tab-flash"></span>
-            {:else}
-              <span class="w-1.5 h-1.5 shrink-0 {running ? 'bg-primary animate-pulse' : 'bg-green-500'}"></span>
-            {/if}
-            {#if store.repos.length > 1}
-              <span class="truncate">{store.repoDisplayName(session.repoPath)}</span>
-              <span class="text-muted-foreground/40">/</span>
-            {/if}
-            <span class="truncate">{session.displayName || (branchIndex(session) + session.branch)}</span>
-            <span
-              role="button"
-              tabindex="-1"
-              onclick={(e) => { e.stopPropagation(); closeTab(session.id); }}
-              onkeydown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); closeTab(session.id); } }}
-              class="ml-1 w-4 h-4 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-muted opacity-0 group-hover/tab:opacity-100 transition-all cursor-pointer"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
-            </span>
-          </button>
-        {/each}
-      </div>
-
-      <!-- Active session -->
-      {#if store.activeSessionId}
-        <!-- Active session -->
-        {#each store.sessions as session (session.id)}
-          <div class="flex-1 min-h-0" class:hidden={store.activeSessionId !== session.id}>
-            {#if session.status === 'running' || session.status === 'starting' || session.status === 'installing' || session.status === 'error'}
-              <WorkspacePane sessionId={session.id} />
-            {:else}
-              <div class="pixel-bg flex items-center justify-center h-full text-muted-foreground relative overflow-hidden">
-                {#each Array(20) as _, i}
-                  <span
-                    class="blue-pixel absolute"
-                    style="width:4px;height:4px;top:{Math.round((8+(((i*37+13)*7)%84))/100*800/6)*6}px;left:{Math.round((5+(((i*53+7)*11)%90))/100*1400/6)*6}px;animation-delay:{(i*1.3)%6}s;"
-                  ></span>
-                {/each}
-                <div class="w-4 h-4 bg-primary animate-pulse relative z-10"></div>
-                <span class="ml-3 text-sm relative z-10">Starting agent...</span>
-              </div>
-            {/if}
+        {#if settingsStore.current.groveCharacters}
+          <GroveEmptyState variant="empty" />
+        {:else}
+          <div class="text-center relative z-10 flex flex-col items-center">
+            <FirstSteps />
           </div>
+        {/if}
+      </div>
+    {:else if !store.activeSessionId}
+      <div class="pixel-bg flex-1 flex items-center justify-center text-muted-foreground relative overflow-hidden">
+        {#each Array(20) as _, i}
+          <span
+            class="blue-pixel absolute"
+            style="width:4px;height:4px;top:{Math.round((8+(((i*37+13)*7)%84))/100*800/6)*6}px;left:{Math.round((5+(((i*53+7)*11)%90))/100*1400/6)*6}px;animation-delay:{(i*1.3)%6}s;"
+          ></span>
         {/each}
-      {:else}
-        <div class="pixel-bg flex-1 flex items-center justify-center text-muted-foreground relative overflow-hidden">
-          {#each Array(20) as _, i}
-            <span
-              class="blue-pixel absolute"
-              style="width:4px;height:4px;top:{Math.round((8+(((i*37+13)*7)%84))/100*800/6)*6}px;left:{Math.round((5+(((i*53+7)*11)%90))/100*1400/6)*6}px;animation-delay:{(i*1.3)%6}s;"
-            ></span>
-          {/each}
+        {#if settingsStore.current.groveCharacters}
+          <GroveEmptyState variant="pick" />
+        {:else}
           <div class="text-center relative z-10">
-            <p class="text-sm">Select a tab to view</p>
+            <p class="text-sm">Select a thread from the sidebar.</p>
           </div>
+        {/if}
+      </div>
+    {/if}
+    {#if store.sessions.length > 0}
+      <!-- Keep all live panes mounted, show only the active one. They stay
+           mounted under the draft and the landing too (all hidden), so their
+           terminals, scroll and half-typed prompts survive a trip there. -->
+      {#each store.sessions as session (session.id)}
+        {@const live = session.status === 'running' || session.status === 'sleeping' || session.status === 'starting' || session.status === 'installing' || session.status === 'error'}
+        {@const scene = wakeScene.for(session.id)}
+        {@const loading = live && !messageStore.isHistoryLoaded(session.id)}
+        <!-- A new conversation's chat shows its own walk (OutputPanel) from
+             the start, so the loading walk would only cut in on it. -->
+        {@const arriving = settingsStore.current.groveCharacters && arrivalScene.for(session.id) !== null}
+        <div class="flex-1 min-h-0 relative" class:hidden={store.activeSessionId !== session.id}>
+          {#if live}
+            <!-- A render/effect error in one session's pane must not take the
+                 whole window down; show a reload affordance for that pane only. -->
+            <svelte:boundary onerror={paneError(session.id)}>
+              <WorkspacePane sessionId={session.id} />
+              {#snippet failed(error, reset)}
+                {@render crashed('This thread view', error, reset)}
+              {/snippet}
+            </svelte:boundary>
+          {/if}
+          <!-- The walk: while a stopped conversation reconnects, and over the
+               chat (kept mounted underneath) while its history loads or the
+               wake-up scene plays. -->
+          {#if !live || scene || (loading && !arriving)}
+            <!-- Opaque here, not on .pixel-bg, whose background shorthand wins over utilities. -->
+            <div class={live ? 'absolute inset-0 z-20 bg-background' : 'h-full'}>
+            <div class="pixel-bg flex items-center justify-center h-full text-muted-foreground relative overflow-hidden">
+              {#each Array(20) as _, i}
+                <span
+                  class="blue-pixel absolute"
+                  style="width:4px;height:4px;top:{Math.round((8+(((i*37+13)*7)%84))/100*800/6)*6}px;left:{Math.round((5+(((i*53+7)*11)%90))/100*1400/6)*6}px;animation-delay:{(i*1.3)%6}s;"
+                ></span>
+              {/each}
+              {#if settingsStore.current.groveCharacters}
+                <!-- Only the open conversation's walk is drawn; hidden panes skip it. -->
+                {#if store.activeSessionId === session.id}
+                  <GroveWalk seed={session.id} projectColor={sessionRepoColor(session.id)} spriteState={sessionSpriteState(session)} wake={scene} />
+                {/if}
+                {#if scene}
+                  <button type="button" class="absolute inset-0 z-30 cursor-default" aria-label="Skip the wake-up" onclick={() => wakeScene.end()}></button>
+                {/if}
+              {:else}
+                <Pulse class="size-4 relative z-10" />
+                <span class="ml-3 text-sm relative z-10">Starting agent...</span>
+              {/if}
+            </div>
+            </div>
+          {/if}
         </div>
-      {/if}
+      {/each}
     {/if}
   </main>
 </div>
+<AnalyticsConsent visible={showAnalyticsConsent} />
 </div>
 
-{#if showSessionFinder}
-  <SessionFinder onclose={() => showSessionFinder = false} />
+{#if store.finderOpen}
+  {#await loadSessionFinder() then SessionFinder}
+    <SessionFinder onclose={() => store.finderOpen = false} />
+  {/await}
+{/if}
+
+{#if backgroundAgentStore.ask}
+  {#await loadBackgroundAgentDialog() then BackgroundAgentDialog}
+    <BackgroundAgentDialog />
+  {/await}
+{/if}
+
+<!-- Opened from Skills in the status bar, or a project's clock in the sidebar.
+     Mounted once opened, so its slide-out and slide-in both play. -->
+{#if skillsPanelStore.open || skillsPanelOpened}
+  {#await loadSkillsPanel() then SkillsPanel}
+    <SkillsPanel />
+  {/await}
 {/if}
 
 <ErrorToast />
+<!-- Toasts share one stack above the status bar, so two at once sit one
+     above the other instead of on top of each other. -->
+<div class="fixed bottom-16 right-4 z-50 flex max-w-md flex-col items-end gap-2 pointer-events-none *:pointer-events-auto">
+  <PlanUsageToast />
+  <MemoryToast />
+</div>
 
-{#if contextMenu}
-  <SessionContextMenu
-    x={contextMenu.x}
-    y={contextMenu.y}
-    items={getContextMenuItems(contextMenu.sessionId)}
-    onclose={() => contextMenu = null}
-  />
+<BookmarksDrawer />
+<!-- Mounted from its first opening on, so closing plays its transition.
+     Before the Focus panel, which can open over it. -->
+{#if subagentPanelStore.opened}
+  {#await loadSubagentPanel() then SubagentPanel}
+    <SubagentPanel />
+  {/await}
 {/if}
+<MarkdownPreviewPanel />
 
-{#if tabRenamingId}
-  <Dialog.Root open={true} onOpenChange={(o) => { if (!o) tabRenamingId = null; }}>
-    <Dialog.Content class="max-w-xs">
-      <Dialog.Header>
-        <Dialog.Title>Rename Agent</Dialog.Title>
-      </Dialog.Header>
-      <!-- svelte-ignore a11y_autofocus -->
-      <input
-        type="text"
-        bind:value={tabRenameValue}
-        onkeydown={handleRenameDialogKeydown}
-        class="w-full text-sm bg-card border border-border px-2 py-1.5 text-foreground focus:outline-none focus:border-primary"
-        autofocus
-      />
-      {#if tabRenameError}
-        <span class="text-xs text-destructive">{tabRenameError}</span>
-      {/if}
-      <Dialog.Footer>
-        <Button variant="secondary" onclick={() => tabRenamingId = null}>Cancel</Button>
-        <Button onclick={confirmTabRename}>Rename</Button>
-      </Dialog.Footer>
-    </Dialog.Content>
-  </Dialog.Root>
-{/if}
-
-<AnalyticsConsent visible={showAnalyticsConsent} />
-
-<style>
-  :global(.tab-flash) {
-    animation: tab-flash 0.8s ease-in-out infinite;
-  }
-  @keyframes tab-flash {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.2; }
-  }
-  :global(.tab-action-required) {
-    animation: tab-glow 1.5s ease-in-out infinite;
-    border-bottom: 2px solid rgb(249 115 22) !important;
-  }
-  @keyframes tab-glow {
-    0%, 100% { box-shadow: inset 0 0 6px 0 rgba(249, 115, 22, 0.15); }
-    50% { box-shadow: inset 0 0 14px 2px rgba(249, 115, 22, 0.3); }
-  }
-  :global(.tab-action-required-active) {
-    box-shadow: inset 0 0 10px 1px rgba(249, 115, 22, 0.2);
-  }
-</style>
+<SpellcheckMenu />

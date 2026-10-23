@@ -1,0 +1,324 @@
+/**
+ * git.ts helpers against real git, for behaviour that depends on history
+ * shape. git.test.ts covers the same functions with scripted output.
+ */
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { resolveMergeBase, squashSince, branchCommits, excludeFromGit, fileDiff, blobLines, mergeNoCommit, revertFile, stageFile, MAX_TEXT_FILE_BYTES } from './git.js';
+import { parseGitStatusPorcelain, parseNumstat } from './git-status-parser.js';
+
+// Real git is slow to start on Windows, and each test runs a dozen commands.
+vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
+
+let repo: string;
+
+const run = (...args: string[]) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+const commit = (file: string, message: string) => {
+  fs.writeFileSync(path.join(repo, file), `${message}\n`);
+  run('add', file);
+  run('commit', '-qm', message);
+  return run('rev-parse', 'HEAD');
+};
+
+beforeEach(() => {
+  repo = fs.mkdtempSync(path.join(os.tmpdir(), 'gb-git-'));
+  run('init', '-q', '-b', 'main');
+  // In the repo's own config, so the app's git calls see them too: a CI
+  // machine has no identity, and Git for Windows turns on autocrlf.
+  run('config', 'user.name', 't');
+  run('config', 'user.email', 't@t');
+  run('config', 'core.autocrlf', 'false');
+  commit('base.txt', 'base');
+});
+
+afterEach(() => {
+  // Retried: on Windows a git process that just exited can still hold the folder.
+  fs.rmSync(repo, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+});
+
+/**
+ * origin/main is two commits ahead of local main (someone pushed; local was
+ * never fast-forwarded), and the conversation's branch started from
+ * origin/main, as a new worktree does when local main can't be moved.
+ */
+function staleLocalBase() {
+  run('checkout', '-q', '-b', 'upstream');
+  commit('up1.txt', 'upstream 1');
+  const originMain = commit('up2.txt', 'upstream 2');
+  run('update-ref', 'refs/remotes/origin/main', originMain);
+  run('checkout', '-q', '-b', 'grove/feat', originMain);
+  commit('m1.txt', 'mine 1');
+  commit('m2.txt', 'mine 2');
+  return originMain;
+}
+
+describe('a local base behind origin', () => {
+  it('resolveMergeBase uses origin/<base>', async () => {
+    const originMain = staleLocalBase();
+    expect(await resolveMergeBase(repo, 'main')).toEqual({ ref: 'origin/main', mergeBase: originMain });
+  });
+
+  it('squash folds in only the branch\'s own commits', async () => {
+    const originMain = staleLocalBase();
+
+    expect(await squashSince(repo, 'main', 'Mine, squashed')).toEqual({ success: true });
+
+    expect(run('rev-parse', 'HEAD~1')).toBe(originMain);
+    expect(run('log', '--format=%s', `${originMain}..HEAD`)).toBe('Mine, squashed');
+    expect(run('diff', '--name-only', 'HEAD~1', 'HEAD').split('\n')).toEqual(['m1.txt', 'm2.txt']);
+  });
+
+  it('branchCommits lists only the branch\'s own commits', async () => {
+    staleLocalBase();
+    expect((await branchCommits(repo, 'main')).map((c) => c.subject)).toEqual(['mine 2', 'mine 1']);
+  });
+});
+
+describe('squash', () => {
+  it('puts the branch back when the commit is rejected', async () => {
+    commit('m1.txt', 'mine 1');
+    commit('m2.txt', 'mine 2');
+    const before = run('rev-parse', 'HEAD');
+    // A commit-msg hook that rejects every message, like a failing commitlint.
+    const hook = path.join(repo, '.git', 'hooks', 'commit-msg');
+    fs.writeFileSync(hook, '#!/bin/sh\necho "rejected by hook" >&2\nexit 1\n', { mode: 0o755 });
+
+    const result = await squashSince(repo, 'HEAD~2', 'Squashed');
+
+    expect(result.success).toBe(false);
+    expect(run('rev-parse', 'HEAD')).toBe(before);
+    expect(run('status', '--porcelain')).toBe('');
+  });
+});
+
+describe('a merge conflict', () => {
+  it('names a conflicted file outside ASCII as it is', async () => {
+    commit('café.ts', 'one');
+    run('checkout', '-q', '-b', 'other');
+    commit('café.ts', 'two');
+    run('checkout', '-q', 'main');
+    commit('café.ts', 'three');
+
+    const result = await mergeNoCommit(repo, 'other');
+
+    expect(result).toEqual({ success: false, conflicts: ['café.ts'] });
+  });
+});
+
+describe('line counts', () => {
+  it('reads a rename and a name outside ASCII as git status names them', () => {
+    fs.writeFileSync(path.join(repo, 'a.txt'), 'one\ntwo\n');
+    fs.writeFileSync(path.join(repo, 'café.ts'), 'x\n');
+    run('add', '.');
+    run('commit', '-qm', 'files');
+    run('mv', 'a.txt', 'b.txt');
+    fs.appendFileSync(path.join(repo, 'b.txt'), 'three\n');
+    run('add', 'b.txt');
+    fs.appendFileSync(path.join(repo, 'café.ts'), 'y\n');
+
+    const status = parseGitStatusPorcelain(execFileSync('git', ['status', '--porcelain=v1', '-z'], { cwd: repo, encoding: 'utf8' }));
+    const counts = parseNumstat(execFileSync('git', ['diff', 'HEAD', '--numstat', '-z', '--', 'b.txt', 'a.txt', 'café.ts'], { cwd: repo, encoding: 'utf8' }));
+
+    expect(status.entries.map((e) => e.filePath).sort()).toEqual(['b.txt', 'café.ts']);
+    expect(counts).toEqual([
+      { path: 'b.txt', additions: 1, deletions: 0, binary: false },
+      { path: 'café.ts', additions: 1, deletions: 0, binary: false },
+    ]);
+  });
+});
+
+describe('reverting a rename', () => {
+  beforeEach(() => commit('a.txt', 'original'));
+  const onDisk = () => fs.readdirSync(repo).filter((f) => f !== '.git').sort();
+
+  it('puts a staged rename back as committed, with its edits gone', async () => {
+    run('mv', 'a.txt', 'b.txt');
+    fs.appendFileSync(path.join(repo, 'b.txt'), 'staged\n');
+    run('add', 'b.txt');
+    fs.appendFileSync(path.join(repo, 'b.txt'), 'unstaged\n');
+
+    await revertFile(repo, 'b.txt', true, 'a.txt');
+
+    expect(onDisk()).toEqual(['a.txt', 'base.txt']);
+    expect(fs.readFileSync(path.join(repo, 'a.txt'), 'utf8')).toBe('original\n');
+    expect(run('status', '--porcelain')).toBe('');
+  });
+
+  it('overwrites nothing at the old path: a new file there', async () => {
+    run('mv', 'a.txt', 'b.txt');
+    fs.writeFileSync(path.join(repo, 'a.txt'), 'a new file\n');
+
+    await expect(revertFile(repo, 'b.txt', true, 'a.txt')).rejects.toThrow('something is at a.txt');
+
+    expect(fs.readFileSync(path.join(repo, 'a.txt'), 'utf8')).toBe('a new file\n');
+    expect(run('status', '--porcelain')).toBe('R  a.txt -> b.txt\n?? a.txt');
+  });
+
+  it('overwrites nothing at the old path: a folder the file was moved into', async () => {
+    fs.mkdirSync(path.join(repo, 'a.tmp'));
+    run('mv', 'a.txt', 'a.tmp/index.txt');
+    fs.renameSync(path.join(repo, 'a.tmp'), path.join(repo, 'a.txt'));
+    run('add', '-A');
+    fs.writeFileSync(path.join(repo, 'a.txt', 'helper.txt'), 'untracked\n');
+
+    await expect(revertFile(repo, 'a.txt/index.txt', true, 'a.txt')).rejects.toThrow('something is at a.txt');
+
+    expect(fs.readdirSync(path.join(repo, 'a.txt')).sort()).toEqual(['helper.txt', 'index.txt']);
+  });
+
+  it('undoes a rename of letter case only where names are case sensitive, and refuses where they are not', async () => {
+    run('mv', 'a.txt', 'A.txt');
+    const insensitive = fs.existsSync(path.join(repo, 'a.txt'));
+
+    const reverting = revertFile(repo, 'A.txt', true, 'a.txt');
+
+    if (insensitive) {
+      // Windows and macOS: the old name opens the renamed file itself.
+      await expect(reverting).rejects.toThrow('only changes letter case');
+      expect(onDisk()).toEqual(['A.txt', 'base.txt']);
+    } else {
+      await reverting;
+      expect(onDisk()).toEqual(['a.txt', 'base.txt']);
+      expect(run('status', '--porcelain')).toBe('');
+    }
+  });
+
+  it('does nothing when the rename was unstaged after the list was read', async () => {
+    run('mv', 'a.txt', 'b.txt');
+    run('reset', '-q');
+
+    await expect(revertFile(repo, 'b.txt', true, 'a.txt')).rejects.toThrow('has changed since the list was read');
+
+    expect(onDisk()).toEqual(['b.txt', 'base.txt']);
+  });
+
+  it('puts back a file moved and added with git add -N', async () => {
+    fs.renameSync(path.join(repo, 'a.txt'), path.join(repo, 'b.txt'));
+    run('add', '-N', 'b.txt');
+
+    await revertFile(repo, 'b.txt', false, 'a.txt');
+
+    expect(onDisk()).toEqual(['a.txt', 'base.txt']);
+    expect(run('status', '--porcelain')).toBe('');
+  });
+});
+
+describe('a name with pattern characters', () => {
+  it('is taken as it is, never as a pattern that names other files', async () => {
+    fs.mkdirSync(path.join(repo, 'pages'));
+    commit('pages/i.tsx', 'i');
+    fs.appendFileSync(path.join(repo, 'pages', 'i.tsx'), 'edited\n');
+
+    // A list read before [id].tsx went: as a pattern it would match i.tsx.
+    await expect(revertFile(repo, 'pages/[id].tsx', false)).rejects.toThrow();
+    await stageFile(repo, 'pages/[id].tsx').catch(() => {});
+
+    expect(fs.readFileSync(path.join(repo, 'pages', 'i.tsx'), 'utf8')).toBe('i\nedited\n');
+    expect(run('status', '--porcelain')).toBe('M pages/i.tsx');
+  });
+});
+
+describe('a file diff', () => {
+  it('stops git once the patch is over the size limit, rather than reading it all', async () => {
+    // A 3.9 MB file with every line changed: a patch of about 8 MB.
+    const lines = (word: string) => Array.from({ length: 150_000 }, (_, i) => `${word} ${i} padding padding`).join('\n');
+    fs.writeFileSync(path.join(repo, 'big.txt'), lines('old'));
+    run('add', 'big.txt');
+    run('commit', '-qm', 'big');
+    fs.writeFileSync(path.join(repo, 'big.txt'), lines('new'));
+
+    expect(await fileDiff(repo, 'big.txt')).toBeNull();
+    fs.writeFileSync(path.join(repo, 'base.txt'), 'changed\n');
+    expect(await fileDiff(repo, 'base.txt')).toContain('+changed');
+  });
+});
+
+describe('a blob\'s lines', () => {
+  it('reads the index\'s copy and a tree\'s, as the working-tree copy is read', async () => {
+    fs.writeFileSync(path.join(repo, 'notes.txt'), 'one\ntwo\n\n');
+    fs.writeFileSync(path.join(repo, 'blank.txt'), '\n');
+    run('add', 'notes.txt', 'blank.txt');
+    // Changed since it was staged: the index's copy is what's read.
+    fs.writeFileSync(path.join(repo, 'notes.txt'), 'changed\n');
+    expect(await blobLines(repo, '', 'notes.txt')).toEqual(['one', 'two', '']);
+    expect(await blobLines(repo, run('write-tree'), 'notes.txt')).toEqual(['one', 'two', '']);
+    expect(await blobLines(repo, '', 'blank.txt')).toEqual(['']);
+  });
+
+  it('gives null over the size limit, to the byte, or for a binary file', async () => {
+    fs.writeFileSync(path.join(repo, 'at.txt'), 'x'.repeat(MAX_TEXT_FILE_BYTES));
+    fs.writeFileSync(path.join(repo, 'over.txt'), 'x'.repeat(MAX_TEXT_FILE_BYTES + 1));
+    fs.writeFileSync(path.join(repo, 'logo.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01]));
+    run('add', 'at.txt', 'over.txt', 'logo.png');
+    expect(await blobLines(repo, '', 'at.txt')).toHaveLength(1);
+    expect(await blobLines(repo, '', 'over.txt')).toBeNull();
+    expect(await blobLines(repo, '', 'logo.png')).toBeNull();
+  });
+
+  it("refuses a folder, which isn't a file's lines", async () => {
+    fs.mkdirSync(path.join(repo, 'src'));
+    fs.writeFileSync(path.join(repo, 'src', 'a.ts'), 'a\n');
+    run('add', 'src/a.ts');
+    await expect(blobLines(repo, run('write-tree'), 'src')).rejects.toThrow();
+  });
+});
+
+describe('a local base ahead of origin', () => {
+  it('keeps the local base', async () => {
+    const originMain = run('rev-parse', 'HEAD');
+    run('update-ref', 'refs/remotes/origin/main', originMain);
+    const localMain = commit('local.txt', 'local only');
+    run('checkout', '-q', '-b', 'grove/feat');
+    commit('m1.txt', 'mine 1');
+
+    expect(await resolveMergeBase(repo, 'main')).toEqual({ ref: 'main', mergeBase: localMain });
+  });
+});
+
+describe("Grove's own files in a worktree", () => {
+  const SETTINGS = '.claude/settings.local.json';
+  let wt: string;
+
+  beforeEach(() => {
+    wt = `${repo}-wt`;
+    run('worktree', 'add', '-q', '-b', 'feat', wt);
+    fs.mkdirSync(path.join(wt, '.claude'));
+    fs.writeFileSync(path.join(wt, SETTINGS), '{}\n');
+  });
+
+  afterEach(() => {
+    fs.rmSync(wt, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  });
+
+  const wtStatus = () => execFileSync('git', ['status', '--porcelain'], { cwd: wt, encoding: 'utf8' }).trim();
+
+  it('are kept out of status and git add -A, through the shared exclude file', async () => {
+    expect(wtStatus()).toContain('.claude/');
+    expect(await excludeFromGit(wt, [SETTINGS])).toEqual([SETTINGS]);
+    expect(wtStatus()).toBe('');
+    execFileSync('git', ['add', '-A'], { cwd: wt });
+    expect(wtStatus()).toBe('');
+    expect(fs.readFileSync(path.join(repo, '.git', 'info', 'exclude'), 'utf8')).toContain('/.claude/settings.local.json');
+  });
+
+  it('are added once, however many worktrees ask', async () => {
+    await excludeFromGit(wt, [SETTINGS]);
+    expect(await excludeFromGit(wt, [SETTINGS])).toEqual([]);
+    const lines = fs.readFileSync(path.join(repo, '.git', 'info', 'exclude'), 'utf8').split('\n');
+    expect(lines.filter((l) => l === '/.claude/settings.local.json')).toHaveLength(1);
+  });
+
+  it('are left alone when the project already ignores them', async () => {
+    fs.writeFileSync(path.join(wt, '.gitignore'), '.claude/settings.local.json\n');
+    expect(await excludeFromGit(wt, [SETTINGS])).toEqual([]);
+  });
+
+  it('are left alone when the project tracks them', async () => {
+    execFileSync('git', ['add', SETTINGS], { cwd: wt });
+    execFileSync('git', ['commit', '-qm', 'track settings'], { cwd: wt });
+    expect(await excludeFromGit(wt, [SETTINGS])).toEqual([]);
+  });
+});

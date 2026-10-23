@@ -1,0 +1,1120 @@
+<script lang="ts">
+  import { untrack, type Snippet } from 'svelte';
+  import { messageStore, type ChatToolCallMessage } from '../stores/messages.svelte.js';
+  import DiffView, { parseDiffLines } from './DiffView.svelte';
+  import { fullEditDiff, quickEditDiff, type EditDiff } from '../lib/edit-diff.js';
+  import OldThenNewNotice from './OldThenNewNotice.svelte';
+  import { toolViewOf } from '../../shared/tool-view.js';
+  import type { DiffLine, CommentAnchor, ContextGap } from './DiffView.svelte';
+  import { diffSize, editSize, hunkLineIndices, isLargeDiff } from '../lib/diff-highlight.js';
+  import { withExpandableContext, reveal, expansionFor, type RevealedRanges } from '../lib/diff-context.js';
+  import { buildReviewPrompt } from '../lib/review-prompt.js';
+  import { reviewStore } from '../stores/review.svelte.js';
+  import type { GitStatusEntry, FileDiffResult, FileLinesResult } from '../../shared/types.js';
+  import CopyButton from './CopyButton.svelte';
+  import { isMarkdownFile } from '../../shared/attachments.js';
+  import { openWorktreeFile } from '$lib/worktree-files.js';
+  import { formatFileSize } from '$lib/file-attachments.js';
+  import ImageDiffView from './ImageDiffView.svelte';
+  import LargeDiffNotice from './LargeDiffNotice.svelte';
+  import SelectionMenu from './SelectionMenu.svelte';
+  import { settingsStore } from '../stores/settings.svelte.js';
+  import GroveEmptyState from './GroveEmptyState.svelte';
+  import { conversationAgent } from '../lib/session-sprite-state.js';
+  import type { GroveTab } from '../lib/agent-sprite.js';
+  import type { CollapsiblePanel } from '../../shared/types.js';
+  import { panelStore } from '../stores/panels.svelte.js';
+  import PanelToggle from './PanelToggle.svelte';
+  import { Button } from '$lib/components/ui/button/index.js';
+  import { Notice } from '$lib/components/ui/notice/index.js';
+  import { PanelHeader } from '$lib/components/ui/panel-header/index.js';
+  import { Pulse } from '$lib/components/ui/pulse/index.js';
+  import { menuPanel, menuItem } from '$lib/components/ui/menu/index.js';
+
+  /**
+   * Shared review UI: a file sidebar (search, sections, viewed marks, comment
+   * counts) next to a diff viewer (word-level marks, expandable context,
+   * line comments batched into one prompt). The Changes tab feeds it git
+   * status; the Checkpoints tab feeds it a checkpoint comparison. Everything
+   * source-specific (staging, revert, commit, scope, rewind) comes in through
+   * props and snippets so this component never talks to git itself.
+   */
+  let {
+    sessionId,
+    sourceKey,
+    entries,
+    active = true,
+    loading = false,
+    changesLabel = 'Changes',
+    loadDiff: fetchDiff,
+    loadFileLines: fetchFileLines,
+    onRefresh,
+    onStage,
+    onUnstage,
+    onStageAll,
+    onUnstageAll,
+    shortcuts = {},
+    commentContext,
+    emptyTitle,
+    emptyHint,
+    emptyScene,
+    panel,
+    sidebarTop,
+    sidebarSummaryExtra,
+    sidebarSummaryNote,
+    sidebarFooter,
+    reviewBarActions,
+    headerActions,
+    dialogs,
+  }: {
+    sessionId: string;
+    /** Identity of what is being compared. When it changes every per-file
+     *  cache (diffs, expansions, composer) resets. */
+    sourceKey: string;
+    entries: GitStatusEntry[];
+    /** Whether this panel is on screen. Hidden, it doesn't fetch diffs on
+     *  each status refresh (one runs after every file edit); it fetches
+     *  them when shown again. */
+    active?: boolean;
+    loading?: boolean;
+    /** Heading for the unstaged section. */
+    changesLabel?: string;
+    loadDiff: (entry: GitStatusEntry) => Promise<FileDiffResult>;
+    loadFileLines: (entry: GitStatusEntry) => Promise<FileLinesResult>;
+    onRefresh?: () => void;
+    /** Staging controls appear only when these are provided. */
+    onStage?: (entry: GitStatusEntry) => void;
+    onUnstage?: (entry: GitStatusEntry) => void;
+    onStageAll?: (entries: GitStatusEntry[]) => void;
+    onUnstageAll?: (entries: GitStatusEntry[]) => void;
+    /** Extra single-key shortcuts acting on the selected file. */
+    shortcuts?: Record<string, (entry: GitStatusEntry) => void>;
+    /** Where the comments were made, for the prompt heading and so a comment
+     *  only renders on the comparison it was written against. */
+    commentContext?: string;
+    emptyTitle: string;
+    emptyHint?: string;
+    /** Which tab's props the grove scene over the empty message shows. */
+    emptyScene?: GroveTab;
+    /** Which saved flag folds the file sidebar down to a rail. */
+    panel: CollapsiblePanel;
+    sidebarTop?: Snippet;
+    sidebarSummaryExtra?: Snippet;
+    /** Right after the change count ("12 changes vs main"). */
+    sidebarSummaryNote?: Snippet;
+    sidebarFooter?: Snippet;
+    /** More ways to send the batched comments, before Discard. */
+    reviewBarActions?: Snippet;
+    headerActions?: Snippet<[GitStatusEntry]>;
+    dialogs?: Snippet;
+  } = $props();
+
+  let isLoading = $derived(loading);
+  /** The conversation's agent on its bench above the empty message. */
+  let groveAgent = $derived(settingsStore.current.groveCharacters ? conversationAgent(sessionId) : null);
+  let hasStaging = $derived(!!onStage && !!onUnstage);
+
+  // Group entries by section
+  let stagedEntries = $derived(entries.filter(e => e.staged));
+  let unstagedEntries = $derived(entries.filter(e => !e.staged && e.status !== 'untracked'));
+  let untrackedEntries = $derived(entries.filter(e => e.status === 'untracked'));
+
+  // Folded down to a rail: one status letter per file, in section order. The
+  // search box and section headers are hidden there, so neither filters it.
+  let collapsed = $derived(panelStore.isCollapsed(panel));
+  let railEntries = $derived([...stagedEntries, ...unstagedEntries, ...untrackedEntries]);
+
+  // ── Viewed tracking ──
+  let reviewState = $derived(reviewStore.bySession[sessionId]);
+  function isViewed(entry: GitStatusEntry): boolean {
+    reviewState;
+    return reviewStore.isViewed(sessionId, entry.filePath, entry.contentHash);
+  }
+  function changedSinceViewed(entry: GitStatusEntry): boolean {
+    reviewState;
+    return reviewStore.changedSinceViewed(sessionId, entry.filePath, entry.contentHash);
+  }
+  let viewedCount = $derived.by(() => { reviewState; return reviewStore.viewedCount(sessionId, entries); });
+
+  /** Toggle viewed; marking a file viewed moves on to the next unviewed file
+   *  (like GitHub collapsing the file you just ticked). */
+  function toggleViewed(entry: GitStatusEntry) {
+    const next = !isViewed(entry);
+    reviewStore.setViewed(sessionId, entry.filePath, entry.contentHash, next);
+    if (next) {
+      const ordered = visibleEntries;
+      const idx = ordered.findIndex(e => fileKey(e) === fileKey(entry));
+      const following = ordered.slice(idx + 1).find(e => !isViewed(e)) ?? ordered.slice(0, idx).find(e => !isViewed(e));
+      if (following) { selectFile(following); scrollSidebarItemIntoView(fileKey(following)); }
+    }
+  }
+
+  // ── Review comments (line-anchored, batched into one prompt) ──
+  let comments = $derived.by(() => { reviewState; return reviewStore.getComments(sessionId); });
+  /** Comments written against this comparison (line numbers only make sense here). */
+  let sourceComments = $derived(comments.filter(c => (c.context ?? '') === (commentContext ?? '')));
+  let composer = $state<CommentAnchor | null>(null);
+  function commentCountFor(filePath: string): number {
+    return sourceComments.filter(c => c.filePath === filePath).length;
+  }
+
+  // Edit history from tool calls (for the expandable sub-section)
+  let editHistory = $derived(messageStore.getLastTurnFileChanges(sessionId));
+  let editHistoryByFile = $derived(
+    new Map(editHistory.map(fc => [fc.filePath, fc]))
+  );
+
+  // Per-file UI state
+  let selectedFileKey = $state<string | null>(null);
+  let sideBySide = $state(settingsStore.current.diffViewMode === 'side-by-side');
+  let editHistoryExpanded = $state<Set<string>>(new Set());
+  let fileDiffs = $state<Record<string, FileDiffResult>>({});
+
+  // Search filter
+  let searchQuery = $state('');
+  let searchInputEl = $state<HTMLInputElement | null>(null);
+  let fileListEl = $state<HTMLDivElement | null>(null);
+  let searchFocused = $state(false);
+  let dropdownIndex = $state(-1);
+
+  // Derived: selected entry
+  let selectedEntry = $derived(
+    entries.find(e => fileKey(e) === selectedFileKey) ?? null
+  );
+
+  function matchesSearch(entry: GitStatusEntry): boolean {
+    if (!searchQuery) return true;
+    const q = searchQuery.toLowerCase();
+    return entry.filePath.toLowerCase().includes(q);
+  }
+
+  let filteredStagedEntries = $derived(stagedEntries.filter(matchesSearch));
+  let filteredUnstagedEntries = $derived(unstagedEntries.filter(matchesSearch));
+  let filteredUntrackedEntries = $derived(untrackedEntries.filter(matchesSearch));
+  let filteredTotal = $derived(filteredStagedEntries.length + filteredUnstagedEntries.length + filteredUntrackedEntries.length);
+
+  // Dropdown items: all matching entries in display order
+  let dropdownEntries = $derived(
+    searchQuery
+      ? [...filteredStagedEntries, ...filteredUnstagedEntries, ...filteredUntrackedEntries]
+      : []
+  );
+  let showDropdown = $derived(searchFocused && dropdownEntries.length > 0);
+
+  function selectDropdownEntry(entry: GitStatusEntry) {
+    const key = fileKey(entry);
+    selectedFileKey = key;
+    loadDiff(entry);
+    searchQuery = '';
+    searchFocused = false;
+    searchInputEl?.blur();
+    scrollSidebarItemIntoView(key);
+  }
+
+  function handleSearchKeydown(e: KeyboardEvent) {
+    if (!showDropdown) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      dropdownIndex = Math.min(dropdownIndex + 1, dropdownEntries.length - 1);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      dropdownIndex = Math.max(dropdownIndex - 1, 0);
+    } else if (e.key === 'Enter' && dropdownIndex >= 0 && dropdownIndex < dropdownEntries.length) {
+      e.preventDefault();
+      selectDropdownEntry(dropdownEntries[dropdownIndex]);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      searchQuery = '';
+      searchFocused = false;
+      searchInputEl?.blur();
+    }
+  }
+
+  // Reset dropdown index when query changes
+  $effect(() => {
+    searchQuery;
+    dropdownIndex = 0;
+  });
+
+  // Collapsed sections
+  let collapsedSections = $state<Set<string>>(new Set());
+
+  // Flat list of the files on screen, in order: the rail's, or the sections'
+  // (respects collapsed sections and search). Arrow keys walk this.
+  let visibleEntries = $derived(collapsed ? railEntries : [
+    ...(collapsedSections.has('staged') ? [] : filteredStagedEntries),
+    ...(collapsedSections.has('unstaged') ? [] : filteredUnstagedEntries),
+    ...(collapsedSections.has('untracked') ? [] : filteredUntrackedEntries),
+  ]);
+
+  // On status change: drop cached diffs for entries that disappeared, fix the
+  // selection, and re-fetch the selected file's diff in place. The previous
+  // patch stays on screen until the new one arrives (stale-while-revalidate),
+  // so a working tree that changes mid-turn updates like a live diff view
+  // instead of blanking and reloading on every git status refresh.
+  let lastSourceKey = '';
+  $effect(() => {
+    const list = entries;
+    const key = sourceKey;
+    const currentKeys = new Set(list.map(e => fileKey(e)));
+
+    untrack(() => {
+      // A source switch changes what every diff means; drop the cache wholesale.
+      const scopeChanged = key !== lastSourceKey;
+      lastSourceKey = key;
+      const kept: Record<string, FileDiffResult> = {};
+      if (!scopeChanged) {
+        const byKey = new Map(list.map(e => [fileKey(e), e]));
+        for (const [key, diff] of Object.entries(fileDiffs)) {
+          const e = byKey.get(key);
+          // Keep a diff while its file is as it was when fetched. Only the
+          // selected file and its neighbours reload below, so a changed file
+          // kept here would show its old patch when selected. The selected
+          // one stays on screen until its reload lands.
+          if (e && (diffSigByKey.get(key) === entrySig(e) || key === selectedFileKey)) kept[key] = diff;
+        }
+      } else {
+        // Replies still on their way are for the old comparison.
+        diffGen++;
+        diffInFlight.clear();
+      }
+      fileDiffs = kept;
+      if (scopeChanged) { revealedByKey = {}; fileLinesByKey = {}; composer = null; largeDiffShown = {}; largeEditShown = {}; }
+
+      // Auto-select first file if no selection or selection no longer exists
+      if (list.length > 0 && (selectedFileKey === null || !currentKeys.has(selectedFileKey))) {
+        selectedFileKey = fileKey(list[0]);
+      } else if (list.length === 0) {
+        selectedFileKey = null;
+      }
+
+      refreshDiffs(true);
+    });
+  });
+
+  // When the user moves to another file: reset hunk position and lazily load
+  // its diff (plus immediate neighbors, so arrow-key navigation feels instant).
+  // Keyed on the file key rather than the entry object so a status refresh that
+  // keeps the same file selected doesn't reset the hunk position.
+  $effect(() => {
+    selectedFileKey;
+    untrack(() => {
+      hunkIdx = 0;
+      // The open comment box holds only a side and line: left open, it would
+      // save its draft against the same line of the next file.
+      composer = null;
+      refreshDiffs(false);
+    });
+  });
+
+  // Set while hidden when a load was skipped; shown again, reload then.
+  let reloadWhenShown = false;
+  function refreshDiffs(forceReload: boolean) {
+    if (!active) { reloadWhenShown = true; return; }
+    loadSelectedAndNeighbors(forceReload);
+  }
+  $effect(() => {
+    if (!active) return;
+    untrack(() => {
+      if (!reloadWhenShown) return;
+      reloadWhenShown = false;
+      loadSelectedAndNeighbors(true);
+    });
+  });
+
+  function loadSelectedAndNeighbors(forceReload: boolean) {
+    const entry = selectedEntry;
+    if (!entry) return;
+    loadDiff(entry, forceReload);
+    const ordered = visibleEntries;
+    const idx = ordered.findIndex(e => fileKey(e) === fileKey(entry));
+    if (idx >= 0) {
+      if (ordered[idx + 1]) loadDiff(ordered[idx + 1], forceReload);
+      if (ordered[idx - 1]) loadDiff(ordered[idx - 1], forceReload);
+    }
+  }
+
+  function fileKey(entry: GitStatusEntry): string {
+    return `${entry.filePath}:${entry.staged}`;
+  }
+
+  // Per-file request sequence so an older in-flight fetch can't overwrite a
+  // newer one when refreshes overlap. A key is in flight while its latest
+  // request has not resolved yet.
+  const diffRequestSeq = new Map<string, number>();
+  const diffInFlight = new Set<string>();
+  /** Bumped when the comparison changes, so older replies are dropped. */
+  let diffGen = 0;
+  /** The file state each cached diff was fetched for. */
+  const diffSigByKey = new Map<string, string>();
+  function entrySig(e: GitStatusEntry): string {
+    return [e.status, e.origPath ?? '', e.contentHash ?? '', e.additions ?? '', e.deletions ?? ''].join('|');
+  }
+
+  async function loadDiff(entry: GitStatusEntry, forceReload = false) {
+    const key = fileKey(entry);
+    if (!forceReload && (fileDiffs[key] !== undefined || diffInFlight.has(key))) return;
+    const seq = (diffRequestSeq.get(key) ?? 0) + 1;
+    const gen = diffGen;
+    diffRequestSeq.set(key, seq);
+    diffInFlight.add(key);
+    let diff: FileDiffResult;
+    try {
+      diff = await fetchDiff(entry);
+    } catch {
+      diff = { kind: 'text', patch: '' };
+    }
+    if (gen !== diffGen || diffRequestSeq.get(key) !== seq) return;
+    diffInFlight.delete(key);
+    diffSigByKey.set(key, entrySig(entry));
+    fileDiffs = { ...fileDiffs, [key]: diff };
+  }
+
+  function selectFile(entry: GitStatusEntry) {
+    selectedFileKey = fileKey(entry);
+    loadDiff(entry);
+  }
+
+  function toggleEditHistory(key: string) {
+    const next = new Set(editHistoryExpanded);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    editHistoryExpanded = next;
+  }
+
+  function toggleSection(section: string) {
+    const next = new Set(collapsedSections);
+    if (next.has(section)) next.delete(section);
+    else next.add(section);
+    collapsedSections = next;
+  }
+
+  function stageEntry(entry: GitStatusEntry) { onStage?.(entry); }
+  function unstageEntry(entry: GitStatusEntry) { onUnstage?.(entry); }
+
+  // Hunk navigation
+  let diffContainer = $state<HTMLDivElement | null>(null);
+  let hunkIdx = $state(0);
+
+  function gotoHunk(dir: 1 | -1) {
+    if (!diffContainer) return;
+    const hunks = diffContainer.querySelectorAll('[data-hunk]');
+    if (hunks.length === 0) return;
+    hunkIdx = Math.max(0, Math.min(hunks.length - 1, hunkIdx + dir));
+    (hunks[hunkIdx] as HTMLElement)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  // Diff-pane keyboard shortcuts. Only act when this pane is actually visible
+  // (offsetParent is null while the tab is hidden via `display:none`) and the user
+  // isn't typing into an input/textarea.
+  function handleShortcuts(e: KeyboardEvent) {
+    if (!diffContainer || diffContainer.offsetParent === null) return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    const t = e.target as HTMLElement | null;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+    if (!selectedEntry) return;
+    switch (e.key) {
+      case 'n': e.preventDefault(); gotoHunk(1); break;
+      case 'p': e.preventDefault(); gotoHunk(-1); break;
+      case 'v': e.preventDefault(); sideBySide = !sideBySide; break;
+      case 's': if (hasStaging) { e.preventDefault(); selectedEntry.staged ? unstageEntry(selectedEntry) : stageEntry(selectedEntry); } break;
+      case 'x': e.preventDefault(); toggleViewed(selectedEntry); break;
+      default: {
+        const extra = shortcuts[e.key];
+        if (extra) { e.preventDefault(); extra(selectedEntry); }
+      }
+    }
+  }
+
+  // Parsed lines for the selected file, memoized on the patch text: neighbor
+  // prefetches and git-status refreshes reassign `fileDiffs` several times per
+  // selection, and each reassignment would otherwise reparse (and re-highlight)
+  // the whole patch.
+  // Keyed on the file key, a string: every status refresh hands back new
+  // entry objects, and reading the entry here would rebuild the lines below
+  // (and re-render every row of the diff) even when the patch is the same.
+  let selectedKey = $derived(selectedEntry ? fileKey(selectedEntry) : null);
+  let parsedDiff: { key: string; patch: string; lines: DiffLine[] } | null = null;
+  let selectedDiffLines = $derived.by((): DiffLine[] => {
+    const key = selectedKey;
+    if (key === null) return [];
+    const result = fileDiffs[key];
+    if (!result || result.kind !== 'text' || !result.patch) return [];
+    if (parsedDiff && parsedDiff.key === key && parsedDiff.patch === result.patch) return parsedDiff.lines;
+    const lines = parseDiffLines(result.patch);
+    parsedDiff = { key, patch: result.patch, lines };
+    return lines;
+  });
+  let selectedHunkCount = $derived(hunkLineIndices(selectedDiffLines).length);
+
+  /** File keys whose large diff the user chose to see, for this comparison. */
+  let largeDiffShown = $state<Record<string, true>>({});
+  /** Edit ids whose large edit the user chose to see in Edit History. */
+  let largeEditShown = $state<Record<string, true>>({});
+  /** Edit ids the user chose to compare line by line in Edit History. */
+  let editCompared = $state<Record<string, true>>({});
+
+  /** An edit's size and, once worked out, its diff lines. Kept per edit, so a
+   *  status refresh (which hands back a new entry object) doesn't redo
+   *  createPatch and redraw every row of every shown edit. A changed edit is
+   *  a new message with a new input object, so it's worked out again. */
+  interface EditInfo { input: unknown; filePath: string; size: { lines: number; chars: number }; quick?: ReturnType<typeof quickEditDiff>; full?: EditDiff }
+  const editInfo = new Map<string, EditInfo>();
+  function editInfoFor(edit: ChatToolCallMessage, filePath: string): EditInfo {
+    const known = editInfo.get(edit.id);
+    if (known && known.input === edit.toolInput && known.filePath === filePath) return known;
+    const info: EditInfo = { input: edit.toolInput, filePath, size: editSize(toolViewOf(edit)) };
+    editInfo.set(edit.id, info);
+    return info;
+  }
+  /** Whether the edit waits for "Show edit", and its lines if worked out. */
+  function quickDiffFor(info: EditInfo, edit: ChatToolCallMessage): ReturnType<typeof quickEditDiff> {
+    return (info.quick ??= quickEditDiff(toolViewOf(edit), info.filePath));
+  }
+  /** Its diff once shown (fullEditDiff), worked out in full once compared. */
+  function editDiffFor(info: EditInfo, edit: ChatToolCallMessage, compared: boolean): EditDiff {
+    info.full ??= fullEditDiff(toolViewOf(edit), info.filePath, quickDiffFor(info, edit).diff);
+    if (compared && info.full.quick) info.full = fullEditDiff(toolViewOf(edit), info.filePath, null);
+    return info.full;
+  }
+
+  let selectedDiffSize = $derived(diffSize(selectedDiffLines));
+  let selectedDiffLarge = $derived(isLargeDiff(selectedDiffSize));
+  /** A large diff waits for "Show diff". */
+  let diffHeldBack = $derived(selectedDiffLarge && selectedKey !== null && !largeDiffShown[selectedKey]);
+
+  // ── Expandable context ──
+  // Revealed new-side line ranges and the new-side file lines, per file key.
+  // Both reset when that file's patch changes (the line numbers would be stale).
+  let revealedByKey = $state<Record<string, RevealedRanges>>({});
+  let fileLinesByKey = $state<Record<string, string[] | null>>({});
+  let patchSeen: Record<string, string> = {};
+  $effect(() => {
+    const entry = selectedEntry;
+    if (!entry) return;
+    const key = fileKey(entry);
+    const result = fileDiffs[key];
+    const patch = result?.kind === 'text' ? result.patch : '';
+    untrack(() => {
+      if (patchSeen[key] !== undefined && patchSeen[key] !== patch) {
+        const { [key]: _r, ...restR } = revealedByKey; revealedByKey = restR;
+        const { [key]: _f, ...restF } = fileLinesByKey; fileLinesByKey = restF;
+      }
+      patchSeen[key] = patch;
+    });
+  });
+  let displayLines = $derived.by((): DiffLine[] => {
+    const key = selectedKey;
+    if (key === null) return [];
+    return withExpandableContext(selectedDiffLines, fileLinesByKey[key] ?? null, revealedByKey[key] ?? []);
+  });
+
+  async function expandContext(gap: ContextGap, dir: 'up' | 'down' | 'all') {
+    const entry = selectedEntry;
+    if (!entry) return;
+    const key = fileKey(entry);
+    if (fileLinesByKey[key] === undefined) {
+      try {
+        const res = await fetchFileLines(entry);
+        fileLinesByKey = { ...fileLinesByKey, [key]: res?.lines ?? null };
+      } catch {
+        fileLinesByKey = { ...fileLinesByKey, [key]: null };
+      }
+    }
+    const lines = fileLinesByKey[key];
+    if (!lines) return;
+    // Clamp the gap to the real file length now that we know it.
+    const clamped: ContextGap = { ...gap, toNew: Math.min(gap.toNew, lines.length) };
+    if (clamped.toNew < clamped.fromNew) return;
+    const [from, to] = expansionFor(clamped, dir);
+    revealedByKey = { ...revealedByKey, [key]: reveal(revealedByKey[key] ?? [], from, to) };
+  }
+
+  // ── Review comment handlers ──
+  function lineTextFor(side: 'old' | 'new', from: number, to: number): string {
+    const out: string[] = [];
+    for (const l of displayLines) {
+      const n = side === 'old' ? l.oldLineNum : l.newLineNum;
+      if (n === undefined || n < from || n > to) continue;
+      if (side === 'old' && l.type === 'add') continue;
+      if (side === 'new' && l.type === 'del') continue;
+      out.push(l.text);
+    }
+    return out.join('\n');
+  }
+
+  function onAddComment(anchor: { side: 'old' | 'new'; lineNum: number; text: string; shiftKey: boolean }) {
+    if (composer && anchor.shiftKey && composer.side === anchor.side) {
+      composer = {
+        side: composer.side,
+        startLine: Math.min(composer.startLine, anchor.lineNum),
+        endLine: Math.max(composer.endLine, anchor.lineNum),
+      };
+      return;
+    }
+    composer = { side: anchor.side, startLine: anchor.lineNum, endLine: anchor.lineNum };
+  }
+
+  function saveComment(body: string) {
+    const entry = selectedEntry;
+    const c = composer;
+    if (!entry || !c) return;
+    reviewStore.addComment(sessionId, {
+      filePath: entry.filePath,
+      side: c.side,
+      startLine: c.startLine,
+      endLine: c.endLine,
+      snippet: lineTextFor(c.side, c.startLine, c.endLine),
+      body,
+      context: commentContext,
+    });
+    composer = null;
+  }
+
+  let sendingReview = $state(false);
+  function sendReview() {
+    if (comments.length === 0 || sendingReview) return;
+    sendingReview = true;
+    try {
+      const prompt = buildReviewPrompt(comments);
+      messageStore.submitMessage(sessionId, { displayText: prompt, outgoing: prompt });
+      reviewStore.clearComments(sessionId);
+      composer = null;
+      messageStore.setActiveTab(sessionId, 'activity');
+    } finally {
+      sendingReview = false;
+    }
+  }
+  function reviewToPrompt() {
+    if (comments.length === 0) return;
+    messageStore.appendToPrompt(sessionId, buildReviewPrompt(comments));
+    reviewStore.clearComments(sessionId);
+    composer = null;
+  }
+
+  /** A Markdown file as it is now, rendered, in the Focus panel. */
+  /** Markdown files Preview found gone (an earlier turn's, in Checkpoints). */
+  let previewMissing = $state<Record<string, true>>({});
+  async function previewMarkdown(filePath: string) {
+    try {
+      if (!(await openWorktreeFile(sessionId, filePath))) previewMissing[filePath] = true;
+    } catch (err) {
+      console.warn(`Could not preview ${filePath}:`, err);
+    }
+  }
+
+  function openInEditor(filePath: string) {
+    window.groveBench.openInEditor(sessionId, filePath).catch(() => {});
+  }
+
+  function fileName(filePath: string): string {
+    const parts = filePath.replace(/\\/g, '/').split('/');
+    return parts[parts.length - 1];
+  }
+
+  function dirPath(filePath: string): string {
+    const parts = filePath.replace(/\\/g, '/').split('/');
+    if (parts.length <= 1) return '';
+    return parts.slice(0, -1).join('/') + '/';
+  }
+
+  function statusBadge(status: string): { label: string; color: string } {
+    switch (status) {
+      case 'modified': return { label: 'M', color: 'text-yellow-400' };
+      case 'added': return { label: 'A', color: 'text-green-400' };
+      case 'deleted': return { label: 'D', color: 'text-red-400' };
+      case 'renamed': return { label: 'R', color: 'text-blue-400' };
+      case 'copied': return { label: 'C', color: 'text-blue-400' };
+      case 'untracked': return { label: '?', color: 'text-muted-foreground' };
+      default: return { label: '?', color: 'text-muted-foreground' };
+    }
+  }
+
+
+  function handleFileListKeydown(e: KeyboardEvent) {
+    if (visibleEntries.length === 0) return;
+    const currentIdx = visibleEntries.findIndex(entry => fileKey(entry) === selectedFileKey);
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      const next = Math.min(currentIdx + 1, visibleEntries.length - 1);
+      selectFile(visibleEntries[next]);
+      scrollSidebarItemIntoView(fileKey(visibleEntries[next]));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      const next = Math.max(currentIdx - 1, 0);
+      selectFile(visibleEntries[next]);
+      scrollSidebarItemIntoView(fileKey(visibleEntries[next]));
+    }
+  }
+
+  function scrollSidebarItemIntoView(key: string) {
+    requestAnimationFrame(() => {
+      // This panel's list: a hidden panel (another conversation, or Changes
+      // beside Checkpoints) can show the same file.
+      const el = fileListEl?.querySelector(`[data-file-key="${CSS.escape(key)}"]`);
+      el?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    });
+  }
+</script>
+
+{#snippet diffStat(entry: GitStatusEntry)}
+  {#if entry.additions !== undefined || entry.deletions !== undefined}
+    <span class="shrink-0 text-micro tabular-nums flex items-center gap-1">
+      {#if entry.additions}<span class="text-green-400">+{entry.additions}</span>{/if}
+      {#if entry.deletions}<span class="text-red-400">−{entry.deletions}</span>{/if}
+    </span>
+  {/if}
+{/snippet}
+
+{#snippet sidebarFileItem(entry: GitStatusEntry)}
+  {@const key = fileKey(entry)}
+  {@const badge = statusBadge(entry.status)}
+  {@const isSelected = key === selectedFileKey}
+  {@const viewed = isViewed(entry)}
+  {@const changed = changedSinceViewed(entry)}
+  {@const nComments = commentCountFor(entry.filePath)}
+  <button
+    onclick={() => selectFile(entry)}
+    data-file-key={key}
+    data-viewed={viewed ? 'true' : undefined}
+    data-changed-since-viewed={changed ? 'true' : undefined}
+    class="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left border-l-2 transition-colors
+      {isSelected ? 'bg-sidebar-accent text-sidebar-accent-foreground border-primary' : 'border-transparent hover:bg-sidebar-accent/50'}
+      {viewed && !isSelected ? 'opacity-60' : ''}"
+  >
+    <span class="font-bold {badge.color} shrink-0 w-3 text-center">{badge.label}</span>
+    <div class="min-w-0 flex-1">
+      <div class="truncate">{fileName(entry.filePath)}</div>
+      {#if dirPath(entry.filePath)}
+        <div class="truncate text-micro text-muted-foreground">{dirPath(entry.filePath)}</div>
+      {/if}
+    </div>
+    {#if nComments > 0}
+      <span class="shrink-0 text-micro text-primary flex items-center gap-0.5" title="{nComments} review comment{nComments === 1 ? '' : 's'}">
+        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h8m-8 4h5m-9 6l3-3h11a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v14z"/></svg>{nComments}
+      </span>
+    {/if}
+    {@render diffStat(entry)}
+    {#if entry.staged}
+      <span class="text-micro text-green-400 shrink-0">S</span>
+    {/if}
+    {#if changed}
+      <span class="shrink-0 w-1.5 h-1.5 bg-amber-500" title="Changed since you viewed it"></span>
+    {:else if viewed}
+      <svg class="w-3 h-3 shrink-0 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-label="Viewed"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
+    {/if}
+  </button>
+{/snippet}
+
+{#snippet sidebarSectionHeader(title: string, sectionKey: string, count: number, colorClass: string, entries: GitStatusEntry[], mode: 'stage' | 'unstage' | 'none')}
+  {#if count > 0}
+    <div class="flex items-center w-full bg-card/30 group/sec">
+      <button
+        onclick={() => toggleSection(sectionKey)}
+        class="flex items-center gap-2 px-3 py-1 text-xs font-medium text-muted-foreground hover:text-foreground flex-1 min-w-0 text-left"
+      >
+        <svg class="w-2.5 h-2.5 transition-transform {collapsedSections.has(sectionKey) ? '' : 'rotate-90'}" fill="currentColor" viewBox="0 0 20 20">
+          <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clip-rule="evenodd" />
+        </svg>
+        <span class={colorClass}>{title}</span>
+        <span class="text-muted-foreground">{count}</span>
+      </button>
+      {#if mode === 'stage' && onStageAll}
+        <Button size="2xs" variant="quiet" onclick={() => onStageAll(entries)} class="mr-1 opacity-0 group-hover/sec:opacity-100">stage all</Button>
+      {:else if mode === 'unstage' && onUnstageAll}
+        <Button size="2xs" variant="quiet" onclick={() => onUnstageAll(entries)} class="mr-1 opacity-0 group-hover/sec:opacity-100">unstage all</Button>
+      {/if}
+    </div>
+  {/if}
+{/snippet}
+
+<svelte:window onkeydown={handleShortcuts} />
+
+{#snippet emptyPane(title: string, hint: string | undefined)}
+  <div class="pixel-bg flex-1 flex items-center justify-center text-muted-foreground text-sm relative overflow-hidden">
+    {#each Array(20) as _, i}
+      <span
+        class="blue-pixel absolute"
+        style="
+          width: 4px; height: 4px;
+          top: {Math.round((8 + (((i * 37 + 13) * 7) % 84)) / 100 * 800 / 6) * 6}px;
+          left: {Math.round((5 + (((i * 53 + 7) * 11) % 90)) / 100 * 1400 / 6) * 6}px;
+          animation-delay: {(i * 1.3) % 6}s;
+        "
+      ></span>
+    {/each}
+    {#snippet emptyDetails()}
+      {#if hint}
+        <span class="text-xs text-muted-foreground flex items-center gap-1.5">
+          <Pulse size="xs" />
+          {hint}
+        </span>
+      {/if}
+    {/snippet}
+    {#if groveAgent}
+      <GroveEmptyState variant="agent" agent={groveAgent} tab={emptyScene}>
+        <div class="mt-5 flex flex-col items-center gap-2">
+          <span class="text-foreground/80">{title}</span>
+          {@render emptyDetails()}
+        </div>
+      </GroveEmptyState>
+    {:else}
+      <div class="relative z-10 flex flex-col items-center gap-2">
+        <span>{title}</span>
+        {@render emptyDetails()}
+      </div>
+    {/if}
+  </div>
+{/snippet}
+
+<div class="flex-1 flex overflow-hidden">
+  <!-- Left: File sidebar -->
+  <div
+    bind:this={fileListEl}
+    class="{collapsed ? 'w-9' : 'w-56'} flex flex-col border-r border-border bg-sidebar shrink-0 overflow-hidden focus:outline-none focus-visible:ring-1 focus-visible:ring-primary focus-visible:ring-inset"
+    role="listbox"
+    aria-label="Changed files"
+    tabindex="0"
+    onkeydown={handleFileListKeydown}
+  >
+    {#if collapsed}
+      <!-- Rail: expand button, file count, one status letter per file -->
+      <div class="border-b border-border py-1.5 shrink-0 flex flex-col items-center gap-1">
+        <PanelToggle {panel} label="file list" />
+        <span class="text-micro text-muted-foreground tabular-nums" title="{entries.length} change{entries.length !== 1 ? 's' : ''}">{entries.length}</span>
+      </div>
+      <div class="flex-1 overflow-y-auto">
+        {#each railEntries as entry (fileKey(entry))}
+          {@const key = fileKey(entry)}
+          {@const badge = statusBadge(entry.status)}
+          {@const isSelected = key === selectedFileKey}
+          {@const viewed = isViewed(entry)}
+          <button
+            onclick={() => selectFile(entry)}
+            data-file-key={key}
+            data-viewed={viewed ? 'true' : undefined}
+            title="{entry.filePath}{entry.staged ? ' (staged)' : ''}"
+            class="w-full h-6 flex items-center justify-center text-xs font-bold border-l-2 transition-colors
+              {isSelected ? 'bg-sidebar-accent border-primary' : 'border-transparent hover:bg-sidebar-accent/50'}
+              {viewed && !isSelected ? 'opacity-60' : ''}"
+          >
+            <span class={badge.color}>{badge.label}</span>
+          </button>
+        {/each}
+      </div>
+    {:else}
+      <!-- Sidebar header: search + summary -->
+      <div class="border-b border-border px-3 py-2 shrink-0">
+        <div class="flex items-center gap-1">
+          <div class="relative flex-1 min-w-0">
+            <svg class="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            <input
+              bind:this={searchInputEl}
+              bind:value={searchQuery}
+              onfocus={() => searchFocused = true}
+              onblur={() => { setTimeout(() => searchFocused = false, 150); }}
+              onkeydown={handleSearchKeydown}
+              type="text"
+              placeholder="Filter files..."
+              class="w-full text-xs bg-background/50 border border-border/50 px-2 py-1 pl-7 text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/50"
+            />
+            {#if searchQuery}
+              <Button
+                size="icon-2xs"
+                variant="quiet"
+                onclick={() => { searchQuery = ''; searchInputEl?.focus(); }}
+                class="absolute right-0.5 top-1/2 -translate-y-1/2"
+                aria-label="Clear filter"
+                title="Clear filter"
+              >
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </Button>
+            {/if}
+
+            <!-- Dropdown -->
+            {#if showDropdown}
+              <div class="{menuPanel({ padding: 'list' })} absolute left-0 right-0 top-full mt-1 max-h-56 overflow-y-auto z-50">
+                {#each dropdownEntries as entry, i (entry.filePath + ':' + entry.staged)}
+                  {@const badge = statusBadge(entry.status)}
+                  <button
+                    onmousedown={() => selectDropdownEntry(entry)}
+                    onmouseenter={() => dropdownIndex = i}
+                    class={menuItem({ selected: i === dropdownIndex })}
+                  >
+                    <span class="font-bold {badge.color} shrink-0">{badge.label}</span>
+                    <span class="truncate">
+                      <span class="text-muted-foreground">{dirPath(entry.filePath)}</span><span class="text-foreground">{fileName(entry.filePath)}</span>
+                    </span>
+                    {#if entry.staged}
+                      <span class="ml-auto text-micro text-green-400 shrink-0">staged</span>
+                    {/if}
+                  </button>
+                {/each}
+              </div>
+            {/if}
+          </div>
+          <PanelToggle {panel} label="file list" class="-mr-1.5" />
+        </div>
+        {#if searchQuery && filteredTotal !== entries.length && !showDropdown}
+          <div class="text-micro text-muted-foreground mt-1">
+            {filteredTotal} of {entries.length} files
+          </div>
+        {/if}
+        {#if sidebarTop}
+          <div class="mt-1.5 flex items-center gap-2">{@render sidebarTop()}</div>
+        {/if}
+        <div class="text-micro text-muted-foreground mt-1.5 flex items-center gap-2 whitespace-nowrap">
+          {#if sidebarSummaryExtra}{@render sidebarSummaryExtra()}{/if}
+          <span>{entries.length} change{entries.length !== 1 ? 's' : ''}</span>
+          {#if sidebarSummaryNote}{@render sidebarSummaryNote()}{/if}
+          {#if stagedEntries.length > 0}
+            <span class="text-green-400">{stagedEntries.length}S</span>
+          {/if}
+          {#if unstagedEntries.length > 0}
+            <span class="text-yellow-400">{unstagedEntries.length}M</span>
+          {/if}
+          {#if untrackedEntries.length > 0}
+            <span class="text-muted-foreground">{untrackedEntries.length}?</span>
+          {/if}
+        </div>
+        {#if viewedCount > 0}
+          <div class="text-micro text-green-400 mt-1 flex items-center gap-1" title="Files marked viewed (press x on the selected file)">
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
+            {viewedCount} of {entries.length} viewed
+          </div>
+        {/if}
+      </div>
+
+      <!-- Scrollable file list -->
+      <div class="flex-1 overflow-y-auto">
+        <!-- Staged -->
+        {#if filteredStagedEntries.length > 0}
+          {@render sidebarSectionHeader('Staged', 'staged', filteredStagedEntries.length, 'text-green-400', filteredStagedEntries, 'unstage')}
+          {#if !collapsedSections.has('staged')}
+            {#each filteredStagedEntries as entry (entry.filePath + ':staged')}
+              {@render sidebarFileItem(entry)}
+            {/each}
+          {/if}
+        {/if}
+
+        <!-- Unstaged (or, in branch scope, everything tracked since the base) -->
+        {#if filteredUnstagedEntries.length > 0}
+          {@render sidebarSectionHeader(changesLabel, 'unstaged', filteredUnstagedEntries.length, 'text-yellow-400', filteredUnstagedEntries, hasStaging ? 'stage' : 'none')}
+          {#if !collapsedSections.has('unstaged')}
+            {#each filteredUnstagedEntries as entry (entry.filePath + ':unstaged')}
+              {@render sidebarFileItem(entry)}
+            {/each}
+          {/if}
+        {/if}
+
+        <!-- Untracked -->
+        {#if filteredUntrackedEntries.length > 0}
+          {@render sidebarSectionHeader('Untracked', 'untracked', filteredUntrackedEntries.length, 'text-muted-foreground', filteredUntrackedEntries, hasStaging ? 'stage' : 'none')}
+          {#if !collapsedSections.has('untracked')}
+            {#each filteredUntrackedEntries as entry (entry.filePath + ':untracked')}
+              {@render sidebarFileItem(entry)}
+            {/each}
+          {/if}
+        {/if}
+      </div>
+
+      {#if sidebarFooter}{@render sidebarFooter()}{/if}
+    {/if}
+  </div>
+
+  <!-- Right: Diff viewer -->
+  <div class="flex-1 flex flex-col overflow-hidden">
+    {#if selectedEntry}
+      {@const key = fileKey(selectedEntry)}
+      {@const diffResult = fileDiffs[key]}
+      {@const diffLines = selectedDiffLines}
+      {@const badge = statusBadge(selectedEntry.status)}
+      {@const history = editHistoryByFile.get(selectedEntry.filePath)}
+      {@const historyExpanded = editHistoryExpanded.has(key)}
+
+      <!-- Diff header -->
+      <PanelHeader class="group/diff-hdr">
+        <span class="text-xs font-bold {badge.color}">{badge.label}</span>
+
+        <button
+          onclick={() => openInEditor(selectedEntry.filePath)}
+          class="text-xs text-foreground/80 hover:text-primary hover:underline cursor-pointer truncate"
+          title="Open in editor"
+        >
+          <span class="text-muted-foreground">{dirPath(selectedEntry.filePath)}</span>{fileName(selectedEntry.filePath)}
+        </button>
+
+        {@render diffStat(selectedEntry)}
+
+        {#if selectedEntry.origPath}
+          <span class="text-xs text-muted-foreground truncate">← {selectedEntry.origPath}</span>
+        {/if}
+
+        <CopyButton text={selectedEntry.filePath} class="opacity-0 group-hover/diff-hdr:opacity-100 shrink-0" />
+
+        {#if history && history.edits.length > 0}
+          <Button
+            size="xs"
+            variant="quiet"
+            onclick={() => toggleEditHistory(key)}
+            class={historyExpanded ? 'text-foreground' : ''}
+            title="Show individual edits from this thread"
+          >
+            {history.edits.length} edit{history.edits.length !== 1 ? 's' : ''}
+          </Button>
+        {/if}
+
+        {#if isMarkdownFile(selectedEntry.filePath) && selectedEntry.status !== 'deleted'}
+          <Button
+            size="xs"
+            variant="quiet"
+            onclick={() => previewMarkdown(selectedEntry.filePath)}
+            disabled={previewMissing[selectedEntry.filePath]}
+            title={previewMissing[selectedEntry.filePath]
+              ? `${selectedEntry.filePath} is no longer in the worktree`
+              : 'Read the file as it is now, rendered, in the Focus panel'}
+          >
+            Preview
+          </Button>
+        {/if}
+
+        {#snippet actions()}
+          <div class="flex items-center gap-2">
+            {#if selectedHunkCount > 1 && !diffHeldBack}
+              <div class="flex items-center" title="Jump between hunks">
+                <Button size="icon-xs" variant="quiet" onclick={() => gotoHunk(-1)} aria-label="Previous hunk">
+                  <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" /></svg>
+                </Button>
+                <Button size="icon-xs" variant="quiet" onclick={() => gotoHunk(1)} aria-label="Next hunk">
+                  <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg>
+                </Button>
+              </div>
+            {/if}
+            <label class="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground cursor-pointer select-none" title="Mark this file as viewed (x). Clears automatically if the file changes again.">
+              <input type="checkbox" checked={isViewed(selectedEntry)} onchange={() => toggleViewed(selectedEntry)} class="accent-green-500" />
+              Viewed
+              {#if changedSinceViewed(selectedEntry)}
+                <span class="text-micro text-amber-500">· changed since</span>
+              {/if}
+            </label>
+            {#if !hasStaging}
+              <!-- No staging for this source (branch scope / checkpoints): the diff doesn't map onto the index. -->
+            {:else if selectedEntry.staged}
+              <Button size="xs" variant="subtle" onclick={() => unstageEntry(selectedEntry)} title="Unstage this file">
+                Unstage
+              </Button>
+            {:else}
+              <Button size="xs" variant="outline-success" onclick={() => stageEntry(selectedEntry)} title="Stage this file">
+                Stage
+              </Button>
+            {/if}
+            <Button size="xs" variant="quiet" onclick={() => sideBySide = !sideBySide} class="select-none">
+              {sideBySide ? 'unified' : 'side-by-side'}
+            </Button>
+            {#if onRefresh}
+              <Button
+                size="icon-2xs"
+                variant="quiet"
+                onclick={onRefresh}
+                title="Refresh"
+                aria-label="Refresh"
+                disabled={isLoading}
+              >
+                <svg class="size-3.5 {isLoading ? 'animate-spin' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+              </Button>
+            {/if}
+            {#if headerActions}{@render headerActions(selectedEntry)}{/if}
+          </div>
+        {/snippet}
+      </PanelHeader>
+
+      <!-- Diff content -->
+      <div class="flex-1 overflow-y-auto px-4 py-2" bind:this={diffContainer}>
+        {#if diffResult?.kind === 'image'}
+          <ImageDiffView {sessionId} filePath={selectedEntry.filePath} />
+        {:else if diffResult?.kind === 'binary'}
+          <Notice tone="neutral"><p>Binary file — no text diff to display.</p></Notice>
+        {:else if diffResult?.kind === 'tooLarge'}
+          <Notice tone="neutral"><p>Too large to show here ({diffResult.atLeast ? 'over ' : ''}{formatFileSize(diffResult.bytes)}).</p></Notice>
+        {:else if diffHeldBack}
+          <LargeDiffNotice kind="diff" size={selectedDiffSize} onShow={() => (largeDiffShown = { ...largeDiffShown, [key]: true })} />
+        {:else if diffLines.length > 0}
+          <DiffView
+            lines={displayLines}
+            {sideBySide}
+            deferHighlight={selectedDiffLarge || isLargeDiff({ lines: displayLines.length, chars: selectedDiffSize.chars })}
+            maxHeight="none"
+            filePath={selectedEntry.filePath}
+            onExpand={expandContext}
+            comments={sourceComments.filter(c => c.filePath === selectedEntry.filePath)}
+            {composer}
+            {onAddComment}
+            onSaveComment={saveComment}
+            onCancelComment={() => composer = null}
+            onUpdateComment={(id, body) => reviewStore.updateComment(sessionId, id, body)}
+            onRemoveComment={(id) => reviewStore.removeComment(sessionId, id)}
+          />
+        {:else}
+          <div class="text-xs text-muted-foreground py-2">No diff available</div>
+        {/if}
+
+        <!-- Edit history sub-section -->
+        {#if history && historyExpanded}
+          <div class="mt-2 border-t border-border/50 pt-2">
+            <div class="text-xs text-muted-foreground mb-1.5 font-medium">Edit History</div>
+            {#each history.edits as edit, idx}
+              {@const info = editInfoFor(edit, selectedEntry.filePath)}
+              {@const held = quickDiffFor(info, edit).large && !largeEditShown[edit.id]}
+              {@const editDiff = held ? null : editDiffFor(info, edit, !!editCompared[edit.id])}
+              {#if held || (editDiff && editDiff.lines.length > 0)}
+                <div class="mb-2 {idx > 0 ? 'border-t border-border/30 pt-2' : ''}">
+                  <div class="text-micro text-muted-foreground mb-1">
+                    {edit.toolName} #{idx + 1}
+                  </div>
+                  {#if held}
+                    <!-- Held back before its diff is worked out in full. -->
+                    <LargeDiffNotice kind="edit" size={info.size} label={`Show ${edit.toolName} #${idx + 1}`} onShow={() => (largeEditShown = { ...largeEditShown, [edit.id]: true })} />
+                  {:else if editDiff}
+                    {#if !editDiff.linedUp}<OldThenNewNotice diff={editDiff} label={`Compare ${edit.toolName} #${idx + 1} line by line`} onCompare={() => (editCompared = { ...editCompared, [edit.id]: true })} />{/if}
+                    <!-- Idle-time colouring, as in the thread: a page of edits draws at once. -->
+                    <DiffView lines={editDiff.lines} sideBySide={false} maxHeight="300px" filePath={selectedEntry.filePath} deferHighlight />
+                  {/if}
+                </div>
+              {/if}
+            {/each}
+          </div>
+        {/if}
+      </div>
+      {#if comments.length > 0}
+        <div data-review-bar class="border-t border-primary/30 bg-card/60 px-4 py-1.5 shrink-0 flex items-center gap-2 text-xs">
+          <span class="text-foreground/80">{comments.length} review comment{comments.length === 1 ? '' : 's'}</span>
+          <span class="text-muted-foreground">across {new Set(comments.map(c => c.filePath)).size} file{new Set(comments.map(c => c.filePath)).size === 1 ? '' : 's'}</span>
+          <div class="ml-auto flex items-center gap-1.5">
+            {#if reviewBarActions}{@render reviewBarActions()}{/if}
+            <Button size="2xs" variant="outline-destructive" onclick={() => { if (confirm('Discard all review comments?')) { reviewStore.clearComments(sessionId); composer = null; } }}>Discard</Button>
+            <Button size="2xs" variant="subtle" onclick={reviewToPrompt} title="Put the batched comments into the prompt so you can edit before sending">To prompt</Button>
+            <Button size="2xs" onclick={sendReview} disabled={sendingReview} title="Send all comments to the agent as one prompt (queued if it is busy)">
+              Send to agent
+            </Button>
+          </div>
+        </div>
+      {/if}
+    {:else if entries.length === 0}
+      {@render emptyPane(emptyTitle, emptyHint)}
+    {:else}
+      {@render emptyPane('Select a file to view changes', undefined)}
+    {/if}
+  </div>
+</div>
+
+<!-- Text-selection actions (Bookmark / To prompt) over the diff content -->
+<SelectionMenu {sessionId} container={diffContainer} />
+
+{#if dialogs}{@render dialogs()}{/if}

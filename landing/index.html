@@ -3,30 +3,32 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Grove Bench — Multi-Agent Git Worktree Orchestrator for Claude Code</title>
-    <meta name="description" content="Run multiple Claude Code AI agents in parallel on the same repository. Automatic git worktree isolation, dedicated PTY terminals, zero branch conflicts. Free and open source Windows desktop app." />
-    <meta name="keywords" content="Claude Code, AI coding agent, git worktree, parallel agents, multi-agent, Electron, Windows, developer tools, code generation, AI pair programming" />
-    <meta name="author" content="Alan Parsons" />
+    <title>Grove Bench: run AI agents side by side, each on its own branch</title>
+    <meta name="description" content="Grove Bench is a free, source-available Windows app that runs several AI coding agents on one project at once. Each works in its own git worktree, on its own branch, with its own terminal." />
+    <meta name="keywords" content="AI coding agents, parallel AI agents, git worktree, multi-agent, Claude Code, Windows, developer tools, source available" />
+    <meta name="author" content="Parsons Projects" />
     <meta name="robots" content="index, follow" />
     <link rel="canonical" href="https://ParsonsProjects.github.io/grove-bench/" />
-    <meta name="theme-color" content="#3b82f6" />
+    <!-- PAPER.background in src/shared/brand.ts -->
+    <meta name="theme-color" content="#fefdfa" />
 
     <!-- Open Graph -->
     <meta property="og:type" content="website" />
-    <meta property="og:title" content="Grove Bench — Parallel AI Agents, Zero Conflicts" />
-    <meta property="og:description" content="Multi-agent git worktree orchestrator for Claude Code. Run multiple AI coding agents in parallel on the same repo with automatic isolation." />
+    <meta property="og:title" content="Grove Bench: AI agents side by side" />
+    <meta property="og:description" content="Run several AI coding agents on one project at once. Each gets its own git worktree, branch and terminal. Free and source-available for Windows." />
     <meta property="og:url" content="https://ParsonsProjects.github.io/grove-bench/" />
     <meta property="og:site_name" content="Grove Bench" />
     <meta property="og:image" content="https://ParsonsProjects.github.io/grove-bench/og-image.png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
-    <meta property="og:image:alt" content="Grove Bench — Multi-agent git worktree orchestrator showing parallel AI coding sessions" />
+    <meta property="og:image:alt" content="Grove Bench: a pixel path with an agent at work on a bench, the line Plant a task. Grow a branch., and the app sidebar with agents working, waiting and asleep." />
 
     <!-- Twitter Card -->
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Grove Bench — Parallel AI Agents, Zero Conflicts" />
-    <meta name="twitter:description" content="Multi-agent git worktree orchestrator for Claude Code. Run multiple AI coding agents in parallel with automatic isolation." />
+    <meta name="twitter:title" content="Grove Bench: AI agents side by side" />
+    <meta name="twitter:description" content="Run several AI coding agents on one project at once. Each gets its own git worktree, branch and terminal. Free and source-available for Windows." />
     <meta name="twitter:image" content="https://ParsonsProjects.github.io/grove-bench/og-image.png" />
+    <meta name="twitter:image:alt" content="Grove Bench: a pixel path with an agent at work on a bench, the line Plant a task. Grow a branch., and the app sidebar with agents working, waiting and asleep." />
 
     <!-- Structured Data -->
     <script type="application/ld+json">
@@ -34,7 +36,7 @@
       "@context": "https://schema.org",
       "@type": "SoftwareApplication",
       "name": "Grove Bench",
-      "description": "Multi-agent git worktree orchestrator for Claude Code. Run multiple AI coding agents in parallel on the same repository with automatic git worktree isolation.",
+      "description": "A Windows app that runs several AI coding agents on one project at once. Each works in its own git worktree, on its own branch, with its own terminal.",
       "applicationCategory": "DeveloperApplication",
       "operatingSystem": "Windows",
       "offers": {
@@ -42,20 +44,22 @@
         "price": "0",
         "priceCurrency": "USD"
       },
-      "license": "https://opensource.org/licenses/MIT",
+      "license": "https://github.com/ParsonsProjects/grove-bench/blob/main/LICENSE",
       "url": "https://ParsonsProjects.github.io/grove-bench/",
       "downloadUrl": "https://github.com/ParsonsProjects/grove-bench/releases",
       "sourceOrganization": {
-        "@type": "Person",
-        "name": "Alan Parsons",
+        "@type": "Organization",
+        "name": "Parsons Projects",
         "url": "https://github.com/ParsonsProjects"
       },
-      "softwareRequirements": "Windows 10 or later",
+      "softwareRequirements": "Windows 10 or later. Claude Code with a Claude plan, or an Anthropic API key. Git 2.17 or later recommended.",
       "featureList": [
-        "Git worktree isolation per agent",
-        "Dedicated PTY terminals per session",
-        "Multiple parallel Claude Code agents",
-        "Windows-native Electron desktop app"
+        "Several AI coding agents running in parallel on one project",
+        "Each thread in its own git worktree and branch",
+        "A dedicated terminal per thread",
+        "Permission prompts for edits and commands",
+        "Checkpoints and rewind",
+        "Project memory shared across threads"
       ]
     }
     </script>
@@ -67,21 +71,33 @@
 
     <!-- Static content for crawlers (SEO/GEO fallback for SPA) -->
     <noscript>
-      <h1>Grove Bench — Multi-Agent Git Worktree Orchestrator</h1>
-      <p>Run multiple Claude Code AI agents in parallel on the same repository. Each agent gets its own git worktree, branch, and dedicated PTY terminal — zero branch conflicts by design.</p>
+      <h1>Grove Bench: run AI agents side by side, each on its own branch</h1>
+      <p>Grove Bench is a free, source-available Windows app for running several AI coding agents on one project at once, starting with Claude Code. Every task gets its own git worktree, branch and terminal, so the agents never trip over each other.</p>
+      <h2>A hobby project, vibe coded</h2>
+      <p>Grove Bench is something I build on the side, in my spare time. It's vibe coded: AI agents write the code while I steer. You should know that before you install it.</p>
+      <ul>
+        <li><strong>Bugs are likely.</strong> Some will be small, some may get in your way.</li>
+        <li><strong>Things change.</strong> Features, settings and names may change or disappear between releases.</li>
+        <li><strong>Help comes when I have time.</strong> It's one person, not a company with a support team.</li>
+        <li><strong>Keep your work safe.</strong> Commit or back up anything you can't lose before you point agents at it.</li>
+      </ul>
+      <p><a href="https://github.com/ParsonsProjects/grove-bench/issues">Report a bug</a></p>
       <h2>Features</h2>
       <ul>
-        <li><strong>Worktree Isolation</strong> — Each agent gets its own git worktree. No branch conflicts, no stepping on each other's changes.</li>
-        <li><strong>Dedicated PTY Terminals</strong> — Real interactive terminals per session with full color output and environment persistence.</li>
-        <li><strong>Parallel Agents</strong> — Run multiple Claude Code agents simultaneously on the same repository.</li>
-        <li><strong>Windows Native</strong> — Built with Electron for Windows. Proper file locking, PATH_MAX safety, native installer.</li>
+        <li><strong>A branch for every agent:</strong> each thread gets its own git worktree, branch and terminal. Your checkout stays as it is.</li>
+        <li><strong>It asks before it acts:</strong> pick a mode per thread (Ask, Plan, Edit, Auto or Read-safe). Anything outside it waits for you.</li>
+        <li><strong>Status at a glance:</strong> a small pixel character shows whether each agent is working, needs you or has finished.</li>
+        <li><strong>Every message is a checkpoint:</strong> rewind the files and the thread to before any message you sent.</li>
+        <li><strong>Naps when idle:</strong> after 30 idle minutes a thread's agent sleeps to save memory and CPU, then wakes where it left off.</li>
+        <li><strong>Watch the context fill:</strong> a strip of grove grows along the status bar as the context window fills.</li>
       </ul>
-      <h2>How It Works</h2>
+      <h2>How it works</h2>
       <ol>
-        <li>Add a repository — Point Grove Bench at any local git repo.</li>
-        <li>Spawn agents — Each agent gets an isolated worktree and branch.</li>
-        <li>Work in parallel — Review diffs, manage permissions, merge when ready.</li>
+        <li>Add a project: pick a folder on your computer, ideally a git repository.</li>
+        <li>Hand out tasks: each thread starts on a new branch in its own worktree.</li>
+        <li>Review and ship: read the diff in the Changes tab, then open a pull request or merge the branch your usual way.</li>
       </ol>
+      <p>Needs Windows 10 or later, and either a Claude plan with Claude Code or an Anthropic API key. Git 2.17 or later is recommended.</p>
       <p><a href="https://github.com/ParsonsProjects/grove-bench/releases">Download for Windows</a> | <a href="https://github.com/ParsonsProjects/grove-bench">View on GitHub</a></p>
     </noscript>
 

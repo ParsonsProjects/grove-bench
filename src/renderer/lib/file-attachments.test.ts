@@ -1,0 +1,471 @@
+import { describe, it, expect } from 'vitest';
+import {
+  classifyFile,
+  mediaTypeOf,
+  validateFileSize,
+  processFiles,
+  extractClipboardImages,
+  uniquifyFileName,
+  base64Size,
+  dataUrlData,
+  formatFileSize,
+  attachmentPayload,
+  TEXT_EXTENSIONS,
+  IMAGE_MIME_TYPES,
+  MAX_TEXT_SIZE,
+  MAX_IMAGE_SIZE,
+  MAX_FILE_SIZE,
+  MAX_TOTAL_SIZE,
+} from './file-attachments.js';
+
+// ─── classifyFile ───
+
+describe('classifyFile', () => {
+  it('classifies JPEG images by MIME type', () => {
+    expect(classifyFile({ name: 'photo.jpg', type: 'image/jpeg' })).toBe('image');
+  });
+
+  it('classifies PNG images by MIME type', () => {
+    expect(classifyFile({ name: 'screenshot.png', type: 'image/png' })).toBe('image');
+  });
+
+  it('classifies GIF images by MIME type', () => {
+    expect(classifyFile({ name: 'anim.gif', type: 'image/gif' })).toBe('image');
+  });
+
+  it('classifies WebP images by MIME type', () => {
+    expect(classifyFile({ name: 'img.webp', type: 'image/webp' })).toBe('image');
+  });
+
+  it('classifies TypeScript files by extension', () => {
+    expect(classifyFile({ name: 'index.ts', type: '' })).toBe('text');
+  });
+
+  it('classifies Python files by extension', () => {
+    expect(classifyFile({ name: 'main.py', type: '' })).toBe('text');
+  });
+
+  it('classifies files with text/ MIME type', () => {
+    expect(classifyFile({ name: 'unknown.abc', type: 'text/plain' })).toBe('text');
+  });
+
+  it('classifies extensionless filenames like dockerfile', () => {
+    expect(classifyFile({ name: 'dockerfile', type: '' })).toBe('text');
+    expect(classifyFile({ name: 'makefile', type: '' })).toBe('text');
+  });
+
+  // New file types added in this feature
+  it('classifies Astro files', () => {
+    expect(classifyFile({ name: 'Layout.astro', type: '' })).toBe('text');
+  });
+
+  it('classifies PowerShell files', () => {
+    expect(classifyFile({ name: 'build.ps1', type: '' })).toBe('text');
+  });
+
+  it('classifies Zig files', () => {
+    expect(classifyFile({ name: 'main.zig', type: '' })).toBe('text');
+  });
+
+  it('classifies Julia files', () => {
+    expect(classifyFile({ name: 'solve.jl', type: '' })).toBe('text');
+  });
+
+  it('classifies GraphQL files', () => {
+    expect(classifyFile({ name: 'schema.graphql', type: '' })).toBe('text');
+  });
+
+  it('classifies .jsonc and .json5 files', () => {
+    expect(classifyFile({ name: 'tsconfig.jsonc', type: '' })).toBe('text');
+    expect(classifyFile({ name: 'config.json5', type: '' })).toBe('text');
+  });
+
+  it('classifies C++ variant extensions', () => {
+    expect(classifyFile({ name: 'main.cc', type: '' })).toBe('text');
+    expect(classifyFile({ name: 'main.cxx', type: '' })).toBe('text');
+    expect(classifyFile({ name: 'main.hxx', type: '' })).toBe('text');
+  });
+
+  it('classifies .editorconfig and .prettierrc', () => {
+    expect(classifyFile({ name: '.editorconfig', type: '' })).toBe('text');
+    expect(classifyFile({ name: '.prettierrc', type: '' })).toBe('text');
+  });
+
+  it('classifies module, infrastructure and schema files as text', () => {
+    for (const name of ['vite.config.mjs', 'index.cjs', 'main.tf', 'schema.prisma', 'api.proto', 'events.jsonl', 'page.htm']) {
+      expect(classifyFile({ name, type: '' })).toBe('text');
+    }
+  });
+
+  it('classifies extensionless build files like Gemfile and Jenkinsfile', () => {
+    expect(classifyFile({ name: 'Gemfile', type: '' })).toBe('text');
+    expect(classifyFile({ name: 'Jenkinsfile', type: '' })).toBe('text');
+  });
+
+  it('classifies a .ts file as text even when the OS calls it a video', () => {
+    expect(classifyFile({ name: 'index.ts', type: 'video/mp2t' })).toBe('text');
+  });
+
+  it('attaches anything else as a file', () => {
+    expect(classifyFile({ name: 'spec.pdf', type: 'application/pdf' })).toBe('file');
+    expect(classifyFile({ name: 'archive.zip', type: 'application/zip' })).toBe('file');
+    expect(classifyFile({ name: 'video.mp4', type: 'video/mp4' })).toBe('file');
+    expect(classifyFile({ name: 'music.mp3', type: 'audio/mpeg' })).toBe('file');
+  });
+
+  it('attaches images the agent cannot see (bmp, tiff) as files', () => {
+    expect(classifyFile({ name: 'old.bmp', type: 'image/bmp' })).toBe('file');
+    expect(classifyFile({ name: 'scan.tiff', type: 'image/tiff' })).toBe('file');
+  });
+});
+
+// ─── mediaTypeOf ───
+
+describe('mediaTypeOf', () => {
+  it("keeps the browser's type", () => {
+    expect(mediaTypeOf({ name: 'a.zip', type: 'application/zip' })).toBe('application/zip');
+  });
+
+  it('fills in PDFs and audio the OS has no type for', () => {
+    expect(mediaTypeOf({ name: 'Spec.PDF', type: '' })).toBe('application/pdf');
+    expect(mediaTypeOf({ name: 'memo.mp3', type: '' })).toBe('audio/mpeg');
+    expect(mediaTypeOf({ name: 'memo.wav', type: '' })).toBe('audio/wav');
+  });
+
+  it('is empty when nothing knows the type', () => {
+    expect(mediaTypeOf({ name: 'data.bin', type: '' })).toBe('');
+  });
+
+  it('is a string even for an extension that names an Object.prototype member', () => {
+    expect(mediaTypeOf({ name: 'x.constructor', type: '' })).toBe('');
+  });
+});
+
+// ─── validateFileSize ───
+
+describe('validateFileSize', () => {
+  it('accepts text files under 100KB', () => {
+    expect(validateFileSize({ name: 'small.ts', size: 1024 }, 'text')).toBeNull();
+  });
+
+  it('rejects text files over 100KB', () => {
+    expect(validateFileSize({ name: 'big.ts', size: MAX_TEXT_SIZE + 1 }, 'text')).toContain('too large');
+    expect(validateFileSize({ name: 'big.ts', size: MAX_TEXT_SIZE + 1 }, 'text')).toContain('100KB');
+  });
+
+  it('accepts image files under 5MB', () => {
+    expect(validateFileSize({ name: 'photo.png', size: 1024 * 1024 }, 'image')).toBeNull();
+  });
+
+  it('rejects image files over 5MB', () => {
+    expect(validateFileSize({ name: 'huge.png', size: MAX_IMAGE_SIZE + 1 }, 'image')).toContain('too large');
+    expect(validateFileSize({ name: 'huge.png', size: MAX_IMAGE_SIZE + 1 }, 'image')).toContain('5MB');
+  });
+
+  it('accepts files at exactly the size limit', () => {
+    expect(validateFileSize({ name: 'exact.ts', size: MAX_TEXT_SIZE }, 'text')).toBeNull();
+    expect(validateFileSize({ name: 'exact.png', size: MAX_IMAGE_SIZE }, 'image')).toBeNull();
+    expect(validateFileSize({ name: 'exact.zip', size: MAX_FILE_SIZE }, 'file')).toBeNull();
+  });
+
+  it('rejects other files over 25MB', () => {
+    expect(validateFileSize({ name: 'huge.zip', size: MAX_FILE_SIZE + 1 }, 'file')).toBe('huge.zip (too large, max 25MB)');
+  });
+});
+
+// ─── processFiles ───
+
+describe('processFiles', () => {
+  function makeFile(name: string, content: string, type = ''): File {
+    return new File([content], name, { type });
+  }
+
+  it('processes a text file', async () => {
+    const file = makeFile('hello.ts', 'const x = 1;', 'text/typescript');
+    const result = await processFiles([file], []);
+    expect(result.files).toHaveLength(1);
+    expect(result.files[0]).toEqual({ name: 'hello.ts', content: 'const x = 1;', type: 'text' });
+    expect(result.skipped).toHaveLength(0);
+  });
+
+  it('processes an image file', async () => {
+    const file = makeFile('photo.png', 'fake-png-data', 'image/png');
+    const result = await processFiles([file], []);
+    expect(result.files).toHaveLength(1);
+    expect(result.files[0].type).toBe('image');
+    expect(result.files[0].name).toBe('photo.png');
+    expect((result.files[0] as { dataUrl: string }).dataUrl).toContain('data:');
+    expect(result.skipped).toHaveLength(0);
+  });
+
+  /** A file that reports `size` without holding that much data. */
+  function sized(file: File, size: number): File {
+    Object.defineProperty(file, 'size', { value: size });
+    return file;
+  }
+
+  it('attaches images as files when the agent can\'t take them, and keeps text files', async () => {
+    const result = await processFiles(
+      [makeFile('photo.png', 'fake-png-data', 'image/png'), makeFile('a.ts', 'x', 'text/typescript')],
+      [],
+      { allowImages: false },
+    );
+    expect(result.files.map((f) => [f.name, f.type]).sort()).toEqual([['a.ts', 'text'], ['photo.png', 'file']]);
+    expect(result.skipped).toEqual([]);
+  });
+
+  it('attaches other files with their type and size', async () => {
+    const file = makeFile('archive.zip', 'data', 'application/zip');
+    const result = await processFiles([file], []);
+    expect(result.files).toEqual([
+      { name: 'archive.zip', dataUrl: expect.stringMatching(/^data:application\/zip;base64,/), mediaType: 'application/zip', size: 4, type: 'file' },
+    ]);
+    expect(result.skipped).toEqual([]);
+  });
+
+  it('attaches text files too large to send inline as files', async () => {
+    const bigContent = 'x'.repeat(MAX_TEXT_SIZE + 1);
+    const file = makeFile('big.log', bigContent, 'text/plain');
+    const result = await processFiles([file], []);
+    expect(result.files).toHaveLength(1);
+    expect(result.files[0]).toMatchObject({ name: 'big.log', type: 'file', size: MAX_TEXT_SIZE + 1 });
+    expect(result.skipped).toEqual([]);
+  });
+
+  it('attaches images over 5MB as files', async () => {
+    const file = sized(makeFile('huge.png', 'png', 'image/png'), MAX_IMAGE_SIZE + 1);
+    const result = await processFiles([file], []);
+    expect(result.files[0]).toMatchObject({ name: 'huge.png', type: 'file', mediaType: 'image/png' });
+  });
+
+  it('sends a large text file by path as text, whatever type the OS gives it', async () => {
+    const ts = sized(makeFile('generated.ts', 'x', 'video/mp2t'), MAX_TEXT_SIZE + 1);
+    const log = sized(makeFile('big.log', 'x', 'text/x-log'), MAX_TEXT_SIZE + 1);
+    const result = await processFiles([ts, log], []);
+    expect(result.files.find((f) => f.name === 'generated.ts')).toMatchObject({ type: 'file', mediaType: 'text/plain' });
+    expect(result.files.find((f) => f.name === 'big.log')).toMatchObject({ type: 'file', mediaType: 'text/x-log' });
+  });
+
+  it('skips a file that would take the message past the 50MB total', async () => {
+    const existing = [{ name: 'a.zip', dataUrl: 'data:,', mediaType: 'application/zip', size: MAX_TOTAL_SIZE - 10, type: 'file' as const }];
+    const result = await processFiles([makeFile('small.txt', 'hi', 'text/plain'), sized(makeFile('b.zip', 'z', 'application/zip'), 20)], existing);
+    expect(result.files.map((f) => f.name)).toEqual(['small.txt']);
+    expect(result.skipped).toEqual(['b.zip (over the 50MB limit for one message)']);
+  });
+
+  it('skips files over 25MB', async () => {
+    const file = sized(makeFile('backup.zip', 'zip', 'application/zip'), MAX_FILE_SIZE + 1);
+    const result = await processFiles([file], []);
+    expect(result.files).toEqual([]);
+    expect(result.skipped).toEqual(['backup.zip (too large, max 25MB)']);
+  });
+
+  it('skips duplicate files based on name', async () => {
+    const file = makeFile('index.ts', 'code', 'text/typescript');
+    const existing = [{ name: 'index.ts', content: 'old code', type: 'text' as const }];
+    const result = await processFiles([file], existing);
+    expect(result.files).toHaveLength(0);
+    expect(result.skipped).toHaveLength(0);
+  });
+
+  it('processes multiple files of mixed types', async () => {
+    const files = [
+      makeFile('app.ts', 'code', 'text/typescript'),
+      makeFile('logo.png', 'img', 'image/png'),
+      makeFile('data.zip', 'bin', 'application/zip'),
+    ];
+    const result = await processFiles(files, []);
+    expect(result.files.map((f) => f.type).sort()).toEqual(['file', 'image', 'text']);
+    expect(result.skipped).toHaveLength(0);
+  });
+
+  it('renames duplicates instead of skipping when renameDuplicates is set', async () => {
+    const file = makeFile('image.png', 'second-paste', 'image/png');
+    const existing = [{ name: 'image.png', dataUrl: 'data:image/png;base64,first', type: 'image' as const }];
+    const result = await processFiles([file], existing, { renameDuplicates: true });
+    expect(result.files).toHaveLength(1);
+    expect(result.files[0].name).toBe('image-2.png');
+    expect(result.skipped).toHaveLength(0);
+  });
+
+  it('renames colliding names within a single batch (multi-image paste)', async () => {
+    const files = [
+      makeFile('image.png', 'a', 'image/png'),
+      makeFile('image.png', 'b', 'image/png'),
+      makeFile('image.png', 'c', 'image/png'),
+    ];
+    const result = await processFiles(files, [], { renameDuplicates: true });
+    const names = result.files.map((f) => f.name).sort();
+    expect(names).toEqual(['image-2.png', 'image-3.png', 'image.png']);
+  });
+
+  it('keeps counting past existing renamed attachments', async () => {
+    const file = makeFile('image.png', 'third-paste', 'image/png');
+    const existing = [
+      { name: 'image.png', dataUrl: 'data:1', type: 'image' as const },
+      { name: 'image-2.png', dataUrl: 'data:2', type: 'image' as const },
+    ];
+    const result = await processFiles([file], existing, { renameDuplicates: true });
+    expect(result.files[0].name).toBe('image-3.png');
+  });
+});
+
+// ─── uniquifyFileName ───
+
+describe('uniquifyFileName', () => {
+  it('returns the name unchanged when not taken', () => {
+    expect(uniquifyFileName('image.png', new Set())).toBe('image.png');
+  });
+
+  it('appends a counter before the extension', () => {
+    expect(uniquifyFileName('image.png', new Set(['image.png']))).toBe('image-2.png');
+  });
+
+  it('increments until the name is free', () => {
+    expect(uniquifyFileName('image.png', new Set(['image.png', 'image-2.png', 'image-3.png']))).toBe('image-4.png');
+  });
+
+  it('handles extensionless names', () => {
+    expect(uniquifyFileName('dockerfile', new Set(['dockerfile']))).toBe('dockerfile-2');
+  });
+
+  it('handles dotfiles without treating the leading dot as an extension', () => {
+    expect(uniquifyFileName('.prettierrc', new Set(['.prettierrc']))).toBe('.prettierrc-2');
+  });
+});
+
+// ─── extractClipboardImages ───
+
+describe('extractClipboardImages', () => {
+  function makeDataTransfer(items: Array<{ kind: string; type: string; file: File | null }>): DataTransfer {
+    // jsdom doesn't provide DataTransfer, so build a minimal mock
+    return {
+      items: items.map((item) => ({
+        kind: item.kind,
+        type: item.type,
+        getAsFile: () => item.file,
+      })),
+    } as unknown as DataTransfer;
+  }
+
+  it('extracts PNG images from clipboard', () => {
+    const file = new File(['data'], 'image.png', { type: 'image/png' });
+    const dt = makeDataTransfer([{ kind: 'file', type: 'image/png', file }]);
+    const result = extractClipboardImages(dt);
+    expect(result).toHaveLength(1);
+    expect(result[0].name).toBe('image.png');
+  });
+
+  it('extracts JPEG images from clipboard', () => {
+    const file = new File(['data'], 'photo.jpg', { type: 'image/jpeg' });
+    const dt = makeDataTransfer([{ kind: 'file', type: 'image/jpeg', file }]);
+    const result = extractClipboardImages(dt);
+    expect(result).toHaveLength(1);
+  });
+
+  it('ignores non-file clipboard items (e.g. text)', () => {
+    const dt = makeDataTransfer([{ kind: 'string', type: 'text/plain', file: null }]);
+    const result = extractClipboardImages(dt);
+    expect(result).toHaveLength(0);
+  });
+
+  it('ignores unsupported image types', () => {
+    const file = new File(['data'], 'image.bmp', { type: 'image/bmp' });
+    const dt = makeDataTransfer([{ kind: 'file', type: 'image/bmp', file }]);
+    const result = extractClipboardImages(dt);
+    expect(result).toHaveLength(0);
+  });
+
+  it('handles mixed clipboard items', () => {
+    const imgFile = new File(['data'], 'screenshot.png', { type: 'image/png' });
+    const dt = makeDataTransfer([
+      { kind: 'string', type: 'text/plain', file: null },
+      { kind: 'file', type: 'image/png', file: imgFile },
+    ]);
+    const result = extractClipboardImages(dt);
+    expect(result).toHaveLength(1);
+    expect(result[0].name).toBe('screenshot.png');
+  });
+
+  it('returns empty array when getAsFile returns null', () => {
+    const dt = makeDataTransfer([{ kind: 'file', type: 'image/png', file: null }]);
+    const result = extractClipboardImages(dt);
+    expect(result).toHaveLength(0);
+  });
+});
+
+// ─── Data helpers ───
+
+describe('dataUrlData and base64Size', () => {
+  it('takes the base64 data off a data: URL', () => {
+    expect(dataUrlData('data:application/pdf;base64,JVBERi0=')).toBe('JVBERi0=');
+  });
+
+  it('is empty for a data: URL with no data part, as an empty file may give', () => {
+    expect(dataUrlData('data:')).toBe('');
+    expect(dataUrlData('data:application/octet-stream;base64,')).toBe('');
+  });
+
+  it('gives the decoded size of base64 data, padding included', () => {
+    for (const bytes of ['', 'a', 'ab', 'abc', 'abcd']) {
+      expect(base64Size(btoa(bytes))).toBe(bytes.length);
+    }
+  });
+});
+
+describe('attachmentPayload', () => {
+  it('puts text files in content blocks and sends images and other files alongside, in order', () => {
+    expect(attachmentPayload([
+      { name: 'a.md', content: 'one', type: 'text' },
+      { name: 'shot.webp', dataUrl: 'data:image/webp;base64,AAAA', type: 'image' },
+      { name: 'b.md', content: 'two', type: 'text' },
+      { name: 'spec.pdf', dataUrl: 'data:application/pdf;base64,BBBB', mediaType: 'application/pdf', size: 3, type: 'file' },
+    ])).toEqual({
+      tags: ['<file path="a.md" length="3">\none\n</file>', '<file path="b.md" length="3">\ntwo\n</file>'],
+      images: [{ name: 'shot.webp', data: 'AAAA', mediaType: 'image/webp' }],
+      files: [{ name: 'spec.pdf', data: 'BBBB', mediaType: 'application/pdf' }],
+    });
+  });
+
+  it('is empty with nothing attached', () => {
+    expect(attachmentPayload([])).toEqual({ tags: [], images: [], files: [] });
+  });
+});
+
+describe('formatFileSize', () => {
+  it('uses bytes, then KB, then MB', () => {
+    expect(formatFileSize(512)).toBe('512 B');
+    expect(formatFileSize(12 * 1024)).toBe('12 KB');
+    expect(formatFileSize(3.4 * 1024 * 1024)).toBe('3.4 MB');
+  });
+});
+
+// ─── Constants coverage ───
+
+describe('TEXT_EXTENSIONS', () => {
+  it('contains common web extensions', () => {
+    for (const ext of ['ts', 'tsx', 'js', 'jsx', 'html', 'css', 'svelte', 'vue']) {
+      expect(TEXT_EXTENSIONS.has(ext)).toBe(true);
+    }
+  });
+
+  it('contains newly added extensions', () => {
+    for (const ext of ['astro', 'ps1', 'zig', 'jl', 'graphql', 'jsonc', 'json5', 'cc', 'cxx', 'hxx', 'nim', 'cr', 'rkt']) {
+      expect(TEXT_EXTENSIONS.has(ext)).toBe(true);
+    }
+  });
+});
+
+describe('IMAGE_MIME_TYPES', () => {
+  it('includes jpeg, png, gif, webp', () => {
+    expect(IMAGE_MIME_TYPES.has('image/jpeg')).toBe(true);
+    expect(IMAGE_MIME_TYPES.has('image/png')).toBe(true);
+    expect(IMAGE_MIME_TYPES.has('image/gif')).toBe(true);
+    expect(IMAGE_MIME_TYPES.has('image/webp')).toBe(true);
+  });
+
+  it('does not include bmp or tiff', () => {
+    expect(IMAGE_MIME_TYPES.has('image/bmp')).toBe(false);
+    expect(IMAGE_MIME_TYPES.has('image/tiff')).toBe(false);
+  });
+});

@@ -1,49 +1,115 @@
 # Grove Bench — Gap Analysis
 
-Feature gaps identified by comparing against [Toad](https://github.com/batrachianai/toad) and [T3 Code](https://github.com/pingdotgg/t3code).
+Feature gaps identified by comparing against [Toad](https://github.com/batrachianai/toad) and [T3 Code](https://github.com/pingdotgg/t3code), plus gaps found by auditing the codebase against DESIGN.md and docs/user-stories.md.
 
 ## Priority 1 — High Impact
 
 ### Multi-Agent Support
-- [ ] Support multiple agent backends (Gemini, Codex, OpenHand) beyond Claude
-- [ ] Agent discovery/install marketplace ("app store")
-- [ ] Agent Client Protocol for custom agent integration
+- [x] Adapter-declared session controls — `AgentAdapter.getControls(model)` returns per-model `ControlDescriptor`s (mode, thinking, speed, …); the session manager owns the values, validates them per model, passes them to `adapter.start()`, and emits `controls_sync`. The renderer no longer hardcodes thinking or permission-mode enums.
+- [x] Agent settings popover — one two-line status-bar trigger (agent on top; model, mode, and any non-default control beneath) opening a column-per-setting popover for agent, model, and every declared control (`SessionControlsPopover.svelte`). Alt+M / Alt+T still cycle.
+- [x] Multi-agent groundwork — per-agent prerequisite status (`PrerequisiteStatus.agents`), saved API keys and default models (`settings.defaultModels`, schema v5 migration); Agent picker in New Conversation; Settings > Agent grouped per agent; status bar model list follows the conversation's agent; Settings MCP / Plugins tabs hidden when the default agent lacks them
+- [x] Per-agent background tasks — memory notes, compaction, commit messages and skill suggestions run on the conversation's own agent with its background model (`adapter.backgroundModel`, `settings.backgroundModels`, schema v6 migration from `memoryModel`); the manifest records each conversation's agent so restarts resume on it
+- [ ] Codex adapter: implement `getControls`, `getModels`, `start`, `setControl`, and `getUsage` against the Codex app-server protocol and register it; attach a `toolView` (shared/tool-view.ts) to tool events so the thread, permission prompts and Read-safe mode understand Codex's tools. Until then Codex runs through the ACP adapter with `codex-acp` as a custom agent
+- [ ] Grok Build adapter
+- [x] Open models through OpenCode (alpha, off until enabled in Settings > Agents): built-in ACP preset (`adapters/acp/opencode.ts`) that makes OpenCode ask before it acts and locks its local server; an OpenRouter key saved in Grove starts conversations on DeepSeek V4.1 Flash. Left to do (a Windows run with a real key, OpenCode's retried replies and subagents, to-do lists, cost) in `docs/open-model-harnesses-plan.md`
+- [x] Per-adapter defaults in Settings — `adapterDefaults` (adapter id → control id → value) replaces `defaultThinkingLevel` (settings schema v2 migration); the Agent tab lists every registered adapter's declared controls for the default model via `getAdapterControls`, and `initialControls` overlays the saved values that the adapter actually offers
+- [x] Neutral form for tool allow/deny rules — rules are `<tool>` / `<tool>(<glob>)` with adapter-neutral keywords (`shell`, `edit`, `read`, `web`, `agent`, `question`, `mcp`) matched by tool category; adapters build the call specifier with `toolCallSpecifier` (command, file path, URL, ...). Provider tool names (`Bash(...)`) keep working, so no migration
+- [x] Switch agent mid-thread: picking another agent in the Agent settings popover hands the thread to it (`switchAgent` in `agent-session.ts`). The thread, worktree and checkpoints stay; if the user agrees, the next message carries a short transcript built from Grove's event log (`agent-handoff.ts`), so it didn't need the on-disk transcript after all
+- [x] Agent discovery: Settings > Agents lists the ACP Registry's agents (`RegistryAgents.svelte`, fetched daily by `catalogs.ts`) with how to install each and a "Use" button that fills in the add form. Installing stays manual: Grove shows the install commands but never runs them
+- [x] Agent Client Protocol for custom agent integration: `adapters/acp/`, with Gemini CLI and GitHub Copilot CLI built in, others added in Settings → Agent; see docs/acp-adapter-plan.md for what is left
 
 ### Embedded Terminal
 - [x] Full working shell with color support and interactive command execution
 - [x] Persistent shell state (env vars, directory changes across commands)
 - [x] Per-session PTY terminals (split, toggle, resize, clear, restart)
-- [ ] Attach terminal output as context to AI messages
+- [x] Attach terminal output as context to AI messages — "To prompt" in the terminal toolbar inserts the selection (or the last 200 lines of scrollback) into the prompt as a fenced block and switches to Activity
 
 ### Checkpointing & Revert
 - [x] Git-based snapshots at each agent turn
 - [x] Per-turn diff viewing (what changed in each turn)
 - [x] Revert workspace to any previous turn's checkpoint
-- [ ] Preserve checkpoints across `/clear` — currently checkpoints are reset on clear; a better solution would keep git checkpoint refs and rebuild the checkpoint list independently of message history
+- [x] Preserve checkpoints across `/clear` — the git refs are kept and a `__clear__` sentinel checkpoint marks the boundary; `list()` flags earlier turns `beforeClear`, the Checkpoints tab shows them under a "Before /clear" divider with a files-only Restore (the conversation they belonged to is gone, so no conversation rewind is offered)
+- [ ] Checkpoints for projects used without git. Today a folder project has none (`noGitCheckpoints` in `src/main/no-git-checkpoints.ts`), so only the conversation can be rewound. Grove takes the snapshot itself before each message, so any option below works for every agent and catches Bash edits (unlike the SDK's own `enableFileCheckpointing`, which is Claude-only and tracks only its file editing tools). First decide who it's for: users with git whose folder isn't a repository, or users with no git at all.
+  1. Git kept outside the folder: a hidden repository in the app's data folder with the project as its work tree. Needs git installed; closest to `checkpoints.ts`, so the smallest change.
+  2. isomorphic-git (pure JavaScript git): no git install, same format as 1. No diff command, so diffs come from the `diff` package; 4.9 MB; its README says it is run by two volunteers who "don't write much code".
+  3. Own snapshots: hashed file copies plus a file list per turn. No dependency, byte-exact restores, Node's built-in hashing; we own storage, cleanup, ignore rules (`ignore` package) and Windows edge cases. Preferred if the goal is users with no git.
 
 ### Settings UI
 - [x] GUI-based settings panel (no manual JSON editing)
 - [x] Configurable UI layouts (full-featured to minimal)
+- [x] Settings redesign: auto-save (no Save/Cancel; text saves after a pause, numbers on blur and only when valid), a left-hand list of sections, each with a grove name over its plain one (The grove / General, Grovekeepers / Agents, The gate / Permissions, Branches & roots / Git & worktrees, Bells / Notifications, Tending / Background work, Tool shed / MCP servers, Seed packets / Plugins, Hedges / Privacy) with search (`settings-search.ts`), `Ctrl+,`, confirm before removing an MCP server or plugin, and `--muted-foreground` raised to 4.5:1 contrast
+- [x] Light theme (VS Code Light Modern): `globals.css` sets every token for `prefers-color-scheme: light`, which main sets from the Theme setting through `nativeTheme.themeSource` (so native menus and Preview pages follow it). Tailwind palette shades used for status colours (`text-green-400` and so on) are swapped for darker ones in light mode, checked by `light-theme.test.ts`; highlight.js and xterm have light themes. Theme picker is in Settings → The grove (General)
+
+### Merge-Back Workflow
+- ~~Merge a session's branch into the base branch from within the app~~ — implemented, then removed; sessions land their work through the PR workflow instead (local `git merge` from the terminal remains available for repos without a remote)
+- [x] Rebase / cherry-pick / squash between agent branches — "Branch…" in the Changes tab opens `GitOpsDialog` (rebase onto the base or another session's branch, squash every commit since the base into one, cherry-pick a commit from another session's branch); operations refuse on a dirty tree and any conflict is aborted and reported with the file list, so the branch is never left mid-operation
+
+### OS Notifications
+- [x] Native notification when an agent finishes a turn while the window is unfocused
+- [x] Native notification when an agent is blocked on a permission prompt or question, and for PR-watch alerts (new CI failure / review comments / needs-human)
+- [x] Taskbar flash while a notification is pending (cleared on focus); clicking a notification jumps to the session
+- [x] Sidebar attention flash extended to PR alerts (previously only status-bar chips)
+- [x] Overlay badge on the taskbar icon showing the count of sessions needing attention — renderer draws the count bitmap (`attention-badge.ts`), main applies it via `setOverlayIcon` (Windows) / dock badge (macOS) / `setBadgeCount` (Linux); toggle in Settings → Notifications
+
+### Attention Triage
+- [x] Sidebar filter chips All / Needs you / Working / Unread / Idle with counts — `session-triage.ts` puts each session in exactly one state (needs-you = pending permission or question, working = turn in progress, unread = finished while unfocused, idle = open and ready or sleeping; closed and errored threads come under no chip)
+- [x] Per-repo attention counts on each Projects header
+- [x] Mark Completed in the conversation context menu and the row's hover tick: stops the conversation (it was called Stop), which takes it off the Conversations list, and its state shows as Completed. A separate `completedAt` hide flag was dropped as it overlapped with Stop. Since renamed Close Conversation, with an ✕ in place of the tick, as it's used to set work aside as much as to finish it
+- [x] Sidebar sections renamed: Conversations (live working set) and Projects (each repo with all its sessions)
+- [x] Persist the unread flag across restarts — `unreadSessionIds` in app-state.json, restored after worktree restore
+
+### Robustness
+- [x] Global error handling — `crash-handling.ts` installs `uncaughtException` / `unhandledRejection` handlers in main (file log + forwarded to the renderer as a toast); `error-handling.ts` hooks `window.onerror` / `unhandledrejection` in the renderer (toast + file log via IPC); `<svelte:boundary>` around the sidebar and each session pane with a Reload view button
+- [x] Opt-in crash reporting — "Send crash reports" toggle under Privacy (requires analytics on); uncaught errors from either process go to PostHog `captureException` with message, stack, source and kind only
+- [x] Schema versioning + migration for persisted state — `persisted-state.ts` (top-level `schemaVersion`, ordered migration table, newer-file handling); settings.json and app-state.json are migrated on load, then validated field by field with Zod so one corrupt value resets to its default instead of dropping the file. Worktree manifest still unversioned.
 
 ## Priority 2 — Notable Gaps
 
 ### Diff Viewer
 - [x] Side-by-side diff view option (toggle in Edit tool header)
-- [ ] Syntax highlighting in diff views across multiple languages
-- [ ] Full thread diff view (cumulative changes across all turns)
+- [x] Syntax highlighting in diff views across multiple languages: `DiffView` highlights by file extension (`languageForPath` in `lib/diff-highlight.ts`, grammars registered in `lib/hljs.ts`) whenever it's given a `filePath`
+- [x] Syntax highlighting in the thread's edit blocks (`DiffBlock.svelte`) and permission prompts (`PermissionBlock.svelte`): they pass `filePath` with `deferHighlight`, so `DiffView` draws plain lines and colours them once on screen, in idle time, a slice of lines at a time (`whenOnScreen` in `lib/code-highlight.ts`, shared with Markdown code blocks), keeping the colours per diff rather than in the shared cache. Lines over 2,000 characters and diffs over 5,000 distinct lines stay plain there (`linesToColour`). Colouring as they rendered would cost about 200 µs a line (a 2,000-line write is about 400 ms), the same freeze code blocks had when a thread woke
+- [x] Full thread diff view (cumulative changes across all turns) — "All turns" entry in the Checkpoints tab, plus per-turn diff stats and a This turn / Since here toggle
 
 ### PR Creation Workflow
-- [ ] Dedicated PR creation dialog (title, body, base branch)
-- [ ] Auto-populate PR description from agent's changes
-- [ ] Call `gh pr create` from within the app
+- [x] Dedicated PR creation dialog (title, body, base branch, draft)
+- [x] Auto-populate PR title/description from the branch's commits
+- [x] Call `gh pr create` from within the app (auto-pushes the branch first)
+- [x] One-click Create PR sends a turn to the session's agent (commit → push → PR); manual dialog is the fallback for stopped sessions
+- [x] PR status watching — state, checks rollup, review decision polled in the status bar (all sessions, not just the open tab)
+- [x] Multiple PRs per session — every PR on the session's branch and on branches checked out in it (via the HEAD reflog) is listed; one primary PR (open first, newest first, or user-picked) drives alerts and auto turns
+- [x] One-click fix turns — clickable failing-checks / changes-requested badges send the agent to read CI logs or review comments and fix
+- [x] New-failure / new-comment detection with pulsing alert chips (baseline seeded on startup, one alert per pushed commit)
+- [x] Opt-in auto mode per session — auto-fix CI and auto-address reviews (idle-only, max 2 fix attempts per PR until CI goes green, then "needs human"; collaborator-authored comments only)
+- [x] Commit & Push and one-click push (↑n) from the Changes panel / status bar
 
 ### Session Search
 - [x] Fuzzy search to find and resume past conversations (Ctrl+R)
 - [x] Filter/search within message history (Ctrl+F with highlighting)
 
 ### Help System
-- [ ] Keybinding documentation (F1 or similar)
-- [ ] Context-aware footer showing relevant keyboard shortcuts
+- [x] Keybinding documentation (F1 or similar) — `F1` opens Help, and the empty state links to Getting Started
+- [ ] Context-aware footer showing relevant keyboard shortcuts. Today "Keys" in the status bar (`StatusBarKeys.svelte`) lists every shortcut, whatever has focus
+
+### Cost & Usage Dashboard
+- [x] Plan usage runway — `AgentQueryHandle.getUsage()` returns a neutral `ProviderUsage` (windows with 0–1 utilization and reset time); the Claude adapter maps the SDK's experimental `/usage` control and probes for it so a rename degrades to "no usage"; `usage.svelte.ts` keeps one snapshot per provider, refreshes on popover open and after turns (throttled), and folds live `rate_limit` events in; shown as bars under the agent in the Agent settings popover
+- [x] Per-thread and daily cost: a click on the last turn in the status bar opens Usage, with what the thread and today (every thread since midnight) have cost so far (`StatusBarLastTurn.svelte`), from the figures the spend limits count (`threadSpend` in `agent-session.ts`, `todaySpend` in `session-limits.ts`), with a link to the limits. The thread's total and its allowance past the spend limit are saved in the worktree manifest (after a costed turn, on Continue, and before a rewind or /clear), so a rewind, /clear or restart doesn't lower the total or reset the thread's spend limit. The dollar rows show only where the last turn's cost is (API sign-ins, and agents that report cost but not plan usage)
+- [x] Token counts per thread: tokens in and out for the thread, in the Usage popover for every sign-in. Claude Code's `modelUsage` is a running total (subagents included, input counts cache reads and writes), so `RunningTokens` in `adapters/running-cost.ts` turns it into each turn's `turnTokens`; ACP agents pass on session/prompt's `usage`, which is the turn's own. `session-limits.ts` adds them up and they're saved in the manifest with the spend. The context popover's output figure now comes from these totals: it added up each reply's `output_tokens`, which the SDK sets when the reply starts and repeats on every message of it (https://code.claude.com/docs/en/agent-sdk/cost-tracking#read-output-tokens-from-the-result-message)
+- [x] Turn cost per turn: Claude Code's `total_cost_usd` is the query's running total, so `adapters/running-cost.ts` turns it into each turn's cost (`totalCostUsd`) and keeps the running total as `sessionCostUsd`; a resumed query starts from the total its history last reached
+- [x] Limits and alerts (Settings > Limits & alerts): plan usage alert at a chosen percent (in-app toast and desktop notification, once per window, `planAlerts.svelte.ts`); spend per thread and per day, tool calls and minutes per turn, each pausing the thread before its next tool call to ask Continue or Stop (`session-limits.ts`, a `PreToolUse` hook for Claude Code, permission requests for ACP agents)
+
+### Session Export
+- [ ] Markdown transcript per session written to disk (`.grove-wt/<id>/thread.md` or under the repo's memory dir) with an "Open in editor" action
+- [x] Export a thread (Markdown / JSON): **Export Thread…** in the sidebar's thread menu asks where to save it (`SESSION_EXPORT` in `ipc.ts`, `thread-export.ts`). Markdown has the messages (what was typed, not the contents of attached or @-mentioned files), proposed plans and the user's answers, a line per tool call and errors, without tool output, thinking or subagents' work; JSON has every saved event
+- [ ] Session export/import between machines
+
+### Security Hardening
+- [ ] Validate IPC inputs at the boundary with Zod (a dependency, not used for IPC yet). This is robustness more than security: the renderer can already run any command through the terminal (`PTY_WRITE` in `ipc.ts`), so the CSP and the sandbox are what stop injected script, not argument checks. Most of the 184 handlers type their arguments without checking them at run time; a few check by hand (`typeof`). If done, start with the handlers that take objects, or pass paths and branch names on to git or the file system
+- [x] Electron sandbox for the app window: on by default since Electron 20 unless `nodeIntegration: true` or `sandbox: false` is set, and the main window sets neither (`src/main/index.ts`). The preload only uses `contextBridge` and `ipcRenderer`, which work sandboxed. The Preview pages set `sandbox: true` themselves
+- [x] Content-Security-Policy for the renderer: a `<meta>` tag added at build time by `scripts/vite-csp.mjs` (only the app's own scripts, no inline scripts or eval, local images only)
+
+### Onboarding
+- [ ] First-launch welcome/tour surfacing the existing `docs/help/` content (currently only the git notice, the API key step in New Conversation, and analytics consent)
 
 ## Priority 3 — Nice to Have
 
@@ -58,6 +124,31 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 ### Clipboard
 - [x] Copy buttons on code blocks, bash output, diffs, file ops, thinking blocks
 
+### Accessibility & i18n
+- [ ] ARIA roles/labels on app components (80 of 122 app components have `aria-*` or `role` attributes; the other 42 have none)
+- [x] `prefers-reduced-motion` support: `globals.css` stops the pulses, the tooltip and the empty-state animation, and animated components check it themselves (`GroveWalk`, `AgentSprite`, `StatusDot`, `PixelMeter` and others). Loading spinners still turn
+- [ ] i18n framework (all UI strings hardcoded English; spellchecker pinned to `en-US`)
+
+### Maintenance & Hygiene
+- [ ] ESLint/Prettier config (CONTRIBUTING.md notes none exists)
+- [x] Tests for the IPC layer: `ipc.test.ts` covers handler validation, file access bounds, setup cancel and history paging
+- [ ] Component tests (54 of 122 app components have their own test file) and E2E tests (Playwright)
+- [ ] In-app log viewer and a log level setting. Today Settings > Diagnostics can open the logs folder ("Show performance log"), and the level is set with the `GROVE_LOG_LEVEL` env var (`logger.ts`)
+- [ ] Worktree disk-usage reporting and a "reclaim space" tool
+- [ ] Measure live conversation memory: a running conversation keeps every non-streaming event in memory for its whole life (`SessionEventStore.append`); log history size per conversation, and if it's large, keep only recent events in memory and read older ones from the JSONL log
+- [ ] Purge userData on uninstall (NSIS currently leaves settings/logs/worktrees behind)
+- [ ] CHANGELOG.md and SECURITY.md
+- [x] Fetch Claude model list dynamically — the adapter reads `Query.supportedModels()` when a conversation starts (once per run), keeps the concrete model ids, caches the list in app-state for the next launch and falls back to `FALLBACK_MODELS` before the first read; the SDK's effort levels, adaptive thinking, fast mode and auto mode override the static rules in `claudeControlsFor()` (default effort and thinking-off still come from the table)
+- [x] Demo harness (`/demo.html`) console errors: the duplicate keyed-each id in the Sidebar demo data and the missing mock bridge methods (`checkPrerequisites`, update listeners) are fixed; the page now loads on the dev server with no console errors
+
+### From DESIGN.md v2 (documented but previously untracked)
+- [ ] Docker-based sandboxing of agent sessions
+- [ ] Shared CLAUDE.md / agent instructions per worktree
+- [ ] Per-repo agent instructions field in Settings (writes to `CLAUDE.md` or a memory `conventions/` note); today only the global system-prompt append exists
+- [ ] Agent-to-agent communication (one agent's output feeds another)
+- [ ] Orchestration engine (goal decomposition → parallel tasks → integration merge agent) — prototyped and removed; see user stories 20–28 in `docs/user-stories.md`
+- [ ] Worktree dependency optimizations: pnpm-store sharing, `node_modules` symlinking from main checkout (DESIGN.md §6.1)
+
 ## Feature Requests
 
 ### Input & UX
@@ -66,16 +157,25 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [x] Context length indicator (token usage / remaining)
 - [x] Drag and drop (files, images into prompt)
 - [x] Image attachments in messages (paste/drop, up to 8 per turn, pass as base64)
+- [x] Any file as an attachment: saved with the thread and given by path (Claude Code: a note, and reads in that folder allowed without a prompt; ACP: `resource_link`). Only audio goes inline, to ACP agents that take it (listed formats, 5 MB a clip, 10 MB per conversation counted from the thread's history). PDFs go by path: inline ones stay in the history and count toward every later request's size and page limits. 50 MB per message
+
+### Markdown Preview Panel
+- [x] Slide-out panel rendering markdown full-width (reuses the marked + highlight.js + DOMPurify pipeline; Esc / backdrop click to close, copy button)
+- [x] Hover "Focus" button on in-turn assistant responses with document-like markdown (≥2 headings, a table, ≥3 code fences, or structure + length) — works in both Detailed and Summary view modes
+- [x] "Focus" on plan-approval blocks so a proposed plan can be read full-width before approving
+- [x] Secondary: preview `.md` files the agent writes: **preview** on an edit block, **Preview** in the Changes tab, and links to `.md` files in replies open the file as it is now in the Focus panel (`openWorktreeFile` returns its text, up to 1 MB; `isMarkdownFile`). Markdown stays out of "Files made", which lists output, not files edited as source. Not done: a preview in the @ file picker
 
 ### Agent Capabilities
 - [x] `/rewind` — Roll back to a previous message checkpoint, restoring files on disk (SDK: `query.rewindFiles()`). See `docs/rewind-plan.md`
 - [ ] `/btw` — Ephemeral side question that doesn't enter conversation history. Runs while agent is working, no tool access, shows in dismissible overlay. No SDK support — needs separate `query()` call with `maxTurns: 1`
 - [x] Commands (slash commands for common actions)
 - [x] Skills (reusable prompt templates / workflows)
+- [ ] Scheduled skills (what "Recipes on top of skills" became): a Skills drawer (in place of the popover) with This thread (Run and Schedule on each skill, for every agent: Grove reads Gemini CLI's, Copilot's, OpenCode's and custom agents' skill folders as well as Claude Code's) and Scheduled (every project's schedules). Proof of concept done (`src/main/skill-schedules.ts`, `SkillsPanel.svelte`, `docs/skill-schedules-plan.md`); left to do: a run in the packaged Windows app, a help page, and removing a project's schedules with it
 - [x] MCP server connections (connect to external MCP servers)
+- [x] A thread's tasks and files in the status bar: **Tasks** shows the agent's current to-do list (Claude Code's TodoWrite or TaskCreate/TaskUpdate, an ACP plan, OpenCode's todowrite) and **Files** lists the files you attached, the agent made and tools returned. Built in main from the whole history (`shared/thread-items.ts`), so a list started before the loaded page still shows; each item can jump to its message
 
 ### Git & Workflow
-- [ ] Branch → PR link (create PR from session branch)
+- [x] Branch → PR link (create PR from session branch)
 - [x] Branch without worktree (use existing checkout, no worktree creation)
 - [ ] Stacked branch workflows (dependent branch chains)
 
@@ -84,7 +184,9 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [ ] Project scripts (user-defined scripts bound to keyboard shortcuts)
 
 ### Dev & Preview
-- [x] Localhost run (start/preview dev server from worktree)
+- ~~Localhost run (start/preview dev server from worktree)~~ — implemented, then removed; run dev servers from the session terminal instead
+- [x] Preview tab (`Alt+5`) — a browser per conversation with two pages sharing storage: yours (a `WebContentsView` over the tab) and Claude's (an offscreen page driven by the `grove-preview` MCP tools: open, screenshot, read, logs, click, type; local URLs only). Localhost links in the conversation open there; addresses dev servers print are offered in the empty tab
+- [ ] Named background commands — a list of long-running processes with Running/Stopped state, Stop, follow-the-log, wrap, and downloadable output, decoupled from the session PTY (a narrower reimplementation of the removed dev-server feature)
 
 ## Already at Parity or Better
 
@@ -105,7 +207,6 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - **Orphan Worktree Detection & Cleanup** — auto-detect on startup + 15-min background sweeps
 - **Auto-Copy `.env` Files** — automatically copies `.env`, `.npmrc`, etc. to new worktrees
 - **Auto-Install Dependencies** — optional npm install with shared cache in new worktrees
-- **Dev Server Management** — auto-detect dev commands, start/stop, detect localhost ports, kill port conflicts
 - **Tool Visibility Control** — allow/deny rules with glob patterns (more granular than t3's sandbox modes)
 - **Power Monitoring** — flush state on suspend, health-check on resume
 - **Changes Review Panel** — dedicated panel with file staging/unstaging, revert individual files

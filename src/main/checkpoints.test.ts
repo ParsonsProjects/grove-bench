@@ -1,31 +1,44 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock git module before importing
-vi.mock('./git.js', () => ({
-  git: vi.fn(),
-  gitEnv: vi.fn(),
-}));
+vi.mock('./git.js', () => {
+  const git = vi.fn();
+  // Straight through to the mocked git; a test makes it give null (over its limit) itself.
+  return { git, gitEnv: vi.fn(), gitPatch: vi.fn((args: string[], cwd: string) => git(args, cwd)) };
+});
 
 vi.mock('./logger.js', () => ({
   logger: { debug: vi.fn(), warn: vi.fn(), info: vi.fn(), error: vi.fn() },
 }));
 
-// Mock fs — capture() now writes commit messages to a temp file
+// Mock fs: capture() writes commit messages to a temp file. No worktree
+// index is found (stat fails), so snapshots start from read-tree HEAD.
 vi.mock('node:fs', () => ({
-  rmSync: vi.fn(),
-  writeFileSync: vi.fn(),
+  promises: {
+    rm: vi.fn(async () => {}),
+    writeFile: vi.fn(async () => {}),
+    copyFile: vi.fn(async () => {}),
+    readFile: vi.fn(async () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); }),
+    stat: vi.fn(async () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); }),
+  },
 }));
 
-import { git, gitEnv } from './git.js';
+import { git, gitEnv, gitPatch } from './git.js';
 import { CheckpointManager } from './checkpoints.js';
 import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 const mockGit = vi.mocked(git);
 const mockGitEnv = vi.mocked(gitEnv);
-const mockFs = vi.mocked(fs);
+const mockWriteFile = vi.mocked(fs.promises.writeFile);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // clearAllMocks keeps queued mockResolvedValueOnce answers: one a test
+  // didn't use would be handed to the next test's git call.
+  mockGit.mockReset();
+  mockGitEnv.mockReset();
+  vi.mocked(gitPatch).mockReset();
 });
 
 describe('CheckpointManager', () => {
@@ -35,7 +48,7 @@ describe('CheckpointManager', () => {
       mockGitEnv.mockResolvedValueOnce(''); // read-tree
       mockGitEnv.mockResolvedValueOnce(''); // add -A
       mockGitEnv.mockResolvedValueOnce('abc123tree'); // write-tree
-      mockGit.mockResolvedValueOnce('def456commit'); // commit-tree
+      mockGitEnv.mockResolvedValueOnce('def456commit'); // commit-tree
       mockGit.mockResolvedValueOnce(''); // update-ref
 
       const mgr = new CheckpointManager();
@@ -52,9 +65,11 @@ describe('CheckpointManager', () => {
         ['write-tree'], '/repo', expect.objectContaining({ GIT_INDEX_FILE: expect.any(String) })
       );
 
-      // Verify commit-tree uses -F (temp file) for Windows newline compat
-      expect(mockGit).toHaveBeenCalledWith(
-        ['commit-tree', 'abc123tree', '-F', expect.any(String)], '/repo'
+      // Verify commit-tree uses -F (temp file) for Windows newline compat, and
+      // carries its own identity so it works where user.name/email are unset
+      expect(mockGitEnv).toHaveBeenCalledWith(
+        ['commit-tree', 'abc123tree', '-F', expect.any(String)], '/repo',
+        expect.objectContaining({ GIT_AUTHOR_NAME: expect.any(String), GIT_AUTHOR_EMAIL: expect.any(String), GIT_COMMITTER_NAME: expect.any(String), GIT_COMMITTER_EMAIL: expect.any(String) })
       );
       expect(mockGit).toHaveBeenCalledWith(
         ['update-ref', 'refs/grove/checkpoints/sess1/turn/1', 'def456commit'], '/repo'
@@ -88,11 +103,12 @@ describe('CheckpointManager', () => {
     });
 
     it('serializes concurrent captures via queue', async () => {
-      const callOrder: number[] = [];
-      let captureCount = 0;
-
+      // Hold the first capture on its first git step, so a second capture
+      // that didn't wait its turn would start in the meantime.
+      let release!: () => void;
+      const gate = new Promise<void>((r) => { release = r; });
       mockGitEnv.mockImplementation(async () => {
-        callOrder.push(++captureCount);
+        if (mockGitEnv.mock.calls.length === 1) await gate;
         return '';
       });
       mockGit.mockResolvedValue('oid');
@@ -101,10 +117,114 @@ describe('CheckpointManager', () => {
       // Fire two captures concurrently
       const p1 = mgr.capture('sess1', '/repo', 'uuid-1');
       const p2 = mgr.capture('sess1', '/repo', 'uuid-2');
-      await Promise.all([p1, p2]);
+      await new Promise((r) => setTimeout(r, 10));
+      expect(mockGitEnv).toHaveBeenCalledTimes(1);
 
-      // Both should complete (all gitEnv calls executed)
-      expect(mockGitEnv).toHaveBeenCalled();
+      release();
+      expect(await Promise.all([p1, p2])).toEqual([true, true]);
+      const refs = mockGit.mock.calls.filter(([args]) => args[0] === 'update-ref').map(([args]) => args[1]);
+      expect(refs).toEqual(['refs/grove/checkpoints/sess1/turn/1', 'refs/grove/checkpoints/sess1/turn/2']);
+    });
+
+    it('resolves true when the ref was written and false when the capture failed', async () => {
+      mockGitEnv.mockResolvedValue('');
+      mockGit.mockResolvedValue('oid');
+      const mgr = new CheckpointManager();
+      expect(await mgr.capture('sess1', '/repo', 'uuid-1')).toBe(true);
+
+      mockGit.mockRejectedValueOnce(new Error('update-ref: lock held'));
+      expect(await mgr.capture('sess1', '/repo', 'uuid-2')).toBe(false);
+      expect(mgr.has('sess1', 'uuid-2')).toBe(false);
+
+      // A failed capture must not wedge the queue for the next one
+      expect(await mgr.capture('sess1', '/repo', 'uuid-3')).toBe(true);
+    });
+
+    it('copies the worktree index and writes and removes its temp files without blocking', async () => {
+      // A linked worktree: .git is a file naming its gitdir.
+      vi.mocked(fs.promises.stat).mockResolvedValueOnce({ isDirectory: () => false } as never);
+      vi.mocked(fs.promises.readFile).mockResolvedValueOnce('gitdir: /main/.git/worktrees/wt\n' as never);
+      mockGitEnv.mockImplementation(async (args: string[]) => (args[0] === 'write-tree' ? 'tree1' : args[0] === 'commit-tree' ? 'commit1' : ''));
+      mockGit.mockResolvedValue('');
+
+      const mgr = new CheckpointManager();
+      expect(await mgr.capture('sess1', '/repo', 'uuid-1', 'hello')).toBe(true);
+
+      const copy = vi.mocked(fs.promises.copyFile).mock.calls;
+      expect(copy).toHaveLength(1);
+      // resolve, as the gitdir is: on Windows it adds the current drive.
+      expect(String(copy[0][0])).toBe(path.resolve('/main/.git/worktrees/wt/index'));
+      const tmpIndex = String(copy[0][1]);
+      expect(mockGitEnv).not.toHaveBeenCalledWith(['read-tree', 'HEAD'], expect.anything(), expect.anything());
+      const msgFile = String(mockWriteFile.mock.calls[0][0]);
+      expect(mockGitEnv).toHaveBeenCalledWith(['commit-tree', 'tree1', '-F', msgFile], '/repo', expect.anything());
+      expect(vi.mocked(fs.promises.rm).mock.calls.map(([file]) => file).sort()).toEqual([msgFile, tmpIndex].sort());
+    });
+
+    it('falls back to an empty index when HEAD cannot be read (branch with no commits)', async () => {
+      mockGitEnv.mockImplementation(async (args: string[]) => {
+        if (args[0] === 'read-tree' && args[1] === 'HEAD') throw new Error('fatal: Not a valid object name HEAD');
+        if (args[0] === 'write-tree') return 'tree-unborn';
+        if (args[0] === 'commit-tree') return 'commit-unborn';
+        return '';
+      });
+      mockGit.mockResolvedValue('');
+
+      const mgr = new CheckpointManager();
+      expect(await mgr.capture('sess1', '/repo', 'uuid-1')).toBe(true);
+
+      expect(mockGitEnv).toHaveBeenCalledWith(['read-tree', '--empty'], '/repo', expect.objectContaining({ GIT_INDEX_FILE: expect.any(String) }));
+      expect(mockGit).toHaveBeenCalledWith(['update-ref', 'refs/grove/checkpoints/sess1/turn/1', 'commit-unborn'], '/repo');
+    });
+  });
+
+  describe('captureBaseline()', () => {
+    it('captures the __baseline__ sentinel as turn 1 of a fresh session', async () => {
+      mockGitEnv.mockResolvedValue('');
+      mockGit.mockResolvedValue('oid');
+      const mgr = new CheckpointManager();
+      expect(await mgr.captureBaseline('sess1', '/repo')).toBe(true);
+
+      const msg = String(mockWriteFile.mock.calls.at(-1)![1]);
+      expect(msg).toContain('uuid=__baseline__');
+      expect(mockGit).toHaveBeenCalledWith(['update-ref', 'refs/grove/checkpoints/sess1/turn/1', expect.any(String)], '/repo');
+    });
+
+    it('is skipped once the session has turns, so the baseline stays the oldest ref', async () => {
+      mockGitEnv.mockResolvedValue('');
+      mockGit.mockResolvedValue('oid');
+      const mgr = new CheckpointManager();
+      await mgr.capture('sess1', '/repo', 'uuid-1');
+      mockGit.mockClear();
+      mockGitEnv.mockClear();
+
+      expect(await mgr.captureBaseline('sess1', '/repo')).toBe(false);
+      expect(mockGitEnv).not.toHaveBeenCalled();
+      expect(mockGit).not.toHaveBeenCalledWith(expect.arrayContaining(['update-ref']), expect.anything());
+
+      // The turn counter was not consumed by the skipped baseline
+      await mgr.capture('sess1', '/repo', 'uuid-2');
+      expect(mockGit).toHaveBeenCalledWith(['update-ref', 'refs/grove/checkpoints/sess1/turn/2', expect.any(String)], '/repo');
+    });
+
+    it('is skipped when git already holds refs for the session, even with no in-memory state', async () => {
+      // Fresh manager (app restart) whose provider session id was dropped, so
+      // the session starts as "new" but its checkpoint refs are still in git.
+      mockGit.mockResolvedValueOnce(
+        'refs/grove/checkpoints/sess1/turn/1 grove checkpoint turn=1 uuid=__baseline__\n' +
+        'refs/grove/checkpoints/sess1/turn/2 grove checkpoint turn=2 uuid=uuid-1'
+      );
+      const mgr = new CheckpointManager();
+
+      expect(await mgr.captureBaseline('sess1', '/repo')).toBe(false);
+      expect(mockGit).toHaveBeenCalledWith(['for-each-ref', expect.any(String), 'refs/grove/checkpoints/sess1/'], '/repo');
+      expect(mockGitEnv).not.toHaveBeenCalled();
+      // The scan also rebuilt the uuid map and the turn counter
+      expect(mgr.has('sess1', 'uuid-1')).toBe(true);
+      mockGitEnv.mockResolvedValue('');
+      mockGit.mockResolvedValue('');
+      await mgr.capture('sess1', '/repo', 'uuid-2');
+      expect(mockGit).toHaveBeenCalledWith(['update-ref', 'refs/grove/checkpoints/sess1/turn/3', expect.any(String)], '/repo');
     });
   });
 
@@ -147,20 +267,54 @@ describe('CheckpointManager', () => {
   });
 
   describe('diff()', () => {
-    it('returns git diff output', async () => {
+    it('diffs the checkpoint against a tree of the current working tree (so new/untracked files show)', async () => {
       mockGitEnv.mockResolvedValue('');
       mockGit.mockResolvedValue('oid');
       const mgr = new CheckpointManager();
       await mgr.capture('sess1', '/repo', 'uuid-1');
 
       mockGit.mockClear();
-      mockGit.mockResolvedValueOnce('diff --git a/file.ts b/file.ts\n+added line');
+      mockGitEnv.mockClear();
+      // diff() builds the current working tree in a temp index, then tree-vs-tree diffs.
+      mockGitEnv.mockResolvedValueOnce(''); // read-tree HEAD
+      mockGitEnv.mockResolvedValueOnce(''); // add -A
+      mockGitEnv.mockResolvedValueOnce('currentTreeOid'); // write-tree
+      mockGit.mockResolvedValueOnce('diff --git a/new.ts b/new.ts\n+added line'); // git diff
 
       const result = await mgr.diff('sess1', '/repo', 'uuid-1');
       expect(result).toContain('+added line');
-      expect(mockGit).toHaveBeenCalledWith(
-        ['diff', expect.stringContaining('refs/grove/checkpoints/sess1/'), '--', '.'], '/repo'
+
+      // Stages the current working tree (incl. untracked) into a temp index.
+      expect(mockGitEnv).toHaveBeenCalledWith(
+        ['read-tree', 'HEAD'], '/repo', expect.objectContaining({ GIT_INDEX_FILE: expect.any(String) })
       );
+      expect(mockGitEnv).toHaveBeenCalledWith(
+        ['add', '-A'], '/repo', expect.objectContaining({ GIT_INDEX_FILE: expect.any(String) })
+      );
+      expect(mockGitEnv).toHaveBeenCalledWith(
+        ['write-tree'], '/repo', expect.objectContaining({ GIT_INDEX_FILE: expect.any(String) })
+      );
+      // Diffs the checkpoint ref against that current tree (not bare `git diff <ref>`,
+      // which omits untracked files).
+      expect(mockGit).toHaveBeenCalledWith(
+        ['diff', '--no-color', expect.stringContaining('refs/grove/checkpoints/sess1/'), 'currentTreeOid', '--', '.'], '/repo'
+      );
+    });
+
+    it('lists the files a rewind changes when its diff is too long to show', async () => {
+      mockGitEnv.mockResolvedValue('');
+      mockGit.mockResolvedValue('oid');
+      const mgr = new CheckpointManager();
+      await mgr.capture('sess1', '/repo', 'uuid-1');
+
+      mockGitEnv.mockResolvedValueOnce(''); // read-tree
+      mockGitEnv.mockResolvedValueOnce(''); // add -A
+      mockGitEnv.mockResolvedValueOnce('currentTreeOid'); // write-tree
+      vi.mocked(gitPatch).mockResolvedValueOnce(null); // the diff, over the limit
+      mockGit.mockResolvedValueOnce(' big.txt | 20000 ++++----\n 1 file changed');
+      expect(await mgr.diff('sess1', '/repo', 'uuid-1')).toBe('The full diff is too long to show here. The files it changes:\n\n big.txt | 20000 ++++----\n 1 file changed');
+      expect(gitPatch).toHaveBeenCalledWith(['diff', '--no-color', expect.stringContaining('refs/grove/checkpoints/sess1/'), 'currentTreeOid', '--', '.'], '/repo', 250_000);
+      expect(mockGit).toHaveBeenLastCalledWith(['diff', '--stat', '--stat-count=1000', '--no-color', expect.any(String), 'currentTreeOid', '--', '.'], '/repo');
     });
 
     it('returns message when no checkpoint found', async () => {
@@ -176,7 +330,11 @@ describe('CheckpointManager', () => {
       await mgr.capture('sess1', '/repo', 'uuid-1');
 
       mockGit.mockClear();
-      mockGit.mockResolvedValueOnce('');
+      mockGitEnv.mockClear();
+      mockGitEnv.mockResolvedValueOnce(''); // read-tree
+      mockGitEnv.mockResolvedValueOnce(''); // add -A
+      mockGitEnv.mockResolvedValueOnce('currentTreeOid'); // write-tree
+      mockGit.mockResolvedValueOnce(''); // empty diff
 
       const result = await mgr.diff('sess1', '/repo', 'uuid-1');
       expect(result).toBe('(no changes)');
@@ -301,6 +459,27 @@ describe('CheckpointManager', () => {
       expect(result[1].uuid).toBe('uuid-a');
     });
 
+    it('flags turns before the latest __clear__ marker and hides the marker itself', async () => {
+      const SEP = '@@GROVE_SEP@@';
+      mockGit.mockResolvedValueOnce(
+        `refs/grove/checkpoints/sess1/turn/1${SEP}grove checkpoint turn=1 uuid=__baseline__${SEP}\n` +
+        `refs/grove/checkpoints/sess1/turn/2${SEP}grove checkpoint turn=2 uuid=uuid-a${SEP}text=old\n` +
+        `refs/grove/checkpoints/sess1/turn/3${SEP}grove checkpoint turn=3 uuid=__clear__${SEP}\n` +
+        `refs/grove/checkpoints/sess1/turn/4${SEP}grove checkpoint turn=4 uuid=uuid-b${SEP}text=older-clear\n` +
+        `refs/grove/checkpoints/sess1/turn/5${SEP}grove checkpoint turn=5 uuid=__clear__${SEP}\n` +
+        `refs/grove/checkpoints/sess1/turn/6${SEP}grove checkpoint turn=6 uuid=uuid-c${SEP}text=new`
+      );
+
+      const mgr = new CheckpointManager();
+      const result = await mgr.list('sess1', '/repo');
+
+      expect(result.map(c => [c.uuid, c.beforeClear ?? false])).toEqual([
+        ['uuid-c', false],
+        ['uuid-b', true],
+        ['uuid-a', true],
+      ]);
+    });
+
     it('calls git for-each-ref with correct args', async () => {
       mockGit.mockResolvedValueOnce('');
       const mgr = new CheckpointManager();
@@ -308,7 +487,7 @@ describe('CheckpointManager', () => {
 
       const SEP = '@@GROVE_SEP@@';
       expect(mockGit).toHaveBeenCalledWith(
-        ['for-each-ref', `--format=%(refname)${SEP}%(subject)${SEP}%(body)`, 'refs/grove/checkpoints/sess1/'],
+        ['for-each-ref', `--format=%(refname)${SEP}%(subject)${SEP}%(body)${SEP}%(objectname)`, 'refs/grove/checkpoints/sess1/'],
         '/repo'
       );
     });
@@ -317,7 +496,7 @@ describe('CheckpointManager', () => {
   describe('capture() with text', () => {
     /** Helper: get the commit message written to the temp file by capture(). */
     function getWrittenCommitMsg(): string {
-      const writeCall = mockFs.writeFileSync.mock.calls.find(
+      const writeCall = mockWriteFile.mock.calls.find(
         (c) => String(c[0]).includes('grove-msg-'),
       );
       return writeCall ? String(writeCall[1]) : '';
@@ -328,7 +507,7 @@ describe('CheckpointManager', () => {
       mockGitEnv.mockResolvedValueOnce(''); // read-tree
       mockGitEnv.mockResolvedValueOnce(''); // add -A
       mockGitEnv.mockResolvedValueOnce('tree1'); // write-tree
-      mockGit.mockResolvedValueOnce('commit1'); // commit-tree
+      mockGitEnv.mockResolvedValueOnce('commit1'); // commit-tree
       mockGit.mockResolvedValueOnce(''); // update-ref
 
       const mgr = new CheckpointManager();
@@ -341,7 +520,7 @@ describe('CheckpointManager', () => {
       expect(msg).toContain('\n\ntext=Fix the login bug');
 
       // commit-tree should use -F (temp file) not -m
-      const commitTreeCall = mockGit.mock.calls.find(c => c[0][0] === 'commit-tree');
+      const commitTreeCall = mockGitEnv.mock.calls.find(c => c[0][0] === 'commit-tree');
       expect(commitTreeCall![0]).toContain('-F');
     });
 
@@ -350,7 +529,7 @@ describe('CheckpointManager', () => {
       mockGitEnv.mockResolvedValueOnce('');
       mockGitEnv.mockResolvedValueOnce('');
       mockGitEnv.mockResolvedValueOnce('tree1');
-      mockGit.mockResolvedValueOnce('commit1');
+      mockGitEnv.mockResolvedValueOnce('commit1');
       mockGit.mockResolvedValueOnce('');
 
       const mgr = new CheckpointManager();
@@ -365,7 +544,7 @@ describe('CheckpointManager', () => {
       mockGitEnv.mockResolvedValueOnce('');
       mockGitEnv.mockResolvedValueOnce('');
       mockGitEnv.mockResolvedValueOnce('tree1');
-      mockGit.mockResolvedValueOnce('commit1');
+      mockGitEnv.mockResolvedValueOnce('commit1');
       mockGit.mockResolvedValueOnce('');
 
       const longText = 'a'.repeat(300);
@@ -382,7 +561,7 @@ describe('CheckpointManager', () => {
       mockGitEnv.mockResolvedValueOnce('');
       mockGitEnv.mockResolvedValueOnce('');
       mockGitEnv.mockResolvedValueOnce('tree1');
-      mockGit.mockResolvedValueOnce('commit1');
+      mockGitEnv.mockResolvedValueOnce('commit1');
       mockGit.mockResolvedValueOnce('');
 
       const mgr = new CheckpointManager();
@@ -391,6 +570,29 @@ describe('CheckpointManager', () => {
       const msg = getWrittenCommitMsg();
       expect(msg).not.toContain('text=');
       expect(msg).not.toContain('\n\n');
+    });
+  });
+
+  describe('markCleared()', () => {
+    it('captures a __clear__ sentinel through the normal capture path, continuing the turn count', async () => {
+      mockGitEnv.mockResolvedValue('');
+      mockGitEnv.mockResolvedValueOnce('').mockResolvedValueOnce('').mockResolvedValueOnce('tree1').mockResolvedValueOnce('commit1');
+      mockGit.mockResolvedValueOnce('');
+      const mgr = new CheckpointManager();
+      await mgr.capture('sess1', '/repo', 'uuid-1');
+
+      mockGitEnv.mockResolvedValueOnce('').mockResolvedValueOnce('').mockResolvedValueOnce('tree2').mockResolvedValueOnce('commit2');
+      mockGit.mockResolvedValueOnce('');
+      await mgr.markCleared('sess1', '/repo');
+
+      expect(mockGit).toHaveBeenCalledWith(
+        ['update-ref', 'refs/grove/checkpoints/sess1/turn/2', 'commit2'], '/repo'
+      );
+      const msg = mockWriteFile.mock.calls.at(-1)![1] as string;
+      expect(msg).toContain('uuid=__clear__');
+      // Real refs are never deleted by a clear
+      expect(mockGit).not.toHaveBeenCalledWith(expect.arrayContaining(['update-ref', '-d']), expect.anything());
+      expect(mgr.has('sess1', 'uuid-1')).toBe(true);
     });
   });
 
@@ -538,6 +740,231 @@ describe('CheckpointManager', () => {
 
       // Should not throw
       await mgr.pruneAfter('sess1', '/repo', 'uuid-a');
+    });
+  });
+
+  describe('history()', () => {
+    const SEP = '@@GROVE_SEP@@';
+    const REFS_OUTPUT =
+      `refs/grove/checkpoints/sess1/turn/1${SEP}grove checkpoint turn=1 uuid=__baseline__${SEP}\n` +
+      `refs/grove/checkpoints/sess1/turn/2${SEP}grove checkpoint turn=2 uuid=uuid-a${SEP}text=first\n` +
+      `refs/grove/checkpoints/sess1/turn/3${SEP}grove checkpoint turn=3 uuid=uuid-b${SEP}text=second`;
+
+    it('computes per-turn stats between consecutive checkpoints and cumulative total', async () => {
+      const mgr = new CheckpointManager();
+      mockGit.mockResolvedValueOnce(REFS_OUTPUT); // listRefs
+      // writeWorkingTree
+      mockGitEnv.mockResolvedValueOnce(''); // read-tree
+      mockGitEnv.mockResolvedValueOnce(''); // add -A
+      mockGitEnv.mockResolvedValueOnce('wtTree'); // write-tree
+      // numstat turn/2 → turn/3 (binary file counts as changed, no lines)
+      mockGit.mockResolvedValueOnce('10\t2\tsrc/a.ts\n-\t-\tassets/img.png');
+      // numstat turn/3 → working tree
+      mockGit.mockResolvedValueOnce('1\t1\tsrc/b.ts');
+      // cumulative: oldest ref (baseline) → working tree
+      mockGit.mockResolvedValueOnce('11\t3\tsrc/a.ts\n1\t1\tsrc/b.ts\n-\t-\tassets/img.png');
+
+      const result = await mgr.history('sess1', '/repo');
+
+      // Baseline is excluded; entries are newest-first
+      expect(result.entries).toEqual([
+        { uuid: 'uuid-b', turn: 3, text: 'second', filesChanged: 1, additions: 1, deletions: 1 },
+        { uuid: 'uuid-a', turn: 2, text: 'first', filesChanged: 2, additions: 10, deletions: 2 },
+      ]);
+      expect(result.total).toEqual({ filesChanged: 3, additions: 12, deletions: 4 });
+
+      // Per-turn diff is checkpoint N vs checkpoint N+1
+      expect(mockGit).toHaveBeenCalledWith(
+        ['diff', '--numstat', 'refs/grove/checkpoints/sess1/turn/2', 'refs/grove/checkpoints/sess1/turn/3', '--', '.'],
+        '/repo'
+      );
+      // The latest turn diffs against the working tree snapshot
+      expect(mockGit).toHaveBeenCalledWith(
+        ['diff', '--numstat', 'refs/grove/checkpoints/sess1/turn/3', 'wtTree', '--', '.'],
+        '/repo'
+      );
+      // Cumulative total anchors at the oldest ref (baseline)
+      expect(mockGit).toHaveBeenCalledWith(
+        ['diff', '--numstat', 'refs/grove/checkpoints/sess1/turn/1', 'wtTree', '--', '.'],
+        '/repo'
+      );
+    });
+
+    it('skips the __clear__ sentinel as an entry but uses it as the end of the preceding turn', async () => {
+      const mgr = new CheckpointManager();
+      mockGit.mockResolvedValueOnce(
+        `refs/grove/checkpoints/sess1/turn/1${SEP}grove checkpoint turn=1 uuid=__baseline__${SEP}\n` +
+        `refs/grove/checkpoints/sess1/turn/2${SEP}grove checkpoint turn=2 uuid=uuid-a${SEP}text=first\n` +
+        `refs/grove/checkpoints/sess1/turn/3${SEP}grove checkpoint turn=3 uuid=__clear__${SEP}\n` +
+        `refs/grove/checkpoints/sess1/turn/4${SEP}grove checkpoint turn=4 uuid=uuid-b${SEP}text=after`
+      );
+      mockGitEnv.mockResolvedValueOnce('').mockResolvedValueOnce('').mockResolvedValueOnce('wtTree');
+      mockGit.mockResolvedValueOnce('1\t0\ta'); // turn/2 → turn/3 (clear marker)
+      mockGit.mockResolvedValueOnce('2\t0\tb'); // turn/4 → working tree
+      mockGit.mockResolvedValueOnce('3\t0\tc'); // total
+
+      const result = await mgr.history('sess1', '/repo');
+
+      expect(result.entries.map(e => e.uuid)).toEqual(['uuid-b', 'uuid-a']);
+      expect(mockGit).toHaveBeenCalledWith(
+        ['diff', '--numstat', 'refs/grove/checkpoints/sess1/turn/2', 'refs/grove/checkpoints/sess1/turn/3', '--', '.'],
+        '/repo'
+      );
+    });
+
+    it('returns empty result when no refs exist', async () => {
+      mockGit.mockResolvedValueOnce('');
+      const mgr = new CheckpointManager();
+      const result = await mgr.history('sess1', '/repo');
+      expect(result).toEqual({ entries: [], total: { filesChanged: 0, additions: 0, deletions: 0 } });
+    });
+
+    it('returns empty result when for-each-ref fails', async () => {
+      mockGit.mockRejectedValueOnce(new Error('git error'));
+      const mgr = new CheckpointManager();
+      const result = await mgr.history('sess1', '/repo');
+      expect(result.entries).toEqual([]);
+    });
+
+    it('records zero stats for a turn whose numstat fails', async () => {
+      const mgr = new CheckpointManager();
+      mockGit.mockResolvedValueOnce(
+        `refs/grove/checkpoints/sess1/turn/1${SEP}grove checkpoint turn=1 uuid=uuid-a${SEP}text=only`
+      );
+      mockGitEnv.mockResolvedValueOnce('');
+      mockGitEnv.mockResolvedValueOnce('');
+      mockGitEnv.mockResolvedValueOnce('wtTree');
+      mockGit.mockRejectedValueOnce(new Error('bad diff')); // per-turn numstat
+      mockGit.mockResolvedValueOnce('1\t0\ta.ts'); // total numstat
+
+      const result = await mgr.history('sess1', '/repo');
+      expect(result.entries).toEqual([
+        { uuid: 'uuid-a', turn: 1, text: 'only', filesChanged: 0, additions: 0, deletions: 0 },
+      ]);
+      expect(result.total).toEqual({ filesChanged: 1, additions: 1, deletions: 0 });
+    });
+  });
+
+  describe('history() numstat cache', () => {
+    const SEP = '@@GROVE_SEP@@';
+    // for-each-ref output including the object id (fourth field)
+    const REFS_WITH_OIDS =
+      `refs/grove/checkpoints/sess1/turn/1${SEP}grove checkpoint turn=1 uuid=__baseline__${SEP}${SEP}aaa111\n` +
+      `refs/grove/checkpoints/sess1/turn/2${SEP}grove checkpoint turn=2 uuid=uuid-a${SEP}text=first${SEP}bbb222\n` +
+      `refs/grove/checkpoints/sess1/turn/3${SEP}grove checkpoint turn=3 uuid=uuid-b${SEP}text=second${SEP}ccc333`;
+
+    function mockWorkingTree(oid: string) {
+      mockGitEnv.mockResolvedValueOnce(''); // read-tree
+      mockGitEnv.mockResolvedValueOnce(''); // add -A
+      mockGitEnv.mockResolvedValueOnce(oid); // write-tree
+    }
+
+    it('reuses cached numstat for checkpoint pairs and an unchanged working tree', async () => {
+      const mgr = new CheckpointManager();
+
+      // First call: all three numstats run
+      mockGit.mockResolvedValueOnce(REFS_WITH_OIDS);
+      mockWorkingTree('wtTree');
+      mockGit.mockResolvedValueOnce('10\t2\tsrc/a.ts'); // turn/2 → turn/3
+      mockGit.mockResolvedValueOnce('1\t1\tsrc/b.ts'); // turn/3 → wtTree
+      mockGit.mockResolvedValueOnce('11\t3\tsrc/a.ts\n1\t1\tsrc/b.ts'); // baseline → wtTree
+      const first = await mgr.history('sess1', '/repo');
+      const numstatCallsAfterFirst = mockGit.mock.calls.filter((c) => c[0][0] === 'diff').length;
+      expect(numstatCallsAfterFirst).toBe(3);
+
+      // Second call with the same working tree: only for-each-ref runs
+      mockGit.mockResolvedValueOnce(REFS_WITH_OIDS);
+      mockWorkingTree('wtTree');
+      const second = await mgr.history('sess1', '/repo');
+      const numstatCallsAfterSecond = mockGit.mock.calls.filter((c) => c[0][0] === 'diff').length;
+      expect(numstatCallsAfterSecond).toBe(3);
+      expect(second).toEqual(first);
+    });
+
+    it('recomputes only the working-tree pairs when the tree changes', async () => {
+      const mgr = new CheckpointManager();
+      mockGit.mockResolvedValueOnce(REFS_WITH_OIDS);
+      mockWorkingTree('wtTree');
+      mockGit.mockResolvedValueOnce('10\t2\tsrc/a.ts');
+      mockGit.mockResolvedValueOnce('1\t1\tsrc/b.ts');
+      mockGit.mockResolvedValueOnce('11\t3\tsrc/a.ts\n1\t1\tsrc/b.ts');
+      await mgr.history('sess1', '/repo');
+      mockGit.mockClear();
+
+      mockGit.mockResolvedValueOnce(REFS_WITH_OIDS);
+      mockWorkingTree('wtTree2');
+      mockGit.mockResolvedValueOnce('5\t5\tsrc/b.ts'); // turn/3 → wtTree2
+      mockGit.mockResolvedValueOnce('15\t7\tsrc/a.ts\n5\t5\tsrc/b.ts'); // baseline → wtTree2
+      const result = await mgr.history('sess1', '/repo');
+
+      const diffCalls = mockGit.mock.calls.filter((c) => c[0][0] === 'diff');
+      expect(diffCalls).toHaveLength(2);
+      expect(diffCalls.every((c) => c[0][3] === 'wtTree2')).toBe(true);
+      expect(result.entries.find((e) => e.uuid === 'uuid-a')).toMatchObject({ additions: 10, deletions: 2 });
+      expect(result.entries.find((e) => e.uuid === 'uuid-b')).toMatchObject({ additions: 5, deletions: 5 });
+      expect(result.total).toEqual({ filesChanged: 2, additions: 20, deletions: 12 });
+    });
+  });
+
+  describe('range()', () => {
+    const SEP = '@@GROVE_SEP@@';
+    const refLine = (turn: number, uuid: string) => `refs/grove/checkpoints/sess1/turn/${turn}${SEP}grove checkpoint turn=${turn} uuid=${uuid}${SEP}`;
+
+    it('spans a turn from its checkpoint to the next, without a working-tree snapshot', async () => {
+      mockGitEnv.mockResolvedValue('');
+      mockGit.mockResolvedValue('oid');
+      const mgr = new CheckpointManager();
+      await mgr.capture('sess1', '/repo', 'uuid-a'); // turn 1
+      await mgr.capture('sess1', '/repo', 'uuid-b'); // turn 2
+
+      mockGit.mockClear();
+      mockGitEnv.mockClear();
+      mockGit.mockResolvedValueOnce(`${refLine(1, 'uuid-a')}\n${refLine(2, 'uuid-b')}`); // listRefs
+      expect(await mgr.range('sess1', '/repo', 'uuid-a', 'turn')).toEqual({ from: 'refs/grove/checkpoints/sess1/turn/1', to: 'refs/grove/checkpoints/sess1/turn/2' });
+      expect(mockGitEnv).not.toHaveBeenCalled();
+    });
+
+    it('spans the latest turn to the working tree', async () => {
+      mockGitEnv.mockResolvedValue('');
+      mockGit.mockResolvedValue('oid');
+      const mgr = new CheckpointManager();
+      await mgr.capture('sess1', '/repo', 'uuid-a'); // turn 1
+
+      mockGit.mockClear();
+      mockGitEnv.mockClear();
+      mockGit.mockResolvedValueOnce(refLine(1, 'uuid-a')); // listRefs
+      mockGitEnv.mockResolvedValueOnce(''); // read-tree
+      mockGitEnv.mockResolvedValueOnce(''); // add -A
+      mockGitEnv.mockResolvedValueOnce('wtTree'); // write-tree
+      expect(await mgr.range('sess1', '/repo', 'uuid-a', 'turn')).toEqual({ from: 'refs/grove/checkpoints/sess1/turn/1', to: 'wtTree' });
+    });
+
+    it('spans the whole thread from the oldest checkpoint by turn, though git lists refs by name', async () => {
+      const mgr = new CheckpointManager();
+      // for-each-ref sorts by name, so turn 10 comes before turn 2.
+      mockGit.mockResolvedValueOnce(`${refLine(10, 'uuid-b')}\n${refLine(2, 'uuid-a')}`);
+      mockGitEnv.mockResolvedValueOnce(''); // read-tree
+      mockGitEnv.mockResolvedValueOnce(''); // add -A
+      mockGitEnv.mockResolvedValueOnce('wtTree'); // write-tree
+      expect(await mgr.range('sess1', '/repo', '', 'full')).toEqual({ from: 'refs/grove/checkpoints/sess1/turn/2', to: 'wtTree' });
+    });
+
+    it('is null without the checkpoint, or without any for the whole thread', async () => {
+      const mgr = new CheckpointManager();
+      mockGit.mockResolvedValueOnce(''); // resolveRef's scan
+      expect(await mgr.range('sess1', '/repo', 'missing', 'turn')).toBeNull();
+      mockGit.mockResolvedValueOnce(''); // listRefs
+      expect(await mgr.range('sess1', '/repo', '', 'full')).toBeNull();
+    });
+  });
+
+  describe('files()', () => {
+    it('says why a comparison has no files when its checkpoints are missing', async () => {
+      const mgr = new CheckpointManager();
+      mockGit.mockResolvedValueOnce(''); // listRefs
+      expect(await mgr.files('sess1', '/repo', '', 'full')).toEqual({ entries: [], scopeError: 'No checkpoints found for this thread' });
+      mockGit.mockResolvedValueOnce(''); // resolveRef's scan
+      expect(await mgr.files('sess1', '/repo', 'missing', 'turn')).toEqual({ entries: [], scopeError: 'No checkpoint found for this message' });
     });
   });
 

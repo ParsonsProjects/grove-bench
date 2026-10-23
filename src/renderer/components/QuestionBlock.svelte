@@ -1,6 +1,11 @@
 <script lang="ts">
   import { messageStore, type QuestionItem } from '../stores/messages.svelte.js';
   import { Button } from '$lib/components/ui/button/index.js';
+  import ArrowUpIcon from '@lucide/svelte/icons/arrow-up';
+  import { settingsStore } from '../stores/settings.svelte.js';
+  import AgentSprite from './AgentSprite.svelte';
+  import { sessionRepoColor } from '../lib/session-repo-color.js';
+  import { PERMISSION_TIMEOUT_MINUTES } from '../../shared/types.js';
 
   let {
     sessionId,
@@ -9,6 +14,7 @@
     resolved,
     response,
     selectedLabels,
+    timedOut = false,
   }: {
     sessionId: string;
     requestId: string;
@@ -16,6 +22,8 @@
     resolved: boolean;
     response?: string;
     selectedLabels?: string[];
+    /** Closed because nobody answered in time. */
+    timedOut?: boolean;
   } = $props();
 
   // Track selections per question (index in questions array → selected option indices)
@@ -87,11 +95,14 @@
   }
 </script>
 
-<div class="py-1 my-1 border-l-4 {resolved ? 'border-blue-400' : 'border-cyan-400'} pl-3">
+<div class="py-1 my-1 border-l-4 {resolved ? 'border-border' : 'border-status-attention'} pl-3">
   {#each questions as q, qIdx}
     <div class={qIdx > 0 ? 'mt-3' : ''}>
       <div class="flex items-center gap-2 text-xs">
-        <span class="text-cyan-400 font-bold">question</span>
+        {#if qIdx === 0 && settingsStore.current.groveCharacters}
+          <AgentSprite state={resolved ? 'answered' : 'asking'} seed={sessionId} projectColor={sessionRepoColor(sessionId)} scale={resolved ? 2 : 3} />
+        {/if}
+        <span class="{resolved ? 'text-muted-foreground' : 'text-status-attention'} font-bold">question</span>
         <span class="text-foreground font-medium">{q.header}</span>
       </div>
       <p class="text-sm text-foreground mt-1">{q.question}</p>
@@ -103,11 +114,11 @@
               <!-- Resolved: show which option was picked -->
               {@const wasChosen = selectedLabels ? selectedLabels.includes(opt.label) : response?.includes(opt.label)}
               <div
-                class="text-xs px-3 py-1.5 border {wasChosen ? 'border-blue-400 bg-blue-500/10 text-foreground' : 'border-border text-muted-foreground opacity-50'}"
+                class="text-xs px-3 py-1.5 border {wasChosen ? 'border-muted-foreground/60 text-foreground' : 'border-border text-muted-foreground opacity-50'}"
               >
                 <span class="font-medium">{opt.label}</span>
                 {#if opt.description}
-                  <span class="ml-1 opacity-70">— {opt.description}</span>
+                  <span class="ml-1 text-muted-foreground">— {opt.description}</span>
                 {/if}
               </div>
             {:else}
@@ -116,26 +127,30 @@
                 onclick={() => toggleOption(qIdx, optIdx, q.multiSelect)}
                 class="text-left text-xs px-3 py-1.5 border transition-colors cursor-pointer
                   {isSelected(qIdx, optIdx)
-                    ? 'border-cyan-400 bg-cyan-500/10 text-foreground'
+                    ? 'border-primary bg-primary/10 text-foreground'
                     : 'border-border text-muted-foreground hover:border-muted-foreground hover:text-foreground'}"
               >
                 <span class="font-medium">{opt.label}</span>
                 {#if opt.description}
-                  <span class="ml-1 opacity-70">— {opt.description}</span>
+                  <span class="ml-1 text-muted-foreground">— {opt.description}</span>
                 {/if}
               </button>
             {/if}
           {/each}
         </div>
         {#if !resolved && q.multiSelect}
-          <p class="text-xs text-muted-foreground mt-1 opacity-60">Select one or more options</p>
+          <p class="text-xs text-muted-foreground mt-1">Select one or more options</p>
         {/if}
       {/if}
     </div>
   {/each}
 
-  {#if resolved}
-    <div class="text-xs mt-2 text-blue-400">
+  {#if resolved && timedOut}
+    <div class="text-xs mt-2 text-muted-foreground">
+      no answer after {PERMISSION_TIMEOUT_MINUTES} minutes, so the question was closed
+    </div>
+  {:else if resolved}
+    <div class="text-xs mt-2 text-muted-foreground">
       answered{#if response}: <span class="text-foreground">{response}</span>{/if}
     </div>
   {:else}
@@ -146,16 +161,17 @@
         bind:value={freeformText}
         onkeydown={handleKeydown}
         placeholder="Or type a custom response..."
-        class="flex-1 text-xs bg-card border border-border px-2 py-1 text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary"
+        class="flex-1 text-xs bg-card border border-border h-8 px-2 py-1 text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary"
       />
       <Button
-        variant="outline"
-        size="sm"
+        variant="outline-success"
+        size="icon-sm"
         onclick={submit}
         disabled={!canSubmit}
-        class="text-cyan-400 border-cyan-600 hover:bg-cyan-900/30 shrink-0"
+        title="Answer (Enter)"
+        aria-label="Answer"
       >
-        Answer
+        <ArrowUpIcon />
       </Button>
     </div>
   {/if}

@@ -1,0 +1,869 @@
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { mockGroveBench } from '../__mocks__/setup.js';
+import { draftStore } from './draft.svelte.js';
+import { store } from './sessions.svelte.js';
+import { agentsStore } from './agents.svelte.js';
+import { messageStore } from './messages.svelte.js';
+import { arrivalScene } from './arrivalScene.svelte.js';
+import { settingsStore } from './settings.svelte.js';
+import { groupStore } from './groups.svelte.js';
+import { todoStore } from './todo.svelte.js';
+import type { ControlDescriptor } from '../../shared/types.js';
+
+const modeControl: ControlDescriptor = {
+  id: 'permissionMode', label: 'Mode', default: 'default',
+  options: [{ value: 'default', label: 'Ask' }, { value: 'plan', label: 'Plan' }, { value: 'acceptEdits', label: 'Edit' }],
+};
+const effortControl: ControlDescriptor = {
+  id: 'effort', label: 'Effort', default: 'medium',
+  options: [{ value: 'low', label: 'Low' }, { value: 'medium', label: 'Medium' }, { value: 'high', label: 'High' }],
+};
+
+function createSessionMock() {
+  return (mockGroveBench as unknown as { createSession: ReturnType<typeof vi.fn> }).createSession;
+}
+
+/** Let the async model/control loads settle. */
+const settle = () => new Promise((r) => setTimeout(r, 0));
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  draftStore.discard();
+  // The store picks the new conversation's id; pin it to 'new1', the id the
+  // mocked createSession returns. Starting with a message begins its
+  // arrival scene.
+  vi.spyOn(crypto, 'randomUUID').mockReturnValue('new1' as ReturnType<typeof crypto.randomUUID>);
+  arrivalScene.end('new1');
+  store.repos = ['/repo/one', '/repo/two'];
+  store.sessions = [];
+  store.activeSessionId = null;
+  agentsStore.list = [
+    { id: 'claude-code', displayName: 'Claude Agent', capabilities: { permissionModes: true }, isDefault: true },
+    { id: 'codex', displayName: 'Codex', capabilities: {} },
+  ];
+  agentsStore.loaded = true;
+  mockGroveBench.getModels.mockResolvedValue([{ id: 'opus', label: 'Opus' }, { id: 'haiku', label: 'Haiku' }]);
+  mockGroveBench.getAdapterControls.mockResolvedValue([modeControl, effortControl]);
+  mockGroveBench.getDefaultBranch.mockResolvedValue('main');
+  (mockGroveBench as unknown as { createSession: ReturnType<typeof vi.fn> }).createSession = vi.fn()
+    .mockResolvedValue({ id: 'new1', branch: 'grove/new1', agentType: 'claude-code' });
+});
+
+afterEach(() => {
+  vi.mocked(crypto.randomUUID).mockRestore();
+  draftStore.discard();
+  groupStore.groups = [];
+  store.repos = [];
+  store.sessions = [];
+  store.activeSessionId = null;
+  agentsStore.list = [];
+  agentsStore.loaded = false;
+  settingsStore.current = { ...settingsStore.current, adapterDefaults: {} };
+});
+
+describe('draftStore.open', () => {
+  it('opens in the given project on the default agent, starting a new branch from the default branch', async () => {
+    draftStore.open('/repo/two');
+    await settle();
+    expect(draftStore.draft).toMatchObject({ repoPath: '/repo/two', agentId: 'claude-code', start: { kind: 'new', branchName: '', baseBranch: 'main' } });
+    expect(draftStore.visible).toBe(true);
+    expect(draftStore.models.map((m) => m.value)).toEqual(['opus', 'haiku']);
+  });
+
+  it('defaults to the open conversation\'s project, agent and model', () => {
+    store.sessions = [{ id: 's1', branch: 'feat/x', repoPath: '/repo/two', status: 'running', agentType: 'codex' }];
+    store.activeSessionId = 's1';
+    vi.spyOn(messageStore, 'getModel').mockReturnValue('o4');
+    draftStore.open();
+    expect(draftStore.draft).toMatchObject({ repoPath: '/repo/two', agentId: 'codex', model: 'o4' });
+    // Opening the draft takes over the main pane.
+    expect(store.activeSessionId).toBeNull();
+  });
+
+  it("starts on the user's default agent rather than the open conversation's, once one is picked", () => {
+    store.sessions = [{ id: 's1', branch: 'feat/x', repoPath: '/repo/two', status: 'running', agentType: 'claude-code' }];
+    store.activeSessionId = 's1';
+    vi.spyOn(messageStore, 'getModel').mockReturnValue('opus');
+    const saved = settingsStore.current;
+    try {
+      settingsStore.current = { ...saved, defaultAgent: 'codex' };
+      draftStore.open();
+      // Another agent: the open conversation's model doesn't carry over.
+      expect(draftStore.draft).toMatchObject({ agentId: 'codex', model: '' });
+      draftStore.discard();
+      // Asked for by name still wins.
+      store.activeSessionId = 's1';
+      draftStore.open('', { agentId: 'claude-code' });
+      expect(draftStore.draft?.agentId).toBe('claude-code');
+    } finally {
+      settingsStore.current = saved;
+    }
+  });
+
+  it('keeps the typed message when opened again in another project', () => {
+    draftStore.open('/repo/one');
+    draftStore.setText('Fix API-12');
+    draftStore.open('/repo/two');
+    expect(draftStore.draft).toMatchObject({ repoPath: '/repo/two', text: 'Fix API-12' });
+  });
+
+  it('does nothing without a project', () => {
+    store.repos = [];
+    draftStore.open();
+    expect(draftStore.draft).toBeNull();
+  });
+
+  describe('an alpha agent', () => {
+    beforeEach(() => {
+      agentsStore.list = [...agentsStore.list, { id: 'opencode', displayName: 'OpenCode', capabilities: {}, stage: 'alpha' }];
+    });
+    afterEach(() => {
+      settingsStore.current = { ...settingsStore.current, enabledAlphaAgents: [] };
+    });
+
+    it('is not offered until turned on, even from a conversation that runs on it', () => {
+      store.sessions = [{ id: 's1', branch: 'b', repoPath: '/repo/one', status: 'running', agentType: 'opencode' }];
+      store.activeSessionId = 's1';
+      draftStore.open();
+      expect(draftStore.draft?.agentId).toBe('claude-code');
+      draftStore.setAgent('opencode');
+      expect(draftStore.draft?.agentId).toBe('claude-code');
+      draftStore.discard();
+      draftStore.open('/repo/one', { agentId: 'opencode' });
+      expect(draftStore.draft?.agentId).toBe('claude-code');
+    });
+
+    it('can be picked once turned on', () => {
+      settingsStore.current = { ...settingsStore.current, enabledAlphaAgents: ['opencode'] };
+      draftStore.open('/repo/one');
+      draftStore.setAgent('opencode');
+      expect(draftStore.draft?.agentId).toBe('opencode');
+    });
+
+    it('doesn\'t start a conversation if it was turned off after being picked', async () => {
+      settingsStore.current = { ...settingsStore.current, enabledAlphaAgents: ['opencode'] };
+      draftStore.open('/repo/one');
+      draftStore.setAgent('opencode');
+      draftStore.setText('hi');
+      settingsStore.current = { ...settingsStore.current, enabledAlphaAgents: [] };
+      expect(await draftStore.start()).toBe(false);
+      expect(createSessionMock()).not.toHaveBeenCalled();
+      expect(draftStore.error).toBe('OpenCode is turned off. Turn it on in Settings → Agents, or pick another agent at the bottom of the message box.');
+    });
+  });
+
+  it('switches agent when opened for another agent', async () => {
+    draftStore.open('/repo/one');
+    draftStore.setModel('haiku');
+    draftStore.open('/repo/one', { agentId: 'codex' });
+    await settle();
+    expect(draftStore.draft).toMatchObject({ agentId: 'codex', model: '' });
+    expect(mockGroveBench.getModels).toHaveBeenLastCalledWith('codex');
+  });
+});
+
+describe('draftStore choices', () => {
+  beforeEach(async () => {
+    draftStore.open('/repo/one');
+    await settle();
+  });
+
+  it('shows saved and picked control values', () => {
+    expect(draftStore.controlValue('permissionMode')).toBe('default');
+    draftStore.setControl('effort', 'high');
+    expect(draftStore.controlValue('effort')).toBe('high');
+  });
+
+  it('leaves the mode alone when a PR or branch is picked', () => {
+    draftStore.setStart({ kind: 'existing', branch: 'feat/a', pr: { number: 7, title: 'Add login' } });
+    expect(draftStore.controlValue('permissionMode')).toBe('default');
+
+    draftStore.setControl('permissionMode', 'acceptEdits');
+    draftStore.setStart({ kind: 'existing', branch: 'fix/b' });
+    expect(draftStore.controlValue('permissionMode')).toBe('acceptEdits');
+    draftStore.setStart({ kind: 'existing', branch: 'feat/a', pr: { number: 7, title: 'Add login' } });
+    expect(draftStore.controlValue('permissionMode')).toBe('acceptEdits');
+  });
+
+  it('resets model and controls when the agent changes', async () => {
+    draftStore.setModel('haiku');
+    draftStore.setControl('effort', 'high');
+    draftStore.setAgent('codex');
+    await settle();
+    expect(draftStore.draft).toMatchObject({ agentId: 'codex', model: '', controls: {} });
+  });
+
+  it('moving to another project goes back to a new branch', async () => {
+    draftStore.setStart({ kind: 'existing', branch: 'feat/a' });
+    draftStore.setRepo('/repo/two');
+    await settle();
+    expect(draftStore.draft?.start).toEqual({ kind: 'new', branchName: '', baseBranch: 'main' });
+  });
+});
+
+describe('draftStore skills', () => {
+  const skill = (name: string) => ({ name, description: `About ${name}`, source: 'project' as const });
+
+  beforeEach(async () => {
+    draftStore.open('/repo/one');
+    await settle();
+  });
+
+  afterEach(() => {
+    settingsStore.current = { ...settingsStore.current, disabledSkills: [] };
+  });
+
+  it("lists the agent's skills in the project, leaving out Claude Code's turned-off ones only", async () => {
+    agentsStore.list = [
+      { id: 'claude-code', displayName: 'Claude Agent', capabilities: { skills: true }, isDefault: true },
+      { id: 'codex', displayName: 'Codex', capabilities: { skills: false } },
+    ];
+    settingsStore.current = { ...settingsStore.current, disabledSkills: ['old'] };
+    mockGroveBench.listAgentSkills.mockResolvedValue([skill('triage'), skill('old')]);
+    await draftStore.loadSkills();
+    expect(mockGroveBench.listAgentSkills).toHaveBeenLastCalledWith('claude-code', '/repo/one');
+    expect(draftStore.skills.map((s) => s.name)).toEqual(['triage']);
+
+    draftStore.setAgent('codex');
+    await draftStore.loadSkills();
+    expect(draftStore.skills.map((s) => s.name)).toEqual(['triage', 'old']);
+  });
+
+  it("drops another agent's skills at once, and an answer that comes back too late", async () => {
+    mockGroveBench.listAgentSkills.mockResolvedValueOnce([skill('triage')]);
+    await draftStore.loadSkills();
+    let answer!: (list: ReturnType<typeof skill>[]) => void;
+    mockGroveBench.listAgentSkills.mockReturnValueOnce(new Promise((r) => { answer = r; }));
+    draftStore.setAgent('codex');
+    const late = draftStore.loadSkills();
+    expect(draftStore.skills).toEqual([]);
+    draftStore.setRepo('/repo/two');
+    mockGroveBench.listAgentSkills.mockResolvedValueOnce([skill('deploy')]);
+    await draftStore.loadSkills();
+    answer([skill('stale')]);
+    await late;
+    expect(draftStore.skills.map((s) => s.name)).toEqual(['deploy']);
+  });
+
+  it('starts the message by asking for a skill, swapping one already there', () => {
+    draftStore.setText('Fix the login bug');
+    draftStore.useSkill('triage');
+    expect(draftStore.draft?.text).toBe('Use the `triage` skill for this task.\n\nFix the login bug');
+    draftStore.useSkill('deploy');
+    expect(draftStore.draft?.text).toBe('Use the `deploy` skill for this task.\n\nFix the login bug');
+    draftStore.useSkill(null);
+    expect(draftStore.draft?.text).toBe('Fix the login bug');
+  });
+});
+
+describe('draftStore.buildOpts', () => {
+  beforeEach(async () => {
+    draftStore.open('/repo/one');
+    await settle();
+  });
+
+  it('sends only what was picked', () => {
+    const opts = draftStore.buildOpts(draftStore.draft!, 'main');
+    expect(opts).toEqual({ repoPath: '/repo/one', adapterType: 'claude-code', branchName: '', baseBranch: 'main' });
+  });
+
+  it('sends the picked model, controls and mode', () => {
+    draftStore.setModel('haiku');
+    draftStore.setControl('effort', 'high');
+    draftStore.setControl('permissionMode', 'plan');
+    expect(draftStore.buildOpts(draftStore.draft!, 'main')).toMatchObject({
+      model: 'haiku', controls: { effort: 'high' }, permissionMode: 'plan',
+    });
+  });
+
+  it('maps each place to run to its create options', () => {
+    draftStore.setStart({ kind: 'folder' });
+    expect(draftStore.buildOpts(draftStore.draft!, '')).toMatchObject({ branchName: '', direct: true });
+    draftStore.setStart({ kind: 'existing', branch: 'feat/a' });
+    expect(draftStore.buildOpts(draftStore.draft!, '')).toMatchObject({ branchName: 'feat/a', useExisting: true });
+    draftStore.setStart({ kind: 'new', branchName: ' feat/API-1 ', baseBranch: 'develop' });
+    expect(draftStore.buildOpts(draftStore.draft!, 'develop')).toMatchObject({ branchName: 'feat/API-1', baseBranch: 'develop' });
+  });
+});
+
+describe('draftStore.start', () => {
+  it('creates the conversation, sends the message and clears the draft', async () => {
+    const addUserMessage = vi.spyOn(messageStore, 'addUserMessage');
+    draftStore.open('/repo/one');
+    await settle();
+    draftStore.setText('Fix API-12 login crash');
+
+    expect(await draftStore.start()).toBe(true);
+    expect(createSessionMock()).toHaveBeenCalledWith(expect.objectContaining({ repoPath: '/repo/one', branchName: '', baseBranch: 'main' }));
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith('new1', 'Fix API-12 login crash', undefined, undefined);
+    expect(addUserMessage).toHaveBeenCalledWith('new1', 'Fix API-12 login crash', undefined, undefined);
+    expect(store.activeSessionId).toBe('new1');
+    expect(store.sessions.find((s) => s.id === 'new1')?.displayName).toBeTruthy();
+    expect(draftStore.draft).toBeNull();
+    // The chat shows the agent walking to its bench until the first reply.
+    expect(arrivalScene.for('new1')).not.toBeNull();
+    addUserMessage.mockRestore();
+    arrivalScene.end('new1');
+  });
+
+  it('starts without a message and sends nothing', async () => {
+    draftStore.open('/repo/one');
+    await settle();
+    expect(await draftStore.start()).toBe(true);
+    expect(mockGroveBench.sendMessage).not.toHaveBeenCalled();
+    expect(arrivalScene.for('new1')).toBeNull();
+  });
+
+  it('sends dropped files with the first message', async () => {
+    const addUserMessage = vi.spyOn(messageStore, 'addUserMessage');
+    draftStore.open('/repo/one');
+    await settle();
+    draftStore.setText('Fix the crash');
+    draftStore.addAttachments([
+      { name: 'notes.md', content: 'steps', type: 'text' },
+      { name: 'shot.png', dataUrl: 'data:image/png;base64,AAAA', type: 'image' },
+      { name: 'spec.pdf', dataUrl: 'data:application/pdf;base64,BBBB', mediaType: 'application/pdf', size: 3, type: 'file' },
+    ]);
+
+    expect(await draftStore.start()).toBe(true);
+    // Text files go in the message, images and other files alongside it.
+    const outgoing = '<file path="notes.md" length="5">\nsteps\n</file>\n\nFix the crash';
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(
+      'new1',
+      outgoing,
+      [{ name: 'shot.png', data: 'AAAA', mediaType: 'image/png' }],
+      [{ name: 'spec.pdf', data: 'BBBB', mediaType: 'application/pdf' }],
+    );
+    expect(addUserMessage).toHaveBeenCalledWith(
+      'new1',
+      outgoing,
+      [{ name: 'shot.png', dataUrl: 'data:image/png;base64,AAAA' }],
+      [{ name: 'spec.pdf', mediaType: 'application/pdf', size: 3 }],
+    );
+    addUserMessage.mockRestore();
+    arrivalScene.end('new1');
+  });
+
+  it('keeps dropped files with the draft when main refuses', async () => {
+    createSessionMock().mockRejectedValue(new Error('Branch "feat/x" already exists'));
+    draftStore.open('/repo/one');
+    await settle();
+    draftStore.setText('Fix the crash');
+    draftStore.addAttachments([{ name: 'notes.md', content: 'steps', type: 'text' }]);
+
+    expect(await draftStore.start()).toBe(false);
+    expect(draftStore.draft?.attachments).toEqual([{ name: 'notes.md', content: 'steps', type: 'text' }]);
+  });
+
+  it('removes a dropped file', async () => {
+    draftStore.open('/repo/one');
+    draftStore.addAttachments([
+      { name: 'a.md', content: 'a', type: 'text' },
+      { name: 'b.md', content: 'b', type: 'text' },
+    ]);
+    draftStore.removeAttachment(0);
+    expect(draftStore.draft?.attachments.map((f) => f.name)).toEqual(['b.md']);
+  });
+
+  it('resolves the base branch when none is set', async () => {
+    draftStore.open('/repo/one');
+    await settle();
+    draftStore.setStart({ kind: 'new', branchName: '', baseBranch: '' });
+    mockGroveBench.getDefaultBranch.mockResolvedValue('trunk');
+    await draftStore.start();
+    expect(createSessionMock()).toHaveBeenCalledWith(expect.objectContaining({ baseBranch: 'trunk' }));
+  });
+
+  it('shows the row and the message before main replies, and sends once main has the thread', async () => {
+    const addUserMessage = vi.spyOn(messageStore, 'addUserMessage');
+    let finish!: (v: unknown) => void;
+    createSessionMock().mockReturnValueOnce(new Promise((r) => { finish = r; }));
+    draftStore.open('/repo/one');
+    await settle();
+    draftStore.setText('Fix API-12 login crash');
+
+    const started = draftStore.start();
+    expect(store.sessions.find((s) => s.id === 'new1')).toMatchObject({
+      status: 'starting', branch: 'grove/new1', repoPath: '/repo/one', agentType: 'claude-code',
+    });
+    expect(store.activeSessionId).toBe('new1');
+    expect(draftStore.draft).toBeNull();
+    expect(addUserMessage).toHaveBeenCalledWith('new1', 'Fix API-12 login crash', undefined, undefined);
+    expect(createSessionMock()).toHaveBeenCalledWith(expect.objectContaining({ id: 'new1' }));
+    // Main has nowhere to put the prompt until it knows the thread.
+    expect(mockGroveBench.sendMessage).not.toHaveBeenCalled();
+
+    finish({ id: 'new1', branch: 'grove/new1', agentType: 'codex' });
+    expect(await started).toBe(true);
+    expect(store.sessions.find((s) => s.id === 'new1')?.agentType).toBe('codex');
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith('new1', 'Fix API-12 login crash', undefined, undefined);
+    addUserMessage.mockRestore();
+    arrivalScene.end('new1');
+  });
+
+  it('takes the row away and brings the draft back with the error when main refuses', async () => {
+    createSessionMock().mockRejectedValue(new Error('Branch "feat/x" already exists'));
+    draftStore.open('/repo/one');
+    await settle();
+    draftStore.setText('hello');
+    expect(await draftStore.start()).toBe(false);
+    expect(draftStore.error).toContain('already exists');
+    expect(draftStore.draft?.text).toBe('hello');
+    expect(store.sessions.find((s) => s.id === 'new1')).toBeUndefined();
+    expect(draftStore.visible).toBe(true);
+    expect(arrivalScene.for('new1')).toBeNull();
+    // The draft says what went wrong; no toast as well.
+    expect(store.error).toBeNull();
+  });
+
+  it('drops the To do flag of a row flagged while it started, when main refuses', async () => {
+    let fail!: (e: Error) => void;
+    createSessionMock().mockReturnValueOnce(new Promise((_, reject) => { fail = reject; }));
+    draftStore.open('/repo/one');
+    await settle();
+    draftStore.setText('hello');
+    const started = draftStore.start();
+    todoStore.ready = true;
+    try {
+      todoStore.set('new1', true);
+      fail(new Error('Branch "feat/x" already exists'));
+      expect(await started).toBe(false);
+      expect(todoStore.has('new1')).toBe(false);
+    } finally {
+      todoStore.ids = [];
+      todoStore.ready = false;
+    }
+  });
+
+  it('lets a thread closed before main replied go: no draft back, no message sent', async () => {
+    let finish!: (v: unknown) => void;
+    createSessionMock().mockReturnValueOnce(new Promise((r) => { finish = r; }));
+    draftStore.open('/repo/one');
+    await settle();
+    draftStore.setText('hello');
+    const started = draftStore.start();
+    store.updateStatus('new1', 'stopped');
+    finish({ id: 'new1', branch: 'grove/new1', agentType: 'claude-code' });
+    expect(await started).toBe(true);
+    expect(mockGroveBench.sendMessage).not.toHaveBeenCalled();
+
+    arrivalScene.end('new1');
+
+    // Deleted while main checked: main stops, and that isn't an error to show.
+    vi.mocked(crypto.randomUUID).mockReturnValueOnce('new2' as ReturnType<typeof crypto.randomUUID>);
+    let fail!: (e: Error) => void;
+    createSessionMock().mockReturnValueOnce(new Promise((_r, reject) => { fail = reject; }));
+    draftStore.open('/repo/one');
+    await settle();
+    draftStore.setText('again');
+    const second = draftStore.start();
+    store.updateStatus('new2', 'stopped');
+    fail(new Error('This operation was aborted'));
+    expect(await second).toBe(false);
+    expect(draftStore.draft).toBeNull();
+    expect(store.error).toBeNull();
+    expect(store.sessions.find((s) => s.id === 'new2')).toBeUndefined();
+    arrivalScene.end('new2');
+  });
+
+  it('drops a thread closed before main heard of it', async () => {
+    draftStore.open('/repo/one');
+    await settle();
+    // No base branch yet, so starting looks it up first.
+    draftStore.setStart({ kind: 'new', branchName: '', baseBranch: '' });
+    let base!: (b: string) => void;
+    mockGroveBench.getDefaultBranch.mockReturnValueOnce(new Promise((r) => { base = r; }));
+    const started = draftStore.start();
+    store.updateStatus('new1', 'stopped');
+    base('main');
+    expect(await started).toBe(false);
+    expect(createSessionMock()).not.toHaveBeenCalled();
+    expect(store.sessions.find((s) => s.id === 'new1')).toBeUndefined();
+  });
+
+  it('keeps a draft with a message opened meanwhile, and says what failed in a toast', async () => {
+    let fail!: (e: Error) => void;
+    createSessionMock().mockReturnValueOnce(new Promise((_r, reject) => { fail = reject; }));
+    draftStore.open('/repo/one');
+    await settle();
+    draftStore.setText('first');
+    const started = draftStore.start();
+    draftStore.open('/repo/two');
+    draftStore.setText('second');
+
+    fail(new Error('Branch "feat/x" already exists'));
+    expect(await started).toBe(false);
+    expect(draftStore.draft?.text).toBe('second');
+    expect(store.error).toContain('already exists');
+    store.clearError();
+  });
+
+  it('keeps a draft with only files opened meanwhile', async () => {
+    let fail!: (e: Error) => void;
+    createSessionMock().mockReturnValueOnce(new Promise((_r, reject) => { fail = reject; }));
+    draftStore.open('/repo/one');
+    await settle();
+    draftStore.setText('first');
+    const started = draftStore.start();
+    draftStore.open('/repo/two');
+    draftStore.addAttachments([{ name: 'notes.md', content: 'steps', type: 'text' }]);
+
+    fail(new Error('Branch "feat/x" already exists'));
+    expect(await started).toBe(false);
+    expect(draftStore.draft?.attachments.map((f) => f.name)).toEqual(['notes.md']);
+    expect(store.error).toContain('already exists');
+    store.clearError();
+  });
+
+  it('will not start with files and no message, or with files and a slash command', async () => {
+    draftStore.open('/repo/one');
+    await settle();
+    draftStore.addAttachments([{ name: 'notes.md', content: 'steps', type: 'text' }]);
+    expect(draftStore.attachmentProblem).toBe('Write a message to go with the attached files.');
+    expect(await draftStore.start()).toBe(false);
+    draftStore.setText('/review this');
+    expect(draftStore.attachmentProblem).toMatch(/slash command can't take attached files/);
+    expect(await draftStore.start()).toBe(false);
+    expect(createSessionMock()).not.toHaveBeenCalled();
+    expect(draftStore.draft).not.toBeNull();
+  });
+
+  it('will not start an existing-branch draft with no branch', async () => {
+    draftStore.open('/repo/one');
+    draftStore.setStart({ kind: 'existing', branch: '' });
+    expect(await draftStore.start()).toBe(false);
+    expect(createSessionMock()).not.toHaveBeenCalled();
+  });
+});
+
+describe('draftStore review fixes', () => {
+  it('starts a PR on the saved default mode, not Plan', async () => {
+    settingsStore.current = { ...settingsStore.current, adapterDefaults: { 'claude-code': { permissionMode: 'acceptEdits' } } };
+    draftStore.open('/repo/one');
+    await settle();
+    draftStore.setStart({ kind: 'existing', branch: 'feat/a', pr: { number: 7, title: 'Add login' } });
+    expect(draftStore.controlValue('permissionMode')).toBe('acceptEdits');
+    expect(draftStore.buildOpts(draftStore.draft!, '').permissionMode).toBeUndefined();
+  });
+
+  it('refuses to start in a project that was removed', async () => {
+    draftStore.open('/repo/one');
+    await settle();
+    store.repos = ['/repo/two'];
+    expect(await draftStore.start()).toBe(false);
+    expect(draftStore.error).toContain('project was removed');
+    expect(createSessionMock()).not.toHaveBeenCalled();
+  });
+});
+
+describe('draftStore in a folder project without git', () => {
+  beforeEach(() => {
+    store.setFolderProject('/repo/two', true);
+    mockGroveBench.repoKind.mockResolvedValue('folder');
+  });
+  afterEach(() => {
+    store.setFolderProject('/repo/two', false);
+    mockGroveBench.repoKind.mockResolvedValue('git');
+  });
+
+  it('starts in the project folder itself', async () => {
+    draftStore.open('/repo/two');
+    await settle();
+    expect(draftStore.draft?.start).toEqual({ kind: 'folder' });
+    draftStore.resetToNewBranch();
+    expect(draftStore.draft?.start).toEqual({ kind: 'folder' });
+    expect(mockGroveBench.getDefaultBranch).not.toHaveBeenCalled();
+  });
+
+  it('creates a conversation in the folder and marks it as having no git', async () => {
+    createSessionMock().mockResolvedValue({ id: 'new1', branch: '', agentType: 'claude-code', noGit: true });
+    draftStore.open('/repo/two');
+    await settle();
+    expect(await draftStore.start()).toBe(true);
+    expect(createSessionMock()).toHaveBeenCalledWith(expect.objectContaining({ repoPath: '/repo/two', branchName: '', direct: true }));
+    expect(store.sessions.find((s) => s.id === 'new1')).toMatchObject({ direct: true, noGit: true, status: 'running' });
+  });
+
+  it('goes back to a new branch when the folder has become a git repository since launch', async () => {
+    mockGroveBench.repoKind.mockResolvedValue('git');
+    draftStore.open('/repo/two');
+    await settle();
+    expect(store.isFolderProject('/repo/two')).toBe(false);
+    expect(draftStore.draft?.start).toMatchObject({ kind: 'new', baseBranch: 'main' });
+  });
+
+  it('keeps a status main sent before it replied', async () => {
+    let finish!: (v: unknown) => void;
+    createSessionMock().mockReturnValueOnce(new Promise((r) => { finish = r; }));
+    draftStore.open('/repo/two');
+    await settle();
+    const started = draftStore.start();
+    expect(store.sessions.find((s) => s.id === 'new1')).toMatchObject({ direct: true, status: 'starting' });
+    store.updateStatus('new1', 'error');
+    finish({ id: 'new1', branch: '', agentType: 'claude-code', noGit: true });
+    await started;
+    expect(store.sessions.find((s) => s.id === 'new1')?.status).toBe('error');
+  });
+
+  it('trusts main over its own flag when marking the new conversation', async () => {
+    // Main found a repository after all, so the conversation runs with git.
+    createSessionMock().mockResolvedValue({ id: 'new1', branch: 'main', agentType: 'claude-code' });
+    draftStore.open('/repo/two');
+    await settle();
+    expect(await draftStore.start()).toBe(true);
+    expect(store.sessions.find((s) => s.id === 'new1')?.noGit).toBeUndefined();
+  });
+});
+
+describe('draftStore.start while it is still starting', () => {
+  it('files the conversation under the project it started in, even if the picker changes', async () => {
+    let finish!: (v: unknown) => void;
+    createSessionMock().mockReturnValueOnce(new Promise((r) => { finish = r; }));
+    draftStore.open('/repo/one');
+    draftStore.setText('hello');
+    await settle();
+
+    const started = draftStore.start();
+    await settle();
+    draftStore.setRepo('/repo/two');
+    finish({ id: 'new1', branch: 'grove/new1', agentType: 'claude-code' });
+    await started;
+
+    expect(createSessionMock()).toHaveBeenCalledWith(expect.objectContaining({ repoPath: '/repo/one' }));
+    expect(store.sessions.find((s) => s.id === 'new1')?.repoPath).toBe('/repo/one');
+  });
+
+  it('leaves a new draft opened meanwhile alone', async () => {
+    let finish!: (v: unknown) => void;
+    createSessionMock().mockReturnValueOnce(new Promise((r) => { finish = r; }));
+    draftStore.open('/repo/one');
+    draftStore.setText('first');
+    await settle();
+
+    const started = draftStore.start();
+    await settle();
+    draftStore.discard();
+    draftStore.open('/repo/two');
+    draftStore.setText('second, still being typed');
+    finish({ id: 'new1', branch: 'grove/new1', agentType: 'claude-code' });
+    await started;
+
+    expect(draftStore.draft?.text).toBe('second, still being typed');
+  });
+});
+
+describe('draft in a group', () => {
+  let billing: string;
+
+  beforeEach(() => {
+    groupStore.ready = true;
+    store.sessions = [{ id: 'api1', branch: 'feat/billing', repoPath: '/repo/one', status: 'running' }] as any;
+    billing = groupStore.create('Billing', ['api1'])!.id;
+  });
+
+  it('starts a new branch with the group\'s branch name, but not where the group has one', async () => {
+    draftStore.open('/repo/two', { group: { groupId: billing } });
+    await settle();
+    expect(draftStore.draft).toMatchObject({ groupId: billing, start: { kind: 'new', branchName: 'feat/billing', baseBranch: 'main' } });
+    expect(draftStore.onGroupBranch).toBe(true);
+    expect(draftStore.groupName).toBe('Billing');
+
+    // The group's conversation in /repo/one has the branch there already.
+    draftStore.setRepo('/repo/one');
+    expect(draftStore.draft?.start).toMatchObject({ kind: 'new', branchName: '' });
+    expect(draftStore.onGroupBranch).toBe(false);
+  });
+
+  it('moves an open draft into the group, keeping its message', () => {
+    draftStore.open('/repo/two');
+    draftStore.setText('keep me');
+    draftStore.open('/repo/two', { group: { groupId: billing } });
+    expect(draftStore.draft).toMatchObject({ groupId: billing, text: 'keep me', start: { branchName: 'feat/billing' } });
+  });
+
+  it('leaves the group when opened from a project, dropping the group\'s branch name', () => {
+    draftStore.open('/repo/two', { group: { groupId: billing } });
+    draftStore.open('/repo/two');
+    expect(draftStore.draft?.groupId).toBeUndefined();
+    expect(draftStore.draft?.start).toMatchObject({ kind: 'new', branchName: '' });
+  });
+
+  it('stays in the group when shown again without a project', () => {
+    draftStore.open('/repo/two', { group: { groupId: billing } });
+    draftStore.open();
+    expect(draftStore.draft?.groupId).toBe(billing);
+  });
+
+  it('leaving the group keeps a branch the user picked', () => {
+    draftStore.open('/repo/two', { group: { groupId: billing } });
+    draftStore.setStart({ kind: 'new', branchName: 'mine', baseBranch: 'main' });
+    draftStore.leaveGroup();
+    expect(draftStore.draft?.groupId).toBeUndefined();
+    expect(draftStore.draft?.start).toMatchObject({ branchName: 'mine' });
+  });
+
+  it('asks main to continue the group\'s branch, and joins the group when it starts', async () => {
+    draftStore.open('/repo/two', { group: { groupId: billing } });
+    await settle();
+    expect(await draftStore.start()).toBe(true);
+    expect(createSessionMock()).toHaveBeenCalledWith(expect.objectContaining({ repoPath: '/repo/two', branchName: 'feat/billing', continueBranch: true }));
+    expect(groupStore.get(billing)?.sessionIds).toEqual(['api1', 'new1']);
+  });
+
+  it('doesn\'t ask to continue a branch the user renamed', async () => {
+    draftStore.open('/repo/two', { group: { groupId: billing } });
+    await settle();
+    draftStore.setStart({ kind: 'new', branchName: 'feat/other', baseBranch: 'main' });
+    await draftStore.start();
+    expect(createSessionMock().mock.calls[0][0]).not.toHaveProperty('continueBranch');
+    expect(groupStore.get(billing)?.sessionIds).toEqual(['api1', 'new1']);
+  });
+
+  it('starts anyway when the group was dropped meanwhile', async () => {
+    draftStore.open('/repo/two', { group: { groupId: billing } });
+    await settle();
+    groupStore.ungroup(billing);
+    expect(await draftStore.start()).toBe(true);
+    expect(groupStore.groups).toEqual([]);
+  });
+
+  describe('a new group', () => {
+    it('is made only when its first conversation starts', async () => {
+      groupStore.ungroup(billing);
+      draftStore.open('/repo/two', { group: { newGroupName: 'Payments' } });
+      expect(draftStore.groupName).toBe('Payments');
+      expect(groupStore.groups).toEqual([]);
+
+      await draftStore.start();
+      expect(groupStore.groups).toEqual([expect.objectContaining({ name: 'Payments', sessionIds: ['new1'] })]);
+    });
+
+    it('leaves nothing behind when the draft is discarded', () => {
+      groupStore.ungroup(billing);
+      draftStore.open('/repo/two', { group: { newGroupName: 'Payments' } });
+      draftStore.discard();
+      expect(groupStore.groups).toEqual([]);
+    });
+
+    it('is replaced by joining an existing group', () => {
+      draftStore.open('/repo/two', { group: { newGroupName: 'Payments' } });
+      draftStore.open('/repo/two', { group: { groupId: billing } });
+      expect(draftStore.draft?.newGroupName).toBeUndefined();
+      expect(draftStore.draft?.groupId).toBe(billing);
+    });
+  });
+});
+
+describe('draftStore.startThread', () => {
+  it('starts a thread with the given message, agent and model, and leaves the user\'s draft alone', async () => {
+    draftStore.open('/repo/two');
+    draftStore.setText('half typed');
+    await settle();
+
+    expect(await draftStore.startThread({
+      repoPath: '/repo/one', agentId: 'codex', model: 'o4', start: { kind: 'new', branchName: '', baseBranch: '' }, text: 'Write a skill',
+    })).toBe(true);
+    expect(createSessionMock()).toHaveBeenCalledWith(expect.objectContaining({
+      repoPath: '/repo/one', adapterType: 'codex', model: 'o4', branchName: '', baseBranch: 'main',
+    }));
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith('new1', 'Write a skill', undefined, undefined);
+    expect(store.activeSessionId).toBe('new1');
+    expect(draftStore.draft).toMatchObject({ repoPath: '/repo/two', text: 'half typed' });
+    arrivalScene.end('new1');
+  });
+
+  it('starts without taking the screen when asked, in the mode given, and returns its id', async () => {
+    store.activeSessionId = 'shown';
+    expect(await draftStore.startThreadFor({
+      repoPath: '/repo/one', text: 'Next issue', controls: { permissionMode: 'plan' }, focus: false,
+    })).toEqual({ id: 'new1' });
+    expect(createSessionMock()).toHaveBeenCalledWith(expect.objectContaining({ repoPath: '/repo/one', permissionMode: 'plan' }));
+    expect(store.activeSessionId).toBe('shown');
+    expect(store.sessions.some((s) => s.id === 'new1')).toBe(true);
+    arrivalScene.end('new1');
+  });
+
+  it('runs in the project folder when asked', async () => {
+    createSessionMock().mockResolvedValue({ id: 'new1', branch: 'main', agentType: 'claude-code' });
+    await draftStore.startThread({ repoPath: '/repo/one', start: { kind: 'folder' }, text: 'Write a skill' });
+    expect(createSessionMock()).toHaveBeenCalledWith(expect.objectContaining({ repoPath: '/repo/one', direct: true }));
+    expect(store.sessions.find((s) => s.id === 'new1')).toMatchObject({ direct: true, status: 'running' });
+    arrivalScene.end('new1');
+  });
+
+  it('runs in the folder of a project without git, whatever start says', async () => {
+    store.setFolderProject('/repo/two', true);
+    try {
+      createSessionMock().mockResolvedValue({ id: 'new1', branch: '', agentType: 'claude-code', noGit: true });
+      await draftStore.startThread({ repoPath: '/repo/two', start: { kind: 'new', branchName: '', baseBranch: '' }, text: 'Write a skill' });
+      expect(createSessionMock()).toHaveBeenCalledWith(expect.objectContaining({ direct: true }));
+      expect(mockGroveBench.getDefaultBranch).not.toHaveBeenCalled();
+    } finally {
+      store.setFolderProject('/repo/two', false);
+      arrivalScene.end('new1');
+    }
+  });
+
+  it('falls back to the default agent, without the model, when the agent asked for is not offered', async () => {
+    agentsStore.list = [...agentsStore.list, { id: 'opencode', displayName: 'OpenCode', capabilities: {}, stage: 'alpha' }];
+    await draftStore.startThread({ repoPath: '/repo/one', agentId: 'opencode', model: 'big', text: 'Write a skill' });
+    const opts = createSessionMock().mock.calls[0][0];
+    expect(opts.adapterType).toBe('claude-code');
+    expect(opts.model).toBeUndefined();
+    arrivalScene.end('new1');
+  });
+
+  it('says what went wrong in a toast when main refuses, and brings no draft back', async () => {
+    createSessionMock().mockRejectedValue(new Error('Branch "feat/x" already exists'));
+    expect(await draftStore.startThread({ repoPath: '/repo/one', text: 'Write a skill' })).toBe(false);
+    expect(store.error).toContain('already exists');
+    expect(store.sessions.find((s) => s.id === 'new1')).toBeUndefined();
+    expect(draftStore.draft).toBeNull();
+    store.clearError();
+  });
+
+  it('brings back the thread that was on screen when main refuses', async () => {
+    store.sessions = [{ id: 's1', branch: 'feat/x', repoPath: '/repo/one', status: 'running', agentType: 'claude-code' }];
+    store.activeSessionId = 's1';
+    createSessionMock().mockRejectedValue(new Error('Claude Agent isn\'t installed'));
+    expect(await draftStore.startThread({ repoPath: '/repo/one', text: 'Write a skill' })).toBe(false);
+    expect(store.activeSessionId).toBe('s1');
+    expect(store.error).toContain("isn't installed");
+    store.clearError();
+  });
+
+  it('with strictAgent, refuses an agent that is not offered instead of using the default', async () => {
+    agentsStore.list = [...agentsStore.list, { id: 'opencode', displayName: 'OpenCode', capabilities: {}, stage: 'alpha' }];
+    expect(await draftStore.startThreadFor({ repoPath: '/repo/one', agentId: 'opencode', text: 'Next issue', strictAgent: true }))
+      .toEqual({ error: 'its agent is turned off or was removed' });
+    expect(await draftStore.startThreadFor({ repoPath: '/repo/one', agentId: 'gone', text: 'Next issue', strictAgent: true }))
+      .toEqual({ error: 'its agent is turned off or was removed' });
+    expect(createSessionMock()).not.toHaveBeenCalled();
+    expect(store.error).toContain('turned off or was removed');
+    store.clearError();
+  });
+
+  it('with strictAgent, loads the agents first when nothing has yet', async () => {
+    agentsStore.list = [];
+    agentsStore.loaded = false;
+    mockGroveBench.listAdapters.mockResolvedValue([{ id: 'codex', displayName: 'Codex', capabilities: {} }]);
+    expect(await draftStore.startThreadFor({ repoPath: '/repo/one', agentId: 'codex', text: 'Next issue', strictAgent: true }))
+      .toEqual({ id: 'new1' });
+    expect(createSessionMock()).toHaveBeenCalledWith(expect.objectContaining({ adapterType: 'codex' }));
+    arrivalScene.end('new1');
+  });
+
+  it('when quiet, hands back main\'s reason without a toast', async () => {
+    createSessionMock().mockRejectedValue(new Error('Branch "feat/x" already exists'));
+    expect(await draftStore.startThreadFor({ repoPath: '/repo/one', text: 'Next issue', quiet: true }))
+      .toEqual({ error: 'Branch "feat/x" already exists' });
+    expect(store.error).toBeNull();
+  });
+
+  it('refuses a project that was removed', async () => {
+    expect(await draftStore.startThread({ repoPath: '/repo/gone', text: 'Write a skill' })).toBe(false);
+    expect(createSessionMock()).not.toHaveBeenCalled();
+    expect(store.error).toContain('project was removed');
+    store.clearError();
+  });
+});

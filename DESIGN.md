@@ -6,6 +6,17 @@
 >
 > v0.2 changes: Fixed fabricated CLAUDE_CODE_PROJECT_DIR env var with real Claude Code config. Added worktree dependency/config file handling (Section 6). Replaced simple-git with execa + git CLI. Added Windows file locking handling to cleanup flows. Switched to short IDs for PATH_MAX safety. Added git version check and shell detection. Added error handling strategy (Section 13). Pinned Electron version.
 
+## 0. Terminology
+
+This document uses the internal names. In the UI, help pages and user docs the same things are called:
+
+| Internal (this doc, code) | User-facing |
+|---|---|
+| session, `AgentSession`, `session:*` IPC | conversation |
+| repo, `repoPath` | project |
+
+"Session" stays internal because it also names the provider's resumable session (`providerSessionId`). "Project" stays out of the code because Claude Code already uses it as a config scope (`project` / `user` / `local`). The plan for projects that are not a single git repository is in `docs/projects-plan.md`.
+
 ## 1. Problem Statement
 
 Running multiple AI coding agents (starting with Claude Code) on the same repository requires manual git worktree setup, multiple terminal windows, and careful branch management. There's no unified Windows-native tool that handles worktree lifecycle and provides a multi-pane terminal environment for parallel agent work.
@@ -69,6 +80,8 @@ Running multiple AI coding agents (starting with Claude Code) on the same reposi
 └─────────────────────────────────────────────────────────┘
 ```
 
+One copy of the app runs at a time (`app.requestSingleInstanceLock()` in `src/main/index.ts`). Every build, the installed app and `npm start` alike, keeps its data in `%APPDATA%\grove-bench`, and two copies would resume the same threads, start a second agent on each transcript and write the same event logs. A second launch hands over to the first, which comes to the front, and quits.
+
 ### 4.2 Key Components
 
 #### WorktreeManager
@@ -99,9 +112,6 @@ class WorktreeManager {
 
   // Lists all grove-bench-managed worktrees for a repo
   async list(repoPath: string): Promise<WorktreeInfo[]>;
-
-  // Cleans up all grove-bench worktrees (called on app quit)
-  async cleanupAll(): Promise<void>;
 
   // Validates that a path is a git repo
   async validateRepo(path: string): Promise<boolean>;
@@ -183,6 +193,35 @@ interface GroveBenchAPI {
 ```
 
 **Note on IPC cleanup:** The `onTermData` return value (a cleanup function) works because the closure is created inside the preload script, which runs in the renderer's JS context. `contextBridge.exposeInMainWorld` correctly proxies returned functions. However, as a safety net, `offTermData` provides an explicit cleanup path that doesn't rely on return value proxying. The `TerminalPane` component should call `offTermData` in its `onDestroy` lifecycle.
+
+#### PreviewManager (Preview tab)
+
+`src/main/preview.ts` gives each conversation a browser with two pages that share one in-memory storage partition (`grove-preview-<sessionId>`, cleared when the conversation closes):
+
+- **Your page** is a `WebContentsView` added to the Grove window. The renderer's `PreviewPanel` checks its content box every frame and reports changes (`preview:setViewport`); main places the view there (scaled by the Grove page's zoom factor, since CSS pixels and window pixels differ when the UI is zoomed), or hides it (`null`) when the tab, conversation or page mode changes. When Grove's UI reloads, main hides every page (the reloaded renderer doesn't know where they were) and the renderer catches up with `preview:getStates`. Native views draw above the HTML, so the panel samples a grid of points with `elementFromPoint`; when anything else is on top (a dropdown, dialog, the finder) it asks for a snapshot (`preview:snapshot`), shows it as an `<img>`, then hides the view until the overlay goes.
+- **The agent's page** is a hidden `BrowserWindow` with `offscreen: true`, created on the agent's first browser tool call. A hidden or never-shown `WebContentsView` stops painting: `capturePage()` fails with "Current display surface not available for capture", ignores resizes and loses its surface on cross-site navigation. Offscreen rendering keeps painting (10 fps), so screenshots, clicks and typing work whatever tab the user is on. The renderer shows it read-only by polling `preview:agentFrame`, which only returns a frame when a paint happened since the last one.
+
+The agent's tools are an in-process SDK MCP server (`src/main/adapters/preview-mcp-server.ts`, server `grove-preview`) over the adapter-neutral `PreviewOperations`: `preview_open`, `preview_screenshot`, `preview_read`, `preview_logs`, `preview_click`, `preview_type`. The first four run without a prompt for every agent, as the memory tools do (`isAutoAllowedGroveTool`, applied by the shared tool policy, `src/main/tool-policy.ts`), but only from a Grove server the agent was given in that thread: with the Preview tools off, a call named for `grove-preview` comes from some other server that took the name, and asks; click and type go through the normal permission prompt. Over ACP, Grove's tools are recognised only by names that include the server (`grove-memory_memory_read`, `memory_list (grove-memory MCP Server)`): Gemini CLI titles a call with arguments `memory_read(path: …)`, which another server's tool could share, so those still ask. A conversation's calls run one at a time in call order (the agent may send an open and a screenshot together), and each fails after 45 seconds so a stuck page can't stall the turn. Clicks and typing are real input events sent over the DevTools protocol (`webContents.debugger`, attached for the page's lifetime). The same connection answers `alert`/`confirm` dialogs, which would otherwise block the hidden page and every later call: OK by default, Cancel when the action passes `dialogs: 'dismiss'`, and the dialog's text goes in the log so the action reports it. The scripts that find, scroll to and focus the element (`src/main/preview-scripts.ts`) take the agent's selector or text as JSON, never as code, and scroll with `behavior: 'instant'` so pages with `scroll-behavior: smooth` report the final position. `settings.previewAgentTools` turns the server off for agents started afterwards.
+
+Rules (`src/main/preview-policy.ts`, `src/main/preview.ts`):
+
+- Your page opens any http(s) URL; the agent's page only local ones (`localhost`, `*.localhost`, `127.0.0.0/8`, `[::1]`). Both open `about:blank` and `file://` URLs inside the conversation's worktree; the agent's page only `.html`/`.htm` ones. Top-level navigations are checked on load, `will-navigate` and `will-redirect`; pop-ups load in the same page. A load that ends in `ERR_ABORTED` because the page redirected itself counts as loaded once the redirect finishes
+- Every `file://` request, frames and scripts included, goes through `webRequest.onBeforeRequest`: it must be inside the worktree, and on the agent's page it must be a web file type (HTML, CSS, JS, images, fonts, media). Otherwise an HTML file could iframe `~/.aws/credentials` or a `.env` into a screenshot, getting round the user's read rules
+- Both pages run with `sandbox`, `contextIsolation`, no Node and no preload. Permission requests are denied except `clipboard-sanitized-write`; device access is denied; downloads from the agent's page are cancelled
+- Certificate errors are accepted for local hosts only, for dev servers with self-signed certificates
+- Console messages, uncaught errors, failed loads, blocked navigations and files, dialogs, and 4xx/5xx or failed requests from the agent's page go to a 300-entry log (`src/main/preview-log.ts`) that `preview_logs` reads
+
+Keys pressed in your page are handled in `before-input-event` (`src/main/preview-keys.ts`): browser keys run on the page and Grove's window shortcuts (listed once in `src/shared/grove-shortcuts.ts`: `Alt+1..5`, `Alt+M/T/E`, `Ctrl+B`, `Ctrl+N`, `Ctrl+Shift+T`) and `Ctrl+L` are sent back to the renderer (`preview:key`), which replays them as a window `keydown`. The pages close on `session:close`, `session:destroy` and when the Grove window closes; the agent's page also closes on `session:sleep`, since nothing drives it while the agent is asleep (the agent's pages are windows, so leaving them open would stop `window-all-closed` from quitting the app). Events a closing page still fires are ignored.
+
+#### Images and files the agent makes
+
+The thread shows what the agent makes, not just what it says:
+
+- **Images a tool returns** (an MCP screenshot, Grove's `preview_screenshot`, `Read` on a .png) are saved to the thread's attachments folder (`src/main/attachments.ts`) and shown under the tool call, in every view: Focus shows the images alone. A subagent's show under its line in the thread too.
+- **Files made in a turn**: while a turn runs, `src/main/turn-files.ts` watches the worktree (`fs.watch`, recursive) and notes changed paths of kinds worth looking at (images, PDFs, web pages, video, audio, spreadsheets, Office documents). At the end of the turn, files still there and written since it began are sent as a `files_made` event just before the result. A turn the user interrupts still lists its files; a stop (which a rewind uses, about to put files back), a sleep or a close drops the watch, all through one `endTurnFiles`, so a watch never carries into the next turn. Dependency, cache and compiled-output folders (`node_modules`, `dist`, `target`, `coverage` and the like) are skipped, but not `out` or `build`, where scripts save reports too. A web page counts only when the turn created it and didn't `Edit` it, and the list stops at 24 files. Up to 12 PNG/JPEG/GIF/WebP images (5 MB each) are copied to the attachments folder, named by a hash taken off the main thread, so older turns keep showing the image as it was. Files outside the worktree (a temp folder) aren't seen.
+- **Images and links in a reply** that name a worktree file (`![home](shots/home.png)`, `[report](out/report.html)`): images load over `grove-attachment://worktree/<id>/<path>`, and links to the same kinds of file the turn list shows open it. Relative and absolute paths and `file://` URLs all work: the renderer keeps a local link's path in `data-local-href`, since DOMPurify drops an absolute one from `href`. A trailing `?query` is ignored and a `#anchor` carries over to the Preview tab. Links to other files (source code) do nothing, so a link the agent wrote can't open a script.
+
+`src/main/worktree-files.ts` checks every such path: it must resolve, symlinks followed, inside the worktree, and only image types are served. Opening one from the thread sends a web page to the Preview tab, opens PDFs, media, spreadsheets, Office files and raster images in their default app, and only shows anything else (scripts, SVGs, macro files) in its folder.
 
 ### 4.3 Renderer / UI
 
@@ -273,20 +312,11 @@ This env var tells Claude Code to reset the working directory back to the projec
 
 **Layer 2: Per-worktree `.claude/settings.local.json`**
 
-When creating a worktree, the app generates a `.claude/settings.local.json` file that denies read/write access outside the worktree:
+When creating a worktree, the app generates a `.claude/settings.local.json` file with Grove's commit attribution settings and the project's `.mcp.json` approvals. It has no deny rules.
 
-```json
-{
-  "permissions": {
-    "deny": [
-      "Read(../../**)",
-      "Edit(../../**)"
-    ]
-  }
-}
-```
+Earlier versions also denied `Read(../../**)` and `Edit(../../**)`, meant to keep Claude's file tools out of other worktrees and the main checkout. Neither rule did that: in tests with the agent SDK 0.3.281, Read, Grep and Write still reached the main checkout. Worse, Claude Code read `Read(../../**)` as covering the worktree itself (it sits two levels below the `worktrees` folder), so Grep and Glob searches there found no files. Before each start in a worktree, Grove removes those two rules from its settings file and keeps the rest.
 
-This uses Claude Code's built-in permission system. It's not a hard sandbox — Claude Code could still execute arbitrary shell commands that touch files outside the worktree — but it prevents Claude's own file operations from accidentally reaching into other worktrees or the main checkout.
+Rules that would work need absolute paths (`Edit(//c/path/to/repo/**)`). Grove doesn't write them: in the modes that ask, Layer 3 already asks before edits outside the worktree, and a deny rule would refuse even edits the user wants to approve.
 
 **Layer 3: Claude Code's interactive permission model**
 
@@ -300,9 +330,8 @@ To be clear: this is an **ergonomic safety net**, not a security boundary. The g
 
 What it prevents:
 - Agent A accidentally editing files that Agent B is working on
-- An agent modifying the main checkout while you're working in it
 - Agents stepping on each other's branches or working trees
-- Accidental file operations outside the intended worktree scope
+- In the modes that ask (Layer 3), edits to the main checkout or anywhere else outside the worktree without your approval. In auto mode Claude Code's classifier decides instead, and bypass mode doesn't ask
 
 What it does NOT prevent:
 - Arbitrary shell commands (Claude Code can run them by design — that's the point)
@@ -375,7 +404,7 @@ User clicks "+ New Agent"
   → WorktreeManager.create() -- creates branch + worktree directory
     → Auto-add .grove-wt to .gitignore if not present
     → Copy untracked files (.env, etc.) from main checkout per repo config
-    → Generate .claude/settings.local.json with directory-scoped deny rules
+    → Generate .claude/settings.local.json (attribution, .mcp.json approvals)
   → AgentSessionManager.createSession()
     → Verify git meets minimum version (2.17+)
     → Verify claude CLI is available (where.exe claude)
@@ -408,14 +437,14 @@ User clicks "X" on agent pane OR closes app
 
 ```
 App close event (before-quit)
-  → AgentSessionManager.destroyAll()
-    → Kill all PTYs
-    → Wait 500ms for Windows file handle release
-  → WorktreeManager.cleanupAll()
-    → Remove all grove-bench-managed worktrees (with retry logic per Section 7.2)
-    → Optionally delete orphaned branches
-    → git worktree prune (clean up any stale references)
+  → TerminalManager.killAll()
+  → AgentSessionManager.closeAll()
+    → Same as closing each conversation: kill the agent process tree, deny
+      pending permissions, flush the event log
   → App exits
+
+Worktrees, branches and checkpoint refs are kept: conversations reopen on the
+next launch. Only an explicit delete removes a worktree (Section 7.2).
 ```
 
 ## 8. Technical Considerations
@@ -424,7 +453,7 @@ App close event (before-quit)
 
 `node-pty` uses Windows ConPTY (available since Windows 10 1809). Key points:
 
-- **Native module rebuild**: node-pty is a native Node addon. It must be rebuilt for Electron's Node version using `electron-rebuild` or `@electron/rebuild`.
+- **Native module**: node-pty is a native Node addon. Version 1.1.0 ships Node-API prebuilds, which load in any Electron version, so it is not rebuilt (`npmRebuild: false` in `electron-builder.yml`).
 - **Shell selection**: Should detect the best available shell rather than hardcoding. See shell detection below.
 - **ConPTY quirks**: ConPTY can have rendering issues with certain escape sequences. xterm.js handles most of these, but testing is needed with Claude Code's specific output (spinner animations, syntax highlighting, etc.).
 
@@ -490,11 +519,17 @@ FitAddon.fit()     ──IPC──> pty.resize(cols,rows) (terminal resizes)
 
 We use `execa` to call the `git` CLI directly rather than `simple-git`. The reason: `simple-git` doesn't have native worktree methods, so every call would be `git.raw()` anyway. Direct `execa` calls are lighter, have fewer dependencies, and avoid native module rebuild issues.
 
+git runs from the **process host** (`process-host.ts`), an Electron utility process, not from the main process (gh runs from the agent host, below). Starting a process is synchronous: on Windows, execa's PATH search (cross-spawn stats every PATH folder for every PATHEXT extension) and CreateProcess together held the main process for tens of ms per call, and sometimes seconds, freezing the window. `runProcess()` takes execa's arguments and sends them to the host; before the host is started (before the app is ready), after it has failed three times in a row, and once it has stopped at quit, it runs execa in the main process as before. A command asked for while the host starts, or restarts after a crash, waits for it and is sent once it is up, in order: at launch the app restores every project and thread, dozens of git calls in its first seconds, which used to start in the main process. It waits 5 s at most (`HOST_WAIT_MS`: a utility process normally starts in well under a second, and a restart takes a 2 s pause plus a start), or until that start fails, and then runs in the main process; its timeout counts from when it is sent. If the host dies, the commands it was running are stopped; read-only ones wait for the restart, ahead of commands asked for since, and are sent again (they run in the main process only as those would, or if a host already died running them), and the rest fail, since they may already have done their work. A caller can mark a command safe to run again (`idempotent`: taskkill, ps, the `where` lookups): it runs again like a read-only one when the host dies, and in the main process when the host stops answering or stops at quit, so a thread's processes are still killed. Killing can't wait for a restart (the processes keep running until then, and a quit has only so long), so taskkill and ps are also `urgent`: when the host isn't up, or dies under them, they run in the main process at once.
+
+The agents' programs start the same way, from a second utility process, the **agent host** (`spawnProcess()`, `process-host-spawn.ts`): Claude Code's claude binary, and every ACP agent. An ACP agent is usually an npm `.cmd` shim, which Node's `spawn` can't start on Windows, so its request sets `findCommand` and the host runs cross-spawn's parse first, as execa does: it finds the command on PATH with PATHEXT and runs a shim through cmd.exe with its arguments escaped. The freeze log measured every claude.exe launch from the main process at 1 s or more, and up to 21 s on a PC running an antivirus. `spawnProcess()` returns at once with a stand-in for the ChildProcess the agent SDK expects (stdin, stdout, exit code, kill); the host starts the process and streams its input and output both ways, decoded as UTF-8 so no character is split. A spawn asked for while the host is starting waits for it, since the open thread's agent starts within seconds of launch. Agents get their own host because the git host is restarted when a command goes unanswered, and a restart stops whatever the host started: when the agent host dies, its agents are stopped and reported as exited. The claude CLI's auth, mcp and plugin calls run there too (`runInAgentHost()`, `process-host-run.ts`), as spawned processes whose output is collected in the main process: a plugin install has no time limit and `mcp list` can hang, so in the git host one would be stopped by, or cause, a restart. So does every gh call (`gh.ts`): gh waits on the network, and on Windows a timeout that kills gh alone can leave a process it started holding the pipes, so the host never answers; on 23 Oct a hung `gh pr` got the git host restarted, failing two checkpoints' `git add` and a `git commit-tree`. Their time limit is kept in the main process, counted from when the process has started rather than while it waits for a restarting agent host (that wait has its own bound, `START_WAIT_MS`), and kills the whole tree (`killTree`), not just cmd.exe or gh, and fails the call as timed out without restarting either host. Their output isn't counted as the agents' output in the health line (`agentOutput: false`). gh is found on PATH as execa finds it (`findCommand`), `gh api --input -` gets its stdin (`input`), and calls that only read (`isReadOnly`) are `idempotent`, so they run once more if the agent host dies under them.
+
+A command's deadline (its timeout plus a minute) only restarts the host when it fires on time. Windows counts system sleep in timers, so a deadline set before sleep fires the moment the computer wakes, before the host has had a chance to answer; on 9 Oct that restarted the host. A deadline that fires 30 s or more late gives the command its full time again instead (`LATE_DEADLINE_MS`). A host killed for not answering takes no new commands until it has restarted (they wait for the restart, as above, and urgent ones run in the main process at once), and the command that found it out fails as timed out, or runs again in the main process if it is idempotent.
+
 ```typescript
-import { execa } from 'execa';
+import { runProcess } from './process-host.js';
 
 async function git(args: string[], cwd: string) {
-  const result = await execa('git', args, { cwd });
+  const result = await runProcess('git', args, { cwd });
   return result.stdout;
 }
 
@@ -525,7 +560,10 @@ const version = await git(['--version'], repoPath);
 
 ### 8.4 Prerequisite Detection
 
-Before spawning a session, verify that required tools are available:
+Checks run in the background at startup and never block the app. The last
+result is cached in `app-state.json` and shown at the next launch while a fresh
+check runs. Git gates only git-backed features; agent credentials are asked for
+when the user starts a conversation.
 
 **Git availability and version:**
 
@@ -545,7 +583,7 @@ async function checkGit(): Promise<{ available: boolean; version?: string; meets
 }
 ```
 
-If git is not found or below 2.17, show a blocking error. Git 2.5 introduced worktrees, but 2.17+ has important Windows fixes and `git worktree move` support.
+If git is not found or below 2.17, show a dismissible notice under the title bar. Projects, worktrees and the Changes tab need it; the rest of the app loads. Git 2.5 introduced worktrees, but 2.17+ has important Windows fixes and `git worktree move` support.
 
 **Claude Code availability:**
 
@@ -561,9 +599,47 @@ async function findClaudeCode(): Promise<string | null> {
 }
 ```
 
-If not found, show a helpful error: "Claude Code not found. Install it with `npm install -g @anthropic-ai/claude-code`" (or whatever the current install method is -- verify at build time).
+Conversations don't need the installed CLI: the Agent SDK runs its own bundled Claude Code binary unless `pathToClaudeCodeExecutable` is set ([quickstart](https://code.claude.com/docs/en/agent-sdk/quickstart)). The CLI is used to read an existing sign-in (`claude auth status --json`) and for MCP and plugin configuration. Both CLI calls have a time limit so a hung CLI can't stall the check.
 
-**All prerequisite checks should run once at app startup** and again when the user tries to create a session. Results are cached until the app restarts.
+**Credentials.** The agent is ready when any of these is true:
+
+- An API key is saved in the app. It is encrypted with Electron `safeStorage` in `<userData>/credentials.json` (`src/main/credentials.ts`), never sent to the renderer, and passed to the agent as `ANTHROPIC_API_KEY`. While saved it wins over a CLI sign-in, which matches how Claude Code treats that variable ([env vars](https://code.claude.com/docs/en/env-vars)).
+- `ANTHROPIC_API_KEY` or a provider switch (`CLAUDE_CODE_USE_BEDROCK`, `_VERTEX`, `_FOUNDRY`, `_ANTHROPIC_AWS`) is set in the environment.
+- `claude auth status` reports a sign-in.
+- `claude auth status` can't be read: it didn't start, timed out or printed no sign-in. That says nothing about the sign-in, so the agent counts as ready but unchecked (`authUnchecked`) and the reason goes to the log. A missing sign-in then comes back as an auth error when the thread starts. Only `"loggedIn": false` counts as signed out; the CLI reports it with exit code 1 ([CLI reference](https://code.claude.com/docs/en/cli-reference)).
+
+If none is, the New Conversation dialog shows an API key field and a Re-check button instead of the form. The key can be changed or removed later in Settings > Agent.
+
+A pasted key is checked before it is saved (`AgentAdapter.verifyApiKey`; for Claude, one `GET /v1/models` call, [List Models](https://platform.claude.com/docs/en/api/models/list)): a 401 turns it away next to the field, and when the provider can't be reached it is saved and marked unchecked. Skipped when `ANTHROPIC_BASE_URL` points conversations elsewhere. A key can still fail later (revoked, typo saved offline): the SDK flags the reply `authentication_failed`, the adapter turns it into an `error` event with `auth` and `keyRejected` set and its own sign-in help in place of the CLI's text, the thread links to Settings > Agents, and main marks the saved key refused (`markApiKeyRejected`). A refused key counts as no credentials (`agentReady`), so new conversations ask again until it is replaced or removed.
+
+**Several agents.** Every check above runs for each registered adapter, and `PrerequisiteStatus.agents` holds the result per adapter id. Saved keys, default models (`settings.defaultModels`) and the Settings > Agent groups are per adapter too. The New Conversation dialog shows an Agent picker when more than one adapter is registered and asks for the picked agent's credentials; the status bar lists the models of the conversation's own agent. **Default agent** (Settings > Agents, `settings.defaultAgent`) picks the agent new threads start on; left at "Same as the open thread", a new thread takes the open thread's agent, else the built-in default, Claude Code (`AgentSummary.isDefault`, `adapterRegistry.getBuiltInDefault`). A pick that isn't offered for new threads (an alpha agent turned off, a removed account) is ignored, by the same rule in main (`pickedDefaultAgent`) and the renderer (`agentsStore.pickedDefaultId`). Calls that name no agent use the default; one that names an agent that isn't registered is refused rather than sent to the default (`resolveAdapter`, skills, worktree settings). The Settings MCP tab picks its agent; the Plugins tab configures the built-in agent and is hidden when it doesn't support plugins.
+
+**Several Claude accounts.** Claude Code keeps an account's sign-in, history, settings, MCP servers and plugins in one folder, picked with `CLAUDE_CONFIG_DIR` ([Log in with multiple accounts](https://code.claude.com/docs/en/authentication#log-in-with-multiple-accounts)). Each account in `settings.claudeAccounts` registers as its own Claude adapter (`claude-account-<id>`, `src/main/adapters/claude-accounts.ts`), so per-adapter keys, default models, model lists, background tasks and the manifest's `adapterType` need nothing new. `adapterType` also resumes a thread on the account it started on, which matters because its transcript is in that account's folder. The default account stays `claude-code` with `~/.claude`.
+
+Accounts are added from the Claude agent's **Add account** button (its adapter declares `capabilities.accounts`). The dialog asks main to check the name and folder as they are typed (`newClaudeAccount`): the id comes from the name and is saved with the entry, so the agent and its default folder (`~/.claude-<id>`) stay the same if the name changes; a typed folder loses Explorer's quotes, expands `%NAME%` and `~`, and is saved as an absolute path; a name whose id is taken, the home folder, the default account's folder and another account's folder are turned away. Main registers the adapter at once and the renderer saves the entry like any other setting. Removing an account only takes it out of the settings: the agent list marks it `account.removed`, so it isn't offered for new threads or shown in Settings, while threads already on it keep it until a restart. After that its threads can't start, and their background tasks are treated like those of any agent that is gone (see Background tasks).
+
+An account agent:
+
+- runs Claude Code, `claude auth status`, `claude mcp` and `claude plugin` with `CLAUDE_CONFIG_DIR` set to its folder, and keeps user skills in `<folder>/skills`.
+- drops the credentials, provider switches and `ANTHROPIC_BASE_URL` inherited from Grove's environment (`INHERITED_SIGN_IN_ENV`), which Claude Code would otherwise use over the folder's sign-in ([authentication precedence](https://code.claude.com/docs/en/authentication#authentication-precedence)). Its own saved key still wins, as for the default account, and is checked with Anthropic directly.
+- signs in with Claude Code's own `claude auth login`, which the user runs in PowerShell with the folder set (the command clears the variable afterwards, and doubles every character PowerShell reads as a single quote, including the typographic ones), so the authentication rules below still hold: Grove never reads the sign-in.
+- has no provider title for its threads: the SDK's `getSessionInfo` reads transcripts in Grove's own process, from Grove's `CLAUDE_CONFIG_DIR`, and takes no folder.
+
+**Background tasks.** Memory notes, memory compaction, commit messages and skill suggestions call `adapter.generateText()` (`src/main/background-tasks.ts`). Each runs on the agent of the conversation it belongs to, so a conversation's content only goes to the provider chosen for it. The manifest records every conversation's agent (`adapterType`), which also lets a restart resume it on the same agent. When that agent is gone (a custom agent taken out of Settings, a removed Claude account, after a restart), nothing is sent to another provider unasked: a task the user starts (a commit message, a new goal) asks which agent to use instead (`backgroundAgentStore`, `BackgroundAgentDialog`) and keeps the answer for that thread until restart, and automatic ones (memory notes) are skipped (`backgroundAgentFor` returns null, `recordedAgent` throws without a `substitute`). Project-level tasks use the project's most recently used agent that is still there, else the default agent: manual compaction any agent, skill suggestions only an agent with skills, and suggestions only read that agent's conversations. The model is the user's pick in `settings.backgroundModels`, else the adapter's own `backgroundModel` (Claude: the SDK's current Haiku), else the agent's default.
+
+**Model lists.** The Claude adapter reads the SDK's list (`Query.supportedModels()`) when a conversation starts, once per run, and caches it in `app-state.json` (`modelCatalogs`) for the next launch; `FALLBACK_MODELS` covers the first launch. The SDK lists aliases (`opus`, `sonnet`, `haiku`) with the model each resolves to; Grove keeps the resolved id so saved choices keep matching, skips the account's `default` row (Grove has its own Default), and lists Opus first so new conversations still start on Opus. The SDK's effort levels, adaptive thinking, fast mode and auto mode drive the session controls; each model's default effort and whether thinking can be switched off still come from the adapter's table, since the SDK doesn't report them. When the list changes, the main process sends `agent:modelsChanged` and the status bar and Settings refetch.
+
+**Authentication rules.** Anthropic's terms decide which sign-in paths the app may offer ([Legal and compliance](https://code.claude.com/docs/en/legal-and-compliance), [Agent SDK overview](https://code.claude.com/docs/en/agent-sdk/overview)):
+
+- **Allowed: the user's own Claude subscription through Claude Code.** The terms don't prevent "an end user from signing in to the unmodified Claude Code binary with their own Claude subscription". The user signs in with `claude auth login`, which is Anthropic's own flow. Grove only runs `claude auth status` to see whether they are signed in. It never reads, stores or forwards the sign-in token; the agent process reads it itself.
+- **Allowed: the user's own API key or cloud provider credentials,** billed to the user under their own agreement.
+- **Not allowed: a Claude login inside Grove.** Third-party developers may not offer Claude.ai login in their own apps, collect or store Claude.ai credentials or session tokens, or route requests through Free, Pro or Max credentials on their users' behalf. Don't add a "Sign in with Claude" button or read the CLI's stored tokens without Anthropic's approval.
+- **Keep the binary as published.** Don't modify the bundled Claude Code binary or remove or disable any of its sign-in methods.
+- **Don't pay for or resell usage.** Each user brings their own subscription, key or cloud credentials.
+- **Commercial Terms.** Running Claude Code inside a product requires agreeing to Anthropic's Commercial Terms of Service, which also govern the Agent SDK.
+- **Naming.** Plain-text statements that Grove runs Claude Code are fine. The agent is labelled "Claude Agent" in the UI, as the SDK branding guidelines suggest for menus. Don't use "Claude Code" or Anthropic's names or logos as part of Grove's own product, feature or company name.
+
+For anything these rules don't settle, Anthropic asks developers to contact its sales team.
 
 ## 9. Project Structure
 
@@ -663,7 +739,7 @@ The app needs to surface errors clearly since things will go wrong (worktree cre
 
 | Category | Example | How it surfaces |
 |----------|---------|-----------------|
-| Prerequisite failure | Git not found, Claude Code missing, git too old | Blocking dialog on startup or session creation. Cannot proceed. |
+| Prerequisite failure | Git not found or too old, no agent credentials | Git: a notice with Download Git and Re-check on the first screen, in a new conversation and at the top of the Changes tab. Credentials: API key step in the New Conversation dialog. Neither blocks the app. |
 | Worktree creation failure | Branch already exists, disk full, permission denied | Error toast + details. Session creation aborted, no terminal opens. |
 | PTY crash | Claude Code exits unexpectedly, shell crashes | Terminal shows exit message in red. Agent status changes to "stopped". User can destroy and recreate. |
 | Worktree cleanup failure | File locked by another process | Warning toast. Retry button. Flag for cleanup on next startup. |
@@ -673,7 +749,7 @@ The app needs to surface errors clearly since things will go wrong (worktree cre
 
 - **Status bar** at the bottom of each terminal pane showing agent status (running/stopped/error)
 - **Toast notifications** for non-blocking errors (worktree cleanup issues, background warnings)
-- **Modal dialogs** for blocking errors (prerequisites missing, can't create session)
+- **Modal dialogs** for blocking errors (can't create session)
 - **Terminal inline messages** for PTY-level events (process exited, connection lost)
 
 ### 13.3 Logging
@@ -689,4 +765,4 @@ All errors log to a file at `%APPDATA%/grove-bench/logs/`. Useful for debugging 
 - Agent-to-agent communication (one agent's output feeds another)
 - Git operations UI (merge, rebase, cherry-pick between agent branches)
 
-> **Already implemented since v0.3:** Built-in diff viewer, session persistence, settings UI, slash commands, skills, MCP server connections, drag-and-drop image attachments, dev server management, auto-update via electron-updater (see `docs/electron-install.md`).
+> **Already implemented since v0.3:** Built-in diff viewer, session persistence, settings UI, slash commands, skills, MCP server connections, drag-and-drop image attachments, auto-update via electron-updater (see `docs/electron-install.md`).

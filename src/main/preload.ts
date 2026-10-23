@@ -7,6 +7,9 @@ const api: GroveBenchAPI = {
   addRepo: () => ipcRenderer.invoke(IPC.REPO_SELECT),
   removeRepo: (repoPath: string) => ipcRenderer.invoke(IPC.REPO_REMOVE, repoPath),
   validateRepo: (path: string) => ipcRenderer.invoke(IPC.REPO_VALIDATE, path),
+  repoKind: (path: string) => ipcRenderer.invoke(IPC.REPO_KIND, path),
+  rememberRepo: (path: string) => ipcRenderer.invoke(IPC.REPO_REMEMBER, path),
+  hasGitIdentity: (path: string) => ipcRenderer.invoke(IPC.GIT_HAS_IDENTITY, path),
 
   // Session operations
   createSession: (opts: CreateSessionOpts) =>
@@ -15,10 +18,32 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.SESSION_RESUME, id, repoPath),
   stopSession: (id: string) =>
     ipcRenderer.invoke(IPC.SESSION_STOP, id),
+  closeSession: (id: string) =>
+    ipcRenderer.invoke(IPC.SESSION_CLOSE, id),
+  sleepSession: (id: string) =>
+    ipcRenderer.invoke(IPC.SESSION_SLEEP, id),
+  wakeSession: (id: string) =>
+    ipcRenderer.invoke(IPC.SESSION_WAKE, id),
+  stopBackgroundTask: (sessionId: string, taskId: string) =>
+    ipcRenderer.invoke(IPC.SESSION_STOP_TASK, sessionId, taskId),
   destroySession: (id: string, deleteBranch?: boolean) =>
     ipcRenderer.invoke(IPC.SESSION_DESTROY, id, deleteBranch),
   renameSession: (sessionId: string, displayName: string) =>
     ipcRenderer.invoke(IPC.SESSION_RENAME, sessionId, displayName),
+  autoNameSession: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.SESSION_AUTO_NAME, sessionId),
+  getConversationGoal: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.SESSION_GOAL_GET, sessionId),
+  getConversationGoals: (sessionIds: string[]) =>
+    ipcRenderer.invoke(IPC.SESSION_GOALS_GET, sessionIds),
+  setConversationGoal: (sessionId: string, text: string) =>
+    ipcRenderer.invoke(IPC.SESSION_GOAL_SET, sessionId, text),
+  autoConversationGoal: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.SESSION_GOAL_AUTO, sessionId),
+  refreshConversationGoal: (sessionId: string, substituteAgent?: string) =>
+    ipcRenderer.invoke(IPC.SESSION_GOAL_REFRESH, sessionId, substituteAgent),
+  setConversationGoalHidden: (sessionId: string, hidden: boolean) =>
+    ipcRenderer.invoke(IPC.SESSION_GOAL_HIDE, sessionId, hidden),
   listSessions: () => ipcRenderer.invoke(IPC.SESSION_LIST),
 
   // Worktree operations
@@ -26,15 +51,40 @@ const api: GroveBenchAPI = {
   listRepos: () => ipcRenderer.invoke(IPC.WORKTREE_LIST_REPOS) as Promise<string[]>,
 
   // Branch operations
-  listBranches: (repoPath: string) => ipcRenderer.invoke(IPC.BRANCH_LIST, repoPath),
+  listBranches: (repoPath: string, opts?: { fetch?: boolean }) => ipcRenderer.invoke(IPC.BRANCH_LIST, repoPath, opts),
+  getDefaultBranch: (repoPath: string) => ipcRenderer.invoke(IPC.BRANCH_DEFAULT, repoPath) as Promise<string>,
   renameBranch: (sessionId: string, newBranchName: string) =>
     ipcRenderer.invoke(IPC.BRANCH_RENAME, sessionId, newBranchName),
+  switchBranch: (sessionId: string, branch: string, opts: { create: boolean; busySessionIds: string[] }) =>
+    ipcRenderer.invoke(IPC.BRANCH_SWITCH, sessionId, branch, opts),
+  syncBranch: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.BRANCH_SYNC, sessionId),
+  getCheckoutSharers: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.CHECKOUT_SHARERS, sessionId) as Promise<string[]>,
+  autoNameBranch: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.BRANCH_AUTO_NAME, sessionId),
 
   // Agent I/O
-  sendMessage: (sessionId: string, content: string, images?: import('../shared/types.js').ImageAttachment[]) =>
-    ipcRenderer.send(IPC.AGENT_SEND, sessionId, content, images),
+  sendMessage: (
+    sessionId: string,
+    content: string,
+    images?: import('../shared/types.js').ImageAttachment[],
+    files?: import('../shared/types.js').FileAttachment[],
+  ) => ipcRenderer.send(IPC.AGENT_SEND, sessionId, content, images, files),
+  openAttachedFile: (sessionId: string, file: string) =>
+    ipcRenderer.invoke(IPC.ATTACHMENT_OPEN, sessionId, file),
+  openWorktreeFile: (sessionId: string, filePath: string) =>
+    ipcRenderer.invoke(IPC.WORKTREE_FILE_OPEN, sessionId, filePath),
   respondToPermission: (sessionId: string, decision: PermissionDecision) =>
     ipcRenderer.invoke(IPC.AGENT_PERMISSION, sessionId, decision),
+  respondToElicitation: (sessionId: string, requestId: string, response: import('../shared/types.js').McpElicitationResponse) =>
+    ipcRenderer.invoke(IPC.AGENT_ELICITATION, sessionId, requestId, response),
+  respondToLimit: (sessionId: string, requestId: string, decision: 'continue' | 'stop') =>
+    ipcRenderer.invoke(IPC.AGENT_LIMIT, sessionId, requestId, decision) as Promise<boolean>,
+  getDailySpend: () =>
+    ipcRenderer.invoke(IPC.LIMITS_DAILY_SPEND) as Promise<number>,
+  getThreadUsage: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.LIMITS_THREAD_USAGE, sessionId) as Promise<import('../shared/types.js').ThreadUsage>,
   onAgentEvent: (sessionId: string, callback: (event: import('../shared/types.js').AgentEvent) => void) => {
     const channel = `${IPC.AGENT_EVENT}:${sessionId}`;
     const handler = (_event: Electron.IpcRendererEvent, data: import('../shared/types.js').AgentEvent) =>
@@ -53,8 +103,26 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.AGENT_HISTORY_PAGE, sessionId, limit, beforeIndex),
   getEventHistoryCount: (sessionId: string) =>
     ipcRenderer.invoke(IPC.AGENT_HISTORY_COUNT, sessionId),
+  getThreadItems: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.AGENT_THREAD_ITEMS, sessionId),
+  searchEventHistory: (sessionId: string, query: string, limit?: number) =>
+    ipcRenderer.invoke(IPC.AGENT_HISTORY_SEARCH, sessionId, query, limit),
+  searchAllEventHistory: (sessionIds: string[], query: string, limitPerSession?: number, maxHits?: number) =>
+    ipcRenderer.invoke(IPC.AGENT_HISTORY_SEARCH_ALL, sessionIds, query, limitPerSession, maxHits),
+  getSessionPreviews: (sessionIds: string[]) =>
+    ipcRenderer.invoke(IPC.SESSION_PREVIEWS, sessionIds),
   clearEventHistory: (sessionId: string) =>
     ipcRenderer.invoke(IPC.AGENT_CLEAR_HISTORY, sessionId),
+  findEventIndexByUuid: (sessionId: string, uuid: string) =>
+    ipcRenderer.invoke(IPC.FIND_EVENT_INDEX_BY_UUID, sessionId, uuid),
+
+  // Bookmarks
+  listBookmarks: () => ipcRenderer.invoke(IPC.BOOKMARKS_LIST),
+  addBookmark: (bookmark: Omit<import('../shared/types.js').Bookmark, 'id' | 'createdAt'>) =>
+    ipcRenderer.invoke(IPC.BOOKMARK_ADD, bookmark),
+  removeBookmark: (id: string) => ipcRenderer.invoke(IPC.BOOKMARK_REMOVE, id),
+  updateBookmark: (id: string, patch: Partial<Pick<import('../shared/types.js').Bookmark, 'note' | 'eventIndex'>>) =>
+    ipcRenderer.invoke(IPC.BOOKMARK_UPDATE, id, patch),
 
   // Mode control
   setMode: (sessionId: string, mode: string) =>
@@ -64,9 +132,59 @@ const api: GroveBenchAPI = {
   setModel: (sessionId: string, model?: string) =>
     ipcRenderer.invoke(IPC.AGENT_SET_MODEL, sessionId, model),
 
-  // Thinking control
-  setThinking: (sessionId: string, enabled: boolean) =>
-    ipcRenderer.invoke(IPC.AGENT_SET_THINKING, sessionId, enabled),
+  // Session controls (adapter-declared)
+  getControls: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.AGENT_GET_CONTROLS, sessionId),
+  getUsage: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.AGENT_GET_USAGE, sessionId),
+  switchAgent: (sessionId: string, adapterId: string, transcript: boolean) =>
+    ipcRenderer.invoke(IPC.AGENT_SWITCH, sessionId, adapterId, transcript),
+  getCachedUsage: (adapterId: string) =>
+    ipcRenderer.invoke(IPC.AGENT_GET_CACHED_USAGE, adapterId),
+  setControl: (sessionId: string, controlId: string, value: string) =>
+    ipcRenderer.invoke(IPC.AGENT_SET_CONTROL, sessionId, controlId, value),
+
+  // MCP server control
+  listMcpServers: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.AGENT_MCP_LIST, sessionId),
+  getMcpContextCost: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.AGENT_MCP_CONTEXT_COST, sessionId),
+  reconnectMcpServer: (sessionId: string, serverName: string) =>
+    ipcRenderer.invoke(IPC.AGENT_MCP_RECONNECT, sessionId, serverName),
+  setMcpServerEnabled: (sessionId: string, serverName: string, enabled: boolean) =>
+    ipcRenderer.invoke(IPC.AGENT_MCP_TOGGLE, sessionId, serverName, enabled),
+  authenticateMcpServer: (sessionId: string, serverName: string) =>
+    ipcRenderer.invoke(IPC.AGENT_MCP_AUTHENTICATE, sessionId, serverName),
+  reconnectDownMcpServers: (sessionId: string, serverName?: string) =>
+    ipcRenderer.invoke(IPC.AGENT_MCP_RECONNECT_DOWN, sessionId, serverName),
+  onMcpStatus: (callback: (sessionId: string, servers: import('../shared/types.js').McpServerInfo[]) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, sessionId: string, servers: import('../shared/types.js').McpServerInfo[]) =>
+      callback(sessionId, servers);
+    ipcRenderer.on(IPC.AGENT_MCP_STATUS, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC.AGENT_MCP_STATUS, handler);
+    };
+  },
+
+  // Skills
+  listSkills: (sessionId: string, fallbackPath: string) =>
+    ipcRenderer.invoke(IPC.SKILLS_LIST, sessionId, fallbackPath),
+  listAgentSkills: (agentId: string, repoPath: string) =>
+    ipcRenderer.invoke(IPC.SKILLS_LIST_FOR_AGENT, agentId, repoPath),
+  addSkill: (sessionId: string, fallbackPath: string, def: unknown) =>
+    ipcRenderer.invoke(IPC.SKILLS_ADD, sessionId, fallbackPath, def),
+  getSkillSharing: (sessionId: string, fallbackPath: string) =>
+    ipcRenderer.invoke(IPC.SKILLS_SHARING, sessionId, fallbackPath),
+  shareSkills: (sessionId: string, fallbackPath: string) =>
+    ipcRenderer.invoke(IPC.SKILLS_SHARE, sessionId, fallbackPath),
+  linkSkills: (sessionId: string, fallbackPath: string) =>
+    ipcRenderer.invoke(IPC.SKILLS_LINK, sessionId, fallbackPath),
+  getSkillSuggestions: (repoPath: string) =>
+    ipcRenderer.invoke(IPC.SKILLS_SUGGESTIONS_GET, repoPath),
+  analyzeSkillSuggestions: (repoPath: string) =>
+    ipcRenderer.invoke(IPC.SKILLS_SUGGESTIONS_ANALYZE, repoPath),
+  dismissSkillSuggestion: (repoPath: string, suggestionId: string) =>
+    ipcRenderer.invoke(IPC.SKILLS_SUGGESTION_DISMISS, repoPath, suggestionId),
 
   // File operations (for @ file picker)
   listFiles: (sessionId: string) => ipcRenderer.invoke(IPC.FILE_LIST, sessionId),
@@ -75,37 +193,109 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.FILE_OPEN_IN_EDITOR, sessionId, filePath, line),
 
   // File revert & diff (for changes review)
-  revertFile: (sessionId: string, filePath: string, staged?: boolean) =>
-    ipcRenderer.invoke(IPC.FILE_REVERT, sessionId, filePath, staged),
-  getFileDiff: (sessionId: string, filePath: string) =>
-    ipcRenderer.invoke(IPC.FILE_DIFF, sessionId, filePath),
+  revertFile: (sessionId: string, filePath: string, staged?: boolean, renamedFrom?: string) =>
+    ipcRenderer.invoke(IPC.FILE_REVERT, sessionId, filePath, staged, renamedFrom),
+  getFileDiff: (sessionId: string, filePath: string, staged?: boolean, opts?: { base?: string }) =>
+    ipcRenderer.invoke(IPC.FILE_DIFF, sessionId, filePath, staged, opts),
+  getFileLines: (sessionId: string, filePath: string, staged?: boolean) =>
+    ipcRenderer.invoke(IPC.FILE_LINES, sessionId, filePath, staged),
+  getImageDiffContent: (sessionId: string, filePath: string) =>
+    ipcRenderer.invoke(IPC.FILE_CONTENT_DATA_URL, sessionId, filePath),
+  stageFile: (sessionId: string, filePath: string) =>
+    ipcRenderer.invoke(IPC.FILE_STAGE, sessionId, filePath),
+  unstageFile: (sessionId: string, filePath: string) =>
+    ipcRenderer.invoke(IPC.FILE_UNSTAGE, sessionId, filePath),
+  commit: (sessionId: string, message: string) =>
+    ipcRenderer.invoke(IPC.GIT_COMMIT, sessionId, message),
+  generateCommitMessage: (sessionId: string, substituteAgent?: string) =>
+    ipcRenderer.invoke(IPC.GIT_GENERATE_COMMIT_MESSAGE, sessionId, substituteAgent),
+  push: (sessionId: string) => ipcRenderer.invoke(IPC.GIT_PUSH, sessionId),
+  getGitSyncStatus: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.GIT_SYNC_STATUS, sessionId),
+  getBranchCommits: (sessionId: string, base: string) =>
+    ipcRenderer.invoke(IPC.GIT_BRANCH_COMMITS, sessionId, base),
+
+  // Branch operations
+  gitLogCommits: (sessionId: string, ref: string, base: string) =>
+    ipcRenderer.invoke(IPC.GIT_LOG_COMMITS, sessionId, ref, base),
+  gitRebase: (sessionId: string, onto: string) =>
+    ipcRenderer.invoke(IPC.GIT_REBASE, sessionId, onto),
+  gitCherryPick: (sessionId: string, sha: string) =>
+    ipcRenderer.invoke(IPC.GIT_CHERRY_PICK, sessionId, sha),
+  gitSquash: (sessionId: string, base: string, message: string) =>
+    ipcRenderer.invoke(IPC.GIT_SQUASH, sessionId, base, message),
 
   // Checkpoint rewind
-  rewindSession: (sessionId: string, userMessageId: string, options?: { conversationOnly?: boolean }) =>
+  rewindSession: (sessionId: string, userMessageId: string, options?: import('../shared/types.js').RewindOptions) =>
     ipcRenderer.invoke(IPC.AGENT_REWIND, sessionId, userMessageId, options),
   getCheckpointDiff: (sessionId: string, userMessageId: string) =>
     ipcRenderer.invoke(IPC.AGENT_CHECKPOINT_DIFF, sessionId, userMessageId),
   listCheckpoints: (sessionId: string) =>
     ipcRenderer.invoke(IPC.AGENT_LIST_CHECKPOINTS, sessionId),
 
+  // Diff history tracking
+  getDiffHistory: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.AGENT_DIFF_HISTORY, sessionId),
+  getCheckpointFiles: (sessionId: string, uuid: string, scope: 'turn' | 'since' | 'full') =>
+    ipcRenderer.invoke(IPC.AGENT_CHECKPOINT_FILES, sessionId, uuid, scope),
+  getCheckpointFileDiff: (sessionId: string, uuid: string, scope: 'turn' | 'since' | 'full', filePath: string) =>
+    ipcRenderer.invoke(IPC.AGENT_CHECKPOINT_FILE_DIFF, sessionId, uuid, scope, filePath),
+  getCheckpointFileLines: (sessionId: string, uuid: string, scope: 'turn' | 'since' | 'full', filePath: string) =>
+    ipcRenderer.invoke(IPC.AGENT_CHECKPOINT_FILE_LINES, sessionId, uuid, scope, filePath),
+
   // Git status
-  getGitStatus: (sessionId: string) =>
-    ipcRenderer.invoke(IPC.GIT_STATUS, sessionId),
+  getGitStatus: (sessionId: string, opts?: { scope?: 'working' | 'branch'; base?: string }) =>
+    ipcRenderer.invoke(IPC.GIT_STATUS, sessionId, opts),
 
   // PR info
-  getPrInfo: (sessionId: string) => ipcRenderer.invoke(IPC.PR_INFO, sessionId),
+  getPrs: (sessionId: string) => ipcRenderer.invoke(IPC.PR_LIST, sessionId),
+  listOpenPrs: (repoPath: string) => ipcRenderer.invoke(IPC.PR_LIST_OPEN, repoPath),
+  createPr: (sessionId: string, opts: import('../shared/types.js').PrCreateOpts) =>
+    ipcRenderer.invoke(IPC.PR_CREATE, sessionId, opts),
+  getPrReviewComments: (sessionId: string, prNumber: number) =>
+    ipcRenderer.invoke(IPC.PR_REVIEW_COMMENTS, sessionId, prNumber),
+  submitPrReview: (sessionId: string, review: import('../shared/types.js').PrReviewSubmit) =>
+    ipcRenderer.invoke(IPC.PR_SUBMIT_REVIEW, sessionId, review),
 
   // External links
   openExternal: (url: string) => ipcRenderer.invoke(IPC.OPEN_EXTERNAL, url),
 
-  // Localhost process cleanup
-  killPort: (port: number) => ipcRenderer.invoke(IPC.KILL_PORT, port),
+  // Preview tab
+  previewNavigate: (sessionId: string, page: import('../shared/types.js').PreviewPageKind, url: string) =>
+    ipcRenderer.invoke(IPC.PREVIEW_NAVIGATE, sessionId, page, url),
+  previewCommand: (sessionId: string, page: import('../shared/types.js').PreviewPageKind, command: import('../shared/types.js').PreviewCommand) =>
+    ipcRenderer.invoke(IPC.PREVIEW_COMMAND, sessionId, page, command),
+  previewSetViewport: (sessionId: string, bounds: import('../shared/types.js').PreviewBounds | null) =>
+    ipcRenderer.send(IPC.PREVIEW_SET_VIEWPORT, sessionId, bounds),
+  previewSnapshot: (sessionId: string) => ipcRenderer.invoke(IPC.PREVIEW_SNAPSHOT, sessionId),
+  previewAgentFrame: (sessionId: string, sinceVersion: number) =>
+    ipcRenderer.invoke(IPC.PREVIEW_AGENT_FRAME, sessionId, sinceVersion),
+  previewGetStates: () => ipcRenderer.invoke(IPC.PREVIEW_GET_STATES),
+  onPreviewState: (callback: (sessionId: string, page: import('../shared/types.js').PreviewPageKind, state: import('../shared/types.js').PreviewPageState | null) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, sessionId: string, page: import('../shared/types.js').PreviewPageKind, state: import('../shared/types.js').PreviewPageState | null) =>
+      callback(sessionId, page, state);
+    ipcRenderer.on(IPC.PREVIEW_STATE, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC.PREVIEW_STATE, handler);
+    };
+  },
+  onPreviewKey: (callback: (sessionId: string, key: import('../shared/types.js').PreviewKeyForward) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, sessionId: string, key: import('../shared/types.js').PreviewKeyForward) =>
+      callback(sessionId, key);
+    ipcRenderer.on(IPC.PREVIEW_KEY, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC.PREVIEW_KEY, handler);
+    };
+  },
 
-  // Dev server
-  startDevServer: (sessionId: string, command?: string) =>
-    ipcRenderer.invoke(IPC.DEV_SERVER_START, sessionId, command),
-  stopDevServer: (sessionId: string) =>
-    ipcRenderer.invoke(IPC.DEV_SERVER_STOP, sessionId),
+  // MCP server configuration
+  mcpConfigList: (cwd?: string, adapterType?: string) => ipcRenderer.invoke(IPC.MCP_CONFIG_LIST, cwd, adapterType),
+  mcpConfigAdd: (opts: import('../shared/types.js').McpAddServerOpts, adapterType?: string) =>
+    ipcRenderer.invoke(IPC.MCP_CONFIG_ADD, opts, adapterType),
+  mcpConfigRemove: (name: string, scope?: import('../shared/types.js').McpConfigScope, cwd?: string, adapterType?: string) =>
+    ipcRenderer.invoke(IPC.MCP_CONFIG_REMOVE, name, scope, cwd, adapterType),
+  mcpConfigApprove: (name: string, repoPath: string, adapterType?: string) =>
+    ipcRenderer.invoke(IPC.MCP_CONFIG_APPROVE, name, repoPath, adapterType),
 
   // Plugins
   pluginList: () => ipcRenderer.invoke(IPC.PLUGIN_LIST),
@@ -117,6 +307,12 @@ const api: GroveBenchAPI = {
 
   // Prerequisites
   checkPrerequisites: () => ipcRenderer.invoke(IPC.PREREQUISITES_CHECK),
+  getCachedPrerequisites: () => ipcRenderer.invoke(IPC.PREREQUISITES_CACHED),
+  checkGhPrerequisite: () => ipcRenderer.invoke(IPC.PREREQUISITES_GH),
+  checkAgentSignIn: (adapterId: string) => ipcRenderer.invoke(IPC.PREREQUISITES_CHECK_SIGN_IN, adapterId),
+  setApiKey: (adapterId: string, key: string) => ipcRenderer.invoke(IPC.CREDENTIALS_SET_API_KEY, adapterId, key),
+  clearApiKey: (adapterId: string) => ipcRenderer.invoke(IPC.CREDENTIALS_CLEAR_API_KEY, adapterId),
+  notifyRestoreComplete: () => ipcRenderer.send(IPC.APP_RESTORE_COMPLETE),
 
   // Session status updates
   onSessionStatus: (callback: (sessionId: string, status: import('../shared/types.js').SessionStatus) => void) => {
@@ -131,6 +327,8 @@ const api: GroveBenchAPI = {
   // Folder
   openSessionFolder: (sessionId: string) =>
     ipcRenderer.invoke(IPC.OPEN_SESSION_FOLDER, sessionId),
+  exportThread: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.SESSION_EXPORT, sessionId) as Promise<string | null>,
 
   // Memory
   memoryList: (repoPath: string) => ipcRenderer.invoke(IPC.MEMORY_LIST, repoPath),
@@ -140,23 +338,28 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.MEMORY_WRITE, repoPath, relativePath, content),
   memoryDelete: (repoPath: string, relativePath: string) =>
     ipcRenderer.invoke(IPC.MEMORY_DELETE, repoPath, relativePath),
-
-  // Shell / Terminal
-  shellRun: (sessionId: string, command: string) =>
-    ipcRenderer.invoke(IPC.SHELL_RUN, sessionId, command),
-  shellKill: (execId: string) =>
-    ipcRenderer.invoke(IPC.SHELL_KILL, execId),
-  shellInput: (execId: string, data: string) =>
-    ipcRenderer.send(IPC.SHELL_INPUT, execId, data),
-  onShellOutput: (sessionId: string, callback: (event: import('../shared/types.js').ShellOutputEvent) => void) => {
-    const channel = `${IPC.SHELL_OUTPUT}:${sessionId}`;
-    const handler = (_event: Electron.IpcRendererEvent, data: import('../shared/types.js').ShellOutputEvent) =>
+  memoryCompact: (repoPath: string) =>
+    ipcRenderer.invoke(IPC.MEMORY_COMPACT, repoPath),
+  memoryCompactCancel: (repoPath: string) =>
+    ipcRenderer.invoke(IPC.MEMORY_COMPACT_CANCEL, repoPath),
+  onMemoryCompactEvent: (callback: (event: import('../shared/types.js').MemoryCompactionEvent) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: import('../shared/types.js').MemoryCompactionEvent) =>
       callback(data);
-    ipcRenderer.on(channel, handler);
+    ipcRenderer.on(IPC.MEMORY_COMPACT_EVENT, handler);
     return () => {
-      ipcRenderer.removeListener(channel, handler);
+      ipcRenderer.removeListener(IPC.MEMORY_COMPACT_EVENT, handler);
     };
   },
+  memoryListBackups: (repoPath: string) =>
+    ipcRenderer.invoke(IPC.MEMORY_LIST_BACKUPS, repoPath),
+  memoryRestoreBackup: (repoPath: string, backupId: string) =>
+    ipcRenderer.invoke(IPC.MEMORY_RESTORE_BACKUP, repoPath, backupId),
+  memoryStats: (repoPath: string) =>
+    ipcRenderer.invoke(IPC.MEMORY_STATS, repoPath),
+  memoryBackupPreview: (repoPath: string, backupId: string) =>
+    ipcRenderer.invoke(IPC.MEMORY_BACKUP_PREVIEW, repoPath, backupId),
+  memoryReadBackupFile: (repoPath: string, backupId: string, relativePath: string) =>
+    ipcRenderer.invoke(IPC.MEMORY_BACKUP_READ_FILE, repoPath, backupId, relativePath),
 
   // PTY Terminal (per-session persistent shell)
   ptySpawn: (sessionId: string) =>
@@ -193,10 +396,55 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.SETTINGS_SAVE, s),
 
   // App state persistence
-  getActiveTab: () => ipcRenderer.invoke(IPC.APP_STATE_GET_ACTIVE_TAB),
-  setActiveTab: (id: string | null) => ipcRenderer.send(IPC.APP_STATE_SET_ACTIVE_TAB, id),
   getOpenTabs: () => ipcRenderer.invoke(IPC.APP_STATE_GET_OPEN_TABS) as Promise<string[]>,
   setOpenTabs: (ids: string[]) => ipcRenderer.send(IPC.APP_STATE_SET_OPEN_TABS, ids),
+  getCollapsedRepos: () =>
+    ipcRenderer.invoke(IPC.APP_STATE_GET_COLLAPSED_REPOS) as Promise<Record<string, boolean>>,
+  setCollapsedRepos: (map: Record<string, boolean>) =>
+    ipcRenderer.send(IPC.APP_STATE_SET_COLLAPSED_REPOS, map),
+  getSessionSort: () =>
+    ipcRenderer.invoke(IPC.APP_STATE_GET_SESSION_SORT) as Promise<import('../shared/types.js').SessionSortState>,
+  setSessionSort: (sort: import('../shared/types.js').SessionSortState) =>
+    ipcRenderer.send(IPC.APP_STATE_SET_SESSION_SORT, sort),
+  getUnreadSessions: () => ipcRenderer.invoke(IPC.APP_STATE_GET_UNREAD) as Promise<string[]>,
+  setUnreadSessions: (ids: string[]) => ipcRenderer.send(IPC.APP_STATE_SET_UNREAD, ids),
+  getTodoSessions: () => ipcRenderer.invoke(IPC.APP_STATE_GET_TODO) as Promise<string[] | null>,
+  setTodoSessions: (ids: string[]) => ipcRenderer.send(IPC.APP_STATE_SET_TODO, ids),
+
+  // Skill schedules
+  listSkillSchedules: () =>
+    ipcRenderer.invoke(IPC.SKILL_SCHEDULES_LIST) as Promise<import('../shared/skill-schedules.js').SkillSchedule[] | null>,
+  saveSkillSchedule: (schedule: import('../shared/skill-schedules.js').SkillScheduleInput) =>
+    ipcRenderer.invoke(IPC.SKILL_SCHEDULES_SAVE, schedule) as Promise<import('../shared/skill-schedules.js').SkillSchedule>,
+  deleteSkillSchedule: (id: string) => ipcRenderer.invoke(IPC.SKILL_SCHEDULES_DELETE, id) as Promise<void>,
+  recordSkillScheduleRun: (id: string, outcome: Omit<import('../shared/skill-schedules.js').ScheduleOutcome, 'at'>) =>
+    ipcRenderer.invoke(IPC.SKILL_SCHEDULES_RECORD_RUN, id, outcome) as Promise<import('../shared/skill-schedules.js').SkillSchedule | null>,
+  onSkillScheduleDue: (callback: (id: string) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, id: string) => callback(id);
+    ipcRenderer.on(IPC.SKILL_SCHEDULE_DUE, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC.SKILL_SCHEDULE_DUE, handler);
+    };
+  },
+  onSkillSchedulesChanged: (callback: (schedules: import('../shared/skill-schedules.js').SkillSchedule[]) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, schedules: import('../shared/skill-schedules.js').SkillSchedule[]) => callback(schedules);
+    ipcRenderer.on(IPC.SKILL_SCHEDULES_CHANGED, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC.SKILL_SCHEDULES_CHANGED, handler);
+    };
+  },
+  getSidebarWidth: () =>
+    ipcRenderer.invoke(IPC.APP_STATE_GET_SIDEBAR_WIDTH) as Promise<number | null>,
+  setSidebarWidth: (width: number) =>
+    ipcRenderer.send(IPC.APP_STATE_SET_SIDEBAR_WIDTH, width),
+  getCollapsedPanels: () =>
+    ipcRenderer.invoke(IPC.APP_STATE_GET_COLLAPSED_PANELS) as Promise<import('../shared/types.js').CollapsedPanels>,
+  setCollapsedPanels: (panels: import('../shared/types.js').CollapsedPanels) =>
+    ipcRenderer.send(IPC.APP_STATE_SET_COLLAPSED_PANELS, panels),
+  getConversationGroups: () =>
+    ipcRenderer.invoke(IPC.APP_STATE_GET_GROUPS) as Promise<import('../shared/types.js').ConversationGroup[] | null>,
+  setConversationGroups: (groups: import('../shared/types.js').ConversationGroup[]) =>
+    ipcRenderer.send(IPC.APP_STATE_SET_GROUPS, groups),
   // App lifecycle
   onAppClosing: (callback: () => void) => {
     const handler = () => callback();
@@ -205,13 +453,55 @@ const api: GroveBenchAPI = {
       ipcRenderer.removeListener(IPC.APP_CLOSING, handler);
     };
   },
-  onPowerResume: (callback: () => void) => {
-    const handler = () => callback();
+  onPowerResume: (callback: (resumeIds: string[]) => void) => {
+    const handler = (_event: unknown, resumeIds: string[]) => callback(resumeIds ?? []);
     ipcRenderer.on(IPC.POWER_RESUME, handler);
     return () => {
       ipcRenderer.removeListener(IPC.POWER_RESUME, handler);
     };
   },
+  onModelsChanged: (callback: (adapterId: string) => void) => {
+    const handler = (_event: unknown, adapterId: string) => callback(adapterId);
+    ipcRenderer.on(IPC.AGENT_MODELS_CHANGED, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC.AGENT_MODELS_CHANGED, handler);
+    };
+  },
+
+  // OS notifications
+  notify: (req: import('../shared/types.js').OsNotificationRequest) =>
+    ipcRenderer.send(IPC.NOTIFY_SHOW, req),
+  testNotification: () => ipcRenderer.invoke(IPC.NOTIFY_TEST),
+  onFocusSession: (callback: (sessionId: string) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, sessionId: string) => callback(sessionId);
+    ipcRenderer.on(IPC.NOTIFY_FOCUS_SESSION, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC.NOTIFY_FOCUS_SESSION, handler);
+    };
+  },
+
+  // Error reporting
+  onAppError: (callback: (report: import('../shared/types.js').AppErrorReport) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, report: import('../shared/types.js').AppErrorReport) =>
+      callback(report);
+    ipcRenderer.on(IPC.APP_ERROR, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC.APP_ERROR, handler);
+    };
+  },
+  reportError: (report: import('../shared/types.js').AppErrorReport) =>
+    ipcRenderer.send(IPC.APP_REPORT_ERROR, report),
+  reportFreeze: (report: import('../shared/types.js').FreezeReport) =>
+    ipcRenderer.send(IPC.APP_REPORT_FREEZE, report),
+  reportTiming: (report: import('../shared/types.js').TimingReport) =>
+    ipcRenderer.send(IPC.APP_REPORT_TIMING, report),
+  logIdle: (line: string) => ipcRenderer.send(IPC.APP_LOG_IDLE, line),
+  recordPerformanceTrace: () => ipcRenderer.invoke(IPC.PERF_RECORD_TRACE),
+  showPerformanceFile: (which: 'log' | 'trace') => ipcRenderer.invoke(IPC.PERF_SHOW_FILE, which),
+
+  // Taskbar attention badge
+  setAttentionBadge: (count: number, dataUrl: string | null) =>
+    ipcRenderer.send(IPC.WIN_SET_ATTENTION_BADGE, count, dataUrl),
 
   // Window controls
   winMinimize: () => ipcRenderer.send(IPC.WIN_MINIMIZE),
@@ -219,14 +509,34 @@ const api: GroveBenchAPI = {
   winClose: () => ipcRenderer.send(IPC.WIN_CLOSE),
   winIsMaximized: () => ipcRenderer.invoke(IPC.WIN_IS_MAXIMIZED),
 
+  // Spell check
+  onSpellcheckMenu: (callback: (req: import('../shared/types.js').SpellcheckMenuRequest) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, req: import('../shared/types.js').SpellcheckMenuRequest) =>
+      callback(req);
+    ipcRenderer.on(IPC.SPELLCHECK_MENU, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC.SPELLCHECK_MENU, handler);
+    };
+  },
+  spellcheckReplace: (suggestion: string) => ipcRenderer.send(IPC.SPELLCHECK_REPLACE, suggestion),
+  spellcheckAddWord: () => ipcRenderer.send(IPC.SPELLCHECK_ADD_WORD),
+
   // Agent adapters
   listAdapters: () => ipcRenderer.invoke(IPC.AGENT_LIST_ADAPTERS),
+  previewClaudeAccount: (input: { name: string; configDir: string }) => ipcRenderer.invoke(IPC.CLAUDE_ACCOUNT_PREVIEW, input),
+  addClaudeAccount: (input: { name: string; configDir: string }) => ipcRenderer.invoke(IPC.CLAUDE_ACCOUNT_ADD, input),
+  listRegistryAgents: () => ipcRenderer.invoke(IPC.CATALOGS_REGISTRY),
+  getRegistryIcon: (id: string) => ipcRenderer.invoke(IPC.CATALOGS_ICON, id),
+  refreshCatalogs: () => ipcRenderer.invoke(IPC.CATALOGS_REFRESH),
+  getAdapterControls: (adapterType?: string, model?: string | null) =>
+    ipcRenderer.invoke(IPC.AGENT_GET_ADAPTER_CONTROLS, adapterType, model),
   getModels: (adapterType?: string) => ipcRenderer.invoke(IPC.AGENT_GET_MODELS, adapterType),
 
   // Auto-update
+  getUpdateState: () => ipcRenderer.invoke(IPC.UPDATE_GET_STATE),
   checkForUpdate: () => ipcRenderer.invoke(IPC.UPDATE_CHECK),
   downloadUpdate: () => ipcRenderer.invoke(IPC.UPDATE_DOWNLOAD),
-  installUpdate: () => ipcRenderer.send(IPC.UPDATE_INSTALL),
+  restartToUpdate: () => ipcRenderer.invoke(IPC.UPDATE_RESTART),
   onUpdateStatus: (callback: (status: import('../shared/types.js').UpdateStatus) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, status: import('../shared/types.js').UpdateStatus) =>
       callback(status);

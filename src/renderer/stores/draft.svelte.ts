@@ -1,0 +1,640 @@
+import type { ControlDescriptor, CreateSessionOpts, SkillInfo } from '../../shared/types.js';
+import { CONTROL_IDS } from '../../shared/types.js';
+import { deriveSessionName } from '../../shared/session-name.js';
+import { tempBranchName } from '../../shared/temp-branch.js';
+import { withSkill } from '../../shared/skill-line.js';
+import { store as sessionStore } from './sessions.svelte.js';
+import { groupStore } from './groups.svelte.js';
+import { todoStore } from './todo.svelte.js';
+import { messageStore } from './messages.svelte.js';
+import { arrivalScene } from './arrivalScene.svelte.js';
+import { agentsStore } from './agents.svelte.js';
+import { settingsStore } from './settings.svelte.js';
+import { resolveBaseBranch } from '../lib/base-branch.js';
+import { attachmentPayload, type AttachedFile } from '../lib/file-attachments.js';
+import { buildOutgoingMessage } from '../lib/prompt-file-refs.js';
+import { trackEvent } from '../lib/analytics.js';
+
+/**
+ * A new conversation before its first message. Opening one creates nothing:
+ * the choices that are fixed once a conversation starts (project, agent,
+ * where it runs) sit at the bottom of the draft's message box, and sending the first message
+ * creates the worktree, starts the agent and sends the message.
+ */
+
+/** Where a draft conversation will run once it starts. */
+export type DraftStart =
+  /** A separate copy (worktree) on a new branch. An empty name starts on a
+   *  placeholder branch that is renamed after the first reply. */
+  | { kind: 'new'; branchName: string; baseBranch: string }
+  /** A separate copy of a branch that already exists, e.g. a PR's head. */
+  | { kind: 'existing'; branch: string; pr?: { number: number; title: string } }
+  /** The project folder itself, on whatever branch it has checked out. */
+  | { kind: 'folder' };
+
+export interface Draft {
+  repoPath: string;
+  agentId: string;
+  /** Model picked for this draft; '' means the agent's default model. */
+  model: string;
+  /** Control values picked for this draft (mode included). Controls not
+   *  listed start on the saved default. */
+  controls: Record<string, string>;
+  start: DraftStart;
+  /** The first message, as typed so far. */
+  text: string;
+  /** Files dropped on the draft, sent with the first message. */
+  attachments: AttachedFile[];
+  /** Group the conversation joins once it starts. */
+  groupId?: string;
+  /** A group made with this conversation once it starts (from New group).
+   *  Not made before, so a discarded draft leaves no empty group. Never set
+   *  together with groupId. */
+  newGroupName?: string;
+}
+
+/** A thread started for the caller (startThread): its project, first
+ *  message and, optionally, agent, model, where it runs and control values
+ *  (mode included). */
+export interface ThreadSetup {
+  repoPath: string;
+  text: string;
+  agentId?: string;
+  model?: string;
+  start?: DraftStart;
+  controls?: Record<string, string>;
+  /** false: start without taking the screen. */
+  focus?: boolean;
+  /** Refuse an agent that isn't offered (turned off, removed, unknown)
+   *  instead of using the default agent: a skill's tools may only be set up
+   *  in the agent it names. */
+  strictAgent?: boolean;
+  /** Leave the refusal toast to the caller, which gets the reason back. */
+  quiet?: boolean;
+}
+
+/** What startThreadFor did: the new thread's id, or why it didn't start. */
+export type ThreadStart = { id: string } | { error: string };
+
+/** The group a draft joins, or the one it starts. */
+export type DraftGroup = { groupId: string } | { newGroupName: string };
+
+export interface DraftModelOption {
+  value: string;
+  label: string;
+}
+
+const newBranchStart = (branchName = ''): DraftStart => ({ kind: 'new', branchName, baseBranch: '' });
+
+/** The draft starts a new branch named after its group's branch. Main then
+ *  continues that branch if the project has it already (continueBranch). */
+function onGroupBranch(d: Draft): boolean {
+  if (!d.groupId || d.start.kind !== 'new') return false;
+  const groupBranch = groupStore.sharedBranch(d.groupId, d.repoPath);
+  return !!groupBranch && d.start.branchName.trim() === groupBranch;
+}
+
+/** Where a new draft in `repo` starts: a new branch, or the folder itself
+ *  for a project that isn't a git repository (the only place it can run).
+ *  In a group, the new branch takes the group's branch name, so the work has
+ *  one branch name in every project it touches. */
+const defaultStart = (repo: string, groupId?: string): DraftStart =>
+  sessionStore.isFolderProject(repo)
+    ? { kind: 'folder' }
+    : newBranchStart(groupId ? groupStore.sharedBranch(groupId, repo) : '');
+
+class DraftStore {
+  draft = $state<Draft | null>(null);
+  error = $state('');
+  /** Models and controls the draft's agent offers (controls for the model
+   *  the draft would start on). */
+  models = $state<DraftModelOption[]>([]);
+  descriptors = $state<ControlDescriptor[]>([]);
+
+  /** The draft agent's skills in its project, for the / menu and the
+   *  Skills button, without Claude Code's turned-off ones. */
+  skills = $state<SkillInfo[]>([]);
+
+  /** Guards against an older agent-info load landing after a newer one. */
+  private infoRequest = 0;
+  /** The agent and project `skills` is being loaded for. */
+  private skillsFor = '';
+
+  /** Whether the main pane shows the draft: one exists and no conversation
+   *  is open over it. */
+  get visible(): boolean {
+    return !!this.draft && !sessionStore.activeSessionId;
+  }
+
+  /**
+   * Open the draft in `repoPath` (default: the open conversation's project,
+   * then the first project) and show it. An existing draft keeps its message
+   * and moves to that project. A new one takes its agent from `agentId` when
+   * given, else the user's default agent (Settings > Agents), else the open
+   * conversation, and the open conversation's model when the agent matches.
+   * With `group`, the conversation joins that group (or starts it) when it
+   * starts. Opened for
+   * a project without one (a project's +, a conversation's controls), an
+   * existing draft leaves its group: it is no longer that group's work.
+   */
+  open(repoPath = '', opts: { agentId?: string; group?: DraftGroup } = {}): void {
+    const active = sessionStore.activeSession;
+    const repo = repoPath || active?.repoPath || this.draft?.repoPath || sessionStore.repos[0] || '';
+    if (!repo) return;
+
+    if (this.draft) {
+      if (opts.group) this.setGroup(opts.group);
+      else if (repoPath) this.setGroup(null);
+      if (repo !== this.draft.repoPath) this.setRepo(repo);
+      if (opts.agentId && opts.agentId !== this.draft.agentId) this.setAgent(opts.agentId);
+    } else {
+      // The agent asked for, else the user's default agent, else the open
+      // conversation's (when the user hasn't picked a default). An alpha
+      // agent the user hasn't turned on isn't offered, even when the open
+      // conversation runs on it.
+      const agentId = this.offeredAgent(opts.agentId) || agentsStore.pickedDefaultId
+        || this.offeredAgent(active?.agentType) || agentsStore.defaultId || '';
+      // Same agent as the open conversation: start on its model too.
+      const model = active && active.agentType === agentId ? messageStore.getModel(active.id) : '';
+      const groupId = opts.group && 'groupId' in opts.group ? opts.group.groupId : undefined;
+      this.draft = {
+        repoPath: repo, agentId, model, controls: {}, start: defaultStart(repo, groupId), text: '', attachments: [],
+        ...opts.group,
+      };
+      this.error = '';
+      void this.prefillBaseBranch(repo);
+      void this.loadAgentInfo();
+      void this.refreshKind(repo);
+    }
+    sessionStore.activeSessionId = null;
+  }
+
+  /** Bring an existing draft back into view. */
+  show(): void {
+    if (this.draft) sessionStore.activeSessionId = null;
+  }
+
+  discard(): void {
+    this.draft = null;
+    this.error = '';
+    this.models = [];
+    this.descriptors = [];
+    this.skills = [];
+    this.skillsFor = '';
+  }
+
+  setText(text: string): void {
+    if (this.draft) this.draft.text = text;
+  }
+
+  /** List the draft agent's skills in its project: when either changes, and
+   *  again as a skill menu opens. Another agent's go at once; an answer for
+   *  an agent or project the draft has since left is dropped. */
+  async loadSkills(): Promise<void> {
+    const d = this.draft;
+    const key = d?.agentId && d.repoPath ? `${d.agentId}\n${d.repoPath}` : '';
+    if (key !== this.skillsFor) this.skills = [];
+    this.skillsFor = key;
+    if (!d || !key) return;
+    const { agentId, repoPath } = d;
+    try {
+      const list = await window.groveBench.listAgentSkills(agentId, repoPath);
+      if (this.skillsFor !== key) return;
+      const off = agentsStore.supports(agentId, 'skills') ? settingsStore.current.disabledSkills ?? [] : [];
+      this.skills = list.filter((s) => !off.includes(s.name));
+    } catch (err) {
+      console.warn('[draft] could not list the agent\'s skills:', err);
+    }
+  }
+
+  /** Start the first message by asking for `skill` (null: for none), keeping
+   *  what follows. */
+  useSkill(skill: string | null): void {
+    if (this.draft) this.draft.text = withSkill(this.draft.text, skill);
+  }
+
+  addAttachments(files: AttachedFile[]): void {
+    if (this.draft) this.draft.attachments = [...this.draft.attachments, ...files];
+  }
+
+  removeAttachment(index: number): void {
+    if (this.draft) this.draft.attachments = this.draft.attachments.filter((_, i) => i !== index);
+  }
+
+  /** Why the draft's files can't go with its first message, or null. */
+  get attachmentProblem(): string | null {
+    const d = this.draft;
+    if (!d?.attachments.length) return null;
+    const text = d.text.trim();
+    if (!text) return 'Write a message to go with the attached files.';
+    // Files go ahead of the text, so the command would no longer lead it.
+    if (text.startsWith('/')) return "A slash command can't take attached files. Remove them, or send them in the next message.";
+    return null;
+  }
+
+  setRepo(repo: string): void {
+    if (!this.draft || repo === this.draft.repoPath) return;
+    this.draft.repoPath = repo;
+    // Branches belong to the old project.
+    this.resetToNewBranch();
+    void this.refreshKind(repo);
+  }
+
+  /** Check what the project is now: git may have been installed, or
+   *  `git init` run in a folder project, since launch. When it changed, the
+   *  draft goes back to that kind of project's default start. */
+  private async refreshKind(repo: string): Promise<void> {
+    let kind: Awaited<ReturnType<typeof window.groveBench.repoKind>>;
+    try {
+      kind = await window.groveBench.repoKind(repo);
+    } catch {
+      return;
+    }
+    if (kind === 'missing') return;
+    const folder = kind === 'folder';
+    if (folder === sessionStore.isFolderProject(repo)) return;
+    sessionStore.setFolderProject(repo, folder);
+    if (this.draft?.repoPath === repo) this.resetToNewBranch();
+  }
+
+  /** Back to the default place to run: a new branch from the project's
+   *  default branch. */
+  resetToNewBranch(): void {
+    if (!this.draft) return;
+    this.setStart(defaultStart(this.draft.repoPath, this.draft.groupId));
+    void this.prefillBaseBranch(this.draft.repoPath);
+  }
+
+  /** Whether the draft starts on its group's branch name, which it continues
+   *  if the project has that branch already. */
+  get onGroupBranch(): boolean {
+    return !!this.draft && onGroupBranch(this.draft);
+  }
+
+  /** The name of the group the draft joins or starts, or null. */
+  get groupName(): string | null {
+    const d = this.draft;
+    if (d?.groupId) return groupStore.get(d.groupId)?.name ?? null;
+    return d?.newGroupName ?? null;
+  }
+
+  /** Start outside the group. */
+  leaveGroup(): void {
+    this.setGroup(null);
+  }
+
+  /** Join a group, start a new one, or (null) leave it. The branch follows:
+   *  joining an existing group starts on its branch name, and leaving drops
+   *  that name. A branch the user picked otherwise stays. */
+  private setGroup(group: DraftGroup | null): void {
+    const d = this.draft;
+    if (!d) return;
+    const same = group
+      ? ('groupId' in group ? d.groupId === group.groupId : d.newGroupName === group.newGroupName)
+      : !d.groupId && !d.newGroupName;
+    if (same) return;
+    const hadGroupBranch = onGroupBranch(d);
+    delete d.groupId;
+    delete d.newGroupName;
+    if (group) Object.assign(d, group);
+    if ((group && 'groupId' in group) || hadGroupBranch) this.resetToNewBranch();
+  }
+
+  /** `id` when new conversations may use it (agentsStore.isOffered), else ''. */
+  private offeredAgent(id: string | null | undefined): string {
+    return id && agentsStore.isOffered(id, settingsStore.current.enabledAlphaAgents) ? id : '';
+  }
+
+  setAgent(agentId: string): void {
+    if (!this.draft || agentId === this.draft.agentId || !this.offeredAgent(agentId)) return;
+    this.draft.agentId = agentId;
+    // Models and controls are the agent's own.
+    this.draft.model = '';
+    this.draft.controls = {};
+    void this.loadAgentInfo();
+  }
+
+  setModel(model: string): void {
+    if (!this.draft || model === this.effectiveModel) return;
+    this.draft.model = model;
+    void this.loadAgentInfo({ keepModels: true });
+  }
+
+  setControl(controlId: string, value: string): void {
+    if (!this.draft) return;
+    this.draft.controls = { ...this.draft.controls, [controlId]: value };
+  }
+
+  /** Where the draft runs. The mode stays as it is: a PR starts on the
+   *  saved default like any branch (it used to switch to Plan, but a branch
+   *  with an open PR is only listed as the PR, so your own branches did too). */
+  setStart(start: DraftStart): void {
+    if (!this.draft) return;
+    this.draft.start = start;
+  }
+
+  /** The model the draft would start on. */
+  get effectiveModel(): string {
+    const d = this.draft;
+    if (!d) return '';
+    return d.model || settingsStore.current.defaultModels?.[d.agentId] || this.models[0]?.value || '';
+  }
+
+  /** A control's value as the draft would start: picked, saved default, or
+   *  the control's own default. */
+  controlValue(controlId: string): string {
+    const d = this.draft;
+    const descriptor = this.descriptors.find((c) => c.id === controlId);
+    if (!d || !descriptor) return '';
+    const offered = (v: string | undefined): v is string => !!v && descriptor.options.some((o) => o.value === v);
+    const picked = d.controls[controlId];
+    if (offered(picked)) return picked;
+    const saved = settingsStore.current.adapterDefaults?.[d.agentId]?.[controlId];
+    return offered(saved) ? saved : descriptor.default;
+  }
+
+  private offers(controlId: string, value: string): boolean {
+    return !!this.descriptors.find((c) => c.id === controlId)?.options.some((o) => o.value === value);
+  }
+
+  private async prefillBaseBranch(repo: string): Promise<void> {
+    // A folder without git has no branches to start from.
+    if (sessionStore.isFolderProject(repo)) return;
+    const base = await resolveBaseBranch(repo);
+    const d = this.draft;
+    if (d && d.repoPath === repo && d.start.kind === 'new' && !d.start.baseBranch) {
+      d.start = { ...d.start, baseBranch: base };
+    }
+  }
+
+  /** Load the agent's models and its controls for the effective model. */
+  async loadAgentInfo(opts: { keepModels?: boolean } = {}): Promise<void> {
+    const request = ++this.infoRequest;
+    if (!this.draft) return;
+    if (!this.draft.agentId) {
+      await agentsStore.load();
+      if (this.draft && !this.draft.agentId) this.draft.agentId = agentsStore.defaultId ?? '';
+    }
+    const agentId = this.draft?.agentId;
+    if (!agentId) return;
+    try {
+      if (!opts.keepModels) {
+        const models = await window.groveBench.getModels(agentId);
+        if (request !== this.infoRequest) return;
+        this.models = models.map((m) => ({ value: m.id, label: m.label }));
+      }
+      const descriptors = await window.groveBench.getAdapterControls(agentId, this.effectiveModel || null);
+      if (request !== this.infoRequest) return;
+      this.descriptors = descriptors;
+      // Drop picks the new model doesn't offer.
+      if (this.draft) {
+        const kept = Object.entries(this.draft.controls).filter(([id, v]) => this.offers(id, v));
+        this.draft.controls = Object.fromEntries(kept);
+      }
+    } catch (e) {
+      console.warn('[draft] could not load the agent\'s models and controls:', e);
+    }
+  }
+
+  /** The create options for the draft. Only what the user picked is sent;
+   *  everything else starts on main's defaults, as before. */
+  buildOpts(d: Draft, baseBranch: string): CreateSessionOpts {
+    const { [CONTROL_IDS.permissionMode]: mode, ...others } = d.controls;
+    const base = {
+      repoPath: d.repoPath,
+      ...(d.agentId ? { adapterType: d.agentId } : {}),
+      ...(d.model ? { model: d.model } : {}),
+      ...(Object.keys(others).length > 0 ? { controls: others } : {}),
+      ...(mode ? { permissionMode: mode as CreateSessionOpts['permissionMode'] } : {}),
+    };
+    switch (d.start.kind) {
+      case 'folder':
+        return { ...base, branchName: '', direct: true };
+      case 'existing':
+        return { ...base, branchName: d.start.branch, useExisting: true };
+      case 'new':
+        return {
+          ...base, branchName: d.start.branchName.trim(), baseBranch: baseBranch || undefined,
+          ...(onGroupBranch(d) ? { continueBranch: true } : {}),
+        };
+    }
+  }
+
+  /** Create the conversation and send the draft's message as its first turn.
+   *  Its row is in the sidebar from the moment this is called, under an id
+   *  picked here, while main checks the branch and sets up. Returns whether
+   *  it started; if main refuses, the row goes and the draft comes back with
+   *  the error. */
+  async start(): Promise<boolean> {
+    const draft = this.draft;
+    if (!draft) return false;
+    // A copy: changes made to the draft object later must not leak into the
+    // conversation being created.
+    const d = $state.snapshot(draft) as Draft;
+    if (d.start.kind === 'existing' && !d.start.branch) return false;
+    if (this.attachmentProblem) return false;
+    if (!sessionStore.repos.includes(d.repoPath)) {
+      this.error = 'This project was removed. Pick another project at the bottom of the message box.';
+      return false;
+    }
+    // An alpha agent turned off in Settings while this draft was open.
+    if (d.agentId && !this.offeredAgent(d.agentId)) {
+      const name = agentsStore.get(d.agentId)?.displayName ?? d.agentId;
+      this.error = `${name} is turned off. Turn it on in Settings → Agents, or pick another agent at the bottom of the message box.`;
+      return false;
+    }
+    this.discard();
+    const started = await this.launch(d, (message, onScreen) => {
+      // Back to the draft, message and all, unless one with a message or
+      // files has been opened since: that one is kept and the error goes in
+      // a toast.
+      if (!this.draft?.text.trim() && !this.draft?.attachments.length) {
+        this.draft = draft;
+        this.error = message;
+        void this.loadAgentInfo();
+      }
+      if (this.draft !== draft || !onScreen) {
+        sessionStore.setError(`The thread couldn't start: ${message}`);
+      }
+    });
+    return started !== null;
+  }
+
+  /**
+   * Start a thread set up by the caller rather than typed into the draft,
+   * with `text` as its first message (Add Skill's "Ask Agent to Write It").
+   * The user's own draft, if they have one, is left as it is. The agent is
+   * picked as open() picks it; without `start` it runs where a new draft
+   * would, and in a project without git it runs in the folder whatever
+   * `start` says. Returns whether it started; a refusal goes in a toast,
+   * and the thread that was on screen comes back.
+   */
+  async startThread(setup: ThreadSetup): Promise<boolean> {
+    return 'id' in (await this.startThreadFor(setup));
+  }
+
+  /** startThread, saying what it did: the new thread's id, or why it didn't
+   *  start (a scheduled skill notes it). See ThreadSetup for the extra options. */
+  async startThreadFor(setup: ThreadSetup): Promise<ThreadStart> {
+    const refuse = (error: string): ThreadStart => {
+      if (!setup.quiet) sessionStore.setError(`The thread couldn't start: ${error}.`);
+      return { error };
+    };
+    const repo = setup.repoPath;
+    if (!sessionStore.repos.includes(repo)) return refuse('its project was removed');
+    if (setup.strictAgent && setup.agentId) {
+      // Agents load on first use; a schedule can run before anything used them.
+      await agentsStore.load();
+      if (!agentsStore.loaded) return refuse("its agent couldn't be checked");
+      if (!agentsStore.get(setup.agentId) || !this.offeredAgent(setup.agentId)) return refuse('its agent is turned off or was removed');
+    }
+    const agentId = this.offeredAgent(setup.agentId) || agentsStore.defaultId || '';
+    const d: Draft = {
+      repoPath: repo,
+      agentId,
+      // The model belongs to the agent asked for.
+      model: agentId === setup.agentId ? setup.model ?? '' : '',
+      controls: setup.controls ?? {},
+      start: (!sessionStore.isFolderProject(repo) && setup.start) || defaultStart(repo),
+      text: setup.text,
+      attachments: [],
+    };
+    // The new row takes the screen; a refusal shouldn't leave the landing
+    // screen where the asking thread was.
+    const shown = sessionStore.activeSessionId;
+    // Kept when the thread is closed while it starts, which launch() doesn't report.
+    let error = 'it was closed while it started';
+    const id = await this.launch(d, (message, onScreen) => {
+      if (onScreen && shown && sessionStore.sessions.some((s) => s.id === shown)) {
+        sessionStore.activeSessionId = shown;
+      }
+      error = message;
+      if (!setup.quiet) sessionStore.setError(`The thread couldn't start: ${message}`);
+    }, setup.focus ?? true);
+    return id ? { id } : { error };
+  }
+
+  /** Add the thread's row, create it in main and send `d.text` (with its
+   *  attachments) as its first message once main has it. `refused` runs when
+   *  main refuses a thread that is still open, with whether its row was on
+   *  screen. The new thread's id, or null when it didn't start. */
+  private async launch(d: Draft, refused: (message: string, onScreen: boolean) => void, focus = true): Promise<string | null> {
+    const text = d.text.trim();
+    // Text files go in the message text; images and other files alongside it.
+    const { tags, images, files } = attachmentPayload(d.attachments);
+    const sent = text
+      ? {
+          outgoing: buildOutgoingMessage(tags, text),
+          ...(images.length > 0 ? { images } : {}),
+          ...(files.length > 0 ? { files } : {}),
+        }
+      : null;
+    const direct = d.start.kind === 'folder';
+    const id = crypto.randomUUID().slice(0, 8);
+    // Name the row from the message straight away; the automatic name
+    // replaces it after the first reply.
+    const placeholderName = text ? deriveSessionName(text) : null;
+    // The row replaces the draft's now, not once main's checks are done:
+    // they run git a few times, which takes a while on Windows. Every thread
+    // shows as starting until main says otherwise.
+    sessionStore.addSession({
+      id,
+      branch: provisionalBranch(d, id),
+      repoPath: d.repoPath,
+      status: 'starting',
+      ...(d.agentId ? { agentType: d.agentId } : {}),
+      createdAt: Date.now(),
+      ...(direct ? { direct: true } : {}),
+      // What the renderer knows of the project; main's reply settles it.
+      ...(direct && sessionStore.isFolderProject(d.repoPath) ? { noGit: true } : {}),
+      ...(placeholderName ? { displayName: placeholderName } : {}),
+    }, focus);
+    if (sent) {
+      // The chat shows the agent walking to its bench until the first reply.
+      arrivalScene.begin(id);
+      messageStore.addSentMessage(id, sent);
+      sessionStore.updateLastActive(id);
+    }
+    try {
+      // No base picked yet (still resolving, or cleared): use the project's
+      // default rather than whatever the project folder has checked out.
+      const baseBranch = d.start.kind === 'new'
+        ? (d.start.baseBranch.trim() || await resolveBaseBranch(d.repoPath))
+        : '';
+      // Closed or deleted while the base branch was looked up: main never
+      // heard of it, so there is nothing to reopen.
+      if (!this.stillOpen(id)) {
+        dropRow(id);
+        return null;
+      }
+      const opts = { ...this.buildOpts(d, baseBranch), id };
+      const result = await window.groveBench.createSession(opts);
+      const mode = d.start.kind === 'folder' ? 'direct' : d.start.kind;
+      trackEvent('session_created', {
+        mode,
+        withPrompt: !!text,
+        ...(d.start.kind === 'new' ? { autoBranch: !opts.branchName } : {}),
+        ...(d.start.kind === 'existing' ? { picked: d.start.pr ? 'pr' : 'branch' } : {}),
+        ...(opts.permissionMode ? { startMode: opts.permissionMode } : {}),
+      });
+      // Main has the last word on the branch, the agent and git.
+      sessionStore.confirmSession(id, {
+        branch: result.branch,
+        agentType: result.agentType,
+        noGit: !!result.noGit,
+        // A direct thread's agent is up by now; a worktree thread goes on
+        // through installing to running.
+        ...(direct ? { status: 'running' as const } : {}),
+      });
+      // A group ungrouped while this ran is gone, and add() does nothing.
+      if (d.groupId) groupStore.add(d.groupId, id);
+      else if (d.newGroupName) groupStore.create(d.newGroupName, [id]);
+      // Main holds a prompt sent during setup until the agent is ready. Not
+      // for a thread closed or deleted meanwhile: main closes that one once
+      // it's up.
+      if (sent && this.stillOpen(id)) window.groveBench.sendMessage(id, sent.outgoing, sent.images, sent.files);
+      return id;
+    } catch (e: any) {
+      const message = e?.message || String(e);
+      const onScreen = sessionStore.activeSessionId === id;
+      // Closed or deleted while main was checking: the user is done with it,
+      // so the draft stays gone and nothing is reported.
+      const dropped = !this.stillOpen(id);
+      dropRow(id);
+      if (dropped) return null;
+      refused(message, onScreen);
+      return null;
+    }
+  }
+
+  /** Whether the thread's row is still in the Threads list: not closed
+   *  (stopped) or deleted. */
+  private stillOpen(id: string): boolean {
+    const row = sessionStore.sessions.find((s) => s.id === id);
+    return !!row && row.status !== 'stopped';
+  }
+}
+
+/** Take away the row start() added, and what the thread showed. */
+function dropRow(id: string): void {
+  sessionStore.removeSession(id);
+  todoStore.forget(id); // it can be flagged while it starts
+  messageStore.destroySession(id);
+  arrivalScene.end(id);
+}
+
+/** The branch the row shows until main replies: the one main will use, as
+ *  far as the renderer can tell. A folder thread's checked-out branch is
+ *  only known to main. */
+function provisionalBranch(d: Draft, id: string): string {
+  switch (d.start.kind) {
+    case 'folder':
+      return '';
+    case 'existing':
+      return d.start.branch;
+    case 'new':
+      return d.start.branchName.trim() || tempBranchName(id);
+  }
+}
+
+export const draftStore = new DraftStore();

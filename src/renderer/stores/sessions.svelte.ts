@@ -1,4 +1,5 @@
 import type { PrerequisiteStatus, SessionStatus } from '../../shared/types.js';
+import { sortSessions, DEFAULT_SORT, type SessionSortState } from '../lib/session-sort.js';
 
 interface SessionEntry {
   id: string;
@@ -6,32 +7,135 @@ interface SessionEntry {
   repoPath: string;
   status: SessionStatus;
   direct?: boolean;
+  /** Runs in a folder that isn't a git repository: no Changes, checkpoints
+   *  or branches. */
+  noGit?: boolean;
+  /** Adapter id the session runs on (e.g. 'claude-code'). */
+  agentType?: string;
   /** User-assigned display name — shown instead of branch when set. */
   displayName?: string | null;
+  /** Timestamp (ms) when the worktree was created. */
+  createdAt?: number;
+  /** Timestamp (ms) of the last activity: a message sent, or a turn the
+   *  agent finished. */
+  lastActiveAt?: number;
 }
 
 class SessionStore {
   sessions = $state<SessionEntry[]>([]);
   repos = $state<string[]>([]);
-  activeSessionId = $state<string | null>(null);
+  /** Projects that are plain folders, not git repositories. */
+  folderRepos = $state<string[]>([]);
+  /** The open thread, or null (the landing, the draft). Moving off a thread
+   *  notes the time in lastLeftAt. */
+  get activeSessionId(): string | null {
+    return this._activeSessionId;
+  }
+  set activeSessionId(id: string | null) {
+    const left = this._activeSessionId;
+    if (left !== null && left !== id) this.lastLeftAt.set(left, Date.now());
+    this._activeSessionId = id;
+  }
+  private _activeSessionId = $state<string | null>(null);
+  /** When the user last moved off each thread this run (ms), noted as it
+   *  happens rather than on the idle loop's once-a-minute tick, which misses
+   *  a visit that starts and ends between two ticks (idle-manager.ts). Plain:
+   *  only that tick reads it. */
+  readonly lastLeftAt = new Map<string, number>();
   error = $state<string | null>(null);
   creating = $state(false);
   prerequisites = $state<PrerequisiteStatus | null>(null);
+
+  /** Whether the session finder (Ctrl+R palette) is open — toggled by the
+   *  global shortcut in App and the sidebar's search field. */
+  finderOpen = $state(false);
+
+  /** Sessions that completed a turn while not focused — drives the "needs you"
+   *  flash on their sidebar row until the user focuses them. Read it through
+   *  isUnread, which leaves closed threads out. */
+  needsAttention = $state<Record<string, boolean>>({});
+
+  /** Tabs restored at startup whose agent hasn't been reconnected yet. They
+   *  stay 'stopped' (no agent process) but still count as open tabs, and
+   *  reconnect the first time the user focuses them. */
+  deferredResume = $state<Record<string, boolean>>({});
+
+  /** Conversation ordering (name/age, asc/desc). Loaded and persisted by the
+   *  sidebar via app-state; kept here so the landing lists conversations in
+   *  the same order. */
+  sessionSort = $state<SessionSortState>({ ...DEFAULT_SORT });
 
   /** Pending status updates for sessions not yet added to the store.
    *  SESSION_STATUS can arrive before addSession during fast worktree setup. */
   private pendingStatuses = new Map<string, SessionStatus>();
 
+  /** LIFO stack of recently-closed session IDs for Ctrl+Shift+T re-open. */
+  private recentlyClosedStack: string[] = [];
+
   get count() {
     return this.sessions.length;
+  }
+
+  /** The sidebar's Conversations list before its triage filter: open tabs,
+   *  in the sidebar's sort order. */
+  get openConversations(): SessionEntry[] {
+    return sortSessions(
+      this.sessions.filter((s) => this.isOpenTab(s)),
+      this.sessionSort,
+    );
   }
 
   get canCreate() {
     return this.repos.length > 0;
   }
 
+  /** Whether the session is an open tab: live, or restored and waiting to
+   *  reconnect on first focus. */
+  isOpenTab(session: { id: string; status: SessionStatus }): boolean {
+    return session.status !== 'stopped' || !!this.deferredResume[session.id];
+  }
+
+  /** Whether the session counts as unread: flagged, and an open tab. A closed
+   *  one counts as dealt with, so a flag it still carries (its agent stopped
+   *  by itself, say) doesn't count while it is closed. That way the Unread
+   *  chip never counts a thread the Threads list leaves out. */
+  isUnread(session: { id: string; status: SessionStatus }): boolean {
+    return !!this.needsAttention[session.id] && this.isOpenTab(session);
+  }
+
+  /** Mark a stopped session as an open tab that reconnects on first focus. */
+  deferResume(id: string) {
+    if (!this.deferredResume[id]) {
+      this.deferredResume = { ...this.deferredResume, [id]: true };
+    }
+  }
+
+  /** Drop the deferred-reconnect mark (reconnected, closed or removed). */
+  clearDeferredResume(id: string) {
+    if (this.deferredResume[id]) {
+      const next = { ...this.deferredResume };
+      delete next[id];
+      this.deferredResume = next;
+    }
+  }
+
   get activeSession() {
     return this.sessions.find((s) => s.id === this.activeSessionId) ?? null;
+  }
+
+  /**
+   * Stopped sessions whose last activity is before the cutoff, oldest first —
+   * candidates for the sidebar's session clean-up dialog. Sessions without a
+   * timestamp get ts=0 and are listed first as unknown age, never hidden.
+   * Running sessions and open tabs waiting to reconnect are never candidates.
+   */
+  stoppedSessionsOlderThan(days: number): Array<SessionEntry & { ts: number }> {
+    const cutoff = Date.now() - days * 86_400_000;
+    return this.sessions
+      .filter((s) => !this.isOpenTab(s))
+      .map((s) => ({ ...s, ts: s.lastActiveAt ?? s.createdAt ?? 0 }))
+      .filter((s) => s.ts < cutoff)
+      .sort((a, b) => a.ts - b.ts);
   }
 
   /** Load repos from the worktree manifest (main process). Must be called before restoreWorktrees. */
@@ -45,6 +149,9 @@ class SessionStore {
         for (const r of legacyRepos) {
           if (!this.repos.includes(r)) {
             this.repos = [...this.repos, r];
+            // Main keeps the list now; without this a project with no
+            // conversations would be gone at the next launch.
+            await window.groveBench.rememberRepo(r).catch(() => {});
           }
         }
         localStorage.removeItem('grove-bench:repos');
@@ -52,18 +159,28 @@ class SessionStore {
     } catch { /* ignore */ }
   }
 
-  addRepo(path: string) {
+  /** Add a project. `folder` says whether it's a plain folder (no git);
+   *  left out, an existing project keeps what it was. */
+  addRepo(path: string, opts: { folder?: boolean } = {}) {
     if (!this.repos.includes(path)) {
       this.repos = [...this.repos, path];
     }
+    if (opts.folder !== undefined) this.setFolderProject(path, opts.folder);
   }
 
   removeRepo(path: string) {
     this.repos = this.repos.filter((r) => r !== path);
+    this.setFolderProject(path, false);
   }
 
-  canRemoveRepo(path: string): boolean {
-    return this.sessionsForRepo(path).length === 0;
+  isFolderProject(path: string): boolean {
+    return this.folderRepos.includes(path);
+  }
+
+  setFolderProject(path: string, folder: boolean) {
+    const has = this.folderRepos.includes(path);
+    if (folder && !has) this.folderRepos = [...this.folderRepos, path];
+    if (!folder && has) this.folderRepos = this.folderRepos.filter((r) => r !== path);
   }
 
   sessionsForRepo(path: string): SessionEntry[] {
@@ -92,40 +209,12 @@ class SessionStore {
 
   removeSession(id: string) {
     this.sessions = this.sessions.filter((s) => s.id !== id);
-    if (this.activeSessionId === id) {
-      // Prefer a running session, fall back to any session
-      const next = this.sessions.find((s) => s.status === 'running')
-        ?? this.sessions[0];
-      this.activeSessionId = next?.id ?? null;
-    }
-  }
-
-  /** Reorder sessions to match the given ID order.
-   *  Sessions whose IDs appear in `orderedIds` are placed first (in that order),
-   *  followed by any remaining sessions in their original order. */
-  reorderByIds(orderedIds: string[]) {
-    const orderMap = new Map(orderedIds.map((id, i) => [id, i]));
-    const ordered: SessionEntry[] = [];
-    const rest: SessionEntry[] = [];
-    for (const s of this.sessions) {
-      if (orderMap.has(s.id)) {
-        ordered.push(s);
-      } else {
-        rest.push(s);
-      }
-    }
-    ordered.sort((a, b) => orderMap.get(a.id)! - orderMap.get(b.id)!);
-    this.sessions = [...ordered, ...rest];
-  }
-
-  reorderSession(fromId: string, toId: string) {
-    const sessions = [...this.sessions];
-    const fromIdx = sessions.findIndex((s) => s.id === fromId);
-    const toIdx = sessions.findIndex((s) => s.id === toId);
-    if (fromIdx === -1 || toIdx === -1 || fromIdx === toIdx) return;
-    const [moved] = sessions.splice(fromIdx, 1);
-    sessions.splice(toIdx, 0, moved);
-    this.sessions = sessions;
+    this.removeFromRecentlyClosed(id);
+    this.clearNeedsAttention(id);
+    this.clearDeferredResume(id);
+    // Back to the landing screen rather than jumping into another conversation.
+    if (this.activeSessionId === id) this.activeSessionId = null;
+    this.lastLeftAt.delete(id);
   }
 
   updateStatus(id: string, status: SessionStatus) {
@@ -140,9 +229,47 @@ class SessionStore {
     );
   }
 
+  /** Fill in what main decided for a thread added before main replied
+   *  (draftStore.start): its branch, its agent and whether it has git.
+   *  `status` applies only while the row still shows 'starting', so a status
+   *  main sent meanwhile (an error, say) isn't overwritten. */
+  confirmSession(id: string, info: { branch: string; agentType: string; noGit: boolean; status?: SessionStatus }) {
+    this.sessions = this.sessions.map((s) => {
+      if (s.id !== id) return s;
+      const next: SessionEntry = { ...s, branch: info.branch, agentType: info.agentType };
+      if (info.noGit) next.noGit = true;
+      else delete next.noGit;
+      if (info.status && s.status === 'starting') next.status = info.status;
+      return next;
+    });
+  }
+
   updateBranch(id: string, branch: string) {
     this.sessions = this.sessions.map((s) =>
       s.id === id ? { ...s, branch } : s
+    );
+  }
+
+  /** Pick up a branch switch made outside the app: the agent (or a terminal)
+   *  ran `git checkout` in the checkout. The main process records the branch
+   *  the checkout is on now, and every conversation sharing it follows. */
+  async syncBranch(sessionId: string): Promise<void> {
+    try {
+      const result = await window.groveBench.syncBranch(sessionId);
+      if (!result) return;
+      for (const id of result.sessionIds) {
+        const s = this.sessions.find((x) => x.id === id);
+        if (s && s.branch !== result.branch) this.updateBranch(id, result.branch);
+      }
+    } catch (e) {
+      console.error('Failed to sync branch:', e);
+    }
+  }
+
+  updateLastActive(id: string) {
+    const now = Date.now();
+    this.sessions = this.sessions.map((s) =>
+      s.id === id ? { ...s, lastActiveAt: now } : s
     );
   }
 
@@ -150,6 +277,40 @@ class SessionStore {
     this.sessions = this.sessions.map((s) =>
       s.id === id ? { ...s, displayName } : s
     );
+  }
+
+  /** Mark a session as needing attention (turn completed while not focused). */
+  markNeedsAttention(id: string) {
+    if (!this.needsAttention[id]) {
+      this.needsAttention = { ...this.needsAttention, [id]: true };
+    }
+  }
+
+  /** Clear the needs-attention flag (e.g. when the session is focused). */
+  clearNeedsAttention(id: string) {
+    if (this.needsAttention[id]) {
+      const next = { ...this.needsAttention };
+      delete next[id];
+      this.needsAttention = next;
+    }
+  }
+
+  pushRecentlyClosed(id: string) {
+    // Don't duplicate the top of stack
+    if (this.recentlyClosedStack[this.recentlyClosedStack.length - 1] === id) return;
+    this.recentlyClosedStack.push(id);
+    // Cap at 20 entries
+    if (this.recentlyClosedStack.length > 20) {
+      this.recentlyClosedStack = this.recentlyClosedStack.slice(-20);
+    }
+  }
+
+  popRecentlyClosed(): string | null {
+    return this.recentlyClosedStack.pop() ?? null;
+  }
+
+  removeFromRecentlyClosed(id: string) {
+    this.recentlyClosedStack = this.recentlyClosedStack.filter((s) => s !== id);
   }
 
   setError(msg: string | null) {

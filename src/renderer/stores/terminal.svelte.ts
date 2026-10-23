@@ -1,3 +1,5 @@
+import { previewStore } from './preview.svelte.js';
+
 /**
  * Terminal store for per-session PTY terminals.
  *
@@ -41,6 +43,8 @@ class TerminalStore {
     const dataCleanup = window.groveBench.onPtyData(sessionId, (data) => {
       const handler = this.dataHandlers.get(sessionId);
       if (handler) handler(data);
+      // A dev server started here prints its URL; offer it in the Preview tab.
+      previewStore.noteStream(sessionId, data);
     });
     this.dataCleanups.set(sessionId, dataCleanup);
 
@@ -62,11 +66,40 @@ class TerminalStore {
     this.exitHandlers.delete(sessionId);
   }
 
+  /** The main process killed this session's PTY on close without an exit
+   *  event; mark it dead so reopening sizes the fresh shell it spawns. */
+  markClosed(sessionId: string) {
+    this.aliveBySession[sessionId] = false;
+  }
+
+  /** Tear down all state for a permanently destroyed session. */
+  destroySession(sessionId: string) {
+    this.unsubscribe(sessionId);
+    const { [sessionId]: _drop, ...rest } = this.aliveBySession;
+    this.aliveBySession = rest;
+  }
+
   /** Spawn a PTY for the session. */
   async spawn(sessionId: string): Promise<boolean> {
     const ok = await window.groveBench.ptySpawn(sessionId);
     this.aliveBySession[sessionId] = ok;
     return ok;
+  }
+
+  private ensuring = new Map<string, Promise<boolean>>();
+
+  /** Make sure a PTY is alive, spawning one if needed. Concurrent callers
+   *  (e.g. the panel mounting while a `!command` is being dispatched) share
+   *  one in-flight check so they can't each spawn and kill the other's shell. */
+  ensureAlive(sessionId: string): Promise<boolean> {
+    const pending = this.ensuring.get(sessionId);
+    if (pending) return pending;
+    const run = (async () => {
+      const alive = await this.checkAlive(sessionId);
+      return alive ? true : this.spawn(sessionId);
+    })().finally(() => this.ensuring.delete(sessionId));
+    this.ensuring.set(sessionId, run);
+    return run;
   }
 
   /** Write data to the PTY (keystrokes, pasted text). */

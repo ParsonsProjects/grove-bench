@@ -1,19 +1,27 @@
 <script lang="ts">
   import CopyButton from './CopyButton.svelte';
-  import DiffView, { computeDiffLines } from './DiffView.svelte';
+  import { Button } from '$lib/components/ui/button/index.js';
+  import { Pulse } from '$lib/components/ui/pulse/index.js';
+  import DiffView from './DiffView.svelte';
+  import { fullEditDiff, quickEditDiff } from '../lib/edit-diff.js';
+  import LargeDiffNotice from './LargeDiffNotice.svelte';
+  import OldThenNewNotice from './OldThenNewNotice.svelte';
+  import { editSize } from '../lib/diff-highlight.js';
+  import type { ToolView } from '../../shared/tool-view.js';
+  import { isMarkdownFile } from '../../shared/attachments.js';
+  import { openWorktreeFile } from '$lib/worktree-files.js';
 
   let {
     sessionId,
-    toolName,
-    toolInput,
+    view,
     result,
     pending,
     isError,
     summaryMode = false,
   }: {
     sessionId: string;
-    toolName: string;
-    toolInput: unknown;
+    /** The edit call (see shared/tool-view.ts). */
+    view: ToolView;
     result?: string;
     pending: boolean;
     isError?: boolean;
@@ -21,33 +29,51 @@
   } = $props();
 
   let sideBySide = $state(false);
-  let input = $derived(toolInput as Record<string, unknown>);
-  let filePath = $derived(String(input?.file_path ?? input?.filePath ?? 'file'));
+  let filePath = $derived(view.path || 'file');
+  /** A whole-file write rather than replacements within the file. */
+  let isWrite = $derived(!view.edits?.length && view.write !== undefined);
 
-  let diffLines = $derived(pending ? [] : computeDiffLines(toolName, input, filePath));
+  /** A large edit waits for "Show edit": working it out in full and drawing
+   *  every row would stall the window (quickEditDiff). */
+  let quick = $derived(pending ? null : quickEditDiff(view, filePath));
+  let shown = $state(false);
+  let heldBack = $derived(!!quick?.large && !shown);
+  /** "Compare line by line" was clicked: work it out in full. */
+  let compared = $state(false);
 
-  let copyContent = $derived.by(() => {
-    if (toolName === 'Write') return String(input?.content ?? '');
-    if (toolName === 'Edit') return String(input?.new_string ?? '');
-    return '';
-  });
+  let shownDiff = $derived(!quick || heldBack ? null : fullEditDiff(view, filePath, compared ? null : quick.diff));
+  let diffLines = $derived(shownDiff?.lines ?? []);
+
+  let copyContent = $derived(isWrite ? (view.write ?? '') : (view.edits ?? []).map((e) => e.newText).join('\n'));
 
   function openInEditor() {
     window.groveBench.openInEditor(sessionId, filePath).catch(() => {});
+  }
+
+  /** A Markdown file can be read as it renders, in the Focus panel. */
+  let isMarkdown = $derived(isMarkdownFile(filePath));
+  /** It's no longer in the worktree. */
+  let gone = $state(false);
+  async function preview() {
+    try {
+      gone = !(await openWorktreeFile(sessionId, filePath));
+    } catch (err) {
+      console.warn(`Could not preview ${filePath}:`, err);
+    }
   }
 </script>
 
 {#if summaryMode}
   <div class="py-0.5 my-0.5 border-l-4 border-primary pl-3">
     <div class="flex items-center gap-2 text-xs group/diff-hdr">
-      <span class="text-primary font-bold">{toolName === 'Write' ? '+ new' : 'edit'}</span>
+      <span class="text-primary font-bold">{isWrite ? '+ new' : 'edit'}</span>
       <button
         onclick={openInEditor}
         class="text-foreground/80 hover:text-primary hover:underline cursor-pointer truncate"
         title="Open in editor"
       >{filePath}</button>
       {#if pending}
-        <span class="w-2.5 h-2.5 bg-primary animate-pulse shrink-0"></span>
+        <Pulse />
       {:else if isError}
         <span class="text-destructive">error</span>
       {/if}
@@ -57,7 +83,7 @@
   <div class="py-1 my-1 border-l-4 border-primary pl-3">
     <!-- Header -->
     <div class="flex items-center gap-2 text-xs mb-1 group/diff-hdr">
-      <span class="text-primary font-bold">{toolName === 'Write' ? '+ new file' : 'edit'}</span>
+      <span class="text-primary font-bold">{isWrite ? '+ new file' : 'edit'}</span>
       <button
         onclick={openInEditor}
         class="text-foreground/80 hover:text-primary hover:underline cursor-pointer"
@@ -65,25 +91,44 @@
       >{filePath}</button>
       <CopyButton text={filePath} class="opacity-0 group-hover/diff-hdr:opacity-100 shrink-0" />
       {#if pending}
-        <span class="w-2.5 h-2.5 bg-primary animate-pulse shrink-0"></span>
+        <Pulse />
       {:else if isError}
         <span class="text-destructive">error</span>
-      {:else if diffLines.length > 0}
+      {:else if heldBack || diffLines.length > 0}
         <div class="ml-auto flex items-center gap-1">
           <CopyButton text={copyContent} class="opacity-0 group-hover/diff-hdr:opacity-100" />
-          {#if toolName === 'Edit'}
-            <button
+          {#if isMarkdown}
+            <Button
+              variant="quiet"
+              size="inline"
+              onclick={preview}
+              disabled={gone}
+              class="select-none"
+              title={gone ? `${filePath} is no longer in the worktree` : 'Read the file as it is now, rendered, in the Focus panel'}
+            >
+              preview
+            </Button>
+          {/if}
+          {#if !isWrite && diffLines.length > 0}
+            <Button
+              variant="quiet"
+              size="inline"
               onclick={() => sideBySide = !sideBySide}
-              class="text-muted-foreground hover:text-foreground select-none"
+              class="select-none"
             >
               {sideBySide ? 'unified' : 'side-by-side'}
-            </button>
+            </Button>
           {/if}
         </div>
       {/if}
     </div>
 
-    <DiffView lines={diffLines} {sideBySide} />
+    {#if heldBack}
+      <LargeDiffNotice kind="edit" size={editSize(view)} label={view.path ? `Show edit to ${view.path}` : undefined} onShow={() => (shown = true)} />
+    {:else}
+      {#if shownDiff && !shownDiff.linedUp}<OldThenNewNotice diff={shownDiff} label={view.path ? `Compare edit to ${view.path} line by line` : undefined} onCompare={() => (compared = true)} />{/if}
+      <DiffView lines={diffLines} {sideBySide} {filePath} deferHighlight />
+    {/if}
 
     {#if isError && result}
       <div class="text-xs text-destructive mt-1">{result}</div>

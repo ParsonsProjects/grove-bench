@@ -1,19 +1,112 @@
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
-import { git, gitEnv } from './git.js';
+import { git, gitEnv, gitPatch, blobLines, detectBinaryDiff, imageExtFor, patchResult, patchOverLimit } from './git.js';
+import { parseDiffRaw, parseNumstat as parseNumstatRows } from './git-status-parser.js';
 import { logger } from './logger.js';
+import type { CheckpointDiffScope, DiffHistoryEntry, DiffHistoryResult, DiffStats, FileDiffResult, FileLinesResult, GitStatusResult } from '../shared/types.js';
+
+const BASELINE_UUID = '__baseline__';
+
+/** The Rewind preview shows a diff up to this many characters. In headless
+ *  Chromium, laying out a <pre> of 250 KB took about 0.1 s; of 1 MB, 0.5 s;
+ *  of 4 MB, 3 s. */
+const PREVIEW_MAX_CHARS = 250_000;
+/** Past that, it lists up to this many of the files the rewind changes:
+ *  about 80 characters each, at git's --stat width. */
+const PREVIEW_MAX_FILES = 1000;
+
+/** Sentinel checkpoint captured when the conversation is cleared. It marks
+ *  the boundary between conversations so earlier turns can be listed as
+ *  "before /clear" (files restorable, conversation not rewindable), and it
+ *  snapshots the working tree at that moment so the last pre-clear turn's
+ *  diff has a fixed end point. */
+const CLEAR_UUID = '__clear__';
+
+/** Internal checkpoints that never show in the list. */
+const SENTINEL_UUIDS: ReadonlySet<string> = new Set([BASELINE_UUID, CLEAR_UUID]);
+
+/** Identity for checkpoint commits. They live only under refs/grove and are
+ *  never part of the user's branch history, so a fixed identity is fine and
+ *  spares the capture from failing where git has no user.name/email. */
+const CHECKPOINT_IDENTITY_ENV: Record<string, string> = {
+  GIT_AUTHOR_NAME: 'Grove Bench',
+  GIT_AUTHOR_EMAIL: 'checkpoints@grove-bench.local',
+  GIT_COMMITTER_NAME: 'Grove Bench',
+  GIT_COMMITTER_EMAIL: 'checkpoints@grove-bench.local',
+};
+
+/** Sum a `git diff --numstat` output into aggregate stats. Binary files count
+ *  toward filesChanged but contribute no line counts (numstat prints `-`). */
+function parseNumstat(output: string): DiffStats {
+  const stats: DiffStats = { filesChanged: 0, additions: 0, deletions: 0 };
+  for (const line of output.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const parts = trimmed.split('\t');
+    if (parts.length < 3) continue;
+    stats.filesChanged++;
+    const adds = parseInt(parts[0], 10);
+    const dels = parseInt(parts[1], 10);
+    if (!Number.isNaN(adds)) stats.additions += adds;
+    if (!Number.isNaN(dels)) stats.deletions += dels;
+  }
+  return stats;
+}
+
+/** The worktree's own index file: `.git/index` in a main checkout, or the
+ *  `index` in the gitdir a linked worktree's `.git` file points to. Null when
+ *  it can't be found. */
+async function realIndexPath(cwd: string): Promise<string | null> {
+  try {
+    const dotGit = path.join(cwd, '.git');
+    if ((await fs.promises.stat(dotGit)).isDirectory()) return path.join(dotGit, 'index');
+    const gitdir = (await fs.promises.readFile(dotGit, 'utf-8')).match(/^gitdir:\s*(.+?)\s*$/m)?.[1];
+    return gitdir ? path.join(path.resolve(cwd, gitdir), 'index') : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Delete a temp file, if it's there. Off the main process: creating and
+ *  deleting files in the temp folder, which an antivirus watches, can take
+ *  hundreds of ms, and checkpoints are taken every turn. */
+async function removeTemp(file: string): Promise<void> {
+  try { await fs.promises.rm(file, { force: true }); } catch { /* ignore */ }
+}
+
+interface CheckpointRef {
+  ref: string;
+  turn: number;
+  uuid: string;
+  text?: string;
+  /** Commit object id. Used to key the numstat cache by content rather than
+   *  by ref name, since turn numbers are reused after a rewind. */
+  oid?: string;
+}
+
+/** Bound on cached numstat results per session — one entry per (from, to)
+ *  pair, so this is only reached after hundreds of turns. */
+const NUMSTAT_CACHE_MAX = 500;
 
 interface SessionCheckpoints {
   turnCount: number;
   uuidToRef: Map<string, string>;
   captureQueue: Promise<void>;
+  /** `git diff --numstat` results keyed by `${fromOid}..${toOid}`. Both sides
+   *  are content-addressed (checkpoint commits, working-tree tree objects), so
+   *  an entry never goes stale; history() would otherwise re-run one git
+   *  process per checkpoint on every refresh. */
+  numstatCache: Map<string, DiffStats>;
 }
 
 export interface CheckpointInfo {
   uuid: string;
   turn: number;
   ref: string;
+  text?: string;
+  /** Captured before the most recent /clear (see CheckpointListItem). */
+  beforeClear?: boolean;
 }
 
 export class CheckpointManager {
@@ -22,7 +115,7 @@ export class CheckpointManager {
   private getOrCreate(sessionId: string): SessionCheckpoints {
     let s = this.sessions.get(sessionId);
     if (!s) {
-      s = { turnCount: 0, uuidToRef: new Map(), captureQueue: Promise.resolve() };
+      s = { turnCount: 0, uuidToRef: new Map(), captureQueue: Promise.resolve(), numstatCache: new Map() };
       this.sessions.set(sessionId, s);
     }
     return s;
@@ -31,17 +124,52 @@ export class CheckpointManager {
   /**
    * Capture a checkpoint of the current working tree state.
    * Uses a temporary git index so we don't interfere with the user's real index.
+   * Never throws: resolves true when the checkpoint ref was written, false
+   * when the capture failed (the failure is logged) or was skipped.
    * @param text Optional user message text to store in the checkpoint for display.
    */
-  async capture(sessionId: string, cwd: string, uuid: string, text?: string): Promise<void> {
+  async capture(sessionId: string, cwd: string, uuid: string, text?: string): Promise<boolean> {
     const s = this.getOrCreate(sessionId);
     // Queue captures to prevent concurrent git index corruption
-    s.captureQueue = s.captureQueue.then(() =>
+    const result = s.captureQueue.then(() =>
       this._doCapture(s, sessionId, cwd, uuid, text)
-    ).catch(err => {
+    ).then((written) => written, (err: unknown) => {
       logger.warn(`[checkpoints] capture failed session=${sessionId} uuid=${uuid}:`, err);
+      return false;
     });
-    return s.captureQueue;
+    s.captureQueue = result.then(() => undefined);
+    return result;
+  }
+
+  /**
+   * Capture the session's starting point (a sentinel that never shows in the
+   * list, but anchors the cumulative "all turns" diff). Existing refs are
+   * scanned first, in the same queue slot, so a session that already has
+   * checkpoints (a query restart after a rewind, or an app-restart resume
+   * whose provider id was dropped) keeps its original baseline as the oldest
+   * ref instead of getting a second one in the middle of its history.
+   */
+  async captureBaseline(sessionId: string, cwd: string): Promise<boolean> {
+    const s = this.getOrCreate(sessionId);
+    const result = s.captureQueue.then(async () => {
+      await this._doResume(s, sessionId, cwd);
+      return this._doCapture(s, sessionId, cwd, BASELINE_UUID);
+    }).then((written) => written, (err: unknown) => {
+      logger.warn(`[checkpoints] baseline capture failed session=${sessionId}:`, err);
+      return false;
+    });
+    s.captureQueue = result.then(() => undefined);
+    return result;
+  }
+
+  /**
+   * Record a conversation clear. Checkpoint refs are kept — the user can
+   * still restore files to any earlier turn — and a sentinel checkpoint is
+   * captured so list() can tell pre-clear turns apart from the new
+   * conversation's. Turn numbering continues across the boundary.
+   */
+  async markCleared(sessionId: string, cwd: string): Promise<void> {
+    await this.capture(sessionId, cwd, CLEAR_UUID);
   }
 
   /**
@@ -54,22 +182,21 @@ export class CheckpointManager {
 
   private async _doCapture(
     s: SessionCheckpoints, sessionId: string, cwd: string, uuid: string, text?: string
-  ): Promise<void> {
+  ): Promise<boolean> {
+    // The baseline must stay the oldest ref: once any turn exists (including
+    // after a rewind reset the counter to a kept turn) a second baseline would
+    // land in the middle of the history and swallow the previous turn's diff.
+    if (uuid === BASELINE_UUID && s.turnCount > 0) {
+      logger.debug(`[checkpoints] baseline skipped session=${sessionId} (already at turn ${s.turnCount})`);
+      return false;
+    }
+
     const turn = ++s.turnCount;
     const ref = `refs/grove/checkpoints/${sessionId}/turn/${turn}`;
     const tmpIndex = path.join(os.tmpdir(), `grove-idx-${sessionId}-${turn}-${Date.now()}`);
 
     try {
-      const env = { GIT_INDEX_FILE: tmpIndex };
-
-      // Seed temp index from HEAD
-      await gitEnv(['read-tree', 'HEAD'], cwd, env);
-
-      // Stage all working tree changes (including untracked files)
-      await gitEnv(['add', '-A'], cwd, env);
-
-      // Write the tree object
-      const treeOid = (await gitEnv(['write-tree'], cwd, env)).trim();
+      const treeOid = await this.snapshotTree(sessionId, cwd, tmpIndex);
 
       // Encode message text into commit message so list() can display it
       // without depending on in-memory messages. Truncate to keep refs light.
@@ -80,12 +207,15 @@ export class CheckpointManager {
       const msgFile = path.join(os.tmpdir(), `grove-msg-${sessionId}-${turn}-${Date.now()}`);
       let commitOid: string;
       try {
-        fs.writeFileSync(msgFile, commitMsg);
-        commitOid = (await git(
-          ['commit-tree', treeOid, '-F', msgFile], cwd
+        await fs.promises.writeFile(msgFile, commitMsg);
+        // commit-tree refuses to run without an author identity. Checkpoint
+        // commits are internal (never on a branch), so a fixed identity keeps
+        // captures working on machines where user.name/email are not set.
+        commitOid = (await gitEnv(
+          ['commit-tree', treeOid, '-F', msgFile], cwd, CHECKPOINT_IDENTITY_ENV
         )).trim();
       } finally {
-        try { fs.rmSync(msgFile, { force: true }); } catch { /* ignore */ }
+        await removeTemp(msgFile);
       }
 
       // Store the ref
@@ -93,10 +223,47 @@ export class CheckpointManager {
 
       s.uuidToRef.set(uuid, ref);
       logger.debug(`[checkpoints] captured session=${sessionId} turn=${turn} uuid=${uuid}`);
+      return true;
     } finally {
       // Always clean up temp index
-      try { fs.rmSync(tmpIndex, { force: true }); } catch { /* ignore */ }
+      await removeTemp(tmpIndex);
     }
+  }
+
+  /**
+   * Write the working tree (tracked and untracked files, not ignored ones) as
+   * a tree object, staged through the temp index `tmpIndex`, and return its
+   * oid. The temp index starts as a copy of the worktree's own index, whose
+   * file stat data lets `git add -A` re-hash only the files that changed.
+   * Starting from `read-tree HEAD` (no stat data) hashes every file, about
+   * 10x slower on a 20k-file repo. Falls back to HEAD, then to an empty index
+   * on a branch with no commits yet.
+   *
+   * A copied index keeps skip-worktree and assume-unchanged bits: sparse
+   * checkouts snapshot correctly, but a file the user marked
+   * assume-unchanged is recorded as it is in the index.
+   */
+  private async snapshotTree(sessionId: string, cwd: string, tmpIndex: string): Promise<string> {
+    const env = { GIT_INDEX_FILE: tmpIndex };
+    const realIndex = await realIndexPath(cwd);
+    if (realIndex) {
+      try {
+        await fs.promises.copyFile(realIndex, tmpIndex);
+        await gitEnv(['add', '-A'], cwd, env);
+        return (await gitEnv(['write-tree'], cwd, env)).trim();
+      } catch (err) {
+        logger.debug(`[checkpoints] snapshot from the worktree index failed session=${sessionId}, reading HEAD instead:`, err);
+        await removeTemp(tmpIndex);
+      }
+    }
+    try {
+      await gitEnv(['read-tree', 'HEAD'], cwd, env);
+    } catch (err) {
+      logger.debug(`[checkpoints] read-tree HEAD failed session=${sessionId}, using empty index:`, err);
+      await gitEnv(['read-tree', '--empty'], cwd, env);
+    }
+    await gitEnv(['add', '-A'], cwd, env);
+    return (await gitEnv(['write-tree'], cwd, env)).trim();
   }
 
   /**
@@ -156,14 +323,225 @@ export class CheckpointManager {
   }
 
   /**
-   * Get a unified diff between a checkpoint and the current working tree.
+   * The Rewind preview: a unified diff between a checkpoint and the current
+   * working tree, or, when that is over PREVIEW_MAX_CHARS, a note and git's
+   * --stat list of the files it changes.
+   *
+   * Builds a tree object from the current working tree (incl. untracked files,
+   * excl. ignored) in a temp index, then diffs the checkpoint ref against it.
+   * A bare `git diff <ref> -- .` omits untracked files, so files the agent
+   * created since the checkpoint wouldn't appear — even though rewind deletes
+   * them — making the preview understate what a rewind removes.
    */
   async diff(sessionId: string, cwd: string, uuid: string): Promise<string> {
     const ref = await this.resolveRef(sessionId, cwd, uuid);
     if (!ref) return 'No checkpoint found for this message';
 
-    const output = await git(['diff', ref, '--', '.'], cwd);
-    return output || '(no changes)';
+    const currentTree = await this.writeWorkingTree(sessionId, cwd);
+    // --no-color: the preview is plain text, whatever color.ui says.
+    const range = ['--no-color', ref, currentTree, '--', '.'];
+    const patch = await gitPatch(['diff', ...range], cwd, PREVIEW_MAX_CHARS);
+    if (patch !== null) return patch || '(no changes)';
+    // Too long to show: the files it changes and by how much. Git lists the
+    // first PREVIEW_MAX_FILES, then "...", and always the totals.
+    const stat = await git(['diff', '--stat', `--stat-count=${PREVIEW_MAX_FILES}`, ...range], cwd);
+    return `The full diff is too long to show here. The files it changes:\n\n${stat}`;
+  }
+
+  /** Recent working-tree snapshots. The review UI asks for the file list and
+   *  then several per-file diffs within a few hundred ms; those calls opt in
+   *  to reusing one tree object so they stay consistent with each other and
+   *  don't re-add the whole tree each time. Everything else (history stats,
+   *  the Rewind preview) always snapshots fresh. */
+  private workingTreeMemo = new Map<string, { oid: string; at: number }>();
+  private static WORKING_TREE_REUSE_MS = 1000;
+
+  /**
+   * Build a tree object for the current working tree (incl. untracked files,
+   * excl. ignored) using a temporary index, and return its oid. With
+   * `reuseRecent`, a snapshot taken within the last second is returned as is.
+   */
+  private async writeWorkingTree(sessionId: string, cwd: string, reuseRecent = false): Promise<string> {
+    const memo = this.workingTreeMemo.get(sessionId);
+    if (reuseRecent && memo && Date.now() - memo.at < CheckpointManager.WORKING_TREE_REUSE_MS) return memo.oid;
+    const tmpIndex = path.join(os.tmpdir(), `grove-diff-${sessionId}-${Date.now()}`);
+    try {
+      const oid = await this.snapshotTree(sessionId, cwd, tmpIndex);
+      this.workingTreeMemo.set(sessionId, { oid, at: Date.now() });
+      return oid;
+    } finally {
+      await removeTemp(tmpIndex);
+    }
+  }
+
+  /**
+   * The two trees a checkpoint comparison spans. `turn` = this checkpoint to
+   * the next one (or the working tree for the latest turn); `since` = this
+   * checkpoint to the working tree; `full` = the session's oldest checkpoint
+   * to the working tree. Null when the checkpoint cannot be found.
+   */
+  async range(sessionId: string, cwd: string, uuid: string, scope: CheckpointDiffScope): Promise<{ from: string; to: string } | null> {
+    if (scope === 'full') {
+      await this.waitForPending(sessionId);
+      let refs: CheckpointRef[] = [];
+      try { refs = await this.listRefs(sessionId, cwd); } catch { /* no refs */ }
+      if (refs.length === 0) return null;
+      return { from: refs[0].ref, to: await this.writeWorkingTree(sessionId, cwd, true) };
+    }
+    const ref = await this.resolveRef(sessionId, cwd, uuid);
+    if (!ref) return null;
+    if (scope === 'since') return { from: ref, to: await this.writeWorkingTree(sessionId, cwd, true) };
+    let refs: CheckpointRef[] = [];
+    try { refs = await this.listRefs(sessionId, cwd); } catch { /* fall through */ }
+    const idx = refs.findIndex(r => r.ref === ref);
+    const next = idx >= 0 ? refs[idx + 1] : undefined;
+    return { from: ref, to: next ? next.ref : await this.writeWorkingTree(sessionId, cwd, true) };
+  }
+
+  /** Files changed across a checkpoint comparison, with line counts and the
+   *  new-side blob id as content hash. */
+  async files(sessionId: string, cwd: string, uuid: string, scope: CheckpointDiffScope): Promise<GitStatusResult> {
+    const range = await this.range(sessionId, cwd, uuid, scope);
+    if (!range) return { entries: [], scopeError: scope === 'full' ? 'No checkpoints found for this thread' : 'No checkpoint found for this message' };
+    const entries = parseDiffRaw(await git(['diff', '--raw', '-z', '--no-abbrev', range.from, range.to, '--', '.'], cwd));
+    if (entries.length === 0) return { entries };
+    try {
+      const stats = new Map(parseNumstatRows(await git(['diff', '--numstat', '-z', range.from, range.to, '--', '.'], cwd)).map(s => [s.path, s]));
+      for (const e of entries) {
+        const st = stats.get(e.filePath);
+        if (st && !st.binary) { e.additions = st.additions; e.deletions = st.deletions; }
+      }
+    } catch { /* best-effort */ }
+    return { entries };
+  }
+
+  /** Unified diff of one file across a checkpoint comparison. */
+  async fileDiff(sessionId: string, cwd: string, uuid: string, scope: CheckpointDiffScope, relPath: string): Promise<FileDiffResult> {
+    const imgExt = imageExtFor(relPath);
+    if (imgExt) return { kind: 'image', ext: imgExt };
+    const range = await this.range(sessionId, cwd, uuid, scope);
+    if (!range) return { kind: 'text', patch: '' };
+    const diff = await gitPatch(['diff', range.from, range.to, '--', relPath], cwd);
+    if (diff === null) return patchOverLimit();
+    if (detectBinaryDiff(diff)) return { kind: 'binary' };
+    return patchResult(diff);
+  }
+
+  /** New-side content of one file across a checkpoint comparison, as lines. */
+  async fileLines(sessionId: string, cwd: string, uuid: string, scope: CheckpointDiffScope, relPath: string): Promise<FileLinesResult> {
+    const range = await this.range(sessionId, cwd, uuid, scope);
+    if (!range) return null;
+    try {
+      const lines = await blobLines(cwd, range.to, relPath);
+      return lines ? { lines } : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * List all checkpoint refs for a session (including the internal baseline),
+   * sorted oldest-first. Throws if for-each-ref fails.
+   */
+  private async listRefs(sessionId: string, cwd: string): Promise<CheckpointRef[]> {
+    const SEP = '@@GROVE_SEP@@';
+    const output = await git(
+      ['for-each-ref', `--format=%(refname)${SEP}%(subject)${SEP}%(body)${SEP}%(objectname)`, `refs/grove/checkpoints/${sessionId}/`],
+      cwd
+    );
+    const items: CheckpointRef[] = [];
+    for (const line of output.split('\n')) {
+      if (!line.trim()) continue;
+      const parts = line.split(SEP);
+      if (parts.length < 2) continue;
+      const ref = parts[0].trim();
+      const subject = parts[1].trim();
+      const body = (parts[2] ?? '').trim();
+      const oid = parts[3]?.trim() || undefined;
+
+      const turnMatch = ref.match(/\/turn\/(\d+)$/);
+      const turn = turnMatch ? parseInt(turnMatch[1], 10) : 0;
+
+      const uuidMatch = subject.match(/uuid=(\S+)/);
+      if (!uuidMatch) continue;
+
+      const textMatch = body.match(/^text=(.*)/);
+      const text = textMatch?.[1] || undefined;
+
+      items.push({ ref, turn, uuid: uuidMatch[1], text, oid });
+    }
+    items.sort((a, b) => a.turn - b.turn);
+    return items;
+  }
+
+  /**
+   * Per-turn diff history: for each checkpoint, the changes made between it
+   * and the next checkpoint (or the current working tree for the latest one).
+   * Since each checkpoint is captured when a user message is sent — before the
+   * agent acts on it — an entry describes what that turn changed on disk.
+   * Also returns cumulative stats from the session baseline to now.
+   */
+  async history(sessionId: string, cwd: string): Promise<DiffHistoryResult> {
+    await this.waitForPending(sessionId);
+    const empty: DiffHistoryResult = {
+      entries: [],
+      total: { filesChanged: 0, additions: 0, deletions: 0 },
+    };
+
+    let refs: CheckpointRef[];
+    try {
+      refs = await this.listRefs(sessionId, cwd);
+    } catch {
+      return empty;
+    }
+    if (refs.length === 0) return empty;
+
+    try {
+      const currentTree = await this.writeWorkingTree(sessionId, cwd);
+      const cache = this.getOrCreate(sessionId).numstatCache;
+
+      // Cached by content ids: a (checkpoint, checkpoint) pair never changes,
+      // and the working tree's tree oid only matches while nothing on disk moved.
+      const numstat = async (from: CheckpointRef, to: CheckpointRef | string): Promise<DiffStats> => {
+        const toRef = typeof to === 'string' ? to : to.ref;
+        const key = `${from.oid ?? from.ref}..${typeof to === 'string' ? to : (to.oid ?? to.ref)}`;
+        const hit = cache.get(key);
+        if (hit) return hit;
+        const out = await git(['diff', '--numstat', from.ref, toRef, '--', '.'], cwd);
+        const stats = parseNumstat(out);
+        if (cache.size >= NUMSTAT_CACHE_MAX) cache.clear();
+        cache.set(key, stats);
+        return stats;
+      };
+
+      const entries: DiffHistoryEntry[] = [];
+      for (let i = 0; i < refs.length; i++) {
+        const r = refs[i];
+        if (SENTINEL_UUIDS.has(r.uuid)) continue;
+        let stats: DiffStats = { filesChanged: 0, additions: 0, deletions: 0 };
+        try {
+          stats = await numstat(r, refs[i + 1] ?? currentTree);
+        } catch (err) {
+          logger.debug(`[checkpoints] history numstat failed turn=${r.turn}:`, err);
+        }
+        entries.push({ uuid: r.uuid, turn: r.turn, text: r.text, ...stats });
+      }
+
+      // Cumulative stats: oldest ref (the baseline for new sessions) → now
+      let total: DiffStats = { filesChanged: 0, additions: 0, deletions: 0 };
+      try {
+        total = await numstat(refs[0], currentTree);
+      } catch (err) {
+        logger.debug(`[checkpoints] history total numstat failed:`, err);
+      }
+
+      // Newest first, matching list()
+      entries.sort((a, b) => b.turn - a.turn);
+      return { entries, total };
+    } catch (err) {
+      logger.warn(`[checkpoints] history failed session=${sessionId}:`, err);
+      return empty;
+    }
   }
 
   /**
@@ -284,43 +662,26 @@ export class CheckpointManager {
   }
 
   /**
-   * List all checkpoints for a session, sorted newest-first.
+   * List all checkpoints for a session, sorted newest-first. Turns captured
+   * before the most recent /clear are flagged `beforeClear`.
    */
-  async list(sessionId: string, cwd: string): Promise<(CheckpointInfo & { text?: string })[]> {
+  async list(sessionId: string, cwd: string): Promise<CheckpointInfo[]> {
     // Wait for any in-flight capture so the latest checkpoint is included
     await this.waitForPending(sessionId);
 
     try {
-      // Use a delimiter to separate fields since body can contain spaces
-      const SEP = '@@GROVE_SEP@@';
-      const output = await git(
-        ['for-each-ref', `--format=%(refname)${SEP}%(subject)${SEP}%(body)`, `refs/grove/checkpoints/${sessionId}/`],
-        cwd
-      );
-      const items: (CheckpointInfo & { text?: string })[] = [];
-      for (const line of output.split('\n')) {
-        if (!line.trim()) continue;
-        const parts = line.split(SEP);
-        if (parts.length < 2) continue;
-        const ref = parts[0].trim();
-        const subject = parts[1].trim();
-        const body = (parts[2] ?? '').trim();
-
-        const turnMatch = ref.match(/\/turn\/(\d+)$/);
-        const turn = turnMatch ? parseInt(turnMatch[1], 10) : 0;
-
-        const uuidMatch = subject.match(/uuid=(\S+)/);
-        if (!uuidMatch) continue;
-
-        // Extract display text from commit body (text=...)
-        const textMatch = body.match(/^text=(.*)/);
-        const text = textMatch?.[1] || undefined;
-
-        items.push({ uuid: uuidMatch[1], turn, ref, text });
+      const items = await this.listRefs(sessionId, cwd);
+      let lastClearTurn = -1;
+      for (const i of items) {
+        if (i.uuid === CLEAR_UUID && i.turn > lastClearTurn) lastClearTurn = i.turn;
       }
-      // Filter out internal baseline checkpoint
-      const visible = items.filter(i => i.uuid !== '__baseline__');
-      // Sort newest first (descending turn)
+      // Filter out internal sentinel checkpoints; sort newest first
+      const visible: CheckpointInfo[] = items
+        .filter(i => !SENTINEL_UUIDS.has(i.uuid))
+        .map(({ uuid, turn, ref, text }) => ({
+          uuid, turn, ref, text,
+          ...(turn < lastClearTurn ? { beforeClear: true } : {}),
+        }));
       visible.sort((a, b) => b.turn - a.turn);
       return visible;
     } catch {

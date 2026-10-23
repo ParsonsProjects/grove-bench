@@ -1,17 +1,52 @@
 <script lang="ts">
+  import { PIXEL_TREE } from '../lib/pixel-tree.js';
   import UpdateNotification from './UpdateNotification.svelte';
+  import { lazyComponent } from '../lib/lazy-component.js';
+  import { helpStore } from '../stores/help.svelte.js';
+
+  // Help (with every help page) loads when first opened, then stays mounted.
+  const loadHelpPanel = lazyComponent(() => import('./HelpPanel.svelte'));
+  let helpOpened = $state(false);
+  $effect(() => { if (helpStore.open) helpOpened = true; });
+
+  /** F1 opens Help from anywhere in the app. It listens in the capture
+   *  phase because the terminal (xterm) stops the keys it handles from
+   *  bubbling, and stops F1 there so the shell doesn't get it too. */
+  function onKeydown(e: KeyboardEvent) {
+    if (e.key !== 'F1' || e.ctrlKey || e.altKey || e.shiftKey || e.metaKey) return;
+    e.preventDefault();
+    e.stopPropagation();
+    helpStore.show();
+  }
+  $effect(() => {
+    window.addEventListener('keydown', onKeydown, true);
+    return () => window.removeEventListener('keydown', onKeydown, true);
+  });
 
   let isMaximized = $state(false);
 
+  let checkSeq = 0;
   async function checkMaximized() {
-    isMaximized = await window.groveBench.winIsMaximized();
+    const seq = ++checkSeq;
+    const maximized = await window.groveBench.winIsMaximized();
+    if (seq === checkSeq) isMaximized = maximized;
   }
 
+  // Dragging a window edge fires resize many times a second: ask main once
+  // it settles (maximizing fires resize too), not once per event.
+  const RESIZE_SETTLE_MS = 150;
   $effect(() => {
     checkMaximized();
-    const onResize = () => checkMaximized();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const onResize = () => {
+      clearTimeout(timer);
+      timer = setTimeout(checkMaximized, RESIZE_SETTLE_MS);
+    };
     window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('resize', onResize);
+    };
   });
 
   // Match pixel-bg: 4px rects on a 6px grid (4px pixel + 2px gap).
@@ -32,7 +67,8 @@
     return (hash(a, b) % 10000) / 10000;
   }
 
-  // Blue pixels — snapped to the same 6px grid, dissolve left to right
+  // Sky pixels (the palette's sky: the title bar is the sky over the
+  // grove), snapped to the same 6px grid, dissolve left to right
   const bluePixels: { left: number; top: number; opacity: number; delay: number }[] = [];
   for (let i = 0; i < 40; i++) {
     const raw = (i / 40);
@@ -67,7 +103,7 @@
       }
 
       const isBlue = rand(x * 3, y * 7) > 0.75;
-      const color = isBlue ? '#6888aa' : '#ffffff';
+      const color = isBlue ? 'var(--pixel-sky)' : 'var(--pixel-ink)';
       const opacity = isBlue ? 0.02 : 0.025;
 
       greyPixels.push({
@@ -88,7 +124,7 @@
       left,
       top,
       opacity: isBlue ? 0.015 : 0.02,
-      color: isBlue ? '#6888aa' : '#ffffff',
+      color: isBlue ? 'var(--pixel-sky)' : 'var(--pixel-ink)',
     });
   }
 </script>
@@ -110,6 +146,7 @@
         width: 4px; height: 4px;
         left: {p.left}px;
         top: {p.top}px;
+        background: var(--pixel-sky);
         --peak-opacity: {p.opacity};
         animation-delay: {p.delay}s;
       "
@@ -119,37 +156,22 @@
   <div class="flex-1 app-drag px-3 flex items-center h-full relative z-10">
     <svg width="11" height="13" viewBox="0 0 21 24" fill="none" class="mr-1.5 shrink-0">
       <!-- Pixel art tree: 2px pixels with 1px gaps on a 3px grid -->
-      <rect x="9" y="0" width="2" height="2" fill="#6ec87a"/>
-      <rect x="6" y="3" width="2" height="2" fill="#5ab868"/>
-      <rect x="9" y="3" width="2" height="2" fill="#5ab868"/>
-      <rect x="12" y="3" width="2" height="2" fill="#5ab868"/>
-      <rect x="3" y="6" width="2" height="2" fill="#4aaa58"/>
-      <rect x="6" y="6" width="2" height="2" fill="#4aaa58"/>
-      <rect x="9" y="6" width="2" height="2" fill="#4aaa58"/>
-      <rect x="12" y="6" width="2" height="2" fill="#4aaa58"/>
-      <rect x="15" y="6" width="2" height="2" fill="#4aaa58"/>
-      <rect x="0" y="9" width="2" height="2" fill="#3a9a48"/>
-      <rect x="3" y="9" width="2" height="2" fill="#3a9a48"/>
-      <rect x="6" y="9" width="2" height="2" fill="#3a9a48"/>
-      <rect x="9" y="9" width="2" height="2" fill="#3a9a48"/>
-      <rect x="12" y="9" width="2" height="2" fill="#3a9a48"/>
-      <rect x="15" y="9" width="2" height="2" fill="#3a9a48"/>
-      <rect x="18" y="9" width="2" height="2" fill="#3a9a48"/>
-      <rect x="3" y="12" width="2" height="2" fill="#3a9a48"/>
-      <rect x="6" y="12" width="2" height="2" fill="#3a9a48"/>
-      <rect x="9" y="12" width="2" height="2" fill="#3a9a48"/>
-      <rect x="12" y="12" width="2" height="2" fill="#3a9a48"/>
-      <rect x="15" y="12" width="2" height="2" fill="#3a9a48"/>
-      <rect x="9" y="15" width="2" height="2" fill="#8a6a4a"/>
-      <rect x="9" y="18" width="2" height="2" fill="#8a6a4a"/>
-      <rect x="6" y="21" width="2" height="2" fill="#6a5040"/>
-      <rect x="9" y="21" width="2" height="2" fill="#6a5040"/>
-      <rect x="12" y="21" width="2" height="2" fill="#6a5040"/>
+      {#each PIXEL_TREE as p (`${p.x},${p.y}`)}
+        <rect x={p.x} y={p.y} width="2" height="2" fill={p.fill}/>
+      {/each}
     </svg>
     <span class="text-xs text-muted-foreground">Grove Bench</span>
     <UpdateNotification />
   </div>
   <div class="flex items-center h-full relative z-10">
+    <button
+      onclick={() => helpStore.show()}
+      class="win-btn h-full px-3 flex items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+      title="Help (F1)"
+      aria-label="Help"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>
+    </button>
     <button
       onclick={() => window.groveBench.winMinimize()}
       class="win-btn h-full px-3 flex items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
@@ -187,6 +209,12 @@
   </div>
 </div>
 
+{#if helpOpened}
+  {#await loadHelpPanel() then HelpPanel}
+    <HelpPanel open={helpStore.open} topicId={helpStore.topicId} onclose={() => helpStore.close()} />
+  {/await}
+{/if}
+
 <style>
   .app-drag {
     -webkit-app-region: drag;
@@ -195,9 +223,15 @@
     -webkit-app-region: no-drag;
   }
   .titlebar-pixel {
-    background: #4a7aaa;
     opacity: 0;
     animation: titlebar-glow 5s ease-in-out infinite;
+  }
+  /* Still, at half their peak, when the system asks for less motion. */
+  @media (prefers-reduced-motion: reduce) {
+    .titlebar-pixel {
+      animation: none;
+      opacity: calc(var(--peak-opacity, 0.1) / 2);
+    }
   }
   @keyframes titlebar-glow {
     0%, 100% { opacity: 0; }

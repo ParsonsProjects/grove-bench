@@ -1,0 +1,179 @@
+# Status Bar
+
+The status bar sits at the bottom of the workspace, just above the prompt, and shows live information about the open thread.
+
+In a narrow window the bar drops its extras so the agent settings, the activity, the branch and the context meter keep their room. As it narrows it drops, in order: the last turn's cost and duration, the project name (the branch's tooltip still names it), then **Keys** (the same list is under Keyboard Shortcuts in Help, `F1`), the **MCP** and **Skills** badges, and **Tasks** and **Files**. The MCP badge stays while a server is down, and Tasks while a task is still to do.
+
+## Agent Settings
+
+The left side is a single **Agent settings** control. The first line is the model and the mode, for example `Opus 5.5 · Ask`; a long model name is cut short, and hovering shows it in full. The second line is the agent, followed by any control that is off its default, for example `Claude Agent · Low · Fast`. Click it to open a popup with one column per setting: **Agent**, **Model**, and each control the provider declares for that model (Mode, Effort, Thinking, Speed). Pick an option in any column; the change applies immediately. A line under the columns says what the current mode does, or what any option you point at or tab to does. `Esc` or clicking outside closes the popup. Picking another agent asks how to switch. **Switch and send the transcript** hands this thread to it: it starts its own session in the same worktree, and with your next message it gets a short transcript of the thread so far (your messages, the replies and the list of files changed, without tool output), which goes to that agent's provider. **Switch without it** does the same with no transcript, so the new agent starts knowing nothing but your files. Either way the thread, the files and the checkpoints stay, the thread marks where the switch happened, the model, mode and controls change to the new agent's (the mode is kept when it offers it), and memory notes and other background work on the new agent only read what came after the switch. **New thread instead** starts a draft with that agent in the same project and leaves this one as it is. In a draft (see [Getting started](getting-started.md#starting-a-thread)) every column can still change, the agent included.
+
+### Usage
+
+Under the agent, the popup shows your **plan usage**: one bar per rate-limit window (for example 5-hour and Weekly, plus per-model weekly windows when your plan has them) with the percentage used and when it resets. Like the context meter, each bar is a row of pixel blocks, here 5% each, in the same colours. It refreshes when you open the popup and after each turn, and live rate-limit headers keep it current in between. Usage is per sign-in, so every thread on the same account shows the same numbers. API-key and third-party sign-ins have no plan limits, and the popup says so instead.
+
+### Mode
+
+The operating mode controls how much the agent may do without asking:
+
+| Mode | Color | Description |
+|------|-------|-------------|
+| **Ask** | Blue | Default mode: the agent checks with you before each edit or command. Reading files and read-only commands run without asking |
+| **Plan** | Yellow | Planning mode — the agent explores and plans but doesn't edit files |
+| **Edit** | Purple | Accept-edits mode — file edits inside the worktree are applied without asking; commands still prompt |
+| **Auto** | Cyan | Claude Code's native auto mode — a classifier model reviews each action instead of you. Read-only actions and in-worktree edits are approved; risky or out-of-scope actions (force push, `curl \| bash`, secrets, mass deletion) are blocked and shown as a status line rather than prompted. Not offered on models that don't support it (Haiku) |
+| **Read-safe** | Green | Grove's own mode — edits and recognised read-only commands (file reads, `git status`, `git log`, `ls`, `grep`, …) run without asking. Anything that writes, reaches outside the worktree, touches the network, or isn't on the allowlist still prompts. A sandbox confines writes to the worktree as a backstop |
+
+Pick a mode in the Agent settings popup, or press `Alt+M` to cycle through them. The first four are Claude Code's own modes. Read-safe is Grove Bench's, so it sits below a divider headed "Grove Bench" in the mode list and in Settings.
+
+Agents other than Claude Code (Gemini CLI, GitHub Copilot CLI, OpenCode and agents you add) get Ask, Edit and Read-safe. They have no OS sandbox, so in Read-safe the read-only check is the only thing between the agent and your files. Their own modes show as a second column, named by the agent (for example Gemini CLI's **Agent mode**). A mode that runs tools without asking, such as Gemini CLI's **YOLO**, shows in red. When the agent changes its own mode, for example leaving Plan by itself, the badge follows.
+
+Read-safe and Auto differ in who decides: Read-safe uses a fixed allowlist inside Grove and asks you about everything else, so nothing unexpected ever runs unprompted. Auto hands the decision to Claude's classifier and rarely prompts, so the agent can run tests, commit and so on without you, at the cost of a model making the call.
+
+The Mode, Effort, Thinking and Speed columns are declared by the agent provider for the model you have selected, so the options you see are exactly the ones that provider and model support. Switching models can add or remove a column (for example, Fast speed is only offered on models that support it) and resets any choice the new model does not offer to its default.
+
+## Activity
+
+Next to the agent settings, the bar says what the agent is doing: **idle**, **thinking**, **writing**, or the tool it is running and for how long. While it works a blue square pulses beside the word. **waiting for you** (amber) means a permission prompt, a question or an MCP form is waiting for your answer in the Thread tab; it shows over whatever the agent was doing. Underneath are any rate-limit warning, pending tools, background tasks and memory compaction. Click a pending tool or background task count for details. When every pending tool belongs to a subagent, the count says so (**1 subagent tool**), since the agent itself may be idle.
+
+## Tasks and Files
+
+Next to the activity, two lines show what the thread holds besides its messages. Each shows only once there is something in it.
+
+**Tasks** is the agent's to-do list, for example `Tasks 2/5`: how many are done out of the total (cancelled tasks don't count). A blue square pulses while the agent works on one. Click it to see the list: done tasks are ticked and struck through, and the one in progress is in bold. **Show in thread** opens the Thread tab at the message that last changed the list. The list comes from Claude Code's to-do and task tools, the plan an ACP agent sends, and OpenCode's to-do tool. It is always the latest one, so a list from an earlier turn stays until the agent changes it.
+
+**Files** counts the files that came into the thread. Click it for the list, newest first, in three groups:
+
+- **You attached**: images, text files and other files you added to your messages.
+- **Made by the agent**: what each turn's **Files made** list shows.
+- **From tools**: images a tool returned, such as a screenshot.
+
+Click a file to open it the way its chip in the thread does: an image full size, a text file in the Focus panel (Markdown rendered, anything else with line numbers), a web page in the Preview tab, and PDFs, media and documents in their default app. The target button beside it opens the Thread tab at the message the file came with. If that message is hidden in Summary or Focus view, the thread switches to Detailed to show it. A file that is gone (a rewind took its message, or the agent deleted it) is greyed out once you try to open it.
+
+A file that came in more than once is listed once, at the latest message. A subagent's own to-do list and screenshots stay in its thread.
+
+## Last turn
+
+When the bar is wide enough, it shows how long the last turn took. With an API key sign-in it also shows what the turn cost, estimated at list price (hover for the exact figure). On a plan such as Pro or Max the cost is left out, because turns count toward the plan's limits rather than a bill; **Usage** in Agent settings shows how much of the plan you've used.
+
+## Project and Branch
+
+The branch area shows the thread's project and branch, for example `grove-bench / feat/login`. The branch has a dashed underline while you can click it. Under it are the sync state (commits to push or pull) and the pull request. Click `↑N` to push those commits. If a push fails, from here or from the Changes tab, **push failed** appears: click it to see the error, copy it, **Retry** the push or **Dismiss** the note. It also goes away by itself once nothing is left to push.
+
+Click the branch name to switch branches. Type to filter local and remote branches, then click one or press `Enter`. If the name you type doesn't exist yet, **Create branch** makes it from the current commit and switches to it.
+
+- A branch that only exists on the remote gets a local branch that tracks it.
+- Switching is refused while the checkout has uncommitted changes or untracked files, so commit, stash or remove them first. Creating a new branch is still allowed: no files change, so your uncommitted work comes along.
+- A branch can only be checked out in one place. A branch in use by another worktree (your project folder included) can't be picked.
+- The branch name can't be clicked while the agent is working. Switch once its turn ends.
+- Threads that share a checkout move together. For a direct thread that checkout is your project folder, so your editor sees the switch too.
+- Closing a thread with "Also delete the branch" never deletes the project's default branch, even if the thread switched onto it.
+
+## Speed
+
+On models that support it, a **Speed** column switches between **Standard** and **Fast** output. Fast keeps the same model but returns responses more quickly.
+
+## Effort
+
+An **Effort** control sets how much the agent reasons before it acts. Higher effort means more thorough work, but it takes longer and uses your plan limits faster. Pick a level in the Agent settings popup, or press `Alt+E` to cycle through the levels the current model offers:
+
+| Level | Meaning |
+|-------|---------|
+| **Low** | Fastest and cheapest; brief reasoning |
+| **Medium** | Balanced speed and depth |
+| **High** | Deep reasoning |
+| **Extra** | Deeper than High; suits long coding and agentic work |
+| **Max** | Uncapped reasoning; slow and token-hungry, for the hardest tasks |
+
+Each model starts on its own default: **Medium** for Opus 5.5, **Extra** for Opus 4.7, and **High** for the others. Opus 4.6 and Sonnet 4.6 don't offer Extra. Haiku 4.5 has no effort setting.
+
+Other agents list their own levels, which can depend on the model (OpenCode offers Low, High and Max on DeepSeek V4.1 Flash). `Alt+E` cycles those too.
+
+## Thinking
+
+On most models a **Thinking** control switches extended thinking **On** (the model decides when and how much to think, and Effort sets how much) or **Off**. Pick it in the Agent settings popup, or press `Alt+T` to toggle it.
+
+- Opus 5.5 and Fable 5 always think, so they show no Thinking control. Use a lower Effort to make them faster.
+- Haiku 4.5 has no Effort setting, so its Thinking control keeps fixed levels: **Off**, **Low**, **Medium**, and **High**.
+
+While the agent reasons, the status bar shows **thinking** in purple next to the blue working square.
+
+## MCP Servers
+
+When the agent has MCP servers configured, an **MCP** badge shows how many are configured. The dot is green when every connection is healthy, amber when some are down but others are still connected, and red when none are connected. It refreshes when each turn ends. Click it to manage the servers without restarting the thread. The popover only offers the controls the thread's agent supports:
+
+- Each server shows where it comes from (for example user, project, plugin or claude.ai), its status and its tool count
+- Click the tool count to list the server's tools. Tools the server marks as destructive or read-only are tagged
+- An estimate of how much of the context window the server's tool definitions use, so you can see which servers are worth disconnecting. "loaded on demand" means the agent only loads the tools when it searches for them
+- A failed server shows its error, with a button to copy it
+- **Reconnect** restarts a connection. **Sign in** starts the browser sign-in for a server that needs it
+- Threads on the same agent share its sign-ins. Once a server connects after you sign in or reconnect it, your other open threads on that agent reconnect it too, in the background. A thread in the middle of a turn waits for the turn to end
+- **Refresh** reconnects every server that needs a sign-in or failed, in this thread and your other open threads on the same agent, then checks each server's status. Servers that are already connected are left alone, and so is one whose browser sign-in is still under way (for up to 3 minutes)
+- **Disconnect** turns a server off, and **Connect** turns it back on. How long a disconnect lasts depends on the agent: hover the button to see. With Claude Agent it applies to the whole project, not just this thread, so new threads in the project also start without it
+
+New servers are added from Settings → MCP servers (Tool shed).
+
+Each server in the popover shows a status dot:
+
+| Color | Meaning |
+|-------|---------|
+| Green | Connected |
+| Blue pulsing | Connecting |
+| Amber | Needs authentication |
+| Gray | Disabled (disconnected) |
+| Red | Failed |
+
+## Skills
+
+**Skills** shows how many skills the thread's agent can use. Click it to open the Skills drawer on the right. **This thread** lists them, each with **Run** (a new thread that uses it now) and **Schedule**; **Scheduled** lists every project's schedules. The clock on a project's header in the sidebar opens Scheduled too, and **Skills** at the foot of the sidebar opens the drawer even when a narrow status bar has no room for its Skills count. The drawer keeps the keyboard inside it until you close it with `Esc` or **×**. To start a thread with a skill and your own instructions, type `/` in a new thread's message box or use **Skills** at its foot (see [Starting a Thread](getting-started.md#starting-a-thread)).
+
+Skills are folders with a `SKILL.md` file, a format every agent Grove Bench knows reads. **Add skill** saves a new one in `.agents/skills` (in the project, or in your home folder for a user skill), the folder they all look in except Claude Agent. Claude Agent finds it through a small link file in `.claude/skills` with the same name and description, which tells it to read the shared one. Links are plain files, so they work in git for your whole team, with or without Grove Bench.
+
+The drawer offers two buttons when skills need them:
+
+- **Share**: skills that are only in Claude Agent's folders move to `.agents/skills`, each leaving a link, so every agent can use them
+- **Link** (in a Claude Agent thread): adds links for shared skills Claude Agent can't see yet, updates a link when its skill's name or description changed, and removes links to skills that were deleted. Only links Grove Bench made are touched
+
+Both change files in the project, which show in the Changes tab for you to commit. For Claude Agent you can also turn skills off and get suggestions from your past threads.
+
+## Context
+
+**Context N%** and a bar of pixel blocks show how much of the agent's context window has been used. Each block is 10% (5% in the popup), and the block the usage is partway through shows dimmed. Context is what the agent can hold in mind at once: your messages, its replies, files it read and command output. Near the limit, Claude Code clears old tool output first, then summarises the thread, so details from early on can be lost ([How Claude Code works](https://code.claude.com/docs/en/how-claude-code-works#when-context-fills-up)).
+
+| Usage | Color | Meaning |
+|-------|-------|---------|
+| 0–40% | Green | Plenty of room |
+| 40–70% | Yellow | Getting full |
+| 70–85% | Amber | Running low |
+| 85–100% | Red | Nearly full: the agent may start summarising older context |
+
+Every filled block takes the colour. Tokens served from the prompt cache take up room like any others, so they count toward the percentage; the popup lists how many were read from or written to the cache.
+
+Click the bar for details and two actions:
+
+- **Summarise to free space** (`/compact`): replaces the earlier messages with a summary, so the agent has room to keep going. It keeps the gist, not every detail. Shown only for agents that can do it (Claude Agent, or an agent that lists a `compact` command)
+- **Start fresh…** (`/clear`): clears the thread and the agent's memory of it. It asks you to confirm first. Your files are not changed.
+
+With **Show grove characters** on (Settings → General (The grove)), a strip of pixel grove also runs along the top of the status bar. It starts with a few small plants and fills in as the thread uses its context window: grass and saplings first, then bushes and trees, until it is a full grove at 100%. Its leaves change with the bar's colour: summer green while there is plenty of room, then late summer, autumn, and rust when the context is nearly full. They turn a plant at a time in the run-up to each change, so by the time the bar changes colour the whole grove has. After `/compact` or `/clear` it thins out and turns green again. Each thread grows its own grove, with the plants in their own random places. In the open thread you can watch it happen: new plants sprout one after another and rise out of the ground (unless your system is set to reduce motion).
+
+## Rate Limiting
+
+If the agent hits API rate limits, an indicator appears:
+
+| Color | Meaning |
+|-------|---------|
+| Amber pulsing | Approaching rate limit |
+| Red pulsing | Rate limited — requests are being throttled |
+
+## Background Tasks
+
+When the agent runs background tasks (subagents), their status is shown:
+
+| Color | Meaning |
+|-------|---------|
+| Blue pulsing | Task running |
+| Green | Task completed |
+| Red | Task failed |
+
+Click a subagent's name in the list to open its thread, the same panel its line in the Thread tab opens. In the pending tools list, a subagent's tools show which subagent they run in (**in Explore**), and clicking one, or a running **Agent** call, opens that subagent's thread too.
+

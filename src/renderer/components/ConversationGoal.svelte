@@ -1,0 +1,150 @@
+<script lang="ts">
+  /**
+   * The conversation's goal, pinned at the top of the Thread tab: a line on
+   * what it is trying to get done, in a card edged all round so it reads
+   * apart from the thread under it (messages are marked on the left edge
+   * only), and up to two lines before it is cut off. Written once after the
+   * first reply by the conversation's agent; Edit replaces it with your own
+   * words and Refresh writes a new one. Close hides it for this
+   * conversation; Settings > Tending turns it off everywhere.
+   */
+  import { tick, untrack } from 'svelte';
+  import { goalStore } from '../stores/goals.svelte.js';
+  import { messageStore } from '../stores/messages.svelte.js';
+  import { settingsStore } from '../stores/settings.svelte.js';
+  import { hasAgentReply } from '$lib/message-view.js';
+  import { MAX_USER_GOAL_LENGTH } from '../../shared/types.js';
+  import GoalFlagIcon from './GoalFlagIcon.svelte';
+  import { Button } from '$lib/components/ui/button/index.js';
+  import XIcon from '@lucide/svelte/icons/x';
+
+  let { sessionId }: { sessionId: string } = $props();
+
+  let goal = $derived(goalStore.get(sessionId));
+  let generating = $derived(goalStore.isGenerating(sessionId));
+  let error = $derived(goalStore.error(sessionId));
+  let replied = $derived(hasAgentReply(messageStore.getMessages(sessionId)));
+  let running = $derived(messageStore.getIsRunning(sessionId));
+
+  let editing = $state(false);
+  let expanded = $state(false);
+  let draft = $state('');
+  let input = $state<HTMLInputElement>();
+
+  // Also on each turn start and end, so a read that failed is tried again
+  // (load does nothing once the goal is in).
+  $effect(() => {
+    const id = sessionId;
+    void running;
+    untrack(() => { void goalStore.load(id); });
+  });
+
+  // With no goal yet, the first turn's end writes one; until it ends there
+  // is nothing to show. A goal you cleared keeps its (empty) bar.
+  let visible = $derived(
+    settingsStore.current.showConversationGoal
+      && goalStore.isLoaded(sessionId)
+      && !goal.hidden
+      && (!!goal.text || generating || editing || (replied && (goal.source !== null || !running))),
+  );
+
+  async function startEdit() {
+    goalStore.clearError(sessionId);
+    draft = goal.text ?? '';
+    editing = true;
+    await tick();
+    input?.focus();
+    input?.select();
+  }
+
+  function commit() {
+    if (!editing) return;
+    editing = false;
+    const next = draft.trim();
+    if (next !== (goal.text ?? '')) void goalStore.save(sessionId, next);
+  }
+
+  function handleKeydown(e: KeyboardEvent) {
+    // Enter or Escape while an IME is composing belongs to the IME.
+    if (e.isComposing) return;
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      commit();
+    } else if (e.key === 'Escape') {
+      // Only cancels the edit: the Escape doesn't reach other handlers.
+      e.preventDefault();
+      e.stopPropagation();
+      editing = false;
+    }
+  }
+</script>
+
+{#if visible}
+  <div class="px-4 pt-2 pb-1 shrink-0 min-w-0" data-testid="conversation-goal">
+    <div class="flex items-start gap-2 border border-input bg-card px-3 py-1.5 text-sm min-w-0">
+      <span class="flex items-center gap-1.5 py-0.5 font-medium text-muted-foreground shrink-0">
+        <GoalFlagIcon />
+        Goal
+      </span>
+
+      {#if editing}
+        <input
+          bind:this={input}
+          bind:value={draft}
+          onkeydown={handleKeydown}
+          onblur={commit}
+          type="text"
+          maxlength={MAX_USER_GOAL_LENGTH}
+          placeholder="What should this thread get done?"
+          aria-label="Thread goal"
+          class="flex-1 min-w-0 bg-background border border-input px-1.5 py-0.5 text-sm text-foreground outline-none focus:border-ring placeholder:text-muted-foreground"
+        />
+      {:else if goal.text}
+        <button
+          type="button"
+          onclick={() => { expanded = !expanded; }}
+          aria-expanded={expanded}
+          title={expanded ? 'Show less' : goal.text}
+          class="flex-1 min-w-0 py-0.5 text-left text-foreground {generating ? 'opacity-60' : ''}"
+        ><span class="break-words {expanded ? '' : 'line-clamp-2'}">{goal.text}</span></button>
+      {:else if generating}
+        <span class="flex-1 min-w-0 py-0.5 truncate text-muted-foreground animate-pulse">Writing a goal…</span>
+      {:else}
+        <span class="flex-1 min-w-0 py-0.5 truncate text-muted-foreground">No goal yet</span>
+      {/if}
+
+      {#if !editing}
+        {#if error}
+          <span class="py-0.5 text-destructive truncate max-w-[40%]" title={error} role="status">{error}</span>
+        {/if}
+        <!-- Padded to the text's first line, which is taller than the buttons. -->
+        <div class="flex items-center gap-0.5 py-0.5 shrink-0">
+          <Button variant="quiet" size="icon-2xs" onclick={startEdit} title="Edit the goal" aria-label="Edit the goal">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+          </Button>
+          <Button
+            variant="quiet"
+            size="icon-2xs"
+            onclick={() => goalStore.refresh(sessionId)}
+            disabled={generating}
+            title="Write a new goal from the thread so far (one background model call)"
+            aria-label="Refresh the goal"
+          >
+            <svg class={generating ? 'animate-spin' : ''} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+          </Button>
+          <Button
+            variant="quiet"
+            size="icon-2xs"
+            onclick={() => goalStore.setHidden(sessionId, true)}
+            title="Hide the goal for this thread"
+            aria-label="Hide the goal"
+          >
+            <XIcon />
+          </Button>
+        </div>
+      {/if}
+    </div>
+  </div>
+{/if}

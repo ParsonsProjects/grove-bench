@@ -1,0 +1,19 @@
+{
+  "name": "grove-acp-spike",
+  "private": true,
+  "type": "module",
+  "description": "Phase 0 spike for docs/open-model-harnesses-plan.md. Not part of the app build.",
+  "engines": {
+    "npm": ">=11.10.0"
+  },
+  "scripts": {
+    "offline": "node probe-offline.mjs",
+    "real": "node probe-real.mjs"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "1.5.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "opencode-ai": "1.18.32",
+    "zod": "^3.25.0"
+  }
+}

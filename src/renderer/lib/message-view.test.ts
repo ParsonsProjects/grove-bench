@@ -1,0 +1,306 @@
+import { describe, it, expect } from 'vitest';
+import {
+  isMessageVisible,
+  filterVisibleMessages,
+  hasAgentReply,
+  threadMessages,
+  agentCallInput,
+  focusImagesOnly,
+  narrationIds,
+  foldNarration,
+  VIEW_MODE_LABELS,
+  VIEW_MODE_DESCRIPTIONS,
+} from './message-view.js';
+import { ACTIVITY_VIEW_MODES } from '../../shared/types.js';
+import type { ChatMessage } from '../stores/messages.svelte.js';
+
+function tool(partial: Partial<ChatMessage> & { id: string }): ChatMessage {
+  return {
+    kind: 'tool_call',
+    toolName: 'Read',
+    toolInput: {},
+    toolUseId: 'tu',
+    uuid: 'u',
+    pending: false,
+    ...partial,
+  } as ChatMessage;
+}
+
+function text(id: string): ChatMessage {
+  return { kind: 'text', id, text: `t${id}`, uuid: '' };
+}
+
+function permission(id: string, resolved: boolean): ChatMessage {
+  return {
+    kind: 'permission',
+    id,
+    requestId: 'r',
+    toolName: 'Bash',
+    toolInput: {},
+    toolUseId: 'tu',
+    resolved,
+  };
+}
+
+function question(id: string, resolved: boolean): ChatMessage {
+  return {
+    kind: 'question',
+    id,
+    requestId: 'r',
+    toolUseId: 'tu',
+    questions: [],
+    resolved,
+  };
+}
+
+describe('isMessageVisible', () => {
+  it('hides tool_call awaiting permission in all modes', () => {
+    const m = tool({ id: '1', toolName: 'Edit', awaitingPermission: true });
+    expect(isMessageVisible(m, 'detailed')).toBe(false);
+    expect(isMessageVisible(m, 'summary')).toBe(false);
+    expect(isMessageVisible(m, 'focus')).toBe(false);
+  });
+
+  it('shows everything except awaiting-permission tools in detailed mode', () => {
+    expect(isMessageVisible({ kind: 'thinking', id: '1', thinking: 'x' }, 'detailed')).toBe(true);
+    expect(isMessageVisible(tool({ id: '2', toolName: 'Glob' }), 'detailed')).toBe(true);
+  });
+
+  it('hides thinking in summary and focus modes', () => {
+    expect(isMessageVisible({ kind: 'thinking', id: '1', thinking: 'x' }, 'summary')).toBe(false);
+    expect(isMessageVisible({ kind: 'thinking', id: '1', thinking: 'x' }, 'focus')).toBe(false);
+  });
+
+  it('in summary mode shows edits and commands, and hides reads and searches', () => {
+    expect(isMessageVisible(tool({ id: '1', toolName: 'Edit' }), 'summary')).toBe(true);
+    expect(isMessageVisible(tool({ id: '2', toolName: 'Write' }), 'summary')).toBe(true);
+    expect(isMessageVisible(tool({ id: '3', toolName: 'Bash' }), 'summary')).toBe(true);
+    expect(isMessageVisible(tool({ id: '6', toolName: 'NotebookEdit' }), 'summary')).toBe(true);
+    expect(isMessageVisible(tool({ id: '4', toolName: 'Read' }), 'summary')).toBe(false);
+    expect(isMessageVisible(tool({ id: '5', toolName: 'Grep' }), 'summary')).toBe(false);
+  });
+
+  it('in summary mode shows MCP tools, which can act outside the project, but not Grove\'s own', () => {
+    expect(isMessageVisible(tool({ id: '1', toolName: 'mcp__linear__create_issue' }), 'summary')).toBe(true);
+    expect(isMessageVisible(tool({ id: '2', toolName: 'mcp__grove-preview__navigate' }), 'summary')).toBe(false);
+    expect(isMessageVisible(tool({ id: '3', toolName: 'mcp__grove-memory__save_memory' }), 'summary')).toBe(false);
+  });
+
+  it("in summary mode shows another agent's MCP calls and calls Grove can't place, but not its own or to-do lists", () => {
+    const acp = (id: string, toolName: string, view: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
+      tool({ id, toolName, toolView: { kind: 'other', ...view }, toolCategory: 'other', ...extra } as never);
+    expect(isMessageVisible(acp('1', 'list_issues (linear MCP Server)', { mcp: { server: 'linear', tool: 'list_issues' } }), 'summary')).toBe(true);
+    expect(isMessageVisible(acp('2', 'grove-memory_memory_read', { mcp: { server: 'grove-memory', tool: 'memory_read' } }), 'summary')).toBe(false);
+    // ACP doesn't mark MCP calls: one Grove can't place may act outside the project.
+    expect(isMessageVisible(acp('3', 'create_issue(title: "Bug")', {}), 'summary')).toBe(true);
+    expect(isMessageVisible(acp('4', 'todowrite', {}, { toolInput: { todos: [{ content: 'a', status: 'pending' }] } }), 'summary')).toBe(false);
+    // Gemini CLI titles Grove's own tools without the server when they have arguments.
+    expect(isMessageVisible(acp('6', 'memory_read(path: "repo/overview.md")', {}), 'summary')).toBe(false);
+    // A read Grove can place still hides.
+    expect(isMessageVisible(tool({ id: '5', toolName: 'read', toolView: { kind: 'read', path: 'a.ts' }, toolCategory: 'read' } as never), 'summary')).toBe(false);
+  });
+
+  it('in summary mode shows tools that returned images, so the images stay in view', () => {
+    const images = [{ file: `${'a'.repeat(32)}.png` }];
+    expect(isMessageVisible(tool({ id: '1', toolName: 'mcp__grove-preview__screenshot', images }), 'summary')).toBe(true);
+    expect(isMessageVisible(tool({ id: '2', toolName: 'Read', images }), 'summary')).toBe(true);
+  });
+
+  it('in focus mode keeps a tool call that returned images, drawn as the images alone', () => {
+    const images = [{ file: `${'a'.repeat(32)}.png` }];
+    const shot = tool({ id: '1', toolName: 'mcp__playwright__browser_take_screenshot', images });
+    expect(isMessageVisible(shot, 'focus')).toBe(true);
+    expect(focusImagesOnly(shot, 'focus')).toBe(true);
+    expect(focusImagesOnly(shot, 'summary')).toBe(false);
+    expect(focusImagesOnly(tool({ id: '2', toolName: 'Read' }), 'focus')).toBe(false);
+    // A subagent's line is drawn as itself.
+    expect(focusImagesOnly(tool({ id: '3', toolName: 'Agent', toolInput: { description: 'x' }, images }), 'focus')).toBe(false);
+  });
+
+  it('shows user/text/system messages in summary mode', () => {
+    expect(isMessageVisible({ kind: 'user', id: '1', text: 'hi' }, 'summary')).toBe(true);
+    expect(isMessageVisible(text('2'), 'summary')).toBe(true);
+    expect(isMessageVisible({ kind: 'system', id: '3', text: 'hi' }, 'summary')).toBe(true);
+  });
+
+  it('keeps the call that started a subagent in every view, as its way in', () => {
+    for (const mode of ACTIVITY_VIEW_MODES) {
+      expect(isMessageVisible(tool({ id: '1', toolName: 'Agent', toolInput: { description: 'Find it' } }), mode)).toBe(true);
+    }
+  });
+
+  it('in focus mode hides all other tool calls and system messages', () => {
+    expect(isMessageVisible(tool({ id: '1', toolName: 'Edit' }), 'focus')).toBe(false);
+    expect(isMessageVisible(tool({ id: '2', toolName: 'Bash' }), 'focus')).toBe(false);
+    expect(isMessageVisible({ kind: 'system', id: '3', text: 'hi' }, 'focus')).toBe(false);
+    // Unlike other system notes, the missing git identity notice needs action.
+    expect(isMessageVisible({ kind: 'git_identity_missing', id: '4' }, 'focus')).toBe(true);
+  });
+
+  it('in focus mode shows only unresolved permissions', () => {
+    expect(isMessageVisible(permission('1', false), 'focus')).toBe(true);
+    expect(isMessageVisible(permission('2', true), 'focus')).toBe(false);
+    // ...but summary mode keeps resolved ones visible
+    expect(isMessageVisible(permission('5', true), 'summary')).toBe(true);
+  });
+
+  it('in focus mode keeps questions whether or not they have been answered', () => {
+    expect(isMessageVisible(question('3', false), 'focus')).toBe(true);
+    // An answered question block renders the user's reply, so it stays.
+    expect(isMessageVisible(question('4', true), 'focus')).toBe(true);
+  });
+
+  it('in focus mode keeps user prompts, errors, and turn results', () => {
+    expect(isMessageVisible({ kind: 'user', id: '1', text: 'hi' }, 'focus')).toBe(true);
+    expect(isMessageVisible({ kind: 'error', id: '2', text: 'boom' }, 'focus')).toBe(true);
+    expect(isMessageVisible({ kind: 'result', id: '3', subtype: 'success', isError: false }, 'focus')).toBe(true);
+  });
+});
+
+describe('filterVisibleMessages', () => {
+  const msgs: ChatMessage[] = [
+    { kind: 'user', id: '1', text: 'hi' },
+    { kind: 'thinking', id: '2', thinking: 'pondering' },
+    tool({ id: '3', toolName: 'Read', toolInput: { file_path: '/a.ts' } }),
+    tool({ id: '4', toolName: 'Edit', toolInput: { file_path: '/b.ts' } }),
+    tool({ id: '5', toolName: 'Bash', awaitingPermission: true }),
+  ];
+
+  it('summary mode keeps user + Edit, drops thinking/Read/awaiting', () => {
+    const visible = filterVisibleMessages(msgs, 'summary').map((m) => m.id);
+    expect(visible).toEqual(['1', '4']);
+  });
+
+  it('detailed mode keeps all except awaiting-permission tool', () => {
+    const visible = filterVisibleMessages(msgs, 'detailed').map((m) => m.id);
+    expect(visible).toEqual(['1', '2', '3', '4']);
+  });
+
+  it('focus mode keeps every assistant text block, not just the last per turn', () => {
+    const turn: ChatMessage[] = [
+      { kind: 'user', id: 'u1', text: 'review this' },
+      text('t1'), // status note before a tool call
+      tool({ id: 'tc1', toolName: 'Read' }),
+      text('t2'), // findings
+      text('t3'), // next steps, split into a separate block by the agent
+      { kind: 'result', id: 'r1', subtype: 'success', isError: false },
+      { kind: 'user', id: 'u2', text: 'more' },
+      text('t4'),
+    ];
+    const visible = filterVisibleMessages(turn, 'focus').map((m) => m.id);
+    expect(visible).toEqual(['u1', 't1', 't2', 't3', 'r1', 'u2', 't4']);
+  });
+
+  it('focus mode keeps every question, unresolved permissions, and drops resolved permissions', () => {
+    const turn: ChatMessage[] = [
+      { kind: 'user', id: 'u1', text: 'go' },
+      permission('p1', true),
+      tool({ id: 'tc1', toolName: 'Bash' }),
+      question('q0', true),
+      permission('p2', false),
+      question('q1', false),
+      text('t1'),
+    ];
+    const visible = filterVisibleMessages(turn, 'focus').map((m) => m.id);
+    expect(visible).toEqual(['u1', 'q0', 'p2', 'q1', 't1']);
+  });
+});
+
+describe('view mode tables', () => {
+  it('has a label and description for every mode', () => {
+    for (const mode of ACTIVITY_VIEW_MODES) {
+      expect(VIEW_MODE_LABELS[mode]).toBeTruthy();
+      expect(VIEW_MODE_DESCRIPTIONS[mode]).toBeTruthy();
+    }
+  });
+});
+
+describe('narrationIds', () => {
+  const user = (id: string): ChatMessage => ({ kind: 'user', id, text: 'go' });
+  const result = (id: string): ChatMessage => ({ kind: 'result', id, subtype: 'success', isError: false });
+
+  it('counts text before a later tool call in the turn, not the answer after the last one', () => {
+    const thread = [
+      user('u1'), text('a'), tool({ id: 't1' }), text('b'), text('c'), tool({ id: 't2' }),
+      text('d'), text('e'), result('r1'),
+    ];
+    expect([...narrationIds(thread)]).toEqual(['a', 'b', 'c']);
+  });
+
+  it('does not carry text across turns', () => {
+    const thread = [user('u1'), text('a'), result('r1'), user('u2'), tool({ id: 't1' }), text('b')];
+    expect(narrationIds(thread).size).toBe(0);
+  });
+
+  it('keeps text that leads into a question or a waiting permission prompt', () => {
+    const asked = [text('a'), tool({ id: 't1', toolName: 'AskUserQuestion', toolUseId: 'q' }), { ...question('q1', true), toolUseId: 'q' }];
+    expect(narrationIds(asked).size).toBe(0);
+    const waiting = [text('a'), tool({ id: 't1', toolName: 'Bash', toolUseId: 'p' }), { ...permission('p1', false), toolUseId: 'p' }];
+    expect(narrationIds(waiting).size).toBe(0);
+    const answered = [text('a'), tool({ id: 't1', toolName: 'Bash', toolUseId: 'p' }), { ...permission('p1', true), toolUseId: 'p' }];
+    expect([...narrationIds(answered)]).toEqual(['a']);
+  });
+});
+
+describe('foldNarration', () => {
+  it('puts each run of notes in one row and leaves other messages alone', () => {
+    const rows = foldNarration([text('a'), text('b'), text('x'), text('c'), text('y')], new Set(['a', 'b', 'c']));
+    expect(rows.map((r) => (r.kind === 'notes' ? r.msgs.map((m) => m.id) : r.msg.id))).toEqual([['a', 'b'], 'x', ['c'], 'y']);
+  });
+});
+
+describe('hasAgentReply', () => {
+  it('ignores the user\'s own messages and the app\'s notes', () => {
+    expect(hasAgentReply([])).toBe(false);
+    expect(hasAgentReply([
+      { kind: 'system', id: 's1', text: 'Connected to a model' },
+      { kind: 'user', id: 'u1', text: 'Fix the login crash' },
+      { kind: 'git_identity_missing', id: 'g1' },
+    ] as ChatMessage[])).toBe(false);
+  });
+
+  it('counts the agent\'s output and the end of a turn', () => {
+    const user = { kind: 'user', id: 'u1', text: 'Fix it' } as ChatMessage;
+    for (const reply of [
+      { kind: 'text', id: 'm', text: 'On it' },
+      { kind: 'tool_call', id: 'm', toolName: 'Edit', toolInput: {} },
+      { kind: 'result', id: 'm', isError: false },
+      { kind: 'error', id: 'm', text: 'Agent crashed' },
+    ]) {
+      expect(hasAgentReply([user, reply as ChatMessage]), reply.kind).toBe(true);
+    }
+  });
+});
+
+describe('threadMessages', () => {
+  const sub = (id: string, parent: string): ChatMessage => ({ kind: 'text', id, text: id, uuid: '', parentToolUseId: parent });
+
+  it('splits the conversation\'s own messages from each subagent\'s', () => {
+    const list = [text('1'), tool({ id: '2', toolName: 'Agent', toolUseId: 'a1' }), sub('3', 'a1'), sub('4', 'a2'), text('5')];
+    expect(threadMessages(list).map((m) => m.id)).toEqual(['1', '2', '5']);
+    expect(threadMessages(list, 'a1').map((m) => m.id)).toEqual(['3']);
+    expect(threadMessages(list, 'a2').map((m) => m.id)).toEqual(['4']);
+    expect(threadMessages(list, 'none')).toEqual([]);
+  });
+
+  it('returns the list itself when there are no subagents, and the same thread on every ask', () => {
+    const plain = [text('1'), text('2')];
+    expect(threadMessages(plain)).toBe(plain);
+    const mixed = [text('1'), sub('2', 'a1')];
+    expect(threadMessages(mixed, 'a1')).toBe(threadMessages(mixed, 'a1'));
+  });
+});
+
+describe('agentCallInput', () => {
+  it("reads the subagent type and prompt from Claude Code's input, ignoring anything else", () => {
+    expect(agentCallInput({ toolName: 'Agent', toolInput: { subagent_type: 'Explore', prompt: 'Find the cron job', description: 'x' } }))
+      .toEqual({ agentType: 'Explore', prompt: 'Find the cron job' });
+    expect(agentCallInput({ toolName: 'Agent', toolInput: { subagent_type: 3, prompt: '' } })).toEqual({});
+    expect(agentCallInput(undefined)).toEqual({});
+  });
+
+  it("reads them from another agent's view", () => {
+    expect(agentCallInput({ toolName: 'task', toolInput: {}, toolView: { kind: 'agent', agentType: 'reviewer', prompt: 'Check it' } }))
+      .toEqual({ agentType: 'reviewer', prompt: 'Check it' });
+  });
+});
