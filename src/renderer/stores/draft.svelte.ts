@@ -1,7 +1,8 @@
-import type { ControlDescriptor, CreateSessionOpts } from '../../shared/types.js';
+import type { ControlDescriptor, CreateSessionOpts, SkillInfo } from '../../shared/types.js';
 import { CONTROL_IDS } from '../../shared/types.js';
 import { deriveSessionName } from '../../shared/session-name.js';
 import { tempBranchName } from '../../shared/temp-branch.js';
+import { withSkill } from '../../shared/skill-line.js';
 import { store as sessionStore } from './sessions.svelte.js';
 import { groupStore } from './groups.svelte.js';
 import { todoStore } from './todo.svelte.js';
@@ -52,6 +53,29 @@ export interface Draft {
   newGroupName?: string;
 }
 
+/** A thread started for the caller (startThread): its project, first
+ *  message and, optionally, agent, model, where it runs and control values
+ *  (mode included). */
+export interface ThreadSetup {
+  repoPath: string;
+  text: string;
+  agentId?: string;
+  model?: string;
+  start?: DraftStart;
+  controls?: Record<string, string>;
+  /** false: start without taking the screen. */
+  focus?: boolean;
+  /** Refuse an agent that isn't offered (turned off, removed, unknown)
+   *  instead of using the default agent: a skill's tools may only be set up
+   *  in the agent it names. */
+  strictAgent?: boolean;
+  /** Leave the refusal toast to the caller, which gets the reason back. */
+  quiet?: boolean;
+}
+
+/** What startThreadFor did: the new thread's id, or why it didn't start. */
+export type ThreadStart = { id: string } | { error: string };
+
 /** The group a draft joins, or the one it starts. */
 export type DraftGroup = { groupId: string } | { newGroupName: string };
 
@@ -87,8 +111,14 @@ class DraftStore {
   models = $state<DraftModelOption[]>([]);
   descriptors = $state<ControlDescriptor[]>([]);
 
+  /** The draft agent's skills in its project, for the / menu and the
+   *  Skills button, without Claude Code's turned-off ones. */
+  skills = $state<SkillInfo[]>([]);
+
   /** Guards against an older agent-info load landing after a newer one. */
   private infoRequest = 0;
+  /** The agent and project `skills` is being loaded for. */
+  private skillsFor = '';
 
   /** Whether the main pane shows the draft: one exists and no conversation
    *  is open over it. */
@@ -149,10 +179,38 @@ class DraftStore {
     this.error = '';
     this.models = [];
     this.descriptors = [];
+    this.skills = [];
+    this.skillsFor = '';
   }
 
   setText(text: string): void {
     if (this.draft) this.draft.text = text;
+  }
+
+  /** List the draft agent's skills in its project: when either changes, and
+   *  again as a skill menu opens. Another agent's go at once; an answer for
+   *  an agent or project the draft has since left is dropped. */
+  async loadSkills(): Promise<void> {
+    const d = this.draft;
+    const key = d?.agentId && d.repoPath ? `${d.agentId}\n${d.repoPath}` : '';
+    if (key !== this.skillsFor) this.skills = [];
+    this.skillsFor = key;
+    if (!d || !key) return;
+    const { agentId, repoPath } = d;
+    try {
+      const list = await window.groveBench.listAgentSkills(agentId, repoPath);
+      if (this.skillsFor !== key) return;
+      const off = agentsStore.supports(agentId, 'skills') ? settingsStore.current.disabledSkills ?? [] : [];
+      this.skills = list.filter((s) => !off.includes(s.name));
+    } catch (err) {
+      console.warn('[draft] could not list the agent\'s skills:', err);
+    }
+  }
+
+  /** Start the first message by asking for `skill` (null: for none), keeping
+   *  what follows. */
+  useSkill(skill: string | null): void {
+    if (this.draft) this.draft.text = withSkill(this.draft.text, skill);
   }
 
   addAttachments(files: AttachedFile[]): void {
@@ -386,7 +444,7 @@ class DraftStore {
       return false;
     }
     this.discard();
-    return this.launch(d, (message, onScreen) => {
+    const started = await this.launch(d, (message, onScreen) => {
       // Back to the draft, message and all, unless one with a message or
       // files has been opened since: that one is kept and the error goes in
       // a toast.
@@ -399,6 +457,7 @@ class DraftStore {
         sessionStore.setError(`The thread couldn't start: ${message}`);
       }
     });
+    return started !== null;
   }
 
   /**
@@ -410,11 +469,24 @@ class DraftStore {
    * `start` says. Returns whether it started; a refusal goes in a toast,
    * and the thread that was on screen comes back.
    */
-  async startThread(setup: { repoPath: string; text: string; agentId?: string; model?: string; start?: DraftStart }): Promise<boolean> {
+  async startThread(setup: ThreadSetup): Promise<boolean> {
+    return 'id' in (await this.startThreadFor(setup));
+  }
+
+  /** startThread, saying what it did: the new thread's id, or why it didn't
+   *  start (a scheduled skill notes it). See ThreadSetup for the extra options. */
+  async startThreadFor(setup: ThreadSetup): Promise<ThreadStart> {
+    const refuse = (error: string): ThreadStart => {
+      if (!setup.quiet) sessionStore.setError(`The thread couldn't start: ${error}.`);
+      return { error };
+    };
     const repo = setup.repoPath;
-    if (!sessionStore.repos.includes(repo)) {
-      sessionStore.setError("The thread couldn't start: its project was removed.");
-      return false;
+    if (!sessionStore.repos.includes(repo)) return refuse('its project was removed');
+    if (setup.strictAgent && setup.agentId) {
+      // Agents load on first use; a schedule can run before anything used them.
+      await agentsStore.load();
+      if (!agentsStore.loaded) return refuse("its agent couldn't be checked");
+      if (!agentsStore.get(setup.agentId) || !this.offeredAgent(setup.agentId)) return refuse('its agent is turned off or was removed');
     }
     const agentId = this.offeredAgent(setup.agentId) || agentsStore.defaultId || '';
     const d: Draft = {
@@ -422,7 +494,7 @@ class DraftStore {
       agentId,
       // The model belongs to the agent asked for.
       model: agentId === setup.agentId ? setup.model ?? '' : '',
-      controls: {},
+      controls: setup.controls ?? {},
       start: (!sessionStore.isFolderProject(repo) && setup.start) || defaultStart(repo),
       text: setup.text,
       attachments: [],
@@ -430,19 +502,23 @@ class DraftStore {
     // The new row takes the screen; a refusal shouldn't leave the landing
     // screen where the asking thread was.
     const shown = sessionStore.activeSessionId;
-    return this.launch(d, (message, onScreen) => {
+    // Kept when the thread is closed while it starts, which launch() doesn't report.
+    let error = 'it was closed while it started';
+    const id = await this.launch(d, (message, onScreen) => {
       if (onScreen && shown && sessionStore.sessions.some((s) => s.id === shown)) {
         sessionStore.activeSessionId = shown;
       }
-      sessionStore.setError(`The thread couldn't start: ${message}`);
-    });
+      error = message;
+      if (!setup.quiet) sessionStore.setError(`The thread couldn't start: ${message}`);
+    }, setup.focus ?? true);
+    return id ? { id } : { error };
   }
 
   /** Add the thread's row, create it in main and send `d.text` (with its
    *  attachments) as its first message once main has it. `refused` runs when
    *  main refuses a thread that is still open, with whether its row was on
-   *  screen. */
-  private async launch(d: Draft, refused: (message: string, onScreen: boolean) => void): Promise<boolean> {
+   *  screen. The new thread's id, or null when it didn't start. */
+  private async launch(d: Draft, refused: (message: string, onScreen: boolean) => void, focus = true): Promise<string | null> {
     const text = d.text.trim();
     // Text files go in the message text; images and other files alongside it.
     const { tags, images, files } = attachmentPayload(d.attachments);
@@ -472,7 +548,7 @@ class DraftStore {
       // What the renderer knows of the project; main's reply settles it.
       ...(direct && sessionStore.isFolderProject(d.repoPath) ? { noGit: true } : {}),
       ...(placeholderName ? { displayName: placeholderName } : {}),
-    });
+    }, focus);
     if (sent) {
       // The chat shows the agent walking to its bench until the first reply.
       arrivalScene.begin(id);
@@ -489,7 +565,7 @@ class DraftStore {
       // heard of it, so there is nothing to reopen.
       if (!this.stillOpen(id)) {
         dropRow(id);
-        return false;
+        return null;
       }
       const opts = { ...this.buildOpts(d, baseBranch), id };
       const result = await window.groveBench.createSession(opts);
@@ -517,7 +593,7 @@ class DraftStore {
       // for a thread closed or deleted meanwhile: main closes that one once
       // it's up.
       if (sent && this.stillOpen(id)) window.groveBench.sendMessage(id, sent.outgoing, sent.images, sent.files);
-      return true;
+      return id;
     } catch (e: any) {
       const message = e?.message || String(e);
       const onScreen = sessionStore.activeSessionId === id;
@@ -525,9 +601,9 @@ class DraftStore {
       // so the draft stays gone and nothing is reported.
       const dropped = !this.stillOpen(id);
       dropRow(id);
-      if (dropped) return false;
+      if (dropped) return null;
       refused(message, onScreen);
-      return false;
+      return null;
     }
   }
 

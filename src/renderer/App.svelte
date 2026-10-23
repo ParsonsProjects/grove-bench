@@ -35,6 +35,8 @@
   import { bookmarkStore } from './stores/bookmarks.svelte.js';
   import { groupStore } from './stores/groups.svelte.js';
   import { todoStore } from './stores/todo.svelte.js';
+  import { schedulesStore } from './stores/schedules.svelte.js';
+  import { skillsPanelStore } from './stores/skillsPanel.svelte.js';
   import { goalStore } from './stores/goals.svelte.js';
   import { panelStore } from './stores/panels.svelte.js';
   import { previewStore } from './stores/preview.svelte.js';
@@ -53,6 +55,10 @@
   const loadSessionFinder = lazyComponent(() => import('./components/SessionFinder.svelte'));
   const loadSubagentPanel = lazyComponent(() => import('./components/SubagentPanel.svelte'));
   const loadBackgroundAgentDialog = lazyComponent(() => import('./components/BackgroundAgentDialog.svelte'));
+  const loadSkillsPanel = lazyComponent(() => import('./components/SkillsPanel.svelte'));
+  // The Skills drawer stays mounted once opened, as Settings and Memory do.
+  let skillsPanelOpened = $state(false);
+  $effect(() => { if (skillsPanelStore.open) skillsPanelOpened = true; });
 
   // ── Global error handling ──
   // Uncaught renderer errors (window.onerror / unhandledrejection / a Svelte
@@ -127,6 +133,9 @@
         if (id !== store.activeSessionId && session && store.isOpenTab(session)) store.markNeedsAttention(id);
       }
     } catch { /* best-effort */ }
+
+    // Scheduled runs can count the threads they started from now on.
+    schedulesStore.markRestored();
 
     restored = true;
     window.groveBench.notifyRestoreComplete();
@@ -384,6 +393,8 @@
     bookmarkStore.load();
     groupStore.load();
     todoStore.load();
+    // Listens before the restore ends: main's scheduler starts after it.
+    schedulesStore.init();
     panelStore.load();
     memoryStore.init();
     previewStore.init();
@@ -613,6 +624,14 @@
 {#if backgroundAgentStore.ask}
   {#await loadBackgroundAgentDialog() then BackgroundAgentDialog}
     <BackgroundAgentDialog />
+  {/await}
+{/if}
+
+<!-- Opened from Skills in the status bar, or a project's clock in the sidebar.
+     Mounted once opened, so its slide-out and slide-in both play. -->
+{#if skillsPanelStore.open || skillsPanelOpened}
+  {#await loadSkillsPanel() then SkillsPanel}
+    <SkillsPanel />
   {/await}
 {/if}
 

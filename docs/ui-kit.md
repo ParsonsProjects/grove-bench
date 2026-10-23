@@ -130,7 +130,7 @@ A disabled `Button` still gets hover events, so its `title` tooltip can say why 
 
 ### Notice
 
-`tone`: `info`, `success`, `warning`, `danger`, `neutral`. Errors are announced at once (`role="alert"`); other tones wait their turn (`role="status"`).
+`tone`: `info`, `success`, `warning`, `danger`, `neutral`. Errors are announced at once (`role="alert"`); other tones wait their turn (`role="status"`). Titles use the tone's 300 shade, the one that keeps 4.5:1 on the tinted background in both themes; `light-theme.test.ts` checks each tone.
 
 ```svelte
 <Notice tone="danger" title="Couldn't save settings">

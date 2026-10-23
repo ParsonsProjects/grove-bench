@@ -5,7 +5,7 @@
    * runs) along its foot, and what will happen under it. Sending the first
    * message starts the conversation. Replaces the old New Conversation dialog.
    */
-  import { onMount } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import { store } from '../stores/sessions.svelte.js';
   import { draftStore } from '../stores/draft.svelte.js';
   import { agentsStore } from '../stores/agents.svelte.js';
@@ -25,6 +25,7 @@
   import { Notice } from '$lib/components/ui/notice/index.js';
   import { PanelHeader } from '$lib/components/ui/panel-header/index.js';
   import { Pulse } from '$lib/components/ui/pulse/index.js';
+  import * as Command from '$lib/components/ui/command/index.js';
 
   let textEl = $state<HTMLTextAreaElement | null>(null);
 
@@ -236,7 +237,72 @@
     textEl?.focus();
   }
 
+  // ─── Skills: / at the start of the message ───
+
+  // The agent's skills in the project, for this menu and the Skills button.
+  $effect(() => {
+    void agentId;
+    void draft?.repoPath;
+    untrack(() => void draftStore.loadSkills());
+  });
+
+  /** What follows a `/` the message is, while it is one word: the skill
+   *  menu is open for it, unless Escape closed it. */
+  const slashQuery = $derived(draft && /^\/\S*$/.test(draft.text) ? draft.text.slice(1).toLowerCase() : null);
+  let slashClosed = $state(false);
+  let slashIndex = $state(0);
+  const slashOpen = $derived(slashQuery !== null && !slashClosed);
+  const slashSkills = $derived(slashQuery === null ? [] : draftStore.skills.filter((s) => s.name.toLowerCase().includes(slashQuery)));
+
+  function handleInput(text: string) {
+    const wasOpen = slashOpen;
+    draftStore.setText(text);
+    slashClosed = false;
+    slashIndex = 0;
+    if (!wasOpen && slashOpen) void draftStore.loadSkills();
+  }
+
+  /** The message box takes the cursor back, at the end, to write the task. */
+  async function focusEnd() {
+    await tick();
+    if (!textEl) return;
+    textEl.focus();
+    textEl.setSelectionRange(textEl.value.length, textEl.value.length);
+  }
+
+  function pickSlashSkill(name: string) {
+    draftStore.setText('');
+    draftStore.useSkill(name);
+    void focusEnd();
+  }
+
+  /** Arrows, Enter and Tab pick from the menu while it lists skills; with
+   *  none matching, Enter starts the thread as usual. Escape closes it. */
+  function handleSlashKey(e: KeyboardEvent): boolean {
+    if (!slashOpen) return false;
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      slashClosed = true;
+      return true;
+    }
+    if (slashSkills.length === 0) return false;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const step = e.key === 'ArrowDown' ? 1 : -1;
+      slashIndex = (slashIndex + step + slashSkills.length) % slashSkills.length;
+      return true;
+    }
+    if ((e.key === 'Enter' || e.key === 'Tab') && !e.shiftKey && !e.isComposing) {
+      e.preventDefault();
+      pickSlashSkill(slashSkills[Math.min(slashIndex, slashSkills.length - 1)].name);
+      return true;
+    }
+    return false;
+  }
+
   function handleKeydown(e: KeyboardEvent) {
+    if (handleSlashKey(e)) return;
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
       if (canStart) draftStore.start();
@@ -384,20 +450,54 @@
         {#if draft.attachments.length > 0}
           <AttachmentChips files={draft.attachments} onremove={removeAttachment} class="px-4 pt-3" />
         {/if}
-        <textarea
-          bind:this={textEl}
-          value={draft.text}
-          oninput={(e) => draftStore.setText(e.currentTarget.value)}
-          onkeydown={handleKeydown}
-          spellcheck={settingsStore.current.spellcheck}
-          rows="6"
-          aria-label="First message"
-          placeholder="What should the agent work on? Include a ticket ID if there is one. (Enter to start, Shift+Enter for a new line)"
-          class="block w-full bg-transparent px-4 py-3 text-sm text-foreground field-sizing-content min-h-40 max-h-[45vh]
-            placeholder:text-muted-foreground resize-none focus:outline-none font-mono"
-        ></textarea>
+        <div class="relative">
+          <textarea
+            bind:this={textEl}
+            value={draft.text}
+            oninput={(e) => handleInput(e.currentTarget.value)}
+            onkeydown={handleKeydown}
+            spellcheck={settingsStore.current.spellcheck}
+            rows="6"
+            aria-label="First message"
+            placeholder={draftStore.skills.length > 0
+              ? 'What should the agent work on? Include a ticket ID if there is one, or type / to use a skill. (Enter to start, Shift+Enter for a new line)'
+              : 'What should the agent work on? Include a ticket ID if there is one. (Enter to start, Shift+Enter for a new line)'}
+            class="block w-full bg-transparent px-4 py-3 text-sm text-foreground field-sizing-content min-h-40 max-h-[45vh]
+              placeholder:text-muted-foreground resize-none focus:outline-none font-mono"
+          ></textarea>
+          {#if slashOpen}
+            <!-- Under the first line, over the empty box below it. -->
+            <div class="absolute left-3 right-3 top-10 z-50 max-w-md">
+              <Command.Root shouldFilter={false} class="border border-border shadow-xl">
+                <Command.List class="max-h-64">
+                  {#if slashSkills.length > 0}
+                    <Command.Group heading="Start with a skill">
+                      {#each slashSkills as skill, i (skill.name)}
+                        <Command.Item
+                          value={skill.name}
+                          onSelect={() => pickSlashSkill(skill.name)}
+                          data-selected={i === slashIndex || undefined}
+                          class={i === slashIndex ? 'bg-accent text-accent-foreground' : ''}
+                        >
+                          <span class="font-mono text-primary shrink-0">/{skill.name}</span>
+                          {#if skill.description}
+                            <span class="ms-auto min-w-0 truncate text-xs text-muted-foreground" title={skill.description}>{skill.description}</span>
+                          {/if}
+                        </Command.Item>
+                      {/each}
+                    </Command.Group>
+                  {:else}
+                    <p class="px-3 py-2 text-xs text-muted-foreground">
+                      {draftStore.skills.length > 0 ? 'No skill matches.' : `${agentName || 'This agent'} has no skills in this project.`}
+                    </p>
+                  {/if}
+                </Command.List>
+              </Command.Root>
+            </div>
+          {/if}
+        </div>
         <div class="flex items-center gap-3 px-3 py-1.5 border-t border-border">
-          <DraftStatusBar />
+          <DraftStatusBar onskill={focusEnd} />
           <Button
             variant="default"
             size="sm"

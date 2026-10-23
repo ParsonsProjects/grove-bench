@@ -54,7 +54,7 @@ describe('startSkillThread', () => {
       await startSkillThread('s1', { name: 'x', description: 'd', scope: 'project' });
       const setup = startThread.mock.calls[0][0];
       expect(setup.start).toEqual({ kind: 'folder' });
-      expect(setup.text).toContain('inside this project folder');
+      expect(setup.text).toContain('in this project folder');
       expect(setup.text).not.toContain('branch');
     } finally {
       store.setFolderProject('/repo/one', false);
