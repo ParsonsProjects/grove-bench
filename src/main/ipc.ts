@@ -1574,14 +1574,6 @@ export function registerHandlers() {
     return sessionManager.getDiffHistory(sessionId);
   });
 
-  ipcMain.handle(IPC.AGENT_TURN_DIFF, async (_event, sessionId: string, userMessageId: string) => {
-    return sessionManager.getTurnDiff(sessionId, userMessageId);
-  });
-
-  ipcMain.handle(IPC.AGENT_FULL_THREAD_DIFF, async (_event, sessionId: string) => {
-    return sessionManager.getFullThreadDiff(sessionId);
-  });
-
   ipcMain.handle(IPC.AGENT_CHECKPOINT_FILES, async (_event, sessionId: string, uuid: string, scope: CheckpointDiffScope) => {
     return sessionManager.getCheckpointFiles(sessionId, uuid, scope);
   });

@@ -230,10 +230,6 @@ const api: GroveBenchAPI = {
   // Diff history tracking
   getDiffHistory: (sessionId: string) =>
     ipcRenderer.invoke(IPC.AGENT_DIFF_HISTORY, sessionId),
-  getTurnDiff: (sessionId: string, userMessageId: string) =>
-    ipcRenderer.invoke(IPC.AGENT_TURN_DIFF, sessionId, userMessageId),
-  getFullThreadDiff: (sessionId: string) =>
-    ipcRenderer.invoke(IPC.AGENT_FULL_THREAD_DIFF, sessionId),
   getCheckpointFiles: (sessionId: string, uuid: string, scope: 'turn' | 'since' | 'full') =>
     ipcRenderer.invoke(IPC.AGENT_CHECKPOINT_FILES, sessionId, uuid, scope),
   getCheckpointFileDiff: (sessionId: string, uuid: string, scope: 'turn' | 'since' | 'full', filePath: string) =>

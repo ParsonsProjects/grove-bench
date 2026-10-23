@@ -7,6 +7,15 @@ import { logger } from './logger.js';
 import type { CheckpointDiffScope, DiffHistoryEntry, DiffHistoryResult, DiffStats, FileDiffResult, FileLinesResult, GitStatusResult } from '../shared/types.js';
 
 const BASELINE_UUID = '__baseline__';
+
+/** The Rewind preview shows a diff up to this many characters. In headless
+ *  Chromium, laying out a <pre> of 250 KB took about 0.1 s; of 1 MB, 0.5 s;
+ *  of 4 MB, 3 s. */
+const PREVIEW_MAX_CHARS = 250_000;
+/** Past that, it lists up to this many of the files the rewind changes:
+ *  about 80 characters each, at git's --stat width. */
+const PREVIEW_MAX_FILES = 1000;
+
 /** Sentinel checkpoint captured when the conversation is cleared. It marks
  *  the boundary between conversations so earlier turns can be listed as
  *  "before /clear" (files restorable, conversation not rewindable), and it
@@ -314,7 +323,9 @@ export class CheckpointManager {
   }
 
   /**
-   * Get a unified diff between a checkpoint and the current working tree.
+   * The Rewind preview: a unified diff between a checkpoint and the current
+   * working tree, or, when that is over PREVIEW_MAX_CHARS, a note and git's
+   * --stat list of the files it changes.
    *
    * Builds a tree object from the current working tree (incl. untracked files,
    * excl. ignored) in a temp index, then diffs the checkpoint ref against it.
@@ -327,15 +338,21 @@ export class CheckpointManager {
     if (!ref) return 'No checkpoint found for this message';
 
     const currentTree = await this.writeWorkingTree(sessionId, cwd);
-    const output = await git(['diff', ref, currentTree, '--', '.'], cwd);
-    return output || '(no changes)';
+    // --no-color: the preview is plain text, whatever color.ui says.
+    const range = ['--no-color', ref, currentTree, '--', '.'];
+    const patch = await gitPatch(['diff', ...range], cwd, PREVIEW_MAX_CHARS);
+    if (patch !== null) return patch || '(no changes)';
+    // Too long to show: the files it changes and by how much. Git lists the
+    // first PREVIEW_MAX_FILES, then "...", and always the totals.
+    const stat = await git(['diff', '--stat', `--stat-count=${PREVIEW_MAX_FILES}`, ...range], cwd);
+    return `The full diff is too long to show here. The files it changes:\n\n${stat}`;
   }
 
   /** Recent working-tree snapshots. The review UI asks for the file list and
    *  then several per-file diffs within a few hundred ms; those calls opt in
    *  to reusing one tree object so they stay consistent with each other and
    *  don't re-add the whole tree each time. Everything else (history stats,
-   *  whole-diff previews) always snapshots fresh. */
+   *  the Rewind preview) always snapshots fresh. */
   private workingTreeMemo = new Map<string, { oid: string; at: number }>();
   private static WORKING_TREE_REUSE_MS = 1000;
 
@@ -528,47 +545,6 @@ export class CheckpointManager {
       logger.warn(`[checkpoints] history failed session=${sessionId}:`, err);
       return empty;
     }
-  }
-
-  /**
-   * Unified diff of what a single turn changed: the checkpoint captured for
-   * this user message vs the next checkpoint, or vs the current working tree
-   * when it's the latest turn.
-   */
-  async turnDiff(sessionId: string, cwd: string, uuid: string): Promise<string> {
-    const ref = await this.resolveRef(sessionId, cwd, uuid);
-    if (!ref) return 'No checkpoint found for this message';
-
-    let refs: CheckpointRef[] = [];
-    try {
-      refs = await this.listRefs(sessionId, cwd);
-    } catch { /* fall through to working-tree diff */ }
-
-    const idx = refs.findIndex(r => r.ref === ref);
-    const next = idx >= 0 ? refs[idx + 1] : undefined;
-    const to = next ? next.ref : await this.writeWorkingTree(sessionId, cwd);
-
-    const output = await git(['diff', ref, to, '--', '.'], cwd);
-    return output || '(no changes)';
-  }
-
-  /**
-   * Cumulative full-thread diff: everything that changed from the session's
-   * oldest checkpoint (the baseline for new sessions) to the current working
-   * tree, across all turns.
-   */
-  async fullThreadDiff(sessionId: string, cwd: string): Promise<string> {
-    await this.waitForPending(sessionId);
-
-    let refs: CheckpointRef[] = [];
-    try {
-      refs = await this.listRefs(sessionId, cwd);
-    } catch { /* no refs */ }
-    if (refs.length === 0) return 'No checkpoints found for this thread';
-
-    const currentTree = await this.writeWorkingTree(sessionId, cwd);
-    const output = await git(['diff', refs[0].ref, currentTree, '--', '.'], cwd);
-    return output || '(no changes)';
   }
 
   /**

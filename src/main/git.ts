@@ -511,16 +511,16 @@ export function patchResult(patch: string): FileDiffResult {
 
 /**
  * `git <args>` for a patch to show in a diff, or null when it's too large.
- * Git is stopped once it has written more than MAX_TEXT_FILE_BYTES
- * characters, plus the final newline execa counts before taking it off: a
- * character is at least one byte, so the patch is then over the limit and
- * patchResult would turn it away. Reading on (execa reads up to 100 MB,
- * then fails, which showed as "No diff available") would only move a patch
- * that is thrown away into the main process.
+ * Git is stopped once it has written more than `maxChars` characters, plus
+ * the final newline execa counts before taking it off. By default that's
+ * MAX_TEXT_FILE_BYTES: a character is at least one byte, so the patch is
+ * then over the limit and patchResult would turn it away. Reading on (execa
+ * reads up to 100 MB, then fails, which showed as "No diff available")
+ * would only move a patch that is thrown away into the main process.
  */
-export async function gitPatch(args: string[], cwd: string): Promise<string | null> {
+export async function gitPatch(args: string[], cwd: string, maxChars = MAX_TEXT_FILE_BYTES): Promise<string | null> {
   try {
-    return await git(args, cwd, { maxBuffer: MAX_TEXT_FILE_BYTES + 1 });
+    return await git(args, cwd, { maxBuffer: maxChars + 1 });
   } catch (e) {
     if ((e as { isMaxBuffer?: unknown } | null)?.isMaxBuffer === true) return null;
     throw e;

@@ -2384,20 +2384,6 @@ class AgentSessionManager {
     return session.checkpoints.history(id, session.worktreePath);
   }
 
-  /** Unified diff of what a single turn changed. */
-  async getTurnDiff(id: string, userMessageId: string): Promise<string> {
-    const session = this.sessions.get(id);
-    if (!session) throw new Error(`Thread ${id} not found`);
-    return session.checkpoints.turnDiff(id, session.worktreePath, userMessageId);
-  }
-
-  /** Cumulative diff from the session baseline to the current working tree. */
-  async getFullThreadDiff(id: string): Promise<string> {
-    const session = this.sessions.get(id);
-    if (!session) throw new Error(`Thread ${id} not found`);
-    return session.checkpoints.fullThreadDiff(id, session.worktreePath);
-  }
-
   /** Files changed across a checkpoint comparison (for the review panel). */
   async getCheckpointFiles(id: string, uuid: string, scope: import('../shared/types.js').CheckpointDiffScope): Promise<import('../shared/types.js').GitStatusResult> {
     const session = this.sessions.get(id);
