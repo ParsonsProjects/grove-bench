@@ -1,4 +1,5 @@
 import { stripFileContext } from './prompt-text.js';
+import { splitSkillLine } from './skill-line.js';
 
 const MAX_LEN = 40;
 
@@ -86,11 +87,25 @@ function namingText(message: string): string | null {
 export function deriveSessionName(firstUserMessage: string): string | null {
   const text = namingText(stripFileContext(firstUserMessage ?? ''));
   if (!text) return null;
+  // A skill run ("Use the `triage` skill for this task.", then the task) is
+  // named after the skill and its task, not the opener every one shares.
+  const asked = splitSkillLine(text);
+  if (asked) {
+    const task = nameCore(asked.rest);
+    return truncate(task ? `${asked.skill}: ${task}` : asked.skill);
+  }
+  const core = nameCore(text);
+  return core ? truncate(core) : null;
+}
+
+/** A message's name before it is cut to length, or null when nothing
+ *  meaningful is left. */
+function nameCore(text: string): string | null {
   const cleaned = cleanPrompt(text);
   if (!cleaned) return null;
   // A prompt that is only filler ("Can you please") keeps its own words.
   const core = (stripFiller(cleaned) || cleaned).replace(/[.,;:!]+$/, '');
-  return truncate(capitalise(core || cleaned));
+  return capitalise(core || cleaned);
 }
 
 /**

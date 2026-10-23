@@ -112,10 +112,10 @@ All in `src/renderer/lib/components/ui/`. Import from the folder's `index.js`:
 | `xs` | 24px | Toolbars, panel headers, secondary dialog actions |
 | `sm` | 32px | Dialog footers |
 | `default` | 36px | Forms and first-run screens |
-| `icon-2xs`, `icon-xs` | 20, 24px square | Icon-only buttons. Give them an `aria-label`. |
+| `icon-2xs`, `icon-xs`, `icon-sm`, `icon` | 20, 24, 32, 36px square | Icon-only buttons. Give them an `aria-label`, and a `title` that names the action. `icon-sm` sits in a row of `sm` buttons or beside a 32px field; `icon` beside a 36px field, like the composer's send and stop. |
 | `inline` | Text height | A button in a line of text |
 
-That is the whole set: ten variants and seven sizes. Before adding one, check whether an existing variant fits; the kit had three more (`ghost`, `outline`, `outline-primary`) that overlapped with these and were merged away.
+That is the whole set: ten variants and nine sizes. Before adding one, check whether an existing variant fits; the kit had three more (`ghost`, `outline`, `outline-primary`) that overlapped with these and were merged away.
 
 A disabled `Button` still gets hover events, so its `title` tooltip can say why it is disabled.
 
@@ -130,7 +130,7 @@ A disabled `Button` still gets hover events, so its `title` tooltip can say why 
 
 ### Notice
 
-`tone`: `info`, `success`, `warning`, `danger`, `neutral`. Errors are announced at once (`role="alert"`); other tones wait their turn (`role="status"`).
+`tone`: `info`, `success`, `warning`, `danger`, `neutral`. Errors are announced at once (`role="alert"`); other tones wait their turn (`role="status"`). Titles use the tone's 300 shade, the one that keeps 4.5:1 on the tinted background in both themes; `light-theme.test.ts` checks each tone.
 
 ```svelte
 <Notice tone="danger" title="Couldn't save settings">

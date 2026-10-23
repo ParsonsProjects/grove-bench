@@ -13,6 +13,10 @@
   import { Button } from '$lib/components/ui/button/index.js';
   import { Kbd } from '$lib/components/ui/kbd/index.js';
   import * as Command from '$lib/components/ui/command/index.js';
+  import ArrowUpIcon from '@lucide/svelte/icons/arrow-up';
+  import ListPlusIcon from '@lucide/svelte/icons/list-plus';
+  import PaperclipIcon from '@lucide/svelte/icons/paperclip';
+  import SquareIcon from '@lucide/svelte/icons/square';
   import {
     type AttachedFile,
     processFiles,
@@ -336,7 +340,10 @@
     // to its padding. The observer above sizes it once it is shown.
     if (textarea.clientWidth === 0) return;
     textarea.style.height = '0';
-    const scrollH = textarea.scrollHeight;
+    // scrollHeight leaves out the border, and the box is border-box, so add
+    // it back or the box comes out 2px short (and shrinks on the first key)
+    const border = textarea.offsetHeight - textarea.clientHeight;
+    const scrollH = textarea.scrollHeight + border;
     // Cap textarea itself at 150px, let container flex naturally
     textarea.style.height = Math.min(scrollH, 150) + 'px';
   }
@@ -611,12 +618,12 @@
       aria-label="Attach files"
       class="self-center disabled:cursor-not-allowed"
     >
-      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-        <path d="M10.5 4.5l-5 5a2.12 2.12 0 003 3l5.5-5.5a3.54 3.54 0 00-5-5L3.5 7.5a4.95 4.95 0 007 7L15 10" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
+      <PaperclipIcon />
     </Button>
 
     <div class="relative flex-1 min-w-0 flex">
+      <!-- py-[7px]: 1px border + 7px + one 20px line + 7px + 1px = 36px, the
+           height of the buttons beside it -->
       <textarea
         bind:this={textarea}
         bind:value
@@ -627,27 +634,29 @@
         placeholder={suggestion ?? (willQueue ? 'Message (Enter to queue, sent when the agent is free)' : 'Message (Enter to send, @ for files, / for commands, ! for shell)')}
         aria-keyshortcuts={showSuggestion ? 'Tab' : undefined}
         rows="1"
-        class="flex-1 min-w-0 bg-card border border-input px-3 py-2 text-sm text-foreground
+        class="flex-1 min-w-0 bg-card border border-input px-3 py-[7px] text-sm text-foreground
           placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-1 focus:ring-ring
           disabled:opacity-50 disabled:cursor-not-allowed font-mono {showSuggestion ? 'pe-12' : ''}"
       ></textarea>
       {#if showSuggestion}
+        <!-- 1px border + 7px + (20px line - 16px key) / 2 = 10px: centred on the line -->
         <Kbd variant="key" class="absolute end-2 top-2.5 pointer-events-none" aria-hidden="true">Tab</Kbd>
       {/if}
     </div>
 
     <Button
       variant="default"
+      size="icon"
       onclick={handleSubmit}
       disabled={!value.trim()}
       title={willQueue ? 'Add to the queue; sent once the agent is free' : 'Send now'}
-      class="h-auto"
+      aria-label={willQueue ? 'Queue' : 'Send'}
     >
-      {willQueue ? 'Queue' : 'Send'}
+      {#if willQueue}<ListPlusIcon />{:else}<ArrowUpIcon />{/if}
     </Button>
     {#if isRunning}
-      <Button variant="outline-destructive" onclick={handleStop} class="h-auto">
-        Stop
+      <Button variant="outline-destructive" size="icon" onclick={handleStop} title="Stop the agent" aria-label="Stop">
+        <SquareIcon class="size-3" fill="currentColor" />
       </Button>
     {/if}
   </div>

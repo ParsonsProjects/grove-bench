@@ -1616,7 +1616,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
   /** Skill folders: the user level is in the account's folder for an
    *  account agent. */
-  private readonly skillDirs: skillsModule.SkillDirs;
+  readonly skillDirs: skillsModule.SkillDirs;
 
   /** `account`: one of the user's other Claude accounts (claude-accounts.ts),
    *  run with its own Claude Code folder. Omit for the default account. */
@@ -1638,7 +1638,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       setupUrl: 'https://code.claude.com/docs/en/setup',
     };
     this.skillDirs = account
-      ? { ...skillsModule.CLAUDE_SKILL_DIRS, user: path.join(account.configDir, 'skills') }
+      ? { ...skillsModule.CLAUDE_SKILL_DIRS, user: [path.join(account.configDir, 'skills')] }
       : skillsModule.CLAUDE_SKILL_DIRS;
   }
 
@@ -2215,7 +2215,8 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     return handle;
   }
 
-  // ─── Skill management (native format: .claude/skills/<name>/SKILL.md) ───
+  // ─── Skill management (.claude/skills/<name>/SKILL.md; new skills go in
+  // the shared .agents/skills with a link here) ───
 
   async listSkills(worktreePath: string) {
     return skillsModule.listSkills(worktreePath, this.skillDirs);

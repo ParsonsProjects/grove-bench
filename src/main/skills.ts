@@ -2,37 +2,117 @@
  * Skill discovery for agent sessions.
  *
  * Skills follow the open Agent Skills format: a `<name>/SKILL.md` folder
- * with YAML frontmatter. Agents keep them under their own folder name at two
- * levels: the user's home directory and the project (which for a Grove Bench
- * session is the worktree — project skills are checked into git, so every
- * worktree carries them). Each adapter passes its folder (SkillDirs); Claude
- * Code's is `.claude/skills`. Plugin-provided skills have no stable on-disk
+ * with YAML frontmatter, which Claude Code, Gemini CLI, Copilot, OpenCode and
+ * Codex all read. Each keeps them under its own folder names at two levels:
+ * the user's home directory and the project (which for a Grove Bench session
+ * is the worktree — project skills are checked into git, so every worktree
+ * carries them). Each adapter passes its folders (SkillDirs); Claude Code's
+ * is `.claude/skills`. Plugin-provided skills have no stable on-disk
  * location we can scan; those are learned from the agent's system_init
  * message instead (see AgentSessionManager's known-skills registry).
+ *
+ * Grove writes new skills to the shared folder, `.agents/skills`, which every
+ * agent it knows reads except Claude Code. Claude Code sees each through a
+ * link in its own folder (skillLinkContent; skill-sharing.ts keeps links up
+ * to date).
  */
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { SkillDefinition, SkillInfo } from '../shared/types.js';
 
-/** Where an agent keeps skills, relative to the project and to the user's
- *  home directory (often the same, e.g. `.claude/skills`). `user` may be an
- *  absolute path instead, such as a Claude account's own folder. */
+/** Where an agent looks for skills, relative to the project and to the
+ *  user's home directory (often the same, e.g. `.claude/skills`). A user
+ *  folder may be an absolute path instead, such as a Claude account's own.
+ *  Most agents read several (their own and the shared `.agents/skills`): the
+ *  first is where Grove writes a new skill, and an earlier folder's skill
+ *  wins over a later one of the same name. */
 export interface SkillDirs {
-  project: string;
-  user: string;
+  project: readonly string[];
+  user: readonly string[];
 }
 
-/** The user-level skills folder of `dirs`. */
-function userSkillsDir(dirs: SkillDirs): string {
-  return path.isAbsolute(dirs.user) ? dirs.user : path.join(os.homedir(), dirs.user);
+/** A user-level skills folder, made absolute. */
+function userSkillsDir(dir: string): string {
+  return path.isAbsolute(dir) ? dir : path.join(os.homedir(), dir);
 }
 
 /** Claude Code's skill folders. */
 export const CLAUDE_SKILL_DIRS: SkillDirs = {
-  project: path.join('.claude', 'skills'),
-  user: path.join('.claude', 'skills'),
+  project: [path.join('.claude', 'skills')],
+  user: [path.join('.claude', 'skills')],
 };
+
+/** The Agent Skills folder every agent Grove knows reads except Claude Code,
+ *  in the project and in the home directory. Grove keeps skills here so any
+ *  agent can use them. */
+export const SHARED_SKILLS_DIR = path.join('.agents', 'skills');
+
+/** An agent that reads only the shared folder. */
+export const SHARED_SKILL_DIRS: SkillDirs = {
+  project: [SHARED_SKILLS_DIR],
+  user: [SHARED_SKILLS_DIR],
+};
+
+export type SkillScope = SkillDefinition['scope'];
+
+/** Whether an agent reads the shared folder at a level. One that doesn't
+ *  (Claude Code) sees a shared skill through a link in its first folder. */
+export function readsSharedSkills(dirs: SkillDirs, scope: SkillScope): boolean {
+  return dirs[scope].some((dir) => !path.isAbsolute(dir) && path.normalize(dir) === SHARED_SKILLS_DIR);
+}
+
+/** A skills folder made absolute: in the project, or in the home directory. */
+export function skillsRoot(worktreePath: string, scope: SkillScope, dir: string): string {
+  return scope === 'project' ? path.join(worktreePath, dir) : userSkillsDir(dir);
+}
+
+// ─── Links ───
+//
+// A link is a SKILL.md in Claude Code's folder that stands in for a shared
+// skill: the shared skill's own frontmatter, so Claude Code lists it under
+// the same name and description and with the same settings, and a body that
+// sends the agent to the shared file. It is a plain file, so it works in git
+// on Windows, where symlinks are checked out as text by default.
+
+const LINK_MARKER = 'grove-bench:skill-link';
+
+/** Where a link points, as written in it: from the project root for a
+ *  project skill, so a teammate's copy of the repository finds it too, and
+ *  absolute for a user one. */
+export function skillLinkTarget(scope: SkillScope, dirName: string): string {
+  return scope === 'project'
+    ? ['.agents', 'skills', dirName, 'SKILL.md'].join('/')
+    : path.join(userSkillsDir(SHARED_SKILLS_DIR), dirName, 'SKILL.md');
+}
+
+/** A SKILL.md's frontmatter, without its `---` lines and with LF line
+ *  endings; null when it has none. */
+export function skillFrontmatter(content: string): string | null {
+  const normalized = content.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n');
+  return normalized.match(/^---\n([\s\S]*?)\n---(?:\n|$)/)?.[1] ?? null;
+}
+
+/** The link to a shared skill, given its SKILL.md content. */
+export function skillLinkContent(sharedContent: string, dirName: string, target: string): string {
+  const folder = target.replace(/[\\/]SKILL\.md$/, '');
+  return [
+    '---',
+    skillFrontmatter(sharedContent) ?? `name: ${dirName}`,
+    '---',
+    '',
+    `<!-- ${LINK_MARKER} ${target} -->`,
+    `<!-- Grove Bench made this link so Claude Code can use a skill kept for every agent. Edit the skill in ${target}; Link in Grove's Skills drawer updates this copy. -->`,
+    '',
+    `This skill is kept in \`${target}\`, where every coding agent can find it. Read that file now and follow its instructions. Paths in it are relative to \`${folder}\`.`,
+    '',
+  ].join('\n');
+}
+
+/** Whether a SKILL.md is a link Grove made. */
+export function isSkillLink(content: string): boolean {
+  return content.includes(`<!-- ${LINK_MARKER} `);
+}
 
 /**
  * Extract `name` and `description` from a SKILL.md YAML frontmatter block.
@@ -57,47 +137,52 @@ export function parseSkillFrontmatter(content: string): { name?: string; descrip
   return result;
 }
 
-/** Scan one skills directory for `<name>/SKILL.md` manifests. */
-export function scanSkillsDir(dir: string, source: SkillInfo['source']): SkillInfo[] {
+/** Scan one skills directory for `<name>/SKILL.md` manifests, in directory
+ *  order. Reads without blocking: it runs on the main process each time a
+ *  thread's Skills count shows, across up to five folders per agent. */
+export async function scanSkillsDir(dir: string, source: SkillInfo['source']): Promise<SkillInfo[]> {
   let entries: fs.Dirent[];
   try {
-    entries = fs.readdirSync(dir, { withFileTypes: true });
+    entries = await fs.promises.readdir(dir, { withFileTypes: true });
   } catch {
     return []; // directory absent — no skills at this level
   }
-  const skills: SkillInfo[] = [];
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
+  const found = await Promise.all(entries.filter((e) => e.isDirectory()).map(async (entry): Promise<SkillInfo | null> => {
     const manifestPath = path.join(dir, entry.name, 'SKILL.md');
     let content: string;
     try {
-      content = fs.readFileSync(manifestPath, 'utf-8');
+      content = await fs.promises.readFile(manifestPath, 'utf-8');
     } catch {
-      continue; // no manifest — not a skill
+      return null; // no manifest — not a skill
     }
     const meta = parseSkillFrontmatter(content);
-    skills.push({
+    return {
       // The CLI identifies a skill by its frontmatter name, falling back to
       // the directory name.
       name: meta.name || entry.name,
       description: meta.description ?? '',
       source,
       path: manifestPath,
-    });
-  }
-  return skills;
+    };
+  }));
+  return found.filter((s) => s !== null);
 }
 
 /**
  * List the skills a session at `worktreePath` can see on disk. Project skills
- * shadow user skills of the same name, matching the CLI's precedence.
+ * shadow user skills of the same name, matching the CLI's precedence, and an
+ * earlier folder's shadow a later one's at the same level.
  */
-export function listSkills(worktreePath: string, dirs: SkillDirs = CLAUDE_SKILL_DIRS): SkillInfo[] {
-  const project = scanSkillsDir(path.join(worktreePath, dirs.project), 'project');
-  const user = scanSkillsDir(userSkillsDir(dirs), 'user');
+export async function listSkills(worktreePath: string, dirs: SkillDirs = CLAUDE_SKILL_DIRS): Promise<SkillInfo[]> {
+  const [user, project] = await Promise.all([
+    Promise.all(dirs.user.map((dir) => scanSkillsDir(userSkillsDir(dir), 'user'))).then((lists) => lists.flat()),
+    Promise.all(dirs.project.map((dir) => scanSkillsDir(path.join(worktreePath, dir), 'project'))).then((lists) => lists.flat()),
+  ]);
   const byName = new Map<string, SkillInfo>();
-  for (const skill of [...user, ...project]) {
-    byName.set(skill.name, skill); // project entries overwrite user entries
+  // Lowest precedence first, so each later entry overwrites: later user
+  // folders, then earlier ones, then project folders the same way.
+  for (const skill of [...user.reverse(), ...project.reverse()]) {
+    byName.set(skill.name, skill);
   }
   return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -129,25 +214,32 @@ export function skillManifestContent(def: SkillDefinition): string {
 }
 
 /**
- * Write a new skill as `<name>/SKILL.md` in the agent's skill folder. Project
- * scope writes into the worktree (`<worktree>/.claude/skills` for Claude
- * Code); user scope writes under the home directory. Rejects names that
- * collide with an existing skill at the same scope — overwriting someone's
- * manifest silently would be data loss.
+ * Write a new skill as `<name>/SKILL.md` in the shared folder, so every agent
+ * can use it, plus a link in the agent's own folder when it doesn't read the
+ * shared one (Claude Code). Project scope writes into the worktree; user
+ * scope under the home directory. Rejects names that collide with an existing
+ * skill (or link) at the same scope — overwriting someone's manifest silently
+ * would be data loss.
  */
 export function writeSkill(worktreePath: string, def: SkillDefinition, dirs: SkillDirs = CLAUDE_SKILL_DIRS): SkillInfo {
   validateSkillName(def.name);
   if (!def.description.trim()) throw new Error('Skill description is required');
   if (!def.instructions.trim()) throw new Error('Skill instructions are required');
 
-  const root = def.scope === 'project' ? path.join(worktreePath, dirs.project) : userSkillsDir(dirs);
-  const skillDir = path.join(root, def.name);
-  const manifestPath = path.join(skillDir, 'SKILL.md');
-  if (fs.existsSync(manifestPath)) {
+  const manifestPath = path.join(skillsRoot(worktreePath, def.scope, SHARED_SKILLS_DIR), def.name, 'SKILL.md');
+  const linkPath = readsSharedSkills(dirs, def.scope)
+    ? null
+    : path.join(skillsRoot(worktreePath, def.scope, dirs[def.scope][0]), def.name, 'SKILL.md');
+  if (fs.existsSync(manifestPath) || (linkPath && fs.existsSync(linkPath))) {
     throw new Error(`A ${def.scope} skill named "${def.name}" already exists`);
   }
-  fs.mkdirSync(skillDir, { recursive: true });
-  fs.writeFileSync(manifestPath, skillManifestContent(def));
+  const content = skillManifestContent(def);
+  fs.mkdirSync(path.dirname(manifestPath), { recursive: true });
+  fs.writeFileSync(manifestPath, content);
+  if (linkPath) {
+    fs.mkdirSync(path.dirname(linkPath), { recursive: true });
+    fs.writeFileSync(linkPath, skillLinkContent(content, def.name, skillLinkTarget(def.scope, def.name)));
+  }
   return {
     name: def.name,
     description: def.description,
