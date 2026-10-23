@@ -106,6 +106,31 @@ describe('ScheduleForm', () => {
     expect(await screen.findByText('Enter how many hours apart')).toBeInTheDocument();
   });
 
+  it('says next to Save what is missing, in the words main would use', async () => {
+    render(ScheduleForm, { repoPath: '/repo', initial: { agentId: 'gemini-cli' }, onclose: () => {} });
+    const save = screen.getByRole('button', { name: 'Save' });
+    expect(await screen.findByText('Pick a skill above')).toBeInTheDocument();
+    expect(save).toBeDisabled();
+    expect(save).toHaveAttribute('aria-describedby', 'schedule-save-blocker');
+    cleanup();
+
+    render(ScheduleForm, { repoPath: '/repo', initial: { ...existing, timing: { kind: 'every', hours: 0 } }, onclose: () => {} });
+    expect(await screen.findByText('Enter how many hours apart, from 1 to 168')).toBeInTheDocument();
+    cleanup();
+
+    render(ScheduleForm, { repoPath: '/repo', initial: { ...existing, timing: { kind: 'daily', time: '25:00', weekdaysOnly: false } }, onclose: () => {} });
+    expect(await screen.findByText('Use a 24-hour time such as 09:00')).toBeInTheDocument();
+    cleanup();
+
+    render(ScheduleForm, { repoPath: '/repo', initial: existing, onclose: () => {} });
+    await fireEvent.input(screen.getByLabelText('Open threads before a run is skipped'), { target: { value: '' } });
+    expect(await screen.findByText('Allow from 1 to 10 open threads')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+    await fireEvent.input(screen.getByLabelText('Open threads before a run is skipped'), { target: { value: '2' } });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled());
+    expect(screen.queryByText(/Allow from/)).toBeNull();
+  });
+
   it('loads the agents for its picker, as nothing else may have yet', async () => {
     agentsStore.loaded = false;
     mockGroveBench.listAdapters.mockResolvedValue([{ id: 'gemini-cli', displayName: 'Gemini CLI', capabilities: {} }]);

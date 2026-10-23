@@ -27,6 +27,9 @@
   import PlusIcon from '@lucide/svelte/icons/plus';
   import PlayIcon from '@lucide/svelte/icons/play';
   import ClockIcon from '@lucide/svelte/icons/clock';
+  import SparklesIcon from '@lucide/svelte/icons/sparkles';
+  import RefreshIcon from '@lucide/svelte/icons/refresh-cw';
+  import SkillCard from './SkillCard.svelte';
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -230,18 +233,17 @@
   <span class="text-xs text-muted-foreground flex-1 min-w-0 truncate">
     {agentsStore.get(agentId)?.displayName ?? agentId} · {store.repoDisplayName(repoPath)}
   </span>
+  <!-- One style for the tab's actions, as for Schedule a skill. -->
   {#if managed}
     <Button
-      variant="link"
-      size="inline"
+      variant="subtle"
+      size="2xs"
       onclick={analyzeSuggestions}
       disabled={analyzingSuggestions}
       title="Mine this project's thread history for recurring workflows and suggest skills"
-    >
-      {analyzingSuggestions ? 'Scanning…' : 'Suggest'}
-    </Button>
+    ><SparklesIcon />{analyzingSuggestions ? 'Scanning…' : 'Suggest'}</Button>
   {/if}
-  <Button variant="quiet" size="inline" onclick={refresh} title="Re-scan skill directories">Refresh</Button>
+  <Button variant="subtle" size="icon-2xs" onclick={refresh} title="Re-scan skill directories" aria-label="Refresh skills"><RefreshIcon /></Button>
   <Button
     variant="subtle"
     size="2xs"
@@ -288,16 +290,12 @@
 <div class="space-y-2">
   {#each allSkills as skill (skill.name)}
     {@const disabled = disabledSkills.includes(skill.name)}
-    <div class="border border-border bg-card/80 px-3 py-2">
-      <div class="flex items-center gap-1.5 min-w-0">
-        <span class="w-1.5 h-1.5 shrink-0 {disabled ? 'bg-muted-foreground/40' : 'bg-green-500'}"></span>
-        <span class="font-mono text-xs truncate {disabled ? 'text-muted-foreground line-through' : 'text-foreground'}" title={skill.path ?? skill.name}>{skill.name}</span>
-        <Badge tone="muted">{skillSourceLabels[skill.source]}</Badge>
-      </div>
+    <SkillCard name={skill.name} active={!disabled} struck={disabled} nameTitle={skill.path ?? skill.name}>
+      {#snippet tags()}<Badge tone="muted">{skillSourceLabels[skill.source]}</Badge>{/snippet}
       {#if skill.description}
-        <div class="text-muted-foreground text-caption mt-0.5 line-clamp-2" title={skill.description}>{skill.description}</div>
+        <div class="line-clamp-2" title={skill.description}>{skill.description}</div>
       {/if}
-      <div class="flex items-center gap-1 mt-2">
+      {#snippet actions()}
         {#if !disabled}
           <Button
             variant="secondary"
@@ -316,7 +314,8 @@
             aria-label="Schedule {skill.name}"
           ><ClockIcon />Schedule</Button>
         {/if}
-        <span class="flex-1"></span>
+      {/snippet}
+      {#snippet end()}
         {#if managed}
           <!-- Turning a skill off is reversible, so it stays quiet; red is
                for what can't be undone. -->
@@ -326,8 +325,8 @@
             <Button variant="quiet" size="2xs" onclick={() => setSkillEnabled(skill.name, false)} disabled={skillsBusy[skill.name]} title="Hide this skill from agents">Disable</Button>
           {/if}
         {/if}
-      </div>
-    </div>
+      {/snippet}
+    </SkillCard>
   {:else}
     <p class="text-xs text-muted-foreground mt-4 text-center">
       {agentsStore.get(agentId)?.displayName ?? 'This agent'} has no skills in this project yet.

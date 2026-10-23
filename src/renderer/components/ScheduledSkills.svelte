@@ -15,6 +15,8 @@
   import { stripIpcErrorPrefix } from '../lib/mcp-errors.js';
   import { describeTiming, scheduleNextRun, type SkillSchedule, type SkillScheduleInput } from '../../shared/skill-schedules.js';
   import ScheduleForm from './ScheduleForm.svelte';
+  import SkillCard from './SkillCard.svelte';
+  import PlusIcon from '@lucide/svelte/icons/plus';
 
   let confirmDeleteId = $state<string | null>(null);
 
@@ -97,45 +99,41 @@
         {/if}
         <span class="text-xs font-medium text-muted-foreground truncate flex-1" title={group.repoPath}>{label}</span>
         {#if !group.removed}
-          <Button size="2xs" variant="subtle" onclick={() => skillsPanelStore.editSchedule(group.repoPath)}>Schedule a skill</Button>
+          <Button size="2xs" variant="subtle" onclick={() => skillsPanelStore.editSchedule(group.repoPath)}><PlusIcon />Schedule a skill</Button>
         {/if}
       </div>
       <div class="flex flex-col gap-2 min-w-0">
         {#each group.schedules as schedule (schedule.id)}
           {@const next = scheduleNextRun(schedule)}
           {@const openCount = schedulesStore.openThreads(schedule)}
-          <div class="border border-border bg-card/80 px-3 py-2 min-w-0">
-            <div class="flex items-center gap-2 min-w-0">
-              <span class="text-sm font-medium font-mono truncate flex-1">{schedule.skill}</span>
-              <span class="text-caption text-muted-foreground shrink-0">{agentName(schedule.agentId)}</span>
-            </div>
+          <SkillCard name={schedule.skill} active={!schedule.paused && !group.removed}>
+            {#snippet aside()}{agentName(schedule.agentId)}{/snippet}
             {#if schedule.note.trim()}
-              <div class="text-caption mt-0.5 line-clamp-2" title={schedule.note}>{schedule.note}</div>
+              <div class="text-foreground/90 line-clamp-2" title={schedule.note}>{schedule.note}</div>
             {/if}
-            <div class="text-caption text-muted-foreground mt-1">
+            <div class="mt-0.5">
               {describeTiming(schedule.timing)}{schedule.paused ? ' · paused' : next ? ` · next ${when(next)}` : ''}
             </div>
-            <div class="text-caption text-muted-foreground">
-              {outcomeText(schedule)}{openCount ? ` · ${openCount} open` : ''}
-            </div>
-            <div class="flex items-center gap-1 mt-2">
+            <div>{outcomeText(schedule)}{openCount ? ` · ${openCount} open` : ''}</div>
+            {#snippet actions()}
               <Button
-                size="xs"
+                size="2xs"
                 variant="secondary"
                 disabled={group.removed || !!schedulesStore.starting[schedule.id]}
                 title={group.removed ? 'Its project was removed' : 'Run it now in a new thread'}
                 onclick={() => runNow(schedule)}
               >Run now</Button>
-              <Button size="xs" variant="subtle" onclick={() => togglePaused(schedule)}>{schedule.paused ? 'Resume' : 'Pause'}</Button>
+              <Button size="2xs" variant="subtle" onclick={() => togglePaused(schedule)}>{schedule.paused ? 'Resume' : 'Pause'}</Button>
               {#if !group.removed}
-                <Button size="xs" variant="subtle" onclick={() => skillsPanelStore.editSchedule(schedule.repoPath, fieldsOf(schedule))}>Edit</Button>
+                <Button size="2xs" variant="subtle" onclick={() => skillsPanelStore.editSchedule(schedule.repoPath, fieldsOf(schedule))}>Edit</Button>
               {/if}
-              <span class="flex-1"></span>
+            {/snippet}
+            {#snippet end()}
               {#if confirmDeleteId === schedule.id}
-                <Button size="xs" variant="destructive" onclick={() => remove(schedule.id)}>Delete</Button>
+                <Button size="2xs" variant="destructive" onclick={() => remove(schedule.id)}>Delete</Button>
               {:else}
                 <Button
-                  size="icon-xs"
+                  size="icon-2xs"
                   variant="quiet-destructive"
                   onclick={() => { confirmDeleteId = schedule.id; }}
                   title="Delete schedule"
@@ -144,8 +142,8 @@
                   <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
                 </Button>
               {/if}
-            </div>
-          </div>
+            {/snippet}
+          </SkillCard>
         {:else}
           <p class="text-caption text-muted-foreground">No scheduled skills in this project.</p>
         {/each}

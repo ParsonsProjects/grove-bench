@@ -19,7 +19,7 @@
   import { agentsStore } from '../stores/agents.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
   import { stripIpcErrorPrefix } from '../lib/mcp-errors.js';
-  import { MAX_NOTE_LENGTH, MAX_OPEN_LIMIT, type SkillScheduleInput } from '../../shared/skill-schedules.js';
+  import { MAX_NOTE_LENGTH, MAX_OPEN_LIMIT, parseTime, type SkillScheduleInput } from '../../shared/skill-schedules.js';
   import { CONTROL_IDS, type ControlOption, type PermissionMode, type SkillInfo } from '../../shared/types.js';
 
   let { repoPath, initial = null, onclose }: {
@@ -63,6 +63,26 @@
       : offered,
   );
   const skillsLoaded = $derived(skills.agentId === editing.agentId && skills.list !== null);
+
+  /** Why Save is off, in the words main would use (skill-schedule-schema.ts),
+   *  so nothing waits for a click to say what is missing. */
+  const saveBlocker = $derived.by(() => {
+    if (!editing.agentId) return 'Pick an agent';
+    if (!editing.skill) {
+      if (!skillsLoaded) return "Loading the agent's skills…";
+      // The picker says why the list is empty.
+      return offered.length === 0 ? 'No skill to schedule' : 'Pick a skill above';
+    }
+    const { timing } = editing;
+    if (timing.kind === 'every' && !(Number.isInteger(timing.hours) && timing.hours >= 1 && timing.hours <= 24 * 7)) {
+      return 'Enter how many hours apart, from 1 to 168';
+    }
+    if (timing.kind === 'daily' && parseTime(timing.time) === null) return 'Use a 24-hour time such as 09:00';
+    if (!(Number.isInteger(editing.maxOpen) && editing.maxOpen >= 1 && editing.maxOpen <= MAX_OPEN_LIMIT)) {
+      return `Allow from 1 to ${MAX_OPEN_LIMIT} open threads`;
+    }
+    return null;
+  });
 
   /** The Select's value for "the default": an empty value reads as nothing picked. */
   const DEFAULT = '_default';
@@ -233,8 +253,17 @@
     <Notice tone="danger"><p>{formError}</p></Notice>
   {/if}
 
-  <div class="flex justify-end gap-2 pt-1">
+  <div class="flex items-center justify-end gap-2 pt-1">
+    {#if saveBlocker}
+      <span id="schedule-save-blocker" class="text-caption text-muted-foreground mr-auto">{saveBlocker}</span>
+    {/if}
     <Button variant="subtle" size="sm" onclick={onclose}>Cancel</Button>
-    <Button size="sm" disabled={saving || !editing.skill} onclick={save}>Save</Button>
+    <Button
+      size="sm"
+      disabled={saving || !!saveBlocker}
+      onclick={save}
+      title={saveBlocker ?? undefined}
+      aria-describedby={saveBlocker ? 'schedule-save-blocker' : undefined}
+    >Save</Button>
   </div>
 </div>
