@@ -144,6 +144,15 @@ describe('MarkdownBlock links', () => {
     expect(open.mock.calls).toEqual([['s1', 'app.ts'], ['s1', 'src/b.ts']]);
   });
 
+  it('shows a text file a link opens at the lines it names', async () => {
+    const { markdownPreviewStore } = await import('../stores/markdownPreview.svelte.js');
+    vi.mocked(window.groveBench.openWorktreeFile).mockResolvedValueOnce({ kind: 'text', content: 'a\nb' });
+    const { container } = render(MarkdownBlock, { content: '[the fix](src/app.ts#L42-L44)', sessionId: 's1' });
+    await fireEvent.click(container.querySelector('a')!);
+    await waitFor(() => expect(markdownPreviewStore.code).toEqual({ path: 'src/app.ts', lines: { start: 42, end: 44 } }));
+    markdownPreviewStore.close();
+  });
+
   it('says next to a link when its file is not in the worktree, once, until a click finds it', async () => {
     const open = vi.mocked(window.groveBench.openWorktreeFile);
     open.mockClear().mockResolvedValueOnce({ kind: 'missing' }).mockResolvedValueOnce({ kind: 'missing' });

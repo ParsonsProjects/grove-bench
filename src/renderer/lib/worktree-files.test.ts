@@ -27,15 +27,32 @@ describe('localFileTarget', () => {
     expect(localFileTarget('file:///C:/wt/r.html#top')).toEqual({ path: 'file:///C:/wt/r.html', hash: '#top' });
   });
 
-  it('drops a line number, or a line and column, after the path', () => {
-    expect(localFileTarget('src/app.ts:42')).toEqual({ path: 'src/app.ts', hash: '' });
-    expect(localFileTarget('src/app.ts:42:7')).toEqual({ path: 'src/app.ts', hash: '' });
-    expect(localFileTarget('C:\\wt\\src\\app.ts:42')).toEqual({ path: 'C:\\wt\\src\\app.ts', hash: '' });
-    expect(localFileTarget('file:///C:/wt/app.ts:42')).toEqual({ path: 'file:///C:/wt/app.ts', hash: '' });
-    expect(localFileTarget('report.html:3#top')).toEqual({ path: 'report.html', hash: '#top' });
+  it('splits off a line number, or a line and column, after the path as its lines', () => {
+    const line42 = { start: 42, end: 42 };
+    expect(localFileTarget('src/app.ts:42')).toEqual({ path: 'src/app.ts', hash: '', lines: line42 });
+    expect(localFileTarget('src/app.ts:42:7')).toEqual({ path: 'src/app.ts', hash: '', lines: line42 });
+    expect(localFileTarget('C:\\wt\\src\\app.ts:42')).toEqual({ path: 'C:\\wt\\src\\app.ts', hash: '', lines: line42 });
+    expect(localFileTarget('file:///C:/wt/app.ts:42')).toEqual({ path: 'file:///C:/wt/app.ts', hash: '', lines: line42 });
+    expect(localFileTarget('report.html:3#top')).toEqual({ path: 'report.html', hash: '#top', lines: { start: 3, end: 3 } });
     // No folder: read as a file with a line, not a scheme named app.ts.
-    expect(localFileTarget('app.ts:42')).toEqual({ path: 'app.ts', hash: '' });
-    expect(localFileTarget('README.md:12:1')).toEqual({ path: 'README.md', hash: '' });
+    expect(localFileTarget('app.ts:42')).toEqual({ path: 'app.ts', hash: '', lines: line42 });
+    expect(localFileTarget('README.md:12:1')).toEqual({ path: 'README.md', hash: '', lines: { start: 12, end: 12 } });
+  });
+
+  it('reads a line anchor (#L42, #L42-L50) as lines too', () => {
+    expect(localFileTarget('src/app.ts#L42')?.lines).toEqual({ start: 42, end: 42 });
+    expect(localFileTarget('src/app.ts#L42-L50')?.lines).toEqual({ start: 42, end: 50 });
+    expect(localFileTarget('src/app.ts#L42-50')?.lines).toEqual({ start: 42, end: 50 });
+    expect(localFileTarget('src/app.ts#L42C3-L45C1')?.lines).toEqual({ start: 42, end: 45 });
+    expect(localFileTarget('src/app.ts#L50-L42')?.lines).toEqual({ start: 42, end: 50 });
+    // The anchor stays, for a web page.
+    expect(localFileTarget('src/app.ts#L42')?.hash).toBe('#L42');
+  });
+
+  it('has no lines without them, or for line 0 or another anchor', () => {
+    for (const href of ['src/app.ts', 'src/app.ts:0', 'src/app.ts#top', 'src/app.ts#L', 'src/app.ts#Lx']) {
+      expect(localFileTarget(href)?.lines).toBeUndefined();
+    }
   });
 
   it('still reads a scheme, or a host and port, with digits after it as no file', () => {
@@ -97,10 +114,22 @@ describe('openWorktreeFile', () => {
     expect(markdownPreviewStore).toMatchObject({ open: true, content: '# Plan', title: 'docs/plan.md', sessionId: 's1', baseDir: 'docs' });
   });
 
-  it('shows another text file in the Focus panel as a code block in its language', async () => {
+  it('shows another text file in the Focus panel as lines, at the lines a link named', async () => {
     mockGroveBench.openWorktreeFile.mockResolvedValueOnce({ kind: 'text', content: 'export const a = 1;' });
-    expect(await openWorktreeFile('s1', 'src/app.ts')).toBe(true);
-    expect(markdownPreviewStore).toMatchObject({ open: true, content: '```ts\nexport const a = 1;\n```', title: 'src/app.ts', sessionId: 's1' });
+    expect(await openWorktreeFile('s1', 'src/app.ts', '', { start: 4, end: 6 })).toBe(true);
+    expect(markdownPreviewStore).toMatchObject({
+      open: true, content: 'export const a = 1;', title: 'src/app.ts', sessionId: 's1',
+      code: { path: 'src/app.ts', lines: { start: 4, end: 6 } },
+    });
+  });
+
+  it('shows Markdown as Markdown again after a text file', async () => {
+    mockGroveBench.openWorktreeFile.mockResolvedValueOnce({ kind: 'text', content: 'a' });
+    await openWorktreeFile('s1', 'src/app.ts');
+    expect(markdownPreviewStore.code).toEqual({ path: 'src/app.ts', lines: null });
+    mockGroveBench.openWorktreeFile.mockResolvedValueOnce({ kind: 'markdown', content: '# Plan' });
+    await openWorktreeFile('s1', 'docs/plan.md');
+    expect(markdownPreviewStore.code).toBeNull();
   });
 
   it('says when the file is gone', async () => {

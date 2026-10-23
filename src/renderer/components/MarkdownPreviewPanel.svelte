@@ -3,11 +3,17 @@
   import MarkdownBlock from './MarkdownBlock.svelte';
   import CopyButton from './CopyButton.svelte';
   import { markdownPreviewStore } from '../stores/markdownPreview.svelte.js';
+  import { codeFileHtml } from '$lib/code-file.js';
   import { PanelHeader } from '$lib/components/ui/panel-header/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import XIcon from '@lucide/svelte/icons/x';
 
   let contentEl = $state<HTMLDivElement | null>(null);
+
+  /** A text file's numbered lines, coloured (lib/code-file). */
+  let codeView = $derived(markdownPreviewStore.code
+    ? codeFileHtml(markdownPreviewStore.content, markdownPreviewStore.code.path, markdownPreviewStore.code.lines)
+    : null);
 
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape' && markdownPreviewStore.open) {
@@ -16,10 +22,17 @@
     }
   }
 
-  // Scroll back to the top whenever new content is shown.
+  // Scroll back to the top whenever new content is shown, or to the first
+  // line a link pointed at, a third of the way down so the lines after it
+  // show too.
   $effect(() => {
     markdownPreviewStore.content; // track
-    if (contentEl) contentEl.scrollTop = 0;
+    const lines = markdownPreviewStore.code?.lines;
+    if (!contentEl) return;
+    const target = lines ? contentEl.querySelector<HTMLElement>(`[data-line="${lines.start}"]`) : null;
+    contentEl.scrollTop = target
+      ? target.getBoundingClientRect().top - contentEl.getBoundingClientRect().top + contentEl.scrollTop - contentEl.clientHeight / 3
+      : 0;
   });
 </script>
 
@@ -54,7 +67,36 @@
       {/snippet}
     </PanelHeader>
     <div class="flex-1 overflow-y-auto px-6 py-4 text-sm" bind:this={contentEl}>
-      <MarkdownBlock content={markdownPreviewStore.content} sessionId={markdownPreviewStore.sessionId} baseDir={markdownPreviewStore.baseDir} />
+      {#if codeView}
+        <!-- The gutter fits the last line's number. -->
+        <div class="code-file text-xs font-mono" style:--gutter="{Math.max(2, String(codeView.lineCount).length)}ch">{@html codeView.html}</div>
+      {:else}
+        <MarkdownBlock content={markdownPreviewStore.content} sessionId={markdownPreviewStore.sessionId} baseDir={markdownPreviewStore.baseDir} />
+      {/if}
     </div>
   </aside>
 {/if}
+
+<style>
+  /* Each line hangs off its number, which CSS draws (so a copy leaves it
+     out), and wraps rather than scrolling sideways, as diffs do. */
+  .code-file :global(.code-line) {
+    white-space: pre-wrap;
+    word-break: break-all;
+    padding-left: calc(var(--gutter) + 1.5ch);
+    text-indent: calc(-1 * (var(--gutter) + 1.5ch));
+  }
+  .code-file :global(.code-line)::before {
+    content: attr(data-line);
+    display: inline-block;
+    width: var(--gutter);
+    margin-right: 1.5ch;
+    text-align: right;
+    text-indent: 0;
+    color: var(--muted-foreground);
+  }
+  /* The lines a link pointed at. */
+  .code-file :global(.code-line.target) {
+    background-color: color-mix(in oklch, var(--primary) 18%, transparent);
+  }
+</style>

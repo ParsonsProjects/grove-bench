@@ -180,7 +180,7 @@
       const local = localFileTarget(anchor.dataset.localHref ?? href);
       if (local !== null && sessionId) {
         const sid = sessionId;
-        openWorktreeFile(sid, pathFrom(baseDir, local.path), local.hash)
+        openWorktreeFile(sid, pathFrom(baseDir, local.path), local.hash, local.lines)
           .then((found) => showLinkMissing(anchor, !found))
           .catch((err) => console.warn(`Could not open ${local.path}:`, err));
       }
