@@ -21,8 +21,8 @@
  * Before the app is ready (the host isn't started yet), once it has failed
  * MAX_FAILURES times in a row, and after it has stopped at quit, commands run
  * in the main process as they did before, except those that can be skipped
- * (runProcessInHost), which fail instead. Tests never start it, so their
- * execa mocks see every call.
+ * (runProcessInHost, unused at present), which fail instead. Tests never
+ * start it, so their execa mocks see every call.
  *
  * A command asked for while the host starts, or restarts after a crash or a
  * kill, waits for it (in order) rather than run here: at launch the app
@@ -81,6 +81,11 @@ export interface SpawnProcessOptions {
   stdout?: 'pipe' | 'ignore';
   /** Run `file` and `args` as one command line in a shell (SpawnRequest). */
   shell?: boolean;
+  /** false: its output isn't an agent's (the commands runInAgentHost runs:
+   *  gh, typeperf, the claude CLI's calls), so it is handed on without
+   *  timeOutput, and the health line's "agent output" leaves it out. Kept in
+   *  the main process: the host never sees it. */
+  agentOutput?: boolean;
 }
 
 /** The host's file name next to the main bundle (vite.main.config.mjs). */
@@ -153,7 +158,7 @@ export interface ProcessHostDeps {
   note?: (line: string) => void;
   /** Hand on a chunk of a spawned process's output (`deliver`), timing it
    *  for the freeze log (freezeLog.timeAgentOutput). By default it's only
-   *  handed on. */
+   *  handed on. Not for a process spawned with `agentOutput: false`. */
   timeOutput?: (chars: number, deliver: () => void) => void;
   /** What the notes call the host, and what it runs. */
   name?: string;
@@ -220,6 +225,8 @@ export function createProcessHost(deps: ProcessHostDeps) {
   const spawned = new Map<number, HostedProcess>();
   /** Spawns waiting for a starting host: told whether it came up. */
   const waitingForHost: ((ready: boolean) => void)[] = [];
+  /** Processes whose output isn't an agent's (`agentOutput: false`). */
+  const notAgents = new WeakSet<HostedProcess>();
 
   function start(): void {
     if (state !== 'idle') return;
@@ -400,9 +407,9 @@ export function createProcessHost(deps: ProcessHostDeps) {
     deliver(proc, event);
   }
 
-  /** Pass what a spawned process did on to it, timing its output. */
+  /** Pass what a spawned process did on to it, timing an agent's output. */
   function deliver(proc: HostedProcess, event: SpawnEvent): void {
-    if (event.type === 'stdout' || event.type === 'stderr') timeOutput(event.data.length, () => proc.receive(event));
+    if ((event.type === 'stdout' || event.type === 'stderr') && !notAgents.has(proc)) timeOutput(event.data.length, () => proc.receive(event));
     else proc.receive(event);
   }
 
@@ -549,7 +556,10 @@ export function createProcessHost(deps: ProcessHostDeps) {
    */
   function spawn(file: string, args: string[], options: SpawnProcessOptions = {}, hostOnly = false): HostedProcess {
     const proc = new HostedProcess(launchLabel(file, [file, ...args]));
-    const request: Omit<SpawnRequest, 'id'> = { type: 'spawn', file, args, ...options };
+    // `agentOutput` stays here; the host gets the rest.
+    const { agentOutput = true, ...spawnOptions } = options;
+    if (!agentOutput) notAgents.add(proc);
+    const request: Omit<SpawnRequest, 'id'> = { type: 'spawn', file, args, ...spawnOptions };
     const launch = (inHost: boolean) => {
       // Stopped before it started: there's nothing to start.
       if (proc.killed) {
@@ -740,8 +750,12 @@ export function runProcess(file: string, args: string[], options?: HostedOptions
  * runProcess, but only in the process host: rejects when the host isn't up
  * (before it is started, once it has given up or stopped, or when it doesn't
  * come up within HOST_WAIT_MS), rather than run the command in the main
- * process. For work that can be skipped, such as the health
- * line's process list (process-memory.ts).
+ * process. For work that can be skipped rather than hold the window.
+ * Nothing calls it at present: its one caller, the health line's process
+ * list (typeperf, process-memory.ts), now runs in the agent host
+ * (runInAgentHost with `hostOnly`). It is kept, with run()'s host-only path
+ * (Pending.hostOnly) and their tests, for skippable work that belongs in
+ * the git host.
  */
 export function runProcessInHost(file: string, args: string[], options?: HostedOptions): Promise<ProcessResult> {
   return processHost.runInHost(file, args, options) as Promise<ProcessResult>;

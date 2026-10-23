@@ -1131,6 +1131,39 @@ describe('process host: spawned processes', () => {
     expect(timed).toEqual([8, 4, 3]);
   });
 
+  it("hands on the output of a process that isn't an agent (agentOutput: false) without timeOutput, and keeps the option from the host", async () => {
+    const timeOutput = vi.fn((_chars: number, deliver: () => void) => deliver());
+    const { host, latest } = setup({ timeOutput });
+    host.start();
+    latest().ready();
+    const gh = host.spawn('gh', ['pr', 'view'], { findCommand: true, agentOutput: false });
+    const seen = watch(gh);
+    const agent = host.spawn('claude.exe', [], { agentOutput: true });
+    watch(agent);
+    expect(spawnOf(latest())).toEqual([
+      { type: 'spawn', id: 1, file: 'gh', args: ['pr', 'view'], findCommand: true },
+      { type: 'spawn', id: 2, file: 'claude.exe', args: [] },
+    ]);
+    latest().emit('message', { type: 'stdout', id: 1, data: '{"number":7}' });
+    latest().emit('message', { type: 'stderr', id: 1, data: 'warn' });
+    latest().emit('message', { type: 'stdout', id: 2, data: '{"a":1}\n' });
+    await settle();
+    expect(seen).toEqual(['out {"number":7}']);
+    expect(timeOutput.mock.calls.map(([chars]) => chars)).toEqual([8]);
+
+    // Started here, the host never having come up, the same way.
+    const down = setup({ timeOutput });
+    down.host.start();
+    const typeperf = down.host.spawn('typeperf.exe', [], { agentOutput: false });
+    const here = watch(typeperf);
+    down.fire(HOST_START_TIMEOUT_MS);
+    expect(down.local[0].requests).toEqual([{ type: 'spawn', id: 0, file: 'typeperf.exe', args: [] }]);
+    down.local[0].post({ type: 'stdout', id: 0, data: '"(PDH-CSV 4.0)"' });
+    await settle();
+    expect(here).toEqual(['out "(PDH-CSV 4.0)"']);
+    expect(timeOutput).toHaveBeenCalledOnce();
+  });
+
   it('passes output on as strings, as the host decoded it', async () => {
     const { host, latest } = setup();
     host.start();

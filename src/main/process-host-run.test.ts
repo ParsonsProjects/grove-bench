@@ -17,7 +17,8 @@ vi.mock('./logger.js', () => ({
 import { execa } from 'execa';
 import { killTree } from './process-tree.js';
 import { HOST_STOPPED_MESSAGE } from './process-host.js';
-import { runInAgentHost } from './process-host-run.js';
+import { runInAgentHost, START_WAIT_MS } from './process-host-run.js';
+import { isNetworkError } from './gh.js';
 
 /** The next command spawnProcess starts, driven by the test as the host
  *  would drive it. */
@@ -61,7 +62,7 @@ describe('runInAgentHost', () => {
     cmd.stderr('warn\n');
     cmd.exit(0);
     await expect(done).resolves.toMatchObject({ stdout: '{"installed":[]]}', stderr: 'warn', exitCode: 0, failed: false, timedOut: false });
-    expect(hosted.spawnProcess).toHaveBeenCalledWith('claude', ['plugin', 'list', '--json'], { cwd: '/repo', shell: true });
+    expect(hosted.spawnProcess).toHaveBeenCalledWith('claude', ['plugin', 'list', '--json'], { cwd: '/repo', shell: true, agentOutput: false });
   });
 
   it('gives it the environment execa would', async () => {
@@ -70,7 +71,7 @@ describe('runInAgentHost', () => {
     let done = runInAgentHost('claude', ['mcp', 'list']);
     cmd.exit(0);
     await done;
-    expect(hosted.spawnProcess).toHaveBeenLastCalledWith('claude', ['mcp', 'list'], {});
+    expect(hosted.spawnProcess).toHaveBeenLastCalledWith('claude', ['mcp', 'list'], { agentOutput: false });
 
     // extendEnv: false: that environment and nothing else.
     const accountEnv = { PATH: '/bin', CLAUDE_CONFIG_DIR: '/home/me/.claude-work' };
@@ -78,14 +79,14 @@ describe('runInAgentHost', () => {
     done = runInAgentHost('claude', ['auth', 'status'], { env: accountEnv, extendEnv: false });
     cmd.exit(0);
     await done;
-    expect(hosted.spawnProcess).toHaveBeenLastCalledWith('claude', ['auth', 'status'], { env: accountEnv });
+    expect(hosted.spawnProcess).toHaveBeenLastCalledWith('claude', ['auth', 'status'], { env: accountEnv, agentOutput: false });
 
     // Otherwise added to this one.
     cmd = nextCommand();
     done = runInAgentHost('claude', ['auth', 'status'], { env: { EXTRA: '1' } });
     cmd.exit(0);
     await done;
-    expect(hosted.spawnProcess).toHaveBeenLastCalledWith('claude', ['auth', 'status'], { env: { ...process.env, EXTRA: '1' } });
+    expect(hosted.spawnProcess).toHaveBeenLastCalledWith('claude', ['auth', 'status'], { env: { ...process.env, EXTRA: '1' }, agentOutput: false });
   });
 
   it('finds the command on PATH as execa does when asked (findCommand), for gh.exe with no shell', async () => {
@@ -93,7 +94,7 @@ describe('runInAgentHost', () => {
     const done = runInAgentHost('gh', ['pr', 'view', 'b'], { cwd: '/repo', findCommand: true, timeout: 30_000 });
     cmd.exit(0);
     await done;
-    expect(hosted.spawnProcess).toHaveBeenCalledWith('gh', ['pr', 'view', 'b'], { cwd: '/repo', findCommand: true });
+    expect(hosted.spawnProcess).toHaveBeenCalledWith('gh', ['pr', 'view', 'b'], { cwd: '/repo', findCommand: true, agentOutput: false });
   });
 
   it('sends `input` to its stdin and then ends it, as execa does', async () => {
@@ -133,7 +134,7 @@ describe('runInAgentHost', () => {
     const proc = new HostedProcess('typeperf.exe');
     hosted.spawnProcessInHost.mockReturnValueOnce(proc);
     const done = runInAgentHost('typeperf.exe', ['-sc', '1'], { timeout: 30_000, hostOnly: true });
-    expect(hosted.spawnProcessInHost).toHaveBeenCalledWith('typeperf.exe', ['-sc', '1'], {});
+    expect(hosted.spawnProcessInHost).toHaveBeenCalledWith('typeperf.exe', ['-sc', '1'], { agentOutput: false });
     expect(hosted.spawnProcess).not.toHaveBeenCalled();
     // The agent host isn't up: it didn't start.
     proc.receive({ type: 'error', id: 0, error: { name: 'Error', message: "The agent host isn't running, so typeperf.exe didn't start" } });
@@ -176,16 +177,73 @@ describe('runInAgentHost', () => {
     expect(await failed).toMatchObject({ message: expect.stringMatching(/^Command timed out after 60000 milliseconds: claude mcp list/), timedOut: true, stdout: 'figma: checking' });
   });
 
-  it('kills a command that ran out of time before it started once it starts', async () => {
+  it('counts its time limit from its start, not while it waits for the agent host to start or restart', async () => {
     vi.useFakeTimers();
     const cmd = nextCommand();
-    const done = runInAgentHost('claude', ['auth', 'status'], { timeout: 15_000 });
-    const failed = done.catch((e: unknown) => e);
+    let settled = false;
+    const failed = runInAgentHost('gh', ['pr', 'view', 'b'], { findCommand: true, timeout: 30_000 })
+      .finally(() => { settled = true; }).catch((e: unknown) => e);
+    // The host restarting: longer than spawnProcess itself waits for it.
+    await vi.advanceTimersByTimeAsync(25_000);
+    expect(settled).toBe(false);
+    cmd.started(4321);
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(settled).toBe(false);
+    expect(killTree).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await failed).toMatchObject({ timedOut: true, message: expect.stringMatching(/^Command timed out after 30000 milliseconds: gh pr view b/) });
+    expect(killTree).toHaveBeenCalledWith(4321);
+  });
+
+  it('runs its time limit at once when it started in this process (the agent host down), as spawn reported before returning', async () => {
+    vi.useFakeTimers();
+    const proc = new HostedProcess('claude');
+    proc.receive({ type: 'spawned', id: 0, pid: 55, launchMs: 1 });
+    hosted.spawnProcess.mockReturnValueOnce(proc);
+    const failed = runInAgentHost('claude', ['auth', 'status'], { timeout: 15_000 }).catch((e: unknown) => e);
     await vi.advanceTimersByTimeAsync(15_000);
     expect(await failed).toMatchObject({ timedOut: true });
+    expect(killTree).toHaveBeenCalledWith(55);
+  });
+
+  it(`stops a command that hasn't started within START_WAIT_MS, and fails it, not as timed out (gh's offline cooldown)`, async () => {
+    vi.useFakeTimers();
+    const cmd = nextCommand();
+    let settled = false;
+    const failed = runInAgentHost('gh', ['pr', 'view', 'b'], { findCommand: true, timeout: 30_000, idempotent: true })
+      .finally(() => { settled = true; }).catch((e: unknown) => e);
+    await vi.advanceTimersByTimeAsync(START_WAIT_MS - 1);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    const error = await failed;
+    expect(error).toMatchObject({ message: `Command didn't start within ${START_WAIT_MS / 1000} s: gh pr view b`, timedOut: false, failed: true });
+    expect(isNetworkError(error)).toBe(false);
+    // Still waiting for the host: it never starts there. Asked to stop, the
+    // host would never have it (spawn drops a killed process).
+    expect(cmd.proc.killed).toBe(true);
+    const sent: unknown[] = [];
+    cmd.proc.connect((command) => sent.push(command));
+    expect(sent).toEqual([{ type: 'kill', signal: 'SIGTERM' }]);
+    // Or, if the host had it already, it is killed with its tree once it
+    // has started.
     expect(killTree).not.toHaveBeenCalled();
-    cmd.started(77);
-    expect(killTree).toHaveBeenCalledWith(77);
+    cmd.started(88);
+    expect(killTree).toHaveBeenCalledWith(88);
+    // Its time limit never starts, and it isn't run again.
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(killTree).toHaveBeenCalledOnce();
+    expect(hosted.spawnProcess).toHaveBeenCalledOnce();
+  });
+
+  it('rejects at once with the error that kept it from starting, its wait for the start ended', async () => {
+    vi.useFakeTimers();
+    const cmd = nextCommand();
+    const done = runInAgentHost('gh', ['pr', 'view', 'b'], { findCommand: true, timeout: 30_000 });
+    cmd.proc.receive({ type: 'error', id: 1, error: { name: 'Error', message: 'spawn gh ENOENT', code: 'ENOENT' } });
+    cmd.proc.receive({ type: 'close', id: 1 });
+    await expect(done).rejects.toMatchObject({ message: 'spawn gh ENOENT', code: 'ENOENT' });
+    expect(vi.getTimerCount()).toBe(0);
+    expect(cmd.proc.killed).toBe(false);
   });
 
   it("doesn't kill by a PID that has exited, which may be another process's by now", async () => {

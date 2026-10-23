@@ -20,7 +20,8 @@ vi.mock('node:child_process', () => ({ ...childProcess, default: childProcess })
 vi.mock('./logger.js', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 vi.mock('./credentials.js', () => ({ getApiKey: vi.fn(() => null) }));
 
-import { DEADLINE_MARGIN_MS, HOST_STOPPED_MESSAGE, RESTART_DELAY_MS, startProcessHost, stopProcessHost } from './process-host.js';
+import { DEADLINE_MARGIN_MS, HOST_STOPPED_MESSAGE, RESTART_DELAY_MS, spawnProcess, startProcessHost, stopProcessHost } from './process-host.js';
+import { freezeLog } from './freeze-log.js';
 import { killTree, listProcesses } from './process-tree.js';
 import { launchEditor } from './editor-launch.js';
 import { installDependencies } from './deps-install.js';
@@ -331,6 +332,22 @@ describe('typeperf, for the health line, starts in the agent host', () => {
     expect(spawns()).toEqual([{ type: 'spawn', id: expect.any(Number), file: expect.stringMatching(/\\System32\\typeperf\.exe$/i), args: typeperfArgs(PROCESS_V2) }]);
   });
 
+  it("its output, like gh's, isn't counted as agent output on the health line, while an agent's is", async () => {
+    resetGhOfflineCooldownForTests();
+    const pr = JSON.stringify({ number: 7, url: 'https://github.com/o/r/pull/7', state: 'OPEN' });
+    const agentLine = '{"type":"system","subtype":"init"}\n';
+    respondSpawn = ({ file }) => ({ stdout: file === 'gh' ? pr : /typeperf\.exe$/i.test(file) ? v2Sample : agentLine });
+    freezeLog.takeStats();
+    expect(await measure()).toMatchObject({ agents: { agents: 1 } });
+    expect(await prStatus('/repo', 'feat/x')).toMatchObject({ number: 7 });
+    expect(freezeLog.takeStats().agentOutput.chars).toBe(0);
+
+    // An agent's program, started as the adapters start it.
+    const agent = spawnProcess('claude.exe', ['--output-format', 'stream-json']);
+    await new Promise((resolve) => agent.once('close', resolve));
+    expect(freezeLog.takeStats().agentOutput.chars).toBe(agentLine.length);
+  });
+
   it('at its time limit, its whole tree is killed, by taskkill from the process host', async () => {
     setPlatform('win32');
     respondSpawn = () => ({ hold: true });
@@ -451,6 +468,39 @@ describe('gh starts in the agent host, never in the process host with git', () =
       vi.useRealTimers();
       for (const finish of held.splice(0)) finish(1);
       heldCommands.splice(0).forEach((answer) => answer());
+    }
+  });
+
+  it('a call made while the agent host restarts gets its whole time limit once it has started there', async () => {
+    setPlatform('win32');
+    // The dead host's processes are stopped by pid: not really, here.
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
+    respondSpawn = () => ({ hold: true });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      agentHost.emit('exit', 1);
+      agentHost = newAgentHost();
+      let settled = false;
+      const status = prStatus('/repo', 'feat/x').finally(() => { settled = true; }).catch((e: unknown) => e);
+      // A slow restart: the pause before it, then 8 s to come up.
+      await vi.advanceTimersByTimeAsync(RESTART_DELAY_MS + 8_000);
+      expect(spawns()).toEqual([]);
+      agentHost.emit('message', HOST_READY);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(spawns()).toHaveLength(1);
+
+      // Past GH_TIMEOUT_MS from the call, but not from the start.
+      await vi.advanceTimersByTimeAsync(GH_TIMEOUT_MS - 1);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await status).toMatchObject({ message: expect.stringMatching(/^gh pr view failed: Command timed out after 30000 milliseconds: gh pr view feat\/x /) });
+      expect(commands()).toEqual([
+        { file: expect.stringMatching(/\\System32\\taskkill\.exe$/i), args: ['/PID', '999', '/T', '/F'], options: { timeout: 10_000, reject: false } },
+      ]);
+    } finally {
+      vi.useRealTimers();
+      kill.mockRestore();
+      for (const finish of held.splice(0)) finish(1);
     }
   });
 

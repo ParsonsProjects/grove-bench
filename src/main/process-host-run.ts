@@ -37,6 +37,18 @@ import { logger } from './logger.js';
 export type AgentHostRunOptions = Pick<HostedOptions, 'cwd' | 'env' | 'extendEnv' | 'shell' | 'timeout' | 'idempotent' | 'input'>
   & Pick<SpawnProcessOptions, 'findCommand'> & { hostOnly?: boolean };
 
+/** The longest a command with a `timeout` waits to start; the timeout counts
+ *  from then. spawnProcess waits for a starting or restarting agent host
+ *  only until that start has failed (RESTART_DELAY_MS, then
+ *  HOST_START_TIMEOUT_MS: 12 s at most), then starts the command in the main
+ *  process or, host-only, fails to start it, so a host that never comes up
+ *  is covered there. This bounds the rest: a start the host doesn't report,
+ *  because an antivirus holds the launch (the freeze log saw 21 s for
+ *  claude.exe) or the host has stopped answering (it isn't restarted for
+ *  that). Such a command is stopped and fails, but not as timed out, which
+ *  for gh would read as GitHub being unreachable (isNetworkError). */
+export const START_WAIT_MS = 30_000;
+
 /** The process ended because its host died, not by itself. */
 class HostLostError extends Error {}
 
@@ -45,8 +57,10 @@ class HostLostError extends Error {}
  * when it's down, unless `hostOnly`; after it when it's starting). Resolves
  * with its output, final newline stripped, when it exits with 0; otherwise
  * rejects as execa does, with `exitCode`, `stdout`, `stderr` and
- * `timedOut`. One marked `idempotent` runs once more if the host dies under
- * it (not at quit).
+ * `timedOut`. Its `timeout` counts from when it has started (within
+ * START_WAIT_MS). Its output isn't counted as an agent's (`agentOutput`).
+ * One marked `idempotent` runs once more if the host dies under it (not at
+ * quit).
  */
 export async function runInAgentHost(file: string, args: string[], options: AgentHostRunOptions = {}): Promise<ProcessResult> {
   try {
@@ -68,6 +82,8 @@ function runOnce(file: string, args: string[], { cwd, env, extendEnv = true, she
     ...(env !== undefined ? { env: extendEnv ? { ...process.env, ...env } : env } : {}),
     ...(shell ? { shell } : {}),
     ...(findCommand ? { findCommand } : {}),
+    // Not an agent: the health line's "agent output" leaves it out.
+    agentOutput: false,
   });
   if (input !== undefined) {
     // Written to its stdin, which then ends, as execa's `input` does. One
@@ -87,12 +103,36 @@ function runOnce(file: string, args: string[], { cwd, env, extendEnv = true, she
     proc.once('close', (code: number | null, signal: NodeJS.Signals | null) => resolve([code, signal]));
   });
   return new Promise((resolve, reject) => {
-    const timer = timeout ? setTimeout(() => {
-      stopTree(proc, command);
-      reject(failure(`Command timed out after ${timeout} milliseconds`, command, output, { timedOut: true }));
-    }, timeout) : undefined;
+    // Its time limit counts from its start, as runProcess's counts from when
+    // the git host has it: not while it waits for the agent host to start
+    // or restart, which would cut it short. That wait has its own bound.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let waitTimer: ReturnType<typeof setTimeout> | undefined;
+    const started = () => {
+      clearTimeout(waitTimer);
+      timer = setTimeout(() => {
+        stopTree(proc, command);
+        reject(failure(`Command timed out after ${timeout} milliseconds`, command, output, { timedOut: true }));
+      }, timeout);
+    };
+    if (timeout) {
+      // Started in this process (the agent host down), it already has.
+      if (proc.pid !== undefined) started();
+      else {
+        proc.once('spawn', started);
+        waitTimer = setTimeout(() => {
+          proc.off('spawn', started);
+          // Still waiting for the host, it never starts; started there, it
+          // is killed with its tree.
+          proc.kill();
+          stopTree(proc, command);
+          reject(failure(`Command didn't start within ${START_WAIT_MS / 1000} s`, command, output, {}));
+        }, START_WAIT_MS);
+      }
+    }
     // Its output, all of it, once it has closed.
     void Promise.all([closed, ...ended]).then(([[code, signal]]) => {
+      clearTimeout(waitTimer);
       clearTimeout(timer);
       if (startError) reject(startError);
       else if (proc.hostDied) reject(new HostLostError(`${HOST_STOPPED_MESSAGE}: ${command}`));
@@ -103,10 +143,11 @@ function runOnce(file: string, args: string[], { cwd, env, extendEnv = true, she
   });
 }
 
-/** Kill a command that ran out of time, and everything it started: with a
- *  shell, the command itself is cmd.exe's child. Once the host says it has
- *  started, if it hasn't yet. Not once it has exited: its PID may be
- *  another process's by now, so whatever it left holding the pipes stays. */
+/** Kill a command that ran out of time (or of time to start), and
+ *  everything it started: with a shell, the command itself is cmd.exe's
+ *  child. Once the host says it has started, if it hasn't yet. Not once it
+ *  has exited: its PID may be another process's by now, so whatever it left
+ *  holding the pipes stays. */
 function stopTree(proc: HostedProcess, command: string): void {
   const kill = () => {
     if (proc.pid === undefined || proc.exitCode !== null || proc.signalCode !== null) return;
