@@ -73,7 +73,7 @@ describe('StatusBarFiles', () => {
     expect(within(dialog).getByRole('img', { name: 'mock.png' })).toHaveAttribute('src', `grove-attachment://image/${SID}/a.png`);
   });
 
-  it('opens an attached text file in the Focus panel', async () => {
+  it('opens an attached text file in the Focus panel as numbered lines', async () => {
     mockGroveBench.getEventHistoryPage.mockResolvedValueOnce({
       events: [{ type: 'user_message', text: `${buildContentBlock('file', 'notes.ts', 'x()')}\n\nLook` }],
       totalCount: 10,
@@ -82,8 +82,20 @@ describe('StatusBarFiles', () => {
     const popover = await openPopover();
     await fireEvent.click(within(popover).getByTitle(/^Open notes\.ts/));
     await waitFor(() => expect(markdownPreviewStore.open).toBe(true));
-    expect(markdownPreviewStore.title).toBe('notes.ts');
-    expect(markdownPreviewStore.content).toBe('```ts\nx()\n```');
+    expect(markdownPreviewStore).toMatchObject({ title: 'notes.ts', content: 'x()', code: { path: 'notes.ts', lines: null } });
+  });
+
+  it('opens an attached Markdown file as it reads', async () => {
+    mockGroveBench.getEventHistoryPage.mockResolvedValueOnce({
+      events: [{ type: 'user_message', text: `${buildContentBlock('file', 'plan.md', '# Plan')}\n\nLook` }],
+      totalCount: 10,
+      startIndex: 2,
+    } as never);
+    render(StatusBarFiles, { sessionId: SID, files: [{ kind: 'text', name: 'plan.md', size: 6, eventIndex: 2 }] });
+    await fireEvent.click(screen.getByRole('button', { name: /Files 1/ }));
+    await fireEvent.click(screen.getByTitle(/^Open plan\.md/));
+    await waitFor(() => expect(markdownPreviewStore.open).toBe(true));
+    expect(markdownPreviewStore).toMatchObject({ title: 'plan.md', content: '# Plan', code: null });
   });
 
   it('shows the message a file came with', async () => {

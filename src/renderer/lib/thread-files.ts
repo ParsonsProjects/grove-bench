@@ -1,7 +1,7 @@
 /**
  * The status bar's Files list (shared/thread-items.ts): what each file is
- * called, where its image loads from, how an attached text file opens, and
- * the jump to the message a task list or file came with.
+ * called, where its image loads from, an attached text file's text, and the
+ * jump to the message a task list or file came with.
  */
 import { messageStore } from '../stores/messages.svelte.js';
 import { attachmentImageUrl, worktreeFileUrl } from '../../shared/attachments.js';
@@ -48,21 +48,6 @@ export function threadImageSrc(sessionId: string, f: ThreadFile): string | null 
     return f.made.image ? attachmentImageUrl(sessionId, f.made.image.file) : worktreeFileUrl(sessionId, f.made.path);
   }
   return null;
-}
-
-/** A fence longer than any run of backticks in `text`, so it can't close early. */
-function fenceFor(text: string): string {
-  const longest = Math.max(0, ...(text.match(/`+/g) ?? []).map((run) => run.length));
-  return '`'.repeat(Math.max(3, longest + 1));
-}
-
-/** An attached text file as markdown for the Focus panel: a markdown file as
- *  it reads, anything else as a code block. */
-export function textFileMarkdown(name: string, content: string): string {
-  const ext = /\.([A-Za-z0-9]+)$/.exec(name)?.[1].toLowerCase() ?? '';
-  if (ext === 'md' || ext === 'markdown') return content;
-  const fence = fenceFor(content);
-  return `${fence}${ext}\n${content}\n${fence}`;
 }
 
 /** The content of a text file attached to the message at `eventIndex`, or
