@@ -1,4 +1,5 @@
-import { runProcess } from './process-host.js';
+import { isReadOnly } from './process-host.js';
+import { runInAgentHost } from './process-host-run.js';
 import type { OpenPrSummary, PrChecksSummary, PrCreateOpts, PrInfo, PrReviewComment, PrReviewEvent } from '../shared/types.js';
 
 /** gh can sit forever on a stalled connection or an interactive prompt. The
@@ -7,9 +8,27 @@ import type { OpenPrSummary, PrChecksSummary, PrCreateOpts, PrInfo, PrReviewComm
  *  the next sweep retries. */
 export const GH_TIMEOUT_MS = 30_000;
 
-/** `input` goes to gh's stdin (for `gh api --input -`). */
+/**
+ * Run gh. `input` goes to its stdin (for `gh api --input -`).
+ *
+ * In the agent host (runInAgentHost), not the git host with git: gh waits
+ * on the network, and on Windows a timeout that kills gh alone can leave a
+ * process it started holding the pipes, so the answer never comes. In the
+ * git host that got the host restarted for not answering, which stopped
+ * other threads' git work with it (23 Oct: a hung `gh pr` failed two
+ * checkpoints). There, the timeout kills gh's whole tree and fails the call
+ * as timed out, and nothing is restarted. gh is found on PATH as execa found
+ * it (findCommand). Calls that only read (isReadOnly) run once more if the
+ * agent host dies under them, as they did in the git host.
+ */
 export async function gh(args: string[], cwd?: string, input?: string): Promise<string> {
-  const result = await runProcess('gh', args, { ...(cwd ? { cwd } : {}), timeout: GH_TIMEOUT_MS, ...(input !== undefined ? { input } : {}) });
+  const result = await runInAgentHost('gh', args, {
+    ...(cwd ? { cwd } : {}),
+    timeout: GH_TIMEOUT_MS,
+    findCommand: true,
+    ...(input !== undefined ? { input } : {}),
+    ...(isReadOnly('gh', args) ? { idempotent: true } : {}),
+  });
   return result.stdout;
 }
 

@@ -1,26 +1,34 @@
 /**
  * Run a command to the end in the agent host and collect what it printed,
  * as runProcess does in the git host: for the claude CLI's auth, mcp and
- * plugin calls (claude-code.ts).
+ * plugin calls (claude-code.ts), and every gh call (gh.ts).
  *
  * Those can run long (a plugin install has no time limit) or hang (`mcp
  * list` health-checks every server, and a server it starts can hold the
- * output pipes once cmd.exe is gone). In the git host, any command left
- * unanswered gets the host restarted, which would stop a running install,
- * and a hung `mcp list` would get it restarted itself, failing other
- * threads' git commands. The agent host isn't restarted for a hang: the
+ * output pipes once cmd.exe is gone; gh waits on the network, and a process
+ * it started can hold its pipes the same way once gh itself is killed). In
+ * the git host, any command left unanswered gets the host restarted, which
+ * would stop a running install, and a hung `mcp list` or `gh pr view` would
+ * get it restarted itself, failing other threads' git commands (on 23 Oct a
+ * hung `gh pr` failed two checkpoints' `git add` and a `git commit-tree`
+ * that way). The agent host isn't restarted for a hang: the
  * command is a spawned process there (spawnProcess), and its time limit is
  * kept here, killing the whole tree (killTree) rather than just cmd.exe.
  *
  * Main process only: unlike the other process-host-* files, the host
  * never loads this one.
  */
-import { HOST_STOPPED_MESSAGE, spawnProcess, type HostedOptions, type HostedProcess, type ProcessResult } from './process-host.js';
+import {
+  HOST_STOPPED_MESSAGE, spawnProcess, type HostedOptions, type HostedProcess, type ProcessResult, type SpawnProcessOptions,
+} from './process-host.js';
 import { killTree } from './process-tree.js';
 import { logger } from './logger.js';
 
-/** The execa options runInAgentHost takes, read as execa reads them. */
-export type AgentHostRunOptions = Pick<HostedOptions, 'cwd' | 'env' | 'extendEnv' | 'shell' | 'timeout' | 'idempotent'>;
+/** The execa options runInAgentHost takes, read as execa reads them, and
+ *  `findCommand` (SpawnProcessOptions): find `file` on PATH, .exe or .cmd,
+ *  as execa does (cross-spawn), for a command run without a shell. */
+export type AgentHostRunOptions = Pick<HostedOptions, 'cwd' | 'env' | 'extendEnv' | 'shell' | 'timeout' | 'idempotent' | 'input'>
+  & Pick<SpawnProcessOptions, 'findCommand'>;
 
 /** The process ended because its host died, not by itself. */
 class HostLostError extends Error {}
@@ -43,7 +51,7 @@ export async function runInAgentHost(file: string, args: string[], options: Agen
   }
 }
 
-function runOnce(file: string, args: string[], { cwd, env, extendEnv = true, shell, timeout }: AgentHostRunOptions): Promise<ProcessResult> {
+function runOnce(file: string, args: string[], { cwd, env, extendEnv = true, shell, timeout, input, findCommand }: AgentHostRunOptions): Promise<ProcessResult> {
   const command = [file, ...args].join(' ');
   const proc = spawnProcess(file, args, {
     ...(cwd !== undefined ? { cwd } : {}),
@@ -51,7 +59,15 @@ function runOnce(file: string, args: string[], { cwd, env, extendEnv = true, she
     // unless told not to.
     ...(env !== undefined ? { env: extendEnv ? { ...process.env, ...env } : env } : {}),
     ...(shell ? { shell } : {}),
+    ...(findCommand ? { findCommand } : {}),
   });
+  if (input !== undefined) {
+    // Written to its stdin, which then ends, as execa's `input` does. One
+    // that exits before reading it all fails the write (EPIPE), which execa
+    // ignores too: how it exits says how it went.
+    proc.stdin.on('error', () => {});
+    proc.stdin.end(input);
+  }
   const output = { stdout: '', stderr: '' };
   const ended = (['stdout', 'stderr'] as const).map((name) => new Promise<void>((resolve) => {
     proc[name].on('data', (chunk: string) => { output[name] += chunk; });

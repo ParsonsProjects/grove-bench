@@ -1,14 +1,15 @@
 /**
- * Process host: git and gh run from an Electron utility process
- * (process-host-child.ts), so starting them never blocks the main process,
+ * Process host: git runs from an Electron utility process
+ * (process-host-child.ts), so starting it never blocks the main process,
  * as do the main process's other short commands (taskkill, ps, where, the
  * editor CLIs).
  * So do the agents' programs (claude, ACP agents), which keep running and
  * stream their input and output through a second host of their own, the agent host
- * (process-host-spawn.ts), and the claude CLI's auth, mcp and plugin calls,
- * which can run long or hang (runInAgentHost, process-host-run.ts). Kept
- * apart because the git host is restarted when a command goes unanswered,
- * and a restart stops whatever the host started.
+ * (process-host-spawn.ts), and the commands that can run long or hang
+ * (runInAgentHost, process-host-run.ts): the claude CLI's auth, mcp and
+ * plugin calls, and gh, which waits on the network. Kept apart because the
+ * git host is restarted when a command goes unanswered, and a restart stops
+ * whatever the host started.
  *
  * Starting a process holds whichever process asks for it until the OS has
  * created it. On Windows that is execa's PATH search (cross-spawn stats every
@@ -25,8 +26,8 @@
  *
  * A command asked for while the host starts, or restarts after a crash or a
  * kill, waits for it (in order) rather than run here: at launch the app
- * restores every project and thread at once, dozens of git and gh calls in
- * the first seconds, which ran here and froze the window. It waits at most
+ * restores every project and thread at once, dozens of git calls in the
+ * first seconds, which ran here and froze the window. It waits at most
  * HOST_WAIT_MS, and no longer once that start has failed: then it runs here
  * (or, host-only, fails) as it did before. Its timeout, and the deadline for
  * the host's answer, count from when it is sent, not from when it was asked
@@ -296,7 +297,7 @@ export function createProcessHost(deps: ProcessHostDeps) {
     waitedOut = false;
     if (failures >= MAX_FAILURES) {
       state = 'failed';
-      note(`${name} ${reason}; ${deps.runs ?? 'git and gh'} run in the main process from now on`);
+      note(`${name} ${reason}; ${deps.runs ?? 'git commands'} run in the main process from now on`);
       runQueuedHere();
       return;
     }
@@ -638,8 +639,9 @@ const GH_API_WRITE_FLAGS = /^(-[XfF]|--(method|field|raw-field|input)(=|$))/;
 
 /**
  * Whether running this git or gh command a second time changes nothing, so it
- * can run again in the main process when the host dies under it. Anything
- * not known to be read-only isn't.
+ * can run again when its host dies under it: a git command in the restarted
+ * host or the main process, a gh call in the agent host (gh.ts marks those
+ * `idempotent` for runInAgentHost). Anything not known to be read-only isn't.
  */
 export function isReadOnly(file: string, args: readonly string[]): boolean {
   const program = (file.split(/[\\/]/).pop() ?? '').toLowerCase().replace(/\.exe$/, '');

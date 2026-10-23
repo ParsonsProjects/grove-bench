@@ -86,6 +86,47 @@ describe('runInAgentHost', () => {
     expect(hosted.spawnProcess).toHaveBeenLastCalledWith('claude', ['auth', 'status'], { env: { ...process.env, EXTRA: '1' } });
   });
 
+  it('finds the command on PATH as execa does when asked (findCommand), for gh.exe with no shell', async () => {
+    const cmd = nextCommand();
+    const done = runInAgentHost('gh', ['pr', 'view', 'b'], { cwd: '/repo', findCommand: true, timeout: 30_000 });
+    cmd.exit(0);
+    await done;
+    expect(hosted.spawnProcess).toHaveBeenCalledWith('gh', ['pr', 'view', 'b'], { cwd: '/repo', findCommand: true });
+  });
+
+  it('sends `input` to its stdin and then ends it, as execa does', async () => {
+    const cmd = nextCommand();
+    const done = runInAgentHost('gh', ['api', '-X', 'POST', 'repos/o/r/pulls/1/reviews', '--input', '-'], { input: '{"event":"APPROVE"}' });
+    const sent: unknown[] = [];
+    // Until the host has the process, its input waits.
+    cmd.proc.connect((command) => sent.push(command));
+    await vi.waitFor(() => expect(sent).toEqual([{ type: 'stdin', data: '{"event":"APPROVE"}' }, { type: 'stdin-end' }]));
+    cmd.started();
+    cmd.stdout('{"html_url":"u"}\n');
+    cmd.exit(0);
+    await expect(done).resolves.toMatchObject({ stdout: '{"html_url":"u"}' });
+  });
+
+  it('leaves stdin alone without `input`', async () => {
+    const cmd = nextCommand();
+    const done = runInAgentHost('gh', ['auth', 'status']);
+    const sent: unknown[] = [];
+    cmd.proc.connect((command) => sent.push(command));
+    cmd.exit(0);
+    await done;
+    expect(sent).toEqual([]);
+  });
+
+  it('goes by how the process exits when it stops reading its input early (EPIPE), as execa does', async () => {
+    const cmd = nextCommand();
+    const done = runInAgentHost('gh', ['api', '--input', '-'], { input: 'x'.repeat(10) });
+    cmd.started();
+    cmd.proc.receive({ type: 'stdin-error', id: 1, error: { name: 'Error', message: 'write EPIPE', code: 'EPIPE' } });
+    cmd.stderr('gh: Bad request\n');
+    cmd.exit(1);
+    await expect(done).rejects.toMatchObject({ exitCode: 1, stderr: 'gh: Bad request' });
+  });
+
   it('rejects as execa did when it exits non-zero', async () => {
     const cmd = nextCommand();
     const done = runInAgentHost('claude', ['plugin', 'install', 'x'], { shell: true });
@@ -158,6 +199,21 @@ describe('runInAgentHost', () => {
     second.exit(0);
     await expect(done).resolves.toMatchObject({ stdout: 'figma: ok' });
     expect(hosted.spawnProcess.mock.calls[1]).toEqual(hosted.spawnProcess.mock.calls[0]);
+  });
+
+  it("doesn't run an idempotent command again when it times out: only when its host dies", async () => {
+    vi.useFakeTimers();
+    const cmd = nextCommand();
+    const done = runInAgentHost('gh', ['pr', 'view', 'b'], { findCommand: true, timeout: 30_000, idempotent: true });
+    const failed = done.catch((e: unknown) => e);
+    cmd.started(4321);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(await failed).toMatchObject({ timedOut: true, message: expect.stringMatching(/^Command timed out after 30000 milliseconds: gh pr view b/) });
+    expect(killTree).toHaveBeenCalledWith(4321);
+    // Killed, it closes: that is no host dying.
+    cmd.exit(null, 'SIGTERM');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(hosted.spawnProcess).toHaveBeenCalledOnce();
   });
 
   it('fails an idempotent command the host dies under twice, rather than run it a third time', async () => {

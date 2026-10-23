@@ -487,7 +487,7 @@ export class AcpAdapter implements AgentAdapter {
     }
     const lookup = process.platform === 'win32' ? 'where.exe' : 'which';
     try {
-      // In the process host, like git and gh, so the lookup never holds up the
+      // In the process host, like git, so the lookup never holds up the
       // window. It only reads, so it runs again if the host dies under it.
       const { stdout, exitCode } = await runProcess(lookup, [this.def.command], { reject: false, timeout: 10_000, idempotent: true });
       const found = exitCode === 0 ? String(stdout).trim().split(/\r?\n/)[0] : '';

@@ -1,7 +1,8 @@
 /**
  * The process host's own process: an Electron utility process that runs git
- * and gh for the main process (process-host.ts) and posts back what they
- * printed, or (as the agent host) starts the agents' processes and streams
+ * (and the main process's other short commands) for the main process
+ * (process-host.ts) and posts back what they printed, or (as the agent host)
+ * starts the agents' processes, gh and the claude CLI's calls, and streams
  * their input and output. Built as its own entry (vite.main.config.mjs).
  *
  * Only execa, Node and the protocol here. A utility process has no `app`, so

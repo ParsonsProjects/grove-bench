@@ -234,7 +234,7 @@ describe('process host', () => {
       fire(RESTART_DELAY_MS);
     }
     expect(hosts).toHaveLength(MAX_FAILURES);
-    expect(notes.at(-1)).toBe('process host exited with code 1; git and gh run in the main process from now on');
+    expect(notes.at(-1)).toBe('process host exited with code 1; git commands run in the main process from now on');
     await host.run('git', ['status']);
     expect(runHere).toHaveBeenCalledTimes(1);
   });
@@ -920,7 +920,7 @@ describe('process host: commands safe to repeat, in flight when it dies', () => 
     expect(runHere).not.toHaveBeenCalled();
 
     latest().exit(15);
-    expect(notes.at(-1)).toBe('process host exited with code 15; git and gh run in the main process from now on');
+    expect(notes.at(-1)).toBe('process host exited with code 15; git commands run in the main process from now on');
     expect(runHere.mock.calls.map(([file, args]) => `${file} ${args[0]}`)).toEqual(['git status', 'taskkill.exe /PID', 'git log']);
     await expect(status).resolves.toEqual({ stdout: 'here: git status' });
     await expect(kill).resolves.toEqual({ stdout: 'here: taskkill.exe /PID 4242 /T /F' });

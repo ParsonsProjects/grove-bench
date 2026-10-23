@@ -157,7 +157,7 @@ app.on('second-instance', () => {
 app.whenReady().then(() => {
   // A second copy only hands over (above), and opens nothing.
   if (!isFirstCopy) return;
-  // git and gh launch from here on in a utility process, so a slow launch
+  // git and gh launch from here on in utility processes, so a slow launch
   // can't freeze the window (process-host.ts). First, before the window
   // starts asking for git status: what it asks for before the host is up
   // waits for it.

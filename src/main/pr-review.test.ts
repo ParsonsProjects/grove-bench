@@ -1,17 +1,30 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
+// git runs through execa here (the git host isn't started in tests); gh
+// runs in the agent host (runInAgentHost).
 vi.mock('execa', () => ({ execa: vi.fn() }));
+vi.mock('./process-host-run.js', () => ({ runInAgentHost: vi.fn() }));
 
 import { execa } from 'execa';
+import { runInAgentHost } from './process-host-run.js';
 import { commentableLines, inlineComment, buildReviewBody, parsePrReviewSubmit, submitPrReview } from './pr-review.js';
 import { resetGhOfflineCooldownForTests } from './gh.js';
 import type { PrReviewLineComment } from '../shared/types.js';
 
 const mockExeca = vi.mocked(execa);
+const mockGh = vi.mocked(runInAgentHost);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockExeca.mockReset();
+  mockGh.mockReset();
   resetGhOfflineCooldownForTests();
+});
+
+afterEach(() => {
+  // gh never goes to the git host, nor git to the agent host.
+  expect(mockExeca.mock.calls.filter(([file]) => file === 'gh')).toEqual([]);
+  expect(mockGh.mock.calls.filter(([file]) => file !== 'gh')).toEqual([]);
 });
 
 // Old side: 1 one, 2 two, 3 four. New side: 1 one, 2 TWO, 3 three, 4 four.
@@ -121,7 +134,7 @@ describe('submitPrReview()', () => {
   /** A fake gh and git: the PR's head is HEAD1, its files are src/a.ts
    *  (PATCH) and a binary with no patch, and the checkout is at `localHead`. */
   function fakeTools(opts: { localHead?: string } = {}) {
-    mockExeca.mockImplementation((async (file: string, args: string[]) => {
+    const fake = (async (file: string, args: string[]) => {
       const cmd = args.join(' ');
       if (file === 'gh' && cmd === 'pr view 7 --json headRefOid') return { stdout: JSON.stringify({ headRefOid: 'HEAD1aaaaaaa' }) };
       if (file === 'gh' && cmd.includes('/pulls/7/files')) {
@@ -130,14 +143,18 @@ describe('submitPrReview()', () => {
       if (file === 'gh' && cmd.includes('/pulls/7/reviews')) return { stdout: JSON.stringify({ html_url: 'https://github.com/o/r/pull/7#pullrequestreview-1' }) };
       if (file === 'git' && cmd === 'rev-parse HEAD') return { stdout: `${opts.localHead ?? 'HEAD1aaaaaaa'}\n` };
       throw Object.assign(new Error(`unexpected: ${file} ${cmd}`), { stderr: 'fatal' });
-    }) as never);
+    }) as never;
+    mockGh.mockImplementation(fake);
+    mockExeca.mockImplementation(fake);
   }
 
   function postedPayload() {
-    const calls = mockExeca.mock.calls as unknown as Array<[string, string[], { input?: string }]>;
+    const calls = mockGh.mock.calls as unknown as Array<[string, string[], { input?: string }]>;
     const call = calls.find(([file, args]) => file === 'gh' && args.includes('POST'));
     expect(call).toBeDefined();
     expect(call![1]).toEqual(['api', '-X', 'POST', 'repos/{owner}/{repo}/pulls/7/reviews', '--input', '-']);
+    // A post may have reached GitHub, so it never runs twice.
+    expect(call![2]).not.toHaveProperty('idempotent');
     return JSON.parse(call![2].input ?? '');
   }
 
@@ -174,14 +191,14 @@ describe('submitPrReview()', () => {
     fakeTools();
     await submitPrReview('/wt', '/repo', { prNumber: 7, event: 'APPROVE', body: '', comments: [] });
     expect(postedPayload()).toEqual({ event: 'APPROVE', commit_id: 'HEAD1aaaaaaa' });
-    expect(mockExeca.mock.calls.some(([file, args]) => file === 'gh' && (args as string[]).some((a) => a.includes('/files')))).toBe(false);
+    expect(mockGh.mock.calls.some(([file, args]) => file === 'gh' && (args as string[]).some((a) => a.includes('/files')))).toBe(false);
   });
 
   it('refuses to approve a head the checkout doesn\'t have', async () => {
     fakeTools({ localHead: 'LOCAL2bbbbbb' });
     await expect(submitPrReview('/wt', '/repo', { prNumber: 7, event: 'APPROVE', body: '', comments: [] }))
       .rejects.toThrow('This checkout is at LOCAL2b but PR #7 is at HEAD1aa');
-    expect(mockExeca.mock.calls.some(([file, args]) => file === 'gh' && (args as string[]).includes('POST'))).toBe(false);
+    expect(mockGh.mock.calls.some(([file, args]) => file === 'gh' && (args as string[]).includes('POST'))).toBe(false);
   });
 
   it('needs a summary to comment or request changes', async () => {
@@ -189,6 +206,7 @@ describe('submitPrReview()', () => {
     await expect(submitPrReview('/wt', '/repo', { prNumber: 7, event: 'COMMENT', body: ' ', comments: [comment()] }))
       .rejects.toThrow('Write a summary to comment or request changes');
     expect(mockExeca).not.toHaveBeenCalled();
+    expect(mockGh).not.toHaveBeenCalled();
   });
 
   it('passes on GitHub\'s reason when it refuses', async () => {
@@ -197,8 +215,8 @@ describe('submitPrReview()', () => {
       stderr: 'gh: Unprocessable Entity (HTTP 422)',
       stdout: JSON.stringify({ message: 'Unprocessable Entity', errors: ['Can not approve your own pull request'] }),
     });
-    const fake = mockExeca.getMockImplementation() as unknown as (...a: unknown[]) => Promise<unknown>;
-    mockExeca.mockImplementation(((file: string, args: string[], o: unknown) =>
+    const fake = mockGh.getMockImplementation() as unknown as (...a: unknown[]) => Promise<unknown>;
+    mockGh.mockImplementation(((file: string, args: string[], o: unknown) =>
       args.includes('POST') ? Promise.reject(refuse) : fake(file, args, o)) as never);
     await expect(submitPrReview('/wt', '/repo', { prNumber: 7, event: 'APPROVE', body: '', comments: [] }))
       .rejects.toThrow('Can not approve your own pull request');
@@ -206,8 +224,8 @@ describe('submitPrReview()', () => {
 
   it('says a timed-out post may have gone through, so it isn\'t posted twice', async () => {
     fakeTools();
-    const fake = mockExeca.getMockImplementation() as unknown as (...a: unknown[]) => Promise<unknown>;
-    mockExeca.mockImplementation(((file: string, args: string[], o: unknown) =>
+    const fake = mockGh.getMockImplementation() as unknown as (...a: unknown[]) => Promise<unknown>;
+    mockGh.mockImplementation(((file: string, args: string[], o: unknown) =>
       args.includes('POST')
         ? Promise.reject(Object.assign(new Error('Command timed out'), { timedOut: true }))
         : fake(file, args, o)) as never);
@@ -216,7 +234,7 @@ describe('submitPrReview()', () => {
   });
 
   it('says which PR it could not read', async () => {
-    mockExeca.mockRejectedValue(Object.assign(new Error('Command failed'), { stderr: 'no pull requests found' }));
+    mockGh.mockRejectedValue(Object.assign(new Error('Command failed'), { stderr: 'no pull requests found' }));
     await expect(submitPrReview('/wt', '/repo', { prNumber: 7, event: 'COMMENT', body: 'Notes', comments: [] }))
       .rejects.toThrow('Could not read PR #7: no pull requests found');
   });
