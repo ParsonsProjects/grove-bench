@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
 import { render, cleanup, screen, fireEvent, waitFor } from '@testing-library/svelte';
 import { mockGroveBench } from '../__mocks__/setup.js';
+import { markdownPreviewStore } from '../stores/markdownPreview.svelte.js';
 
 import UserPromptBlock from './UserPromptBlock.svelte';
 
@@ -10,23 +11,24 @@ const DATA_URL = 'data:image/png;base64,iVBOR';
 
 afterEach(() => {
   cleanup();
+  markdownPreviewStore.close();
 });
 
 describe('UserPromptBlock attachments', () => {
-  it('shows attached files as chips that open and close their content', async () => {
+  it('shows attached text files as chips that open them in the Focus panel', async () => {
     render(UserPromptBlock, {
       sessionId: SID,
       text: 'fix it',
-      files: [{ path: 'notes.md', content: 'the notes' }],
+      files: [{ path: 'src/a.ts', content: 'const a = 1;' }, { path: 'notes.md', content: '# Notes' }],
     });
 
-    const chip = screen.getByRole('button', { name: 'notes.md' });
-    expect(screen.queryByText('the notes')).toBeNull();
-    await fireEvent.click(chip);
-    expect(screen.getByText('the notes')).toBeInTheDocument();
-    expect(chip).toHaveAttribute('aria-expanded', 'true');
-    await fireEvent.click(chip);
-    expect(screen.queryByText('the notes')).toBeNull();
+    // Not shown inline.
+    expect(screen.queryByText('const a = 1;')).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'src/a.ts' }));
+    expect(markdownPreviewStore).toMatchObject({ open: true, title: 'src/a.ts', content: 'const a = 1;', sessionId: SID, code: { path: 'src/a.ts', lines: null } });
+    // Markdown as it reads.
+    await fireEvent.click(screen.getByRole('button', { name: 'notes.md' }));
+    expect(markdownPreviewStore).toMatchObject({ open: true, title: 'notes.md', content: '# Notes', code: null });
   });
 
   it('shows a just-sent image and enlarges it on click', async () => {

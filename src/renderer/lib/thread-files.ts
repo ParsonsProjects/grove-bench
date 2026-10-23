@@ -1,10 +1,12 @@
 /**
  * The status bar's Files list (shared/thread-items.ts): what each file is
- * called, where its image loads from, an attached text file's text, and the
- * jump to the message a task list or file came with.
+ * called, where its image loads from, an attached text file's text and how
+ * it shows (from here and its chip in the thread), and the jump to the
+ * message a task list or file came with.
  */
 import { messageStore } from '../stores/messages.svelte.js';
-import { attachmentImageUrl, worktreeFileUrl } from '../../shared/attachments.js';
+import { markdownPreviewStore } from '../stores/markdownPreview.svelte.js';
+import { attachmentImageUrl, isMarkdownFile, worktreeFileUrl } from '../../shared/attachments.js';
 import { attachedFilesFromSent } from '../../shared/prompt-text.js';
 import { toolLabel } from './tool-names.js';
 import type { ThreadFile } from '../../shared/thread-items.js';
@@ -48,6 +50,13 @@ export function threadImageSrc(sessionId: string, f: ThreadFile): string | null 
     return f.made.image ? attachmentImageUrl(sessionId, f.made.image.file) : worktreeFileUrl(sessionId, f.made.path);
   }
   return null;
+}
+
+/** Show an attached text file in the Focus panel: Markdown as it reads,
+ *  anything else as numbered lines. */
+export function showAttachedText(sessionId: string, name: string, content: string): void {
+  if (isMarkdownFile(name)) markdownPreviewStore.show(content, name, sessionId);
+  else markdownPreviewStore.showCode(content, name, sessionId);
 }
 
 /** The content of a text file attached to the message at `eventIndex`, or

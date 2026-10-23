@@ -14,14 +14,12 @@
   import StatusBarPopover from './StatusBarPopover.svelte';
   import AttachmentIcon from './AttachmentIcon.svelte';
   import ImageLightbox from './ImageLightbox.svelte';
-  import { markdownPreviewStore } from '../stores/markdownPreview.svelte.js';
   import { formatFileSize } from '$lib/file-attachments.js';
   import { openWorktreeFile } from '$lib/worktree-files.js';
   import {
-    attachedTextContent, showInThread, threadFileName, threadFileSize, threadImageSrc,
+    attachedTextContent, showAttachedText, showInThread, threadFileName, threadFileSize, threadImageSrc,
   } from '$lib/thread-files.js';
   import { threadFileKey, type ThreadFile } from '../../shared/thread-items.js';
-  import { isMarkdownFile } from '../../shared/attachments.js';
 
   let { sessionId, files }: { sessionId: string; files: ThreadFile[] } = $props();
 
@@ -69,9 +67,7 @@
           return;
         }
         open = false;
-        // Markdown as it reads, anything else as numbered lines.
-        if (isMarkdownFile(f.name)) markdownPreviewStore.show(content, f.name, sessionId);
-        else markdownPreviewStore.showCode(content, f.name, sessionId);
+        showAttachedText(sessionId, f.name, content);
       } else if (f.kind === 'file') {
         if (!(await window.groveBench.openAttachedFile(sessionId, f.file.file))) missing[key] = true;
       } else if (f.kind === 'made') {
