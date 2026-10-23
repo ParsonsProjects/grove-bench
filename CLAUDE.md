@@ -112,10 +112,13 @@ Use the user-facing words in any new UI text, help page or doc. See `docs/projec
 - Main process manages AgentSessions, each with a node-pty instance and git worktree
 - IPC bridge via Electron contextBridge (preload.ts)
 - Git operations use `execa` calling `git` CLI directly (not simple-git), via
-  `runProcess` (`src/main/process-host.ts`), which runs git and gh in a utility
-  process so launching them never blocks the main process. The agents'
+  `runProcess` (`src/main/process-host.ts`), which runs git in a utility
+  process so launching it never blocks the main process. The agents'
   programs (claude, ACP agents) start in a second one, the agent host
-  (`spawnProcess`), and stream their stdio through it
+  (`spawnProcess`), and stream their stdio through it. Commands that can
+  hang (gh, the claude CLI's auth, mcp and plugin calls) run there too
+  (`runInAgentHost`, `process-host-run.ts`), whose timeout kills the whole
+  tree, so a hung one can't get the git host restarted
 - Multiple concurrent agent sessions per repository
 - Worktrees stored in a managed directory with short IDs (PATH_MAX safety)
 - Windows-only (no cross-platform support in v1)
