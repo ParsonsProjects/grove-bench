@@ -452,12 +452,14 @@
   });
   let selectedHunkCount = $derived(hunkLineIndices(selectedDiffLines).length);
   /** A conflicted file can't be marked resolved (staged) while its diff
-   *  against HEAD still has conflict markers, or until that diff is in.
-   *  Staging is how git marks it resolved, markers or not. */
+   *  against HEAD shows conflict markers, or until that diff is in: one
+   *  fetched before the file went into conflict doesn't count. Main refuses
+   *  it too (stageFile), which also covers a diff that couldn't be shown. */
   let resolveBlocked = $derived.by((): 'markers' | 'loading' | null => {
     if (selectedKey === null || selectedEntry?.status !== 'conflicted') return null;
-    if (!fileDiffs[selectedKey]) return 'loading';
-    return selectedDiffLines.some((l) => (l.type === 'add' || l.type === 'context') && isConflictMarker(l.text)) ? 'markers' : null;
+    if (!fileDiffs[selectedKey] || diffSigByKey.get(selectedKey) !== entrySig(selectedEntry)) return 'loading';
+    // HEAD has none of the markers git wrote, so they are added lines.
+    return selectedDiffLines.some((l) => l.type === 'add' && isConflictMarker(l.text)) ? 'markers' : null;
   });
 
   /** File keys whose large diff the user chose to see, for this comparison. */

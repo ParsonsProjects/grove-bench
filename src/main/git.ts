@@ -653,7 +653,21 @@ export async function revertFile(cwd: string, relPath: string, staged: boolean, 
 
 /** Stage a single path (git add). */
 export async function stageFile(cwd: string, relPath: string): Promise<void> {
+  // Staging a file in conflict is how git marks it resolved.
+  if (await hasLeftoverConflictMarkers(cwd, relPath)) {
+    throw new Error(`${relPath} still has conflict markers. Edit them out, then mark it resolved.`);
+  }
   await git(['add', '--', literal(relPath)], cwd);
+}
+
+/** Whether a file in conflict still has the markers git wrote into it.
+ *  `git diff --check` knows a .gitattributes conflict-marker-size too. A
+ *  file not in conflict is never refused: its lines are its own. */
+async function hasLeftoverConflictMarkers(cwd: string, relPath: string): Promise<boolean> {
+  if (!(await git(['ls-files', '--unmerged', '-z', '--', literal(relPath)], cwd))) return false;
+  // It exits 2 for whitespace errors as well, so the lines are read.
+  const { stdout } = await runProcess('git', ['diff', '--check', '--', literal(relPath)], { cwd, reject: false });
+  return /: leftover conflict marker$/m.test(stdout);
 }
 
 /** Unstage a single path, leaving working-tree changes intact (git reset HEAD). */

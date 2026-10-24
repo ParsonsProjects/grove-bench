@@ -63,10 +63,12 @@ Each modified file has a **Revert** button that resets it to its last committed 
 
 Reverting a renamed file undoes the rename: the old name comes back and the new one is deleted. If something else is at the old name by then, such as a new file or a folder, Revert stops and says so rather than overwrite it. Move it, then try again.
 
-A file with a merge conflict has no **Revert**: resolve the conflict (see below), or abort the merge in the terminal (`git merge --abort`).
+A file with a merge conflict has no **Revert**: resolve the conflict (see below), or abort in the terminal.
 
 ## Resolving conflicts
 
-When the agent (or you, in the terminal) merges, rebases or cherry-picks and git stops on a conflict, the files it couldn't merge are listed under **Conflicts**. The diff header says how each one conflicts, in git's words (for example **Conflict: both modified**, or **deleted by them**), and the diff shows the file as it is now against the commit checked out (HEAD). Any conflict markers git wrote into it (`<<<<<<<`, `=======` and `>>>>>>>`) show as added lines.
+When the agent (or you, in the terminal) merges, rebases or cherry-picks and git stops on a conflict, the files it couldn't merge are listed under **Conflicts**, in both views. The diff header says how each one conflicts, in git's words (for example **Conflict: both modified**, or **deleted by them**). In **Uncommitted**, the diff shows the file as it is now against the commit checked out (HEAD), so the conflict markers git wrote into it (`<<<<<<<`, `=======` and `>>>>>>>`) show as added lines. **Branch** compares it with the base branch, as it does every file.
 
-Edit the file to keep what you want and remove the markers, or ask the agent to, then click **Mark resolved**. That stages the file, which is how git marks a conflict resolved. The button stays off while the file still has a `<<<<<<<` or `>>>>>>>` marker, so a file isn't marked resolved with the markers still in it. Once every conflict is resolved, commit to finish the merge.
+Edit the file to keep what you want and remove the markers, or ask the agent to. Then, in **Uncommitted**, click **Mark resolved**. That stages the file, which is how git marks a conflict resolved. It isn't done while the file still has conflict markers, so a file isn't marked resolved with them still in it. Once every conflict is resolved, commit to finish. If nothing is left staged, there's no commit box: finish in the terminal with `git commit`.
+
+To give up instead, abort in the terminal: `git merge --abort`, `git rebase --abort` or `git cherry-pick --abort`, whichever stopped.

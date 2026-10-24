@@ -106,7 +106,7 @@ vi.mock('./session-goal.js', async (importOriginal) => ({
 import { ipcMain, BrowserWindow, dialog, shell } from 'electron';
 import { execa } from 'execa';
 import { IPC } from '../shared/types.js';
-import type { AgentEvent } from '../shared/types.js';
+import type { AgentEvent, GitStatusEntry } from '../shared/types.js';
 import * as git from './git.js';
 import * as gh from './gh.js';
 import { generateBranchName } from './branch-name.js';
@@ -1332,6 +1332,24 @@ describe('git handlers', () => {
       expect.objectContaining({ filePath: 'src/a.ts', status: 'modified' }),
     ]);
     expect(result.uncommitted).toBe(1);
+  });
+
+  it('GIT_STATUS hashes the files beside a conflicted one that is gone, rather than none', async () => {
+    fs.writeFileSync(path.join(wt, 'kept.txt'), 'x');
+    try {
+      vi.mocked(git.git).mockImplementation(async (args: string[]) => (args[0] === 'status' ? 'DD gone.txt\0UU kept.txt\0 M a.ts\0' : ''));
+      vi.mocked(git.hashWorkingFiles).mockResolvedValue('h1\nh2\n');
+
+      const result = await invoke(IPC.GIT_STATUS, 's1');
+
+      // One missing path would fail the whole hash-object call.
+      expect(git.hashWorkingFiles).toHaveBeenCalledWith(wt, ['kept.txt', 'a.ts']);
+      expect(result.entries.map((e: GitStatusEntry) => [e.filePath, e.contentHash])).toEqual([
+        ['gone.txt', 'deleted'], ['kept.txt', 'h1'], ['a.ts', 'h2'],
+      ]);
+    } finally {
+      fs.rmSync(path.join(wt, 'kept.txt'));
+    }
   });
 
   it('GIT_STATUS says so when git fails, rather than reading as a clean tree', async () => {

@@ -193,11 +193,18 @@ async function attachNumstat(cwd: string, entries: GitStatusEntry[], base: strin
  *  files get a fixed marker. Best-effort. */
 async function attachContentHashes(cwd: string, entries: GitStatusEntry[]): Promise<void> {
   try {
-    const present = [...new Set(entries.filter(e => e.status !== 'deleted').map(e => e.filePath))];
+    // A file in conflict can be gone (both sides deleted it, or someone did
+    // since), and one missing path fails the whole call.
+    const missing = new Set<string>();
+    for (const e of entries) {
+      if (e.status === 'conflicted' && !(await fs.access(path.join(cwd, e.filePath)).then(() => true, () => false))) missing.add(e.filePath);
+    }
+    const gone = (e: GitStatusEntry) => e.status === 'deleted' || missing.has(e.filePath);
+    const present = [...new Set(entries.filter(e => !gone(e)).map(e => e.filePath))];
     if (present.length > 200) return;
     const hashes = parseHashObjectOutput(await hashWorkingFiles(cwd, present), present);
     for (const entry of entries) {
-      entry.contentHash = entry.status === 'deleted' ? 'deleted' : hashes.get(entry.filePath);
+      entry.contentHash = gone(entry) ? 'deleted' : hashes.get(entry.filePath);
     }
   } catch { /* hashes are best-effort */ }
 }

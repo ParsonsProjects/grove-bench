@@ -77,6 +77,9 @@ afterEach(() => {
   store.sessions = [];
   mockGroveBench.getGitStatus.mockReset();
   mockGroveBench.getDefaultBranch.mockReset();
+  // Back to its default (an empty patch): a test may leave one that never answers.
+  mockGroveBench.getFileDiff.mockReset();
+  mockGroveBench.stageFile.mockReset();
 });
 
 describe('ChangesReviewPanel — live diff while the agent is running', () => {
@@ -472,6 +475,40 @@ describe('ChangesReviewPanel — merge conflicts', () => {
     expect(button).toBeDisabled();
     send({ kind: 'text', patch: resolved });
     await waitFor(() => expect(button).toBeEnabled());
+  });
+
+  it('waits for a new diff when the file it shows goes into conflict', async () => {
+    let send!: (diff: { kind: 'text'; patch: string }) => void;
+    mockGroveBench.getFileDiff
+      .mockResolvedValueOnce({ kind: 'text', patch: resolved })
+      .mockImplementation(() => new Promise((r) => { send = r; }));
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('both.txt')] } };
+    const view = render(ChangesReviewPanel, { sessionId: SID });
+    await waitFor(() => expect(diffText(view.container)).toContain('merged'));
+
+    // Same file key: its old diff, with no markers, is still on screen.
+    gitStatusStore.statusBySession = { [SID]: { entries: [conflicted()] } };
+    const button = await view.findByRole('button', { name: 'Mark resolved' });
+    expect(button).toBeDisabled();
+    send({ kind: 'text', patch: withMarkers });
+    await waitFor(() => expect(diffText(view.container)).toContain('theirs'));
+    expect(button).toBeDisabled();
+  });
+
+  it('only counts markers the conflict added, not lines HEAD already has', async () => {
+    const view = show([conflicted()], '--- a/both.txt\n+++ b/both.txt\n@@ -1,2 +1,2 @@\n >>>>>>> fixture\n-ours\n+merged\n');
+    await waitFor(() => expect(diffText(view.container)).toContain('merged'));
+
+    expect(view.getByRole('button', { name: 'Mark resolved' })).toBeEnabled();
+  });
+
+  it('shows why main refused to mark it resolved', async () => {
+    mockGroveBench.stageFile.mockRejectedValueOnce(new Error("Error invoking remote method 'file:stage': Error: both.txt still has conflict markers. Edit them out, then mark it resolved."));
+    const view = show([conflicted()], resolved);
+    await waitFor(() => expect(diffText(view.container)).toContain('merged'));
+
+    await fireEvent.click(view.getByRole('button', { name: 'Mark resolved' }));
+    expect(await view.findByRole('alert')).toHaveTextContent(/^both\.txt still has conflict markers\. Edit them out, then mark it resolved\.$/);
   });
 
   it('marks it resolved, by staging it, once the markers are gone', async () => {

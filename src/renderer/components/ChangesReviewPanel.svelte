@@ -104,8 +104,16 @@
   }
 
   // ── Staging ──
+  /** Why staging the selected file failed, by the entry's key: main refuses
+   *  to mark a conflict resolved while it still has conflict markers. */
+  let stageError = $state<{ key: string; message: string } | null>(null);
   function stageEntry(entry: GitStatusEntry) {
-    gitStatusStore.stageFile(sessionId, entry.filePath).catch(e => console.error('Failed to stage:', e));
+    const key = `${entry.filePath}:${entry.staged}`;
+    stageError = null;
+    gitStatusStore.stageFile(sessionId, entry.filePath).catch(e => {
+      console.error('Failed to stage:', e);
+      stageError = { key, message: stripIpcErrorPrefix(e instanceof Error ? e.message : String(e)) };
+    });
   }
   function unstageEntry(entry: GitStatusEntry) {
     gitStatusStore.unstageFile(sessionId, entry.filePath).catch(e => console.error('Failed to unstage:', e));
@@ -387,6 +395,9 @@
     {#if revertError?.key === `${entry.filePath}:${entry.staged}`}
       <span role="alert" class="text-micro text-destructive min-w-0">{revertError.message}</span>
     {/if}
+  {/if}
+  {#if stageError?.key === `${entry.filePath}:${entry.staged}`}
+    <span role="alert" class="text-micro text-destructive min-w-0">{stageError.message}</span>
   {/if}
 {/snippet}
 
