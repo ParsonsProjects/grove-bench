@@ -202,7 +202,9 @@ class GitStatusStore {
     if (timeout) clearTimeout(timeout);
     this.pendingTimeout.delete(sessionId);
     this.lastFetch.delete(sessionId);
-    this.requestSeq.delete(sessionId);
+    // Bumped, not deleted: a refresh still in flight then sees its number is
+    // stale, even once a new one has started from 1 again.
+    this.requestSeq.set(sessionId, (this.requestSeq.get(sessionId) ?? 0) + 1);
     this.detectedBases.delete(sessionId);
     this.suppressedSessions.delete(sessionId);
     const { [sessionId]: _s, ...restStatus } = this.statusBySession;

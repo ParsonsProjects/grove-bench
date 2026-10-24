@@ -219,3 +219,30 @@ describe('gitStatusStore — revertFile', () => {
     refresh.mockRestore();
   });
 });
+
+describe('gitStatusStore — clear', () => {
+  function deferred<T>() {
+    let resolve!: (v: T) => void;
+    const promise = new Promise<T>((r) => { resolve = r; });
+    return { promise, resolve };
+  }
+
+  it('drops a refresh still in flight, even once a new one has started', async () => {
+    const id = 'cleared';
+    const working = () => { gitStatusStore.scopeBySession = { ...gitStatusStore.scopeBySession, [id]: { scope: 'working' } }; };
+    working();
+    const stale = deferred<GitStatusResult>();
+    mockGroveBench.getGitStatus.mockReturnValueOnce(stale.promise);
+    const first = gitStatusStore.refresh(id);
+
+    gitStatusStore.clear(id);
+    working();
+    mockGroveBench.getGitStatus.mockResolvedValueOnce({ entries: [] });
+    await gitStatusStore.refresh(id);
+    stale.resolve({ entries: [{ filePath: 'old.ts', status: 'modified', staged: false }] });
+    await first;
+
+    expect(gitStatusStore.statusBySession[id]?.entries).toEqual([]);
+    gitStatusStore.clear(id);
+  });
+});

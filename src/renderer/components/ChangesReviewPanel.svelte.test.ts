@@ -37,6 +37,8 @@ vi.mock('../lib/diff-highlight.js', async (importOriginal) => {
 });
 
 const SID = 'changes-session';
+/** A second thread, whose panel shows the same files. */
+const OTHER = 'other-session';
 
 function entry(filePath: string, over: Partial<GitStatusEntry> = {}): GitStatusEntry {
   return { filePath, status: 'modified', staged: false, ...over } as GitStatusEntry;
@@ -62,7 +64,20 @@ beforeEach(() => {
   messageStore.setActiveTab(SID, 'changes');
 });
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  // The stores outlive each test, and CI shuffles the order. A git status
+  // refresh one test scheduled (after a revert, stage or commit) or left in
+  // flight would land in the next and replace its files with the mock's; the
+  // viewed state, sessions and mock results it set would carry over too.
+  for (const id of new Set([SID, OTHER, ...Object.keys(gitStatusStore.statusBySession)])) gitStatusStore.clear(id);
+  reviewStore.clear(SID);
+  reviewStore.clear(OTHER);
+  localStorage.clear();
+  store.sessions = [];
+  mockGroveBench.getGitStatus.mockReset();
+  mockGroveBench.getDefaultBranch.mockReset();
+});
 
 describe('ChangesReviewPanel — live diff while the agent is running', () => {
   it('shows the empty state while running instead of a "wait for the turn" placeholder', async () => {
@@ -266,7 +281,6 @@ describe('ChangesReviewPanel — review features', () => {
   });
 
   it('scrolls its own file list, not a hidden panel showing the same file', async () => {
-    const OTHER = 'other-session';
     messageStore.messagesBySession[OTHER] = [];
     gitStatusStore.statusBySession = { ...gitStatusStore.statusBySession, [OTHER]: gitStatusStore.statusBySession[SID] };
     const scrolled: Element[] = [];
@@ -571,12 +585,7 @@ describe('ChangesReviewPanel with grove characters', () => {
 });
 
 describe('ChangesReviewPanel — commit and push errors', () => {
-  afterEach(() => {
-    prStore.clear(SID);
-    // A good commit schedules a git status refresh. Cancel it, or it lands in
-    // a later test and swaps that test's files for the mock's empty list.
-    gitStatusStore.clear(SID);
-  });
+  afterEach(() => prStore.clear(SID));
 
   function renderStaged() {
     gitStatusStore.statusBySession = { [SID]: { entries: [entry('src/a.ts', { staged: true })] } };
@@ -613,11 +622,7 @@ describe('ChangesReviewPanel — commit and push errors', () => {
 });
 
 describe('ChangesReviewPanel — Branch view by default', () => {
-  afterEach(() => gitStatusStore.clear(SID));
-
   it('opens on the Branch view, listed first, against the default base', async () => {
-    // Start fresh: a refresh from an earlier test would throttle this one's.
-    gitStatusStore.clear(SID);
     gitStatusStore.scopeBySession = {};
     store.sessions = [{ id: SID, branch: 'feat', repoPath: '/repo', status: 'running' }] as never;
     mockGroveBench.getDefaultBranch.mockResolvedValue('main');
@@ -652,8 +657,6 @@ describe('ChangesReviewPanel — reviewing the PR', () => {
   afterEach(() => {
     mockGroveBench.getPrs.mockResolvedValue([]);
     prStore.clear(SID);
-    reviewStore.clear(SID);
-    gitStatusStore.clear(SID);
   });
 
   function addComment(context: string | undefined, body: string) {
