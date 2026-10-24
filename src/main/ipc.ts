@@ -193,11 +193,18 @@ async function attachNumstat(cwd: string, entries: GitStatusEntry[], base: strin
  *  files get a fixed marker. Best-effort. */
 async function attachContentHashes(cwd: string, entries: GitStatusEntry[]): Promise<void> {
   try {
-    const present = [...new Set(entries.filter(e => e.status !== 'deleted').map(e => e.filePath))];
+    // A file in conflict can be gone (both sides deleted it, or someone did
+    // since), and one missing path fails the whole call.
+    const missing = new Set<string>();
+    for (const e of entries) {
+      if (e.status === 'conflicted' && !(await fs.access(path.join(cwd, e.filePath)).then(() => true, () => false))) missing.add(e.filePath);
+    }
+    const gone = (e: GitStatusEntry) => e.status === 'deleted' || missing.has(e.filePath);
+    const present = [...new Set(entries.filter(e => !gone(e)).map(e => e.filePath))];
     if (present.length > 200) return;
     const hashes = parseHashObjectOutput(await hashWorkingFiles(cwd, present), present);
     for (const entry of entries) {
-      entry.contentHash = entry.status === 'deleted' ? 'deleted' : hashes.get(entry.filePath);
+      entry.contentHash = gone(entry) ? 'deleted' : hashes.get(entry.filePath);
     }
   } catch { /* hashes are best-effort */ }
 }
@@ -1641,7 +1648,14 @@ export function registerHandlers() {
         const tracked = parseNameStatus(await git(['diff', '--name-status', '-z', mb.mergeBase], cwd));
         const status = parseGitStatusPorcelain(await git(['status', '--porcelain=v1', '-z', '--untracked-files=all'], cwd));
         const untracked = status.entries.filter(e => e.status === 'untracked');
-        result = { entries: [...tracked, ...untracked], baseRef: mb.ref, uncommitted: status.entries.length };
+        // The diff from the base lists a file in conflict as an ordinary change.
+        const conflicted = status.entries.filter(e => e.status === 'conflicted');
+        const conflictPaths = new Set(conflicted.map(e => e.filePath));
+        result = {
+          entries: [...conflicted, ...tracked.filter(e => !conflictPaths.has(e.filePath)), ...untracked],
+          baseRef: mb.ref,
+          uncommitted: status.entries.length,
+        };
       } else {
         const raw = await git(['status', '--porcelain=v1', '-z', '--untracked-files=all'], cwd);
         result = parseGitStatusPorcelain(raw);

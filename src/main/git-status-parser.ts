@@ -1,4 +1,5 @@
 import type { GitFileStatus, GitStatusEntry, GitStatusResult } from '../shared/types.js';
+import { isConflictCode } from '../shared/git-conflicts.js';
 
 function mapStatus(c: string): GitFileStatus {
   switch (c) {
@@ -36,13 +37,18 @@ export function porcelainRecords(raw: string): PorcelainRecord[] {
 }
 
 /** Parse the output of `git status --porcelain=v1 -z` into GitStatusResult:
- *  an entry for each column with a change. */
+ *  an entry for each column with a change, and one for a file in conflict
+ *  (both columns of its code describe the conflict). */
 export function parseGitStatusPorcelain(raw: string): GitStatusResult {
   const entries: GitStatusEntry[] = [];
   for (const { xy, path: filePath, origPath } of porcelainRecords(raw)) {
     const [x, y] = xy; // index (staged), then worktree (unstaged)
     if (xy === '??') {
       entries.push({ filePath, status: 'untracked', staged: false });
+      continue;
+    }
+    if (isConflictCode(xy)) {
+      entries.push({ filePath, status: 'conflicted', staged: false, conflict: xy });
       continue;
     }
     if (x !== ' ' && x !== '?') {

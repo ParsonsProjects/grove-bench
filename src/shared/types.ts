@@ -1,4 +1,5 @@
 import type { ToolView } from './tool-view.js';
+import type { GitConflictCode } from './git-conflicts.js';
 import type { LimitKind } from './limits.js';
 import type { ThreadItems } from './thread-items.js';
 import type { ScheduleOutcome, SkillSchedule, SkillScheduleInput } from './skill-schedules.js';
@@ -435,13 +436,17 @@ export interface PermissionDecision {
 
 // ─── Git Status ───
 
-export type GitFileStatus = 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked' | 'copied';
+/** 'conflicted': a merge, rebase or cherry-pick left the file unmerged
+ *  (one entry, never staged; `conflict` says how). */
+export type GitFileStatus = 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked' | 'copied' | 'conflicted';
 
 export interface GitStatusEntry {
   filePath: string;
   status: GitFileStatus;
   staged: boolean;
   origPath?: string;
+  /** A conflicted file's status code (see CONFLICT_KINDS). */
+  conflict?: GitConflictCode;
   /** Line counts from `git diff --numstat` (combined vs HEAD); absent for untracked files. */
   additions?: number;
   deletions?: number;

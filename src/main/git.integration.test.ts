@@ -108,6 +108,66 @@ describe('a merge conflict', () => {
   });
 });
 
+describe('a file in conflict', () => {
+  it('is diffed against HEAD, markers and all, however it conflicts', async () => {
+    commit('gone.txt', 'kept');
+    run('checkout', '-q', '-b', 'other');
+    commit('both.txt', 'theirs');
+    commit('gone.txt', 'changed there');
+    run('checkout', '-q', 'main');
+    commit('both.txt', 'ours');
+    run('rm', '-q', 'gone.txt');
+    run('commit', '-qm', 'gone here');
+    expect(() => run('merge', '-q', 'other')).toThrow();
+    expect(parseGitStatusPorcelain(run('status', '--porcelain=v1', '-z')).entries).toEqual([
+      { filePath: 'both.txt', status: 'conflicted', staged: false, conflict: 'AA' },
+      { filePath: 'gone.txt', status: 'conflicted', staged: false, conflict: 'DU' },
+    ]);
+
+    // Plain `git diff` gives a combined diff for one, and no diff for the other.
+    const both = await fileDiff(repo, 'both.txt');
+    expect(both).toMatch(/^diff --git /);
+    expect(both).toContain('\n+<<<<<<< HEAD\n ours\n+=======\n+theirs\n+>>>>>>> other');
+    const gone = await fileDiff(repo, 'gone.txt');
+    expect(gone).toContain('new file mode');
+    expect(gone).toContain('\n+changed there');
+  });
+});
+
+describe('marking a conflict resolved', () => {
+  it('is refused while the file has conflict markers, of any size, and done once they are gone', async () => {
+    fs.writeFileSync(path.join(repo, '.gitattributes'), '*.md conflict-marker-size=12\n');
+    run('add', '.gitattributes');
+    run('commit', '-qm', 'attributes');
+    run('checkout', '-q', '-b', 'other');
+    commit('both.txt', 'theirs');
+    commit('doc.md', 'theirs');
+    run('checkout', '-q', 'main');
+    commit('both.txt', 'ours');
+    commit('doc.md', 'ours');
+    expect(() => run('merge', '-q', 'other')).toThrow();
+    expect(fs.readFileSync(path.join(repo, 'doc.md'), 'utf8')).toMatch(/^<{12} HEAD$/m);
+
+    await expect(stageFile(repo, 'both.txt')).rejects.toThrow('both.txt still has conflict markers');
+    await expect(stageFile(repo, 'doc.md')).rejects.toThrow('doc.md still has conflict markers');
+    // Trailing spaces make `git diff --check` fail too, but aren't markers.
+    fs.writeFileSync(path.join(repo, 'both.txt'), 'merged   \n');
+    await stageFile(repo, 'both.txt');
+
+    expect(run('status', '--porcelain', '--', 'both.txt')).toBe('M  both.txt');
+  });
+
+  it('never refuses a file not in conflict, whatever its lines look like', async () => {
+    // Tracked and edited: `git diff --check` would call these markers.
+    commit('guide.md', 'guide');
+    fs.writeFileSync(path.join(repo, 'guide.md'), '<<<<<<< HEAD\nexample\n>>>>>>> main\n');
+
+    await stageFile(repo, 'guide.md');
+
+    expect(run('status', '--porcelain')).toBe('M  guide.md');
+  });
+});
+
 describe('line counts', () => {
   it('reads a rename and a name outside ASCII as git status names them', () => {
     fs.writeFileSync(path.join(repo, 'a.txt'), 'one\ntwo\n');

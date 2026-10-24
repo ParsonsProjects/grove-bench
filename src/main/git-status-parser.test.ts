@@ -14,6 +14,17 @@ describe('parseGitStatusPorcelain', () => {
     ]);
   });
 
+  it('gives a file in conflict one entry, never staged, with its code', () => {
+    const raw = 'UU both.txt\0AA new.txt\0DU gone-here.txt\0UD gone-there.txt\0M  ok.ts\0';
+    expect(parseGitStatusPorcelain(raw).entries).toEqual([
+      { filePath: 'both.txt', status: 'conflicted', staged: false, conflict: 'UU' },
+      { filePath: 'new.txt', status: 'conflicted', staged: false, conflict: 'AA' },
+      { filePath: 'gone-here.txt', status: 'conflicted', staged: false, conflict: 'DU' },
+      { filePath: 'gone-there.txt', status: 'conflicted', staged: false, conflict: 'UD' },
+      { filePath: 'ok.ts', status: 'modified', staged: true },
+    ]);
+  });
+
   it('parses staged modified file', () => {
     const raw = 'M  src/app.ts\0';
     const result = parseGitStatusPorcelain(raw);
