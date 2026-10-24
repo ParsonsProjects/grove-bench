@@ -13,6 +13,7 @@
   import type { GitStatusEntry, FileDiffResult, FileLinesResult } from '../../shared/types.js';
   import CopyButton from './CopyButton.svelte';
   import { isMarkdownFile } from '../../shared/attachments.js';
+  import { CONFLICT_KINDS, isConflictMarker } from '../../shared/git-conflicts.js';
   import { openWorktreeFile } from '$lib/worktree-files.js';
   import { formatFileSize } from '$lib/file-attachments.js';
   import ImageDiffView from './ImageDiffView.svelte';
@@ -115,14 +116,15 @@
   let hasStaging = $derived(!!onStage && !!onUnstage);
 
   // Group entries by section
+  let conflictEntries = $derived(entries.filter(e => e.status === 'conflicted'));
   let stagedEntries = $derived(entries.filter(e => e.staged));
-  let unstagedEntries = $derived(entries.filter(e => !e.staged && e.status !== 'untracked'));
+  let unstagedEntries = $derived(entries.filter(e => !e.staged && e.status !== 'untracked' && e.status !== 'conflicted'));
   let untrackedEntries = $derived(entries.filter(e => e.status === 'untracked'));
 
   // Folded down to a rail: one status letter per file, in section order. The
   // search box and section headers are hidden there, so neither filters it.
   let collapsed = $derived(panelStore.isCollapsed(panel));
-  let railEntries = $derived([...stagedEntries, ...unstagedEntries, ...untrackedEntries]);
+  let railEntries = $derived([...conflictEntries, ...stagedEntries, ...unstagedEntries, ...untrackedEntries]);
 
   // ── Viewed tracking ──
   let reviewState = $derived(reviewStore.bySession[sessionId]);
@@ -188,15 +190,16 @@
     return entry.filePath.toLowerCase().includes(q);
   }
 
+  let filteredConflictEntries = $derived(conflictEntries.filter(matchesSearch));
   let filteredStagedEntries = $derived(stagedEntries.filter(matchesSearch));
   let filteredUnstagedEntries = $derived(unstagedEntries.filter(matchesSearch));
   let filteredUntrackedEntries = $derived(untrackedEntries.filter(matchesSearch));
-  let filteredTotal = $derived(filteredStagedEntries.length + filteredUnstagedEntries.length + filteredUntrackedEntries.length);
+  let filteredTotal = $derived(filteredConflictEntries.length + filteredStagedEntries.length + filteredUnstagedEntries.length + filteredUntrackedEntries.length);
 
   // Dropdown items: all matching entries in display order
   let dropdownEntries = $derived(
     searchQuery
-      ? [...filteredStagedEntries, ...filteredUnstagedEntries, ...filteredUntrackedEntries]
+      ? [...filteredConflictEntries, ...filteredStagedEntries, ...filteredUnstagedEntries, ...filteredUntrackedEntries]
       : []
   );
   let showDropdown = $derived(searchFocused && dropdownEntries.length > 0);
@@ -242,6 +245,7 @@
   // Flat list of the files on screen, in order: the rail's, or the sections'
   // (respects collapsed sections and search). Arrow keys walk this.
   let visibleEntries = $derived(collapsed ? railEntries : [
+    ...(collapsedSections.has('conflicts') ? [] : filteredConflictEntries),
     ...(collapsedSections.has('staged') ? [] : filteredStagedEntries),
     ...(collapsedSections.has('unstaged') ? [] : filteredUnstagedEntries),
     ...(collapsedSections.has('untracked') ? [] : filteredUntrackedEntries),
@@ -281,9 +285,10 @@
       fileDiffs = kept;
       if (scopeChanged) { revealedByKey = {}; fileLinesByKey = {}; composer = null; largeDiffShown = {}; largeEditShown = {}; }
 
-      // Auto-select first file if no selection or selection no longer exists
+      // Auto-select first file if no selection or selection no longer exists:
+      // a conflict, if there is one, as it waits on you.
       if (list.length > 0 && (selectedFileKey === null || !currentKeys.has(selectedFileKey))) {
-        selectedFileKey = fileKey(list[0]);
+        selectedFileKey = fileKey(list.find(e => e.status === 'conflicted') ?? list[0]);
       } else if (list.length === 0) {
         selectedFileKey = null;
       }
@@ -417,7 +422,7 @@
       case 'n': e.preventDefault(); gotoHunk(1); break;
       case 'p': e.preventDefault(); gotoHunk(-1); break;
       case 'v': e.preventDefault(); sideBySide = !sideBySide; break;
-      case 's': if (hasStaging) { e.preventDefault(); selectedEntry.staged ? unstageEntry(selectedEntry) : stageEntry(selectedEntry); } break;
+      case 's': if (hasStaging && !resolveBlocked) { e.preventDefault(); selectedEntry.staged ? unstageEntry(selectedEntry) : stageEntry(selectedEntry); } break;
       case 'x': e.preventDefault(); toggleViewed(selectedEntry); break;
       default: {
         const extra = shortcuts[e.key];
@@ -446,6 +451,14 @@
     return lines;
   });
   let selectedHunkCount = $derived(hunkLineIndices(selectedDiffLines).length);
+  /** A conflicted file can't be marked resolved (staged) while its diff
+   *  against HEAD still has conflict markers, or until that diff is in.
+   *  Staging is how git marks it resolved, markers or not. */
+  let resolveBlocked = $derived.by((): 'markers' | 'loading' | null => {
+    if (selectedKey === null || selectedEntry?.status !== 'conflicted') return null;
+    if (!fileDiffs[selectedKey]) return 'loading';
+    return selectedDiffLines.some((l) => (l.type === 'add' || l.type === 'context') && isConflictMarker(l.text)) ? 'markers' : null;
+  });
 
   /** File keys whose large diff the user chose to see, for this comparison. */
   let largeDiffShown = $state<Record<string, true>>({});
@@ -625,6 +638,8 @@
       case 'deleted': return { label: 'D', color: 'text-red-400' };
       case 'renamed': return { label: 'R', color: 'text-blue-400' };
       case 'copied': return { label: 'C', color: 'text-blue-400' };
+      // git's letter for unmerged; amber, as for anything waiting on you.
+      case 'conflicted': return { label: 'U', color: 'text-amber-500' };
       case 'untracked': return { label: '?', color: 'text-muted-foreground' };
       default: return { label: '?', color: 'text-muted-foreground' };
     }
@@ -794,7 +809,7 @@
             onclick={() => selectFile(entry)}
             data-file-key={key}
             data-viewed={viewed ? 'true' : undefined}
-            title="{entry.filePath}{entry.staged ? ' (staged)' : ''}"
+            title="{entry.filePath}{entry.staged ? ' (staged)' : entry.status === 'conflicted' ? ' (conflict)' : ''}"
             class="w-full h-6 flex items-center justify-center text-xs font-bold border-l-2 transition-colors
               {isSelected ? 'bg-sidebar-accent border-primary' : 'border-transparent hover:bg-sidebar-accent/50'}
               {viewed && !isSelected ? 'opacity-60' : ''}"
@@ -872,6 +887,9 @@
           {#if sidebarSummaryExtra}{@render sidebarSummaryExtra()}{/if}
           <span>{entries.length} change{entries.length !== 1 ? 's' : ''}</span>
           {#if sidebarSummaryNote}{@render sidebarSummaryNote()}{/if}
+          {#if conflictEntries.length > 0}
+            <span class="text-amber-500" title="{conflictEntries.length} file{conflictEntries.length !== 1 ? 's' : ''} in conflict">{conflictEntries.length}U</span>
+          {/if}
           {#if stagedEntries.length > 0}
             <span class="text-green-400">{stagedEntries.length}S</span>
           {/if}
@@ -892,6 +910,16 @@
 
       <!-- Scrollable file list -->
       <div class="flex-1 overflow-y-auto">
+        <!-- Left in conflict by a merge, rebase or cherry-pick: first, as they need you -->
+        {#if filteredConflictEntries.length > 0}
+          {@render sidebarSectionHeader('Conflicts', 'conflicts', filteredConflictEntries.length, 'text-amber-500', filteredConflictEntries, 'none')}
+          {#if !collapsedSections.has('conflicts')}
+            {#each filteredConflictEntries as entry (entry.filePath + ':conflict')}
+              {@render sidebarFileItem(entry)}
+            {/each}
+          {/if}
+        {/if}
+
         <!-- Staged -->
         {#if filteredStagedEntries.length > 0}
           {@render sidebarSectionHeader('Staged', 'staged', filteredStagedEntries.length, 'text-green-400', filteredStagedEntries, 'unstage')}
@@ -951,6 +979,10 @@
 
         {@render diffStat(selectedEntry)}
 
+        {#if selectedEntry.conflict}
+          <span class="text-micro text-amber-500 shrink-0">Conflict: {CONFLICT_KINDS[selectedEntry.conflict]}</span>
+        {/if}
+
         {#if selectedEntry.origPath}
           <span class="text-xs text-muted-foreground truncate">← {selectedEntry.origPath}</span>
         {/if}
@@ -1007,6 +1039,18 @@
             {:else if selectedEntry.staged}
               <Button size="xs" variant="subtle" onclick={() => unstageEntry(selectedEntry)} title="Unstage this file">
                 Unstage
+              </Button>
+            {:else if selectedEntry.status === 'conflicted'}
+              <Button
+                size="xs"
+                variant="outline-success"
+                onclick={() => stageEntry(selectedEntry)}
+                disabled={resolveBlocked !== null}
+                title={resolveBlocked === 'markers'
+                  ? 'It still has conflict markers (<<<<<<< and >>>>>>>). Edit them out first, or ask the agent to'
+                  : 'Mark the conflict resolved: stage the file as it is now (git add)'}
+              >
+                Mark resolved
               </Button>
             {:else}
               <Button size="xs" variant="outline-success" onclick={() => stageEntry(selectedEntry)} title="Stage this file">

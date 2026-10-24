@@ -430,6 +430,80 @@ describe('ChangesReviewPanel — revert warnings', () => {
   });
 });
 
+describe('ChangesReviewPanel — merge conflicts', () => {
+  /** A conflicted file's diff against HEAD, as main sends it. */
+  const withMarkers = '--- a/both.txt\n+++ b/both.txt\n@@ -1 +1,5 @@\n+<<<<<<< HEAD\n ours\n+=======\n+theirs\n+>>>>>>> main\n';
+  const resolved = '--- a/both.txt\n+++ b/both.txt\n@@ -1 +1 @@\n-ours\n+merged\n';
+  const conflicted = () => entry('both.txt', { status: 'conflicted', conflict: 'UU' });
+
+  function show(entries: GitStatusEntry[], diff: string) {
+    mockGroveBench.getFileDiff.mockResolvedValue({ kind: 'text', patch: diff });
+    gitStatusStore.statusBySession = { [SID]: { entries } };
+    return render(ChangesReviewPanel, { sessionId: SID });
+  }
+
+  it('lists a conflicted file first, under Conflicts, opens it and says how it conflicts', async () => {
+    const view = show([entry('a.ts'), conflicted(), entry('b.ts', { staged: true })], withMarkers);
+
+    await waitFor(() => expect(diffText(view.container)).toContain('theirs'));
+    expect(view.getByText('Conflicts')).toBeInTheDocument();
+    const listed = [...view.container.querySelectorAll('[role="listbox"] [data-file-key]')].map((el) => el.getAttribute('data-file-key'));
+    expect(listed).toEqual(['both.txt:false', 'b.ts:true', 'a.ts:false']);
+    expect(view.getByText('Conflict: both modified')).toBeInTheDocument();
+    expect(mockGroveBench.getFileDiff).toHaveBeenCalledWith(SID, 'both.txt', false, undefined);
+  });
+
+  it("won't mark it resolved while it still has conflict markers", async () => {
+    const view = show([conflicted()], withMarkers);
+    await waitFor(() => expect(diffText(view.container)).toContain('theirs'));
+
+    const button = view.getByRole('button', { name: 'Mark resolved' });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute('title', expect.stringContaining('still has conflict markers'));
+  });
+
+  it('waits for its diff before it can be marked resolved', async () => {
+    let send!: (diff: { kind: 'text'; patch: string }) => void;
+    mockGroveBench.getFileDiff.mockImplementation(() => new Promise((r) => { send = r; }));
+    gitStatusStore.statusBySession = { [SID]: { entries: [conflicted()] } };
+    const view = render(ChangesReviewPanel, { sessionId: SID });
+
+    const button = await view.findByRole('button', { name: 'Mark resolved' });
+    expect(button).toBeDisabled();
+    send({ kind: 'text', patch: resolved });
+    await waitFor(() => expect(button).toBeEnabled());
+  });
+
+  it('marks it resolved, by staging it, once the markers are gone', async () => {
+    const view = show([conflicted()], resolved);
+    await waitFor(() => expect(diffText(view.container)).toContain('merged'));
+
+    const button = view.getByRole('button', { name: 'Mark resolved' });
+    expect(button).toBeEnabled();
+    await fireEvent.click(button);
+    expect(mockGroveBench.stageFile).toHaveBeenCalledWith(SID, 'both.txt');
+  });
+
+  it('offers no Revert, which git would refuse, nor a plain Stage', async () => {
+    const view = show([conflicted()], resolved);
+    await waitFor(() => expect(diffText(view.container)).toContain('merged'));
+
+    expect(view.queryByRole('button', { name: 'Revert' })).toBeNull();
+    expect(view.queryByRole('button', { name: 'Stage' })).toBeNull();
+  });
+
+  it('shows conflicts in the Branch view too, where nothing is staged', async () => {
+    gitStatusStore.scopeBySession = { [SID]: { scope: 'branch', base: 'main' } };
+    mockGroveBench.getGitStatus.mockResolvedValue({ entries: [conflicted()], baseRef: 'main' });
+    const view = show([conflicted()], withMarkers);
+    await waitFor(() => expect(diffText(view.container)).toContain('theirs'));
+
+    expect(view.getByText('Conflicts')).toBeInTheDocument();
+    expect(view.getByText('Conflict: both modified')).toBeInTheDocument();
+    expect(view.queryByRole('button', { name: 'Mark resolved' })).toBeNull();
+  });
+});
+
 describe('ChangesReviewPanel — diff cache', () => {
   beforeEach(() => {
     reviewStore.clear(SID);

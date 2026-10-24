@@ -365,7 +365,9 @@
 {/snippet}
 
 {#snippet headerActions(entry: GitStatusEntry)}
-  {#if !isBranchScope}
+  <!-- A conflict can't be reverted (revertFile refuses it): it is resolved,
+       then marked resolved, or the merge is aborted in the terminal. -->
+  {#if !isBranchScope && entry.status !== 'conflicted'}
     {@const isUntracked = entry.status === 'untracked'}
     {@const reverting = revertingFiles.has(`${entry.filePath}:${entry.staged}`)}
     <Button

@@ -1316,6 +1316,24 @@ describe('git handlers', () => {
     );
   });
 
+  it('GIT_STATUS branch scope lists a file in conflict once, as one, not as the change the diff from the base calls it', async () => {
+    vi.mocked(git.resolveMergeBase).mockResolvedValue({ ref: 'origin/main', mergeBase: 'mb' });
+    vi.mocked(git.git).mockImplementation(async (args: string[]) => {
+      if (args[0] === 'diff' && args[1] === '--name-status') return 'M\0both.txt\0M\0src/a.ts\0';
+      if (args[0] === 'status') return 'UU both.txt\0';
+      return '';
+    });
+    vi.mocked(git.hashWorkingFiles).mockResolvedValue('h1\nh2\n');
+
+    const result = await invoke(IPC.GIT_STATUS, 's1', { scope: 'branch', base: 'main' });
+
+    expect(result.entries).toEqual([
+      expect.objectContaining({ filePath: 'both.txt', status: 'conflicted', conflict: 'UU', staged: false }),
+      expect.objectContaining({ filePath: 'src/a.ts', status: 'modified' }),
+    ]);
+    expect(result.uncommitted).toBe(1);
+  });
+
   it('GIT_STATUS says so when git fails, rather than reading as a clean tree', async () => {
     vi.mocked(git.git).mockRejectedValue(new Error('not a git repository'));
     expect(await invoke(IPC.GIT_STATUS, 's1')).toEqual({ entries: [], error: 'not a git repository' });

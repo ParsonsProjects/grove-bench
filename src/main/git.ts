@@ -3,6 +3,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import type { BranchCommit, CommitEntry, FileDiffResult, GitOpResult, GitSyncStatus } from '../shared/types.js';
 import { porcelainRecords } from './git-status-parser.js';
+import { isConflictCode } from '../shared/git-conflicts.js';
 
 /** Cap on network git commands (fetch): a dead network must not leave git
  *  processes hanging or block what waits on them. */
@@ -180,9 +181,6 @@ export async function validateBranchName(name: string): Promise<boolean> {
   }
 }
 
-/** The status codes of a file left in conflict (git status, "Short Format"). */
-const CONFLICT_CODES = new Set(['UU', 'AA', 'DD', 'DU', 'UD', 'AU', 'UA']);
-
 /**
  * Work out which files a failed merge/rebase/cherry-pick left in conflict:
  * porcelain status first, then `diff --diff-filter=U`, then the CONFLICT
@@ -195,7 +193,7 @@ async function detectConflicts(cwd: string, opErr: any): Promise<string[]> {
     // -z: names as they are. Without it git quotes and escapes any name
     // outside ASCII ("caf\303\251.ts").
     const conflicts = porcelainRecords(await git(['status', '--porcelain', '-z'], cwd))
-      .filter((r) => CONFLICT_CODES.has(r.xy))
+      .filter((r) => isConflictCode(r.xy))
       .map((r) => r.path);
     if (conflicts.length > 0) return conflicts;
 
@@ -421,6 +419,11 @@ export async function checkoutBranch(
   else await git(['checkout', branch, '--'], cwd);
 }
 
+/** What `git diff` (working tree against the index) gives a file in
+ *  conflict: a combined diff, a column per side, or only this line when one
+ *  side deleted it. */
+const UNMERGED_DIFF = /^(diff --cc |\* Unmerged path )/;
+
 /**
  * Diff a single file. `staged` selects the index-vs-HEAD diff (`--cached`);
  * otherwise the working-tree-vs-index diff is returned. Returns the raw unified
@@ -435,7 +438,12 @@ export async function fileDiff(
   const args = opts.staged
     ? ['diff', '--cached', '--', relPath]
     : ['diff', '--', relPath];
-  return gitPatch(args, cwd);
+  const patch = await gitPatch(args, cwd);
+  // A file in conflict has a copy per side in the index rather than one to
+  // diff against: show it as it is now, conflict markers and all, against
+  // HEAD.
+  if (!opts.staged && patch && UNMERGED_DIFF.test(patch)) return gitPatch(['diff', 'HEAD', '--', relPath], cwd);
+  return patch;
 }
 
 /** Whether git tracks a path (it is in the index), unlike a new or ignored file. */
@@ -610,7 +618,7 @@ const literal = (relPath: string) => `:(literal)${gitPath(relPath)}`;
 export async function revertFile(cwd: string, relPath: string, staged: boolean, renamedFrom?: string): Promise<void> {
   // The whole tree: a rename only reads as one with both its paths in view.
   const record = porcelainRecords(await git(['status', '--porcelain=v1', '-z'], cwd)).find((r) => r.path === gitPath(relPath));
-  if (record && CONFLICT_CODES.has(record.xy)) {
+  if (record && isConflictCode(record.xy)) {
     // Neither side is safe: checkout refuses an unmerged path, and rm would
     // delete a file both branches added, HEAD's copy included.
     throw new Error(`${relPath} has a merge conflict. Resolve it, or abort the merge, before reverting.`);

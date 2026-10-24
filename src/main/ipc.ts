@@ -1641,7 +1641,14 @@ export function registerHandlers() {
         const tracked = parseNameStatus(await git(['diff', '--name-status', '-z', mb.mergeBase], cwd));
         const status = parseGitStatusPorcelain(await git(['status', '--porcelain=v1', '-z', '--untracked-files=all'], cwd));
         const untracked = status.entries.filter(e => e.status === 'untracked');
-        result = { entries: [...tracked, ...untracked], baseRef: mb.ref, uncommitted: status.entries.length };
+        // The diff from the base lists a file in conflict as an ordinary change.
+        const conflicted = status.entries.filter(e => e.status === 'conflicted');
+        const conflictPaths = new Set(conflicted.map(e => e.filePath));
+        result = {
+          entries: [...conflicted, ...tracked.filter(e => !conflictPaths.has(e.filePath)), ...untracked],
+          baseRef: mb.ref,
+          uncommitted: status.entries.length,
+        };
       } else {
         const raw = await git(['status', '--porcelain=v1', '-z', '--untracked-files=all'], cwd);
         result = parseGitStatusPorcelain(raw);

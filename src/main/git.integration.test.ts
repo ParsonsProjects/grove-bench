@@ -108,6 +108,32 @@ describe('a merge conflict', () => {
   });
 });
 
+describe('a file in conflict', () => {
+  it('is diffed against HEAD, markers and all, however it conflicts', async () => {
+    commit('gone.txt', 'kept');
+    run('checkout', '-q', '-b', 'other');
+    commit('both.txt', 'theirs');
+    commit('gone.txt', 'changed there');
+    run('checkout', '-q', 'main');
+    commit('both.txt', 'ours');
+    run('rm', '-q', 'gone.txt');
+    run('commit', '-qm', 'gone here');
+    expect(() => run('merge', '-q', 'other')).toThrow();
+    expect(parseGitStatusPorcelain(run('status', '--porcelain=v1', '-z')).entries).toEqual([
+      { filePath: 'both.txt', status: 'conflicted', staged: false, conflict: 'AA' },
+      { filePath: 'gone.txt', status: 'conflicted', staged: false, conflict: 'DU' },
+    ]);
+
+    // Plain `git diff` gives a combined diff for one, and no diff for the other.
+    const both = await fileDiff(repo, 'both.txt');
+    expect(both).toMatch(/^diff --git /);
+    expect(both).toContain('\n+<<<<<<< HEAD\n ours\n+=======\n+theirs\n+>>>>>>> other');
+    const gone = await fileDiff(repo, 'gone.txt');
+    expect(gone).toContain('new file mode');
+    expect(gone).toContain('\n+changed there');
+  });
+});
+
 describe('line counts', () => {
   it('reads a rename and a name outside ASCII as git status names them', () => {
     fs.writeFileSync(path.join(repo, 'a.txt'), 'one\ntwo\n');
