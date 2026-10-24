@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -13,16 +13,19 @@ vi.mock('./logger.js', () => ({ getLogDir: () => dir }));
 
 import { perfLine, perfLogPath, closePerfLog } from './perf-log.js';
 
-/** Close the file and wait until what was written is on disk. */
+/** Close the file, once what was written is on disk. */
 async function flushed(): Promise<string> {
-  closePerfLog();
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  await closePerfLog();
   return fs.readFileSync(perfLogPath(), 'utf-8');
 }
 
+afterAll(async () => {
+  await closePerfLog();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 beforeEach(async () => {
-  closePerfLog();
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  await closePerfLog();
   for (const f of fs.readdirSync(dir)) fs.rmSync(path.join(dir, f), { recursive: true });
 });
 
