@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -18,6 +18,11 @@ async function flushed(): Promise<string> {
   await closePerfLog();
   return fs.readFileSync(perfLogPath(), 'utf-8');
 }
+
+afterAll(async () => {
+  await closePerfLog();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
 
 beforeEach(async () => {
   await closePerfLog();

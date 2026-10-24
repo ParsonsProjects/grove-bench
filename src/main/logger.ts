@@ -85,7 +85,8 @@ export const logger = {
     console.error(msg, ...args);
     write('error', formatMessage('ERROR', msg, ...args));
   },
-  close() {
-    logFile.close();
+  /** Settles once the log file is closed. */
+  close(): Promise<void> {
+    return logFile.close();
   },
 };

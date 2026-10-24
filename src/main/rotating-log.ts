@@ -23,7 +23,8 @@ export interface RotatingLog {
   write(text: string): void;
   /** Close the stream (at quit). The next write reopens it. Settles once
    *  what was written is on disk and the file is closed (or the stream has
-   *  failed): the stream opens, writes and closes in the background. */
+   *  failed), for this stream and any ended before it by an earlier close or
+   *  a rotation: a stream opens, writes and closes in the background. */
   close(): Promise<void>;
 }
 
@@ -38,6 +39,15 @@ function sizeOf(file: string): number {
 export function createRotatingLog({ path, maxSize, maxFiles, header, checkEvery = 500 }: RotatingLogOptions): RotatingLog {
   let stream: fs.WriteStream | null = null;
   let writesSinceCheck = 0;
+  /** Streams ended but not closed yet: their last writes are on the way. */
+  const closing = new Set<Promise<void>>();
+
+  /** End `s`, and keep track of it until it has closed (or failed). */
+  function retire(s: fs.WriteStream): void {
+    const closed = new Promise<void>((resolve) => s.close(() => resolve()));
+    closing.add(closed);
+    void closed.then(() => closing.delete(closed));
+  }
 
   /** Shift file → file.1 → file.2 ..., dropping the oldest. */
   function rotate(file: string): void {
@@ -68,20 +78,15 @@ export function createRotatingLog({ path, maxSize, maxFiles, header, checkEvery 
         writesSinceCheck = 0;
         if (sizeOf(path()) >= maxSize) {
           // The next write rotates and reopens.
-          stream.end();
+          retire(stream);
           stream = null;
         }
       }
     },
     close() {
-      const s = stream;
+      if (stream) retire(stream);
       stream = null;
-      if (!s || s.closed) return Promise.resolve();
-      // 'close' follows the last write, and also a failure.
-      return new Promise((resolve) => {
-        s.once('close', () => resolve());
-        s.end();
-      });
+      return Promise.all(closing).then(() => {});
     },
   };
 }
