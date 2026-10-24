@@ -33,6 +33,10 @@ export interface DiffLine {
   hunk?: HunkRange;
   /** Hidden-line gap on expander rows. */
   gap?: ContextGap;
+  /** From a replacement shown as its old text, then its new: where a line
+   *  sits says nothing about which line it became, so it's never paired
+   *  with one for word marks. */
+  unpaired?: true;
 }
 
 export interface SideBySideRow {

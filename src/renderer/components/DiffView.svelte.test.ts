@@ -10,6 +10,7 @@ vi.mock('dompurify', async () => {
 });
 
 import DiffView from './DiffView.svelte';
+import type { DiffLine } from '../lib/diff-types.js';
 import { parseDiffLines } from '../lib/diff-parse.js';
 import type { ReviewComment } from '../lib/diff-types.js';
 
@@ -105,5 +106,29 @@ describe('DiffView highlighting', () => {
     await vi.waitFor(() => expect(container.querySelector('.hljs-keyword')).not.toBeNull());
     expect(container.querySelector('img')).toBeNull();
     expect(container).toHaveTextContent(text);
+  });
+});
+
+describe('word marks', () => {
+  /** A replacement of two lines, each changing one word. */
+  const pairs = (unpaired?: true): DiffLine[] => [
+    { type: 'hunk', text: '@@ -1,2 +1,2 @@' },
+    { type: 'del', text: 'const v0 = f(0);', lineNum: 1, ...(unpaired ? { unpaired } : {}) },
+    { type: 'del', text: 'const v1 = f(1);', lineNum: 2, ...(unpaired ? { unpaired } : {}) },
+    { type: 'add', text: 'const v0 = g(0);', lineNum: 1, ...(unpaired ? { unpaired } : {}) },
+    { type: 'add', text: 'const v1 = g(1);', lineNum: 2, ...(unpaired ? { unpaired } : {}) },
+  ];
+
+  const marks = (lines: DiffLine[], sideBySide: boolean) =>
+    render(DiffView, { lines, sideBySide, filePath: 'f.ts' }).container.querySelectorAll('mark.diff-mark').length;
+
+  it('marks the changed words between removed and added lines a diff lined up', () => {
+    expect(marks(pairs(), false)).toBe(4);
+    expect(marks(pairs(), true)).toBe(4);
+  });
+
+  it("doesn't pair lines shown as the old text, then the new: their places say nothing", () => {
+    expect(marks(pairs(true), false)).toBe(0);
+    expect(marks(pairs(true), true)).toBe(0);
   });
 });

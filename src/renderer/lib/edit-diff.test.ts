@@ -45,6 +45,16 @@ describe('quickEditDiff', () => {
     expect(quickEditDiff(edit(`${block}\nend`, 'end'), 'notes.txt').diff?.linedUp).toBe(true);
   });
 
+  it('gives up on a large edit at its first replacement past the cap, rather than half a diff', () => {
+    vi.mocked(createPatch).mockReturnValue(undefined as never);
+    vi.mocked(createPatch).mockClear();
+    const half = file.slice(0, 600).join('\n');
+    const view: ToolView = { kind: 'edit', path: 'f', edits: [{ oldText: half, newText: `${half}!` }, { oldText: half, newText: `!${half}` }] };
+
+    expect(quickEditDiff(view, 'f')).toEqual({ diff: null, large: true });
+    expect(createPatch).toHaveBeenCalledOnce();
+  });
+
   it('shows an edit under the limits at once as the old text, then the new, after one capped try', () => {
     vi.mocked(createPatch).mockReturnValue(undefined as never);
     vi.mocked(createPatch).mockClear();
@@ -90,9 +100,31 @@ describe('fullEditDiff', () => {
     expect(quick).toBeUndefined();
     expect(lines).toEqual([
       { type: 'hunk', text: '@@ -1,2 +1,1 @@' },
-      { type: 'del', text: 'one', lineNum: 1, oldLineNum: 1 },
-      { type: 'del', text: 'two', lineNum: 2, oldLineNum: 2 },
-      { type: 'add', text: 'uno', lineNum: 1, newLineNum: 1 },
+      { type: 'del', text: 'one', lineNum: 1, oldLineNum: 1, unpaired: true },
+      { type: 'del', text: 'two', lineNum: 2, oldLineNum: 2, unpaired: true },
+      { type: 'add', text: 'uno', lineNum: 1, newLineNum: 1, unpaired: true },
+    ]);
+  });
+
+  it('falls back one replacement at a time: the others keep their diffs', () => {
+    // The second replacement runs out of time; the first and third don't.
+    vi.mocked(createPatch)
+      .mockImplementationOnce(realCreatePatch)
+      .mockImplementationOnce((() => undefined) as never)
+      .mockImplementationOnce(realCreatePatch);
+    const view: ToolView = { kind: 'edit', path: 'f', edits: [
+      { oldText: 'let a = 1;\n', newText: 'let a = 2;\n' },
+      { oldText: 'x\ny\n', newText: 'y\nx\n' },
+      { oldText: 'let c = 1;\n', newText: 'let c = 3;\n' },
+    ] };
+
+    const diff = fullEditDiff(view, 'f', null);
+
+    expect(diff).toMatchObject({ linedUp: false, partly: true });
+    expect(diff.lines.filter((l) => l.type !== 'hunk').map((l) => [l.type, l.text, !!l.unpaired])).toEqual([
+      ['del', 'let a = 1;', false], ['add', 'let a = 2;', false],
+      ['del', 'x', true], ['del', 'y', true], ['add', 'y', true], ['add', 'x', true],
+      ['del', 'let c = 1;', false], ['add', 'let c = 3;', false],
     ]);
   });
 

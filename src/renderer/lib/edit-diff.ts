@@ -27,26 +27,32 @@ const QUICK_DIFF_MS = 50;
  *  diff; of 10,000, 28 s. */
 const FULL_DIFF_MS = 1000;
 
-/** An edit's diff, ready to draw. `linedUp` is false when it had too many
- *  changes to work out in time, so `lines` are the old text, then the new.
- *  `quick` marks one only quickEditDiff gave up on: fullEditDiff with no
- *  known diff may still line it up ("Compare line by line"). */
-export interface EditDiff { lines: DiffLine[]; linedUp: boolean; quick?: boolean }
+/** An edit's diff, ready to draw. `linedUp` is false when a replacement had
+ *  too many changes to work out in time, so its lines are the old text, then
+ *  the new; `partly` when others in the edit were worked out. `quick` marks
+ *  one only quickEditDiff gave up on: fullEditDiff with no known diff may
+ *  still line it up ("Compare line by line"). */
+export interface EditDiff { lines: DiffLine[]; linedUp: boolean; partly?: boolean; quick?: boolean }
 
 /**
  * An edit's diff, worked out with capped effort, and whether it's large
  * enough to wait for "Show edit" (isLargeDiff). `diff` is null when it wasn't
  * worked out (a large write, or a large edit past the cap): fullEditDiff
- * works it out once asked. An edit under the large-diff limits past the cap
- * is the old text, then the new, which is no bigger and takes no time.
+ * works it out once asked. Under the large-diff limits, a replacement past
+ * the cap is its old text, then its new, which is no bigger and takes no
+ * time; the others keep their diffs.
  */
 export function quickEditDiff(view: ToolView, filePath: string): { diff: EditDiff | null; large: boolean } {
   // A diff is no bigger than the text it's made from.
   const small = !isLargeDiff(editSize(view));
   if (!view.edits?.length) return small ? { diff: { lines: writeLines(view), linedUp: true }, large: false } : { diff: null, large: true };
-  const lines = patchLines(view.edits, filePath, small ? { ms: QUICK_DIFF_MS } : { maxEditLength: QUICK_EDIT_LENGTH, ms: QUICK_DIFF_MS });
-  if (lines) return { diff: { lines, linedUp: true }, large: !small && isLargeDiff(diffSize(lines)) };
-  return small ? { diff: { lines: oldThenNew(view.edits), linedUp: false, quick: true }, large: false } : { diff: null, large: true };
+  if (!small) {
+    // Held back unless it all works out: "Show edit" works it out in full.
+    const patched = patchLines(view.edits, filePath, { maxEditLength: QUICK_EDIT_LENGTH, ms: QUICK_DIFF_MS, allOrNothing: true });
+    return patched ? { diff: patched, large: isLargeDiff(diffSize(patched.lines)) } : { diff: null, large: true };
+  }
+  const patched = patchLines(view.edits, filePath, { ms: QUICK_DIFF_MS });
+  return { diff: patched.linedUp ? patched : { ...patched, quick: true }, large: false };
 }
 
 /** An edit's diff once shown: what quickEditDiff already worked out, else
@@ -57,8 +63,7 @@ export function quickEditDiff(view: ToolView, filePath: string): { diff: EditDif
 export function fullEditDiff(view: ToolView, filePath: string, known: EditDiff | null): EditDiff {
   if (known) return known;
   if (!view.edits?.length) return { lines: writeLines(view), linedUp: true };
-  const lines = patchLines(view.edits, filePath, { ms: FULL_DIFF_MS });
-  return lines ? { lines, linedUp: true } : { lines: oldThenNew(view.edits), linedUp: false };
+  return patchLines(view.edits, filePath, { ms: FULL_DIFF_MS });
 }
 
 /** A whole-file write's diff lines: all of it, added. */
@@ -67,37 +72,45 @@ function writeLines(view: ToolView): DiffLine[] {
   return view.write.split('\n').map((line, i) => ({ type: 'add' as const, text: line, lineNum: i + 1 }));
 }
 
-/** Each replacement as a patch's diff lines, or null once they take longer
- *  than `ms` together, or one needs more than `maxEditLength` changed lines.
- *  jsdiff's clock starts after it splits the text into lines, so a huge
- *  edit can run a little over. */
-function patchLines(edits: ToolTextEdit[], filePath: string, limits: { maxEditLength?: number; ms: number }): DiffLine[] | null {
+/** Each replacement as a patch's diff lines, within `ms` for them all and
+ *  `maxEditLength` changed lines each. One past them is its old text, then
+ *  its new, as is every one after the time is up: the others keep their
+ *  diffs. With `allOrNothing`, null instead. jsdiff's clock starts after it
+ *  splits the text into lines, so a huge edit can run a little over. */
+function patchLines(edits: ToolTextEdit[], filePath: string, limits: { maxEditLength?: number; ms: number; allOrNothing: true }): EditDiff | null;
+function patchLines(edits: ToolTextEdit[], filePath: string, limits: { maxEditLength?: number; ms: number }): EditDiff;
+function patchLines(edits: ToolTextEdit[], filePath: string, limits: { maxEditLength?: number; ms: number; allOrNothing?: true }): EditDiff | null {
   const deadline = performance.now() + limits.ms;
   const out: DiffLine[] = [];
+  let patched = 0;
+  let fellBack = 0;
   for (const edit of edits) {
     if (!edit.oldText && !edit.newText) continue;
     const timeout = deadline - performance.now();
-    if (timeout <= 0) return null;
-    const patch = createPatch(filePath || 'file', edit.oldText, edit.newText, '', '', { context: 3, timeout, maxEditLength: limits.maxEditLength });
-    if (patch === undefined) return null;
+    const patch = timeout > 0
+      ? createPatch(filePath || 'file', edit.oldText, edit.newText, '', '', { context: 3, timeout, maxEditLength: limits.maxEditLength })
+      : undefined;
+    if (patch === undefined) {
+      if (limits.allOrNothing) return null;
+      fellBack++;
+      oldThenNew(edit, out);
+      continue;
+    }
+    patched++;
     // One at a time: spreading 130,000 or so into push() overflows the stack.
     for (const line of parseDiffLines(patch)) out.push(line);
   }
-  return out;
+  return fellBack === 0 ? { lines: out, linedUp: true } : { lines: out, linedUp: false, ...(patched > 0 ? { partly: true } : {}) };
 }
 
-/** Each replacement as all of its old lines, then all of its new. */
-function oldThenNew(edits: ToolTextEdit[]): DiffLine[] {
-  const out: DiffLine[] = [];
-  for (const edit of edits) {
-    const oldLines = textLines(edit.oldText);
-    const newLines = textLines(edit.newText);
-    if (!oldLines.length && !newLines.length) continue;
-    out.push({ type: 'hunk', text: `@@ -${oldLines.length ? 1 : 0},${oldLines.length} +${newLines.length ? 1 : 0},${newLines.length} @@` });
-    oldLines.forEach((text, i) => out.push({ type: 'del', text, lineNum: i + 1, oldLineNum: i + 1 }));
-    newLines.forEach((text, i) => out.push({ type: 'add', text, lineNum: i + 1, newLineNum: i + 1 }));
-  }
-  return out;
+/** A replacement as all of its old lines, then all of its new, onto `out`. */
+function oldThenNew(edit: ToolTextEdit, out: DiffLine[]): void {
+  const oldLines = textLines(edit.oldText);
+  const newLines = textLines(edit.newText);
+  if (!oldLines.length && !newLines.length) return;
+  out.push({ type: 'hunk', text: `@@ -${oldLines.length ? 1 : 0},${oldLines.length} +${newLines.length ? 1 : 0},${newLines.length} @@` });
+  oldLines.forEach((text, i) => out.push({ type: 'del', text, lineNum: i + 1, oldLineNum: i + 1, unpaired: true }));
+  newLines.forEach((text, i) => out.push({ type: 'add', text, lineNum: i + 1, newLineNum: i + 1, unpaired: true }));
 }
 
 /** A text's lines, as a patch counts them: a final newline ends the last

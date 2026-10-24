@@ -174,12 +174,21 @@ export type ThreadRow =
   | { kind: 'message'; msg: ChatMessage }
   | { kind: 'notes'; msgs: ChatMessage[] };
 
+/** Each message's row, kept while the message is: the thread derives its
+ *  rows again on every new message, and a new row object reruns everything
+ *  drawn from it (an edit's diff among them). */
+const messageRows = new WeakMap<ChatMessage, ThreadRow>();
+
 /** Visible messages as rows, each run of notes (narrationIds) in one row. */
 export function foldNarration(visible: ChatMessage[], notes: Set<string>): ThreadRow[] {
   const rows: ThreadRow[] = [];
   for (const msg of visible) {
     const last = rows[rows.length - 1];
-    if (!notes.has(msg.id)) rows.push({ kind: 'message', msg });
+    if (!notes.has(msg.id)) {
+      let row = messageRows.get(msg);
+      if (!row) messageRows.set(msg, row = { kind: 'message', msg });
+      rows.push(row);
+    }
     else if (last?.kind === 'notes') last.msgs.push(msg);
     else rows.push({ kind: 'notes', msgs: [msg] });
   }

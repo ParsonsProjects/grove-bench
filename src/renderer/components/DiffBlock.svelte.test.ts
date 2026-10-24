@@ -134,6 +134,16 @@ describe('DiffBlock large edits', () => {
     expect(container.querySelectorAll('.diff-del')).toHaveLength(2);
   });
 
+  it('says only some replacements are the old text, then the new, when the others lined up', () => {
+    vi.mocked(createPatch)
+      .mockImplementationOnce(realCreatePatch)
+      .mockImplementationOnce((() => undefined) as never);
+    render(DiffBlock, { sessionId: 's1', view: { kind: 'edit', path: 'notes.txt', edits: [{ oldText: 'a\n', newText: 'b\n' }, ...swapped.edits!] }, pending: false });
+
+    expect(screen.getByText('Some replacements have too many changes to compare line by line without a pause, so they show the old text, then the new.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Compare edit to notes.txt line by line' })).toBeInTheDocument();
+  });
+
   it('compares such an edit line by line once asked', async () => {
     capsGiveUp('quick');
     const { container } = render(DiffBlock, { sessionId: 's1', view: swapped, pending: false });

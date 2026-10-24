@@ -10,6 +10,12 @@ vi.mock('dompurify', () => ({
   default: { addHook: () => {}, sanitize: (html: string) => html },
 }));
 
+// Counted, to see an edit's diff isn't worked out again; otherwise the real one.
+vi.mock('diff', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('diff')>();
+  return { ...actual, createPatch: vi.fn(actual.createPatch) };
+});
+import { createPatch } from 'diff';
 import OutputPanel from './OutputPanel.svelte';
 import { messageStore, type ChatMessage } from '../stores/messages.svelte.js';
 import { store } from '../stores/sessions.svelte.js';
@@ -860,5 +866,29 @@ describe('OutputPanel images from the agent', () => {
       expect(container.querySelector('[data-msg-id="f1"]')!.textContent).toContain('report.pdf');
       unmount();
     }
+  });
+});
+
+describe('OutputPanel: an edit in the thread', () => {
+  it("isn't diffed again as the turns after it come in", async () => {
+    store.activeSessionId = SID;
+    const edit: ChatMessage = { kind: 'tool_call', id: 'e1', toolName: 'Edit', toolInput: { file_path: 'a.ts', old_string: 'let a = 1;', new_string: 'let a = 2;' }, toolUseId: 'tu-e1', uuid: 'a1', pending: false, result: 'ok' };
+    messageStore.messagesBySession = { [SID]: [{ kind: 'user', id: 'u1', text: 'go' }, edit] };
+    messageStore.setViewMode(SID, 'detailed');
+    const { container } = render(OutputPanel, { sessionId: SID });
+    await tick();
+    expect(container).toHaveTextContent('let a = 2;');
+    vi.mocked(createPatch).mockClear();
+
+    // Each of these used to rebuild every row, and every edit's diff with it.
+    messageStore.ingestEvent(SID, { type: 'assistant_text', text: 'Now the tests', uuid: 'a2' });
+    await tick();
+    messageStore.ingestEvent(SID, { type: 'assistant_tool_use', toolName: 'Read', toolInput: { file_path: 'b.ts' }, toolUseId: 'tu-r1', uuid: 'a3' });
+    await tick();
+    messageStore.ingestEvent(SID, { type: 'tool_result', toolUseId: 'tu-r1', content: 'contents' });
+    await tick();
+
+    expect(container).toHaveTextContent('Now the tests');
+    expect(createPatch).not.toHaveBeenCalled();
   });
 });
