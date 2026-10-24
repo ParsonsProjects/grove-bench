@@ -117,14 +117,20 @@ describe('gitStatusStore — default branch view', () => {
     sessionStore.sessions = ids.map((id) => ({ id, branch: 'feat', repoPath: '/repo', status: 'running' })) as never;
   };
   let prBase: Record<string, string> = {};
+  let savedBase = '';
 
   beforeEach(() => {
     prBase = {};
     gitStatusStore.setPrBaseSource((id) => prBase[id]);
+    savedBase = settingsStore.current.defaultBaseBranch;
     settingsStore.current = { ...settingsStore.current, defaultBaseBranch: '' };
   });
 
   afterEach(() => {
+    // Put back what these tests change: the others compare against the
+    // default branch the store falls back to, and CI shuffles the order.
+    settingsStore.current = { ...settingsStore.current, defaultBaseBranch: savedBase };
+    gitStatusStore.setPrBaseSource(() => undefined);
     sessionStore.sessions = [];
     for (const id of ['fresh', 'picked', 'empty', 'pr', 'setting', 'chosen']) gitStatusStore.clear(id);
   });
