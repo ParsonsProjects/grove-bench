@@ -639,7 +639,7 @@ export function registerHandlers() {
     await worktreeManager.assertRemovable(id);
     previewManager.close(id);
     await terminalManager.killAllForSession(id);
-    await sessionManager.destroySession(id); // includes 500ms Windows handle-release delay
+    await sessionManager.destroySession(id); // includes its wait for Windows to release file handles (handleReleaseMs)
     await worktreeManager.remove(id, deleteBranch);
     // Cascade: no orphan bookmarks. The conversation is already gone, so a
     // bookmarks file that can't be read right now doesn't fail the delete.

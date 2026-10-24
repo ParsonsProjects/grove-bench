@@ -102,6 +102,10 @@ function sleepRefusal(session: ManagedSession): string | null {
 }
 
 class AgentSessionManager {
+  /** How long destroySession waits once the agent is stopped, so Windows
+   *  releases the files its processes held before the worktree is removed.
+   *  Tests set it to 0. */
+  handleReleaseMs = 500;
   private sessions = new Map<string, ManagedSession>();
   private completionCallbacks = new Map<string, (result: SessionCompletionResult) => void>();
   /** Session setups (worktree, dependency install, adapter start) still in
@@ -1990,7 +1994,7 @@ class AgentSessionManager {
     });
 
     // Wait for Windows file handles to release
-    await new Promise((r) => setTimeout(r, 500));
+    await new Promise((r) => setTimeout(r, this.handleReleaseMs));
 
     await this.events.flush(session);
     this.events.forget(id);
