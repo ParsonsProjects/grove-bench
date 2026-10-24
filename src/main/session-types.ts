@@ -143,6 +143,9 @@ export interface ManagedSession {
   /** Resolves once sleepSession() has shut the agent process down. A wake,
    *  close or destroy waits on it so two agents never share a transcript. */
   sleepSettled: Promise<void> | null;
+  /** Resolves once runQuery has killed an agent it started for a thread that
+   *  was closing or being deleted. shutDown() waits on it. */
+  abandonedStart: Promise<void> | null;
   /** The query whose turn is in progress: set when a message is sent or the
    *  agent starts replying, cleared on its result. Tied to the handle, so a
    *  replaced query never counts as mid-turn. Idle sleep refuses while set,

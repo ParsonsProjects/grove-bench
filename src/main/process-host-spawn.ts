@@ -83,6 +83,24 @@ export class HostedProcess extends EventEmitter {
     return true;
   }
 
+  /** Resolves with the pid once the OS has created the process (its host
+   *  reports it a moment after spawnProcess returns), or with undefined if
+   *  it ends without starting. */
+  started(): Promise<number | undefined> {
+    if (this.pid !== undefined || this.exited || this.closed) return Promise.resolve(this.pid);
+    return new Promise((resolve) => {
+      const done = () => {
+        this.off('spawn', done);
+        this.off('exit', done);
+        this.off('close', done);
+        resolve(this.pid);
+      };
+      this.on('spawn', done);
+      this.on('exit', done);
+      this.on('close', done);
+    });
+  }
+
   /** Apply what the process did. */
   receive(event: SpawnEvent): void {
     switch (event.type) {

@@ -692,6 +692,10 @@ class AcpQuery {
   }
 
   handle(): AgentQueryHandle {
+    // Only while it runs, as for Claude Code: once it has exited, been
+    // killed or lost with its host (exit code null, signal SIGKILL),
+    // Windows can give its pid to an unrelated process.
+    const processId = () => (this.proc && this.proc.exitCode === null && this.proc.signalCode == null ? this.proc.pid : undefined);
     return {
       events: this.events,
       sendMessage: (message) => this.enqueue(message),
@@ -700,10 +704,11 @@ class AcpQuery {
       interrupt: () => this.interrupt(),
       getSessionId: () => this.sessionId,
       closeInput: () => { /* prompts are sent one at a time; nothing to close */ },
-      // Only while it runs, as for Claude Code: once it has exited, been
-      // killed or lost with its host (exit code null, signal SIGKILL),
-      // Windows can give its pid to an unrelated process.
-      processId: () => (this.proc && this.proc.exitCode === null && this.proc.signalCode == null ? this.proc.pid : undefined),
+      processId,
+      processStarted: async () => {
+        await this.proc?.started();
+        return processId();
+      },
       setModel: (model) => this.setModel(model),
       setPermissionMode: (mode) => { this.groveMode = mode; },
       setControl: (id, value) => this.setControl(id, value),
