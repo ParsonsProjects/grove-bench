@@ -11,6 +11,7 @@ vi.mock('../logger.js', () => ({
   logger: { debug: vi.fn(), warn: vi.fn(), info: vi.fn(), error: vi.fn() },
 }));
 
+import { query, type SpawnOptions } from '@anthropic-ai/claude-agent-sdk';
 import { asarUnpackedPath, claudeProcessExe, spawnClaudeCodeProcess } from './claude-code.js';
 import { windowsExeName } from '../process-memory.js';
 
@@ -90,5 +91,27 @@ describe('spawnClaudeCodeProcess', () => {
     child.receive({ type: 'stderr', id: 1, data: 'Warning: x\n' });
     await new Promise((r) => setImmediate(r));
     expect(lines).toEqual(['Warning: x\n']);
+  });
+});
+
+describe('the agent SDK', () => {
+  // ClaudeCodeAdapter's processStarted() waits on the process the spawn hook
+  // made. Were the SDK to start it later (as it does for a resume with a
+  // sessionStore), start() would return with none, a close straight after
+  // would find nothing to wait for, and the agent's tree would not be killed.
+  it('starts the agent process inside query(), through the spawn hook', () => {
+    const proc = new HostedProcess('claude.exe');
+    proc.connect(() => {});
+    const spawn = vi.fn((_options: SpawnOptions) => proc);
+
+    const q = query({
+      prompt: (async function* () { /* no prompt */ })(),
+      options: { cwd: process.cwd(), pathToClaudeCodeExecutable: process.execPath, spawnClaudeCodeProcess: spawn },
+    });
+    try {
+      expect(spawn).toHaveBeenCalledTimes(1);
+    } finally {
+      q.close();
+    }
   });
 });

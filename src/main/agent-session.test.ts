@@ -2097,6 +2097,40 @@ describe('AgentSessionManager.closeSession()', () => {
     expect(errors).toEqual([]);
   });
 
+  it('does not report an error event the agent sends as it is killed', async () => {
+    mockAdapter.pid = 4444;
+    const { win, session } = await startSession('test-close-error-event');
+    processTree.killTree.mockImplementationOnce(async () => {
+      // As an ACP agent does when its process exits before its query closes.
+      mockAdapter.control!.emitEvent({ type: 'error', message: 'Mock Agent exited with code 1' });
+      await new Promise((r) => setTimeout(r, 10));
+    });
+
+    await sessionManager.closeSession('test-close-error-event');
+
+    await new Promise((r) => setTimeout(r, 20));
+    const errors = win._send.mock.calls.filter(([, event]: [string, AgentEvent | undefined]) => event?.type === 'error');
+    expect(errors).toEqual([]);
+    expect(session.eventHistory.some((e) => e.type === 'error')).toBe(false);
+  });
+
+  it('ignores a stop, and its restore, that comes while the thread is being deleted', async () => {
+    mockAdapter.pid = 4545;
+    await startSession('test-delete-stop');
+    let releaseKill!: () => void;
+    processTree.killTree.mockImplementationOnce(() => new Promise<void>((r) => { releaseKill = r; }));
+    const deleting = sessionManager.destroySession('test-delete-stop');
+    await vi.waitFor(() => expect(releaseKill).toBeDefined());
+    const beforeRestart = vi.fn(async () => {});
+
+    await sessionManager.stopQuery('test-delete-stop', beforeRestart);
+    releaseKill();
+    await deleting;
+
+    expect(beforeRestart).not.toHaveBeenCalled();
+    expect(mockAdapter.startCallCount).toBe(1);
+  });
+
   it('resolves pending permissions as denied', async () => {
     await startSession('test-close-perm');
     let permResolved: PermissionResponse | null = null;
@@ -2190,6 +2224,38 @@ describe('AgentSessionManager.closeSession()', () => {
       expect(processTree.killTree).toHaveBeenCalledWith(6161);
     });
 
+    it('waits for the start and then the kill, each up to its own limit', async () => {
+      const previous = sessionManager.agentStartWaitMs;
+      sessionManager.agentStartWaitMs = 400;
+      try {
+        let reportPid!: () => void;
+        mockAdapter.pidReported = new Promise<void>((r) => { reportPid = r; });
+        let openGate!: () => void;
+        mockAdapter.startGate = new Promise<void>((r) => { openGate = r; });
+        let killed = false;
+        processTree.killTree.mockImplementationOnce(async () => { killed = true; });
+        await sessionManager.createSession({
+          id: 'test-end-slow-launch', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+        });
+        await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(1));
+
+        const { ending } = await end('test-end-slow-launch');
+        const killedFirst = ending.then(() => killed);
+        await new Promise((r) => setTimeout(r, 200));
+        openGate();
+        // Past the 400 ms the close waits for the start, but within the
+        // 400 ms the kill then waits for the pid.
+        await new Promise((r) => setTimeout(r, 300));
+        mockAdapter.pid = 6565;
+        reportPid();
+
+        expect(await killedFirst).toBe(true);
+        expect(processTree.killTree).toHaveBeenCalledWith(6565);
+      } finally {
+        sessionManager.agentStartWaitMs = previous;
+      }
+    });
+
     it('kills the agent, and starts no second one, for a stop that came during startup', async () => {
       let openGate!: () => void;
       mockAdapter.startGate = new Promise<void>((r) => { openGate = r; });
@@ -2208,6 +2274,31 @@ describe('AgentSessionManager.closeSession()', () => {
       expect(mockAdapter.startCallCount).toBe(1);
       expect(processTree.killTree).toHaveBeenCalledWith(6363);
       expect(mockAdapter.lastHandle!.close).toHaveBeenCalled();
+    });
+
+    it('starts nothing when it comes while a stop during startup is killing the agent it replaced', async () => {
+      let openGate!: () => void;
+      mockAdapter.startGate = new Promise<void>((r) => { openGate = r; });
+      mockAdapter.pid = 6464;
+      let releaseKill!: () => void;
+      processTree.killTree.mockImplementationOnce(() => new Promise<void>((r) => { releaseKill = r; }));
+      await sessionManager.createSession({
+        id: 'test-end-replacing', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+      });
+      await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(1));
+      await sessionManager.stopQuery('test-end-replacing');
+      openGate();
+      await vi.waitFor(() => expect(releaseKill).toBeDefined());
+      const setUps = vi.mocked(getGitIdentity).mock.calls.length;
+
+      const { ending } = await end('test-end-replacing');
+      releaseKill();
+      await ending;
+      await new Promise((r) => setTimeout(r, 20));
+
+      expect(mockAdapter.startCallCount).toBe(1);
+      // The relaunch didn't even get as far as setting up.
+      expect(vi.mocked(getGitIdentity).mock.calls.length).toBe(setUps);
     });
 
     it('starts no agent when it happens before start() is reached', async () => {
@@ -4205,6 +4296,26 @@ describe('AgentSessionManager stop/restart race', () => {
     expect(ok).toBe(true);
 
     await sessionManager.destroySession('test-race');
+  });
+
+  it('kills the agent a stop during startup replaced, before closing it', async () => {
+    let release!: () => void;
+    mockAdapter.startGate = new Promise<void>((r) => { release = r; });
+    mockAdapter.pid = 4646;
+    await sessionManager.createSession({
+      id: 'test-race-kill', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(1));
+    await sessionManager.stopQuery('test-race-kill');
+
+    release();
+    await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(2));
+
+    const [replaced] = mockAdapter.handles;
+    expect(processTree.killTree).toHaveBeenCalledWith(4646);
+    expect(processTree.killTree.mock.invocationCallOrder[0])
+      .toBeLessThan(vi.mocked(replaced.close).mock.invocationCallOrder[0]);
+    await sessionManager.destroySession('test-race-kill');
   });
 });
 

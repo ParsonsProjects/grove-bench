@@ -31,6 +31,7 @@ import { CheckpointManager } from './checkpoints.js';
 import type { EventSearchHit } from './event-search.js';
 import { noGitCheckpoints } from './no-git-checkpoints.js';
 import { killTree } from './process-tree.js';
+import { within } from './within.js';
 import { previewManager } from './preview.js';
 import type { Emit, ManagedSession, SessionCompletionResult } from './session-types.js';
 import { SessionEventStore, TRANSIENT_EVENT_TYPES, eventLogPath } from './session-event-store.js';
@@ -101,37 +102,25 @@ function sleepRefusal(session: ManagedSession): string | null {
   return null;
 }
 
-/** A start given up because the thread is closing or being deleted: let
- *  what waits on it go (shutDown(), sends). */
-function endAbandonedStart(session: ManagedSession): void {
-  session.isStartingQuery = false;
+/** The start in flight has ended: let sends waiting for its query handle go
+ *  (see awaitQueryHandle), and shutDown(). */
+function settleQueryReady(session: ManagedSession): void {
   session.resolveQueryReady?.();
   session.resolveQueryReady = null;
   session.queryReady = null;
-}
-
-/** How long a close or delete waits for an agent that is still starting,
- *  and then for the agent host to report its pid, to kill it. */
-const AGENT_START_WAIT_MS = 10_000;
-
-/** `promise`'s value, or undefined if it takes longer than `ms`. */
-async function within<T>(promise: Promise<T>, ms: number): Promise<T | undefined> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<undefined>((resolve) => { timer = setTimeout(() => resolve(undefined), ms); });
-  try {
-    return await Promise.race([promise, timeout]);
-  } finally {
-    clearTimeout(timer);
-  }
 }
 
 /** Kill the agent's process tree while it is still running. Once it exits,
  *  whatever it left running can no longer be traced back to it. An agent
  *  that has only just launched has no pid yet: start() returns before the
  *  agent host reports it. */
-async function killAgentTree(handle: AgentQueryHandle, id: string): Promise<void> {
-  const pid = handle.processId?.()
-    ?? (handle.processStarted ? await within(handle.processStarted(), AGENT_START_WAIT_MS) : undefined);
+async function killAgentTree(handle: AgentQueryHandle, id: string, waitMs: number): Promise<void> {
+  let pid = handle.processId?.();
+  if (pid === undefined && handle.processStarted) {
+    const started = handle.processStarted();
+    if (await within(started, waitMs)) pid = await started;
+    else logger.warn(`Agent for ${id} reported no pid within ${waitMs} ms: closing it without killing its process tree`);
+  }
   if (!pid) return;
   await killTree(pid);
   logger.info(`Killed agent process tree for ${id}: pid=${pid}`);
@@ -142,6 +131,10 @@ class AgentSessionManager {
    *  releases the files its processes held before the worktree is removed.
    *  Tests set it to 0. */
   handleReleaseMs = 500;
+  /** How long a close or delete waits for an agent that is still starting,
+   *  and, separately, for the agent host to report a new agent's pid. Tests
+   *  shorten it. */
+  agentStartWaitMs = 10_000;
   private sessions = new Map<string, ManagedSession>();
   private completionCallbacks = new Map<string, (result: SessionCompletionResult) => void>();
   /** Session setups (worktree, dependency install, adapter start) still in
@@ -370,6 +363,7 @@ class AgentSessionManager {
       gitBacked,
       statusBeforeSleep: null,
       sleepSettled: null,
+      abandonedStart: null,
       turnHandle: null,
       promptsBeforeInit: null,
       limits: limitsFromHistory(eventHistory, opts.savedLimits),
@@ -454,6 +448,13 @@ class AgentSessionManager {
     resend: UserMessage[] = [],
   ) {
     const { id, abortController } = session;
+
+    // Closed or deleted: start nothing. A start already in flight settles
+    // queryReady itself.
+    if (session.destroying) {
+      if (!session.isStartingQuery) settleQueryReady(session);
+      return;
+    }
 
     // Guard against concurrent runQuery calls (e.g. rapid double-stop).
     // A stop that arrives mid-startup must not be dropped: flag a restart so the
@@ -545,7 +546,8 @@ class AgentSessionManager {
     perfSteps.step(id, 'agent setup');
     // Closed or deleted while those ran: start no agent for it.
     if (session.destroying) {
-      endAbandonedStart(session);
+      session.isStartingQuery = false;
+      settleQueryReady(session);
       return;
     }
     let handle: AgentQueryHandle;
@@ -602,7 +604,8 @@ class AgentSessionManager {
       // that is going.
       if (session.destroying) {
         logger.debug(`[runQuery] session=${id} failed to start as it closed:`, startErr);
-        endAbandonedStart(session);
+        session.isStartingQuery = false;
+        settleQueryReady(session);
         return;
       }
       session.isStartingQuery = false;
@@ -625,29 +628,31 @@ class AgentSessionManager {
         return;
       }
       // Reject any pending sendMessage() waiters
-      if (session.resolveQueryReady) {
-        session.resolveQueryReady();
-        session.resolveQueryReady = null;
-        session.queryReady = null;
-      }
+      settleQueryReady(session);
       throw startErr;
     }
 
     // Closed or destroyed while start() was in flight: nothing will read this
-    // handle, so kill the agent as shutDown() would (it waits for this).
-    // Before the restart below: a thread that is going gets no new agent.
+    // handle, so kill the agent as shutDown() would. shutDown() waits for the
+    // kill, which can itself wait for the agent's pid. Before the restart
+    // below: a thread that is going gets no new agent.
     if (session.destroying) {
-      await killAgentTree(handle, id).catch((e) => logger.warn(`[runQuery] session=${id} could not kill the agent it started as it closed:`, e));
-      try { handle.close(); } catch { /* may already be closed */ }
-      endAbandonedStart(session);
+      session.abandonedStart = (async () => {
+        await killAgentTree(handle, id, this.agentStartWaitMs).catch((e) => logger.warn(`[runQuery] session=${id} could not kill the agent it started as it closed:`, e));
+        try { handle.close(); } catch { /* may already be closed */ }
+      })();
+      session.isStartingQuery = false;
+      settleQueryReady(session);
       return;
     }
 
     // If a stop arrived while start() was in flight, discard this now-stale
     // handle and relaunch cleanly rather than installing a handle on an already
     // aborted run (which would leave the session wedged and queryReady resolved
-    // against a dead query).
+    // against a dead query). Killed first: on Windows close() alone leaves the
+    // agent running for seconds beside the new one.
     if (session.restartRequested) {
+      await killAgentTree(handle, id, this.agentStartWaitMs).catch((e) => logger.warn(`[runQuery] session=${id} could not kill the agent a stop replaced:`, e));
       try { handle.close(); } catch { /* may already be closed */ }
       this.relaunchQuery(session);
       return;
@@ -678,11 +683,7 @@ class AgentSessionManager {
       session.pendingResumeAt = null;
     }
     // Signal any pending sendMessage() that the queryHandle is ready
-    if (session.resolveQueryReady) {
-      session.resolveQueryReady();
-      session.resolveQueryReady = null;
-      session.queryReady = null;
-    }
+    settleQueryReady(session);
     logger.debug(`[runQuery] session=${id} query created, entering event loop`);
 
     // Show a connecting message in the thread while waiting for system_init
@@ -710,6 +711,9 @@ class AgentSessionManager {
         // Stopped or closed while they were saved: dropped like anything it
         // sends after, so nothing lands after a close's process_exit.
         if (abortController.signal.aborted) break;
+        // A close or delete kills the agent before closing its query, and an
+        // agent can report its own death as an error (ACP agents do).
+        if (event.type === 'error' && session.destroying) continue;
 
         // Skip adapter user_message events — we emit our own with UUIDs in sendMessage
         if (event.type === 'user_message') continue;
@@ -1799,7 +1803,8 @@ class AgentSessionManager {
    */
   async stopQuery(id: string, beforeRestart?: () => Promise<void>): Promise<void> {
     const session = this.sessions.get(id);
-    if (!session) return;
+    // Being deleted (still listed until it's gone): shutDown() stops it.
+    if (!session || session.destroying) return;
     // Asleep: there is no query to stop. A rewind's fork point (set before
     // this is called) is picked up when the session wakes.
     if (session.status === 'sleeping') {
@@ -1913,11 +1918,7 @@ class AgentSessionManager {
 
     const settled = (async () => {
       // Kill the tree while the agent is still running, as shutDown() does.
-      const pid = handle.processId?.();
-      if (pid) {
-        await killTree(pid);
-        logger.info(`Put session ${id} to sleep: killed agent pid=${pid}`);
-      }
+      await killAgentTree(handle, id, this.agentStartWaitMs);
       try { handle.close(); } catch { /* may already be closed */ }
       abortController.abort();
     })();
@@ -2068,9 +2069,12 @@ class AgentSessionManager {
     await session.sleepSettled;
     // An agent still starting: runQuery kills it once start() returns (see
     // there). Wait for that, so it isn't running when the worktree goes.
-    if (session.isStartingQuery && session.queryReady) await within(session.queryReady, AGENT_START_WAIT_MS);
+    if (session.isStartingQuery && session.queryReady && !(await within(session.queryReady, this.agentStartWaitMs))) {
+      logger.warn(`Agent for ${id} still starting after ${this.agentStartWaitMs} ms: closing without waiting; it is killed once start() returns`);
+    }
+    await session.abandonedStart;
 
-    if (session.queryHandle) await killAgentTree(session.queryHandle, id);
+    if (session.queryHandle) await killAgentTree(session.queryHandle, id, this.agentStartWaitMs);
 
     // Close the query and input stream before aborting so the SDK tidies up its side
     try {
