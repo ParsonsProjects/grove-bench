@@ -28,7 +28,8 @@ export function perfLine(kind: PerfKind, message: string): void {
   } catch { /* the logs folder can't be reached */ }
 }
 
-/** Close the file (at quit). The next line reopens it. */
-export function closePerfLog(): void {
-  file.close();
+/** Close the file (at quit). The next line reopens it. Settles once the
+ *  file is closed. */
+export function closePerfLog(): Promise<void> {
+  return file.close();
 }

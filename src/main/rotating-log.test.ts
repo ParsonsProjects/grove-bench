@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -14,16 +14,14 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  log?.close();
+  await log?.close();
   log = null;
-  await new Promise((resolve) => setTimeout(resolve, 20));
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-/** Close and wait for the stream to reach the disk. */
+/** Close, once what was written is on disk. */
 async function flush(): Promise<void> {
-  log?.close();
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  await log?.close();
 }
 
 const read = (name: string) => fs.readFileSync(path.join(dir, name), 'utf-8');
@@ -49,11 +47,13 @@ describe('createRotatingLog', () => {
 
   it('rotates while running, once the file passes the limit', async () => {
     log = createRotatingLog({ path: () => file, maxSize: 50, maxFiles: 2, checkEvery: 5 });
-    for (let i = 0; i < 5; i++) log.write(`line ${i} ${'x'.repeat(10)}\n`);
+    const line = (i: number) => `line ${i} ${'x'.repeat(10)}\n`; // 18 characters
+    const onDisk = (lines: number) => vi.waitFor(() => expect(fs.statSync(file).size).toBe(lines * 18));
+    for (let i = 0; i < 5; i++) log.write(line(i));
     // The size is read from disk: let the first five land before the check.
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    for (let i = 5; i < 10; i++) log.write(`line ${i} ${'x'.repeat(10)}\n`);
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await onDisk(5);
+    for (let i = 5; i < 10; i++) log.write(line(i));
+    await onDisk(10);
     log.write('after\n');
     await flush();
 

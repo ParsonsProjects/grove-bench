@@ -21,8 +21,10 @@ export interface RotatingLog {
   /** Append `text` (with its own newline). Can throw if the folder can't be
    *  reached; a write that fails later is dropped. */
   write(text: string): void;
-  /** Close the stream (at quit). The next write reopens it. */
-  close(): void;
+  /** Close the stream (at quit). The next write reopens it. Settles once
+   *  what was written is on disk and the file is closed (or the stream has
+   *  failed): the stream opens, writes and closes in the background. */
+  close(): Promise<void>;
 }
 
 function sizeOf(file: string): number {
@@ -72,8 +74,14 @@ export function createRotatingLog({ path, maxSize, maxFiles, header, checkEvery 
       }
     },
     close() {
-      stream?.end();
+      const s = stream;
       stream = null;
+      if (!s || s.closed) return Promise.resolve();
+      // 'close' follows the last write, and also a failure.
+      return new Promise((resolve) => {
+        s.once('close', () => resolve());
+        s.end();
+      });
     },
   };
 }
