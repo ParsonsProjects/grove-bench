@@ -1976,17 +1976,22 @@ describe('AgentSessionManager.destroySession()', () => {
     expect(sessionManager.getSession('test-destroy')).toBeUndefined();
   });
 
-  it('waits for Windows to release the agent\'s files before it returns', async () => {
+  it('waits for Windows to release the agent\'s files after killing it, before it returns', async () => {
     // The worktree is removed right after, which fails on Windows while a
     // killed process still holds a file in it.
+    mockAdapter.pid = 4242;
     await sessionManager.createSession({ id: 'test-release', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
+    await vi.waitFor(() => expect(sessionManager.getSession('test-release')?.queryHandle).toBeTruthy());
+    let killedAt = 0;
+    processTree.killTree.mockImplementationOnce(async () => { killedAt = performance.now(); });
+    const before = sessionManager.handleReleaseMs;
     sessionManager.handleReleaseMs = 40;
     try {
-      const started = performance.now();
       await sessionManager.destroySession('test-release');
-      expect(performance.now() - started).toBeGreaterThanOrEqual(35);
+      expect(processTree.killTree).toHaveBeenCalledWith(4242);
+      expect(performance.now() - killedAt).toBeGreaterThanOrEqual(35);
     } finally {
-      sessionManager.handleReleaseMs = 0;
+      sessionManager.handleReleaseMs = before;
     }
   });
 
