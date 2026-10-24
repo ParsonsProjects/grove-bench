@@ -33,7 +33,7 @@ import { accountEnv, accountSignInCommand, type ClaudeAccount } from './claude-a
 import { logger } from '../logger.js';
 import { writeFileAtomic } from '../fs-utils.js';
 import { RunningCost, RunningTokens } from './running-cost.js';
-import { runProcess, spawnProcess, type HostedOptions, type ProcessResult } from '../process-host.js';
+import { runProcess, spawnProcess, type HostedOptions, type HostedProcess, type ProcessResult } from '../process-host.js';
 import { runInAgentHost, type AgentHostRunOptions } from '../process-host-run.js';
 import { windowsExeName } from '../process-memory.js';
 import { extractJsonObject } from '../extract-json.js';
@@ -68,7 +68,6 @@ type Query = import('@anthropic-ai/claude-agent-sdk').Query;
 type SDKMessage = import('@anthropic-ai/claude-agent-sdk').SDKMessage;
 type SDKUserMessage = Extract<SDKMessage, { type: 'user' }>;
 type SpawnOptions = import('@anthropic-ai/claude-agent-sdk').SpawnOptions;
-type SpawnedProcess = import('@anthropic-ai/claude-agent-sdk').SpawnedProcess;
 type SdkElicitationRequest = import('@anthropic-ai/claude-agent-sdk').ElicitationRequest;
 type HookCallback = import('@anthropic-ai/claude-agent-sdk').HookCallback;
 
@@ -95,7 +94,7 @@ type HookCallback = import('@anthropic-ai/claude-agent-sdk').HookCallback;
 export function spawnClaudeCodeProcess(
   opts: SpawnOptions,
   onStderr?: (data: string) => void,
-): SpawnedProcess & { readonly pid?: number } {
+): HostedProcess {
   const isNode = isNodeCommand(opts.command);
   const command = isNode ? process.execPath : asarUnpackedPath(opts.command);
   const env = isNode
@@ -2068,6 +2067,11 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       }
     }
 
+    // Only while it runs: once it has exited, Windows can give its PID to an
+    // unrelated process.
+    const runningPid = () =>
+      agentProcess?.exitCode === null && agentProcess.signalCode == null ? agentProcess.pid : undefined;
+
     const handle: AgentQueryHandle = {
       events: eventGenerator(),
 
@@ -2110,11 +2114,11 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         return sessionId;
       },
 
-      processId() {
-        // Only while it runs: once it has exited, Windows can give its PID to
-        // an unrelated process.
-        const running = agentProcess?.exitCode === null && agentProcess.signalCode == null;
-        return running ? agentProcess?.pid : undefined;
+      processId: runningPid,
+
+      async processStarted() {
+        await agentProcess?.started();
+        return runningPid();
       },
 
       processExe() {

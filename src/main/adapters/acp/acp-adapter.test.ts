@@ -507,6 +507,17 @@ describe('AcpAdapter', () => {
     }
   }, SPAWNS_TIMEOUT_MS);
 
+  it('reports its pid once the agent has launched, for a close straight after start()', async () => {
+    const handle = await new AcpAdapter(def()).start(config());
+    try {
+      const pid = await handle.processStarted!();
+      expect(pid).toEqual(expect.any(Number));
+      expect(handle.processId!()).toBe(pid);
+    } finally {
+      handle.close();
+    }
+  }, SPAWNS_TIMEOUT_MS);
+
   it('keeps the agent\'s own defaults when a conversation changes a control', async () => {
     const adapter = new AcpAdapter(def());
     const handle = await adapter.start(config());

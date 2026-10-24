@@ -203,6 +203,9 @@ class MockAdapter implements AgentAdapter {
   startGate: Promise<void> | null = null;
   /** PID the query handle reports for its agent process. */
   pid: number | undefined = undefined;
+  /** Until this resolves, processStarted() waits: the agent host reports a
+   *  launched agent's pid a moment after start() returns. */
+  pidReported: Promise<void> | null = null;
   /** The handle the last start() returned. */
   lastHandle: AgentQueryHandle | null = null;
   /** Every handle start() has returned, to check none is left running. */
@@ -297,6 +300,10 @@ class MockAdapter implements AgentAdapter {
       }),
       getSessionId: () => sessionId,
       processId: () => this.pid,
+      processStarted: async () => {
+        await this.pidReported;
+        return this.pid;
+      },
       processExe: () => 'claude.exe',
       closeInput: vi.fn(),
       setModel: vi.fn(),
@@ -2126,18 +2133,135 @@ describe('AgentSessionManager.closeSession()', () => {
     await sessionManager.destroySession('test-reopen');
   });
 
-  it('shuts down an agent whose start() finishes after the close', async () => {
-    let openGate!: () => void;
-    mockAdapter.startGate = new Promise<void>((r) => { openGate = r; });
-    await sessionManager.createSession({
-      id: 'test-close-starting', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+  describe.each([
+    ['closed', (id: string) => sessionManager.closeSession(id)],
+    ['deleted', (id: string) => sessionManager.destroySession(id)],
+  ] as const)('a thread %s while its agent is starting', (_how, endThread) => {
+    /** Close or delete the thread, once it is marked as going (a delete
+     *  first waits for any setup). */
+    async function end(id: string): Promise<{ ending: Promise<void> }> {
+      const session = sessionManager.getSession(id)!;
+      const ending = endThread(id);
+      await vi.waitFor(() => expect(session.destroying).toBe(true));
+      return { ending };
+    }
+
+    it('kills the agent once start() returns, before the close or delete does', async () => {
+      let openGate!: () => void;
+      mockAdapter.startGate = new Promise<void>((r) => { openGate = r; });
+      mockAdapter.pid = 6060;
+      await sessionManager.createSession({
+        id: 'test-end-starting', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+      });
+      await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(1));
+
+      let ended = false;
+      const { ending } = await end('test-end-starting');
+      void ending.then(() => { ended = true; });
+      await new Promise((r) => setTimeout(r, 20));
+      expect(ended).toBe(false);
+      openGate();
+      await ending;
+
+      const handle = mockAdapter.lastHandle!;
+      expect(processTree.killTree).toHaveBeenCalledWith(6060);
+      expect(processTree.killTree.mock.invocationCallOrder[0])
+        .toBeLessThan(vi.mocked(handle.close).mock.invocationCallOrder[0]);
     });
-    await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(1));
 
-    await sessionManager.closeSession('test-close-starting');
-    openGate();
+    it('waits for the agent host to report the pid of an agent that has just launched', async () => {
+      let reportPid!: () => void;
+      mockAdapter.pidReported = new Promise<void>((r) => { reportPid = r; });
+      let openGate!: () => void;
+      mockAdapter.startGate = new Promise<void>((r) => { openGate = r; });
+      await sessionManager.createSession({
+        id: 'test-end-launching', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+      });
+      await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(1));
 
-    await vi.waitFor(() => expect(mockAdapter.lastHandle?.close).toHaveBeenCalled());
+      const { ending } = await end('test-end-launching');
+      openGate();
+      await new Promise((r) => setTimeout(r, 20));
+      expect(processTree.killTree).not.toHaveBeenCalled();
+      mockAdapter.pid = 6161;
+      reportPid();
+      await ending;
+
+      expect(processTree.killTree).toHaveBeenCalledWith(6161);
+    });
+
+    it('kills the agent, and starts no second one, for a stop that came during startup', async () => {
+      let openGate!: () => void;
+      mockAdapter.startGate = new Promise<void>((r) => { openGate = r; });
+      mockAdapter.pid = 6363;
+      await sessionManager.createSession({
+        id: 'test-end-restart', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+      });
+      await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(1));
+      await sessionManager.stopQuery('test-end-restart');
+
+      const { ending } = await end('test-end-restart');
+      openGate();
+      await ending;
+      await new Promise((r) => setTimeout(r, 20));
+
+      expect(mockAdapter.startCallCount).toBe(1);
+      expect(processTree.killTree).toHaveBeenCalledWith(6363);
+      expect(mockAdapter.lastHandle!.close).toHaveBeenCalled();
+    });
+
+    it('starts no agent when it happens before start() is reached', async () => {
+      let identity!: (value: null) => void;
+      vi.mocked(getGitIdentity).mockImplementationOnce(() => new Promise((r) => { identity = r; }));
+      await sessionManager.createSession({
+        id: 'test-end-early', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+      });
+      await vi.waitFor(() => expect(identity).toBeDefined());
+
+      const { ending } = await end('test-end-early');
+      identity(null);
+      await ending;
+      await new Promise((r) => setTimeout(r, 20));
+
+      expect(mockAdapter.startCallCount).toBe(0);
+    });
+
+    it('reports no error when start() fails after it', async () => {
+      let failStart!: () => void;
+      mockAdapter.start = vi.fn(() => new Promise<never>((_, reject) => { failStart = () => reject(new Error('spawn failed')); }));
+      const win = makeMockWindow();
+      await sessionManager.createSession({
+        id: 'test-end-failing', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock',
+      });
+      await vi.waitFor(() => expect(failStart).toBeDefined());
+
+      const { ending } = await end('test-end-failing');
+      failStart();
+      await ending;
+      await new Promise((r) => setTimeout(r, 20));
+
+      const errors = win._send.mock.calls.filter(([, event]: [string, AgentEvent | undefined]) => event?.type === 'error');
+      expect(errors).toEqual([]);
+      expect(mockAdapter.start).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('kills an agent deleted just after it launched, once the agent host reports its pid', async () => {
+    let reportPid!: () => void;
+    mockAdapter.pidReported = new Promise<void>((r) => { reportPid = r; });
+    const { session } = await startSession('test-delete-launched');
+    const handle = session.queryHandle!;
+
+    const deleting = sessionManager.destroySession('test-delete-launched');
+    await new Promise((r) => setTimeout(r, 20));
+    expect(handle.close).not.toHaveBeenCalled();
+    mockAdapter.pid = 6262;
+    reportPid();
+    await deleting;
+
+    expect(processTree.killTree).toHaveBeenCalledWith(6262);
+    expect(processTree.killTree.mock.invocationCallOrder[0])
+      .toBeLessThan(vi.mocked(handle.close).mock.invocationCallOrder[0]);
   });
 
   it('destroying a closed conversation cancels its pending auto-save and saves its metadata', async () => {

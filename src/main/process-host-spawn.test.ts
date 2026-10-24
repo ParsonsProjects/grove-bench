@@ -125,6 +125,44 @@ describe('HostedProcess', () => {
     expect(seen).toEqual(['exit null SIGKILL', 'end']);
     expect(proc.signalCode).toBe('SIGKILL');
   });
+
+  describe('started()', () => {
+    it('resolves with the pid once its host reports the launch', async () => {
+      const proc = new HostedProcess('claude.exe');
+      let pid: number | undefined | 'waiting' = 'waiting';
+      void proc.started().then((p) => { pid = p; });
+      await settle();
+      expect(pid).toBe('waiting');
+
+      proc.receive({ type: 'spawned', id: 1, pid: 4242, launchMs: 5 });
+      await settle();
+      expect(pid).toBe(4242);
+      expect(proc.listenerCount('spawn') + proc.listenerCount('exit') + proc.listenerCount('close')).toBe(0);
+    });
+
+    it('resolves with undefined for a process that failed to start or was lost', async () => {
+      const failed = new HostedProcess('claude.exe');
+      const failedPid = failed.started();
+      failed.receive({ type: 'error', id: 1, error: { name: 'Error', message: 'spawn claude.exe ENOENT', code: 'ENOENT' } });
+      failed.receive({ type: 'close', id: 1 });
+      const lost = new HostedProcess('claude.exe');
+      const lostPid = lost.started();
+      lost.lost(true);
+
+      expect(await failedPid).toBeUndefined();
+      expect(await lostPid).toBeUndefined();
+    });
+
+    it('resolves at once for a process already started or ended', async () => {
+      const running = new HostedProcess('claude.exe');
+      running.receive({ type: 'spawned', id: 1, pid: 77, launchMs: 5 });
+      const ended = new HostedProcess('claude.exe');
+      ended.lost();
+
+      expect(await running.started()).toBe(77);
+      expect(await ended.started()).toBeUndefined();
+    });
+  });
 });
 
 describe('createSpawnRunner', () => {
