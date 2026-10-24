@@ -325,6 +325,8 @@ function makeMockWindow() {
 
 // Import the module under test AFTER mocks are set up
 const { sessionManager } = await import('./agent-session.js');
+// destroySession's wait for Windows to release file handles: no real files here.
+sessionManager.handleReleaseMs = 0;
 const { sanitizeElicitationResponse } = await import('./session-permissions.js');
 const { READ_SAFE_SANDBOX_WARNING, READ_SAFE_NO_SANDBOX_WARNING } = await import('./session-config.js');
 const settingsMock = await import('./settings.js') as unknown as { getSettings: ReturnType<typeof vi.fn> };
@@ -1972,6 +1974,20 @@ describe('AgentSessionManager.destroySession()', () => {
     await sessionManager.destroySession('test-destroy');
 
     expect(sessionManager.getSession('test-destroy')).toBeUndefined();
+  });
+
+  it('waits for Windows to release the agent\'s files before it returns', async () => {
+    // The worktree is removed right after, which fails on Windows while a
+    // killed process still holds a file in it.
+    await sessionManager.createSession({ id: 'test-release', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
+    sessionManager.handleReleaseMs = 40;
+    try {
+      const started = performance.now();
+      await sessionManager.destroySession('test-release');
+      expect(performance.now() - started).toBeGreaterThanOrEqual(35);
+    } finally {
+      sessionManager.handleReleaseMs = 0;
+    }
   });
 
   it('resolves pending permissions as denied on destroy', async () => {
