@@ -1688,6 +1688,9 @@ export interface GroveBenchAPI {
   testNotification(): Promise<TestNotificationResult>;
   /** Fired when the user clicks an OS notification — jump to that session. */
   onFocusSession(callback: (sessionId: string) => void): () => void;
+  /** Fired when the window comes back into focus from another app, whichever
+   *  view inside it (the app, or the Preview tab's page) takes the focus. */
+  onWindowFocus(callback: () => void): () => void;
 
   // Window controls
   winMinimize(): void;
@@ -2229,6 +2232,7 @@ export const IPC = {
   NOTIFY_SHOW: 'notify:show',
   NOTIFY_TEST: 'notify:test',
   NOTIFY_FOCUS_SESSION: 'notify:focusSession',
+  WINDOW_FOCUS: 'window:focus',
   FILE_LIST: 'file:list',
   FILE_READ: 'file:read',
   AGENT_SET_MODE: 'agent:setMode',

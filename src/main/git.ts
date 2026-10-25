@@ -19,6 +19,10 @@ export interface GitOptions {
   /** Fail, with `isMaxBuffer` set, once git has written more than this many
    *  characters; git ends when it next writes. execa's own limit is 100 MB. */
   maxBuffer?: number;
+  /** false: without git's optional locks (GIT_OPTIONAL_LOCKS=0), for a read
+   *  in the background: `git status` then doesn't rewrite the index, whose
+   *  lock can make a git command run meanwhile fail. `git diff` ignores it. */
+  optionalLocks?: false;
 }
 
 export async function git(args: string[], cwd: string, opts?: GitOptions): Promise<string> {
@@ -26,6 +30,7 @@ export async function git(args: string[], cwd: string, opts?: GitOptions): Promi
     cwd,
     ...(opts?.timeout ? { timeout: opts.timeout } : {}),
     ...(opts?.maxBuffer ? { maxBuffer: opts.maxBuffer } : {}),
+    ...(opts?.optionalLocks === false ? { env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' } } : {}),
   });
   return result.stdout;
 }

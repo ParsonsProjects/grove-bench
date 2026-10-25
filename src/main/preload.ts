@@ -484,6 +484,13 @@ const api: GroveBenchAPI = {
       ipcRenderer.removeListener(IPC.NOTIFY_FOCUS_SESSION, handler);
     };
   },
+  onWindowFocus: (callback: () => void) => {
+    const handler = () => callback();
+    ipcRenderer.on(IPC.WINDOW_FOCUS, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC.WINDOW_FOCUS, handler);
+    };
+  },
 
   // Error reporting
   onAppError: (callback: (report: import('../shared/types.js').AppErrorReport) => void) => {

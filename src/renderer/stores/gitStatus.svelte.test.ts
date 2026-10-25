@@ -271,27 +271,36 @@ describe('gitStatusStore — continue or abort', () => {
 });
 
 describe('gitStatusStore — back in the window', () => {
-  it('reads the status of the thread on screen again, if it has one loaded', () => {
+  it('reads the status of the thread on screen again, if it runs on git', () => {
+    let focused = () => {};
+    mockGroveBench.onWindowFocus.mockImplementation(((callback: () => void) => {
+      focused = callback;
+      return () => { focused = () => {}; };
+    }) as never);
     const refresh = vi.spyOn(gitStatusStore, 'refresh').mockResolvedValue(undefined);
-    let onScreen: string | null = 'focused';
-    gitStatusStore.statusBySession = { focused: { entries: [] } };
+    sessionStore.sessions = [
+      { id: 'with-git', branch: 'feat', repoPath: '/repo', status: 'running' },
+      { id: 'no-git', branch: '', repoPath: '/notes', status: 'running', noGit: true },
+    ] as never;
+    let onScreen: string | null = 'with-git';
     const stop = gitStatusStore.refreshOnFocus(() => onScreen);
     try {
-      window.dispatchEvent(new Event('focus'));
-      expect(refresh).toHaveBeenCalledExactlyOnceWith('focused');
+      focused();
+      expect(refresh).toHaveBeenCalledExactlyOnceWith('with-git');
 
-      // One without a status read (a thread without git): nothing to update.
-      onScreen = 'not-loaded';
-      window.dispatchEvent(new Event('focus'));
+      onScreen = 'no-git';
+      focused();
       onScreen = null;
-      window.dispatchEvent(new Event('focus'));
+      focused();
+      expect(refresh).toHaveBeenCalledTimes(1);
+
+      stop();
+      onScreen = 'with-git';
+      focused();
       expect(refresh).toHaveBeenCalledTimes(1);
     } finally {
-      stop();
+      refresh.mockRestore();
+      sessionStore.sessions = [];
     }
-    onScreen = 'focused';
-    window.dispatchEvent(new Event('focus'));
-    expect(refresh).toHaveBeenCalledTimes(1);
-    refresh.mockRestore();
   });
 });

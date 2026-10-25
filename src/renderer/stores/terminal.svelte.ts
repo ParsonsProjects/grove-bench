@@ -4,8 +4,9 @@ import { gitStatusStore } from './gitStatus.svelte.js';
 /** After Enter in a thread's terminal, how long its output must stay quiet
  *  before the git status is read again: the command has likely finished. */
 export const COMMAND_SETTLED_MS = 1000;
-/** How long after Enter output still counts as the command's, so a long one
- *  (an install, a rebase) is caught when it ends. */
+/** How long after Enter output still counts as the command's: a command that
+ *  ends within it is read as it ends. One that runs longer (or a server left
+ *  running) is read when the Changes tab opens or the window comes back. */
 export const COMMAND_WINDOW_MS = 120_000;
 
 /**
@@ -33,8 +34,8 @@ class TerminalStore {
   /** A command typed in the terminal may change what git sees (git itself,
    *  or anything that edits files): when its output settles, the Changes tab
    *  and the status bar are read again. Per session: until when output still
-   *  counts, and the pending read. */
-  private commands = new Map<string, { until: number; timer: ReturnType<typeof setTimeout> | null }>();
+   *  counts as the last command's. */
+  private commandUntil = new Map<string, number>();
 
   isAlive(sessionId: string): boolean {
     return this.aliveBySession[sessionId] ?? false;
@@ -57,8 +58,7 @@ class TerminalStore {
     const dataCleanup = window.groveBench.onPtyData(sessionId, (data) => {
       const handler = this.dataHandlers.get(sessionId);
       if (handler) handler(data);
-      const command = this.commands.get(sessionId);
-      if (command && Date.now() < command.until) this.awaitSettled(sessionId);
+      if (Date.now() < (this.commandUntil.get(sessionId) ?? 0)) this.awaitSettled(sessionId);
       // A dev server started here prints its URL; offer it in the Preview tab.
       previewStore.noteStream(sessionId, data);
     });
@@ -72,15 +72,10 @@ class TerminalStore {
     this.exitCleanups.set(sessionId, exitCleanup);
   }
 
-  /** (Re)start the wait for a command's output to settle. */
+  /** (Re)start the wait for a command's output to settle: the store's
+   *  scheduled read starts over each time it's asked. */
   private awaitSettled(sessionId: string) {
-    const command = this.commands.get(sessionId);
-    if (!command) return;
-    if (command.timer) clearTimeout(command.timer);
-    command.timer = setTimeout(() => {
-      command.timer = null;
-      gitStatusStore.scheduleRefresh(sessionId, 0);
-    }, COMMAND_SETTLED_MS);
+    if (gitStatusStore.hasGit(sessionId)) gitStatusStore.scheduleRefresh(sessionId, COMMAND_SETTLED_MS);
   }
 
   /** Unsubscribe from IPC events. */
@@ -91,9 +86,7 @@ class TerminalStore {
     this.exitCleanups.delete(sessionId);
     this.dataHandlers.delete(sessionId);
     this.exitHandlers.delete(sessionId);
-    const command = this.commands.get(sessionId);
-    if (command?.timer) clearTimeout(command.timer);
-    this.commands.delete(sessionId);
+    this.commandUntil.delete(sessionId);
   }
 
   /** The main process killed this session's PTY on close without an exit
@@ -137,9 +130,7 @@ class TerminalStore {
     window.groveBench.ptyWrite(sessionId, data);
     // Enter: a command runs.
     if (data.includes('\r')) {
-      const command = this.commands.get(sessionId) ?? { until: 0, timer: null };
-      command.until = Date.now() + COMMAND_WINDOW_MS;
-      this.commands.set(sessionId, command);
+      this.commandUntil.set(sessionId, Date.now() + COMMAND_WINDOW_MS);
       this.awaitSettled(sessionId);
     }
   }

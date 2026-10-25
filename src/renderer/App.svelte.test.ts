@@ -298,17 +298,21 @@ describe('App: back in the window', () => {
     const { gitStatusStore } = await import('./stores/gitStatus.svelte.js');
     const settings = JSON.parse(JSON.stringify(settingsStore.current)) as typeof settingsStore.current;
     mockGroveBench.getSettings.mockResolvedValue(settings);
+    let focused = () => {};
+    mockGroveBench.onWindowFocus.mockImplementation(((callback: () => void) => {
+      focused = callback;
+      return () => {};
+    }) as never);
     render(App);
     await screen.findByText('Add a project to get started.');
     const refresh = vi.spyOn(gitStatusStore, 'refresh').mockResolvedValue(undefined);
     try {
+      store.sessions = [{ id: 'on-screen', branch: 'feat', repoPath: '/repo', status: 'running' }] as never;
       store.activeSessionId = 'on-screen';
-      gitStatusStore.statusBySession = { 'on-screen': { entries: [] } };
-      window.dispatchEvent(new Event('focus'));
+      focused();
       expect(refresh).toHaveBeenCalledWith('on-screen');
     } finally {
       refresh.mockRestore();
-      gitStatusStore.statusBySession = {};
     }
   });
 });
