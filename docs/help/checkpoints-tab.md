@@ -28,7 +28,9 @@ When you're ready to rewind, you have two choices. Each asks first, says what it
 
 Either way, this turn and the ones after it leave the thread, and the checkpoints after this one are deleted. That part can't be undone.
 
-The files can be. Before restoring them, Rewind all and Restore files keep a copy of the files as they are, and the thread shows a line saying so, with **Bring them back**. Bringing them back keeps a copy of the files they replace in turn, so you can swap back. Only the latest copy is kept: the next rewind replaces it, and only the last such line offers it. Bring them back waits while the agent is working. If the copy can't be made, nothing is restored.
+The files can be. Before restoring them, Rewind all and Restore files keep a copy of the files as they are, and the thread shows a line saying so, with **Bring them back**. Each line brings back its own copy, and bringing one back keeps a copy of the files it replaces in turn, so you can always swap back. Copies are kept for as long as the thread. Bring them back waits while the agent is working. If the copy can't be made, nothing is restored; if restoring fails partway, the thread says so and offers the copy from just before.
+
+A commit doesn't stop a rewind: Rewind all still takes the files on disk back, so they then show as changes that undo the commit. The commit itself stays in the branch's history.
 
 A checkpoint whose message is no longer in the thread (one from before a `/clear`, or the target of an earlier rewind) can only have its files restored; the thread is left untouched. It shows a single **Restore files** button in place of the two above.
 

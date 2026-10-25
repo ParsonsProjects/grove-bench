@@ -2362,15 +2362,15 @@ class AgentSessionManager {
       if (options?.conversationOnly) {
         throw new Error('That message is no longer part of the thread, so there is nothing to rewind. Its files can still be restored.');
       }
-      await session.checkpoints.restore(id, session.worktreePath, userMessageId);
+      const copy = await this.restoreKeeping(session, () => session.checkpoints.restore(id, session.worktreePath, userMessageId));
       session.emit?.({ type: 'rewind', toMessageId: userMessageId, filesOnly: true });
-      session.emit?.({ type: 'files_kept', reason: 'rewind' });
+      session.emit?.({ type: 'files_kept', reason: 'rewind', copy });
       return;
     }
 
-    if (!options?.conversationOnly) {
-      await session.checkpoints.restore(id, session.worktreePath, userMessageId);
-    }
+    const copy = options?.conversationOnly
+      ? null
+      : await this.restoreKeeping(session, () => session.checkpoints.restore(id, session.worktreePath, userMessageId));
 
     // Remove orphaned checkpoint refs for turns after the rewind point
     await session.checkpoints.pruneAfter(id, session.worktreePath, userMessageId);
@@ -2423,7 +2423,7 @@ class AgentSessionManager {
     }
 
     // After the cut, so the offer to bring the files back stays in the thread.
-    if (!options?.conversationOnly) session.emit?.({ type: 'files_kept', reason: 'rewind' });
+    if (copy) session.emit?.({ type: 'files_kept', reason: 'rewind', copy });
 
     if (forkPoint && canFork) {
       // True rewind: resume the same conversation truncated at the last kept
@@ -2453,15 +2453,28 @@ class AgentSessionManager {
     void pruneAttachments(id, session.eventHistory);
   }
 
-  /** Put back the files the last rewind replaced (CheckpointManager.restoreKept).
-   *  The ones they replace are kept in their place, so it can be swapped back. */
-  async bringBackFiles(id: string): Promise<void> {
+  /** Put back a kept copy of the files (CheckpointManager.restoreKept). The
+   *  ones it replaces are kept in turn, so it can be swapped back. */
+  async bringBackFiles(id: string, copy: string): Promise<void> {
     const session = this.sessions.get(id);
     if (!session) throw new Error(`Thread ${id} not found`);
-    // As for a rewind: a running turn would keep editing the files.
-    if (this.isMidTurn(id)) await this.interruptQuery(id);
-    await session.checkpoints.restoreKept(id, session.worktreePath);
-    session.emit?.({ type: 'files_kept', reason: 'bring_back' });
+    // A running turn would keep editing the files. An agent only starting
+    // (after a rewind) edits nothing, so it isn't stopped and started again.
+    if (turnInFlight(session)) await this.interruptQuery(id);
+    const kept = await this.restoreKeeping(session, () => session.checkpoints.restoreKept(id, session.worktreePath, copy));
+    session.emit?.({ type: 'files_kept', reason: 'bring_back', copy: kept });
+  }
+
+  /** Run a restore that keeps a copy of the files it replaces. One that fails
+   *  partway has changed some files: the thread offers that copy back. */
+  private async restoreKeeping(session: ManagedSession, restore: () => Promise<string>): Promise<string> {
+    try {
+      return await restore();
+    } catch (err) {
+      const copy = (err as { copy?: unknown }).copy;
+      if (typeof copy === 'string') session.emit?.({ type: 'files_kept', reason: 'unfinished', copy });
+      throw err;
+    }
   }
 
   /** Dry-run rewind to get the diff of what would change. */

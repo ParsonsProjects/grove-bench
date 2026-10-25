@@ -264,7 +264,7 @@
       <!-- Asking before an action that discards something, in place. -->
       <Confirm
         class="max-w-xl"
-        message="Rewind to #2? Files go back to before this turn, so every change since is lost, yours included, and new files are deleted."
+        message="Rewind to #2? Files go back to before this turn: your own changes go too, and new files are removed, but the thread keeps a copy of them as they are now, so you can bring them back."
         confirm="Rewind"
         oncancel={() => {}}
         onconfirm={() => {}}

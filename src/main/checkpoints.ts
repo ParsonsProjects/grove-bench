@@ -1,7 +1,7 @@
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
-import { git, gitEnv, gitPatch, blobLines, detectBinaryDiff, imageExtFor, patchResult, patchOverLimit } from './git.js';
+import { git, gitEnv, gitExit, gitPatch, blobLines, detectBinaryDiff, imageExtFor, patchResult, patchOverLimit } from './git.js';
 import { parseDiffRaw, parseNumstat as parseNumstatRows } from './git-status-parser.js';
 import { logger } from './logger.js';
 import type { CheckpointDiffScope, DiffHistoryEntry, DiffHistoryResult, DiffStats, FileDiffResult, FileLinesResult, GitStatusResult } from '../shared/types.js';
@@ -54,9 +54,9 @@ function parseNumstat(output: string): DiffStats {
   return stats;
 }
 
-/** The files the last restore replaced, one copy per thread. Under the
- *  thread's checkpoint refs, so cleanup() deletes it with them; pruneAfter
- *  only touches turn/N refs. */
+/** The latest copy of the files a restore replaced; the copies before it are
+ *  its ancestors. Under the thread's checkpoint refs, so cleanup() deletes
+ *  it with them; pruneAfter only touches turn/N refs. */
 function keptRef(sessionId: string): string {
   return `refs/grove/checkpoints/${sessionId}/kept`;
 }
@@ -310,51 +310,93 @@ export class CheckpointManager {
 
   /**
    * Restore the working tree to the state at a specific checkpoint, keeping
-   * a copy of the files it replaces (restoreKept brings them back).
+   * a copy of the files it replaces; returns the copy (restoreKept brings
+   * it back).
    */
-  async restore(sessionId: string, cwd: string, uuid: string): Promise<void> {
+  async restore(sessionId: string, cwd: string, uuid: string): Promise<string> {
     const ref = await this.resolveRef(sessionId, cwd, uuid);
     if (!ref) throw new Error(`No checkpoint found for uuid=${uuid}`);
 
     const oid = (await git(['rev-parse', ref], cwd)).trim();
-    await this.keepThenRestore(sessionId, cwd, oid);
+    const copy = await this.queued(sessionId, () => this.keepThenRestore(sessionId, cwd, oid));
     logger.debug(`[checkpoints] restored session=${sessionId} uuid=${uuid}`);
+    return copy;
   }
 
   /**
-   * Bring back the files the last restore replaced. The ones they replace
-   * are kept in their place, so it can be swapped back.
+   * Bring back a kept copy of the files (one restore returned). The ones it
+   * replaces are kept in turn; returns that copy.
    */
-  async restoreKept(sessionId: string, cwd: string): Promise<void> {
-    const oid = (await git(['rev-parse', '--verify', '--quiet', keptRef(sessionId)], cwd).catch(() => '')).trim();
-    if (!oid) throw new Error('There are no kept files to bring back.');
-    await this.keepThenRestore(sessionId, cwd, oid);
+  async restoreKept(sessionId: string, cwd: string, copy: string): Promise<string> {
+    const kept = await this.queued(sessionId, async () => {
+      await this.checkKept(sessionId, cwd, copy);
+      return this.keepThenRestore(sessionId, cwd, copy);
+    });
     logger.debug(`[checkpoints] brought back kept files session=${sessionId}`);
+    return kept;
+  }
+
+  /** Run `work` in the thread's capture queue, so a restore never overlaps
+   *  a capture (a checkpoint of half-restored files) or another restore. */
+  private queued<T>(sessionId: string, work: () => Promise<T>): Promise<T> {
+    const s = this.getOrCreate(sessionId);
+    const result = s.captureQueue.then(work);
+    s.captureQueue = result.then(() => undefined, () => undefined);
+    return result;
+  }
+
+  /** Throw unless `copy` is one of this thread's kept copies: the latest,
+   *  or one before it (each copy's parent is the one before). */
+  private async checkKept(sessionId: string, cwd: string, copy: string): Promise<void> {
+    const kept = (await git(['for-each-ref', '--format=%(objectname)', keptRef(sessionId)], cwd)).trim();
+    if (!kept) throw new Error('There are no kept files to bring back.');
+    if (!/^[0-9a-f]{40,64}$/.test(copy)) throw new Error('That copy of the files is no longer kept.');
+    const check = await gitExit(['merge-base', '--is-ancestor', copy, kept], cwd);
+    if (check.exitCode === 0) return;
+    // 1: not in the chain. 128: an object git doesn't have.
+    if (check.exitCode === 1 || check.exitCode === 128) throw new Error('That copy of the files is no longer kept.');
+    throw new Error(`Couldn't check the kept copy of the files: ${check.stderr.trim() || `git exited with ${check.exitCode}`}`);
   }
 
   /** Copy the files as they are now (the only copy there would be), then
    *  set the working tree to `oid`: tracked files restored, files it doesn't
-   *  have removed, ignored files left alone, nothing staged. */
-  private async keepThenRestore(sessionId: string, cwd: string, oid: string): Promise<void> {
+   *  have removed, ignored files left alone, nothing staged. Returns the copy;
+   *  a restore that fails partway throws with it (`copy`) as the way back. */
+  private async keepThenRestore(sessionId: string, cwd: string, oid: string): Promise<string> {
+    let copy: string;
     try {
-      await this.keepFiles(sessionId, cwd);
+      copy = await this.keepFiles(sessionId, cwd);
     } catch (err) {
       throw new Error(`Couldn't keep a copy of the files as they are, so none were restored: ${err instanceof Error ? err.message : String(err)}`);
     }
-    await git(['restore', '--source', oid, '--worktree', '--staged', '--', '.'], cwd);
-    await git(['clean', '-fd', '--', '.'], cwd);
-    await git(['reset', '--quiet', '--', '.'], cwd);
+    try {
+      await git(['restore', '--source', oid, '--worktree', '--staged', '--', '.'], cwd);
+      await git(['clean', '-fd', '--', '.'], cwd);
+      await git(['reset', '--quiet', '--', '.'], cwd);
+    } catch (err) {
+      throw Object.assign(
+        new Error(`Couldn't finish restoring the files, so some may have changed: ${err instanceof Error ? err.message : String(err)}`),
+        { copy },
+      );
+    }
+    return copy;
   }
 
-  /** Write the working tree as a commit at keptRef, replacing the last one. */
-  private async keepFiles(sessionId: string, cwd: string): Promise<void> {
+  /** Write the working tree as a commit at keptRef and return it. Its parent
+   *  is the copy before, so every copy stays reachable, and can be brought
+   *  back, for as long as the thread has its refs. */
+  private async keepFiles(sessionId: string, cwd: string): Promise<string> {
     const tmpIndex = path.join(os.tmpdir(), `grove-idx-${sessionId}-kept-${Date.now()}`);
     try {
       const treeOid = await this.snapshotTree(sessionId, cwd, tmpIndex);
+      const before = (await git(['for-each-ref', '--format=%(objectname)', keptRef(sessionId)], cwd)).trim();
       // No uuid= in the message: the checkpoint list, history and resume
       // read only commits that have one.
-      const commitOid = (await gitEnv(['commit-tree', treeOid, '-m', 'grove kept files'], cwd, CHECKPOINT_IDENTITY_ENV)).trim();
+      const commitOid = (await gitEnv(
+        ['commit-tree', treeOid, ...(before ? ['-p', before] : []), '-m', 'grove kept files'], cwd, CHECKPOINT_IDENTITY_ENV,
+      )).trim();
       await git(['update-ref', keptRef(sessionId), commitOid], cwd);
+      return commitOid;
     } finally {
       await removeTemp(tmpIndex);
     }

@@ -11,13 +11,6 @@ const SID = 'kept-session';
 beforeEach(() => {
   mockGroveBench.bringBackFiles.mockReset();
   mockGroveBench.bringBackFiles.mockResolvedValue(undefined);
-  messageStore.messagesBySession = {
-    [SID]: [
-      { kind: 'files_kept', id: 'k1', reason: 'rewind' },
-      { kind: 'user', id: 'm1', text: 'Try again', uuid: 'u2' },
-      { kind: 'files_kept', id: 'k2', reason: 'bring_back' },
-    ],
-  };
   messageStore.setIsRunning(SID, false);
 });
 
@@ -27,25 +20,27 @@ afterEach(() => {
 });
 
 describe('FilesKeptBlock', () => {
-  it('offers the latest copy back, and brings it back', async () => {
-    render(FilesKeptBlock, { sessionId: SID, id: 'k2', reason: 'bring_back' });
-    expect(screen.getByText(/Brought back the kept files, and kept a copy of the ones they replaced/)).toBeInTheDocument();
+  // Each line names its own copy, so an older line still brings back its own.
+  it('brings back the copy it was given', async () => {
+    render(FilesKeptBlock, { sessionId: SID, reason: 'rewind', copy: 'c1' });
+    expect(screen.getByText('Kept a copy of the files from before the rewind.')).toBeInTheDocument();
 
     await fireEvent.click(screen.getByRole('button', { name: 'Bring them back' }));
-    expect(mockGroveBench.bringBackFiles).toHaveBeenCalledWith(SID);
+    expect(mockGroveBench.bringBackFiles).toHaveBeenCalledWith(SID, 'c1');
   });
 
-  // Only the latest copy is kept.
-  it('offers nothing for a copy a later one replaced', () => {
-    render(FilesKeptBlock, { sessionId: SID, id: 'k1', reason: 'rewind' });
-    expect(screen.getByText(/Kept a copy of the files from before the rewind/)).toBeInTheDocument();
-    expect(screen.getByText('A later copy replaced it.')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Bring them back' })).toBeNull();
+  it('says what each kind of copy holds', () => {
+    render(FilesKeptBlock, { sessionId: SID, reason: 'bring_back', copy: 'c2' });
+    expect(screen.getByText('Brought back a kept copy of the files, and kept a copy of the ones it replaced.')).toBeInTheDocument();
+    cleanup();
+    render(FilesKeptBlock, { sessionId: SID, reason: 'unfinished', copy: 'c3' });
+    expect(screen.getByText("Couldn't finish restoring the files, so some may have changed. Kept a copy of them from just before.")).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Bring them back' })).toBeEnabled();
   });
 
   it('waits while the agent is working', () => {
     messageStore.setIsRunning(SID, true);
-    render(FilesKeptBlock, { sessionId: SID, id: 'k2', reason: 'bring_back' });
+    render(FilesKeptBlock, { sessionId: SID, reason: 'rewind', copy: 'c1' });
     const button = screen.getByRole('button', { name: 'Bring them back' });
     expect(button).toBeDisabled();
     expect(button).toHaveAttribute('title', 'Waits for the agent to finish its turn');
@@ -53,11 +48,11 @@ describe('FilesKeptBlock', () => {
 
   it("says why, without Electron's wrapper, when they can't come back", async () => {
     mockGroveBench.bringBackFiles.mockRejectedValueOnce(
-      new Error("Error invoking remote method 'agent:bring-back-files': Error: There are no kept files to bring back."),
+      new Error("Error invoking remote method 'agent:bring-back-files': Error: That copy of the files is no longer kept."),
     );
-    render(FilesKeptBlock, { sessionId: SID, id: 'k2', reason: 'bring_back' });
+    render(FilesKeptBlock, { sessionId: SID, reason: 'rewind', copy: 'c1' });
     await fireEvent.click(screen.getByRole('button', { name: 'Bring them back' }));
 
-    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/^There are no kept files to bring back\.$/));
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/^That copy of the files is no longer kept\.$/));
   });
 });

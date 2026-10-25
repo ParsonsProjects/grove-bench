@@ -6,6 +6,7 @@ import { messageStore, settlePrompts, type ChatUserMessage } from './messages.sv
 import { userMessageLabel } from '../lib/message-label.js';
 import { store as sessionStore } from './sessions.svelte.js';
 import { checkpointStore } from './checkpoints.svelte.js';
+import { gitStatusStore } from './gitStatus.svelte.js';
 import { backgroundTaskStore } from './backgroundTask.svelte.js';
 import { rateLimitStore } from './rateLimit.svelte.js';
 import { usageStore } from './usage.svelte.js';
@@ -631,9 +632,29 @@ describe('ingestEvent: files_kept', () => {
   it('adds the line offering the replaced files back after the rewind', () => {
     messageStore.ingestEvent(SID, { type: 'user_message', text: 'First', uuid: 'u1' } as AgentEvent);
     messageStore.ingestEvent(SID, { type: 'rewind', toMessageId: 'u1' } as AgentEvent);
-    messageStore.ingestEvent(SID, { type: 'files_kept', reason: 'rewind' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'files_kept', reason: 'rewind', copy: 'c1' } as AgentEvent);
 
-    expect(messageStore.getMessages(SID)).toMatchObject([{ kind: 'files_kept', reason: 'rewind' }]);
+    expect(messageStore.getMessages(SID)).toMatchObject([{ kind: 'files_kept', reason: 'rewind', copy: 'c1' }]);
+  });
+
+  // The files on disk changed: the Changes list and the checkpoint diffs follow.
+  it('refreshes the changes after files are brought back', () => {
+    const refresh = vi.spyOn(gitStatusStore, 'refresh').mockResolvedValue(undefined as never);
+    const schedule = vi.spyOn(checkpointStore, 'scheduleRefresh').mockImplementation(() => {});
+    try {
+      messageStore.ingestEvent(SID, { type: 'files_kept', reason: 'bring_back', copy: 'c2' } as AgentEvent);
+      expect(refresh).toHaveBeenCalledWith(SID);
+      expect(schedule).toHaveBeenCalledWith(SID);
+    } finally {
+      refresh.mockRestore();
+      schedule.mockRestore();
+    }
+  });
+
+  it('puts text that was streaming above the line', () => {
+    messageStore.streamingText[SID] = 'Half a sentence';
+    messageStore.ingestEvent(SID, { type: 'files_kept', reason: 'bring_back', copy: 'c2' } as AgentEvent);
+    expect(messageStore.getMessages(SID).map((m) => m.kind)).toEqual(['text', 'files_kept']);
   });
 });
 

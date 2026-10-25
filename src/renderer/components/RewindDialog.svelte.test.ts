@@ -77,7 +77,7 @@ describe('RewindDialog', () => {
     render(RewindDialog, { sessionId: SID });
     messageStore.openRewindDialog(SID, 'uuid-1');
     await waitFor(() => expect(document.getElementById('conversation-only')).not.toBeNull());
-    expect(document.body.textContent).toContain('Files go back to how they were before it; the thread keeps a copy of them as they are now, which you can bring back until the next rewind.');
+    expect(document.body.textContent).toContain('Files go back to how they were before it: your own changes go too, and new files are removed, but the thread keeps a copy of them as they are now, so you can bring them back.');
 
     await fireEvent.click(document.getElementById('conversation-only')!);
     await waitFor(() => expect(document.body.textContent).toContain('files stay as they are'));

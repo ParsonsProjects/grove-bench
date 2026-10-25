@@ -1597,8 +1597,8 @@ export function registerHandlers() {
     await sessionManager.rewindFiles(sessionId, userMessageId, options);
   });
 
-  ipcMain.handle(IPC.AGENT_BRING_BACK_FILES, async (_event, sessionId: string) => {
-    await sessionManager.bringBackFiles(sessionId);
+  ipcMain.handle(IPC.AGENT_BRING_BACK_FILES, async (_event, sessionId: string, copy: string) => {
+    await sessionManager.bringBackFiles(sessionId, copy);
   });
 
   ipcMain.handle(IPC.AGENT_CHECKPOINT_DIFF, async (_event, sessionId: string, userMessageId: string) => {

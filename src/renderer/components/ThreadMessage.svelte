@@ -125,7 +125,7 @@
   <GitIdentityNotice />
 
 {:else if msg.kind === 'files_kept'}
-  <FilesKeptBlock {sessionId} id={msg.id} reason={msg.reason} />
+  <FilesKeptBlock {sessionId} reason={msg.reason} copy={msg.copy} />
 
 {:else if msg.kind === 'files_made'}
   <FilesMadeBlock {sessionId} files={msg.files} more={msg.more} />
