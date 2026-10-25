@@ -414,7 +414,10 @@ export class AcpAdapter implements AgentAdapter {
       // On Windows the agent runs under npm's .cmd shim: kill() would stop
       // only cmd.exe and leave the agent running in the folder.
       // No pid yet (the host hasn't said it started): kill() reaches it once it does.
-      if (proc.exitCode === null) await (proc.pid ? killTree(proc.pid) : Promise.reject()).catch(() => proc.kill());
+      if (proc.exitCode === null) {
+        if (proc.pid) await killTree(proc.pid).catch(() => proc.kill());
+        else proc.kill();
+      }
       try {
         fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
       } catch (e) {

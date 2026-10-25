@@ -690,7 +690,7 @@ export class PreviewManager {
       wc.reload();
     });
 
-    let timedOut = false;
+    let timedOut: boolean;
     try {
       timedOut = !(await within(load, LOAD_TIMEOUT_MS));
     } catch (e) {

@@ -42,7 +42,7 @@ const INDEX_FOLDER_ORDER = ['repo', 'conventions', 'architecture'];
 export function sanitizeRepoPath(repoPath: string): string {
   return repoPath
     .toLowerCase()
-    .replace(/[:\\\/]/g, '-')
+    .replace(/[:\\/]/g, '-')
     .replace(/^-+/, '')
     .replace(/-+/g, '-');
 }

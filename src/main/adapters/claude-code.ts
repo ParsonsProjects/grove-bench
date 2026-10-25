@@ -219,6 +219,7 @@ interface MessageContext {
 
 /** Strip ANSI escape sequences from provider-authored text before it is
  *  shown in the UI (the SDK warns that decision reasons may carry them). */
+// eslint-disable-next-line no-control-regex
 const ANSI_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
 export function stripAnsi(text: string): string {
   return text.replace(ANSI_RE, '');
@@ -1348,7 +1349,7 @@ export function validateMcpName(name: string): void {
  *  third-party, so only shell-inert characters are accepted, and no leading
  *  dash (it would read as a CLI option). */
 export function validatePluginId(id: unknown): string {
-  if (typeof id !== 'string' || id.startsWith('-') || !/^[A-Za-z0-9._\/:@+-]+$/.test(id)) {
+  if (typeof id !== 'string' || id.startsWith('-') || !/^[A-Za-z0-9._/:@+-]+$/.test(id)) {
     throw new Error(`Invalid plugin id: ${String(id).slice(0, 80)}`);
   }
   return id;
@@ -1372,7 +1373,7 @@ export function quoteArg(arg: string): string {
   if (/["%\r\n\0]/.test(arg)) {
     throw new Error(`Unsupported characters in argument: ${arg}`);
   }
-  return /^[A-Za-z0-9._\/:@=+,-]+$/.test(arg) ? arg : `"${arg}"`;
+  return /^[A-Za-z0-9._/:@=+,-]+$/.test(arg) ? arg : `"${arg}"`;
 }
 
 /**

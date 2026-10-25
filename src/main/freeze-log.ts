@@ -482,7 +482,7 @@ export function createFreezeLog({ now = () => performance.now(), write = writeFr
     flush,
     logWindowFreeze,
     /** The totals since the last call, for the health line. */
-    takeStats(): FreezeStats {
+    takeStats: (): FreezeStats => {
       const sorted = delays.sort((a, b) => a - b);
       const loopDelay = sorted.length > 0
         ? { p50: percentile(sorted, 0.5), p99: percentile(sorted, 0.99), max: sorted[sorted.length - 1] }
@@ -501,8 +501,8 @@ export function createFreezeLog({ now = () => performance.now(), write = writeFr
     /** Start (or restart) the clock the next tick is measured from. */
     start(): void { suspended = false; lastTick = now(); lastCpu = cpuMs?.() ?? 0; },
     /** The system is going to sleep: the timer stops, that's not a freeze. */
-    suspend(): void { suspended = true; },
-    resume(): void { suspended = false; lastTick = now(); lastCpu = cpuMs?.() ?? 0; },
+    suspend: (): void => { suspended = true; },
+    resume: (): void => { suspended = false; lastTick = now(); lastCpu = cpuMs?.() ?? 0; },
   };
 }
 
