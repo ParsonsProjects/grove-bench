@@ -102,7 +102,7 @@ All in `src/renderer/lib/components/ui/`. Import from the folder's `index.js`:
 | `subtle-primary` | The main action of a group inside a view, in green: Add in a section's header, Run on a skill, Retry after a failure, Add beside the field it adds. One per group; a toolbar of equal tools has none |
 | `quiet` | Icon buttons, and text actions that only brighten on hover |
 | `quiet-destructive` | Icon buttons that delete or stop something: quiet until hovered, then red |
-| `outline-success` | Answering what the agent is waiting on: Allow, Approve, Answer, an MCP form's Submit, Continue at a limit. Only those: an action of your own is `subtle-primary` or `default` |
+| `outline-success` | Answering what the agent is waiting on: Allow and Always allow, Approve and Clear and start (a plan), Answer, an MCP form's Submit, Continue at a limit. Only those: the app's own actions use the variants above (`button-variants.test.ts` checks) |
 | `outline-destructive`, `destructive` | Actions that delete or discard. Use the filled one only in a confirmation. |
 | `link` | An action inside a sentence, and a notice's main action ("Try again", "Compare line by line") |
 | `external` | A link that opens a web page or another app, in the blue `--link` colour (green acts, blue goes). That includes an MCP form's Open page, which answers it by opening the page |

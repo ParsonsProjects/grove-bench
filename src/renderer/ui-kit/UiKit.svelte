@@ -170,7 +170,7 @@
               <tr>
                 <td class="pr-4 text-caption text-muted-foreground">{variant}</td>
                 {#each buttonSizes as size (size)}
-                  <td class="px-3 py-1.5"><Button {variant} {size}>{variant === 'link' ? 'Try again' : variant === 'external' ? 'Open on GitHub' : 'Create PR'}</Button></td>
+                  <td class="px-3 py-1.5"><Button {variant} {size}>{variant === 'link' ? 'Try again' : variant === 'external' ? 'Open on GitHub' : variant === 'outline-success' ? 'Allow' : 'Create PR'}</Button></td>
                 {/each}
               </tr>
             {/each}
