@@ -576,7 +576,9 @@ describe('a merge, rebase, cherry-pick or revert stopped part way', () => {
     run('checkout', '--ours', 'base.txt');
     run('add', 'base.txt');
 
-    await expect(continueGitOperation(repo, 'rebase')).rejects.toThrow('No changes');
+    // git says why, and to run --skip: on stdout, or its hints on stderr in
+    // newer versions (2.56 on CI).
+    await expect(continueGitOperation(repo, 'rebase')).rejects.toThrow(/No changes[\s\S]*git rebase --skip/);
     expect(await gitOperation(repo)).toMatchObject({ kind: 'rebase' });
   });
 

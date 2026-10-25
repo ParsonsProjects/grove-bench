@@ -779,8 +779,11 @@ async function refName(cwd: string, oid: string): Promise<string> {
 
 /** git's own words from a failed call. */
 function gitErrorText(e: unknown): string {
-  const { stderr, message } = (e ?? {}) as { stderr?: string; message?: string };
-  return (stderr?.trim() || message || String(e)).slice(0, 500);
+  // A rebase or pick that stops says why on stdout ("No changes - did you
+  // forget to use 'git add'?"); newer git puts only its hints on stderr.
+  const { stdout, stderr, message } = (e ?? {}) as { stdout?: unknown; stderr?: unknown; message?: string };
+  const said = [stdout, stderr].map((s) => (typeof s === 'string' ? s.trim() : '')).filter(Boolean).join('\n');
+  return (said || message || String(e)).slice(0, 1000);
 }
 
 /**
