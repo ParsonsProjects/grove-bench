@@ -493,16 +493,16 @@ export function readableStreamToAsyncIterable<T>(stream: ReadableStream<T>): Asy
       return {
         async next() {
           const { done, value } = await reader.read();
-          if (done) return { done: true, value: undefined as any };
+          if (done) return { done: true, value: undefined };
           return { done: false, value };
         },
         async return() {
           reader.releaseLock();
-          return { done: true, value: undefined as any };
+          return { done: true, value: undefined };
         },
         async throw(e: unknown) {
           void reader.cancel(e instanceof Error ? e.message : String(e));
-          return { done: true, value: undefined as any };
+          return { done: true, value: undefined };
         },
       };
     },

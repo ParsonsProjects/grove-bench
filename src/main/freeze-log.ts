@@ -420,7 +420,7 @@ export function createFreezeLog({ now = () => performance.now(), write = writeFr
    *  can name the calls it covered, and the messages by channel. */
   function timeIpcHandlers(ipc: Pick<IpcMain, 'handle' | 'on' | 'once' | 'removeListener'>): void {
     const handle = ipc.handle.bind(ipc);
-    ipc.handle = (channel: string, listener: Parameters<IpcMain['handle']>[1]) => handle(channel, (event, ...args) => {
+    ipc.handle = (channel: string, listener: Parameters<IpcMain['handle']>[1]) => handle(channel, (event, ...args: unknown[]): unknown => {
       const start = now();
       try {
         return listener(event, ...args);
@@ -447,7 +447,7 @@ export function createFreezeLog({ now = () => performance.now(), write = writeFr
     // above, so the emitter would hold this file's wrapper around that one,
     // and the once wrapper's removal of itself would find nothing.
     ipc.once = ((channel: string, listener: Listener) => {
-      const wrapper = counted(channel, listener, (event, ...args) => {
+      const wrapper = counted(channel, listener, (event, ...args: unknown[]) => {
         removeListener(channel, wrapper);
         listener(event, ...args);
       });

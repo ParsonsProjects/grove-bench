@@ -7,6 +7,7 @@ import * as settings from './settings.js';
 import { backgroundAgentFor, backgroundModelFor } from './background-tasks.js';
 import { effectiveCompactTimeoutSeconds } from '../shared/compact-timeout.js';
 import { extractJsonObject } from './extract-json.js';
+import { isRecord } from './persisted-state.js';
 import type { MemoryEntry } from '../shared/types.js';
 import type { AgentAdapter } from './adapters/types.js';
 
@@ -152,8 +153,8 @@ function setLastCompactedAt(repoPath: string, ts: number, filesChanged: number):
 /** When the last compaction run changed something — the panel's trace line. */
 export function getCompactionInfo(repoPath: string): CompactionInfo {
   try {
-    const raw = JSON.parse(fs.readFileSync(compactStatePath(repoPath), 'utf-8'));
-    if (typeof raw.lastCompactedAt === 'string' && !Number.isNaN(Date.parse(raw.lastCompactedAt))) {
+    const raw: unknown = JSON.parse(fs.readFileSync(compactStatePath(repoPath), 'utf-8'));
+    if (isRecord(raw) && typeof raw.lastCompactedAt === 'string' && !Number.isNaN(Date.parse(raw.lastCompactedAt))) {
       return {
         lastCompactedAt: raw.lastCompactedAt,
         lastFilesChanged: typeof raw.lastFilesChanged === 'number' ? raw.lastFilesChanged : undefined,

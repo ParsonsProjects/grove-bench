@@ -84,7 +84,7 @@ export function trackWindowState(win: BrowserWindow): void {
     } else {
       // Keep previous non-maximized dimensions
       try {
-        const prev = JSON.parse(fs.readFileSync(getStatePath(), 'utf-8'));
+        const prev = JSON.parse(fs.readFileSync(getStatePath(), 'utf-8')) as Partial<WindowState>;
         state.x = prev.x;
         state.y = prev.y;
         state.width = prev.width || DEFAULT_STATE.width;

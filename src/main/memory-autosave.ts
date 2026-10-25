@@ -492,7 +492,7 @@ export function saveSessionMetadata(repoPath: string, sessionId: string, events:
   const turns = lastResult && 'numTurns' in lastResult ? lastResult.numTurns : userMessages.length;
 
   const firstMessage = userMessages[0] && 'text' in userMessages[0]
-    ? (userMessages[0] as any).text.slice(0, 200)
+    ? userMessages[0].text.slice(0, 200)
     : 'unknown';
 
   const sessionPath = generateSessionFilename(sessionId, branchName);

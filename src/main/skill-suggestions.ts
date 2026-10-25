@@ -303,7 +303,7 @@ function readEventLog(eventsDir: string, sessionId: string): AgentEvent[] {
     const events: AgentEvent[] = [];
     for (const line of raw.split('\n')) {
       if (!line.trim()) continue;
-      try { events.push(JSON.parse(line)); } catch { /* torn write — skip line */ }
+      try { events.push(JSON.parse(line) as AgentEvent); } catch { /* torn write — skip line */ }
     }
     return events;
   } catch {

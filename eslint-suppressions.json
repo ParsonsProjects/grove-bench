@@ -150,30 +150,7 @@
       "count": 20
     }
   },
-  "src/main/agent-session.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 2
-    },
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 3
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 5
-    },
-    "@typescript-eslint/no-unsafe-call": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 11
-    }
-  },
   "src/main/agent-utils.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 3
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 3
-    },
     "@typescript-eslint/require-await": {
       "count": 2
     }
@@ -296,12 +273,6 @@
     }
   },
   "src/main/freeze-log.ts": {
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 2
-    },
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 1
-    },
     "@typescript-eslint/unbound-method": {
       "count": 2
     }
@@ -362,18 +333,6 @@
     }
   },
   "src/main/ipc.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 5
-    },
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 2
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 3
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 5
-    },
     "@typescript-eslint/only-throw-error": {
       "count": 1
     },
@@ -389,37 +348,12 @@
       "count": 1
     }
   },
-  "src/main/memory-autosave.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-call": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 1
-    }
-  },
   "src/main/memory-compact.test.ts": {
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 1
     },
     "@typescript-eslint/require-await": {
       "count": 2
-    }
-  },
-  "src/main/memory-compact.ts": {
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 3
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 5
     }
   },
   "src/main/memory.ts": {
@@ -475,12 +409,6 @@
     }
   },
   "src/main/preview.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 5
-    },
     "@typescript-eslint/require-await": {
       "count": 1
     },
@@ -549,14 +477,6 @@
       "count": 1
     }
   },
-  "src/main/project-path.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 2
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 2
-    }
-  },
   "src/main/quit-cleanup.test.ts": {
     "@typescript-eslint/require-await": {
       "count": 1
@@ -577,11 +497,6 @@
       "count": 2
     },
     "@typescript-eslint/require-await": {
-      "count": 1
-    }
-  },
-  "src/main/session-event-store.ts": {
-    "@typescript-eslint/no-unsafe-argument": {
       "count": 1
     }
   },
@@ -621,11 +536,6 @@
       "count": 2
     }
   },
-  "src/main/skill-suggestions.ts": {
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 1
-    }
-  },
   "src/main/skills.ts": {
     "no-irregular-whitespace": {
       "count": 1
@@ -633,14 +543,6 @@
   },
   "src/main/terminal.test.ts": {
     "@typescript-eslint/require-await": {
-      "count": 1
-    }
-  },
-  "src/main/terminal.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
       "count": 1
     }
   },
@@ -659,14 +561,6 @@
       "count": 2
     }
   },
-  "src/main/window-state.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 5
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 4
-    }
-  },
   "src/main/worktree-manager.test.ts": {
     "@typescript-eslint/no-require-imports": {
       "count": 2
@@ -682,20 +576,6 @@
     },
     "@typescript-eslint/require-await": {
       "count": 17
-    }
-  },
-  "src/main/worktree-manager.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-call": {
-      "count": 2
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 4
     }
   },
   "src/renderer/App.svelte": {

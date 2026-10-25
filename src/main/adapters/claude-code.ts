@@ -2,7 +2,7 @@
  * Claude Code adapter — wraps the @anthropic-ai/claude-agent-sdk.
  */
 import type { ControlDescriptor, ControlOption, McpServerInfo, McpConfiguredServer, McpAddServerOpts, McpConfigScope, McpElicitationRequest, McpServerContextCost, McpServerManager, McpSupport, PermissionMode, ProviderUsage, SkillDefinition, ThinkingLevel, UsageWindow } from '../../shared/types.js';
-import { CONTROL_IDS, PERMISSION_MODES, PERMISSION_TIMEOUT_MINUTES, THINKING_LEVELS, isImageMediaType } from '../../shared/types.js';
+import { CONTROL_IDS, PERMISSION_TIMEOUT_MINUTES, THINKING_LEVELS, isImageMediaType, isPermissionMode } from '../../shared/types.js';
 import { isRecord } from '../persisted-state.js';
 import type {
   AgentAdapter,
@@ -268,7 +268,7 @@ export function fromSdkSyncMode(mode: PermissionMode, ctx: MessageContext): Perm
 export function fromSdkSyncMode(mode: string, ctx: MessageContext): PermissionMode | null;
 export function fromSdkSyncMode(mode: string, ctx: MessageContext): PermissionMode | null {
   if (mode === 'acceptEdits' && ctx.groveMode === 'readSafe') return 'readSafe';
-  return (PERMISSION_MODES as readonly string[]).includes(mode) ? mode as PermissionMode : null;
+  return isPermissionMode(mode) ? mode : null;
 }
 
 
