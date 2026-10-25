@@ -1,7 +1,6 @@
 import { it, expect, afterEach, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
 import { render, cleanup, screen } from '@testing-library/svelte';
-import { mockGroveBench } from '../__mocks__/setup.js';
 import WorkspacePane from './WorkspacePane.svelte';
 import { store } from '../stores/sessions.svelte.js';
 import { messageStore } from '../stores/messages.svelte.js';
@@ -28,13 +27,18 @@ it("says the Changes tab couldn't load, in the tab, rather than leaving it blank
   store.activeSessionId = SID;
   gitStatusStore.statusBySession = { [SID]: { entries: [] } };
   messageStore.messagesBySession = { [SID]: [] };
-  render(WorkspacePane, { sessionId: SID });
+  const errors: unknown[] = [];
+  const onError = (e: ErrorEvent) => errors.push(e.error);
+  window.addEventListener('error', onError);
+  try {
+    render(WorkspacePane, { sessionId: SID });
+    messageStore.setActiveTab(SID, 'changes');
 
-  messageStore.setActiveTab(SID, 'changes');
-
-  // (Vitest words the import's error itself.)
-  const alert = await screen.findByRole('alert');
-  expect(alert).toHaveTextContent(/^Couldn't load the Changes tab: .+\. Retry, or restart Grove Bench if it keeps failing\./);
-  expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
-  expect(mockGroveBench.reportError).toHaveBeenCalledWith(expect.objectContaining({ kind: 'lazy-load', sessionId: SID }));
+    // (Vitest words the import's error itself.)
+    expect(await screen.findByRole('alert')).toHaveTextContent(/^Couldn't load the Changes tab \(.+\)\. Restart Grove Bench to try again/);
+  } finally {
+    window.removeEventListener('error', onError);
+  }
+  // To the app's handler, which logs it and shows a toast, as before.
+  expect(errors).toHaveLength(1);
 });

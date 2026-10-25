@@ -79,6 +79,13 @@ export class ErrorDeduper {
   }
 }
 
+/** Hand an error that was caught, and shown where it happened, to the handler
+ *  for uncaught ones (installRendererErrorHandlers): its log line, toast and
+ *  crash report, as if nothing had caught it. */
+export function reportCaught(error: unknown): void {
+  window.dispatchEvent(new ErrorEvent('error', { error, message: describe(error).message }));
+}
+
 /** Hook window error events. Returns an uninstall function. */
 export function installRendererErrorHandlers(onReport: (report: AppErrorReport) => void): () => void {
   const onError = (e: ErrorEvent) => {

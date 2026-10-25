@@ -391,7 +391,7 @@
     {#if noGit}
       {@render noGitNote('changes', 'Changes', 'there is nothing to compare the files against. The agent edits your files in place; check them in your editor or file explorer.')}
     {:else if changesMounted}
-      <LazyTab load={loadChangesPanel} tab="Changes" {sessionId}>
+      <LazyTab load={loadChangesPanel} tab="Changes">
         {#snippet children(ChangesReviewPanel)}<ChangesReviewPanel {sessionId} />{/snippet}
       </LazyTab>
     {/if}
@@ -400,21 +400,21 @@
     {#if noGit}
       {@render noGitNote('checkpoints', 'Checkpoints', 'no checkpoints are saved and file edits can\'t be restored. You can still rewind the thread from a message in the Thread tab; files stay as they are.')}
     {:else if checkpointsMounted}
-      <LazyTab load={loadCheckpointsPanel} tab="Checkpoints" {sessionId}>
+      <LazyTab load={loadCheckpointsPanel} tab="Checkpoints">
         {#snippet children(CheckpointsPanel)}<CheckpointsPanel {sessionId} />{/snippet}
       </LazyTab>
     {/if}
   </div>
   <div class="flex-1 overflow-hidden flex flex-col {activeTab === 'terminal' ? '' : 'hidden'}">
     {#if terminalMounted}
-      <LazyTab load={loadTerminalPanel} tab="Terminal" {sessionId}>
+      <LazyTab load={loadTerminalPanel} tab="Terminal">
         {#snippet children(TerminalPanel)}<TerminalPanel {sessionId} />{/snippet}
       </LazyTab>
     {/if}
   </div>
   <div class="flex-1 overflow-hidden flex flex-col {activeTab === 'preview' ? '' : 'hidden'}">
     {#if previewMounted}
-      <LazyTab load={loadPreviewPanel} tab="Preview" {sessionId}>
+      <LazyTab load={loadPreviewPanel} tab="Preview">
         {#snippet children(PreviewPanel)}<PreviewPanel {sessionId} active={previewVisible} />{/snippet}
       </LazyTab>
     {/if}

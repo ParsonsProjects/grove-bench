@@ -155,8 +155,8 @@ Use the user-facing words in any new UI text, help page or doc. See `docs/projec
 - Panels, dialogs and tabs that open on demand load on first use via
   `lazyComponent` (`src/renderer/lib/lazy-component.ts`), keeping their code
   (and libraries only they use, such as xterm) out of the startup bundle. A
-  workspace tab loads through `LazyTab`, which says so, with Retry, if its
-  code fails to load
+  workspace tab loads through `LazyTab`, which says so if its code fails to
+  load (Chromium keeps a failed import, so only a restart tries again)
 
 ## Key Dependencies
 

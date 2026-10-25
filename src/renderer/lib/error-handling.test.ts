@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { reportFromError, shortMessage, ErrorDeduper, installRendererErrorHandlers } from './error-handling.js';
+import { reportFromError, shortMessage, ErrorDeduper, installRendererErrorHandlers, reportCaught } from './error-handling.js';
 
 describe('reportFromError', () => {
   it('captures Error message and stack with the session', () => {
@@ -75,5 +75,17 @@ describe('installRendererErrorHandlers', () => {
     uninstall();
     expect(removed.mock.calls.map((c) => c[0]).sort()).toEqual(['error', 'unhandledrejection']);
     removed.mockRestore();
+  });
+
+  it('reports an error that was caught as it would one nothing caught', () => {
+    const onReport = vi.fn();
+    const uninstall = installRendererErrorHandlers(onReport);
+    try {
+      const error = new Error('Failed to fetch dynamically imported module: x.js');
+      reportCaught(error);
+      expect(onReport).toHaveBeenCalledWith(expect.objectContaining({ kind: 'error', message: error.message, stack: error.stack }));
+    } finally {
+      uninstall();
+    }
   });
 });
