@@ -95,17 +95,11 @@
     },
     "@typescript-eslint/require-await": {
       "count": 1
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 7
     }
   },
   "src/main/adapters/claude-code-spawn.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
       "count": 3
-    },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
     }
   },
   "src/main/adapters/claude-code.test.ts": {
@@ -205,9 +199,6 @@
   "src/main/adapters/preview-mcp-server.test.ts": {
     "@typescript-eslint/require-await": {
       "count": 7
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 6
     }
   },
   "src/main/adapters/sdk-mcp.ts": {
@@ -242,14 +233,8 @@
     "@typescript-eslint/no-unsafe-return": {
       "count": 24
     },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 3
-    },
     "@typescript-eslint/require-await": {
       "count": 20
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 100
     },
     "prefer-const": {
       "count": 1
@@ -304,9 +289,6 @@
     },
     "@typescript-eslint/require-await": {
       "count": 10
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 2
     }
   },
   "src/main/app-state.ts": {
@@ -317,9 +299,6 @@
   "src/main/attachments.test.ts": {
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 3
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 15
     }
   },
   "src/main/attention-badge.test.ts": {
@@ -331,9 +310,6 @@
     },
     "@typescript-eslint/no-unsafe-member-access": {
       "count": 1
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 9
     }
   },
   "src/main/auto-updater.test.ts": {
@@ -347,11 +323,6 @@
   "src/main/auto-updater.ts": {
     "@typescript-eslint/no-redundant-type-constituents": {
       "count": 1
-    }
-  },
-  "src/main/background-tasks.test.ts": {
-    "@typescript-eslint/unbound-method": {
-      "count": 8
     }
   },
   "src/main/background-text.test.ts": {
@@ -379,9 +350,6 @@
   },
   "src/main/checkpoints.integration.test.ts": {
     "@typescript-eslint/no-unsafe-assignment": {
-      "count": 1
-    },
-    "@typescript-eslint/unbound-method": {
       "count": 1
     }
   },
@@ -425,14 +393,6 @@
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 2
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 11
-    }
-  },
-  "src/main/credentials.test.ts": {
-    "@typescript-eslint/unbound-method": {
-      "count": 6
     }
   },
   "src/main/credentials.ts": {
@@ -465,9 +425,6 @@
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 1
-    },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 3
     }
   },
   "src/main/freeze-log.ts": {
@@ -586,9 +543,6 @@
     },
     "@typescript-eslint/require-await": {
       "count": 18
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 24
     }
   },
   "src/main/ipc.ts": {
@@ -620,9 +574,6 @@
   "src/main/memory-autosave-context.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
       "count": 2
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 1
     }
   },
   "src/main/memory-autosave-throttle.test.ts": {
@@ -656,9 +607,6 @@
     },
     "@typescript-eslint/require-await": {
       "count": 2
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 1
     }
   },
   "src/main/memory-compact.ts": {
@@ -685,19 +633,9 @@
       "count": 9
     }
   },
-  "src/main/notifications.test.ts": {
-    "@typescript-eslint/unbound-method": {
-      "count": 10
-    }
-  },
   "src/main/perf-health.test.ts": {
     "@typescript-eslint/require-await": {
       "count": 2
-    }
-  },
-  "src/main/perf-log.test.ts": {
-    "@typescript-eslint/unbound-method": {
-      "count": 1
     }
   },
   "src/main/perf-trace.test.ts": {
@@ -741,12 +679,6 @@
     },
     "@typescript-eslint/no-unsafe-member-access": {
       "count": 3
-    },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 2
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 2
     }
   },
   "src/main/preview.test.ts": {
@@ -774,9 +706,6 @@
   "src/main/process-host-callers.test.ts": {
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 21
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 3
     }
   },
   "src/main/process-host-protocol.test.ts": {
@@ -854,9 +783,6 @@
   "src/main/quit-cleanup.test.ts": {
     "@typescript-eslint/require-await": {
       "count": 1
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 3
     }
   },
   "src/main/read-only-tools.ts": {
@@ -872,9 +798,6 @@
   "src/main/session-auto-name.test.ts": {
     "@typescript-eslint/require-await": {
       "count": 1
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 5
     }
   },
   "src/main/session-event-store.test.ts": {
@@ -901,9 +824,6 @@
     }
   },
   "src/main/session-prompt-suggestions.test.ts": {
-    "@typescript-eslint/no-unused-vars": {
-      "count": 2
-    },
     "@typescript-eslint/require-await": {
       "count": 10
     }
@@ -925,9 +845,6 @@
   "src/main/settings.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
       "count": 1
-    },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 5
     }
   },
   "src/main/skill-schedules.test.ts": {
@@ -946,16 +863,10 @@
     },
     "@typescript-eslint/require-await": {
       "count": 2
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 1
     }
   },
   "src/main/skill-suggestions.ts": {
     "@typescript-eslint/no-unsafe-argument": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unused-vars": {
       "count": 1
     }
   },
@@ -968,14 +879,8 @@
     "@typescript-eslint/no-floating-promises": {
       "count": 3
     },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
-    },
     "@typescript-eslint/require-await": {
       "count": 1
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 4
     }
   },
   "src/main/terminal.ts": {
@@ -1007,9 +912,6 @@
   "src/main/window-guard.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
       "count": 1
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 5
     }
   },
   "src/main/window-state.ts": {
@@ -1018,14 +920,6 @@
     },
     "@typescript-eslint/no-unsafe-member-access": {
       "count": 4
-    },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 2
-    }
-  },
-  "src/main/worktree-files.test.ts": {
-    "@typescript-eslint/unbound-method": {
-      "count": 19
     }
   },
   "src/main/worktree-manager.test.ts": {
@@ -1046,9 +940,6 @@
     },
     "@typescript-eslint/require-await": {
       "count": 17
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 2
     }
   },
   "src/main/worktree-manager.ts": {
@@ -1087,9 +978,6 @@
     "@typescript-eslint/no-unsafe-member-access": {
       "count": 1
     },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 3
-    },
     "svelte/prefer-svelte-reactivity": {
       "count": 4
     },
@@ -1108,9 +996,6 @@
   "src/renderer/__mocks__/setup.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
       "count": 1
-    },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 53
     }
   },
   "src/renderer/components/AddSkillDialog.svelte": {
@@ -1281,9 +1166,6 @@
     }
   },
   "src/renderer/components/DiffView.svelte": {
-    "no-import-assign": {
-      "count": 5
-    },
     "svelte/no-at-html-tags": {
       "count": 7
     },
@@ -1318,9 +1200,6 @@
     },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 1
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 2
     }
   },
   "src/renderer/components/DraftStartPicker.svelte": {
@@ -1330,9 +1209,6 @@
   },
   "src/renderer/components/DraftStatusBar.svelte.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 1
-    },
-    "@typescript-eslint/unbound-method": {
       "count": 1
     }
   },
@@ -1344,20 +1220,12 @@
       "count": 1
     }
   },
-  "src/renderer/components/ElicitationBlock.svelte.test.ts": {
-    "@typescript-eslint/unbound-method": {
-      "count": 13
-    }
-  },
   "src/renderer/components/FileOpBlock.svelte": {
     "@typescript-eslint/no-unused-vars": {
       "count": 1
     }
   },
   "src/renderer/components/FilePickerPopup.svelte": {
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
-    },
     "no-useless-assignment": {
       "count": 1
     },
@@ -1415,11 +1283,6 @@
       "count": 1
     }
   },
-  "src/renderer/components/LimitBlock.svelte.test.ts": {
-    "@typescript-eslint/unbound-method": {
-      "count": 3
-    }
-  },
   "src/renderer/components/MarkdownBlock.svelte": {
     "svelte/no-at-html-tags": {
       "count": 3
@@ -1431,9 +1294,6 @@
     },
     "@typescript-eslint/require-await": {
       "count": 1
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 9
     }
   },
   "src/renderer/components/MarkdownPreviewPanel.svelte": {
@@ -1446,9 +1306,6 @@
   },
   "src/renderer/components/MarkdownPreviewPanel.svelte.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 1
-    },
-    "@typescript-eslint/unbound-method": {
       "count": 1
     }
   },
@@ -1481,9 +1338,6 @@
     "@typescript-eslint/no-unused-expressions": {
       "count": 1
     },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 5
-    },
     "svelte/require-each-key": {
       "count": 1
     }
@@ -1494,9 +1348,6 @@
     },
     "@typescript-eslint/require-await": {
       "count": 2
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 1
     }
   },
   "src/renderer/components/PermissionBlock.svelte": {
@@ -1518,9 +1369,6 @@
       "count": 1
     },
     "@typescript-eslint/no-unsafe-assignment": {
-      "count": 1
-    },
-    "@typescript-eslint/unbound-method": {
       "count": 1
     }
   },
@@ -1564,9 +1412,6 @@
     },
     "@typescript-eslint/require-await": {
       "count": 1
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 1
     }
   },
   "src/renderer/components/QuestionBlock.svelte": {
@@ -1601,9 +1446,6 @@
     },
     "@typescript-eslint/no-unused-expressions": {
       "count": 7
-    },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 3
     },
     "svelte/prefer-svelte-reactivity": {
       "count": 6
@@ -1662,9 +1504,6 @@
   "src/renderer/components/ScheduledSkills.svelte": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
       "count": 1
-    },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 4
     }
   },
   "src/renderer/components/ScheduledSkills.svelte.test.ts": {
@@ -1690,9 +1529,6 @@
       "count": 1
     },
     "@typescript-eslint/no-misused-promises": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unused-vars": {
       "count": 1
     },
     "svelte/require-each-key": {
@@ -1725,11 +1561,6 @@
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 3
-    }
-  },
-  "src/renderer/components/SettingsPanel.svelte.test.ts": {
-    "@typescript-eslint/unbound-method": {
-      "count": 1
     }
   },
   "src/renderer/components/Sidebar.svelte": {
@@ -1782,9 +1613,6 @@
     },
     "@typescript-eslint/require-await": {
       "count": 21
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 2
     }
   },
   "src/renderer/components/SkillsPanel.svelte": {
@@ -1795,9 +1623,6 @@
   "src/renderer/components/SkillsPanel.svelte.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
       "count": 1
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 2
     }
   },
   "src/renderer/components/StatusBar.svelte.test.ts": {
@@ -1809,9 +1634,6 @@
     },
     "@typescript-eslint/require-await": {
       "count": 1
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 38
     }
   },
   "src/renderer/components/StatusBarActivity.svelte": {
@@ -1841,9 +1663,6 @@
     "@typescript-eslint/no-misused-promises": {
       "count": 1
     },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 2
-    },
     "no-useless-assignment": {
       "count": 2
     },
@@ -1853,9 +1672,6 @@
   },
   "src/renderer/components/StatusBarPopover.svelte.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 1
-    },
-    "@typescript-eslint/unbound-method": {
       "count": 1
     }
   },
@@ -1874,9 +1690,6 @@
   },
   "src/renderer/components/SubagentPanel.svelte.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 1
-    },
-    "@typescript-eslint/unbound-method": {
       "count": 1
     }
   },
@@ -1944,9 +1757,6 @@
   "src/renderer/components/WorkspacePane.svelte.test.ts": {
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 1
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 1
     }
   },
   "src/renderer/components/settings/AgentSettings.svelte": {
@@ -1976,11 +1786,6 @@
       "count": 1
     },
     "@typescript-eslint/no-unsafe-member-access": {
-      "count": 1
-    }
-  },
-  "src/renderer/components/settings/GeneralSettings.svelte": {
-    "@typescript-eslint/no-unused-vars": {
       "count": 1
     }
   },
@@ -2027,9 +1832,6 @@
   "src/renderer/demo-mock.ts": {
     "@typescript-eslint/no-misused-promises": {
       "count": 2
-    },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
     },
     "@typescript-eslint/require-await": {
       "count": 92
@@ -2119,9 +1921,6 @@
   "src/renderer/lib/perf-timing.test.ts": {
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 1
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 1
     }
   },
   "src/renderer/lib/pixel-meter.test.ts": {
@@ -2173,11 +1972,6 @@
       "count": 5
     }
   },
-  "src/renderer/stores/arrivalScene.svelte.ts": {
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
-    }
-  },
   "src/renderer/stores/backgroundTask.svelte.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
       "count": 1
@@ -2189,9 +1983,6 @@
   "src/renderer/stores/backgroundTask.svelte.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
       "count": 1
-    },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 2
     },
     "svelte/prefer-svelte-reactivity": {
       "count": 1
@@ -2205,9 +1996,6 @@
   "src/renderer/stores/checkpoints.svelte.ts": {
     "@typescript-eslint/no-floating-promises": {
       "count": 1
-    },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 7
     }
   },
   "src/renderer/stores/draft.svelte.test.ts": {
@@ -2219,9 +2007,6 @@
     },
     "@typescript-eslint/require-await": {
       "count": 1
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 2
     }
   },
   "src/renderer/stores/draft.svelte.ts": {
@@ -2244,16 +2029,10 @@
   "src/renderer/stores/gitStatus.svelte.ts": {
     "@typescript-eslint/no-floating-promises": {
       "count": 1
-    },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 3
     }
   },
   "src/renderer/stores/goals.svelte.ts": {
     "@typescript-eslint/no-base-to-string": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unused-vars": {
       "count": 1
     }
   },
@@ -2366,9 +2145,6 @@
     "@typescript-eslint/no-misused-promises": {
       "count": 2
     },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 8
-    },
     "preserve-caught-error": {
       "count": 1
     },
@@ -2381,16 +2157,6 @@
       "count": 3
     }
   },
-  "src/renderer/stores/rateLimit.svelte.ts": {
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
-    }
-  },
-  "src/renderer/stores/review.svelte.ts": {
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
-    }
-  },
   "src/renderer/stores/schedules.svelte.test.ts": {
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 1
@@ -2401,9 +2167,6 @@
   },
   "src/renderer/stores/schedules.svelte.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unused-vars": {
       "count": 1
     }
   },
@@ -2433,16 +2196,6 @@
     "@typescript-eslint/no-unsafe-member-access": {
       "count": 3
     },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
-    }
-  },
-  "src/renderer/stores/terminal.svelte.ts": {
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
-    }
-  },
-  "src/renderer/stores/threadItems.svelte.ts": {
     "@typescript-eslint/no-unused-vars": {
       "count": 1
     }

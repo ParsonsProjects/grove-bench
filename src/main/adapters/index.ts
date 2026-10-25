@@ -1,5 +1,4 @@
 export { adapterRegistry } from './registry.js';
-export { ClaudeCodeAdapter } from './claude-code.js';
 
 import type { AcpAgentSetting, ClaudeAccountSetting, GroveBenchSettings } from '../../shared/types.js';
 import { adapterRegistry } from './registry.js';

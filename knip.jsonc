@@ -9,7 +9,10 @@
     "src/main/adapters/acp/fake-acp-agent.test-fixture.mjs",
     "src/renderer/demo-mock.ts",
     "src/renderer/ui-kit/main.ts",
-    "scripts/*.mjs"
+    "scripts/*.mjs",
+    // The landing page draws its art with the app's own code, imported from
+    // src/ here, so knip counts those exports as used.
+    "landing/src/shared/app-art.js"
   ],
   // Separate projects, each with its own package.json.
   "ignore": ["landing/**", "scripts/acp-spike/**"],

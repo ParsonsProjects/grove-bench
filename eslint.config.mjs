@@ -25,6 +25,16 @@ export default defineConfig(
         extraFileExtensions: ['.svelte'],
       },
     },
+    rules: {
+      // A leading _ marks a name left unused on purpose (an interface's
+      // argument, a mock's).
+      '@typescript-eslint/no-unused-vars': ['error', {
+        argsIgnorePattern: '^_',
+        varsIgnorePattern: '^_',
+        caughtErrorsIgnorePattern: '^_',
+        destructuredArrayIgnorePattern: '^_',
+      }],
+    },
   },
   {
     files: ['**/*.svelte', '**/*.svelte.ts'],
@@ -34,6 +44,12 @@ export default defineConfig(
         svelteConfig,
       },
     },
+    // typescript-eslint turns off the core rules TypeScript already checks
+    // (no-undef, no-import-assign and others) only in .ts files. Its
+    // prefer-const stays out: Svelte's `let { a } = $props()` is meant.
+    rules: Object.fromEntries(
+      Object.entries(ts.configs.eslintRecommended.rules).filter(([, level]) => level === 'off'),
+    ),
   },
   {
     // Plain JavaScript (scripts, configs, the MCP bridge) is outside
@@ -50,10 +66,13 @@ export default defineConfig(
     languageOptions: { globals: globals.node },
   },
   {
-    // Mocks and fixtures in tests are often loosely typed on purpose.
+    // Mocks and fixtures in tests are often loosely typed on purpose, and
+    // expect(obj.method) and vi.mocked(obj.method) never call the method
+    // unbound.
     files: ['**/*.test.ts', '**/__mocks__/**'],
     rules: {
       '@typescript-eslint/no-explicit-any': 'off',
+      '@typescript-eslint/unbound-method': 'off',
     },
   },
 );

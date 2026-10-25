@@ -51,6 +51,7 @@ jobs:
     # Separate from the tests so it runs alongside them. Neither tool needs
     # Windows, so it runs on Linux.
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
 
@@ -60,12 +61,31 @@ jobs:
           cache: npm
 
       - name: Install dependencies
+        id: install
         run: npm ci --ignore-scripts
 
+      # Each check runs even when the one before it fails, so one push shows
+      # every problem.
       - name: Lint
         # Errors listed in eslint-suppressions.json don't fail it, but one
         # that's fixed and still listed does: run npm run lint:prune.
         run: npm run lint
 
       - name: Unused files, exports and dependencies
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: npm run knip
+
+      - name: Check the lint suppressions list
+        # ESLint lets eslint-suppressions.json grow and keeps entries for
+        # deleted files. This fails on both (scripts/check-lint-suppressions.mjs,
+        # which needs no install).
+        if: ${{ !cancelled() }}
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if [ -n "$BASE_REF" ]; then
+            git fetch --no-tags --depth=1 origin "$BASE_REF"
+            node scripts/check-lint-suppressions.mjs FETCH_HEAD
+          else
+            node scripts/check-lint-suppressions.mjs
+          fi
