@@ -178,3 +178,65 @@ describe('CheckpointsPanel with grove characters', () => {
     expect(queryByRole('img', { name: 'Ready' })).toBeNull();
   });
 });
+
+// A rewind discards work that nothing else keeps (the checkpoint is from
+// before the turn, and later ones are pruned), so each one asks first.
+describe('CheckpointsPanel rewinds', () => {
+  async function pick(text: string) {
+    const view = render(CheckpointsPanel, { sessionId: SID });
+    await fireEvent.click(view.getByText(text));
+    return view;
+  }
+
+  it('asks before Rewind all, says what it discards, then rewinds files and thread', async () => {
+    const { getByRole, queryByRole } = await pick('Add polling');
+    await fireEvent.click(getByRole('button', { name: 'Rewind all' }));
+
+    expect(mockGroveBench.rewindSession).not.toHaveBeenCalled();
+    expect(getByRole('alert')).toHaveTextContent(
+      'Rewind to #2? Files go back to before this turn, so every change since is lost, yours included, and new files are deleted. This turn and later ones leave the thread.',
+    );
+    await fireEvent.click(getByRole('button', { name: 'Rewind' }));
+    await waitFor(() => expect(mockGroveBench.rewindSession).toHaveBeenCalledWith(SID, 'u2', undefined));
+    expect(queryByRole('alert')).toBeNull();
+  });
+
+  it('rewinds nothing on Cancel', async () => {
+    const { getByRole, queryByRole } = await pick('Add polling');
+    await fireEvent.click(getByRole('button', { name: 'Rewind all' }));
+    await fireEvent.click(getByRole('button', { name: 'Cancel' }));
+
+    expect(queryByRole('alert')).toBeNull();
+    expect(mockGroveBench.rewindSession).not.toHaveBeenCalled();
+  });
+
+  it('drops the question when another checkpoint is picked', async () => {
+    const { getByRole, getByText, queryByRole } = await pick('Add polling');
+    await fireEvent.click(getByRole('button', { name: 'Rewind all' }));
+    await fireEvent.click(getByText('Initial change'));
+
+    expect(queryByRole('alert')).toBeNull();
+  });
+
+  it('says Thread only keeps the files', async () => {
+    const { getByRole } = await pick('Add polling');
+    await fireEvent.click(getByRole('button', { name: 'Thread only' }));
+
+    expect(getByRole('alert')).toHaveTextContent('Rewind the thread to #2? This turn and later ones leave the thread. Files stay as they are.');
+    await fireEvent.click(getByRole('button', { name: 'Rewind thread' }));
+    await waitFor(() => expect(mockGroveBench.rewindSession).toHaveBeenCalledWith(SID, 'u2', { conversationOnly: true }));
+  });
+
+  it('asks before restoring the files of a checkpoint from before a /clear', async () => {
+    checkpointStore.checkpointsBySession = {
+      [SID]: [{ uuid: 'u1', turn: 1, ref: 'r1', text: 'Initial change', beforeClear: true }],
+    };
+    const { getByRole } = await pick('Initial change');
+    await fireEvent.click(getByRole('button', { name: 'Restore files' }));
+
+    expect(getByRole('alert')).toHaveTextContent('Restore files to #1? They go back to before this turn, so every change since is lost, yours included, and new files are deleted.');
+    expect(mockGroveBench.rewindSession).not.toHaveBeenCalled();
+    await fireEvent.click(getByRole('button', { name: 'Restore' }));
+    await waitFor(() => expect(mockGroveBench.rewindSession).toHaveBeenCalledWith(SID, 'u1', { filesOnly: true }));
+  });
+});

@@ -33,6 +33,14 @@
   let listCollapsed = $derived(panelStore.isCollapsed('checkpointList'));
   let rewinding = $state(false);
   let error = $state('');
+  /** The rewind waiting on Confirm: each one discards work, and nothing
+   *  keeps the files as they are now, so none runs on the first click. */
+  let confirming = $state<'files' | 'all' | 'conversation' | null>(null);
+  // Another checkpoint, or none, drops it.
+  $effect(() => {
+    void selectedUuid;
+    confirming = null;
+  });
 
   let isFullThread = $derived(selectedUuid === FULL_THREAD_UUID);
   let statsByUuid = $derived(new Map(history.entries.map(e => [e.uuid, e])));
@@ -50,6 +58,7 @@
 
   async function handleRewind(mode: 'files' | 'all' | 'conversation') {
     if (!selectedUuid || isFullThread) return;
+    confirming = null;
     rewinding = true;
     error = '';
     try {
@@ -74,6 +83,15 @@
   let selectedCheckpoint = $derived(checkpoints.find(c => c.uuid === selectedUuid));
   /** Checkpoints from before the last /clear: files restorable, conversation gone. */
   let selectedBeforeClear = $derived(!!selectedCheckpoint?.beforeClear);
+  /** What the pending rewind discards: files back to before the turn (the
+   *  checkpoint is taken before its prompt), and the turns from it on. */
+  let confirmText = $derived.by(() => {
+    const at = `#${selectedCheckpoint?.turn ?? '?'}`;
+    const files = 'every change since is lost, yours included, and new files are deleted';
+    if (confirming === 'files') return `Restore files to ${at}? They go back to before this turn, so ${files}.`;
+    if (confirming === 'conversation') return `Rewind the thread to ${at}? This turn and later ones leave the thread. Files stay as they are.`;
+    return `Rewind to ${at}? Files go back to before this turn, so ${files}. This turn and later ones leave the thread.`;
+  });
   /** Index of the first pre-clear entry in the newest-first list (divider position). */
   let firstBeforeClearIdx = $derived(checkpoints.findIndex(c => c.beforeClear));
 
@@ -253,27 +271,29 @@
                      files can come back. -->
                 <Button
                   size="xs"
-                  onclick={() => handleRewind('files')}
+                  variant="outline-destructive"
+                  onclick={() => (confirming = 'files')}
                   disabled={rewinding}
-                  title="Restore files to this checkpoint. The thread was cleared, so it is left as is."
+                  title="Restore files to this checkpoint. The thread was cleared, so it is left as is. Asks first."
                 >
                   {rewinding ? 'Restoring...' : 'Restore files'}
                 </Button>
               {:else}
                 <Button
                   size="xs"
-                  onclick={() => handleRewind('all')}
+                  variant="outline-destructive"
+                  onclick={() => (confirming = 'all')}
                   disabled={rewinding}
-                  title="Restore files and rewind thread to this point"
+                  title="Restore files and rewind thread to this point. Asks first."
                 >
                   {rewinding ? 'Rewinding...' : 'Rewind all'}
                 </Button>
                 <Button
                   size="xs"
-                  variant="secondary"
-                  onclick={() => handleRewind('conversation')}
+                  variant="subtle"
+                  onclick={() => (confirming = 'conversation')}
                   disabled={rewinding}
-                  title="Only rewind thread, keep current files"
+                  title="Only rewind thread, keep current files. Asks first."
                 >
                   Thread only
                 </Button>
@@ -281,6 +301,16 @@
             {/if}
           {/snippet}
         </PanelHeader>
+
+        {#if confirming}
+          <div class="shrink-0 border-b border-border px-3 py-2 flex flex-wrap items-center gap-2">
+            <p class="flex-1 min-w-48 text-xs text-foreground" role="alert">{confirmText}</p>
+            <Button variant="subtle" size="xs" onclick={() => (confirming = null)}>Cancel</Button>
+            <Button variant="destructive" size="xs" disabled={rewinding} onclick={() => handleRewind(confirming!)}>
+              {confirming === 'files' ? 'Restore' : confirming === 'conversation' ? 'Rewind thread' : 'Rewind'}
+            </Button>
+          </div>
+        {/if}
 
         {#if error}
           <Notice tone="danger" class="shrink-0 border-b border-b-border">

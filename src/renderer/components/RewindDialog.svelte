@@ -95,9 +95,10 @@
           Select a message to rewind the thread to. This thread runs without git, so files on disk stay as
           they are: the agent's edits after that point are not undone.
         {:else}
-          Select a message to rewind to. Files on disk will be restored to their state at that point.
+          Select a message to rewind to. Files go back to how they were before it, so every change since is
+          lost, yours included, and new files are deleted.
           <span class="text-muted-foreground text-xs block mt-1">
-            Captures full working tree state including all file changes.
+            Tick Thread only to keep the files as they are.
           </span>
         {/if}
         {#if !canForget}

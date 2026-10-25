@@ -21,10 +21,12 @@ When you select a checkpoint, the right panel shows a diff with two modes:
 
 ## Rewind Options
 
-When you're ready to rewind, you have two choices:
+When you're ready to rewind, you have two choices. Each asks first, and says what it will discard:
 
-- **Rewind all** — Restores both the files and the thread to the checkpoint state. This is a full undo.
+- **Rewind all** — Restores both the files and the thread to the checkpoint state. Every change made since is lost, your own edits included, and files created since are deleted. Ignored files are left alone.
 - **Thread only** — Resets only the thread to the checkpoint. Files on disk are left as-is.
+
+A rewind can't be undone: the files as they are just before it aren't saved anywhere. Commit or copy anything you want to keep first.
 
 A checkpoint whose message is no longer in the thread (one from before a `/clear`, or the target of an earlier rewind) can only have its files restored; the thread is left untouched. Checkpoints from before a `/clear` show a single **Restore files** button in place of the two above.
 
