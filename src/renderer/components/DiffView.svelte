@@ -339,7 +339,7 @@
           <col class="w-[calc(50%-1rem)]" />
         </colgroup>
         <tbody>
-          {#each rows as row}
+          {#each rows as row, i (i)}
             {#if row.type === 'hunk'}
               <tr data-hunk="true">
                 <td colspan="4" class="text-cyan-400 bg-cyan-950/20 px-2 py-0.5">{row.hunkText}</td>
@@ -392,7 +392,7 @@
     </div>
   {:else}
     <div bind:this={root} class="overflow-x-auto overflow-y-auto text-xs font-mono" style:max-height={maxHeight}>
-      {#each lines as line, idx}
+      {#each lines as line, idx (idx)}
         {#if line.type === 'hunk'}
           <div data-hunk="true" class="text-cyan-400 bg-cyan-950/20 px-2 py-0.5">{line.text}</div>
         {:else if line.type === 'expander'}

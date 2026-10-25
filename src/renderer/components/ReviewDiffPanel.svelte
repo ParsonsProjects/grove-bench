@@ -754,7 +754,7 @@
 
 {#snippet emptyPane(title: string, hint: string | undefined)}
   <div class="pixel-bg flex-1 flex items-center justify-center text-muted-foreground text-sm relative overflow-hidden">
-    {#each Array(20) as _, i}
+    {#each Array(20) as _, i (i)}
       <span
         class="blue-pixel absolute"
         style="
@@ -1120,7 +1120,7 @@
         {#if history && historyExpanded}
           <div class="mt-2 border-t border-border/50 pt-2">
             <div class="text-xs text-muted-foreground mb-1.5 font-medium">Edit History</div>
-            {#each history.edits as edit, idx}
+            {#each history.edits as edit, idx (edit.id)}
               {@const info = editInfoFor(edit, selectedEntry.filePath)}
               {@const held = quickDiffFor(info, edit).large && !largeEditShown[edit.id]}
               {@const editDiff = held ? null : editDiffFor(info, edit, !!editCompared[edit.id])}

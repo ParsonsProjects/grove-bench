@@ -776,9 +776,6 @@
     },
     "@typescript-eslint/no-unsafe-member-access": {
       "count": 1
-    },
-    "svelte/require-each-key": {
-      "count": 3
     }
   },
   "src/renderer/App.svelte.test.ts": {
@@ -812,11 +809,6 @@
   },
   "src/renderer/components/ApiKeyField.svelte": {
     "svelte/no-useless-mustaches": {
-      "count": 1
-    }
-  },
-  "src/renderer/components/AttachmentChips.svelte": {
-    "svelte/require-each-key": {
       "count": 1
     }
   },
@@ -884,11 +876,6 @@
       "count": 1
     }
   },
-  "src/renderer/components/ContextMenu.svelte": {
-    "svelte/require-each-key": {
-      "count": 1
-    }
-  },
   "src/renderer/components/ConversationGoal.svelte.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
       "count": 1
@@ -903,11 +890,6 @@
     },
     "@typescript-eslint/no-unsafe-member-access": {
       "count": 1
-    }
-  },
-  "src/renderer/components/DiffView.svelte": {
-    "svelte/require-each-key": {
-      "count": 2
     }
   },
   "src/renderer/components/DraftAgentControl.svelte.test.ts": {
@@ -954,16 +936,6 @@
       "count": 4
     }
   },
-  "src/renderer/components/HelpPanel.svelte": {
-    "svelte/require-each-key": {
-      "count": 2
-    }
-  },
-  "src/renderer/components/HighlightedText.svelte": {
-    "svelte/require-each-key": {
-      "count": 1
-    }
-  },
   "src/renderer/components/MarkdownBlock.svelte.test.ts": {
     "@typescript-eslint/require-await": {
       "count": 1
@@ -975,14 +947,6 @@
     },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 2
-    },
-    "svelte/require-each-key": {
-      "count": 5
-    }
-  },
-  "src/renderer/components/OutputPanel.svelte": {
-    "svelte/require-each-key": {
-      "count": 1
     }
   },
   "src/renderer/components/OutputPanel.svelte.test.ts": {
@@ -1011,19 +975,11 @@
   "src/renderer/components/PromptEditor.svelte": {
     "@typescript-eslint/no-unsafe-call": {
       "count": 1
-    },
-    "svelte/require-each-key": {
-      "count": 1
     }
   },
   "src/renderer/components/PromptEditor.svelte.test.ts": {
     "@typescript-eslint/require-await": {
       "count": 1
-    }
-  },
-  "src/renderer/components/QuestionBlock.svelte": {
-    "svelte/require-each-key": {
-      "count": 2
     }
   },
   "src/renderer/components/ReviewDiffPanel.svelte": {
@@ -1044,9 +1000,6 @@
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 1
-    },
-    "svelte/require-each-key": {
-      "count": 2
     }
   },
   "src/renderer/components/RewindDialog.svelte": {
@@ -1058,9 +1011,6 @@
     },
     "@typescript-eslint/no-unsafe-member-access": {
       "count": 2
-    },
-    "svelte/require-each-key": {
-      "count": 1
     }
   },
   "src/renderer/components/RewindDialog.svelte.test.ts": {
@@ -1108,11 +1058,6 @@
       "count": 1
     }
   },
-  "src/renderer/components/SessionFinder.svelte": {
-    "svelte/require-each-key": {
-      "count": 1
-    }
-  },
   "src/renderer/components/SessionFinder.svelte.test.ts": {
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 5
@@ -1153,9 +1098,6 @@
     },
     "svelte/no-useless-mustaches": {
       "count": 3
-    },
-    "svelte/require-each-key": {
-      "count": 1
     }
   },
   "src/renderer/components/Sidebar.svelte.test.ts": {
@@ -1188,16 +1130,6 @@
       "count": 1
     }
   },
-  "src/renderer/components/StatusBarActivity.svelte": {
-    "svelte/require-each-key": {
-      "count": 2
-    }
-  },
-  "src/renderer/components/StatusBarContext.svelte": {
-    "svelte/require-each-key": {
-      "count": 1
-    }
-  },
   "src/renderer/components/StatusBarPr.svelte": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
       "count": 3
@@ -1222,11 +1154,6 @@
   "src/renderer/components/ThreadViewSelect.svelte": {
     "svelte/no-useless-children-snippet": {
       "count": 1
-    }
-  },
-  "src/renderer/components/TitleBar.svelte": {
-    "svelte/require-each-key": {
-      "count": 2
     }
   },
   "src/renderer/components/UpdateNotification.svelte.test.ts": {

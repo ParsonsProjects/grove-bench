@@ -58,10 +58,10 @@
     <div class="flex gap-3 flex-1 min-h-0 overflow-hidden">
       <!-- Topic sidebar -->
       <nav class="w-48 shrink-0 overflow-auto border-r border-border pr-3">
-        {#each sections as [section, sectionTopics]}
+        {#each sections as [section, sectionTopics] (section)}
           <div class="mb-3">
             <SectionLabel>{section}</SectionLabel>
-            {#each sectionTopics as topic}
+            {#each sectionTopics as topic (topic.id)}
               <button
                 onclick={() => selectedTopicId = topic.id}
                 class="w-full text-left text-xs px-2 py-1 transition-colors

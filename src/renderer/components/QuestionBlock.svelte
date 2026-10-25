@@ -96,7 +96,7 @@
 </script>
 
 <div class="py-1 my-1 border-l-4 {resolved ? 'border-border' : 'border-status-attention'} pl-3">
-  {#each questions as q, qIdx}
+  {#each questions as q, qIdx (qIdx)}
     <div class={qIdx > 0 ? 'mt-3' : ''}>
       <div class="flex items-center gap-2 text-xs">
         {#if qIdx === 0 && settingsStore.current.groveCharacters}
@@ -109,7 +109,7 @@
 
       {#if q.options.length > 0}
         <div class="flex flex-col gap-1 mt-2">
-          {#each q.options as opt, optIdx}
+          {#each q.options as opt, optIdx (optIdx)}
             {#if resolved}
               <!-- Resolved: show which option was picked -->
               {@const wasChosen = selectedLabels ? selectedLabels.includes(opt.label) : response?.includes(opt.label)}

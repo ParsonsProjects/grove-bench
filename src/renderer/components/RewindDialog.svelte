@@ -119,7 +119,7 @@
       </div>
     {:else}
       <div class="max-h-64 overflow-y-auto -mx-1 px-1 space-y-1">
-        {#each rewindPoints as point, i}
+        {#each rewindPoints as point, i (point.index)}
           <button
             class="w-full text-left px-3 py-2 text-sm transition-colors
               {selectedId === point.uuid

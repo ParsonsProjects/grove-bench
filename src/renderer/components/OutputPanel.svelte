@@ -480,7 +480,7 @@
   <!-- Clipped to the view: the dots reach 726px down, and unclipped they
        made a short chat scroll, so following it hid the first messages. -->
   <div class="absolute inset-0 overflow-hidden pointer-events-none">
-    {#each Array(20) as _, i}
+    {#each Array(20) as _, i (i)}
       <span
         class="blue-pixel absolute"
         style="

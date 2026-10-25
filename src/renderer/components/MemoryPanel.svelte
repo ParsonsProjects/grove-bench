@@ -211,7 +211,7 @@
             {memoryStore.activeRepo?.split(/[/\\]/).pop() ?? 'Select project'}
           </Select.Trigger>
           <Select.Content>
-            {#each store.repos as repo}
+            {#each store.repos as repo, i (i)}
               <Select.Item value={repo} label={repo.split(/[/\\]/).pop() ?? repo} />
             {/each}
           </Select.Content>
@@ -277,10 +277,10 @@
         {:else if memoryStore.files.length === 0}
           <p class="text-xs text-muted-foreground">No memory files yet. Click + to create one.</p>
         {:else}
-          {#each memoryStore.folders as folder}
+          {#each memoryStore.folders as folder (folder)}
             <div class="mb-2">
               <span class="text-xs font-medium text-muted-foreground">{folder}/</span>
-              {#each memoryStore.filesByFolder[folder] as file}
+              {#each memoryStore.filesByFolder[folder] as file (file.relativePath)}
                 <button
                   onclick={() => selectFile(file.relativePath)}
                   class="w-full text-left text-xs px-2 py-1 truncate transition-colors
@@ -399,7 +399,7 @@
               {newFileFolder}/
             </Select.Trigger>
             <Select.Content>
-              {#each folders as f}
+              {#each folders as f (f)}
                 <Select.Item value={f} label="{f}/" />
               {/each}
             </Select.Content>
@@ -563,7 +563,7 @@
           aria-label="Older than (days)"
           class="ml-1"
         >
-          {#each pruneDayPresets as d}
+          {#each pruneDayPresets as d (d)}
             <Segmented.Item value={String(d)}>{d}</Segmented.Item>
           {/each}
         </Segmented.Root>

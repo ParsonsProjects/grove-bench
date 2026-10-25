@@ -8,6 +8,6 @@
   let segments = $derived(highlightSegments(text, query, { words }));
 </script>
 
-{#each segments as seg}
+{#each segments as seg, i (i)}
   {#if seg.match}<mark class="bg-highlight text-highlight-foreground">{seg.text}</mark>{:else}{seg.text}{/if}
 {/each}

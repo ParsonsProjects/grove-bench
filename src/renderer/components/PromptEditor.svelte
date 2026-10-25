@@ -558,7 +558,7 @@
       <Command.Root shouldFilter={false} class="border border-border shadow-xl">
         <Command.List class="max-h-48">
           <Command.Group heading="Commands">
-            {#each filteredCommands as cmd, i}
+            {#each filteredCommands as cmd, i (i)}
               <Command.Item
                 value={cmd.name}
                 onSelect={() => selectCommand(cmd)}

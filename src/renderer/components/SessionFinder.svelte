@@ -224,7 +224,7 @@
       {:else}
         {#if sessionResults.length > 0}
           <SectionLabel class="px-3 pt-2 pb-1">Threads</SectionLabel>
-          {#each sessionResults as entry, i}
+          {#each sessionResults as entry, i (entry.id)}
             {@const isActive = store.activeSessionId === entry.id}
             <button
               class="w-full text-left px-3 py-2 text-xs flex flex-col gap-0.5 transition-colors
