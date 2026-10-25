@@ -27,6 +27,7 @@
 </script>
 
 <Notice tone="neutral">
-  {#snippet actions()}<Button size="2xs" variant="subtle" aria-label={label ?? button} onclick={onShow}>{button}</Button>{/snippet}
+  <!-- Green, as an action (BRAND.md), as in OldThenNewNotice. -->
+  {#snippet actions()}<Button size="2xs" variant="link" aria-label={label ?? button} onclick={onShow}>{button}</Button>{/snippet}
   <p>{text} Showing it can pause the app for a moment.</p>
 </Notice>

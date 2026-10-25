@@ -103,7 +103,7 @@ All in `src/renderer/lib/components/ui/`. Import from the folder's `index.js`:
 | `quiet-destructive` | Icon buttons that delete or stop something: quiet until hovered, then red |
 | `outline-success` | Answering what the agent asked for: Allow, Approve, Answer, an MCP form's Submit |
 | `outline-destructive`, `destructive` | Actions that delete or discard. Use the filled one only in a confirmation. |
-| `link` | An action inside a sentence ("Try again") |
+| `link` | An action inside a sentence ("Try again"), and the diff notices' actions ("Compare line by line", "Show diff"), where a grey bordered button was lost on the notice |
 | `external` | A link that opens a web page or another app, in the blue `--link` colour (green acts, blue goes) |
 
 | Size | Height | Use |
