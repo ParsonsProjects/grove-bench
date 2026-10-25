@@ -450,6 +450,13 @@ describe('a merge, rebase, cherry-pick or revert stopped part way', () => {
     expect(await gitOperation(repo)).toEqual({ kind: 'merge', incoming: 'main', branch: 'feat', message: "Merge branch 'main' into feat" });
   });
 
+  it("reads a merged branch's name that holds a quote", async () => {
+    diverge();
+    run('branch', "it's-done", 'main');
+    tryRun('merge', "it's-done");
+    expect(await gitOperation(repo)).toMatchObject({ incoming: "it's-done", message: "Merge branch 'it's-done' into feat" });
+  });
+
   it('reports a rebase, with its step', async () => {
     diverge(1);
     tryRun('rebase', 'main');
@@ -500,16 +507,51 @@ describe('a merge, rebase, cherry-pick or revert stopped part way', () => {
     expect(run('log', '-1', '--format=%s')).toBe('main');
   });
 
-  it('drops a cherry-pick resolved to no change, as a rebase does', async () => {
+  it('drops a cherry-pick resolved to no change, as a rebase does, keeping changes not staged', async () => {
+    commit('notes.txt', 'notes');
     diverge();
     const before = run('rev-parse', 'HEAD');
     tryRun('cherry-pick', run('rev-parse', 'main'));
     run('checkout', '--ours', 'base.txt');
     run('add', 'base.txt');
+    write('notes.txt', 'my edit\n');
 
     await continueGitOperation(repo, 'cherry-pick');
     expect(await gitOperation(repo)).toBeNull();
     expect(run('rev-parse', 'HEAD')).toBe(before);
+    expect(fs.readFileSync(path.join(repo, 'notes.txt'), 'utf8')).toBe('my edit\n');
+  });
+
+  it("won't continue a rebase with changes not staged, and leaves them be", async () => {
+    // git would refuse too, saying to "edit all merge conflicts". Its --skip
+    // (once tried here when nothing was staged) resets them away.
+    commit('notes.txt', 'notes');
+    diverge();
+    tryRun('rebase', 'main');
+    run('checkout', '--ours', 'base.txt');
+    run('add', 'base.txt');
+    write('notes.txt', 'my edit\n');
+
+    await expect(continueGitOperation(repo, 'rebase')).rejects.toThrow("Stage or undo the changes that aren't staged first: git won't continue a rebase with them.");
+    expect(await gitOperation(repo)).toMatchObject({ kind: 'rebase', step: 1 });
+    expect(fs.readFileSync(path.join(repo, 'notes.txt'), 'utf8')).toBe('my edit\n');
+  });
+
+  it('reports picking several commits between two of them, and continues with the rest', async () => {
+    diverge();
+    run('checkout', '-q', 'main');
+    commit('extra.txt', 'extra');
+    run('checkout', '-q', 'feat');
+    tryRun('cherry-pick', 'main~1', 'main');
+    write('base.txt', 'both\n');
+    run('add', 'base.txt');
+    // Committed by hand: git keeps only the list of picks still to come.
+    run('commit', '-q', '--no-edit');
+    expect(await gitOperation(repo)).toEqual({ kind: 'cherry-pick' });
+
+    await continueGitOperation(repo, 'cherry-pick');
+    expect(await gitOperation(repo)).toBeNull();
+    expect(run('log', '--format=%s', '-3').split('\n')).toEqual(['extra', 'main', 'feat']);
   });
 
   it('aborts each kind back to where it started', async () => {

@@ -18,19 +18,24 @@
   let busy = $state<'continue' | 'abort' | null>(null);
   let confirming = $state(false);
   let error = $state('');
+  // An error is about the step it came from: dropped once git moves on.
+  let step = $derived(`${operation.kind} ${operation.step ?? ''} ${operation.commit ?? ''}`);
+  $effect(() => {
+    void step;
+    error = '';
+  });
 
   async function act(which: 'continue' | 'abort') {
     confirming = false;
     busy = which;
     error = '';
     try {
-      if (which === 'continue') await window.groveBench.continueGitOperation(sessionId, operation.kind);
-      else await window.groveBench.abortGitOperation(sessionId, operation.kind);
+      if (which === 'continue') await gitStatusStore.continueOperation(sessionId, operation.kind);
+      else await gitStatusStore.abortOperation(sessionId, operation.kind);
     } catch (e) {
       error = stripIpcErrorPrefix(e instanceof Error ? e.message : String(e));
     } finally {
       busy = null;
-      void gitStatusStore.refresh(sessionId);
     }
   }
 

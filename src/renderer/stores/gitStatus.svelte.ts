@@ -1,4 +1,4 @@
-import type { DiffScope, GitStatusResult } from '../../shared/types.js';
+import type { DiffScope, GitOperation, GitStatusResult } from '../../shared/types.js';
 import { store as sessionStore } from './sessions.svelte.js';
 import { settingsStore } from './settings.svelte.js';
 
@@ -195,6 +195,25 @@ class GitStatusStore {
   async commit(sessionId: string, message: string): Promise<void> {
     await window.groveBench.commit(sessionId, message);
     this.scheduleRefresh(sessionId, 100);
+  }
+
+  /** Continue or abort a rebase, cherry-pick or revert (abort a merge too)
+   *  git stopped part way. Refreshed even when it fails: it may have
+   *  stopped again, or ended some other way. */
+  async continueOperation(sessionId: string, kind: GitOperation['kind']): Promise<void> {
+    try {
+      await window.groveBench.continueGitOperation(sessionId, kind);
+    } finally {
+      this.scheduleRefresh(sessionId, 100);
+    }
+  }
+
+  async abortOperation(sessionId: string, kind: GitOperation['kind']): Promise<void> {
+    try {
+      await window.groveBench.abortGitOperation(sessionId, kind);
+    } finally {
+      this.scheduleRefresh(sessionId, 100);
+    }
   }
 
   clear(sessionId: string): void {

@@ -699,16 +699,30 @@ export async function push(cwd: string, branch: string): Promise<void> {
 
 /** Their state files, in the worktree's own git dir, in the order checked:
  *  a rebase can leave other heads behind while it runs. */
-const OPERATION_FILES = ['rebase-merge', 'rebase-apply', 'MERGE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD'] as const;
+/**
+ * The worktree's own git dir, where git keeps the state of a merge or
+ * rebase under way. Read from `.git` (a folder, or in a linked worktree a
+ * file naming its folder) rather than asked of git, as the status asks on
+ * every refresh.
+ */
+async function worktreeGitDir(cwd: string): Promise<string> {
+  const dotGit = path.join(cwd, '.git');
+  const stat = await fs.stat(dotGit).catch(() => null);
+  if (stat?.isDirectory()) return dotGit;
+  const pointer = stat?.isFile() ? (await fs.readFile(dotGit, 'utf8')).match(/^gitdir: (.+)$/m) : null;
+  if (pointer) return path.resolve(cwd, pointer[1].trim());
+  return path.resolve(cwd, (await git(['rev-parse', '--git-dir'], cwd)).trim());
+}
 
 /**
  * A merge, rebase, cherry-pick or revert stopped part way in `cwd` (on
- * conflicts, or resolved and waiting to be finished), or null. One git call
+ * conflicts, or resolved and waiting to be finished), or null. No git call
  * when there is none; `git am` (rebase-apply/applying) isn't one of these.
  */
 export async function gitOperation(cwd: string): Promise<GitOperation | null> {
-  const out = await git(['rev-parse', ...OPERATION_FILES.flatMap((f) => ['--git-path', f])], cwd);
-  const [rebaseMerge, rebaseApply, mergeHead, cherryPickHead, revertHead] = out.split('\n').map((p) => path.resolve(cwd, p.trim()));
+  const gitDir = await worktreeGitDir(cwd);
+  const [rebaseMerge, rebaseApply, mergeHead, cherryPickHead, revertHead, sequencerTodo] =
+    ['rebase-merge', 'rebase-apply', 'MERGE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'sequencer/todo'].map((f) => path.join(gitDir, f));
   const exists = (p: string) => fs.access(p).then(() => true, () => false);
   const read = (p: string) => fs.readFile(p, 'utf8').then((t) => t.trim(), () => '');
 
@@ -730,15 +744,22 @@ export async function gitOperation(cwd: string): Promise<GitOperation | null> {
     const message = (await read(path.join(path.dirname(mergeHead), 'MERGE_MSG')))
       .split('\n').filter((l) => !l.startsWith('#')).join('\n').trim();
     const branch = await currentBranch(cwd);
+    // A branch's name may hold a quote: "Merge branch 'it's-done' into feat".
+    const named = message.split('\n', 1)[0].match(/^Merge (?:remote-tracking )?branch '(.+?)'(?: into .+)?$/)?.[1];
     return {
       kind: 'merge',
-      incoming: message.match(/^Merge (?:remote-tracking )?branch '([^']+)'/)?.[1] ?? (await read(mergeHead)).slice(0, 7),
+      incoming: named ?? (await read(mergeHead)).slice(0, 7),
       ...(branch ? { branch } : {}),
       ...(message ? { message } : {}),
     };
   }
   if (await exists(cherryPickHead)) return { kind: 'cherry-pick', commit: (await read(cherryPickHead)).slice(0, 7) };
   if (await exists(revertHead)) return { kind: 'revert', commit: (await read(revertHead)).slice(0, 7) };
+  // Picking or reverting several commits, between two of them: one was
+  // committed by hand, or git stopped before starting the next.
+  const next = (await read(sequencerTodo)).split(/\s/, 1)[0];
+  if (next === 'pick') return { kind: 'cherry-pick' };
+  if (next === 'revert') return { kind: 'revert' };
   return null;
 }
 
@@ -767,24 +788,22 @@ function gitErrorText(e: unknown): string {
  */
 export async function continueGitOperation(cwd: string, kind: GitOperation['kind']): Promise<void> {
   if (kind === 'merge') throw new Error('A merge is finished with a commit.');
-  if ((await gitOperation(cwd))?.kind !== kind) throw new Error(`There is no ${kind} to continue: it may have finished already.`);
+  const op = await gitOperation(cwd);
+  if (op?.kind !== kind) throw new Error(`There is no ${kind} to continue: it may have finished already.`);
   if (await hasUnmergedPaths(cwd)) throw new Error('Mark each conflict resolved first.');
+  // git refuses with "You must edit all merge conflicts", which misleads.
+  if (kind === 'rebase' && (await gitExit(['diff', '--quiet', '--ignore-submodules'], cwd)).exitCode !== 0) {
+    throw new Error("Stage or undo the changes that aren't staged first: git won't continue a rebase with them.");
+  }
+  // A pick resolved to no change: git won't make an empty commit, so drop it,
+  // as a rebase does itself. Its --skip keeps unstaged changes (a rebase's
+  // wouldn't). Between picks (no commit stopped on) there is none to drop.
+  const empty = kind !== 'rebase' && !!op.commit && (await gitExit(['diff', '--cached', '--quiet'], cwd)).exitCode === 0;
   try {
-    await gitEnv([kind, '--continue'], cwd, { GIT_EDITOR: 'true' });
+    await gitEnv([kind, empty ? '--skip' : '--continue'], cwd, { GIT_EDITOR: 'true' });
   } catch (e) {
-    const stillHere = (await gitOperation(cwd))?.kind === kind;
     // Conflicts now are the next commit's: it stopped again.
-    if (stillHere && await hasUnmergedPaths(cwd)) return;
-    // Resolved to no change at all: git won't make an empty commit. Drop it,
-    // as a rebase does (and stop at the next one's conflicts, if any).
-    if (stillHere && (await gitExit(['diff', '--cached', '--quiet'], cwd)).exitCode === 0) {
-      try {
-        await git([kind, '--skip'], cwd);
-      } catch (skipError) {
-        if (!(await hasUnmergedPaths(cwd))) throw new Error(gitErrorText(skipError), { cause: skipError });
-      }
-      return;
-    }
+    if ((await gitOperation(cwd))?.kind === kind && await hasUnmergedPaths(cwd)) return;
     throw new Error(gitErrorText(e), { cause: e });
   }
 }

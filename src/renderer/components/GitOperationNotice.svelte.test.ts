@@ -15,12 +15,13 @@ beforeEach(() => {
   mockGroveBench.continueGitOperation.mockResolvedValue(undefined);
   mockGroveBench.abortGitOperation.mockReset();
   mockGroveBench.abortGitOperation.mockResolvedValue(undefined);
-  vi.spyOn(gitStatusStore, 'refresh').mockResolvedValue(undefined);
+  mockGroveBench.getGitStatus.mockResolvedValue({ entries: [] });
   messageStore.setIsRunning(SID, false);
 });
 
 afterEach(() => {
   cleanup();
+  gitStatusStore.clear(SID);
   vi.restoreAllMocks();
   messageStore.setIsRunning(SID, false);
 });
@@ -34,12 +35,15 @@ describe('GitOperationNotice', () => {
     expect(cont).toHaveAttribute('title', 'Mark each conflict resolved first');
   });
 
-  it('continues once they are, and reloads the status', async () => {
+  it('continues once they are, and reloads the status, however soon after the last load', async () => {
+    // The last file marked resolved just reloaded it.
+    await gitStatusStore.refresh(SID);
+    mockGroveBench.getGitStatus.mockClear();
     render(GitOperationNotice, { sessionId: SID, operation: REBASE, conflicts: 0 });
     await fireEvent.click(screen.getByRole('button', { name: 'Continue rebase' }));
 
     expect(mockGroveBench.continueGitOperation).toHaveBeenCalledWith(SID, 'rebase');
-    await waitFor(() => expect(gitStatusStore.refresh).toHaveBeenCalledWith(SID));
+    await waitFor(() => expect(mockGroveBench.getGitStatus).toHaveBeenCalled());
   });
 
   it('asks before aborting, then aborts', async () => {
@@ -74,5 +78,15 @@ describe('GitOperationNotice', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Continue rebase' }));
 
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/^There is no rebase to continue: it may have finished already\.$/));
+  });
+
+  it('drops an error once git has moved on to another step', async () => {
+    mockGroveBench.continueGitOperation.mockRejectedValueOnce(new Error('hook failed'));
+    const view = render(GitOperationNotice, { sessionId: SID, operation: REBASE, conflicts: 0 });
+    await fireEvent.click(screen.getByRole('button', { name: 'Continue rebase' }));
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('hook failed'));
+
+    await view.rerender({ sessionId: SID, operation: { ...REBASE, step: 2 }, conflicts: 1 });
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 });

@@ -1,15 +1,14 @@
 import type { DiffLine } from './diff-types.js';
 import type { GitOperation } from '../../shared/types.js';
+import { isConflictMarker } from '../../shared/git-conflicts.js';
 
 /** A marker line git writes into a file it stopped on: `ours` opens the
  *  block (<<<<<<<), `base` starts the common ancestor's lines (|||||||,
  *  with diff3), `separator` (=======) and `theirs` closes it (>>>>>>>). */
 export type ConflictMarker = 'ours' | 'base' | 'separator' | 'theirs';
 
-const OURS = /^<{7}(?: |$)/;
 const BASE = /^\|{7}(?: |$)/;
 const SEPARATOR = /^={7}$/;
-const THEIRS = /^>{7}(?: |$)/;
 
 /**
  * The marker lines in a conflicted file's diff, by their new-side line
@@ -27,16 +26,13 @@ export function conflictMarkers(lines: DiffLine[]): Map<number, ConflictMarker> 
     if (num === undefined) continue;
     // In a file with CRLF endings git ends its markers with \r too.
     const text = line.text.replace(/\r$/, '');
-    if (OURS.test(text)) {
-      markers.set(num, 'ours');
-      inside = true;
+    if (isConflictMarker(text)) {
+      inside = text.startsWith('<');
+      markers.set(num, inside ? 'ours' : 'theirs');
     } else if (inside && BASE.test(text)) {
       markers.set(num, 'base');
     } else if (inside && SEPARATOR.test(text)) {
       markers.set(num, 'separator');
-    } else if (THEIRS.test(text)) {
-      markers.set(num, 'theirs');
-      inside = false;
     }
   }
   return markers;

@@ -1121,6 +1121,9 @@ describe('ChangesReviewPanel: a merge or rebase stopped part way', () => {
     const commit = getByRole('button', { name: 'Commit 1 file' });
     expect(commit).toBeDisabled();
     expect(commit).toHaveAttribute('title', 'Mark each conflict resolved first');
+    // Nor does Ctrl+Enter commit it.
+    await fireEvent.keyDown(message, { key: 'Enter', ctrlKey: true });
+    expect(mockGroveBench.commit).not.toHaveBeenCalled();
 
     // Resolved: the commit finishes the merge. A message the user cleared stays cleared.
     message.value = '';
@@ -1131,5 +1134,35 @@ describe('ChangesReviewPanel: a merge or rebase stopped part way', () => {
     await tick();
     expect(message.value).toBe('');
     expect(getByRole('button', { name: 'Commit 2 files' })).not.toHaveAttribute('title');
+  });
+
+  it('commits a merge whose conflicts all went your way, with nothing staged', async () => {
+    gitStatusStore.statusBySession = { [SID]: { entries: [], operation: MERGE } };
+    const { findByRole } = render(ChangesReviewPanel, { sessionId: SID });
+
+    await fireEvent.click(await findByRole('button', { name: 'Commit merge' }));
+    expect(mockGroveBench.commit).toHaveBeenCalledWith(SID, "Merge branch 'main' into feat");
+  });
+
+  it("takes git's message out when the merge ends some other way, unless it was edited", async () => {
+    const staged = [entry('src/b.ts', { staged: true })];
+    gitStatusStore.statusBySession = { [SID]: { entries: staged, operation: MERGE } };
+    const { getByPlaceholderText } = render(ChangesReviewPanel, { sessionId: SID });
+    await tick();
+    const message = getByPlaceholderText('Commit message…') as HTMLTextAreaElement;
+    expect(message.value).toBe("Merge branch 'main' into feat");
+
+    // Aborted: the next commit isn't a merge.
+    gitStatusStore.statusBySession = { [SID]: { entries: staged } };
+    await tick();
+    expect(message.value).toBe('');
+
+    gitStatusStore.statusBySession = { [SID]: { entries: staged, operation: { ...MERGE, incoming: 'dev' } } };
+    await tick();
+    message.value = "Merge branch 'main' into feat, by hand";
+    message.dispatchEvent(new Event('input'));
+    gitStatusStore.statusBySession = { [SID]: { entries: staged } };
+    await tick();
+    expect(message.value).toBe("Merge branch 'main' into feat, by hand");
   });
 });
