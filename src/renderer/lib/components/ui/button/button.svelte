@@ -23,7 +23,7 @@
 				quiet: "text-muted-foreground hover:text-foreground disabled:hover:text-muted-foreground",
 				// An icon that deletes, closes for good or stops: quiet until hovered.
 				"quiet-destructive": "text-muted-foreground hover:text-destructive hover:bg-destructive/10 disabled:hover:text-muted-foreground disabled:hover:bg-transparent",
-				"outline-destructive": "border border-destructive/60 text-destructive hover:bg-destructive/10",
+				"outline-destructive": "border border-destructive/60 text-destructive hover:bg-destructive/10 disabled:hover:bg-transparent",
 				// Answering what the agent is waiting on, and nothing else
 				// (docs/ui-kit.md): done-green, not brand green.
 				"outline-success": "border border-green-400/60 text-green-400 hover:bg-green-400/10",

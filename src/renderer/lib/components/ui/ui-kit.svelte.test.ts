@@ -1,9 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
-import { fireEvent, render, screen } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
 import { createRawSnippet } from 'svelte';
 import { Badge } from './badge/index.js';
 import { Button } from './button/index.js';
+import { Confirm } from './confirm/index.js';
 import { Kbd } from './kbd/index.js';
 import { Notice } from './notice/index.js';
 import { SectionLabel } from './section-label/index.js';
@@ -16,6 +17,30 @@ import { segmentedItem } from './segmented/index.js';
 import KitFixture from './kit-fixture.svelte';
 
 const text = (t: string) => createRawSnippet(() => ({ render: () => `<span>${t}</span>` }));
+
+describe('Confirm', () => {
+  const props = (extra = {}) => ({ message: 'Rewind to #2? Every change since is lost.', confirm: 'Rewind', onconfirm: vi.fn(), oncancel: vi.fn(), ...extra });
+
+  it('asks the question at once, then cancels or acts', async () => {
+    const p = props();
+    render(Confirm, p);
+    expect(screen.getByRole('alert')).toHaveTextContent('Rewind to #2? Every change since is lost.');
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(p.oncancel).toHaveBeenCalledOnce();
+    await fireEvent.click(screen.getByRole('button', { name: 'Rewind' }));
+    expect(p.onconfirm).toHaveBeenCalledOnce();
+  });
+
+  it('holds both buttons while busy, and only the action when disabled', () => {
+    render(Confirm, props({ busy: true, confirm: 'Clear' }));
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Clear' })).toBeDisabled();
+    cleanup();
+    render(Confirm, props({ disabled: true, confirm: 'Clear' }));
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Clear' })).toBeDisabled();
+  });
+});
 
 describe('Button', () => {
   it('has the dense sizes the app uses', () => {

@@ -84,6 +84,7 @@ All in `src/renderer/lib/components/ui/`. Import from the folder's `index.js`:
 | `Tabs` | A row of tabs that switch panels (bits-ui: real `tab` roles and arrow keys) | Buttons with `border-b-2` |
 | `Segmented` | Choosing one of a few views or modes side by side (a radio group) | Joined buttons with an active fill |
 | `Notice` | A message that stays in a panel until what it describes changes: a failed save, a missing git identity, a tip | Divs with `bg-destructive/10` or `bg-yellow-500/10` |
+| `Confirm` | Asking before an action that discards something, in place of the button that started it: the question (what it discards), Cancel and the action. `busy` holds both buttons, `disabled` only the action, `stretch` shares a narrow popover's width | A `<p role="alert">` and two hand-placed buttons |
 | `SectionLabel` | The small uppercase heading over a group of rows | `text-[10px] uppercase tracking-wide` spans |
 | `PanelHeader` | The bar along the top of a panel or tab: title left, actions right | `border-b bg-card/50 px-3 py-1.5` divs |
 | `Pulse` | A square that shows something is in progress: a tool running, a thread working, a panel loading. Blue (`working`) by default; `attention` while something waits for you | `w-2.5 h-2.5 bg-primary animate-pulse` spans |

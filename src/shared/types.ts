@@ -527,6 +527,9 @@ export interface CheckpointListItem {
    *  Its files can still be restored, but its message is no longer part of
    *  the conversation, so a conversation rewind to it is not offered. */
   beforeClear?: boolean;
+  /** False when its message has left the thread (before a /clear, or the
+   *  target of an earlier rewind): only its files can be restored. */
+  inThread?: false;
 }
 
 /** Aggregate diff statistics (git diff --numstat totals). */

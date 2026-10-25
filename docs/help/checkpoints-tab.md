@@ -21,16 +21,16 @@ When you select a checkpoint, the right panel shows a diff with two modes:
 
 ## Rewind Options
 
-When you're ready to rewind, you have two choices. Each asks first, and says what it will discard:
+When you're ready to rewind, you have two choices. Each asks first, says what it will discard, and switches the diff to **Since here** when files would change:
 
 - **Rewind all** — Restores both the files and the thread to the checkpoint state. Every change made since is lost, your own edits included, and files created since are deleted. Ignored files are left alone.
 - **Thread only** — Resets only the thread to the checkpoint. Files on disk are left as-is.
 
-A rewind can't be undone: the files as they are just before it aren't saved anywhere. Commit or copy anything you want to keep first.
+Either way, this turn and the ones after it leave the thread, and the checkpoints after this one are deleted. A rewind can't be undone. Rewind all doesn't keep the files as they are first, so copy anything you want to keep. A commit keeps it in the branch's history, but the rewind still takes the files on disk back, so they then show as changes that undo the commit.
 
-A checkpoint whose message is no longer in the thread (one from before a `/clear`, or the target of an earlier rewind) can only have its files restored; the thread is left untouched. Checkpoints from before a `/clear` show a single **Restore files** button in place of the two above.
+A checkpoint whose message is no longer in the thread (one from before a `/clear`, or the target of an earlier rewind) can only have its files restored; the thread is left untouched. It shows a single **Restore files** button in place of the two above.
 
-After a rewind, the agent keeps its memory of the thread up to the rewind point and genuinely forgets the turns that were rewound away. One caveat: project memory files (the Memory panel) are not rolled back — notes the agent saved during rewound turns are kept, so it may still recall facts it wrote to memory.
+After a rewind, the agent keeps its memory of the thread up to the rewind point and genuinely forgets the turns that were rewound away. An agent that can't forget part of a thread (the ACP agents) starts afresh instead, without the earlier turns either; the question says so. One caveat: project memory files (the Memory panel) are not rolled back — notes the agent saved during rewound turns are kept, so it may still recall facts it wrote to memory.
 
 ## When to Use Checkpoints
 

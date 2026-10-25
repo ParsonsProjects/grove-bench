@@ -7,6 +7,7 @@
   import { contextUsage, formatTokens } from '../lib/context-usage.js';
   import { usageTextClass, usageBarClass } from '../lib/usage-tone.js';
   import { Button } from '$lib/components/ui/button/index.js';
+  import { Confirm } from '$lib/components/ui/confirm/index.js';
   import StatusBarPopover from './StatusBarPopover.svelte';
   import PixelMeter from './PixelMeter.svelte';
   import { canCompact } from '../lib/agent-commands.js';
@@ -217,23 +218,15 @@
     <!-- Quick actions. Clearing drops the conversation, so it asks first. -->
     <div class="border-t border-border pt-2.5 mt-2.5">
       {#if confirmClear}
-        <p class="text-xs text-foreground mb-2" role="alert">
-          Clear this thread? Its messages, and the agent's memory of them, are removed. Your files stay as they are.
-        </p>
-        <div class="flex gap-2">
-          <Button variant="subtle" size="xs" class="flex-1" onclick={() => confirmClear = false}>
-            Cancel
-          </Button>
-          <Button
-            variant="outline-destructive"
-            size="xs"
-            onclick={() => { messageStore.sendCommand(sessionId, '/clear'); contextExpanded = false; }}
-            disabled={isRunning}
-            class="flex-1 disabled:cursor-not-allowed"
-          >
-            Clear
-          </Button>
-        </div>
+        <Confirm
+          message="Clear this thread? Its messages, and the agent's memory of them, are removed. Your files stay as they are."
+          confirm="Clear"
+          variant="outline-destructive"
+          stretch
+          disabled={isRunning}
+          oncancel={() => (confirmClear = false)}
+          onconfirm={() => { messageStore.sendCommand(sessionId, '/clear'); contextExpanded = false; }}
+        />
       {:else}
         <!-- Stacked: side by side, the labels wrapped onto two lines. -->
         <div class="flex flex-col gap-2">
