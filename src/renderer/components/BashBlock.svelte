@@ -68,7 +68,7 @@
 
   function handleLinkClick(e: MouseEvent) {
     const target = e.target as HTMLElement;
-    const link = target.closest('a.localhost-link') as HTMLAnchorElement | null;
+    const link = target.closest<HTMLAnchorElement>('a.localhost-link');
     if (link) {
       e.preventDefault();
       const url = link.dataset.url || link.href;

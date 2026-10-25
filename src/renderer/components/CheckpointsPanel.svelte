@@ -19,6 +19,7 @@
   import { PanelHeader } from '$lib/components/ui/panel-header/index.js';
   import { SectionLabel } from '$lib/components/ui/section-label/index.js';
   import * as Segmented from '$lib/components/ui/segmented/index.js';
+  import { errorMessage } from '../../shared/error-message.js';
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -81,8 +82,8 @@
       // stale selection/diff before reloading the list.
       checkpointStore.clearSelection(sessionId);
       void checkpointStore.refresh(sessionId);
-    } catch (e: any) {
-      error = e?.message || 'Rewind failed';
+    } catch (e) {
+      error = errorMessage(e, 'Rewind failed');
     } finally {
       rewinding = false;
     }

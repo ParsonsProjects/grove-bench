@@ -172,8 +172,8 @@ export function plantStage(plant: GrovePlant, percent: number): number {
  * A growing plant comes up out of the ground in front of its stage before.
  */
 export function groveRuns(plants: GrovePlant[], percent: number, growth: ReadonlyMap<number, number> = new Map()): GroveRun[] {
-  const fills: (string | null)[] = new Array(GROVE_W * GROVE_H).fill(null);
-  const far: boolean[] = new Array(GROVE_W * GROVE_H).fill(false);
+  const fills = new Array<string | null>(GROVE_W * GROVE_H).fill(null);
+  const far = new Array<boolean>(GROVE_W * GROVE_H).fill(false);
 
   function paint(plant: GrovePlant, stage: number, risen: number) {
     const map = plant.bloom ? FLOWER : STAGES[plant.kind][stage];

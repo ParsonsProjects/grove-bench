@@ -14,4 +14,10 @@ describe('errorMessage', () => {
     expect(errorMessage(undefined)).toBe('undefined');
     expect(errorMessage(42)).toBe('42');
   });
+
+  it('gives the fallback, when there is one, instead of the value', () => {
+    expect(errorMessage(new Error('git push failed'), 'Commit failed')).toBe('git push failed');
+    expect(errorMessage(new Error(''), 'Commit failed')).toBe('Commit failed');
+    expect(errorMessage(null, 'Rewind failed')).toBe('Rewind failed');
+  });
 });

@@ -5,11 +5,8 @@
   import { Button } from '$lib/components/ui/button/index.js';
 
   let { visible = false }: { visible: boolean } = $props();
-  let show = $state(false);
-
-  $effect(() => {
-    show = visible;
-  });
+  // Follows visible, and answering hides it until visible changes again.
+  let show = $derived(visible);
 
   // Only the answer is saved: save() would also write whatever the Settings
   // panel's draft holds, including edits closed without saving. The banner

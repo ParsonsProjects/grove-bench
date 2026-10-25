@@ -1,11 +1,12 @@
 <script lang="ts">
   import { untrack, type Snippet } from 'svelte';
   import { messageStore, type ChatToolCallMessage } from '../stores/messages.svelte.js';
-  import DiffView, { parseDiffLines } from './DiffView.svelte';
+  import DiffView from './DiffView.svelte';
+  import { parseDiffLines } from '../lib/diff-parse.js';
   import { fullEditDiff, quickEditDiff, type EditDiff } from '../lib/edit-diff.js';
   import OldThenNewNotice from './OldThenNewNotice.svelte';
   import { toolViewOf } from '../../shared/tool-view.js';
-  import type { DiffLine, CommentAnchor, ContextGap } from './DiffView.svelte';
+  import type { DiffLine, CommentAnchor, ContextGap } from '../lib/diff-types.js';
   import { diffSize, editSize, hunkLineIndices, isLargeDiff } from '../lib/diff-highlight.js';
   import { withExpandableContext, reveal, expansionFor, type RevealedRanges } from '../lib/diff-context.js';
   import { buildReviewPrompt } from '../lib/review-prompt.js';

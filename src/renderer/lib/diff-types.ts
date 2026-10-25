@@ -1,8 +1,9 @@
 /**
  * Diff view types shared between DiffView.svelte and plain .ts modules
  * (e.g. diff-highlight). Defined here rather than in DiffView.svelte's module
- * script because `tsc --noEmit` resolves `*.svelte` to an ambient module with
- * only a default export, so named type imports from a .svelte file fail.
+ * script because `tsc --noEmit` and ESLint resolve `*.svelte` to an ambient
+ * module with only a default export: a named import from a .svelte file fails
+ * in tsc, and reads as any in ESLint.
  */
 
 export interface HunkRange {
@@ -49,6 +50,9 @@ export interface SideBySideRow {
   leftRanges?: [number, number][];
   rightRanges?: [number, number][];
 }
+
+/** Where a new comment is being written: the anchored line range on one side. */
+export interface CommentAnchor { side: 'old' | 'new'; startLine: number; endLine: number }
 
 /** A review comment anchored to lines of a file in the diff. `side` says
  *  which line numbering `startLine`/`endLine` use. */

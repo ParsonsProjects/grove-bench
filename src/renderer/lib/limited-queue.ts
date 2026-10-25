@@ -21,8 +21,9 @@ export function limitedQueue(limit: number): LimitedQueue {
       let started: Promise<unknown>;
       try {
         started = job();
-      } catch (err) {
-        started = Promise.reject(err);
+      } catch {
+        // Thrown before it returned its promise: done all the same.
+        started = Promise.resolve();
       }
       started.catch(() => { /* the job reports its own errors */ }).finally(() => {
         running--;

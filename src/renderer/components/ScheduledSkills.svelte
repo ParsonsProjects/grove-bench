@@ -45,7 +45,7 @@
   /** The fields the form edits, as a plain copy: the store's schedules are
    *  state proxies, which can't be cloned or sent to main as they are. */
   function fieldsOf(schedule: SkillSchedule): SkillScheduleInput {
-    const { scheduledFrom: _f, checkedThrough: _c, lastOutcome: _o, sessionIds: _s, ...fields } = $state.snapshot(schedule) as SkillSchedule;
+    const { scheduledFrom: _f, checkedThrough: _c, lastOutcome: _o, sessionIds: _s, ...fields } = $state.snapshot(schedule);
     return fields;
   }
 

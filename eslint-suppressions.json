@@ -347,14 +347,8 @@
     }
   },
   "src/renderer/App.svelte": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 1
-    },
     "@typescript-eslint/no-unsafe-argument": {
-      "count": 4
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 1
+      "count": 3
     }
   },
   "src/renderer/App.svelte.test.ts": {
@@ -363,38 +357,12 @@
     }
   },
   "src/renderer/components/AddSkillDialog.svelte": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 1
-    },
     "@typescript-eslint/no-unsafe-assignment": {
-      "count": 2
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 1
-    }
-  },
-  "src/renderer/components/AgentSettingsTrigger.svelte": {
-    "svelte/no-useless-mustaches": {
-      "count": 2
-    }
-  },
-  "src/renderer/components/AnalyticsConsent.svelte": {
-    "svelte/prefer-writable-derived": {
-      "count": 1
-    }
-  },
-  "src/renderer/components/ApiKeyField.svelte": {
-    "svelte/no-useless-mustaches": {
       "count": 1
     }
   },
   "src/renderer/components/BackgroundAgentDialog.svelte": {
     "@typescript-eslint/no-unsafe-assignment": {
-      "count": 1
-    }
-  },
-  "src/renderer/components/BashBlock.svelte": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
       "count": 1
     }
   },
@@ -409,17 +377,8 @@
     }
   },
   "src/renderer/components/ChangesReviewPanel.svelte": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 2
-    },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 1
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 2
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 2
     }
   },
   "src/renderer/components/ChangesReviewPanel.svelte.test.ts": {
@@ -430,17 +389,6 @@
       "count": 2
     }
   },
-  "src/renderer/components/CheckpointsPanel.svelte": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 1
-    }
-  },
   "src/renderer/components/CheckpointsPanel.svelte.test.ts": {
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 2
@@ -448,22 +396,6 @@
   },
   "src/renderer/components/ConversationGoal.svelte.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 1
-    }
-  },
-  "src/renderer/components/CreatePrDialog.svelte": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 1
-    }
-  },
-  "src/renderer/components/DraftPane.svelte": {
-    "svelte/no-useless-mustaches": {
       "count": 1
     }
   },
@@ -478,17 +410,6 @@
   "src/renderer/components/FilePickerPopup.svelte.test.ts": {
     "@typescript-eslint/no-unsafe-call": {
       "count": 5
-    }
-  },
-  "src/renderer/components/GitOpsDialog.svelte": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 1
     }
   },
   "src/renderer/components/GitOpsDialog.svelte.test.ts": {
@@ -509,14 +430,6 @@
       "count": 2
     }
   },
-  "src/renderer/components/PermissionBlock.svelte": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 1
-    }
-  },
   "src/renderer/components/PlanUsageToast.svelte.test.ts": {
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 1
@@ -533,34 +446,8 @@
     }
   },
   "src/renderer/components/ReviewDiffPanel.svelte": {
-    "@typescript-eslint/no-redundant-type-constituents": {
-      "count": 1
-    },
     "@typescript-eslint/no-unsafe-argument": {
-      "count": 15
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 10
-    },
-    "@typescript-eslint/no-unsafe-call": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 20
-    },
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 1
-    }
-  },
-  "src/renderer/components/RewindDialog.svelte": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 2
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 2
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 2
+      "count": 3
     }
   },
   "src/renderer/components/RewindDialog.svelte.test.ts": {
@@ -584,11 +471,6 @@
       "count": 1
     },
     "@typescript-eslint/no-unsafe-assignment": {
-      "count": 1
-    }
-  },
-  "src/renderer/components/ScheduledSkills.svelte": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
       "count": 1
     }
   },
@@ -617,23 +499,11 @@
     }
   },
   "src/renderer/components/Sidebar.svelte": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 3
-    },
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 2
-    },
     "@typescript-eslint/no-unsafe-assignment": {
-      "count": 2
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 3
+      "count": 1
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 1
-    },
-    "svelte/no-useless-mustaches": {
-      "count": 3
     }
   },
   "src/renderer/components/Sidebar.svelte.test.ts": {
@@ -660,24 +530,11 @@
       "count": 17
     }
   },
-  "src/renderer/components/StatusBarPr.svelte": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 3
-    },
-    "svelte/no-useless-mustaches": {
-      "count": 1
-    }
-  },
   "src/renderer/components/ThreadSkills.svelte": {
     "@typescript-eslint/no-unsafe-argument": {
       "count": 1
     },
     "@typescript-eslint/no-unsafe-member-access": {
-      "count": 1
-    }
-  },
-  "src/renderer/components/ThreadViewSelect.svelte": {
-    "svelte/no-useless-children-snippet": {
       "count": 1
     }
   },
@@ -690,14 +547,6 @@
     }
   },
   "src/renderer/components/UpdateSettings.svelte.test.ts": {
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 1
-    }
-  },
-  "src/renderer/components/WorkspacePane.svelte": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 1
-    },
     "@typescript-eslint/no-unsafe-member-access": {
       "count": 1
     }
@@ -756,9 +605,6 @@
   "src/renderer/components/settings/McpSettings.svelte": {
     "@typescript-eslint/no-unsafe-argument": {
       "count": 2
-    },
-    "svelte/no-useless-children-snippet": {
-      "count": 1
     }
   },
   "src/renderer/components/settings/PermissionSettings.svelte": {
@@ -786,11 +632,6 @@
       "count": 2
     }
   },
-  "src/renderer/lib/context-grove.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 2
-    }
-  },
   "src/renderer/lib/file-attachments.test.ts": {
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 1
@@ -798,11 +639,6 @@
   },
   "src/renderer/lib/format-age.test.ts": {
     "@typescript-eslint/no-unsafe-argument": {
-      "count": 1
-    }
-  },
-  "src/renderer/lib/limited-queue.ts": {
-    "@typescript-eslint/prefer-promise-reject-errors": {
       "count": 1
     }
   },
@@ -819,17 +655,6 @@
   "src/renderer/lib/pixel-meter.test.ts": {
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 5
-    }
-  },
-  "src/renderer/lib/restore-worktrees.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 1
     }
   },
   "src/renderer/lib/session-repo-color.test.ts": {
@@ -911,11 +736,6 @@
   "src/renderer/stores/usage.svelte.test.ts": {
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 2
-    }
-  },
-  "src/renderer/ui-kit/UiKit.svelte": {
-    "svelte/no-useless-mustaches": {
-      "count": 1
     }
   },
   "src/shared/preview-url.ts": {
