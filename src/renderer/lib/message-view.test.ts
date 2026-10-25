@@ -247,6 +247,16 @@ describe('foldNarration', () => {
     const rows = foldNarration([text('a'), text('b'), text('x'), text('c'), text('y')], new Set(['a', 'b', 'c']));
     expect(rows.map((r) => (r.kind === 'notes' ? r.msgs.map((m) => m.id) : r.msg.id))).toEqual([['a', 'b'], 'x', ['c'], 'y']);
   });
+
+  it("keeps a message's row from one call to the next, and gives a replaced message a new one", () => {
+    const x = text('x');
+    const y = text('y');
+    const first = foldNarration([x, y], new Set());
+    const again = foldNarration([x, y, text('z')], new Set());
+    expect(again[0]).toBe(first[0]);
+    expect(again[1]).toBe(first[1]);
+    expect(foldNarration([{ ...x }], new Set())[0]).not.toBe(first[0]);
+  });
 });
 
 describe('hasAgentReply', () => {

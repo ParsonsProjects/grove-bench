@@ -124,14 +124,26 @@ describe('DiffBlock large edits', () => {
   }
   afterEach(() => { vi.mocked(createPatch).mockImplementation(realCreatePatch); });
 
-  const swapped: ToolView = { kind: 'edit', path: 'notes.txt', edits: [{ oldText: 'row 0\nrow 1\n', newText: 'row 1\nrow 0\n' }] };
+  // Past the size a replacement is always diffed at (60 lines), its first two swapped.
+  const rows = Array.from({ length: 60 }, (_, i) => `row ${i}`);
+  const swapped: ToolView = { kind: 'edit', path: 'notes.txt', edits: [{ oldText: `${rows.join('\n')}\n`, newText: `${[rows[1], rows[0], ...rows.slice(2)].join('\n')}\n` }] };
 
   it('shows an edit under the limits that runs out of time at once, as the old text then the new', () => {
     capsGiveUp('quick');
     const { container } = render(DiffBlock, { sessionId: 's1', view: swapped, pending: false });
     expect(screen.queryByRole('button', { name: /Show edit/ })).toBeNull();
     expect(screen.getByText(/Too many changes to compare line by line without a pause/)).toBeInTheDocument();
-    expect(container.querySelectorAll('.diff-del')).toHaveLength(2);
+    expect(container.querySelectorAll('.diff-del')).toHaveLength(60);
+  });
+
+  it('says only some replacements are the old text, then the new, when the others lined up', () => {
+    vi.mocked(createPatch)
+      .mockImplementationOnce(realCreatePatch)
+      .mockImplementationOnce((() => undefined) as never);
+    render(DiffBlock, { sessionId: 's1', view: { kind: 'edit', path: 'notes.txt', edits: [{ oldText: 'a\n', newText: 'b\n' }, ...swapped.edits!] }, pending: false });
+
+    expect(screen.getByText('Some replacements have too many changes to compare line by line without a pause, so they show the old text, then the new.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Compare edit to notes.txt line by line' })).toBeInTheDocument();
   });
 
   it('compares such an edit line by line once asked', async () => {

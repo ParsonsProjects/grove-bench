@@ -40,7 +40,7 @@
     <div class="bg-popover border border-border shadow-xl">
       <Notice tone="warning" {title}>
         {#snippet actions()}
-          <Button size="2xs" variant="subtle" onclick={() => planAlertStore.viewUsage()}>View usage</Button>
+          <Button size="2xs" variant="link" onclick={() => planAlertStore.viewUsage()}>View usage</Button>
           <Button size="2xs" variant="quiet" onclick={openSettings}>Alert level</Button>
           <Button size="icon-2xs" variant="quiet" aria-label="Dismiss" onclick={() => planAlertStore.dismiss()}>
             <XIcon />

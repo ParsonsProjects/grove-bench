@@ -248,7 +248,7 @@
       <div class="grid gap-2 md:grid-cols-2">
         {#each noticeTones as tone (tone)}
           <Notice {tone} title={{ info: 'Tip', success: 'Pushed', warning: 'No git identity', danger: "Couldn't save settings", neutral: 'Nothing to review' }[tone]}>
-            {#snippet actions()}{#if tone === 'danger'}<Button size="2xs" variant="subtle">Try again</Button>{/if}{/snippet}
+            {#snippet actions()}{#if tone === 'danger'}<Button size="2xs" variant="link">Try again</Button>{/if}{/snippet}
             <p>{{ info: 'Ctrl+R finds any thread, open or closed.', success: 'claude/sidebar-revamp is on GitHub.', warning: "Git doesn't have your name and email for this project, so it will likely refuse the agent's commits.", danger: 'settings.json is read-only. Check its permissions and try again.', neutral: 'This worktree has no changes yet.' }[tone]}</p>
           </Notice>
         {/each}
