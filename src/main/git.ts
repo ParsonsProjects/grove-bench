@@ -1,7 +1,7 @@
 import { runProcess } from './process-host.js';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import type { BranchCommit, CommitEntry, FileDiffResult, GitOpResult, GitSyncStatus } from '../shared/types.js';
+import type { BranchCommit, CommitEntry, FileDiffResult, GitOperation, GitOpResult, GitSyncStatus } from '../shared/types.js';
 import { porcelainRecords } from './git-status-parser.js';
 import { isConflictCode } from '../shared/git-conflicts.js';
 
@@ -694,6 +694,108 @@ export async function push(cwd: string, branch: string): Promise<void> {
     await git(['push', '--set-upstream', 'origin', branch], cwd);
   } catch (e: any) {
     throw new Error(e?.stderr?.trim() || e?.message || 'git push failed');
+  }
+}
+
+/** Their state files, in the worktree's own git dir, in the order checked:
+ *  a rebase can leave other heads behind while it runs. */
+const OPERATION_FILES = ['rebase-merge', 'rebase-apply', 'MERGE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD'] as const;
+
+/**
+ * A merge, rebase, cherry-pick or revert stopped part way in `cwd` (on
+ * conflicts, or resolved and waiting to be finished), or null. One git call
+ * when there is none; `git am` (rebase-apply/applying) isn't one of these.
+ */
+export async function gitOperation(cwd: string): Promise<GitOperation | null> {
+  const out = await git(['rev-parse', ...OPERATION_FILES.flatMap((f) => ['--git-path', f])], cwd);
+  const [rebaseMerge, rebaseApply, mergeHead, cherryPickHead, revertHead] = out.split('\n').map((p) => path.resolve(cwd, p.trim()));
+  const exists = (p: string) => fs.access(p).then(() => true, () => false);
+  const read = (p: string) => fs.readFile(p, 'utf8').then((t) => t.trim(), () => '');
+
+  for (const [dir, stepFile, totalFile] of [[rebaseMerge, 'msgnum', 'end'], [rebaseApply, 'next', 'last']] as const) {
+    if (!(await exists(dir)) || await exists(path.join(dir, 'applying'))) continue;
+    const head = await read(path.join(dir, 'head-name'));
+    const onto = await read(path.join(dir, 'onto'));
+    const step = parseInt(await read(path.join(dir, stepFile)), 10);
+    const total = parseInt(await read(path.join(dir, totalFile)), 10);
+    return {
+      kind: 'rebase',
+      ...(head.startsWith('refs/heads/') ? { branch: head.slice('refs/heads/'.length) } : {}),
+      ...(onto ? { incoming: await refName(cwd, onto) } : {}),
+      ...(step > 0 && total > 0 ? { step, total } : {}),
+    };
+  }
+  if (await exists(mergeHead)) {
+    // Git's own message for the merge commit, without its # comments.
+    const message = (await read(path.join(path.dirname(mergeHead), 'MERGE_MSG')))
+      .split('\n').filter((l) => !l.startsWith('#')).join('\n').trim();
+    const branch = await currentBranch(cwd);
+    return {
+      kind: 'merge',
+      incoming: message.match(/^Merge (?:remote-tracking )?branch '([^']+)'/)?.[1] ?? (await read(mergeHead)).slice(0, 7),
+      ...(branch ? { branch } : {}),
+      ...(message ? { message } : {}),
+    };
+  }
+  if (await exists(cherryPickHead)) return { kind: 'cherry-pick', commit: (await read(cherryPickHead)).slice(0, 7) };
+  if (await exists(revertHead)) return { kind: 'revert', commit: (await read(revertHead)).slice(0, 7) };
+  return null;
+}
+
+/** A branch's name for a commit (`main`, `origin/main`), or its short oid. */
+async function refName(cwd: string, oid: string): Promise<string> {
+  try {
+    const name = (await git(['name-rev', '--name-only', '--no-undefined', '--refs=refs/heads/*', '--refs=refs/remotes/*', oid], cwd)).trim();
+    return name.replace(/^remotes\//, '') || oid.slice(0, 7);
+  } catch {
+    return oid.slice(0, 7);
+  }
+}
+
+/** git's own words from a failed call. */
+const gitErrorText = (e: any): string => (e?.stderr?.trim() || e?.message || String(e)).slice(0, 500);
+
+/**
+ * Continue a rebase, cherry-pick or revert whose conflicts are resolved,
+ * keeping each commit's own message (no editor opens). Stopping again on
+ * the next commit's conflicts isn't a failure: the status shows them. A
+ * commit resolved to no change is dropped. A merge is finished with a
+ * commit instead.
+ */
+export async function continueGitOperation(cwd: string, kind: GitOperation['kind']): Promise<void> {
+  if (kind === 'merge') throw new Error('A merge is finished with a commit.');
+  if ((await gitOperation(cwd))?.kind !== kind) throw new Error(`There is no ${kind} to continue: it may have finished already.`);
+  if (await hasUnmergedPaths(cwd)) throw new Error('Mark each conflict resolved first.');
+  try {
+    await gitEnv([kind, '--continue'], cwd, { GIT_EDITOR: 'true' });
+  } catch (e) {
+    const stillHere = (await gitOperation(cwd))?.kind === kind;
+    // Conflicts now are the next commit's: it stopped again.
+    if (stillHere && await hasUnmergedPaths(cwd)) return;
+    // Resolved to no change at all: git won't make an empty commit. Drop it,
+    // as a rebase does (and stop at the next one's conflicts, if any).
+    if (stillHere && (await gitExit(['diff', '--cached', '--quiet'], cwd)).exitCode === 0) {
+      try {
+        await git([kind, '--skip'], cwd);
+      } catch (skipError) {
+        if (!(await hasUnmergedPaths(cwd))) throw new Error(gitErrorText(skipError));
+      }
+      return;
+    }
+    throw new Error(gitErrorText(e));
+  }
+}
+
+const hasUnmergedPaths = async (cwd: string) => (await git(['ls-files', '--unmerged'], cwd)).trim() !== '';
+
+/** Abort a merge, rebase, cherry-pick or revert: the branch goes back to how
+ *  it was before it started. */
+export async function abortGitOperation(cwd: string, kind: GitOperation['kind']): Promise<void> {
+  if ((await gitOperation(cwd))?.kind !== kind) throw new Error(`There is no ${kind} to abort: it may have finished already.`);
+  try {
+    await git([kind, '--abort'], cwd);
+  } catch (e) {
+    throw new Error(gitErrorText(e));
   }
 }
 

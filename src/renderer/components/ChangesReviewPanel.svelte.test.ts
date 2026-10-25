@@ -1081,3 +1081,45 @@ describe('ChangesReviewPanel — large diffs', () => {
     expect(diffText(container)).not.toContain('line 30');
   });
 });
+
+// Started by the agent or in a terminal: the tab says what is under way and
+// how to finish it (GitOperationNotice).
+describe('ChangesReviewPanel: a merge or rebase stopped part way', () => {
+  const MERGE = { kind: 'merge' as const, incoming: 'main', branch: 'feat', message: "Merge branch 'main' into feat" };
+
+  it('shows it across the tab, with no commit box during a rebase', async () => {
+    gitStatusStore.statusBySession = {
+      [SID]: { entries: [entry('src/a.ts', { staged: true })], operation: { kind: 'rebase', branch: 'feat', incoming: 'main', step: 1, total: 2 } },
+    };
+    const { getByRole, queryByRole } = render(ChangesReviewPanel, { sessionId: SID });
+    await tick();
+
+    expect(getByRole('status')).toHaveTextContent('Rebasing feat onto main, step 1 of 2. All conflicts resolved: continue the rebase.');
+    // Continue keeps the commit's own message: a commit here would add another.
+    expect(queryByRole('button', { name: /^Commit/ })).toBeNull();
+  });
+
+  it("fills in git's merge message once, and holds Commit while conflicts remain", async () => {
+    gitStatusStore.statusBySession = {
+      [SID]: { entries: [entry('src/a.ts', { status: 'conflicted', conflict: 'UU' }), entry('src/b.ts', { staged: true })], operation: MERGE },
+    };
+    const { getByRole, getByPlaceholderText } = render(ChangesReviewPanel, { sessionId: SID });
+    await tick();
+
+    const message = getByPlaceholderText('Commit message…') as HTMLTextAreaElement;
+    expect(message.value).toBe("Merge branch 'main' into feat");
+    const commit = getByRole('button', { name: 'Commit 1 file' });
+    expect(commit).toBeDisabled();
+    expect(commit).toHaveAttribute('title', 'Mark each conflict resolved first');
+
+    // Resolved: the commit finishes the merge. A message the user cleared stays cleared.
+    message.value = '';
+    message.dispatchEvent(new Event('input'));
+    gitStatusStore.statusBySession = {
+      [SID]: { entries: [entry('src/a.ts', { staged: true }), entry('src/b.ts', { staged: true })], operation: MERGE },
+    };
+    await tick();
+    expect(message.value).toBe('');
+    expect(getByRole('button', { name: 'Commit 2 files' })).not.toHaveAttribute('title');
+  });
+});

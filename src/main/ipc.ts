@@ -15,7 +15,7 @@ import { adapterRegistry, registerClaudeAccount } from './adapters/index.js';
 import { claudeAccounts, isClaudeAccountId, newClaudeAccount } from './adapters/claude-accounts.js';
 import type { AgentAdapter } from './adapters/types.js';
 import { agentForProject, recordedAgent } from './background-tasks.js';
-import { validateBranchName, branchExists, branchExistsAnywhere, worktreeBranches, listBranches, getDefaultBranch, git, fileDiff, fileDiffAgainst, isTracked, patchResult, patchOverLimit, MAX_TEXT_FILE_BYTES, resolveMergeBase, blobLines, hashWorkingFiles, listProjectFiles, revertFile, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, textLines, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, logCommits, rebaseOnto, cherryPick, squashSince, currentBranch, recentCheckouts, getGitIdentity, gitVersion } from './git.js';
+import { validateBranchName, branchExists, branchExistsAnywhere, worktreeBranches, listBranches, getDefaultBranch, git, fileDiff, fileDiffAgainst, isTracked, patchResult, patchOverLimit, MAX_TEXT_FILE_BYTES, resolveMergeBase, blobLines, hashWorkingFiles, listProjectFiles, revertFile, gitOperation, continueGitOperation, abortGitOperation, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, textLines, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, logCommits, rebaseOnto, cherryPick, squashSince, currentBranch, recentCheckouts, getGitIdentity, gitVersion } from './git.js';
 import { inspectProjectFolder, projectKind } from './project-path.js';
 import { prsForBranches, prCreate, prReviewComments, ghLogin, isNetworkError, isRateLimitError, openPrs, GH_OFFLINE_COOLDOWN_MS, GH_OFFLINE_MESSAGE, GH_RATE_LIMITED_MESSAGE } from './gh.js';
 import { tempBranchName, isTempBranch, generateBranchName } from './branch-name.js';
@@ -26,7 +26,7 @@ import { openWorktreeFile } from './worktree-files.js';
 import { generateCommitMessage } from './commit-message.js';
 import { exportFileName, threadJson, threadMarkdown, type ThreadExportInfo } from './thread-export.js';
 import type { PreviewBounds, PreviewCommand, PreviewPageKind } from '../shared/types.js';
-import type { CheckpointDiffScope, FileDiffResult, FileLinesResult, GitStatusOptions, GitStatusResult, GitStatusEntry, ImageDiffContent, OpenWorktreeFileResult, PrCreateOpts, PrReviewSubmitResult } from '../shared/types.js';
+import type { CheckpointDiffScope, FileDiffResult, GitOperation, FileLinesResult, GitStatusOptions, GitStatusResult, GitStatusEntry, ImageDiffContent, OpenWorktreeFileResult, PrCreateOpts, PrReviewSubmitResult } from '../shared/types.js';
 import { parsePrReviewSubmit, submitPrReview } from './pr-review.js';
 import { showOsNotification, showTestNotification } from './notifications.js';
 import { parseGitStatusPorcelain, parseNumstat, parseNameStatus, parseHashObjectOutput } from './git-status-parser.js';
@@ -1513,6 +1513,17 @@ export function registerHandlers() {
     await commit(worktree.path, message);
   });
 
+  // A merge, rebase, cherry-pick or revert stopped part way (GitStatusResult.operation).
+  for (const [channel, act] of [[IPC.GIT_OPERATION_CONTINUE, continueGitOperation], [IPC.GIT_OPERATION_ABORT, abortGitOperation]] as const) {
+    ipcMain.handle(channel, async (_event, sessionId: string, kind: GitOperation['kind']) => {
+      const worktree = worktreeManager.getWorktree(sessionId);
+      if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
+      // The agent may be the one running it, or editing the files it touches.
+      if (sessionManager.isMidTurn(sessionId)) throw new Error('Wait for the agent to finish its turn.');
+      await act(worktree.path, kind);
+    });
+  }
+
   ipcMain.handle(IPC.GIT_GENERATE_COMMIT_MESSAGE, async (_event, sessionId: string, substitute?: unknown) => {
     const worktree = worktreeManager.getWorktree(sessionId);
     if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
@@ -1637,6 +1648,15 @@ export function registerHandlers() {
     const worktree = worktreeManager.getWorktree(sessionId);
     if (!worktree || worktree.noGit) return { entries: [] };
     const cwd = worktree.path;
+    // A merge or rebase stopped part way: the Changes tab finishes or aborts it.
+    const operation = Promise.resolve().then(() => gitOperation(cwd)).catch((e) => {
+      logger.warn(`git operation check failed for session ${sessionId}:`, e);
+      return null;
+    });
+    const withOperation = async (r: GitStatusResult): Promise<GitStatusResult> => {
+      const op = await operation;
+      return op ? { ...r, operation: op } : r;
+    };
 
     try {
       let result: GitStatusResult;
@@ -1645,7 +1665,7 @@ export function registerHandlers() {
         const base = opts.base?.trim();
         const mb = base ? await resolveMergeBase(cwd, base) : null;
         if (!mb) {
-          return { entries: [], scopeError: base ? `No merge base with ${base}` : 'No base branch' };
+          return withOperation({ entries: [], scopeError: base ? `No merge base with ${base}` : 'No base branch' });
         }
         numstatBase = mb.mergeBase;
         // Tracked changes (committed or not) since the merge base, plus untracked files.
@@ -1664,10 +1684,10 @@ export function registerHandlers() {
         const raw = await git(['status', '--porcelain=v1', '-z', '--untracked-files=all'], cwd);
         result = parseGitStatusPorcelain(raw);
       }
-      if (result.entries.length === 0) return result;
+      if (result.entries.length === 0) return withOperation(result);
       await attachNumstat(cwd, result.entries, numstatBase);
       await attachContentHashes(cwd, result.entries);
-      return result;
+      return withOperation(result);
     } catch (e) {
       logger.warn(`git status failed for session ${sessionId}:`, e);
       return { entries: [], error: e instanceof Error ? e.message : String(e) };

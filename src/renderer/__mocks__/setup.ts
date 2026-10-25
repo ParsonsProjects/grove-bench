@@ -98,6 +98,8 @@ const mockGroveBench = {
     Promise.resolve({ url: null, inline: 0, quoted: 0 } as import('../../shared/types.js').PrReviewSubmitResult)),
   rewindSession: vi.fn(() => Promise.resolve()),
   bringBackFiles: vi.fn(() => Promise.resolve()),
+  continueGitOperation: vi.fn(() => Promise.resolve()),
+  abortGitOperation: vi.fn(() => Promise.resolve()),
   getCheckpointDiff: vi.fn(() => Promise.resolve('')),
   listCheckpoints: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').CheckpointListItem[])),
   getDiffHistory: vi.fn(() => Promise.resolve({ entries: [], total: { filesChanged: 0, additions: 0, deletions: 0 } } as import('../../shared/types.js').DiffHistoryResult)),

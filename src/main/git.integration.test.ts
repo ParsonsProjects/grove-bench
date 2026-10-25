@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { resolveMergeBase, squashSince, branchCommits, excludeFromGit, fileDiff, blobLines, mergeNoCommit, revertFile, stageFile, MAX_TEXT_FILE_BYTES } from './git.js';
+import { resolveMergeBase, squashSince, branchCommits, excludeFromGit, fileDiff, blobLines, mergeNoCommit, revertFile, stageFile, MAX_TEXT_FILE_BYTES, gitOperation, continueGitOperation, abortGitOperation } from './git.js';
 import { parseGitStatusPorcelain, parseNumstat } from './git-status-parser.js';
 
 // Real git is slow to start on Windows, and each test runs a dozen commands.
@@ -422,5 +422,114 @@ describe("Grove's own files in a worktree", () => {
     execFileSync('git', ['add', SETTINGS], { cwd: wt });
     execFileSync('git', ['commit', '-qm', 'track settings'], { cwd: wt });
     expect(await excludeFromGit(wt, [SETTINGS])).toEqual([]);
+  });
+});
+
+// Started by the agent or in a terminal: the Changes tab says so and can
+// finish or back out of it.
+describe('a merge, rebase, cherry-pick or revert stopped part way', () => {
+  const write = (file: string, text: string) => fs.writeFileSync(path.join(repo, file), text);
+  const tryRun = (...args: string[]) => { try { run(...args); } catch { /* stops on conflicts */ } };
+  /** main and feat both change base.txt; feat has `extra` more commits after. */
+  const diverge = (extra = 0) => {
+    run('checkout', '-q', '-b', 'feat');
+    commit('base.txt', 'feat');
+    for (let i = 1; i <= extra; i++) { write('base.txt', `feat ${i}\n`); run('commit', '-qam', `feat ${i}`); }
+    run('checkout', '-q', 'main');
+    commit('base.txt', 'main');
+    run('checkout', '-q', 'feat');
+  };
+
+  it('reports nothing when none is under way', async () => {
+    expect(await gitOperation(repo)).toBeNull();
+  });
+
+  it('reports a merge, with what comes in and git\'s message', async () => {
+    diverge();
+    tryRun('merge', 'main');
+    expect(await gitOperation(repo)).toEqual({ kind: 'merge', incoming: 'main', branch: 'feat', message: "Merge branch 'main' into feat" });
+  });
+
+  it('reports a rebase, with its step', async () => {
+    diverge(1);
+    tryRun('rebase', 'main');
+    expect(await gitOperation(repo)).toEqual({ kind: 'rebase', branch: 'feat', incoming: 'main', step: 1, total: 2 });
+  });
+
+  it('reports one in a linked worktree, whose state is in its own git dir', async () => {
+    diverge();
+    run('checkout', '-q', 'main');
+    const wt = path.join(repo, '..', `${path.basename(repo)}-wt`);
+    run('worktree', 'add', '-q', wt, 'feat');
+    try {
+      try { execFileSync('git', ['merge', 'main'], { cwd: wt, stdio: 'ignore' }); } catch { /* conflicts */ }
+      expect(await gitOperation(wt)).toMatchObject({ kind: 'merge', incoming: 'main', branch: 'feat' });
+      expect(await gitOperation(repo)).toBeNull();
+    } finally {
+      fs.rmSync(wt, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    }
+  });
+
+  it('continues a rebase step by step, keeping each message, and only once resolved', async () => {
+    diverge(1);
+    tryRun('rebase', 'main');
+    await expect(continueGitOperation(repo, 'rebase')).rejects.toThrow('Mark each conflict resolved first.');
+
+    write('base.txt', 'resolved\n');
+    run('add', 'base.txt');
+    // The next commit conflicts too: it stops there, which is no failure.
+    await continueGitOperation(repo, 'rebase');
+    expect(await gitOperation(repo)).toMatchObject({ kind: 'rebase', step: 2, total: 2 });
+
+    write('base.txt', 'resolved again\n');
+    run('add', 'base.txt');
+    await continueGitOperation(repo, 'rebase');
+    expect(await gitOperation(repo)).toBeNull();
+    expect(run('log', '--format=%s', '-3').split('\n')).toEqual(['feat 1', 'feat', 'main']);
+  });
+
+  it('reports and continues a cherry-pick', async () => {
+    diverge();
+    const fromMain = run('rev-parse', 'main');
+    tryRun('cherry-pick', fromMain);
+    expect(await gitOperation(repo)).toEqual({ kind: 'cherry-pick', commit: fromMain.slice(0, 7) });
+    write('base.txt', 'both\n');
+    run('add', 'base.txt');
+    await continueGitOperation(repo, 'cherry-pick');
+    expect(await gitOperation(repo)).toBeNull();
+    expect(run('log', '-1', '--format=%s')).toBe('main');
+  });
+
+  it('drops a cherry-pick resolved to no change, as a rebase does', async () => {
+    diverge();
+    const before = run('rev-parse', 'HEAD');
+    tryRun('cherry-pick', run('rev-parse', 'main'));
+    run('checkout', '--ours', 'base.txt');
+    run('add', 'base.txt');
+
+    await continueGitOperation(repo, 'cherry-pick');
+    expect(await gitOperation(repo)).toBeNull();
+    expect(run('rev-parse', 'HEAD')).toBe(before);
+  });
+
+  it('aborts each kind back to where it started', async () => {
+    diverge(1);
+    const before = run('rev-parse', 'HEAD');
+    tryRun('rebase', 'main');
+    await abortGitOperation(repo, 'rebase');
+    tryRun('merge', 'main');
+    await abortGitOperation(repo, 'merge');
+    tryRun('revert', '--no-edit', 'HEAD~1');
+    expect(await gitOperation(repo)).toMatchObject({ kind: 'revert' });
+    await abortGitOperation(repo, 'revert');
+
+    expect(await gitOperation(repo)).toBeNull();
+    expect(run('rev-parse', 'HEAD')).toBe(before);
+    expect(run('status', '--porcelain')).toBe('');
+  });
+
+  it('says so when there is nothing of that kind to continue or abort', async () => {
+    await expect(continueGitOperation(repo, 'rebase')).rejects.toThrow('There is no rebase to continue: it may have finished already.');
+    await expect(abortGitOperation(repo, 'merge')).rejects.toThrow('There is no merge to abort: it may have finished already.');
   });
 });

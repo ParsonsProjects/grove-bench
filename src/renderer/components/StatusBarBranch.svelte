@@ -1,6 +1,6 @@
 <script lang="ts">
   import { gitStatusStore } from '../stores/gitStatus.svelte.js';
-  import { opPrototype } from '../lib/op-prototype.svelte.js';
+  import { operationShort, operationTitle } from '../lib/git-operation.js';
   /**
    * The branch stack: project / branch on top (click the branch to switch);
    * underneath, its sync state (ahead / behind / push error) and the PR for
@@ -32,6 +32,12 @@
   let sessionRepoPath = $derived(session?.repoPath ?? '');
   let sessionStatus = $derived(session?.status);
   let isRunning = $derived(messageStore.getIsRunning(sessionId));
+  /** A merge, rebase, cherry-pick or revert stopped part way in the worktree. */
+  let operation = $derived(gitStatusStore.getStatus(sessionId).operation);
+  function openChanges() {
+    messageStore.setActiveTab(sessionId, 'changes');
+    void gitStatusStore.refresh(sessionId);
+  }
   /** The agent path to creating a PR needs a live, idle session. */
   let canAgentCreatePr = $derived(sessionStatus === 'running' && !isRunning);
 
@@ -178,9 +184,16 @@
             onclose={() => branchPickerOpen = false}
           />
         </StatusBarPopover>
-        {#if opPrototype.statusBar && gitStatusStore.getStatus(sessionId).operation}
-          {@const op = gitStatusStore.getStatus(sessionId).operation!}
-          <span class="ml-1.5 text-caption text-status-attention whitespace-nowrap">{op.kind === 'rebase' ? `rebasing ${op.step}/${op.total}` : op.kind === 'merge' ? 'merging' : op.kind === 'cherry-pick' ? 'cherry-picking' : 'reverting'}</span>
+        {#if operation}
+          <!-- A merge or rebase stopped part way: noticed from any tab, finished
+               or aborted in the Changes tab (GitOperationNotice). -->
+          <button
+            class="ml-1.5 text-caption text-status-attention hover:underline whitespace-nowrap"
+            title={`${operationTitle(operation)}: open the Changes tab to finish or abort it`}
+            onclick={openChanges}
+          >
+            {operationShort(operation)}
+          </button>
         {/if}
       </div>
     {/if}

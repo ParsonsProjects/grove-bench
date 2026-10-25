@@ -207,6 +207,10 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.FILE_UNSTAGE, sessionId, filePath),
   commit: (sessionId: string, message: string) =>
     ipcRenderer.invoke(IPC.GIT_COMMIT, sessionId, message),
+  continueGitOperation: (sessionId: string, kind: import('../shared/types.js').GitOperation['kind']) =>
+    ipcRenderer.invoke(IPC.GIT_OPERATION_CONTINUE, sessionId, kind),
+  abortGitOperation: (sessionId: string, kind: import('../shared/types.js').GitOperation['kind']) =>
+    ipcRenderer.invoke(IPC.GIT_OPERATION_ABORT, sessionId, kind),
   generateCommitMessage: (sessionId: string, substituteAgent?: string) =>
     ipcRenderer.invoke(IPC.GIT_GENERATE_COMMIT_MESSAGE, sessionId, substituteAgent),
   push: (sessionId: string) => ipcRenderer.invoke(IPC.GIT_PUSH, sessionId),
