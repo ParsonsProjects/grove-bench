@@ -222,7 +222,7 @@
       "count": 12
     },
     "@typescript-eslint/no-unsafe-assignment": {
-      "count": 329
+      "count": 331
     },
     "@typescript-eslint/no-unsafe-call": {
       "count": 55
@@ -367,7 +367,12 @@
       "count": 1
     },
     "@typescript-eslint/require-await": {
-      "count": 4
+      "count": 9
+    }
+  },
+  "src/main/checkpoints.ts": {
+    "preserve-caught-error": {
+      "count": 1
     }
   },
   "src/main/commit-message.test.ts": {
@@ -630,7 +635,7 @@
   },
   "src/main/no-git-checkpoints.ts": {
     "@typescript-eslint/require-await": {
-      "count": 9
+      "count": 10
     }
   },
   "src/main/perf-health.test.ts": {
@@ -2087,7 +2092,7 @@
       "count": 3
     },
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 154
+      "count": 160
     },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 2
@@ -2107,7 +2112,7 @@
   },
   "src/renderer/stores/messages.svelte.ts": {
     "@typescript-eslint/no-floating-promises": {
-      "count": 4
+      "count": 5
     },
     "@typescript-eslint/no-unnecessary-type-assertion": {
       "count": 10
