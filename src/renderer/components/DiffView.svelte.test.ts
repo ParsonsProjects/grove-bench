@@ -10,9 +10,8 @@ vi.mock('dompurify', async () => {
 });
 
 import DiffView from './DiffView.svelte';
-import type { DiffLine } from '../lib/diff-types.js';
 import { parseDiffLines } from '../lib/diff-parse.js';
-import type { ReviewComment } from '../lib/diff-types.js';
+import type { DiffLine, ReviewComment } from '../lib/diff-types.js';
 
 afterEach(() => {
   cleanup();

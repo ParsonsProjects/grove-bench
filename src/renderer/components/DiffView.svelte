@@ -37,6 +37,8 @@
       const adds: DiffLine[] = [];
       while (i < diffLines.length && diffLines[i].type === 'del') { dels.push(diffLines[i]); i++; }
       while (i < diffLines.length && diffLines[i].type === 'add') { adds.push(diffLines[i]); i++; }
+      // Every replacement starts with a hunk row, so a run never mixes an
+      // old-then-new one (unpaired) with another: its first line says.
       const paired = dels.length === adds.length && !dels[0]?.unpaired;
       const maxLen = Math.max(dels.length, adds.length);
       for (let j = 0; j < maxLen; j++) {
@@ -66,6 +68,7 @@
       while (i < diffLines.length && diffLines[i].type === 'add') i++;
       const nDel = addStart - delStart;
       const nAdd = i - addStart;
+      // A run is one replacement's (see buildSideBySideRows).
       if (nDel !== nAdd || diffLines[delStart].unpaired) continue;
       for (let j = 0; j < nDel; j++) {
         const r = intralineRanges(diffLines[delStart + j].text, diffLines[addStart + j].text);

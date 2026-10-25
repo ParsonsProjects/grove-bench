@@ -72,35 +72,62 @@ function writeLines(view: ToolView): DiffLine[] {
   return view.write.split('\n').map((line, i) => ({ type: 'add' as const, text: line, lineNum: i + 1 }));
 }
 
+/** A replacement with no more than this on each side is diffed whatever the
+ *  time left: in Node, 50 lines all changed took about half a millisecond
+ *  (500, 45). So one heavy replacement can't leave the small ones after it
+ *  undiffed, and a small edit is never shown as old-then-new. */
+const CHEAP_LINES = 50;
+const CHEAP_CHARS = 5000;
+
 /** Each replacement as a patch's diff lines, within `ms` for them all and
  *  `maxEditLength` changed lines each. One past them is its old text, then
- *  its new, as is every one after the time is up: the others keep their
- *  diffs. With `allOrNothing`, null instead. jsdiff's clock starts after it
- *  splits the text into lines, so a huge edit can run a little over. */
+ *  its new, as is every one but a cheap one after the time is up (they
+ *  aren't tried: jsdiff splits the text before its clock starts). The
+ *  others keep their diffs. With `allOrNothing`, null instead. */
 function patchLines(edits: ToolTextEdit[], filePath: string, limits: { maxEditLength?: number; ms: number; allOrNothing: true }): EditDiff | null;
 function patchLines(edits: ToolTextEdit[], filePath: string, limits: { maxEditLength?: number; ms: number }): EditDiff;
 function patchLines(edits: ToolTextEdit[], filePath: string, limits: { maxEditLength?: number; ms: number; allOrNothing?: true }): EditDiff | null {
   const deadline = performance.now() + limits.ms;
   const out: DiffLine[] = [];
-  let patched = 0;
-  let fellBack = 0;
+  let anyLinedUp = false;
+  let anyFellBack = false;
+  let timeUp = false;
   for (const edit of edits) {
-    if (!edit.oldText && !edit.newText) continue;
+    // Nothing to show, and no reason to say a replacement was compared.
+    if (edit.oldText === edit.newText) continue;
     const timeout = deadline - performance.now();
-    const patch = timeout > 0
-      ? createPatch(filePath || 'file', edit.oldText, edit.newText, '', '', { context: 3, timeout, maxEditLength: limits.maxEditLength })
-      : undefined;
+    if (timeout <= 0) timeUp = true;
+    const patch = isCheap(edit) ? createPatch(filePath || 'file', edit.oldText, edit.newText, '', '', { context: 3 })
+      : timeUp ? undefined
+      : createPatch(filePath || 'file', edit.oldText, edit.newText, '', '', { context: 3, timeout, maxEditLength: limits.maxEditLength });
     if (patch === undefined) {
       if (limits.allOrNothing) return null;
-      fellBack++;
+      // Without allOrNothing there's no maxEditLength: the time ran out.
+      timeUp = true;
+      anyFellBack = true;
       oldThenNew(edit, out);
       continue;
     }
-    patched++;
+    anyLinedUp = true;
     // One at a time: spreading 130,000 or so into push() overflows the stack.
     for (const line of parseDiffLines(patch)) out.push(line);
   }
-  return fellBack === 0 ? { lines: out, linedUp: true } : { lines: out, linedUp: false, ...(patched > 0 ? { partly: true } : {}) };
+  return !anyFellBack ? { lines: out, linedUp: true } : { lines: out, linedUp: false, ...(anyLinedUp ? { partly: true } : {}) };
+}
+
+function isCheap(edit: ToolTextEdit): boolean {
+  return edit.oldText.length <= CHEAP_CHARS && edit.newText.length <= CHEAP_CHARS
+    && atMostLines(edit.oldText, CHEAP_LINES) && atMostLines(edit.newText, CHEAP_LINES);
+}
+
+/** Whether `text` has no more than `max` lines (as textLines counts them),
+ *  counting no further. */
+function atMostLines(text: string, max: number): boolean {
+  let breaks = 0;
+  for (let i = text.indexOf('\n'); i !== -1; i = text.indexOf('\n', i + 1)) {
+    if (++breaks > max) return false;
+  }
+  return breaks + (text.endsWith('\n') ? 0 : 1) <= max;
 }
 
 /** A replacement as all of its old lines, then all of its new, onto `out`. */

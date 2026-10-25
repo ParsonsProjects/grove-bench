@@ -1007,8 +1007,9 @@ describe('ChangesReviewPanel — large diffs', () => {
     vi.mocked(createPatch).mockImplementation(((...args: Parameters<typeof realCreatePatch>) =>
       Number.isFinite((args[5] as { timeout?: number } | undefined)?.timeout) && args[1].startsWith('old 0') ? undefined : realCreatePatch(...args)) as typeof createPatch);
     try {
-      // Large by text here (30 lines, scaled), so it gets the capped diffs.
-      const side = (word: string) => Array.from({ length: 15 }, (_, i) => `${word} ${i}`).join('\n');
+      // Large by text here (120 lines, scaled), so it gets the capped diffs,
+      // and past the size a replacement is always diffed at.
+      const side = (word: string) => Array.from({ length: 60 }, (_, i) => `${word} ${i}`).join('\n');
       editTurn();
       messageStore.messagesBySession[SID]!.splice(2, 1, {
         kind: 'tool_call', id: 'b1', toolName: 'Edit', toolInput: { file_path: 'notes.txt', old_string: side('old'), new_string: side('new') }, toolUseId: 't1', uuid: 'u1', pending: false,
@@ -1028,9 +1029,14 @@ describe('ChangesReviewPanel — large diffs', () => {
   it('compares an edit in Edit History line by line once asked, when the quick try gave up', async () => {
     // Only the small edit's quick try (50 ms at most) gives up.
     vi.mocked(createPatch).mockImplementation(((...args: Parameters<typeof realCreatePatch>) =>
-      ((args[5] as { timeout?: number } | undefined)?.timeout ?? Infinity) <= 50 && args[1] === 'tiny old' ? undefined : realCreatePatch(...args)) as typeof createPatch);
+      ((args[5] as { timeout?: number } | undefined)?.timeout ?? Infinity) <= 50 && args[1].startsWith('tiny old') ? undefined : realCreatePatch(...args)) as typeof createPatch);
     try {
       editTurn();
+      // One line, but past the 5,000 characters a replacement is always diffed at.
+      const pad = ' '.repeat(5000);
+      messageStore.messagesBySession[SID]!.splice(1, 1, {
+        kind: 'tool_call', id: 'e1', toolName: 'Edit', toolInput: { file_path: 'notes.txt', old_string: `tiny old${pad}`, new_string: `tiny new${pad}` }, toolUseId: 't0', uuid: 'u0', pending: false,
+      } as any);
       const { container, findByRole, findByText, queryByText } = render(ChangesReviewPanel, { sessionId: SID });
 
       await fireEvent.click(await findByRole('button', { name: '2 edits' }));

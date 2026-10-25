@@ -870,6 +870,13 @@ describe('OutputPanel images from the agent', () => {
 });
 
 describe('OutputPanel: an edit in the thread', () => {
+  afterEach(() => {
+    // What the events below leave behind: the turn as running, and its activity.
+    messageStore.isRunning = {};
+    messageStore.activityBySession = {};
+    messageStore.streamingText = {};
+  });
+
   it("isn't diffed again as the turns after it come in", async () => {
     store.activeSessionId = SID;
     const edit: ChatMessage = { kind: 'tool_call', id: 'e1', toolName: 'Edit', toolInput: { file_path: 'a.ts', old_string: 'let a = 1;', new_string: 'let a = 2;' }, toolUseId: 'tu-e1', uuid: 'a1', pending: false, result: 'ok' };

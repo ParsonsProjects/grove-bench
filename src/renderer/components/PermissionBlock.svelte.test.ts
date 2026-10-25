@@ -176,14 +176,16 @@ describe('PermissionBlock edit preview', () => {
     // The quick try (50 ms at most) gives up; the full one doesn't.
     vi.mocked(createPatch).mockImplementation(((...args: Parameters<typeof realCreatePatch>) =>
       ((args[5] as { timeout?: number } | undefined)?.timeout ?? Infinity) <= 50 ? undefined : realCreatePatch(...args)) as typeof createPatch);
+    // Past the size a replacement is always diffed at: 60 lines kept.
+    const kept = Array.from({ length: 60 }, (_, i) => `kept ${i}\n`).join('');
     try {
       const { container } = render(PermissionBlock, {
         sessionId: 's1', requestId: 'r9', toolName: 'Edit', resolved: false, toolCategory: 'edit',
-        toolInput: {}, toolView: { kind: 'edit', path: 'src/data.ts', edits: [{ oldText: 'kept\nthe old line\n', newText: 'kept\nthe new line\n' }] },
+        toolInput: {}, toolView: { kind: 'edit', path: 'src/data.ts', edits: [{ oldText: `${kept}the old line\n`, newText: `${kept}the new line\n` }] },
       });
       expect(screen.queryByRole('button', { name: /Show edit/ })).toBeNull();
       expect(screen.getByText(/Too many changes to compare line by line/)).toBeInTheDocument();
-      expect(container.querySelectorAll('.diff-del')).toHaveLength(2);
+      expect(container.querySelectorAll('.diff-del')).toHaveLength(61);
       await fireEvent.click(screen.getByRole('button', { name: 'Compare edit to src/data.ts line by line' }));
       expect(screen.queryByText(/Too many changes/)).toBeNull();
       expect(container.querySelectorAll('.diff-del')).toHaveLength(1);

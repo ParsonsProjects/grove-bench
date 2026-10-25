@@ -58,12 +58,15 @@ describe('quickEditDiff', () => {
   it('shows an edit under the limits at once as the old text, then the new, after one capped try', () => {
     vi.mocked(createPatch).mockReturnValue(undefined as never);
     vi.mocked(createPatch).mockClear();
-    const { diff, large } = quickEditDiff(edit('one\ntwo\n', 'uno\n'), 'notes.txt');
+    // Past the size a replacement is always diffed at.
+    const many = file.slice(0, 60).join('\n');
+    const { diff, large } = quickEditDiff(edit(`${many}\none\ntwo\n`, `${many}\nuno\n`), 'notes.txt');
     expect(large).toBe(false);
     expect(diff?.linedUp).toBe(false);
     // Only the quick try gave up, so a full one may line it up.
     expect(diff?.quick).toBe(true);
-    expect(diff?.lines.map((l) => [l.type, l.text])).toEqual([['hunk', '@@ -1,2 +1,1 @@'], ['del', 'one'], ['del', 'two'], ['add', 'uno']]);
+    expect(diff?.lines[0]).toEqual({ type: 'hunk', text: '@@ -1,62 +1,61 @@' });
+    expect(diff?.lines.slice(-3).map((l) => [l.type, l.text])).toEqual([['add', 'line 58'], ['add', 'line 59'], ['add', 'uno']]);
     expect(createPatch).toHaveBeenCalledOnce();
     const opts = vi.mocked(createPatch).mock.calls[0][5] as { timeout?: number; maxEditLength?: number };
     expect(opts.timeout).toBeLessThanOrEqual(50);
@@ -128,15 +131,53 @@ describe('fullEditDiff', () => {
     ]);
   });
 
-  it('stops before the next replacement once the time is up', () => {
+  /** A replacement past the size one is always diffed at. */
+  const big = (word: string) => file.slice(0, 60).map((l) => `${word} ${l}`).join('\n');
+  /** Big replacements run out of time; small ones are never given a limit. */
+  const bigOnesGiveUp = () => vi.mocked(createPatch).mockImplementation(((...args: Parameters<typeof realCreatePatch>) =>
+    (args[5] as { timeout?: number } | undefined)?.timeout !== undefined ? undefined : realCreatePatch(...args)) as typeof createPatch);
+
+  it("doesn't try a big replacement once the time is up", () => {
     const now = vi.spyOn(performance, 'now');
     // The deadline is set at 0; the second replacement starts at 2 s.
     now.mockReturnValueOnce(0).mockReturnValueOnce(0).mockReturnValueOnce(2000);
-    const view: ToolView = { kind: 'edit', path: 'f', edits: [{ oldText: 'a', newText: 'b' }, { oldText: 'c', newText: 'd' }] };
+    const view: ToolView = { kind: 'edit', path: 'f', edits: [{ oldText: big('a'), newText: big('b') }, { oldText: big('c'), newText: big('d') }] };
     vi.mocked(createPatch).mockClear();
-    const { linedUp } = fullEditDiff(view, 'f', null);
-    expect(linedUp).toBe(false);
+    const diff = fullEditDiff(view, 'f', null);
+    expect(diff).toMatchObject({ linedUp: false, partly: true });
     expect(createPatch).toHaveBeenCalledOnce();
+  });
+
+  it('diffs a small replacement whatever the time left, after a big one ran out', () => {
+    bigOnesGiveUp();
+    const view: ToolView = { kind: 'edit', path: 'f', edits: [{ oldText: big('a'), newText: big('b') }, { oldText: 'let a = 1;\n', newText: 'let a = 2;\n' }] };
+
+    const diff = fullEditDiff(view, 'f', null);
+
+    expect(diff).toMatchObject({ linedUp: false, partly: true });
+    expect(diff.lines.filter((l) => !l.unpaired && l.type !== 'hunk').map((l) => [l.type, l.text])).toEqual([['del', 'let a = 1;'], ['add', 'let a = 2;']]);
+  });
+
+  it('always diffs a replacement of up to 50 lines a side, and gives a longer one a limit', () => {
+    bigOnesGiveUp();
+    const side = (n: number, word: string) => Array.from({ length: n }, (_, i) => `${word} ${i}`).join('\n') + '\n';
+
+    expect(fullEditDiff({ kind: 'edit', path: 'f', edits: [{ oldText: side(50, 'a'), newText: side(50, 'b') }] }, 'f', null).linedUp).toBe(true);
+    expect(fullEditDiff({ kind: 'edit', path: 'f', edits: [{ oldText: side(51, 'a'), newText: side(50, 'b') }] }, 'f', null).linedUp).toBe(false);
+    // 51 lines with no newline at the end are 50 line breaks.
+    expect(fullEditDiff({ kind: 'edit', path: 'f', edits: [{ oldText: side(51, 'a').slice(0, -1), newText: side(50, 'b') }] }, 'f', null).linedUp).toBe(false);
+    // Or of up to 5,000 characters.
+    expect(fullEditDiff({ kind: 'edit', path: 'f', edits: [{ oldText: 'x'.repeat(5001), newText: 'y' }] }, 'f', null).linedUp).toBe(false);
+  });
+
+  it("doesn't count a replacement that changes nothing as compared", () => {
+    bigOnesGiveUp();
+    const view: ToolView = { kind: 'edit', path: 'f', edits: [{ oldText: 'same', newText: 'same' }, { oldText: big('a'), newText: big('b') }] };
+
+    const diff = fullEditDiff(view, 'f', null);
+
+    expect(diff.linedUp).toBe(false);
+    expect(diff.partly).toBeUndefined();
   });
 
   it('works out a diff with more lines than a function call can take', () => {
