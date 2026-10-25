@@ -1,6 +1,14 @@
 import { afterAll, vi } from 'vitest';
+import { configure } from '@testing-library/svelte';
 import type { GroveBenchAPI, OpenWorktreeFileResult, ThreadTurnState } from '../../shared/types.js';
 import type { ThreadItems } from '../../shared/thread-items.js';
+
+// Panels and dialogs load their code on first use (lazyComponent), and under
+// test Vite compiles it then: on a busy machine that takes longer than
+// testing-library's default 1 s wait (findBy*, waitFor). 5 s for all of them,
+// so a test that opens one needn't remember to allow for it. The renderer's
+// test timeout (vitest.config.mts) is longer, so a wait gives up first.
+configure({ asyncUtilTimeout: 5000 });
 
 // A closed bits-ui dialog resets the page body's style on a timer (24ms by
 // default, see bits-ui's body-scroll-lock). One left over from a file's last

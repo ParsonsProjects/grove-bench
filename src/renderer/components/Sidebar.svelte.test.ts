@@ -878,8 +878,7 @@ describe('Sidebar settings', () => {
 
     await fireEvent.click(screen.getByTitle('Settings (Ctrl+,)'));
 
-    // The panel's code loads on first open, which can be slow under test.
-    expect(await screen.findByRole('dialog', {}, { timeout: 5000 })).toBeInTheDocument();
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
   });
 });
 
