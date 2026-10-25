@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
 import { render, cleanup, screen, fireEvent, waitFor } from '@testing-library/svelte';
 import { flushSync } from 'svelte';
@@ -133,11 +133,6 @@ describe('WorkspacePane thread view picker', () => {
 const SID = 'pane-session';
 
 describe('WorkspacePane tabs', () => {
-  // The Changes tab loads on first visit. Load it here once, since
-  // transforming it cold (diff views, highlight.js) can take seconds on a
-  // busy machine, longer than a test waits for it.
-  beforeAll(async () => { await import('./ChangesReviewPanel.svelte'); }, 30_000);
-
   it('loads the Changes tab on its first visit', async () => {
     store.sessions = [{ id: SID, branch: 'feat', repoPath: '/repo', status: 'running' }] as never;
     store.activeSessionId = SID;

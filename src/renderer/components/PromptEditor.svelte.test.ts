@@ -190,8 +190,7 @@ describe('PromptEditor: @ file picker', () => {
     textarea.setSelectionRange(textarea.value.length, textarea.value.length);
     await fireEvent.input(textarea);
 
-    // Its code loads on first use, which can be slow under test.
-    const option = await screen.findByTitle('src/app.ts', {}, { timeout: 4000 });
+    const option = await screen.findByTitle('src/app.ts');
     await fireEvent.mouseDown(option);
 
     expect(textarea.value).toContain('@src/app.ts');

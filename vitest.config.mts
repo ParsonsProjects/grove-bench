@@ -62,6 +62,8 @@ export default defineConfig({
           name: 'renderer',
           include: ['src/renderer/**/*.test.ts'],
           environment: 'jsdom',
+          // Longer than the 5 s testing-library waits (__mocks__/setup.ts).
+          testTimeout: 15_000,
           setupFiles: ['src/renderer/__mocks__/setup.ts'],
         },
         resolve: {
