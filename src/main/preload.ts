@@ -228,6 +228,7 @@ const api: GroveBenchAPI = {
   // Checkpoint rewind
   rewindSession: (sessionId: string, userMessageId: string, options?: import('../shared/types.js').RewindOptions) =>
     ipcRenderer.invoke(IPC.AGENT_REWIND, sessionId, userMessageId, options),
+  bringBackFiles: (sessionId: string) => ipcRenderer.invoke(IPC.AGENT_BRING_BACK_FILES, sessionId),
   getCheckpointDiff: (sessionId: string, userMessageId: string) =>
     ipcRenderer.invoke(IPC.AGENT_CHECKPOINT_DIFF, sessionId, userMessageId),
   listCheckpoints: (sessionId: string) =>

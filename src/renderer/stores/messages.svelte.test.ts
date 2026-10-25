@@ -627,6 +627,16 @@ describe('ingestEvent: files_made', () => {
   });
 });
 
+describe('ingestEvent: files_kept', () => {
+  it('adds the line offering the replaced files back after the rewind', () => {
+    messageStore.ingestEvent(SID, { type: 'user_message', text: 'First', uuid: 'u1' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'rewind', toMessageId: 'u1' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'files_kept', reason: 'rewind' } as AgentEvent);
+
+    expect(messageStore.getMessages(SID)).toMatchObject([{ kind: 'files_kept', reason: 'rewind' }]);
+  });
+});
+
 describe('ingestEvent — result', () => {
   it('marks session as not running and idle', () => {
     messageStore.setIsRunning(SID, true);

@@ -92,6 +92,7 @@ vi.mock('./checkpoints.js', () => {
     capture = vi.fn().mockResolvedValue(true);
     captureBaseline = vi.fn().mockResolvedValue(true);
     restore = vi.fn().mockResolvedValue(undefined);
+    restoreKept = vi.fn().mockResolvedValue(undefined);
     pruneAfter = vi.fn().mockResolvedValue(undefined);
     resume = vi.fn().mockResolvedValue(undefined);
     cleanup = vi.fn().mockResolvedValue(undefined);
@@ -3609,7 +3610,74 @@ describe('AgentSessionManager.listCheckpoints()', () => {
   });
 });
 
+describe('AgentSessionManager.bringBackFiles()', () => {
+  it('puts the kept files back and says the ones they replaced are kept', async () => {
+    await sessionManager.createSession({
+      id: 'test-bring-back', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(sessionManager.getSession('test-bring-back')?.queryHandle).toBeTruthy());
+    const session = sessionManager.getSession('test-bring-back')!;
+
+    await sessionManager.bringBackFiles('test-bring-back');
+
+    expect(session.checkpoints.restoreKept).toHaveBeenCalledWith('test-bring-back', expect.any(String));
+    expect(session.eventHistory.at(-1)).toMatchObject({ type: 'files_kept', reason: 'bring_back' });
+    await sessionManager.destroySession('test-bring-back');
+  });
+
+  it('stops a running turn first, as a rewind does', async () => {
+    await sessionManager.createSession({
+      id: 'test-bring-back-midturn', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(sessionManager.getSession('test-bring-back-midturn')?.queryHandle).toBeTruthy());
+    const session = sessionManager.getSession('test-bring-back-midturn')!;
+    await sessionManager.sendMessage('test-bring-back-midturn', 'Refactor everything');
+    const handle = session.queryHandle!;
+
+    await sessionManager.bringBackFiles('test-bring-back-midturn');
+
+    expect(vi.mocked(handle.interrupt!).mock.invocationCallOrder[0])
+      .toBeLessThan(vi.mocked(session.checkpoints.restoreKept).mock.invocationCallOrder[0]);
+    await sessionManager.destroySession('test-bring-back-midturn');
+  });
+
+  it('adds no line when there was nothing to bring back', async () => {
+    await sessionManager.createSession({
+      id: 'test-bring-back-none', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(sessionManager.getSession('test-bring-back-none')?.queryHandle).toBeTruthy());
+    const session = sessionManager.getSession('test-bring-back-none')!;
+    vi.mocked(session.checkpoints.restoreKept).mockRejectedValueOnce(new Error('There are no kept files to bring back.'));
+
+    await expect(sessionManager.bringBackFiles('test-bring-back-none')).rejects.toThrow('no kept files');
+    expect(session.eventHistory.some((e) => e.type === 'files_kept')).toBe(false);
+    await sessionManager.destroySession('test-bring-back-none');
+  });
+});
+
 describe('AgentSessionManager.rewindFiles()', () => {
+  it('offers the replaced files back after a rewind of files and thread, but not of the thread only', async () => {
+    await sessionManager.createSession({
+      id: 'test-rewind-kept', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(sessionManager.getSession('test-rewind-kept')?.queryHandle).toBeTruthy());
+    const session = sessionManager.getSession('test-rewind-kept')!;
+    await sessionManager.sendMessage('test-rewind-kept', 'First');
+    await sessionManager.sendMessage('test-rewind-kept', 'Second');
+    const [first, second] = session.eventHistory.filter((e) => e.type === 'user_message') as { uuid: string }[];
+
+    await sessionManager.rewindFiles('test-rewind-kept', second.uuid, { conversationOnly: true });
+    expect(session.eventHistory.some((e) => e.type === 'files_kept')).toBe(false);
+
+    await sessionManager.rewindFiles('test-rewind-kept', first.uuid);
+    // After the cut, so the line stays in the thread
+    const rewindAt = session.eventHistory.findIndex((e) => e.type === 'rewind' && !('conversationOnly' in e && e.conversationOnly));
+    const keptAt = session.eventHistory.findIndex((e) => e.type === 'files_kept');
+    expect(keptAt).toBeGreaterThan(rewindAt);
+    expect(session.eventHistory[keptAt]).toMatchObject({ type: 'files_kept', reason: 'rewind' });
+    await sessionManager.destroySession('test-rewind-kept');
+  });
+
   it('stops a running turn before restoring files', async () => {
     await sessionManager.createSession({
       id: 'test-rewind-midturn', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
@@ -3834,9 +3902,10 @@ describe('AgentSessionManager.rewindFiles()', () => {
     expect(session.checkpoints.restore).toHaveBeenCalledWith('test-rewind-files-only', expect.any(String), 'pre-clear-uuid');
     expect(session.checkpoints.pruneAfter).not.toHaveBeenCalled();
     expect(session.providerSessionId).toBe(providerBefore);
-    // Nothing truncated: only the rewind marker itself was appended
-    expect(session.eventHistory.length).toBe(historyBefore + 1);
-    expect(session.eventHistory.at(-1)).toMatchObject({ type: 'rewind', filesOnly: true });
+    // Nothing truncated: only the rewind marker, and the line offering the
+    // replaced files back, were appended
+    expect(session.eventHistory.length).toBe(historyBefore + 2);
+    expect(session.eventHistory.slice(-2)).toMatchObject([{ type: 'rewind', filesOnly: true }, { type: 'files_kept', reason: 'rewind' }]);
     expect(session.eventHistory.some((e) => e.type === 'user_message')).toBe(true);
     // The query was not restarted
     expect(mockAdapter.control).toBe(control);

@@ -54,6 +54,13 @@ function parseNumstat(output: string): DiffStats {
   return stats;
 }
 
+/** The files the last restore replaced, one copy per thread. Under the
+ *  thread's checkpoint refs, so cleanup() deletes it with them; pruneAfter
+ *  only touches turn/N refs. */
+function keptRef(sessionId: string): string {
+  return `refs/grove/checkpoints/${sessionId}/kept`;
+}
+
 /** The worktree's own index file: `.git/index` in a main checkout, or the
  *  `index` in the gitdir a linked worktree's `.git` file points to. Null when
  *  it can't be found. */
@@ -302,24 +309,55 @@ export class CheckpointManager {
   }
 
   /**
-   * Restore the working tree to the state at a specific checkpoint.
+   * Restore the working tree to the state at a specific checkpoint, keeping
+   * a copy of the files it replaces (restoreKept brings them back).
    */
   async restore(sessionId: string, cwd: string, uuid: string): Promise<void> {
     const ref = await this.resolveRef(sessionId, cwd, uuid);
     if (!ref) throw new Error(`No checkpoint found for uuid=${uuid}`);
 
     const oid = (await git(['rev-parse', ref], cwd)).trim();
-
-    // Restore all files from the checkpoint
-    await git(['restore', '--source', oid, '--worktree', '--staged', '--', '.'], cwd);
-
-    // Remove files not in the checkpoint
-    await git(['clean', '-fd', '--', '.'], cwd);
-
-    // Unstage everything so the working tree is clean but not committed
-    await git(['reset', '--quiet', '--', '.'], cwd);
-
+    await this.keepThenRestore(sessionId, cwd, oid);
     logger.debug(`[checkpoints] restored session=${sessionId} uuid=${uuid}`);
+  }
+
+  /**
+   * Bring back the files the last restore replaced. The ones they replace
+   * are kept in their place, so it can be swapped back.
+   */
+  async restoreKept(sessionId: string, cwd: string): Promise<void> {
+    const oid = (await git(['rev-parse', '--verify', '--quiet', keptRef(sessionId)], cwd).catch(() => '')).trim();
+    if (!oid) throw new Error('There are no kept files to bring back.');
+    await this.keepThenRestore(sessionId, cwd, oid);
+    logger.debug(`[checkpoints] brought back kept files session=${sessionId}`);
+  }
+
+  /** Copy the files as they are now (the only copy there would be), then
+   *  set the working tree to `oid`: tracked files restored, files it doesn't
+   *  have removed, ignored files left alone, nothing staged. */
+  private async keepThenRestore(sessionId: string, cwd: string, oid: string): Promise<void> {
+    try {
+      await this.keepFiles(sessionId, cwd);
+    } catch (err) {
+      throw new Error(`Couldn't keep a copy of the files as they are, so none were restored: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    await git(['restore', '--source', oid, '--worktree', '--staged', '--', '.'], cwd);
+    await git(['clean', '-fd', '--', '.'], cwd);
+    await git(['reset', '--quiet', '--', '.'], cwd);
+  }
+
+  /** Write the working tree as a commit at keptRef, replacing the last one. */
+  private async keepFiles(sessionId: string, cwd: string): Promise<void> {
+    const tmpIndex = path.join(os.tmpdir(), `grove-idx-${sessionId}-kept-${Date.now()}`);
+    try {
+      const treeOid = await this.snapshotTree(sessionId, cwd, tmpIndex);
+      // No uuid= in the message: the checkpoint list, history and resume
+      // read only commits that have one.
+      const commitOid = (await gitEnv(['commit-tree', treeOid, '-m', 'grove kept files'], cwd, CHECKPOINT_IDENTITY_ENV)).trim();
+      await git(['update-ref', keptRef(sessionId), commitOid], cwd);
+    } finally {
+      await removeTemp(tmpIndex);
+    }
   }
 
   /**

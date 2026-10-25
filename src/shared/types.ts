@@ -270,6 +270,10 @@ export type AgentEvent =
   /** Files the agent made during the turn, sent just before its result.
    *  `more`: how many others were left off the list. */
   | { type: 'files_made'; files: MadeFile[]; more?: number }
+  /** Restoring files kept a copy of the ones it replaced (one per thread, the
+   *  latest): after a rewind, or after bringing an earlier copy back. The
+   *  thread offers to bring the copy back (bringBackFiles). */
+  | { type: 'files_kept'; reason: 'rewind' | 'bring_back' }
   /** `totalCostUsd`: what this turn cost, in USD as the agent estimates it
    *  (absent when it doesn't say). `sessionCostUsd`: the conversation's
    *  running total the agent reported with it, when it reports one; a turn
@@ -1485,6 +1489,8 @@ export interface GroveBenchAPI {
 
   // Checkpoint rewind
   rewindSession(sessionId: string, userMessageId: string, options?: RewindOptions): Promise<void>;
+  /** Put back the files the last rewind replaced, keeping the ones they replace. */
+  bringBackFiles(sessionId: string): Promise<void>;
   getCheckpointDiff(sessionId: string, userMessageId: string): Promise<string>;
   listCheckpoints(sessionId: string): Promise<CheckpointListItem[]>;
 
@@ -2326,6 +2332,7 @@ export const IPC = {
   PTY_DATA: 'pty:data',      // pty:data:{sessionId}
   PTY_EXIT: 'pty:exit',      // pty:exit:{sessionId}
   AGENT_REWIND: 'agent:rewind',
+  AGENT_BRING_BACK_FILES: 'agent:bring-back-files',
   AGENT_CHECKPOINT_DIFF: 'agent:checkpointDiff',
   AGENT_LIST_CHECKPOINTS: 'agent:listCheckpoints',
   AGENT_DIFF_HISTORY: 'agent:diffHistory',

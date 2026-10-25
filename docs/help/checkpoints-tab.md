@@ -23,10 +23,12 @@ When you select a checkpoint, the right panel shows a diff with two modes:
 
 When you're ready to rewind, you have two choices. Each asks first, says what it will discard, and switches the diff to **Since here** when files would change:
 
-- **Rewind all** — Restores both the files and the thread to the checkpoint state. Every change made since is lost, your own edits included, and files created since are deleted. Ignored files are left alone.
+- **Rewind all** — Restores both the files and the thread to the checkpoint state. Every change made since is replaced, your own edits included, and files created since are deleted; a copy of them is kept (see below). Ignored files are left alone.
 - **Thread only** — Resets only the thread to the checkpoint. Files on disk are left as-is.
 
-Either way, this turn and the ones after it leave the thread, and the checkpoints after this one are deleted. A rewind can't be undone. Rewind all doesn't keep the files as they are first, so copy anything you want to keep. A commit keeps it in the branch's history, but the rewind still takes the files on disk back, so they then show as changes that undo the commit.
+Either way, this turn and the ones after it leave the thread, and the checkpoints after this one are deleted. That part can't be undone.
+
+The files can be. Before restoring them, Rewind all and Restore files keep a copy of the files as they are, and the thread shows a line saying so, with **Bring them back**. Bringing them back keeps a copy of the files they replace in turn, so you can swap back. Only the latest copy is kept: the next rewind replaces it, and only the last such line offers it. Bring them back waits while the agent is working. If the copy can't be made, nothing is restored.
 
 A checkpoint whose message is no longer in the thread (one from before a `/clear`, or the target of an earlier rewind) can only have its files restored; the thread is left untouched. It shows a single **Restore files** button in place of the two above.
 

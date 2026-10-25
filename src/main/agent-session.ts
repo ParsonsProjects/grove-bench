@@ -2364,6 +2364,7 @@ class AgentSessionManager {
       }
       await session.checkpoints.restore(id, session.worktreePath, userMessageId);
       session.emit?.({ type: 'rewind', toMessageId: userMessageId, filesOnly: true });
+      session.emit?.({ type: 'files_kept', reason: 'rewind' });
       return;
     }
 
@@ -2421,6 +2422,9 @@ class AgentSessionManager {
       });
     }
 
+    // After the cut, so the offer to bring the files back stays in the thread.
+    if (!options?.conversationOnly) session.emit?.({ type: 'files_kept', reason: 'rewind' });
+
     if (forkPoint && canFork) {
       // True rewind: resume the same conversation truncated at the last kept
       // chain entry, forked to a new provider session — the agent keeps the
@@ -2447,6 +2451,17 @@ class AgentSessionManager {
     // After the stop, so a tool result from the old query can't save an image
     // after the check. The rewound turns' images and files are no longer shown.
     void pruneAttachments(id, session.eventHistory);
+  }
+
+  /** Put back the files the last rewind replaced (CheckpointManager.restoreKept).
+   *  The ones they replace are kept in their place, so it can be swapped back. */
+  async bringBackFiles(id: string): Promise<void> {
+    const session = this.sessions.get(id);
+    if (!session) throw new Error(`Thread ${id} not found`);
+    // As for a rewind: a running turn would keep editing the files.
+    if (this.isMidTurn(id)) await this.interruptQuery(id);
+    await session.checkpoints.restoreKept(id, session.worktreePath);
+    session.emit?.({ type: 'files_kept', reason: 'bring_back' });
   }
 
   /** Dry-run rewind to get the diff of what would change. */

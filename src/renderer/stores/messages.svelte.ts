@@ -216,6 +216,15 @@ export interface ChatFilesMadeMessage {
   more?: number;
 }
 
+/** A restore kept a copy of the files it replaced (FilesKeptBlock): after a
+ *  rewind, or after bringing an earlier copy back. Only the latest copy is
+ *  kept, so only the last of these offers to bring it back. */
+export interface ChatFilesKeptMessage {
+  kind: 'files_kept';
+  id: string;
+  reason: 'rewind' | 'bring_back';
+}
+
 export type ChatMessage =
   | ChatTextMessage
   | ChatToolCallMessage
@@ -229,7 +238,8 @@ export type ChatMessage =
   | ChatQuestionMessage
   | ChatElicitationMessage
   | ChatLimitMessage
-  | ChatFilesMadeMessage;
+  | ChatFilesMadeMessage
+  | ChatFilesKeptMessage;
 
 // ─── Store ───
 
@@ -1642,6 +1652,10 @@ class MessageStore {
         });
         break;
 
+      case 'files_kept':
+        this.pushMessage(sessionId, { kind: 'files_kept', id: nextId(), reason: event.reason });
+        break;
+
       case 'files_made':
         this.flushStreamingText(sessionId);
         this.pushMessage(sessionId, {
@@ -2643,6 +2657,12 @@ class MessageStore {
     }
     // Most recent first
     return points.reverse();
+  }
+
+  /** Put back the files the last rewind replaced; main keeps the ones they
+   *  replace and adds a line saying so. */
+  async bringBackFiles(sessionId: string): Promise<void> {
+    await window.groveBench.bringBackFiles(sessionId);
   }
 
   /** Execute a rewind to a specific user message checkpoint.

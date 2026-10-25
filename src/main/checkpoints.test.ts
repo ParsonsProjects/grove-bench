@@ -264,6 +264,26 @@ describe('CheckpointManager', () => {
       const mgr = new CheckpointManager();
       await expect(mgr.restore('sess1', '/repo', 'missing')).rejects.toThrow('No checkpoint found');
     });
+
+    // The copy is the only one of the files as they are now.
+    it('restores nothing when it cannot keep a copy of the files first', async () => {
+      mockGitEnv.mockResolvedValue('');
+      mockGit.mockResolvedValue('oid');
+      const mgr = new CheckpointManager();
+      await mgr.capture('sess1', '/repo', 'uuid-1');
+      mockGit.mockClear();
+      mockGit.mockResolvedValue('abc123');
+      mockGitEnv.mockImplementation(async (args: string[]) => {
+        if (args[0] === 'commit-tree') throw new Error('disk full');
+        return 'tree';
+      });
+
+      await expect(mgr.restore('sess1', '/repo', 'uuid-1'))
+        .rejects.toThrow("Couldn't keep a copy of the files as they are, so none were restored: disk full");
+      const commands = mockGit.mock.calls.map(([args]) => args[0]);
+      expect(commands).not.toContain('restore');
+      expect(commands).not.toContain('clean');
+    });
   });
 
   describe('diff()', () => {

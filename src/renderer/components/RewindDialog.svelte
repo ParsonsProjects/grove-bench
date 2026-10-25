@@ -6,7 +6,7 @@
   import { Checkbox } from '$lib/components/ui/checkbox/index.js';
   import { agentsStore } from '../stores/agents.svelte.js';
   import { canRewindThread } from '../lib/agent-commands.js';
-  import { FILES_LOST, startsAfresh } from '../lib/rewind-text.js';
+  import { COPY_KEPT, startsAfresh } from '../lib/rewind-text.js';
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -99,7 +99,7 @@
           {#if conversationOnly}
             Select a message to rewind to. It and the turns after it leave the thread; files stay as they are.
           {:else}
-            Select a message to rewind to. Files go back to how they were before it, so {FILES_LOST}.
+            Select a message to rewind to. Files go back to how they were before it; {COPY_KEPT}.
             <span class="text-muted-foreground text-xs block mt-1">
               Tick Thread only to keep the files as they are.
             </span>
