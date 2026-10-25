@@ -1,6 +1,7 @@
 <script lang="ts">
   import { messageStore } from '../stores/messages.svelte.js';
   import { Button } from '$lib/components/ui/button/index.js';
+  import { Confirm } from '$lib/components/ui/confirm/index.js';
   import ArrowUpIcon from '@lucide/svelte/icons/arrow-up';
   import DiffView from './DiffView.svelte';
   import { fullEditDiff, quickEditDiff } from '../lib/edit-diff.js';
@@ -334,15 +335,17 @@
     {#if isExitPlanMode}
       <div class="flex gap-2 mt-2 flex-wrap">
         {#if confirmFresh}
-          <p class="basis-full text-xs text-foreground" role="alert">
-            Clear this thread's messages and start again with only the plan? Your files stay as they are.
-          </p>
-          <Button variant="subtle" size="sm" onclick={() => confirmFresh = false} disabled={submitting}>
-            Cancel
-          </Button>
-          <Button variant="outline-success" size="sm" onclick={clearAndExecute} disabled={submitting}>
-            Clear and start
-          </Button>
+          <!-- Approving the plan answers the agent: done-green, not red. -->
+          <Confirm
+            class="basis-full"
+            message="Clear this thread's messages and start again with only the plan? Your files stay as they are."
+            confirm="Clear and start"
+            variant="outline-success"
+            size="sm"
+            busy={submitting}
+            oncancel={() => (confirmFresh = false)}
+            onconfirm={clearAndExecute}
+          />
         {:else}
           <!-- Approving always switches to Edit mode (messageStore.resolvePermission). -->
           <Button variant="outline-success" size="sm" onclick={approve} disabled={submitting} title="Approve the plan. The thread switches to Edit mode so the plan's file edits don't each ask; commands still ask.">

@@ -73,6 +73,17 @@ describe('RewindDialog', () => {
     expect(groveBench().getCheckpointDiff).not.toHaveBeenCalled();
   });
 
+  it('says what a rewind discards, and that the files stay once Thread only is ticked', async () => {
+    render(RewindDialog, { sessionId: SID });
+    messageStore.openRewindDialog(SID, 'uuid-1');
+    await waitFor(() => expect(document.getElementById('conversation-only')).not.toBeNull());
+    expect(document.body.textContent).toContain('every change since is lost, yours included, and new files are deleted');
+
+    await fireEvent.click(document.getElementById('conversation-only')!);
+    await waitFor(() => expect(document.body.textContent).toContain('files stay as they are'));
+    expect(document.body.textContent).not.toContain('every change since is lost');
+  });
+
   it('rewinds only the conversation in a folder without git, with no file preview', async () => {
     store.sessions = [{ id: SID, branch: '', repoPath: '/notes', status: 'running', direct: true, noGit: true }] as any;
     groveBench().rewindSession.mockClear();

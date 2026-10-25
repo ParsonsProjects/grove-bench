@@ -6,6 +6,7 @@
   import { Checkbox } from '$lib/components/ui/checkbox/index.js';
   import { agentsStore } from '../stores/agents.svelte.js';
   import { canRewindThread } from '../lib/agent-commands.js';
+  import { FILES_LOST, startsAfresh } from '../lib/rewind-text.js';
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -95,14 +96,18 @@
           Select a message to rewind the thread to. This thread runs without git, so files on disk stay as
           they are: the agent's edits after that point are not undone.
         {:else}
-          Select a message to rewind to. Files on disk will be restored to their state at that point.
-          <span class="text-muted-foreground text-xs block mt-1">
-            Captures full working tree state including all file changes.
-          </span>
+          {#if conversationOnly}
+            Select a message to rewind to. It and the turns after it leave the thread; files stay as they are.
+          {:else}
+            Select a message to rewind to. Files go back to how they were before it, so {FILES_LOST}.
+            <span class="text-muted-foreground text-xs block mt-1">
+              Tick Thread only to keep the files as they are.
+            </span>
+          {/if}
         {/if}
         {#if !canForget}
           <span class="text-muted-foreground text-xs block mt-1" data-testid="rewind-starts-afresh">
-            {agentName} can't forget part of a thread, so it starts afresh from there: it won't remember the earlier turns either.
+            {startsAfresh(agentName)}
           </span>
         {/if}
       </Dialog.Description>

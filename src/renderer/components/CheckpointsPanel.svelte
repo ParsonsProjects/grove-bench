@@ -8,9 +8,13 @@
   import { conversationAgent } from '../lib/session-sprite-state.js';
   import { panelStore } from '../stores/panels.svelte.js';
   import PanelToggle from './PanelToggle.svelte';
-  import type { DiffStats, GitStatusEntry } from '../../shared/types.js';
+  import type { DiffStats, GitStatusEntry, RewindOptions } from '../../shared/types.js';
+  import { canRewindThread } from '../lib/agent-commands.js';
+  import { FILES_LOST, startsAfresh } from '../lib/rewind-text.js';
+  import { agentsStore } from '../stores/agents.svelte.js';
   import { Badge } from '$lib/components/ui/badge/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
+  import { Confirm } from '$lib/components/ui/confirm/index.js';
   import { Notice } from '$lib/components/ui/notice/index.js';
   import { PanelHeader } from '$lib/components/ui/panel-header/index.js';
   import { SectionLabel } from '$lib/components/ui/section-label/index.js';
@@ -34,6 +38,17 @@
   let rewinding = $state(false);
   let error = $state('');
 
+  type RewindMode = 'files' | 'all' | 'conversation';
+  const REWIND_OPTIONS: Record<RewindMode, RewindOptions | undefined> = {
+    all: undefined,
+    files: { filesOnly: true },
+    conversation: { conversationOnly: true },
+  };
+  /** The rewind waiting on Confirm, and the checkpoint it was asked about:
+   *  each one discards work, and nothing keeps the files as they are now,
+   *  so none runs on the first click. */
+  let confirming = $state<{ mode: RewindMode; uuid: string } | null>(null);
+
   let isFullThread = $derived(selectedUuid === FULL_THREAD_UUID);
   let statsByUuid = $derived(new Map(history.entries.map(e => [e.uuid, e])));
   let hasAnyChanges = $derived(history.total.filesChanged > 0);
@@ -48,18 +63,20 @@
     return point?.text ?? `Turn checkpoint`;
   }
 
-  async function handleRewind(mode: 'files' | 'all' | 'conversation') {
+  function ask(mode: RewindMode) {
     if (!selectedUuid || isFullThread) return;
+    confirming = { mode, uuid: selectedUuid };
+    // Show what it would undo: everything since this checkpoint.
+    if (mode !== 'conversation') void checkpointStore.setDiffMode(sessionId, 'since');
+  }
+
+  async function handleRewind({ mode, uuid }: { mode: RewindMode; uuid: string }) {
+    if (rewinding) return;
+    confirming = null;
     rewinding = true;
     error = '';
     try {
-      if (mode === 'conversation') {
-        await messageStore.executeRewind(sessionId, selectedUuid, { conversationOnly: true });
-      } else if (mode === 'files') {
-        await messageStore.executeRewind(sessionId, selectedUuid, { filesOnly: true });
-      } else {
-        await messageStore.executeRewind(sessionId, selectedUuid);
-      }
+      await messageStore.executeRewind(sessionId, uuid, REWIND_OPTIONS[mode]);
       // The selected checkpoint (and any later ones) may now be pruned — drop the
       // stale selection/diff before reloading the list.
       checkpointStore.clearSelection(sessionId);
@@ -72,8 +89,27 @@
   }
 
   let selectedCheckpoint = $derived(checkpoints.find(c => c.uuid === selectedUuid));
-  /** Checkpoints from before the last /clear: files restorable, conversation gone. */
-  let selectedBeforeClear = $derived(!!selectedCheckpoint?.beforeClear);
+  /** Its message has left the thread (before a /clear, or the target of an
+   *  earlier rewind): main restores only its files (rewindFiles). */
+  let selectedFilesOnly = $derived(!!selectedCheckpoint?.beforeClear || selectedCheckpoint?.inThread === false);
+  let agentName = $derived(agentsStore.get(sessionStore.sessions.find((s) => s.id === sessionId)?.agentType)?.displayName ?? 'The agent');
+  /** The question for the pending rewind, while its checkpoint is still the
+   *  one selected and listed: what it discards (files back to before the
+   *  turn, as the checkpoint is taken before its prompt) and its button. */
+  let prompt = $derived.by(() => {
+    if (!confirming || confirming.uuid !== selectedUuid || !selectedCheckpoint) return null;
+    const at = `#${selectedCheckpoint.turn}`;
+    const thread = 'This turn and later ones leave the thread, and the checkpoints after it are deleted.';
+    const afresh = canRewindThread(sessionId) ? '' : ` ${startsAfresh(agentName)}`;
+    switch (confirming.mode) {
+      case 'files':
+        return { message: `Restore files to ${at}? They go back to before this turn, so ${FILES_LOST}.`, confirm: 'Restore' };
+      case 'conversation':
+        return { message: `Rewind the thread to ${at}? ${thread} Files stay as they are.${afresh}`, confirm: 'Rewind thread' };
+      case 'all':
+        return { message: `Rewind to ${at}? Files go back to before this turn, so ${FILES_LOST}. ${thread}${afresh}`, confirm: 'Rewind' };
+    }
+  });
   /** Index of the first pre-clear entry in the newest-first list (divider position). */
   let firstBeforeClearIdx = $derived(checkpoints.findIndex(c => c.beforeClear));
 
@@ -248,32 +284,34 @@
                   Since here
                 </Segmented.Item>
               </Segmented.Root>
-              {#if selectedBeforeClear}
-                <!-- The conversation this turn belonged to was cleared; only the
-                     files can come back. -->
+              {#if selectedFilesOnly}
+                <!-- Its message has left the thread (a /clear, or an earlier
+                     rewind); only the files can come back. -->
                 <Button
                   size="xs"
-                  onclick={() => handleRewind('files')}
+                  variant="outline-destructive"
+                  onclick={() => ask('files')}
                   disabled={rewinding}
-                  title="Restore files to this checkpoint. The thread was cleared, so it is left as is."
+                  title="Restore files to this checkpoint. Its message has left the thread, so the thread is left as is. Asks first."
                 >
                   {rewinding ? 'Restoring...' : 'Restore files'}
                 </Button>
               {:else}
                 <Button
                   size="xs"
-                  onclick={() => handleRewind('all')}
+                  variant="outline-destructive"
+                  onclick={() => ask('all')}
                   disabled={rewinding}
-                  title="Restore files and rewind thread to this point"
+                  title="Restore files and rewind thread to this point. Asks first."
                 >
                   {rewinding ? 'Rewinding...' : 'Rewind all'}
                 </Button>
                 <Button
                   size="xs"
-                  variant="secondary"
-                  onclick={() => handleRewind('conversation')}
+                  variant="subtle"
+                  onclick={() => ask('conversation')}
                   disabled={rewinding}
-                  title="Only rewind thread, keep current files"
+                  title="Only rewind thread, keep current files. Asks first."
                 >
                   Thread only
                 </Button>
@@ -281,6 +319,17 @@
             {/if}
           {/snippet}
         </PanelHeader>
+
+        {#if prompt}
+          <Confirm
+            class="shrink-0 border-b border-border px-3 py-2"
+            message={prompt.message}
+            confirm={prompt.confirm}
+            busy={rewinding}
+            oncancel={() => (confirming = null)}
+            onconfirm={() => confirming && handleRewind(confirming)}
+          />
+        {/if}
 
         {#if error}
           <Notice tone="danger" class="shrink-0 border-b border-b-border">

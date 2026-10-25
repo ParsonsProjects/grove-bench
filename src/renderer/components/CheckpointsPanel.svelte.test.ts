@@ -10,6 +10,7 @@ import { reviewStore } from '../stores/review.svelte.js';
 import { store } from '../stores/sessions.svelte.js';
 import { settingsStore } from '../stores/settings.svelte.js';
 import { panelStore } from '../stores/panels.svelte.js';
+import { agentsStore } from '../stores/agents.svelte.js';
 import type { GitStatusResult } from '../../shared/types.js';
 
 const SID = 'cp-session';
@@ -176,5 +177,103 @@ describe('CheckpointsPanel with grove characters', () => {
     const { getByText, queryByRole } = render(CheckpointsPanel, { sessionId: SID });
     expect(getByText(/No checkpoints yet/)).toBeInTheDocument();
     expect(queryByRole('img', { name: 'Ready' })).toBeNull();
+  });
+});
+
+// A rewind discards work that nothing else keeps (the checkpoint is from
+// before the turn, and later ones are pruned), so each one asks first.
+describe('CheckpointsPanel rewinds', () => {
+  const LOST = 'every change since is lost, yours included, and new files are deleted';
+  const THREAD = 'This turn and later ones leave the thread, and the checkpoints after it are deleted.';
+
+  afterEach(() => {
+    store.sessions = [];
+    agentsStore.list = [];
+  });
+
+  async function pick(text: string) {
+    const view = render(CheckpointsPanel, { sessionId: SID });
+    await fireEvent.click(view.getByText(text));
+    return view;
+  }
+
+  it('asks before Rewind all, says what it discards, then rewinds files and thread', async () => {
+    const { getByRole, queryByRole } = await pick('Add polling');
+    await fireEvent.click(getByRole('button', { name: 'Rewind all' }));
+
+    expect(mockGroveBench.rewindSession).not.toHaveBeenCalled();
+    expect(getByRole('alert')).toHaveTextContent(`Rewind to #2? Files go back to before this turn, so ${LOST}. ${THREAD}`);
+    await fireEvent.click(getByRole('button', { name: 'Rewind' }));
+    await waitFor(() => expect(mockGroveBench.rewindSession).toHaveBeenCalledWith(SID, 'u2', undefined));
+    expect(queryByRole('alert')).toBeNull();
+  });
+
+  it('shows what a rewind of the files would undo while it asks', async () => {
+    const { getByRole } = await pick('Add polling');
+    await fireEvent.click(getByRole('button', { name: 'Thread only' }));
+    expect(checkpointStore.getDiffMode(SID)).toBe('turn');
+
+    await fireEvent.click(getByRole('button', { name: 'Rewind all' }));
+    expect(checkpointStore.getDiffMode(SID)).toBe('since');
+  });
+
+  it('rewinds nothing on Cancel', async () => {
+    const { getByRole, queryByRole } = await pick('Add polling');
+    await fireEvent.click(getByRole('button', { name: 'Rewind all' }));
+    await fireEvent.click(getByRole('button', { name: 'Cancel' }));
+
+    expect(queryByRole('alert')).toBeNull();
+    expect(mockGroveBench.rewindSession).not.toHaveBeenCalled();
+  });
+
+  it('drops the question when another checkpoint is picked, or its own leaves the list', async () => {
+    const { getByRole, getByText, queryByRole } = await pick('Add polling');
+    await fireEvent.click(getByRole('button', { name: 'Rewind all' }));
+    await fireEvent.click(getByText('Initial change'));
+    expect(queryByRole('alert')).toBeNull();
+
+    await fireEvent.click(getByText('Add polling'));
+    await fireEvent.click(getByRole('button', { name: 'Rewind all' }));
+    // A rewind from the Thread tab pruned it
+    checkpointStore.checkpointsBySession = { [SID]: [{ uuid: 'u1', turn: 1, ref: 'r1', text: 'Initial change' }] };
+    await waitFor(() => expect(queryByRole('alert')).toBeNull());
+  });
+
+  it('says Thread only keeps the files', async () => {
+    const { getByRole } = await pick('Add polling');
+    await fireEvent.click(getByRole('button', { name: 'Thread only' }));
+
+    expect(getByRole('alert')).toHaveTextContent(`Rewind the thread to #2? ${THREAD} Files stay as they are.`);
+    await fireEvent.click(getByRole('button', { name: 'Rewind thread' }));
+    await waitFor(() => expect(mockGroveBench.rewindSession).toHaveBeenCalledWith(SID, 'u2', { conversationOnly: true }));
+  });
+
+  it("says when the agent can't forget part of a thread", async () => {
+    store.sessions = [{ id: SID, branch: 'b', repoPath: '/repo', status: 'running', agentType: 'gemini-cli' }] as any;
+    agentsStore.list = [{ id: 'gemini-cli', displayName: 'Gemini CLI', capabilities: { rewind: false } }] as any;
+    const { getByRole } = await pick('Add polling');
+    await fireEvent.click(getByRole('button', { name: 'Rewind all' }));
+
+    expect(getByRole('alert')).toHaveTextContent("Gemini CLI can't forget part of a thread, so it starts afresh from there");
+  });
+
+  // Main restores only the files of these (rewindFiles), so the tab offers
+  // only that, before a /clear or after an earlier rewind took the message.
+  it.each([
+    ['from before a /clear', { beforeClear: true }],
+    ['whose message has left the thread', { inThread: false as const }],
+  ])('asks before restoring the files of a checkpoint %s', async (_name, flag) => {
+    checkpointStore.checkpointsBySession = {
+      [SID]: [{ uuid: 'u1', turn: 1, ref: 'r1', text: 'Initial change', ...flag }],
+    };
+    const { getByRole, queryByRole } = await pick('Initial change');
+    expect(queryByRole('button', { name: 'Rewind all' })).toBeNull();
+    expect(queryByRole('button', { name: 'Thread only' })).toBeNull();
+    await fireEvent.click(getByRole('button', { name: 'Restore files' }));
+
+    expect(getByRole('alert')).toHaveTextContent(`Restore files to #1? They go back to before this turn, so ${LOST}.`);
+    expect(mockGroveBench.rewindSession).not.toHaveBeenCalled();
+    await fireEvent.click(getByRole('button', { name: 'Restore' }));
+    await waitFor(() => expect(mockGroveBench.rewindSession).toHaveBeenCalledWith(SID, 'u1', { filesOnly: true }));
   });
 });

@@ -83,6 +83,13 @@ function turnInFlight(session: ManagedSession): boolean {
   return !!session.turnHandle && session.turnHandle === session.queryHandle;
 }
 
+/** Whether a user message is still in the thread. Only then can a rewind to
+ *  its checkpoint take the thread back too; otherwise just its files can be
+ *  restored. rewindFiles and listCheckpoints both decide by this. */
+function messageInThread(session: ManagedSession, uuid: string): boolean {
+  return session.eventHistory.some((e) => e.type === 'user_message' && e.uuid === uuid);
+}
+
 /** Why idle sleep must leave `session` awake for now, or null when it can
  *  sleep. Checked here rather than trusting the renderer's view alone. */
 function sleepRefusal(session: ManagedSession): string | null {
@@ -2350,9 +2357,7 @@ class AgentSessionManager {
     // away earlier, or from before a /clear) can only have its files restored.
     // Without this guard the fork point below would come back null and the
     // "rewind" would silently start a brand-new conversation.
-    const inConversation = session.eventHistory.some(
-      (e) => e.type === 'user_message' && e.uuid === userMessageId,
-    );
+    const inConversation = messageInThread(session, userMessageId);
     if (options?.filesOnly || !inConversation) {
       if (options?.conversationOnly) {
         throw new Error('That message is no longer part of the thread, so there is nothing to rewind. Its files can still be restored.');
@@ -2452,11 +2457,13 @@ class AgentSessionManager {
     return session.checkpoints.diff(id, session.worktreePath, userMessageId);
   }
 
-  /** List all checkpoints for a session. */
+  /** List all checkpoints for a session, flagging those whose message has
+   *  left the thread, so the Checkpoints tab offers what rewindFiles does. */
   async listCheckpoints(id: string): Promise<import('../shared/types.js').CheckpointListItem[]> {
     const session = this.sessions.get(id);
     if (!session) return [];
-    return session.checkpoints.list(id, session.worktreePath);
+    const list = await session.checkpoints.list(id, session.worktreePath);
+    return list.map((c) => (messageInThread(session, c.uuid) ? c : { ...c, inThread: false }));
   }
 
   /** Per-turn diff history (what each turn changed) plus cumulative stats. */

@@ -9,6 +9,7 @@
   import { Badge } from '$lib/components/ui/badge/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Checkbox } from '$lib/components/ui/checkbox/index.js';
+  import { Confirm } from '$lib/components/ui/confirm/index.js';
   import { Input } from '$lib/components/ui/input/index.js';
   import { Kbd } from '$lib/components/ui/kbd/index.js';
   import { Logo } from '$lib/components/ui/logo/index.js';
@@ -260,6 +261,14 @@
           </Notice>
         {/each}
       </div>
+      <!-- Asking before an action that discards something, in place. -->
+      <Confirm
+        class="max-w-xl"
+        message="Rewind to #2? Files go back to before this turn, so every change since is lost, yours included, and new files are deleted."
+        confirm="Rewind"
+        oncancel={() => {}}
+        onconfirm={() => {}}
+      />
       <div class="flex flex-wrap items-center gap-6 text-xs">
         <span class="flex items-center gap-2"><Pulse /> Running npm test</span>
         <span class="flex items-center gap-2"><Pulse motion="spin" /> Writing</span>

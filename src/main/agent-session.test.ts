@@ -3585,6 +3585,30 @@ describe('AgentSessionManager.listSessions()', () => {
   });
 });
 
+describe('AgentSessionManager.listCheckpoints()', () => {
+  // rewindFiles restores only the files of a checkpoint whose message has
+  // left the thread, so the Checkpoints tab must know which ones those are.
+  it('flags the checkpoints whose message has left the thread', async () => {
+    await sessionManager.createSession({
+      id: 'test-list-cp', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(sessionManager.getSession('test-list-cp')?.queryHandle).toBeTruthy());
+    const session = sessionManager.getSession('test-list-cp')!;
+    await sessionManager.sendMessage('test-list-cp', 'Add polling');
+    const uuid = (session.eventHistory.find((e) => e.type === 'user_message') as { uuid: string }).uuid;
+    vi.mocked(session.checkpoints.list).mockResolvedValueOnce([
+      { uuid, turn: 2, ref: 'r2', text: 'Add polling' },
+      { uuid: 'rewound-away', turn: 1, ref: 'r1', text: 'Initial change' },
+    ]);
+
+    expect(await sessionManager.listCheckpoints('test-list-cp')).toEqual([
+      { uuid, turn: 2, ref: 'r2', text: 'Add polling' },
+      { uuid: 'rewound-away', turn: 1, ref: 'r1', text: 'Initial change', inThread: false },
+    ]);
+    await sessionManager.destroySession('test-list-cp');
+  });
+});
+
 describe('AgentSessionManager.rewindFiles()', () => {
   it('stops a running turn before restoring files', async () => {
     await sessionManager.createSession({
