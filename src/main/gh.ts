@@ -1,6 +1,15 @@
 import { isReadOnly } from './process-host.js';
 import { runInAgentHost } from './process-host-run.js';
 import type { OpenPrSummary, PrChecksSummary, PrCreateOpts, PrInfo, PrReviewComment, PrReviewEvent } from '../shared/types.js';
+import { isRecord } from './persisted-state.js';
+
+/** obj.a.b... in JSON of unknown shape: undefined where a step isn't an
+ *  object, as `?.` would give. */
+function at(obj: unknown, ...path: string[]): unknown {
+  let value = obj;
+  for (const key of path) value = isRecord(value) ? value[key] : undefined;
+  return value;
+}
 
 /** gh can sit forever on a stalled connection or an interactive prompt. The
  *  renderer polls PR status for every session in sequence, so one hung call
@@ -164,7 +173,7 @@ let cachedLogin: string | null = null;
 export async function ghLogin(): Promise<string | null> {
   if (cachedLogin) return cachedLogin;
   try {
-    const login = JSON.parse(await ghOnline(['api', 'user']))?.login;
+    const login = at(JSON.parse(await ghOnline(['api', 'user'])), 'login');
     if (typeof login === 'string' && login) cachedLogin = login;
   } catch {
     return null;
@@ -203,16 +212,18 @@ export function failingCheckNames(rollup: unknown): string[] {
 export function commentSignature(comments: unknown, reviews: unknown, ignoreLogin?: string | null): string[] {
   const sig: string[] = [];
   if (Array.isArray(comments)) {
-    for (const c of comments as Array<Record<string, any>>) {
-      if (ignoreLogin && c.author?.login === ignoreLogin) continue;
-      sig.push(`c:${c.id ?? `${c.author?.login}@${c.createdAt}`}`);
+    for (const c of comments as unknown[]) {
+      const author = at(c, 'author', 'login');
+      if (ignoreLogin && author === ignoreLogin) continue;
+      sig.push(`c:${String(at(c, 'id') ?? `${author}@${at(c, 'createdAt')}`)}`);
     }
   }
   if (Array.isArray(reviews)) {
-    for (const r of reviews as Array<Record<string, any>>) {
-      if (String(r.state).toUpperCase() === 'PENDING') continue;
-      if (ignoreLogin && r.author?.login === ignoreLogin) continue;
-      sig.push(`r:${r.id ?? `${r.author?.login}@${r.submittedAt}`}`);
+    for (const r of reviews as unknown[]) {
+      if (String(at(r, 'state')).toUpperCase() === 'PENDING') continue;
+      const author = at(r, 'author', 'login');
+      if (ignoreLogin && author === ignoreLogin) continue;
+      sig.push(`r:${String(at(r, 'id') ?? `${author}@${at(r, 'submittedAt')}`)}`);
     }
   }
   return sig;
@@ -232,9 +243,29 @@ export function summarizeChecks(rollup: unknown): PrChecksSummary | null {
   return summary;
 }
 
+/** The fields of gh's PR JSON (PR_VIEW_FIELDS) that parsePr reads. gh's own
+ *  output, so trusted to have these types where they are there at all. */
+interface GhPrJson {
+  number?: number;
+  url?: string;
+  state?: PrInfo['state'];
+  isDraft?: boolean;
+  title?: string;
+  reviewDecision?: string;
+  headRefOid?: string;
+  headRefName?: string;
+  baseRefName?: string;
+  statusCheckRollup?: unknown;
+  comments?: unknown;
+  reviews?: unknown;
+  author?: { login?: string };
+}
+
 /** Shape one gh PR JSON object into PrInfo; null when it isn't a PR. */
-function parsePr(data: Record<string, any>, selfLogin?: string | null): PrInfo | null {
-  if (!data || typeof data !== 'object' || !data.number || !data.url) return null;
+function parsePr(json: unknown, selfLogin?: string | null): PrInfo | null {
+  if (!isRecord(json)) return null;
+  const data = json as GhPrJson;
+  if (!data.number || !data.url) return null;
   return {
     number: data.number,
     url: data.url,
@@ -311,13 +342,14 @@ export function parseOpenPrs(stdout: string): OpenPrSummary[] {
   }
   if (!Array.isArray(data)) return [];
   const result: OpenPrSummary[] = [];
-  for (const item of data) {
-    if (!item || typeof item.number !== 'number' || typeof item.headRefName !== 'string' || !item.headRefName) continue;
+  for (const item of data as unknown[]) {
+    if (!isRecord(item) || typeof item.number !== 'number' || typeof item.headRefName !== 'string' || !item.headRefName) continue;
+    const author = at(item, 'author', 'login');
     result.push({
       number: item.number,
       title: typeof item.title === 'string' ? item.title : '',
       headRefName: item.headRefName,
-      author: typeof item.author?.login === 'string' ? item.author.login : '',
+      author: typeof author === 'string' ? author : '',
       isDraft: item.isDraft === true,
       isCrossRepository: item.isCrossRepository === true,
       url: typeof item.url === 'string' ? item.url : '',
@@ -362,6 +394,19 @@ export async function prsForBranches(repoPath: string, branches: string[], selfL
   return sortPrs([...byNumber.values()]);
 }
 
+/** The fields of a GitHub REST review, review comment or issue comment that
+ *  prReviewComments reads. GitHub's own JSON, so trusted to have these types. */
+interface GhApiComment {
+  id?: number;
+  body?: string | null;
+  state?: string;
+  user?: { login?: string } | null;
+  author_association?: string;
+  path?: string;
+  line?: number | null;
+  original_line?: number | null;
+}
+
 /** Inline review comments, submitted review bodies, and PR conversation comments,
  *  flattened for prompting. Conversation comments must be included: new-feedback
  *  detection (commentSignature) counts them, so an alert can fire for a plain PR
@@ -370,18 +415,17 @@ export async function prsForBranches(repoPath: string, branches: string[], selfL
  *  fetch the rest when more exist.
  *  gh substitutes {owner}/{repo} from the repo's origin remote. */
 export async function prReviewComments(repoPath: string, prNumber: number): Promise<PrReviewComment[]> {
+  const fetchList = (endpoint: string) => ghOnline(['api', `repos/{owner}/{repo}/${endpoint}?per_page=100`], repoPath)
+    .then((s): unknown => JSON.parse(s)).catch(() => []);
   const [inline, reviews, conversation] = await Promise.all([
-    ghOnline(['api', `repos/{owner}/{repo}/pulls/${prNumber}/comments?per_page=100`], repoPath)
-      .then((s) => JSON.parse(s)).catch(() => []),
-    ghOnline(['api', `repos/{owner}/{repo}/pulls/${prNumber}/reviews?per_page=100`], repoPath)
-      .then((s) => JSON.parse(s)).catch(() => []),
-    ghOnline(['api', `repos/{owner}/{repo}/issues/${prNumber}/comments?per_page=100`], repoPath)
-      .then((s) => JSON.parse(s)).catch(() => []),
+    fetchList(`pulls/${prNumber}/comments`),
+    fetchList(`pulls/${prNumber}/reviews`),
+    fetchList(`issues/${prNumber}/comments`),
   ]);
 
   const result: PrReviewComment[] = [];
   if (Array.isArray(reviews)) {
-    for (const r of reviews as Array<Record<string, any>>) {
+    for (const r of reviews as GhApiComment[]) {
       if (!r.body?.trim() || String(r.state).toUpperCase() === 'PENDING') continue;
       result.push({
         id: `review-${r.id}`,
@@ -392,7 +436,7 @@ export async function prReviewComments(repoPath: string, prNumber: number): Prom
     }
   }
   if (Array.isArray(inline)) {
-    for (const c of inline as Array<Record<string, any>>) {
+    for (const c of inline as GhApiComment[]) {
       if (!c.body?.trim()) continue;
       result.push({
         id: `comment-${c.id}`,
@@ -405,7 +449,7 @@ export async function prReviewComments(repoPath: string, prNumber: number): Prom
     }
   }
   if (Array.isArray(conversation)) {
-    for (const c of conversation as Array<Record<string, any>>) {
+    for (const c of conversation as GhApiComment[]) {
       if (!c.body?.trim()) continue;
       result.push({
         id: `discussion-${c.id}`,
@@ -425,14 +469,16 @@ export async function prCreate(repoPath: string, branch: string, opts: PrCreateO
   if (opts.draft) args.push('--draft');
   try {
     await ghOnline(args, repoPath, { bypassCooldown: true });
-  } catch (e: any) {
-    throw new Error(e?.stderr?.trim() || e?.message || 'gh pr create failed', { cause: e });
+  } catch (e) {
+    const err = e as { stderr?: string; message?: string } | null;
+    throw new Error(err?.stderr?.trim() || err?.message || 'gh pr create failed', { cause: e });
   }
   let created: PrInfo | null;
   try {
     created = await prStatus(repoPath, branch);
-  } catch (e: any) {
-    throw new Error(`PR was created but could not be read back — check GitHub (${e?.message ?? e})`, { cause: e });
+  } catch (e) {
+    const message = (e as { message?: string } | null)?.message;
+    throw new Error(`PR was created but could not be read back — check GitHub (${message ?? e})`, { cause: e });
   }
   if (!created) throw new Error('PR was created but could not be read back — check GitHub');
   // Opened with the gh account just now, so it's the viewer's own.
@@ -449,7 +495,10 @@ export function ghApiErrorMessage(e: unknown): string {
       const data = JSON.parse(err.stdout) as { message?: unknown; errors?: unknown };
       const details = Array.isArray(data.errors)
         ? data.errors
-          .map((x) => (typeof x === 'string' ? x : typeof x?.message === 'string' ? x.message : ''))
+          .map((x: unknown) => {
+            const message = at(x, 'message');
+            return typeof x === 'string' ? x : typeof message === 'string' ? message : '';
+          })
           .filter(Boolean)
         : [];
       if (details.length > 0) return details.join('; ');

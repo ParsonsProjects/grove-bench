@@ -5,6 +5,10 @@ import type { BranchCommit, CommitEntry, FileDiffResult, GitOperation, GitOpResu
 import { porcelainRecords } from './git-status-parser.js';
 import { isConflictCode } from '../shared/git-conflicts.js';
 
+/** What a failed git command throws (runProcess) carries: its stderr, and the
+ *  error's message. */
+type GitError = { stderr?: string; message?: string };
+
 /** Cap on network git commands (fetch): a dead network must not leave git
  *  processes hanging or block what waits on them. */
 export const FETCH_TIMEOUT_MS = 30_000;
@@ -194,8 +198,9 @@ export async function validateBranchName(name: string): Promise<boolean> {
  * lines in git's own message. Falls back to the error text so the caller
  * always has something to show.
  */
-async function detectConflicts(cwd: string, opErr: any): Promise<string[]> {
-  const errMsg: string = opErr?.stderr || opErr?.message || String(opErr);
+async function detectConflicts(cwd: string, opErr: unknown): Promise<string[]> {
+  const err = opErr as GitError | null;
+  const errMsg = err?.stderr || err?.message || String(opErr);
   try {
     // -z: names as they are. Without it git quotes and escapes any name
     // outside ASCII ("caf\303\251.ts").
@@ -226,7 +231,7 @@ export async function mergeNoCommit(cwd: string, branch: string): Promise<{ succ
     await git(['merge', '--no-commit', '--no-ff', branch], cwd);
     await git(['commit', '-m', `Merge ${branch}`], cwd);
     return { success: true };
-  } catch (mergeErr: any) {
+  } catch (mergeErr) {
     return { success: false, conflicts: await detectConflicts(cwd, mergeErr) };
   }
 }
@@ -252,18 +257,20 @@ const DIRTY_TREE_ERROR = 'The working tree has uncommitted changes. Commit or st
 async function requireCleanTree(cwd: string): Promise<GitOpResult | null> {
   try {
     if (!(await isWorkingTreeClean(cwd))) return { success: false, error: DIRTY_TREE_ERROR };
-  } catch (e: any) {
-    return { success: false, error: e?.stderr?.trim() || e?.message || 'git status failed' };
+  } catch (e) {
+    const err = e as GitError | null;
+    return { success: false, error: err?.stderr?.trim() || err?.message || 'git status failed' };
   }
   return null;
 }
 
 /** Turn a failed operation into a GitOpResult: conflicts when git left the
  *  tree mid-operation (which `abortArgs` then unwinds), otherwise the error. */
-async function failedOp(cwd: string, err: any, abortArgs: string[]): Promise<GitOpResult> {
-  const errMsg: string = err?.stderr || err?.message || String(err);
+async function failedOp(cwd: string, opErr: unknown, abortArgs: string[]): Promise<GitOpResult> {
+  const err = opErr as GitError | null;
+  const errMsg = err?.stderr || err?.message || String(opErr);
   const looksLikeConflict = /CONFLICT|could not apply|conflict/i.test(errMsg);
-  const conflicts = looksLikeConflict ? await detectConflicts(cwd, err) : [];
+  const conflicts = looksLikeConflict ? await detectConflicts(cwd, opErr) : [];
   // Always unwind so the worktree is usable again; the user can redo the
   // operation in the terminal if they want to resolve by hand.
   await git(abortArgs, cwd).catch(() => {});
@@ -278,7 +285,7 @@ export async function rebaseOnto(cwd: string, onto: string): Promise<GitOpResult
   try {
     await git(['rebase', onto], cwd);
     return { success: true };
-  } catch (e: any) {
+  } catch (e) {
     return failedOp(cwd, e, ['rebase', '--abort']);
   }
 }
@@ -291,7 +298,7 @@ export async function cherryPick(cwd: string, sha: string): Promise<GitOpResult>
   try {
     await git(['cherry-pick', sha], cwd);
     return { success: true };
-  } catch (e: any) {
+  } catch (e) {
     return failedOp(cwd, e, ['cherry-pick', '--abort']);
   }
 }
@@ -317,12 +324,13 @@ export async function squashSince(cwd: string, base: string, message: string): P
     await git(['reset', '--soft', mergeBase], cwd);
     await git(['commit', '-m', message], cwd);
     return { success: true };
-  } catch (e: any) {
+  } catch (e) {
     // The commit can fail after the reset (a commit-msg or pre-commit hook,
     // signing): put the branch back, or its commits would be left folded
     // into staged changes. The tree was clean, so this restores it exactly.
     await git(['reset', '--soft', head], cwd).catch(() => {});
-    return { success: false, error: e?.stderr?.trim() || e?.message || 'squash failed' };
+    const err = e as GitError | null;
+    return { success: false, error: err?.stderr?.trim() || err?.message || 'squash failed' };
   }
 }
 
@@ -691,8 +699,9 @@ export async function commit(cwd: string, message: string): Promise<void> {
 export async function push(cwd: string, branch: string): Promise<void> {
   try {
     await git(['push', '--set-upstream', 'origin', branch], cwd);
-  } catch (e: any) {
-    throw new Error(e?.stderr?.trim() || e?.message || 'git push failed', { cause: e });
+  } catch (e) {
+    const err = e as GitError | null;
+    throw new Error(err?.stderr?.trim() || err?.message || 'git push failed', { cause: e });
   }
 }
 
