@@ -245,7 +245,7 @@
   {/if}
   <Button variant="subtle" size="icon-2xs" onclick={refresh} title="Re-scan skill directories" aria-label="Refresh skills"><RefreshIcon /></Button>
   <Button
-    variant="subtle"
+    variant="subtle-primary"
     size="2xs"
     onclick={() => { addSkillOpen = true; }}
     title="Author a new skill every agent can use — write it yourself or hand it to the agent"
@@ -260,7 +260,7 @@
   <Notice class="mb-3">
     {#snippet actions()}
       <Button
-        variant="secondary"
+        variant="link"
         size="2xs"
         onclick={fixSharing}
         disabled={sharingBusy}
@@ -298,7 +298,7 @@
       {#snippet actions()}
         {#if !disabled}
           <Button
-            variant="secondary"
+            variant="subtle-primary"
             size="2xs"
             onclick={() => runSkill(skill)}
             title={store.isFolderProject(repoPath)

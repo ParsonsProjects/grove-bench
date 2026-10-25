@@ -109,7 +109,7 @@
           Refresh
         </Button>
         <span data-setting="mcp-add">
-          <Button variant="subtle" size="xs" onclick={() => (adding = true)}>
+          <Button variant="subtle-primary" size="xs" onclick={() => (adding = true)}>
             <PlusIcon class="size-3.5" aria-hidden="true" />
             Add server
           </Button>

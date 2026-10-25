@@ -99,7 +99,7 @@
         {/if}
         <span class="text-xs font-medium text-muted-foreground truncate flex-1" title={group.repoPath}>{label}</span>
         {#if !group.removed}
-          <Button size="2xs" variant="subtle" onclick={() => skillsPanelStore.editSchedule(group.repoPath)}><PlusIcon />Schedule a skill</Button>
+          <Button size="2xs" variant="subtle-primary" onclick={() => skillsPanelStore.editSchedule(group.repoPath)}><PlusIcon />Schedule a skill</Button>
         {/if}
       </div>
       <div class="flex flex-col gap-2 min-w-0">
@@ -118,7 +118,7 @@
             {#snippet actions()}
               <Button
                 size="2xs"
-                variant="secondary"
+                variant="subtle-primary"
                 disabled={group.removed || !!schedulesStore.starting[schedule.id]}
                 title={group.removed ? 'Its project was removed' : 'Run it now in a new thread'}
                 onclick={() => runNow(schedule)}

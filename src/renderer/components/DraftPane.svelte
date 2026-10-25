@@ -345,7 +345,7 @@
           <p class="text-sm text-foreground">No agent is available to start this thread.</p>
           <p class="text-xs text-muted-foreground">Grove Bench couldn't load its list of agents. Try again, or restart the app if it keeps happening.</p>
           <div class="flex justify-end">
-            <Button variant="secondary" size="sm" onclick={retryAgents}>Try again</Button>
+            <Button variant="subtle-primary" size="sm" onclick={retryAgents}>Try again</Button>
           </div>
         </div>
       {:else if credentials === 'missing'}
@@ -423,9 +423,9 @@
           {/if}
           <div class="flex justify-end gap-2">
             {#if installed && agentStatus?.signInCheckable}
-              <Button variant="secondary" size="sm" onclick={checkSignIn}>Check sign-in</Button>
+              <Button variant="subtle-primary" size="sm" onclick={checkSignIn}>Check sign-in</Button>
             {:else}
-              <Button variant="secondary" size="sm" onclick={() => prerequisitesStore.refresh()}>Re-check</Button>
+              <Button variant="subtle-primary" size="sm" onclick={() => prerequisitesStore.refresh()}>Re-check</Button>
             {/if}
           </div>
         </div>

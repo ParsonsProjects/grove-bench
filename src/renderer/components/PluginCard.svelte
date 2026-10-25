@@ -96,7 +96,7 @@
         >Remove</Button>
       {:else if available}
         <Button
-          variant="secondary"
+          variant="subtle-primary"
           size="xs"
           disabled={busy}
           onclick={() => oninstall?.(available!.pluginId)}
