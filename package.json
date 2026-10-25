@@ -10,7 +10,16 @@
   },
   "main": "dist/main/index.js",
   "engines": {
-    "npm": ">=11.10.0"
+    "npm": ">=11.19.0"
+  },
+  "allowScripts": {
+    "core-js": false,
+    "electron": true,
+    "electron-winstaller": false,
+    "esbuild": true,
+    "fsevents": false,
+    "node-pty": true,
+    "protobufjs": false
   },
   "scripts": {
     "start": "node scripts/dev.mjs",
