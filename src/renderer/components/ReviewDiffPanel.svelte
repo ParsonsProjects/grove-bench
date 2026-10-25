@@ -1045,7 +1045,7 @@
             {:else if selectedEntry.status === 'conflicted'}
               <Button
                 size="xs"
-                variant="outline-success"
+                variant="subtle-primary"
                 onclick={() => stageEntry(selectedEntry)}
                 disabled={resolveBlocked !== null}
                 title={resolveBlocked === 'markers'
@@ -1055,7 +1055,7 @@
                 Mark resolved
               </Button>
             {:else}
-              <Button size="xs" variant="outline-success" onclick={() => stageEntry(selectedEntry)} title="Stage this file">
+              <Button size="xs" variant="subtle-primary" onclick={() => stageEntry(selectedEntry)} title="Stage this file">
                 Stage
               </Button>
             {/if}

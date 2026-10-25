@@ -109,8 +109,10 @@
       {#if openError}
         <div class="text-destructive mt-1">{openError}</div>
       {/if}
-      <div class="flex gap-2 mt-2">
-        <Button variant="subtle" size="sm" onclick={openPage} disabled={busy || !request.url}>
+      <!-- Two text buttons: pulled left so their words line up with the text above. -->
+      <div class="flex gap-2 mt-2 -ml-3">
+        <!-- Blue: it opens a web page (green acts, blue goes). -->
+        <Button variant="external" size="sm" onclick={openPage} disabled={busy || !request.url}>
           Open page
         </Button>
         <Button variant="quiet" size="sm" onclick={() => respond({ action: 'decline' })} disabled={busy}>Decline</Button>
