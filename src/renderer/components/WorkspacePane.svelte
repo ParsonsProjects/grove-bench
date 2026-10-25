@@ -14,6 +14,7 @@
   import PromptEditor from './PromptEditor.svelte';
   import { lazyComponent } from '../lib/lazy-component.js';
   import GitNotice from './GitNotice.svelte';
+  import LazyTab from './LazyTab.svelte';
   import GroveEmptyState from './GroveEmptyState.svelte';
   import { settingsStore } from '../stores/settings.svelte.js';
   import { conversationAgent } from '$lib/session-sprite-state.js';
@@ -390,32 +391,32 @@
     {#if noGit}
       {@render noGitNote('changes', 'Changes', 'there is nothing to compare the files against. The agent edits your files in place; check them in your editor or file explorer.')}
     {:else if changesMounted}
-      {#await loadChangesPanel() then ChangesReviewPanel}
-        <ChangesReviewPanel {sessionId} />
-      {/await}
+      <LazyTab load={loadChangesPanel} tab="Changes" {sessionId}>
+        {#snippet children(ChangesReviewPanel)}<ChangesReviewPanel {sessionId} />{/snippet}
+      </LazyTab>
     {/if}
   </div>
   <div class="flex-1 overflow-hidden flex flex-col {activeTab === 'checkpoints' ? '' : 'hidden'}">
     {#if noGit}
       {@render noGitNote('checkpoints', 'Checkpoints', 'no checkpoints are saved and file edits can\'t be restored. You can still rewind the thread from a message in the Thread tab; files stay as they are.')}
     {:else if checkpointsMounted}
-      {#await loadCheckpointsPanel() then CheckpointsPanel}
-        <CheckpointsPanel {sessionId} />
-      {/await}
+      <LazyTab load={loadCheckpointsPanel} tab="Checkpoints" {sessionId}>
+        {#snippet children(CheckpointsPanel)}<CheckpointsPanel {sessionId} />{/snippet}
+      </LazyTab>
     {/if}
   </div>
   <div class="flex-1 overflow-hidden flex flex-col {activeTab === 'terminal' ? '' : 'hidden'}">
     {#if terminalMounted}
-      {#await loadTerminalPanel() then TerminalPanel}
-        <TerminalPanel {sessionId} />
-      {/await}
+      <LazyTab load={loadTerminalPanel} tab="Terminal" {sessionId}>
+        {#snippet children(TerminalPanel)}<TerminalPanel {sessionId} />{/snippet}
+      </LazyTab>
     {/if}
   </div>
   <div class="flex-1 overflow-hidden flex flex-col {activeTab === 'preview' ? '' : 'hidden'}">
     {#if previewMounted}
-      {#await loadPreviewPanel() then PreviewPanel}
-        <PreviewPanel {sessionId} active={previewVisible} />
-      {/await}
+      <LazyTab load={loadPreviewPanel} tab="Preview" {sessionId}>
+        {#snippet children(PreviewPanel)}<PreviewPanel {sessionId} active={previewVisible} />{/snippet}
+      </LazyTab>
     {/if}
   </div>
 

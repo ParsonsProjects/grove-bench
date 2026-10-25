@@ -154,7 +154,9 @@ Use the user-facing words in any new UI text, help page or doc. See `docs/projec
   `text-[10px]`. Import `tv` from `$lib/utils.js`, which knows those sizes
 - Panels, dialogs and tabs that open on demand load on first use via
   `lazyComponent` (`src/renderer/lib/lazy-component.ts`), keeping their code
-  (and libraries only they use, such as xterm) out of the startup bundle
+  (and libraries only they use, such as xterm) out of the startup bundle. A
+  workspace tab loads through `LazyTab`, which says so, with Retry, if its
+  code fails to load
 
 ## Key Dependencies
 
