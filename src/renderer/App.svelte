@@ -388,14 +388,14 @@
 
     // Git and agent checks run in the background and never block the app.
     // Credentials are asked for when the user starts a conversation.
-    prerequisitesStore.init();
-    settingsStore.load();
-    bookmarkStore.load();
-    groupStore.load();
-    todoStore.load();
+    void prerequisitesStore.init();
+    void settingsStore.load();
+    void bookmarkStore.load();
+    void groupStore.load();
+    void todoStore.load();
     // Listens before the restore ends: main's scheduler starts after it.
     schedulesStore.init();
-    panelStore.load();
+    void panelStore.load();
     memoryStore.init();
     previewStore.init();
     store.loadRepos().then(() => restoreApp()).catch((e) => {

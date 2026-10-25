@@ -31,7 +31,7 @@
   /** Focus the new-file input once the dialog has finished mounting (after
    *  the dialog's own open-autofocus has run). */
   function focusOnMount(node: HTMLElement) {
-    tick().then(() => node.focus());
+    void tick().then(() => node.focus());
   }
   let newFileFolder = $state('repo');
   let confirmDeletePath = $state<string | null>(null);
@@ -75,12 +75,12 @@
   $effect(() => {
     if (!open || !defaultRepo) return;
     const repo = defaultRepo;
-    untrack(() => memoryStore.loadForRepo(repo));
+    void untrack(() => memoryStore.loadForRepo(repo));
   });
 
   function selectFile(path: string) {
     isEditing = false;
-    memoryStore.readFile(path);
+    void memoryStore.readFile(path);
   }
 
   function startEdit() {
@@ -126,11 +126,11 @@
   }
 
   function switchRepo(repoPath: string) {
-    memoryStore.loadForRepo(repoPath);
+    void memoryStore.loadForRepo(repoPath);
   }
 
   function openBackups() {
-    memoryStore.loadBackups();
+    void memoryStore.loadBackups();
     showBackups = true;
   }
 
@@ -413,7 +413,7 @@
             bind:value={newFilePath}
             placeholder="e.g. overview"
             class="w-full text-sm bg-card border border-border px-2 py-1.5 text-foreground focus:outline-none focus:border-primary"
-            onkeydown={(e) => { if (e.key === 'Enter') createNewFile(); }}
+            onkeydown={(e) => { if (e.key === 'Enter') void createNewFile(); }}
             use:focusOnMount
           />
           <span class="text-xs text-muted-foreground mt-1">.md will be added automatically</span>

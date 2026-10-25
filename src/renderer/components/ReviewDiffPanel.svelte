@@ -211,7 +211,7 @@
   function selectDropdownEntry(entry: GitStatusEntry) {
     const key = fileKey(entry);
     selectedFileKey = key;
-    loadDiff(entry);
+    void loadDiff(entry);
     searchQuery = '';
     searchFocused = false;
     searchInputEl?.blur();
@@ -334,12 +334,12 @@
   function loadSelectedAndNeighbors(forceReload: boolean) {
     const entry = selectedEntry;
     if (!entry) return;
-    loadDiff(entry, forceReload);
+    void loadDiff(entry, forceReload);
     const ordered = visibleEntries;
     const idx = ordered.findIndex(e => fileKey(e) === fileKey(entry));
     if (idx >= 0) {
-      if (ordered[idx + 1]) loadDiff(ordered[idx + 1], forceReload);
-      if (ordered[idx - 1]) loadDiff(ordered[idx - 1], forceReload);
+      if (ordered[idx + 1]) void loadDiff(ordered[idx + 1], forceReload);
+      if (ordered[idx - 1]) void loadDiff(ordered[idx - 1], forceReload);
     }
   }
 
@@ -381,7 +381,7 @@
 
   function selectFile(entry: GitStatusEntry) {
     selectedFileKey = fileKey(entry);
-    loadDiff(entry);
+    void loadDiff(entry);
   }
 
   function toggleEditHistory(key: string) {

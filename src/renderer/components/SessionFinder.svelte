@@ -41,7 +41,7 @@
   onMount(() => {
     inputEl?.focus();
     // Previews give stopped sessions (no loaded messages) a searchable first prompt.
-    sessionPreviewStore.ensure(store.sessions.map((s) => s.id));
+    void sessionPreviewStore.ensure(store.sessions.map((s) => s.id));
   });
 
   // Re-read on every message (the first prompt comes from the messages), but
@@ -115,7 +115,7 @@
     }
     contentLoading = true;
     const token = ++reqToken;
-    const timer = setTimeout(async () => {
+    const search = async () => {
       try {
         const hits = await window.groveBench.searchAllEventHistory(ids, q, HITS_PER_CONVERSATION, MAX_CONTENT_HITS);
         if (token !== reqToken) return; // superseded by a newer query
@@ -123,7 +123,8 @@
       } finally {
         if (token === reqToken) contentLoading = false;
       }
-    }, 150);
+    };
+    const timer = setTimeout(() => void search(), 150);
     return () => clearTimeout(timer);
   });
 

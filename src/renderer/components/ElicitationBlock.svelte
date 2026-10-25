@@ -64,7 +64,7 @@
       return;
     }
     errors = {};
-    respond({ action: 'accept', content: result.content });
+    void respond({ action: 'accept', content: result.content });
   }
 
   async function openPage() {
@@ -84,7 +84,7 @@
     }
     // In URL mode, accepting means the user agreed to go to the page; the
     // server finishes the flow there.
-    respond({ action: 'accept' });
+    void respond({ action: 'accept' });
   }
 
   function toggleChoice(key: string, value: string) {

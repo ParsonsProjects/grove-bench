@@ -423,7 +423,7 @@ const api: Record<string, unknown> = {
   // stop the seeded sessions (it stops "running" sessions it doesn't
   // recognize as open tabs).
   notifyRestoreComplete: () => {
-    setTimeout(seedSessions, 150);
+    setTimeout(() => void seedSessions(), 150);
   },
   listBookmarks: async () => [],
   getOpenTabs: async () => [],
@@ -662,7 +662,7 @@ async function seedSessions() {
   store.addSession({ id: 's-perf', branch: 'claude/perf-audit', repoPath: REPO_B, status: 'stopped', createdAt: now - 5 * 24 * 60 * min, lastActiveAt: now - 3 * 24 * 60 * min }, false);
   store.activeSessionId = 's-sidebar';
   // Phase 2 after the panes have mounted and replayed (their onMount clears messages).
-  setTimeout(seedConversations, 650);
+  setTimeout(() => void seedConversations(), 650);
 }
 
 // ─── Phase 2: seed conversations after the panes have mounted and replayed ───

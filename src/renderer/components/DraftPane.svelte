@@ -62,7 +62,7 @@
 
   function retryAgents() {
     agentsTried = false;
-    agentsStore.refresh().finally(() => {
+    void agentsStore.refresh().finally(() => {
       agentsTried = true;
       void draftStore.loadAgentInfo();
     });
@@ -73,7 +73,7 @@
   $effect(() => {
     if (!agentId || checkedFor === agentId) return;
     checkedFor = agentId;
-    if (credentials !== 'ready') prerequisitesStore.refresh();
+    if (credentials !== 'ready') void prerequisitesStore.refresh();
   });
 
   const start = $derived(draft?.start);
@@ -170,7 +170,7 @@
   const modeHint = $derived(controlHint(draftStore.descriptors, (id) => draftStore.controlValue(id), null));
 
   onMount(() => {
-    agentsStore.load().finally(() => { agentsTried = true; });
+    void agentsStore.load().finally(() => { agentsTried = true; });
     textEl?.focus();
   });
 
@@ -305,7 +305,7 @@
     if (handleSlashKey(e)) return;
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
-      if (canStart) draftStore.start();
+      if (canStart) void draftStore.start();
       else if (startBlocker) nudged = true;
     }
   }

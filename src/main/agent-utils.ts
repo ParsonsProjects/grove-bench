@@ -501,7 +501,7 @@ export function readableStreamToAsyncIterable<T>(stream: ReadableStream<T>): Asy
           return { done: true, value: undefined as any };
         },
         async throw(e: unknown) {
-          reader.cancel(e instanceof Error ? e.message : String(e));
+          void reader.cancel(e instanceof Error ? e.message : String(e));
           return { done: true, value: undefined as any };
         },
       };

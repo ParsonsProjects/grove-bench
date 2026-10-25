@@ -41,7 +41,7 @@
 
   onMount(() => {
     inputEl?.focus();
-    loadBranches();
+    void loadBranches();
   });
 
   /** Local refs first so the list shows at once, then again after a fetch
@@ -73,7 +73,7 @@
       for (const id of result.sessionIds) {
         if (!store.sessions.some((s) => s.id === id)) continue;
         store.updateBranch(id, result.branch);
-        prStore.refresh(id, true);
+        void prStore.refresh(id, true);
       }
       onclose();
     } catch (e) {
@@ -93,14 +93,14 @@
   function onKeydown(e: KeyboardEvent) {
     if (e.key === 'ArrowDown') {
       e.preventDefault();
-      move(1);
+      void move(1);
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
-      move(-1);
+      void move(-1);
     } else if (e.key === 'Enter') {
       e.preventDefault();
       const opt = options[active];
-      if (opt) switchTo(opt.name, opt.create);
+      if (opt) void switchTo(opt.name, opt.create);
     } else if (e.key === 'Escape') {
       e.preventDefault();
       e.stopPropagation();

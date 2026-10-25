@@ -44,9 +44,9 @@
     // this. Settings only change through the settings store, so once loaded
     // they don't need reading again.
     untrack(() => {
-      if (!settingsStore.loaded && !settingsStore.loading) settingsStore.load();
-      pluginStore.refresh();
-      agentsStore.load();
+      if (!settingsStore.loaded && !settingsStore.loading) void settingsStore.load();
+      void pluginStore.refresh();
+      void agentsStore.load();
     });
   });
 
@@ -149,7 +149,7 @@
   function onSearchKeydown(e: KeyboardEvent) {
     if (e.key === 'Enter' && results[0]) {
       e.preventDefault();
-      goTo(results[0]);
+      void goTo(results[0]);
     } else if (e.key === 'Escape' && query) {
       // Clear the search first; the next Escape closes Settings.
       e.preventDefault();

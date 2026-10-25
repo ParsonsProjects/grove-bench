@@ -1050,20 +1050,20 @@ describe('ingestEvent — mode_sync respects user-explicit mode', () => {
     messageStore.modeBySession[SID] = 'acceptEdits';
     // setMode sets userExplicitMode — simulate by calling setMode directly
     // (IPC will fail in test env but the flag is set before the await)
-    messageStore.setMode(SID, 'acceptEdits');
+    void messageStore.setMode(SID, 'acceptEdits');
     messageStore.ingestEvent(SID, { type: 'mode_sync', mode: 'default', source: 'sdk' });
     // User-set mode should be preserved
     expect(messageStore.getMode(SID)).toBe('acceptEdits');
   });
 
   it('does not let SDK mode_sync overwrite user-set plan', () => {
-    messageStore.setMode(SID, 'plan');
+    void messageStore.setMode(SID, 'plan');
     messageStore.ingestEvent(SID, { type: 'mode_sync', mode: 'default', source: 'sdk' });
     expect(messageStore.getMode(SID)).toBe('plan');
   });
 
   it('session-sourced mode_sync overrides user-explicit mode', () => {
-    messageStore.setMode(SID, 'acceptEdits');
+    void messageStore.setMode(SID, 'acceptEdits');
     messageStore.ingestEvent(SID, { type: 'mode_sync', mode: 'default', source: 'session' });
     expect(messageStore.getMode(SID)).toBe('default');
   });

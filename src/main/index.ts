@@ -121,9 +121,9 @@ function createWindow() {
   lockToAppPage(mainWindow.webContents);
 
   if (!app.isPackaged && process.env.VITE_DEV_SERVER_URL) {
-    mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
+    void mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
   } else {
-    mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
+    void mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
   }
 
   mainWindow.once('ready-to-show', () => {
@@ -155,7 +155,7 @@ app.on('second-instance', () => {
   mainWindow.focus();
 });
 
-app.whenReady().then(() => {
+void app.whenReady().then(() => {
   // A second copy only hands over (above), and opens nothing.
   if (!isFirstCopy) return;
   // git and gh launch from here on in utility processes, so a slow launch
@@ -291,16 +291,16 @@ app.on('before-quit', (event) => {
   stopSkillScheduler();
   if (isQuitting) return;
   if (!shutdownDone && nothingRunning()) {
-    logger.close();
-    closePerfLog();
+    void logger.close();
+    void closePerfLog();
     return;
   }
 
   event.preventDefault();
   isQuitting = true;
-  shutdown().finally(() => {
-    logger.close();
-    closePerfLog();
+  void shutdown().finally(() => {
+    void logger.close();
+    void closePerfLog();
     app.quit();
   });
 });

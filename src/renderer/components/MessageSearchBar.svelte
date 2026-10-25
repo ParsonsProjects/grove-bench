@@ -37,7 +37,7 @@
     }
     loading = true;
     const token = ++reqToken;
-    const timer = setTimeout(async () => {
+    const search = async () => {
       try {
         const results = await window.groveBench.searchEventHistory(sessionId, q);
         if (token !== reqToken) return; // a newer query superseded this one
@@ -46,7 +46,8 @@
       } finally {
         if (token === reqToken) loading = false;
       }
-    }, 150);
+    };
+    const timer = setTimeout(() => void search(), 150);
     return () => clearTimeout(timer);
   });
 

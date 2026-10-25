@@ -75,7 +75,7 @@
     lastInsertNonce = req.nonce;
     value = req.replace ? req.text : value ? `${value}\n${req.text}` : req.text;
     if (req.attachments?.length) attachedFiles = [...attachedFiles, ...req.attachments];
-    tick().then(() => { textarea?.focus(); autoResize(); });
+    void tick().then(() => { textarea?.focus(); autoResize(); });
   });
   let userResized = $state(false);
   let pickerOpen = $state(false);
@@ -172,7 +172,7 @@
         messageStore.setActiveTab(sessionId, 'terminal');
         // Ensure PTY is alive, then write the command + Enter. Shares the
         // in-flight check with the terminal panel mounting on tab switch.
-        (async () => {
+        void (async () => {
           await terminalStore.ensureAlive(sessionId);
           terminalStore.write(sessionId, cmd + '\r');
         })();
@@ -216,7 +216,7 @@
     }
 
     if (refs.length > 0) {
-      buildRefTags(refs, (ref) => window.groveBench.readFile(sessionId, ref)).then((refTags) => {
+      void buildRefTags(refs, (ref) => window.groveBench.readFile(sessionId, ref)).then((refTags) => {
         send(buildOutgoingMessage([...droppedTags, ...refTags], text));
       });
     } else {
@@ -426,7 +426,7 @@
     messageStore.markSessionStopped(sessionId);
     // A stopped turn may report no result, so nothing else would end it.
     arrivalScene.end(sessionId);
-    window.groveBench.stopSession(sessionId);
+    void window.groveBench.stopSession(sessionId);
   }
 
   // ─── Drag & Drop ───

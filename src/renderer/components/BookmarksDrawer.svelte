@@ -106,7 +106,7 @@
                       bind:value={noteDraft}
                       placeholder="Add a note…"
                       autofocus
-                      onkeydown={(e) => { if (e.key === 'Enter') saveNote(b); if (e.key === 'Escape') editingId = null; }}
+                      onkeydown={(e) => { if (e.key === 'Enter') void saveNote(b); if (e.key === 'Escape') editingId = null; }}
                       onblur={() => saveNote(b)}
                     />
                   {:else if b.note}

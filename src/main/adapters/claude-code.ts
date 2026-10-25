@@ -2141,7 +2141,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
       setPermissionMode(mode) {
         ctx.groveMode = mode;
-        q.setPermissionMode(toSdkPermissionMode(mode));
+        void q.setPermissionMode(toSdkPermissionMode(mode));
       },
 
       async setControl(controlId: string, value: string) {

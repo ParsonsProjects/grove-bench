@@ -201,7 +201,7 @@
    *  drawer closes only once the thread starts, as it holds that dialog. */
   async function askAgent(skill: SkillPromptOpts) {
     const suggested = suggestions.find((s) => s.name === skill.name);
-    if (suggested) dismissSkillSuggestion(suggested.id);
+    if (suggested) void dismissSkillSuggestion(suggested.id);
     if (await startSkillThread(sessionId, skill)) {
       skillsPanelStore.close();
       return;
@@ -225,7 +225,7 @@
   onMount(() => {
     void agentsStore.load();
     refresh();
-    refreshSuggestions();
+    void refreshSuggestions();
   });
 </script>
 
@@ -380,7 +380,7 @@
         refresh();
         // A created suggestion is resolved — drop it from the list for good.
         const created = suggestions.find((s) => s.name === skill.name);
-        if (created) dismissSkillSuggestion(created.id);
+        if (created) void dismissSkillSuggestion(created.id);
       }}
       onaskagent={(skill) => void askAgent(skill)}
     />
