@@ -35,6 +35,10 @@
   let isLoading = $derived(gitStatusStore.isLoading(sessionId));
   let isRunning = $derived(messageStore.getIsRunning(sessionId));
   let stagedEntries = $derived(gitStatus.entries.filter(e => e.staged));
+  // Scope: uncommitted working tree (git-client view) or everything on the
+  // branch since it left the base (pull-request view).
+  let scopeState = $derived(gitStatusStore.getScope(sessionId));
+  let isBranchScope = $derived(scopeState.scope === 'branch');
   /** A merge, rebase, cherry-pick or revert stopped part way (GitOperationNotice). */
   let operation = $derived(gitStatus.operation);
   let conflictCount = $derived(gitStatus.entries.filter(e => e.status === 'conflicted').length);
@@ -44,8 +48,11 @@
   /** A merge finishes with a commit, which waits for its conflicts. */
   let mergeConflicts = $derived(operation?.kind === 'merge' && conflictCount > 0);
   /** Its conflicts resolved, a merge commits even with nothing staged: each
-   *  file may have been resolved to the branch's own version. */
-  let mergeReady = $derived(operation?.kind === 'merge' && conflictCount === 0);
+   *  file may have been resolved to the branch's own version. Only in
+   *  Uncommitted, whose list is what the commit takes. */
+  let mergeReady = $derived(operation?.kind === 'merge' && !isBranchScope && conflictCount === 0);
+  /** What a merge commit leaves out: a resolution unstaged again, say. */
+  let mergeLeavesOut = $derived(operation?.kind === 'merge' ? gitStatus.entries.filter((e) => !e.staged && e.status !== 'conflicted').length : 0);
   let canCommit = $derived((stagedEntries.length > 0 || mergeReady) && !continuesOp);
   // git's own message for a merge commit, filled in once per merge, and
   // taken out again, if still as filled in, when the merge ends some other
@@ -53,6 +60,8 @@
   let filledForMerge = '';
   let filledMessage = '';
   $effect(() => {
+    // A status that failed says nothing about the merge.
+    if (gitStatus.error) return;
     const op = operation;
     const key = op?.kind === 'merge' && op.message ? `${op.incoming} into ${op.branch}` : '';
     if (filledForMerge === key) return;
@@ -64,10 +73,6 @@
     });
   });
 
-  // Scope: uncommitted working tree (git-client view) or everything on the
-  // branch since it left the base (pull-request view).
-  let scopeState = $derived(gitStatusStore.getScope(sessionId));
-  let isBranchScope = $derived(scopeState.scope === 'branch');
   let switchingScope = $state(false);
   let sourceKey = $derived(isBranchScope ? `branch:${scopeState.base ?? ''}` : 'working');
 
@@ -313,6 +318,9 @@
           {/if}
         </Button>
       </div>
+      {#if mergeLeavesOut > 0}
+        <div class="text-micro text-amber-300">{mergeLeavesOut} file{mergeLeavesOut === 1 ? '' : 's'} not staged: the merge commit leaves {mergeLeavesOut === 1 ? 'it' : 'them'} out.</div>
+      {/if}
       {#if commitError}
         <div class="text-micro text-destructive">{commitError}</div>
       {/if}

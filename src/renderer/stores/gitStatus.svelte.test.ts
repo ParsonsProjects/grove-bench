@@ -252,3 +252,20 @@ describe('gitStatusStore — clear', () => {
     gitStatusStore.clear(id);
   });
 });
+
+describe('gitStatusStore — continue or abort', () => {
+  afterEach(() => gitStatusStore.clear('op'));
+
+  it('reloads the status before it settles, in place of a refresh already scheduled', async () => {
+    gitStatusStore.scopeBySession = { op: { scope: 'working' } };
+    mockGroveBench.getGitStatus.mockResolvedValue({ entries: [] });
+    // The last file marked resolved scheduled one.
+    gitStatusStore.scheduleRefresh('op', 100);
+    await gitStatusStore.continueOperation('op', 'rebase');
+    expect(mockGroveBench.getGitStatus).toHaveBeenCalledTimes(1);
+
+    // Left to run, it would start another, which could overtake this one.
+    await new Promise((r) => setTimeout(r, 150));
+    expect(mockGroveBench.getGitStatus).toHaveBeenCalledTimes(1);
+  });
+});

@@ -26,4 +26,15 @@ describe('git operation wording', () => {
     expect(operationNext({ kind: 'merge' }, 0)).toBe('All conflicts resolved: commit to finish the merge.');
     expect(operationNext({ kind: 'revert' }, 0)).toBe('All conflicts resolved: continue the revert.');
   });
+
+  it('points to Uncommitted to commit a merge from the Branch view', () => {
+    expect(operationNext({ kind: 'merge' }, 0, true)).toBe('All conflicts resolved: commit in Uncommitted to finish the merge.');
+    expect(operationNext({ kind: 'rebase' }, 0, true)).toBe('All conflicts resolved: continue the rebase.');
+  });
+
+  it('says what Continue and Abort do between two of several picks', () => {
+    expect(operationNext({ kind: 'cherry-pick', passesOver: '5d1c780' }, 0)).toBe("git hasn't picked 5d1c780, and continuing skips it. To pick it, abort and start again.");
+    expect(operationNext({ kind: 'revert', passesOver: '5d1c780' }, 0)).toBe("git hasn't reverted 5d1c780, and continuing skips it. To revert it, abort and start again.");
+    expect(operationNext({ kind: 'cherry-pick', byHand: true }, 0)).toBe('A commit was made by hand part way: continue to pick the rest, or run git cherry-pick --quit in the terminal to stop here.');
+  });
 });

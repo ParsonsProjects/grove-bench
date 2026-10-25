@@ -457,6 +457,27 @@ describe('a merge, rebase, cherry-pick or revert stopped part way', () => {
     expect(await gitOperation(repo)).toMatchObject({ incoming: "it's-done", message: "Merge branch 'it's-done' into feat" });
   });
 
+  it('reads what git pull merges, from a path with a space, and names a merged commit by its id', async () => {
+    const upstream = `${repo} up`;
+    execFileSync('git', ['clone', '-q', repo, upstream]);
+    try {
+      fs.writeFileSync(path.join(upstream, 'base.txt'), 'theirs\n');
+      execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qam', 'theirs'], { cwd: upstream });
+      commit('base.txt', 'ours');
+      tryRun('pull', '-q', '--no-rebase', upstream, 'main');
+      // "Merge branch 'main' of /tmp/gb-git-x up"
+      expect(await gitOperation(repo)).toMatchObject({ kind: 'merge', incoming: 'main' });
+    } finally {
+      fs.rmSync(upstream, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    }
+    run('merge', '--abort');
+    diverge();
+    const oid = run('rev-parse', 'main');
+    tryRun('merge', oid);
+    // "Merge commit '<oid>'"
+    expect(await gitOperation(repo)).toMatchObject({ kind: 'merge', incoming: oid.slice(0, 7) });
+  });
+
   it('reports a rebase, with its step', async () => {
     diverge(1);
     tryRun('rebase', 'main');
@@ -537,6 +558,49 @@ describe('a merge, rebase, cherry-pick or revert stopped part way', () => {
     expect(fs.readFileSync(path.join(repo, 'notes.txt'), 'utf8')).toBe('my edit\n');
   });
 
+  it('drops a rebase step resolved to no change, as git does itself', async () => {
+    diverge();
+    commit('extra.txt', 'extra');
+    tryRun('rebase', 'main');
+    run('checkout', '--ours', 'base.txt');
+    run('add', 'base.txt');
+
+    await continueGitOperation(repo, 'rebase');
+    expect(await gitOperation(repo)).toBeNull();
+    expect(run('log', '--format=%s', '-3').split('\n')).toEqual(['extra', 'main', 'base']);
+  });
+
+  it("leaves skipping one to git with the apply backend, which can't tell it from a step it never applied", async () => {
+    diverge();
+    tryRun('rebase', '--apply', 'main');
+    run('checkout', '--ours', 'base.txt');
+    run('add', 'base.txt');
+
+    // git says why, and to run --skip: on stdout, or its hints on stderr in
+    // newer versions (2.56 on CI).
+    await expect(continueGitOperation(repo, 'rebase')).rejects.toThrow(/No changes[\s\S]*git rebase --skip/);
+    expect(await gitOperation(repo)).toMatchObject({ kind: 'rebase' });
+  });
+
+  it('reports a commit git never started between picks, which continuing skips', async () => {
+    run('checkout', '-q', '-b', 'side');
+    commit('a.txt', 'A');
+    const b = commit('b.txt', 'B');
+    run('checkout', '-q', 'main');
+    write('b.txt', 'in the way\n');
+    tryRun('cherry-pick', 'side~1', 'side');
+    // git's short id for it, from its list of picks.
+    const short = (await gitOperation(repo))?.passesOver ?? '';
+    expect(short.length).toBeGreaterThanOrEqual(7);
+    expect(await gitOperation(repo)).toEqual({ kind: 'cherry-pick', passesOver: b.slice(0, short.length) });
+    fs.rmSync(path.join(repo, 'b.txt'));
+
+    // As the strip says ("Skip <commit>"): git's --continue passes over it.
+    await continueGitOperation(repo, 'cherry-pick');
+    expect(await gitOperation(repo)).toBeNull();
+    expect(run('log', '--format=%s', '-2').split('\n')).toEqual(['A', 'base']);
+  });
+
   it('reports picking several commits between two of them, and continues with the rest', async () => {
     diverge();
     run('checkout', '-q', 'main');
@@ -547,7 +611,10 @@ describe('a merge, rebase, cherry-pick or revert stopped part way', () => {
     run('add', 'base.txt');
     // Committed by hand: git keeps only the list of picks still to come.
     run('commit', '-q', '--no-edit');
-    expect(await gitOperation(repo)).toEqual({ kind: 'cherry-pick' });
+    expect(await gitOperation(repo)).toEqual({ kind: 'cherry-pick', byHand: true });
+    // git's abort wouldn't take the branch back now, only stop.
+    await expect(abortGitOperation(repo, 'cherry-pick')).rejects.toThrow("A commit was made by hand part way, so git won't take the branch back. Run git cherry-pick --quit in the terminal to stop here.");
+    expect(await gitOperation(repo)).toEqual({ kind: 'cherry-pick', byHand: true });
 
     await continueGitOperation(repo, 'cherry-pick');
     expect(await gitOperation(repo)).toBeNull();

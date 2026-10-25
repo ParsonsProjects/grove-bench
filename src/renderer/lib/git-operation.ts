@@ -30,9 +30,14 @@ export function operationShort(op: GitOperation): string {
 }
 
 /** What to do next: resolve what's left, then finish it (a merge with a
- *  commit, the others with Continue). */
-export function operationNext(op: GitOperation, conflicts: number): string {
+ *  commit, in Uncommitted, the others with Continue). Between two of several
+ *  picks, what Continue and Abort will do there. */
+export function operationNext(op: GitOperation, conflicts: number, inBranchView = false): string {
   const finish = op.kind === 'merge' ? 'commit' : 'continue';
   if (conflicts > 0) return `Resolve ${conflicts} conflict${conflicts === 1 ? '' : 's'}, then ${finish}.`;
-  return op.kind === 'merge' ? 'All conflicts resolved: commit to finish the merge.' : `All conflicts resolved: continue the ${op.kind}.`;
+  const [verb, done] = op.kind === 'revert' ? ['revert', 'reverted'] : ['pick', 'picked'];
+  if (op.byHand) return `A commit was made by hand part way: continue to ${verb} the rest, or run git ${op.kind} --quit in the terminal to stop here.`;
+  if (op.passesOver) return `git hasn't ${done} ${op.passesOver}, and continuing skips it. To ${verb} it, abort and start again.`;
+  if (op.kind === 'merge') return `All conflicts resolved: commit${inBranchView ? ' in Uncommitted' : ''} to finish the merge.`;
+  return `All conflicts resolved: continue the ${op.kind}.`;
 }

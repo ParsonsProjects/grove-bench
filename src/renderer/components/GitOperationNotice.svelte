@@ -15,10 +15,13 @@
 
   // The agent may be the one running it, or editing what it touches.
   let running = $derived(messageStore.getIsRunning(sessionId));
+  let inBranchView = $derived(gitStatusStore.getScope(sessionId).scope === 'branch');
   let busy = $state<'continue' | 'abort' | null>(null);
   let confirming = $state(false);
   let error = $state('');
-  // An error is about the step it came from: dropped once git moves on.
+  // An error is dropped once git moves on a step. One from a Continue that
+  // moved on and then stopped is about the step it moved to: the store
+  // reloads before the call settles, so that step is in by then.
   let step = $derived(`${operation.kind} ${operation.step ?? ''} ${operation.commit ?? ''}`);
   $effect(() => {
     void step;
@@ -51,12 +54,15 @@
       title={conflicts > 0 ? 'Mark each conflict resolved first' : running ? WAITS : `git ${operation.kind} --continue`}
       onclick={() => act('continue')}
     >
-      {busy === 'continue' ? 'Continuing…' : `Continue ${operation.kind}`}
+      {busy === 'continue' ? 'Continuing…' : operation.passesOver ? `Skip ${operation.passesOver}` : `Continue ${operation.kind}`}
     </Button>
   {/if}
-  <Button size="2xs" variant="quiet" disabled={running || busy !== null} title={running ? WAITS : undefined} onclick={() => (confirming = true)}>
-    {busy === 'abort' ? 'Aborting…' : 'Abort'}
-  </Button>
+  <!-- Past a commit made by hand, git's abort wouldn't take the branch back. -->
+  {#if !operation.byHand}
+    <Button size="2xs" variant="quiet" disabled={running || busy !== null} title={running ? WAITS : undefined} onclick={() => (confirming = true)}>
+      {busy === 'abort' ? 'Aborting…' : 'Abort'}
+    </Button>
+  {/if}
 {/snippet}
 
 {#if confirming}
@@ -69,7 +75,7 @@
   />
 {:else}
   <Notice tone="warning" class="shrink-0 border-b border-b-border" {actions}>
-    <p><span class="text-foreground">{operationTitle(operation)}</span>. {operationNext(operation, conflicts)}</p>
+    <p><span class="text-foreground">{operationTitle(operation)}</span>. {operationNext(operation, conflicts, inBranchView)}</p>
     {#if error}<p class="text-destructive" role="alert">{error}</p>{/if}
   </Notice>
 {/if}

@@ -39,6 +39,7 @@ import {
   syncStatus,
   branchCommits,
   gitOperation,
+  continueGitOperation,
   parseBranchCommits,
   rebaseOnto,
   cherryPick,
@@ -1194,5 +1195,33 @@ describe('gitOperation()', () => {
     mockExeca.mockClear();
     expect(await gitOperation(path.join(dir, 'wt'))).toEqual({ kind: 'cherry-pick', commit: '1a2b3c4' });
     expect(mockExeca).not.toHaveBeenCalled();
+  });
+
+  it("continues a rebase when git can't say whether files have unstaged changes, leaving the error to git", async () => {
+    const dir = temp();
+    fs.mkdirSync(path.join(dir, '.git', 'rebase-merge'), { recursive: true });
+    mockExeca.mockImplementation(((_cmd: string, args: string[]) => Promise.resolve(
+      args[0] === 'diff'
+        ? { stdout: '', stderr: 'fatal: index file corrupt', exitCode: args[1] === '--cached' ? 1 : 128 }
+        : { stdout: '', exitCode: 0 },
+    )) as never);
+
+    await continueGitOperation(dir, 'rebase');
+    expect(mockExeca).toHaveBeenCalledWith('git', ['rebase', '--continue'], expect.anything());
+  });
+
+  it("says what git wrote to stdout and stderr when it stops, as newer git keeps only its hints on stderr", async () => {
+    const dir = temp();
+    fs.mkdirSync(path.join(dir, '.git', 'rebase-apply'), { recursive: true });
+    const stopped = Object.assign(new Error('Command failed with exit code 1: git rebase --continue'), {
+      stdout: "Applying: feat\nNo changes - did you forget to use 'git add'?",
+      stderr: 'hint: You can instead skip this commit: run "git rebase --skip".',
+    });
+    mockExeca.mockImplementation(((_cmd: string, args: string[]) =>
+      args[0] === 'rebase' ? Promise.reject(stopped) : Promise.resolve({ stdout: '', exitCode: 0 })) as never);
+
+    await expect(continueGitOperation(dir, 'rebase')).rejects.toThrow(
+      "Applying: feat\nNo changes - did you forget to use 'git add'?\nhint: You can instead skip this commit: run \"git rebase --skip\".",
+    );
   });
 });

@@ -159,9 +159,7 @@ class GitStatusStore {
       sessionId,
       setTimeout(() => {
         this.pendingTimeout.delete(sessionId);
-        // Reset throttle so the debounced call always goes through
-        this.lastFetch.delete(sessionId);
-        void this.refresh(sessionId);
+        void this.reload(sessionId);
       }, delayMs),
     );
   }
@@ -198,13 +196,13 @@ class GitStatusStore {
   }
 
   /** Continue or abort a rebase, cherry-pick or revert (abort a merge too)
-   *  git stopped part way. Refreshed even when it fails: it may have
-   *  stopped again, or ended some other way. */
+   *  git stopped part way. Settles once the status is reloaded, even when it
+   *  fails: it may have stopped again, at the next step, or ended. */
   async continueOperation(sessionId: string, kind: GitOperation['kind']): Promise<void> {
     try {
       await window.groveBench.continueGitOperation(sessionId, kind);
     } finally {
-      this.scheduleRefresh(sessionId, 100);
+      await this.reload(sessionId);
     }
   }
 
@@ -212,8 +210,18 @@ class GitStatusStore {
     try {
       await window.groveBench.abortGitOperation(sessionId, kind);
     } finally {
-      this.scheduleRefresh(sessionId, 100);
+      await this.reload(sessionId);
     }
+  }
+
+  /** Refresh now, however soon after the last, in place of one scheduled
+   *  (which would start another, and could overtake this one). */
+  private reload(sessionId: string): Promise<void> {
+    const pending = this.pendingTimeout.get(sessionId);
+    if (pending) clearTimeout(pending);
+    this.pendingTimeout.delete(sessionId);
+    this.lastFetch.delete(sessionId);
+    return this.refresh(sessionId);
   }
 
   clear(sessionId: string): void {
