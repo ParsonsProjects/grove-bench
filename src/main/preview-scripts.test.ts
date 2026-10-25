@@ -178,16 +178,13 @@ describe('script builders', () => {
     expect(script).toContain(JSON.stringify(nasty));
     // The script is a single call expression that evaluates cleanly.
     document.body.innerHTML = '';
-    // eslint-disable-next-line no-eval
     const result = (0, eval)(script);
     expect(result.ok).toBe(false);
   });
 
   it('produce scripts that run on their own', () => {
     document.body.innerHTML = '<button>Go</button>';
-    // eslint-disable-next-line no-eval
     expect((0, eval)(locateScript({ text: 'Go' }, 'click')).ok).toBe(true);
-    // eslint-disable-next-line no-eval
     expect((0, eval)(readScript({ maxChars: 100 })).text).toContain('Go');
   });
 });

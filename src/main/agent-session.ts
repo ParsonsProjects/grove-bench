@@ -52,8 +52,6 @@ import {
   initialControls, normalizeModelId, appendedSystemPrompt,
 } from './session-config.js';
 
-export type { SessionCompletionResult } from './session-types.js';
-
 // SDK teardown rejections (a query closed with control responses in flight)
 // are filtered in crash-handling.ts, which owns the process-wide handler.
 

@@ -12,7 +12,7 @@
 import { randomUUID } from 'node:crypto';
 import { PERMISSION_TIMEOUT_MINUTES } from '../shared/types.js';
 import type { AgentEvent, GroveBenchSettings, TokenCounts } from '../shared/types.js';
-import { localDay, reachedLimit, type LimitKind, type LimitUsage, type ReachedLimit } from '../shared/limits.js';
+import { localDay, reachedLimit, type LimitUsage, type ReachedLimit } from '../shared/limits.js';
 import { loadDailySpend, saveDailySpend } from './app-state.js';
 import type { Emit } from './session-types.js';
 
@@ -315,5 +315,3 @@ export function respondToLimit(limits: SessionLimits, requestId: string, decisio
 export function cancelLimit(limits: SessionLimits): void {
   limits.pending?.resolve('stop', 'cancelled');
 }
-
-export type { LimitKind };

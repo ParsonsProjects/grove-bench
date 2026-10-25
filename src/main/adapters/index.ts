@@ -1,23 +1,5 @@
-export type {
-  AgentAdapter,
-  AgentQueryHandle,
-  AgentCapabilities,
-  AdapterConfig,
-  AdapterPrerequisiteStatus,
-  ModelInfo,
-  UserMessage,
-  PermissionRequest,
-  PermissionResponse,
-  PermissionHandler,
-  MemoryOperations,
-  PreviewOperations,
-  PreviewTarget,
-  PreviewScreenshot,
-} from './types.js';
-
 export { adapterRegistry } from './registry.js';
 export { ClaudeCodeAdapter } from './claude-code.js';
-export { AcpAdapter } from './acp/acp-adapter.js';
 
 import type { AcpAgentSetting, ClaudeAccountSetting, GroveBenchSettings } from '../../shared/types.js';
 import { adapterRegistry } from './registry.js';

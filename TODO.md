@@ -130,7 +130,8 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [ ] i18n framework (all UI strings hardcoded English; spellchecker pinned to `en-US`)
 
 ### Maintenance & Hygiene
-- [ ] ESLint/Prettier config (CONTRIBUTING.md notes none exists)
+- [x] ESLint (typed rules, run in CI; errors it found at the start are listed in `eslint-suppressions.json` and fixed over time) and knip for unused files, exports and dependencies
+- [ ] Prettier config
 - [x] Tests for the IPC layer: `ipc.test.ts` covers handler validation, file access bounds, setup cancel and history paging
 - [ ] Component tests (54 of 122 app components have their own test file) and E2E tests (Playwright)
 - [ ] In-app log viewer and a log level setting. Today Settings > Diagnostics can open the logs folder ("Show performance log"), and the level is set with the `GROVE_LOG_LEVEL` env var (`logger.ts`)
