@@ -4,7 +4,10 @@
   "type": "module",
   "description": "Phase 0 spike for docs/open-model-harnesses-plan.md. Not part of the app build.",
   "engines": {
-    "npm": ">=11.10.0"
+    "npm": ">=11.19.0"
+  },
+  "allowScripts": {
+    "opencode-ai": true
   },
   "scripts": {
     "offline": "node probe-offline.mjs",
