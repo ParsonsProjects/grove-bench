@@ -5,6 +5,7 @@
  * https://agentclientprotocol.com/protocol/transports
  */
 import type { Readable, Writable } from 'node:stream';
+import { isRecord } from '../../persisted-state.js';
 
 /** An error with a JSON-RPC code: thrown by a request handler to answer the
  *  agent with that code, and rejected from request() when the agent answers
@@ -101,29 +102,32 @@ export class JsonRpcConnection {
   }
 
   private handleLine(line: string): void {
-    let msg: any;
+    let msg: unknown;
     try {
       msg = JSON.parse(line);
     } catch {
       this.handlers.onBadLine?.(line);
       return;
     }
-    if (!msg || typeof msg !== 'object' || msg.jsonrpc !== '2.0') {
+    // A JSON-RPC id is a string or a number; a message without one is a
+    // notification.
+    const id = isRecord(msg) && (typeof msg.id === 'string' || typeof msg.id === 'number') ? msg.id : null;
+    if (!isRecord(msg) || msg.jsonrpc !== '2.0' || (id === null && msg.id !== undefined && msg.id !== null)) {
       this.handlers.onBadLine?.(line);
       return;
     }
-    const hasId = msg.id !== undefined && msg.id !== null;
     if (typeof msg.method === 'string') {
-      if (hasId) void this.answer(msg.id, msg.method, msg.params);
+      if (id !== null) void this.answer(id, msg.method, msg.params);
       else this.handlers.onNotification(msg.method, msg.params);
       return;
     }
-    if (hasId) {
-      const p = this.pending.get(msg.id);
+    if (id !== null) {
+      const p = this.pending.get(id);
       if (!p) return;
-      this.pending.delete(msg.id);
+      this.pending.delete(id);
       if (msg.error) {
-        p.reject(new JsonRpcError(Number(msg.error.code) || RPC_ERRORS.internal, String(msg.error.message ?? 'Agent error'), msg.error.data));
+        const error = isRecord(msg.error) ? msg.error : {};
+        p.reject(new JsonRpcError(Number(error.code) || RPC_ERRORS.internal, String(error.message ?? 'Agent error'), error.data));
       } else {
         p.resolve(msg.result);
       }
