@@ -82,7 +82,7 @@
           >Disable</Button>
         {:else}
           <Button
-            variant="quiet"
+            variant="subtle-primary"
             size="xs"
             disabled={busy}
             onclick={() => onenable?.(installed!.id)}

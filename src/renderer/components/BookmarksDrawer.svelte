@@ -115,7 +115,7 @@
                     </button>
                   {/if}
 
-                  <div class="mt-1 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div class="mt-1 flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
                     <Button
                       variant="subtle-primary"
                       size="2xs"

@@ -237,9 +237,12 @@ describe('SettingsPanel permission rules', () => {
     const field = await openRules();
     await fireEvent.input(field, { target: { value: 'shel(npm *)' } });
     const group = field.closest<HTMLElement>('[data-setting]')!;
+    // Green as the field's main action, then grey once the hint warns against it
+    expect(within(group).getByRole('button', { name: 'Add' })).toHaveClass('text-primary');
     await fireEvent.click(within(group).getByRole('button', { name: 'Add' }));
 
     expect(within(group).getByRole('status')).toHaveTextContent('"shel" isn\'t a rule keyword');
+    expect(within(group).getByRole('button', { name: 'Add anyway' })).toHaveClass('text-muted-foreground');
     await fireEvent.click(within(group).getByRole('button', { name: 'Add anyway' }));
     await waitFor(() => expect(lastSaved().toolDenyRules).toEqual([{ pattern: 'shel(npm *)' }]));
   });

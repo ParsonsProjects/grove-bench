@@ -233,7 +233,8 @@
   <span class="text-xs text-muted-foreground flex-1 min-w-0 truncate">
     {agentsStore.get(agentId)?.displayName ?? agentId} · {store.repoDisplayName(repoPath)}
   </span>
-  <!-- One style for the tab's actions, as for Schedule a skill. -->
+  <!-- Add skill is the tab's main action, green as Schedule a skill is on
+       the other tab; the rest stay grey. -->
   {#if managed}
     <Button
       variant="subtle"
