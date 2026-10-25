@@ -841,6 +841,18 @@ describe('transformMessage()', () => {
       expect(fromSdkSyncMode('acceptEdits', makeCtx())).toBe('acceptEdits');
     });
 
+    it("sends no mode_sync for an SDK mode Grove doesn't have", () => {
+      expect(fromSdkSyncMode('bypassPermissions', makeCtx())).toBeNull();
+      expect(fromSdkSyncMode('dontAsk', makeCtx())).toBeNull();
+      const modeSyncs = (message: object) =>
+        transformMessage(message as never, makeCtx()).filter((e) => e.type === 'mode_sync');
+      expect(modeSyncs({ type: 'system', subtype: 'status', status: null, permissionMode: 'bypassPermissions' })).toEqual([]);
+      // A system message with no case of its own still reports a mode Grove has.
+      expect(modeSyncs({ type: 'system', subtype: 'not_a_real_subtype', mode: 'dontAsk' })).toEqual([]);
+      expect(modeSyncs({ type: 'system', subtype: 'not_a_real_subtype', mode: 'plan' }))
+        .toEqual([{ type: 'mode_sync', mode: 'plan', source: 'sdk' }]);
+    });
+
     it('passes native auto mode through to and from the SDK untouched', () => {
       expect(toSdkPermissionMode('auto')).toBe('auto');
       expect(toSdkPermissionMode('readSafe')).toBe('acceptEdits');

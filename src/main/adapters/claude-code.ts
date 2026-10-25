@@ -2,7 +2,8 @@
  * Claude Code adapter — wraps the @anthropic-ai/claude-agent-sdk.
  */
 import type { ControlDescriptor, ControlOption, McpServerInfo, McpConfiguredServer, McpAddServerOpts, McpConfigScope, McpElicitationRequest, McpServerContextCost, McpServerManager, McpSupport, PermissionMode, ProviderUsage, SkillDefinition, ThinkingLevel, UsageWindow } from '../../shared/types.js';
-import { CONTROL_IDS, PERMISSION_TIMEOUT_MINUTES, THINKING_LEVELS, isImageMediaType } from '../../shared/types.js';
+import { CONTROL_IDS, PERMISSION_MODES, PERMISSION_TIMEOUT_MINUTES, THINKING_LEVELS, isImageMediaType } from '../../shared/types.js';
+import { isRecord } from '../persisted-state.js';
 import type {
   AgentAdapter,
   AgentCapabilities,
@@ -69,6 +70,7 @@ type SDKUserMessage = Extract<SDKMessage, { type: 'user' }>;
 type SpawnOptions = import('@anthropic-ai/claude-agent-sdk').SpawnOptions;
 type SdkElicitationRequest = import('@anthropic-ai/claude-agent-sdk').ElicitationRequest;
 type HookCallback = import('@anthropic-ai/claude-agent-sdk').HookCallback;
+type SdkPermissionUpdate = import('@anthropic-ai/claude-agent-sdk').PermissionUpdate;
 
 /**
  * Custom spawn used for the SDK's `spawnClaudeCodeProcess` hook.
@@ -259,9 +261,14 @@ export function toSdkPermissionMode(mode: PermissionMode): 'default' | 'plan' | 
 
 /** Translate an SDK-reported mode back to the Grove-level mode for mode_sync
  *  events: while Grove is in 'readSafe', the SDK legitimately reports
- *  'acceptEdits' — surface that as 'readSafe' so the UI doesn't flip to Edit. */
-export function fromSdkSyncMode(mode: PermissionMode, ctx: MessageContext): PermissionMode {
-  return mode === 'acceptEdits' && ctx.groveMode === 'readSafe' ? 'readSafe' : mode;
+ *  'acceptEdits' — surface that as 'readSafe' so the UI doesn't flip to Edit.
+ *  Null for a mode Grove doesn't have (the SDK's bypassPermissions and
+ *  dontAsk), which the UI has nothing to show for. */
+export function fromSdkSyncMode(mode: PermissionMode, ctx: MessageContext): PermissionMode;
+export function fromSdkSyncMode(mode: string, ctx: MessageContext): PermissionMode | null;
+export function fromSdkSyncMode(mode: string, ctx: MessageContext): PermissionMode | null {
+  if (mode === 'acceptEdits' && ctx.groveMode === 'readSafe') return 'readSafe';
+  return (PERMISSION_MODES as readonly string[]).includes(mode) ? mode as PermissionMode : null;
 }
 
 
@@ -284,10 +291,11 @@ export function userMessageContent(message: UserMessage): string | Array<Record<
  *  image file) or MCP ones (`data` + `mimeType`), in case they arrive unconverted. */
 export function toolResultImages(content: unknown[]): ToolImageData[] {
   const images: ToolImageData[] = [];
-  for (const c of content as any[]) {
-    if (c?.type !== 'image') continue;
-    const data = c.source?.type === 'base64' ? c.source.data : c.data;
-    const mediaType = c.source?.type === 'base64' ? c.source.media_type : c.mimeType;
+  for (const c of content) {
+    if (!isRecord(c) || c.type !== 'image') continue;
+    const source = isRecord(c.source) && c.source.type === 'base64' ? c.source : null;
+    const data = source ? source.data : c.data;
+    const mediaType = source ? source.media_type : c.mimeType;
     if (typeof data === 'string' && data && isImageMediaType(mediaType)) {
       images.push({ data, mediaType });
     }
@@ -330,27 +338,27 @@ export function transformMessage(
           sessionId: message.session_id,
           model: message.model,
           tools: message.tools,
-          agents: (message as any).agents,
-          skills: (message as any).skills,
-          slashCommands: (message as any).slash_commands,
-          mcpServers: (message as any).mcp_servers,
+          agents: message.agents,
+          skills: message.skills,
+          slashCommands: message.slash_commands,
+          mcpServers: message.mcp_servers,
         });
       } else if (message.subtype === 'compact_boundary') {
-        const meta = (message as any).compact_metadata ?? {};
+        const meta = message.compact_metadata ?? {};
         events.push({
           type: 'compact_boundary',
           trigger: meta.trigger ?? 'manual',
           preTokens: meta.pre_tokens ?? 0,
         });
       } else if (message.subtype === 'status') {
-        const m = message as any;
+        const m = message;
         if (m.status === 'compacting') {
           events.push({ type: 'status', message: 'Compacting thread...' });
         }
-        const modeValue = m.permissionMode ?? m.permission_mode;
-        if (modeValue) {
-          events.push({ type: 'mode_sync', mode: fromSdkSyncMode(modeValue, ctx), source: 'sdk' });
-        }
+        // Older SDKs sent the mode as permission_mode.
+        const modeValue = m.permissionMode ?? (m as { permission_mode?: typeof m.permissionMode }).permission_mode;
+        const mode = modeValue && fromSdkSyncMode(modeValue, ctx);
+        if (mode) events.push({ type: 'mode_sync', mode, source: 'sdk' });
       } else if (message.subtype === 'informational') {
         // The CLI's own warnings (e.g. a sandbox that could not start) reach
         // the user; lower levels are transcript-only chatter in the CLI too.
@@ -359,7 +367,7 @@ export function transformMessage(
           events.push({ type: 'status', level: 'warning', message: m.content.trim() });
         }
       } else if (message.subtype === 'local_command_output') {
-        const content = (message as any).content;
+        const content = message.content;
         if (content) {
           events.push({ type: 'status', message: content });
           if (/mode.*plan/i.test(content) || /plan mode/i.test(content)) {
@@ -371,7 +379,7 @@ export function transformMessage(
           }
         }
       } else if (message.subtype === 'task_started') {
-        const m = message as any;
+        const m = message;
         // Ambient tasks (live-update watchers, skip_transcript work) are not
         // activity; the SDK asks hosts to keep them out of activity indicators.
         if (m.ambient) return events;
@@ -383,7 +391,7 @@ export function transformMessage(
           taskType: m.task_type,
         });
       } else if (message.subtype === 'task_progress') {
-        const m = message as any;
+        const m = message;
         const usage = m.usage ?? {};
         events.push({
           type: 'task_progress',
@@ -397,9 +405,8 @@ export function transformMessage(
           durationMs: usage.duration_ms ?? 0,
         });
       } else if (message.subtype === 'task_notification') {
-        const m = message as any;
+        const m = message;
         if (m.ambient) return events;
-        const usage = m.usage ?? {};
         events.push({
           type: 'task_notification',
           taskId: m.task_id ?? '',
@@ -407,13 +414,13 @@ export function transformMessage(
           taskStatus: m.status ?? 'completed',
           summary: m.summary ?? '',
           outputFile: m.output_file ?? '',
-          totalTokens: usage.total_tokens,
-          toolUses: usage.tool_uses,
-          durationMs: usage.duration_ms,
+          totalTokens: m.usage?.total_tokens,
+          toolUses: m.usage?.tool_uses,
+          durationMs: m.usage?.duration_ms,
         });
       } else if (message.subtype === 'background_tasks_changed') {
-        const m = message as any;
-        const tasks: any[] = Array.isArray(m.tasks) ? m.tasks : [];
+        const m = message;
+        const tasks = Array.isArray(m.tasks) ? m.tasks : [];
         events.push({
           type: 'background_tasks_changed',
           tasks: tasks.filter((t) => !t.ambient).map((t) => ({
@@ -423,7 +430,7 @@ export function transformMessage(
           })),
         });
       } else if (message.subtype === 'hook_started') {
-        const m = message as any;
+        const m = message;
         events.push({
           type: 'hook_event',
           subtype: 'started',
@@ -432,7 +439,7 @@ export function transformMessage(
           hookEvent: m.hook_event ?? '',
         });
       } else if (message.subtype === 'hook_progress') {
-        const m = message as any;
+        const m = message;
         events.push({
           type: 'hook_event',
           subtype: 'progress',
@@ -442,7 +449,7 @@ export function transformMessage(
           output: m.output || m.stdout || m.stderr || '',
         });
       } else if (message.subtype === 'hook_response') {
-        const m = message as any;
+        const m = message;
         events.push({
           type: 'hook_event',
           subtype: 'response',
@@ -454,34 +461,34 @@ export function transformMessage(
           exitCode: m.exit_code,
         });
       } else if (message.subtype === 'elicitation_complete') {
-        const m = message as any;
+        const m = message;
         events.push({
           type: 'elicitation_complete',
           serverName: m.mcp_server_name ?? '',
           elicitationId: m.elicitation_id ?? '',
         });
       } else if (message.subtype === 'files_persisted') {
-        const m = message as any;
+        const m = message;
         events.push({
           type: 'files_persisted',
-          files: (m.files ?? []).map((f: any) => ({ filename: f.filename, fileId: f.file_id })),
+          files: (m.files ?? []).map((f) => ({ filename: f.filename, fileId: f.file_id })),
           failed: m.failed ?? [],
         });
       } else if (message.subtype === 'permission_denied') {
         // A tool call denied without a prompt (auto-mode classifier, deny
         // rule, ...). The CLI shows a notification for these; surface the
         // same so a blocked action in auto mode isn't silent.
-        const m = message as any;
+        const m = message;
         const reason = typeof m.decision_reason === 'string' ? stripAnsi(m.decision_reason).trim() : '';
         const who = m.decision_reason_type === 'classifier' ? 'Auto mode blocked' : 'Blocked';
         events.push({ type: 'status', message: `${who} ${m.tool_name ?? 'a tool call'}${reason ? `: ${reason}` : ''}` });
       } else {
         // Try to extract permission mode from any unhandled system message
-        const m = message as any;
+        // (none of the SDK's types for them has one).
+        const m = message as { permissionMode?: unknown; permission_mode?: unknown; mode?: unknown };
         const modeVal = m.permissionMode ?? m.permission_mode ?? m.mode;
-        if (modeVal && typeof modeVal === 'string') {
-          events.push({ type: 'mode_sync', mode: fromSdkSyncMode(modeVal as PermissionMode, ctx), source: 'sdk' });
-        }
+        const mode = typeof modeVal === 'string' && fromSdkSyncMode(modeVal, ctx);
+        if (mode) events.push({ type: 'mode_sync', mode, source: 'sdk' });
       }
       break;
     }
@@ -517,7 +524,7 @@ export function transformMessage(
           } else if (block.type === 'thinking') {
             events.push({
               type: 'thinking',
-              thinking: (block as any).thinking || '',
+              thinking: block.thinking || '',
               uuid: message.uuid,
               ...subagent,
             });
@@ -527,14 +534,15 @@ export function transformMessage(
       // Only track token usage from the main conversation — subagent messages
       // carry a parent_tool_use_id and would cause the status-bar values to
       // fluctuate wildly as their smaller contexts overwrite the main context size.
-      const usage = (message.message as any)?.usage;
+      const usage = message.message?.usage;
       if (usage && !subagent.parentToolUseId) {
         events.push({
           type: 'usage',
           inputTokens: usage.input_tokens ?? 0,
           outputTokens: usage.output_tokens ?? 0,
-          cacheReadTokens: usage.cache_read_input_tokens,
-          cacheCreationTokens: usage.cache_creation_input_tokens,
+          // The API sends null for none; the renderer reads both as 0.
+          cacheReadTokens: usage.cache_read_input_tokens ?? undefined,
+          cacheCreationTokens: usage.cache_creation_input_tokens ?? undefined,
         });
       }
       break;
@@ -546,7 +554,7 @@ export function transformMessage(
         for (const block of content) {
           if (block.type === 'tool_result') {
             const resultContent = Array.isArray(block.content)
-              ? block.content.map((c: any) => c.text || '').join('')
+              ? block.content.map((c) => ('text' in c ? c.text : '') || '').join('')
               : typeof block.content === 'string' ? block.content : JSON.stringify(block.content);
             const imageData = Array.isArray(block.content) ? toolResultImages(block.content) : [];
             events.push({
@@ -569,7 +577,7 @@ export function transformMessage(
       // Pick the entry that did the bulk of the token work — the first key is
       // not reliably the conversation model, and helper entries would report
       // the wrong context window (e.g. Haiku's 200k for an Opus session).
-      const modelUsage = (message as any).modelUsage as Record<string, {
+      const modelUsage = message.modelUsage as Record<string, {
         contextWindow?: number;
         inputTokens?: number;
         outputTokens?: number;
@@ -607,8 +615,8 @@ export function transformMessage(
       events.push({
         type: 'result',
         subtype: message.subtype,
-        result: 'result' in message ? (message as any).result : undefined,
-        structured_output: 'structured_output' in message ? (message as any).structured_output : undefined,
+        result: 'result' in message ? message.result : undefined,
+        structured_output: 'structured_output' in message ? message.structured_output : undefined,
         ...(runningCost !== undefined ? {
           totalCostUsd: cost.turnCost(runningCost, message.is_error),
           sessionCostUsd: cost.total,
@@ -619,7 +627,7 @@ export function transformMessage(
         } : {}),
         durationMs: message.duration_ms,
         isError: message.is_error,
-        errors: 'errors' in message ? (message as any).errors : undefined,
+        errors: 'errors' in message ? message.errors : undefined,
         numTurns: message.num_turns,
         contextWindow,
       });
@@ -627,7 +635,7 @@ export function transformMessage(
     }
 
     case 'tool_progress': {
-      const m = message as any;
+      const m = message;
       events.push({
         type: 'tool_progress',
         toolName: m.tool_name ?? '',
@@ -644,14 +652,14 @@ export function transformMessage(
       if (message.parent_tool_use_id) break;
       const event = message.event;
       if (event.type === 'content_block_delta') {
-        const delta = (event as any).delta;
+        const delta = event.delta;
         if (delta?.type === 'text_delta' && delta.text) {
           events.push({ type: 'partial_text', text: delta.text });
         } else if (delta?.type === 'thinking_delta' && delta.thinking) {
           events.push({ type: 'partial_thinking', text: delta.thinking });
         }
       } else if (event.type === 'content_block_start') {
-        const block = (event as any).content_block;
+        const block = event.content_block;
         if (block?.type === 'thinking') {
           events.push({ type: 'activity', activity: 'thinking' });
         } else if (block?.type === 'text') {
@@ -666,7 +674,7 @@ export function transformMessage(
     }
 
     case 'auth_status': {
-      const m = message as any;
+      const m = message;
       events.push({
         type: 'auth_status',
         isAuthenticating: m.isAuthenticating ?? false,
@@ -677,7 +685,7 @@ export function transformMessage(
     }
 
     case 'tool_use_summary': {
-      const m = message as any;
+      const m = message;
       events.push({
         type: 'tool_use_summary',
         summary: m.summary ?? '',
@@ -687,14 +695,16 @@ export function transformMessage(
     }
 
     case 'rate_limit_event': {
-      const m = message as any;
+      const m = message;
       const info = m.rate_limit_info ?? {};
+      // Older SDKs sent these two in snake_case.
+      const legacy = info as { resets_at?: number; rate_limit_type?: typeof info.rateLimitType };
       events.push({
         type: 'rate_limit',
         status: info.status ?? 'allowed',
-        resetsAt: info.resets_at ?? info.resetsAt,
+        resetsAt: legacy.resets_at ?? info.resetsAt,
         utilization: info.utilization,
-        rateLimitType: info.rate_limit_type ?? info.rateLimitType,
+        rateLimitType: legacy.rate_limit_type ?? info.rateLimitType,
       });
       break;
     }
@@ -713,7 +723,7 @@ export function transformMessage(
     }
 
     case 'prompt_suggestion': {
-      const m = message as any;
+      const m = message;
       events.push({
         type: 'prompt_suggestion',
         suggestion: m.suggestion ?? '',
@@ -1309,8 +1319,8 @@ async function readSettingsFile(file: string): Promise<Record<string, unknown>> 
   let text: string;
   try {
     text = await fs.readFile(file, 'utf8');
-  } catch (e: any) {
-    if (e?.code === 'ENOENT') return {};
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException | null)?.code === 'ENOENT') return {};
     throw e;
   }
   let parsed: unknown;
@@ -1869,7 +1879,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     const queryFn = await getQuery();
 
     // Register Grove memory operations as an SDK MCP server
-    let mcpServers: Record<string, any> | undefined;
+    let mcpServers: import('@anthropic-ai/claude-agent-sdk').Options['mcpServers'];
     if (config.memoryOperations) {
       const memoryServer = await createMemoryMcpServer(config.memoryOperations);
       mcpServers = { 'grove-memory': memoryServer };
@@ -1932,7 +1942,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       // Forward to the permission handler (which prompts the user).
       // The session manager assigns the canonical requestId; we pass an empty
       // placeholder that will be overwritten by onPermissionRequest.
-      return config.onPermissionRequest({
+      const response = await config.onPermissionRequest({
         requestId: '',
         toolName,
         toolUseId: options.toolUseID,
@@ -1941,10 +1951,13 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         suggestions: options.suggestions,
         isPlanExecution: toolName === 'ExitPlanMode',
         toolCategory: category,
-        planText: toolName === 'ExitPlanMode' && typeof (input as any)?.plan === 'string'
-          ? (input as any).plan
-          : undefined,
+        planText: toolName === 'ExitPlanMode' && typeof input.plan === 'string' ? input.plan : undefined,
       });
+      // updatedPermissions are the SDK's own suggestions above, handed back
+      // when the user picks Always allow.
+      return response.behavior === 'allow'
+        ? { ...response, updatedPermissions: response.updatedPermissions as SdkPermissionUpdate[] | undefined }
+        : response;
     };
 
     // Build SDK query options
@@ -1996,7 +2009,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         ...(config.resumeSessionId && config.resumeAtUuid
           ? { resumeSessionAt: config.resumeAtUuid, forkSession: true }
           : {}),
-        canUseTool: canUseTool as any,
+        canUseTool,
         ...(config.beforeToolUse ? {
           hooks: {
             PreToolUse: [{
@@ -2291,7 +2304,13 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   async listPlugins(): Promise<{ installed: Array<{ id: string; name?: string; enabled?: boolean }>; available: unknown[] }> {
     try {
       const { stdout } = await runClaudeCli('claude', ['plugin', 'list', '--json', '--available'], { idempotent: true, ...this.cliEnv() });
-      return JSON.parse(stdout);
+      // The CLI's own JSON: a part that isn't there, or isn't a list, reads as empty.
+      const parsed: unknown = JSON.parse(stdout);
+      if (!isRecord(parsed)) return { installed: [], available: [] };
+      return {
+        installed: Array.isArray(parsed.installed) ? parsed.installed as Array<{ id: string; name?: string; enabled?: boolean }> : [],
+        available: Array.isArray(parsed.available) ? parsed.available : [],
+      };
     } catch {
       return { installed: [], available: [] };
     }
