@@ -18,8 +18,7 @@
     "electron-winstaller": false,
     "esbuild": true,
     "fsevents": false,
-    "node-pty": true,
-    "protobufjs": false
+    "node-pty": true
   },
   "scripts": {
     "start": "node scripts/dev.mjs",
