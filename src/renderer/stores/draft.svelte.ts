@@ -3,6 +3,7 @@ import { CONTROL_IDS } from '../../shared/types.js';
 import { deriveSessionName } from '../../shared/session-name.js';
 import { tempBranchName } from '../../shared/temp-branch.js';
 import { withSkill } from '../../shared/skill-line.js';
+import { errorMessage } from '../../shared/error-message.js';
 import { store as sessionStore } from './sessions.svelte.js';
 import { groupStore } from './groups.svelte.js';
 import { todoStore } from './todo.svelte.js';
@@ -430,7 +431,7 @@ class DraftStore {
     if (!draft) return false;
     // A copy: changes made to the draft object later must not leak into the
     // conversation being created.
-    const d = $state.snapshot(draft) as Draft;
+    const d = $state.snapshot(draft);
     if (d.start.kind === 'existing' && !d.start.branch) return false;
     if (this.attachmentProblem) return false;
     if (!sessionStore.repos.includes(d.repoPath)) {
@@ -594,8 +595,8 @@ class DraftStore {
       // it's up.
       if (sent && this.stillOpen(id)) window.groveBench.sendMessage(id, sent.outgoing, sent.images, sent.files);
       return id;
-    } catch (e: any) {
-      const message = e?.message || String(e);
+    } catch (e) {
+      const message = errorMessage(e);
       const onScreen = sessionStore.activeSessionId === id;
       // Closed or deleted while main was checking: the user is done with it,
       // so the draft stays gone and nothing is reported.

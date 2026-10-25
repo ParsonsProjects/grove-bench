@@ -145,7 +145,7 @@ class SessionStore {
     try {
       const legacy = localStorage.getItem('grove-bench:repos');
       if (legacy) {
-        const legacyRepos: string[] = JSON.parse(legacy);
+        const legacyRepos = JSON.parse(legacy) as string[];
         for (const r of legacyRepos) {
           if (!this.repos.includes(r)) {
             this.repos = [...this.repos, r];
