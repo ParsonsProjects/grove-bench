@@ -1,4 +1,6 @@
 <script lang="ts">
+  import GitOperationBox from './GitOperationBox.svelte';
+  import { opPrototype } from '../lib/op-prototype.svelte.js';
   import { messageStore } from '../stores/messages.svelte.js';
   import { gitStatusStore } from '../stores/gitStatus.svelte.js';
   import { prStore } from '../stores/pr.svelte.js';
@@ -33,6 +35,10 @@
   let isLoading = $derived(gitStatusStore.isLoading(sessionId));
   let isRunning = $derived(messageStore.getIsRunning(sessionId));
   let stagedEntries = $derived(gitStatus.entries.filter(e => e.staged));
+  // PROTOTYPE
+  let operation = $derived(gitStatus.operation);
+  let conflictCount = $derived(gitStatus.entries.filter(e => e.status === 'conflicted').length);
+  let continuesOp = $derived(!!operation && operation.kind !== 'merge');
 
   // Scope: uncommitted working tree (git-client view) or everything on the
   // branch since it left the base (pull-request view).
@@ -255,12 +261,15 @@
 {/snippet}
 
 {#snippet commitBox()}
-  {#if stagedEntries.length > 0}
+  {#if operation && opPrototype.layout === 'footer'}
+    <GitOperationBox {operation} conflicts={conflictCount} layout="footer" />
+  {/if}
+  {#if stagedEntries.length > 0 && !continuesOp}
     <div class="border-t border-border p-2 shrink-0 space-y-1.5">
       <div class="relative">
         <textarea
           bind:value={commitMessage}
-          placeholder={generatingMsg ? 'Generating…' : 'Commit message…'}
+          placeholder={generatingMsg ? 'Generating…' : operation?.kind === 'merge' ? `Merge branch '${operation.incoming}' into ${operation.branch}` : 'Commit message…'}
           rows="2"
           onkeydown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); doCommit(); } }}
           class="w-full text-xs bg-background/50 border border-border/50 px-2 py-1 pr-6 text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/50 resize-none"
@@ -293,8 +302,9 @@
           disabled={!commitMessage.trim() || committing}
           class="flex-1 disabled:cursor-not-allowed"
         >
-          {committing && !pushing ? 'Committing…' : `Commit ${stagedEntries.length} file${stagedEntries.length !== 1 ? 's' : ''}`}
+          {continuesOp ? `Continue ${operation?.kind}` : committing && !pushing ? 'Committing…' : `Commit ${stagedEntries.length} file${stagedEntries.length !== 1 ? 's' : ''}`}
         </Button>
+        {#if !continuesOp}
         <Button
           size="xs"
           variant="subtle"
@@ -305,6 +315,7 @@
         >
           {pushing ? 'Pushing…' : '& Push'}
         </Button>
+        {/if}
       </div>
     </div>
   {/if}
@@ -465,6 +476,9 @@
   {/if}
 {/snippet}
 
+{#if operation && opPrototype.layout === 'strip'}
+  <GitOperationBox {operation} conflicts={conflictCount} layout="strip" />
+{/if}
 <ReviewDiffPanel
   {sessionId}
   {sourceKey}

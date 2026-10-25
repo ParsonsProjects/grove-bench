@@ -470,8 +470,25 @@ export interface GitStatusOptions {
   base?: string;
 }
 
+/** A git operation stopped part way, waiting on the user: a merge, rebase,
+ *  cherry-pick or revert with conflicts to resolve (or resolved, waiting
+ *  to be finished). */
+export interface GitOperation {
+  kind: 'merge' | 'rebase' | 'cherry-pick' | 'revert';
+  /** Merge: what is coming in. Rebase: the commit list's target. */
+  incoming?: string;
+  /** Rebase: the branch being rebased, and how far it has got. */
+  branch?: string;
+  step?: number;
+  total?: number;
+  /** Cherry-pick or revert: the commit, short. */
+  commit?: string;
+}
+
 export interface GitStatusResult {
   entries: GitStatusEntry[];
+  /** A merge, rebase, cherry-pick or revert in progress. */
+  operation?: GitOperation;
   /** The ref the branch scope resolved (`main` or `origin/main`). */
   baseRef?: string;
   /** Set when the branch scope could not find a merge base with `base`. */

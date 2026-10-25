@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { gitStatusStore } from '../stores/gitStatus.svelte.js';
+  import { opPrototype } from '../lib/op-prototype.svelte.js';
   /**
    * The branch stack: project / branch on top (click the branch to switch);
    * underneath, its sync state (ahead / behind / push error) and the PR for
@@ -176,6 +178,10 @@
             onclose={() => branchPickerOpen = false}
           />
         </StatusBarPopover>
+        {#if opPrototype.statusBar && gitStatusStore.getStatus(sessionId).operation}
+          {@const op = gitStatusStore.getStatus(sessionId).operation!}
+          <span class="ml-1.5 text-caption text-status-attention whitespace-nowrap">{op.kind === 'rebase' ? `rebasing ${op.step}/${op.total}` : op.kind === 'merge' ? 'merging' : op.kind === 'cherry-pick' ? 'cherry-picking' : 'reverting'}</span>
+        {/if}
       </div>
     {/if}
 
