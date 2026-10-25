@@ -360,7 +360,7 @@
             {#if status === 'disabled'}
               {#if mcpControls.toggle}
                 <Button
-                  variant="outline-success"
+                  variant="subtle-primary"
                   size="2xs"
                   onclick={() => mcpAction(server.name, 'enable')}
                   disabled={mcpBusy[server.name]}

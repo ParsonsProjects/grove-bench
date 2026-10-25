@@ -321,7 +321,7 @@
           <!-- Turning a skill off is reversible, so it stays quiet; red is
                for what can't be undone. -->
           {#if disabled}
-            <Button variant="outline-success" size="2xs" onclick={() => setSkillEnabled(skill.name, true)} disabled={skillsBusy[skill.name]} title="Re-enable this skill">Enable</Button>
+            <Button variant="subtle-primary" size="2xs" onclick={() => setSkillEnabled(skill.name, true)} disabled={skillsBusy[skill.name]} title="Re-enable this skill">Enable</Button>
           {:else}
             <Button variant="quiet" size="2xs" onclick={() => setSkillEnabled(skill.name, false)} disabled={skillsBusy[skill.name]} title="Hide this skill from agents">Disable</Button>
           {/if}
@@ -344,7 +344,7 @@
           <div class="flex items-center gap-1.5">
             <span class="w-1.5 h-1.5 bg-blue-400 shrink-0"></span>
             <span class="font-mono text-xs truncate text-foreground flex-1 min-w-0" title={suggestion.description}>{suggestion.name}</span>
-            <Button variant="outline-success" size="2xs" onclick={() => createFromSuggestion(suggestion)} title="Open the Add Skill dialog prefilled with this suggestion">Create</Button>
+            <Button variant="subtle-primary" size="2xs" onclick={() => createFromSuggestion(suggestion)} title="Open the Add Skill dialog prefilled with this suggestion">Create</Button>
             <Button
               variant="subtle"
               size="2xs"

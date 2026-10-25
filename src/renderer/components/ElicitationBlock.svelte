@@ -29,6 +29,8 @@
   let values = $state<ElicitationValues>(untrack(() => initialElicitationValues(form.fields)));
   let errors = $state<Record<string, string>>({});
   let busy = $state(false);
+  // While the browser opens: busy only starts once the answer is sent.
+  let opening = $state(false);
   let openError = $state<string | null>(null);
 
   const urlHost = $derived.by(() => {
@@ -66,14 +68,19 @@
   }
 
   async function openPage() {
-    if (!request.url) return;
+    if (!request.url || opening) return;
     openError = null;
+    opening = true;
     try {
       await window.groveBench.openExternal(request.url);
     } catch {
-      // Main only opens http(s) links
-      openError = 'This link could not be opened. Only http and https links are allowed.';
+      // Main refuses anything but http(s); otherwise the browser didn't open
+      openError = /^https?:\/\//i.test(request.url)
+        ? "Couldn't open the page in your browser."
+        : 'This link could not be opened. Only http and https links are allowed.';
       return;
+    } finally {
+      opening = false;
     }
     // In URL mode, accepting means the user agreed to go to the page; the
     // server finishes the flow there.
@@ -110,10 +117,12 @@
         <div class="text-destructive mt-1">{openError}</div>
       {/if}
       <div class="flex gap-2 mt-2">
-        <Button variant="subtle" size="sm" onclick={openPage} disabled={busy || !request.url}>
+        <!-- Blue: it opens a web page (green acts, blue goes). No side
+             padding, so its words line up with the text above. -->
+        <Button variant="external" size="sm" class="px-0" onclick={openPage} disabled={busy || opening || !request.url}>
           Open page
         </Button>
-        <Button variant="quiet" size="sm" onclick={() => respond({ action: 'decline' })} disabled={busy}>Decline</Button>
+        <Button variant="quiet" size="sm" onclick={() => respond({ action: 'decline' })} disabled={busy || opening}>Decline</Button>
       </div>
     </div>
   {:else}

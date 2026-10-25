@@ -71,6 +71,42 @@ describe('ElicitationBlock', () => {
     expect(window.groveBench.respondToElicitation).toHaveBeenCalledWith('s1', 'e3', { action: 'accept' });
   });
 
+  const urlRequest = { serverName: 'auth', message: 'Sign in to continue', mode: 'url' as const, url: 'https://auth.example/login' };
+
+  it('opens the page once, and holds Decline, while the browser opens', async () => {
+    let opened!: () => void;
+    vi.mocked(window.groveBench.openExternal).mockReturnValueOnce(new Promise<void>((r) => { opened = r; }));
+    render(ElicitationBlock, { sessionId: 's1', requestId: 'e5', request: urlRequest, resolved: false });
+    const open = screen.getByRole('button', { name: 'Open page' });
+    await fireEvent.click(open);
+    await fireEvent.click(open);
+
+    expect(window.groveBench.openExternal).toHaveBeenCalledTimes(1);
+    expect(open).toBeDisabled();
+    // A decline now would answer a page that is already opening
+    expect(screen.getByRole('button', { name: 'Decline' })).toBeDisabled();
+    opened();
+    await vi.waitFor(() => expect(window.groveBench.respondToElicitation).toHaveBeenCalledWith('s1', 'e5', { action: 'accept' }));
+  });
+
+  it("says the browser didn't open an https link, rather than blaming the link", async () => {
+    vi.mocked(window.groveBench.openExternal).mockRejectedValueOnce(new Error('ShellExecute failed'));
+    render(ElicitationBlock, { sessionId: 's1', requestId: 'e6', request: urlRequest, resolved: false });
+    await fireEvent.click(screen.getByRole('button', { name: 'Open page' }));
+
+    expect(await screen.findByText("Couldn't open the page in your browser.")).toBeInTheDocument();
+    expect(window.groveBench.respondToElicitation).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Open page' })).toBeEnabled();
+  });
+
+  it('says only http and https links open, for any other link', async () => {
+    vi.mocked(window.groveBench.openExternal).mockRejectedValueOnce(new Error('Only http/https URLs are allowed'));
+    render(ElicitationBlock, { sessionId: 's1', requestId: 'e7', request: { ...urlRequest, url: 'file:///C:/secrets.txt' }, resolved: false });
+    await fireEvent.click(screen.getByRole('button', { name: 'Open page' }));
+
+    expect(await screen.findByText(/Only http and https links are allowed/)).toBeInTheDocument();
+  });
+
   it('shows how it ended once resolved', () => {
     render(ElicitationBlock, { sessionId: 's1', requestId: 'e4', request: formRequest, resolved: true, action: 'decline' });
     expect(screen.getByText('declined')).toBeInTheDocument();
