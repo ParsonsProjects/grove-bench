@@ -25,16 +25,33 @@ function ensureInitialized(): Promise<PostHog | null> {
           capture_pageview: false,
           capture_pageleave: false,
           persistence: 'localStorage',
+          // Opting out deletes the anonymous IDs PostHog stored, not just
+          // the sending.
+          opt_out_persistence_by_default: true,
+          // The app uses no feature flags, and reset() would ask PostHog for
+          // the new ID's flags just after an opt-out.
+          advanced_disable_feature_flags: true,
         });
         posthog = ph;
+        // Someone who opted out earlier starts as someone new. Versions before
+        // this one kept their IDs stored, and init has just read them back.
+        if (ph.has_opted_out_capturing()) ph.reset(true);
         // Apply whatever the user chose while the module was loading.
         if (desiredEnabled) ph.opt_in_capturing();
-        else ph.opt_out_capturing();
+        else optOutAndForget(ph);
         return ph;
       })
       .catch(() => null);
   }
   return loading;
+}
+
+/** Stop sending, and give this install new anonymous IDs (true resets the
+ *  device ID too), so usage after an opt-in again isn't linked to usage
+ *  before. reset() goes first: it also clears the stored opt-out. */
+function optOutAndForget(ph: PostHog): void {
+  ph.reset(true);
+  ph.opt_out_capturing();
 }
 
 /**
@@ -43,10 +60,14 @@ function ensureInitialized(): Promise<PostHog | null> {
  */
 export function setAnalyticsEnabled(enabled: boolean): void {
   desiredEnabled = enabled;
-  if (enabled) {
-    void ensureInitialized();
-  } else if (posthog) {
-    posthog.opt_out_capturing();
+  if (!posthog) {
+    if (enabled) void ensureInitialized();
+  } else if (enabled) {
+    // Only when turned back on after an opt-out this session: settings
+    // changes call this again, and each opt-in sends an event.
+    if (posthog.has_opted_out_capturing()) posthog.opt_in_capturing();
+  } else if (!posthog.has_opted_out_capturing()) {
+    optOutAndForget(posthog);
   }
 }
 

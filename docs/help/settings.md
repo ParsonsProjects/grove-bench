@@ -146,7 +146,7 @@ Browse and manage MCP server plugins that extend the agent's capabilities. Plugi
 
 ## Hedges (Privacy)
 
-- **Send anonymous usage data**: Helps improve Grove Bench. No personal information or code is collected. Off unless you agree to it
+- **Send anonymous usage data**: Helps improve Grove Bench. No personal information or code is collected. Off unless you agree to it. Turning it off also deletes the random ID your usage was sent under, so if you turn it on again you start as someone new
 - **Send crash reports**: When something goes wrong, send the error message and stack trace with the usage data. Needs usage data on. Never includes prompts, code or project paths
 - **Look up agents and models online**: Once a day, download two public lists: the [ACP Registry](https://github.com/agentclientprotocol/registry) (agents that speak ACP, their latest versions and install commands) and [models.dev](https://models.dev) (each model's context size and price). The last copy is kept, so it works offline. Nothing about you or your projects is sent. On by default
 
