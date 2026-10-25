@@ -226,7 +226,7 @@
                 Dismiss
               </Button>
               <Button
-                variant="subtle"
+                variant="subtle-primary"
                 size="xs"
                 onclick={retryPush}
                 disabled={retrying || pushing}

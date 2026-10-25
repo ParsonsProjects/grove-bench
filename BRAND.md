@@ -93,18 +93,18 @@ Colour is for meaning, not decoration. Each colour has one job:
 
 | Colour | Means | Token |
 |---|---|---|
-| Brand green | An action you can take (primary buttons, focus, the current choice), or done: a thread that finished a turn, a passing check, a copied tick | `--primary`, `--status-unread`, `text-green-400` |
+| Brand green | The action to take (the main action of a view or of a group, focus, the current choice), or done: a thread that finished a turn, a passing check, a copied tick | `--primary`, `--status-unread`, `text-green-400` |
 | Blue (sky) | In progress: an agent working, a background task, something loading. Also links that leave the app | `--status-working`, `--link` |
 | Amber (sun) | Needs you: a permission prompt, a question, an MCP form. Also warnings: context running low, changes requested | `--status-attention`, `text-amber-500` |
 | Red (ember) | Something failed, or an action that destroys something | `--status-error`, `--destructive` |
-| Grey | Quiet: ready, sleeping, closed, answered | `--muted-foreground` |
+| Grey | Quiet: ready, sleeping, closed, answered. Also a group's other actions, and tools that sit side by side as equals | `--muted-foreground` |
 | Yellow, purple, cyan | Categories, not states: tool names and pending checks (yellow), thinking and merged pull requests (purple), code such as diff hunk headers (cyan) | Tailwind's palette |
 
 Those seven hues are the whole set; `light-theme.test.ts` fails if a component uses another. Orange, teal and violet were merged into amber, blue and amber: they sat too close to their neighbours to mean anything different.
 
 Rules that follow from that:
 
-- **Green acts and finishes, blue is in progress or goes.** A button or link-style button that does something in the app is green, and so is anything that is done. Something still happening is blue; so is a link that opens a web page or another app.
+- **Green acts and finishes, blue is in progress or goes.** The main action of a view or a group is green (Send, Run on a skill, Retry after a failure), and so is anything that is done. A group's other actions stay grey so the green one stands out, and a toolbar of equal tools has no green. Something still happening is blue; so is a link that opens a web page or another app.
 - **Motion says it's live.** A blue square pulses while work is in progress and an amber one while something waits for you; a still square is a settled state. When the system asks for reduced motion the pulses stop and colour carries the meaning alone, which is why "working" and "done" must differ in colour, not only in motion ([WCAG 1.4.1, Use of Color](https://www.w3.org/WAI/WCAG22/Understanding/use-of-color.html)).
 - **The square is the state, the word is the kind.** In the status bar and the Thread tab the moving square is always blue while the agent works; the word after it is coloured by what it is doing (yellow for a tool, purple for thinking).
 - **Status colours only through the status tokens** (`bg-status-working`, `text-status-attention`, and so on), never `bg-primary` or a palette colour. Changing what a status looks like is then a one-line edit in `globals.css`.

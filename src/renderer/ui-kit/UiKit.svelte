@@ -33,7 +33,7 @@
   /** Theme tokens as the current theme draws them. */
   const tokens = ['background', 'card', 'muted', 'accent', 'border', 'input', 'primary', 'destructive', 'foreground', 'muted-foreground'];
 
-  const buttonVariants = ['default', 'secondary', 'subtle', 'quiet', 'quiet-destructive', 'outline-success', 'outline-destructive', 'destructive', 'link', 'external'] as const;
+  const buttonVariants = ['default', 'secondary', 'subtle', 'subtle-primary', 'quiet', 'quiet-destructive', 'outline-success', 'outline-destructive', 'destructive', 'link', 'external'] as const;
   const buttonSizes = ['2xs', 'xs', 'sm', 'default'] as const;
   const badgeTones = ['neutral', 'muted', 'primary', 'info', 'success', 'warning', 'danger', 'accent', 'highlight'] as const;
   const noticeTones = ['info', 'success', 'warning', 'danger', 'neutral'] as const;
@@ -186,6 +186,13 @@
         <Button size="icon" aria-label="Send"><ArrowUpIcon /></Button>
         
         <span class="text-xs">An inline <Button size="inline" variant="link">action</Button> in a sentence.</span>
+      </div>
+      <div class="flex flex-wrap items-center gap-3">
+        <SectionLabel>A group</SectionLabel>
+        <!-- Its main action green, the rest grey (rule 4). -->
+        <Button size="2xs" variant="subtle-primary">Run</Button>
+        <Button size="2xs" variant="subtle">Schedule</Button>
+        <Button size="2xs" variant="quiet">Disable</Button>
       </div>
     </section>
 

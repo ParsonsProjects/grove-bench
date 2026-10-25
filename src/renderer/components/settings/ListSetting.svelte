@@ -108,7 +108,8 @@
       oninput={() => { issue = null; }}
       onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') add(); }}
     />
-    <Button variant="secondary" onclick={add} disabled={!trimmed || duplicate || error !== null}>
+    <!-- Grey once a hint warns against it: Add anyway isn't the action to take. -->
+    <Button variant={hint ? 'subtle' : 'subtle-primary'} onclick={add} disabled={!trimmed || duplicate || error !== null}>
       {hint ? 'Add anyway' : 'Add'}
     </Button>
   </div>

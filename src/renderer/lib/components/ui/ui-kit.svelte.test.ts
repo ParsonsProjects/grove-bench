@@ -26,6 +26,17 @@ describe('Button', () => {
     expect(button).not.toHaveClass('text-sm');
   });
 
+  it("marks a group's main action in green, with subtle's border", () => {
+    render(Button, { size: '2xs', variant: 'subtle-primary', children: text('Run') });
+    render(Button, { size: '2xs', variant: 'subtle', children: text('Schedule') });
+    const main = screen.getByRole('button', { name: 'Run' });
+    expect(main).toHaveClass('border-border', 'text-primary');
+    // Stays green on hover, where subtle brightens to the foreground colour
+    expect(main).not.toHaveClass('text-muted-foreground');
+    expect(main).not.toHaveClass('hover:text-foreground');
+    expect(screen.getByRole('button', { name: 'Schedule' })).toHaveClass('border-border', 'text-muted-foreground');
+  });
+
   it('has square icon sizes as tall as the default and sm sizes', () => {
     render(Button, { size: 'icon', 'aria-label': 'Send', children: text('↑') });
     render(Button, { size: 'icon-sm', 'aria-label': 'Answer', children: text('↑') });

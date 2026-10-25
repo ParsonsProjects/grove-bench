@@ -233,7 +233,8 @@
   <span class="text-xs text-muted-foreground flex-1 min-w-0 truncate">
     {agentsStore.get(agentId)?.displayName ?? agentId} · {store.repoDisplayName(repoPath)}
   </span>
-  <!-- One style for the tab's actions, as for Schedule a skill. -->
+  <!-- Add skill is the tab's main action, green as Schedule a skill is on
+       the other tab; the rest stay grey. -->
   {#if managed}
     <Button
       variant="subtle"
@@ -245,7 +246,7 @@
   {/if}
   <Button variant="subtle" size="icon-2xs" onclick={refresh} title="Re-scan skill directories" aria-label="Refresh skills"><RefreshIcon /></Button>
   <Button
-    variant="subtle"
+    variant="subtle-primary"
     size="2xs"
     onclick={() => { addSkillOpen = true; }}
     title="Author a new skill every agent can use — write it yourself or hand it to the agent"
@@ -260,7 +261,7 @@
   <Notice class="mb-3">
     {#snippet actions()}
       <Button
-        variant="secondary"
+        variant="link"
         size="2xs"
         onclick={fixSharing}
         disabled={sharingBusy}
@@ -298,7 +299,7 @@
       {#snippet actions()}
         {#if !disabled}
           <Button
-            variant="secondary"
+            variant="subtle-primary"
             size="2xs"
             onclick={() => runSkill(skill)}
             title={store.isFolderProject(repoPath)

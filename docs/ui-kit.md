@@ -98,7 +98,8 @@ All in `src/renderer/lib/components/ui/`. Import from the folder's `index.js`:
 |---|---|
 | `default` | The main action in a view: Send, Start, Restart to update. One per view. |
 | `secondary` | Other actions next to it |
-| `subtle` | Any other bordered action: toolbars, the status bar, Cancel in a dialog. Not a notice's action (see Notice) |
+| `subtle` | A group's other bordered actions, and tools that sit side by side as equals: toolbars, the status bar, Cancel in a dialog. Not a notice's action (see Notice) |
+| `subtle-primary` | The main action of a group inside a view, in green: Add in a section's header, Run on a skill, Retry after a failure, Add beside the field it adds. One per group; a toolbar of equal tools has none |
 | `quiet` | Icon buttons, and text actions that only brighten on hover |
 | `quiet-destructive` | Icon buttons that delete or stop something: quiet until hovered, then red |
 | `outline-success` | Answering what the agent asked for: Allow, Approve, Answer, an MCP form's Submit |
@@ -115,7 +116,7 @@ All in `src/renderer/lib/components/ui/`. Import from the folder's `index.js`:
 | `icon-2xs`, `icon-xs`, `icon-sm`, `icon` | 20, 24, 32, 36px square | Icon-only buttons. Give them an `aria-label`, and a `title` that names the action. `icon-sm` sits in a row of `sm` buttons or beside a 32px field; `icon` beside a 36px field, like the composer's send and stop. |
 | `inline` | Text height | A button in a line of text |
 
-That is the whole set: ten variants and nine sizes. Before adding one, check whether an existing variant fits; the kit had three more (`ghost`, `outline`, `outline-primary`) that overlapped with these and were merged away.
+That is the whole set: eleven variants and nine sizes. Before adding one, check whether an existing variant fits; the kit had three more (`ghost`, `outline`, `outline-primary`) that overlapped with these and were merged away.
 
 A disabled `Button` still gets hover events, so its `title` tooltip can say why it is disabled.
 
@@ -146,7 +147,7 @@ Its main action is a `link` button, green as an action, or `external` (blue) whe
 1. **Reach for the kit first.** If what you need isn't here and the pattern turns up a third time, add it to the kit (with a test in `ui-kit.svelte.test.ts` and an example on `/ui-kit.html`) rather than copying it again.
 2. **No arbitrary font sizes** (`text-[10px]`). Use the type scale.
 3. **Status colours only through `status-*` tokens.** Never `bg-primary` or `bg-green-400` to mean a status.
-4. **Green acts and finishes, blue is in progress or goes.** Primary green for actions in the app and for anything done; blue for work in progress (`status-working`) and for links that open a page or another app (`--link`). Amber means needs you, red failed.
+4. **Green acts and finishes, blue is in progress or goes.** Primary green for the main action of a view (`default`), a group (`subtle-primary`) or a notice (`link`), and for anything done; a group's other actions stay grey. Blue for work in progress (`status-working`) and for links that open a page or another app (`--link`). Amber means needs you, red failed.
 5. **Keep text readable.** Don't fade text below `text-muted-foreground` (`/40`, `/50`, `/60`) for anything people need to read: it drops under 4.5:1.
 6. **Every Tailwind palette shade needs a light-theme value.** A component that uses `text-green-400` needs `--color-green-400` in the light block of `globals.css`; `light-theme.test.ts` fails otherwise.
 7. **Square.** No `rounded-*`, no round spinners. `Pulse` with `motion="spin"` is the turning square.

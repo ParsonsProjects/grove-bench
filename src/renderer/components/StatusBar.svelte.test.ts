@@ -166,6 +166,18 @@ describe('StatusBar MCP controls follow the agent', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: /MCP 1/ })).toBeTruthy());
   });
 
+  it('makes Reconnect green only for a server that failed', async () => {
+    useAgent({ controls: { ...NONE, list: true, reconnect: true }, disconnectHint: '' });
+    messageStore.systemInfoBySession[ID] = { tools: [], agents: [], skills: [], slashCommands: [], mcpServers: [{ name: 'docs', status: 'failed' }, { name: 'search', status: 'connected' }] };
+    render(StatusBar, { props: { sessionId: ID } });
+
+    await fireEvent.click(screen.getByRole('button', { name: /MCP/ }));
+
+    const [failed, connected] = screen.getAllByRole('button', { name: 'Reconnect' });
+    expect(failed).toHaveClass('text-primary');
+    expect(connected).toHaveClass('text-muted-foreground');
+  });
+
   // claude.ai connectors sign in on claude.ai, so nothing redirects back to
   // the agent and the server stays needs-auth until it is reconnected.
   it('offers Reconnect after a sign-in the agent will not finish by itself', async () => {

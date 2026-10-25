@@ -397,8 +397,9 @@
                 </Button>
                 {/if}
               {:else if mcpControls.reconnect}
+                <!-- Green after a failure, as the next thing to try. -->
                 <Button
-                  variant="subtle"
+                  variant={status === 'failed' ? 'subtle-primary' : 'subtle'}
                   size="2xs"
                   onclick={() => mcpAction(server.name, 'reconnect')}
                   disabled={mcpBusy[server.name]}

@@ -241,7 +241,7 @@
     {#snippet actions()}
       {#if agent.addsAccounts}
         <span data-setting="claude-accounts">
-          <Button variant="subtle" size="xs" onclick={() => (addingAccount = true)}>
+          <Button variant="subtle-primary" size="xs" onclick={() => (addingAccount = true)}>
             <PlusIcon aria-hidden="true" />
             Add account
           </Button>
@@ -290,7 +290,7 @@
             <div class="flex items-center gap-2">
               <div class="flex-1 min-w-0"><CommandLine command={status.cliSignIn.command} label="Sign-in command" /></div>
               {#if status.signInCheckable}
-                <Button variant="secondary" size="sm" disabled={prerequisitesStore.checking} onclick={() => checkSignIn(agent.id)}>Check sign-in</Button>
+                <Button variant="subtle-primary" size="sm" disabled={prerequisitesStore.checking} onclick={() => checkSignIn(agent.id)}>Check sign-in</Button>
               {/if}
             </div>
             {#if signInErrors[agent.id]}<p class="text-xs text-destructive" role="alert">{signInErrors[agent.id]}</p>{/if}
@@ -538,7 +538,7 @@
         onkeydown={(e) => { if (e.key === 'Enter') addAcpAgent(); }}
         class="flex-1"
       />
-      <Button variant="secondary" onclick={addAcpAgent}>Add</Button>
+      <Button variant="subtle-primary" onclick={addAcpAgent}>Add</Button>
     </div>
     <RegistryAgents onUse={(a) => { acpName = a.name; acpCommand = a.command; acpArgs = a.args.join(' '); }} />
   </div>

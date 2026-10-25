@@ -17,6 +17,9 @@
 				// Grove's own (docs/ui-kit.md). subtle: the bordered toolbar
 				// button; quiet: an icon or text that only brightens on hover.
 				subtle: "border border-border text-muted-foreground hover:text-foreground hover:bg-accent disabled:hover:text-muted-foreground disabled:hover:bg-transparent",
+				// The main action of a group (a row, a section's header): subtle's
+				// border, in green. A view's one main action is default.
+				"subtle-primary": "border border-border text-primary hover:bg-accent disabled:hover:bg-transparent",
 				quiet: "text-muted-foreground hover:text-foreground disabled:hover:text-muted-foreground",
 				// An icon that deletes, closes for good or stops: quiet until hovered.
 				"quiet-destructive": "text-muted-foreground hover:text-destructive hover:bg-destructive/10 disabled:hover:text-muted-foreground disabled:hover:bg-transparent",
