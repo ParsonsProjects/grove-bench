@@ -100,6 +100,11 @@ describe('gitVersion()', () => {
     expect(v).toEqual({ version: 'git version 2.39.1', major: 2, minor: 39, patch: 1 });
   });
 
+  it("reads Git for Windows' version, which has a suffix", async () => {
+    mockExeca.mockResolvedValue({ stdout: 'git version 2.23.0.windows.1\n' } as never);
+    expect(await gitVersion()).toEqual({ version: 'git version 2.23.0.windows.1', major: 2, minor: 23, patch: 0 });
+  });
+
   it('returns null on error', async () => {
     mockExeca.mockRejectedValue(new Error('not found'));
     expect(await gitVersion()).toBeNull();

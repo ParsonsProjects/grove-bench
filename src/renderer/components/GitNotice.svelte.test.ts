@@ -38,7 +38,7 @@ describe('GitNotice', () => {
     store.prerequisites = { git: { available: true, version: 'git version 2.22.5', meetsMinimum: false }, agents };
     render(GitNotice);
     expect(screen.getByRole('status')).toHaveTextContent('git version 2.22.5');
-    expect(screen.getByRole('status')).toHaveTextContent('need Git 2.23 or later');
+    expect(screen.getByRole('status')).toHaveTextContent('rewinding and a few other steps need Git 2.23 or later');
   });
 
   it('hides once a re-check finds git', async () => {

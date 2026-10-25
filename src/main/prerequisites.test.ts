@@ -57,7 +57,7 @@ describe('checkGit()', () => {
   });
 
   it('meets minimum for git 2.23', async () => {
-    mockGitVersion.mockResolvedValue({ version: 'git version 2.23.0.windows.1', major: 2, minor: 23, patch: 0 });
+    mockGitVersion.mockResolvedValue({ version: 'git version 2.23.0', major: 2, minor: 23, patch: 0 });
     const result = await checkGit();
     expect(result.meetsMinimum).toBe(true);
   });

@@ -1,5 +1,11 @@
 import type { PrerequisiteStatus } from './types.js';
 
+/** The oldest git the app is made for: rewinding restores files with
+ *  `git restore`, and Continue drops a pick resolved to no change with
+ *  `cherry-pick --skip` (`revert --skip`), both from git 2.23. Older git only
+ *  gets a warning: threads still start, and those steps fail. */
+export const MIN_GIT = { major: 2, minor: 23 } as const;
+
 /**
  * True when git is installed and new enough. Only git-backed features need it
  * (adding a project, worktrees, Changes); it never blocks the app from loading.
