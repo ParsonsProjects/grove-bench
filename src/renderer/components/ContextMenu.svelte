@@ -141,7 +141,7 @@
   onpointerdown={(e) => e.stopPropagation()}
   onmouseleave={() => activeIndex = -1}
 >
-  {#each items as item, i}
+  {#each items as item, i (i)}
     {#if item.separator}
       <div class={menuSeparator} role="separator"></div>
     {/if}

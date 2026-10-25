@@ -1518,7 +1518,7 @@
           aria-label="Inactive for"
           class="ml-1"
         >
-          {#each cleanupDayPresets as d}
+          {#each cleanupDayPresets as d (d)}
             <Segmented.Item value={String(d)}>{d}</Segmented.Item>
           {/each}
         </Segmented.Root>

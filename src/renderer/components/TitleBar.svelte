@@ -131,7 +131,7 @@
 
 <div class="titlebar flex items-center h-8 bg-card border-b border-border select-none shrink-0 relative overflow-hidden">
   <!-- Individual pixels: solid grid on left, dissolving to scattered on right -->
-  {#each greyPixels as g}
+  {#each greyPixels as g, i (i)}
     <span
       class="absolute"
       style="width:4px;height:4px;left:{g.left}px;top:{g.top}px;background:{g.color};opacity:{g.opacity};"
@@ -139,7 +139,7 @@
   {/each}
 
   <!-- Dissolving blue pixel trail -->
-  {#each bluePixels as p}
+  {#each bluePixels as p, i (i)}
     <span
       class="titlebar-pixel absolute"
       style="

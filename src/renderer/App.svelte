@@ -526,7 +526,7 @@
       </svelte:boundary>
     {:else if store.sessions.length === 0}
       <div class="pixel-bg flex-1 flex items-center justify-center text-muted-foreground relative overflow-hidden">
-        {#each Array(20) as _, i}
+        {#each Array(20) as _, i (i)}
           <span
             class="blue-pixel absolute"
             style="width:4px;height:4px;top:{Math.round((8+(((i*37+13)*7)%84))/100*800/6)*6}px;left:{Math.round((5+(((i*53+7)*11)%90))/100*1400/6)*6}px;animation-delay:{(i*1.3)%6}s;"
@@ -542,7 +542,7 @@
       </div>
     {:else if !store.activeSessionId}
       <div class="pixel-bg flex-1 flex items-center justify-center text-muted-foreground relative overflow-hidden">
-        {#each Array(20) as _, i}
+        {#each Array(20) as _, i (i)}
           <span
             class="blue-pixel absolute"
             style="width:4px;height:4px;top:{Math.round((8+(((i*37+13)*7)%84))/100*800/6)*6}px;left:{Math.round((5+(((i*53+7)*11)%90))/100*1400/6)*6}px;animation-delay:{(i*1.3)%6}s;"
@@ -586,7 +586,7 @@
             <!-- Opaque here, not on .pixel-bg, whose background shorthand wins over utilities. -->
             <div class={live ? 'absolute inset-0 z-20 bg-background' : 'h-full'}>
             <div class="pixel-bg flex items-center justify-center h-full text-muted-foreground relative overflow-hidden">
-              {#each Array(20) as _, i}
+              {#each Array(20) as _, i (i)}
                 <span
                   class="blue-pixel absolute"
                   style="width:4px;height:4px;top:{Math.round((8+(((i*37+13)*7)%84))/100*800/6)*6}px;left:{Math.round((5+(((i*53+7)*11)%90))/100*1400/6)*6}px;animation-delay:{(i*1.3)%6}s;"

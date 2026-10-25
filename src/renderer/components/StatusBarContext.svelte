@@ -205,7 +205,7 @@
           Tool list ({systemInfo.tools.length})
         </summary>
         <div class="mt-1.5 max-h-32 overflow-y-auto space-y-0.5 text-muted-foreground">
-          {#each systemInfo.tools as tool}
+          {#each systemInfo.tools as tool, i (i)}
             <div class="font-mono text-micro truncate">{tool}</div>
           {/each}
         </div>

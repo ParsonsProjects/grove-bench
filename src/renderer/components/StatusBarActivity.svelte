@@ -142,7 +142,7 @@
           <!-- Out to the panel's edges, so a row to pick can reach them
                without the list scrolling sideways. -->
           <div class="space-y-1.5 max-h-48 overflow-y-auto -mx-3 px-3">
-            {#each pendingTools as task}
+            {#each pendingTools as task, i (i)}
               {#if task.subagentCall}
                 {@const call = task.subagentCall}
                 <!-- A row to pick, like a menu's, its text in line with the
@@ -190,7 +190,7 @@
             <Notice tone="danger" class="mb-2 break-words">Could not stop task: {bgTaskStopError}</Notice>
           {/if}
           <div class="space-y-2 max-h-64 overflow-y-auto">
-            {#each backgroundTasks as task}
+            {#each backgroundTasks as task (task.taskId)}
               <div class="border border-border/50 p-2">
                 <div class="flex items-center gap-2 mb-1">
                   {#if task.status === 'running'}

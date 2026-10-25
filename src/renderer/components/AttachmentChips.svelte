@@ -14,7 +14,7 @@
 </script>
 
 <div class="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto {className}">
-  {#each files as file, i}
+  {#each files as file, i (i)}
     <span
       class="inline-flex items-center gap-1 bg-primary/15 text-primary text-xs px-2 py-1 font-mono border border-primary/25"
       title={file.type === 'file' ? `${file.name} (${formatFileSize(file.size)})` : undefined}
