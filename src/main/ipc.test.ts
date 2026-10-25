@@ -1298,9 +1298,10 @@ describe('git handlers', () => {
   it('GIT_STATUS branch scope lists changes since the merge base plus untracked files, with line counts', async () => {
     vi.mocked(git.resolveMergeBase).mockResolvedValue({ ref: 'origin/main', mergeBase: 'mb' });
     vi.mocked(git.git).mockImplementation(async (args: string[]) => {
-      if (args[0] === 'diff' && args[1] === '--name-status') return 'M\0src/a.ts\0';
-      if (args[0] === 'status') return '?? new.ts\0';
-      if (args[0] === 'diff' && args.includes('--numstat')) return '3\t1\tsrc/a.ts\0';
+      // args[0] is --no-optional-locks.
+      if (args[1] === 'diff' && args[2] === '--name-status') return 'M\0src/a.ts\0';
+      if (args[1] === 'status') return '?? new.ts\0';
+      if (args[1] === 'diff' && args.includes('--numstat')) return '3\t1\tsrc/a.ts\0';
       return '';
     });
     vi.mocked(git.hashWorkingFiles).mockResolvedValue('h1\nh2\n');
@@ -1312,16 +1313,20 @@ describe('git handlers', () => {
       expect.objectContaining({ filePath: 'src/a.ts', status: 'modified', additions: 3, deletions: 1, contentHash: 'h1' }),
       expect.objectContaining({ filePath: 'new.ts', status: 'untracked', contentHash: 'h2' }),
     ]);
+    // Without the index lock, so a git command run in the terminal meanwhile
+    // can't fail on it.
     expect(git.git).toHaveBeenCalledWith(
-      ['diff', 'mb', '--numstat', '-z', '--', 'src/a.ts', 'new.ts'], wt,
+      ['--no-optional-locks', 'diff', 'mb', '--numstat', '-z', '--', 'src/a.ts', 'new.ts'], wt,
     );
+    expect(git.git).toHaveBeenCalledWith(['--no-optional-locks', 'status', '--porcelain=v1', '-z', '--untracked-files=all'], wt);
+    expect(git.git).toHaveBeenCalledWith(['--no-optional-locks', 'diff', '--name-status', '-z', 'mb'], wt);
   });
 
   it('GIT_STATUS branch scope lists a file in conflict once, as one, not as the change the diff from the base calls it', async () => {
     vi.mocked(git.resolveMergeBase).mockResolvedValue({ ref: 'origin/main', mergeBase: 'mb' });
     vi.mocked(git.git).mockImplementation(async (args: string[]) => {
-      if (args[0] === 'diff' && args[1] === '--name-status') return 'M\0both.txt\0M\0src/a.ts\0';
-      if (args[0] === 'status') return 'UU both.txt\0';
+      if (args[1] === 'diff' && args[2] === '--name-status') return 'M\0both.txt\0M\0src/a.ts\0';
+      if (args[1] === 'status') return 'UU both.txt\0';
       return '';
     });
     vi.mocked(git.hashWorkingFiles).mockResolvedValue('h1\nh2\n');
@@ -1338,7 +1343,7 @@ describe('git handlers', () => {
   it('GIT_STATUS hashes the files beside a conflicted one that is gone, rather than none', async () => {
     fs.writeFileSync(path.join(wt, 'kept.txt'), 'x');
     try {
-      vi.mocked(git.git).mockImplementation(async (args: string[]) => (args[0] === 'status' ? 'DD gone.txt\0UU kept.txt\0 M a.ts\0' : ''));
+      vi.mocked(git.git).mockImplementation(async (args: string[]) => (args[1] === 'status' ? 'DD gone.txt\0UU kept.txt\0 M a.ts\0' : ''));
       vi.mocked(git.hashWorkingFiles).mockResolvedValue('h1\nh2\n');
 
       const result = await invoke(IPC.GIT_STATUS, 's1');
@@ -1356,7 +1361,7 @@ describe('git handlers', () => {
   it('GIT_STATUS reports a merge or rebase stopped part way, in either scope', async () => {
     const rebase = { kind: 'rebase' as const, branch: 'feat', incoming: 'main', step: 1, total: 2 };
     vi.mocked(git.gitOperation).mockResolvedValue(rebase);
-    vi.mocked(git.git).mockImplementation((args: string[]) => Promise.resolve(args[0] === 'status' ? 'UU a.ts\0' : ''));
+    vi.mocked(git.git).mockImplementation((args: string[]) => Promise.resolve(args[1] === 'status' ? 'UU a.ts\0' : ''));
     vi.mocked(git.hashWorkingFiles).mockResolvedValue('h1\n');
 
     expect(await invoke(IPC.GIT_STATUS, 's1')).toMatchObject({ operation: rebase });

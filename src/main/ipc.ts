@@ -157,6 +157,13 @@ function sanitizeWorktreeRelPath(worktreePath: string, filePath: string): { relP
  *  Scoped to the changed paths so this doesn't walk the whole tree after every
  *  agent edit; falls back to the full diff when the path list would be
  *  unreasonably long for a command line. Best-effort (e.g. no HEAD yet). */
+/** git for the Changes tab's status, which refreshes in the background.
+ *  Without its optional locks: status and diff rewrite the index as they go
+ *  (only to save later commands work), and the lock that takes can make a
+ *  git command run in the terminal meanwhile fail ("index.lock exists").
+ *  git-status's "Background refresh" advises this. */
+const statusGit = (args: string[], cwd: string) => git(['--no-optional-locks', ...args], cwd);
+
 async function attachNumstat(cwd: string, entries: GitStatusEntry[], base: string): Promise<void> {
   try {
     const paths = new Set<string>();
@@ -168,7 +175,7 @@ async function attachNumstat(cwd: string, entries: GitStatusEntry[], base: strin
     // name rather than "a => b", and a name outside ASCII unquoted.
     const numstatArgs = ['diff', base, '--numstat', '-z'];
     if (paths.size <= 200) numstatArgs.push('--', ...paths);
-    const numstatRaw = await git(numstatArgs, cwd);
+    const numstatRaw = await statusGit(numstatArgs, cwd);
     const stats = new Map(parseNumstat(numstatRaw).map(s => [s.path, s]));
     for (const entry of entries) {
       const stat = stats.get(entry.filePath);
@@ -1663,8 +1670,8 @@ export function registerHandlers() {
         }
         numstatBase = mb.mergeBase;
         // Tracked changes (committed or not) since the merge base, plus untracked files.
-        const tracked = parseNameStatus(await git(['diff', '--name-status', '-z', mb.mergeBase], cwd));
-        const status = parseGitStatusPorcelain(await git(['status', '--porcelain=v1', '-z', '--untracked-files=all'], cwd));
+        const tracked = parseNameStatus(await statusGit(['diff', '--name-status', '-z', mb.mergeBase], cwd));
+        const status = parseGitStatusPorcelain(await statusGit(['status', '--porcelain=v1', '-z', '--untracked-files=all'], cwd));
         const untracked = status.entries.filter(e => e.status === 'untracked');
         // The diff from the base lists a file in conflict as an ordinary change.
         const conflicted = status.entries.filter(e => e.status === 'conflicted');
@@ -1675,7 +1682,7 @@ export function registerHandlers() {
           uncommitted: status.entries.length,
         };
       } else {
-        const raw = await git(['status', '--porcelain=v1', '-z', '--untracked-files=all'], cwd);
+        const raw = await statusGit(['status', '--porcelain=v1', '-z', '--untracked-files=all'], cwd);
         result = parseGitStatusPorcelain(raw);
       }
       if (result.entries.length === 0) return withOperation(result);

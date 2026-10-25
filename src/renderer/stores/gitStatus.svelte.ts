@@ -164,6 +164,19 @@ class GitStatusStore {
     );
   }
 
+  /** Read the status again, for the thread on screen, when the window comes
+   *  back into focus: git may have changed in another app meanwhile (a
+   *  commit in an editor, say). Only a thread whose status is loaded, so not
+   *  one without git. Returns a function that stops it. */
+  refreshOnFocus(onScreen: () => string | null): () => void {
+    const onFocus = () => {
+      const sessionId = onScreen();
+      if (sessionId && sessionId in this.statusBySession) void this.refresh(sessionId);
+    };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }
+
   // ── Git write actions (proxy the CLI via IPC, then refresh status) ──
 
   /** Revert a file via git checkout, or undo a rename (`renamedFrom`, its old path). */

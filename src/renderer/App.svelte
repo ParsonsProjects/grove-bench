@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
   import { store } from './stores/sessions.svelte.js';
+  import { gitStatusStore } from './stores/gitStatus.svelte.js';
   import { messageStore } from './stores/messages.svelte.js';
   import { settingsStore } from './stores/settings.svelte.js';
   import { prStore } from './stores/pr.svelte.js';
@@ -385,6 +386,7 @@
     const unsubAppError = window.groveBench.onAppError(handleErrorReport);
     // Slow frames go to main's freeze log, so a reported freeze can be traced.
     const uninstallFreezeWatch = installFreezeWatch((report) => window.groveBench.reportFreeze(report));
+    const stopFocusRefresh = gitStatusStore.refreshOnFocus(() => store.activeSessionId);
 
     // Git and agent checks run in the background and never block the app.
     // Credentials are asked for when the user starts a conversation.
@@ -487,6 +489,7 @@
       uninstallErrors();
       uninstallTooltips();
       uninstallFreezeWatch();
+      stopFocusRefresh();
       stopIdleManager();
       window.removeEventListener('keydown', handleGlobalKeydown);
       window.removeEventListener('keydown', skipWakeScene, true);
