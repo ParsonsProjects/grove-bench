@@ -10,7 +10,7 @@
   import PanelToggle from './PanelToggle.svelte';
   import type { DiffStats, GitStatusEntry, RewindOptions } from '../../shared/types.js';
   import { canRewindThread } from '../lib/agent-commands.js';
-  import { FILES_LOST, startsAfresh } from '../lib/rewind-text.js';
+  import { FILES_REPLACED, startsAfresh } from '../lib/rewind-text.js';
   import { agentsStore } from '../stores/agents.svelte.js';
   import { Badge } from '$lib/components/ui/badge/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
@@ -103,11 +103,11 @@
     const afresh = canRewindThread(sessionId) ? '' : ` ${startsAfresh(agentName)}`;
     switch (confirming.mode) {
       case 'files':
-        return { message: `Restore files to ${at}? They go back to before this turn, so ${FILES_LOST}.`, confirm: 'Restore' };
+        return { message: `Restore files to ${at}? They go back to before this turn: ${FILES_REPLACED}.`, confirm: 'Restore' };
       case 'conversation':
         return { message: `Rewind the thread to ${at}? ${thread} Files stay as they are.${afresh}`, confirm: 'Rewind thread' };
       case 'all':
-        return { message: `Rewind to ${at}? Files go back to before this turn, so ${FILES_LOST}. ${thread}${afresh}`, confirm: 'Rewind' };
+        return { message: `Rewind to ${at}? Files go back to before this turn: ${FILES_REPLACED}. ${thread}${afresh}`, confirm: 'Rewind' };
     }
   });
   /** Index of the first pre-clear entry in the newest-first list (divider position). */

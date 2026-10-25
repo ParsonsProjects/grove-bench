@@ -121,7 +121,7 @@ export function isMessageVisible(msg: ChatMessage, mode: MessageViewMode): boole
       // reply, which is part of the conversation the user needs to follow.
       return true;
     default:
-      // user, text, error, git_identity_missing, result. Every assistant text block is kept: agents
+      // user, text, error, git_identity_missing, files_kept, result. Every assistant text block is kept: agents
       // routinely split one answer across several blocks (findings, then next
       // steps), so keeping only the last would hide the part that matters.
       // The notes written while working fold into one line instead
@@ -203,5 +203,5 @@ export function foldNarration(visible: ChatMessage[], notes: Set<string>): Threa
  * of a turn (result, error) counts, so a turn that ends without a reply does.
  */
 export function hasAgentReply(visible: ChatMessage[]): boolean {
-  return visible.some((m) => m.kind !== 'user' && m.kind !== 'system' && m.kind !== 'git_identity_missing');
+  return visible.some((m) => m.kind !== 'user' && m.kind !== 'system' && m.kind !== 'git_identity_missing' && m.kind !== 'files_kept');
 }

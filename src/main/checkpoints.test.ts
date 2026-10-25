@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('./git.js', () => {
   const git = vi.fn();
   // Straight through to the mocked git; a test makes it give null (over its limit) itself.
-  return { git, gitEnv: vi.fn(), gitPatch: vi.fn((args: string[], cwd: string) => git(args, cwd)) };
+  return { git, gitEnv: vi.fn(), gitExit: vi.fn(), gitPatch: vi.fn((args: string[], cwd: string) => git(args, cwd)) };
 });
 
 vi.mock('./logger.js', () => ({
@@ -263,6 +263,85 @@ describe('CheckpointManager', () => {
     it('throws when uuid not found', async () => {
       const mgr = new CheckpointManager();
       await expect(mgr.restore('sess1', '/repo', 'missing')).rejects.toThrow('No checkpoint found');
+    });
+
+    // The copy is the only one of the files as they are now.
+    it('restores nothing when it cannot keep a copy of the files first', async () => {
+      mockGitEnv.mockResolvedValue('');
+      mockGit.mockResolvedValue('oid');
+      const mgr = new CheckpointManager();
+      await mgr.capture('sess1', '/repo', 'uuid-1');
+      mockGit.mockClear();
+      mockGit.mockResolvedValue('abc123');
+      mockGitEnv.mockImplementation(async (args: string[]) => {
+        if (args[0] === 'commit-tree') throw new Error('disk full');
+        return 'tree';
+      });
+
+      await expect(mgr.restore('sess1', '/repo', 'uuid-1'))
+        .rejects.toThrow("Couldn't keep a copy of the files as they are, so none were restored: disk full");
+      const commands = mockGit.mock.calls.map(([args]) => args[0]);
+      expect(commands).not.toContain('restore');
+      expect(commands).not.toContain('clean');
+    });
+
+    // Some files may have changed: the copy made just before is the way back.
+    it('gives the copy it kept when restoring fails partway', async () => {
+      mockGitEnv.mockResolvedValue('');
+      mockGit.mockResolvedValue('oid');
+      const mgr = new CheckpointManager();
+      await mgr.capture('sess1', '/repo', 'uuid-1');
+      mockGit.mockReset();
+      mockGit.mockImplementation(async (args: string[]) => {
+        if (args[0] === 'clean') throw new Error('EBUSY: resource busy or locked');
+        return args[0] === 'for-each-ref' ? '' : 'abc123';
+      });
+      mockGitEnv.mockImplementation(async (args: string[]) => (args[0] === 'commit-tree' ? 'kept1\n' : 'tree'));
+
+      const err = await mgr.restore('sess1', '/repo', 'uuid-1').catch((e: unknown) => e);
+      expect(err).toMatchObject({ copy: 'kept1' });
+      expect((err as Error).message).toBe("Couldn't finish restoring the files, so some may have changed: EBUSY: resource busy or locked");
+    });
+
+    // A checkpoint taken mid-restore would record half-restored files.
+    it('holds a capture asked for during a restore until the restore is done', async () => {
+      mockGitEnv.mockResolvedValue('tree');
+      mockGit.mockResolvedValue('oid');
+      const mgr = new CheckpointManager();
+      await mgr.capture('sess1', '/repo', 'uuid-1');
+      mockGit.mockReset();
+      let finishClean!: () => void;
+      const order: string[] = [];
+      mockGit.mockImplementation(async (args: string[]) => {
+        order.push(args[0] === 'update-ref' ? `update-ref ${args[1]}` : args[0]);
+        if (args[0] === 'clean') await new Promise<void>((r) => { finishClean = r; });
+        return args[0] === 'for-each-ref' ? '' : 'abc123';
+      });
+
+      const restoring = mgr.restore('sess1', '/repo', 'uuid-1');
+      await vi.waitFor(() => expect(order).toContain('clean'));
+      const capturing = mgr.capture('sess1', '/repo', 'uuid-2');
+      await new Promise((r) => setTimeout(r, 20));
+      expect(order.some((c) => c.includes('/turn/2'))).toBe(false);
+
+      finishClean();
+      await restoring;
+      await capturing;
+      expect(order.indexOf('reset')).toBeLessThan(order.findIndex((c) => c.includes('/turn/2')));
+    });
+
+    // Each copy's parent is the one before, so none becomes unreachable.
+    it('chains each copy to the one before', async () => {
+      mockGitEnv.mockResolvedValue('');
+      mockGit.mockResolvedValue('oid');
+      const mgr = new CheckpointManager();
+      await mgr.capture('sess1', '/repo', 'uuid-1');
+      mockGit.mockReset();
+      mockGit.mockImplementation(async (args: string[]) => (args[0] === 'for-each-ref' ? 'previous\n' : 'abc123'));
+      mockGitEnv.mockImplementation(async (args: string[]) => (args[0] === 'commit-tree' ? 'kept2\n' : 'tree'));
+
+      expect(await mgr.restore('sess1', '/repo', 'uuid-1')).toBe('kept2');
+      expect(mockGitEnv).toHaveBeenCalledWith(['commit-tree', 'tree', '-p', 'previous', '-m', 'grove kept files'], '/repo', expect.anything());
     });
   });
 

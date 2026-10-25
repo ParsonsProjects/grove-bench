@@ -183,7 +183,7 @@ describe('CheckpointsPanel with grove characters', () => {
 // A rewind discards work that nothing else keeps (the checkpoint is from
 // before the turn, and later ones are pruned), so each one asks first.
 describe('CheckpointsPanel rewinds', () => {
-  const LOST = 'every change since is lost, yours included, and new files are deleted';
+  const REPLACED = 'your own changes go too, and new files are removed, but the thread keeps a copy of them as they are now, so you can bring them back';
   const THREAD = 'This turn and later ones leave the thread, and the checkpoints after it are deleted.';
 
   afterEach(() => {
@@ -202,7 +202,7 @@ describe('CheckpointsPanel rewinds', () => {
     await fireEvent.click(getByRole('button', { name: 'Rewind all' }));
 
     expect(mockGroveBench.rewindSession).not.toHaveBeenCalled();
-    expect(getByRole('alert')).toHaveTextContent(`Rewind to #2? Files go back to before this turn, so ${LOST}. ${THREAD}`);
+    expect(getByRole('alert')).toHaveTextContent(`Rewind to #2? Files go back to before this turn: ${REPLACED}. ${THREAD}`);
     await fireEvent.click(getByRole('button', { name: 'Rewind' }));
     await waitFor(() => expect(mockGroveBench.rewindSession).toHaveBeenCalledWith(SID, 'u2', undefined));
     expect(queryByRole('alert')).toBeNull();
@@ -271,7 +271,7 @@ describe('CheckpointsPanel rewinds', () => {
     expect(queryByRole('button', { name: 'Thread only' })).toBeNull();
     await fireEvent.click(getByRole('button', { name: 'Restore files' }));
 
-    expect(getByRole('alert')).toHaveTextContent(`Restore files to #1? They go back to before this turn, so ${LOST}.`);
+    expect(getByRole('alert')).toHaveTextContent(`Restore files to #1? They go back to before this turn: ${REPLACED}.`);
     expect(mockGroveBench.rewindSession).not.toHaveBeenCalled();
     await fireEvent.click(getByRole('button', { name: 'Restore' }));
     await waitFor(() => expect(mockGroveBench.rewindSession).toHaveBeenCalledWith(SID, 'u1', { filesOnly: true }));
