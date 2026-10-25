@@ -249,6 +249,7 @@ export function isReadOnlyBashCommand(command: string, cwd?: string): boolean {
  *  method calls, cmd.exe expands `%var%` and escapes with `^`, and control
  *  characters such as a lone carriage return, which PowerShell reads as a
  *  line break the bash split doesn't make. */
+// eslint-disable-next-line no-control-regex
 const NON_BASH_EXEC_CHARS = /[(){}@$%^\x00-\x1f\x7f]/;
 
 /**

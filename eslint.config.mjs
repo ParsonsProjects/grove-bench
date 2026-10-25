@@ -46,6 +46,12 @@ export default defineConfig(
       '@typescript-eslint/restrict-template-expressions': ['error', {
         allow: [{ name: ['Error', 'URL', 'URLSearchParams', 'unknown'], from: 'lib' }],
       }],
+      // In this code an async function with no await is one whose type says
+      // it returns a promise (a mock, the no-git checkpoints, an IPC
+      // handler): async is how it returns one, and turns a throw into a
+      // rejection the caller's .catch() sees. no-floating-promises and
+      // no-misused-promises still catch a promise left unawaited.
+      '@typescript-eslint/require-await': 'off',
     },
   },
   {

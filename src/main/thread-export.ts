@@ -202,6 +202,7 @@ export function threadJson(events: readonly AgentEvent[], info: ThreadExportInfo
 /** A file name for the save dialog: the title without characters Windows
  *  doesn't allow, kept short, and never a name Windows keeps for a device. */
 export function exportFileName(title: string, extension: 'md' | 'json'): string {
+  // eslint-disable-next-line no-control-regex
   const safe = title.replace(/[<>:"/\\|?*\u0000-\u001f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80).replace(/[. ]+$/, '');
   // Windows keeps these for devices, with any extension too (AUX.ts is AUX),
   // and reads the name before the extension without its trailing spaces.

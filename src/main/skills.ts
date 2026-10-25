@@ -120,7 +120,7 @@ export function isSkillLink(content: string): boolean {
  * manifest format — so a full YAML parser isn't pulled into the main process.
  */
 export function parseSkillFrontmatter(content: string): { name?: string; description?: string } {
-  const normalized = content.replace(/^﻿/, '');
+  const normalized = content.replace(/^\uFEFF/, '');
   const match = normalized.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
   if (!match) return {};
   const result: { name?: string; description?: string } = {};

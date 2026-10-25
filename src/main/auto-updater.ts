@@ -32,7 +32,7 @@ function setStatus(next: UpdateStatus) {
   }
 }
 
-function extractInfo(info: { version: string; releaseNotes?: string | unknown; releaseName?: string | null; releaseDate?: string }): UpdateInfo {
+function extractInfo(info: { version: string; releaseNotes?: unknown; releaseName?: string | null; releaseDate?: string }): UpdateInfo {
   return {
     version: info.version,
     releaseNotes: typeof info.releaseNotes === 'string' ? info.releaseNotes : undefined,

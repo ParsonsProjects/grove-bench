@@ -306,7 +306,8 @@ export class Catalogs {
     }
   }
 
-  private async fetchJson(url: string): Promise<unknown | null> {
+  /** The JSON at `url`, or null when it can't be fetched. */
+  private async fetchJson(url: string): Promise<unknown> {
     try {
       const res = await this.fetchFn(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
       if (!res.ok) {

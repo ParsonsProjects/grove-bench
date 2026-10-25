@@ -1409,7 +1409,7 @@ export function registerHandlers() {
     // commits the agent already made on the branch stay in the diff.
     // Otherwise staged diff = index vs HEAD; unstaged diff = working tree vs index.
     let diff: string | null = '';
-    let diffError: unknown;
+    let diffError: Error | undefined;
     try {
       if (opts?.base) {
         const mb = await resolveMergeBase(worktree.path, opts.base);
@@ -1419,7 +1419,7 @@ export function registerHandlers() {
         diff = await fileDiff(worktree.path, relPath, { staged });
       }
     } catch (e) {
-      diffError = e;
+      diffError = e instanceof Error ? e : new Error(String(e));
     }
     if (diff === null) return patchOverLimit();
     if (detectBinaryDiff(diff)) return { kind: 'binary' };
