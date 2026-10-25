@@ -53,7 +53,7 @@ function readCredentialsForUpdate(): CredentialsFile {
     return readCredentials();
   } catch (err) {
     logger.warn('[credentials] could not read saved API keys:', err);
-    throw new Error("Couldn't read your saved API keys, so nothing was changed. Try again in a moment.");
+    throw new Error("Couldn't read your saved API keys, so nothing was changed. Try again in a moment.", { cause: err });
   }
 }
 

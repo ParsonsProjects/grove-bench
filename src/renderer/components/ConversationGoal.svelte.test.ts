@@ -12,7 +12,7 @@ import type { ConversationGoal as Goal } from '../../shared/types.js';
 const SID = 'goal1';
 
 const REPLIED: ChatMessage[] = [
-  { kind: 'user', id: 'u1', text: 'Add a dark mode toggle' } as ChatMessage,
+  { kind: 'user', id: 'u1', text: 'Add a dark mode toggle' },
   { kind: 'text', id: 't1', text: 'Added it.', uuid: 'a1' },
 ];
 

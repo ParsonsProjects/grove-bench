@@ -24,7 +24,6 @@ vi.mock('./logger.js', () => ({
 import { loadSettings, saveSettings, getSettings, applyImmediateEffects, windowBackground, upgradeSettings, validateSettings, resetSettingsCache, SETTINGS_SCHEMA_VERSION } from './settings.js';
 import { NIGHT, PAPER } from '../shared/brand.js';
 import { nativeTheme } from 'electron';
-import type { GroveBenchSettings } from '../shared/types.js';
 
 const enoent = () => Object.assign(new Error('ENOENT: no such file'), { code: 'ENOENT' });
 

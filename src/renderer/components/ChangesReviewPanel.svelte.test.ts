@@ -41,7 +41,7 @@ const SID = 'changes-session';
 const OTHER = 'other-session';
 
 function entry(filePath: string, over: Partial<GitStatusEntry> = {}): GitStatusEntry {
-  return { filePath, status: 'modified', staged: false, ...over } as GitStatusEntry;
+  return { filePath, status: 'modified', staged: false, ...over };
 }
 
 function patch(line: string): string {
@@ -1001,7 +1001,7 @@ describe('ChangesReviewPanel — large diffs', () => {
     const after = [...before];
     after[14] = 'the one changed line';
     editTurn();
-    messageStore.messagesBySession[SID]!.splice(2, 1, {
+    messageStore.messagesBySession[SID].splice(2, 1, {
       kind: 'tool_call', id: 'a1', toolName: 'edit', toolInput: {}, toolUseId: 't1', uuid: 'u1', pending: false,
       toolView: { kind: 'edit', path: 'notes.txt', edits: [{ oldText: before.join('\n'), newText: after.join('\n') }] },
     } as any);
@@ -1021,7 +1021,7 @@ describe('ChangesReviewPanel — large diffs', () => {
       // and past the size a replacement is always diffed at.
       const side = (word: string) => Array.from({ length: 60 }, (_, i) => `${word} ${i}`).join('\n');
       editTurn();
-      messageStore.messagesBySession[SID]!.splice(2, 1, {
+      messageStore.messagesBySession[SID].splice(2, 1, {
         kind: 'tool_call', id: 'b1', toolName: 'Edit', toolInput: { file_path: 'notes.txt', old_string: side('old'), new_string: side('new') }, toolUseId: 't1', uuid: 'u1', pending: false,
       } as any);
       const { container, findByRole, findByText } = render(ChangesReviewPanel, { sessionId: SID });
@@ -1044,7 +1044,7 @@ describe('ChangesReviewPanel — large diffs', () => {
       editTurn();
       // One line, but past the 5,000 characters a replacement is always diffed at.
       const pad = ' '.repeat(5000);
-      messageStore.messagesBySession[SID]!.splice(1, 1, {
+      messageStore.messagesBySession[SID].splice(1, 1, {
         kind: 'tool_call', id: 'e1', toolName: 'Edit', toolInput: { file_path: 'notes.txt', old_string: `tiny old${pad}`, new_string: `tiny new${pad}` }, toolUseId: 't0', uuid: 'u0', pending: false,
       } as any);
       const { container, findByRole, findByText, queryByText } = render(ChangesReviewPanel, { sessionId: SID });

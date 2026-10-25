@@ -1107,7 +1107,7 @@ describe('remove: which branches go', () => {
     mockFs.readFile.mockResolvedValue(JSON.stringify({
       'wt-a': { repoPath: '/repo', branch: 'release/1.4', createdAt: 1000, createdBranches: ['claude/foo'] },
     }));
-    mockGit.mockImplementation(unmerged('release/1.4') as never);
+    mockGit.mockImplementation(unmerged('release/1.4'));
 
     await manager.remove('wt-a', true);
 
@@ -1122,7 +1122,7 @@ describe('remove: which branches go', () => {
     mockFs.readFile.mockResolvedValue(JSON.stringify({
       'wt-a': { repoPath: '/repo', branch: 'claude/foo', createdAt: 1000, createdBranches: ['claude/foo'] },
     }));
-    mockGit.mockImplementation(unmerged('claude/foo') as never);
+    mockGit.mockImplementation(unmerged('claude/foo'));
 
     await manager.remove('wt-a', true);
 
@@ -1133,7 +1133,7 @@ describe('remove: which branches go', () => {
     mockFs.readFile.mockResolvedValue(JSON.stringify({
       'wt-a': { repoPath: '/repo', branch: 'feat-a', createdAt: 1000 },
     }));
-    mockGit.mockImplementation(unmerged('feat-a') as never);
+    mockGit.mockImplementation(unmerged('feat-a'));
 
     await manager.remove('wt-a', true);
 
@@ -1158,7 +1158,7 @@ describe('remove: which branches go', () => {
       'wt-a': { repoPath: '/repo', branch: 'release/1.4', createdAt: 1000, createdBranches: ['claude/foo'], pendingRemoval: true, pendingBranchDelete: true },
     }));
     mockFsUtils.pathExists.mockResolvedValue(false);
-    mockGit.mockImplementation(unmerged('release/1.4') as never);
+    mockGit.mockImplementation(unmerged('release/1.4'));
 
     await manager.processPendingRemovals();
 

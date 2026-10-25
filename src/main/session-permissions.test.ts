@@ -24,8 +24,8 @@ describe('requestPermission ids', () => {
     const emit = (e: { type: string; requestId?: string }) => { if (e.type === 'permission_request') ids.push(e.requestId!); };
     const request = { requestId: 'adapter_1', toolName: 'Bash', toolUseId: 't1', toolInput: { command: 'ls' } };
 
-    void requestPermission(freshSession(), request, emit as never);
-    void requestPermission(freshSession(), request, emit as never);
+    void requestPermission(freshSession(), request, emit);
+    void requestPermission(freshSession(), request, emit);
 
     expect(ids).toHaveLength(2);
     expect(ids[0]).not.toBe(ids[1]);

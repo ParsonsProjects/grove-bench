@@ -1,4 +1,4 @@
-import type { ClaudeAccountSetting, GroveBenchSettings, ToolRule } from '../../shared/types.js';
+import type { ClaudeAccountSetting, GroveBenchSettings } from '../../shared/types.js';
 import { slugify } from '../../shared/slug.js';
 import type { SettingsSectionId } from '../lib/settings-search.js';
 

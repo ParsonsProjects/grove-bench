@@ -1259,7 +1259,7 @@ class AgentSessionManager {
           // With the path of each saved copy when every one was saved (so the
           // lists line up), for an agent that can't take images.
           images: images?.map((img, i) => {
-            const saved = storedImages.length === images!.length ? imagePath(id, storedImages[i].file) : null;
+            const saved = storedImages.length === images.length ? imagePath(id, storedImages[i].file) : null;
             return saved ? { ...img, path: saved.path } : img;
           }),
           // Only a clip that may go inline carries its data; the rest go by path.

@@ -84,7 +84,7 @@ function toServer(name: string, config: unknown): ParsedMcpServer | { error: str
       name,
       transport,
       commandOrUrl: config.command.trim(),
-      ...(args.length > 0 ? { args: args as string[] } : {}),
+      ...(args.length > 0 ? { args } : {}),
       ...(Object.keys(env).length > 0 ? { env } : {}),
     };
   }

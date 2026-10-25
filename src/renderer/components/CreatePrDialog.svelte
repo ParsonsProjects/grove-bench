@@ -101,7 +101,6 @@
     <div class="flex flex-col gap-3 mt-4">
       <div>
         <Label for="pr-title" class="mb-1 block">Title</Label>
-        <!-- svelte-ignore a11y_autofocus -->
         <Input
           id="pr-title"
           type="text"

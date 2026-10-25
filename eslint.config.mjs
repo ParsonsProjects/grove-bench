@@ -34,6 +34,18 @@ export default defineConfig(
         caughtErrorsIgnorePattern: '^_',
         destructuredArrayIgnorePattern: '^_',
       }],
+      // A ternary run for its calls (`a ? b() : c()`) is meant.
+      '@typescript-eslint/no-unused-expressions': ['error', { allowTernary: true }],
+      // `{}` is what `if (x) String(x)` narrows an unknown value to: String()
+      // there is a guard, as on unknown itself, which the rule already skips.
+      '@typescript-eslint/no-base-to-string': ['error', {
+        ignoredTypeNames: ['Error', 'RegExp', 'URL', 'URLSearchParams', '{}'],
+      }],
+      // unknown is allowed as any is by default: nearly every one is a caught
+      // error in a log line.
+      '@typescript-eslint/restrict-template-expressions': ['error', {
+        allow: [{ name: ['Error', 'URL', 'URLSearchParams', 'unknown'], from: 'lib' }],
+      }],
     },
   },
   {
@@ -47,9 +59,25 @@ export default defineConfig(
     // typescript-eslint turns off the core rules TypeScript already checks
     // (no-undef, no-import-assign and others) only in .ts files. Its
     // prefer-const stays out: Svelte's `let { a } = $props()` is meant.
-    rules: Object.fromEntries(
-      Object.entries(ts.configs.eslintRecommended.rules).filter(([, level]) => level === 'off'),
-    ),
+    rules: {
+      ...Object.fromEntries(
+        Object.entries(ts.configs.eslintRecommended.rules).filter(([, level]) => level === 'off'),
+      ),
+      // It flags every Map, Set and Date. Here they are copied and then
+      // assigned, or bookkeeping nothing draws, which a reactive one would
+      // only slow down.
+      'svelte/prefer-svelte-reactivity': 'off',
+    },
+  },
+  {
+    files: ['**/*.svelte'],
+    rules: {
+      // `value;` alone in a $derived or $effect reads it so it reruns.
+      '@typescript-eslint/no-unused-expressions': 'off',
+      // It reads $bindable() defaults, and a counter in <script module>
+      // that each instance bumps, as values nothing uses.
+      'no-useless-assignment': 'off',
+    },
   },
   {
     // Plain JavaScript (scripts, configs, the MCP bridge) is outside

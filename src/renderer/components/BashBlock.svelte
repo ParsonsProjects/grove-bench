@@ -22,7 +22,6 @@
     summaryMode?: boolean;
   } = $props();
 
-  let expanded = $state(true);
 
   let command = $derived(
     commandProp !== undefined ? commandProp
@@ -123,6 +122,7 @@
       <div class="mt-1 relative group/out" onclick={handleLinkClick}>
         <CopyButton text={result} class="absolute top-1 right-1 opacity-0 group-hover/out:opacity-100" />
         {#if hasLinks}
+          <!-- eslint-disable-next-line svelte/no-at-html-tags -- linkifyOutput escapes the output first -->
           <pre class="text-xs text-muted-foreground overflow-x-auto max-h-[300px] overflow-y-auto whitespace-pre-wrap {isError ? 'text-red-300' : ''}">{@html linkifyOutput(result)}</pre>
         {:else}
           <pre class="text-xs text-muted-foreground overflow-x-auto max-h-[300px] overflow-y-auto whitespace-pre-wrap {isError ? 'text-red-300' : ''}">{result}</pre>
@@ -144,6 +144,7 @@
       <CopyButton text={result} class="absolute top-1 right-1 opacity-0 group-hover/out:opacity-100" />
       {#if isLong && collapsed}
         {#if hasLinks}
+          <!-- eslint-disable-next-line svelte/no-at-html-tags -- linkifyOutput escapes the output first -->
           <pre class="text-xs text-muted-foreground overflow-x-auto max-h-[300px] overflow-y-auto whitespace-pre-wrap {isError ? 'text-red-300' : ''}">{@html linkifyOutput(preview)}</pre>
         {:else}
           <pre class="text-xs text-muted-foreground overflow-x-auto max-h-[300px] overflow-y-auto whitespace-pre-wrap {isError ? 'text-red-300' : ''}">{preview}</pre>
@@ -158,6 +159,7 @@
         </Button>
       {:else}
         {#if hasLinks}
+          <!-- eslint-disable-next-line svelte/no-at-html-tags -- linkifyOutput escapes the output first -->
           <pre class="text-xs text-muted-foreground overflow-x-auto max-h-[300px] overflow-y-auto whitespace-pre-wrap {isError ? 'text-red-300' : ''}">{@html linkifyOutput(result)}</pre>
         {:else}
           <pre class="text-xs text-muted-foreground overflow-x-auto max-h-[300px] overflow-y-auto whitespace-pre-wrap {isError ? 'text-red-300' : ''}">{result}</pre>

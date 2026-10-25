@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import path from 'node:path';
 import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS, thinkingConfigFor, parseMcpListOutput, mcpServerManager, claudeMcpOrigin, mcpToolServerKey, mcpContextCostByServer, toMcpElicitationRequest, withMcpjsonApproval, mcpjsonApprovalsFrom, withoutLegacyDenyRules, buildMcpAddArgs, quoteArg, validatePluginId, validateConfigScope, claudeControlsFor, supportsAdaptiveThinking, supportsFastMode, supportsAutoMode, claudeModelCaps, effortFor, reasoningOptionsFor, toSdkPermissionMode, fromSdkSyncMode, stripAnsi, mapClaudeUsage, thinkingDisplayFor, TEXT_GENERATION_OPTIONS, missingConversationError, userMessageContent, sandboxDecision } from './claude-code.js';
 import type { AgentEvent } from '../../shared/types.js';
@@ -691,7 +691,7 @@ describe('transformMessage() tool results', () => {
           ],
         }],
       },
-    } as any, ctx as any);
+    } as any, ctx);
 
     expect(events).toEqual([{
       type: 'tool_result',
@@ -710,7 +710,7 @@ describe('transformMessage() tool results', () => {
     const events = transformMessage({
       type: 'user',
       message: { content: [{ type: 'tool_result', tool_use_id: 'tu1', content: [{ type: 'text', text: 'ok' }] }] },
-    } as any, ctx as any);
+    } as any, ctx);
     expect(events[0]).not.toHaveProperty('imageData');
   });
 });

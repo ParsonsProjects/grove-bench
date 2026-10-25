@@ -1372,7 +1372,7 @@ describe('Sidebar delete conversation', () => {
   });
 
   it('warns about commits the base branch lacks once the branch is to be deleted too', async () => {
-    mockGroveBench.getBranchCommits.mockResolvedValueOnce([{ subject: 'Fix parser', body: '' }] as any);
+    mockGroveBench.getBranchCommits.mockResolvedValueOnce([{ subject: 'Fix parser', body: '' }]);
     await openDeleteDialog();
     await waitFor(() => expect(mockGroveBench.getBranchCommits).toHaveBeenCalledWith('s2', 'main'));
     expect(screen.queryByText(/isn't on main yet/)).toBeNull();
@@ -1546,12 +1546,12 @@ describe('Sidebar remove project', () => {
     store.sessions = Array.from({ length: 8 }, (_, i) => ({ id: `w${i}`, branch: `b${i}`, repoPath: '/repo-a', status: 'stopped' })) as any;
     let inFlight = 0;
     let most = 0;
-    mockGroveBench.getGitStatus.mockImplementation((async () => {
+    mockGroveBench.getGitStatus.mockImplementation(async () => {
       most = Math.max(most, ++inFlight);
       await new Promise((r) => setTimeout(r, 5));
       inFlight--;
       return { entries: [] };
-    }) as any);
+    });
     await openRemoveDialog();
     await screen.findByRole('button', { name: 'Remove' });
     expect(mockGroveBench.getGitStatus).toHaveBeenCalledTimes(8);
@@ -1682,7 +1682,7 @@ describe('Sidebar sections', () => {
   }
 
   beforeEach(() => {
-    Element.prototype.animate = finishingAnimation as never;
+    Element.prototype.animate = finishingAnimation;
     // Two projects with a conversation, so the Groups section shows.
     store.repos = ['/api', '/web'];
     store.sessions = [

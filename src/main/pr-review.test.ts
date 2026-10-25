@@ -191,14 +191,14 @@ describe('submitPrReview()', () => {
     fakeTools();
     await submitPrReview('/wt', '/repo', { prNumber: 7, event: 'APPROVE', body: '', comments: [] });
     expect(postedPayload()).toEqual({ event: 'APPROVE', commit_id: 'HEAD1aaaaaaa' });
-    expect(mockGh.mock.calls.some(([file, args]) => file === 'gh' && (args as string[]).some((a) => a.includes('/files')))).toBe(false);
+    expect(mockGh.mock.calls.some(([file, args]) => file === 'gh' && args.some((a) => a.includes('/files')))).toBe(false);
   });
 
   it('refuses to approve a head the checkout doesn\'t have', async () => {
     fakeTools({ localHead: 'LOCAL2bbbbbb' });
     await expect(submitPrReview('/wt', '/repo', { prNumber: 7, event: 'APPROVE', body: '', comments: [] }))
       .rejects.toThrow('This checkout is at LOCAL2b but PR #7 is at HEAD1aa');
-    expect(mockGh.mock.calls.some(([file, args]) => file === 'gh' && (args as string[]).includes('POST'))).toBe(false);
+    expect(mockGh.mock.calls.some(([file, args]) => file === 'gh' && args.includes('POST'))).toBe(false);
   });
 
   it('needs a summary to comment or request changes', async () => {

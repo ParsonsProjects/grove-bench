@@ -11,7 +11,7 @@ const { updater, settings } = vi.hoisted(() => {
     updater: {
       autoDownload: false,
       autoInstallOnAppQuit: false,
-      logger: null as unknown,
+      logger: null,
       handlers,
       on(event: string, fn: Handler) {
         handlers.set(event, [...(handlers.get(event) ?? []), fn]);

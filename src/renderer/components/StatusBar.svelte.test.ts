@@ -680,7 +680,7 @@ describe('StatusBar PR', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(screen.getByTestId('push-error').textContent).toContain('could not read Username'));
 
-    vi.mocked(window.groveBench.push).mockResolvedValueOnce(undefined as never);
+    vi.mocked(window.groveBench.push).mockResolvedValueOnce(undefined);
     await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(screen.queryByTestId('push-error')).toBeNull());
     expect(screen.queryByText('push failed')).toBeNull();

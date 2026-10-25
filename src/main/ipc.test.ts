@@ -163,7 +163,7 @@ beforeAll(() => {
   m.adapterRegistry.list.mockReturnValue([]);
   registerHandlers();
   for (const [channel, handler] of [...vi.mocked(ipcMain.handle).mock.calls, ...vi.mocked(ipcMain.on).mock.calls]) {
-    handlers.set(channel as string, handler as Handler);
+    handlers.set(channel, handler as Handler);
   }
 });
 

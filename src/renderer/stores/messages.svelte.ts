@@ -839,7 +839,7 @@ class MessageStore {
       pending = { permission: false, question: false };
       for (const m of msgs) {
         if (m.kind === 'permission') {
-          if (!(m as ChatPermissionMessage).resolved) pending.permission = true;
+          if (!m.resolved) pending.permission = true;
         } else if (m.kind === 'question' || m.kind === 'elicitation' || m.kind === 'limit') {
           if (!m.resolved) pending.question = true;
         }
@@ -2250,7 +2250,7 @@ class MessageStore {
     const msgs = this.getMessagesForMutation(sessionId);
     let changed = false;
     const updated = msgs.map((m) => {
-      if (m.kind === 'permission' && (m as ChatPermissionMessage).requestId === event.requestId && !m.resolved) {
+      if (m.kind === 'permission' && m.requestId === event.requestId && !m.resolved) {
         changed = true;
         return { ...m, resolved: true as const, decision: event.decision, ...(event.reason === 'timeout' ? { timedOut: true } : {}) };
       }
@@ -2333,7 +2333,7 @@ class MessageStore {
     if (event.uuid) {
       const msgs = this.getMessagesForMutation(sessionId);
       const existingIdx = msgs.findLastIndex(
-        (m) => m.kind === 'user' && !(m as ChatUserMessage).uuid,
+        (m) => m.kind === 'user' && !m.uuid,
       );
       if (existingIdx >= 0) {
         const updated = [...msgs];
@@ -2423,7 +2423,7 @@ class MessageStore {
     // during replay (when messages are in _replayBuffer, not messagesBySession).
     const msgs = this.getMessagesForMutation(sessionId);
     const rewindIdx = msgs.findLastIndex(
-      (m) => m.kind === 'user' && (m as ChatUserMessage).uuid === event.toMessageId,
+      (m) => m.kind === 'user' && m.uuid === event.toMessageId,
     );
     if (rewindIdx >= 0) {
       // Remove the rewind target message and place its text into the input
@@ -2550,13 +2550,12 @@ class MessageStore {
     decision: 'allow' | 'deny' | 'allowAlways',
     opts?: { message?: string; updatedPermissions?: unknown[] },
   ): Promise<boolean> {
-    const resolvedDecision = (decision === 'deny' ? 'deny' : 'allow') as 'allow' | 'deny';
+    const resolvedDecision: 'allow' | 'deny' = decision === 'deny' ? 'deny' : 'allow';
 
     // Optimistically update the store so the UI responds instantly.
     // Scan the full message array to find and resolve the permission +
     // clear awaitingPermission on its matching tool_call in a single pass.
     const msgs = this.messagesBySession[sessionId] ?? [];
-    let foundToolName: string | undefined;
     let foundToolCategory: import('../../shared/types.js').ToolCategory | undefined;
     let foundToolUseId: string | undefined;
     let foundIsPlanExecution = false;
@@ -2565,9 +2564,8 @@ class MessageStore {
     // Skip already-resolved ones (stale duplicates from prior query loops).
     const updated = msgs.map((m) => {
       if (m.kind === 'permission') {
-        const pm = m as ChatPermissionMessage;
+        const pm = m;
         if (pm.requestId === requestId && !pm.resolved) {
-          foundToolName = pm.toolName;
           foundToolCategory = pm.toolCategory;
           foundToolUseId = pm.toolUseId;
           foundIsPlanExecution = !!pm.isPlanExecution;
@@ -2630,7 +2628,7 @@ class MessageStore {
       const current = this.messagesBySession[sessionId] ?? [];
       let rollbackChanged = false;
       const rollback = current.map((m) => {
-        if (m.kind === 'permission' && (m as ChatPermissionMessage).requestId === requestId && m.resolved && (m as ChatPermissionMessage).decision !== 'deny') {
+        if (m.kind === 'permission' && m.requestId === requestId && m.resolved && m.decision !== 'deny') {
           rollbackChanged = true;
           return { ...m, decision: 'deny' as const };
         }
@@ -2655,9 +2653,9 @@ class MessageStore {
     const points: { uuid: string; text: string; index: number }[] = [];
     for (let i = 0; i < msgs.length; i++) {
       const m = msgs[i];
-      if (m.kind === 'user' && (m as ChatUserMessage).uuid) {
+      if (m.kind === 'user' && m.uuid) {
         points.push({
-          uuid: (m as ChatUserMessage).uuid!,
+          uuid: m.uuid,
           text: userMessageLabel(m),
           index: i,
         });

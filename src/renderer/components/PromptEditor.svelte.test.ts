@@ -7,7 +7,6 @@ import PromptEditor from './PromptEditor.svelte';
 import { messageStore } from '../stores/messages.svelte.js';
 import { settingsStore } from '../stores/settings.svelte.js';
 import { mockGroveBench } from '../__mocks__/setup.js';
-import type { AgentEvent } from '../../shared/types.js';
 
 const SID = 'prompt-session';
 const DRAFT = 'first line\nsecond line\nthird line\nfourth line';
@@ -90,8 +89,8 @@ describe('PromptEditor: rewind', () => {
     const el = container.querySelector('textarea')!;
     await fireEvent.input(el, { target: { value: 'half-typed' } });
 
-    messageStore.ingestEvent(SID, { type: 'user_message', text: 'try again', uuid: 'cp-1' } as AgentEvent);
-    messageStore.ingestEvent(SID, { type: 'rewind', toMessageId: 'cp-1' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'user_message', text: 'try again', uuid: 'cp-1' });
+    messageStore.ingestEvent(SID, { type: 'rewind', toMessageId: 'cp-1' });
     await tick();
 
     expect(el.value).toBe('try again');
@@ -213,7 +212,7 @@ describe('PromptEditor: suggested next prompt', () => {
     settingsStore.current.promptSuggestions = true;
   });
 
-  const suggest = (suggestion: string) => messageStore.ingestEvent(SID, { type: 'prompt_suggestion', suggestion } as AgentEvent);
+  const suggest = (suggestion: string) => messageStore.ingestEvent(SID, { type: 'prompt_suggestion', suggestion });
   const tabKey = () => new KeyboardEvent('keydown', { key: 'Tab', cancelable: true, bubbles: true });
 
   it('shows the suggestion in the empty box with a Tab hint', async () => {

@@ -250,7 +250,7 @@ describe('CheckpointsPanel rewinds', () => {
 
   it("says when the agent can't forget part of a thread", async () => {
     store.sessions = [{ id: SID, branch: 'b', repoPath: '/repo', status: 'running', agentType: 'gemini-cli' }] as any;
-    agentsStore.list = [{ id: 'gemini-cli', displayName: 'Gemini CLI', capabilities: { rewind: false } }] as any;
+    agentsStore.list = [{ id: 'gemini-cli', displayName: 'Gemini CLI', capabilities: { rewind: false } }];
     const { getByRole } = await pick('Add polling');
     await fireEvent.click(getByRole('button', { name: 'Rewind all' }));
 

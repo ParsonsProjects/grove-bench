@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { topics, type HelpTopic } from './index.js';
+import { topics } from './index.js';
 
 describe('help topics', () => {
   it('exports a non-empty array of topics', () => {

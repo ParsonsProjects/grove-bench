@@ -82,11 +82,11 @@ describe('createRotatingLog', () => {
     const later = path.join(dir, 'later', 'app.log'); // its folder doesn't exist yet: the stream errors
     const opened: fs.WriteStream[] = [];
     const create = fs.createWriteStream;
-    const spy = vi.spyOn(fs, 'createWriteStream').mockImplementation(((...args: Parameters<typeof create>) => {
+    const spy = vi.spyOn(fs, 'createWriteStream').mockImplementation((...args: Parameters<typeof create>) => {
       const s = create(...args);
       opened.push(s);
       return s;
-    }) as typeof create);
+    });
     log = createRotatingLog({ path: () => later, maxSize: 1000, maxFiles: 2 });
     log.write('lost\n');
     // A failed stream closes once its error is out. (events.once would

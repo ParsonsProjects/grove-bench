@@ -693,7 +693,7 @@ export async function push(cwd: string, branch: string): Promise<void> {
   try {
     await git(['push', '--set-upstream', 'origin', branch], cwd);
   } catch (e: any) {
-    throw new Error(e?.stderr?.trim() || e?.message || 'git push failed');
+    throw new Error(e?.stderr?.trim() || e?.message || 'git push failed', { cause: e });
   }
 }
 

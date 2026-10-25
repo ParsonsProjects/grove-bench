@@ -88,7 +88,7 @@
   }
 
   function toggleChoice(key: string, value: string) {
-    const current = Array.isArray(values[key]) ? (values[key] as string[]) : [];
+    const current = Array.isArray(values[key]) ? (values[key]) : [];
     values[key] = current.includes(value) ? current.filter((v) => v !== value) : [...current, value];
   }
 </script>

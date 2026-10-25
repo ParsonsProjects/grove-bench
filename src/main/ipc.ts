@@ -1012,8 +1012,8 @@ export function registerHandlers() {
     const notDelivered = (message: string) => {
       const channel = `${IPC.AGENT_EVENT}:${sessionId}`;
       if (event.sender.isDestroyed()) return;
-      event.sender.send(channel, { type: 'error', message } as import('../shared/types.js').AgentEvent);
-      event.sender.send(channel, { type: 'process_exit' } as import('../shared/types.js').AgentEvent);
+      event.sender.send(channel, { type: 'error', message });
+      event.sender.send(channel, { type: 'process_exit' });
     };
     sessionManager.sendMessage(sessionId, content, images, files).then(
       (ok) => {

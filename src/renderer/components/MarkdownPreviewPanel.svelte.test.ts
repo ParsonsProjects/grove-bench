@@ -7,7 +7,7 @@ import MarkdownPreviewPanel from './MarkdownPreviewPanel.svelte';
 // jsdom has no Web Animations, which the panel's slide-in uses.
 const realAnimate = Element.prototype.animate;
 beforeEach(() => {
-  Element.prototype.animate = vi.fn(() => ({ onfinish: null, cancel() {}, currentTime: 0 }) as unknown as Animation) as never;
+  Element.prototype.animate = vi.fn(() => ({ onfinish: null, cancel() {}, currentTime: 0 }) as unknown as Animation);
 });
 
 afterEach(() => {

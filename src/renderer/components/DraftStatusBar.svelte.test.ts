@@ -24,7 +24,7 @@ function finishingAnimation(): Animation {
 
 beforeEach(async () => {
   vi.clearAllMocks();
-  Element.prototype.animate = finishingAnimation as never;
+  Element.prototype.animate = finishingAnimation;
   store.repos = ['/repo/one'];
   store.sessions = [];
   store.activeSessionId = null;

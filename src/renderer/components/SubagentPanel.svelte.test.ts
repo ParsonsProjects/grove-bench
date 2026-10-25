@@ -148,7 +148,7 @@ describe('SubagentPanel', () => {
   it('says what a running subagent is doing when the view hides its calls', async () => {
     messageStore.messagesBySession = {
       [SID]: [
-        { ...agentCall, pending: true, result: undefined } as ChatMessage,
+        { ...agentCall, pending: true, result: undefined },
         { kind: 'tool_call', id: 's1', toolName: 'Bash', toolInput: { command: 'node runs.mjs' }, toolUseId: 'tu-bash', uuid: 'b1', pending: true, parentToolUseId: 'tu-agent' },
       ],
     };

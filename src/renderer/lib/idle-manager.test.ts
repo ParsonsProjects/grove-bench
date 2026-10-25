@@ -216,12 +216,12 @@ describe('startIdleManager', () => {
   /** A turn that ran a command as a task, as Claude Code reports it. */
   function turnWithTask(id: string, taskId: string, events: AgentEvent[]) {
     messageStore.addUserMessage(id, 'run the tests');
-    messageStore.ingestEvent(id, { type: 'system_init', sessionId: 'p', model: 'm', tools: [] } as AgentEvent);
+    messageStore.ingestEvent(id, { type: 'system_init', sessionId: 'p', model: 'm', tools: [] });
     messageStore.ingestEvent(id, { type: 'assistant_tool_use', toolName: 'Bash', toolInput: {}, toolUseId: `tu-${taskId}`, uuid: `u-${taskId}` });
     messageStore.ingestEvent(id, { type: 'task_started', taskId, toolUseId: `tu-${taskId}`, description: 'npm test' });
     for (const event of events) messageStore.ingestEvent(id, event);
-    messageStore.ingestEvent(id, { type: 'tool_result', toolUseId: `tu-${taskId}`, content: 'ok', isError: false } as AgentEvent);
-    messageStore.ingestEvent(id, { type: 'result', subtype: 'success', isError: false } as AgentEvent);
+    messageStore.ingestEvent(id, { type: 'tool_result', toolUseId: `tu-${taskId}`, content: 'ok', isError: false });
+    messageStore.ingestEvent(id, { type: 'result', subtype: 'success', isError: false });
   }
 
   // The bridge's mocks are typed without arguments.
@@ -324,7 +324,7 @@ describe('startIdleManager', () => {
   it('counts from the last activity, so opening a thread does not restart the clock', async () => {
     liveThread('t1');
     liveThread('t2');
-    messageStore.ingestEvent('t1', { type: 'result', subtype: 'success', isError: false } as AgentEvent);
+    messageStore.ingestEvent('t1', { type: 'result', subtype: 'success', isError: false });
     mainSleepsIt();
     stop = startIdleManager();
 
@@ -429,7 +429,7 @@ describe('startIdleManager', () => {
     messageStore.addUserMessage('busy', 'keep going');
     messageStore.ingestEvent('perm', {
       type: 'permission_request', toolName: 'Bash', toolInput: { command: 'ls' }, toolUseId: 'tu-1', requestId: 'req-1',
-    } as AgentEvent);
+    });
     expect(messageStore.getIsRunning('busy')).toBe(true);
     expect(messageStore.hasPendingPermission('perm')).toBe(true);
     mockGroveBench.sleepSession.mockResolvedValue(false);
