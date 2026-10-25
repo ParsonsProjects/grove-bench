@@ -3,7 +3,12 @@
   "private": true,
   "version": "0.0.1",
   "engines": {
-    "npm": ">=11.10.0"
+    "npm": ">=11.19.0"
+  },
+  "allowScripts": {
+    "core-js": false,
+    "esbuild": true,
+    "fsevents": false
   },
   "type": "module",
   "scripts": {

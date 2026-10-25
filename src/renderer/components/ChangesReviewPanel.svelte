@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
+  import GitOperationNotice from './GitOperationNotice.svelte';
   import { messageStore } from '../stores/messages.svelte.js';
   import { gitStatusStore } from '../stores/gitStatus.svelte.js';
   import { prStore } from '../stores/pr.svelte.js';
@@ -33,6 +35,34 @@
   let isLoading = $derived(gitStatusStore.isLoading(sessionId));
   let isRunning = $derived(messageStore.getIsRunning(sessionId));
   let stagedEntries = $derived(gitStatus.entries.filter(e => e.staged));
+  /** A merge, rebase, cherry-pick or revert stopped part way (GitOperationNotice). */
+  let operation = $derived(gitStatus.operation);
+  let conflictCount = $derived(gitStatus.entries.filter(e => e.status === 'conflicted').length);
+  /** A rebase, cherry-pick or revert finishes with Continue, keeping each
+   *  commit's own message, not with a commit: no commit box meanwhile. */
+  let continuesOp = $derived(!!operation && operation.kind !== 'merge');
+  /** A merge finishes with a commit, which waits for its conflicts. */
+  let mergeConflicts = $derived(operation?.kind === 'merge' && conflictCount > 0);
+  /** Its conflicts resolved, a merge commits even with nothing staged: each
+   *  file may have been resolved to the branch's own version. */
+  let mergeReady = $derived(operation?.kind === 'merge' && conflictCount === 0);
+  let canCommit = $derived((stagedEntries.length > 0 || mergeReady) && !continuesOp);
+  // git's own message for a merge commit, filled in once per merge, and
+  // taken out again, if still as filled in, when the merge ends some other
+  // way (aborted, or committed by the agent).
+  let filledForMerge = '';
+  let filledMessage = '';
+  $effect(() => {
+    const op = operation;
+    const key = op?.kind === 'merge' && op.message ? `${op.incoming} into ${op.branch}` : '';
+    if (filledForMerge === key) return;
+    filledForMerge = key;
+    untrack(() => {
+      if (filledMessage && commitMessage === filledMessage) commitMessage = '';
+      filledMessage = '';
+      if (op?.kind === 'merge' && op.message && !commitMessage.trim()) commitMessage = filledMessage = op.message;
+    });
+  });
 
   // Scope: uncommitted working tree (git-client view) or everything on the
   // branch since it left the base (pull-request view).
@@ -155,7 +185,7 @@
   }
 
   async function doCommit(andPush = false) {
-    if (!commitMessage.trim() || stagedEntries.length === 0 || committing) return;
+    if (!commitMessage.trim() || !canCommit || mergeConflicts || committing) return;
     committing = true;
     commitError = '';
     let committed = false;
@@ -178,10 +208,10 @@
     }
   }
 
-  // With nothing staged the commit box is hidden. Drop any error then, so it
-  // can't come back, out of date, with the next staged file.
+  // With nothing to commit the commit box is hidden. Drop any error then, so
+  // it can't come back, out of date, with the next staged file.
   $effect(() => {
-    if (stagedEntries.length === 0) commitError = '';
+    if (!canCommit) commitError = '';
   });
 
   // ── Revert / discard (destructive, confirmed first) ──
@@ -255,7 +285,7 @@
 {/snippet}
 
 {#snippet commitBox()}
-  {#if stagedEntries.length > 0}
+  {#if canCommit}
     <div class="border-t border-border p-2 shrink-0 space-y-1.5">
       <div class="relative">
         <textarea
@@ -269,7 +299,7 @@
           size="icon-2xs"
           variant="quiet"
           onclick={generateMessage}
-          disabled={generatingMsg || committing}
+          disabled={generatingMsg || committing || stagedEntries.length === 0}
           class="absolute right-0.5 top-0.5 disabled:cursor-not-allowed"
           title="Generate a commit message from the staged changes"
           aria-label="Generate a commit message from the staged changes"
@@ -290,16 +320,17 @@
         <Button
           size="xs"
           onclick={() => doCommit()}
-          disabled={!commitMessage.trim() || committing}
+          disabled={!commitMessage.trim() || committing || mergeConflicts}
           class="flex-1 disabled:cursor-not-allowed"
+          title={mergeConflicts ? 'Mark each conflict resolved first' : undefined}
         >
-          {committing && !pushing ? 'Committing…' : `Commit ${stagedEntries.length} file${stagedEntries.length !== 1 ? 's' : ''}`}
+          {committing && !pushing ? 'Committing…' : stagedEntries.length === 0 ? 'Commit merge' : `Commit ${stagedEntries.length} file${stagedEntries.length !== 1 ? 's' : ''}`}
         </Button>
         <Button
           size="xs"
           variant="subtle"
           onclick={() => doCommit(true)}
-          disabled={!commitMessage.trim() || committing}
+          disabled={!commitMessage.trim() || committing || mergeConflicts}
           class="disabled:cursor-not-allowed"
           title="Commit staged files, then push the branch to origin"
         >
@@ -465,10 +496,14 @@
   {/if}
 {/snippet}
 
+{#if operation}
+  <GitOperationNotice {sessionId} {operation} conflicts={conflictCount} />
+{/if}
 <ReviewDiffPanel
   {sessionId}
   {sourceKey}
   entries={gitStatus.entries}
+  {operation}
   active={sessionStore.activeSessionId === sessionId && messageStore.getActiveTab(sessionId) === 'changes'}
   loading={isLoading}
   changesLabel={isBranchScope ? 'Changed on branch' : 'Changes'}

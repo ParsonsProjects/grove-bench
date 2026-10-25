@@ -12,6 +12,7 @@ import { prStore } from '../stores/pr.svelte.js';
 import { usageStore } from '../stores/usage.svelte.js';
 import { backgroundTaskStore } from '../stores/backgroundTask.svelte.js';
 import { subagentPanelStore } from '../stores/subagentPanel.svelte.js';
+import { gitStatusStore } from '../stores/gitStatus.svelte.js';
 import { CONTROL_IDS } from '../../shared/types.js';
 import { TAB_BY_KEY, TAB_LABELS } from '../lib/keyboard-shortcuts.js';
 import type { PrInfo, ThreadUsage } from '../../shared/types.js';
@@ -996,5 +997,28 @@ describe('StatusBar last turn', () => {
       expect(dialog.queryByText(/\$/)).toBeNull();
       expect(api().getDailySpend).not.toHaveBeenCalled();
     });
+  });
+});
+
+// The agent may have started it while you were reading the thread.
+describe('StatusBar: a merge or rebase stopped part way', () => {
+  afterEach(() => gitStatusStore.clear(ACTIVE));
+
+  it('shows it by the branch, and opens the Changes tab to finish it', async () => {
+    const refresh = vi.spyOn(gitStatusStore, 'refresh').mockResolvedValue(undefined);
+    gitStatusStore.statusBySession = { ...gitStatusStore.statusBySession, [ACTIVE]: { entries: [], operation: { kind: 'rebase', branch: 'feat-a', incoming: 'main', step: 1, total: 2 } } };
+    render(StatusBar, { props: { sessionId: ACTIVE } });
+
+    const hint = screen.getByRole('button', { name: 'rebasing 1/2' });
+    expect(hint).toHaveAttribute('title', 'Rebasing feat-a onto main, step 1 of 2: open the Changes tab to finish or abort it');
+    await fireEvent.click(hint);
+    expect(messageStore.getActiveTab(ACTIVE)).toBe('changes');
+    expect(refresh).toHaveBeenCalledWith(ACTIVE);
+    refresh.mockRestore();
+  });
+
+  it('shows nothing when none is under way', () => {
+    render(StatusBar, { props: { sessionId: ACTIVE } });
+    expect(screen.queryByRole('button', { name: /rebasing|merging/ })).toBeNull();
   });
 });

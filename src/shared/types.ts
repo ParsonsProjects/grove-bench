@@ -470,8 +470,28 @@ export interface GitStatusOptions {
   base?: string;
 }
 
+/** A git operation stopped part way, waiting on the user: a merge, rebase,
+ *  cherry-pick or revert with conflicts to resolve (or resolved, waiting
+ *  to be finished). */
+export interface GitOperation {
+  kind: 'merge' | 'rebase' | 'cherry-pick' | 'revert';
+  /** Merge: the branch coming in. Rebase: the branch it goes onto. */
+  incoming?: string;
+  /** The branch being merged into or rebased. */
+  branch?: string;
+  /** Rebase: how far it has got. */
+  step?: number;
+  total?: number;
+  /** Cherry-pick or revert: the commit, short. */
+  commit?: string;
+  /** Merge: git's message for the merge commit (MERGE_MSG, without comments). */
+  message?: string;
+}
+
 export interface GitStatusResult {
   entries: GitStatusEntry[];
+  /** A merge, rebase, cherry-pick or revert in progress. */
+  operation?: GitOperation;
   /** The ref the branch scope resolved (`main` or `origin/main`). */
   baseRef?: string;
   /** Set when the branch scope could not find a merge base with `base`. */
@@ -1471,6 +1491,10 @@ export interface GroveBenchAPI {
   stageFile(sessionId: string, filePath: string): Promise<void>;
   unstageFile(sessionId: string, filePath: string): Promise<void>;
   commit(sessionId: string, message: string): Promise<void>;
+  /** Continue a rebase, cherry-pick or revert whose conflicts are resolved (GitStatusResult.operation). */
+  continueGitOperation(sessionId: string, kind: GitOperation['kind']): Promise<void>;
+  /** Abort a merge, rebase, cherry-pick or revert, back to how the branch was before it. */
+  abortGitOperation(sessionId: string, kind: GitOperation['kind']): Promise<void>;
   /** Ask the agent to write a commit message for the staged changes.
    *  `substituteAgent`: the agent to use when the conversation's own agent
    *  is gone (backgroundAgentStore asks). */
@@ -2205,6 +2229,8 @@ export const IPC = {
   FILE_UNSTAGE: 'file:unstage',
   GIT_STATUS: 'git:status',
   GIT_COMMIT: 'git:commit',
+  GIT_OPERATION_CONTINUE: 'git:operation-continue',
+  GIT_OPERATION_ABORT: 'git:operation-abort',
   GIT_PUSH: 'git:push',
   GIT_SYNC_STATUS: 'git:syncStatus',
   GIT_BRANCH_COMMITS: 'git:branchCommits',

@@ -131,3 +131,42 @@ describe('word marks', () => {
     expect(marks(pairs(true), true)).toBe(0);
   });
 });
+
+describe('conflict markers', () => {
+  // `git diff HEAD` for a file a rebase of feat onto main stopped on.
+  const conflicted = parseDiffLines(['@@ -1,3 +1,7 @@', ' a', '+<<<<<<< HEAD', ' MAIN', '+=======', '+FEAT', '+>>>>>>> 5150b6c (feat change)', ' c', ''].join('\n'));
+  const rebase = { kind: 'rebase' as const, branch: 'feat', incoming: 'main', step: 1, total: 1 };
+  /** Each marker line: its role, the line as git wrote it (without the
+   *  unified view's line number and +), and its label. */
+  const shown = (container: HTMLElement) =>
+    [...container.querySelectorAll('[data-conflict-marker]')].map((el) => {
+      const label = el.querySelector('[data-conflict-side]')?.textContent ?? null;
+      const text = el.textContent!.replace(label ?? '', '').replace(/^\s*\d*\s*\+?\s*/, '').replace(/\s+$/, '');
+      return [el.getAttribute('data-conflict-marker'), text, label];
+    });
+
+  for (const sideBySide of [false, true]) {
+    it(`shows git's markers in amber with each side named (${sideBySide ? 'side by side' : 'unified'})`, () => {
+      const { container } = render(DiffView, { lines: conflicted, sideBySide, filePath: 'f.txt', conflict: { operation: rebase } });
+      expect(shown(container)).toEqual([
+        ['ours', '<<<<<<< HEAD', "↓ main, the branch you're rebasing onto"],
+        ['separator', '=======', null],
+        ['theirs', '>>>>>>> 5150b6c (feat change)', '↑ your commit'],
+      ]);
+      for (const el of container.querySelectorAll('[data-conflict-marker]')) expect(el).toHaveClass('text-amber-300');
+      // The lines between them are the file's own: still green.
+      expect([...container.querySelectorAll('.diff-add')].some((el) => el.textContent?.includes('FEAT'))).toBe(true);
+    });
+
+    it(`shows them as ordinary added lines in a file that isn't in conflict (${sideBySide ? 'side by side' : 'unified'})`, () => {
+      const { container } = render(DiffView, { lines: conflicted, sideBySide, filePath: 'f.txt' });
+      expect(container.querySelector('[data-conflict-marker]')).toBeNull();
+      expect(container.textContent).not.toContain('rebasing onto');
+    });
+  }
+
+  it("keeps git's own words when nothing is under way", () => {
+    const { container } = render(DiffView, { lines: conflicted, filePath: 'f.txt', conflict: {} });
+    expect(shown(container)[0]).toEqual(['ours', '<<<<<<< HEAD', null]);
+  });
+});

@@ -87,6 +87,7 @@ vi.mock('./git.js', async (importOriginal) => {
     'fileDiffAgainst', 'resolveMergeBase', 'blobLines', 'hashWorkingFiles', 'listProjectFiles', 'revertFile',
     'stageFile', 'unstageFile', 'commit', 'push', 'syncStatus', 'branchCommits', 'logCommits', 'rebaseOnto', 'cherryPick',
     'squashSince', 'currentBranch', 'recentCheckouts', 'worktreeBranches', 'isTracked',
+    'gitOperation', 'continueGitOperation', 'abortGitOperation',
   ];
   return { ...actual, ...Object.fromEntries(runsGit.map((n) => [n, vi.fn()])) };
 });
@@ -1350,6 +1351,33 @@ describe('git handlers', () => {
     } finally {
       fs.rmSync(path.join(wt, 'kept.txt'));
     }
+  });
+
+  it('GIT_STATUS reports a merge or rebase stopped part way, in either scope', async () => {
+    const rebase = { kind: 'rebase' as const, branch: 'feat', incoming: 'main', step: 1, total: 2 };
+    vi.mocked(git.gitOperation).mockResolvedValue(rebase);
+    vi.mocked(git.git).mockImplementation((args: string[]) => Promise.resolve(args[0] === 'status' ? 'UU a.ts\0' : ''));
+    vi.mocked(git.hashWorkingFiles).mockResolvedValue('h1\n');
+
+    expect(await invoke(IPC.GIT_STATUS, 's1')).toMatchObject({ operation: rebase });
+    expect(await invoke(IPC.GIT_STATUS, 's1', { scope: 'branch' })).toEqual({ entries: [], scopeError: 'No base branch', operation: rebase });
+  });
+
+  it('GIT_STATUS reads as no operation when checking for one fails', async () => {
+    vi.mocked(git.gitOperation).mockRejectedValue(new Error('boom'));
+    vi.mocked(git.git).mockResolvedValue('');
+    expect(await invoke(IPC.GIT_STATUS, 's1')).toEqual({ entries: [] });
+  });
+
+  it('continues or aborts an operation in the thread\'s worktree, but not while the agent works', async () => {
+    await invoke(IPC.GIT_OPERATION_CONTINUE, 's1', 'rebase');
+    expect(git.continueGitOperation).toHaveBeenCalledWith(wt, 'rebase');
+    await invoke(IPC.GIT_OPERATION_ABORT, 's1', 'merge');
+    expect(git.abortGitOperation).toHaveBeenCalledWith(wt, 'merge');
+
+    m.sessionManager.isMidTurn.mockReturnValue(true);
+    await expect(invoke(IPC.GIT_OPERATION_ABORT, 's1', 'merge')).rejects.toThrow('Wait for the agent to finish its turn.');
+    expect(git.abortGitOperation).toHaveBeenCalledTimes(1);
   });
 
   it('GIT_STATUS says so when git fails, rather than reading as a clean tree', async () => {

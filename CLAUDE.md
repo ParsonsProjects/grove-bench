@@ -85,7 +85,7 @@ TODO.md                # Gap analysis vs competitors
 - `svelte.config.mjs` — Svelte compiler config
 - `eslint.config.mjs`: ESLint flat config (typescript-eslint with type-aware rules, eslint-plugin-svelte). `eslint-suppressions.json` lists the errors the code had when it was added; only new ones fail. `scripts/check-lint-suppressions.mjs` fails CI if the list grows or names a file that is gone
 - `knip.jsonc`: knip config: entry points from the Vite configs and HTML pages that knip doesn't find itself, and what it skips (`landing/`, except the file that imports the app's art from `src/`, and the UI kit's exports)
-- `.npmrc`: npm settings. `min-release-age=7` only installs versions published 7+ days ago; `engine-strict` makes the `engines.npm` range (>=11.10.0, the first npm with that setting) a hard error. `landing/.npmrc` and `scripts/acp-spike/.npmrc` repeat them. `scripts/check-release-age.mjs` checks lockfile changes in the Dependency age workflow
+- `.npmrc`: npm settings. `min-release-age=7` only installs versions published 7+ days ago; `strict-allow-scripts` fails the install when a dependency's install script isn't approved or denied in `allowScripts` (package.json); `allow-git`, `allow-remote`, `allow-file` and `allow-directory` set to `none` only allow registry packages; `engine-strict` makes the `engines.npm` range (>=11.19.0, so every one of those settings works) a hard error. `landing/.npmrc` and `scripts/acp-spike/.npmrc` repeat them, and each package.json has its own `allowScripts`. `scripts/check-release-age.mjs` checks lockfile changes in the Dependency age workflow
 
 ## Commands
 
