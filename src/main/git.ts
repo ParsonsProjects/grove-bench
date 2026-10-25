@@ -26,6 +26,13 @@ export async function git(args: string[], cwd: string, opts?: GitOptions): Promi
   return result.stdout;
 }
 
+/** `git <args>`'s exit code and error output, without throwing on a non-zero
+ *  exit: for commands whose exit code is the answer (merge-base --is-ancestor). */
+export async function gitExit(args: string[], cwd: string): Promise<{ exitCode: number; stderr: string }> {
+  const result = await runProcess('git', args, { cwd, reject: false });
+  return { exitCode: result.exitCode ?? -1, stderr: String(result.stderr ?? '') };
+}
+
 /** Whether `git <args>` exits 0. For yes/no commands such as check-ignore. */
 async function gitSucceeds(args: string[], cwd: string): Promise<boolean> {
   const result = await runProcess('git', args, { cwd, reject: false });

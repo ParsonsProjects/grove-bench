@@ -162,6 +162,83 @@ describe('checkpoints with real git', () => {
     expect(run(['diff', '--cached', '--name-only'], wt)).toBe('');
   });
 
+  // The checkpoint is taken before its turn, so the files as they are at a
+  // rewind (the last turn's edits, the user's own) would otherwise be lost.
+  it('keeps the files a rewind replaces, brings them back, and swaps back', async () => {
+    const mgr = new CheckpointManager();
+    await mgr.capture('s1', wt, 'u1');
+    write('a.ts', 'two\n');
+    await mgr.capture('s1', wt, 'u2');
+    write('a.ts', 'three, from the last turn\n');
+    write('src/added.ts', 'added by the last turn\n');
+    write('notes.md', 'the user\'s own, never in a checkpoint\n');
+    write('debug.log', 'ignored\n');
+
+    const copy = await mgr.restore('s1', wt, 'u1');
+    expect(read('a.ts')).toBe('one\n');
+    expect(exists('src/added.ts')).toBe(false);
+    expect(exists('notes.md')).toBe(false);
+
+    const rewound = await mgr.restoreKept('s1', wt, copy);
+    expect(read('a.ts')).toBe('three, from the last turn\n');
+    expect(read('src/added.ts')).toBe('added by the last turn\n');
+    expect(read('notes.md')).toBe('the user\'s own, never in a checkpoint\n');
+    expect(read('debug.log')).toBe('ignored\n');
+    expect(run(['diff', '--cached', '--name-only'], wt)).toBe('');
+
+    // Bringing them back kept the rewound files in turn.
+    await mgr.restoreKept('s1', wt, rewound);
+    expect(read('a.ts')).toBe('one\n');
+    expect(exists('notes.md')).toBe(false);
+  });
+
+  // Each line in the thread names its own copy, so an older one still works.
+  it('brings back an older copy after a later rewind', async () => {
+    const mgr = new CheckpointManager();
+    await mgr.capture('s1', wt, 'u1');
+    write('a.ts', 'first try\n');
+    const firstTry = await mgr.restore('s1', wt, 'u1');
+    write('a.ts', 'second try\n');
+    await mgr.restore('s1', wt, 'u1');
+
+    await mgr.restoreKept('s1', wt, firstTry);
+    expect(read('a.ts')).toBe('first try\n');
+  });
+
+  it('keeps the copies out of the checkpoint list, and deletes them with the thread', async () => {
+    const mgr = new CheckpointManager();
+    await mgr.capture('s1', wt, 'u1');
+    write('a.ts', 'two\n');
+    await mgr.restore('s1', wt, 'u1');
+    expect(run(['for-each-ref', '--format=%(refname)', 'refs/grove/'], wt).split('\n'))
+      .toEqual(['refs/grove/checkpoints/s1/kept', 'refs/grove/checkpoints/s1/turn/1']);
+
+    expect((await mgr.list('s1', wt)).map((c) => c.uuid)).toEqual(['u1']);
+    // A new manager, as after a restart, resumes the turns only.
+    const resumed = new CheckpointManager();
+    await resumed.resume('s1', wt);
+    expect(await resumed.capture('s1', wt, 'u2')).toBe(true);
+    expect(run(['for-each-ref', '--format=%(refname)', 'refs/grove/checkpoints/s1/turn/'], wt).split('\n'))
+      .toEqual(['refs/grove/checkpoints/s1/turn/1', 'refs/grove/checkpoints/s1/turn/2']);
+
+    await resumed.cleanup('s1', wt);
+    expect(run(['for-each-ref', 'refs/grove/'], wt)).toBe('');
+  });
+
+  it('brings back only copies it kept for this thread', async () => {
+    const mgr = new CheckpointManager();
+    const head = run(['rev-parse', 'HEAD'], wt);
+    await expect(mgr.restoreKept('s1', wt, head)).rejects.toThrow('There are no kept files to bring back.');
+
+    await mgr.capture('s1', wt, 'u1');
+    write('a.ts', 'two\n');
+    await mgr.restore('s1', wt, 'u1');
+    await expect(mgr.restoreKept('s1', wt, head)).rejects.toThrow('That copy of the files is no longer kept.');
+    await expect(mgr.restoreKept('s1', wt, 'f'.repeat(40))).rejects.toThrow('That copy of the files is no longer kept.');
+    await expect(mgr.restoreKept('s1', wt, '--all')).rejects.toThrow('That copy of the files is no longer kept.');
+    expect(read('a.ts')).toBe('one\n');
+  });
+
   it('captures on a branch with no commits yet', async () => {
     const empty = path.join(tmp, 'empty');
     fs.mkdirSync(empty);

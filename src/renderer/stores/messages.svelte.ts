@@ -216,6 +216,16 @@ export interface ChatFilesMadeMessage {
   more?: number;
 }
 
+/** A restore kept a copy of the files it replaced (FilesKeptBlock): after a
+ *  rewind, after bringing a copy back, or when a restore failed partway.
+ *  `copy` is the kept commit, which this line brings back. */
+export interface ChatFilesKeptMessage {
+  kind: 'files_kept';
+  id: string;
+  reason: 'rewind' | 'bring_back' | 'unfinished';
+  copy: string;
+}
+
 export type ChatMessage =
   | ChatTextMessage
   | ChatToolCallMessage
@@ -229,7 +239,8 @@ export type ChatMessage =
   | ChatQuestionMessage
   | ChatElicitationMessage
   | ChatLimitMessage
-  | ChatFilesMadeMessage;
+  | ChatFilesMadeMessage
+  | ChatFilesKeptMessage;
 
 // ─── Store ───
 
@@ -1642,6 +1653,17 @@ class MessageStore {
         });
         break;
 
+      case 'files_kept':
+        this.flushStreamingText(sessionId);
+        this.pushMessage(sessionId, { kind: 'files_kept', id: nextId(), reason: event.reason, copy: event.copy });
+        // A rewind's own event refreshes these; bringing files back (or a
+        // restore that failed partway) changed them too.
+        if (event.reason !== 'rewind' && this._replayBuffer === null && this.sideEffects) {
+          gitStatusStore.refresh(sessionId);
+          checkpointStore.scheduleRefresh(sessionId);
+        }
+        break;
+
       case 'files_made':
         this.flushStreamingText(sessionId);
         this.pushMessage(sessionId, {
@@ -2643,6 +2665,12 @@ class MessageStore {
     }
     // Most recent first
     return points.reverse();
+  }
+
+  /** Put back a kept copy of the files; main keeps the ones it replaces and
+   *  adds a line saying so. */
+  async bringBackFiles(sessionId: string, copy: string): Promise<void> {
+    await window.groveBench.bringBackFiles(sessionId, copy);
   }
 
   /** Execute a rewind to a specific user message checkpoint.

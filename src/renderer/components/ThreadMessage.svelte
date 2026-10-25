@@ -8,6 +8,7 @@
   import PermissionBlock from './PermissionBlock.svelte';
   import QuestionBlock from './QuestionBlock.svelte';
   import ElicitationBlock from './ElicitationBlock.svelte';
+  import FilesKeptBlock from './FilesKeptBlock.svelte';
   import LimitBlock from './LimitBlock.svelte';
   import ThinkingBlock from './ThinkingBlock.svelte';
   import SystemBlock from './SystemBlock.svelte';
@@ -122,6 +123,9 @@
 
 {:else if msg.kind === 'git_identity_missing'}
   <GitIdentityNotice />
+
+{:else if msg.kind === 'files_kept'}
+  <FilesKeptBlock {sessionId} reason={msg.reason} copy={msg.copy} />
 
 {:else if msg.kind === 'files_made'}
   <FilesMadeBlock {sessionId} files={msg.files} more={msg.more} />

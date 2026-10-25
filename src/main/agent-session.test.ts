@@ -91,7 +91,8 @@ vi.mock('./checkpoints.js', () => {
     constructor() { MockCheckpointManager.instances.push(this); }
     capture = vi.fn().mockResolvedValue(true);
     captureBaseline = vi.fn().mockResolvedValue(true);
-    restore = vi.fn().mockResolvedValue(undefined);
+    restore = vi.fn().mockResolvedValue('kept-copy');
+    restoreKept = vi.fn().mockResolvedValue('kept-copy-2');
     pruneAfter = vi.fn().mockResolvedValue(undefined);
     resume = vi.fn().mockResolvedValue(undefined);
     cleanup = vi.fn().mockResolvedValue(undefined);
@@ -3609,7 +3610,94 @@ describe('AgentSessionManager.listCheckpoints()', () => {
   });
 });
 
+describe('AgentSessionManager.bringBackFiles()', () => {
+  async function thread(id: string) {
+    await sessionManager.createSession({ id, branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
+    await vi.waitFor(() => expect(sessionManager.getSession(id)?.queryHandle).toBeTruthy());
+    return sessionManager.getSession(id)!;
+  }
+
+  it('puts the given copy back and offers the files it replaced', async () => {
+    const session = await thread('test-bring-back');
+
+    await sessionManager.bringBackFiles('test-bring-back', 'kept-copy');
+
+    expect(session.checkpoints.restoreKept).toHaveBeenCalledWith('test-bring-back', expect.any(String), 'kept-copy');
+    expect(session.eventHistory.at(-1)).toMatchObject({ type: 'files_kept', reason: 'bring_back', copy: 'kept-copy-2' });
+    await sessionManager.destroySession('test-bring-back');
+  });
+
+  it('stops a running turn first, as a rewind does', async () => {
+    const session = await thread('test-bring-back-midturn');
+    await sessionManager.sendMessage('test-bring-back-midturn', 'Refactor everything');
+    const handle = session.queryHandle!;
+
+    await sessionManager.bringBackFiles('test-bring-back-midturn', 'kept-copy');
+
+    expect(vi.mocked(handle.interrupt!).mock.invocationCallOrder[0])
+      .toBeLessThan(vi.mocked(session.checkpoints.restoreKept).mock.invocationCallOrder[0]);
+    await sessionManager.destroySession('test-bring-back-midturn');
+  });
+
+  // Right after a rewind the agent is starting again: it edits nothing yet,
+  // and stopping it would only start it once more.
+  it('leaves an agent that is only starting alone', async () => {
+    const session = await thread('test-bring-back-starting');
+    session.isStartingQuery = true;
+    const handle = session.queryHandle!;
+
+    await sessionManager.bringBackFiles('test-bring-back-starting', 'kept-copy');
+
+    expect(handle.interrupt).not.toHaveBeenCalled();
+    session.isStartingQuery = false;
+    await sessionManager.destroySession('test-bring-back-starting');
+  });
+
+  it('adds no line when there was nothing to bring back', async () => {
+    const session = await thread('test-bring-back-none');
+    vi.mocked(session.checkpoints.restoreKept).mockRejectedValueOnce(new Error('That copy of the files is no longer kept.'));
+
+    await expect(sessionManager.bringBackFiles('test-bring-back-none', 'gone')).rejects.toThrow('no longer kept');
+    expect(session.eventHistory.some((e) => e.type === 'files_kept')).toBe(false);
+    await sessionManager.destroySession('test-bring-back-none');
+  });
+
+  // Some files may have changed: the copy made just before is the way back.
+  it('offers the copy from just before when restoring fails partway', async () => {
+    const session = await thread('test-bring-back-partway');
+    vi.mocked(session.checkpoints.restoreKept).mockRejectedValueOnce(
+      Object.assign(new Error("Couldn't finish restoring the files, so some may have changed: EBUSY"), { copy: 'before-attempt' }),
+    );
+
+    await expect(sessionManager.bringBackFiles('test-bring-back-partway', 'kept-copy')).rejects.toThrow("Couldn't finish restoring");
+    expect(session.eventHistory.at(-1)).toMatchObject({ type: 'files_kept', reason: 'unfinished', copy: 'before-attempt' });
+    await sessionManager.destroySession('test-bring-back-partway');
+  });
+});
+
 describe('AgentSessionManager.rewindFiles()', () => {
+  it('offers the replaced files back after a rewind of files and thread, but not of the thread only', async () => {
+    await sessionManager.createSession({
+      id: 'test-rewind-kept', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(sessionManager.getSession('test-rewind-kept')?.queryHandle).toBeTruthy());
+    const session = sessionManager.getSession('test-rewind-kept')!;
+    await sessionManager.sendMessage('test-rewind-kept', 'First');
+    await sessionManager.sendMessage('test-rewind-kept', 'Second');
+    const [first, second] = session.eventHistory.filter((e) => e.type === 'user_message') as { uuid: string }[];
+
+    await sessionManager.rewindFiles('test-rewind-kept', second.uuid, { conversationOnly: true });
+    expect(session.eventHistory.some((e) => e.type === 'files_kept')).toBe(false);
+
+    await sessionManager.rewindFiles('test-rewind-kept', first.uuid);
+    // After the cut, so the line stays in the thread
+    const rewindAt = session.eventHistory.findIndex((e) => e.type === 'rewind' && !('conversationOnly' in e && e.conversationOnly));
+    const keptAt = session.eventHistory.findIndex((e) => e.type === 'files_kept');
+    expect(keptAt).toBeGreaterThan(rewindAt);
+    expect(session.eventHistory[keptAt]).toMatchObject({ type: 'files_kept', reason: 'rewind', copy: 'kept-copy' });
+    await sessionManager.destroySession('test-rewind-kept');
+  });
+
   it('stops a running turn before restoring files', async () => {
     await sessionManager.createSession({
       id: 'test-rewind-midturn', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
@@ -3834,9 +3922,10 @@ describe('AgentSessionManager.rewindFiles()', () => {
     expect(session.checkpoints.restore).toHaveBeenCalledWith('test-rewind-files-only', expect.any(String), 'pre-clear-uuid');
     expect(session.checkpoints.pruneAfter).not.toHaveBeenCalled();
     expect(session.providerSessionId).toBe(providerBefore);
-    // Nothing truncated: only the rewind marker itself was appended
-    expect(session.eventHistory.length).toBe(historyBefore + 1);
-    expect(session.eventHistory.at(-1)).toMatchObject({ type: 'rewind', filesOnly: true });
+    // Nothing truncated: only the rewind marker, and the line offering the
+    // replaced files back, were appended
+    expect(session.eventHistory.length).toBe(historyBefore + 2);
+    expect(session.eventHistory.slice(-2)).toMatchObject([{ type: 'rewind', filesOnly: true }, { type: 'files_kept', reason: 'rewind', copy: 'kept-copy' }]);
     expect(session.eventHistory.some((e) => e.type === 'user_message')).toBe(true);
     // The query was not restarted
     expect(mockAdapter.control).toBe(control);

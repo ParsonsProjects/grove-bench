@@ -2,7 +2,7 @@ import type { CheckpointManager } from './checkpoints.js';
 
 /** The checkpoint operations a conversation uses. */
 export type Checkpoints = Pick<CheckpointManager,
-  | 'capture' | 'captureBaseline' | 'markCleared' | 'resume' | 'cleanup' | 'pruneAfter' | 'restore'
+  | 'capture' | 'captureBaseline' | 'markCleared' | 'resume' | 'cleanup' | 'pruneAfter' | 'restore' | 'restoreKept'
   | 'list' | 'history' | 'diff' | 'files' | 'fileDiff' | 'fileLines'>;
 
 const NO_GIT = 'This project isn\'t a git repository, so there are no checkpoints: files the agent changed can\'t be restored.';
@@ -20,6 +20,7 @@ export const noGitCheckpoints: Checkpoints = {
   cleanup: async () => {},
   pruneAfter: async () => {},
   restore: async () => { throw new Error(NO_GIT); },
+  restoreKept: async () => { throw new Error(NO_GIT); },
   list: async () => [],
   history: async () => ({ entries: [], total: { filesChanged: 0, additions: 0, deletions: 0 } }),
   diff: async () => '',
