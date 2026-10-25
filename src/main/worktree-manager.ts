@@ -985,8 +985,9 @@ export class WorktreeManager {
 
           await checkoutBranch(cwd, name, { create, track });
         }
-      } catch (e: any) {
-        return { success: false, error: (e?.stderr || e?.message || String(e)).trim().slice(0, 500) };
+      } catch (e) {
+        const err = e as { stderr?: string; message?: string } | null;
+        return { success: false, error: (err?.stderr || err?.message || String(e)).trim().slice(0, 500) };
       }
 
       await this.recordBranch(sharers, name, { created: create });

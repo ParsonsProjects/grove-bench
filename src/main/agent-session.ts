@@ -1,7 +1,7 @@
 import type { BrowserWindow } from 'electron';
 import { IPC } from '../shared/types.js';
 import type { SessionInfo, SessionStatus, AgentEvent, ThreadUsage, PermissionDecision, PermissionMode, McpServerInfo, McpAuthStartResult, McpElicitationResponse, McpServerContextCost, ProviderUsage, SessionControls, ThreadTurnState, EventHistoryPage } from '../shared/types.js';
-import { CONTROL_IDS, MCP_SIGN_IN_TIMEOUT_MS, PERMISSION_MODES, isMcpServerDown, subagentParent } from '../shared/types.js';
+import { CONTROL_IDS, MCP_SIGN_IN_TIMEOUT_MS, isMcpServerDown, isPermissionMode, subagentParent } from '../shared/types.js';
 import { userEventText } from '../shared/prompt-text.js';
 import { applyRateLimit } from '../shared/usage.js';
 import { loadUsageSnapshot, saveUsageSnapshot } from './app-state.js';
@@ -70,6 +70,21 @@ function failureEvent(adapter: AgentAdapter, detail: string): AgentEvent {
     ? { type: 'error', message: adapter.authErrorMessage, auth: true }
     : { type: 'error', message: detail };
 }
+
+/** A rejected run's message, else the rejected value itself as text. */
+function rejectionText(err: unknown): string {
+  return String((err as { message?: unknown } | null)?.message || err);
+}
+
+/** What an agent run can throw: a process failure adds its stderr (or its
+ *  cause's) and exit code to the message. */
+type RunError = {
+  message?: string;
+  stderr?: string;
+  cause?: { stderr?: string };
+  exitCode?: number | string;
+  code?: number | string;
+};
 
 /** Whether `session` is in a turn: from the prompt's user_message (still on
  *  its way to the agent, see unsentPrompts) or the agent starting to reply,
@@ -403,7 +418,7 @@ class AgentSessionManager {
     this.runQuery(session, emit).catch((err) => {
         perfSteps.fail(id, 'agent failed to start');
         console.error(`[runQuery] session=${id} FAILED:`, err);
-        emit(failureEvent(adapter, String(err.message || err)));
+        emit(failureEvent(adapter, rejectionText(err)));
         session.status = 'error';
         this.sendStatus(session, 'error');
         // Fire completion callback on error
@@ -439,7 +454,7 @@ class AgentSessionManager {
     this.runQuery(session, emit, resend).catch((err) => {
       perfSteps.fail(session.id, 'agent failed to start');
       console.error(`[runQuery] session=${session.id} FAILED on restart:`, err);
-      emit(failureEvent(session.adapter, String(err?.message || err)));
+      emit(failureEvent(session.adapter, rejectionText(err)));
       session.status = 'error';
       this.sendStatus(session, 'error');
     });
@@ -849,23 +864,24 @@ class AgentSessionManager {
         emit(event);
       }
       logger.debug(`[runQuery] session=${id} event loop ended normally`);
-    } catch (err: any) {
+    } catch (err) {
+      const e = err as RunError | null;
       // Abort errors are expected when the user stops a query — don't surface them.
       // interrupting covers an in-place interrupt that tears down the event loop
       // (the SDK throws "Request was aborted" rather than yielding a result).
       // destroying covers a close or delete, which kills the agent process
       // before closing its query. A handle that is no longer the session's
       // belongs to a run that was put to sleep, which also kills the process.
-      if (err?.message === 'Operation aborted' || abortController.signal.aborted || session.interrupting || session.destroying || session.queryHandle !== handle) {
+      if (e?.message === 'Operation aborted' || abortController.signal.aborted || session.interrupting || session.destroying || session.queryHandle !== handle) {
         session.interrupting = false;
         logger.debug(`[runQuery] session=${id} event loop aborted (expected)`);
       } else if (err instanceof ResumeNotFoundError && resumingProviderSession) {
         this.replaceMissingConversation(session, handle, emit, err.message);
         return;
       } else {
-        const errMsg = err?.message || String(err);
-        const stderr = err?.stderr || err?.cause?.stderr || '';
-        const exitCode = err?.exitCode ?? err?.code ?? '';
+        const errMsg = e?.message || String(err);
+        const stderr = e?.stderr || e?.cause?.stderr || '';
+        const exitCode = e?.exitCode ?? e?.code ?? '';
         const detail = stderr ? `${errMsg}\n${stderr}` : errMsg;
         logger.error(`[runQuery] session=${id} event loop error (exit=${exitCode}):`, detail);
 
@@ -1340,7 +1356,7 @@ class AgentSessionManager {
     if (!session) return;
     // Only modes the app offers. The value comes over IPC, and anything else
     // (e.g. the SDK's bypassPermissions) would be passed to the SDK as-is.
-    if (!(PERMISSION_MODES as readonly string[]).includes(mode)) {
+    if (!isPermissionMode(mode)) {
       logger.warn(`[setMode] session=${id} ignored unknown permission mode: ${mode}`);
       return;
     }
@@ -1349,7 +1365,7 @@ class AgentSessionManager {
 
     // Always update permissionMode on the session so it persists across
     // stop/restart cycles — even when queryHandle is temporarily null.
-    session.permissionMode = mode as ManagedSession['permissionMode'];
+    session.permissionMode = mode;
 
     // When leaving an edit-accepting mode (acceptEdits, readSafe or auto),
     // clear always-allowed edit tools so switching back to default/plan
@@ -1384,7 +1400,7 @@ class AgentSessionManager {
     // Pass the mode to the adapter so the SDK is kept in sync.
     if (session.queryHandle?.setPermissionMode) {
       try {
-        session.queryHandle.setPermissionMode(mode as any);
+        session.queryHandle.setPermissionMode(mode);
       } catch (e) {
         logger.warn(`Failed to set mode for session ${id}:`, e);
       }
@@ -1882,7 +1898,7 @@ class AgentSessionManager {
     // Start a new query loop — the session stays in the map so sendMessage works
     this.runQuery(session, emit).catch((err) => {
       console.error(`[runQuery] session=${id} FAILED after stop:`, err);
-      emit(failureEvent(session.adapter, String(err.message || err)));
+      emit(failureEvent(session.adapter, rejectionText(err)));
     });
   }
 
@@ -1961,7 +1977,7 @@ class AgentSessionManager {
     })().catch((err) => {
       perfSteps.fail(id, 'agent failed to start');
       console.error(`[runQuery] session=${id} FAILED on wake:`, err);
-      emit(failureEvent(session.adapter, String(err?.message || err)));
+      emit(failureEvent(session.adapter, rejectionText(err)));
       session.status = 'error';
       this.sendStatus(session, 'error');
     });

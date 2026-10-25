@@ -97,8 +97,8 @@ export class TerminalManager {
       this.sessions.set(sessionId, { pty: ptyProcess, sessionId, sender, cwd });
       logger.info(`PTY spawned: session=${sessionId}, shell=${shell}, cwd=${cwd}`);
       return true;
-    } catch (err: any) {
-      logger.error(`PTY spawn failed for session ${sessionId}:`, err.message);
+    } catch (err) {
+      logger.error(`PTY spawn failed for session ${sessionId}:`, err instanceof Error ? err.message : String(err));
       return false;
     }
   }

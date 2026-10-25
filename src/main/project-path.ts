@@ -28,8 +28,8 @@ export async function inspectProjectFolder(picked: string): Promise<PickedProjec
   let refusal = '';
   try {
     root = (await git(['rev-parse', '--show-toplevel'], picked)).trim() || null;
-  } catch (e: any) {
-    refusal = String(e?.stderr ?? '').trim();
+  } catch (e) {
+    refusal = String((e as { stderr?: string } | null)?.stderr ?? '').trim();
   }
 
   if (root) {
@@ -76,7 +76,7 @@ export async function projectKind(dir: string): Promise<ProjectKind> {
   try {
     await git(['rev-parse', '--git-dir'], dir);
     return 'git';
-  } catch (e: any) {
-    return GIT_REFUSAL.test(String(e?.stderr ?? '')) ? 'git' : 'folder';
+  } catch (e) {
+    return GIT_REFUSAL.test(String((e as { stderr?: string } | null)?.stderr ?? '')) ? 'git' : 'folder';
   }
 }

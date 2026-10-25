@@ -285,7 +285,7 @@ export class SessionEventStore {
       for (const line of data.split('\n')) {
         if (!line) continue;
         try {
-          events.push(JSON.parse(line));
+          events.push(JSON.parse(line) as AgentEvent);
         } catch {
           logger.warn(`[loadEventHistory] skipping corrupt line in ${id}.jsonl`);
         }

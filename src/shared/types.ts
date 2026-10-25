@@ -2162,6 +2162,11 @@ export interface UpdateState {
 export const PERMISSION_MODES = ['default', 'plan', 'acceptEdits', 'readSafe', 'auto'] as const;
 export type PermissionMode = (typeof PERMISSION_MODES)[number];
 
+/** Whether `mode` is one the app offers (PERMISSION_MODES). */
+export function isPermissionMode(mode: unknown): mode is PermissionMode {
+  return (PERMISSION_MODES as readonly unknown[]).includes(mode);
+}
+
 export const IPC = {
   FILE_OPEN_IN_EDITOR: 'file:openInEditor',
   REPO_SELECT: 'repo:select',

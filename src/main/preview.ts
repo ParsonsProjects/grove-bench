@@ -80,6 +80,13 @@ interface Entry {
   viewport: PreviewBounds | null;
 }
 
+/** The fields read from the DevTools protocol's Page.javascriptDialogOpening. */
+interface DialogOpening {
+  type: string;
+  message: string;
+  defaultPrompt?: string;
+}
+
 function blankState(): PreviewPageState {
   return { url: '', title: '', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false };
 }
@@ -322,13 +329,14 @@ export class PreviewManager {
    * doesn't support prompt().)
    */
   private answerDialogs(page: AgentPage, wc: WebContents): void {
-    wc.debugger.on('message', (_event, method, params) => {
+    wc.debugger.on('message', (_event, method: string, params: unknown) => {
       if (method !== 'Page.javascriptDialogOpening') return;
-      const accept = page.dialogAnswer === 'accept' || params.type === 'beforeunload';
-      if (params.type !== 'beforeunload') {
-        page.log.add({ kind: 'page', level: 'warning', text: `The page showed ${params.type}(${JSON.stringify(params.message)}) and it was answered ${accept ? 'OK' : 'Cancel'}.` });
+      const dialog = params as DialogOpening;
+      const accept = page.dialogAnswer === 'accept' || dialog.type === 'beforeunload';
+      if (dialog.type !== 'beforeunload') {
+        page.log.add({ kind: 'page', level: 'warning', text: `The page showed ${dialog.type}(${JSON.stringify(dialog.message)}) and it was answered ${accept ? 'OK' : 'Cancel'}.` });
       }
-      wc.debugger.sendCommand('Page.handleJavaScriptDialog', { accept, promptText: params.defaultPrompt ?? '' }).catch(() => {});
+      wc.debugger.sendCommand('Page.handleJavaScriptDialog', { accept, promptText: dialog.defaultPrompt ?? '' }).catch(() => {});
     });
     page.ensureDebugger = () => {
       if (wc.isDestroyed() || wc.debugger.isAttached()) return;

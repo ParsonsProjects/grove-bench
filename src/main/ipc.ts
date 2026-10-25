@@ -1,7 +1,7 @@
 import { app, ipcMain, BrowserWindow, dialog, shell } from 'electron';
 import { runProcess } from './process-host.js';
-import { IPC, PERMISSION_MODES } from '../shared/types.js';
-import type { BranchSwitchResult, ClaudeAccountPreview, ClaudeAccountSetting, BranchSyncResult, ConversationGoal, CreateSessionOpts, EventHistoryPage, ThreadUsage, OpenPrSummary, PermissionMode, PrerequisiteStatus, PermissionDecision, RegistryAgentSummary, SessionInfo, SkillDefinition, WorktreeInfo } from '../shared/types.js';
+import { IPC, isPermissionMode } from '../shared/types.js';
+import type { BranchSwitchResult, ClaudeAccountPreview, ClaudeAccountSetting, BranchSyncResult, ConversationGoal, CreateSessionOpts, EventHistoryPage, ThreadUsage, OpenPrSummary, PrerequisiteStatus, PermissionDecision, RegistryAgentSummary, SessionInfo, SkillDefinition, WorktreeInfo } from '../shared/types.js';
 import { sessionManager } from './agent-session.js';
 import { todaySpend } from './session-limits.js';
 import { searchEvents, findEventIndexByUuid, extractSessionPreview, firstUserPrompt } from './event-search.js';
@@ -74,14 +74,6 @@ function prelaunchPrefixedEvents(sessionId: string): import('../shared/types.js'
   const prelaunch = prelaunchEvents.get(sessionId) ?? [];
   const history = sessionManager.getEventHistory(sessionId);
   return prelaunch.length > 0 ? [...prelaunch, ...history] : history;
-}
-
-const KNOWN_PERMISSION_MODES: ReadonlySet<string> = new Set<string>(PERMISSION_MODES);
-
-/** A mode the renderer asked a new conversation to start in. Anything else
- *  is dropped so the agent's saved default applies. */
-function isPermissionMode(value: unknown): value is PermissionMode {
-  return typeof value === 'string' && KNOWN_PERMISSION_MODES.has(value);
 }
 
 /** Control values the renderer chose for a new conversation: string values
@@ -323,6 +315,7 @@ export function registerHandlers() {
   ) {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win) throw new Error('No window found');
+    // Any other mode is dropped so the agent's saved default applies.
     const permissionMode = isPermissionMode(opts.permissionMode) ? opts.permissionMode : undefined;
     const model = typeof opts.model === 'string' && opts.model ? opts.model : undefined;
     const controls = sanitizeControls(opts.controls);
@@ -480,7 +473,8 @@ export function registerHandlers() {
             if (signal.aborted) throw e;
             if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
               perfSteps.step(id, 'install dependencies (failed)');
-              const stderr = (e as any).stderr || (e as any).message || String(e);
+              const err = e as { stderr?: string; message?: string };
+              const stderr = err.stderr || err.message || String(e);
               logger.warn(`npm install failed for worktree ${worktree.id}:`, e);
               emitPrelaunch({ type: 'error', message: `npm install failed:\n${stderr}` });
             }
@@ -508,14 +502,14 @@ export function registerHandlers() {
         });
 
         logger.info(`Session created: id=${worktree.id}`);
-      } catch (err: any) {
+      } catch (err) {
         if (signal.aborted) {
           perfSteps.fail(id, 'deleted');
           logger.info(`Session setup stopped for ${id}: the conversation was deleted`);
           return;
         }
         perfSteps.fail(id, 'setup failed');
-        const msg = err.message || String(err);
+        const msg = (err as Error | null)?.message || String(err);
         logger.error(`Session setup failed for ${id}:`, msg);
         emitPrelaunch({ type: 'error', message: msg });
         if (!win.isDestroyed()) {
@@ -640,7 +634,7 @@ export function registerHandlers() {
     await sessionManager.stopTask(id, taskId);
   });
 
-  ipcMain.handle(IPC.SESSION_DESTROY, async (_event, id: string, deleteBranch = false) => {
+  ipcMain.handle(IPC.SESSION_DESTROY, async (_event, id: string, deleteBranch: boolean = false) => {
     logger.info(`Destroying session: id=${id}, deleteBranch=${deleteBranch}`);
     // Refuse before stopping anything if other conversations share its worktree.
     await worktreeManager.assertRemovable(id);
@@ -1806,8 +1800,8 @@ export function registerHandlers() {
     if (!adapter.listConfiguredMcpServers) return [];
     try {
       return await adapter.listConfiguredMcpServers(cwd);
-    } catch (e: any) {
-      logger.warn('Failed to list configured MCP servers:', e.message);
+    } catch (e) {
+      logger.warn('Failed to list configured MCP servers:', e instanceof Error ? e.message : String(e));
       throw e;
     }
   });
@@ -1841,13 +1835,13 @@ export function registerHandlers() {
     }
     try {
       return await adapter.listPlugins();
-    } catch (e: any) {
-      logger.warn('Failed to list plugins:', e.message);
+    } catch (e) {
+      logger.warn('Failed to list plugins:', e instanceof Error ? e.message : String(e));
       return { installed: [], available: [] };
     }
   });
 
-  ipcMain.handle(IPC.PLUGIN_INSTALL, async (_event, pluginId: string, scope = 'user', adapterType?: string) => {
+  ipcMain.handle(IPC.PLUGIN_INSTALL, async (_event, pluginId: string, scope: string = 'user', adapterType?: string) => {
     const adapter = resolveAdapter(adapterType, builtInAgent);
     if (!adapter.installPlugin) throw new Error(`Adapter "${adapter.id}" does not support plugins`);
     await adapter.installPlugin(pluginId, scope);
