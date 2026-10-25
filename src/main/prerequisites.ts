@@ -5,8 +5,10 @@ import { adapterRegistry } from './adapters/index.js';
 import type { AdapterPrerequisiteStatus, AgentAdapter } from './adapters/types.js';
 import { canStoreApiKey, hasApiKey, isApiKeyRejected, isApiKeyUnverified } from './credentials.js';
 
+// 2.23: rewinding restores files with `git restore`, and Continue drops a
+// pick resolved to no change with `cherry-pick --skip` (`revert --skip`).
 const MIN_GIT_MAJOR = 2;
-const MIN_GIT_MINOR = 17;
+const MIN_GIT_MINOR = 23;
 
 export async function checkGit(): Promise<PrerequisiteStatus['git']> {
   const info = await gitVersion();

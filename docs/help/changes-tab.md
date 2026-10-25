@@ -4,7 +4,7 @@ The Changes tab (`Alt+2`) shows the git status of your thread's worktree, lettin
 
 In a thread that runs without git there is nothing to compare against, so the tab only says it needs git. Check the agent's edits in your editor or file explorer.
 
-If git isn't installed, or is older than 2.17, a warning at the top of this tab says so, with **Download Git** and **Re-check**. Grove Bench doesn't warn about it anywhere else: without git, projects are plain folders.
+If git isn't installed, or is older than 2.23, a warning at the top of this tab says so, with **Download Git** and **Re-check**. Grove Bench doesn't warn about it anywhere else: without git, projects are plain folders.
 
 ## Branch and Uncommitted
 

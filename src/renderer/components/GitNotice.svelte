@@ -29,7 +29,7 @@
     {/snippet}
     <p>
       {#if git.available}
-        Git is too old ({git.version}). Separate copies, branches and rewinding need Git 2.17 or later.
+        Git is too old ({git.version}). Separate copies, branches and rewinding need Git 2.23 or later.
       {:else}
         Git isn't installed. Without it, the agent edits your project folder in place and its edits can't be
         rewound.

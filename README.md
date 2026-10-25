@@ -25,7 +25,7 @@ Download `Grove-Bench-Setup-<version>.exe` from [Releases](https://github.com/Pa
 
 ## Using Grove Bench
 
-You need either a Claude plan (Pro, Max, Team or Enterprise) with [Claude Code](https://code.claude.com/docs/en/setup) installed and signed in, or an Anthropic API key. Git 2.17 or later is recommended: without it, the agent edits your project folder in place and its edits can't be rewound.
+You need either a Claude plan (Pro, Max, Team or Enterprise) with [Claude Code](https://code.claude.com/docs/en/setup) installed and signed in, or an Anthropic API key. Git 2.23 or later is recommended: without it, the agent edits your project folder in place and its edits can't be rewound.
 
 1. **Add a project**: a folder on your computer, ideally a git repository. A folder without git is added as it is.
 2. **Start a thread**: tell the agent what to work on. By default it works on a new branch in its own copy of the project (a git worktree), so your checkout is left alone.
