@@ -80,7 +80,7 @@
   );
 
   async function refreshMcpServers() {
-    if (mcpExpanded && mcpControls.contextCost) refreshMcpCost();
+    if (mcpExpanded && mcpControls.contextCost) void refreshMcpCost();
     if (!mcpControls.list) return;
     try {
       const servers = await window.groveBench.listMcpServers(sessionId);
@@ -133,7 +133,7 @@
     const running = isRunning;
     const turnEnded = mcpWasRunning && !running;
     mcpWasRunning = running;
-    if (turnEnded) untrack(() => { if (mcpRows.length > 0 || mcpControls.list) refreshMcpServers(); });
+    if (turnEnded) untrack(() => { if (mcpRows.length > 0 || mcpControls.list) void refreshMcpServers(); });
   });
 
   // Not every agent reports its servers when it starts. One that can list
@@ -142,14 +142,14 @@
   $effect(() => {
     if (sessionStatus !== 'running' || !mcpControls.list || mcpListedOnStart) return;
     mcpListedOnStart = true;
-    untrack(() => { if (mcpKnown.length === 0) refreshMcpServers(); });
+    untrack(() => { if (mcpKnown.length === 0) void refreshMcpServers(); });
   });
 
   function toggleMcpPopover() {
     mcpExpanded = !mcpExpanded;
     if (mcpExpanded) {
       mcpError = null;
-      refreshMcpServers();
+      void refreshMcpServers();
     }
   }
 
@@ -220,7 +220,7 @@
     mcpSigningIn = { ...mcpSigningIn, [name]: true };
     mcpSignInDeadlines.set(name, Date.now() + MCP_SIGN_IN_TIMEOUT_MS);
     if (mcpSignInPoll) return; // one ticker serves every pending sign-in
-    mcpSignInPoll = setInterval(async () => {
+    const checkSignIns = async () => {
       await refreshMcpServers();
       for (const pending of Object.keys(mcpSigningIn)) {
         const status = mcpStatuses.find((s) => s.name === pending)?.status;
@@ -241,7 +241,8 @@
         }
       }
       if (Object.keys(mcpSigningIn).length === 0) stopSignInPoll();
-    }, MCP_SIGN_IN_POLL_MS);
+    };
+    mcpSignInPoll = setInterval(() => void checkSignIns(), MCP_SIGN_IN_POLL_MS);
   }
 
   function stopSignInPoll() {
@@ -254,7 +255,7 @@
 
   onMount(() => {
     // The controls depend on what the agent supports (loaded once).
-    agentsStore.load();
+    void agentsStore.load();
   });
 
   onDestroy(() => {

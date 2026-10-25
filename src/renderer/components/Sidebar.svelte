@@ -128,7 +128,7 @@
     const unloaded = store.sessions
       .filter((s) => messageStore.getMessages(s.id).length === 0)
       .map((s) => s.id);
-    if (unloaded.length > 0) sessionPreviewStore.ensure(unloaded);
+    if (unloaded.length > 0) void sessionPreviewStore.ensure(unloaded);
   });
 
   // Goals for the rows' tooltips, while goals are on: one call for every
@@ -209,8 +209,8 @@
     const items: MenuItem[] = [
       ...followUp,
       { label: 'Rename', icon: 'rename', action: () => startRename(sessionId, sessionLabel(session)), separator: followUp.length > 0 },
-      { label: 'Open Folder', icon: 'folder', action: () => window.groveBench.openSessionFolder(sessionId) },
-      { label: 'Export Thread…', icon: 'export', action: () => exportThread(sessionId) },
+      { label: 'Open Folder', icon: 'folder', action: () => void window.groveBench.openSessionFolder(sessionId) },
+      { label: 'Export Thread…', icon: 'export', action: () => void exportThread(sessionId) },
     ];
     // Close Conversation stops a live session (it was called Stop, then Mark
     // Completed) but keeps it resumable from Ctrl+R; not shown for
@@ -793,7 +793,7 @@
   }
 
   function handleRenameKeydown(e: KeyboardEvent) {
-    if (e.key === 'Enter') { e.preventDefault(); confirmRename(); }
+    if (e.key === 'Enter') { e.preventDefault(); void confirmRename(); }
   }
 
   // ── Attention triage: filter chips, per-repo counts ──

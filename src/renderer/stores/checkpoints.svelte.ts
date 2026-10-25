@@ -116,7 +116,7 @@ class CheckpointStore {
       setTimeout(() => {
         this.pendingTimeout.delete(sessionId);
         this.lastFetch.delete(sessionId);
-        this.refresh(sessionId);
+        void this.refresh(sessionId);
       }, delayMs),
     );
   }

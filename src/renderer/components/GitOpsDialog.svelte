@@ -105,7 +105,7 @@
   });
 
   function afterChange() {
-    gitStatusStore.refresh(sessionId);
+    void gitStatusStore.refresh(sessionId);
     prStore.refresh(sessionId, true).catch(() => {});
     checkpointStore.scheduleRefresh(sessionId);
   }

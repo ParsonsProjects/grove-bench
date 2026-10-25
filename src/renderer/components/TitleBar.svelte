@@ -36,11 +36,11 @@
   // it settles (maximizing fires resize too), not once per event.
   const RESIZE_SETTLE_MS = 150;
   $effect(() => {
-    checkMaximized();
+    void checkMaximized();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const onResize = () => {
       clearTimeout(timer);
-      timer = setTimeout(checkMaximized, RESIZE_SETTLE_MS);
+      timer = setTimeout(() => void checkMaximized(), RESIZE_SETTLE_MS);
     };
     window.addEventListener('resize', onResize);
     return () => {
@@ -182,7 +182,7 @@
       </svg>
     </button>
     <button
-      onclick={() => { window.groveBench.winMaximize(); setTimeout(checkMaximized, 50); }}
+      onclick={() => { window.groveBench.winMaximize(); setTimeout(() => void checkMaximized(), 50); }}
       class="win-btn h-full px-3 flex items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
       title={isMaximized ? 'Restore' : 'Maximize'}
     >

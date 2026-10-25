@@ -102,10 +102,10 @@
     messageStore.setActiveTab(sessionId, tab);
     if (noGit) return;
     if (tab === 'changes') {
-      gitStatusStore.refresh(sessionId);
+      void gitStatusStore.refresh(sessionId);
     }
     if (tab === 'checkpoints') {
-      checkpointStore.refresh(sessionId);
+      void checkpointStore.refresh(sessionId);
     }
   }
 
@@ -235,7 +235,7 @@
     }
 
     // Single git status refresh after replay (none without git)
-    if (!noGit) gitStatusStore.refresh(sessionId);
+    if (!noGit) void gitStatusStore.refresh(sessionId);
 
     // A minimized window draws nothing until it's restored: that wait isn't
     // drawing time, so there is no first draw to time then.

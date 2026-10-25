@@ -104,7 +104,7 @@
   // a new model list.
   let modelsVersion = $state(0);
   $effect(() => window.groveBench.onModelsChanged(() => {
-    agentsStore.refresh().finally(() => { modelsVersion++; });
+    void agentsStore.refresh().finally(() => { modelsVersion++; });
   }));
   // Keyed on the default models' value, not the draft object: other saves
   // (a status-bar toggle) replace the draft without changing them.
@@ -114,7 +114,7 @@
     void modelsVersion;
     // Untracked: the load reads agentsStore.loaded, which a models-changed
     // refresh flips twice, and each re-run would fetch every agent's models.
-    untrack(() => loadAgentGroups(defaults));
+    void untrack(() => loadAgentGroups(defaults));
   });
 
   function controlValue(adapterId: string, control: ControlDescriptor): string {

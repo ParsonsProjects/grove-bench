@@ -229,7 +229,7 @@
   function confirmRevert() {
     const entry = confirmEntry;
     confirmEntry = null;
-    if (entry) revertFile(entry);
+    if (entry) void revertFile(entry);
   }
 
   async function revertFile(entry: GitStatusEntry) {
@@ -297,7 +297,7 @@
           bind:value={commitMessage}
           placeholder={generatingMsg ? 'Generating…' : 'Commit message…'}
           rows="2"
-          onkeydown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); doCommit(); } }}
+          onkeydown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); void doCommit(); } }}
           class="w-full text-xs bg-background/50 border border-border/50 px-2 py-1 pr-6 text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/50 resize-none"
         ></textarea>
         <Button

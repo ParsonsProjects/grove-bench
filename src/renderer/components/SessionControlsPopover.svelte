@@ -55,7 +55,7 @@
   /** The mode, and any other control off its default, for the button. */
   let summary = $derived(controlSummary(controls, (id) => messageStore.getControlValue(sessionId, id)));
 
-  $effect(() => { messageStore.loadControls(sessionId); });
+  $effect(() => { void messageStore.loadControls(sessionId); });
 
   // ── Plan usage ("runway") for the session's provider ──
   // Opening the popover is the moment the numbers matter — refresh unless

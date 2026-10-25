@@ -217,7 +217,7 @@ describe('TerminalManager', () => {
       const oldPty = ptyAt(0);
 
       // Kill and spawn new PTY (simulates restart flow: kill + spawn)
-      tm.killPty('s1');
+      void tm.killPty('s1');
       tm.spawnPty('s1', '/tmp', sender);
       expect(tm.isAlive('s1')).toBe(true);
       expect(spawnedPtys).toHaveLength(2);
@@ -242,7 +242,7 @@ describe('TerminalManager', () => {
       oldPty._onDataCb!('stale-data');
 
       // Kill and spawn new PTY before flush fires
-      tm.killPty('s1');
+      void tm.killPty('s1');
       tm.spawnPty('s1', '/tmp', sender);
 
       // Advance past the 8ms flush timer of the old PTY
@@ -262,7 +262,7 @@ describe('TerminalManager', () => {
       oldPty._onDataCb!('stale-buffered');
 
       // Kill and spawn new PTY
-      tm.killPty('s1');
+      void tm.killPty('s1');
       tm.spawnPty('s1', '/tmp', sender);
 
       // Old PTY exits

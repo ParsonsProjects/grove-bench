@@ -73,7 +73,7 @@
       });
       open = false;
       onclose();
-      window.groveBench.openExternal(pr.url);
+      void window.groveBench.openExternal(pr.url);
     } catch (e: any) {
       dialogError = e?.message || String(e);
     } finally {

@@ -1440,7 +1440,7 @@ describe('AgentSessionManager.respondToPermission()', () => {
 
     await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
 
-    mockAdapter.control!.permissionHandler!({
+    void mockAdapter.control!.permissionHandler!({
       requestId: 'a1',
       toolName: 'Edit',
       toolUseId: 'tu_2',
@@ -1474,7 +1474,7 @@ describe('AgentSessionManager.respondToPermission()', () => {
 
     await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
 
-    mockAdapter.control!.permissionHandler!({
+    void mockAdapter.control!.permissionHandler!({
       requestId: 'a1',
       toolName: 'Bash',
       toolUseId: 'tu_3',
@@ -1509,10 +1509,10 @@ describe('AgentSessionManager.permRequestCounter', () => {
     await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
 
     // Trigger two permission requests
-    mockAdapter.control!.permissionHandler!({
+    void mockAdapter.control!.permissionHandler!({
       requestId: 'a1', toolName: 'Bash', toolUseId: 'tu_1', toolInput: {},
     });
-    mockAdapter.control!.permissionHandler!({
+    void mockAdapter.control!.permissionHandler!({
       requestId: 'a2', toolName: 'Read', toolUseId: 'tu_2', toolInput: {},
     });
     await new Promise((r) => setTimeout(r, 50));
@@ -1664,7 +1664,7 @@ describe('AgentSessionManager.stopQuery()', () => {
     await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
 
     let permResolved: PermissionResponse | null = null;
-    mockAdapter.control!.permissionHandler!({
+    void mockAdapter.control!.permissionHandler!({
       requestId: 'a1', toolName: 'Bash', toolUseId: 'tu_1', toolInput: {},
     }).then((r) => { permResolved = r; });
     await new Promise((r) => setTimeout(r, 50));
@@ -1801,7 +1801,7 @@ describe('AgentSessionManager.interruptQuery()', () => {
     await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
 
     let permResolved: PermissionResponse | null = null;
-    mockAdapter.control!.permissionHandler!({
+    void mockAdapter.control!.permissionHandler!({
       requestId: 'a1', toolName: 'Bash', toolUseId: 'tu_1', toolInput: {},
     }).then((r) => { permResolved = r; });
     await new Promise((r) => setTimeout(r, 50));
@@ -2017,7 +2017,7 @@ describe('AgentSessionManager.destroySession()', () => {
     await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
 
     let permResolved: PermissionResponse | null = null;
-    mockAdapter.control!.permissionHandler!({
+    void mockAdapter.control!.permissionHandler!({
       requestId: 'a1', toolName: 'Bash', toolUseId: 'tu_1', toolInput: {},
     }).then((r) => { permResolved = r; });
     await new Promise((r) => setTimeout(r, 50));
@@ -2135,7 +2135,7 @@ describe('AgentSessionManager.closeSession()', () => {
   it('resolves pending permissions as denied', async () => {
     await startSession('test-close-perm');
     let permResolved: PermissionResponse | null = null;
-    mockAdapter.control!.permissionHandler!({
+    void mockAdapter.control!.permissionHandler!({
       requestId: 'a1', toolName: 'Bash', toolUseId: 'tu_1', toolInput: {},
     }).then((r) => { permResolved = r; });
     await new Promise((r) => setTimeout(r, 50));
@@ -3476,7 +3476,7 @@ describe('AgentSessionManager.sendMessage()', () => {
     const pending = sessionManager.sendMessage('test-send-early', 'Hello before connect');
     // Not resolved (false) yet — it is waiting, not dropped
     let settled = false;
-    pending.then(() => { settled = true; });
+    void pending.then(() => { settled = true; });
     await new Promise((r) => setTimeout(r, 20));
     expect(settled).toBe(false);
 
@@ -3500,7 +3500,7 @@ describe('AgentSessionManager.sendMessage()', () => {
 
     const pending = sessionManager.sendMessage('test-send-presetup', 'Hello before setup');
     let settled = false;
-    pending.then(() => { settled = true; });
+    void pending.then(() => { settled = true; });
     await new Promise((r) => setTimeout(r, 20));
     expect(settled).toBe(false);
 

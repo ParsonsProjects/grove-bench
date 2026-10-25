@@ -36,7 +36,7 @@
   // A restored conversation can have a cost before anything asked for plan
   // usage: ask (the store throttles and shares it across conversations).
   $effect(() => {
-    if (lastResult?.totalCostUsd !== undefined && onPlan === null) untrack(() => usageStore.refresh(sessionId).catch(() => {}));
+    if (lastResult?.totalCostUsd !== undefined && onPlan === null) void untrack(() => usageStore.refresh(sessionId).catch(() => {}));
   });
   let lastTurnCost = $derived.by(() => {
     const usd = lastResult?.totalCostUsd;
@@ -81,8 +81,8 @@
       () => { if (ask === asking) set('unknown'); },
     ] as const;
     untrack(() => {
-      window.groveBench.getThreadUsage(sessionId).then(...settle<ThreadUsage>((v) => { thread = v; }));
-      if (withCost) window.groveBench.getDailySpend().then(...settle<number>((v) => { todayUsd = v; }));
+      void window.groveBench.getThreadUsage(sessionId).then(...settle<ThreadUsage>((v) => { thread = v; }));
+      if (withCost) void window.groveBench.getDailySpend().then(...settle<number>((v) => { todayUsd = v; }));
     });
   });
   const pending = (value: Asked<unknown>) => (value === null ? '…' : 'unknown');

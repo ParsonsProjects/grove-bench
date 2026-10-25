@@ -292,7 +292,7 @@ class PrStore {
   startGlobalPolling(getSessionIds: () => string[]): void {
     if (this.getPolledSessionIds) return;
     this.getPolledSessionIds = getSessionIds;
-    this.globalTimer = setTimeout(() => this.sweep(), POLL_MS);
+    this.globalTimer = setTimeout(() => void this.sweep(), POLL_MS);
     if (typeof document !== 'undefined') {
       document.addEventListener('visibilitychange', this.onVisibilityChange);
     }
@@ -335,7 +335,7 @@ class PrStore {
       console.error('PR status sweep failed:', e);
     } finally {
       this.sweeping = false;
-      if (this.getPolledSessionIds !== null) this.globalTimer = setTimeout(() => this.sweep(), POLL_MS);
+      if (this.getPolledSessionIds !== null) this.globalTimer = setTimeout(() => void this.sweep(), POLL_MS);
     }
   }
 
@@ -343,7 +343,7 @@ class PrStore {
    *  doesn't spawn a gh process per switch. Returns an unwatch fn (no-op —
    *  ongoing polling is global). */
   watch(sessionId: string): () => void {
-    this.refresh(sessionId);
+    void this.refresh(sessionId);
     return () => {};
   }
 
@@ -372,7 +372,7 @@ class PrStore {
     const { [sessionId]: _chosen, ...restPrimary } = this.primaryBySession;
     this.primaryBySession = restPrimary;
     gitStatusStore.prBaseChanged(sessionId);
-    this.refresh(sessionId, true);
+    void this.refresh(sessionId, true);
     return pr;
   }
 

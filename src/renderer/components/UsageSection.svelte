@@ -26,8 +26,8 @@
   let stale = $derived(updatedAt > 0 && Date.now() - updatedAt > STALE_MS);
 
   $effect(() => {
-    agentsStore.load();
-    if (providerId) usageStore.loadCached(providerId);
+    void agentsStore.load();
+    if (providerId) void usageStore.loadCached(providerId);
   });
 
   function clock(ms: number): string {

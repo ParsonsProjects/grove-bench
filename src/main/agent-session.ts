@@ -531,7 +531,7 @@ class AgentSessionManager {
     const resumingProviderSession = !!session.providerSessionId;
     if (!resumingProviderSession && session.gitBacked) {
       const baselineStart = performance.now();
-      session.checkpoints.captureBaseline(id, session.worktreePath).then((written) => {
+      void session.checkpoints.captureBaseline(id, session.worktreePath).then((written) => {
         if (!written) {
           logger.warn(`Checkpoint baseline not captured for ${id}`);
           return;
@@ -834,7 +834,7 @@ class AgentSessionManager {
             .filter(f => f.folder === 'sessions' && /plan|todo/i.test(f.relativePath));
           if (planFiles.length > 0) {
             const fileList = planFiles.map(f => f.relativePath).join(', ');
-            this.sendMessage(session.id,
+            void this.sendMessage(session.id,
               `[System] Context was just compacted. You have active plan/todo files in memory: ${fileList}. Use memory_read to restore your progress before continuing.`
             );
           }
@@ -1090,7 +1090,7 @@ class AgentSessionManager {
     this.pendingSetups.set(id, settled);
     if (abort) this.pendingSetupAborts.set(id, abort);
     else this.pendingSetupAborts.delete(id);
-    settled.then(() => {
+    void settled.then(() => {
       if (this.pendingSetups.get(id) !== settled) return;
       this.pendingSetups.delete(id);
       if (this.pendingSetupAborts.get(id) === abort) this.pendingSetupAborts.delete(id);
@@ -2398,7 +2398,7 @@ class AgentSessionManager {
       // input. The disk log is rewritten to match, so save what the cut
       // turns cost first.
       this.saveThreadLimitsBeforeCut(session);
-      this.events.replace(session, session.eventHistory.slice(0, rewindIdx));
+      void this.events.replace(session, session.eventHistory.slice(0, rewindIdx));
     }
 
     session.emit?.({ type: 'rewind', toMessageId: userMessageId, conversationOnly: options?.conversationOnly });
@@ -2569,7 +2569,7 @@ class AgentSessionManager {
         });
       }
       this.saveThreadLimitsBeforeCut(session);
-      this.events.replace(session, []);
+      void this.events.replace(session, []);
       // Keep the checkpoint refs — the user can still restore files to any
       // earlier turn — but capture a clear sentinel so the Checkpoints tab can
       // separate the cleared conversation's turns from the new one's (the

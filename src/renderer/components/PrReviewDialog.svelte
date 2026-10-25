@@ -131,7 +131,7 @@
           rows="5"
           autofocus
           placeholder={needsSummary ? 'What should the author know? (Markdown)' : 'Anything to add? (Markdown)'}
-          onkeydown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); submit(); } }}
+          onkeydown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); void submit(); } }}
           class="w-full text-sm bg-background border border-input px-3 py-2 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring resize-y"
         ></textarea>
       </div>
