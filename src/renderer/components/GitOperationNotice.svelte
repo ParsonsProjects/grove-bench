@@ -24,8 +24,8 @@
     busy = which;
     error = '';
     try {
-      const call = which === 'continue' ? window.groveBench.continueGitOperation : window.groveBench.abortGitOperation;
-      await call(sessionId, operation.kind);
+      if (which === 'continue') await window.groveBench.continueGitOperation(sessionId, operation.kind);
+      else await window.groveBench.abortGitOperation(sessionId, operation.kind);
     } catch (e) {
       error = stripIpcErrorPrefix(e instanceof Error ? e.message : String(e));
     } finally {

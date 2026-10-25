@@ -1005,7 +1005,7 @@ describe('StatusBar: a merge or rebase stopped part way', () => {
   afterEach(() => gitStatusStore.clear(ACTIVE));
 
   it('shows it by the branch, and opens the Changes tab to finish it', async () => {
-    const refresh = vi.spyOn(gitStatusStore, 'refresh').mockResolvedValue(undefined as never);
+    const refresh = vi.spyOn(gitStatusStore, 'refresh').mockResolvedValue(undefined);
     gitStatusStore.statusBySession = { ...gitStatusStore.statusBySession, [ACTIVE]: { entries: [], operation: { kind: 'rebase', branch: 'feat-a', incoming: 'main', step: 1, total: 2 } } };
     render(StatusBar, { props: { sessionId: ACTIVE } });
 

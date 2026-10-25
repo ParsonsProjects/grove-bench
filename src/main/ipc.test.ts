@@ -1356,7 +1356,7 @@ describe('git handlers', () => {
   it('GIT_STATUS reports a merge or rebase stopped part way, in either scope', async () => {
     const rebase = { kind: 'rebase' as const, branch: 'feat', incoming: 'main', step: 1, total: 2 };
     vi.mocked(git.gitOperation).mockResolvedValue(rebase);
-    vi.mocked(git.git).mockImplementation(async (args: string[]) => (args[0] === 'status' ? 'UU a.ts\0' : ''));
+    vi.mocked(git.git).mockImplementation((args: string[]) => Promise.resolve(args[0] === 'status' ? 'UU a.ts\0' : ''));
     vi.mocked(git.hashWorkingFiles).mockResolvedValue('h1\n');
 
     expect(await invoke(IPC.GIT_STATUS, 's1')).toMatchObject({ operation: rebase });

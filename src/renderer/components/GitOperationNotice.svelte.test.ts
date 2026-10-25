@@ -15,7 +15,7 @@ beforeEach(() => {
   mockGroveBench.continueGitOperation.mockResolvedValue(undefined);
   mockGroveBench.abortGitOperation.mockReset();
   mockGroveBench.abortGitOperation.mockResolvedValue(undefined);
-  vi.spyOn(gitStatusStore, 'refresh').mockResolvedValue(undefined as never);
+  vi.spyOn(gitStatusStore, 'refresh').mockResolvedValue(undefined);
   messageStore.setIsRunning(SID, false);
 });
 

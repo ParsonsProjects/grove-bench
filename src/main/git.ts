@@ -753,7 +753,10 @@ async function refName(cwd: string, oid: string): Promise<string> {
 }
 
 /** git's own words from a failed call. */
-const gitErrorText = (e: any): string => (e?.stderr?.trim() || e?.message || String(e)).slice(0, 500);
+function gitErrorText(e: unknown): string {
+  const { stderr, message } = (e ?? {}) as { stderr?: string; message?: string };
+  return (stderr?.trim() || message || String(e)).slice(0, 500);
+}
 
 /**
  * Continue a rebase, cherry-pick or revert whose conflicts are resolved,
@@ -778,11 +781,11 @@ export async function continueGitOperation(cwd: string, kind: GitOperation['kind
       try {
         await git([kind, '--skip'], cwd);
       } catch (skipError) {
-        if (!(await hasUnmergedPaths(cwd))) throw new Error(gitErrorText(skipError));
+        if (!(await hasUnmergedPaths(cwd))) throw new Error(gitErrorText(skipError), { cause: skipError });
       }
       return;
     }
-    throw new Error(gitErrorText(e));
+    throw new Error(gitErrorText(e), { cause: e });
   }
 }
 
@@ -795,7 +798,7 @@ export async function abortGitOperation(cwd: string, kind: GitOperation['kind'])
   try {
     await git([kind, '--abort'], cwd);
   } catch (e) {
-    throw new Error(gitErrorText(e));
+    throw new Error(gitErrorText(e), { cause: e });
   }
 }
 
