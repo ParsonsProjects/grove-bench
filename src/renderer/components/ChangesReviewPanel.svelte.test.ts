@@ -495,6 +495,16 @@ describe('ChangesReviewPanel — merge conflicts', () => {
     expect(button).toBeDisabled();
   });
 
+  it("shows the markers in amber, each side named for the merge under way", async () => {
+    mockGroveBench.getFileDiff.mockResolvedValue({ kind: 'text', patch: withMarkers });
+    gitStatusStore.statusBySession = { [SID]: { entries: [conflicted()], operation: { kind: 'merge', branch: 'feat', incoming: 'main' } } };
+    const view = render(ChangesReviewPanel, { sessionId: SID });
+    await waitFor(() => expect(view.container.querySelectorAll('[data-conflict-marker]')).toHaveLength(3));
+
+    const sides = [...view.container.querySelectorAll('[data-conflict-side]')].map((el) => el.textContent);
+    expect(sides).toEqual(['↓ feat, yours', '↑ coming in']);
+  });
+
   it('only counts markers the conflict added, not lines HEAD already has', async () => {
     const view = show([conflicted()], '--- a/both.txt\n+++ b/both.txt\n@@ -1,2 +1,2 @@\n >>>>>>> fixture\n-ours\n+merged\n');
     await waitFor(() => expect(diffText(view.container)).toContain('merged'));

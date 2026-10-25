@@ -10,7 +10,7 @@
   import { withExpandableContext, reveal, expansionFor, type RevealedRanges } from '../lib/diff-context.js';
   import { buildReviewPrompt } from '../lib/review-prompt.js';
   import { reviewStore } from '../stores/review.svelte.js';
-  import type { GitStatusEntry, FileDiffResult, FileLinesResult } from '../../shared/types.js';
+  import type { GitStatusEntry, FileDiffResult, FileLinesResult, GitOperation } from '../../shared/types.js';
   import CopyButton from './CopyButton.svelte';
   import { isMarkdownFile } from '../../shared/attachments.js';
   import { CONFLICT_KINDS, isConflictMarker } from '../../shared/git-conflicts.js';
@@ -67,6 +67,7 @@
     reviewBarActions,
     headerActions,
     dialogs,
+    operation,
   }: {
     sessionId: string;
     /** Identity of what is being compared. When it changes every per-file
@@ -108,6 +109,9 @@
     reviewBarActions?: Snippet;
     headerActions?: Snippet<[GitStatusEntry]>;
     dialogs?: Snippet;
+    /** A merge, rebase, cherry-pick or revert git stopped part way: names
+     *  the sides of a conflicted file's markers. */
+    operation?: GitOperation;
   } = $props();
 
   let isLoading = $derived(loading);
@@ -1106,6 +1110,7 @@
             onCancelComment={() => composer = null}
             onUpdateComment={(id, body) => reviewStore.updateComment(sessionId, id, body)}
             onRemoveComment={(id) => reviewStore.removeComment(sessionId, id)}
+            conflict={selectedEntry.status === 'conflicted' ? { operation } : null}
           />
         {:else}
           <div class="text-xs text-muted-foreground py-2">No diff available</div>

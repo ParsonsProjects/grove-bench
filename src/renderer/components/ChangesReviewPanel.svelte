@@ -493,6 +493,7 @@
   {sessionId}
   {sourceKey}
   entries={gitStatus.entries}
+  {operation}
   active={sessionStore.activeSessionId === sessionId && messageStore.getActiveTab(sessionId) === 'changes'}
   loading={isLoading}
   changesLabel={isBranchScope ? 'Changed on branch' : 'Changes'}

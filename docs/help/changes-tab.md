@@ -63,11 +63,11 @@ Each modified file has a **Revert** button that resets it to its last committed 
 
 Reverting a renamed file undoes the rename: the old name comes back and the new one is deleted. If something else is at the old name by then, such as a new file or a folder, Revert stops and says so rather than overwrite it. Move it, then try again.
 
-A file with a merge conflict has no **Revert**: resolve the conflict (see below), or abort in the terminal.
+A file with a merge conflict has no **Revert**: resolve the conflict, or abort what stopped on it (see below).
 
 ## Resolving conflicts
 
-When the agent (or you, in the terminal) merges, rebases or cherry-picks and git stops on a conflict, the files it couldn't merge are listed under **Conflicts**, in both views. The diff header says how each one conflicts, in git's words (for example **Conflict: both modified**, or **deleted by them**). In **Uncommitted**, the diff shows the file as it is now against the commit checked out (HEAD), so the conflict markers git wrote into it (`<<<<<<<`, `=======` and `>>>>>>>`) show as added lines. **Branch** compares it with the base branch, as it does every file.
+When the agent (or you, in the terminal) merges, rebases or cherry-picks and git stops on a conflict, the files it couldn't merge are listed under **Conflicts**, in both views. The diff header says how each one conflicts, in git's words (for example **Conflict: both modified**, or **deleted by them**). In **Uncommitted**, the diff shows the file as it is now against the commit checked out (HEAD), so the conflict markers git wrote into it (`<<<<<<<`, `=======` and `>>>>>>>`) show as added lines, in amber. Next to each marker, the diff names the side it starts or ends in plain words, since git's own can mislead: in a rebase git calls the branch you're rebasing onto **HEAD**, so that side reads **main, the branch you're rebasing onto**, and the other **your commit**. In a merge they read **feat, yours** and **coming in**. **Branch** compares it with the base branch, as it does every file.
 
 While it's stopped, an amber strip across the top of the tab says what is under way and what's left, for example **Rebasing feat onto main, step 1 of 2. Resolve 1 conflict, then continue.** The status bar shows the same next to the branch (**rebasing 1/2**), whichever tab you're on; click it to come here.
 
