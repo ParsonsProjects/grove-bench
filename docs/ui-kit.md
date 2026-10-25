@@ -98,12 +98,12 @@ All in `src/renderer/lib/components/ui/`. Import from the folder's `index.js`:
 |---|---|
 | `default` | The main action in a view: Send, Start, Restart to update. One per view. |
 | `secondary` | Other actions next to it |
-| `subtle` | Any other bordered action: toolbars, the status bar, Cancel in a dialog |
+| `subtle` | Any other bordered action: toolbars, the status bar, Cancel in a dialog. Not a notice's action (see Notice) |
 | `quiet` | Icon buttons, and text actions that only brighten on hover |
 | `quiet-destructive` | Icon buttons that delete or stop something: quiet until hovered, then red |
 | `outline-success` | Answering what the agent asked for: Allow, Approve, Answer, an MCP form's Submit |
 | `outline-destructive`, `destructive` | Actions that delete or discard. Use the filled one only in a confirmation. |
-| `link` | An action inside a sentence ("Try again"), and the diff notices' actions ("Compare line by line", "Show diff"), where a grey bordered button was lost on the notice |
+| `link` | An action inside a sentence, and a notice's main action ("Try again", "Compare line by line") |
 | `external` | A link that opens a web page or another app, in the blue `--link` colour (green acts, blue goes) |
 
 | Size | Height | Use |
@@ -132,9 +132,11 @@ A disabled `Button` still gets hover events, so its `title` tooltip can say why 
 
 `tone`: `info`, `success`, `warning`, `danger`, `neutral`. Errors are announced at once (`role="alert"`); other tones wait their turn (`role="status"`). Titles use the tone's 300 shade, the one that keeps 4.5:1 on the tinted background in both themes; `light-theme.test.ts` checks each tone.
 
+Its main action is a `link` button, green as an action, or `external` (blue) when it opens a web page; anything else, such as Dismiss, is `quiet`. A `subtle` button's border is lost on the notice's tint (about 1.1:1), so it reads as grey text.
+
 ```svelte
 <Notice tone="danger" title="Couldn't save settings">
-  {#snippet actions()}<Button size="2xs" variant="subtle" onclick={retry}>Try again</Button>{/snippet}
+  {#snippet actions()}<Button size="2xs" variant="link" onclick={retry}>Try again</Button>{/snippet}
   <p>settings.json is read-only. Check its permissions and try again.</p>
 </Notice>
 ```

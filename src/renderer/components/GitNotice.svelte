@@ -20,10 +20,10 @@
        Changes tab, ruled off from the panel below. -->
   <Notice tone="warning" class="items-center {boxed ? '' : 'shrink-0 border-b border-b-border'}">
     {#snippet actions()}
-      <Button size="2xs" variant="subtle" onclick={() => window.groveBench.openExternal('https://git-scm.com/downloads')}>
+      <Button size="2xs" variant="external" onclick={() => window.groveBench.openExternal('https://git-scm.com/downloads')}>
         Download Git
       </Button>
-      <Button size="2xs" variant="subtle" disabled={prerequisitesStore.checking} onclick={() => prerequisitesStore.refresh()}>
+      <Button size="2xs" variant="quiet" disabled={prerequisitesStore.checking} onclick={() => prerequisitesStore.refresh()}>
         {prerequisitesStore.checking ? 'Checking…' : 'Re-check'}
       </Button>
     {/snippet}

@@ -251,7 +251,7 @@
                   {:else}
                     <Notice tone="danger">
                       {#snippet actions()}
-                        <Button size="2xs" variant="subtle" onclick={() => settingsStore.load()}>Try again</Button>
+                        <Button size="2xs" variant="link" onclick={() => settingsStore.load()}>Try again</Button>
                       {/snippet}
                       <p>Couldn't load settings{settingsStore.error ? `: ${settingsStore.error}` : '.'}</p>
                     </Notice>

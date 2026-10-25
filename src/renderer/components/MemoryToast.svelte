@@ -30,7 +30,7 @@
       <Notice tone={toast.kind === 'error' ? 'danger' : toast.kind === 'success' ? 'success' : 'info'}>
         {#snippet actions()}
           {#if toast.showView}
-            <Button size="2xs" variant="subtle" onclick={openPanel}>View</Button>
+            <Button size="2xs" variant="link" onclick={openPanel}>View</Button>
           {/if}
           <Button size="icon-2xs" variant="quiet" aria-label="Dismiss" onclick={() => (memoryStore.toast = null)}>
             <XIcon />

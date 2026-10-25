@@ -19,7 +19,6 @@
   } = $props();
 </script>
 
-<!-- Green, as an action (BRAND.md): the grey bordered button was lost on the notice. -->
 {#snippet compare()}<Button size="2xs" variant="link" aria-label={label ?? 'Compare line by line'} onclick={onCompare}>Compare line by line</Button>{/snippet}
 
 <Notice tone="neutral" class="mb-1" actions={diff.quick ? compare : undefined}>
