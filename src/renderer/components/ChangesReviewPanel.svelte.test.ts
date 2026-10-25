@@ -495,6 +495,16 @@ describe('ChangesReviewPanel — merge conflicts', () => {
     expect(button).toBeDisabled();
   });
 
+  it("shows the markers in amber, each side named for the merge under way", async () => {
+    mockGroveBench.getFileDiff.mockResolvedValue({ kind: 'text', patch: withMarkers });
+    gitStatusStore.statusBySession = { [SID]: { entries: [conflicted()], operation: { kind: 'merge', branch: 'feat', incoming: 'main' } } };
+    const view = render(ChangesReviewPanel, { sessionId: SID });
+    await waitFor(() => expect(view.container.querySelectorAll('[data-conflict-marker]')).toHaveLength(3));
+
+    const sides = [...view.container.querySelectorAll('[data-conflict-side]')].map((el) => el.textContent);
+    expect(sides).toEqual(['↓ feat, yours', '↑ coming in']);
+  });
+
   it('only counts markers the conflict added, not lines HEAD already has', async () => {
     const view = show([conflicted()], '--- a/both.txt\n+++ b/both.txt\n@@ -1,2 +1,2 @@\n >>>>>>> fixture\n-ours\n+merged\n');
     await waitFor(() => expect(diffText(view.container)).toContain('merged'));
@@ -1079,5 +1089,80 @@ describe('ChangesReviewPanel — large diffs', () => {
     gitStatusStore.scopeBySession = { [SID]: { scope: 'branch', base: 'main' } };
     expect(await findByRole('button', { name: 'Show diff' })).toBeInTheDocument();
     expect(diffText(container)).not.toContain('line 30');
+  });
+});
+
+// Started by the agent or in a terminal: the tab says what is under way and
+// how to finish it (GitOperationNotice).
+describe('ChangesReviewPanel: a merge or rebase stopped part way', () => {
+  const MERGE = { kind: 'merge' as const, incoming: 'main', branch: 'feat', message: "Merge branch 'main' into feat" };
+
+  it('shows it across the tab, with no commit box during a rebase', async () => {
+    gitStatusStore.statusBySession = {
+      [SID]: { entries: [entry('src/a.ts', { staged: true })], operation: { kind: 'rebase', branch: 'feat', incoming: 'main', step: 1, total: 2 } },
+    };
+    const { getByRole, queryByRole } = render(ChangesReviewPanel, { sessionId: SID });
+    await tick();
+
+    expect(getByRole('status')).toHaveTextContent('Rebasing feat onto main, step 1 of 2. All conflicts resolved: continue the rebase.');
+    // Continue keeps the commit's own message: a commit here would add another.
+    expect(queryByRole('button', { name: /^Commit/ })).toBeNull();
+  });
+
+  it("fills in git's merge message once, and holds Commit while conflicts remain", async () => {
+    gitStatusStore.statusBySession = {
+      [SID]: { entries: [entry('src/a.ts', { status: 'conflicted', conflict: 'UU' }), entry('src/b.ts', { staged: true })], operation: MERGE },
+    };
+    const { getByRole, getByPlaceholderText } = render(ChangesReviewPanel, { sessionId: SID });
+    await tick();
+
+    const message = getByPlaceholderText('Commit message…') as HTMLTextAreaElement;
+    expect(message.value).toBe("Merge branch 'main' into feat");
+    const commit = getByRole('button', { name: 'Commit 1 file' });
+    expect(commit).toBeDisabled();
+    expect(commit).toHaveAttribute('title', 'Mark each conflict resolved first');
+    // Nor does Ctrl+Enter commit it.
+    await fireEvent.keyDown(message, { key: 'Enter', ctrlKey: true });
+    expect(mockGroveBench.commit).not.toHaveBeenCalled();
+
+    // Resolved: the commit finishes the merge. A message the user cleared stays cleared.
+    message.value = '';
+    message.dispatchEvent(new Event('input'));
+    gitStatusStore.statusBySession = {
+      [SID]: { entries: [entry('src/a.ts', { staged: true }), entry('src/b.ts', { staged: true })], operation: MERGE },
+    };
+    await tick();
+    expect(message.value).toBe('');
+    expect(getByRole('button', { name: 'Commit 2 files' })).not.toHaveAttribute('title');
+  });
+
+  it('commits a merge whose conflicts all went your way, with nothing staged', async () => {
+    gitStatusStore.statusBySession = { [SID]: { entries: [], operation: MERGE } };
+    const { findByRole } = render(ChangesReviewPanel, { sessionId: SID });
+
+    await fireEvent.click(await findByRole('button', { name: 'Commit merge' }));
+    expect(mockGroveBench.commit).toHaveBeenCalledWith(SID, "Merge branch 'main' into feat");
+  });
+
+  it("takes git's message out when the merge ends some other way, unless it was edited", async () => {
+    const staged = [entry('src/b.ts', { staged: true })];
+    gitStatusStore.statusBySession = { [SID]: { entries: staged, operation: MERGE } };
+    const { getByPlaceholderText } = render(ChangesReviewPanel, { sessionId: SID });
+    await tick();
+    const message = getByPlaceholderText('Commit message…') as HTMLTextAreaElement;
+    expect(message.value).toBe("Merge branch 'main' into feat");
+
+    // Aborted: the next commit isn't a merge.
+    gitStatusStore.statusBySession = { [SID]: { entries: staged } };
+    await tick();
+    expect(message.value).toBe('');
+
+    gitStatusStore.statusBySession = { [SID]: { entries: staged, operation: { ...MERGE, incoming: 'dev' } } };
+    await tick();
+    message.value = "Merge branch 'main' into feat, by hand";
+    message.dispatchEvent(new Event('input'));
+    gitStatusStore.statusBySession = { [SID]: { entries: staged } };
+    await tick();
+    expect(message.value).toBe("Merge branch 'main' into feat, by hand");
   });
 });

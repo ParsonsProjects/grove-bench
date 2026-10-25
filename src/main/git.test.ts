@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock execa before importing git module
 vi.mock('execa', () => ({
@@ -38,6 +38,7 @@ import {
   push,
   syncStatus,
   branchCommits,
+  gitOperation,
   parseBranchCommits,
   rebaseOnto,
   cherryPick,
@@ -1167,5 +1168,31 @@ describe('isWorkingTreeClean()', () => {
     mockExeca.mockResolvedValue({ stdout: '' } as any);
     expect(await isWorkingTreeClean('/wt', { ignoreUntracked: true })).toBe(true);
     expect(mockExeca).toHaveBeenCalledWith('git', ['status', '--porcelain', '--untracked-files=no'], { cwd: '/wt' });
+  });
+});
+
+describe('gitOperation()', () => {
+  const dirs: string[] = [];
+  const temp = () => { const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gb-op-')); dirs.push(dir); return dir; };
+  afterEach(() => { for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true }); });
+
+  it('starts no git process when nothing is under way, as the status asks on every refresh', async () => {
+    const dir = temp();
+    fs.mkdirSync(path.join(dir, '.git'));
+    mockExeca.mockClear();
+    expect(await gitOperation(dir)).toBeNull();
+    expect(mockExeca).not.toHaveBeenCalled();
+  });
+
+  it("finds a linked worktree's state through its .git file", async () => {
+    const dir = temp();
+    const gitDir = path.join(dir, 'main', '.git', 'worktrees', 'wt');
+    fs.mkdirSync(gitDir, { recursive: true });
+    fs.writeFileSync(path.join(gitDir, 'CHERRY_PICK_HEAD'), '1a2b3c4d5e6f\n');
+    fs.mkdirSync(path.join(dir, 'wt'));
+    fs.writeFileSync(path.join(dir, 'wt', '.git'), 'gitdir: ../main/.git/worktrees/wt\n');
+    mockExeca.mockClear();
+    expect(await gitOperation(path.join(dir, 'wt'))).toEqual({ kind: 'cherry-pick', commit: '1a2b3c4' });
+    expect(mockExeca).not.toHaveBeenCalled();
   });
 });

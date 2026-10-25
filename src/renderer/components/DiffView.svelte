@@ -86,6 +86,8 @@
   import { whenOnScreen } from '../lib/code-highlight.js';
   import { EXPAND_STEP } from '../lib/diff-context.js';
   import { Button } from '$lib/components/ui/button/index.js';
+  import { conflictMarkers, conflictSideLabel, type ConflictMarker } from '../lib/conflict-markers.js';
+  import type { GitOperation } from '../../shared/types.js';
 
   let {
     lines,
@@ -101,6 +103,7 @@
     onCancelComment,
     onUpdateComment,
     onRemoveComment,
+    conflict = null,
   }: {
     lines: DiffLine[];
     sideBySide?: boolean;
@@ -122,11 +125,17 @@
     onCancelComment?: () => void;
     onUpdateComment?: (id: string, body: string) => void;
     onRemoveComment?: (id: string) => void;
+    /** Set for a file git stopped on: its conflict markers show in amber,
+     *  each side named for what is under way. */
+    conflict?: { operation?: GitOperation } | null;
   } = $props();
 
   let rows = $derived(sideBySide ? buildSideBySideRows(lines) : []);
   let intraline = $derived(sideBySide ? new Map<number, [number, number][]>() : unifiedIntralineRanges(lines));
   let lang = $derived(filePath ? languageForPath(filePath) : null);
+  let markers = $derived(conflict ? conflictMarkers(lines) : null);
+  const markerAt = (num: number | undefined): ConflictMarker | undefined =>
+    markers && num !== undefined ? markers.get(num) : undefined;
   let root = $state<HTMLElement>();
   /** With deferHighlight: each line's coloured HTML by its text, worked out
    *  once the diff is on screen, in idle time. Kept here, not in
@@ -228,6 +237,13 @@
     return `${n} hidden line${n === 1 ? '' : 's'}`;
   }
 </script>
+
+<!-- A conflict marker as git wrote it, uncoloured, then which side the lines
+     it opens (below) or closes (above) come from. -->
+{#snippet markerText(marker: ConflictMarker, text: string)}
+  {@const label = conflictSideLabel(marker, conflict?.operation)}
+  {text}{#if label}<span data-conflict-side class="ml-3 text-muted-foreground select-none break-normal">{marker === 'theirs' ? '↑' : '↓'} {label}</span>{/if}
+{/snippet}
 
 {#snippet expander(gap: ContextGap)}
   {@const n = gap.toNew - gap.fromNew + 1}
@@ -349,11 +365,17 @@
                   <td class="text-muted-foreground px-2 whitespace-pre-wrap break-all align-top">{#if row.right}{@html hl(row.right.text)}{/if}</td>
                 </tr>
               {:else}
+                {@const marker = markerAt(row.right?.lineNum)}
                 <tr class="group/line {inRange ? 'outline outline-1 outline-primary/60' : ''}">
                   <td class="w-8 text-right text-muted-foreground pr-2 select-none align-top relative {row.left ? 'bg-red-950/30' : ''}">{@render addButton(side, anchorNum, anchorText)}{row.left?.lineNum ?? ''}</td>
                   <td class="diff-del px-2 border-r border-border/30 whitespace-pre-wrap break-all align-top {row.left ? 'bg-red-950/30 text-red-300' : ''}">{#if row.left}{@html hl(row.left.text, row.leftRanges)}{/if}</td>
-                  <td class="w-8 text-right text-muted-foreground pr-2 select-none align-top {row.right ? 'bg-green-950/30' : ''}">{row.right?.lineNum ?? ''}</td>
-                  <td class="diff-add px-2 whitespace-pre-wrap break-all align-top {row.right ? 'bg-green-950/30 text-green-300' : ''}">{#if row.right}{@html hl(row.right.text, row.rightRanges)}{/if}</td>
+                  {#if marker && row.right}
+                    <td class="w-8 text-right text-muted-foreground pr-2 select-none align-top bg-amber-500/10">{row.right.lineNum}</td>
+                    <td data-conflict-marker={marker} class="px-2 whitespace-pre-wrap break-all align-top bg-amber-500/10 text-amber-300">{@render markerText(marker, row.right.text)}</td>
+                  {:else}
+                    <td class="w-8 text-right text-muted-foreground pr-2 select-none align-top {row.right ? 'bg-green-950/30' : ''}">{row.right?.lineNum ?? ''}</td>
+                    <td class="diff-add px-2 whitespace-pre-wrap break-all align-top {row.right ? 'bg-green-950/30 text-green-300' : ''}">{#if row.right}{@html hl(row.right.text, row.rightRanges)}{/if}</td>
+                  {/if}
                 </tr>
               {/if}
               {#if commentsAt(side, anchorNum).length > 0 || composerAt(side, anchorNum) || commentsAt('old', pairedOld).length > 0 || composerAt('old', pairedOld)}
@@ -375,7 +397,15 @@
           {@const side: 'old' | 'new' = line.type === 'del' ? 'old' : 'new'}
           {@const num = line.type === 'del' ? (line.oldLineNum ?? line.lineNum) : (line.newLineNum ?? line.lineNum)}
           {@const inRange = inComposerRange(side, num)}
-          {#if line.type === 'add'}
+          {@const marker = line.type === 'add' ? markerAt(num) : undefined}
+          {#if marker}
+            <div data-conflict-marker={marker} class="group/line relative flex bg-amber-500/10 text-amber-300 px-2 {inRange ? 'outline outline-1 outline-primary/60' : ''}">
+              {@render addButton(side, num, line.text)}
+              <span class="shrink-0 w-8 text-right text-muted-foreground mr-2 select-none">{num ?? ''}</span>
+              <span class="shrink-0 select-none mr-1">+</span>
+              <span class="flex-1 min-w-0 whitespace-pre-wrap break-all">{@render markerText(marker, line.text)}</span>
+            </div>
+          {:else if line.type === 'add'}
             <div class="group/line relative flex bg-green-950/30 text-green-300 px-2 diff-add {inRange ? 'outline outline-1 outline-primary/60' : ''}">
               {@render addButton(side, num, line.text)}
               <span class="shrink-0 w-8 text-right text-muted-foreground mr-2 select-none">{num ?? ''}</span>
