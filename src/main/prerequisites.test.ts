@@ -56,14 +56,14 @@ describe('checkGit()', () => {
     expect(result.meetsMinimum).toBe(true);
   });
 
-  it('meets minimum for git 2.17', async () => {
-    mockGitVersion.mockResolvedValue({ version: 'git version 2.17.0', major: 2, minor: 17, patch: 0 });
+  it('meets minimum for git 2.23', async () => {
+    mockGitVersion.mockResolvedValue({ version: 'git version 2.23.0', major: 2, minor: 23, patch: 0 });
     const result = await checkGit();
     expect(result.meetsMinimum).toBe(true);
   });
 
-  it('does not meet minimum for git 2.16', async () => {
-    mockGitVersion.mockResolvedValue({ version: 'git version 2.16.5', major: 2, minor: 16, patch: 5 });
+  it('does not meet minimum for git 2.22, which has no git restore', async () => {
+    mockGitVersion.mockResolvedValue({ version: 'git version 2.22.5', major: 2, minor: 22, patch: 5 });
     const result = await checkGit();
     expect(result.meetsMinimum).toBe(false);
   });
@@ -276,7 +276,7 @@ describe('API key state', () => {
 describe('gitReady()', () => {
   const agents = { 'claude-code': { available: true, authenticated: true } };
 
-  it('passes with git 2.17+ and ignores the agents', () => {
+  it('passes with git 2.23+ and ignores the agents', () => {
     expect(gitReady({ git: { available: true, meetsMinimum: true }, agents })).toBe(true);
     expect(gitReady({ git: { available: true, meetsMinimum: true }, agents: {} })).toBe(true);
   });

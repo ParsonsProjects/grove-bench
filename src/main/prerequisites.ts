@@ -3,10 +3,8 @@ import { gitVersion } from './git.js';
 import { ghVersion, ghAuthenticated } from './gh.js';
 import { adapterRegistry } from './adapters/index.js';
 import type { AdapterPrerequisiteStatus, AgentAdapter } from './adapters/types.js';
+import { MIN_GIT } from '../shared/prerequisites.js';
 import { canStoreApiKey, hasApiKey, isApiKeyRejected, isApiKeyUnverified } from './credentials.js';
-
-const MIN_GIT_MAJOR = 2;
-const MIN_GIT_MINOR = 17;
 
 export async function checkGit(): Promise<PrerequisiteStatus['git']> {
   const info = await gitVersion();
@@ -14,8 +12,8 @@ export async function checkGit(): Promise<PrerequisiteStatus['git']> {
     return { available: false };
   }
   const meetsMinimum =
-    info.major > MIN_GIT_MAJOR ||
-    (info.major === MIN_GIT_MAJOR && info.minor >= MIN_GIT_MINOR);
+    info.major > MIN_GIT.major ||
+    (info.major === MIN_GIT.major && info.minor >= MIN_GIT.minor);
   return {
     available: true,
     version: info.version,

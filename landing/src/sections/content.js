@@ -101,7 +101,7 @@ export const FAQ = [
   },
   {
     q: 'What do I need?',
-    a: 'Windows 10 or later, and either a Claude plan (Pro, Max, Team or Enterprise) with Claude Code installed and signed in, or an Anthropic API key. Git 2.17 or later is recommended: without it, threads edit your folder in place and can’t be rewound.',
+    a: 'Windows 10 or later, and either a Claude plan (Pro, Max, Team or Enterprise) with Claude Code installed and signed in, or an Anthropic API key. Git 2.23 or later is recommended: older versions can’t rewind a thread’s edits, and without git, threads edit your folder in place.',
   },
   {
     q: 'Which agents does it work with?',

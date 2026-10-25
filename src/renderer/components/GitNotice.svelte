@@ -1,7 +1,7 @@
 <script lang="ts">
   import { store } from '../stores/sessions.svelte.js';
   import { prerequisitesStore } from '../stores/prerequisites.svelte.js';
-  import { gitReady } from '../../shared/prerequisites.js';
+  import { gitReady, MIN_GIT } from '../../shared/prerequisites.js';
   import { Notice } from '$lib/components/ui/notice/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
 
@@ -29,7 +29,8 @@
     {/snippet}
     <p>
       {#if git.available}
-        Git is too old ({git.version}). Separate copies, branches and rewinding need Git 2.17 or later.
+        Git is too old ({git.version}): rewinding and a few other steps need Git {MIN_GIT.major}.{MIN_GIT.minor} or
+        later.
       {:else}
         Git isn't installed. Without it, the agent edits your project folder in place and its edits can't be
         rewound.

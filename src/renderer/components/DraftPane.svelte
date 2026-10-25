@@ -99,7 +99,8 @@
     return `Signed in${agentStatus.email ? ` as ${agentStatus.email}` : ''}. You're ready to start.`;
   });
 
-  /** Git isn't installed (or is too old): every project runs without it. */
+  /** Git isn't installed, or is too old: warned about here. Without git a
+   *  project is a plain folder; with an older git, rewinding fails. */
   const gitMissing = $derived(!!store.prerequisites && !gitReady(store.prerequisites));
 
   /** Why Start is off, in words, for its tooltip and for Enter. */

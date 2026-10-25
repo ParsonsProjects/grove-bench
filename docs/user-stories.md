@@ -57,7 +57,7 @@
 
 ## Prerequisites & Onboarding
 
-37. **As a new user, I want the app to load straight away, even before everything is set up,** and tell me what's missing (for example Git 2.17+) without blocking me.
+37. **As a new user, I want the app to load straight away, even before everything is set up,** and tell me what's missing (for example Git 2.23+) without blocking me.
 38. **As a new user, I want to add my API key when I start my first conversation** so I don't need a terminal to get going, and can change it later in Settings.
 
 ## Persistence & Window Management

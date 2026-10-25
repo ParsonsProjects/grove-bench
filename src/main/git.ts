@@ -413,8 +413,7 @@ export function parseWorktreeBranches(raw: string): Map<string, string> {
 
 /** Check out a branch in `cwd`. `create` makes a new branch at HEAD; `track`
  *  (a remote-tracking ref) makes a new local branch following it; otherwise
- *  `branch` must be an existing local branch. Uses `checkout` rather than
- *  `switch`, which needs git 2.23 (the app supports 2.17). */
+ *  `branch` must be an existing local branch. */
 export async function checkoutBranch(
   cwd: string,
   branch: string,

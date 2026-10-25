@@ -406,7 +406,7 @@ User clicks "+ New Agent"
     → Copy untracked files (.env, etc.) from main checkout per repo config
     → Generate .claude/settings.local.json (attribution, .mcp.json approvals)
   → AgentSessionManager.createSession()
-    → Verify git meets minimum version (2.17+)
+    → (No git version check here: startup only warns below 2.23)
     → Verify claude CLI is available (where.exe claude)
     → Detect preferred shell (pwsh > powershell > cmd)
     → Spawn node-pty with cwd = worktree path
@@ -573,17 +573,17 @@ async function checkGit(): Promise<{ available: boolean; version?: string; meets
     const { stdout } = await execAsync('git --version');
     // stdout: "git version 2.43.0.windows.1"
     const match = stdout.match(/(\d+)\.(\d+)\.(\d+)/);
-    if (!match) return { available: true, meetsMinimum: false };
+    if (!match) return { available: false };
     const [major, minor] = [parseInt(match[1]), parseInt(match[2])];
-    // Require git 2.17+ for reliable worktree support on Windows
-    return { available: true, version: stdout.trim(), meetsMinimum: major > 2 || (major === 2 && minor >= 17) };
+    // Require git 2.23+: rewinding uses git restore, Continue cherry-pick --skip
+    return { available: true, version: stdout.trim(), meetsMinimum: major > 2 || (major === 2 && minor >= 23) };
   } catch {
     return { available: false };
   }
 }
 ```
 
-If git is not found or below 2.17, show a dismissible notice under the title bar. Projects, worktrees and the Changes tab need it; the rest of the app loads. Git 2.5 introduced worktrees, but 2.17+ has important Windows fixes and `git worktree move` support.
+If git is not found or below 2.23, a notice says so at the top of the Changes tab, on the first screen and when starting a thread. Nothing is blocked: without git, projects are plain folders; with an older git, threads still get worktrees, but the steps below fail. Git 2.5 introduced worktrees; 2.23 added `git restore`, which rewinding uses, and `cherry-pick --skip` / `revert --skip`, which Continue uses for a pick resolved to no change.
 
 **Claude Code availability:**
 
@@ -716,7 +716,7 @@ grove-bench/
 | Worktree cleanup fails on crash | High | Medium (disk clutter, git state) | Orphan detection on startup. Retry logic with force removal. Manual cleanup instructions in README |
 | Windows file locking prevents worktree deletion | High | Medium (stuck worktrees) | Kill PTY + 500ms delay + force remove + fs.rm fallback + git worktree prune |
 | Claude Code not installed on user's machine | High | Medium (dead feature) | Detection + clear install instructions at session creation time |
-| Git not installed or too old | Medium | High (blocks everything) | Check at startup, require 2.17+. Clear error message with install link |
+| Git not installed or too old | Medium | High (blocks everything) | Check at startup and warn below 2.23, with an install link |
 | Git worktree branch conflicts | Low | Medium | Enforce unique branch naming. Validate before creation |
 | High memory usage with many xterm instances | Low | Low | xterm.js is lightweight. node-pty processes are the main cost |
 | Claude Code changes its CLI interface | Medium | High | Abstract the agent spawn config. Pin to known-good version in docs |
