@@ -39,6 +39,7 @@ import {
   syncStatus,
   branchCommits,
   gitOperation,
+  continueGitOperation,
   parseBranchCommits,
   rebaseOnto,
   cherryPick,
@@ -1194,5 +1195,18 @@ describe('gitOperation()', () => {
     mockExeca.mockClear();
     expect(await gitOperation(path.join(dir, 'wt'))).toEqual({ kind: 'cherry-pick', commit: '1a2b3c4' });
     expect(mockExeca).not.toHaveBeenCalled();
+  });
+
+  it("continues a rebase when git can't say whether files have unstaged changes, leaving the error to git", async () => {
+    const dir = temp();
+    fs.mkdirSync(path.join(dir, '.git', 'rebase-merge'), { recursive: true });
+    mockExeca.mockImplementation(((_cmd: string, args: string[]) => Promise.resolve(
+      args[0] === 'diff'
+        ? { stdout: '', stderr: 'fatal: index file corrupt', exitCode: args[1] === '--cached' ? 1 : 128 }
+        : { stdout: '', exitCode: 0 },
+    )) as never);
+
+    await continueGitOperation(dir, 'rebase');
+    expect(mockExeca).toHaveBeenCalledWith('git', ['rebase', '--continue'], expect.anything());
   });
 });

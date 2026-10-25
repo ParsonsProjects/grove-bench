@@ -18,7 +18,9 @@
   let busy = $state<'continue' | 'abort' | null>(null);
   let confirming = $state(false);
   let error = $state('');
-  // An error is about the step it came from: dropped once git moves on.
+  // An error is dropped once git moves on a step. One from a Continue that
+  // moved on and then stopped is about the step it moved to: the store
+  // reloads before the call settles, so that step is in by then.
   let step = $derived(`${operation.kind} ${operation.step ?? ''} ${operation.commit ?? ''}`);
   $effect(() => {
     void step;

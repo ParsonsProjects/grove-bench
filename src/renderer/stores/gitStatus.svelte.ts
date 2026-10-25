@@ -198,13 +198,13 @@ class GitStatusStore {
   }
 
   /** Continue or abort a rebase, cherry-pick or revert (abort a merge too)
-   *  git stopped part way. Refreshed even when it fails: it may have
-   *  stopped again, or ended some other way. */
+   *  git stopped part way. Settles once the status is reloaded, even when it
+   *  fails: it may have stopped again, at the next step, or ended. */
   async continueOperation(sessionId: string, kind: GitOperation['kind']): Promise<void> {
     try {
       await window.groveBench.continueGitOperation(sessionId, kind);
     } finally {
-      this.scheduleRefresh(sessionId, 100);
+      await this.reload(sessionId);
     }
   }
 
@@ -212,8 +212,14 @@ class GitStatusStore {
     try {
       await window.groveBench.abortGitOperation(sessionId, kind);
     } finally {
-      this.scheduleRefresh(sessionId, 100);
+      await this.reload(sessionId);
     }
+  }
+
+  /** Refresh now, however soon after the last. */
+  private reload(sessionId: string): Promise<void> {
+    this.lastFetch.delete(sessionId);
+    return this.refresh(sessionId);
   }
 
   clear(sessionId: string): void {

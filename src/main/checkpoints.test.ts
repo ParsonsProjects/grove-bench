@@ -4,7 +4,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('./git.js', () => {
   const git = vi.fn();
   // Straight through to the mocked git; a test makes it give null (over its limit) itself.
-  return { git, gitEnv: vi.fn(), gitExit: vi.fn(), gitPatch: vi.fn((args: string[], cwd: string) => git(args, cwd)) };
+  // No worktree index is found, so snapshots start from read-tree HEAD.
+  return { git, gitEnv: vi.fn(), gitExit: vi.fn(), gitPatch: vi.fn((args: string[], cwd: string) => git(args, cwd)), dotGitDir: vi.fn(() => Promise.resolve(null)) };
 });
 
 vi.mock('./logger.js', () => ({
@@ -23,7 +24,7 @@ vi.mock('node:fs', () => ({
   },
 }));
 
-import { git, gitEnv, gitPatch } from './git.js';
+import { git, gitEnv, gitPatch, dotGitDir } from './git.js';
 import { CheckpointManager } from './checkpoints.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -141,9 +142,9 @@ describe('CheckpointManager', () => {
     });
 
     it('copies the worktree index and writes and removes its temp files without blocking', async () => {
-      // A linked worktree: .git is a file naming its gitdir.
-      vi.mocked(fs.promises.stat).mockResolvedValueOnce({ isDirectory: () => false } as never);
-      vi.mocked(fs.promises.readFile).mockResolvedValueOnce('gitdir: /main/.git/worktrees/wt\n');
+      // A linked worktree, whose index is in its own git dir (dotGitDir reads
+      // it from .git: git.test.ts).
+      vi.mocked(dotGitDir).mockResolvedValueOnce(path.resolve('/main/.git/worktrees/wt'));
       mockGitEnv.mockImplementation(async (args: string[]) => (args[0] === 'write-tree' ? 'tree1' : args[0] === 'commit-tree' ? 'commit1' : ''));
       mockGit.mockResolvedValue('');
 

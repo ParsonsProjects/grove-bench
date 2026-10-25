@@ -1144,6 +1144,36 @@ describe('ChangesReviewPanel: a merge or rebase stopped part way', () => {
     expect(mockGroveBench.commit).toHaveBeenCalledWith(SID, "Merge branch 'main' into feat");
   });
 
+  it("won't commit a merge with nothing staged while a resolution is unstaged, or from Branch", async () => {
+    // Marked resolved, then unstaged: the commit would take HEAD's version.
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('base.txt')], operation: MERGE } };
+    const view = render(ChangesReviewPanel, { sessionId: SID });
+    await tick();
+    expect(view.queryByRole('button', { name: 'Commit merge' })).toBeNull();
+    cleanup();
+
+    // Branch lists what changed since the base, not what a commit takes.
+    gitStatusStore.scopeBySession = { [SID]: { scope: 'branch', base: 'main' } };
+    gitStatusStore.statusBySession = { [SID]: { entries: [], scopeError: 'No merge base with main', operation: MERGE } };
+    const branch = render(ChangesReviewPanel, { sessionId: SID });
+    await tick();
+    expect(branch.queryByRole('button', { name: 'Commit merge' })).toBeNull();
+  });
+
+  it('keeps the reason a Continue stopped at the next step', async () => {
+    const rebase = (step: number) => ({ kind: 'rebase' as const, branch: 'feat', incoming: 'main', step, total: 3 });
+    gitStatusStore.statusBySession = { [SID]: { entries: [], operation: rebase(1) } };
+    // It moved on, then git stopped at step 2 (an exec line failed, say).
+    mockGroveBench.getGitStatus.mockResolvedValue({ entries: [], operation: rebase(2) });
+    mockGroveBench.continueGitOperation.mockRejectedValueOnce(new Error('exec npm test failed'));
+    const { findByRole, getByRole } = render(ChangesReviewPanel, { sessionId: SID });
+
+    await fireEvent.click(await findByRole('button', { name: 'Continue rebase' }));
+    await waitFor(() => expect(getByRole('status')).toHaveTextContent('step 2 of 3'));
+    await new Promise((r) => setTimeout(r, 200));
+    expect(getByRole('alert')).toHaveTextContent('exec npm test failed');
+  });
+
   it("takes git's message out when the merge ends some other way, unless it was edited", async () => {
     const staged = [entry('src/b.ts', { staged: true })];
     gitStatusStore.statusBySession = { [SID]: { entries: staged, operation: MERGE } };

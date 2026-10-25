@@ -1,7 +1,7 @@
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
-import { git, gitEnv, gitExit, gitPatch, blobLines, detectBinaryDiff, imageExtFor, patchResult, patchOverLimit } from './git.js';
+import { git, gitEnv, gitExit, gitPatch, dotGitDir, blobLines, detectBinaryDiff, imageExtFor, patchResult, patchOverLimit } from './git.js';
 import { parseDiffRaw, parseNumstat as parseNumstatRows } from './git-status-parser.js';
 import { logger } from './logger.js';
 import type { CheckpointDiffScope, DiffHistoryEntry, DiffHistoryResult, DiffStats, FileDiffResult, FileLinesResult, GitStatusResult } from '../shared/types.js';
@@ -66,10 +66,8 @@ function keptRef(sessionId: string): string {
  *  it can't be found. */
 async function realIndexPath(cwd: string): Promise<string | null> {
   try {
-    const dotGit = path.join(cwd, '.git');
-    if ((await fs.promises.stat(dotGit)).isDirectory()) return path.join(dotGit, 'index');
-    const gitdir = (await fs.promises.readFile(dotGit, 'utf-8')).match(/^gitdir:\s*(.+?)\s*$/m)?.[1];
-    return gitdir ? path.join(path.resolve(cwd, gitdir), 'index') : null;
+    const gitDir = await dotGitDir(cwd);
+    return gitDir ? path.join(gitDir, 'index') : null;
   } catch {
     return null;
   }
