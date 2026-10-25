@@ -151,7 +151,7 @@
   function handleReplyKeydown(e: KeyboardEvent) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      sendReply();
+      void sendReply();
     }
   }
 

@@ -22,5 +22,5 @@ export function openLink(url: string, event?: { ctrlKey?: boolean; metaKey?: boo
     previewStore.navigate(sessionId, 'user', target).catch(() => window.groveBench.openExternal(target));
     return;
   }
-  window.groveBench.openExternal(target);
+  void window.groveBench.openExternal(target);
 }

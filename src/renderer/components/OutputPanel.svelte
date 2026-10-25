@@ -79,7 +79,7 @@
       renderCap = Infinity;
       return;
     }
-    const frame = requestAnimationFrame(drawOlderBatch);
+    const frame = requestAnimationFrame(() => void drawOlderBatch());
     return () => cancelAnimationFrame(frame);
   });
 
@@ -176,11 +176,11 @@
   }
 
   function loadOlderMessages() {
-    expandVisibleCount(visibleCount + PAGE_SIZE);
+    void expandVisibleCount(visibleCount + PAGE_SIZE);
   }
 
   function showAllMessages() {
-    expandVisibleCount(filteredMessages.length);
+    void expandVisibleCount(filteredMessages.length);
   }
 
   async function loadOlderEvents() {
@@ -265,7 +265,7 @@
     const _loaded = messageStore.getMessages(sessionId).length;
     if (!req || store.activeSessionId !== sessionId || jumpInFlight) return;
     jumpInFlight = true;
-    (async () => {
+    void (async () => {
       try {
         let next: JumpRequest | undefined = req;
         while (next) {
@@ -296,7 +296,7 @@
     let eventIndex = req.eventIndex;
     if (eventIndex == null && req.uuid) {
       eventIndex = await window.groveBench.findEventIndexByUuid(sessionId, req.uuid);
-      if (eventIndex != null) bookmarkStore.patchEventIndex(req.bookmarkId, eventIndex);
+      if (eventIndex != null) void bookmarkStore.patchEventIndex(req.bookmarkId, eventIndex);
     }
     if (eventIndex == null) {
       showBookmarkFallback(req.bookmarkId);
@@ -314,7 +314,7 @@
     if (req.uuid) {
       const ei = await window.groveBench.findEventIndexByUuid(sessionId, req.uuid);
       if (ei != null && ei !== eventIndex) {
-        bookmarkStore.patchEventIndex(req.bookmarkId, ei);
+        void bookmarkStore.patchEventIndex(req.bookmarkId, ei);
         if (await jumpToEventIndex(ei)) {
           clearHighlightOnInteraction = true;
           finishJump(req);

@@ -80,7 +80,7 @@
       // The selected checkpoint (and any later ones) may now be pruned — drop the
       // stale selection/diff before reloading the list.
       checkpointStore.clearSelection(sessionId);
-      checkpointStore.refresh(sessionId);
+      void checkpointStore.refresh(sessionId);
     } catch (e: any) {
       error = e?.message || 'Rewind failed';
     } finally {

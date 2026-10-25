@@ -132,7 +132,7 @@
         // Drop the stand-in picture once the page is back on top of it.
         setTimeout(() => { if (!disposed && shown) snapshot = null; }, 150);
       } else if (shown && covered) {
-        hideWithSnapshot();
+        void hideWithSnapshot();
       } else {
         window.groveBench.previewSetViewport(sessionId, null);
         shown = null;
@@ -166,9 +166,9 @@
           agentFrame = frame.dataUrl;
         }
       } catch { /* page closed */ }
-      if (!stopped) timer = setTimeout(poll, 400);
+      if (!stopped) timer = setTimeout(() => void poll(), 400);
     };
-    poll();
+    void poll();
     const clock = setInterval(() => { now = Date.now(); }, 5000);
     return () => {
       stopped = true;

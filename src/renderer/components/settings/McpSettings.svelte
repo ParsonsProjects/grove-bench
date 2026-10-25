@@ -31,7 +31,7 @@
       const active = store.activeSession;
       mcpConfigStore.adapterType ??= mcpAgents.find((a) => a.id === active?.agentType)?.id
         ?? mcpAgents.find((a) => a.id === agentsStore.defaultId)?.id ?? mcpAgents[0]?.id;
-      mcpConfigStore.showProject(mcpConfigStore.cwd ?? active?.repoPath ?? store.repos[0]);
+      void mcpConfigStore.showProject(mcpConfigStore.cwd ?? active?.repoPath ?? store.repos[0]);
     });
   });
 
@@ -125,7 +125,7 @@
     {#if mcpAgents.length > 1}
       <div class="flex items-center gap-2 max-w-xl">
         <Label for="settings-mcp-agent" class="text-xs w-16 shrink-0">Agent</Label>
-        <Select.Root type="single" value={mcpAgent?.id ?? ''} onValueChange={(v) => { if (v) mcpConfigStore.showAgent(v); }}>
+        <Select.Root type="single" value={mcpAgent?.id ?? ''} onValueChange={(v) => { if (v) void mcpConfigStore.showAgent(v); }}>
           <Select.Trigger id="settings-mcp-agent" class="w-full" disabled={mcpConfigStore.loading}>
             <span class="truncate">{mcpAgent?.displayName ?? 'Select an agent...'}</span>
           </Select.Trigger>
@@ -144,7 +144,7 @@
       <Select.Root
         type="single"
         value={mcpConfigStore.cwd ?? NO_PROJECT}
-        onValueChange={(v) => { if (v) mcpConfigStore.showProject(v === NO_PROJECT ? undefined : v); }}
+        onValueChange={(v) => { if (v) void mcpConfigStore.showProject(v === NO_PROJECT ? undefined : v); }}
       >
         <Select.Trigger id="settings-mcp-project" class="w-full" disabled={mcpConfigStore.loading} title={mcpConfigStore.cwd}>
           <span class="truncate">{mcpConfigStore.cwd ? store.repoDisplayName(mcpConfigStore.cwd) : 'None (user servers only)'}</span>
@@ -201,7 +201,7 @@
                 variant="destructive"
                 size="xs"
                 disabled={mcpConfigStore.actionInProgress !== null}
-                onclick={() => { confirmingRemove = null; mcpConfigStore.remove(server.name); }}
+                onclick={() => { confirmingRemove = null; void mcpConfigStore.remove(server.name); }}
               >
                 Remove
               </Button>

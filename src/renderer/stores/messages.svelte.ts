@@ -1287,7 +1287,7 @@ class MessageStore {
       : ['default', 'acceptEdits', 'readSafe'];
     const idx = modes.indexOf(current);
     const next = modes[(idx + 1) % modes.length];
-    this.setMode(sessionId, next);
+    void this.setMode(sessionId, next);
   }
 
   private pushMessage(sessionId: string, msg: ChatMessage) {
@@ -1659,7 +1659,7 @@ class MessageStore {
         // A rewind's own event refreshes these; bringing files back (or a
         // restore that failed partway) changed them too.
         if (event.reason !== 'rewind' && this._replayBuffer === null && this.sideEffects) {
-          gitStatusStore.refresh(sessionId);
+          void gitStatusStore.refresh(sessionId);
           checkpointStore.scheduleRefresh(sessionId);
         }
         break;
@@ -2403,7 +2403,7 @@ class MessageStore {
     // is untouched, only the working tree moved.
     if (event.filesOnly) {
       if (this.sideEffects) {
-        gitStatusStore.refresh(sessionId);
+        void gitStatusStore.refresh(sessionId);
         checkpointStore.scheduleRefresh(sessionId);
       }
       return;
@@ -2449,7 +2449,7 @@ class MessageStore {
     // A rewind rewrites history; queued follow-ups may no longer make sense.
     this.pauseQueue(sessionId);
     // Refresh git status since files may have changed on disk
-    if (this.sideEffects) gitStatusStore.refresh(sessionId);
+    if (this.sideEffects) void gitStatusStore.refresh(sessionId);
   }
 
   /** Send a slash command (e.g. /compact, /clear, /rewind) */
@@ -2537,7 +2537,7 @@ class MessageStore {
       behavior: 'deny',
       message: response,
     };
-    window.groveBench.respondToPermission(sessionId, permDecision);
+    void window.groveBench.respondToPermission(sessionId, permDecision);
   }
 
   /** Resolve a permission request by forwarding the decision to main.

@@ -43,8 +43,16 @@ class BookmarkStore {
     this.list = this.list.map((b) => (b.id === id ? { ...b, note } : b));
   }
 
+  /** Save where a bookmark's event turned out to be. Only a cache (a jump
+   *  finds the event by uuid without it), so a failed save is logged, not
+   *  thrown. */
   async patchEventIndex(id: string, eventIndex: number) {
-    await window.groveBench.updateBookmark(id, { eventIndex });
+    try {
+      await window.groveBench.updateBookmark(id, { eventIndex });
+    } catch (e) {
+      console.warn("[bookmarks] couldn't save a bookmark's event index:", e);
+      return;
+    }
     this.list = this.list.map((b) => (b.id === id ? { ...b, eventIndex } : b));
   }
 

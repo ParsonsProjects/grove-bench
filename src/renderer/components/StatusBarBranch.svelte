@@ -91,7 +91,7 @@
   let prevRunning = $state(false);
   $effect(() => {
     if (prevRunning && !isRunning) {
-      prStore.refresh(sessionId, true);
+      void prStore.refresh(sessionId, true);
     }
     prevRunning = isRunning;
   });
@@ -102,7 +102,7 @@
   let prevBranch = '';
   $effect(() => {
     const branch = sessionBranch;
-    if (prevBranch && branch && branch !== prevBranch) prStore.refresh(sessionId);
+    if (prevBranch && branch && branch !== prevBranch) void prStore.refresh(sessionId);
     prevBranch = branch;
   });
 
@@ -139,7 +139,7 @@
 
   function createPr(how: 'agent' | 'manual') {
     createPrMenuOpen = false;
-    if (how === 'agent') sendAgentPrTurn();
+    if (how === 'agent') void sendAgentPrTurn();
     else createPrOpen = true;
   }
 

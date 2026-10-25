@@ -34,7 +34,7 @@
     if (!open || !target) return;
     if (selectedId !== null) return;
     if (!rewindPoints.some((p) => p.uuid === target)) return;
-    handleSelect(target);
+    void handleSelect(target);
   });
 
   function handleOpenChange(value: boolean) {

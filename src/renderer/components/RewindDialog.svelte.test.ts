@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vitest';
 import '@testing-library/jest-dom/vitest';
 import { render, cleanup, waitFor, screen, fireEvent } from '@testing-library/svelte';
 
@@ -6,9 +6,10 @@ import RewindDialog from './RewindDialog.svelte';
 import { messageStore } from '../stores/messages.svelte.js';
 import { store } from '../stores/sessions.svelte.js';
 import { agentsStore } from '../stores/agents.svelte.js';
+import type { GroveBenchAPI } from '../../shared/types.js';
 
 const SID = 'rewind-dialog-session';
-const groveBench = () => (window as any).groveBench as { getCheckpointDiff: ReturnType<typeof vi.fn>; rewindSession: ReturnType<typeof vi.fn> };
+const groveBench = () => (window as any).groveBench as { getCheckpointDiff: Mock<GroveBenchAPI['getCheckpointDiff']>; rewindSession: ReturnType<typeof vi.fn> };
 
 beforeEach(() => {
   messageStore.messagesBySession = {

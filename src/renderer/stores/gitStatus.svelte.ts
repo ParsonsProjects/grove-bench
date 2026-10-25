@@ -161,7 +161,7 @@ class GitStatusStore {
         this.pendingTimeout.delete(sessionId);
         // Reset throttle so the debounced call always goes through
         this.lastFetch.delete(sessionId);
-        this.refresh(sessionId);
+        void this.refresh(sessionId);
       }, delayMs),
     );
   }

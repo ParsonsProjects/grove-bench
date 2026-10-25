@@ -96,9 +96,6 @@
     "@typescript-eslint/no-explicit-any": {
       "count": 40
     },
-    "@typescript-eslint/no-floating-promises": {
-      "count": 1
-    },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 10
     },
@@ -163,9 +160,6 @@
     }
   },
   "src/main/agent-session.test.ts": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 10
-    },
     "@typescript-eslint/no-unnecessary-type-assertion": {
       "count": 5
     },
@@ -192,9 +186,6 @@
     "@typescript-eslint/no-explicit-any": {
       "count": 2
     },
-    "@typescript-eslint/no-floating-promises": {
-      "count": 5
-    },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 3
     },
@@ -211,9 +202,6 @@
   "src/main/agent-utils.ts": {
     "@typescript-eslint/no-explicit-any": {
       "count": 3
-    },
-    "@typescript-eslint/no-floating-promises": {
-      "count": 1
     },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 3
@@ -415,9 +403,6 @@
     }
   },
   "src/main/index.ts": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 8
-    },
     "@typescript-eslint/unbound-method": {
       "count": 1
     }
@@ -716,9 +701,6 @@
     }
   },
   "src/main/terminal.test.ts": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 3
-    },
     "@typescript-eslint/require-await": {
       "count": 1
     }
@@ -789,9 +771,6 @@
     "@typescript-eslint/no-explicit-any": {
       "count": 1
     },
-    "@typescript-eslint/no-floating-promises": {
-      "count": 6
-    },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 4
     },
@@ -832,9 +811,6 @@
     }
   },
   "src/renderer/components/ApiKeyField.svelte": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 1
-    },
     "svelte/no-useless-mustaches": {
       "count": 1
     }
@@ -854,19 +830,9 @@
       "count": 1
     }
   },
-  "src/renderer/components/BookmarksDrawer.svelte": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 1
-    }
-  },
   "src/renderer/components/BookmarksDrawer.svelte.test.ts": {
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 1
-    }
-  },
-  "src/renderer/components/BranchPicker.svelte": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 5
     }
   },
   "src/renderer/components/BranchPicker.svelte.test.ts": {
@@ -876,9 +842,6 @@
   },
   "src/renderer/components/ChangesReviewPanel.svelte": {
     "@typescript-eslint/no-explicit-any": {
-      "count": 2
-    },
-    "@typescript-eslint/no-floating-promises": {
       "count": 2
     },
     "@typescript-eslint/no-unsafe-argument": {
@@ -904,9 +867,6 @@
   },
   "src/renderer/components/CheckpointsPanel.svelte": {
     "@typescript-eslint/no-explicit-any": {
-      "count": 1
-    },
-    "@typescript-eslint/no-floating-promises": {
       "count": 1
     },
     "@typescript-eslint/no-unsafe-assignment": {
@@ -938,9 +898,6 @@
     "@typescript-eslint/no-explicit-any": {
       "count": 1
     },
-    "@typescript-eslint/no-floating-promises": {
-      "count": 1
-    },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 1
     },
@@ -953,20 +910,12 @@
       "count": 2
     }
   },
-  "src/renderer/components/DraftAgentControl.svelte": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 1
-    }
-  },
   "src/renderer/components/DraftAgentControl.svelte.test.ts": {
     "@typescript-eslint/require-await": {
       "count": 2
     }
   },
   "src/renderer/components/DraftPane.svelte": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 4
-    },
     "svelte/no-useless-mustaches": {
       "count": 1
     }
@@ -979,11 +928,6 @@
       "count": 1
     }
   },
-  "src/renderer/components/ElicitationBlock.svelte": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 2
-    }
-  },
   "src/renderer/components/FilePickerPopup.svelte.test.ts": {
     "@typescript-eslint/no-unsafe-call": {
       "count": 5
@@ -991,9 +935,6 @@
   },
   "src/renderer/components/GitOpsDialog.svelte": {
     "@typescript-eslint/no-explicit-any": {
-      "count": 1
-    },
-    "@typescript-eslint/no-floating-promises": {
       "count": 1
     },
     "@typescript-eslint/no-unsafe-assignment": {
@@ -1029,9 +970,6 @@
     }
   },
   "src/renderer/components/MemoryPanel.svelte": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 6
-    },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 1
     },
@@ -1042,18 +980,7 @@
       "count": 5
     }
   },
-  "src/renderer/components/MessageSearchBar.svelte": {
-    "@typescript-eslint/no-misused-promises": {
-      "count": 1
-    }
-  },
   "src/renderer/components/OutputPanel.svelte": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 5
-    },
-    "@typescript-eslint/no-misused-promises": {
-      "count": 1
-    },
     "svelte/require-each-key": {
       "count": 1
     }
@@ -1067,9 +994,6 @@
     "@typescript-eslint/no-explicit-any": {
       "count": 1
     },
-    "@typescript-eslint/no-floating-promises": {
-      "count": 1
-    },
     "@typescript-eslint/no-unsafe-member-access": {
       "count": 1
     }
@@ -1079,28 +1003,12 @@
       "count": 1
     }
   },
-  "src/renderer/components/PrReviewDialog.svelte": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 1
-    }
-  },
-  "src/renderer/components/PreviewPanel.svelte": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 2
-    },
-    "@typescript-eslint/no-misused-promises": {
-      "count": 1
-    }
-  },
   "src/renderer/components/PreviewPanel.svelte.test.ts": {
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 2
     }
   },
   "src/renderer/components/PromptEditor.svelte": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 4
-    },
     "@typescript-eslint/no-unsafe-call": {
       "count": 1
     },
@@ -1119,9 +1027,6 @@
     }
   },
   "src/renderer/components/ReviewDiffPanel.svelte": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 5
-    },
     "@typescript-eslint/no-redundant-type-constituents": {
       "count": 1
     },
@@ -1148,9 +1053,6 @@
     "@typescript-eslint/no-explicit-any": {
       "count": 2
     },
-    "@typescript-eslint/no-floating-promises": {
-      "count": 1
-    },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 2
     },
@@ -1162,9 +1064,6 @@
     }
   },
   "src/renderer/components/RewindDialog.svelte.test.ts": {
-    "@typescript-eslint/no-misused-promises": {
-      "count": 1
-    },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 2
     },
@@ -1201,11 +1100,6 @@
       "count": 1
     }
   },
-  "src/renderer/components/SessionControlsPopover.svelte": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 1
-    }
-  },
   "src/renderer/components/SessionControlsPopover.svelte.test.ts": {
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 5
@@ -1215,12 +1109,6 @@
     }
   },
   "src/renderer/components/SessionFinder.svelte": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 1
-    },
-    "@typescript-eslint/no-misused-promises": {
-      "count": 1
-    },
     "svelte/require-each-key": {
       "count": 1
     }
@@ -1234,9 +1122,6 @@
     }
   },
   "src/renderer/components/SettingsPanel.svelte": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 4
-    },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 2
     },
@@ -1253,12 +1138,6 @@
   "src/renderer/components/Sidebar.svelte": {
     "@typescript-eslint/no-explicit-any": {
       "count": 3
-    },
-    "@typescript-eslint/no-floating-promises": {
-      "count": 2
-    },
-    "@typescript-eslint/no-misused-promises": {
-      "count": 2
     },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 2
@@ -1314,26 +1193,8 @@
       "count": 2
     }
   },
-  "src/renderer/components/StatusBarBranch.svelte": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 3
-    }
-  },
   "src/renderer/components/StatusBarContext.svelte": {
     "svelte/require-each-key": {
-      "count": 1
-    }
-  },
-  "src/renderer/components/StatusBarLastTurn.svelte": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 3
-    }
-  },
-  "src/renderer/components/StatusBarMcp.svelte": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 5
-    },
-    "@typescript-eslint/no-misused-promises": {
       "count": 1
     }
   },
@@ -1346,9 +1207,6 @@
     }
   },
   "src/renderer/components/ThreadSkills.svelte": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 3
-    },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 1
     },
@@ -1367,12 +1225,6 @@
     }
   },
   "src/renderer/components/TitleBar.svelte": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 1
-    },
-    "@typescript-eslint/no-misused-promises": {
-      "count": 2
-    },
     "svelte/require-each-key": {
       "count": 2
     }
@@ -1390,17 +1242,9 @@
       "count": 1
     }
   },
-  "src/renderer/components/UsageSection.svelte": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 2
-    }
-  },
   "src/renderer/components/WorkspacePane.svelte": {
     "@typescript-eslint/no-explicit-any": {
       "count": 1
-    },
-    "@typescript-eslint/no-floating-promises": {
-      "count": 3
     },
     "@typescript-eslint/no-unsafe-member-access": {
       "count": 1
@@ -1412,9 +1256,6 @@
     }
   },
   "src/renderer/components/settings/AgentSettings.svelte": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 2
-    },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 7
     },
@@ -1461,9 +1302,6 @@
     }
   },
   "src/renderer/components/settings/McpSettings.svelte": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 4
-    },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 2
     },
@@ -1482,9 +1320,6 @@
     }
   },
   "src/renderer/demo-mock.ts": {
-    "@typescript-eslint/no-misused-promises": {
-      "count": 2
-    },
     "@typescript-eslint/require-await": {
       "count": 92
     }
@@ -1564,11 +1399,6 @@
       "count": 1
     }
   },
-  "src/renderer/lib/preview-links.ts": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 1
-    }
-  },
   "src/renderer/lib/prompt-file-refs.test.ts": {
     "@typescript-eslint/require-await": {
       "count": 1
@@ -1608,11 +1438,6 @@
       "count": 1
     }
   },
-  "src/renderer/stores/checkpoints.svelte.ts": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 1
-    }
-  },
   "src/renderer/stores/draft.svelte.test.ts": {
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 2
@@ -1638,11 +1463,6 @@
       "count": 1
     },
     "@typescript-eslint/no-unsafe-member-access": {
-      "count": 1
-    }
-  },
-  "src/renderer/stores/gitStatus.svelte.ts": {
-    "@typescript-eslint/no-floating-promises": {
       "count": 1
     }
   },
@@ -1693,9 +1513,6 @@
     }
   },
   "src/renderer/stores/messages.svelte.test.ts": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 3
-    },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 2
     },
@@ -1712,11 +1529,6 @@
       "count": 1
     }
   },
-  "src/renderer/stores/messages.svelte.ts": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 5
-    }
-  },
   "src/renderer/stores/planAlerts.svelte.test.ts": {
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 4
@@ -1731,14 +1543,6 @@
     },
     "@typescript-eslint/no-unsafe-member-access": {
       "count": 5
-    }
-  },
-  "src/renderer/stores/pr.svelte.ts": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 2
-    },
-    "@typescript-eslint/no-misused-promises": {
-      "count": 2
     }
   },
   "src/renderer/stores/schedules.svelte.test.ts": {

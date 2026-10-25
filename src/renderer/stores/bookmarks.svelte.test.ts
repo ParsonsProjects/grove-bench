@@ -87,6 +87,18 @@ describe('patchEventIndex', () => {
     expect(mockGroveBench.updateBookmark).toHaveBeenCalledWith('a', { eventIndex: 99 });
     expect(bookmarkStore.list[0].eventIndex).toBe(99);
   });
+
+  it('logs a failed save instead of rejecting, and leaves the list as it was', async () => {
+    bookmarkStore.list = [bm({ id: 'a', eventIndex: null })];
+    mockGroveBench.updateBookmark.mockRejectedValueOnce(new Error('disk full'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await expect(bookmarkStore.patchEventIndex('a', 99)).resolves.toBeUndefined();
+
+    expect(warn).toHaveBeenCalled();
+    expect(bookmarkStore.list[0].eventIndex).toBeNull();
+    warn.mockRestore();
+  });
 });
 
 describe('dropSessionLocal', () => {

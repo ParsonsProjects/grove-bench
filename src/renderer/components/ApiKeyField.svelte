@@ -83,7 +83,7 @@
           bind:ref={inputEl}
           bind:value
           placeholder={apiKey.saved ? 'Saved. Paste a new key to replace it.' : 'Paste your key'}
-          onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') save(); }}
+          onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') void save(); }}
         />
         <Button onclick={save} disabled={!value.trim() || busy}>
           {checking ? 'Checking…' : 'Save key'}

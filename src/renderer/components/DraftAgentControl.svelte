@@ -53,7 +53,7 @@
   onMount(() => {
     window.addEventListener('click', handleClickOutside);
     window.addEventListener('keydown', handleKeydown, true);
-    agentsStore.load();
+    void agentsStore.load();
   });
 
   onDestroy(() => {
