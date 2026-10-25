@@ -173,13 +173,13 @@ export class WorktreeManager {
       data = await readFileWithRetry(manifestPath);
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code === 'ENOENT') return {};
-      throw new Error(`Could not read the worktree manifest ${manifestPath}: ${(e as Error).message}`);
+      throw new Error(`Could not read the worktree manifest ${manifestPath}: ${(e as Error).message}`, { cause: e });
     }
     let parsed: unknown;
     try {
       parsed = JSON.parse(data);
     } catch (e) {
-      throw new Error(`The worktree manifest ${manifestPath} is corrupt: ${(e as Error).message}`);
+      throw new Error(`The worktree manifest ${manifestPath} is corrupt: ${(e as Error).message}`, { cause: e });
     }
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
       throw new Error(`The worktree manifest ${manifestPath} is corrupt: not an object`);
@@ -1278,7 +1278,7 @@ export class WorktreeManager {
             try {
               await this.moveToTrash(entryPath);
               totalCleaned++;
-            } catch (e) {
+            } catch {
               logger.warn(`Sweep: directory busy, will retry next sweep: ${entryPath}`);
             }
           }

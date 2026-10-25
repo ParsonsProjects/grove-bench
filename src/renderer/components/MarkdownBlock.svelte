@@ -221,10 +221,13 @@
   {#if streamParts}
     <!-- A block's string never changes once cut, so its HTML is made once. -->
     {#each streamParts.settled as block, i (i)}
+      <!-- eslint-disable-next-line svelte/no-at-html-tags -- renderMarkdown sanitizes with DOMPurify -->
       {@html renderMarkdown(block, { highlight: false })}
     {/each}
+    <!-- eslint-disable-next-line svelte/no-at-html-tags -- renderMarkdown sanitizes with DOMPurify -->
     {@html renderMarkdown(streamParts.tail, { highlight: false })}
   {:else}
+    <!-- eslint-disable-next-line svelte/no-at-html-tags -- renderMarkdown sanitizes with DOMPurify -->
     {@html html}
   {/if}
 </div>

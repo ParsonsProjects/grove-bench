@@ -25,14 +25,14 @@ function setPlatform(platform: NodeJS.Platform) {
  *  Returns the PIDs sent SIGKILL, in order. */
 function fakeKill(running: Set<number>): number[] {
   const killed: number[] = [];
-  vi.spyOn(process, 'kill').mockImplementation(((pid: number, signal?: string | number) => {
+  vi.spyOn(process, 'kill').mockImplementation((pid: number, signal?: string | number) => {
     if (!running.has(pid)) throw Object.assign(new Error('ESRCH'), { code: 'ESRCH' });
     if (signal === 'SIGKILL') {
       killed.push(pid);
       running.delete(pid);
     }
     return true;
-  }) as typeof process.kill);
+  });
   return killed;
 }
 

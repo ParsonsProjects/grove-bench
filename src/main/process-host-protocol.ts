@@ -172,7 +172,7 @@ function pick(source: Record<string, unknown>, fields: readonly string[]): Recor
 /** The result fields of an execa result, as plain data. */
 export function serializeResult(result: unknown): ProcessResult<string | Uint8Array> {
   const picked = pick((result ?? {}) as Record<string, unknown>, RESULT_FIELDS);
-  return { stdout: '', stderr: '', failed: false, timedOut: false, ...picked } as ProcessResult<string | Uint8Array>;
+  return { stdout: '', stderr: '', failed: false, timedOut: false, ...picked };
 }
 
 /** An error (execa's or any other) as plain data. */

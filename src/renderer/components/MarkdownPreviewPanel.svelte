@@ -69,6 +69,7 @@
     <div class="flex-1 overflow-y-auto px-6 py-4 text-sm" bind:this={contentEl}>
       {#if codeView}
         <!-- The gutter fits the last line's number. -->
+        <!-- eslint-disable-next-line svelte/no-at-html-tags -- codeFileHtml escapes each line, or sanitizes highlight.js output with DOMPurify -->
         <div class="code-file text-xs font-mono" style:--gutter="{Math.max(2, String(codeView.lineCount).length)}ch">{@html codeView.html}</div>
       {:else}
         <MarkdownBlock content={markdownPreviewStore.content} sessionId={markdownPreviewStore.sessionId} baseDir={markdownPreviewStore.baseDir} />

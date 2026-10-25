@@ -40,7 +40,7 @@ class PrerequisitesStore {
     try {
       this.apply(await window.groveBench.setApiKey(adapterId, key));
     } catch (err) {
-      throw new Error(errorMessage(err));
+      throw new Error(errorMessage(err), { cause: err });
     }
   }
 
@@ -50,7 +50,7 @@ class PrerequisitesStore {
     try {
       this.apply(await window.groveBench.checkAgentSignIn(adapterId));
     } catch (err) {
-      throw new Error(errorMessage(err));
+      throw new Error(errorMessage(err), { cause: err });
     } finally {
       this.checking = false;
     }
@@ -60,7 +60,7 @@ class PrerequisitesStore {
     try {
       this.apply(await window.groveBench.clearApiKey(adapterId));
     } catch (err) {
-      throw new Error(errorMessage(err));
+      throw new Error(errorMessage(err), { cause: err });
     }
   }
 

@@ -29,7 +29,7 @@ function makeWebContents(url = APP_URL) {
 }
 
 beforeEach(() => {
-  vi.mocked(shell.openExternal).mockReset().mockResolvedValue(undefined as never);
+  vi.mocked(shell.openExternal).mockReset().mockResolvedValue(undefined);
 });
 
 describe('isSameDocument', () => {

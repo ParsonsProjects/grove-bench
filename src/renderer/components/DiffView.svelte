@@ -344,15 +344,19 @@
               {#if row.type === 'context'}
                 <tr class="group/line {inRange ? 'outline outline-1 outline-primary/60' : ''}">
                   <td class="w-8 text-right text-muted-foreground pr-2 select-none align-top relative">{@render addButton(side, anchorNum, anchorText)}{row.left?.lineNum ?? ''}</td>
+                  <!-- eslint-disable-next-line svelte/no-at-html-tags -- hl() escapes the line, or highlight.js does -->
                   <td class="text-muted-foreground px-2 border-r border-border/30 whitespace-pre-wrap break-all align-top">{#if row.left}{@html hl(row.left.text)}{/if}</td>
                   <td class="w-8 text-right text-muted-foreground pr-2 select-none align-top">{row.right?.lineNum ?? ''}</td>
+                  <!-- eslint-disable-next-line svelte/no-at-html-tags -- hl() escapes the line, or highlight.js does -->
                   <td class="text-muted-foreground px-2 whitespace-pre-wrap break-all align-top">{#if row.right}{@html hl(row.right.text)}{/if}</td>
                 </tr>
               {:else}
                 <tr class="group/line {inRange ? 'outline outline-1 outline-primary/60' : ''}">
                   <td class="w-8 text-right text-muted-foreground pr-2 select-none align-top relative {row.left ? 'bg-red-950/30' : ''}">{@render addButton(side, anchorNum, anchorText)}{row.left?.lineNum ?? ''}</td>
+                  <!-- eslint-disable-next-line svelte/no-at-html-tags -- hl() escapes the line, or highlight.js does -->
                   <td class="diff-del px-2 border-r border-border/30 whitespace-pre-wrap break-all align-top {row.left ? 'bg-red-950/30 text-red-300' : ''}">{#if row.left}{@html hl(row.left.text, row.leftRanges)}{/if}</td>
                   <td class="w-8 text-right text-muted-foreground pr-2 select-none align-top {row.right ? 'bg-green-950/30' : ''}">{row.right?.lineNum ?? ''}</td>
+                  <!-- eslint-disable-next-line svelte/no-at-html-tags -- hl() escapes the line, or highlight.js does -->
                   <td class="diff-add px-2 whitespace-pre-wrap break-all align-top {row.right ? 'bg-green-950/30 text-green-300' : ''}">{#if row.right}{@html hl(row.right.text, row.rightRanges)}{/if}</td>
                 </tr>
               {/if}
@@ -380,6 +384,7 @@
               {@render addButton(side, num, line.text)}
               <span class="shrink-0 w-8 text-right text-muted-foreground mr-2 select-none">{num ?? ''}</span>
               <span class="shrink-0 text-green-500 select-none mr-1">+</span>
+              <!-- eslint-disable-next-line svelte/no-at-html-tags -- hl() escapes the line, or highlight.js does -->
               <span class="flex-1 min-w-0 whitespace-pre-wrap break-all">{@html hl(line.text, intraline.get(idx))}</span>
             </div>
           {:else if line.type === 'del'}
@@ -387,6 +392,7 @@
               {@render addButton(side, num, line.text)}
               <span class="shrink-0 w-8 text-right text-muted-foreground mr-2 select-none">{num ?? ''}</span>
               <span class="shrink-0 text-red-500 select-none mr-1">-</span>
+              <!-- eslint-disable-next-line svelte/no-at-html-tags -- hl() escapes the line, or highlight.js does -->
               <span class="flex-1 min-w-0 whitespace-pre-wrap break-all">{@html hl(line.text, intraline.get(idx))}</span>
             </div>
           {:else}
@@ -394,6 +400,7 @@
               {@render addButton(side, num, line.text)}
               <span class="shrink-0 w-8 text-right text-muted-foreground mr-2 select-none">{num ?? ''}</span>
               <span class="shrink-0 select-none mr-1">&nbsp;</span>
+              <!-- eslint-disable-next-line svelte/no-at-html-tags -- hl() escapes the line, or highlight.js does -->
               <span class="flex-1 min-w-0 whitespace-pre-wrap break-all">{@html hl(line.text)}</span>
             </div>
           {/if}

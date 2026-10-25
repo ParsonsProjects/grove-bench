@@ -85,7 +85,7 @@ describe('StatusBarPopover', () => {
   it('slides in when asked to', async () => {
     const realAnimate = Element.prototype.animate;
     const animate = vi.fn(() => ({ onfinish: null, cancel() {}, currentTime: 0 }) as unknown as Animation);
-    Element.prototype.animate = animate as never;
+    Element.prototype.animate = animate;
     try {
       const { rerender } = render(StatusBarPopover, { open: false, animate: true, trigger, children });
       await rerender({ open: true, animate: true, trigger, children });

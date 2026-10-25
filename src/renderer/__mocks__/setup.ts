@@ -176,7 +176,7 @@ const mockGroveBench = {
   spellcheckAddWord: vi.fn(),
   listBookmarks: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').Bookmark[])),
   addBookmark: vi.fn((b: Omit<import('../../shared/types.js').Bookmark, 'id' | 'createdAt'>) =>
-    Promise.resolve({ ...b, id: 'generated-id', createdAt: 0 } as import('../../shared/types.js').Bookmark)),
+    Promise.resolve({ ...b, id: 'generated-id', createdAt: 0 })),
   removeBookmark: vi.fn(() => Promise.resolve()),
   updateBookmark: vi.fn(() => Promise.resolve()),
   findEventIndexByUuid: vi.fn(() => Promise.resolve(null as number | null)),

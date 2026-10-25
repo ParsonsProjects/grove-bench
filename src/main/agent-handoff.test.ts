@@ -35,7 +35,7 @@ describe('handoffTranscript', () => {
       { type: 'user_message', text: 'Add a README', uuid: 'u1' },
       { type: 'assistant_text', text: 'Writing it now.', uuid: 'a1' },
       { type: 'assistant_tool_use', toolName: 'Write', toolInput: { file_path: '/wt/README.md', content: 'secret tool content' }, toolUseId: 't1', uuid: 'a2' },
-      { type: 'tool_result', toolUseId: 't1', content: 'tool output here', isError: false } as AgentEvent,
+      { type: 'tool_result', toolUseId: 't1', content: 'tool output here', isError: false },
       { type: 'assistant_tool_use', toolName: 'Read', toolInput: { file_path: '/wt/package.json' }, toolUseId: 't2', uuid: 'a3' },
       { type: 'assistant_text', text: 'Done.', uuid: 'a4' },
       { type: 'assistant_text', text: 'subagent chatter', uuid: 'a5', parentToolUseId: 't9' },

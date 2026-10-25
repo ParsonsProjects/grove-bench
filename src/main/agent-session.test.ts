@@ -279,7 +279,7 @@ class MockAdapter implements AgentAdapter {
       }
     }
 
-    let sessionId = 'mock-session-id';
+    const sessionId = 'mock-session-id';
     const abortController = new AbortController();
 
     const handle: AgentQueryHandle = {
@@ -856,7 +856,7 @@ describe('AgentSessionManager event processing', () => {
     const isLog = (p: unknown) => String(p).endsWith('test-resume-log.jsonl');
     const missing = () => { throw new Error('ENOENT'); };
     vi.mocked(fs.statSync).mockImplementation(((p: fs.PathLike) => isLog(p) ? { mtimeMs: 1, size: log.length } : missing()) as typeof fs.statSync);
-    vi.mocked(fs.readFileSync).mockImplementation(((p: fs.PathOrFileDescriptor) => isLog(p) ? log : missing()) as typeof fs.readFileSync);
+    vi.mocked(fs.readFileSync).mockImplementation((p: fs.PathOrFileDescriptor) => isLog(p) ? log : missing());
     const parses = () => vi.mocked(fs.readFileSync).mock.calls.filter(([p]) => isLog(p)).length;
     try {
       // The stopped thread's pane shows its first page, then the thread resumes.
@@ -3274,7 +3274,7 @@ describe('AgentSessionManager.sendMessage()', () => {
     expect(userMsgs[0]).toMatchObject({ type: 'user_message', text: 'Hello agent' });
     expect(userMsgs[0]).toHaveProperty('uuid');
     // When it was sent, for the thread to show.
-    const at = (userMsgs[0] as Extract<AgentEvent, { type: 'user_message' }>).at!;
+    const at = userMsgs[0].at!;
     expect(at).toBeGreaterThanOrEqual(before);
     expect(at).toBeLessThanOrEqual(Date.now());
 
@@ -4976,7 +4976,7 @@ describe('AgentSessionManager.switchAgent', () => {
     const other = new MockAdapter();
     Object.defineProperty(other, 'id', { value: 'other' });
     Object.defineProperty(other, 'displayName', { value: 'Other Agent' });
-    extraAdapters.other = other as unknown as AgentAdapter;
+    extraAdapters.other = other;
     return other;
   }
 
@@ -5250,7 +5250,7 @@ describe('AgentSessionManager.reconnectDownMcpServers', () => {
     const other = new MockAdapter();
     Object.defineProperty(other, 'id', { value: 'other' });
     Object.assign(other, { mcp: MCP_SUPPORT });
-    extraAdapters.other = other as unknown as AgentAdapter;
+    extraAdapters.other = other;
   }
 
   it('reconnects the servers that are down here and in the other threads on the same agent', async () => {

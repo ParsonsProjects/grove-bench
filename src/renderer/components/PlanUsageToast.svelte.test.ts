@@ -12,7 +12,7 @@ const RESET = Math.round(Date.now() / 1000) + 3600;
 // jsdom has no Web Animations; the toast flies in and out with them.
 const realAnimate = Element.prototype.animate;
 beforeEach(() => {
-  Element.prototype.animate = vi.fn(() => ({ onfinish: null, cancel() {}, finish() {}, currentTime: 0 }) as unknown as Animation) as never;
+  Element.prototype.animate = vi.fn(() => ({ onfinish: null, cancel() {}, finish() {}, currentTime: 0 }) as unknown as Animation);
   planAlertStore.reset();
   sessionStore.sessions = [{ id: 's1', branch: 'b', repoPath: '/r', status: 'running', agentType: 'claude-code' }] as any;
   sessionStore.activeSessionId = 's1';

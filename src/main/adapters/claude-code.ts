@@ -1,7 +1,7 @@
 /**
  * Claude Code adapter — wraps the @anthropic-ai/claude-agent-sdk.
  */
-import type { ControlDescriptor, ControlOption, McpServerInfo, McpConfiguredServer, McpAddServerOpts, McpConfigScope, McpElicitationRequest, McpServerContextCost, McpServerManager, McpSupport, ImageMediaType, PermissionMode, ProviderUsage, SkillDefinition, ThinkingLevel, UsageWindow } from '../../shared/types.js';
+import type { ControlDescriptor, ControlOption, McpServerInfo, McpConfiguredServer, McpAddServerOpts, McpConfigScope, McpElicitationRequest, McpServerContextCost, McpServerManager, McpSupport, PermissionMode, ProviderUsage, SkillDefinition, ThinkingLevel, UsageWindow } from '../../shared/types.js';
 import { CONTROL_IDS, PERMISSION_TIMEOUT_MINUTES, THINKING_LEVELS, isImageMediaType } from '../../shared/types.js';
 import type {
   AgentAdapter,
@@ -13,7 +13,6 @@ import type {
   ApiKeyDescriptor,
   CliSignInDescriptor,
   ModelInfo,
-  PermissionResponse,
   ToolImageData,
   UserMessage,
 } from './types.js';
@@ -130,6 +129,9 @@ export function claudeProcessExe(command: string): string {
   return windowsExeName(isNodeCommand(command) ? process.execPath : command);
 }
 
+// A real import() of the ESM-only SDK: Vite would turn a plain one into
+// require() in main's CommonJS bundle.
+// eslint-disable-next-line @typescript-eslint/no-implied-eval
 const dynamicImport = new Function('specifier', 'return import(specifier)') as
   (specifier: string) => Promise<typeof import('@anthropic-ai/claude-agent-sdk')>;
 
@@ -287,7 +289,7 @@ export function toolResultImages(content: unknown[]): ToolImageData[] {
     const data = c.source?.type === 'base64' ? c.source.data : c.data;
     const mediaType = c.source?.type === 'base64' ? c.source.media_type : c.mimeType;
     if (typeof data === 'string' && data && isImageMediaType(mediaType)) {
-      images.push({ data, mediaType: mediaType as ImageMediaType });
+      images.push({ data, mediaType });
     }
   }
   return images;
@@ -2326,7 +2328,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       session_id: '',
       message: { role: 'user', content: userMessage },
       parent_tool_use_id: null,
-    } as SDKUserMessage);
+    });
     inputController!.close();
 
     const abortController = new AbortController();

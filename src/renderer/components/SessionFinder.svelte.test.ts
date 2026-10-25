@@ -8,7 +8,7 @@ import { messageStore } from '../stores/messages.svelte.js';
 import { sessionPreviewStore } from '../stores/sessionPreviews.svelte.js';
 import { mockGroveBench } from '../__mocks__/setup.js';
 import { AGENT_SPRITES } from '../lib/agent-sprite.js';
-import type { AgentEvent, CrossSessionSearchHit } from '../../shared/types.js';
+import type { CrossSessionSearchHit } from '../../shared/types.js';
 
 // Counts search index builds; otherwise the real Fuse.
 const fuseBuilds = vi.hoisted(() => ({ count: 0 }));
@@ -78,7 +78,7 @@ describe('SessionFinder: search index', () => {
     await typeQuery('parser');
     const builds = fuseBuilds.count;
 
-    messageStore.ingestEvent('s1', { type: 'assistant_text', text: 'working on it', uuid: 'a1' } as AgentEvent);
+    messageStore.ingestEvent('s1', { type: 'assistant_text', text: 'working on it', uuid: 'a1' });
     messageStore.setIsRunning('s2', true);
     await new Promise((r) => setTimeout(r, 0));
     expect(fuseBuilds.count).toBe(builds);

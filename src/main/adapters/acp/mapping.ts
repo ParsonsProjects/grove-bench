@@ -8,7 +8,7 @@ import type { ControlDescriptor, ControlOption, ControlTone, ToolCategory } from
 import type { ToolView, ToolTextEdit } from '../../../shared/tool-view.js';
 import { groveToolOf } from '../../../shared/grove-tools.js';
 import type {
-  AcpConfigOption, AcpConfigSelectOption, AcpContentBlock, AcpModeState, AcpModelState, AcpPermissionOption,
+  AcpConfigOption, AcpConfigSelectOption, AcpModeState, AcpModelState, AcpPermissionOption,
   AcpPermissionOptionKind, AcpPlanEntry, AcpToolCall, AcpToolKind,
 } from './protocol.js';
 
@@ -76,7 +76,7 @@ export function commandOf(rawInput: unknown): string | undefined {
   if (typeof cmd === 'string' && cmd.trim()) return cmd;
   if (Array.isArray(cmd) && cmd.length > 0 && cmd.every((c) => typeof c === 'string')) {
     // An argv. Quote what a shell would split, for display and rule matching.
-    return (cmd as string[]).map((a) => (/[\s"']/.test(a) ? JSON.stringify(a) : a)).join(' ');
+    return cmd.map((a) => (/[\s"']/.test(a) ? JSON.stringify(a) : a)).join(' ');
   }
   return undefined;
 }
@@ -99,7 +99,7 @@ export function contentText(content: AcpToolCall['content']): string {
   const parts: string[] = [];
   for (const c of content ?? []) {
     if (c?.type === 'content') {
-      const block = c.content as AcpContentBlock;
+      const block = c.content;
       if (block?.type === 'text') parts.push(block.text);
       else if (block?.type === 'resource' && typeof block.resource?.text === 'string') parts.push(block.resource.text);
       else if (block?.type === 'resource_link') parts.push(block.uri);
@@ -262,7 +262,7 @@ function flatOptions(option: AcpConfigOption): AcpConfigSelectOption[] {
   const out: AcpConfigSelectOption[] = [];
   for (const o of option.options ?? []) {
     if (o && 'group' in o && Array.isArray(o.options)) out.push(...o.options);
-    else if (o && 'value' in o) out.push(o as AcpConfigSelectOption);
+    else if (o && 'value' in o) out.push(o);
   }
   return out;
 }

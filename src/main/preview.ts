@@ -690,7 +690,7 @@ export class PreviewManager {
       if (!isAborted(message)) {
         const hint = /ERR_CONNECTION_REFUSED/.test(message) ? ' Nothing is listening there. Is the dev server running?' : '';
         // A blocked redirect only shows up as ERR_FAILED; the log says why.
-        throw new Error([`Couldn't load ${target}: ${message}.${hint}`, this.newProblems(page, mark)].filter(Boolean).join('\n'));
+        throw new Error([`Couldn't load ${target}: ${message}.${hint}`, this.newProblems(page, mark)].filter(Boolean).join('\n'), { cause: e });
       }
       // The page moved on (a script redirect) before it finished loading.
       // Wait for wherever it went; a blocked redirect leaves it where it was.

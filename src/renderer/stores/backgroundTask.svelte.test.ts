@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { backgroundTaskStore } from './backgroundTask.svelte.js';
-import type { AgentEvent } from '../../shared/types.js';
 import { mockGroveBench } from '../__mocks__/setup.js';
 
 const SID = 'test-session';
@@ -18,7 +17,7 @@ afterEach(() => {
 
 describe('backgroundTaskStore', () => {
   it('start adds a running task', () => {
-    backgroundTaskStore.start(SID, { type: 'task_started', taskId: 't1', description: 'Research', taskType: 'explore' } as Extract<AgentEvent, { type: 'task_started' }>);
+    backgroundTaskStore.start(SID, { type: 'task_started', taskId: 't1', description: 'Research', taskType: 'explore' });
     const tasks = backgroundTaskStore.get(SID);
     expect(tasks).toHaveLength(1);
     expect(tasks[0].status).toBe('running');

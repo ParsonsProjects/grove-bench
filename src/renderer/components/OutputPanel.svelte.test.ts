@@ -246,8 +246,8 @@ describe('OutputPanel — bookmark jumps', () => {
       ],
     };
     let finishPaging!: () => void;
-    vi.spyOn(messageStore, 'loadOlderUntil').mockImplementation(((_sid: string, eventIndex: number) =>
-      eventIndex === 1 ? new Promise<void>((r) => { finishPaging = r; }) : Promise.resolve()) as never);
+    vi.spyOn(messageStore, 'loadOlderUntil').mockImplementation((_sid: string, eventIndex: number) =>
+      eventIndex === 1 ? new Promise<void>((r) => { finishPaging = r; }) : Promise.resolve());
     const find = vi.spyOn(messageStore, 'findMessageForEvent').mockImplementation(async (_sid, ei) => (ei === 1 ? 'm1' : 'm2'));
     render(OutputPanel, { sessionId: SID });
 
@@ -284,7 +284,7 @@ describe('OutputPanel: follows the conversation after being hidden', () => {
   let resized: () => void;
   beforeEach(() => {
     vi.stubGlobal('ResizeObserver', class {
-      constructor(cb: ResizeObserverCallback) { resized = () => cb([], this as never); }
+      constructor(cb: ResizeObserverCallback) { resized = () => cb([], this); }
       observe() {}
       unobserve() {}
       disconnect() {}

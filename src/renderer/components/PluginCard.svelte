@@ -65,7 +65,7 @@
           variant="destructive"
           size="xs"
           disabled={busy}
-          onclick={() => { confirmingRemove = false; onuninstall?.(installed!.id); }}
+          onclick={() => { confirmingRemove = false; onuninstall?.(installed.id); }}
         >Remove</Button>
         <Button
           variant="quiet"
@@ -78,14 +78,14 @@
             variant="quiet"
             size="xs"
             disabled={busy}
-            onclick={() => ondisable?.(installed!.id)}
+            onclick={() => ondisable?.(installed.id)}
           >Disable</Button>
         {:else}
           <Button
             variant="subtle-primary"
             size="xs"
             disabled={busy}
-            onclick={() => onenable?.(installed!.id)}
+            onclick={() => onenable?.(installed.id)}
           >Enable</Button>
         {/if}
         <Button
@@ -99,7 +99,7 @@
           variant="subtle-primary"
           size="xs"
           disabled={busy}
-          onclick={() => oninstall?.(available!.pluginId)}
+          onclick={() => oninstall?.(available.pluginId)}
         >Install</Button>
       {/if}
     </div>

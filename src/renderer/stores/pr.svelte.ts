@@ -383,7 +383,7 @@ class PrStore {
     try {
       result = await window.groveBench.submitPrReview(sessionId, review);
     } catch (e) {
-      throw new Error(stripIpcErrorPrefix(e instanceof Error ? e.message : String(e ?? '')) || 'Review failed');
+      throw new Error(stripIpcErrorPrefix(e instanceof Error ? e.message : String(e ?? '')) || 'Review failed', { cause: e });
     }
     void this.refresh(sessionId, true);
     return result;

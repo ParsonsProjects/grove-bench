@@ -102,7 +102,6 @@
       <div class="flex items-end gap-3">
         <div class="flex-1">
           <Label for="skill-name" class="mb-1 block">Name</Label>
-          <!-- svelte-ignore a11y_autofocus -->
           <Input
             id="skill-name"
             type="text"

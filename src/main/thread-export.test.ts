@@ -48,7 +48,7 @@ describe('threadMarkdown', () => {
 
   it('names attached files and says when the agent changed', () => {
     const md = threadMarkdown([
-      { type: 'user_message', text: 'See these', images: [{ file: 'i1.png', name: 'screen.png' } as never], files: [{ file: 'f1', name: 'notes.pdf' } as never] },
+      { type: 'user_message', text: 'See these', images: [{ file: 'i1.png', name: 'screen.png' }], files: [{ file: 'f1', name: 'notes.pdf' } as never] },
       { type: 'assistant_text', text: 'Seen.', uuid: 'a1' },
       { type: 'agent_changed', from: 'claude-code', to: 'gemini', fromName: 'Claude Agent', toName: 'Gemini CLI', transcript: true },
       { type: 'user_message', text: 'Carry on' },

@@ -158,7 +158,7 @@ class BackgroundTaskStore {
     let timers = this.timers.get(sessionId);
     if (!timers) { timers = new Set(); this.timers.set(sessionId, timers); }
     const timer = setTimeout(() => {
-      timers!.delete(timer);
+      timers.delete(timer);
       this.remove(sessionId, taskId);
     }, AUTO_REMOVE_MS);
     timers.add(timer);

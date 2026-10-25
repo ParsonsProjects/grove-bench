@@ -367,7 +367,7 @@ export class CheckpointManager {
     try {
       copy = await this.keepFiles(sessionId, cwd);
     } catch (err) {
-      throw new Error(`Couldn't keep a copy of the files as they are, so none were restored: ${err instanceof Error ? err.message : String(err)}`);
+      throw new Error(`Couldn't keep a copy of the files as they are, so none were restored: ${err instanceof Error ? err.message : String(err)}`, { cause: err });
     }
     try {
       await git(['restore', '--source', oid, '--worktree', '--staged', '--', '.'], cwd);

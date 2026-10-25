@@ -66,7 +66,7 @@ describe('spawnClaudeCodeProcess', () => {
 
   it('stops the process when the SDK aborts, as spawn()\'s signal option did', () => {
     const controller = new AbortController();
-    const child = spawnClaudeCodeProcess(opts('claude', controller.signal)) as unknown as HostedProcess;
+    const child = spawnClaudeCodeProcess(opts('claude', controller.signal));
     const kill = vi.spyOn(child, 'kill');
     controller.abort();
     expect(kill).toHaveBeenCalledTimes(1);
@@ -78,7 +78,7 @@ describe('spawnClaudeCodeProcess', () => {
 
   it('stops listening for the abort once the process has exited', () => {
     const controller = new AbortController();
-    const child = spawnClaudeCodeProcess(opts('claude', controller.signal)) as unknown as HostedProcess;
+    const child = spawnClaudeCodeProcess(opts('claude', controller.signal));
     const kill = vi.spyOn(child, 'kill');
     child.receive({ type: 'exit', id: 1, code: 0, signal: null });
     controller.abort();
@@ -87,7 +87,7 @@ describe('spawnClaudeCodeProcess', () => {
 
   it('passes stderr to the callback', async () => {
     const lines: string[] = [];
-    const child = spawnClaudeCodeProcess(opts('claude'), (d) => lines.push(d)) as unknown as HostedProcess;
+    const child = spawnClaudeCodeProcess(opts('claude'), (d) => lines.push(d));
     child.receive({ type: 'stderr', id: 1, data: 'Warning: x\n' });
     await new Promise((r) => setImmediate(r));
     expect(lines).toEqual(['Warning: x\n']);

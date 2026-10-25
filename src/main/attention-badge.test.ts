@@ -36,9 +36,9 @@ describe('applyAttentionBadge', () => {
   it('uses the dock badge on macOS and the badge count elsewhere', () => {
     const win = makeWin();
     applyAttentionBadge(win, 4, null, 'darwin');
-    expect(app.dock!.setBadge).toHaveBeenCalledWith('4');
+    expect(app.dock.setBadge).toHaveBeenCalledWith('4');
     applyAttentionBadge(win, 0, null, 'darwin');
-    expect(app.dock!.setBadge).toHaveBeenLastCalledWith('');
+    expect(app.dock.setBadge).toHaveBeenLastCalledWith('');
     applyAttentionBadge(win, 5, null, 'linux');
     expect(app.setBadgeCount).toHaveBeenCalledWith(5);
     expect(win.setOverlayIcon).not.toHaveBeenCalled();

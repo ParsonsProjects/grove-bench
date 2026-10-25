@@ -6,6 +6,9 @@ import type { GroveServer } from './grove-tools.js';
 
 // ─── SDK dynamic import (ESM-only module in a CJS Electron main process) ───
 
+// A real import() of the ESM-only SDK: Vite would turn a plain one into
+// require() in main's CommonJS bundle.
+// eslint-disable-next-line @typescript-eslint/no-implied-eval
 const dynamicImport = new Function('specifier', 'return import(specifier)') as
   (specifier: string) => Promise<typeof import('@anthropic-ai/claude-agent-sdk')>;
 

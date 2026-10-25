@@ -199,7 +199,7 @@ const appStateSchema = z.object({
 export function validateAppState(raw: unknown): AppState {
   const input = typeof raw === 'object' && raw !== null ? raw : {};
   const result = appStateSchema.safeParse({ ...DEFAULT_STATE, ...input });
-  return result.success ? (result.data as AppState) : { ...DEFAULT_STATE };
+  return result.success ? result.data : { ...DEFAULT_STATE };
 }
 
 /** Migrate + validate a parsed app-state.json. Exported for tests. */

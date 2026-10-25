@@ -269,7 +269,7 @@ export async function prStatus(repoPath: string, branch: string, selfLogin?: str
   } catch (e) {
     if (isNoPrError(e)) return null;
     const err = e as { stderr?: string; message?: string };
-    throw new Error(`gh pr view failed: ${err.stderr?.trim() || err.message || String(e)}`);
+    throw new Error(`gh pr view failed: ${err.stderr?.trim() || err.message || String(e)}`, { cause: e });
   }
   try {
     return parsePr(JSON.parse(stdout), selfLogin);
@@ -286,7 +286,7 @@ export async function prList(repoPath: string, branch: string, selfLogin?: strin
     stdout = await ghOnline(['pr', 'list', '--head', branch, '--state', 'all', '--limit', String(PR_LIST_LIMIT), '--json', PR_VIEW_FIELDS], repoPath);
   } catch (e) {
     const err = e as { stderr?: string; message?: string };
-    throw new Error(`gh pr list failed: ${err.stderr?.trim() || err.message || String(e)}`);
+    throw new Error(`gh pr list failed: ${err.stderr?.trim() || err.message || String(e)}`, { cause: e });
   }
   let data: unknown;
   try {
@@ -426,13 +426,13 @@ export async function prCreate(repoPath: string, branch: string, opts: PrCreateO
   try {
     await ghOnline(args, repoPath, { bypassCooldown: true });
   } catch (e: any) {
-    throw new Error(e?.stderr?.trim() || e?.message || 'gh pr create failed');
+    throw new Error(e?.stderr?.trim() || e?.message || 'gh pr create failed', { cause: e });
   }
   let created: PrInfo | null;
   try {
     created = await prStatus(repoPath, branch);
   } catch (e: any) {
-    throw new Error(`PR was created but could not be read back — check GitHub (${e?.message ?? e})`);
+    throw new Error(`PR was created but could not be read back — check GitHub (${e?.message ?? e})`, { cause: e });
   }
   if (!created) throw new Error('PR was created but could not be read back — check GitHub');
   // Opened with the gh account just now, so it's the viewer's own.
@@ -466,7 +466,7 @@ export async function prHeadSha(repoPath: string, prNumber: number): Promise<str
   try {
     stdout = await ghOnline(['pr', 'view', String(prNumber), '--json', 'headRefOid'], repoPath, { bypassCooldown: true });
   } catch (e) {
-    throw new Error(`Could not read PR #${prNumber}: ${ghApiErrorMessage(e)}`);
+    throw new Error(`Could not read PR #${prNumber}: ${ghApiErrorMessage(e)}`, { cause: e });
   }
   const sha = (JSON.parse(stdout) as { headRefOid?: unknown }).headRefOid;
   if (typeof sha !== 'string' || !sha) throw new Error(`Could not read PR #${prNumber}`);
@@ -492,7 +492,7 @@ export async function prFilePatches(repoPath: string, prNumber: number): Promise
         { bypassCooldown: true },
       );
     } catch (e) {
-      throw new Error(`Could not read PR #${prNumber}'s files: ${ghApiErrorMessage(e)}`);
+      throw new Error(`Could not read PR #${prNumber}'s files: ${ghApiErrorMessage(e)}`, { cause: e });
     }
     const data = JSON.parse(stdout) as unknown;
     if (!Array.isArray(data)) break;
@@ -541,9 +541,9 @@ export async function prSubmitReview(
     // A post that timed out may still have reached GitHub. Posting again
     // would add a second review, so say to look first.
     if ((e as { timedOut?: unknown } | null)?.timedOut === true) {
-      throw new Error('GitHub didn\'t answer in time. The review may still have been posted, so check the PR before submitting again.');
+      throw new Error('GitHub didn\'t answer in time. The review may still have been posted, so check the PR before submitting again.', { cause: e });
     }
-    throw new Error(ghApiErrorMessage(e));
+    throw new Error(ghApiErrorMessage(e), { cause: e });
   }
   try {
     const url = (JSON.parse(stdout) as { html_url?: unknown }).html_url;

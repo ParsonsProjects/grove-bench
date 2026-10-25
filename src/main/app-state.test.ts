@@ -52,7 +52,7 @@ import {
   loadOpenTabs, loadCollapsedRepos, loadSessionSort, loadSidebarWidth, loadCollapsedPanels,
   saveKnownSkills, loadKnownSkills, saveCollapsedPanels, flushPendingSaves, validateAppState, upgradeAppState, APP_STATE_SCHEMA_VERSION,
   loadPrerequisiteCache, loadModelCatalog, saveModelCatalog, loadUsageSnapshot, saveUsageSnapshot,
-  loadSkillSuggestionCache, saveSkillSuggestionCache,
+  loadSkillSuggestionCache,
   mergeProjects, listProjects, rememberProject, forgetProject,
   loadConversationGroups, saveConversationGroups,
   loadTodoSessionIds, saveTodoSessionIds,

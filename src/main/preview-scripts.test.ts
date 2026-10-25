@@ -13,7 +13,7 @@ beforeEach(() => {
   topElement = null;
   vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
     const zero = this.hasAttribute('data-zero');
-    return { left: 10, top: 20, width: zero ? 0 : 100, height: zero ? 0 : 30, right: 110, bottom: 50, x: 10, y: 20, toJSON() {} } as DOMRect;
+    return { left: 10, top: 20, width: zero ? 0 : 100, height: zero ? 0 : 30, right: 110, bottom: 50, x: 10, y: 20, toJSON() {} };
   });
   Element.prototype.scrollIntoView = vi.fn();
   document.elementFromPoint = vi.fn((_x: number, _y: number) => topElement?.() ?? null);
@@ -124,7 +124,7 @@ describe('locateInPage', () => {
   it('refuses a point outside the visible area instead of clicking blind', () => {
     document.body.innerHTML = '<button id="far">Far</button>';
     vi.mocked(Element.prototype.getBoundingClientRect).mockImplementation(() =>
-      ({ left: 10, top: 5000, width: 100, height: 30, right: 110, bottom: 5030, x: 10, y: 5000, toJSON() {} }) as DOMRect);
+      ({ left: 10, top: 5000, width: 100, height: 30, right: 110, bottom: 5030, x: 10, y: 5000, toJSON() {} }));
     const res = locateInPage({ selector: '#far', purpose: 'click' });
     expect(res.ok || res.error).toContain('outside the visible area');
   });

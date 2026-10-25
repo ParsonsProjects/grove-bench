@@ -22,11 +22,11 @@ import {
 } from './skill-suggestions.js';
 
 function userMsg(text: string): AgentEvent {
-  return { type: 'user_message', text } as AgentEvent;
+  return { type: 'user_message', text };
 }
 
 function bash(command: string): AgentEvent {
-  return { type: 'assistant_tool_use', toolName: 'Bash', toolInput: { command }, toolUseId: 't', uuid: 'u' } as AgentEvent;
+  return { type: 'assistant_tool_use', toolName: 'Bash', toolInput: { command }, toolUseId: 't', uuid: 'u' };
 }
 
 describe('normalizeCommand', () => {
@@ -44,7 +44,7 @@ describe('extractActivity', () => {
       bash('npm run dist && installer.exe'),
       bash('git status'), // stoplisted
       bash('ls -la'),     // stoplisted
-      { type: 'assistant_text', text: 'ok', uuid: 'u' } as AgentEvent,
+      { type: 'assistant_text', text: 'ok', uuid: 'u' },
     ]);
     expect(activity.prompts).toEqual(['Update the changelog since the last tag']);
     expect(activity.bashCommands).toEqual(['npm run dist && installer.exe']);

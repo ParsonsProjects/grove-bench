@@ -41,7 +41,6 @@
   });
 
   let resultLines = $derived(result ? result.split('\n') : []);
-  let isLong = $derived(resultLines.length > 15);
 </script>
 
 <div class="py-1 my-1 border-l-4 border-border pl-3">

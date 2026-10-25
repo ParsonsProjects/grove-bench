@@ -143,7 +143,7 @@ describe('CheckpointManager', () => {
     it('copies the worktree index and writes and removes its temp files without blocking', async () => {
       // A linked worktree: .git is a file naming its gitdir.
       vi.mocked(fs.promises.stat).mockResolvedValueOnce({ isDirectory: () => false } as never);
-      vi.mocked(fs.promises.readFile).mockResolvedValueOnce('gitdir: /main/.git/worktrees/wt\n' as never);
+      vi.mocked(fs.promises.readFile).mockResolvedValueOnce('gitdir: /main/.git/worktrees/wt\n');
       mockGitEnv.mockImplementation(async (args: string[]) => (args[0] === 'write-tree' ? 'tree1' : args[0] === 'commit-tree' ? 'commit1' : ''));
       mockGit.mockResolvedValue('');
 

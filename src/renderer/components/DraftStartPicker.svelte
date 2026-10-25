@@ -122,7 +122,7 @@
     {#each tabs as [value, label] (value)}
       <button
         type="button"
-        onclick={() => chooseTab(value as Tab)}
+        onclick={() => chooseTab(value)}
         aria-pressed={tab === value}
         class={cn(tabTrigger({ active: tab === value }), 'flex-1 justify-center')}
       >

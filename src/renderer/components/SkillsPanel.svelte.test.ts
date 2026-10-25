@@ -16,7 +16,7 @@ const realScroll = Element.prototype.scrollIntoView;
 
 beforeEach(() => {
   vi.clearAllMocks();
-  Element.prototype.animate = vi.fn(() => ({ onfinish: null, cancel() {}, finished: Promise.resolve(), currentTime: 0 }) as unknown as Animation) as never;
+  Element.prototype.animate = vi.fn(() => ({ onfinish: null, cancel() {}, finished: Promise.resolve(), currentTime: 0 }) as unknown as Animation);
   Element.prototype.scrollIntoView = function scrollIntoView() {};
   store.repos = ['/repo'];
   store.sessions = [{ id: 't1', branch: 'b', repoPath: '/repo', status: 'running', agentType: 'gemini-cli', createdAt: 0 }] as typeof store.sessions;

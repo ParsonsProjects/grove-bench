@@ -174,7 +174,7 @@ describe('installDependencies', () => {
 
   it('settles when Node throws the start (the agent host down, so it starts here)', async () => {
     const einval = Object.assign(new Error('spawn EINVAL'), { code: 'EINVAL', syscall: 'spawn' });
-    spawnHere((() => { throw einval; }) as unknown as Parameters<typeof createSpawnRunner>[1]);
+    spawnHere(() => { throw einval; });
     await expect(installDependencies('/wt', '/cache', new AbortController().signal)).rejects.toMatchObject({ code: 'EINVAL', message: 'spawn EINVAL' });
   });
 

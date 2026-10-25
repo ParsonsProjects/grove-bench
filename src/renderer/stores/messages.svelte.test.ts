@@ -84,7 +84,7 @@ describe('ingestEvent — system_init', () => {
       sessionId: SID,
       model: 'test-model-v1',
       tools: [],
-    } as AgentEvent);
+    });
 
     expect(messageStore.getControlValue(SID, 'thinking')).toBe('low');
     expect(mockGroveBench.setControl).not.toHaveBeenCalled();
@@ -96,7 +96,7 @@ describe('ingestEvent — system_init', () => {
       sessionId: SID,
       model: 'test-model-v1',
       tools: ['Read', 'Edit'],
-    } as AgentEvent);
+    });
 
     expect(messageStore.getIsReady(SID)).toBe(true);
     expect(messageStore.getIsRunning(SID)).toBe(false);
@@ -116,7 +116,7 @@ describe('ingestEvent — system_init', () => {
       sessionId: SID,
       model: 'opus',
       tools: [],
-    } as AgentEvent);
+    });
 
     expect(messageStore.getIsReady(SID)).toBe(true);
     expect(messageStore.getIsRunning(SID)).toBe(true);
@@ -132,7 +132,7 @@ describe('ingestEvent — system_init', () => {
       sessionId: SID,
       model: 'opus',
       tools: [],
-    } as AgentEvent);
+    });
 
     const msgs = messageStore.getMessages(SID);
     expect(msgs).toHaveLength(1);
@@ -149,7 +149,7 @@ describe('ingestEvent — system_init', () => {
       sessionId: SID,
       model: 'opus',
       tools: [],
-    } as AgentEvent);
+    });
 
     const msgs = messageStore.getMessages(SID);
     // Only the re-init system message should remain
@@ -167,7 +167,7 @@ describe('ingestEvent — system_init', () => {
       sessionId: SID,
       model: 'opus',
       tools: [],
-    } as AgentEvent);
+    });
 
     // Pagination should be fully reset — no older events to load
     expect(messageStore.hasOlderEvents(SID)).toBe(false);
@@ -188,7 +188,7 @@ describe('ingestEvent — system_init', () => {
       sessionId: SID,
       model: 'opus',
       tools: [],
-    } as AgentEvent);
+    });
 
     expect(checkpointStore.getCheckpoints(SID)).toHaveLength(1);
     expect(checkpointStore.getSelected(SID)).toBeNull();
@@ -206,7 +206,7 @@ describe('ingestEvent — system_init', () => {
       skills: ['commit'],
       slashCommands: ['/help'],
       mcpServers: [{ name: 'github', status: 'connected' }],
-    } as AgentEvent);
+    });
 
     const info = messageStore.getSystemInfo(SID);
     expect(info.tools).toEqual(['Read', 'Edit']);
@@ -217,8 +217,8 @@ describe('ingestEvent — system_init', () => {
 
 describe('ingestEvent — text streaming', () => {
   it('accumulates partial_text into streaming buffer', () => {
-    messageStore.ingestEvent(SID, { type: 'partial_text', text: 'Hello ' } as AgentEvent);
-    messageStore.ingestEvent(SID, { type: 'partial_text', text: 'world' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'partial_text', text: 'Hello ' });
+    messageStore.ingestEvent(SID, { type: 'partial_text', text: 'world' });
 
     // Deltas are coalesced: nothing reactive changes until the flush tick.
     expect(messageStore.getStreamingText(SID)).toBe('');
@@ -231,9 +231,9 @@ describe('ingestEvent — text streaming', () => {
     const id = 'stop-fragment';
     vi.useFakeTimers();
     try {
-      messageStore.ingestEvent(id, { type: 'partial_text', text: 'Hello ' } as AgentEvent);
+      messageStore.ingestEvent(id, { type: 'partial_text', text: 'Hello ' });
       messageStore.flushStreamBuffers();
-      messageStore.ingestEvent(id, { type: 'partial_text', text: 'world' } as AgentEvent);
+      messageStore.ingestEvent(id, { type: 'partial_text', text: 'world' });
 
       messageStore.markSessionStopped(id);
       vi.advanceTimersByTime(200);
@@ -248,14 +248,14 @@ describe('ingestEvent — text streaming', () => {
   });
 
   it('applies buffered deltas before a non-streaming event is processed', () => {
-    messageStore.ingestEvent(SID, { type: 'partial_text', text: 'buffered' } as AgentEvent);
-    messageStore.ingestEvent(SID, { type: 'activity', activity: 'generating' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'partial_text', text: 'buffered' });
+    messageStore.ingestEvent(SID, { type: 'activity', activity: 'generating' });
     expect(messageStore.getStreamingText(SID)).toBe('buffered');
   });
 
   it('drops buffered text deltas superseded by the finalized assistant_text', () => {
-    messageStore.ingestEvent(SID, { type: 'partial_text', text: 'preview' } as AgentEvent);
-    messageStore.ingestEvent(SID, { type: 'assistant_text', text: 'Final', uuid: 'u1' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'partial_text', text: 'preview' });
+    messageStore.ingestEvent(SID, { type: 'assistant_text', text: 'Final', uuid: 'u1' });
     expect(messageStore.getStreamingText(SID)).toBe('');
     messageStore.flushStreamBuffers();
     expect(messageStore.getStreamingText(SID)).toBe('');
@@ -264,7 +264,7 @@ describe('ingestEvent — text streaming', () => {
 
   it('clears streaming thinking when partial_text arrives', () => {
     messageStore.streamingThinking[SID] = 'thinking...';
-    messageStore.ingestEvent(SID, { type: 'partial_text', text: 'hi' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'partial_text', text: 'hi' });
     expect(messageStore.getStreamingThinking(SID)).toBe('');
   });
 
@@ -274,7 +274,7 @@ describe('ingestEvent — text streaming', () => {
       type: 'assistant_text',
       text: 'Final answer',
       uuid: 'uuid-1',
-    } as AgentEvent);
+    });
 
     expect(messageStore.getStreamingText(SID)).toBe('');
     const msgs = messageStore.getMessages(SID);
@@ -286,8 +286,8 @@ describe('ingestEvent — text streaming', () => {
 
 describe('ingestEvent — thinking', () => {
   it('accumulates partial_thinking', () => {
-    messageStore.ingestEvent(SID, { type: 'partial_thinking', text: 'Let me ' } as AgentEvent);
-    messageStore.ingestEvent(SID, { type: 'partial_thinking', text: 'think...' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'partial_thinking', text: 'Let me ' });
+    messageStore.ingestEvent(SID, { type: 'partial_thinking', text: 'think...' });
 
     messageStore.flushStreamBuffers();
     expect(messageStore.getStreamingThinking(SID)).toBe('Let me think...');
@@ -300,7 +300,7 @@ describe('ingestEvent — thinking', () => {
       type: 'thinking',
       thinking: 'Full thought',
       uuid: 'uuid-t',
-    } as AgentEvent);
+    });
 
     expect(messageStore.getStreamingThinking(SID)).toBe('');
     const msgs = messageStore.getMessages(SID);
@@ -309,7 +309,7 @@ describe('ingestEvent — thinking', () => {
 
   it('skips thinking that arrived without text', () => {
     messageStore.streamingThinking[SID] = 'preview';
-    messageStore.ingestEvent(SID, { type: 'thinking', thinking: '', uuid: 'uuid-t' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'thinking', thinking: '', uuid: 'uuid-t' });
 
     expect(messageStore.getStreamingThinking(SID)).toBe('');
     expect(messageStore.getMessages(SID)).toHaveLength(0);
@@ -324,7 +324,7 @@ describe('ingestEvent — tool_use and tool_result', () => {
       toolInput: { file_path: '/src/foo.ts' },
       toolUseId: 'tu-1',
       uuid: 'uuid-2',
-    } as AgentEvent);
+    });
 
     const msgs = messageStore.getMessages(SID);
     expect(msgs).toHaveLength(1);
@@ -342,7 +342,7 @@ describe('ingestEvent — tool_use and tool_result', () => {
       toolInput: {},
       toolUseId: 'tu-2',
       uuid: 'uuid-3',
-    } as AgentEvent);
+    });
 
     // Streaming text flushed as a text message, then tool call added
     const msgs = messageStore.getMessages(SID);
@@ -358,14 +358,14 @@ describe('ingestEvent — tool_use and tool_result', () => {
       toolInput: { command: 'ls' },
       toolUseId: 'tu-3',
       uuid: 'uuid-4',
-    } as AgentEvent);
+    });
 
     messageStore.ingestEvent(SID, {
       type: 'tool_result',
       toolUseId: 'tu-3',
       content: 'file1.ts\nfile2.ts',
       isError: false,
-    } as AgentEvent);
+    });
 
     const msgs = messageStore.getMessages(SID);
     const tc = msgs[0] as any;
@@ -381,9 +381,9 @@ describe('ingestEvent — tool_use and tool_result', () => {
       toolInput: {},
       toolUseId: 'tu-shot',
       uuid: 'uuid-shot',
-    } as AgentEvent);
+    });
     const images = [{ file: 'b'.repeat(32) + '.png' }];
-    messageStore.ingestEvent(SID, { type: 'tool_result', toolUseId: 'tu-shot', content: '', images } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'tool_result', toolUseId: 'tu-shot', content: '', images });
 
     const tc = messageStore.getMessages(SID)[0] as any;
     expect(tc.pending).toBe(false);
@@ -397,7 +397,7 @@ describe('ingestEvent — tool_use and tool_result', () => {
       toolInput: {},
       toolUseId: 'tu-plan',
       uuid: 'u-plan',
-    } as AgentEvent);
+    });
 
     // Mode stays 'default' — only mode_sync events change it
     expect(messageStore.getMode(SID)).toBe('default');
@@ -411,7 +411,7 @@ describe('ingestEvent — tool_use and tool_result', () => {
       toolInput: {},
       toolUseId: 'tu-exit',
       uuid: 'u-exit',
-    } as AgentEvent);
+    });
 
     // Mode stays 'plan' — only mode_sync events change it
     expect(messageStore.getMode(SID)).toBe('plan');
@@ -440,9 +440,9 @@ describe('ingestEvent — subagent events', () => {
   });
 
   it('leaves the main agent\'s live reply alone', () => {
-    messageStore.ingestEvent(SID, { type: 'partial_text', text: 'The cause ' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'partial_text', text: 'The cause ' });
     messageStore.ingestEvent(SID, sub({ type: 'assistant_text', text: 'subagent note', uuid: 's1' }));
-    messageStore.ingestEvent(SID, { type: 'partial_text', text: 'is the cron job' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'partial_text', text: 'is the cron job' });
     messageStore.ingestEvent(SID, sub({ type: 'assistant_tool_use', toolName: 'Grep', toolInput: {}, toolUseId: 'tu-grep', uuid: 's2' }));
     messageStore.flushStreamBuffers();
 
@@ -468,9 +468,9 @@ describe('ingestEvent — subagent events', () => {
   });
 
   it('names the subagent each pending call runs in or starts, for the status bar', () => {
-    messageStore.ingestEvent(SID, { ...agentCall, toolInput: { description: 'Find the burst', subagent_type: 'Explore' } } as AgentEvent);
+    messageStore.ingestEvent(SID, { ...agentCall, toolInput: { description: 'Find the burst', subagent_type: 'Explore' } });
     messageStore.ingestEvent(SID, sub({ type: 'assistant_tool_use', toolName: 'Bash', toolInput: { command: 'ls' }, toolUseId: 'tu-bash', uuid: 's1' }));
-    messageStore.ingestEvent(SID, { type: 'assistant_tool_use', toolName: 'Read', toolInput: {}, toolUseId: 'tu-read', uuid: 'u2' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'assistant_tool_use', toolName: 'Read', toolInput: {}, toolUseId: 'tu-read', uuid: 'u2' });
 
     expect(messageStore.getPendingTools(SID).map(({ toolUseId, subagentCall, inSubagent }) => ({ toolUseId, subagentCall, inSubagent }))).toEqual([
       { toolUseId: 'tu-agent', subagentCall: 'tu-agent', inSubagent: undefined },
@@ -480,13 +480,13 @@ describe('ingestEvent — subagent events', () => {
   });
 
   it('reports a background subagent as running after its Agent call returned', () => {
-    messageStore.ingestEvent(SID, { type: 'task_started', taskId: 'bg-1', toolUseId: 'tu-agent', description: 'Find the burst' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'task_started', taskId: 'bg-1', toolUseId: 'tu-agent', description: 'Find the burst' });
     expect(backgroundTaskStore.isRunningFor(SID, 'tu-agent')).toBe(true);
     expect(backgroundTaskStore.isRunningFor(SID, 'tu-other')).toBe(false);
 
     messageStore.ingestEvent(SID, {
       type: 'task_notification', taskId: 'bg-1', toolUseId: 'tu-agent', taskStatus: 'completed', summary: 'done', outputFile: '',
-    } as AgentEvent);
+    });
     expect(backgroundTaskStore.isRunningFor(SID, 'tu-agent')).toBe(false);
   });
 });
@@ -499,7 +499,7 @@ describe('ingestEvent — permission_request', () => {
       toolInput: { command: 'rm -rf /' },
       toolUseId: 'tu-perm',
       requestId: 'req-1',
-    } as AgentEvent);
+    });
 
     const msgs = messageStore.getMessages(SID);
     expect(msgs[0].kind).toBe('permission');
@@ -518,7 +518,7 @@ describe('ingestEvent — permission_request', () => {
       toolUseId: 'tu-q',
       requestId: 'req-q',
       toolCategory: 'question',
-    } as AgentEvent);
+    });
 
     const msgs = messageStore.getMessages(SID);
     expect(msgs[0].kind).toBe('question');
@@ -536,7 +536,7 @@ describe('ingestEvent — permission_request', () => {
       requestId: 'req-q2',
       toolCategory: 'question',
       toolView: { kind: 'question', questions: [{ question: 'Ship it?', options: [{ label: 'Yes' }, { label: 'No', description: 'Not yet' }] }] },
-    } as AgentEvent);
+    });
 
     const q = messageStore.getMessages(SID).find((m) => m.kind === 'question') as any;
     expect(q.questions).toEqual([{
@@ -553,14 +553,14 @@ describe('OS notification triggers', () => {
   });
 
   it('notifies turn completion from the result event', () => {
-    messageStore.ingestEvent(SID, { type: 'result', subtype: 'success', isError: false } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'result', subtype: 'success', isError: false });
     expect(mockGroveBench.notify).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'turn_complete', sessionId: SID, body: 'Agent finished a turn' }),
     );
   });
 
   it('uses error wording when the turn ended with an error', () => {
-    messageStore.ingestEvent(SID, { type: 'result', subtype: 'error_during_execution', isError: true } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'result', subtype: 'error_during_execution', isError: true });
     expect(mockGroveBench.notify).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'turn_complete', body: 'Agent turn ended with an error' }),
     );
@@ -569,7 +569,7 @@ describe('OS notification triggers', () => {
   it('notifies permission requests with the tool name', () => {
     messageStore.ingestEvent(SID, {
       type: 'permission_request', toolName: 'Bash', toolInput: {}, toolUseId: 't1', requestId: 'r1',
-    } as AgentEvent);
+    });
     expect(mockGroveBench.notify).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'permission_request', body: 'The agent wants to run a command' }),
     );
@@ -578,14 +578,14 @@ describe('OS notification triggers', () => {
   it('uses plain language for plan approvals and questions', () => {
     messageStore.ingestEvent(SID, {
       type: 'permission_request', toolName: 'ExitPlanMode', toolInput: {}, toolUseId: 't2', requestId: 'r2', isPlanExecution: true,
-    } as AgentEvent);
+    });
     expect(mockGroveBench.notify).toHaveBeenCalledWith(
       expect.objectContaining({ body: 'A plan is ready for review' }),
     );
 
     messageStore.ingestEvent(SID, {
       type: 'permission_request', toolName: 'AskUserQuestion', toolInput: { questions: [] }, toolUseId: 't3', requestId: 'r3', toolCategory: 'question',
-    } as AgentEvent);
+    });
     expect(mockGroveBench.notify).toHaveBeenCalledWith(
       expect.objectContaining({ body: 'Agent is waiting for an answer' }),
     );
@@ -593,21 +593,21 @@ describe('OS notification triggers', () => {
 
   it('never notifies from replayed history', () => {
     messageStore.replayEvents(SID, [
-      { type: 'permission_request', toolName: 'Bash', toolInput: {}, toolUseId: 't4', requestId: 'r4' } as AgentEvent,
-      { type: 'result', subtype: 'success', isError: false } as AgentEvent,
+      { type: 'permission_request', toolName: 'Bash', toolInput: {}, toolUseId: 't4', requestId: 'r4' },
+      { type: 'result', subtype: 'success', isError: false },
     ]);
     expect(mockGroveBench.notify).not.toHaveBeenCalled();
   });
 
   it('never notifies for a stopped session', () => {
     sessionStore.sessions = [{ id: SID, branch: 'feat/x', repoPath: 'C:/repo', status: 'stopped' }];
-    messageStore.ingestEvent(SID, { type: 'result', subtype: 'success', isError: false } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'result', subtype: 'success', isError: false });
     expect(mockGroveBench.notify).not.toHaveBeenCalled();
   });
 
   it('never notifies for a session no longer in the store', () => {
     sessionStore.sessions = [];
-    messageStore.ingestEvent(SID, { type: 'result', subtype: 'success', isError: false } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'result', subtype: 'success', isError: false });
     expect(mockGroveBench.notify).not.toHaveBeenCalled();
   });
 });
@@ -619,8 +619,8 @@ describe('ingestEvent: files_made', () => {
       { path: 'shots/home.png', kind: 'image' as const, size: 70, image: { file: 'c'.repeat(32) + '.png' } },
       { path: 'report.pdf', kind: 'pdf' as const, size: 9 },
     ];
-    messageStore.ingestEvent(SID, { type: 'files_made', files, more: 2 } as AgentEvent);
-    messageStore.ingestEvent(SID, { type: 'result', subtype: 'success', isError: false } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'files_made', files, more: 2 });
+    messageStore.ingestEvent(SID, { type: 'result', subtype: 'success', isError: false });
 
     const msgs = messageStore.getMessages(SID);
     expect(msgs.map((m) => m.kind)).toEqual(['text', 'files_made', 'result']);
@@ -630,19 +630,19 @@ describe('ingestEvent: files_made', () => {
 
 describe('ingestEvent: files_kept', () => {
   it('adds the line offering the replaced files back after the rewind', () => {
-    messageStore.ingestEvent(SID, { type: 'user_message', text: 'First', uuid: 'u1' } as AgentEvent);
-    messageStore.ingestEvent(SID, { type: 'rewind', toMessageId: 'u1' } as AgentEvent);
-    messageStore.ingestEvent(SID, { type: 'files_kept', reason: 'rewind', copy: 'c1' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'user_message', text: 'First', uuid: 'u1' });
+    messageStore.ingestEvent(SID, { type: 'rewind', toMessageId: 'u1' });
+    messageStore.ingestEvent(SID, { type: 'files_kept', reason: 'rewind', copy: 'c1' });
 
     expect(messageStore.getMessages(SID)).toMatchObject([{ kind: 'files_kept', reason: 'rewind', copy: 'c1' }]);
   });
 
   // The files on disk changed: the Changes list and the checkpoint diffs follow.
   it('refreshes the changes after files are brought back', () => {
-    const refresh = vi.spyOn(gitStatusStore, 'refresh').mockResolvedValue(undefined as never);
+    const refresh = vi.spyOn(gitStatusStore, 'refresh').mockResolvedValue(undefined);
     const schedule = vi.spyOn(checkpointStore, 'scheduleRefresh').mockImplementation(() => {});
     try {
-      messageStore.ingestEvent(SID, { type: 'files_kept', reason: 'bring_back', copy: 'c2' } as AgentEvent);
+      messageStore.ingestEvent(SID, { type: 'files_kept', reason: 'bring_back', copy: 'c2' });
       expect(refresh).toHaveBeenCalledWith(SID);
       expect(schedule).toHaveBeenCalledWith(SID);
     } finally {
@@ -653,7 +653,7 @@ describe('ingestEvent: files_kept', () => {
 
   it('puts text that was streaming above the line', () => {
     messageStore.streamingText[SID] = 'Half a sentence';
-    messageStore.ingestEvent(SID, { type: 'files_kept', reason: 'bring_back', copy: 'c2' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'files_kept', reason: 'bring_back', copy: 'c2' });
     expect(messageStore.getMessages(SID).map((m) => m.kind)).toEqual(['text', 'files_kept']);
   });
 });
@@ -667,7 +667,7 @@ describe('ingestEvent — result', () => {
       isError: false,
       totalCostUsd: 0.05,
       durationMs: 3000,
-    } as AgentEvent);
+    });
 
     expect(messageStore.getIsRunning(SID)).toBe(false);
     expect(messageStore.getActivity(SID).activity).toBe('idle');
@@ -679,7 +679,7 @@ describe('ingestEvent — result', () => {
       type: 'result',
       subtype: 'success',
       isError: false,
-    } as AgentEvent);
+    });
 
     const msgs = messageStore.getMessages(SID);
     expect(msgs[0].kind).toBe('text');
@@ -693,7 +693,7 @@ describe('ingestEvent — result', () => {
       isError: false,
       contextWindow: 100000,
       numTurns: 5,
-    } as AgentEvent);
+    });
 
     expect(messageStore.getContextWindow(SID)).toBe(100000);
     expect(messageStore.getTurns(SID)).toBe(5);
@@ -703,10 +703,10 @@ describe('ingestEvent — result', () => {
     vi.useFakeTimers({ toFake: ['Date'], now: 5_000 });
     try {
       sessionStore.sessions = [{ id: SID, branch: 'feat/x', repoPath: 'C:/repo', status: 'running', lastActiveAt: 1_000 }];
-      messageStore.replayEvents(SID, [{ type: 'result', subtype: 'success', isError: false } as AgentEvent]);
+      messageStore.replayEvents(SID, [{ type: 'result', subtype: 'success', isError: false }]);
       expect(sessionStore.sessions[0].lastActiveAt).toBe(1_000);
 
-      messageStore.ingestEvent(SID, { type: 'result', subtype: 'success', isError: false } as AgentEvent);
+      messageStore.ingestEvent(SID, { type: 'result', subtype: 'success', isError: false });
       expect(sessionStore.sessions[0].lastActiveAt).toBe(5_000);
     } finally {
       vi.useRealTimers();
@@ -720,12 +720,12 @@ describe('ingestEvent — usage', () => {
       type: 'usage',
       inputTokens: 1000,
       outputTokens: 200,
-    } as AgentEvent);
+    });
     messageStore.ingestEvent(SID, {
       type: 'usage',
       inputTokens: 1500,
       outputTokens: 300,
-    } as AgentEvent);
+    });
 
     const usage = messageStore.getUsage(SID);
     expect(usage.inputTokens).toBe(1500); // latest, not summed
@@ -736,21 +736,21 @@ describe('ingestEvent — usage', () => {
 
 describe('ingestEvent — error and status', () => {
   it('pushes error message', () => {
-    messageStore.ingestEvent(SID, { type: 'error', message: 'Something broke' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'error', message: 'Something broke' });
     const msgs = messageStore.getMessages(SID);
     expect(msgs[0].kind).toBe('error');
     expect((msgs[0] as any).text).toBe('Something broke');
   });
 
   it('pushes status as system message', () => {
-    messageStore.ingestEvent(SID, { type: 'status', message: 'Loading...' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'status', message: 'Loading...' });
     const msgs = messageStore.getMessages(SID);
     expect(msgs[0].kind).toBe('system');
     expect((msgs[0] as any).text).toBe('Loading...');
   });
 
   it('keeps a warning level on status messages', () => {
-    messageStore.ingestEvent(SID, { type: 'status', message: 'No sandbox', level: 'warning' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'status', message: 'No sandbox', level: 'warning' });
     expect(messageStore.getMessages(SID)[0]).toMatchObject({ kind: 'system', text: 'No sandbox', level: 'warning' });
   });
 
@@ -766,7 +766,7 @@ describe('ingestEvent — rate_limit (delegates to rateLimitStore)', () => {
       type: 'rate_limit',
       status: 'allowed_warning',
       utilization: 0.85,
-    } as AgentEvent);
+    });
 
     const rl = rateLimitStore.get(SID);
     expect(rl!.status).toBe('allowed_warning');
@@ -778,7 +778,7 @@ describe('ingestEvent — rate_limit (delegates to rateLimitStore)', () => {
       type: 'rate_limit',
       status: 'rejected',
       rateLimitType: 'token',
-    } as AgentEvent);
+    });
 
     const msgs = messageStore.getMessages(SID);
     expect(msgs[0].kind).toBe('system');
@@ -821,7 +821,7 @@ describe('ingestEvent — compact_boundary', () => {
       type: 'compact_boundary',
       trigger: 'auto',
       preTokens: 150000,
-    } as AgentEvent);
+    });
 
     const msgs = messageStore.getMessages(SID);
     expect(msgs[0].kind).toBe('system');
@@ -836,7 +836,7 @@ describe('ingestEvent — tool_progress', () => {
       toolName: 'Bash',
       toolUseId: 'tu-p',
       elapsedSeconds: 5,
-    } as AgentEvent);
+    });
 
     const activity = messageStore.getActivity(SID);
     expect(activity.activity).toBe('tool_starting');
@@ -847,14 +847,14 @@ describe('ingestEvent — tool_progress', () => {
 
 describe('ingestEvent — activity', () => {
   it('sets running when not idle', () => {
-    messageStore.ingestEvent(SID, { type: 'activity', activity: 'generating' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'activity', activity: 'generating' });
     expect(messageStore.getIsRunning(SID)).toBe(true);
     expect(messageStore.getActivity(SID).activity).toBe('generating');
   });
 
   it('does not set running for idle', () => {
     messageStore.setIsRunning(SID, false);
-    messageStore.ingestEvent(SID, { type: 'activity', activity: 'idle' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'activity', activity: 'idle' });
     expect(messageStore.getIsRunning(SID)).toBe(false);
   });
 });
@@ -863,7 +863,7 @@ describe('ingestEvent — process_exit', () => {
   it('marks session as stopped', () => {
     messageStore.setIsRunning(SID, true);
     messageStore.streamingText[SID] = 'leftover';
-    messageStore.ingestEvent(SID, { type: 'process_exit' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'process_exit' });
 
     expect(messageStore.getIsRunning(SID)).toBe(false);
     expect(messageStore.getActivity(SID).activity).toBe('idle');
@@ -877,7 +877,7 @@ describe('ingestEvent — background tasks', () => {
       taskId: 'bg-1',
       description: 'Research API',
       taskType: 'explore',
-    } as AgentEvent);
+    });
 
     let tasks = backgroundTaskStore.get(SID);
     expect(tasks).toHaveLength(1);
@@ -891,7 +891,7 @@ describe('ingestEvent — background tasks', () => {
       totalTokens: 5000,
       toolUses: 3,
       durationMs: 10000,
-    } as AgentEvent);
+    });
 
     tasks = backgroundTaskStore.get(SID);
     expect(tasks[0].summary).toBe('Reading docs');
@@ -914,7 +914,7 @@ describe('ingestEvent — background tasks', () => {
 
   it('keeps running tasks across a turn result (they outlive the turn and survive an interrupt)', () => {
     messageStore.setIsRunning(SID, true);
-    messageStore.ingestEvent(SID, { type: 'task_started', taskId: 'bg-1', description: 'Long job' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'task_started', taskId: 'bg-1', description: 'Long job' });
     messageStore.ingestEvent(SID, { type: 'result', subtype: 'success', result: '', totalCostUsd: 0, durationMs: 1 } as AgentEvent);
 
     expect(messageStore.getIsRunning(SID)).toBe(false);
@@ -925,19 +925,19 @@ describe('ingestEvent — background tasks', () => {
 
   it('drops running tasks once the agent process exits', () => {
     messageStore.setIsRunning(SID, true);
-    messageStore.ingestEvent(SID, { type: 'task_started', taskId: 'bg-1', description: 'Long job' } as AgentEvent);
-    messageStore.ingestEvent(SID, { type: 'process_exit' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'task_started', taskId: 'bg-1', description: 'Long job' });
+    messageStore.ingestEvent(SID, { type: 'process_exit' });
 
     expect(backgroundTaskStore.get(SID)).toHaveLength(0);
   });
 
   it('applies background_tasks_changed as the authoritative task list', () => {
-    messageStore.ingestEvent(SID, { type: 'task_started', taskId: 'bg-1', description: 'One' } as AgentEvent);
-    messageStore.ingestEvent(SID, { type: 'task_started', taskId: 'bg-2', description: 'Two' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'task_started', taskId: 'bg-1', description: 'One' });
+    messageStore.ingestEvent(SID, { type: 'task_started', taskId: 'bg-2', description: 'Two' });
     messageStore.ingestEvent(SID, {
       type: 'background_tasks_changed',
       tasks: [{ taskId: 'bg-2', description: 'Two' }],
-    } as AgentEvent);
+    });
 
     expect(backgroundTaskStore.get(SID).map((t) => t.taskId)).toEqual(['bg-2']);
   });
@@ -945,45 +945,45 @@ describe('ingestEvent — background tasks', () => {
 
 describe('ingestEvent — prompt_suggestion', () => {
   it('keeps the newest suggestion', () => {
-    messageStore.ingestEvent(SID, { type: 'prompt_suggestion', suggestion: 'Try this' } as AgentEvent);
-    messageStore.ingestEvent(SID, { type: 'prompt_suggestion', suggestion: ' Or this\n' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'prompt_suggestion', suggestion: 'Try this' });
+    messageStore.ingestEvent(SID, { type: 'prompt_suggestion', suggestion: ' Or this\n' });
 
     expect(messageStore.getPromptSuggestion(SID)).toBe('Or this');
   });
 
   it('ignores an empty suggestion', () => {
-    messageStore.ingestEvent(SID, { type: 'prompt_suggestion', suggestion: 'Try this' } as AgentEvent);
-    messageStore.ingestEvent(SID, { type: 'prompt_suggestion', suggestion: '  ' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'prompt_suggestion', suggestion: 'Try this' });
+    messageStore.ingestEvent(SID, { type: 'prompt_suggestion', suggestion: '  ' });
 
     expect(messageStore.getPromptSuggestion(SID)).toBe('Try this');
   });
 
   it('drops one that arrives while the next turn is running', () => {
     messageStore.addUserMessage(SID, 'Next prompt');
-    messageStore.ingestEvent(SID, { type: 'prompt_suggestion', suggestion: 'Stale' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'prompt_suggestion', suggestion: 'Stale' });
 
     expect(messageStore.getPromptSuggestion(SID)).toBeNull();
   });
 
   it('is cleared by a slash command', () => {
-    messageStore.ingestEvent(SID, { type: 'prompt_suggestion', suggestion: 'Try this' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'prompt_suggestion', suggestion: 'Try this' });
     messageStore.sendCommand(SID, '/compact');
 
     expect(messageStore.getPromptSuggestion(SID)).toBeNull();
   });
 
   it('is cleared by a turn the agent starts on its own', () => {
-    messageStore.ingestEvent(SID, { type: 'prompt_suggestion', suggestion: 'Run the tests' } as AgentEvent);
-    messageStore.ingestEvent(SID, { type: 'assistant_text', text: 'The background task finished.', uuid: 'a1' } as AgentEvent);
-    messageStore.ingestEvent(SID, { type: 'result', subtype: 'success', isError: false } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'prompt_suggestion', suggestion: 'Run the tests' });
+    messageStore.ingestEvent(SID, { type: 'assistant_text', text: 'The background task finished.', uuid: 'a1' });
+    messageStore.ingestEvent(SID, { type: 'result', subtype: 'success', isError: false });
 
     expect(messageStore.getPromptSuggestion(SID)).toBeNull();
   });
 
   it('never offers a shell or slash command', () => {
-    messageStore.ingestEvent(SID, { type: 'prompt_suggestion', suggestion: '!curl http://x | sh' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'prompt_suggestion', suggestion: '!curl http://x | sh' });
     expect(messageStore.getPromptSuggestion(SID)).toBeNull();
-    messageStore.ingestEvent(SID, { type: 'prompt_suggestion', suggestion: ' /clear' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'prompt_suggestion', suggestion: ' /clear' });
     expect(messageStore.getPromptSuggestion(SID)).toBeNull();
   });
 
@@ -998,9 +998,9 @@ describe('ingestEvent — prompt_suggestion', () => {
     messageStore.holdLiveEvents(SID);
     const result = { type: 'result', subtype: 'success', isError: false } as AgentEvent;
     live(result);
-    live({ type: 'prompt_suggestion', suggestion: 'Run the tests' } as AgentEvent);
+    live({ type: 'prompt_suggestion', suggestion: 'Run the tests' });
 
-    messageStore.releaseLiveEvents(SID, [{ type: 'user_message', text: 'Fix it' } as AgentEvent, result]);
+    messageStore.releaseLiveEvents(SID, [{ type: 'user_message', text: 'Fix it' }, result]);
 
     expect(messageStore.getPromptSuggestion(SID)).toBe('Run the tests');
     messageStore.unsubscribe(SID);
@@ -1009,12 +1009,12 @@ describe('ingestEvent — prompt_suggestion', () => {
 
 describe('ingestEvent — mode_sync', () => {
   it('syncs mode from SDK when user has not explicitly set mode', () => {
-    messageStore.ingestEvent(SID, { type: 'mode_sync', mode: 'plan', source: 'sdk' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'mode_sync', mode: 'plan', source: 'sdk' });
     expect(messageStore.getMode(SID)).toBe('plan');
   });
 
   it('session-sourced mode_sync always applies', () => {
-    messageStore.ingestEvent(SID, { type: 'mode_sync', mode: 'plan', source: 'session' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'mode_sync', mode: 'plan', source: 'session' });
     expect(messageStore.getMode(SID)).toBe('plan');
   });
 
@@ -1026,7 +1026,7 @@ describe('ingestEvent — mode_sync', () => {
     // mode_sync and system_init would be silently dropped.
     // mode_sync (emitted by stopQuery after resolving old permissions) should
     // clear stoppingSession so the new query's permissions get through.
-    messageStore.ingestEvent(SID, { type: 'mode_sync', mode: 'default', source: 'session' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'mode_sync', mode: 'default', source: 'session' });
 
     // Now a permission_request from the new query should NOT be suppressed
     messageStore.ingestEvent(SID, {
@@ -1035,7 +1035,7 @@ describe('ingestEvent — mode_sync', () => {
       toolInput: { command: 'echo hi' },
       toolUseId: 'tu-post-stop',
       requestId: 'perm-post-stop',
-    } as AgentEvent);
+    });
 
     const msgs = messageStore.getMessages(SID);
     const perm = msgs.find((m) => m.kind === 'permission');
@@ -1051,26 +1051,26 @@ describe('ingestEvent — mode_sync respects user-explicit mode', () => {
     // setMode sets userExplicitMode — simulate by calling setMode directly
     // (IPC will fail in test env but the flag is set before the await)
     messageStore.setMode(SID, 'acceptEdits');
-    messageStore.ingestEvent(SID, { type: 'mode_sync', mode: 'default', source: 'sdk' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'mode_sync', mode: 'default', source: 'sdk' });
     // User-set mode should be preserved
     expect(messageStore.getMode(SID)).toBe('acceptEdits');
   });
 
   it('does not let SDK mode_sync overwrite user-set plan', () => {
     messageStore.setMode(SID, 'plan');
-    messageStore.ingestEvent(SID, { type: 'mode_sync', mode: 'default', source: 'sdk' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'mode_sync', mode: 'default', source: 'sdk' });
     expect(messageStore.getMode(SID)).toBe('plan');
   });
 
   it('session-sourced mode_sync overrides user-explicit mode', () => {
     messageStore.setMode(SID, 'acceptEdits');
-    messageStore.ingestEvent(SID, { type: 'mode_sync', mode: 'default', source: 'session' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'mode_sync', mode: 'default', source: 'session' });
     expect(messageStore.getMode(SID)).toBe('default');
   });
 
   it('allows SDK mode_sync when user has not explicitly changed mode', () => {
     messageStore.modeBySession[SID] = 'default';
-    messageStore.ingestEvent(SID, { type: 'mode_sync', mode: 'plan', source: 'sdk' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'mode_sync', mode: 'plan', source: 'sdk' });
     expect(messageStore.getMode(SID)).toBe('plan');
   });
 });
@@ -1085,7 +1085,7 @@ describe('ingestEvent — stoppingSession suppresses late permission_request', (
       toolInput: { command: 'echo hi' },
       toolUseId: 'tu-late',
       requestId: 'perm-late',
-    } as AgentEvent);
+    });
 
     const msgs = messageStore.getMessages(SID);
     const perms = msgs.filter((m) => m.kind === 'permission');
@@ -1098,7 +1098,7 @@ describe('ingestEvent — stoppingSession suppresses late permission_request', (
 
     // mode_sync (emitted by stopQuery after resolving old permissions) should
     // clear stoppingSession so the new query's permissions get through.
-    messageStore.ingestEvent(SID, { type: 'mode_sync', mode: 'default', source: 'session' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'mode_sync', mode: 'default', source: 'session' });
 
     // Now a permission_request from the new query should NOT be suppressed
     messageStore.ingestEvent(SID, {
@@ -1107,7 +1107,7 @@ describe('ingestEvent — stoppingSession suppresses late permission_request', (
       toolInput: { command: 'echo hi' },
       toolUseId: 'tu-post-stop',
       requestId: 'perm-post-stop',
-    } as AgentEvent);
+    });
 
     const msgs = messageStore.getMessages(SID);
     const perm = msgs.find((m) => m.kind === 'permission');
@@ -1164,14 +1164,14 @@ describe('ingestEvent — permission_resolved', () => {
       toolInput: { command: 'ls' },
       toolUseId: 'tu-pr',
       requestId: 'req-pr',
-    } as AgentEvent);
+    });
 
     messageStore.ingestEvent(SID, {
       type: 'permission_resolved',
       requestId: 'req-pr',
       toolUseId: 'tu-pr',
       decision: 'allow',
-    } as AgentEvent);
+    });
 
     const msgs = messageStore.getMessages(SID);
     const perm = msgs.find((m) => m.kind === 'permission') as any;
@@ -1186,14 +1186,14 @@ describe('ingestEvent — permission_resolved', () => {
       toolInput: { command: 'ls' },
       toolUseId: 'tu-to',
       requestId: 'req-to',
-    } as AgentEvent);
+    });
     messageStore.ingestEvent(SID, {
       type: 'permission_resolved',
       requestId: 'req-to',
       toolUseId: 'tu-to',
       decision: 'deny',
       reason: 'timeout',
-    } as AgentEvent);
+    });
 
     const perm = messageStore.getMessages(SID).find((m) => m.kind === 'permission' && m.requestId === 'req-to') as any;
     expect(perm).toMatchObject({ resolved: true, decision: 'deny', timedOut: true });
@@ -1207,14 +1207,14 @@ describe('ingestEvent — permission_resolved', () => {
       toolUseId: 'tu-qt',
       requestId: 'req-qt',
       toolCategory: 'question',
-    } as AgentEvent);
+    });
     messageStore.ingestEvent(SID, {
       type: 'permission_resolved',
       requestId: 'req-qt',
       toolUseId: 'tu-qt',
       decision: 'deny',
       reason: 'timeout',
-    } as AgentEvent);
+    });
 
     const q = messageStore.getMessages(SID).find((m) => m.kind === 'question' && m.requestId === 'req-qt') as any;
     expect(q).toMatchObject({ resolved: true, timedOut: true });
@@ -1229,7 +1229,7 @@ describe('ingestEvent — permission_resolved', () => {
       toolUseId: 'tu-q',
       requestId: 'req-q',
       toolCategory: 'question',
-    } as AgentEvent);
+    });
 
     messageStore.ingestEvent(SID, {
       type: 'permission_resolved',
@@ -1237,7 +1237,7 @@ describe('ingestEvent — permission_resolved', () => {
       toolUseId: 'tu-q',
       decision: 'deny',
       message: 'B',
-    } as AgentEvent);
+    });
 
     const q = messageStore.getMessages(SID).find((m) => m.kind === 'question') as any;
     expect(q.resolved).toBe(true);
@@ -1252,7 +1252,7 @@ describe('ingestEvent — permission_resolved', () => {
       toolInput: { command: 'ls' },
       toolUseId: 'tu-await',
       uuid: 'u-await',
-    } as AgentEvent);
+    });
 
     // Set awaitingPermission via permission_request
     messageStore.ingestEvent(SID, {
@@ -1261,7 +1261,7 @@ describe('ingestEvent — permission_resolved', () => {
       toolInput: { command: 'ls' },
       toolUseId: 'tu-await',
       requestId: 'req-await',
-    } as AgentEvent);
+    });
 
     // Resolve it
     messageStore.ingestEvent(SID, {
@@ -1269,7 +1269,7 @@ describe('ingestEvent — permission_resolved', () => {
       requestId: 'req-await',
       toolUseId: 'tu-await',
       decision: 'allow',
-    } as AgentEvent);
+    });
 
     const msgs = messageStore.getMessages(SID);
     const tc = msgs.find((m) => m.kind === 'tool_call') as any;
@@ -1286,7 +1286,7 @@ describe('ingestEvent — isPlanExecution on permission_request', () => {
       toolUseId: 'tu-plan-exec',
       requestId: 'req-plan-exec',
       isPlanExecution: true,
-    } as AgentEvent);
+    });
 
     const msgs = messageStore.getMessages(SID);
     const perm = msgs.find((m) => m.kind === 'permission') as any;
@@ -1301,7 +1301,7 @@ describe('ingestEvent — isPlanExecution on permission_request', () => {
       toolInput: { command: 'ls' },
       toolUseId: 'tu-no-plan',
       requestId: 'req-no-plan',
-    } as AgentEvent);
+    });
 
     const msgs = messageStore.getMessages(SID);
     const perm = msgs.find((m) => m.kind === 'permission') as any;
@@ -1313,7 +1313,7 @@ describe('ingestEvent — isPlanExecution on permission_request', () => {
 describe('ingestEvent — error/process_exit unlocks input when never initialized', () => {
   it('error unlocks input if session never had system_init', () => {
     expect(messageStore.getIsReady(SID)).toBe(false);
-    messageStore.ingestEvent(SID, { type: 'error', message: 'Auth failed' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'error', message: 'Auth failed' });
     expect(messageStore.getIsReady(SID)).toBe(true);
     expect(messageStore.getIsRunning(SID)).toBe(false);
   });
@@ -1342,7 +1342,7 @@ describe('ingestEvent — error/process_exit unlocks input when never initialize
 
   it('process_exit unlocks input if session never had system_init', () => {
     expect(messageStore.getIsReady(SID)).toBe(false);
-    messageStore.ingestEvent(SID, { type: 'process_exit' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'process_exit' });
     expect(messageStore.getIsReady(SID)).toBe(true);
   });
 });
@@ -1355,7 +1355,7 @@ describe('summarizeToolInput (via activity)', () => {
       toolInput: { command: 'npm run build' },
       toolUseId: 'tu-s1',
       uuid: 'u-s1',
-    } as AgentEvent);
+    });
 
     const activity = messageStore.getActivity(SID);
     expect(activity.toolSummary).toBe('npm run build');
@@ -1368,7 +1368,7 @@ describe('summarizeToolInput (via activity)', () => {
       toolInput: { file_path: '/src/index.ts' },
       toolUseId: 'tu-s2',
       uuid: 'u-s2',
-    } as AgentEvent);
+    });
 
     const activity = messageStore.getActivity(SID);
     expect(activity.toolSummary).toBe('/src/index.ts');
@@ -1381,7 +1381,7 @@ describe('summarizeToolInput (via activity)', () => {
       toolInput: { pattern: 'TODO' },
       toolUseId: 'tu-s3',
       uuid: 'u-s3',
-    } as AgentEvent);
+    });
 
     const activity = messageStore.getActivity(SID);
     expect(activity.toolSummary).toBe('TODO');
@@ -1394,7 +1394,7 @@ describe('summarizeToolInput (via activity)', () => {
       toolInput: null,
       toolUseId: 'tu-s4',
       uuid: 'u-s4',
-    } as AgentEvent);
+    });
 
     const activity = messageStore.getActivity(SID);
     expect(activity.toolSummary).toBe('');
@@ -1439,7 +1439,7 @@ describe('markSessionStopped', () => {
       toolInput: {},
       toolUseId: 'tu-stop',
       uuid: 'u-stop',
-    } as AgentEvent);
+    });
 
     messageStore.markSessionStopped(SID);
 
@@ -1642,7 +1642,7 @@ describe('applyTurnState (main says how a replayed history ends)', () => {
 
     expect(messageStore.getIsRunning(SID)).toBe(true);
     // Still waiting on the reply: the agent connecting doesn't end it.
-    messageStore.ingestEvent(SID, { type: 'system_init', sessionId: 'p', model: 'm', tools: [] } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'system_init', sessionId: 'p', model: 'm', tools: [] });
     expect(messageStore.getIsRunning(SID)).toBe(true);
   });
 
@@ -1883,14 +1883,14 @@ describe('session controls', () => {
   ];
 
   it('controls_sync installs the descriptors and values for the session', () => {
-    messageStore.ingestEvent(SID, { type: 'controls_sync', descriptors, values: { thinking: 'low' } } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'controls_sync', descriptors, values: { thinking: 'low' } });
 
     expect(messageStore.getControlDescriptors(SID).map((d) => d.id)).toEqual(['permissionMode', 'thinking']);
     expect(messageStore.getControlValue(SID, 'thinking')).toBe('low');
   });
 
   it('getControlValue falls back to the descriptor default, and reads permissionMode from the mode store', () => {
-    messageStore.ingestEvent(SID, { type: 'controls_sync', descriptors, values: {} } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'controls_sync', descriptors, values: {} });
     messageStore.modeBySession[SID] = 'plan';
 
     expect(messageStore.getControlValue(SID, 'thinking')).toBe('high');
@@ -1899,7 +1899,7 @@ describe('session controls', () => {
   });
 
   it('setControl reflects the value immediately and forwards it over IPC', async () => {
-    messageStore.ingestEvent(SID, { type: 'controls_sync', descriptors, values: { thinking: 'high' } } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'controls_sync', descriptors, values: { thinking: 'high' } });
 
     const pending = messageStore.setControl(SID, 'thinking', 'low');
     expect(messageStore.getControlValue(SID, 'thinking')).toBe('low');
@@ -1909,7 +1909,7 @@ describe('session controls', () => {
   });
 
   it('setControl rolls back when main rejects the value', async () => {
-    messageStore.ingestEvent(SID, { type: 'controls_sync', descriptors, values: { thinking: 'high' } } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'controls_sync', descriptors, values: { thinking: 'high' } });
     mockGroveBench.setControl.mockRejectedValueOnce(new Error('not offered on this model'));
 
     await messageStore.setControl(SID, 'thinking', 'low');
@@ -1918,7 +1918,7 @@ describe('session controls', () => {
   });
 
   it('setControl on permissionMode routes through setMode', async () => {
-    messageStore.ingestEvent(SID, { type: 'controls_sync', descriptors, values: {} } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'controls_sync', descriptors, values: {} });
 
     await messageStore.setControl(SID, 'permissionMode', 'plan');
 
@@ -1928,7 +1928,7 @@ describe('session controls', () => {
   });
 
   it('cycleControl walks the declared options in order and wraps', () => {
-    messageStore.ingestEvent(SID, { type: 'controls_sync', descriptors, values: { thinking: 'off' } } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'controls_sync', descriptors, values: { thinking: 'off' } });
 
     for (const expected of ['low', 'high', 'off']) {
       messageStore.cycleControl(SID, 'thinking');
@@ -1937,7 +1937,7 @@ describe('session controls', () => {
   });
 
   it('cycleMode uses the declared mode options instead of the built-in list', () => {
-    messageStore.ingestEvent(SID, { type: 'controls_sync', descriptors, values: {} } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'controls_sync', descriptors, values: {} });
     messageStore.modeBySession[SID] = 'plan';
 
     messageStore.cycleMode(SID);
@@ -1970,7 +1970,7 @@ describe('session controls', () => {
     mockGroveBench.getControls.mockImplementationOnce(() => new Promise((r) => { resolveFetch = r; }));
 
     const loading = messageStore.loadControls(SID);
-    messageStore.ingestEvent(SID, { type: 'controls_sync', descriptors, values: { thinking: 'low' } } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'controls_sync', descriptors, values: { thinking: 'low' } });
     resolveFetch({ descriptors, values: { thinking: 'high' } });
     await loading;
 
@@ -1989,7 +1989,7 @@ describe('updateMcpServers', () => {
       model: 'test-model-v1',
       tools: ['Read'],
       mcpServers: [{ name: 'docs', status: 'connected' }],
-    } as AgentEvent);
+    });
 
     messageStore.updateMcpServers(SID, [
       { name: 'docs', status: 'failed', error: 'boom' },
@@ -2051,7 +2051,7 @@ describe('ingestEvent — user_message UUID stamping', () => {
     messageStore.addUserMessage(SID, 'look', [{ name: 'shot.png', dataUrl: 'data:image/png;base64,AA' }]);
     const saved = [{ file: `${'a'.repeat(32)}.png`, name: 'shot.png' }];
 
-    messageStore.ingestEvent(SID, { type: 'user_message', text: 'look', uuid: 'u-img', images: saved } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'user_message', text: 'look', uuid: 'u-img', images: saved });
 
     const msg = messageStore.getMessages(SID)[0] as ChatUserMessage;
     expect(msg.uuid).toBe('u-img');
@@ -2067,7 +2067,7 @@ describe('ingestEvent — user_message UUID stamping', () => {
 
     messageStore.ingestEvent(SID, {
       type: 'user_message', text: 'look', uuid: 'u-img', images: [{ file: `${'a'.repeat(32)}.png`, name: 'a.png' }],
-    } as AgentEvent);
+    });
 
     expect((messageStore.getMessages(SID)[0] as ChatUserMessage).images).toEqual(inline);
   });
@@ -2080,7 +2080,7 @@ describe('ingestEvent — user_message UUID stamping', () => {
     // b.zip could not be saved, so it drops off.
     const saved = [{ file: `${'a'.repeat(32)}.pdf`, name: 'a.pdf', mediaType: 'application/pdf', size: 3 }];
 
-    messageStore.ingestEvent(SID, { type: 'user_message', text: 'read these', uuid: 'u-files', files: saved } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'user_message', text: 'read these', uuid: 'u-files', files: saved });
 
     expect((messageStore.getMessages(SID)[0] as ChatUserMessage).attachments).toEqual(saved);
   });
@@ -2094,7 +2094,7 @@ describe('ingestEvent — user_message UUID stamping', () => {
       type: 'user_message',
       text: 'second prompt',
       uuid: 'uuid-replay-1',
-    } as AgentEvent);
+    });
 
     const msgs = messageStore.getMessages(SID);
     // Should stamp UUID on the last UUID-less user message (second)
@@ -2112,14 +2112,14 @@ describe('ingestEvent — user_message UUID stamping', () => {
       type: 'user_message',
       text: 'second',
       uuid: 'uuid-b',
-    } as AgentEvent);
+    });
 
     // Now second has a UUID, first still doesn't — next replay stamps first
     messageStore.ingestEvent(SID, {
       type: 'user_message',
       text: 'first',
       uuid: 'uuid-a',
-    } as AgentEvent);
+    });
 
     const msgs = messageStore.getMessages(SID);
     expect((msgs[0] as any).uuid).toBe('uuid-a');
@@ -2132,7 +2132,7 @@ describe('ingestEvent — user_message UUID stamping', () => {
       type: 'user_message',
       text: 'replayed prompt',
       uuid: 'uuid-new',
-    } as AgentEvent);
+    });
 
     const msgs = messageStore.getMessages(SID);
     expect(msgs).toHaveLength(1);
@@ -2196,7 +2196,7 @@ describe('ingestEvent — rewind', () => {
     messageStore.ingestEvent(SID, {
       type: 'rewind',
       toMessageId: 'cp-2',
-    } as AgentEvent);
+    });
 
     const msgs = messageStore.getMessages(SID);
     // Should keep messages before the rewind target (exclude it)
@@ -2221,7 +2221,7 @@ describe('ingestEvent — rewind', () => {
     messageStore.ingestEvent(SID, {
       type: 'rewind',
       toMessageId: 'cp-1',
-    } as AgentEvent);
+    });
 
     expect(messageStore.getIsRunning(SID)).toBe(false);
     expect(messageStore.getStreamingText(SID)).toBe('');
@@ -2240,7 +2240,7 @@ describe('ingestEvent — rewind', () => {
       type: 'rewind',
       toMessageId: 'cp-1',
       filesOnly: true,
-    } as AgentEvent);
+    });
 
     expect(messageStore.getMessages(SID)).toHaveLength(2);
     expect(messageStore.getDraft(SID)).toBe('typing');
@@ -2256,7 +2256,7 @@ describe('ingestEvent — rewind', () => {
     messageStore.ingestEvent(SID, {
       type: 'rewind',
       toMessageId: 'nonexistent-uuid',
-    } as AgentEvent);
+    });
 
     // Messages should be unchanged (no truncation)
     expect(messageStore.getMessages(SID)).toHaveLength(2);
@@ -2301,8 +2301,8 @@ describe('ingestEvent — rewind', () => {
     expect(messageStore.getDraft(SID)).toBe('first');
     expect(messageStore.promptInsertBySession[SID]).toBeUndefined();
 
-    messageStore.ingestEvent(SID, { type: 'user_message', text: 'second', uuid: 'cp-2' } as AgentEvent);
-    messageStore.ingestEvent(SID, { type: 'rewind', toMessageId: 'cp-2' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'user_message', text: 'second', uuid: 'cp-2' });
+    messageStore.ingestEvent(SID, { type: 'rewind', toMessageId: 'cp-2' });
     expect(messageStore.getDraft(SID)).toBe('second');
     expect(messageStore.promptInsertBySession[SID]).toMatchObject({ text: 'second', replace: true });
   });
@@ -2319,7 +2319,7 @@ describe('needsInput', () => {
     expect(messageStore.hasPendingPermission(SID)).toBe(true);
     expect(messageStore.needsInput(SID)).toBe(true);
 
-    messageStore.ingestEvent(SID, { type: 'permission_resolved', requestId: 'r1', toolUseId: 't-r1', decision: 'allow' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'permission_resolved', requestId: 'r1', toolUseId: 't-r1', decision: 'allow' });
     expect(messageStore.hasPendingPermission(SID)).toBe(false);
     expect(messageStore.needsInput(SID)).toBe(false);
 
@@ -2338,7 +2338,7 @@ describe('needsInput', () => {
     flushSync();
     messageStore.ingestEvent(SID, ask('permission', 'r2'));
     flushSync();
-    messageStore.ingestEvent(SID, { type: 'permission_resolved', requestId: 'r2', toolUseId: 't-r2', decision: 'deny' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'permission_resolved', requestId: 'r2', toolUseId: 't-r2', decision: 'deny' });
     flushSync();
     stop();
     expect(seen).toEqual([false, true, false]);
@@ -2663,8 +2663,8 @@ describe('destroySession', () => {
 });
 
 describe('outgoing message queue', () => {
-  const result: AgentEvent = { type: 'result', subtype: 'success', isError: false } as AgentEvent;
-  const init: AgentEvent = { type: 'system_init', sessionId: 'p', model: 'm', tools: [] } as AgentEvent;
+  const result: AgentEvent = { type: 'result', subtype: 'success', isError: false };
+  const init: AgentEvent = { type: 'system_init', sessionId: 'p', model: 'm', tools: [] };
 
   it('sends immediately when the session is idle', () => {
     const outcome = messageStore.submitMessage(SID, { displayText: 'hi', outgoing: 'hi' });
@@ -2892,7 +2892,7 @@ describe('outgoing message queue', () => {
     messageStore.submitMessage(SID, { displayText: 'first', outgoing: 'first' });
     messageStore.submitMessage(SID, { displayText: 'held', outgoing: 'held' });
 
-    messageStore.ingestEvent(SID, { type: 'rewind', toMessageId: 'none', conversationOnly: true } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'rewind', toMessageId: 'none', conversationOnly: true });
 
     expect(messageStore.isQueuePaused(SID)).toBe(true);
     expect(messageStore.getQueue(SID)).toHaveLength(1);
@@ -2944,8 +2944,8 @@ describe('outgoing message queue', () => {
     messageStore.submitMessage(SID, { displayText: 'second', outgoing: 'second' });
     mockGroveBench.sendMessage.mockClear();
 
-    messageStore.ingestEvent(SID, { type: 'error', message: 'boom' } as AgentEvent);
-    messageStore.ingestEvent(SID, { type: 'process_exit' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'error', message: 'boom' });
+    messageStore.ingestEvent(SID, { type: 'process_exit' });
 
     expect(mockGroveBench.sendMessage).not.toHaveBeenCalled();
     expect(messageStore.getQueue(SID)).toHaveLength(1);
@@ -2983,8 +2983,8 @@ describe('findMessageForEvent', () => {
   it('finds a message that arrived live by its event\'s uuid', async () => {
     const id = 'search-live';
     messageStore.addUserMessage(id, 'live prompt');
-    messageStore.ingestEvent(id, { type: 'user_message', text: 'live prompt', uuid: 'u-live' } as AgentEvent);
-    messageStore.ingestEvent(id, { type: 'assistant_text', text: 'reply', uuid: 'a-live' } as AgentEvent);
+    messageStore.ingestEvent(id, { type: 'user_message', text: 'live prompt', uuid: 'u-live' });
+    messageStore.ingestEvent(id, { type: 'assistant_text', text: 'reply', uuid: 'a-live' });
     mockGroveBench.getEventHistoryPage.mockResolvedValueOnce({
       events: [{ type: 'user_message', text: 'live prompt', uuid: 'u-live' }], totalCount: 8, startIndex: 7,
     } as never);
@@ -3003,7 +3003,7 @@ describe('findMessageForEvent', () => {
     const id = 'search-live-made';
     const made = (path: string) => ({ type: 'files_made', files: [{ path, kind: 'pdf', size: 1 }] }) as AgentEvent;
     messageStore.ingestEvent(id, made('one.pdf'));
-    messageStore.ingestEvent(id, { type: 'assistant_text', text: 'between', uuid: 'a1' } as AgentEvent);
+    messageStore.ingestEvent(id, { type: 'assistant_text', text: 'between', uuid: 'a1' });
     messageStore.ingestEvent(id, made('two.pdf'));
     mockGroveBench.getEventHistoryPage.mockResolvedValueOnce({ events: [made('one.pdf')], totalCount: 9, startIndex: 4 } as never);
 
@@ -3022,8 +3022,8 @@ describe('/clear that never happened', () => {
     messageStore.clearAndSend(id, 'then do this');
 
     // Main: not delivered.
-    messageStore.ingestEvent(id, { type: 'error', message: 'Message not delivered' } as AgentEvent);
-    messageStore.ingestEvent(id, { type: 'process_exit' } as AgentEvent);
+    messageStore.ingestEvent(id, { type: 'error', message: 'Message not delivered' });
+    messageStore.ingestEvent(id, { type: 'process_exit' });
     expect(messageStore.getDraft(id)).toContain('then do this');
 
     // Much later: a restart or wake.

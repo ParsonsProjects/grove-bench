@@ -388,7 +388,7 @@ export class AcpAdapter implements AgentAdapter {
     const proc = spawnAgent(this.def, dir);
     let stderr = '';
     collectStderr(proc, (tail) => { stderr = tail; });
-    const rpc = new JsonRpcConnection(proc.stdout!, proc.stdin!, {
+    const rpc = new JsonRpcConnection(proc.stdout, proc.stdin, {
       onRequest: async (method) => { throw new JsonRpcError(RPC_ERRORS.methodNotFound, `Not supported: ${method}`); },
       onNotification: () => {},
     });
@@ -558,7 +558,7 @@ export class AcpAdapter implements AgentAdapter {
     collectStderr(proc, (tail) => { stderr = tail; });
     let sessionId: string | null = null;
     let text = '';
-    const rpc = new JsonRpcConnection(proc.stdout!, proc.stdin!, {
+    const rpc = new JsonRpcConnection(proc.stdout, proc.stdin, {
       onRequest: async (method, params) => {
         if (method !== 'session/request_permission') throw new JsonRpcError(RPC_ERRORS.methodNotFound, `Not supported: ${method}`);
         const option = pickPermissionOption((params as AcpPermissionRequest)?.options ?? [], 'deny');
@@ -596,7 +596,7 @@ export class AcpAdapter implements AgentAdapter {
       return text.trim();
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
-      throw new Error(stderr.trim() ? `${message}\n${stderr.trim().slice(-800)}` : message);
+      throw new Error(stderr.trim() ? `${message}\n${stderr.trim().slice(-800)}` : message, { cause: e });
     } finally {
       options?.abortSignal?.removeEventListener('abort', abort);
       rpc.close();

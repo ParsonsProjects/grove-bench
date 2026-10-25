@@ -16,7 +16,6 @@
     sessionId,
     toolUseId,
     toolName,
-    toolInput,
     summary,
     agentType,
     result,
@@ -26,7 +25,6 @@
     sessionId: string;
     toolUseId: string;
     toolName: string;
-    toolInput: unknown;
     /** The task the subagent was given, in a line. */
     summary?: string;
     /** The kind of subagent (Explore, general-purpose, ...), when the agent says. */

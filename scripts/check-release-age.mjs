@@ -133,7 +133,7 @@ export function registryTimes(registry = DEFAULT_REGISTRY) {
         res = await fetch(url, { headers: { accept: 'application/json' } });
       } catch (err) {
         if (attempt < 3) { await new Promise((r) => setTimeout(r, attempt * 2000)); continue; }
-        throw new Error(`${url}: ${err.message}`);
+        throw new Error(`${url}: ${err.message}`, { cause: err });
       }
       if (res.ok) return (await res.json()).time ?? {};
       if (res.status >= 500 && attempt < 3) { await new Promise((r) => setTimeout(r, attempt * 2000)); continue; }

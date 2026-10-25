@@ -303,7 +303,7 @@ const settingsSchema = z.object({
 export function validateSettings(raw: unknown): GroveBenchSettings {
   const input = typeof raw === 'object' && raw !== null ? raw : {};
   const result = settingsSchema.safeParse({ ...DEFAULT_SETTINGS, ...input });
-  return result.success ? (result.data as GroveBenchSettings) : { ...DEFAULT_SETTINGS };
+  return result.success ? result.data : { ...DEFAULT_SETTINGS };
 }
 
 /** Migrate + validate a parsed settings.json. Exported for tests. */

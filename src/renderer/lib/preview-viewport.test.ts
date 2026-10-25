@@ -67,7 +67,7 @@ describe('tooltipCovers', () => {
     const tip = document.createElement('div');
     tip.setAttribute('role', 'tooltip');
     tip.hidden = hidden;
-    tip.getBoundingClientRect = () => ({ left: 10, right: 110, top: rect.top, bottom: rect.top + rect.height, width: 100, height: rect.height, x: 10, y: rect.top, toJSON() {} }) as DOMRect;
+    tip.getBoundingClientRect = () => ({ left: 10, right: 110, top: rect.top, bottom: rect.top + rect.height, width: 100, height: rect.height, x: 10, y: rect.top, toJSON() {} });
     document.body.appendChild(tip);
     return tip;
   }

@@ -242,21 +242,21 @@ describe('startStallWatch', () => {
   it('pauses across system sleep', () => {
     vi.useFakeTimers();
     const on = vi.fn();
-    startStallWatch({ on } as never);
+    startStallWatch({ on });
     expect(on.mock.calls.map(([event]) => event)).toEqual(['suspend', 'resume']);
   });
 
   it('measures from when the timer starts, not from when the file loaded', () => {
     const start = vi.spyOn(freezeLog, 'start');
     vi.useFakeTimers();
-    startStallWatch({ on: vi.fn() } as never);
+    startStallWatch({ on: vi.fn() });
     expect(start).toHaveBeenCalledOnce();
     start.mockRestore();
   });
 
   it('names garbage collections', () => {
     vi.useFakeTimers();
-    startStallWatch({ on: vi.fn() } as never);
+    startStallWatch({ on: vi.fn() });
     expect(watchGc).toHaveBeenCalledOnce();
   });
 });

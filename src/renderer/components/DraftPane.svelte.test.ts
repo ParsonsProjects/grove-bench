@@ -146,7 +146,7 @@ describe('DraftPane skills', () => {
       const animation = { onfinish: null as null | (() => void), cancel() {}, finished: Promise.resolve(), currentTime: 0 };
       queueMicrotask(() => animation.onfinish?.());
       return animation as unknown as Animation;
-    }) as never;
+    });
     Element.prototype.scrollIntoView = function scrollIntoView() {};
   });
 
@@ -455,7 +455,7 @@ describe('DraftPane for agents that sign in with their own CLI', () => {
   const cliSignIn = { accountLabel: 'Google account', cliName: 'Gemini CLI', command: 'gemini', setupUrl: 'https://example.com/gemini' };
   function withGemini(agent: Partial<AgentPrerequisiteStatus>): PrerequisiteStatus {
     const s = status(true);
-    s.agents['gemini-cli'] = { available: true, installRequired: true, cliSignIn, signInCheckable: true, ...agent } as AgentPrerequisiteStatus;
+    s.agents['gemini-cli'] = { available: true, installRequired: true, cliSignIn, signInCheckable: true, ...agent };
     return s;
   }
 

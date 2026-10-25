@@ -164,8 +164,8 @@ describe('applying an extraction', () => {
   function events(): AgentEvent[] {
     const list: AgentEvent[] = [];
     for (let i = 0; i < 3; i++) {
-      list.push({ type: 'user_message', text: `work on the payments page ${i}` } as AgentEvent);
-      list.push({ type: 'assistant_text', text: 'done', uuid: `a${i}` } as AgentEvent);
+      list.push({ type: 'user_message', text: `work on the payments page ${i}` });
+      list.push({ type: 'assistant_text', text: 'done', uuid: `a${i}` });
     }
     return list;
   }
