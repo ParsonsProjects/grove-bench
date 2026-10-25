@@ -3,6 +3,7 @@ import { IPC } from '../shared/types.js';
 import type { SessionInfo, SessionStatus, AgentEvent, ThreadUsage, PermissionDecision, PermissionMode, McpServerInfo, McpAuthStartResult, McpElicitationResponse, McpServerContextCost, ProviderUsage, SessionControls, ThreadTurnState, EventHistoryPage } from '../shared/types.js';
 import { CONTROL_IDS, MCP_SIGN_IN_TIMEOUT_MS, isMcpServerDown, isPermissionMode, subagentParent } from '../shared/types.js';
 import { userEventText } from '../shared/prompt-text.js';
+import { errorMessage } from '../shared/error-message.js';
 import { applyRateLimit } from '../shared/usage.js';
 import { loadUsageSnapshot, saveUsageSnapshot } from './app-state.js';
 import { handoffTranscript, isSlashCommand, lastAgentChange, pendingHandoff } from './agent-handoff.js';
@@ -69,11 +70,6 @@ function failureEvent(adapter: AgentAdapter, detail: string): AgentEvent {
   return isAuthFailure(detail)
     ? { type: 'error', message: adapter.authErrorMessage, auth: true }
     : { type: 'error', message: detail };
-}
-
-/** A rejected run's message, else the rejected value itself as text. */
-function rejectionText(err: unknown): string {
-  return String((err as { message?: unknown } | null)?.message || err);
 }
 
 /** What an agent run can throw: a process failure adds its stderr (or its
@@ -418,7 +414,7 @@ class AgentSessionManager {
     this.runQuery(session, emit).catch((err) => {
         perfSteps.fail(id, 'agent failed to start');
         console.error(`[runQuery] session=${id} FAILED:`, err);
-        emit(failureEvent(adapter, rejectionText(err)));
+        emit(failureEvent(adapter, errorMessage(err)));
         session.status = 'error';
         this.sendStatus(session, 'error');
         // Fire completion callback on error
@@ -454,7 +450,7 @@ class AgentSessionManager {
     this.runQuery(session, emit, resend).catch((err) => {
       perfSteps.fail(session.id, 'agent failed to start');
       console.error(`[runQuery] session=${session.id} FAILED on restart:`, err);
-      emit(failureEvent(session.adapter, rejectionText(err)));
+      emit(failureEvent(session.adapter, errorMessage(err)));
       session.status = 'error';
       this.sendStatus(session, 'error');
     });
@@ -1898,7 +1894,7 @@ class AgentSessionManager {
     // Start a new query loop — the session stays in the map so sendMessage works
     this.runQuery(session, emit).catch((err) => {
       console.error(`[runQuery] session=${id} FAILED after stop:`, err);
-      emit(failureEvent(session.adapter, rejectionText(err)));
+      emit(failureEvent(session.adapter, errorMessage(err)));
     });
   }
 
@@ -1977,7 +1973,7 @@ class AgentSessionManager {
     })().catch((err) => {
       perfSteps.fail(id, 'agent failed to start');
       console.error(`[runQuery] session=${id} FAILED on wake:`, err);
-      emit(failureEvent(session.adapter, rejectionText(err)));
+      emit(failureEvent(session.adapter, errorMessage(err)));
       session.status = 'error';
       this.sendStatus(session, 'error');
     });

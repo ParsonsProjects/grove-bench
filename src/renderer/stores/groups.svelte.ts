@@ -154,7 +154,7 @@ class GroupStore {
   private save(next: ConversationGroup[]): boolean {
     if (!this.ready) return false;
     this.groups = next;
-    window.groveBench.setConversationGroups($state.snapshot(this.groups) as ConversationGroup[]);
+    window.groveBench.setConversationGroups($state.snapshot(this.groups));
     return true;
   }
 }

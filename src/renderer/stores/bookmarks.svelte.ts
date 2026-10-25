@@ -27,7 +27,7 @@ class BookmarkStore {
 
   async add(payload: Omit<Bookmark, 'id' | 'createdAt'>): Promise<Bookmark> {
     const created = await window.groveBench.addBookmark(
-      $state.snapshot(payload) as Omit<Bookmark, 'id' | 'createdAt'>,
+      $state.snapshot(payload),
     );
     this.list = [created, ...this.list];
     return created;

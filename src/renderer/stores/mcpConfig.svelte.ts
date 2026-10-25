@@ -1,4 +1,5 @@
 import type { McpConfiguredServer, McpAddServerOpts, McpConfigScope } from '../../shared/types.js';
+import { errorMessage } from '../../shared/error-message.js';
 
 /** What the store was doing: listing, or changing one server. */
 export type McpConfigAction = 'list' | 'add' | 'remove' | 'approve';
@@ -66,8 +67,8 @@ class McpConfigStore {
     try {
       this.servers = await window.groveBench.mcpConfigList(this.cwd, this.adapterType);
       this.loaded = true;
-    } catch (e: any) {
-      this.fail('list', e.message || String(e));
+    } catch (e) {
+      this.fail('list', errorMessage(e));
     } finally {
       this.loading = false;
       this.attempted = true;
@@ -86,8 +87,8 @@ class McpConfigStore {
       await window.groveBench.mcpConfigAdd(opts, this.adapterType);
       await this.showAdded(opts);
       return true;
-    } catch (e: any) {
-      this.fail('add', e.message || String(e));
+    } catch (e) {
+      this.fail('add', errorMessage(e));
       return false;
     } finally {
       this.actionInProgress = null;
@@ -106,8 +107,8 @@ class McpConfigStore {
     try {
       await window.groveBench.mcpConfigRemove(name, scope, this.cwd, this.adapterType);
       await this.refresh();
-    } catch (e: any) {
-      this.fail('remove', e.message || String(e));
+    } catch (e) {
+      this.fail('remove', errorMessage(e));
     } finally {
       this.actionInProgress = null;
       this.actionKind = null;
@@ -131,8 +132,8 @@ class McpConfigStore {
         await window.groveBench.mcpConfigAdd(opts, this.adapterType);
         added.push(opts.name);
       }
-    } catch (e: any) {
-      error = e.message || String(e);
+    } catch (e) {
+      error = errorMessage(e);
     } finally {
       this.actionInProgress = null;
       this.actionKind = null;
@@ -163,8 +164,8 @@ class McpConfigStore {
     try {
       await window.groveBench.mcpConfigApprove(name, this.cwd, this.adapterType);
       await this.refresh();
-    } catch (e: any) {
-      this.fail('approve', e.message || String(e));
+    } catch (e) {
+      this.fail('approve', errorMessage(e));
     } finally {
       this.actionInProgress = null;
       this.actionKind = null;

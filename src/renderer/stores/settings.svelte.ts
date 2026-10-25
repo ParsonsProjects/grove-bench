@@ -1,6 +1,7 @@
 import type { ClaudeAccountSetting, GroveBenchSettings } from '../../shared/types.js';
 import { slugify } from '../../shared/slug.js';
 import type { SettingsSectionId } from '../lib/settings-search.js';
+import { errorMessage } from '../../shared/error-message.js';
 
 const DEFAULT_SETTINGS: GroveBenchSettings = {
   toolAllowRules: [],
@@ -102,10 +103,10 @@ class SettingsStore {
     try {
       const s = await window.groveBench.getSettings();
       this.current = s;
-      this.draft = JSON.parse(JSON.stringify(s));
+      this.draft = JSON.parse(JSON.stringify(s)) as GroveBenchSettings;
       this.loaded = true;
-    } catch (e: any) {
-      this.error = e.message || String(e);
+    } catch (e) {
+      this.error = errorMessage(e);
     } finally {
       this.loading = false;
     }
@@ -148,15 +149,15 @@ class SettingsStore {
         if (this.loaded) this.error = null;
         return;
       }
-      const next = $state.snapshot(this.draft) as GroveBenchSettings;
+      const next = $state.snapshot(this.draft);
       this.saving = true;
       this.error = null;
       try {
         await window.groveBench.saveSettings(next);
         this.current = next;
         this.savedAt = Date.now();
-      } catch (e: any) {
-        this.error = e.message || String(e);
+      } catch (e) {
+        this.error = errorMessage(e);
       } finally {
         this.saving = false;
       }
@@ -176,16 +177,16 @@ class SettingsStore {
    *  current settings for changes that depend on them. */
   updateNow(patch: Partial<GroveBenchSettings> | ((current: GroveBenchSettings) => Partial<GroveBenchSettings>)): Promise<void> {
     const run = this.saveChain.then(async () => {
-      const current = $state.snapshot(this.current) as GroveBenchSettings;
+      const current = $state.snapshot(this.current);
       const changes = typeof patch === 'function' ? patch(current) : patch;
       const next = { ...current, ...changes };
       this.error = null;
       try {
         await window.groveBench.saveSettings(next);
         this.current = next;
-        this.draft = { ...($state.snapshot(this.draft) as GroveBenchSettings), ...changes };
-      } catch (e: any) {
-        this.error = e.message || String(e);
+        this.draft = { ...$state.snapshot(this.draft), ...changes };
+      } catch (e) {
+        this.error = errorMessage(e);
         throw e;
       }
     });

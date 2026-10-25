@@ -7,6 +7,7 @@ import type {
   MemoryCompactionStatus,
   MemoryStatsResult,
 } from '../../shared/types.js';
+import { errorMessage } from '../../shared/error-message.js';
 
 export interface MemoryToast {
   kind: 'success' | 'info' | 'error';
@@ -126,8 +127,8 @@ class MemoryStore {
     this.lastCompaction = null;
     try {
       this.files = await window.groveBench.memoryList(repoPath);
-    } catch (e: any) {
-      this.error = e.message || String(e);
+    } catch (e) {
+      this.error = errorMessage(e);
     } finally {
       this.loading = false;
     }
@@ -150,8 +151,8 @@ class MemoryStore {
     try {
       const content = await window.groveBench.memoryRead(this.activeRepo, relativePath);
       this.selectedFile = { path: relativePath, content: content ?? '' };
-    } catch (e: any) {
-      this.error = e.message || String(e);
+    } catch (e) {
+      this.error = errorMessage(e);
     } finally {
       this.loading = false;
     }
@@ -168,8 +169,8 @@ class MemoryStore {
       }
       // Refresh the file list
       this.files = await window.groveBench.memoryList(this.activeRepo);
-    } catch (e: any) {
-      this.error = e.message || String(e);
+    } catch (e) {
+      this.error = errorMessage(e);
     } finally {
       this.saving = false;
     }
@@ -208,9 +209,9 @@ class MemoryStore {
         this.files = await window.groveBench.memoryList(repo);
         await this.loadStats();
       }
-    } catch (e: any) {
-      if (this.panelOpen) this.error = e.message || String(e);
-      else this.toast = { kind: 'error', message: e.message || String(e) };
+    } catch (e) {
+      if (this.panelOpen) this.error = errorMessage(e);
+      else this.toast = { kind: 'error', message: errorMessage(e) };
     } finally {
       this.stopElapsedTimer();
       this.compacting = false;
@@ -225,8 +226,8 @@ class MemoryStore {
     try {
       await window.groveBench.memoryCompactCancel(repo);
       // compact()'s pending promise resolves with the cancelled status
-    } catch (e: any) {
-      this.error = e.message || String(e);
+    } catch (e) {
+      this.error = errorMessage(e);
     }
   }
 
@@ -250,8 +251,8 @@ class MemoryStore {
       } else {
         this.error = status.error ?? 'Undo failed';
       }
-    } catch (e: any) {
-      this.error = e.message || String(e);
+    } catch (e) {
+      this.error = errorMessage(e);
     } finally {
       this.undoing = false;
     }
@@ -271,8 +272,8 @@ class MemoryStore {
       this.backupPreviewFiles = await window.groveBench.memoryBackupPreview(this.activeRepo, backupId);
       this.backupPreviewId = backupId;
       this.backupPreviewFile = null;
-    } catch (e: any) {
-      this.error = e.message || String(e);
+    } catch (e) {
+      this.error = errorMessage(e);
     }
   }
 
@@ -281,8 +282,8 @@ class MemoryStore {
     try {
       const content = await window.groveBench.memoryReadBackupFile(this.activeRepo, backupId, path);
       this.backupPreviewFile = { path, content: content ?? '(unreadable)' };
-    } catch (e: any) {
-      this.error = e.message || String(e);
+    } catch (e) {
+      this.error = errorMessage(e);
     }
   }
 
@@ -294,8 +295,8 @@ class MemoryStore {
     this.backupPreviewFile = null;
     try {
       this.backups = await window.groveBench.memoryListBackups(this.activeRepo);
-    } catch (e: any) {
-      this.error = e.message || String(e);
+    } catch (e) {
+      this.error = errorMessage(e);
     }
   }
 
@@ -314,8 +315,8 @@ class MemoryStore {
       } else {
         this.error = status.error ?? 'Restore failed';
       }
-    } catch (e: any) {
-      this.error = e.message || String(e);
+    } catch (e) {
+      this.error = errorMessage(e);
     }
   }
 
@@ -328,8 +329,8 @@ class MemoryStore {
         this.selectedFile = null;
       }
       this.files = await window.groveBench.memoryList(this.activeRepo);
-    } catch (e: any) {
-      this.error = e.message || String(e);
+    } catch (e) {
+      this.error = errorMessage(e);
     }
   }
 
@@ -347,8 +348,8 @@ class MemoryStore {
       this.files = await window.groveBench.memoryList(this.activeRepo);
       this.compactMessage = `Deleted ${relativePaths.length} thread ${relativePaths.length === 1 ? 'note' : 'notes'}`;
       await this.loadStats();
-    } catch (e: any) {
-      this.error = e.message || String(e);
+    } catch (e) {
+      this.error = errorMessage(e);
     }
   }
 }

@@ -1,4 +1,5 @@
 import type { InstalledPlugin, AvailablePlugin } from '../../shared/types.js';
+import { errorMessage } from '../../shared/error-message.js';
 
 class PluginStore {
   installed = $state<InstalledPlugin[]>([]);
@@ -14,8 +15,8 @@ class PluginStore {
       const result = await window.groveBench.pluginList();
       this.installed = result.installed;
       this.available = result.available;
-    } catch (e: any) {
-      this.error = e.message || String(e);
+    } catch (e) {
+      this.error = errorMessage(e);
     } finally {
       this.loading = false;
     }
@@ -27,8 +28,8 @@ class PluginStore {
     try {
       await window.groveBench.pluginInstall(pluginId, scope);
       await this.refresh();
-    } catch (e: any) {
-      this.error = e.message || String(e);
+    } catch (e) {
+      this.error = errorMessage(e);
     } finally {
       this.actionInProgress = null;
     }
@@ -40,8 +41,8 @@ class PluginStore {
     try {
       await window.groveBench.pluginUninstall(pluginId);
       await this.refresh();
-    } catch (e: any) {
-      this.error = e.message || String(e);
+    } catch (e) {
+      this.error = errorMessage(e);
     } finally {
       this.actionInProgress = null;
     }
@@ -53,8 +54,8 @@ class PluginStore {
     try {
       await window.groveBench.pluginEnable(pluginId);
       await this.refresh();
-    } catch (e: any) {
-      this.error = e.message || String(e);
+    } catch (e) {
+      this.error = errorMessage(e);
     } finally {
       this.actionInProgress = null;
     }
@@ -66,8 +67,8 @@ class PluginStore {
     try {
       await window.groveBench.pluginDisable(pluginId);
       await this.refresh();
-    } catch (e: any) {
-      this.error = e.message || String(e);
+    } catch (e) {
+      this.error = errorMessage(e);
     } finally {
       this.actionInProgress = null;
     }

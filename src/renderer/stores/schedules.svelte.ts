@@ -53,7 +53,7 @@ class SchedulesStore {
   }
 
   async save(input: SkillScheduleInput): Promise<SkillSchedule> {
-    const saved = await window.groveBench.saveSkillSchedule($state.snapshot(input) as SkillScheduleInput);
+    const saved = await window.groveBench.saveSkillSchedule($state.snapshot(input));
     this.put(saved);
     return saved;
   }
