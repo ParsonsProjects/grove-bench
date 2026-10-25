@@ -80,10 +80,3 @@ export function reportCrash(report: AppErrorReport): void {
     posthog.captureException(err, { source: report.source, kind: report.kind });
   } catch { /* reporting is best-effort */ }
 }
-
-export function shutdownAnalytics(): void {
-  if (!posthog) return;
-  posthog.reset();
-  posthog = null;
-  loading = null;
-}

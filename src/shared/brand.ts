@@ -66,8 +66,6 @@ export const PAPER = {
   accent: '#d3edd3', // hover and selection: a moss tint
 } as const;
 
-export type ThemeName = 'dark' | 'light';
-
 /**
  * What each thread status colour means, and its colour in each theme. The
  * sidebar's filter chips, the status dots and the grove characters all wear
@@ -80,8 +78,6 @@ export const STATUS = {
   unread: { label: 'Finished a turn', dark: PALETTE.leaf, light: PALETTE.forest },
   error: { label: 'Error', dark: PALETTE.ember, light: PALETTE.emberDeep },
 } as const;
-
-export type StatusTone = keyof typeof STATUS;
 
 /** Typefaces. Both ship with the app (fontsource, SIL Open Font License),
  *  so they look the same on every machine. */

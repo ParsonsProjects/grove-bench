@@ -83,6 +83,8 @@ TODO.md                # Gap analysis vs competitors
 - `vite.preload.config.mjs` — Vite config for preload script
 - `vitest.config.mts` — Test config (projects: main, renderer)
 - `svelte.config.mjs` — Svelte compiler config
+- `eslint.config.mjs`: ESLint flat config (typescript-eslint with type-aware rules, eslint-plugin-svelte). `eslint-suppressions.json` lists the errors the code had when it was added; only new ones fail. `scripts/check-lint-suppressions.mjs` fails CI if the list grows or names a file that is gone
+- `knip.jsonc`: knip config: entry points from the Vite configs and HTML pages that knip doesn't find itself, and what it skips (`landing/`, except the file that imports the app's art from `src/`, and the UI kit's exports)
 - `.npmrc`: npm settings. `min-release-age=7` only installs versions published 7+ days ago; `engine-strict` makes the `engines.npm` range (>=11.10.0, the first npm with that setting) a hard error. `landing/.npmrc` and `scripts/acp-spike/.npmrc` repeat them. `scripts/check-release-age.mjs` checks lockfile changes in the Dependency age workflow
 
 ## Commands
@@ -92,6 +94,9 @@ npm start              # Run in dev mode (Vite dev server + Electron)
 npm run build          # Build main, preload, and renderer
 npm run dist           # Build + package NSIS installer into out/ (unsigned, never publishes)
 npm run typecheck      # tsc, then svelte-check for .svelte components (CI runs both)
+npm run lint           # ESLint (CI runs it)
+npm run lint:prune     # Drop fixed errors from eslint-suppressions.json
+npm run knip           # Unused files, exports and dependencies (CI runs it)
 npm test               # Run all tests (vitest run)
 npm run test:watch     # Watch mode
 npm run test:coverage  # Run tests with coverage

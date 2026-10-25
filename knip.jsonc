@@ -1,0 +1,28 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema-jsonc.json",
+  // What knip doesn't find on its own: the other entries in the Vite configs
+  // and HTML pages, a fixture tests start by path, and scripts run by hand.
+  "entry": [
+    "src/main/preload.ts",
+    "src/main/process-host-child.ts",
+    "src/main/adapters/mcp-bridge/main.mjs",
+    "src/main/adapters/acp/fake-acp-agent.test-fixture.mjs",
+    "src/renderer/demo-mock.ts",
+    "src/renderer/ui-kit/main.ts",
+    "scripts/*.mjs",
+    // The landing page draws its art with the app's own code, imported from
+    // src/ here, so knip counts those exports as used.
+    "landing/src/shared/app-art.js"
+  ],
+  // Separate projects, each with its own package.json.
+  "ignore": ["landing/**", "scripts/acp-spike/**"],
+  "ignoreExportsUsedInFile": true,
+  "ignoreIssues": {
+    // The UI kit offers more than the app uses today (docs/ui-kit.md), in the
+    // shadcn layout its CLI writes.
+    "src/renderer/lib/components/ui/*/index.ts": ["exports", "types"],
+    // Types for bridge.mjs: imports of it resolve to the .mjs file, so knip
+    // sees these as unused.
+    "src/main/adapters/mcp-bridge/bridge.d.mts": ["exports"]
+  }
+}

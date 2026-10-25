@@ -30,10 +30,20 @@ See [CLAUDE.md](./CLAUDE.md) for full project structure and commands.
 
 - Keep PRs focused — one feature or fix per PR
 - Include a clear description of what changed and why
-- Run `npm run typecheck` and `npm test` before submitting. CI runs the
-  tests in a random order and prints the seed; to repeat a failing order
-  locally, run `npx vitest run --sequence.shuffle --sequence.seed=<seed>`
-- Follow the existing code style (no linter config — just match what's there)
+- Run `npm run typecheck`, `npm test`, `npm run lint` and `npm run knip`
+  before submitting. CI runs the tests in a random order and prints the
+  seed; to repeat a failing order locally, run
+  `npx vitest run --sequence.shuffle --sequence.seed=<seed>`
+- ESLint errors the code had when ESLint was added are listed in
+  `eslint-suppressions.json`, so only new ones fail. Fix new errors rather
+  than adding them to the list: CI fails if a rule has more listed than on
+  `main`. If you fix listed ones, run `npm run lint:prune` to take them off
+  (CI fails until you do). If you rename or delete a file that has an entry,
+  move or delete the entry by hand: ESLint doesn't, and CI fails on an entry
+  whose file is gone
+- knip fails on files and dependencies nothing uses, and on exports no other
+  file imports (an export its own file uses passes): delete them
+- Follow the existing code style; there is no formatter
 
 ## Issues
 

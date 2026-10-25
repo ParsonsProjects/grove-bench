@@ -681,11 +681,6 @@ export function saveDailySpend(spend: DailySpend): void {
   setSoon('dailySpend', spend);
 }
 
-/** Test hook: forget the cached daily spend. */
-export function resetDailySpendCache(): void {
-  dailySpend = undefined;
-}
-
 /** The saved groups, or null when the file exists but can't be read right
  *  now. The renderer saves its whole list back, so reading a passing lock as
  *  "no groups" would let its next save wipe them. */
