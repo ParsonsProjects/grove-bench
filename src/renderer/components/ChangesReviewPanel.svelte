@@ -48,13 +48,11 @@
   /** A merge finishes with a commit, which waits for its conflicts. */
   let mergeConflicts = $derived(operation?.kind === 'merge' && conflictCount > 0);
   /** Its conflicts resolved, a merge commits even with nothing staged: each
-   *  file may have been resolved to the branch's own version. Not with
-   *  changes left unstaged (a resolution unstaged again would be left out),
-   *  and only in Uncommitted, whose list is what the commit takes. */
-  let mergeReady = $derived(
-    operation?.kind === 'merge' && !isBranchScope && conflictCount === 0
-      && !gitStatus.entries.some((e) => !e.staged && e.status !== 'untracked'),
-  );
+   *  file may have been resolved to the branch's own version. Only in
+   *  Uncommitted, whose list is what the commit takes. */
+  let mergeReady = $derived(operation?.kind === 'merge' && !isBranchScope && conflictCount === 0);
+  /** What a merge commit leaves out: a resolution unstaged again, say. */
+  let mergeLeavesOut = $derived(operation?.kind === 'merge' ? gitStatus.entries.filter((e) => !e.staged && e.status !== 'conflicted').length : 0);
   let canCommit = $derived((stagedEntries.length > 0 || mergeReady) && !continuesOp);
   // git's own message for a merge commit, filled in once per merge, and
   // taken out again, if still as filled in, when the merge ends some other
@@ -62,6 +60,8 @@
   let filledForMerge = '';
   let filledMessage = '';
   $effect(() => {
+    // A status that failed says nothing about the merge.
+    if (gitStatus.error) return;
     const op = operation;
     const key = op?.kind === 'merge' && op.message ? `${op.incoming} into ${op.branch}` : '';
     if (filledForMerge === key) return;
@@ -318,6 +318,9 @@
           {/if}
         </Button>
       </div>
+      {#if mergeLeavesOut > 0}
+        <div class="text-micro text-amber-300">{mergeLeavesOut} file{mergeLeavesOut === 1 ? '' : 's'} not staged: the merge commit leaves {mergeLeavesOut === 1 ? 'it' : 'them'} out.</div>
+      {/if}
       {#if commitError}
         <div class="text-micro text-destructive">{commitError}</div>
       {/if}

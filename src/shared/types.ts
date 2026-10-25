@@ -486,6 +486,13 @@ export interface GitOperation {
   commit?: string;
   /** Merge: git's message for the merge commit (MERGE_MSG, without comments). */
   message?: string;
+  /** Picking or reverting several commits, between two of them, when git
+   *  never started the next (a file was in the way, or a stopped one was
+   *  reset away): that commit, short. git's --continue passes over it. */
+  passesOver?: string;
+  /** Picking or reverting several commits, between two of them, after a
+   *  commit made by hand: git's abort won't take the branch back. */
+  byHand?: true;
 }
 
 export interface GitStatusResult {

@@ -56,11 +56,33 @@ describe('GitOperationNotice', () => {
     expect(mockGroveBench.abortGitOperation).toHaveBeenCalledWith(SID, 'rebase');
   });
 
-  it('leaves finishing a merge to the commit box', () => {
-    render(GitOperationNotice, { sessionId: SID, operation: { kind: 'merge', incoming: 'main', branch: 'feat' }, conflicts: 0 });
+  it('leaves finishing a merge to the commit box, in Uncommitted', () => {
+    const merge = { kind: 'merge' as const, incoming: 'main', branch: 'feat' };
+    gitStatusStore.scopeBySession = { [SID]: { scope: 'working' } };
+    render(GitOperationNotice, { sessionId: SID, operation: merge, conflicts: 0 });
     expect(screen.getByRole('status')).toHaveTextContent('Merging main into feat. All conflicts resolved: commit to finish the merge.');
     expect(screen.queryByRole('button', { name: /Continue/ })).toBeNull();
     expect(screen.getByRole('button', { name: 'Abort' })).toBeEnabled();
+    cleanup();
+
+    // Branch, the tab's first view, has no commit box.
+    gitStatusStore.scopeBySession = {};
+    render(GitOperationNotice, { sessionId: SID, operation: merge, conflicts: 0 });
+    expect(screen.getByRole('status')).toHaveTextContent('All conflicts resolved: commit in Uncommitted to finish the merge.');
+  });
+
+  it('between two of several picks, says Continue skips a commit git never started', () => {
+    render(GitOperationNotice, { sessionId: SID, operation: { kind: 'cherry-pick', passesOver: '5d1c780' }, conflicts: 0 });
+    expect(screen.getByRole('status')).toHaveTextContent("git hasn't picked 5d1c780, and continuing skips it. To pick it, abort and start again.");
+    expect(screen.getByRole('button', { name: 'Skip 5d1c780' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Abort' })).toBeEnabled();
+  });
+
+  it("offers no Abort past a commit made by hand, which git wouldn't take back", () => {
+    render(GitOperationNotice, { sessionId: SID, operation: { kind: 'cherry-pick', byHand: true }, conflicts: 0 });
+    expect(screen.getByRole('status')).toHaveTextContent('git cherry-pick --quit');
+    expect(screen.getByRole('button', { name: 'Continue cherry-pick' })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: 'Abort' })).toBeNull();
   });
 
   it('waits while the agent is working: it may be the one running it', () => {

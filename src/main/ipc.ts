@@ -1690,9 +1690,7 @@ export function registerHandlers() {
       return withOperation(result);
     } catch (e) {
       logger.warn(`git status failed for session ${sessionId}:`, e);
-      // The operation is read from files, not the status: a status that fails
-      // (index.lock held, say) doesn't make it look finished.
-      return withOperation({ entries: [], error: e instanceof Error ? e.message : String(e) });
+      return { entries: [], error: e instanceof Error ? e.message : String(e) };
     }
   });
 

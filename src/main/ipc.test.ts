@@ -1363,12 +1363,6 @@ describe('git handlers', () => {
     expect(await invoke(IPC.GIT_STATUS, 's1', { scope: 'branch' })).toEqual({ entries: [], scopeError: 'No base branch', operation: rebase });
   });
 
-  it('GIT_STATUS still reports a merge when the status itself fails', async () => {
-    vi.mocked(git.gitOperation).mockResolvedValue({ kind: 'merge', incoming: 'main', branch: 'feat' });
-    vi.mocked(git.git).mockRejectedValue(new Error('index.lock exists'));
-    expect(await invoke(IPC.GIT_STATUS, 's1')).toEqual({ entries: [], error: 'index.lock exists', operation: { kind: 'merge', incoming: 'main', branch: 'feat' } });
-  });
-
   it('GIT_STATUS reads as no operation when checking for one fails', async () => {
     vi.mocked(git.gitOperation).mockRejectedValue(new Error('boom'));
     vi.mocked(git.git).mockResolvedValue('');

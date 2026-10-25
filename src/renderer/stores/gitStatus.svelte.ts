@@ -159,9 +159,7 @@ class GitStatusStore {
       sessionId,
       setTimeout(() => {
         this.pendingTimeout.delete(sessionId);
-        // Reset throttle so the debounced call always goes through
-        this.lastFetch.delete(sessionId);
-        this.refresh(sessionId);
+        void this.reload(sessionId);
       }, delayMs),
     );
   }
@@ -216,8 +214,12 @@ class GitStatusStore {
     }
   }
 
-  /** Refresh now, however soon after the last. */
+  /** Refresh now, however soon after the last, in place of one scheduled
+   *  (which would start another, and could overtake this one). */
   private reload(sessionId: string): Promise<void> {
+    const pending = this.pendingTimeout.get(sessionId);
+    if (pending) clearTimeout(pending);
+    this.pendingTimeout.delete(sessionId);
     this.lastFetch.delete(sessionId);
     return this.refresh(sessionId);
   }

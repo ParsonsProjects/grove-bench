@@ -1121,6 +1121,8 @@ describe('ChangesReviewPanel: a merge or rebase stopped part way', () => {
     const commit = getByRole('button', { name: 'Commit 1 file' });
     expect(commit).toBeDisabled();
     expect(commit).toHaveAttribute('title', 'Mark each conflict resolved first');
+    // A conflict isn't a file the commit leaves out: it can't be made yet.
+    expect(message.closest('div.border-t')!.textContent).not.toContain('not staged');
     // Nor does Ctrl+Enter commit it.
     await fireEvent.keyDown(message, { key: 'Enter', ctrlKey: true });
     expect(mockGroveBench.commit).not.toHaveBeenCalled();
@@ -1144,12 +1146,21 @@ describe('ChangesReviewPanel: a merge or rebase stopped part way', () => {
     expect(mockGroveBench.commit).toHaveBeenCalledWith(SID, "Merge branch 'main' into feat");
   });
 
-  it("won't commit a merge with nothing staged while a resolution is unstaged, or from Branch", async () => {
+  it('says what a merge commit leaves out, and offers none from Branch or a status that failed', async () => {
     // Marked resolved, then unstaged: the commit would take HEAD's version.
-    gitStatusStore.statusBySession = { [SID]: { entries: [entry('base.txt')], operation: MERGE } };
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('base.txt'), entry('notes.md', { status: 'untracked' })], operation: MERGE } };
     const view = render(ChangesReviewPanel, { sessionId: SID });
     await tick();
-    expect(view.queryByRole('button', { name: 'Commit merge' })).toBeNull();
+    expect(view.getByRole('button', { name: 'Commit merge' })).toBeEnabled();
+    expect(view.container.textContent).toContain('2 files not staged: the merge commit leaves them out.');
+    cleanup();
+
+    // A status that failed lists nothing, conflicts included (and main sends
+    // no operation with it).
+    gitStatusStore.statusBySession = { [SID]: { entries: [], error: 'index.lock exists' } };
+    const failed = render(ChangesReviewPanel, { sessionId: SID });
+    await tick();
+    expect(failed.queryByRole('button', { name: /^Commit/ })).toBeNull();
     cleanup();
 
     // Branch lists what changed since the base, not what a commit takes.
@@ -1178,21 +1189,33 @@ describe('ChangesReviewPanel: a merge or rebase stopped part way', () => {
     const staged = [entry('src/b.ts', { staged: true })];
     gitStatusStore.statusBySession = { [SID]: { entries: staged, operation: MERGE } };
     const { getByPlaceholderText } = render(ChangesReviewPanel, { sessionId: SID });
+    // Asked for each time: the box goes while a status lists nothing staged.
+    const message = () => getByPlaceholderText('Commit message…') as HTMLTextAreaElement;
     await tick();
-    const message = getByPlaceholderText('Commit message…') as HTMLTextAreaElement;
-    expect(message.value).toBe("Merge branch 'main' into feat");
+    expect(message().value).toBe("Merge branch 'main' into feat");
+
+    // Cleared by the user, it stays cleared through a status that failed.
+    message().value = '';
+    message().dispatchEvent(new Event('input'));
+    gitStatusStore.statusBySession = { [SID]: { entries: [], error: 'index.lock exists' } };
+    await tick();
+    gitStatusStore.statusBySession = { [SID]: { entries: staged, operation: MERGE } };
+    await tick();
+    expect(message().value).toBe('');
+    message().value = "Merge branch 'main' into feat";
+    message().dispatchEvent(new Event('input'));
 
     // Aborted: the next commit isn't a merge.
     gitStatusStore.statusBySession = { [SID]: { entries: staged } };
     await tick();
-    expect(message.value).toBe('');
+    expect(message().value).toBe('');
 
     gitStatusStore.statusBySession = { [SID]: { entries: staged, operation: { ...MERGE, incoming: 'dev' } } };
     await tick();
-    message.value = "Merge branch 'main' into feat, by hand";
-    message.dispatchEvent(new Event('input'));
+    message().value = "Merge branch 'main' into feat, by hand";
+    message().dispatchEvent(new Event('input'));
     gitStatusStore.statusBySession = { [SID]: { entries: staged } };
     await tick();
-    expect(message.value).toBe("Merge branch 'main' into feat, by hand");
+    expect(message().value).toBe("Merge branch 'main' into feat, by hand");
   });
 });

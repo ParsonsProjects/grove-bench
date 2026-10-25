@@ -745,23 +745,26 @@ export async function gitOperation(cwd: string): Promise<GitOperation | null> {
       .split('\n').filter((l) => !l.startsWith('#')).join('\n').trim();
     const branch = await currentBranch(cwd);
     // "Merge branch 'main' into feat", or from git pull "Merge branch 'main'
-    // of github.com:o/r into feat". A branch's name may hold a quote.
-    const named = message.split('\n', 1)[0].trim().match(/^Merge (?:remote-tracking )?branch '(.+?)'(?: of \S+)?(?: into .+)?$/)?.[1];
+    // of C:\Users\Jo Smith\up into feat". A branch's name may hold a quote.
+    const named = message.split('\n', 1)[0].trim().match(/^Merge (?:remote-tracking )?branch '(.+?)'(?: of .+?)?(?: into .+)?$/)?.[1];
     return {
       kind: 'merge',
-      incoming: named ?? await refName(cwd, await read(mergeHead)),
+      incoming: named ?? (await read(mergeHead)).slice(0, 7),
       ...(branch ? { branch } : {}),
       ...(message ? { message } : {}),
     };
   }
   if (await exists(cherryPickHead)) return { kind: 'cherry-pick', commit: (await read(cherryPickHead)).slice(0, 7) };
   if (await exists(revertHead)) return { kind: 'revert', commit: (await read(revertHead)).slice(0, 7) };
-  // Picking or reverting several commits, between two of them: one was
-  // committed by hand, or git stopped before starting the next.
-  const next = (await read(sequencerTodo)).split(/\s/, 1)[0];
-  if (next === 'pick') return { kind: 'cherry-pick' };
-  if (next === 'revert') return { kind: 'revert' };
-  return null;
+  // Picking or reverting several commits, between two of them. HEAD has
+  // moved since git's last step if a commit was made by hand; if not, git
+  // never started the next one, which its --continue would pass over.
+  const [command, next] = (await read(sequencerTodo)).split(/\s+/, 2);
+  const kind = command === 'pick' ? 'cherry-pick' : command === 'revert' ? 'revert' : null;
+  if (!kind) return null;
+  const last = await read(path.join(gitDir, 'sequencer', 'abort-safety'));
+  if (!last) return { kind };
+  return last === (await git(['rev-parse', 'HEAD'], cwd)).trim() ? { kind, passesOver: next } : { kind, byHand: true };
 }
 
 /** A branch's name for a commit (`main`, `origin/main`), or its short oid. */
@@ -791,29 +794,21 @@ export async function continueGitOperation(cwd: string, kind: GitOperation['kind
   if (kind === 'merge') throw new Error('A merge is finished with a commit.');
   const op = await gitOperation(cwd);
   if (op?.kind !== kind) throw new Error(`There is no ${kind} to continue: it may have finished already.`);
-  const between = kind !== 'rebase' && !op.commit;
-  const [unmerged, unstaged, nothingStaged, moved, applyBackend] = await Promise.all([
+  const [unmerged, unstaged, nothingStaged] = await Promise.all([
     hasUnmergedPaths(cwd),
     // 1 means changes; an error is left for git's own command to report.
     gitExit(['diff', '--quiet', '--ignore-submodules'], cwd).then((r) => r.exitCode === 1),
     gitExit(['diff', '--cached', '--quiet'], cwd).then((r) => r.exitCode === 0),
-    between ? movedSinceLastStep(cwd) : null,
-    kind === 'rebase' ? worktreeGitDir(cwd).then((dir) => fs.access(path.join(dir, 'rebase-apply')).then(() => true, () => false)) : false,
   ]);
   if (unmerged) throw new Error('Mark each conflict resolved first.');
   // git refuses with "You must edit all merge conflicts", which misleads.
   if (kind === 'rebase' && unstaged) {
     throw new Error("Stage or undo the changes that aren't staged first: git won't continue a rebase with them.");
   }
-  // git stopped before it could start the next one (a file in the way, say):
-  // its --continue would pass over that commit.
-  if (moved === false) {
-    throw new Error(`git stopped before it could ${kind === 'revert' ? 'revert' : 'pick'} the next commit, and continuing would leave it out. Abort, then start again.`);
-  }
-  // Resolved to no change: a pick won't make an empty commit, so drop it, as
-  // a rebase does itself, except with the apply backend. --skip keeps a
-  // pick's unstaged changes; a rebase's resets them, but it has none (above).
-  const skip = nothingStaged && (kind === 'rebase' ? applyBackend : !between);
+  // A pick resolved to no change: git won't make an empty commit, so drop it,
+  // as a rebase does itself. Its --skip keeps unstaged changes. Between
+  // picks (no commit stopped on) there is none to drop.
+  const skip = kind !== 'rebase' && !!op.commit && nothingStaged;
   try {
     await gitEnv([kind, skip ? '--skip' : '--continue'], cwd, { GIT_EDITOR: 'true' });
   } catch (e) {
@@ -825,24 +820,14 @@ export async function continueGitOperation(cwd: string, kind: GitOperation['kind
 
 const hasUnmergedPaths = async (cwd: string) => (await git(['ls-files', '--unmerged'], cwd)).trim() !== '';
 
-/** Picking or reverting several commits, between two of them: whether HEAD
- *  has moved since git's last step, as a commit made by hand moves it. Null
- *  when git kept no record of that step. */
-async function movedSinceLastStep(cwd: string): Promise<boolean | null> {
-  const last = (await fs.readFile(path.join(await worktreeGitDir(cwd), 'sequencer', 'abort-safety'), 'utf8').catch(() => '')).trim();
-  return last ? last !== (await git(['rev-parse', 'HEAD'], cwd)).trim() : null;
-}
-
 /** Abort a merge, rebase, cherry-pick or revert: the branch goes back to how
  *  it was before it started. */
 export async function abortGitOperation(cwd: string, kind: GitOperation['kind']): Promise<void> {
   const op = await gitOperation(cwd);
   if (op?.kind !== kind) throw new Error(`There is no ${kind} to abort: it may have finished already.`);
-  // Past a commit made by hand git won't take the branch back: it only stops,
-  // warning "You seem to have moved HEAD", and doesn't fail.
-  if (kind !== 'rebase' && kind !== 'merge' && !op.commit && (await movedSinceLastStep(cwd)) === true) {
-    throw new Error(`A commit was made by hand part way, so git won't take the branch back. Continue to ${kind === 'revert' ? 'revert' : 'pick'} the rest, or run git ${kind} --quit in the terminal to stop here.`);
-  }
+  // git's would only stop, warning "You seem to have moved HEAD", and not
+  // fail. The strip offers no Abort then; this is for a stale one.
+  if (op.byHand) throw new Error(`A commit was made by hand part way, so git won't take the branch back. Run git ${kind} --quit in the terminal to stop here.`);
   try {
     await git([kind, '--abort'], cwd);
   } catch (e) {
