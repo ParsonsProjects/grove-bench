@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
-import { readFileSync } from 'node:fs';
 import { PassThrough } from 'node:stream';
 
 // cross-spawn's parse, as it would wrap an npm shim on Windows, recorded.
@@ -24,6 +23,7 @@ vi.mock('cross-spawn', () => ({
 import { createSpawnRunner, HostedProcess, TREE_KILL_ANSWER_MS, type KillTree, type ProcessCommand } from './process-host-spawn.js';
 import type { SpawnEvent } from './process-host-protocol.js';
 import { killTreeWith } from './process-tree-kill.js';
+import { isRunning, TREE_SCRIPT } from './__mocks__/process-trees.js';
 import { execa } from 'execa';
 
 /** A runner's tree kill that does nothing, for tests that don't ask for one. */
@@ -493,26 +493,23 @@ describe('createSpawnRunner', () => {
     });
 
     it('kills a real process and the process it started', async () => {
-      // The child prints its own child's pid, then both wait to be killed.
-      const script = [
-        "const c = require('child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });",
-        "console.log(c.pid);",
-        'setInterval(() => {}, 1000);',
-      ].join(' ');
       let grandchild = 0;
+      let printed = '';
       const events = await new Promise<SpawnEvent[]>((resolve) => {
         const seen: SpawnEvent[] = [];
         const runner = createSpawnRunner((event) => {
           seen.push(event);
           if (event.type === 'spawned') startedPids.push(event.pid);
-          if (event.type === 'stdout' && !grandchild) {
-            grandchild = Number(event.data.trim());
+          // Its child's pid, once the whole line has come.
+          if (event.type === 'stdout' && !grandchild) printed += event.data;
+          if (!grandchild && printed.includes('\n')) {
+            grandchild = Number(printed.trim());
             startedPids.push(grandchild);
             runner.handle({ type: 'kill-tree', id: 8 });
           }
           if (event.type === 'close') resolve(seen);
         }, (pid) => killTreeWith(pid, (file, args, options) => execa(file, args, options)));
-        runner.handle({ type: 'spawn', id: 8, file: process.execPath, args: ['-e', script], env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } });
+        runner.handle({ type: 'spawn', id: 8, file: process.execPath, args: ['-e', TREE_SCRIPT], env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } });
       });
       expect(grandchild).toBeGreaterThan(0);
       expect(events).toContainEqual({ type: 'tree-killed', id: 8, killed: true });
@@ -521,20 +518,3 @@ describe('createSpawnRunner', () => {
     }, 20_000);
   });
 });
-
-/** Whether `pid` is still running: not gone, and (on Linux) not a zombie
- *  waiting for a parent that may never reap it. */
-function isRunning(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-  } catch {
-    return false;
-  }
-  if (process.platform !== 'linux') return true;
-  try {
-    // The state follows the command name in brackets: "123 (node) Z ...".
-    return !/\) Z /.test(readFileSync(`/proc/${pid}/stat`, 'utf8'));
-  } catch {
-    return false;
-  }
-}
