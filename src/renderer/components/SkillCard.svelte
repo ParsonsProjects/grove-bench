@@ -18,6 +18,7 @@
     children,
     actions,
     end,
+    oncontextmenu,
   }: {
     name: string;
     /** Can run: green square. Off or paused: grey. */
@@ -35,10 +36,12 @@
     actions?: Snippet;
     /** Actions on the far right. */
     end?: Snippet;
+    /** A right-click on the card, for a menu of its actions. */
+    oncontextmenu?: (e: MouseEvent) => void;
   } = $props();
 </script>
 
-<div class="border border-border bg-card/80 px-3 py-2 min-w-0">
+<div class="border border-border bg-card/80 px-3 py-2 min-w-0" role="presentation" {oncontextmenu}>
   <div class="flex items-center gap-1.5 min-w-0">
     <span class="w-1.5 h-1.5 shrink-0 {active ? 'bg-green-500' : 'bg-muted-foreground/40'}"></span>
     <span class="font-mono text-xs truncate {struck ? 'text-muted-foreground line-through' : 'text-foreground'}" title={nameTitle ?? name}>{name}</span>
