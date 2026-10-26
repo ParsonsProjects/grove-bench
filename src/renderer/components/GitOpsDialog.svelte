@@ -15,6 +15,7 @@
   import { resolveBaseBranch } from '../lib/base-branch.js';
   import { candidateBranches, squashMessageFrom, describeOpResult, type BranchCandidate } from '../lib/git-ops.js';
   import type { CommitEntry } from '../../shared/types.js';
+  import { errorMessage } from '../../shared/error-message.js';
 
   export type GitOpMode = 'rebase' | 'squash' | 'cherry-pick';
 
@@ -131,8 +132,8 @@
         }
       }
       if (result.ok) afterChange();
-    } catch (e: any) {
-      result = { ok: false, text: e?.message || String(e) };
+    } catch (e) {
+      result = { ok: false, text: errorMessage(e) };
     } finally {
       busy = false;
     }

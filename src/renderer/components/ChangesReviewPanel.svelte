@@ -17,6 +17,7 @@
   import { Pulse } from '$lib/components/ui/pulse/index.js';
   import { Notice } from '$lib/components/ui/notice/index.js';
   import { stripIpcErrorPrefix } from '$lib/mcp-errors.js';
+  import { errorMessage } from '../../shared/error-message.js';
 
   /**
    * The Changes tab: git status (the whole branch since its base, by
@@ -182,8 +183,8 @@
       const substitute = await backgroundAgentStore.substituteFor(sessionId, 'write a commit message');
       if (substitute === null) return;
       commitMessage = await window.groveBench.generateCommitMessage(sessionId, substitute);
-    } catch (e: any) {
-      commitError = e?.message || 'Failed to generate commit message';
+    } catch (e) {
+      commitError = errorMessage(e, 'Failed to generate commit message');
     } finally {
       generatingMsg = false;
     }
@@ -202,11 +203,11 @@
         pushing = true;
         await prStore.push(sessionId);
       }
-    } catch (e: any) {
+    } catch (e) {
       // A failed push after a good commit is kept by prStore and shown in
       // the status bar as "push failed": the commit box disappears once
       // nothing is staged, so an error here would never be seen.
-      if (!committed) commitError = e?.message || 'Commit failed';
+      if (!committed) commitError = errorMessage(e, 'Commit failed');
     } finally {
       committing = false;
       pushing = false;

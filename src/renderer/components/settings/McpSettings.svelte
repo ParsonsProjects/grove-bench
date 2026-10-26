@@ -85,12 +85,10 @@
 {#snippet projectItems()}
   {#each projectOptions as option (option)}
     <Select.Item value={option} label={store.repoDisplayName(option)}>
-      {#snippet children()}
-        <div class="flex flex-col min-w-0">
-          <span class="truncate">{store.repoDisplayName(option)}</span>
-          <span class="text-xs text-muted-foreground truncate">{option}</span>
-        </div>
-      {/snippet}
+      <div class="flex flex-col min-w-0">
+        <span class="truncate">{store.repoDisplayName(option)}</span>
+        <span class="text-xs text-muted-foreground truncate">{option}</span>
+      </div>
     </Select.Item>
   {/each}
 {/snippet}

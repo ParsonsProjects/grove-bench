@@ -10,6 +10,7 @@
   import { store } from '../stores/sessions.svelte.js';
   import { prStore } from '../stores/pr.svelte.js';
   import { resolveBaseBranch } from '../lib/base-branch.js';
+  import { errorMessage } from '../../shared/error-message.js';
 
   let { sessionId, onclose }: { sessionId: string; onclose: () => void } = $props();
 
@@ -74,8 +75,8 @@
       open = false;
       onclose();
       void window.groveBench.openExternal(pr.url);
-    } catch (e: any) {
-      dialogError = e?.message || String(e);
+    } catch (e) {
+      dialogError = errorMessage(e);
     } finally {
       creating = false;
     }

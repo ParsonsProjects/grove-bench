@@ -59,13 +59,11 @@
   <Select.Content align="start" class="w-80">
     {#each ACTIVITY_VIEW_MODES as mode (mode)}
       <Select.Item value={mode} label={VIEW_MODE_LABELS[mode]} class="text-xs items-start">
-        {#snippet children()}
-          <!-- Full-width lines: the item centres its last span's children. -->
-          <span class="flex flex-col gap-0.5">
-            <span class="w-full text-foreground">{VIEW_MODE_LABELS[mode]}</span>
-            <span class="w-full text-caption text-muted-foreground whitespace-normal">{VIEW_MODE_DESCRIPTIONS[mode]}</span>
-          </span>
-        {/snippet}
+        <!-- Full-width lines: the item centres its last span's children. -->
+        <span class="flex flex-col gap-0.5">
+          <span class="w-full text-foreground">{VIEW_MODE_LABELS[mode]}</span>
+          <span class="w-full text-caption text-muted-foreground whitespace-normal">{VIEW_MODE_DESCRIPTIONS[mode]}</span>
+        </span>
       </Select.Item>
     {/each}
   </Select.Content>

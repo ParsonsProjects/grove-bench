@@ -10,6 +10,7 @@
   import { store } from '../stores/sessions.svelte.js';
   import type { SkillPromptOpts } from '../lib/skill-prompt.js';
   import type { SkillInfo } from '../../shared/types.js';
+  import { errorMessage } from '../../shared/error-message.js';
 
   let {
     sessionId,
@@ -65,8 +66,8 @@
       });
       oncreated(skill);
       close();
-    } catch (e: any) {
-      dialogError = e?.message || String(e);
+    } catch (e) {
+      dialogError = errorMessage(e);
     } finally {
       creating = false;
     }

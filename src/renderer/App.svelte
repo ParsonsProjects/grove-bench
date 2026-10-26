@@ -50,6 +50,7 @@
   import { Button } from '$lib/components/ui/button/index.js';
   import { Notice } from '$lib/components/ui/notice/index.js';
   import { Pulse } from '$lib/components/ui/pulse/index.js';
+  import { errorMessage } from '../shared/error-message.js';
 
   let showAnalyticsConsent = $state(false);
   // Loaded the first time it opens (Ctrl+R or the search button).
@@ -333,8 +334,8 @@
       // on mount. Subscribing here would race with mount and cause isReady to be
       // set before history replay, resulting in an empty chat.
       failedResumeIds.delete(sessionId);
-    }).catch((e: any) => {
-      store.setError(e.message || String(e));
+    }).catch((e: unknown) => {
+      store.setError(errorMessage(e));
       failedResumeIds.add(sessionId);
     }).finally(() => {
       resumingIds.delete(sessionId);

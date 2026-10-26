@@ -6,7 +6,6 @@
    */
   import { untrack } from 'svelte';
   import { prStore } from '../stores/pr.svelte.js';
-  import type { PrAlert } from '../stores/pr.svelte.js';
   import { Checkbox } from '$lib/components/ui/checkbox/index.js';
   import { badgeVariants } from '$lib/components/ui/badge/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
@@ -55,9 +54,9 @@
   let prFetchFailed = $derived(prStore.fetchFailedBySession[sessionId] ?? false);
 
   // Alerts merge into their popover sections rather than rendering as separate rows
-  let ciAlert = $derived(prAlerts.find((a) => a.kind === 'ci_failed') as Extract<PrAlert, { kind: 'ci_failed' }> | undefined);
-  let commentsAlert = $derived(prAlerts.find((a) => a.kind === 'new_comments') as Extract<PrAlert, { kind: 'new_comments' }> | undefined);
-  let humanAlert = $derived(prAlerts.find((a) => a.kind === 'needs_human') as Extract<PrAlert, { kind: 'needs_human' }> | undefined);
+  let ciAlert = $derived(prAlerts.find((a) => a.kind === 'ci_failed'));
+  let commentsAlert = $derived(prAlerts.find((a) => a.kind === 'new_comments'));
+  let humanAlert = $derived(prAlerts.find((a) => a.kind === 'needs_human'));
 
   /** Worst condition on the PR, for the collapsed badge's dot and tooltip.
    *  Shared with the sidebar's branch icon so the two always agree. */

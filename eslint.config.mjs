@@ -83,6 +83,10 @@ export default defineConfig(
       // It reads $bindable() defaults, and a counter in <script module>
       // that each instance bumps, as values nothing uses.
       'no-useless-assignment': 'off',
+      // Svelte 5 drops whitespace at the start and end of a tag or block, so
+      // `<span>{' · '}</span>` and `{#if x}{' '}…` keep spaces that plain text
+      // there would lose. The rule reports those too.
+      'svelte/no-useless-mustaches': 'off',
     },
   },
   {

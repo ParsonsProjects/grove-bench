@@ -29,6 +29,7 @@
   import { Kbd } from '$lib/components/ui/kbd/index.js';
   import { Pulse } from '$lib/components/ui/pulse/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
+  import { errorMessage } from '../../shared/error-message.js';
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -222,12 +223,12 @@
       if (session && (session.status === 'running' || session.status === 'error') && !messageStore.getIsReady(sessionId)) {
         messageStore.setIsReady(sessionId, true);
       }
-    } catch (e: any) {
+    } catch (e) {
       historyFailed = true;
       console.error(`[WorkspacePane] history replay failed for ${sessionId}:`, e);
       messageStore.ingestEvent(sessionId, {
         type: 'error',
-        message: `Failed to load thread history: ${e?.message || e}`,
+        message: `Failed to load thread history: ${errorMessage(e)}`,
       });
     } finally {
       messageStore.releaseLiveEvents(sessionId, replayedPage);

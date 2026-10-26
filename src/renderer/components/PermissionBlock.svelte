@@ -193,7 +193,6 @@
         if (m.kind === 'permission' && m.requestId === requestId) foundSelf = true;
         continue;
       }
-      if (m.kind === 'tool_call' && (m as any).isPlanExecution) break;
       if (m.kind === 'permission') break;
       if (m.kind === 'text') parts.unshift(m.text);
     }

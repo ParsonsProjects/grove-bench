@@ -1,4 +1,5 @@
 import { store } from '../stores/sessions.svelte.js';
+import { errorMessage } from '../../shared/error-message.js';
 
 /**
  * Restore worktree sessions from disk on app startup.
@@ -60,8 +61,8 @@ export async function restoreWorktrees(): Promise<Set<string>> {
         restored.add(wt.id);
 
         if (isRunning) {
-          window.groveBench.resumeSession(wt.id, repo).catch((e: any) => {
-            store.setError(e.message || String(e));
+          window.groveBench.resumeSession(wt.id, repo).catch((e: unknown) => {
+            store.setError(errorMessage(e));
           });
         }
       }

@@ -7,6 +7,7 @@
   import { agentsStore } from '../stores/agents.svelte.js';
   import { canRewindThread } from '../lib/agent-commands.js';
   import { FILES_REPLACED, startsAfresh } from '../lib/rewind-text.js';
+  import { errorMessage } from '../../shared/error-message.js';
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -55,8 +56,8 @@
     let preview: string;
     try {
       preview = await window.groveBench.getCheckpointDiff(sessionId, uuid);
-    } catch (e: any) {
-      preview = e?.message || '(Failed to load preview)';
+    } catch (e) {
+      preview = errorMessage(e, '(Failed to load preview)');
     }
     // A message picked since: its own preview is on the way.
     if (selectedId !== uuid) return;
@@ -74,8 +75,8 @@
       selectedId = null;
       diffPreview = null;
       conversationOnly = false;
-    } catch (e: any) {
-      error = e?.message || 'Rewind failed';
+    } catch (e) {
+      error = errorMessage(e, 'Rewind failed');
     } finally {
       rewinding = false;
     }

@@ -1,13 +1,6 @@
 <script lang="ts" module>
-  import type { DiffLine, SideBySideRow, ContextGap, ReviewComment } from '../lib/diff-types.js';
+  import type { CommentAnchor, DiffLine, SideBySideRow, ContextGap, ReviewComment } from '../lib/diff-types.js';
   import { intralineRanges } from '../lib/diff-highlight.js';
-  import { parseDiffLines } from '../lib/diff-parse.js';
-  // Re-export so existing component consumers can keep importing from here.
-  export type { DiffLine, SideBySideRow, ContextGap, ReviewComment };
-  export { parseDiffLines };
-
-  /** Where a new comment is being written: the anchored line range on one side. */
-  export interface CommentAnchor { side: 'old' | 'new'; startLine: number; endLine: number }
 
   export function buildSideBySideRows(diffLines: DiffLine[]): SideBySideRow[] {
     const rows: SideBySideRow[] = [];

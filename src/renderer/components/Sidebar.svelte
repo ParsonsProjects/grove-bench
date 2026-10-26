@@ -54,6 +54,7 @@
   import { splitSkillLine } from '../../shared/skill-line.js';
   import { deriveSessionName } from '../../shared/session-name.js';
   import { onMount, untrack } from 'svelte';
+  import { errorMessage } from '../../shared/error-message.js';
 
   /** The draft's row: its first line, or for a skill run the name the
    *  thread will get ("triage: Fix the login bug"), not the line every one
@@ -622,8 +623,8 @@
       trackEvent('session_destroyed');
       forgetConversation(id);
       return true;
-    } catch (e: any) {
-      store.setError(e.message || String(e));
+    } catch (e) {
+      store.setError(errorMessage(e));
       return false;
     } finally {
       const next = new Set(destroying);
@@ -733,8 +734,8 @@
       store.removeRepo(repoPath);
       // A draft can't start in a project that's gone.
       if (draftStore.draft?.repoPath === repoPath) draftStore.discard();
-    } catch (e: any) {
-      store.setError(e.message || String(e));
+    } catch (e) {
+      store.setError(errorMessage(e));
     }
     confirmRemoveRepo = null;
   }
@@ -787,8 +788,8 @@
         renamingSessionId = null;
         renameError = null;
       }
-    } catch (e: any) {
-      if (renamingSessionId === id) renameError = e.message || String(e);
+    } catch (e) {
+      if (renamingSessionId === id) renameError = errorMessage(e);
     }
   }
 
