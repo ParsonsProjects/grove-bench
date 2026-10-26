@@ -172,6 +172,9 @@ const DEMO_SKILLS = [
   { name: 'worktree-doctor', description: 'Diagnose and repair broken git worktrees and stale locks', source: 'user', path: 'C:/Users/demo/.claude/skills/worktree-doctor/SKILL.md' },
 ];
 
+/** SKILL.md text saved in the demo's skill editor, by path. */
+const demoSkillFiles: Record<string, string> = {};
+
 /** Two project skills only Claude Code can see, and a shared one it can't
  *  see yet, so the drawer shows Share and Link. */
 let DEMO_SHARING = {
@@ -377,6 +380,23 @@ const api: Record<string, unknown> = {
     DEMO_SKILLS.push(skill);
     return skill;
   },
+  readSkill: async (_sid: string, _fallback: string, skillPath: string) => {
+    const skill = DEMO_SKILLS.find((s) => s.path === skillPath);
+    if (!skill) throw new Error("That skill isn't in this thread's skill folders any more");
+    return {
+      path: skill.path,
+      content: demoSkillFiles[skill.path]
+        ?? `---\nname: ${skill.name}\ndescription: ${skill.description}\n---\n\nDescribe the steps for ${skill.name} here.\n`,
+    };
+  },
+  saveSkill: async (_sid: string, _fallback: string, skillPath: string, _expected: string, content: string) => {
+    const skill = DEMO_SKILLS.find((s) => s.path === skillPath);
+    if (!skill) throw new Error("That skill isn't in this thread's skill folders any more");
+    demoSkillFiles[skillPath] = content;
+    skill.description = content.match(/^description:\s*(.*)$/m)?.[1] ?? skill.description;
+    return skill;
+  },
+  openSkillInEditor: async () => {},
   getSkillSharing: async () => DEMO_SHARING,
   shareSkills: async () => {
     const done = DEMO_SHARING.toShare.map((s) => s.name);

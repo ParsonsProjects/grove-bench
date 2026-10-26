@@ -125,16 +125,20 @@ Each server in the popover shows a status dot:
 
 ## Skills
 
-**Skills** shows how many skills the thread's agent can use. Click it to open the Skills drawer on the right. **This thread** lists them, each with **Run** (a new thread that uses it now) and **Schedule**; **Scheduled** lists every project's schedules. The clock on a project's header in the sidebar opens Scheduled too, and **Skills** at the foot of the sidebar opens the drawer even when a narrow status bar has no room for its Skills count. The drawer keeps the keyboard inside it until you close it with `Esc` or **×**. To start a thread with a skill and your own instructions, type `/` in a new thread's message box or use **Skills** at its foot (see [Starting a Thread](getting-started.md#starting-a-thread)).
+**Skills** shows how many skills the thread's agent can use. Click it to open the Skills drawer on the right. **This thread** lists them, each with **Run** (a new thread that uses it now), **Schedule** and **Edit**; **Scheduled** lists every project's schedules. The clock on a project's header in the sidebar opens Scheduled too, and **Skills** at the foot of the sidebar opens the drawer even when a narrow status bar has no room for its Skills count. The drawer keeps the keyboard inside it until you close it with `Esc` or **×**. To start a thread with a skill and your own instructions, type `/` in a new thread's message box or use **Skills** at its foot (see [Starting a Thread](getting-started.md#starting-a-thread)).
 
 Skills are folders with a `SKILL.md` file, a format every agent Grove Bench knows reads. **Add skill** saves a new one in `.agents/skills` (in the project, or in your home folder for a user skill), the folder they all look in except Claude Agent. Claude Agent finds it through a small link file in `.claude/skills` with the same name and description, which tells it to read the shared one. Links are plain files, so they work in git for your whole team, with or without Grove Bench.
+
+**This thread** puts skills in sections by where they live: **Project** (in the project, for anyone working on it), **Personal** (in your user folder, for all your projects) and **Plugin and built-in** (reported by the running agent, with no file to edit). Click a section's heading to fold it. The search box above them finds skills by name or description in every section, folded or not; `Esc` clears it before closing the drawer. **Claude only** marks a skill in Claude Agent's own folder that other agents can't see yet (see **Share** below).
+
+**Edit** opens the skill's `SKILL.md` in the drawer as plain text, frontmatter included, so settings the Add skill form doesn't have (such as `allowed-tools`) stay as they are. **Save** (`Ctrl+S`) writes it back, keeping the file's line endings. For a shared skill it edits the file in `.agents/skills` and updates Claude Agent's link to it. Save refuses if the file changed after you opened it (**Reload** shows the new version, dropping your changes) or if the text changes the skill's `name`, since schedules, links and turned-off skills go by it. **Open in editor** opens the file in VS Code, Cursor or your default app instead. Leaving the editor, switching tab or closing the drawer with unsaved changes asks first.
 
 The drawer offers two buttons when skills need them:
 
 - **Share**: skills that are only in Claude Agent's folders move to `.agents/skills`, each leaving a link, so every agent can use them
 - **Link** (in a Claude Agent thread): adds links for shared skills Claude Agent can't see yet, updates a link when its skill's name or description changed, and removes links to skills that were deleted. Only links Grove Bench made are touched
 
-Both change files in the project, which show in the Changes tab for you to commit. For Claude Agent you can also turn skills off and get suggestions from your past threads.
+Both change files in the project, which show in the Changes tab for you to commit, as does saving a project skill. For Claude Agent you can also turn skills off and get suggestions from your past threads.
 
 ## Context
 

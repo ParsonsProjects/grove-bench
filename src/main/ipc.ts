@@ -43,7 +43,7 @@ import * as memoryCompact from './memory-compact.js';
 import * as bookmarks from './bookmarks.js';
 import { deleteSchedule, listSchedules, recordScheduleRun, saveSchedule } from './skill-schedules.js';
 import { linkSkills, shareSkills, skillSharing } from './skill-sharing.js';
-import { CLAUDE_SKILL_DIRS, readsSharedSkills, type SkillDirs } from './skills.js';
+import { CLAUDE_SKILL_DIRS, readSkillFile, readsSharedSkills, saveSkillFile, type SkillDirs } from './skills.js';
 import { listProjects, rememberProject, forgetProject, loadOpenTabs, saveOpenTabs, loadCollapsedRepos, saveCollapsedRepos, loadSessionSort, saveSessionSort, loadSidebarWidth, saveSidebarWidth, loadCollapsedPanels, saveCollapsedPanels, loadConversationGroups, saveConversationGroups, saveUnreadSessionIds, loadUnreadSessionIds, saveTodoSessionIds, loadTodoSessionIds, loadPrerequisiteCache, savePrerequisiteCache, loadUsageSnapshot } from './app-state.js';
 import { logRendererError } from './crash-handling.js';
 import { freezeLog } from './freeze-log.js';
@@ -1133,6 +1133,38 @@ export function registerHandlers() {
     const root = sessionManager.getWorktreePath(sessionId) ?? fallbackPath;
     if (!root) throw new Error('No project root available for this thread');
     return adapter.addSkill(root, def);
+  });
+
+  /** Where a thread's skills are edited: its project root and its agent's
+   *  skill folders, which bound the files that can be read and written. */
+  async function skillEditTarget(sessionId: string, fallbackPath: string, skillPath: unknown): Promise<{ root: string; dirs: SkillDirs; skillPath: string }> {
+    if (typeof skillPath !== 'string' || !skillPath) throw new Error('No skill given');
+    const dirs = (await threadAgent(sessionId))?.skillDirs;
+    if (!dirs) throw new Error("This thread's agent has no skill files Grove can edit");
+    const root = sessionManager.getWorktreePath(sessionId) ?? fallbackPath;
+    if (!root) throw new Error('No project root available for this thread');
+    return { root, dirs, skillPath };
+  }
+
+  ipcMain.handle(IPC.SKILLS_READ, async (_event, sessionId: string, fallbackPath: string, skillPath: unknown) => {
+    const { root, dirs, skillPath: file } = await skillEditTarget(sessionId, fallbackPath, skillPath);
+    return readSkillFile(root, dirs, file);
+  });
+
+  ipcMain.handle(IPC.SKILLS_SAVE, async (_event, sessionId: string, fallbackPath: string, skillPath: unknown, expected: unknown, content: unknown) => {
+    if (typeof expected !== 'string' || typeof content !== 'string') throw new Error('No skill text given');
+    const { root, dirs, skillPath: file } = await skillEditTarget(sessionId, fallbackPath, skillPath);
+    return saveSkillFile(root, dirs, file, expected, content);
+  });
+
+  ipcMain.handle(IPC.SKILLS_OPEN, async (_event, sessionId: string, fallbackPath: string, skillPath: unknown) => {
+    const { root, dirs, skillPath: file } = await skillEditTarget(sessionId, fallbackPath, skillPath);
+    const target = (await readSkillFile(root, dirs, file)).path;
+    // As for a worktree file: VS Code, then Cursor, then the OS default.
+    if (await launchEditor('code', target, undefined)) return;
+    if (await launchEditor('cursor', target, undefined)) return;
+    const openError = await shell.openPath(target);
+    if (openError) throw new Error('Could not open SKILL.md. Install the VS Code or Cursor CLI.');
   });
 
   /** Where Share and Link work for a thread: its project root, and Claude

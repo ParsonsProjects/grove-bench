@@ -19,7 +19,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { SkillDefinition, SkillInfo } from '../shared/types.js';
+import type { SkillDefinition, SkillFile, SkillInfo } from '../shared/types.js';
 
 /** Where an agent looks for skills, relative to the project and to the
  *  user's home directory (often the same, e.g. `.claude/skills`). A user
@@ -246,6 +246,84 @@ export function writeSkill(worktreePath: string, def: SkillDefinition, dirs: Ski
     source: def.scope,
     path: manifestPath,
   };
+}
+
+// ─── Editing ───
+//
+// The Skills drawer edits a skill's SKILL.md as text. It names the skill by
+// the path listSkills gave it, so only a file listSkills finds can be read or
+// written. A Claude Code link stands in for a shared skill, so the shared
+// file is the one edited, and Save brings the link in line with it.
+
+/** A SKILL.md's text with LF line endings and no byte order mark. */
+function skillText(raw: string): string {
+  return raw.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n');
+}
+
+/** The listed skill whose SKILL.md is at `skillPath`. */
+async function listedSkill(worktreePath: string, dirs: SkillDirs, skillPath: string): Promise<SkillInfo & { path: string; source: SkillScope }> {
+  const wanted = path.resolve(skillPath);
+  const skill = (await listSkills(worktreePath, dirs)).find((s) => s.path && path.resolve(s.path) === wanted);
+  if (!skill?.path || skill.source === 'session') throw new Error("That skill isn't in this thread's skill folders any more");
+  return { ...skill, path: skill.path, source: skill.source };
+}
+
+interface EditTarget {
+  /** The file edited: the skill's own, or the shared one its link stands in for. */
+  path: string;
+  raw: string;
+  /** The link, when the listed file is one Grove made. */
+  link?: { path: string; raw: string };
+}
+
+/** Where a listed skill's text lives. A link's shared file is found by its
+ *  folder name, as Link does, not from the path written in the link. */
+async function editTarget(worktreePath: string, skill: { name: string; path: string; source: SkillScope }): Promise<EditTarget> {
+  const raw = await fs.promises.readFile(skill.path, 'utf-8');
+  if (!isSkillLink(raw)) return { path: skill.path, raw };
+  const dirName = path.basename(path.dirname(skill.path));
+  const sharedPath = path.join(skillsRoot(worktreePath, skill.source, SHARED_SKILLS_DIR), dirName, 'SKILL.md');
+  try {
+    return { path: sharedPath, raw: await fs.promises.readFile(sharedPath, 'utf-8'), link: { path: skill.path, raw } };
+  } catch {
+    throw new Error(`"${skill.name}" is a link to ${sharedPath}, which is gone. Link in the Skills drawer removes it.`);
+  }
+}
+
+/** A listed skill's SKILL.md, to edit. */
+export async function readSkillFile(worktreePath: string, dirs: SkillDirs, skillPath: string): Promise<SkillFile> {
+  const target = await editTarget(worktreePath, await listedSkill(worktreePath, dirs, skillPath));
+  return { path: target.path, content: skillText(target.raw), ...(target.link ? { linkPath: target.link.path } : {}) };
+}
+
+/**
+ * Save a listed skill's SKILL.md. `expected` is the text readSkillFile gave:
+ * if the file has changed since (the agent edited it, say), nothing is
+ * written. The name can't change, as schedules, the turned-off list and
+ * links go by it. The file keeps its line endings and byte order mark, so
+ * git shows only what changed.
+ */
+export async function saveSkillFile(worktreePath: string, dirs: SkillDirs, skillPath: string, expected: string, content: string): Promise<SkillInfo> {
+  const skill = await listedSkill(worktreePath, dirs, skillPath);
+  const target = await editTarget(worktreePath, skill);
+  if (skillText(target.raw) !== expected) {
+    throw new Error(`${skill.name}'s SKILL.md changed after you opened it. Reload to see the change, then edit again.`);
+  }
+  const text = skillText(content);
+  if (!text.trim()) throw new Error("SKILL.md can't be empty");
+  const dirName = path.basename(path.dirname(target.path));
+  const name = parseSkillFrontmatter(target.raw).name || dirName;
+  const meta = parseSkillFrontmatter(text);
+  if ((meta.name || dirName) !== name) {
+    throw new Error(`Keep the name "${name}": renaming a skill isn't supported here`);
+  }
+  const eol = target.raw.includes('\r\n') ? text.replace(/\n/g, '\r\n') : text;
+  await fs.promises.writeFile(target.path, target.raw.startsWith('\uFEFF') ? `\uFEFF${eol}` : eol);
+  if (target.link) {
+    const link = skillLinkContent(text, dirName, skillLinkTarget(skill.source, dirName));
+    if (skillText(target.link.raw) !== link) await fs.promises.writeFile(target.link.path, link);
+  }
+  return { name, description: meta.description ?? '', source: skill.source, path: skill.path };
 }
 
 /**

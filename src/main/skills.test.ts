@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { parseSkillFrontmatter, scanSkillsDir, computeSkillsFilter, validateSkillName, skillManifestContent, writeSkill, listSkills, CLAUDE_SKILL_DIRS, SHARED_SKILL_DIRS, readsSharedSkills, skillLinkContent, skillFrontmatter, isSkillLink } from './skills.js';
+import { parseSkillFrontmatter, scanSkillsDir, computeSkillsFilter, validateSkillName, skillManifestContent, writeSkill, listSkills, CLAUDE_SKILL_DIRS, SHARED_SKILL_DIRS, readsSharedSkills, skillLinkContent, skillFrontmatter, isSkillLink, readSkillFile, saveSkillFile } from './skills.js';
 
 describe('parseSkillFrontmatter', () => {
   it('reads name and description from a frontmatter block', () => {
@@ -233,6 +233,136 @@ describe('links', () => {
   it('tells a link from a skill', () => {
     expect(isSkillLink(skillLinkContent('x', 'a', 'b'))).toBe(true);
     expect(isSkillLink('---\nname: a\n---\nDo things')).toBe(false);
+  });
+});
+
+describe('readSkillFile and saveSkillFile', () => {
+  let worktree: string;
+  let fakeHome: string;
+
+  beforeEach(() => {
+    worktree = fs.mkdtempSync(path.join(os.tmpdir(), 'grove-wt-'));
+    fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'grove-home-'));
+    vi.spyOn(os, 'homedir').mockReturnValue(fakeHome);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    fs.rmSync(worktree, { recursive: true, force: true });
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  });
+
+  /** A skill of Claude Code's own, in `.claude/skills`. */
+  function ownSkill(root: string, dir: string, content: string): string {
+    const file = path.join(root, '.claude', 'skills', dir, 'SKILL.md');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, content);
+    return file;
+  }
+
+  const review = '---\nname: review\ndescription: Review the diff\nallowed-tools: Read Grep\n---\n\nLook for bugs.\n';
+
+  it("reads a skill's whole SKILL.md and saves it back, other frontmatter fields included", async () => {
+    const file = ownSkill(worktree, 'review', review);
+    const read = await readSkillFile(worktree, CLAUDE_SKILL_DIRS, file);
+    expect(read).toEqual({ path: file, content: review });
+
+    const edited = review.replace('Review the diff', 'Review the staged diff').replace('Look for bugs.', 'Look for bugs and missing tests.');
+    const saved = await saveSkillFile(worktree, CLAUDE_SKILL_DIRS, file, read.content, edited);
+    expect(saved).toEqual({ name: 'review', description: 'Review the staged diff', source: 'project', path: file });
+    expect(fs.readFileSync(file, 'utf-8')).toBe(edited);
+  });
+
+  it('saves a personal skill in the home folder', async () => {
+    const file = ownSkill(fakeHome, 'review', review);
+    const saved = await saveSkillFile(worktree, CLAUDE_SKILL_DIRS, file, review, review.replace('bugs', 'races'));
+    expect(saved.source).toBe('user');
+    expect(fs.readFileSync(file, 'utf-8')).toContain('Look for races.');
+  });
+
+  it("reads and writes only files listSkills finds, so a path from the renderer can't reach others", async () => {
+    const other = path.join(worktree, 'notes.md');
+    fs.writeFileSync(other, review);
+    // A SKILL.md in a folder the agent doesn't read.
+    const elsewhere = path.join(worktree, 'docs', 'review', 'SKILL.md');
+    fs.mkdirSync(path.dirname(elsewhere), { recursive: true });
+    fs.writeFileSync(elsewhere, review);
+    for (const file of [other, elsewhere, path.join(worktree, '.claude', 'skills', '..', '..', 'notes.md')]) {
+      await expect(readSkillFile(worktree, CLAUDE_SKILL_DIRS, file)).rejects.toThrow("isn't in this thread's skill folders");
+      await expect(saveSkillFile(worktree, CLAUDE_SKILL_DIRS, file, review, 'x')).rejects.toThrow("isn't in this thread's skill folders");
+    }
+    expect(fs.readFileSync(other, 'utf-8')).toBe(review);
+    expect(fs.readFileSync(elsewhere, 'utf-8')).toBe(review);
+  });
+
+  it("edits a shared skill's own file through Claude Code's link, and updates the link", async () => {
+    writeSkill(worktree, { name: 'release-notes', description: 'Draft notes', instructions: 'Do the thing', scope: 'project' });
+    const linkPath = path.join(worktree, '.claude', 'skills', 'release-notes', 'SKILL.md');
+    const sharedPath = path.join(worktree, '.agents', 'skills', 'release-notes', 'SKILL.md');
+
+    const read = await readSkillFile(worktree, CLAUDE_SKILL_DIRS, linkPath);
+    expect(read).toEqual({ path: sharedPath, content: fs.readFileSync(sharedPath, 'utf-8'), linkPath });
+
+    const edited = read.content.replace('Draft notes', 'Draft release notes').replace('Do the thing', 'Do the other thing');
+    const saved = await saveSkillFile(worktree, CLAUDE_SKILL_DIRS, linkPath, read.content, edited);
+    // Listed as before: by the link Claude Code reads.
+    expect(saved).toEqual({ name: 'release-notes', description: 'Draft release notes', source: 'project', path: linkPath });
+    expect(fs.readFileSync(sharedPath, 'utf-8')).toBe(edited);
+    const link = fs.readFileSync(linkPath, 'utf-8');
+    expect(isSkillLink(link)).toBe(true);
+    expect(parseSkillFrontmatter(link).description).toBe('Draft release notes');
+    expect(link).not.toContain('other thing');
+  });
+
+  it('leaves a link alone when only the body changes, as it holds just the frontmatter', async () => {
+    writeSkill(worktree, { name: 'release-notes', description: 'Draft notes', instructions: 'Do the thing', scope: 'project' });
+    const linkPath = path.join(worktree, '.claude', 'skills', 'release-notes', 'SKILL.md');
+    // As git on Windows may check it out.
+    fs.writeFileSync(linkPath, fs.readFileSync(linkPath, 'utf-8').replace(/\n/g, '\r\n'));
+    const before = fs.readFileSync(linkPath, 'utf-8');
+    const read = await readSkillFile(worktree, CLAUDE_SKILL_DIRS, linkPath);
+    await saveSkillFile(worktree, CLAUDE_SKILL_DIRS, linkPath, read.content, read.content.replace('Do the thing', 'Do it well'));
+    expect(fs.readFileSync(linkPath, 'utf-8')).toBe(before);
+  });
+
+  it('says when a link points at a shared skill that is gone', async () => {
+    writeSkill(worktree, { name: 'release-notes', description: 'Draft notes', instructions: 'Do the thing', scope: 'project' });
+    fs.rmSync(path.join(worktree, '.agents'), { recursive: true });
+    const linkPath = path.join(worktree, '.claude', 'skills', 'release-notes', 'SKILL.md');
+    await expect(readSkillFile(worktree, CLAUDE_SKILL_DIRS, linkPath)).rejects.toThrow('which is gone');
+  });
+
+  it('writes nothing when the file changed after it was read', async () => {
+    const file = ownSkill(worktree, 'review', review);
+    const read = await readSkillFile(worktree, CLAUDE_SKILL_DIRS, file);
+    const agentEdit = review.replace('bugs', 'typos');
+    fs.writeFileSync(file, agentEdit);
+    await expect(saveSkillFile(worktree, CLAUDE_SKILL_DIRS, file, read.content, review.replace('bugs', 'races')))
+      .rejects.toThrow('changed after you opened it');
+    expect(fs.readFileSync(file, 'utf-8')).toBe(agentEdit);
+  });
+
+  it('refuses a rename, by the name or by dropping it for a different folder name, and an empty file', async () => {
+    const file = ownSkill(worktree, 'review-folder', review);
+    for (const text of [review.replace('name: review', 'name: audit'), review.replace('name: review\n', ''), '  \n']) {
+      await expect(saveSkillFile(worktree, CLAUDE_SKILL_DIRS, file, review, text)).rejects.toThrow(/Keep the name "review"|can't be empty/);
+    }
+    expect(fs.readFileSync(file, 'utf-8')).toBe(review);
+  });
+
+  it('lets a skill named by its folder drop or add a matching name line', async () => {
+    const plain = '---\ndescription: Review\n---\nBody\n';
+    const file = ownSkill(worktree, 'review', plain);
+    await saveSkillFile(worktree, CLAUDE_SKILL_DIRS, file, plain, '---\nname: review\ndescription: Review\n---\nBody\n');
+    expect(parseSkillFrontmatter(fs.readFileSync(file, 'utf-8')).name).toBe('review');
+  });
+
+  it('keeps CRLF line endings and a byte order mark, and hands the editor plain LF text', async () => {
+    const file = ownSkill(worktree, 'review', `\uFEFF${review.replace(/\n/g, '\r\n')}`);
+    const read = await readSkillFile(worktree, CLAUDE_SKILL_DIRS, file);
+    expect(read.content).toBe(review);
+    await saveSkillFile(worktree, CLAUDE_SKILL_DIRS, file, read.content, review.replace('bugs', 'races'));
+    expect(fs.readFileSync(file, 'utf-8')).toBe(`\uFEFF${review.replace('bugs', 'races').replace(/\n/g, '\r\n')}`);
   });
 });
 

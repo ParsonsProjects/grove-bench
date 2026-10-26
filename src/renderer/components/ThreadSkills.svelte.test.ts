@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
-import { render, cleanup, screen, fireEvent, waitFor } from '@testing-library/svelte';
+import { render, cleanup, screen, fireEvent, waitFor, within } from '@testing-library/svelte';
 import { mockGroveBench } from '../__mocks__/setup.js';
 
 import ThreadSkills from './ThreadSkills.svelte';
@@ -9,6 +9,7 @@ import { agentsStore } from '../stores/agents.svelte.js';
 import { settingsStore } from '../stores/settings.svelte.js';
 import { schedulesStore } from '../stores/schedules.svelte.js';
 import { skillsPanelStore } from '../stores/skillsPanel.svelte.js';
+import { messageStore } from '../stores/messages.svelte.js';
 
 const skills = [{ name: 'triage', description: 'Sort new issues', source: 'project' as const }];
 
@@ -31,6 +32,8 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   skillsPanelStore.close();
+  skillsPanelStore.collapsed = [];
+  delete messageStore.systemInfoBySession.t1;
   store.sessions = [];
   store.repos = [];
   settingsStore.current = { ...settingsStore.current, disabledSkills: [] };
@@ -184,5 +187,85 @@ describe('ThreadSkills', () => {
     expect(run.compareDocumentPosition(ask) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     // Not red: only the base's aria-invalid styles name destructive.
     expect(screen.getByRole('button', { name: 'Disable' }).className).not.toMatch(/(^|\s)(text|border)-destructive/);
+  });
+
+  /** The running agent reports a skill with no file Grove can scan. */
+  function pluginSkill() {
+    messageStore.systemInfoBySession.t1 = { tools: [], agents: [], skills: ['engineering:code-review'], slashCommands: [], mcpServers: [] };
+  }
+
+  const many = [
+    { name: 'release-notes', description: 'Draft notes from merged pull requests', source: 'project' as const, path: '/repo/.claude/skills/release-notes/SKILL.md' },
+    { name: 'triage', description: 'Sort new issues', source: 'project' as const, path: '/repo/.claude/skills/triage/SKILL.md' },
+    { name: 'deploy', description: 'Ship to staging', source: 'user' as const, path: '/home/me/.claude/skills/deploy/SKILL.md' },
+  ];
+
+  it('lists skills in sections by where they live, with counts, plugin ones from the agent last', async () => {
+    thread('claude-code');
+    mockGroveBench.listSkills.mockResolvedValue(many);
+    pluginSkill();
+    render(ThreadSkills, { sessionId: 't1' });
+    await screen.findByRole('button', { name: 'Run deploy in a new thread' });
+    const headings = screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent?.replace(/\s+/g, ' ').trim());
+    expect(headings).toEqual([
+      'Project 2 In this project, for anyone working on it',
+      'Personal 1 In your user folder, for all your projects',
+      'Plugin and built-in 1 From the running agent, with no file to edit',
+    ]);
+    const personal = screen.getByRole('region', { name: /^Personal/ });
+    expect(within(personal).getByText('deploy')).toBeInTheDocument();
+    expect(within(personal).queryByText('triage')).toBeNull();
+  });
+
+  it('folds a section away, and searches every section by name and description', async () => {
+    thread('gemini-cli');
+    mockGroveBench.listSkills.mockResolvedValue(many);
+    render(ThreadSkills, { sessionId: 't1' });
+    const project = await screen.findByRole('button', { name: /^Project/ });
+    await fireEvent.click(project);
+    expect(project).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('button', { name: 'Run triage in a new thread' })).toBeNull();
+
+    // A search shows every match, folded section or not.
+    const search = screen.getByRole('searchbox', { name: 'Search skills' });
+    await fireEvent.input(search, { target: { value: 'pull requests' } });
+    expect(screen.getByRole('button', { name: 'Run release-notes in a new thread' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Run triage in a new thread' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: /^Personal/ })).toBeNull();
+
+    await fireEvent.input(search, { target: { value: 'kubernetes' } });
+    expect(screen.getByText('No skills match "kubernetes".')).toBeInTheDocument();
+
+    await fireEvent.input(search, { target: { value: '' } });
+    expect(screen.queryByRole('button', { name: 'Run triage in a new thread' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Run deploy in a new thread' })).toBeInTheDocument();
+  });
+
+  it('edits a skill with a file, even one turned off, in place of the list', async () => {
+    thread('claude-code');
+    settingsStore.current = { ...settingsStore.current, disabledSkills: ['triage'] };
+    mockGroveBench.listSkills.mockResolvedValue(many);
+    mockGroveBench.readSkill.mockResolvedValue({ path: many[1].path, content: '---\nname: triage\n---\n' });
+    pluginSkill();
+    render(ThreadSkills, { sessionId: 't1' });
+    await screen.findByRole('button', { name: 'Edit triage' });
+    // A skill only the agent reports has no file to edit.
+    expect(screen.queryByRole('button', { name: 'Edit engineering:code-review' })).toBeNull();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Edit triage' }));
+    expect(skillsPanelStore.edit).toMatchObject({ sessionId: 't1', skill: many[1] });
+    expect(await screen.findByRole('textbox', { name: 'SKILL.md for triage' })).toBeInTheDocument();
+    expect(screen.queryByRole('searchbox')).toBeNull();
+    expect(screen.queryByRole('button', { name: /Add skill/ })).toBeNull();
+  });
+
+  it("marks Claude Code's own skills that other agents can't see yet", async () => {
+    thread('claude-code');
+    mockGroveBench.listSkills.mockResolvedValue(many);
+    mockGroveBench.getSkillSharing.mockResolvedValueOnce({ toShare: [many[1]], toLink: [], broken: [] });
+    render(ThreadSkills, { sessionId: 't1' });
+    const badge = await screen.findByText('Claude only');
+    expect(badge.closest('div')).toHaveTextContent('triage');
+    expect(screen.getAllByText('Claude only')).toHaveLength(1);
   });
 });
