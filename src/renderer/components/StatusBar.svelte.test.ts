@@ -751,6 +751,7 @@ describe('StatusBar PR', () => {
 describe('StatusBar activity', () => {
   afterEach(() => {
     delete messageStore.messagesBySession[ACTIVE];
+    delete messageStore.messagesBySession[HIDDEN];
     messageStore.isRunning = {};
   });
 
@@ -792,7 +793,21 @@ describe('StatusBar activity', () => {
     store.activeSessionId = HIDDEN;
     await tick();
     expect(screen.getByRole('button', { name: /^2 tools/ })).toBeInTheDocument();
-    delete messageStore.messagesBySession[HIDDEN];
+  });
+
+  it('closes the pending tools popover when its conversation is hidden', async () => {
+    const tool = { kind: 'tool_call', id: 't', toolName: 'Bash', toolUseId: 'tu1', toolInput: { command: 'ls' }, pending: true } as any;
+    messageStore.messagesBySession[ACTIVE] = [tool];
+    render(StatusBar, { props: { sessionId: ACTIVE } });
+    await fireEvent.click(screen.getByRole('button', { name: /^1 tool/ }));
+    expect(screen.queryByText('Pending Tools')).not.toBeNull();
+
+    store.activeSessionId = HIDDEN;
+    await tick();
+    store.activeSessionId = ACTIVE;
+    await tick();
+
+    expect(screen.queryByText('Pending Tools')).toBeNull();
   });
 
   describe('subagents', () => {

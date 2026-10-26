@@ -260,6 +260,37 @@ describe('OutputPanel — bookmark jumps', () => {
     await vi.waitFor(() => expect(find).toHaveBeenCalledWith(SID, 40));
     await vi.waitFor(() => expect(messageStore.pendingJumpBySession[SID]).toBeUndefined());
   });
+
+  it('waits for the thread to be open again when the user switches away mid-jump', async () => {
+    Element.prototype.scrollIntoView = vi.fn();
+    store.activeSessionId = SID;
+    messageStore.setViewMode(SID, 'summary');
+    messageStore.messagesBySession = { [SID]: [{ kind: 'text', id: 'm1', text: 'recent', uuid: 'a1' }] };
+    let finishPaging!: () => void;
+    const paging = vi.spyOn(messageStore, 'loadOlderUntil').mockImplementationOnce(() => new Promise<void>((r) => { finishPaging = r; }));
+    paging.mockResolvedValue();
+    // The target is paged in while the user is away.
+    vi.spyOn(messageStore, 'findMessageForEvent').mockResolvedValue('m0');
+    render(OutputPanel, { sessionId: SID });
+
+    messageStore.requestJump(SID, { eventIndex: 0, uuid: null, bookmarkId: 'A' });
+    await tick();
+    store.activeSessionId = 'another';
+    messageStore.messagesBySession = { [SID]: [{ kind: 'text', id: 'm0', text: 'deep', uuid: 'a0' }, { kind: 'text', id: 'm1', text: 'recent', uuid: 'a1' }] };
+    finishPaging();
+    await vi.waitFor(() => expect(paging).toHaveBeenCalledTimes(1));
+    await new Promise((r) => setTimeout(r, 0));
+
+    // Not looked for in the chat as it stood: no fallback view, no fallback text.
+    expect(messageStore.getViewMode(SID)).toBe('summary');
+    expect(messageStore.pendingJumpBySession[SID]).toBeDefined();
+
+    store.activeSessionId = SID;
+    await vi.waitFor(() => expect(messageStore.pendingJumpBySession[SID]).toBeUndefined());
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
+    expect(messageStore.getViewMode(SID)).toBe('summary');
+    messageStore.viewModeBySession = {};
+  });
 });
 
 describe('OutputPanel — live reply', () => {
@@ -551,12 +582,72 @@ describe("OutputPanel: a hidden conversation's chat", () => {
 
   it('draws much that came meanwhile newest first, then the rest a batch per frame', async () => {
     const { container } = await workOutOfSight(5, 30);
+    const kept = container.querySelector('[data-msg-id="m2"]');
 
     store.activeSessionId = SID;
     await tick();
 
-    expect(drawn(container)).toEqual(Array.from({ length: 10 }, (_, i) => `m${20 + i}`));
-    await vi.waitFor(() => expect(drawn(container)).toHaveLength(30));
+    const ids = (from: number, to: number) => Array.from({ length: to - from }, (_, i) => `m${from + i}`);
+    expect(drawn(container)).toEqual([...ids(0, 5), ...ids(20, 30)]);
+    await vi.waitFor(() => expect(drawn(container)).toEqual(ids(0, 30)));
+    // The rows drawn before are the same rows, with whatever was opened in them.
+    expect(container.querySelector('[data-msg-id="m2"]')).toBe(kept);
+  });
+
+  it('draws a history replaced while hidden as a load', async () => {
+    const { container } = await workOutOfSight(12, 12);
+    messageStore.messagesBySession = {
+      [SID]: Array.from({ length: 12 }, (_, i) => ({ kind: 'text', id: `n${i}`, text: `again ${i}`, uuid: `b${i}` })) as never,
+    };
+
+    store.activeSessionId = SID;
+    await tick();
+
+    expect(drawn(container)).toEqual(['n2', 'n3', 'n4', 'n5', 'n6', 'n7', 'n8', 'n9', 'n10', 'n11']);
+    await vi.waitFor(() => expect(drawn(container)).toHaveLength(12));
+  });
+
+  it("isn't drawn again when its view changed while hidden", async () => {
+    messageStore.setViewMode(SID, 'summary');
+    messageStore.messagesBySession = {
+      [SID]: [...replies(12), ...Array.from({ length: 12 }, (_, i) => ({ kind: 'thinking', id: `t${i}`, thinking: 'Hmm' }))] as never,
+    };
+    const { container } = render(OutputPanel, { sessionId: SID });
+    await vi.waitFor(() => expect(drawn(container)).toHaveLength(12));
+    store.activeSessionId = 'another';
+    await tick();
+    // Detailed shows the thinking too: the hidden chat redraws with it.
+    messageStore.setViewMode(SID, 'detailed');
+    await vi.waitFor(() => expect(drawn(container)).toHaveLength(24));
+    const kept = container.querySelector('[data-msg-id="m2"]');
+
+    store.activeSessionId = SID;
+    await tick();
+
+    expect(drawn(container)).toHaveLength(24);
+    expect(container.querySelector('[data-msg-id="m2"]')).toBe(kept);
+  });
+
+  it('follows the conversation again when a prompt went out while hidden', async () => {
+    messageStore.messagesBySession = { [SID]: replies(5) as never };
+    const { container, findByTitle, queryByTitle } = render(OutputPanel, { sessionId: SID });
+    const el = container.querySelector<HTMLElement>('.overflow-y-auto')!;
+    for (const [key, value] of Object.entries({ scrollTop: 0, scrollHeight: 2000, clientHeight: 500 })) {
+      Object.defineProperty(el, key, { configurable: true, writable: true, value });
+    }
+    el.dispatchEvent(new Event('scroll'));
+    await findByTitle('Scroll to bottom');
+    store.activeSessionId = 'another';
+    await tick();
+    // A prompt queued before leaving goes out, and the agent answers it.
+    messageStore.messagesBySession = {
+      [SID]: [...replies(5), { kind: 'user', id: 'u1', text: 'next' }, { kind: 'text', id: 'r1', text: 'Done', uuid: 'b1' }] as never,
+    };
+
+    store.activeSessionId = SID;
+    await tick();
+
+    expect(queryByTitle('Scroll to bottom')).toBeNull();
   });
 
   it('draws a little that came meanwhile at once', async () => {
@@ -675,11 +766,43 @@ describe('OutputPanel: the first turn', () => {
       { kind: 'text', id: 't1', text: 'On it', uuid: 'a1' },
     ] };
     await tick();
-    // Hidden, the chat stands still, the scene with it.
+    // Hidden, the chat stands still: the reply isn't in it yet.
     expect(arrivalScene.for(SID)).not.toBeNull();
 
     store.activeSessionId = SID;
     await tick();
+    expect(arrivalScene.for(SID)).toBeNull();
+  });
+
+  it('ends while hidden when the agent stops without a reply', async () => {
+    store.sessions = [session('running')];
+    messageStore.messagesBySession = { [SID]: [{ kind: 'user', id: 'u1', text: 'Fix it' }] };
+    arrivalScene.begin(SID);
+    render(OutputPanel, { sessionId: SID });
+    store.activeSessionId = 'another';
+    await tick();
+
+    store.sessions = [session('error')];
+    await tick();
+
+    expect(arrivalScene.for(SID)).toBeNull();
+  });
+
+  it("doesn't begin again while hidden once the live reply has ended it", async () => {
+    store.sessions = [session('running')];
+    messageStore.messagesBySession = { [SID]: [{ kind: 'user', id: 'u1', text: 'Fix it' }] };
+    arrivalScene.begin(SID);
+    render(OutputPanel, { sessionId: SID });
+    store.activeSessionId = 'another';
+    await tick();
+    messageStore.streamingText = { [SID]: 'On it' };
+    await tick();
+    expect(arrivalScene.for(SID)).toBeNull();
+
+    // The reply is final: the live text clears, and the chat, standing still, doesn't show it yet.
+    messageStore.streamingText = {};
+    await tick();
+
     expect(arrivalScene.for(SID)).toBeNull();
   });
 

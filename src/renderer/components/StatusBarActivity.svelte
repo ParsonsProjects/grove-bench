@@ -63,6 +63,10 @@
 
   let tasksExpanded = $state(false);
   let bgTasksExpanded = $state(false);
+  // Hidden, the pending tools chip stays (its list keeps what it last
+  // showed), so it can't close its popover by going away as the tools
+  // finish. Close it here, or it would come back open on a later set.
+  $effect(() => { if (!threadOpen) tasksExpanded = false; });
 
   function openSubagent(toolUseId: string) {
     tasksExpanded = false;
