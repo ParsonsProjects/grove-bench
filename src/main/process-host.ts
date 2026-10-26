@@ -67,7 +67,8 @@ import {
   HOST_READY, isHostReply, isHostStarted, isSpawnEvent, reviveError, serializeError,
   type HostedOptions, type HostReply, type HostRequest, type ProcessResult, type SpawnEvent, type SpawnRequest,
 } from './process-host-protocol.js';
-import { createSpawnRunner, HostedProcess, type SpawnRunner } from './process-host-spawn.js';
+import { createSpawnRunner, HostedProcess, type KillTree, type SpawnRunner } from './process-host-spawn.js';
+import { killTreeWith } from './process-tree-kill.js';
 
 export type { HostedOptions, ProcessResult } from './process-host-protocol.js';
 export type { HostedProcess } from './process-host-spawn.js';
@@ -150,6 +151,9 @@ export interface ProcessHostDeps {
   runHere: (file: string, args: string[], options?: HostedOptions) => Promise<unknown>;
   /** Start processes in this process, posting what they do. */
   spawnHere?: (post: (event: SpawnEvent) => void) => SpawnRunner;
+  /** Kill the tree of a process that started in this process (the host
+   *  down), as the host kills those it started. By default with runHere. */
+  killTreeHere?: KillTree;
   /** Stop a process the host started, once the host is gone. */
   killPid?: (pid: number) => void;
   now?: () => number;
@@ -203,6 +207,8 @@ export function createProcessHost(deps: ProcessHostDeps) {
   const note = deps.note ?? noteInLogs;
   const name = deps.name ?? 'process host';
   const timeOutput = deps.timeOutput ?? ((_chars: number, deliver: () => void) => deliver());
+  const killTreeHere = deps.killTreeHere
+    ?? ((pid: number) => killTreeWith(pid, (file, args, options) => deps.runHere(file, args, options) as Promise<ProcessResult>));
 
   let state: State = 'idle';
   let host: HostProcess | null = null;
@@ -563,7 +569,7 @@ export function createProcessHost(deps: ProcessHostDeps) {
     const request: Omit<SpawnRequest, 'id'> = { type: 'spawn', file, args, ...spawnOptions };
     const launch = (inHost: boolean) => {
       // Stopped before it started: there's nothing to start.
-      if (proc.killed) {
+      if (proc.stopRequested) {
         proc.lost();
         return;
       }
@@ -597,7 +603,8 @@ export function createProcessHost(deps: ProcessHostDeps) {
         });
         return;
       }
-      const runner = (deps.spawnHere ?? createSpawnRunner)((event) => deliver(proc, event));
+      const post = (event: SpawnEvent) => deliver(proc, event);
+      const runner = deps.spawnHere ? deps.spawnHere(post) : createSpawnRunner(post, killTreeHere);
       runner.handle({ ...request, id: 0 });
       proc.connect((command) => runner.handle({ ...command, id: 0 }));
     };
@@ -733,6 +740,10 @@ const processHost = createProcessHost({
 const agentHost = createProcessHost({
   fork: () => utilityProcess.fork(hostScriptPath(), [], { serviceName: 'Grove agent host' }),
   runHere: runInMain,
+  // An agent started here (the agent host down) has its tree killed with
+  // taskkill (ps off Windows) in the git host, as process-tree.ts runs it:
+  // never waiting for that host, and run again if it dies under it.
+  killTreeHere: (pid) => killTreeWith(pid, (file, args, options) => processHost.run(file, args, { ...options, idempotent: true, urgent: true }) as Promise<ProcessResult>),
   name: 'agent host',
   runs: 'agents',
   timeOutput: freezeLog.timeAgentOutput,

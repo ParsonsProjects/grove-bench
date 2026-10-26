@@ -10,7 +10,9 @@
  * ChildProcess the agent SDK expects (stdin, stdout, exitCode, kill, 'exit')
  * and follows the SpawnEvents it is given. createSpawnRunner starts the real
  * process and reports those events; it runs in the host, or in the main
- * process when the host is down. Only Node (and cross-spawn) here: the host
+ * process when the host is down. It also kills a process's tree when asked
+ * (HostedProcess.killTree): it holds the process until it exits, so its pid
+ * can't be another process's yet. Only Node (and cross-spawn) here: the host
  * has no `app`.
  */
 import { spawn as nodeSpawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
@@ -20,6 +22,11 @@ import { Readable, Writable } from 'node:stream';
 import {
   reviveError, serializeError, type SpawnEvent, type SpawnRequest, type StdioRequest,
 } from './process-host-protocol.js';
+
+/** How long killTree waits for its answer: a process still waiting for its
+ *  host waits up to HOST_START_TIMEOUT_MS (after RESTART_DELAY_MS), and
+ *  taskkill then has 10 s (process-tree-kill.ts). */
+export const TREE_KILL_ANSWER_MS = 30_000;
 
 type WithoutId<T> = T extends unknown ? Omit<T, 'id'> : never;
 /** Input for, or a request to stop, a process: a StdioRequest before it is
@@ -49,6 +56,8 @@ export class HostedProcess extends EventEmitter {
   private stderrEnded = false;
   private send: ((command: ProcessCommand) => void) | null = null;
   private queued: ProcessCommand[] = [];
+  /** Asked for by killTree; settled by its answer, or by the close. */
+  private treeKill: { promise: Promise<boolean>; settle: (result: boolean | Error) => void } | null = null;
 
   constructor(readonly label: string) {
     super();
@@ -83,22 +92,44 @@ export class HostedProcess extends EventEmitter {
     return true;
   }
 
-  /** Resolves with the pid once the OS has created the process (its host
-   *  reports it a moment after spawnProcess returns), or with undefined if
-   *  it ends without starting. */
-  started(): Promise<number | undefined> {
-    if (this.pid !== undefined || this.exited || this.closed) return Promise.resolve(this.pid);
-    return new Promise((resolve) => {
-      const done = () => {
-        this.off('spawn', done);
-        this.off('exit', done);
-        this.off('close', done);
-        resolve(this.pid);
+  /**
+   * Kill the process and everything it started, from where it runs: that
+   * holds it until it exits, so its pid is still its own (Windows gives an
+   * exited process's pid to the next process it starts, but not while a
+   * handle to it is open). Needs no pid here, so it works just after
+   * spawnProcess returns; asked for before the process has started, it
+   * never starts. Resolves true once the tree is killed, false when there
+   * was nothing to kill (it never started, or exited first: what it left
+   * running can't be traced back to it then). Rejects when the kill failed,
+   * its host went first, or no answer came within TREE_KILL_ANSWER_MS.
+   * Asked again, it gives the same answer.
+   */
+  killTree(): Promise<boolean> {
+    if (this.treeKill) return this.treeKill.promise;
+    if (this.exited || this.closed) return Promise.resolve(false);
+    let settle!: (result: boolean | Error) => void;
+    const promise = new Promise<boolean>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        settle(new Error(`No answer within ${TREE_KILL_ANSWER_MS / 1000} s to killing ${this.label}'s process tree`));
+      }, TREE_KILL_ANSWER_MS);
+      timer.unref?.();
+      settle = (result) => {
+        clearTimeout(timer);
+        if (result instanceof Error) reject(result);
+        else resolve(result);
       };
-      this.on('spawn', done);
-      this.on('exit', done);
-      this.on('close', done);
     });
+    this.treeKill = { promise, settle };
+    this.command({ type: 'kill-tree' });
+    return promise;
+  }
+
+  /** Asked to stop (kill) or to kill its tree (killTree), so a launch still
+   *  waiting for its host doesn't start it. `killed` stays false for a tree
+   *  kill, as Node leaves it for a process killed by another: the agent SDK
+   *  reads it, and still stops a process whose tree kill failed. */
+  get stopRequested(): boolean {
+    return this.killed || this.treeKill !== null;
   }
 
   /** Apply what the process did. */
@@ -131,6 +162,9 @@ export class HostedProcess extends EventEmitter {
       case 'exit':
         this.exit(event.code, event.signal as NodeJS.Signals | null);
         break;
+      case 'tree-killed':
+        this.treeKill?.settle(event.failure !== undefined ? new Error(event.failure) : event.killed);
+        break;
       case 'close':
         this.close();
         break;
@@ -142,6 +176,8 @@ export class HostedProcess extends EventEmitter {
    *  being stopped at quit. */
   lost(hostDied = false): void {
     if (hostDied && !this.exited) this.hostDied = true;
+    // It started: its tree may not have been killed.
+    if (this.pid !== undefined) this.treeKill?.settle(new Error(`The process host stopped before ${this.label}'s process tree was killed`));
     this.exit(null, 'SIGKILL');
     this.close();
   }
@@ -166,6 +202,9 @@ export class HostedProcess extends EventEmitter {
     this.endStderr();
     this.closed = true;
     this.queued = [];
+    // Its tree-killed came first, if it had one: closed without it, it never
+    // started, or exited before the request reached it.
+    this.treeKill?.settle(false);
     this.emit('close', this.exitCode, this.signalCode);
   }
 
@@ -186,17 +225,44 @@ export interface SpawnRunner {
   handle(request: SpawnRequest | StdioRequest): void;
 }
 
+/** Kill a process and everything under it; resolves with why it failed,
+ *  if it did (killTreeWith, process-tree-kill.ts). */
+export type KillTree = (pid: number) => Promise<string | undefined>;
+
 /**
- * Start processes and run their input and stop requests, posting what each
- * one does. Output is decoded as UTF-8 here, so a character split across two
- * reads still arrives whole.
+ * Start processes and run their input, stop and tree-kill requests, posting
+ * what each one does. Output is decoded as UTF-8 here, so a character split
+ * across two reads still arrives whole.
  */
 export function createSpawnRunner(
   post: (event: SpawnEvent) => void,
+  killTree: KillTree,
   spawn: typeof nodeSpawn = nodeSpawn,
   now: () => number = () => performance.now(),
 ): SpawnRunner {
   const children = new Map<number, ChildProcess>();
+  /** Tree kills running, by id. `closed`: the process has closed meanwhile,
+   *  and its close is posted after the answer. */
+  const killing = new Map<number, { closed: boolean }>();
+
+  function killTreeOf(id: number, child: ChildProcess): void {
+    if (killing.has(id)) return;
+    // Exited: Node has let go of it, and Windows may give its pid to another
+    // process. Whatever it left running can't be traced back to it now.
+    if (child.pid === undefined || child.exitCode !== null || child.signalCode !== null) {
+      post({ type: 'tree-killed', id, killed: false });
+      return;
+    }
+    const kill = { closed: false };
+    killing.set(id, kill);
+    void killTree(child.pid)
+      .catch((e: unknown) => (e instanceof Error ? e.message : String(e)))
+      .then((failure) => {
+        killing.delete(id);
+        post(failure === undefined ? { type: 'tree-killed', id, killed: true } : { type: 'tree-killed', id, killed: false, failure });
+        if (kill.closed) post({ type: 'close', id });
+      });
+  }
 
   function start({ id, file, args, cwd, env, findCommand, stdout, shell }: SpawnRequest): void {
     const startedAt = now();
@@ -257,7 +323,10 @@ export function createSpawnRunner(
     });
     child.on('close', () => {
       children.delete(id);
-      post({ type: 'close', id });
+      // Close comes last: after the answer to a tree kill still running.
+      const kill = killing.get(id);
+      if (kill) kill.closed = true;
+      else post({ type: 'close', id });
     });
   }
 
@@ -274,6 +343,7 @@ export function createSpawnRunner(
           case 'stdin': child.stdin?.write(request.data); break;
           case 'stdin-end': child.stdin?.end(); break;
           case 'kill': child.kill(request.signal as NodeJS.Signals); break;
+          case 'kill-tree': killTreeOf(request.id, child); break;
         }
       } catch { /* it has already gone */ }
     },

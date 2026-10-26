@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { HostedProcess } from './process-host-spawn.js';
+import { HostedProcess, type ProcessCommand } from './process-host-spawn.js';
 
 // The command starts in the agent host (spawnProcess), never here.
 const hosted = vi.hoisted(() => ({ spawnProcess: vi.fn(), spawnProcessInHost: vi.fn() }));
@@ -9,13 +9,11 @@ vi.mock('./process-host.js', async (importOriginal) => ({
   spawnProcessInHost: hosted.spawnProcessInHost,
 }));
 vi.mock('execa', () => ({ execa: vi.fn() }));
-vi.mock('./process-tree.js', () => ({ killTree: vi.fn(async () => {}) }));
 vi.mock('./logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
 import { execa } from 'execa';
-import { killTree } from './process-tree.js';
 import { HOST_STOPPED_MESSAGE } from './process-host.js';
 import { recordCommandPids, runInAgentHost, START_WAIT_MS } from './process-host-run.js';
 import { isNetworkError } from './gh.js';
@@ -38,6 +36,13 @@ function nextCommand() {
       send({ type: 'close', id: 1 });
     },
   };
+}
+
+/** What a process its host doesn't have yet will be sent: connects it. */
+function sentOnConnect(proc: HostedProcess): ProcessCommand[] {
+  const sent: ProcessCommand[] = [];
+  proc.connect((command) => sent.push(command));
+  return sent;
 }
 
 beforeEach(() => {
@@ -173,7 +178,8 @@ describe('runInAgentHost', () => {
     cmd.started(4321);
     cmd.stdout('figma: checking');
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(killTree).toHaveBeenCalledWith(4321);
+    // Killed by the agent host, which has it.
+    expect(sentOnConnect(cmd.proc)).toEqual([{ type: 'kill-tree' }]);
     expect(await failed).toMatchObject({ message: expect.stringMatching(/^Command timed out after 60000 milliseconds: claude mcp list/), timedOut: true, stdout: 'figma: checking' });
   });
 
@@ -189,10 +195,10 @@ describe('runInAgentHost', () => {
     cmd.started(4321);
     await vi.advanceTimersByTimeAsync(29_999);
     expect(settled).toBe(false);
-    expect(killTree).not.toHaveBeenCalled();
+    expect(cmd.proc.stopRequested).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
     expect(await failed).toMatchObject({ timedOut: true, message: expect.stringMatching(/^Command timed out after 30000 milliseconds: gh pr view b/) });
-    expect(killTree).toHaveBeenCalledWith(4321);
+    expect(sentOnConnect(cmd.proc)).toEqual([{ type: 'kill-tree' }]);
   });
 
   it('runs its time limit at once when it started in this process (the agent host down), as spawn reported before returning', async () => {
@@ -203,7 +209,7 @@ describe('runInAgentHost', () => {
     const failed = runInAgentHost('claude', ['auth', 'status'], { timeout: 15_000 }).catch((e: unknown) => e);
     await vi.advanceTimersByTimeAsync(15_000);
     expect(await failed).toMatchObject({ timedOut: true });
-    expect(killTree).toHaveBeenCalledWith(55);
+    expect(sentOnConnect(proc)).toEqual([{ type: 'kill-tree' }]);
   });
 
   it(`stops a command that hasn't started within START_WAIT_MS, and fails it, not as timed out (gh's offline cooldown)`, async () => {
@@ -218,20 +224,16 @@ describe('runInAgentHost', () => {
     const error = await failed;
     expect(error).toMatchObject({ message: `Command didn't start within ${START_WAIT_MS / 1000} s: gh pr view b`, timedOut: false, failed: true });
     expect(isNetworkError(error)).toBe(false);
-    // Still waiting for the host: it never starts there. Asked to stop, the
-    // host would never have it (spawn drops a killed process).
-    expect(cmd.proc.killed).toBe(true);
-    const sent: unknown[] = [];
-    cmd.proc.connect((command) => sent.push(command));
-    expect(sent).toEqual([{ type: 'kill', signal: 'SIGTERM' }]);
-    // Or, if the host had it already, it is killed with its tree once it
-    // has started.
-    expect(killTree).not.toHaveBeenCalled();
-    cmd.started(88);
-    expect(killTree).toHaveBeenCalledWith(88);
+    // Still waiting for the host: it never starts there (spawn drops a
+    // process asked to stop). Or, if the host had it already, the host
+    // kills it with its tree once it has started it.
+    expect(cmd.proc.stopRequested).toBe(true);
+    const sent = sentOnConnect(cmd.proc);
+    expect(sent).toEqual([{ type: 'kill-tree' }]);
     // Its time limit never starts, and it isn't run again.
+    cmd.started(88);
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(killTree).toHaveBeenCalledOnce();
+    expect(sent).toEqual([{ type: 'kill-tree' }]);
     expect(hosted.spawnProcess).toHaveBeenCalledOnce();
   });
 
@@ -256,7 +258,7 @@ describe('runInAgentHost', () => {
     cmd.exited(0);
     await vi.advanceTimersByTimeAsync(60_000);
     expect(await failed).toMatchObject({ timedOut: true });
-    expect(killTree).not.toHaveBeenCalled();
+    expect(sentOnConnect(cmd.proc)).toEqual([]);
   });
 
   it('runs an idempotent command again once if the host dies under it', async () => {
@@ -281,7 +283,7 @@ describe('runInAgentHost', () => {
     cmd.started(4321);
     await vi.advanceTimersByTimeAsync(30_000);
     expect(await failed).toMatchObject({ timedOut: true, message: expect.stringMatching(/^Command timed out after 30000 milliseconds: gh pr view b/) });
-    expect(killTree).toHaveBeenCalledWith(4321);
+    expect(sentOnConnect(cmd.proc)).toEqual([{ type: 'kill-tree' }]);
     // Killed, it closes: that is no host dying.
     cmd.exit(null, 'SIGTERM');
     await vi.advanceTimersByTimeAsync(0);

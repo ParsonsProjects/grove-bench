@@ -35,7 +35,6 @@ import { RunningCost } from '../running-cost.js';
 import { runProcess, spawnProcess } from '../../process-host.js';
 import type { HostedProcess } from '../../process-host-spawn.js';
 import { getApiKey } from '../../credentials.js';
-import { killTree } from '../../process-tree.js';
 import { logger } from '../../logger.js';
 import { isReadOnlyToolCall } from '../../read-only-tools.js';
 import { loadAgentSignIn, loadModelCatalog, saveAgentSignIn, saveModelCatalog } from '../../app-state.js';
@@ -413,11 +412,7 @@ export class AcpAdapter implements AgentAdapter {
       rpc.close();
       // On Windows the agent runs under npm's .cmd shim: kill() would stop
       // only cmd.exe and leave the agent running in the folder.
-      // No pid yet (the host hasn't said it started): kill() reaches it once it does.
-      if (proc.exitCode === null) {
-        if (proc.pid) await killTree(proc.pid).catch(() => proc.kill());
-        else proc.kill();
-      }
+      await proc.killTree().catch(() => proc.kill());
       try {
         fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
       } catch (e) {
@@ -708,9 +703,9 @@ class AcpQuery {
       getSessionId: () => this.sessionId,
       closeInput: () => { /* prompts are sent one at a time; nothing to close */ },
       processId,
-      processStarted: async () => {
-        await this.proc?.started();
-        return processId();
+      killProcessTree: async () => {
+        const proc = this.proc;
+        return proc && (await proc.killTree()) ? proc.pid : undefined;
       },
       setModel: (model) => this.setModel(model),
       setPermissionMode: (mode) => { this.groveMode = mode; },

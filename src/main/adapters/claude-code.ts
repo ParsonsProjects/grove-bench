@@ -2132,9 +2132,9 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
       processId: runningPid,
 
-      async processStarted() {
-        await agentProcess?.started();
-        return runningPid();
+      async killProcessTree() {
+        const proc = agentProcess;
+        return proc && (await proc.killTree()) ? proc.pid : undefined;
       },
 
       processExe() {

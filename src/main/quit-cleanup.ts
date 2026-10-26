@@ -1,7 +1,8 @@
 import { logger } from './logger.js';
 
-/** Longest a quit waits for agents and shells to stop. Above killTree's own
- *  list + kill timeouts (10s each), so it only cuts off a hang. */
+/** Longest a quit waits for agents and shells to stop. Above a tree kill's
+ *  own list + kill timeouts (10s each, process-tree-kill.ts), so it only
+ *  cuts off a hang. */
 export const QUIT_CLEANUP_TIMEOUT_MS = 30_000;
 
 /**

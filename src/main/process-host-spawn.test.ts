@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
+import { readFileSync } from 'node:fs';
 import { PassThrough } from 'node:stream';
 
 // cross-spawn's parse, as it would wrap an npm shim on Windows, recorded.
@@ -20,8 +21,13 @@ vi.mock('cross-spawn', () => ({
   },
 }));
 
-import { createSpawnRunner, HostedProcess, type ProcessCommand } from './process-host-spawn.js';
+import { createSpawnRunner, HostedProcess, TREE_KILL_ANSWER_MS, type KillTree, type ProcessCommand } from './process-host-spawn.js';
 import type { SpawnEvent } from './process-host-protocol.js';
+import { killTreeWith } from './process-tree-kill.js';
+import { execa } from 'execa';
+
+/** A runner's tree kill that does nothing, for tests that don't ask for one. */
+const noKill: KillTree = () => Promise.resolve(undefined);
 
 /** Let stream events (they come on the next tick) run. */
 const settle = () => new Promise((r) => setImmediate(r));
@@ -31,10 +37,15 @@ function setPlatform(platform: NodeJS.Platform) {
   Object.defineProperty(process, 'platform', { value: platform, configurable: true });
 }
 
+/** Real processes a test started, to stop if a failed test left them running. */
+const startedPids: number[] = [];
+
 afterEach(() => {
+  vi.useRealTimers();
   setPlatform(realPlatform);
   found.clear();
   parseCalls.length = 0;
+  for (const pid of startedPids.splice(0)) if (isRunning(pid)) process.kill(pid);
 });
 
 describe('HostedProcess', () => {
@@ -126,55 +137,106 @@ describe('HostedProcess', () => {
     expect(proc.signalCode).toBe('SIGKILL');
   });
 
-  describe('started()', () => {
-    it('resolves with the pid once its host reports the launch', async () => {
+  describe('killTree()', () => {
+    it('asks where it runs once connected, and resolves true once that has killed the tree', async () => {
       const proc = new HostedProcess('claude.exe');
-      let pid: number | undefined | 'waiting' = 'waiting';
-      void proc.started().then((p) => { pid = p; });
-      await settle();
-      expect(pid).toBe('waiting');
+      const killed = proc.killTree();
+      // So a launch still waiting for its host doesn't start it.
+      expect(proc.stopRequested).toBe(true);
+      // Unlike kill(): the agent SDK stops a process itself unless it was
+      // killed, which this one may not have been yet.
+      expect(proc.killed).toBe(false);
+      const sent: ProcessCommand[] = [];
+      proc.connect((c) => sent.push(c));
+      expect(sent).toEqual([{ type: 'kill-tree' }]);
 
+      proc.receive({ type: 'tree-killed', id: 1, killed: true });
+      await expect(killed).resolves.toBe(true);
+    });
+
+    it('resolves false when there was nothing to kill', async () => {
+      const proc = new HostedProcess('claude.exe');
+      proc.connect(() => {});
+      const killed = proc.killTree();
+      proc.receive({ type: 'tree-killed', id: 1, killed: false });
+      await expect(killed).resolves.toBe(false);
+    });
+
+    it('rejects with what went wrong when the kill failed', async () => {
+      const proc = new HostedProcess('claude.exe');
+      proc.connect(() => {});
+      const killed = proc.killTree();
+      proc.receive({ type: 'tree-killed', id: 1, killed: false, failure: 'taskkill 4242 failed: ERROR: Access is denied.' });
+      await expect(killed).rejects.toThrow('taskkill 4242 failed: ERROR: Access is denied.');
+    });
+
+    it('asked again, gives the same answer, asking once', async () => {
+      const proc = new HostedProcess('claude.exe');
+      const sent: ProcessCommand[] = [];
+      proc.connect((c) => sent.push(c));
+      const first = proc.killTree();
+      const second = proc.killTree();
+      expect(second).toBe(first);
+      expect(sent).toEqual([{ type: 'kill-tree' }]);
+      proc.receive({ type: 'tree-killed', id: 1, killed: true });
+      await expect(second).resolves.toBe(true);
+    });
+
+    it('resolves false at once for a process that has exited or closed, asking nothing', async () => {
+      const exited = new HostedProcess('claude.exe');
+      const sent: ProcessCommand[] = [];
+      exited.connect((c) => sent.push(c));
+      exited.receive({ type: 'exit', id: 1, code: 0, signal: null });
+      const closed = new HostedProcess('claude.exe');
+      closed.lost();
+
+      await expect(exited.killTree()).resolves.toBe(false);
+      await expect(closed.killTree()).resolves.toBe(false);
+      expect(sent).toEqual([]);
+      expect(exited.stopRequested).toBe(false);
+    });
+
+    it('resolves false when it closes without an answer: it never started, or exited before the request reached it', async () => {
+      const neverStarted = new HostedProcess('claude.exe');
+      const killed = neverStarted.killTree();
+      // What process-host.ts does with a process killed before its launch.
+      neverStarted.lost();
+      await expect(killed).resolves.toBe(false);
+    });
+
+    it('rejects when its host goes before answering, once the process had started', async () => {
+      const proc = new HostedProcess('claude.exe');
+      proc.connect(() => {});
       proc.receive({ type: 'spawned', id: 1, pid: 4242, launchMs: 5 });
-      await settle();
-      expect(pid).toBe(4242);
-      expect(proc.listenerCount('spawn') + proc.listenerCount('exit') + proc.listenerCount('close')).toBe(0);
+      const killed = proc.killTree();
+      proc.lost(true);
+      await expect(killed).rejects.toThrow("The process host stopped before claude.exe's process tree was killed");
     });
 
-    it('resolves with undefined for a process that failed to start or was lost', async () => {
-      const failed = new HostedProcess('claude.exe');
-      const failedPid = failed.started();
-      failed.receive({ type: 'error', id: 1, error: { name: 'Error', message: 'spawn claude.exe ENOENT', code: 'ENOENT' } });
-      failed.receive({ type: 'close', id: 1 });
-      const lost = new HostedProcess('claude.exe');
-      const lostPid = lost.started();
-      lost.lost(true);
-
-      expect(await failedPid).toBeUndefined();
-      expect(await lostPid).toBeUndefined();
-    });
-
-    it('resolves at once for a process already started or ended', async () => {
-      const running = new HostedProcess('claude.exe');
-      running.receive({ type: 'spawned', id: 1, pid: 77, launchMs: 5 });
-      const ended = new HostedProcess('claude.exe');
-      ended.lost();
-
-      expect(await running.started()).toBe(77);
-      expect(await ended.started()).toBeUndefined();
+    it(`rejects when no answer comes within ${TREE_KILL_ANSWER_MS / 1000} s`, async () => {
+      vi.useFakeTimers();
+      const proc = new HostedProcess('claude.exe');
+      proc.connect(() => {});
+      let outcome = 'waiting';
+      proc.killTree().then(() => { outcome = 'resolved'; }, (e: Error) => { outcome = e.message; });
+      await vi.advanceTimersByTimeAsync(TREE_KILL_ANSWER_MS - 1);
+      expect(outcome).toBe('waiting');
+      await vi.advanceTimersByTimeAsync(1);
+      expect(outcome).toBe(`No answer within ${TREE_KILL_ANSWER_MS / 1000} s to killing claude.exe's process tree`);
     });
   });
 });
 
 describe('createSpawnRunner', () => {
   /** Run a request through a runner with real processes; resolve on close. */
-  function run(script: string, onSpawned?: (runner: ReturnType<typeof createSpawnRunner>) => void) {
+  function run(script: string, onSpawned?: (runner: ReturnType<typeof createSpawnRunner>) => void, killTree: KillTree = noKill) {
     const events: SpawnEvent[] = [];
     return new Promise<SpawnEvent[]>((resolve) => {
       const runner = createSpawnRunner((event) => {
         events.push(event);
         if (event.type === 'spawned') onSpawned?.(runner);
         if (event.type === 'close') resolve(events);
-      });
+      }, killTree);
       runner.handle({ type: 'spawn', id: 5, file: process.execPath, args: ['-e', script], env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } });
     });
   }
@@ -212,7 +274,7 @@ describe('createSpawnRunner', () => {
       const runner = createSpawnRunner((event) => {
         events.push(event);
         if (event.type === 'close') resolve();
-      });
+      }, noKill);
       runner.handle({ type: 'spawn', id: 9, file: '/no/such/claude', args: [] });
     });
     expect(events.find((e) => e.type === 'spawned')).toBeUndefined();
@@ -224,8 +286,8 @@ describe('createSpawnRunner', () => {
     const fakeSpawn = ((file: string, args: readonly string[], options: Record<string, unknown>) => {
       calls.push({ file, args, options });
       throw new Error('not starting it');
-    }) as unknown as Parameters<typeof createSpawnRunner>[1];
-    const runner = createSpawnRunner(() => {}, fakeSpawn);
+    }) as unknown as Parameters<typeof createSpawnRunner>[2];
+    const runner = createSpawnRunner(() => {}, noKill, fakeSpawn);
     runner.handle({ type: 'spawn', id: 1, file: 'gemini', args: ['--acp'], cwd: '/w', findCommand: true });
     runner.handle({ type: 'spawn', id: 2, file: '/abs/claude', args: ['--x'], cwd: '/w' });
     expect(parseCalls).toEqual([{ command: 'gemini', args: ['--acp'] }]);
@@ -236,8 +298,8 @@ describe('createSpawnRunner', () => {
   it('reports a start Node throws (EINVAL) on the next tick, as Node reports the others', async () => {
     const events: SpawnEvent[] = [];
     const einval = Object.assign(new Error('spawn EINVAL'), { code: 'EINVAL', errno: -4071, syscall: 'spawn' });
-    const throwing = (() => { throw einval; }) as unknown as Parameters<typeof createSpawnRunner>[1];
-    const runner = createSpawnRunner((event) => events.push(event), throwing);
+    const throwing = (() => { throw einval; }) as unknown as Parameters<typeof createSpawnRunner>[2];
+    const runner = createSpawnRunner((event) => events.push(event), noKill, throwing);
     runner.handle({ type: 'spawn', id: 3, file: 'C:\\tools\\agent.bat', args: [] });
     // Nothing yet: run in the main process, it would reach the
     // HostedProcess before spawnProcess had returned it.
@@ -254,8 +316,8 @@ describe('createSpawnRunner', () => {
     const fakeSpawn = ((file: string, args: readonly string[], options: Record<string, unknown>) => {
       calls.push({ file, args, options });
       throw new Error('not starting it');
-    }) as unknown as Parameters<typeof createSpawnRunner>[1];
-    const runner = createSpawnRunner(() => {}, fakeSpawn);
+    }) as unknown as Parameters<typeof createSpawnRunner>[2];
+    const runner = createSpawnRunner(() => {}, noKill, fakeSpawn);
     runner.handle({ type: 'spawn', id: 1, file: 'claude', args: ['mcp', 'remove', '"my server"'], cwd: '/w', shell: true, findCommand: true });
     expect(parseCalls).toEqual([]);
     expect(calls).toEqual([{ file: 'claude mcp remove "my server"', args: [], options: { cwd: '/w', env: undefined, stdio: 'pipe', windowsHide: true, shell: true } }]);
@@ -267,7 +329,7 @@ describe('createSpawnRunner', () => {
       const runner = createSpawnRunner((event) => {
         events.push(event);
         if (event.type === 'close') resolve();
-      });
+      }, noKill);
       runner.handle({ type: 'spawn', id: 3, file: 'echo', args: ['one', 'two'], shell: true });
     });
     expect(events.filter((e) => e.type === 'stdout').map((e) => (e as { data: string }).data).join('').trim()).toBe('one two');
@@ -280,7 +342,7 @@ describe('createSpawnRunner', () => {
       const runner = createSpawnRunner((event) => {
         events.push(event);
         if (event.type === 'close') resolve();
-      });
+      }, noKill);
       runner.handle({
         type: 'spawn', id: 6, file: process.execPath, stdout: 'ignore',
         args: ['-e', "process.stdout.write('added 1 package'); process.stderr.write('npm warn')"],
@@ -298,8 +360,8 @@ describe('createSpawnRunner', () => {
     const fakeSpawn = ((_file: string, _args: readonly string[], options: Record<string, unknown>) => {
       calls.push({ options });
       throw new Error('not starting it');
-    }) as unknown as Parameters<typeof createSpawnRunner>[1];
-    const runner = createSpawnRunner(() => {}, fakeSpawn);
+    }) as unknown as Parameters<typeof createSpawnRunner>[2];
+    const runner = createSpawnRunner(() => {}, noKill, fakeSpawn);
     runner.handle({ type: 'spawn', id: 1, file: 'npm', args: [], stdout: 'ignore', findCommand: true });
     runner.handle({ type: 'spawn', id: 2, file: 'claude', args: [] });
     expect(calls[0].options).toMatchObject({ stdio: ['pipe', 'ignore', 'pipe'], windowsVerbatimArguments: true });
@@ -313,7 +375,7 @@ describe('createSpawnRunner', () => {
     function exitsOne(file: string, findCommand = true) {
       const events: SpawnEvent[] = [];
       const child = Object.assign(new EventEmitter(), { pid: 77, stdin: new PassThrough(), stdout: null, stderr: null, kill: () => true });
-      const runner = createSpawnRunner((event) => events.push(event), (() => child) as unknown as Parameters<typeof createSpawnRunner>[1]);
+      const runner = createSpawnRunner((event) => events.push(event), noKill, (() => child) as unknown as Parameters<typeof createSpawnRunner>[2]);
       runner.handle({ type: 'spawn', id: 4, file, args: ['install'], findCommand });
       child.emit('exit', 1, null);
       child.emit('close', 1, null);
@@ -344,8 +406,135 @@ describe('createSpawnRunner', () => {
   });
 
   it('ignores input for a process it does not have', () => {
-    const runner = createSpawnRunner(() => {});
+    const runner = createSpawnRunner(() => {}, noKill);
     expect(() => runner.handle({ type: 'stdin', id: 404, data: 'x' })).not.toThrow();
     expect(() => runner.handle({ type: 'kill', id: 404, signal: 'SIGTERM' })).not.toThrow();
+    expect(() => runner.handle({ type: 'kill-tree', id: 404 })).not.toThrow();
+  });
+
+  describe('kill-tree', () => {
+    /** A stand-in process the runner starts, and the events it posts. */
+    function standIn(killTree: KillTree) {
+      const events: SpawnEvent[] = [];
+      const child = Object.assign(new EventEmitter(), {
+        pid: 77, exitCode: null as number | null, signalCode: null as string | null,
+        stdin: new PassThrough(), stdout: null, stderr: null, kill: () => true,
+      });
+      const runner = createSpawnRunner((event) => events.push(event), killTree, (() => child) as unknown as Parameters<typeof createSpawnRunner>[2]);
+      runner.handle({ type: 'spawn', id: 4, file: 'claude', args: [] });
+      const exit = (code: number) => {
+        child.exitCode = code;
+        child.emit('exit', code, null);
+        child.emit('close', code, null);
+      };
+      const posted = () => events.filter((e) => e.type !== 'spawned' && e.type !== 'stdout-end' && e.type !== 'stderr-end');
+      return { runner, child, exit, posted };
+    }
+
+    it('kills the tree of a running process by its pid, and closes it only after saying so', async () => {
+      let finish = (_failure?: string) => {};
+      const killTree = vi.fn<KillTree>(() => new Promise((resolve) => { finish = resolve; }));
+      const { runner, exit, posted } = standIn(killTree);
+
+      runner.handle({ type: 'kill-tree', id: 4 });
+      expect(killTree).toHaveBeenCalledWith(77);
+      // taskkill ends the process before it has finished with the tree.
+      exit(1);
+      expect(posted()).toEqual([{ type: 'exit', id: 4, code: 1, signal: null }]);
+
+      finish();
+      await settle();
+      expect(posted()).toEqual([
+        { type: 'exit', id: 4, code: 1, signal: null },
+        { type: 'tree-killed', id: 4, killed: true },
+        { type: 'close', id: 4 },
+      ]);
+    });
+
+    it('closes as usual when the process outlives the kill', async () => {
+      const { runner, exit, posted } = standIn(() => Promise.resolve(undefined));
+      runner.handle({ type: 'kill-tree', id: 4 });
+      await settle();
+      exit(0);
+      expect(posted()).toEqual([
+        { type: 'tree-killed', id: 4, killed: true },
+        { type: 'exit', id: 4, code: 0, signal: null },
+        { type: 'close', id: 4 },
+      ]);
+    });
+
+    it('kills nothing for a process that has exited: its pid may be another process\'s', () => {
+      const killTree = vi.fn<KillTree>(() => Promise.resolve(undefined));
+      const { runner, child, posted } = standIn(killTree);
+      child.exitCode = 0;
+      runner.handle({ type: 'kill-tree', id: 4 });
+      expect(killTree).not.toHaveBeenCalled();
+      expect(posted()).toEqual([{ type: 'tree-killed', id: 4, killed: false }]);
+    });
+
+    it('says why a kill failed, whether it resolved with the reason or threw', async () => {
+      const said = standIn(() => Promise.resolve('taskkill 77 failed: ERROR: Access is denied.'));
+      said.runner.handle({ type: 'kill-tree', id: 4 });
+      const threw = standIn(() => Promise.reject(new Error('spawn taskkill.exe ENOENT')));
+      threw.runner.handle({ type: 'kill-tree', id: 4 });
+      await settle();
+      expect(said.posted()).toEqual([{ type: 'tree-killed', id: 4, killed: false, failure: 'taskkill 77 failed: ERROR: Access is denied.' }]);
+      expect(threw.posted()).toEqual([{ type: 'tree-killed', id: 4, killed: false, failure: 'spawn taskkill.exe ENOENT' }]);
+    });
+
+    it('kills once when asked again while it is killing', async () => {
+      const killTree = vi.fn<KillTree>(() => Promise.resolve(undefined));
+      const { runner, posted } = standIn(killTree);
+      runner.handle({ type: 'kill-tree', id: 4 });
+      runner.handle({ type: 'kill-tree', id: 4 });
+      await settle();
+      expect(killTree).toHaveBeenCalledOnce();
+      expect(posted()).toEqual([{ type: 'tree-killed', id: 4, killed: true }]);
+    });
+
+    it('kills a real process and the process it started', async () => {
+      // The child prints its own child's pid, then both wait to be killed.
+      const script = [
+        "const c = require('child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });",
+        "console.log(c.pid);",
+        'setInterval(() => {}, 1000);',
+      ].join(' ');
+      let grandchild = 0;
+      const events = await new Promise<SpawnEvent[]>((resolve) => {
+        const seen: SpawnEvent[] = [];
+        const runner = createSpawnRunner((event) => {
+          seen.push(event);
+          if (event.type === 'spawned') startedPids.push(event.pid);
+          if (event.type === 'stdout' && !grandchild) {
+            grandchild = Number(event.data.trim());
+            startedPids.push(grandchild);
+            runner.handle({ type: 'kill-tree', id: 8 });
+          }
+          if (event.type === 'close') resolve(seen);
+        }, (pid) => killTreeWith(pid, (file, args, options) => execa(file, args, options)));
+        runner.handle({ type: 'spawn', id: 8, file: process.execPath, args: ['-e', script], env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } });
+      });
+      expect(grandchild).toBeGreaterThan(0);
+      expect(events).toContainEqual({ type: 'tree-killed', id: 8, killed: true });
+      expect(events.at(-1)).toEqual({ type: 'close', id: 8 });
+      await expect.poll(() => isRunning(grandchild), { timeout: 5_000 }).toBe(false);
+    }, 20_000);
   });
 });
+
+/** Whether `pid` is still running: not gone, and (on Linux) not a zombie
+ *  waiting for a parent that may never reap it. */
+function isRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+  } catch {
+    return false;
+  }
+  if (process.platform !== 'linux') return true;
+  try {
+    // The state follows the command name in brackets: "123 (node) Z ...".
+    return !/\) Z /.test(readFileSync(`/proc/${pid}/stat`, 'utf8'));
+  } catch {
+    return false;
+  }
+}

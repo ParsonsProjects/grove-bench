@@ -15,7 +15,8 @@
  * hung `gh pr` failed two checkpoints' `git add` and a `git commit-tree`
  * that way). The agent host isn't restarted for a hang: the
  * command is a spawned process there (spawnProcess), and its time limit is
- * kept here, killing the whole tree (killTree) rather than just cmd.exe.
+ * kept here, killing the whole tree (HostedProcess.killTree) rather than
+ * just cmd.exe.
  *
  * Main process only: unlike the other process-host-* files, the host
  * never loads this one.
@@ -24,7 +25,6 @@ import {
   HOST_STOPPED_MESSAGE, spawnProcess, spawnProcessInHost, type HostedOptions, type HostedProcess, type ProcessResult,
   type SpawnProcessOptions,
 } from './process-host.js';
-import { killTree } from './process-tree.js';
 import { logger } from './logger.js';
 
 /** The execa options runInAgentHost takes, read as execa reads them, and
@@ -125,7 +125,6 @@ function runOnce(file: string, args: string[], { cwd, env, extendEnv = true, she
           proc.off('spawn', started);
           // Still waiting for the host, it never starts; started there, it
           // is killed with its tree.
-          proc.kill();
           stopTree(proc, command);
           reject(failure(`Command didn't start within ${START_WAIT_MS / 1000} s`, command, output, {}));
         }, START_WAIT_MS);
@@ -146,16 +145,11 @@ function runOnce(file: string, args: string[], { cwd, env, extendEnv = true, she
 
 /** Kill a command that ran out of time (or of time to start), and
  *  everything it started: with a shell, the command itself is cmd.exe's
- *  child. Once the host says it has started, if it hasn't yet. Not once it
- *  has exited: its PID may be another process's by now, so whatever it left
- *  holding the pipes stays. */
+ *  child. Where it runs, so before the host has said it started too. Not
+ *  once it has exited: its PID may be another process's by now, so whatever
+ *  it left holding the pipes stays. */
 function stopTree(proc: HostedProcess, command: string): void {
-  const kill = () => {
-    if (proc.pid === undefined || proc.exitCode !== null || proc.signalCode !== null) return;
-    killTree(proc.pid).catch((e) => logger.warn(`[process-host] couldn't stop ${command}:`, e));
-  };
-  if (proc.pid === undefined) proc.once('spawn', kill);
-  else kill();
+  proc.killTree().catch((e: unknown) => logger.warn(`[process-host] couldn't stop ${command}:`, e));
 }
 
 /** An error shaped like execa's: what went wrong, then stderr and stdout. */

@@ -1,8 +1,8 @@
 /**
  * The commands the main process runs (taskkill, ps, the editor CLIs, where)
  * go to the process host, and npm install, the claude CLI, gh and typeperf
- * to the agent host: none starts in the main process, where a slow launch
- * freezes the window.
+ * to the agent host, which also kills their trees: none starts in the main
+ * process, where a slow launch freezes the window.
  *
  * The real hosts (process-host.ts) run here on stand-in utility processes.
  * execa and Node's child_process are mocked, so a command that started in
@@ -22,7 +22,7 @@ vi.mock('./credentials.js', () => ({ getApiKey: vi.fn(() => null) }));
 
 import { DEADLINE_MARGIN_MS, HOST_STOPPED_MESSAGE, RESTART_DELAY_MS, spawnProcess, startProcessHost, stopProcessHost } from './process-host.js';
 import { freezeLog } from './freeze-log.js';
-import { killTree, listProcesses } from './process-tree.js';
+import { killDescendants, listProcesses } from './process-tree.js';
 import { launchEditor } from './editor-launch.js';
 import { installDependencies } from './deps-install.js';
 import { ClaudeCodeAdapter } from './adapters/claude-code.js';
@@ -82,6 +82,11 @@ const held: ((code: number) => void)[] = [];
 /** An agent host that starts each process, which prints what respondSpawn
  *  says and exits, unless held. */
 const newAgentHost = () => new FakeUtilityProcess(5151, (message, host) => {
+  // A tree kill is done at once; the test ends the process (held).
+  if ((message as StdioRequest).type === 'kill-tree') {
+    host.emit('message', { type: 'tree-killed', id: (message as StdioRequest).id, killed: true });
+    return;
+  }
   const request = message as SpawnRequest;
   if (request.type !== 'spawn') return;
   const { id } = request;
@@ -112,6 +117,21 @@ let agentHost = newAgentHost();
 const commands = () => (processHost.sent as HostRequest[]).map(({ file, args, options }) => ({ file, args, options }));
 /** The processes the agent host was asked to start. */
 const spawns = () => (agentHost.sent as SpawnRequest[]).filter((m) => m.type === 'spawn');
+/** The tree kills the agent host was asked for. */
+const treeKills = () => (agentHost.sent as StdioRequest[]).filter((m) => m.type === 'kill-tree');
+
+/** The next fork() is node-pty's console list helper for a shell, which
+ *  lists `pids` as on the console (itself first). */
+function consoleHelper(pids: number[]) {
+  childProcess.fork.mockImplementationOnce(() => {
+    const helper = Object.assign(new EventEmitter(), { pid: pids[0], kill: vi.fn() });
+    queueMicrotask(() => {
+      helper.emit('message', { consoleProcessList: pids });
+      helper.emit('close', 0);
+    });
+    return helper;
+  });
+}
 
 const realPlatform = process.platform;
 function setPlatform(platform: NodeJS.Platform) {
@@ -147,12 +167,14 @@ afterEach(() => {
 });
 
 describe('commands the main process runs start in the process host', () => {
-  it('taskkill, when a thread closes or sleeps (killTree)', async () => {
+  it('taskkill, when a terminal closes (killDescendants)', async () => {
     setPlatform('win32');
-    await killTree(4242);
+    // The helper itself (9000), a dev server (700) and the shell (500).
+    consoleHelper([9000, 700, 500]);
+    expect(await killDescendants(500)).toEqual([700]);
     expect(commands()).toEqual([{
       file: expect.stringMatching(/\\System32\\taskkill\.exe$/i),
-      args: ['/PID', '4242', '/T', '/F'],
+      args: ['/PID', '700', '/T', '/F'],
       options: { timeout: 10_000, reject: false },
     }]);
   });
@@ -161,7 +183,7 @@ describe('commands the main process runs start in the process host', () => {
     setPlatform('linux');
     respond = () => ({ stdout: '1 0\n200 1\n' });
     expect(await listProcesses()).toEqual([{ pid: 1, ppid: 0 }, { pid: 200, ppid: 1 }]);
-    expect(commands()).toEqual([{ file: 'ps', args: ['-A', '-o', 'pid=,ppid='], options: { timeout: 10_000 } }]);
+    expect(commands()).toEqual([{ file: 'ps', args: ['-A', '-o', 'pid=,ppid='], options: { timeout: 10_000, reject: false } }]);
   });
 
   it('the editor CLI, to open a file (launchEditor)', async () => {
@@ -174,16 +196,18 @@ describe('commands the main process runs start in the process host', () => {
     mockExeca.mockResolvedValue({ stdout: '', stderr: '', exitCode: 0, failed: false, timedOut: false });
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     let opened: Promise<boolean>;
-    let killed: Promise<void>;
+    let killed: Promise<number[]>;
     try {
       processHost.emit('exit', 1);
       processHost = newProcessHost();
       opened = launchEditor('code', '/repo/src/a.ts', 7);
-      // Killing can't wait: the thread's processes keep running until then.
-      killed = killTree(4242);
+      // Killing can't wait: the terminal's processes keep running until then.
+      consoleHelper([9000, 700, 500]);
+      killed = killDescendants(500);
+      await new Promise((resolve) => setImmediate(resolve));
       expect(mockExeca.mock.calls).toEqual([[
         expect.stringMatching(/\\System32\\taskkill\.exe$/i),
-        ['/PID', '4242', '/T', '/F'],
+        ['/PID', '700', '/T', '/F'],
         { timeout: 10_000, reject: false },
       ]]);
       vi.advanceTimersByTime(RESTART_DELAY_MS);
@@ -271,7 +295,7 @@ describe('the claude CLI starts in the agent host, its lookup in the process hos
     ]);
   });
 
-  it('at its time limit, its whole tree is killed, by taskkill from the process host', async () => {
+  it('at its time limit, its whole tree is killed, by the agent host it runs in', async () => {
     setPlatform('win32');
     respondSpawn = () => ({ hold: true });
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
@@ -279,12 +303,9 @@ describe('the claude CLI starts in the agent host, its lookup in the process hos
       const listed = new ClaudeCodeAdapter().listConfiguredMcpServers('/repo').catch((e: unknown) => e);
       await vi.advanceTimersByTimeAsync(60_000);
       expect(await listed).toMatchObject({ timedOut: true });
-      // 999: cmd.exe, which the claude CLI runs under.
-      expect(commands()).toEqual([{
-        file: expect.stringMatching(/\\System32\\taskkill\.exe$/i),
-        args: ['/PID', '999', '/T', '/F'],
-        options: { timeout: 10_000, reject: false },
-      }]);
+      // cmd.exe, which the claude CLI runs under, and what it started.
+      expect(treeKills()).toEqual([{ type: 'kill-tree', id: spawns()[0].id }]);
+      expect(commands()).toEqual([]);
     } finally {
       vi.useRealTimers();
       for (const finish of held.splice(0)) finish(1);
@@ -372,7 +393,7 @@ describe('typeperf, for the health line, starts in the agent host', () => {
     });
   });
 
-  it('at its time limit, its whole tree is killed, by taskkill from the process host', async () => {
+  it('at its time limit, its whole tree is killed, by the agent host it runs in', async () => {
     setPlatform('win32');
     respondSpawn = () => ({ hold: true });
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
@@ -380,12 +401,8 @@ describe('typeperf, for the health line, starts in the agent host', () => {
       const measured = measure();
       await vi.advanceTimersByTimeAsync(TYPEPERF_TIMEOUT_MS);
       expect(await measured).toBeNull();
-      // 999: typeperf.exe.
-      expect(commands()).toEqual([{
-        file: expect.stringMatching(/\\System32\\taskkill\.exe$/i),
-        args: ['/PID', '999', '/T', '/F'],
-        options: { timeout: 10_000, reject: false },
-      }]);
+      expect(treeKills()).toEqual([{ type: 'kill-tree', id: spawns()[0].id }]);
+      expect(commands()).toEqual([]);
     } finally {
       vi.useRealTimers();
       for (const finish of held.splice(0)) finish(1);
@@ -473,11 +490,9 @@ describe('gh starts in the agent host, never in the process host with git', () =
       const added = git(['add', '-A'], '/wt');
       await vi.advanceTimersByTimeAsync(GH_TIMEOUT_MS);
       expect(await status).toMatchObject({ message: expect.stringMatching(/^gh pr view failed: Command timed out after 30000 milliseconds: gh pr view feat\/x /) });
-      // 999: gh, which taskkill /T stops with whatever it started.
-      expect(commands()).toEqual([
-        { file: 'git', args: ['add', '-A'], options: { cwd: '/wt' } },
-        { file: expect.stringMatching(/\\System32\\taskkill\.exe$/i), args: ['/PID', '999', '/T', '/F'], options: { timeout: 10_000, reject: false } },
-      ]);
+      // gh, killed with whatever it started by the agent host it runs in.
+      expect(treeKills()).toEqual([{ type: 'kill-tree', id: spawns()[0].id }]);
+      expect(commands()).toEqual([{ file: 'git', args: ['add', '-A'], options: { cwd: '/wt' } }]);
 
       // Long past when the process host would have been taken for hung,
       // had gh run there: nothing is killed or started again.
@@ -518,9 +533,8 @@ describe('gh starts in the agent host, never in the process host with git', () =
       expect(settled).toBe(false);
       await vi.advanceTimersByTimeAsync(1);
       expect(await status).toMatchObject({ message: expect.stringMatching(/^gh pr view failed: Command timed out after 30000 milliseconds: gh pr view feat\/x /) });
-      expect(commands()).toEqual([
-        { file: expect.stringMatching(/\\System32\\taskkill\.exe$/i), args: ['/PID', '999', '/T', '/F'], options: { timeout: 10_000, reject: false } },
-      ]);
+      expect(treeKills()).toEqual([{ type: 'kill-tree', id: spawns()[0].id }]);
+      expect(commands()).toEqual([]);
     } finally {
       vi.useRealTimers();
       kill.mockRestore();

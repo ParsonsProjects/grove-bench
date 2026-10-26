@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 import {
   createProcessHost, isReadOnly, type ProcessHostDeps, DEADLINE_MARGIN_MS, HEALTHY_UPTIME_MS, HOST_START_TIMEOUT_MS, HOST_STOPPED_MESSAGE, HOST_WAIT_MS,
@@ -1319,8 +1319,8 @@ describe('process host: spawned processes', () => {
     // The host down, the process starts in this process, inside spawn(); on
     // Windows Node throws EINVAL, EPERM or ENAMETOOLONG rather than emit them.
     const einval = Object.assign(new Error('spawn EINVAL'), { code: 'EINVAL', syscall: 'spawn' });
-    const throwing = (() => { throw einval; }) as unknown as Parameters<typeof createSpawnRunner>[1];
-    const { host } = setup({ spawnHere: (post) => createSpawnRunner(post, throwing) });
+    const throwing = (() => { throw einval; }) as unknown as Parameters<typeof createSpawnRunner>[2];
+    const { host } = setup({ spawnHere: (post) => createSpawnRunner(post, () => Promise.resolve(undefined), throwing) });
 
     const proc = host.spawn('npm', ['install'], { findCommand: true });
     const errors: Error[] = [];
@@ -1330,6 +1330,81 @@ describe('process host: spawned processes', () => {
 
     expect(errors).toEqual([expect.objectContaining({ code: 'EINVAL', message: 'spawn EINVAL' })]);
     expect(seen).toEqual(['close', 'out end']);
+  });
+
+  it("kills a process's tree in the host: asks it, and passes the answer on before the close", async () => {
+    const { host, latest } = setup();
+    host.start();
+    latest().ready();
+    const proc = host.spawn('C:\\sdk\\claude.exe', []);
+    const killed = proc.killTree();
+    expect(spawnOf(latest())).toEqual([
+      { type: 'spawn', id: 1, file: 'C:\\sdk\\claude.exe', args: [] },
+      { type: 'kill-tree', id: 1 },
+    ]);
+    latest().emit('message', { type: 'spawned', id: 1, pid: 42, launchMs: 5 });
+    latest().emit('message', { type: 'exit', id: 1, code: 1, signal: null });
+    latest().emit('message', { type: 'tree-killed', id: 1, killed: true });
+    latest().emit('message', { type: 'close', id: 1 });
+    await expect(killed).resolves.toBe(true);
+  });
+
+  it('a tree kill asked for before the host came up never starts the process', async () => {
+    const { host, local, latest } = setup();
+    host.start();
+    const proc = host.spawn('claude.exe', []);
+    const killed = proc.killTree();
+    latest().ready();
+    expect(latest().sent).toEqual([]);
+    expect(local).toEqual([]);
+    await expect(killed).resolves.toBe(false);
+  });
+
+  it('a tree kill the host dies before answering fails', async () => {
+    const { host, latest } = setup();
+    host.start();
+    latest().ready();
+    const proc = host.spawn('claude.exe', []);
+    latest().emit('message', { type: 'spawned', id: 1, pid: 42, launchMs: 5 });
+    const killed = proc.killTree();
+    latest().exit(1);
+    await expect(killed).rejects.toThrow("The process host stopped before claude.exe's process tree was killed");
+  });
+
+  describe('a process started here, the host down', () => {
+    const realPlatform = process.platform;
+    const started: HostedProcess[] = [];
+    afterEach(() => {
+      Object.defineProperty(process, 'platform', { value: realPlatform, configurable: true });
+      // One a failed test left running.
+      for (const proc of started.splice(0)) if (proc.pid && proc.exitCode === null && proc.signalCode === null) process.kill(proc.pid);
+    });
+    /** A real process that waits to be killed, started here: the host never started. */
+    function startHere(extra: Partial<ProcessHostDeps>) {
+      const down = setup({ spawnHere: undefined, ...extra });
+      const proc = down.host.spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } });
+      started.push(proc);
+      const closed = new Promise((resolve) => proc.once('close', resolve));
+      return { ...down, proc, closed };
+    }
+
+    it('has its tree killed with killTreeHere', async () => {
+      const killTreeHere = vi.fn((pid: number) => { process.kill(pid); return Promise.resolve(undefined); });
+      const { proc, closed } = startHere({ killTreeHere });
+      expect(proc.pid).toBeGreaterThan(0);
+      await expect(proc.killTree()).resolves.toBe(true);
+      expect(killTreeHere).toHaveBeenCalledWith(proc.pid);
+      await closed;
+    });
+
+    it('by default with the commands this process runs (runHere)', async () => {
+      // ps, then a kill: the same on every platform the tests run on.
+      Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+      const { proc, closed, runHere } = startHere({});
+      await expect(proc.killTree()).resolves.toBe(true);
+      expect(runHere).toHaveBeenCalledWith('ps', ['-A', '-o', 'pid=,ppid='], { timeout: 10_000, reject: false });
+      await closed;
+    });
   });
 
   it('a process stopped before the host came up never starts', () => {

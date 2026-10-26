@@ -2,52 +2,30 @@ import path from 'node:path';
 import { fork } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { logger } from './logger.js';
-import { runProcess, type ProcessResult } from './process-host.js';
+import { runProcess } from './process-host.js';
+import {
+  isKillable, killPids, listProcessesWith, taskkillWith, treeOf, type ProcessEntry, type RunCommand,
+} from './process-tree-kill.js';
 
 /**
- * Kill the processes a conversation started.
- *
- * Closing a conversation has to stop its terminal shell and agent process and
- * everything those launched: dev servers, watchers, test runners. Killing only
- * the parent is not enough. On Windows a child outlives its parent and keeps
- * its listening ports and file handles open; on POSIX it is re-parented to
- * init and keeps running. Either way it can no longer be traced back to its
- * parent, so a tree is killed from its root while the root is still running.
- *
- * Nothing here may start PowerShell. AVG and Avast's behaviour shield
- * (IDP.HELU.PSE*) treats a hidden PowerShell started by electron.exe as
- * malware: it kills the app and quarantines electron.exe. On Windows the
- * killing is done by taskkill, which ships with Windows and walks the tree
- * itself.
+ * Kill what runs in a terminal (killDescendants), from the main process. How
+ * a tree is killed, and why taskkill, is in process-tree-kill.ts; an agent's
+ * tree is killed by the agent host, which started it (HostedProcess.killTree).
  *
  * taskkill (and ps) start in the process host (runProcess), so a slow launch
- * never freezes the window: they run whenever a thread closes or sleeps. At
- * quit they still have the host, which stops only after the threads have
- * closed (will-quit, index.ts); once it has stopped they run here. They
- * never wait for a host that is starting or restarting (`urgent`): the
- * processes keep running until they are killed, so they run here then.
+ * never freezes the window: they run whenever a terminal closes. At quit
+ * they still have the host, which stops only after the threads have closed
+ * (will-quit, index.ts); once it has stopped they run here. They never wait
+ * for a host that is starting or restarting (`urgent`): the processes keep
+ * running until they are killed, so they run here then. Killing is safe to
+ * repeat (`idempotent`): if the host dies, stops answering or stops (at quit)
+ * while taskkill runs, it runs again in the main process.
  */
 
-export interface ProcessEntry {
-  pid: number;
-  ppid: number;
-}
-
-const KILL_TIMEOUT_MS = 10_000;
 const LIST_TIMEOUT_MS = 10_000;
 
-/** Kill `pid` and every process under it. `pid` must still be the caller's
- *  process (it holds a handle to it, or has not seen it exit): Windows hands
- *  an exited process's PID to the next process it starts. */
-export async function killTree(pid: number): Promise<void> {
-  if (!isKillable(pid)) return;
-  if (process.platform === 'win32') {
-    await taskkill([pid]);
-    return;
-  }
-  const tree = treeOf(await listProcesses(), pid);
-  killPids(tree.length > 0 ? tree.map((p) => p.pid) : [pid]);
-}
+/** taskkill and ps in the process host, never waiting for it. */
+const run: RunCommand = (file, args, options) => runProcess(file, args, { ...options, idempotent: true, urgent: true });
 
 /**
  * Kill everything started from a PTY shell, leaving the shell itself to its
@@ -61,35 +39,13 @@ export async function killTree(pid: number): Promise<void> {
 export async function killDescendants(shellPid: number): Promise<number[]> {
   if (process.platform === 'win32') {
     const roots = (await consoleProcesses(shellPid)).filter((pid) => pid !== shellPid && isKillable(pid));
-    await taskkill(roots);
+    const failure = await taskkillWith(roots, run);
+    if (failure) logger.warn(`[process-tree] ${failure}`);
     return roots;
   }
   const pids = treeOf(await listProcesses(), shellPid).slice(1).map((p) => p.pid);
   killPids(pids);
   return pids;
-}
-
-async function taskkill(pids: number[]): Promise<void> {
-  if (pids.length === 0) return;
-  // Full path, so a taskkill.exe in the worktree or on PATH can't stand in.
-  const exe = path.win32.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'taskkill.exe');
-  const args = [...pids.flatMap((pid) => ['/PID', String(pid)]), '/T', '/F'];
-  let result: ProcessResult;
-  try {
-    // No console window: execa hides it by default. Killing is safe to
-    // repeat (idempotent): if the host dies, stops answering or stops (at
-    // quit) while taskkill runs, it runs again in the main process. It
-    // can't wait for a restarting host (urgent): it runs here at once.
-    result = await runProcess(exe, args, { timeout: KILL_TIMEOUT_MS, reject: false, idempotent: true, urgent: true });
-  } catch (e) {
-    logger.warn(`[process-tree] taskkill ${pids.join(', ')} failed:`, e instanceof Error ? e.message : String(e));
-    return;
-  }
-  // 128: one of them had already exited.
-  if (result.failed && result.exitCode !== 128) {
-    const why = result.stderr || (result.timedOut ? 'timed out' : `exit code ${result.exitCode ?? 'none'}`);
-    logger.warn(`[process-tree] taskkill ${pids.join(', ')} failed:`, why);
-  }
 }
 
 /**
@@ -136,8 +92,8 @@ function consoleProcesses(shellPid: number): Promise<number[]> {
 let inflight: Promise<ProcessEntry[]> | null = null;
 
 /** Every process on the machine, from `ps` (POSIX only). Empty when the
- *  process table can't be read. Concurrent callers (every conversation
- *  closing at app quit) share one query. */
+ *  process table can't be read. Concurrent callers (every terminal closing
+ *  at app quit) share one query. */
 export function listProcesses(): Promise<ProcessEntry[]> {
   inflight ??= queryProcesses().finally(() => { inflight = null; });
   return inflight;
@@ -145,67 +101,9 @@ export function listProcesses(): Promise<ProcessEntry[]> {
 
 async function queryProcesses(): Promise<ProcessEntry[]> {
   try {
-    // It finds the tree to kill (off Windows), so it doesn't wait either (urgent).
-    const { stdout } = await runProcess('ps', ['-A', '-o', 'pid=,ppid='], { timeout: LIST_TIMEOUT_MS, idempotent: true, urgent: true });
-    return parseProcessList(stdout);
+    return await listProcessesWith(run);
   } catch (err) {
     logger.warn('[process-tree] could not list processes:', err);
     return [];
-  }
-}
-
-/** Parse `pid ppid` lines. */
-export function parseProcessList(stdout: string): ProcessEntry[] {
-  const entries: ProcessEntry[] = [];
-  for (const line of stdout.split(/\r?\n/)) {
-    const [pid, ppid] = line.trim().split(/\s+/).map(Number);
-    if (!Number.isInteger(pid) || !Number.isInteger(ppid)) continue;
-    entries.push({ pid, ppid });
-  }
-  return entries;
-}
-
-/** `rootPid` and every process under it in `table`, parents before children.
- *  Empty when the root isn't in the table. `isChild` can turn down a process
- *  that names a parent which can't be it (one started after it, whose PID
- *  Windows reused). */
-export function treeOf<T extends ProcessEntry>(
-  table: T[],
-  rootPid: number,
-  isChild: (child: T, parent: T) => boolean = () => true,
-): T[] {
-  const root = table.find((p) => p.pid === rootPid);
-  if (!root) return [];
-  const childrenOf = new Map<number, T[]>();
-  for (const p of table) {
-    const siblings = childrenOf.get(p.ppid);
-    if (siblings) siblings.push(p);
-    else childrenOf.set(p.ppid, [p]);
-  }
-  const tree = [root];
-  const seen = new Set([root.pid]);
-  for (let i = 0; i < tree.length; i++) {
-    for (const child of childrenOf.get(tree[i].pid) ?? []) {
-      if (seen.has(child.pid) || !isChild(child, tree[i])) continue;
-      seen.add(child.pid);
-      tree.push(child);
-    }
-  }
-  return tree;
-}
-
-/** Never this process, or PID 0, which on POSIX signals our own process group. */
-function isKillable(pid: number): boolean {
-  return pid > 0 && pid !== process.pid;
-}
-
-/** Parents go first so a supervisor (nodemon, concurrently) can't respawn a
- *  child between the two kills. */
-function killPids(pids: number[]): void {
-  for (const pid of pids) {
-    if (!isKillable(pid)) continue;
-    try {
-      process.kill(pid, 'SIGKILL');
-    } catch { /* already gone, or not ours to kill */ }
   }
 }

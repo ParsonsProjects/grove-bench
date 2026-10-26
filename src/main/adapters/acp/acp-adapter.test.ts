@@ -507,12 +507,13 @@ describe('AcpAdapter', () => {
     }
   }, SPAWNS_TIMEOUT_MS);
 
-  it('reports its pid once the agent has launched, for a close straight after start()', async () => {
+  it('kills its agent with its process tree for a close straight after start(), saying which pid', async () => {
     const handle = await new AcpAdapter(def()).start(config());
     try {
-      const pid = await handle.processStarted!();
-      expect(pid).toEqual(expect.any(Number));
-      expect(handle.processId!()).toBe(pid);
+      const running = handle.processId!();
+      expect(running).toEqual(expect.any(Number));
+      await expect(handle.killProcessTree!()).resolves.toBe(running);
+      await vi.waitFor(() => expect(handle.processId!()).toBeUndefined());
     } finally {
       handle.close();
     }

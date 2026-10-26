@@ -104,7 +104,8 @@ export const HOST_READY = 'grove-process-host-ready';
 /**
  * Start a long-running process whose output streams back as it comes (an
  * agent's program), rather than a command that is waited for. Its input, and
- * a request to stop it, follow as StdioRequests with the same id.
+ * requests to stop it or kill its tree, follow as StdioRequests with the
+ * same id.
  */
 export interface SpawnRequest {
   type: 'spawn';
@@ -128,25 +129,31 @@ export interface SpawnRequest {
   shell?: boolean;
 }
 
+/** 'kill-tree': kill the process and everything it started, from where it
+ *  runs, which holds it until it exits (HostedProcess.killTree). */
 export type StdioRequest =
   | { type: 'stdin'; id: number; data: string | Uint8Array }
   | { type: 'stdin-end'; id: number }
-  | { type: 'kill'; id: number; signal: string };
+  | { type: 'kill'; id: number; signal: string }
+  | { type: 'kill-tree'; id: number };
 
 /** What a spawned process did, in the order it did it. Output is text:
  *  the host decodes it as UTF-8, so no character is split between two
- *  messages. `close` comes last, once the process has exited and its output
- *  has ended. */
+ *  messages. `tree-killed` answers a kill-tree: `killed` false when the
+ *  process had already exited, so there was nothing to kill, and `failure`
+ *  when the kill failed. `close` comes last, once the process has exited,
+ *  its output has ended and a tree kill asked for has finished. */
 export type SpawnEvent =
   | { type: 'spawned'; id: number; pid: number; launchMs: number }
   | { type: 'stdout' | 'stderr'; id: number; data: string }
   | { type: 'stdout-end' | 'stderr-end'; id: number }
   | { type: 'stdin-error' | 'error'; id: number; error: SerializedError }
   | { type: 'exit'; id: number; code: number | null; signal: string | null }
+  | { type: 'tree-killed'; id: number; killed: boolean; failure?: string }
   | { type: 'close'; id: number };
 
-const SPAWN_EVENT_TYPES = new Set(['spawned', 'stdout', 'stderr', 'stdout-end', 'stderr-end', 'stdin-error', 'error', 'exit', 'close']);
-const STDIO_REQUEST_TYPES = new Set(['stdin', 'stdin-end', 'kill']);
+const SPAWN_EVENT_TYPES = new Set(['spawned', 'stdout', 'stderr', 'stdout-end', 'stderr-end', 'stdin-error', 'error', 'exit', 'tree-killed', 'close']);
+const STDIO_REQUEST_TYPES = new Set(['stdin', 'stdin-end', 'kill', 'kill-tree']);
 
 const RESULT_FIELDS = [
   'stdout', 'stderr', 'exitCode', 'failed', 'timedOut', 'isCanceled', 'isTerminated', 'isMaxBuffer',
