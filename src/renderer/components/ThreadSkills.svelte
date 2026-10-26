@@ -10,6 +10,7 @@
    * past threads.
    */
   import { onMount } from 'svelte';
+  import { Portal } from 'bits-ui';
   import { messageStore } from '../stores/messages.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
@@ -35,11 +36,10 @@
   import ClockIcon from '@lucide/svelte/icons/clock';
   import SparklesIcon from '@lucide/svelte/icons/sparkles';
   import RefreshIcon from '@lucide/svelte/icons/refresh-cw';
-  import PencilIcon from '@lucide/svelte/icons/pencil';
   import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
-  import ShareIcon from '@lucide/svelte/icons/share-2';
-  import CopyPlusIcon from '@lucide/svelte/icons/copy-plus';
+  import EllipsisIcon from '@lucide/svelte/icons/ellipsis';
   import SkillCard from './SkillCard.svelte';
+  import ContextMenu from './ContextMenu.svelte';
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -173,6 +173,42 @@
       copying = null;
       refresh();
     }
+  }
+
+  // ─── A card's menu (⋯, or right-click): what doesn't fit on it ───
+
+  let menu = $state<{ x: number; y: number; skill: SkillInfo } | null>(null);
+
+  /** What a skill's menu offers. Turning one off sits apart: it's not about
+   *  its file. */
+  function menuItems(skill: SkillInfo) {
+    const items: { label: string; action: () => void; disabled?: boolean; separator?: boolean }[] = [];
+    if (skill.path && skill.source !== 'session') {
+      items.push({ label: 'Edit SKILL.md', action: () => skillsPanelStore.editSkill(sessionId, skill) });
+    }
+    if (skill.path && claudeOnly.has(skill.path)) {
+      items.push({ label: 'Share with every agent', action: () => void shareSkill(skill), disabled: sharingBusy });
+    }
+    if (skill.path && skill.source === 'project') {
+      items.push({ label: 'Copy to personal', action: () => void copyToPersonal(skill), disabled: copying !== null });
+    }
+    if (managed && !disabledSkills.includes(skill.name)) {
+      items.push({ label: 'Disable', action: () => void setSkillEnabled(skill.name, false), disabled: skillsBusy[skill.name], separator: items.length > 0 });
+    }
+    return items;
+  }
+
+  /** Under the card's ⋯ button. */
+  function openMenuBelow(e: MouseEvent, skill: SkillInfo) {
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    menu = { x: rect.left, y: rect.bottom + 2, skill };
+  }
+
+  /** At the pointer, on a right-click on the card. */
+  function openMenuAt(e: MouseEvent, skill: SkillInfo) {
+    if (menuItems(skill).length === 0) return;
+    e.preventDefault();
+    menu = { x: e.clientX, y: e.clientY, skill };
   }
 
   /** What Link will do, as a sentence. */
@@ -391,7 +427,7 @@
       <div class="space-y-2">
         {#each group.skills as skill (skill.name)}
           {@const disabled = disabledSkills.includes(skill.name)}
-          <SkillCard name={skill.name} active={!disabled} struck={disabled} nameTitle={skill.path ?? skill.name}>
+          <SkillCard name={skill.name} active={!disabled} struck={disabled} nameTitle={skill.path ?? skill.name} oncontextmenu={(e: MouseEvent) => openMenuAt(e, skill)}>
             {#snippet tags()}
               {#if skill.path && claudeOnly.has(skill.path)}
                 <Badge tone="muted" title="Only Claude Agent reads .claude/skills. Share moves it to .agents/skills, where every agent looks, leaving a link for Claude Agent.">Claude only</Badge>
@@ -419,45 +455,22 @@
                   aria-label="Schedule {skill.name}"
                 ><ClockIcon />Schedule</Button>
               {/if}
-              {#if skill.path && skill.source !== 'session'}
-                <Button
-                  variant="subtle"
-                  size="2xs"
-                  onclick={() => skillsPanelStore.editSkill(sessionId, skill)}
-                  title="Edit this skill's SKILL.md"
-                  aria-label="Edit {skill.name}"
-                ><PencilIcon />Edit</Button>
-              {/if}
-              {#if skill.path && claudeOnly.has(skill.path)}
-                <Button
-                  variant="subtle"
-                  size="2xs"
-                  onclick={() => shareSkill(skill)}
-                  disabled={sharingBusy}
-                  title="Move this skill to .agents/skills, where every agent looks, leaving a link for Claude Agent"
-                  aria-label="Share {skill.name} with every agent"
-                ><ShareIcon />Share</Button>
-              {/if}
-              {#if skill.path && skill.source === 'project'}
-                <Button
-                  variant="subtle"
-                  size="2xs"
-                  onclick={() => copyToPersonal(skill)}
-                  disabled={copying !== null}
-                  title="Copy this skill to your user folder, so all your projects have it. The project keeps its copy for your team."
-                  aria-label="Copy {skill.name} to your personal skills"
-                ><CopyPlusIcon />Copy to personal</Button>
-              {/if}
             {/snippet}
             {#snippet end()}
-              {#if managed}
-                <!-- Turning a skill off is reversible, so it stays quiet; red is
-                     for what can't be undone. -->
-                {#if disabled}
-                  <Button variant="subtle-primary" size="2xs" onclick={() => setSkillEnabled(skill.name, true)} disabled={skillsBusy[skill.name]} title="Re-enable this skill">Enable</Button>
-                {:else}
-                  <Button variant="quiet" size="2xs" onclick={() => setSkillEnabled(skill.name, false)} disabled={skillsBusy[skill.name]} title="Hide this skill from agents">Disable</Button>
-                {/if}
+              <!-- A turned-off skill's one action stays in view. -->
+              {#if managed && disabled}
+                <Button variant="subtle-primary" size="2xs" onclick={() => setSkillEnabled(skill.name, true)} disabled={skillsBusy[skill.name]} title="Re-enable this skill">Enable</Button>
+              {/if}
+              {#if menuItems(skill).length > 0}
+                <Button
+                  variant="quiet"
+                  size="icon-2xs"
+                  onclick={(e: MouseEvent) => openMenuBelow(e, skill)}
+                  title="More actions"
+                  aria-label="More for {skill.name}"
+                  aria-haspopup="menu"
+                  aria-expanded={menu?.skill.name === skill.name}
+                ><EllipsisIcon /></Button>
               {/if}
             {/snippet}
           </SkillCard>
@@ -509,6 +522,14 @@
     Skills from {agentsStore.get(agentId)?.displayName ?? 'this agent'}'s own folders. Turn them off there.
   {/if}
 </p>
+
+<!-- On the page, not in the drawer: the drawer is the box a fixed menu
+     inside it would be placed in, so it would open off to the right. -->
+{#if menu}
+  <Portal>
+    <ContextMenu x={menu.x} y={menu.y} items={menuItems(menu.skill)} label={menu.skill.name} onclose={() => { menu = null; }} />
+  </Portal>
+{/if}
 
 {#if addSkillOpen}
   {#await loadAddSkillDialog() then AddSkillDialog}
