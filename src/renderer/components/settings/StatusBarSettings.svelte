@@ -34,6 +34,10 @@
     keys: { label: 'Keys', description: 'The keyboard shortcuts.' },
   };
 
+  /** The drag's data type. Not text/plain, which a text field would take
+   *  as typing if a row were dropped on it. */
+  const DRAG_TYPE = 'application/x-grove-status-bar-part';
+
   const SIDES: { side: StatusBarSide; label: string }[] = [
     { side: 'left', label: 'Left' },
     { side: 'right', label: 'Right' },
@@ -59,7 +63,7 @@
     dragging = id;
     if (e.dataTransfer) {
       e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData('text/plain', id);
+      e.dataTransfer.setData(DRAG_TYPE, id);
     }
   }
 
@@ -96,14 +100,26 @@
     endDrag();
   }
 
+  /** Cleared first, so the same words said twice are read twice. */
+  async function announce(text: string) {
+    announcement = '';
+    await tick();
+    announcement = text;
+  }
+
   async function onHandleKeydown(e: KeyboardEvent, id: StatusBarPartId) {
     if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
     e.preventDefault();
-    const next = stepStatusBarPart(layout, id, e.key === 'ArrowUp' ? -1 : 1);
+    const step = e.key === 'ArrowUp' ? -1 : 1;
+    const next = stepStatusBarPart(layout, id, step);
+    if (next.every((p, i) => p.id === layout[i].id && p.side === layout[i].side)) {
+      void announce(`${PARTS[id].label} is already ${step === -1 ? 'first' : 'last'}`);
+      return;
+    }
     const part = next.find((p) => p.id === id)!;
     const onSide = next.filter((p) => p.side === part.side);
     const sideLabel = SIDES.find((s) => s.side === part.side)!.label;
-    announcement = `${PARTS[id].label}: ${sideLabel}, ${onSide.indexOf(part) + 1} of ${onSide.length}`;
+    void announce(`${PARTS[id].label}: ${sideLabel}, ${onSide.indexOf(part) + 1} of ${onSide.length}`);
     update(next);
     // Moving to the other side rebuilds the row, which loses focus.
     await tick();
@@ -146,16 +162,17 @@
               {#if dropAt?.side === side && dropAt.before === part.id}
                 <span class="absolute inset-x-0 -top-[3px] h-0.5 bg-primary pointer-events-none" aria-hidden="true"></span>
               {/if}
-              <button
+              <Button
                 id="{uid}-handle-{part.id}"
-                type="button"
-                class="shrink-0 cursor-grab text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                variant="quiet"
+                size="icon-2xs"
+                class="cursor-grab"
                 aria-label="Move {info.label}"
                 aria-describedby="{uid}-move-hint"
-                onkeydown={(e) => onHandleKeydown(e, part.id)}
+                onkeydown={(e: KeyboardEvent) => onHandleKeydown(e, part.id)}
               >
                 <GripVerticalIcon class="size-4" aria-hidden="true" />
-              </button>
+              </Button>
               <label class="flex items-start gap-2 min-w-0 flex-1 {part.id === ALWAYS_SHOWN_PART ? 'cursor-default' : 'cursor-pointer'}">
                 <Checkbox
                   checked={part.shown}

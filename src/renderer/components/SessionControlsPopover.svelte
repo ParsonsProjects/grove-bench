@@ -17,6 +17,7 @@
   import { toneClass } from '../lib/control-tones.js';
   import { CONTROL_SHORTCUTS, controlShortcut, type AgentSummary, type ControlOption } from '../../shared/types.js';
   import { controlHint, controlSummary } from '../lib/control-hint.js';
+  import { keepInViewport } from '../lib/keep-in-viewport.js';
   import AgentSettingsTrigger from './AgentSettingsTrigger.svelte';
   import UsageSection from './UsageSection.svelte';
   import { stripIpcErrorPrefix } from '../lib/mcp-errors.js';
@@ -160,7 +161,10 @@
   />
 
   {#if open}
+    <!-- Opens from its left edge; kept on screen when Settings has moved
+         it to the right of the bar. -->
     <div
+      use:keepInViewport
       class="{menuPanel({ padding: 'content' })} absolute bottom-full left-0 mb-2 z-50"
       role="dialog"
       aria-label="Agent settings"

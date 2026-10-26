@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
 import { render, cleanup, screen, fireEvent, within } from '@testing-library/svelte';
 
@@ -20,10 +20,10 @@ const row = (id: string) => document.querySelector<HTMLElement>(`[data-part="${i
 
 /** jsdom has no DragEvent or layout: a drag event carrying the pointer's
  *  height, and rows 40px tall stacked from the top of each list. */
-async function drag(type: string, target: HTMLElement, clientY = 0) {
+async function drag(type: string, target: HTMLElement, clientY = 0, setData = vi.fn()) {
   const event = new Event(type, { bubbles: true, cancelable: true });
   Object.defineProperty(event, 'clientY', { value: clientY });
-  Object.defineProperty(event, 'dataTransfer', { value: { setData: () => {}, effectAllowed: '', dropEffect: '' } });
+  Object.defineProperty(event, 'dataTransfer', { value: { setData, effectAllowed: '', dropEffect: '' } });
   await fireEvent(target, event);
 }
 
@@ -64,6 +64,14 @@ describe('StatusBarSettings', () => {
     expect(side('right')).toEqual(['context']);
   });
 
+  it('carries the part as its own data type, not text a text field would take', async () => {
+    render(StatusBarSettings);
+    const setData = vi.fn();
+    await drag('dragstart', row('keys'), 0, setData);
+    expect(setData).toHaveBeenCalledWith('application/x-grove-status-bar-part', 'keys');
+    expect(setData).not.toHaveBeenCalledWith('text/plain', expect.anything());
+  });
+
   it('drops at the end of a side below its last row', async () => {
     render(StatusBarSettings);
     stackRows();
@@ -101,6 +109,25 @@ describe('StatusBarSettings', () => {
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Move Project and branch' }));
     expect(screen.getByText('Project and branch: Right, 1 of 3')).toBeInTheDocument();
     await fireEvent.keyDown(document.activeElement!, { key: 'ArrowUp' });
+    expect(layout()).toEqual(defaultStatusBarLayout());
+  });
+
+  it('says when a part is already at either end, each time, and leaves the layout alone', async () => {
+    render(StatusBarSettings);
+    const first = screen.getByRole('button', { name: 'Move Agent settings' });
+    await fireEvent.keyDown(first, { key: 'ArrowUp' });
+    expect(await screen.findByText('Agent settings is already first')).toBeInTheDocument();
+    // Cleared and said again, so a screen reader reads the second press too.
+    const live = screen.getByText('Agent settings is already first');
+    const said: string[] = [];
+    const watcher = new MutationObserver(() => said.push(live.textContent ?? ''));
+    watcher.observe(live, { childList: true, characterData: true, subtree: true });
+    await fireEvent.keyDown(first, { key: 'ArrowUp' });
+    await screen.findByText('Agent settings is already first');
+    watcher.disconnect();
+    expect(said).toContain('');
+    await fireEvent.keyDown(screen.getByRole('button', { name: 'Move Keys' }), { key: 'ArrowDown' });
+    expect(await screen.findByText('Keys is already last')).toBeInTheDocument();
     expect(layout()).toEqual(defaultStatusBarLayout());
   });
 

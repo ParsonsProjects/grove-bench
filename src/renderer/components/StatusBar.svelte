@@ -13,7 +13,7 @@
   import { store } from '../stores/sessions.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
   import { CONTROL_IDS } from '../../shared/types.js';
-  import type { StatusBarPartId } from '../../shared/status-bar-layout.js';
+  import type { StatusBarPartId, StatusBarSide } from '../../shared/status-bar-layout.js';
   import { contextUsage } from '../lib/context-usage.js';
   import SessionControlsPopover from './SessionControlsPopover.svelte';
   import ContextGrove from './ContextGrove.svelte';
@@ -61,20 +61,29 @@
   /** For the grove along the top, which grows as the context fills. */
   let usedPercent = $derived(contextUsage(messageStore.getUsage(sessionId), contextWindow).usedPercent);
 
+  /** Parts drawn with a divider after them, as the bar always had. */
+  const DIVIDED: ReadonlySet<StatusBarPartId> = new Set(['agent', 'activity', 'last-turn']);
+  /** Parts that always draw something. The others can draw nothing (Last
+   *  turn before the first turn, Context before any is used) or drop out on
+   *  a narrow bar (Keys, Tasks and Files, MCP and Skills). */
+  const ALWAYS_DRAWN: ReadonlySet<StatusBarPartId> = new Set(['agent', 'activity', 'branch']);
+
   let layout = $derived(settingsStore.current.statusBarLayout);
-  /** Shown parts with another shown part after them on their side: the ones
-   *  that draw a divider after themselves get one. */
-  let followed = $derived.by(() => {
+  /** The divided parts that get their divider: those with a shown part that
+   *  always draws somewhere after them on their side, so a divider can't be
+   *  left against the spacer or the bar's end. */
+  let divided = $derived.by(() => {
     const ids = new Set<StatusBarPartId>();
-    for (const [i, part] of layout.entries()) {
-      if (part.shown && layout.slice(i + 1).some((p) => p.shown && p.side === part.side)) ids.add(part.id);
+    const drawnAfter: Record<StatusBarSide, boolean> = { left: false, right: false };
+    for (const part of [...layout].reverse()) {
+      if (!part.shown) continue;
+      if (DIVIDED.has(part.id) && drawnAfter[part.side]) ids.add(part.id);
+      if (ALWAYS_DRAWN.has(part.id)) drawnAfter[part.side] = true;
     }
     return ids;
   });
   /** The right side starts at its first shown part. */
   let rightStart = $derived(layout.find((p) => p.shown && p.side === 'right')?.id);
-  /** Parts drawn with a divider after them, as the bar always had. */
-  const DIVIDED: ReadonlySet<StatusBarPartId> = new Set(['agent', 'activity']);
 
   function handleKeydown(e: KeyboardEvent) {
     // Every conversation's StatusBar is mounted at once (inactive panes hidden
@@ -108,7 +117,7 @@
     <StatusBarThreadItems {sessionId} />
   {:else if id === 'last-turn'}
     <!-- Draws its own divider, which drops out with it on a narrow bar. -->
-    <StatusBarLastTurn {sessionId} divider={followed.has(id)} />
+    <StatusBarLastTurn {sessionId} divider={divided.has(id)} />
   {:else if id === 'capabilities'}
     <StatusBarCapabilities {sessionId} />
   {:else if id === 'branch'}
@@ -118,7 +127,7 @@
   {:else if id === 'keys'}
     <StatusBarKeys />
   {/if}
-  {#if DIVIDED.has(id) && followed.has(id)}
+  {#if id !== 'last-turn' && divided.has(id)}
     <span class="w-px self-stretch bg-border"></span>
   {/if}
 {/snippet}

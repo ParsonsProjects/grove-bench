@@ -1,8 +1,8 @@
 <script lang="ts">
   /**
    * The last turn: its cost (API sign-ins only) over how long it took. Only
-   * on a wide bar; the divider after it goes with it (none when it is the
-   * last part on its side of the bar). A click opens what
+   * on a wide bar; the divider after it goes with it (StatusBar says when
+   * it has one). A click opens what
    * the thread has used so far: its tokens, and with a cost, what it and
    * today have cost (main's figures, the ones the spend limits count).
    */

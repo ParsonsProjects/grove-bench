@@ -2,7 +2,7 @@
 
 The status bar sits at the bottom of the workspace, just above the prompt, and shows live information about the open thread.
 
-You can change which parts it shows, their order and which side they sit on, under **Status bar** in Settings > **The grove (General)** (see [Settings](settings.md#the-grove-general)). The sections below follow the default order.
+You can change which parts it shows, their order and which side they sit on, under **Status bar** in Settings > **The grove (General)** (see [Settings](settings.md#the-grove-general)).
 
 In a narrow window the bar drops its extras so the agent settings, the activity, the branch and the context meter keep their room. As it narrows it drops, in order: the last turn's cost and duration, the project name (the branch's tooltip still names it), then **Keys** (the same list is under Keyboard Shortcuts in Help, `F1`), the **MCP** and **Skills** badges, and **Tasks** and **Files**. The MCP badge stays while a server is down, and Tasks while a task is still to do.
 

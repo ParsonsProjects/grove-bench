@@ -1156,6 +1156,17 @@ describe('StatusBar layout from Settings', () => {
     expect(part(container, 'last-turn').querySelector('span.w-px')).toBeNull();
   });
 
+  it('leaves the divider out when only parts that can draw nothing follow', () => {
+    // Left: Agent, Activity, Last turn. Before the first turn (or on a
+    // narrow bar) Last turn draws nothing, so Activity's divider would hang.
+    let layout = defaultStatusBarLayout();
+    for (const id of ['thread-items', 'capabilities', 'branch'] as const) layout = moveStatusBarPart(layout, id, 'right', null);
+    useLayout(layout);
+    const { container } = render(StatusBar, { props: { sessionId: ACTIVE } });
+    expect(divider(part(container, 'agent'))).not.toBeNull();
+    expect(divider(part(container, 'activity'))).toBeNull();
+  });
+
   it('keeps the last turn\'s divider while a shown part follows it', () => {
     messageStore.messagesBySession[ACTIVE] = [{ kind: 'result', id: 'r1', durationMs: 4200 } as any];
     const { container } = render(StatusBar, { props: { sessionId: ACTIVE } });

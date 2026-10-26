@@ -76,6 +76,16 @@ describe('SessionControlsPopover', () => {
     planAlertStore.reset();
   });
 
+  it('moves its panel back inside the window when it would run past the right edge', async () => {
+    // As if Settings had moved it to the right of the bar: the panel, opening
+    // from its left edge, would reach 1400px in a 1024px window (jsdom's).
+    const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockReturnValue({ left: 900, right: 1400, top: 0, bottom: 0, width: 500, height: 0, x: 900, y: 0, toJSON: () => ({}) });
+    const panel = await openPopover();
+    expect(panel.style.marginLeft).toBe(`${1024 - 8 - 1400}px`);
+    rect.mockRestore();
+  });
+
   it('summarises agent, model, and mode on the trigger, hiding controls at their default', async () => {
     render(SessionControlsPopover, { props: { sessionId: SID, modelOptions: MODELS } });
     await new Promise((r) => setTimeout(r, 0));
