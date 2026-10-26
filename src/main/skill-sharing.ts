@@ -132,11 +132,14 @@ function reasonOf(err: unknown): string {
 }
 
 /** Move the agent's own skills to the shared folder, each leaving a link so
- *  the agent still finds it. */
-export async function shareSkills(worktreePath: string, dirs: SkillDirs): Promise<SkillChanges> {
+ *  the agent still finds it: all of them, or only the one whose SKILL.md is
+ *  at `onlyPath` (as skillSharing listed it). */
+export async function shareSkills(worktreePath: string, dirs: SkillDirs, onlyPath?: string): Promise<SkillChanges> {
   const result: SkillChanges = { done: [], skipped: [] };
+  const only = onlyPath === undefined ? null : path.resolve(onlyPath);
   for (const level of await plan(worktreePath, dirs)) {
     for (const m of level.toShare) {
+      if (only !== null && path.resolve(m.path) !== only) continue;
       const name = infoOf(m, level.scope).name;
       const from = path.dirname(m.path);
       const to = path.join(level.sharedRoot, m.dir);

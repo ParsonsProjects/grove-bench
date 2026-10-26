@@ -396,12 +396,22 @@ const api: Record<string, unknown> = {
     skill.description = content.match(/^description:\s*(.*)$/m)?.[1] ?? skill.description;
     return skill;
   },
+  copySkillToUser: async (_sid: string, _fallback: string, skillPath: string) => {
+    const skill = DEMO_SKILLS.find((s) => s.path === skillPath);
+    if (!skill) throw new Error("That skill isn't in this thread's skill folders any more");
+    if (DEMO_SKILLS.some((s) => s.source === 'user' && s.name === skill.name)) throw new Error(`You have a personal skill named "${skill.name}" already`);
+    const copy = { ...skill, source: 'user', path: `C:/Users/demo/.claude/skills/${skill.name}/SKILL.md` };
+    // Claude Code runs the personal one, so it's listed in the project's place.
+    DEMO_SKILLS.splice(DEMO_SKILLS.indexOf(skill), 1, copy);
+    return copy;
+  },
   openSkillInEditor: async () => {},
   getSkillSharing: async () => DEMO_SHARING,
-  shareSkills: async () => {
-    const done = DEMO_SHARING.toShare.map((s) => s.name);
+  shareSkills: async (_sid: string, _fallback: string, skillPath?: string) => {
+    const moving = DEMO_SHARING.toShare.filter((s) => skillPath === undefined || s.path === skillPath);
+    const done = moving.map((s) => s.name);
     for (const s of DEMO_SKILLS) if (done.includes(s.name)) s.path = s.path.replace('/.claude/', '/.agents/');
-    DEMO_SHARING = { ...DEMO_SHARING, toShare: [] };
+    DEMO_SHARING = { ...DEMO_SHARING, toShare: DEMO_SHARING.toShare.filter((s) => !moving.includes(s)) };
     return { done, skipped: [] };
   },
   linkSkills: async () => {

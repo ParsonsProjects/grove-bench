@@ -18,6 +18,8 @@
   import { skillsPanelStore } from '../stores/skillsPanel.svelte.js';
   import { mergeSkills } from '../lib/skills-merge.js';
   import { groupSkills, searchSkills } from '../lib/skill-groups.js';
+  import { stripIpcErrorPrefix } from '../lib/mcp-errors.js';
+  import { errorMessage } from '../../shared/error-message.js';
   import { startSkillThread } from '../lib/skill-thread.js';
   import type { SkillPromptOpts } from '../lib/skill-prompt.js';
   import { lazyComponent } from '../lib/lazy-component.js';
@@ -35,6 +37,8 @@
   import RefreshIcon from '@lucide/svelte/icons/refresh-cw';
   import PencilIcon from '@lucide/svelte/icons/pencil';
   import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
+  import ShareIcon from '@lucide/svelte/icons/share-2';
+  import CopyPlusIcon from '@lucide/svelte/icons/copy-plus';
   import SkillCard from './SkillCard.svelte';
 
   let { sessionId }: { sessionId: string } = $props();
@@ -128,6 +132,45 @@
       store.setError(`Couldn't ${sharingAction.toLowerCase()} the skills: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       sharingBusy = false;
+      refresh();
+    }
+  }
+
+  /** Share one of Claude Code's own skills from its card: move it to
+   *  `.agents/skills`, leaving a link, as Share does for all of them. */
+  async function shareSkill(skill: SkillInfo) {
+    if (sharingBusy || !skill.path) return;
+    sharingBusy = true;
+    try {
+      const result = await window.groveBench.shareSkills(sessionId, repoPath, skill.path);
+      const skipped = result.skipped[0];
+      if (skipped) store.setError(`Couldn't share "${skipped.name}" (${skipped.reason}).`);
+    } catch (err) {
+      store.setError(`Couldn't share "${skill.name}": ${stripIpcErrorPrefix(errorMessage(err))}`);
+    } finally {
+      sharingBusy = false;
+      refresh();
+    }
+  }
+
+  /** The project skill being copied to the user's own folders. */
+  let copying = $state<string | null>(null);
+  /** The skill last copied, which a notice names until dismissed. */
+  let copied = $state<string | null>(null);
+
+  /** Copy a project skill to the user's own folders, so every project has
+   *  it. The project keeps its copy for the team. */
+  async function copyToPersonal(skill: SkillInfo) {
+    if (copying || !skill.path) return;
+    copying = skill.name;
+    copied = null;
+    try {
+      await window.groveBench.copySkillToUser(sessionId, repoPath, skill.path);
+      copied = skill.name;
+    } catch (err) {
+      store.setError(`Couldn't copy "${skill.name}" to your personal skills: ${stripIpcErrorPrefix(errorMessage(err))}`);
+    } finally {
+      copying = null;
       refresh();
     }
   }
@@ -273,6 +316,16 @@
   <Notice tone="danger" class="mb-2 break-words">{settingsStore.error}</Notice>
 {/if}
 
+{#if copied}
+  <Notice tone="success" class="mb-3">
+    {#snippet actions()}
+      <Button variant="quiet" size="icon-2xs" onclick={() => { copied = null; }} title="Dismiss" aria-label="Dismiss"><XIcon /></Button>
+    {/snippet}
+    <span class="font-mono">{copied}</span> is a personal skill now, so all your projects have it. The project keeps its copy for your team.
+    {#if managed}Claude Agent uses yours where both are.{/if}
+  </Notice>
+{/if}
+
 {#if toShareCount > 0 || linkCount > 0}
   <Notice class="mb-3">
     {#snippet actions()}
@@ -341,7 +394,7 @@
           <SkillCard name={skill.name} active={!disabled} struck={disabled} nameTitle={skill.path ?? skill.name}>
             {#snippet tags()}
               {#if skill.path && claudeOnly.has(skill.path)}
-                <Badge tone="muted" title="Only Claude Agent reads .claude/skills. Share moves it to .agents/skills, where every agent looks.">Claude only</Badge>
+                <Badge tone="muted" title="Only Claude Agent reads .claude/skills. Share moves it to .agents/skills, where every agent looks, leaving a link for Claude Agent.">Claude only</Badge>
               {/if}
             {/snippet}
             {#if skill.description}
@@ -374,6 +427,26 @@
                   title="Edit this skill's SKILL.md"
                   aria-label="Edit {skill.name}"
                 ><PencilIcon />Edit</Button>
+              {/if}
+              {#if skill.path && claudeOnly.has(skill.path)}
+                <Button
+                  variant="subtle"
+                  size="2xs"
+                  onclick={() => shareSkill(skill)}
+                  disabled={sharingBusy}
+                  title="Move this skill to .agents/skills, where every agent looks, leaving a link for Claude Agent"
+                  aria-label="Share {skill.name} with every agent"
+                ><ShareIcon />Share</Button>
+              {/if}
+              {#if skill.path && skill.source === 'project'}
+                <Button
+                  variant="subtle"
+                  size="2xs"
+                  onclick={() => copyToPersonal(skill)}
+                  disabled={copying !== null}
+                  title="Copy this skill to your user folder, so all your projects have it. The project keeps its copy for your team."
+                  aria-label="Copy {skill.name} to your personal skills"
+                ><CopyPlusIcon />Copy to personal</Button>
               {/if}
             {/snippet}
             {#snippet end()}

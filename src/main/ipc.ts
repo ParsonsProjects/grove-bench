@@ -43,7 +43,7 @@ import * as memoryCompact from './memory-compact.js';
 import * as bookmarks from './bookmarks.js';
 import { deleteSchedule, listSchedules, recordScheduleRun, saveSchedule } from './skill-schedules.js';
 import { linkSkills, shareSkills, skillSharing } from './skill-sharing.js';
-import { CLAUDE_SKILL_DIRS, readSkillFile, readsSharedSkills, saveSkillFile, type SkillDirs } from './skills.js';
+import { CLAUDE_SKILL_DIRS, copySkillToUser, readSkillFile, readsSharedSkills, saveSkillFile, type SkillDirs } from './skills.js';
 import { listProjects, rememberProject, forgetProject, loadOpenTabs, saveOpenTabs, loadCollapsedRepos, saveCollapsedRepos, loadSessionSort, saveSessionSort, loadSidebarWidth, saveSidebarWidth, loadCollapsedPanels, saveCollapsedPanels, loadConversationGroups, saveConversationGroups, saveUnreadSessionIds, loadUnreadSessionIds, saveTodoSessionIds, loadTodoSessionIds, loadPrerequisiteCache, savePrerequisiteCache, loadUsageSnapshot } from './app-state.js';
 import { logRendererError } from './crash-handling.js';
 import { freezeLog } from './freeze-log.js';
@@ -1167,6 +1167,11 @@ export function registerHandlers() {
     return saveSkillFile(root, dirs, file, expected, content);
   });
 
+  ipcMain.handle(IPC.SKILLS_COPY_TO_USER, async (_event, sessionId: string, fallbackPath: string, skillPath: unknown) => {
+    const { root, dirs, skillPath: file } = await skillEditTarget(sessionId, fallbackPath, skillPath);
+    return copySkillToUser(root, dirs, file);
+  });
+
   ipcMain.handle(IPC.SKILLS_OPEN, async (_event, sessionId: string, fallbackPath: string, skillPath: unknown) => {
     const { root, dirs, skillPath: file } = await skillEditTarget(sessionId, fallbackPath, skillPath);
     const target = (await readSkillFile(root, dirs, file)).path;
@@ -1192,9 +1197,10 @@ export function registerHandlers() {
     return links ? sharing : { ...sharing, toLink: [], broken: [] };
   });
 
-  ipcMain.handle(IPC.SKILLS_SHARE, async (_event, sessionId: string, fallbackPath: string) => {
+  ipcMain.handle(IPC.SKILLS_SHARE, async (_event, sessionId: string, fallbackPath: string, skillPath: unknown) => {
+    if (skillPath !== undefined && typeof skillPath !== 'string') throw new Error('No skill given');
     const { root, dirs } = await sharingTarget(sessionId, fallbackPath);
-    return shareSkills(root, dirs);
+    return shareSkills(root, dirs, skillPath);
   });
 
   ipcMain.handle(IPC.SKILLS_LINK, async (_event, sessionId: string, fallbackPath: string) => {

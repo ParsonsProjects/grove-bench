@@ -1476,13 +1476,17 @@ export interface GroveBenchAPI {
   /** Save a listed skill's SKILL.md. Rejects if the file no longer reads
    *  `expected` (readSkill's content), or if the text renames the skill. */
   saveSkill(sessionId: string, fallbackPath: string, skillPath: string, expected: string, content: string): Promise<SkillInfo>;
+  /** Copy a listed project skill to the user's own folders, for every
+   *  project. The project keeps its copy. Returns the personal skill. */
+  copySkillToUser(sessionId: string, fallbackPath: string, skillPath: string): Promise<SkillInfo>;
   /** Open a listed skill's SKILL.md in VS Code, Cursor or the system default. */
   openSkillInEditor(sessionId: string, fallbackPath: string, skillPath: string): Promise<void>;
   /** What Share and Link would change for the session's project. Links are
    *  only offered in a Claude Code thread. */
   getSkillSharing(sessionId: string, fallbackPath: string): Promise<SkillSharing>;
-  /** Move Claude Code's own skills to the shared folder, leaving links. */
-  shareSkills(sessionId: string, fallbackPath: string): Promise<SkillChanges>;
+  /** Move Claude Code's own skills to the shared folder, leaving links: all
+   *  of them, or the one whose SKILL.md is at `skillPath` (as listed). */
+  shareSkills(sessionId: string, fallbackPath: string, skillPath?: string): Promise<SkillChanges>;
   /** Bring Claude Code's links in line with the shared folder. */
   linkSkills(sessionId: string, fallbackPath: string): Promise<SkillChanges>;
   /** Cached skill suggestions for a repo (last analysis result). */
@@ -2293,6 +2297,7 @@ export const IPC = {
   SKILLS_READ: 'skills:read',
   SKILLS_SAVE: 'skills:save',
   SKILLS_OPEN: 'skills:open',
+  SKILLS_COPY_TO_USER: 'skills:copyToUser',
   SKILLS_SHARING: 'skills:sharing',
   SKILLS_SHARE: 'skills:share',
   SKILLS_LINK: 'skills:link',

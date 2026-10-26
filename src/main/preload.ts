@@ -177,12 +177,14 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.SKILLS_READ, sessionId, fallbackPath, skillPath),
   saveSkill: (sessionId: string, fallbackPath: string, skillPath: string, expected: string, content: string) =>
     ipcRenderer.invoke(IPC.SKILLS_SAVE, sessionId, fallbackPath, skillPath, expected, content),
+  copySkillToUser: (sessionId: string, fallbackPath: string, skillPath: string) =>
+    ipcRenderer.invoke(IPC.SKILLS_COPY_TO_USER, sessionId, fallbackPath, skillPath),
   openSkillInEditor: (sessionId: string, fallbackPath: string, skillPath: string) =>
     ipcRenderer.invoke(IPC.SKILLS_OPEN, sessionId, fallbackPath, skillPath),
   getSkillSharing: (sessionId: string, fallbackPath: string) =>
     ipcRenderer.invoke(IPC.SKILLS_SHARING, sessionId, fallbackPath),
-  shareSkills: (sessionId: string, fallbackPath: string) =>
-    ipcRenderer.invoke(IPC.SKILLS_SHARE, sessionId, fallbackPath),
+  shareSkills: (sessionId: string, fallbackPath: string, skillPath?: string) =>
+    ipcRenderer.invoke(IPC.SKILLS_SHARE, sessionId, fallbackPath, skillPath),
   linkSkills: (sessionId: string, fallbackPath: string) =>
     ipcRenderer.invoke(IPC.SKILLS_LINK, sessionId, fallbackPath),
   getSkillSuggestions: (repoPath: string) =>
