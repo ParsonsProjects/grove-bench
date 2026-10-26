@@ -501,9 +501,10 @@ export interface AgentAdapter {
    *  `.agents/skills/<name>/SKILL.md`, which every agent can use, plus a
    *  link for an agent that doesn't read that folder (skills.ts writeSkill).
    *  Project scope writes into the worktree so the skill travels with the
-   *  branch; user scope under the home directory. Rejects if the skill
+   *  branch; user scope under the home directory, linked too in each of
+   *  `userLinks` (every Claude account's folder). Rejects if the skill
    *  already exists. */
-  addSkill?(worktreePath: string, def: SkillDefinition): Promise<SkillInfo>;
+  addSkill?(worktreePath: string, def: SkillDefinition, userLinks?: readonly string[]): Promise<SkillInfo>;
 
   // ─── Optional text generation (used by memory auto-save) ───
 

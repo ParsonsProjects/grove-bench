@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { linkSkills, shareSkills, skillSharing } from './skill-sharing.js';
+import { linkSkills, setSkillReach, shareSkills, skillSharing, unshareSkill } from './skill-sharing.js';
 import { CLAUDE_SKILL_DIRS, SHARED_SKILL_DIRS, isSkillLink, listSkills, skillLinkContent, writeSkill } from './skills.js';
 
 let worktree: string;
@@ -133,6 +133,39 @@ describe('shareSkills', () => {
   });
 });
 
+describe('every Claude account', () => {
+  const work = () => path.join(home, '.claude-work', 'skills');
+  const dirs = () => ({ ...CLAUDE_SKILL_DIRS, userLinks: ['.claude/skills', work()] });
+
+  it("finds a personal skill another Claude account can't see, once, and Link adds it there", async () => {
+    // Shared from the work account's thread: only it has a link.
+    put(sharedFile(home, 'notes'), skill('notes'));
+    put(path.join(work(), 'notes', 'SKILL.md'), skillLinkContent(skill('notes'), 'notes', path.join(home, '.agents', 'skills', 'notes', 'SKILL.md')));
+    put(path.join(work(), 'gone', 'SKILL.md'), skillLinkContent(skill('gone'), 'gone', path.join(home, '.agents', 'skills', 'gone', 'SKILL.md')));
+
+    const sharing = await skillSharing(worktree, dirs());
+    expect(names(sharing.toLink)).toEqual(['notes']);
+    expect(names(sharing.broken)).toEqual(['gone']);
+
+    await linkSkills(worktree, dirs());
+    expect(isSkillLink(fs.readFileSync(claudeFile(home, 'notes'), 'utf-8'))).toBe(true);
+    expect(fs.existsSync(path.join(work(), 'gone'))).toBe(false);
+    expect(await skillSharing(worktree, dirs())).toEqual({ toShare: [], toLink: [], broken: [] });
+  });
+
+  it("links a shared personal skill for every account, and shares only the thread's own", async () => {
+    put(claudeFile(home, 'mine'), skill('mine'));
+    put(path.join(work(), 'theirs', 'SKILL.md'), skill('theirs'));
+    expect(names((await skillSharing(worktree, dirs())).toShare)).toEqual(['mine']);
+
+    await shareSkills(worktree, dirs());
+    expect(fs.readFileSync(sharedFile(home, 'mine'), 'utf-8')).toBe(skill('mine'));
+    expect(isSkillLink(fs.readFileSync(claudeFile(home, 'mine'), 'utf-8'))).toBe(true);
+    expect(isSkillLink(fs.readFileSync(path.join(work(), 'mine', 'SKILL.md'), 'utf-8'))).toBe(true);
+    expect(fs.readFileSync(path.join(work(), 'theirs', 'SKILL.md'), 'utf-8')).toBe(skill('theirs'));
+  });
+});
+
 describe('linkSkills', () => {
   it('adds and updates links, removes ones to deleted skills, and leaves other files alone', async () => {
     put(sharedFile(worktree, 'team'), skill('team'));
@@ -159,5 +192,77 @@ describe('linkSkills', () => {
     expect((await linkSkills(worktree, dirs)).done).toEqual(['personal']);
     expect(isSkillLink(fs.readFileSync(path.join(account, 'skills', 'personal', 'SKILL.md'), 'utf-8'))).toBe(true);
     expect(fs.existsSync(claudeFile(home, 'personal'))).toBe(false);
+  });
+});
+
+describe('who can use a skill', () => {
+  const work = () => path.join(home, '.claude-work', 'skills');
+  const dirs = () => ({ ...CLAUDE_SKILL_DIRS, userLinks: ['.claude/skills', work()] });
+
+  it('lets every agent use a Claude-only skill, and takes it back to Claude alone', async () => {
+    put(claudeFile(worktree, 'own'), skill('own'));
+    put(path.join(worktree, '.claude', 'skills', 'own', 'scripts', 'run.sh'), 'echo hi');
+    await setSkillReach(worktree, dirs(), claudeFile(worktree, 'own'), { agents: 'all', projects: 'project' });
+    expect(fs.readFileSync(sharedFile(worktree, 'own'), 'utf-8')).toBe(skill('own'));
+    expect(isSkillLink(fs.readFileSync(claudeFile(worktree, 'own'), 'utf-8'))).toBe(true);
+
+    await setSkillReach(worktree, dirs(), claudeFile(worktree, 'own'), { agents: 'claude', projects: 'project' });
+    expect(fs.readFileSync(claudeFile(worktree, 'own'), 'utf-8')).toBe(skill('own'));
+    expect(fs.existsSync(path.join(worktree, '.claude', 'skills', 'own', 'scripts', 'run.sh'))).toBe(true);
+    expect(fs.existsSync(path.join(worktree, '.agents', 'skills', 'own'))).toBe(false);
+  });
+
+  it("takes a personal skill back to the thread's account alone, removing the other accounts' links", async () => {
+    put(claudeFile(home, 'mine'), skill('mine'));
+    await setSkillReach(worktree, dirs(), claudeFile(home, 'mine'), { agents: 'all', projects: 'all' });
+    expect(isSkillLink(fs.readFileSync(path.join(work(), 'mine', 'SKILL.md'), 'utf-8'))).toBe(true);
+
+    await unshareSkill(worktree, dirs(), claudeFile(home, 'mine'));
+    expect(fs.readFileSync(claudeFile(home, 'mine'), 'utf-8')).toBe(skill('mine'));
+    expect(fs.existsSync(path.join(home, '.agents', 'skills', 'mine'))).toBe(false);
+    expect(fs.existsSync(path.join(work(), 'mine'))).toBe(false);
+  });
+
+  it("puts a link back, and moves nothing, when the link's folder holds other files", async () => {
+    put(sharedFile(worktree, 'team'), skill('team'));
+    await linkSkills(worktree, dirs());
+    put(path.join(worktree, '.claude', 'skills', 'team', 'notes.txt'), 'mine');
+    await expect(unshareSkill(worktree, dirs(), claudeFile(worktree, 'team'))).rejects.toThrow('has other files in it');
+    expect(isSkillLink(fs.readFileSync(claudeFile(worktree, 'team'), 'utf-8'))).toBe(true);
+    expect(fs.readFileSync(sharedFile(worktree, 'team'), 'utf-8')).toBe(skill('team'));
+  });
+
+  it("copies a project skill to all projects, for every agent or for the thread's Claude account alone", async () => {
+    put(claudeFile(worktree, 'a'), skill('a'));
+    put(claudeFile(worktree, 'b'), skill('b'));
+    await setSkillReach(worktree, dirs(), claudeFile(worktree, 'a'), { agents: 'all', projects: 'all' });
+    expect(fs.readFileSync(sharedFile(home, 'a'), 'utf-8')).toBe(skill('a'));
+    expect(isSkillLink(fs.readFileSync(path.join(work(), 'a', 'SKILL.md'), 'utf-8'))).toBe(true);
+
+    await setSkillReach(worktree, dirs(), claudeFile(worktree, 'b'), { agents: 'claude', projects: 'all' });
+    expect(fs.readFileSync(claudeFile(home, 'b'), 'utf-8')).toBe(skill('b'));
+    expect(fs.existsSync(path.join(home, '.agents', 'skills', 'b'))).toBe(false);
+    expect(fs.existsSync(path.join(work(), 'b'))).toBe(false);
+    // The project keeps both as they were.
+    expect(fs.readFileSync(claudeFile(worktree, 'a'), 'utf-8')).toBe(skill('a'));
+  });
+
+  it('refuses to narrow a personal skill to one project, to share over a shared one of the name, and to move another agent\'s', async () => {
+    put(claudeFile(home, 'mine'), skill('mine'));
+    await expect(setSkillReach(worktree, dirs(), claudeFile(home, 'mine'), { agents: 'claude', projects: 'project' })).rejects.toThrow('in all your projects already');
+
+    put(claudeFile(worktree, 'dup'), skill('dup'));
+    put(sharedFile(worktree, 'dup'), skill('dup', 'Shared one'));
+    await expect(setSkillReach(worktree, dirs(), claudeFile(worktree, 'dup'), { agents: 'all', projects: 'project' })).rejects.toThrow('has a skill named "dup" already');
+
+    put(path.join(worktree, '.gemini', 'skills', 'gem', 'SKILL.md'), skill('gem'));
+    const gemini = { project: ['.agents/skills', '.gemini/skills'], user: ['.agents/skills', '.gemini/skills'] };
+    await expect(setSkillReach(worktree, gemini, path.join(worktree, '.gemini', 'skills', 'gem', 'SKILL.md'), { agents: 'all', projects: 'project' })).rejects.toThrow("Only Claude Agent's skills");
+  });
+
+  it('does nothing when nothing changes', async () => {
+    put(claudeFile(worktree, 'own'), skill('own'));
+    await setSkillReach(worktree, dirs(), claudeFile(worktree, 'own'), { agents: 'claude', projects: 'project' });
+    expect(fs.existsSync(path.join(worktree, '.agents'))).toBe(false);
   });
 });

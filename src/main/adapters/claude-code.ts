@@ -2267,8 +2267,8 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     return skillsModule.listSkills(worktreePath, this.skillDirs);
   }
 
-  async addSkill(worktreePath: string, def: SkillDefinition) {
-    return skillsModule.writeSkill(worktreePath, def, this.skillDirs);
+  async addSkill(worktreePath: string, def: SkillDefinition, userLinks?: readonly string[]) {
+    return skillsModule.writeSkill(worktreePath, def, { ...this.skillDirs, userLinks });
   }
 
   // ─── MCP server configuration (delegates to `claude mcp` CLI) ───

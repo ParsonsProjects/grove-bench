@@ -171,7 +171,8 @@ describe('SkillsPanel', () => {
       skillsPanelStore.showThread();
       render(SkillsPanel);
       await fireEvent.input(await screen.findByRole('searchbox', { name: 'Search skills' }), { target: { value: 'sort' } });
-      await fireEvent.click(await screen.findByRole('button', { name: 'Edit triage' }));
+      await fireEvent.click(await screen.findByRole('button', { name: 'More for triage' }));
+      await fireEvent.click(screen.getByRole('menuitem', { name: 'Edit SKILL.md' }));
       expect(await screen.findByRole('textbox', { name: 'SKILL.md for triage' })).toBeInTheDocument();
       expect(screen.queryByRole('searchbox')).toBeNull();
       await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));

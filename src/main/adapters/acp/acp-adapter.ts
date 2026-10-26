@@ -332,8 +332,8 @@ export class AcpAdapter implements AgentAdapter {
   }
 
   /** A new skill goes in the shared folder, which the agent reads. */
-  async addSkill(worktreePath: string, def: SkillDefinition) {
-    return writeSkill(worktreePath, def, this.skillDirs);
+  async addSkill(worktreePath: string, def: SkillDefinition, userLinks?: readonly string[]) {
+    return writeSkill(worktreePath, def, { ...this.skillDirs, userLinks });
   }
 
   /** How to install the program: the ACP Registry's command when it has an

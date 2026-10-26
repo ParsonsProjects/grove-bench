@@ -135,7 +135,7 @@
   role="menu"
   tabindex="-1"
   aria-label={label}
-  class={menuPanel({ padding: 'list', class: 'fixed z-[100] pointer-events-auto min-w-[160px]' })}
+  class={menuPanel({ padding: 'list', class: 'fixed z-[100] pointer-events-auto min-w-[160px] whitespace-nowrap' })}
   style="left: {adjustedX}px; top: {adjustedY}px;"
   onmousedown={(e) => e.preventDefault()}
   onpointerdown={(e) => e.stopPropagation()}
