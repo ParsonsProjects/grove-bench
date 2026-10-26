@@ -396,6 +396,15 @@ const api: Record<string, unknown> = {
     skill.description = content.match(/^description:\s*(.*)$/m)?.[1] ?? skill.description;
     return skill;
   },
+  copySkillToUser: async (_sid: string, _fallback: string, skillPath: string) => {
+    const skill = DEMO_SKILLS.find((s) => s.path === skillPath);
+    if (!skill) throw new Error("That skill isn't in this thread's skill folders any more");
+    if (DEMO_SKILLS.some((s) => s.source === 'user' && s.name === skill.name)) throw new Error(`You have a personal skill named "${skill.name}" already`);
+    const copy = { ...skill, source: 'user', path: `C:/Users/demo/.claude/skills/${skill.name}/SKILL.md` };
+    // Claude Code runs the personal one, so it's listed in the project's place.
+    DEMO_SKILLS.splice(DEMO_SKILLS.indexOf(skill), 1, copy);
+    return copy;
+  },
   openSkillInEditor: async () => {},
   getSkillSharing: async () => DEMO_SHARING,
   shareSkills: async (_sid: string, _fallback: string, skillPath?: string) => {

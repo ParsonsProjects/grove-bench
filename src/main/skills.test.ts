@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { parseSkillFrontmatter, scanSkillsDir, computeSkillsFilter, validateSkillName, skillManifestContent, writeSkill, listSkills, CLAUDE_SKILL_DIRS, SHARED_SKILL_DIRS, readsSharedSkills, skillLinkContent, skillFrontmatter, isSkillLink, readSkillFile, saveSkillFile } from './skills.js';
+import { parseSkillFrontmatter, scanSkillsDir, computeSkillsFilter, validateSkillName, skillManifestContent, writeSkill, listSkills, CLAUDE_SKILL_DIRS, SHARED_SKILL_DIRS, readsSharedSkills, skillLinkContent, skillFrontmatter, isSkillLink, readSkillFile, saveSkillFile, copySkillToUser } from './skills.js';
 
 describe('parseSkillFrontmatter', () => {
   it('reads name and description from a frontmatter block', () => {
@@ -192,6 +192,22 @@ describe('writeSkill', () => {
     expect(writeSkill(worktree, { ...def, name: 'notes' }, dirs).path).toBe(shared(worktree, 'notes'));
   });
 
+  it("lists the personal skill over the project's for Claude Code, which runs that one", async () => {
+    const add = (root: string, name: string, description: string) => {
+      fs.mkdirSync(path.join(root, '.claude', 'skills', name), { recursive: true });
+      fs.writeFileSync(path.join(root, '.claude', 'skills', name, 'SKILL.md'), `---\nname: ${name}\ndescription: ${description}\n---\n`);
+    };
+    add(fakeHome, 'deploy', 'mine');
+    add(worktree, 'deploy', 'the team\'s');
+    add(worktree, 'review', 'the team\'s');
+    expect((await listSkills(worktree, CLAUDE_SKILL_DIRS)).map((s) => [s.name, s.description, s.source])).toEqual([
+      ['deploy', 'mine', 'user'],
+      ['review', "the team's", 'project'],
+    ]);
+    // An agent without userFirst lists the project's.
+    expect((await listSkills(worktree, { project: ['.claude/skills'], user: ['.claude/skills'] }))[0]).toMatchObject({ description: "the team's", source: 'project' });
+  });
+
   it('refuses to overwrite an existing skill or link at the same scope', () => {
     writeSkill(worktree, def);
     expect(() => writeSkill(worktree, def)).toThrow(/already exists/);
@@ -378,6 +394,83 @@ describe('readSkillFile and saveSkillFile', () => {
     expect(read.content).toBe(review);
     await saveSkillFile(worktree, CLAUDE_SKILL_DIRS, file, read.content, review.replace('bugs', 'races'));
     expect(fs.readFileSync(file, 'utf-8')).toBe(`\uFEFF${review.replace('bugs', 'races').replace(/\n/g, '\r\n')}`);
+  });
+});
+
+describe('copySkillToUser', () => {
+  let worktree: string;
+  let fakeHome: string;
+
+  beforeEach(() => {
+    worktree = fs.mkdtempSync(path.join(os.tmpdir(), 'grove-wt-'));
+    fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'grove-home-'));
+    vi.spyOn(os, 'homedir').mockReturnValue(fakeHome);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    fs.rmSync(worktree, { recursive: true, force: true });
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  });
+
+  const review = '---\nname: review\ndescription: Review the diff\n---\n\nLook for bugs.\n';
+  const own = (root: string, dir = 'review') => path.join(root, '.claude', 'skills', dir, 'SKILL.md');
+  const shared = (root: string, dir = 'review') => path.join(root, '.agents', 'skills', dir, 'SKILL.md');
+
+  function put(file: string, content: string) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, content);
+  }
+
+  it('copies the whole folder to the shared personal one, links it for Claude Code, and keeps the project copy', async () => {
+    put(own(worktree), review);
+    put(path.join(worktree, '.claude', 'skills', 'review', 'scripts', 'check.sh'), 'echo ok');
+
+    const copy = await copySkillToUser(worktree, CLAUDE_SKILL_DIRS, own(worktree));
+    expect(copy).toEqual({ name: 'review', description: 'Review the diff', source: 'user', path: own(fakeHome) });
+    expect(fs.readFileSync(shared(fakeHome), 'utf-8')).toBe(review);
+    expect(fs.readFileSync(path.join(fakeHome, '.agents', 'skills', 'review', 'scripts', 'check.sh'), 'utf-8')).toBe('echo ok');
+    const link = fs.readFileSync(own(fakeHome), 'utf-8');
+    expect(isSkillLink(link)).toBe(true);
+    expect(link).toContain(`\`${shared(fakeHome)}\``);
+    expect(fs.readFileSync(own(worktree), 'utf-8')).toBe(review);
+    // Claude Code runs the personal one now, so that's the one listed.
+    expect(await listSkills(worktree)).toEqual([copy]);
+    expect((await readSkillFile(worktree, CLAUDE_SKILL_DIRS, own(fakeHome))).path).toBe(shared(fakeHome));
+  });
+
+  it("copies a shared project skill's own folder, not Claude Code's link to it", async () => {
+    writeSkill(worktree, { name: 'release-notes', description: 'Draft notes', instructions: 'Do the thing', scope: 'project' });
+    await copySkillToUser(worktree, CLAUDE_SKILL_DIRS, own(worktree, 'release-notes'));
+    const copied = fs.readFileSync(shared(fakeHome, 'release-notes'), 'utf-8');
+    expect(isSkillLink(copied)).toBe(false);
+    expect(copied).toContain('Do the thing');
+  });
+
+  it('writes no link for an agent that reads the shared folder', async () => {
+    put(shared(worktree), review);
+    const copy = await copySkillToUser(worktree, SHARED_SKILL_DIRS, shared(worktree));
+    expect(copy.path).toBe(shared(fakeHome));
+    expect(fs.existsSync(path.join(fakeHome, '.claude'))).toBe(false);
+  });
+
+  it('refuses a name a personal skill has, in any of its folders, and a personal skill itself', async () => {
+    put(shared(worktree), review);
+    // In a folder of another name, which the agent still lists as "review".
+    put(path.join(fakeHome, '.agents', 'skills', 'old-review', 'SKILL.md'), review);
+    await expect(copySkillToUser(worktree, SHARED_SKILL_DIRS, shared(worktree))).rejects.toThrow('You have a personal skill named "review" already');
+    expect(fs.existsSync(shared(fakeHome))).toBe(false);
+
+    const mine = path.join(fakeHome, '.agents', 'skills', 'old-review', 'SKILL.md');
+    fs.rmSync(shared(worktree));
+    await expect(copySkillToUser(worktree, SHARED_SKILL_DIRS, mine)).rejects.toThrow('is a personal skill already');
+  });
+
+  it("copies only a skill listSkills finds", async () => {
+    const elsewhere = path.join(worktree, 'docs', 'review', 'SKILL.md');
+    put(elsewhere, review);
+    await expect(copySkillToUser(worktree, CLAUDE_SKILL_DIRS, elsewhere)).rejects.toThrow("isn't in this thread's skill folders");
+    expect(fs.existsSync(path.join(fakeHome, '.agents'))).toBe(false);
   });
 });
 

@@ -297,6 +297,36 @@ describe('ThreadSkills', () => {
     store.setError(null);
   });
 
+  it('copies a project skill to the personal ones, and says so', async () => {
+    thread('claude-code');
+    mockGroveBench.listSkills.mockResolvedValue(many);
+    mockGroveBench.copySkillToUser.mockResolvedValueOnce({ ...many[1], source: 'user', path: '/home/me/.claude/skills/triage/SKILL.md' });
+    render(ThreadSkills, { sessionId: 't1' });
+    const copy = await screen.findByRole('button', { name: 'Copy triage to your personal skills' });
+    // Only project skills have it.
+    expect(screen.queryByRole('button', { name: 'Copy deploy to your personal skills' })).toBeNull();
+
+    const listings = mockGroveBench.listSkills.mock.calls.length;
+    await fireEvent.click(copy);
+    expect(mockGroveBench.copySkillToUser).toHaveBeenCalledWith('t1', '/repo', many[1].path);
+    const notice = await screen.findByText(/is a personal skill now/);
+    expect(notice).toHaveTextContent('triage is a personal skill now, so all your projects have it. The project keeps its copy for your team. Claude Agent uses yours where both are.');
+    await waitFor(() => expect(mockGroveBench.listSkills.mock.calls.length).toBeGreaterThan(listings));
+    await fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    expect(screen.queryByText(/is a personal skill now/)).toBeNull();
+  });
+
+  it("says why a skill couldn't be copied to the personal ones", async () => {
+    thread('gemini-cli');
+    mockGroveBench.listSkills.mockResolvedValue(many);
+    mockGroveBench.copySkillToUser.mockRejectedValueOnce(new Error('Error invoking remote method \'skills:copyToUser\': Error: You have a personal skill named "triage" already'));
+    render(ThreadSkills, { sessionId: 't1' });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Copy triage to your personal skills' }));
+    await waitFor(() => expect(store.error).toBe('Couldn\'t copy "triage" to your personal skills: You have a personal skill named "triage" already'));
+    expect(screen.queryByText(/is a personal skill now/)).toBeNull();
+    store.setError(null);
+  });
+
   it("marks no skill Claude only in another agent's thread, as Copilot and OpenCode read .claude/skills too", async () => {
     thread('gemini-cli');
     mockGroveBench.listSkills.mockResolvedValue(many);

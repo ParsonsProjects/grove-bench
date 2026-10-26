@@ -133,6 +133,8 @@ Skills are folders with a `SKILL.md` file, a format every agent Grove Bench know
 
 **Edit** opens the skill's `SKILL.md` in the drawer as plain text, frontmatter included, so settings the Add skill form doesn't have (such as `allowed-tools`) stay as they are. **Save** (`Ctrl+S`) writes it back, keeping the file's line endings. For a shared skill it edits the file in `.agents/skills` and updates Claude Agent's link to it. Save refuses if the file changed after you opened it (**Reload** shows the new version, dropping your changes) or if the text changes the skill's `name`, since schedules, links and turned-off skills go by it. **Open in editor** opens the file in VS Code, Cursor or your default app instead. Leaving the editor, switching tab or closing the drawer with unsaved changes asks first.
 
+**Copy to personal** on a project skill copies its folder to your user folder (`~/.agents/skills`, with a link in `~/.claude/skills` for Claude Agent), so all your projects have it. The project keeps its copy for your team. When a personal and a project skill have the same name, Claude Agent uses the personal one, so a Claude Agent thread lists that one; other agents' threads list the project's.
+
 The drawer offers two buttons when skills need them:
 
 - **Share**: skills that are only in Claude Agent's folders move to `.agents/skills`, each leaving a link, so every agent can use them. The button here shares them all; **Share** on a card shares just that skill

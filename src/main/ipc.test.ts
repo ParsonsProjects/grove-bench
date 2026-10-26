@@ -71,7 +71,7 @@ vi.mock('./memory.js', () => ({
 vi.mock('./skill-suggestions.js', () => ({ getCachedSuggestions: vi.fn(), dismissSuggestion: vi.fn() }));
 const sharing = vi.hoisted(() => ({ skillSharing: vi.fn(), shareSkills: vi.fn(), linkSkills: vi.fn() }));
 vi.mock('./skill-sharing.js', () => sharing);
-const skillFiles = vi.hoisted(() => ({ readSkillFile: vi.fn(), saveSkillFile: vi.fn() }));
+const skillFiles = vi.hoisted(() => ({ readSkillFile: vi.fn(), saveSkillFile: vi.fn(), copySkillToUser: vi.fn() }));
 vi.mock('./skills.js', async (importOriginal) => ({ ...(await importOriginal<typeof import('./skills.js')>()), ...skillFiles }));
 vi.mock('./background-tasks.js', () => ({ agentForProject: vi.fn(), recordedAgent: vi.fn(), backgroundModelFor: vi.fn() }));
 vi.mock('./editor-launch.js', () => ({ launchEditor: vi.fn() }));
@@ -1688,9 +1688,9 @@ describe('adapters, skills and MCP config', () => {
     // Another agent's thread can share Claude Code's skills, but isn't offered links.
     m.worktreeManager.getAdapterType.mockResolvedValue('gemini-cli');
     expect(await invoke(IPC.SKILLS_SHARING, 's1', '/repo')).toEqual({ toShare: [{ name: 'own' }], toLink: [], broken: [] });
-    expect(sharing.skillSharing).toHaveBeenLastCalledWith('/wt', { project: [path.join('.claude', 'skills')], user: [path.join('.claude', 'skills')] });
+    expect(sharing.skillSharing).toHaveBeenLastCalledWith('/wt', { project: [path.join('.claude', 'skills')], user: [path.join('.claude', 'skills')], userFirst: true });
     await invoke(IPC.SKILLS_SHARE, 's1', '/repo');
-    expect(sharing.shareSkills).toHaveBeenLastCalledWith('/wt', { project: [path.join('.claude', 'skills')], user: [path.join('.claude', 'skills')] }, undefined);
+    expect(sharing.shareSkills).toHaveBeenLastCalledWith('/wt', { project: [path.join('.claude', 'skills')], user: [path.join('.claude', 'skills')], userFirst: true }, undefined);
     // One skill, by the path its card has.
     await invoke(IPC.SKILLS_SHARE, 's1', '/repo', '/wt/.claude/skills/own/SKILL.md');
     expect(sharing.shareSkills).toHaveBeenLastCalledWith('/wt', expect.anything(), '/wt/.claude/skills/own/SKILL.md');
@@ -1709,6 +1709,9 @@ describe('adapters, skills and MCP config', () => {
 
     await invoke(IPC.SKILLS_SAVE, 's1', '/repo', listed, 'text', 'new text');
     expect(skillFiles.saveSkillFile).toHaveBeenCalledWith('/wt', dirs, listed, 'text', 'new text');
+
+    await invoke(IPC.SKILLS_COPY_TO_USER, 's1', '/repo', listed);
+    expect(skillFiles.copySkillToUser).toHaveBeenCalledWith('/wt', dirs, listed);
 
     // Opens the file edited, not the link, as a worktree file opens.
     vi.mocked(launchEditor).mockResolvedValueOnce(false).mockResolvedValueOnce(false);
@@ -1729,8 +1732,10 @@ describe('adapters, skills and MCP config', () => {
     await expect(invoke(IPC.SKILLS_SAVE, 's1', '/repo', '/x/SKILL.md', 'old', undefined)).rejects.toThrow('No skill text given');
     m.sessionManager.getWorktreePath.mockReturnValue(null);
     await expect(invoke(IPC.SKILLS_SAVE, 's1', '', '/x/SKILL.md', 'old', 'new')).rejects.toThrow('No project root');
+    await expect(invoke(IPC.SKILLS_COPY_TO_USER, 's1', '', '/x/SKILL.md')).rejects.toThrow('No project root');
     expect(skillFiles.readSkillFile).not.toHaveBeenCalled();
     expect(skillFiles.saveSkillFile).not.toHaveBeenCalled();
+    expect(skillFiles.copySkillToUser).not.toHaveBeenCalled();
   });
 
   it("refuses MCP and plugin calls for an agent that isn't registered, rather than change the default's", async () => {
