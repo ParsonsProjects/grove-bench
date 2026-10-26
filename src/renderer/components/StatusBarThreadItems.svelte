@@ -1,9 +1,9 @@
 <script lang="ts">
   /**
-   * Tasks over Files, as one stack like MCP over Skills, so both popovers
-   * open above the pair rather than over each other. The thread's items
-   * load the first time it is the open thread (every pane is mounted, and
-   * a hidden one needn't ask), then stay current with its live events.
+   * Tasks over Files, as one stack, so both popovers open above the pair
+   * rather than over each other. The thread's items load the first time it
+   * is the open thread (every pane is mounted, and a hidden one needn't
+   * ask), then stay current with its live events.
    * A narrow bar drops the stack, unless a task is still to do: what the
    * agent is working through is worth the room.
    */

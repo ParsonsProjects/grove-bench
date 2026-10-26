@@ -123,17 +123,76 @@ describe('StatusBar MCP controls follow the agent', () => {
     store.activeSessionId = ID;
   }
 
+  // jsdom has no Web Animations, which the drawer's slide runs through. This
+  // one ends at once, so a closed drawer leaves the page.
+  const realAnimate = Element.prototype.animate;
+
   beforeEach(() => {
     vi.mocked(window.groveBench.reconnectMcpServer).mockClear();
     vi.mocked(window.groveBench.reconnectDownMcpServers).mockClear();
+    Element.prototype.animate = vi.fn(() => {
+      const animation = { onfinish: null as (() => void) | null, cancel() {}, finished: Promise.resolve(), currentTime: 0 };
+      queueMicrotask(() => animation.onfinish?.());
+      return animation as unknown as Animation;
+    });
   });
 
   afterEach(() => {
+    // Unmount first: emptying the server list below would close an open
+    // drawer, and its slide would need the animate mock restored next.
+    cleanup();
     agentsStore.list = [];
     agentsStore.loaded = false;
     delete messageStore.systemInfoBySession[ID];
     delete messageStore.mcpLiveBySession[ID];
     vi.mocked(window.groveBench.listMcpServers).mockResolvedValue([]);
+    Element.prototype.animate = realAnimate;
+  });
+
+  it('opens the servers in a drawer, and closes it on Escape', async () => {
+    useAgent({ controls: { ...NONE, list: true }, disconnectHint: '' });
+    messageStore.systemInfoBySession[ID] = { tools: [], agents: [], skills: [], slashCommands: [], mcpServers: [{ name: 'docs', status: 'connected' }] };
+    render(StatusBar, { props: { sessionId: ID } });
+
+    await fireEvent.click(screen.getByRole('button', { name: /MCP 1/ }));
+
+    const drawer = screen.getByRole('dialog', { name: 'MCP servers' });
+    expect(drawer).toHaveAttribute('aria-modal', 'true');
+    expect(within(drawer).getByText('docs')).toBeInTheDocument();
+    expect(within(drawer).getByText('1 of 1 connected')).toBeInTheDocument();
+
+    await fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+
+  it('closes when another thread opens', async () => {
+    useAgent({ controls: { ...NONE, list: true }, disconnectHint: '' });
+    messageStore.systemInfoBySession[ID] = { tools: [], agents: [], skills: [], slashCommands: [], mcpServers: [{ name: 'docs', status: 'connected' }] };
+    render(StatusBar, { props: { sessionId: ID } });
+    await fireEvent.click(screen.getByRole('button', { name: /MCP 1/ }));
+    expect(screen.getByRole('dialog', { name: 'MCP servers' })).toBeInTheDocument();
+
+    store.activeSessionId = 'another-thread';
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+
+  // The sign-in poll belongs to the thread, not the drawer.
+  it('keeps waiting on a sign-in after the drawer closes', async () => {
+    useAgent({ controls: { ...NONE, list: true, reconnect: true, signIn: true }, disconnectHint: '' });
+    messageStore.systemInfoBySession[ID] = { tools: [], agents: [], skills: [], slashCommands: [], mcpServers: [{ name: 'cloudflare', status: 'needs-auth' }] };
+    vi.mocked(window.groveBench.authenticateMcpServer).mockResolvedValueOnce({ authUrl: 'https://example.com/oauth', callbackExpected: true });
+    render(StatusBar, { props: { sessionId: ID } });
+    await fireEvent.click(screen.getByRole('button', { name: /MCP 1/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    await screen.findByRole('button', { name: 'Waiting...' });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Close MCP servers' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await fireEvent.click(screen.getByRole('button', { name: /MCP 1/ }));
+
+    expect(screen.getByRole('button', { name: 'Waiting...' })).toBeDisabled();
+    expect(screen.getByText(/Finish signing in to cloudflare/)).toBeInTheDocument();
   });
 
   it('offers no controls for an agent without MCP support', async () => {
