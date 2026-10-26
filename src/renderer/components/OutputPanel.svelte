@@ -17,6 +17,7 @@
   import { settingsStore } from '../stores/settings.svelte.js';
   import { filterVisibleMessages, foldNarration, hasAgentReply, narrationIds, threadMessages } from '$lib/message-view.js';
   import { dayDividers, dayStart } from '$lib/message-dates.js';
+  import { whileShown } from '$lib/while-shown.js';
   import { sessionRepoColor } from '$lib/session-repo-color.js';
   import { sessionSpriteState } from '$lib/session-sprite-state.js';
   import type { EventSearchHit } from '../../shared/types.js';
@@ -27,12 +28,16 @@
   let scrollContainer = $state<HTMLDivElement>();
   let shouldAutoScroll = $state(true);
 
-  let allMessages = $derived(messageStore.getMessages(sessionId));
-  let streamingText = $derived(messageStore.getStreamingText(sessionId));
   // Every conversation's pane stays mounted, hidden but for the open one.
-  // A hidden one skips drawing its live reply (re-parsed on every flush);
+  // A hidden one's chat stands still at what it last showed (whileShown),
+  // and opening it brings in what came meanwhile. On another tab of the open
+  // conversation it keeps up, as a jump to a message can start from there.
+  let threadOpen = $derived(store.activeSessionId === sessionId);
+  let allMessages = $derived.by(whileShown(() => threadOpen, () => messageStore.getMessages(sessionId)));
+  let streamingText = $derived(messageStore.getStreamingText(sessionId));
+  // Nor does a hidden pane draw its live reply (re-parsed on every flush);
   // shown again, it draws what has arrived so far.
-  let paneShown = $derived(store.activeSessionId === sessionId && messageStore.getActiveTab(sessionId) === 'activity');
+  let paneShown = $derived(threadOpen && messageStore.getActiveTab(sessionId) === 'activity');
   let streamingThinking = $derived(messageStore.getStreamingThinking(sessionId));
   let isRunning = $derived(messageStore.getIsRunning(sessionId));
   let activity = $derived(messageStore.getActivity(sessionId));
@@ -72,6 +77,22 @@
     if (!batchNextLoad) return;
     batchNextLoad = false;
     if (len > RENDER_BATCH) renderCap = RENDER_BATCH;
+  });
+  // Opening a conversation that worked on out of sight brings in all it said
+  // meanwhile at once (allMessages). More than a batch of it draws as a load
+  // does, if the reader follows the conversation: scrolled up, the rows
+  // they're reading stay, and the new ones join below at once.
+  let countWhenHidden: number | null = null;
+  $effect.pre(() => {
+    const len = filteredMessages.length;
+    if (!threadOpen) {
+      countWhenHidden ??= len;
+      return;
+    }
+    if (countWhenHidden !== null && len - countWhenHidden > RENDER_BATCH && untrack(() => shouldAutoScroll)) {
+      renderCap = RENDER_BATCH;
+    }
+    countWhenHidden = null;
   });
   $effect(() => {
     if (renderCap === Infinity) return;
@@ -149,8 +170,10 @@
   // there is nothing here to go on before then. A first message sent later,
   // in a conversation started without one, begins it here. It ends at the
   // reply, or when the agent stops or goes to sleep without one; Stop ends
-  // it too (PromptEditor).
+  // it too (PromptEditor). Only as the open conversation shows it: hidden,
+  // its chat stands still, and opening it settles the scene.
   $effect(() => {
+    if (!threadOpen) return;
     if (replied || !agentLive) {
       untrack(() => arrivalScene.end(sessionId));
     } else if (isRunning && allMessages.some((m) => m.kind === 'user')) {
@@ -262,7 +285,7 @@
     const req = messageStore.pendingJumpBySession[sessionId];
     // Track message count so a jump requested before history replay retries once
     // the pane's history finishes loading.
-    const _loaded = messageStore.getMessages(sessionId).length;
+    const _loaded = allMessages.length;
     if (!req || store.activeSessionId !== sessionId || jumpInFlight) return;
     jumpInFlight = true;
     void (async () => {
@@ -390,6 +413,8 @@
   });
 
   $effect(() => {
+    // Hidden, there's nothing to scroll: the observer below pins it on showing.
+    if (!paneShown) return;
     const _len = messages.length;
     const _st = streamingText;
     const _stk = streamingThinking; // follow the live thinking line as it grows

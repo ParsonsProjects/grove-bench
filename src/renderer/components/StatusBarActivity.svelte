@@ -13,6 +13,7 @@
   import { store } from '../stores/sessions.svelte.js';
   import { formatResetTime } from '../lib/reset-time.js';
   import { formatTokens } from '../lib/context-usage.js';
+  import { whileShown } from '../lib/while-shown.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Notice } from '$lib/components/ui/notice/index.js';
   import { Pulse } from '$lib/components/ui/pulse/index.js';
@@ -27,7 +28,11 @@
   let needsInput = $derived(messageStore.needsInput(sessionId));
   let activity = $derived(messageStore.getActivity(sessionId));
 
-  let pendingTools = $derived(messageStore.getPendingTools(sessionId));
+  // Every conversation's status bar is mounted, hidden but for the open
+  // one's. The lists below go over the whole thread, so a hidden one keeps
+  // what it last showed until it's open again.
+  let threadOpen = $derived(store.activeSessionId === sessionId);
+  let pendingTools = $derived.by(whileShown(() => threadOpen, () => messageStore.getPendingTools(sessionId)));
   /** All of them are subagents' calls: the conversation itself may be idle. */
   let onlySubagentTools = $derived(pendingTools.length > 0 && pendingTools.every((t) => t.inSubagent));
   let rateLimit = $derived(rateLimitStore.get(sessionId));
@@ -41,9 +46,9 @@
   let backgroundTasks = $derived(backgroundTaskStore.get(sessionId));
   /** The Agent calls in the conversation, so a background subagent's task
    *  can open its thread. */
-  let agentCalls = $derived(new Set(
+  let agentCalls = $derived.by(whileShown(() => threadOpen, () => new Set(
     messageStore.getMessages(sessionId).filter(isAgentCall).map((m) => (m as ChatToolCallMessage).toolUseId),
-  ));
+  )));
   let runningBgTasks = $derived(backgroundTasks.filter((t) => t.status === 'running'));
   let bgTaskStopError = $state('');
 

@@ -506,6 +506,88 @@ describe('OutputPanel: drawing a loaded page', () => {
   });
 });
 
+describe("OutputPanel: a hidden conversation's chat", () => {
+  const replies = (n: number) => Array.from({ length: n }, (_, i) => ({ kind: 'text', id: `m${i}`, text: `reply ${i}`, uuid: `a${i}` }));
+  const drawn = (container: HTMLElement) => [...container.querySelectorAll<HTMLElement>('[data-msg-id]')].map((el) => el.dataset.msgId);
+
+  beforeEach(() => {
+    store.activeSessionId = SID;
+    messageStore.setViewMode(SID, 'detailed');
+  });
+  afterEach(() => { messageStore.activeTabBySession = {}; });
+
+  /** Render with `before` drawn, then hide the conversation while it gets to `after`. */
+  async function workOutOfSight(before: number, after: number) {
+    messageStore.messagesBySession = { [SID]: replies(before) as never };
+    const result = render(OutputPanel, { sessionId: SID });
+    await vi.waitFor(() => expect(drawn(result.container)).toHaveLength(before));
+    store.activeSessionId = 'another';
+    await tick();
+    messageStore.messagesBySession = { [SID]: replies(after) as never };
+    await tick();
+    return result;
+  }
+
+  it('stands still while hidden, and shows what came meanwhile when opened', async () => {
+    const { container } = await workOutOfSight(3, 5);
+    expect(drawn(container)).toEqual(['m0', 'm1', 'm2']);
+
+    store.activeSessionId = SID;
+    await tick();
+
+    expect(drawn(container)).toEqual(['m0', 'm1', 'm2', 'm3', 'm4']);
+  });
+
+  it('keeps up on another tab of the open conversation', async () => {
+    messageStore.messagesBySession = { [SID]: replies(3) as never };
+    const { container } = render(OutputPanel, { sessionId: SID });
+    messageStore.setActiveTab(SID, 'changes');
+
+    messageStore.messagesBySession = { [SID]: replies(4) as never };
+    await tick();
+
+    expect(drawn(container)).toHaveLength(4);
+  });
+
+  it('draws much that came meanwhile newest first, then the rest a batch per frame', async () => {
+    const { container } = await workOutOfSight(5, 30);
+
+    store.activeSessionId = SID;
+    await tick();
+
+    expect(drawn(container)).toEqual(Array.from({ length: 10 }, (_, i) => `m${20 + i}`));
+    await vi.waitFor(() => expect(drawn(container)).toHaveLength(30));
+  });
+
+  it('draws a little that came meanwhile at once', async () => {
+    const { container } = await workOutOfSight(5, 12);
+
+    store.activeSessionId = SID;
+    await tick();
+
+    expect(drawn(container)).toHaveLength(12);
+  });
+
+  it('draws it all at once below a reader who scrolled up', async () => {
+    messageStore.messagesBySession = { [SID]: replies(5) as never };
+    const { container, findByTitle } = render(OutputPanel, { sessionId: SID });
+    const el = container.querySelector<HTMLElement>('.overflow-y-auto')!;
+    for (const [key, value] of Object.entries({ scrollTop: 0, scrollHeight: 2000, clientHeight: 500 })) {
+      Object.defineProperty(el, key, { configurable: true, writable: true, value });
+    }
+    el.dispatchEvent(new Event('scroll'));
+    await findByTitle('Scroll to bottom');
+    store.activeSessionId = 'another';
+    await tick();
+    messageStore.messagesBySession = { [SID]: replies(30) as never };
+
+    store.activeSessionId = SID;
+    await tick();
+
+    expect(drawn(container)).toHaveLength(30);
+  });
+});
+
 describe('OutputPanel: the first turn', () => {
   const session = (status: string) => ({ id: SID, branch: 'b', repoPath: '/repo', status, agentType: 'claude-code', createdAt: 0 }) as (typeof store.sessions)[number];
 
@@ -576,6 +658,27 @@ describe('OutputPanel: the first turn', () => {
     arrivalScene.begin(SID);
     render(OutputPanel, { sessionId: SID });
     store.sessions = [session('stopped')];
+    await tick();
+    expect(arrivalScene.for(SID)).toBeNull();
+  });
+
+  it('ends at a reply that came while hidden once its conversation is opened', async () => {
+    store.sessions = [session('running')];
+    messageStore.messagesBySession = { [SID]: [{ kind: 'user', id: 'u1', text: 'Fix it' }] };
+    arrivalScene.begin(SID);
+    render(OutputPanel, { sessionId: SID });
+    store.activeSessionId = 'another';
+    await tick();
+
+    messageStore.messagesBySession = { [SID]: [
+      { kind: 'user', id: 'u1', text: 'Fix it' },
+      { kind: 'text', id: 't1', text: 'On it', uuid: 'a1' },
+    ] };
+    await tick();
+    // Hidden, the chat stands still, the scene with it.
+    expect(arrivalScene.for(SID)).not.toBeNull();
+
+    store.activeSessionId = SID;
     await tick();
     expect(arrivalScene.for(SID)).toBeNull();
   });

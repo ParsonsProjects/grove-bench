@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
 import { render, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/svelte';
+import { tick } from 'svelte';
 
 import StatusBar from './StatusBar.svelte';
 import { store } from '../stores/sessions.svelte.js';
@@ -774,6 +775,24 @@ describe('StatusBar activity', () => {
 
     await waitFor(() => expect(screen.queryByRole('button', { name: /^1 tool/ })).not.toBeNull());
     expect(screen.queryByText('Pending Tools')).toBeNull();
+  });
+
+  it("keeps a hidden conversation's pending tools as they were until it's open", async () => {
+    const tool = { kind: 'tool_call', id: 't', toolName: 'Bash', toolUseId: 'tu1', toolInput: { command: 'ls' }, pending: true } as any;
+    messageStore.messagesBySession[HIDDEN] = [tool];
+    store.activeSessionId = HIDDEN;
+    render(StatusBar, { props: { sessionId: HIDDEN } });
+    expect(screen.getByRole('button', { name: /^1 tool/ })).toBeInTheDocument();
+
+    store.activeSessionId = ACTIVE;
+    messageStore.messagesBySession[HIDDEN] = [tool, { ...tool, id: 't2', toolUseId: 'tu2' }];
+    await tick();
+    expect(screen.getByRole('button', { name: /^1 tool/ })).toBeInTheDocument();
+
+    store.activeSessionId = HIDDEN;
+    await tick();
+    expect(screen.getByRole('button', { name: /^2 tools/ })).toBeInTheDocument();
+    delete messageStore.messagesBySession[HIDDEN];
   });
 
   describe('subagents', () => {
