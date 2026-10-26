@@ -326,7 +326,7 @@ describe('agent output', () => {
 
   it('names how many changes the worktree watchers saw', () => {
     const { log, lines, advance } = setup();
-    for (let i = 0; i < 3; i++) log.noteWorktreeChange();
+    log.noteWorktreeChanges(3);
     advance(300); log.tick();
     expect(lines).toEqual(["main process didn't run for 300 ms; worktree file changes: 3"]);
   });
@@ -403,6 +403,24 @@ describe('garbage collection', () => {
     advance(TICK_MS); log.tick();
 
     expect(lines).toEqual(["main process didn't run for 500 ms; garbage collection: major (380 ms), minor (12 ms)"]);
+  });
+
+  it("counts the watcher thread's changes that come in by the next tick toward the stall", () => {
+    const { log, lines, advance } = watched();
+    advance(TICK_MS); log.tick();
+    log.noteWorktreeChanges(5);
+    advance(500); log.tick();
+    // Sent while the main process was stalled, handled after the tick that saw it.
+    log.noteWorktreeChanges(40);
+    advance(TICK_MS); log.tick();
+    log.noteWorktreeChanges(7);
+    advance(400); log.tick();
+    advance(TICK_MS); log.tick();
+
+    expect(lines).toEqual([
+      "main process didn't run for 500 ms; worktree file changes: 45",
+      "main process didn't run for 400 ms; worktree file changes: 7",
+    ]);
   });
 
   it('leaves out short collections and ones outside the stall', () => {

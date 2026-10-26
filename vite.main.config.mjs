@@ -27,6 +27,10 @@ export default defineConfig({
         // The utility process git and gh launch from (src/main/process-host.ts).
         // Electron runs it from inside app.asar, so it isn't unpacked.
         'process-host-child': path.resolve('src/main/process-host-child.ts'),
+        // The worker thread turns watch their worktrees from
+        // (src/main/turn-files.ts), so libuv's work on each change isn't the
+        // main process's. Loaded from inside app.asar like the host.
+        'turn-files-worker': path.resolve('src/main/turn-files-worker.ts'),
       },
       formats: ['cjs'],
       fileName: (_format, entryName) => `${entryName}.js`,
