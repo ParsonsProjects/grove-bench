@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import type { AgentAdapter, AgentQueryHandle, AdapterConfig, PermissionResponse } from './adapters/types.js';
+import type { AdapterEvent, AgentAdapter, AgentQueryHandle, AdapterConfig, PermissionResponse } from './adapters/types.js';
 import type { ManagedSession } from './session-types.js';
 import { IPC, PERMISSION_TIMEOUT_MINUTES, type AgentEvent, type McpServerInfo } from '../shared/types.js';
 import * as fs from 'node:fs';
@@ -172,7 +172,7 @@ vi.mock('./credentials.js', () => ({ markApiKeyRejected: vi.fn() }));
 // ─── Mock Adapter ───
 
 interface MockQueryControl {
-  emitEvent: (event: AgentEvent) => void;
+  emitEvent: (event: AdapterEvent) => void;
   finish: () => void;
   error: (err: Error) => void;
   permissionHandler: ((req: any) => Promise<PermissionResponse>) | null;
@@ -243,12 +243,12 @@ class MockAdapter implements AgentAdapter {
 
     let resolveIter: (() => void) | null = null;
     let rejectIter: ((err: Error) => void) | null = null;
-    const eventQueue: AgentEvent[] = [];
+    const eventQueue: AdapterEvent[] = [];
     let done = false;
     let waitForEvent: Promise<void> | null = null;
 
     const control: MockQueryControl = {
-      emitEvent: (event: AgentEvent) => {
+      emitEvent: (event: AdapterEvent) => {
         eventQueue.push(event);
         resolveIter?.();
       },
@@ -756,7 +756,7 @@ describe('AgentSessionManager event processing', () => {
     await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
     vi.mocked(worktreeManager.updateLastActive).mockClear();
 
-    mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false } as any);
+    mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false });
 
     await vi.waitFor(() => expect(worktreeManager.updateLastActive).toHaveBeenCalledWith('test-turn-active'));
     await sessionManager.destroySession('test-turn-active');
@@ -1884,7 +1884,7 @@ describe('AgentSessionManager.interruptQuery()', () => {
       subtype: 'error_during_execution',
       isError: true,
       errors: ['Error: File does not exist.', 'Error: Request was aborted.'],
-    } as any);
+    });
 
     await vi.waitFor(() => {
       const history = sessionManager.getEventHistory('test-interrupt-sanitize');
@@ -1917,7 +1917,7 @@ describe('AgentSessionManager.interruptQuery()', () => {
       subtype: 'error_during_execution',
       isError: true,
       errors: ['Real tool failure'],
-    } as any);
+    });
 
     await vi.waitFor(() => {
       const history = sessionManager.getEventHistory('test-result-errors');
@@ -2792,7 +2792,7 @@ describe('AgentSessionManager turn state for a loading history', () => {
       mockAdapter.control!.emitEvent({ type: 'assistant_text', text: 'The build finished', uuid: 'u1' });
       mockAdapter.control!.emitEvent({
         type: 'tool_result', toolUseId: 'tu1', content: '', imageData: [{ data: 'iVBOR', mediaType: 'image/png' }],
-      } as any);
+      });
       await vi.waitFor(() => expect(attachments.storeToolImages).toHaveBeenCalled());
     });
 
@@ -3438,7 +3438,7 @@ describe('AgentSessionManager.sendMessage()', () => {
 
     mockAdapter.control!.emitEvent({
       type: 'tool_result', toolUseId: 'tu1', content: '', imageData: [{ data: 'iVBOR', mediaType: 'image/png' }],
-    } as any);
+    });
 
     await vi.waitFor(() => {
       const results = sessionManager.getEventHistory('test-tool-images').filter((e) => e.type === 'tool_result');
@@ -3757,7 +3757,7 @@ describe('AgentSessionManager.rewindFiles()', () => {
 
     const userMsg = session!.eventHistory.find((e) => e.type === 'user_message');
     expect(userMsg).toBeDefined();
-    const uuid = (userMsg as any).uuid;
+    const uuid = userMsg!.uuid!;
 
     // Rewind to that message
     await sessionManager.rewindFiles('test-rewind', uuid);
@@ -3793,7 +3793,7 @@ describe('AgentSessionManager.rewindFiles()', () => {
 
     const session = sessionManager.getSession('test-rewind-restart');
     const userMsg = session!.eventHistory.find((e) => e.type === 'user_message');
-    const uuid = (userMsg as any).uuid;
+    const uuid = userMsg!.uuid!;
 
     // Rewind
     await sessionManager.rewindFiles('test-rewind-restart', uuid);
@@ -3836,7 +3836,7 @@ describe('AgentSessionManager.rewindFiles()', () => {
     expect(userMsgs).toHaveLength(2);
 
     // Rewind to the second message — should remove it from history
-    const secondUuid = (userMsgs[1] as any).uuid;
+    const secondUuid = userMsgs[1].uuid!;
     await sessionManager.rewindFiles('test-rewind-history', secondUuid);
     await new Promise((r) => setTimeout(r, 50));
 
@@ -3872,7 +3872,7 @@ describe('AgentSessionManager.rewindFiles()', () => {
 
     const session = sessionManager.getSession('test-rewind-emit');
     const userMsg = session!.eventHistory.find((e) => e.type === 'user_message');
-    const uuid = (userMsg as any).uuid;
+    const uuid = userMsg!.uuid!;
 
     await sessionManager.rewindFiles('test-rewind-emit', uuid);
     await new Promise((r) => setTimeout(r, 50));
@@ -3955,7 +3955,7 @@ describe('AgentSessionManager.rewindFiles()', () => {
     await new Promise((r) => setTimeout(r, 50));
 
     const session = sessionManager.getSession('test-rewind-fresh');
-    const secondUuid = (session!.eventHistory.filter((e) => e.type === 'user_message')[1] as any).uuid;
+    const secondUuid = session!.eventHistory.filter((e) => e.type === 'user_message')[1].uuid!;
     await sessionManager.rewindFiles('test-rewind-fresh', secondUuid);
     await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(2));
     await new Promise((r) => setTimeout(r, 50));
@@ -3995,7 +3995,7 @@ describe('AgentSessionManager.rewindFiles()', () => {
 
     const session = sessionManager.getSession('test-rewind-fork');
     const userMsgs = session!.eventHistory.filter((e) => e.type === 'user_message');
-    const secondUuid = (userMsgs[1] as any).uuid;
+    const secondUuid = userMsgs[1].uuid!;
 
     await sessionManager.rewindFiles('test-rewind-fork', secondUuid);
     await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(2));
@@ -4038,7 +4038,7 @@ describe('AgentSessionManager.rewindFiles()', () => {
     const session = sessionManager.getSession('test-rewind-autosave');
     const userMsg = session!.eventHistory.find((e) => e.type === 'user_message');
 
-    await sessionManager.rewindFiles('test-rewind-autosave', (userMsg as any).uuid);
+    await sessionManager.rewindFiles('test-rewind-autosave', userMsg!.uuid!);
 
     const autosave = await import('./memory-autosave.js');
     expect(vi.mocked(autosave.cancelAutoSave)).toHaveBeenCalledWith('test-rewind-autosave');

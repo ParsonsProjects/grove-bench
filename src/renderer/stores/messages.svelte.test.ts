@@ -1836,7 +1836,7 @@ describe('background task cleanup (delegates to backgroundTaskStore)', () => {
     };
     messageStore.setIsRunning(SID, true);
 
-    messageStore.ingestEvent(SID, { type: 'result', subtype: 'success', result: '', totalCostUsd: 0, durationMs: 100 } as any);
+    messageStore.ingestEvent(SID, { type: 'result', subtype: 'success', result: '', totalCostUsd: 0, durationMs: 100, isError: false });
 
     expect(backgroundTaskStore.get(SID)).toHaveLength(1);
   });
@@ -1847,7 +1847,7 @@ describe('background task cleanup (delegates to backgroundTaskStore)', () => {
     };
     messageStore.setIsRunning(SID, true);
 
-    messageStore.ingestEvent(SID, { type: 'process_exit' } as any);
+    messageStore.ingestEvent(SID, { type: 'process_exit' });
 
     expect(backgroundTaskStore.get(SID)).toHaveLength(0);
   });

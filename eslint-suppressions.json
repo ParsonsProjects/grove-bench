@@ -1,52 +1,7 @@
 {
-  "src/main/adapters/acp/acp-adapter.test.ts": {
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 1
-    }
-  },
-  "src/main/adapters/acp/opencode.test.ts": {
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 2
-    }
-  },
-  "src/main/adapters/claude-code-auth.test.ts": {
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 2
-    }
-  },
-  "src/main/adapters/claude-code.test.ts": {
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 53
-    }
-  },
   "src/main/adapters/grove-tools.ts": {
     "@typescript-eslint/no-explicit-any": {
       "count": 1
-    }
-  },
-  "src/main/agent-session.test.ts": {
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 12
-    }
-  },
-  "src/main/gh.test.ts": {
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 33
-    }
-  },
-  "src/main/git.test.ts": {
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 76
-    }
-  },
-  "src/main/ipc.test.ts": {
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 9
-    }
-  },
-  "src/main/settings.test.ts": {
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 6
     }
   },
   "src/renderer/App.svelte": {
@@ -67,11 +22,6 @@
   "src/renderer/components/ChangesReviewPanel.svelte": {
     "@typescript-eslint/no-unsafe-argument": {
       "count": 1
-    }
-  },
-  "src/renderer/components/ChangesReviewPanel.svelte.test.ts": {
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 3
     }
   },
   "src/renderer/components/MemoryPanel.svelte": {
@@ -120,11 +70,6 @@
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 1
-    }
-  },
-  "src/renderer/components/Sidebar.svelte.test.ts": {
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 12
     }
   },
   "src/renderer/components/SkillsPanel.svelte": {
@@ -213,21 +158,6 @@
   },
   "src/renderer/lib/components/ui/select/select-item.svelte": {
     "@typescript-eslint/no-unsafe-assignment": {
-      "count": 2
-    }
-  },
-  "src/renderer/lib/format-age.test.ts": {
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 1
-    }
-  },
-  "src/renderer/stores/backgroundTask.svelte.test.ts": {
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 17
-    }
-  },
-  "src/renderer/stores/messages.svelte.test.ts": {
-    "@typescript-eslint/no-unsafe-argument": {
       "count": 2
     }
   }

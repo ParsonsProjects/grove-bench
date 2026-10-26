@@ -337,7 +337,7 @@ describe('AcpAdapter', () => {
       for (const m of messages) {
         handle.sendMessage(m);
         const turn = await until(handle, 'result');
-        seen.push(JSON.parse((turn.find((e) => e.type === 'assistant_text') as { text: string }).text));
+        seen.push(JSON.parse((turn.find((e) => e.type === 'assistant_text') as { text: string }).text) as unknown[]);
       }
       handle.close();
       return seen;

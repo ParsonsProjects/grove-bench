@@ -1004,7 +1004,7 @@ describe('ChangesReviewPanel — large diffs', () => {
     messageStore.messagesBySession[SID].splice(2, 1, {
       kind: 'tool_call', id: 'a1', toolName: 'edit', toolInput: {}, toolUseId: 't1', uuid: 'u1', pending: false,
       toolView: { kind: 'edit', path: 'notes.txt', edits: [{ oldText: before.join('\n'), newText: after.join('\n') }] },
-    } as any);
+    });
     const { container, findByRole, queryByText } = render(ChangesReviewPanel, { sessionId: SID });
 
     await fireEvent.click(await findByRole('button', { name: '2 edits' }));
@@ -1023,7 +1023,7 @@ describe('ChangesReviewPanel — large diffs', () => {
       editTurn();
       messageStore.messagesBySession[SID].splice(2, 1, {
         kind: 'tool_call', id: 'b1', toolName: 'Edit', toolInput: { file_path: 'notes.txt', old_string: side('old'), new_string: side('new') }, toolUseId: 't1', uuid: 'u1', pending: false,
-      } as any);
+      });
       const { container, findByRole, findByText } = render(ChangesReviewPanel, { sessionId: SID });
 
       await fireEvent.click(await findByRole('button', { name: '2 edits' }));
@@ -1046,7 +1046,7 @@ describe('ChangesReviewPanel — large diffs', () => {
       const pad = ' '.repeat(5000);
       messageStore.messagesBySession[SID].splice(1, 1, {
         kind: 'tool_call', id: 'e1', toolName: 'Edit', toolInput: { file_path: 'notes.txt', old_string: `tiny old${pad}`, new_string: `tiny new${pad}` }, toolUseId: 't0', uuid: 'u0', pending: false,
-      } as any);
+      });
       const { container, findByRole, findByText, queryByText } = render(ChangesReviewPanel, { sessionId: SID });
 
       await fireEvent.click(await findByRole('button', { name: '2 edits' }));
