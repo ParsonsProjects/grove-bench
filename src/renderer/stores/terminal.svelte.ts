@@ -1,4 +1,13 @@
 import { previewStore } from './preview.svelte.js';
+import { gitStatusStore } from './gitStatus.svelte.js';
+
+/** After Enter in a thread's terminal, how long its output must stay quiet
+ *  before the git status is read again: the command has likely finished. */
+export const COMMAND_SETTLED_MS = 1000;
+/** How long after Enter output still counts as the command's: a command that
+ *  ends within it is read as it ends. One that runs longer (or a server left
+ *  running) is read when the Changes tab opens or the window comes back. */
+export const COMMAND_WINDOW_MS = 120_000;
 
 /**
  * Terminal store for per-session PTY terminals.
@@ -22,6 +31,12 @@ class TerminalStore {
   /** Callbacks registered for PTY exit. */
   private exitHandlers = new Map<string, (exitCode: number, signal?: number) => void>();
 
+  /** A command typed in the terminal may change what git sees (git itself,
+   *  or anything that edits files): when its output settles, the Changes tab
+   *  and the status bar are read again. Per session: until when output still
+   *  counts as the last command's. */
+  private commandUntil = new Map<string, number>();
+
   isAlive(sessionId: string): boolean {
     return this.aliveBySession[sessionId] ?? false;
   }
@@ -43,6 +58,7 @@ class TerminalStore {
     const dataCleanup = window.groveBench.onPtyData(sessionId, (data) => {
       const handler = this.dataHandlers.get(sessionId);
       if (handler) handler(data);
+      if (Date.now() < (this.commandUntil.get(sessionId) ?? 0)) this.awaitSettled(sessionId);
       // A dev server started here prints its URL; offer it in the Preview tab.
       previewStore.noteStream(sessionId, data);
     });
@@ -56,6 +72,12 @@ class TerminalStore {
     this.exitCleanups.set(sessionId, exitCleanup);
   }
 
+  /** (Re)start the wait for a command's output to settle: the store's
+   *  scheduled read starts over each time it's asked. */
+  private awaitSettled(sessionId: string) {
+    if (gitStatusStore.hasGit(sessionId)) gitStatusStore.scheduleRefresh(sessionId, COMMAND_SETTLED_MS);
+  }
+
   /** Unsubscribe from IPC events. */
   unsubscribe(sessionId: string) {
     this.dataCleanups.get(sessionId)?.();
@@ -64,6 +86,7 @@ class TerminalStore {
     this.exitCleanups.delete(sessionId);
     this.dataHandlers.delete(sessionId);
     this.exitHandlers.delete(sessionId);
+    this.commandUntil.delete(sessionId);
   }
 
   /** The main process killed this session's PTY on close without an exit
@@ -105,6 +128,11 @@ class TerminalStore {
   /** Write data to the PTY (keystrokes, pasted text). */
   write(sessionId: string, data: string) {
     window.groveBench.ptyWrite(sessionId, data);
+    // Enter: a command runs.
+    if (data.includes('\r')) {
+      this.commandUntil.set(sessionId, Date.now() + COMMAND_WINDOW_MS);
+      this.awaitSettled(sessionId);
+    }
   }
 
   /** Resize the PTY. */

@@ -2,6 +2,8 @@
 
 The Changes tab (`Alt+2`) shows the git status of your thread's worktree, letting you review all file modifications the agent has made.
 
+It keeps up as the agent works, when a command you type in the Terminal tab finishes within two minutes (its output stops for a second), when you open this tab, and when you come back to the window from another app, such as an editor you committed from.
+
 In a thread that runs without git there is nothing to compare against, so the tab only says it needs git. Check the agent's edits in your editor or file explorer.
 
 If git isn't installed, or is older than 2.23, a warning says so, with **Download Git** and **Re-check**: at the top of this tab, on the first screen, and when you start a thread. Without git, projects are plain folders. With an older git, threads still get their own branch, but rewinding and a few other steps fail.

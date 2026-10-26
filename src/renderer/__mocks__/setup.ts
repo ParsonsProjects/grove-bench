@@ -233,6 +233,7 @@ const mockGroveBench = {
   setOpenTabs: vi.fn(),
   onSessionStatus: vi.fn(() => () => {}),
   onFocusSession: vi.fn(() => () => {}),
+  onWindowFocus: vi.fn(() => () => {}),
   onPowerResume: vi.fn(() => () => {}),
   onAppClosing: vi.fn(() => () => {}),
   getEventHistory: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').AgentEvent[])),

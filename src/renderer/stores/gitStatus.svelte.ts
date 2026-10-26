@@ -164,6 +164,22 @@ class GitStatusStore {
     );
   }
 
+  /** Whether a thread runs on git, so has a status to read. */
+  hasGit(sessionId: string): boolean {
+    const session = sessionStore.sessions.find((s) => s.id === sessionId);
+    return !!session && !session.noGit;
+  }
+
+  /** Read the status again, for the thread on screen, when the window comes
+   *  back into focus: git may have changed in another app meanwhile (a
+   *  commit in an editor, say). Returns a function that stops it. */
+  refreshOnFocus(onScreen: () => string | null): () => void {
+    return window.groveBench.onWindowFocus(() => {
+      const sessionId = onScreen();
+      if (sessionId && this.hasGit(sessionId)) void this.refresh(sessionId);
+    });
+  }
+
   // ── Git write actions (proxy the CLI via IPC, then refresh status) ──
 
   /** Revert a file via git checkout, or undo a rename (`renamedFrom`, its old path). */

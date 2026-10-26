@@ -93,6 +93,20 @@ describe('git()', () => {
   });
 });
 
+describe('git() without optional locks', () => {
+  it('asks git not to take them, through the environment, leaving the arguments as they are', async () => {
+    mockExeca.mockResolvedValue({ stdout: '' } as never);
+    await git(['status', '--porcelain=v1'], '/wt', { optionalLocks: false });
+    const [, args, opts] = mockExeca.mock.calls[0] as unknown as [string, string[], { env?: Record<string, string> }];
+    expect(args).toEqual(['status', '--porcelain=v1']);
+    expect(opts.env?.GIT_OPTIONAL_LOCKS).toBe('0');
+
+    mockExeca.mockClear();
+    await git(['status'], '/wt');
+    expect((mockExeca.mock.calls[0] as unknown as [string, string[], { env?: unknown }])[2].env).toBeUndefined();
+  });
+});
+
 describe('gitVersion()', () => {
   it('parses version string', async () => {
     mockExeca.mockResolvedValue({ stdout: 'git version 2.39.1' } as any);

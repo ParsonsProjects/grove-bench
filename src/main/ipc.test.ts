@@ -1315,6 +1315,9 @@ describe('git handlers', () => {
     expect(git.git).toHaveBeenCalledWith(
       ['diff', 'mb', '--numstat', '-z', '--', 'src/a.ts', 'new.ts'], wt,
     );
+    // Without the index lock, so a git command run in the terminal meanwhile
+    // can't fail on it.
+    expect(git.git).toHaveBeenCalledWith(['status', '--porcelain=v1', '-z', '--untracked-files=all'], wt, { optionalLocks: false });
   });
 
   it('GIT_STATUS branch scope lists a file in conflict once, as one, not as the change the diff from the base calls it', async () => {

@@ -269,3 +269,38 @@ describe('gitStatusStore — continue or abort', () => {
     expect(mockGroveBench.getGitStatus).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('gitStatusStore — back in the window', () => {
+  it('reads the status of the thread on screen again, if it runs on git', () => {
+    let focused = () => {};
+    mockGroveBench.onWindowFocus.mockImplementation(((callback: () => void) => {
+      focused = callback;
+      return () => { focused = () => {}; };
+    }) as never);
+    const refresh = vi.spyOn(gitStatusStore, 'refresh').mockResolvedValue(undefined);
+    sessionStore.sessions = [
+      { id: 'with-git', branch: 'feat', repoPath: '/repo', status: 'running' },
+      { id: 'no-git', branch: '', repoPath: '/notes', status: 'running', noGit: true },
+    ] as never;
+    let onScreen: string | null = 'with-git';
+    const stop = gitStatusStore.refreshOnFocus(() => onScreen);
+    try {
+      focused();
+      expect(refresh).toHaveBeenCalledExactlyOnceWith('with-git');
+
+      onScreen = 'no-git';
+      focused();
+      onScreen = null;
+      focused();
+      expect(refresh).toHaveBeenCalledTimes(1);
+
+      stop();
+      onScreen = 'with-git';
+      focused();
+      expect(refresh).toHaveBeenCalledTimes(1);
+    } finally {
+      refresh.mockRestore();
+      sessionStore.sessions = [];
+    }
+  });
+});

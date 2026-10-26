@@ -130,9 +130,12 @@ function createWindow() {
     mainWindow?.show();
   });
 
-  // Stop the taskbar flash (started by OS notifications) once the user returns.
+  // Stop the taskbar flash (started by OS notifications) once the user returns,
+  // and tell the renderer, which reads the git status again: the page's own
+  // focus event misses a return to the Preview tab's page.
   mainWindow.on('focus', () => {
     mainWindow?.flashFrame(false);
+    mainWindow?.webContents.send(IPC.WINDOW_FOCUS);
   });
 
   initAutoUpdater(mainWindow, { shutdown });

@@ -153,6 +153,13 @@ function sanitizeWorktreeRelPath(worktreePath: string, filePath: string): { relP
   return { relPath, resolved };
 }
 
+/** The Changes tab's `git status`, which runs in the background. Without
+ *  git's optional locks, as git-status's "Background refresh" advises: else
+ *  it rewrites the index as it reads, and that lock can make a git command
+ *  typed in the terminal meanwhile fail ("index.lock exists"). The diffs
+ *  after it still can, once, after files change: diff ignores the setting. */
+const statusGit = (cwd: string) => git(['status', '--porcelain=v1', '-z', '--untracked-files=all'], cwd, { optionalLocks: false });
+
 /** Attach per-file line counts (`git diff <base> --numstat`) as a sidebar hint.
  *  Scoped to the changed paths so this doesn't walk the whole tree after every
  *  agent edit; falls back to the full diff when the path list would be
@@ -1664,7 +1671,7 @@ export function registerHandlers() {
         numstatBase = mb.mergeBase;
         // Tracked changes (committed or not) since the merge base, plus untracked files.
         const tracked = parseNameStatus(await git(['diff', '--name-status', '-z', mb.mergeBase], cwd));
-        const status = parseGitStatusPorcelain(await git(['status', '--porcelain=v1', '-z', '--untracked-files=all'], cwd));
+        const status = parseGitStatusPorcelain(await statusGit(cwd));
         const untracked = status.entries.filter(e => e.status === 'untracked');
         // The diff from the base lists a file in conflict as an ordinary change.
         const conflicted = status.entries.filter(e => e.status === 'conflicted');
@@ -1675,7 +1682,7 @@ export function registerHandlers() {
           uncommitted: status.entries.length,
         };
       } else {
-        const raw = await git(['status', '--porcelain=v1', '-z', '--untracked-files=all'], cwd);
+        const raw = await statusGit(cwd);
         result = parseGitStatusPorcelain(raw);
       }
       if (result.entries.length === 0) return withOperation(result);
