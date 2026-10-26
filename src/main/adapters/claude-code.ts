@@ -26,6 +26,7 @@ import { decideToolCall, groveServersOf, type PolicyDecision } from '../tool-pol
 import { categoryForView, claudeToolView } from '../../shared/tool-view.js';
 import { attachedFilesNote } from './file-attachments.js';
 import { checkKeyWithGet, type KeyCheckFetch } from './key-check.js';
+import { loadClaudeSdk } from './claude-sdk.js';
 import { createMemoryMcpServer } from './memory-mcp-server.js';
 import { createPreviewMcpServer } from './preview-mcp-server.js';
 import * as skillsModule from '../skills.js';
@@ -62,7 +63,7 @@ export function claudeAccountAuthErrorMessage(accountName: string): string {
   return `Claude couldn't sign in to your ${accountName} account. Check or replace its Anthropic API key in Settings → Agents (Grovekeepers), or run its sign-in command from there in a terminal, then try again.`;
 }
 
-// ─── SDK dynamic import (ESM-only module in a CJS Electron main process) ───
+// ─── SDK types (the SDK itself loads on first use: claude-sdk.ts) ───
 
 type Query = import('@anthropic-ai/claude-agent-sdk').Query;
 type SDKMessage = import('@anthropic-ai/claude-agent-sdk').SDKMessage;
@@ -129,31 +130,6 @@ function isNodeCommand(command: string): boolean {
  *  Electron's own binary for a `node` command. */
 export function claudeProcessExe(command: string): string {
   return windowsExeName(isNodeCommand(command) ? process.execPath : command);
-}
-
-// A real import() of the ESM-only SDK: Vite would turn a plain one into
-// require() in main's CommonJS bundle.
-// eslint-disable-next-line @typescript-eslint/no-implied-eval
-const dynamicImport = new Function('specifier', 'return import(specifier)') as
-  (specifier: string) => Promise<typeof import('@anthropic-ai/claude-agent-sdk')>;
-
-let _sdk: typeof import('@anthropic-ai/claude-agent-sdk') | undefined;
-async function getSdk() {
-  if (!_sdk) {
-    _sdk = await dynamicImport('@anthropic-ai/claude-agent-sdk');
-  }
-  return _sdk;
-}
-
-async function getQuery() {
-  return (await getSdk()).query;
-}
-
-/** Use `sdk` in place of the SDK, or load it again (undefined). Tests only:
- *  Vitest's module runner gives the import above no way to run ("A dynamic
- *  import callback was not specified"), so start() can't load the SDK. */
-export function setSdkForTests(sdk: typeof import('@anthropic-ai/claude-agent-sdk') | undefined): void {
-  _sdk = sdk;
 }
 
 // ─── Tool calls ───
@@ -1884,7 +1860,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   }
 
   async start(config: AdapterConfig): Promise<AgentQueryHandle> {
-    const queryFn = await getQuery();
+    const { query: queryFn } = await loadClaudeSdk();
 
     // Register Grove memory operations as an SDK MCP server
     let mcpServers: import('@anthropic-ai/claude-agent-sdk').Options['mcpServers'];
@@ -2343,7 +2319,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   // ─── Text generation (for memory extraction) ───
 
   async generateText(systemPrompt: string, userMessage: string, options?: { cwd?: string; abortSignal?: AbortSignal; model?: string }): Promise<string> {
-    const queryFn = await getQuery();
+    const { query: queryFn } = await loadClaudeSdk();
 
     let inputController: ReadableStreamDefaultController<SDKUserMessage> | null = null;
     const inputStream = new ReadableStream<SDKUserMessage>({
@@ -2406,7 +2382,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     // Grove's CLAUDE_CONFIG_DIR, and takes no folder of its own. An account's
     // transcripts are elsewhere, so Grove names those threads itself.
     if (this.account) return null;
-    const sdk = await getSdk();
+    const sdk = await loadClaudeSdk();
     return titleFromSessions(await sdk.listSessions(titleListOptions(cwd)), providerSessionId);
   }
 

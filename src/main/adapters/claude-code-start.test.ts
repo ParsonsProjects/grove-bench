@@ -1,5 +1,5 @@
 /**
- * ClaudeCodeAdapter.start() on a stand-in SDK (setSdkForTests): the options
+ * ClaudeCodeAdapter.start() on a stand-in SDK (claude-sdk.ts mocked): the options
  * it asks the SDK for, the agent process its spawn hook starts, the events it
  * reads, its tool-call callback and its handle's calls into the query. What
  * those build on (the message transforms, the tool policy, the reasoning
@@ -26,8 +26,12 @@ const servers = vi.hoisted(() => ({
 }));
 vi.mock('./memory-mcp-server.js', () => ({ createMemoryMcpServer: servers.createMemoryMcpServer }));
 vi.mock('./preview-mcp-server.js', () => ({ createPreviewMcpServer: servers.createPreviewMcpServer }));
+// The SDK's query(), and nothing else of it. No default: a test that hasn't
+// given start() its fake fails at once.
+const query = vi.hoisted(() => vi.fn<(params: QueryParams) => unknown>());
+vi.mock('./claude-sdk.js', () => ({ loadClaudeSdk: () => Promise.resolve({ query }) }));
 
-import { ClaudeCodeAdapter, CONTEXT_1M_BETA, LIMIT_STOP_REASON, THINKING_LEVEL_TOKENS, setSdkForTests } from './claude-code.js';
+import { ClaudeCodeAdapter, CONTEXT_1M_BETA, LIMIT_STOP_REASON, THINKING_LEVEL_TOKENS } from './claude-code.js';
 import { ResumeNotFoundError, type AdapterConfig, type AdapterEvent, type AgentQueryHandle, type PermissionResponse } from './types.js';
 import type { ClaudeAccount } from './claude-accounts.js';
 import type { Options } from '@anthropic-ai/claude-agent-sdk';
@@ -77,8 +81,6 @@ function fakeQuery() {
   };
 }
 
-// No default: a test that hasn't given start() its fake fails at once.
-const query = vi.fn<(params: QueryParams) => unknown>();
 
 function config(extra: Partial<AdapterConfig> = {}): AdapterConfig {
   return {
@@ -118,7 +120,6 @@ const init = (sessionId: string) => ({
 });
 
 beforeEach(() => {
-  setSdkForTests({ query } as never);
   // Reset, not cleared: a fake a failed start() left queued mustn't reach
   // the next test.
   query.mockReset();
@@ -129,7 +130,6 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  setSdkForTests(undefined);
   vi.unstubAllEnvs();
 });
 

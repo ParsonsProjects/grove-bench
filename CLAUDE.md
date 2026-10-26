@@ -51,6 +51,7 @@ src/
       types.ts         # Adapter interfaces
       registry.ts      # Adapter registry
       claude-code.ts   # Claude Code adapter implementation
+      claude-sdk.ts    # The Agent SDK, imported on first use (Vitest can't run that import: tests mock this module)
       claude-accounts.ts # Other Claude accounts: one adapter each, with its own CLAUDE_CONFIG_DIR
       acp/             # Agent Client Protocol adapter (Gemini CLI, Copilot CLI, OpenCode, custom agents)
       file-attachments.ts # How attached files reach each agent (by path; audio inline for ACP agents that take it)

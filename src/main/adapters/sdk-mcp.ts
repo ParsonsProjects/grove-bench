@@ -3,33 +3,15 @@
  * servers. Claude Code adapter-specific.
  */
 import type { GroveServer } from './grove-tools.js';
-
-// ─── SDK dynamic import (ESM-only module in a CJS Electron main process) ───
-
-// A real import() of the ESM-only SDK: Vite would turn a plain one into
-// require() in main's CommonJS bundle.
-// eslint-disable-next-line @typescript-eslint/no-implied-eval
-const dynamicImport = new Function('specifier', 'return import(specifier)') as
-  (specifier: string) => Promise<typeof import('@anthropic-ai/claude-agent-sdk')>;
-
-let _createSdkMcpServer: typeof import('@anthropic-ai/claude-agent-sdk').createSdkMcpServer;
-let _tool: typeof import('@anthropic-ai/claude-agent-sdk').tool;
-
-async function ensureSdk() {
-  if (!_createSdkMcpServer) {
-    const sdk = await dynamicImport('@anthropic-ai/claude-agent-sdk');
-    _createSdkMcpServer = sdk.createSdkMcpServer;
-    _tool = sdk.tool;
-  }
-}
+import { loadClaudeSdk } from './claude-sdk.js';
 
 export async function toSdkMcpServer(server: GroveServer) {
-  await ensureSdk();
-  return _createSdkMcpServer({
+  const { createSdkMcpServer, tool } = await loadClaudeSdk();
+  return createSdkMcpServer({
     name: server.name,
     ...(server.instructions ? { instructions: server.instructions } : {}),
     ...(server.alwaysLoad ? { alwaysLoad: true } : {}),
-    tools: server.tools.map((t) => _tool(
+    tools: server.tools.map((t) => tool(
       t.name,
       t.description,
       t.shape,
