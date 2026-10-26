@@ -1,5 +1,6 @@
 import type { ClaudeAccountSetting, GroveBenchSettings } from '../../shared/types.js';
 import { slugify } from '../../shared/slug.js';
+import { defaultStatusBarLayout } from '../../shared/status-bar-layout.js';
 import type { SettingsSectionId } from '../lib/settings-search.js';
 import { errorMessage } from '../../shared/error-message.js';
 
@@ -34,6 +35,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   autoDownloadUpdates: true,
   repoColors: {},
   groveCharacters: true,
+  statusBarLayout: defaultStatusBarLayout(),
   diffViewMode: 'unified',
   defaultActivityView: 'summary',
   spellcheck: true,

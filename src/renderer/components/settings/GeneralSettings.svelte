@@ -10,6 +10,7 @@
   import SettingRow from './SettingRow.svelte';
   import CheckboxSetting from './CheckboxSetting.svelte';
   import SettingsGroup from './SettingsGroup.svelte';
+  import StatusBarSettings from './StatusBarSettings.svelte';
   import UpdateSettings from '../UpdateSettings.svelte';
 
   const draft = $derived(settingsStore.draft);
@@ -162,6 +163,8 @@
     </div>
   {/if}
 </SettingsGroup>
+
+<StatusBarSettings />
 
 <SettingsGroup title="Window and editor">
   <CheckboxSetting

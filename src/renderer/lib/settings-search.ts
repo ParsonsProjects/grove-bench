@@ -34,6 +34,7 @@ export const SETTINGS_INDEX: readonly SettingsEntry[] = [
   { id: 'theme', section: 'general', label: 'Theme', keywords: 'dark light mode colour color scheme appearance' },
   { id: 'grove-characters', section: 'general', label: 'Show grove characters', keywords: 'pixel sprites status animation' },
   { id: 'project-colors', section: 'general', label: 'Project colors', keywords: 'accent colour repository' },
+  { id: 'status-bar-layout', section: 'general', label: 'Status bar', keywords: 'taskbar toolbar customise customize reorder order drag hide show parts left right' },
   { id: 'always-on-top', section: 'general', label: 'Always on top', keywords: 'window' },
   { id: 'spellcheck', section: 'general', label: 'Spell checking', keywords: 'spelling prompt editor' },
   { id: 'updates', section: 'general', label: 'Updates', keywords: 'version check for updates releases' },

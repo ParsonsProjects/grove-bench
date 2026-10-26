@@ -3,14 +3,17 @@
    * The bar between a conversation's tabs and its prompt. Each part is its
    * own component (StatusBar*.svelte), and every popover in it is a
    * StatusBarPopover, so they all open, close and take Escape the same way.
-   * This file lays the parts out and owns what they share: the model list
-   * and the Alt+M / Alt+T / Alt+E shortcuts.
+   * This file lays the parts out, in the order, sides and visibility set in
+   * Settings (statusBarLayout), and owns what they share: the model list and
+   * the Alt+M / Alt+T / Alt+E shortcuts. A hidden part stays mounted, so
+   * what it keeps going (the PR poll, the thread's tasks) still runs.
    */
   import { onMount, onDestroy } from 'svelte';
   import { messageStore } from '../stores/messages.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
   import { CONTROL_IDS } from '../../shared/types.js';
+  import type { StatusBarPartId } from '../../shared/status-bar-layout.js';
   import { contextUsage } from '../lib/context-usage.js';
   import SessionControlsPopover from './SessionControlsPopover.svelte';
   import ContextGrove from './ContextGrove.svelte';
@@ -58,6 +61,21 @@
   /** For the grove along the top, which grows as the context fills. */
   let usedPercent = $derived(contextUsage(messageStore.getUsage(sessionId), contextWindow).usedPercent);
 
+  let layout = $derived(settingsStore.current.statusBarLayout);
+  /** Shown parts with another shown part after them on their side: the ones
+   *  that draw a divider after themselves get one. */
+  let followed = $derived.by(() => {
+    const ids = new Set<StatusBarPartId>();
+    for (const [i, part] of layout.entries()) {
+      if (part.shown && layout.slice(i + 1).some((p) => p.shown && p.side === part.side)) ids.add(part.id);
+    }
+    return ids;
+  });
+  /** The right side starts at its first shown part. */
+  let rightStart = $derived(layout.find((p) => p.shown && p.side === 'right')?.id);
+  /** Parts drawn with a divider after them, as the bar always had. */
+  const DIVIDED: ReadonlySet<StatusBarPartId> = new Set(['agent', 'activity']);
+
   function handleKeydown(e: KeyboardEvent) {
     // Every conversation's StatusBar is mounted at once (inactive panes hidden
     // via CSS), so ignore shortcuts unless this is the active conversation.
@@ -81,6 +99,30 @@
   onDestroy(() => window.removeEventListener('keydown', handleKeydown));
 </script>
 
+{#snippet part(id: StatusBarPartId)}
+  {#if id === 'agent'}
+    <SessionControlsPopover {sessionId} {modelOptions} />
+  {:else if id === 'activity'}
+    <StatusBarActivity {sessionId} />
+  {:else if id === 'thread-items'}
+    <StatusBarThreadItems {sessionId} />
+  {:else if id === 'last-turn'}
+    <!-- Draws its own divider, which drops out with it on a narrow bar. -->
+    <StatusBarLastTurn {sessionId} divider={followed.has(id)} />
+  {:else if id === 'capabilities'}
+    <StatusBarCapabilities {sessionId} />
+  {:else if id === 'branch'}
+    <StatusBarBranch {sessionId} />
+  {:else if id === 'context'}
+    <StatusBarContext {sessionId} {contextWindow} />
+  {:else if id === 'keys'}
+    <StatusBarKeys />
+  {/if}
+  {#if DIVIDED.has(id) && followed.has(id)}
+    <span class="w-px self-stretch bg-border"></span>
+  {/if}
+{/snippet}
+
 {#if settingsStore.current.groveCharacters}
   <!-- Stands on the bar's top border, so the border is the grove's ground.
        Only the open conversation's grove plays out its growth. -->
@@ -91,20 +133,19 @@
      branch and context keep their room: Keys (Help has the list), MCP /
      Skills and Tasks / Files below 672px (MCP stays while a server is down,
      Tasks while a task is still to do), the project name below 768px, and
-     the last turn's cost below 1024px. -->
+     the last turn's cost below 1024px. Each part sits in a display: contents
+     box, so the bar lays out the part itself, and the box is what hides it
+     and what moves when the order changes (keyed, so the part keeps its
+     state). -->
 <div data-status-bar class="@container flex items-center gap-3 px-3 @3xl:gap-4 @3xl:px-4 py-1 bg-card border-t border-b border-border text-xs text-muted-foreground shrink-0">
-  <SessionControlsPopover {sessionId} {modelOptions} />
-
-  <span class="w-px self-stretch bg-border"></span>
-
-  <StatusBarActivity {sessionId} />
-
-  <span class="w-px self-stretch bg-border"></span>
-
-  <StatusBarThreadItems {sessionId} />
-  <StatusBarLastTurn {sessionId} />
-  <StatusBarCapabilities {sessionId} />
-  <StatusBarBranch {sessionId} />
-  <StatusBarContext {sessionId} {contextWindow} />
-  <StatusBarKeys />
+  {#each layout as { id, shown } (id)}
+    <div data-status-bar-part={id} class={shown ? 'contents' : undefined} hidden={!shown}>
+      {#if id === rightStart}
+        <!-- Pushes the right side over. The negative margin takes back the
+             bar's gap, so the space between the sides is only what is free. -->
+        <span class="flex-1 -ml-3 @3xl:-ml-4" aria-hidden="true"></span>
+      {/if}
+      {@render part(id)}
+    </div>
+  {/each}
 </div>

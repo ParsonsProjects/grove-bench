@@ -16,6 +16,7 @@ import { gitStatusStore } from '../stores/gitStatus.svelte.js';
 import { CONTROL_IDS } from '../../shared/types.js';
 import { TAB_BY_KEY, TAB_LABELS } from '../lib/keyboard-shortcuts.js';
 import type { PrInfo, ThreadUsage } from '../../shared/types.js';
+import { defaultStatusBarLayout, moveStatusBarPart, setStatusBarPartShown, type StatusBarPart } from '../../shared/status-bar-layout.js';
 
 const ACTIVE = 's-active';
 const HIDDEN = 's-hidden';
@@ -1079,5 +1080,85 @@ describe('StatusBar: a merge or rebase stopped part way', () => {
   it('shows nothing when none is under way', () => {
     render(StatusBar, { props: { sessionId: ACTIVE } });
     expect(screen.queryByRole('button', { name: /rebasing|merging/ })).toBeNull();
+  });
+});
+
+describe('StatusBar layout from Settings', () => {
+  afterEach(() => {
+    settingsStore.current = { ...settingsStore.current, statusBarLayout: defaultStatusBarLayout() };
+    delete messageStore.messagesBySession[ACTIVE];
+  });
+
+  function useLayout(layout: StatusBarPart[]) {
+    settingsStore.current = { ...settingsStore.current, statusBarLayout: layout };
+  }
+
+  const parts = (container: HTMLElement) => [...container.querySelectorAll<HTMLElement>('[data-status-bar-part]')];
+  const order = (container: HTMLElement) => parts(container).map((el) => el.dataset.statusBarPart);
+  const part = (container: HTMLElement, id: string) => container.querySelector<HTMLElement>(`[data-status-bar-part="${id}"]`)!;
+  /** The divider drawn straight after a part, inside its box. */
+  const divider = (el: HTMLElement) => el.querySelector(':scope > span.w-px');
+  /** The spacer that pushes the right side over. */
+  const spacer = (el: HTMLElement) => el.querySelector(':scope > span.flex-1');
+
+  it('draws every part in the default order, the right side after the spacer', () => {
+    const { container } = render(StatusBar, { props: { sessionId: ACTIVE } });
+    expect(order(container)).toEqual(['agent', 'activity', 'thread-items', 'last-turn', 'capabilities', 'branch', 'context', 'keys']);
+    expect(parts(container).every((el) => !el.hidden)).toBe(true);
+    expect(spacer(part(container, 'context'))).not.toBeNull();
+    expect(parts(container).filter((el) => spacer(el))).toHaveLength(1);
+    expect(divider(part(container, 'agent'))).not.toBeNull();
+    expect(divider(part(container, 'activity'))).not.toBeNull();
+  });
+
+  it('follows a custom order and side', () => {
+    let layout = moveStatusBarPart(defaultStatusBarLayout(), 'keys', 'left', 'agent');
+    layout = moveStatusBarPart(layout, 'branch', 'right', null);
+    useLayout(layout);
+    const { container } = render(StatusBar, { props: { sessionId: ACTIVE } });
+    expect(order(container)).toEqual(['keys', 'agent', 'activity', 'thread-items', 'last-turn', 'capabilities', 'context', 'branch']);
+    expect(spacer(part(container, 'context'))).not.toBeNull();
+  });
+
+  it('hides a part but keeps it mounted, so what it keeps going still runs', () => {
+    useLayout(setStatusBarPartShown(setStatusBarPartShown(defaultStatusBarLayout(), 'keys', false), 'branch', false));
+    const { container } = render(StatusBar, { props: { sessionId: ACTIVE } });
+    expect(part(container, 'keys').hidden).toBe(true);
+    expect(screen.queryByRole('button', { name: 'Keys' })).toBeNull();
+    // The branch stack is still there under its hidden box.
+    expect(part(container, 'branch').hidden).toBe(true);
+    expect(part(container, 'branch').textContent).toContain('feat-a');
+  });
+
+  it('starts the right side at its first shown part', () => {
+    useLayout(setStatusBarPartShown(defaultStatusBarLayout(), 'context', false));
+    const { container } = render(StatusBar, { props: { sessionId: ACTIVE } });
+    expect(spacer(part(container, 'context'))).toBeNull();
+    expect(spacer(part(container, 'keys'))).not.toBeNull();
+  });
+
+  it('has no spacer when nothing shows on the right', () => {
+    let layout = setStatusBarPartShown(defaultStatusBarLayout(), 'context', false);
+    layout = setStatusBarPartShown(layout, 'keys', false);
+    useLayout(layout);
+    const { container } = render(StatusBar, { props: { sessionId: ACTIVE } });
+    expect(parts(container).filter((el) => spacer(el))).toHaveLength(0);
+  });
+
+  it('drops the divider after a part with nothing shown after it on its side', () => {
+    messageStore.messagesBySession[ACTIVE] = [{ kind: 'result', id: 'r1', durationMs: 4200 } as any];
+    let layout = moveStatusBarPart(defaultStatusBarLayout(), 'activity', 'right', null);
+    layout = moveStatusBarPart(layout, 'last-turn', 'left', null);
+    useLayout(layout);
+    const { container } = render(StatusBar, { props: { sessionId: ACTIVE } });
+    expect(divider(part(container, 'activity'))).toBeNull();
+    expect(divider(part(container, 'agent'))).not.toBeNull();
+    expect(part(container, 'last-turn').querySelector('span.w-px')).toBeNull();
+  });
+
+  it('keeps the last turn\'s divider while a shown part follows it', () => {
+    messageStore.messagesBySession[ACTIVE] = [{ kind: 'result', id: 'r1', durationMs: 4200 } as any];
+    const { container } = render(StatusBar, { props: { sessionId: ACTIVE } });
+    expect(part(container, 'last-turn').querySelector('span.w-px')).not.toBeNull();
   });
 });

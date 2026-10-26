@@ -4,6 +4,7 @@ import { NIGHT, PAPER } from '../shared/brand.js';
 import { z } from 'zod';
 import type { GroveBenchSettings } from '../shared/types.js';
 import { effectiveCompactTimeoutSeconds } from '../shared/compact-timeout.js';
+import { defaultStatusBarLayout, normalizeStatusBarLayout } from '../shared/status-bar-layout.js';
 import { migrateRaw, stampSchemaVersion, type Migration } from './persisted-state.js';
 import { readJsonFile, writeFileAtomicSync } from './json-file.js';
 import { logger } from './logger.js';
@@ -56,6 +57,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   // Appearance
   repoColors: {},
   groveCharacters: true,
+  statusBarLayout: defaultStatusBarLayout(),
 
   // Editor
   diffViewMode: 'unified',
@@ -271,6 +273,8 @@ const settingsSchema = z.object({
 
   repoColors: z.record(z.string(), hexColor).catch(DEFAULT_SETTINGS.repoColors),
   groveCharacters: z.boolean().catch(DEFAULT_SETTINGS.groveCharacters),
+  // Stored as the bar will draw it, so Settings lists what the bar shows.
+  statusBarLayout: z.unknown().transform(normalizeStatusBarLayout),
 
   diffViewMode: z.enum(['unified', 'side-by-side']).catch(DEFAULT_SETTINGS.diffViewMode),
   defaultActivityView: z.enum(['detailed', 'summary', 'focus']).catch(DEFAULT_SETTINGS.defaultActivityView),
