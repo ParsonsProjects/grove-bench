@@ -100,7 +100,7 @@ While the agent reasons, the status bar shows **thinking** in purple next to the
 
 ## MCP Servers
 
-When the agent has MCP servers configured, an **MCP** badge shows how many are configured. The dot is green when every connection is healthy, amber when some are down but others are still connected, and red when none are connected. It refreshes when each turn ends. Click it to manage the servers without restarting the thread. The popover only offers the controls the thread's agent supports:
+When the agent has MCP servers configured, an **MCP** badge shows how many are configured. The dot is green when every connection is healthy, amber when some are down but others are still connected, and red when none are connected. It refreshes when each turn ends. Click it to open the MCP drawer on the right, where you manage the servers without restarting the thread. Press `Esc`, click the close button or click outside it to close it. If you close it during a browser sign-in, the sign-in carries on, and opening the drawer again shows how it went. Switching to another thread closes the drawer. The drawer only offers the controls the thread's agent supports:
 
 - Each server shows where it comes from (for example user, project, plugin or claude.ai), its status and its tool count
 - Click the tool count to list the server's tools. Tools the server marks as destructive or read-only are tagged
@@ -113,7 +113,7 @@ When the agent has MCP servers configured, an **MCP** badge shows how many are c
 
 New servers are added from Settings → MCP servers (Tool shed).
 
-Each server in the popover shows a status dot:
+Each server in the drawer shows a status dot:
 
 | Color | Meaning |
 |-------|---------|

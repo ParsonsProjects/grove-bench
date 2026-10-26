@@ -1,8 +1,8 @@
 <script lang="ts">
   /**
-   * MCP servers over skills, as one stack, so both popovers open above the
-   * pair rather than over each other. A narrow bar drops the stack to keep
-   * the branch in view, unless an MCP server is down: that is worth the room.
+   * MCP servers over skills, as one stack. Each opens its own drawer on the
+   * right. A narrow bar drops the stack to keep the branch in view, unless
+   * an MCP server is down: that is worth the room.
    */
   import StatusBarMcp from './StatusBarMcp.svelte';
   import StatusBarSkills from './StatusBarSkills.svelte';
@@ -17,7 +17,7 @@
   );
 </script>
 
-<div class="relative {display} flex-col gap-px leading-snug">
+<div class="{display} flex-col gap-px leading-snug">
   <StatusBarMcp {sessionId} bind:count={mcpCount} bind:health={mcpHealth} />
   <StatusBarSkills {sessionId} bind:count={skillCount} />
 </div>

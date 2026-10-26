@@ -213,7 +213,7 @@
     {/if}
 
     <!-- Per-server MCP status and connect/disconnect controls live in the
-         status bar's dedicated MCP popover, not here. -->
+         MCP drawer, opened from the status bar's MCP badge, not here. -->
 
     <!-- Quick actions. Clearing drops the conversation, so it asks first. -->
     <div class="border-t border-border pt-2.5 mt-2.5">
