@@ -166,8 +166,25 @@ describe('TurnFiles', () => {
     b.fail(new Error('EPERM'));
     expect(b.close).toHaveBeenCalledTimes(1);
     b.change('late.png');
-    b.t.close();
+    void b.t.close();
     expect(b.close).toHaveBeenCalledTimes(1);
+  });
+
+  it('gives the same stop to every close, so a later close waits for the first', async () => {
+    let release!: () => void;
+    const closing = new Promise<void>((r) => { release = r; });
+    const close = vi.fn(() => closing);
+    const t = new TurnFiles(ROOT, START, { watch: () => ({ close }), stat: fakeStat({}) });
+
+    let settled = 0;
+    void t.close().then(() => settled++);
+    void t.close().then(() => settled++);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(settled).toBe(0);
+    release();
+    await t.finish();
+    expect(settled).toBe(2);
   });
 
   it('lists nothing when the folder cannot be watched', async () => {
@@ -278,6 +295,42 @@ describe('createWatchClient', () => {
     expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('ENOENT') }));
     watch(ROOT, vi.fn(), vi.fn());
     expect(thread.startThread).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops a thread that hasn't loaded in time and watches here", async () => {
+    vi.useFakeTimers();
+    const terminate = vi.fn();
+    let send: ((m: unknown) => void) | null = null;
+    const startThread = vi.fn<StartThread>((onMessage) => {
+      send = onMessage;
+      return { postMessage: vi.fn(), terminate };
+    });
+    const watch = createWatchClient({ startThread, noteChanges: vi.fn(), loadTimeoutMs: 10_000 });
+    const onError = vi.fn();
+    watch(ROOT, vi.fn(), onError);
+
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(terminate).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(terminate).toHaveBeenCalledTimes(1);
+    // Watched here now: ROOT doesn't exist, so the watch fails at once.
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('ENOENT') }));
+
+    // The stopped thread's late ready changes nothing.
+    send!({ type: 'ready' });
+    watch(ROOT, vi.fn(), vi.fn());
+    expect(startThread).toHaveBeenCalledTimes(1);
+  });
+
+  it('a thread that loads in time keeps the watches', async () => {
+    vi.useFakeTimers();
+    const thread = fakeThread();
+    const watch = createWatchClient({ startThread: thread.startThread, noteChanges: vi.fn(), loadTimeoutMs: 10_000 });
+    const onError = vi.fn();
+    watch(ROOT, vi.fn(), onError);
+    thread.send({ type: 'ready' });
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(onError).not.toHaveBeenCalled();
   });
 
   it("watches here when the thread can't start", () => {

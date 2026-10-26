@@ -266,21 +266,58 @@ describe('SessionEventStore', () => {
     expect(logLines('cut')).toEqual([text('kept'), text('after')]);
   });
 
-  it('closeLog() writes what is queued and closes the file; an append after opens it again', async () => {
+  it('closeLog() writes what is queued through the open log, then closes it', async () => {
     const store = new TestStore();
     store.ensureDir();
     const s = liveSession('close');
     const open = vi.spyOn(fs.promises, 'open');
 
     store.append(s, text('one'));
-    await store.closeLog(s);
-    expect(logLines('close')).toEqual([text('one')]);
-    expect(s.logFlushTimer).toBeNull();
-
-    store.append(s, text('two'));
     await store.flush(s);
-    expect(open).toHaveBeenCalledTimes(2);
+    store.append(s, text('two'));
+    await store.closeLog(s);
+    expect(open).toHaveBeenCalledTimes(1);
     expect(logLines('close')).toEqual([text('one'), text('two')]);
+    expect(s.logFlushTimer).toBeNull();
+    expect((store as unknown as { handles: Map<string, unknown> }).handles.size).toBe(0);
+  });
+
+  it("writes a line that comes after closeLog without keeping the log open", async () => {
+    const store = new TestStore();
+    store.ensureDir();
+    const s = liveSession('late');
+    store.append(s, text('one'));
+    await store.closeLog(s);
+
+    // A memory auto-save finishing after the thread closed.
+    store.append(s, text('late'));
+    await store.flush(s);
+
+    expect(logLines('late')).toEqual([text('one'), text('late')]);
+    expect((store as unknown as { handles: Map<string, unknown> }).handles.size).toBe(0);
+  });
+
+  it('notes a slow close in the performance log', async () => {
+    const store = new TestStore();
+    store.ensureDir();
+    const s = liveSession('slow-close');
+    let t = 0;
+    vi.spyOn(performance, 'now').mockImplementation(() => t);
+    const realOpen = fs.promises.open;
+    vi.spyOn(fs.promises, 'open').mockImplementation(async (...args: Parameters<typeof realOpen>) => {
+      const handle = await realOpen(...args);
+      const realClose = handle.close.bind(handle);
+      handle.close = () => {
+        t += SLOW_EVENT_LOG_WRITE_MS + 500;
+        return realClose();
+      };
+      return handle;
+    });
+
+    store.append(s, text('x'));
+    await store.closeLog(s);
+
+    expect(perf.perfLine).toHaveBeenCalledWith('events', expect.stringMatching(/^event log close took 1500 ms/));
   });
 
   it('a failed append closes the file, and the next one opens it again', async () => {

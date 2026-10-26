@@ -44,11 +44,16 @@ export const MAX_THREAD_FAILURES = 3;
 /** The longest the end of a turn waits for the watcher thread to send the
  *  paths it still holds for it. It sends them within BATCH_MS. */
 export const UNWATCH_WAIT_MS = 2_000;
+/** A watcher thread that hasn't loaded in this long won't: it is stopped,
+ *  and the watches run in the main process. It loads in well under a second. */
+export const THREAD_LOAD_TIMEOUT_MS = 10_000;
 
 /** Where the watches run: the watcher thread, or (when it can't) the main
  *  process. */
 export interface WatchPort {
   postMessage(request: WatchRequest): void;
+  /** Stop the thread (one that never loaded). */
+  terminate?(): unknown;
 }
 
 /** Start the watcher thread, handing what it posts to `onMessage`, and why it
@@ -73,24 +78,26 @@ const startWorkerThread: StartThread = (onMessage, onExit) => {
 export interface WatchClientOptions {
   startThread?: StartThread;
   /** Changes the watches saw, for the freeze log. They arrive a batch at a
-   *  time (BATCH_MS), so a stall line counts those whose batch came in
-   *  during it, not exactly those that happened then. */
+   *  time (BATCH_MS): a stall line counts the batches in by the tick after
+   *  it, close to but not exactly the changes made during it. */
   noteChanges?: (count: number) => void;
   unwatchWaitMs?: number;
+  loadTimeoutMs?: number;
 }
 
 /**
  * Watches for turns, run in the watcher thread, started on the first one.
- * When it can't start or load (its script missing or broken: the turns
- * waiting for it move here), or has stopped MAX_THREAD_FAILURES times after
- * loading, they run in this process as they did before it, through the same
- * service. A turn watching through a thread that stops after loading lists
- * nothing.
+ * When it can't start or load (its script missing or broken, or no `ready`
+ * within THREAD_LOAD_TIMEOUT_MS: the turns waiting for it move here), or has
+ * stopped MAX_THREAD_FAILURES times after loading, they run in this process
+ * as they did before it, through the same service. A turn watching through a
+ * thread that stops after loading lists nothing.
  */
 export function createWatchClient({
   startThread = startWorkerThread,
   noteChanges = (count) => freezeLog.noteWorktreeChanges(count),
   unwatchWaitMs = UNWATCH_WAIT_MS,
+  loadTimeoutMs = THREAD_LOAD_TIMEOUT_MS,
 }: WatchClientOptions = {}): WatchFn {
   interface ClientWatch {
     root: string;
@@ -105,6 +112,7 @@ export function createWatchClient({
   let thread: WatchPort | null = null;
   /** The thread has posted `ready`. */
   let loaded = false;
+  let loadTimer: ReturnType<typeof setTimeout> | null = null;
   let inProcess: WatchPort | null = null;
   let failures = 0;
 
@@ -116,6 +124,8 @@ export function createWatchClient({
   function handleMessage(message: WatchMessage): void {
     if (message.type === 'ready') {
       loaded = true;
+      if (loadTimer) clearTimeout(loadTimer);
+      loadTimer = null;
       return;
     }
     if (message.type === 'changes') {
@@ -144,6 +154,8 @@ export function createWatchClient({
     const ran = loaded;
     thread = null;
     loaded = false;
+    if (loadTimer) clearTimeout(loadTimer);
+    loadTimer = null;
     if (!ran) {
       // It never loaded, and won't next time: watch here, these turns too.
       const here = runHere(reason);
@@ -171,8 +183,20 @@ export function createWatchClient({
     if (thread) return thread;
     if (failures >= MAX_THREAD_FAILURES) return runHere(`it stopped ${failures} times`);
     try {
-      thread = startThread(receive, exited);
-      return thread;
+      // A thread stopped for not loading may still post or exit: only the
+      // current one is heard.
+      const started: WatchPort = startThread(
+        (message) => { if (thread === started) receive(message); },
+        (reason) => { if (thread === started) exited(reason); },
+      );
+      thread = started;
+      loadTimer = setTimeout(() => {
+        if (thread !== started || loaded) return;
+        started.terminate?.();
+        exited(new Error(`The watcher thread didn't load within ${loadTimeoutMs} ms`));
+      }, loadTimeoutMs);
+      (loadTimer as { unref?: () => void }).unref?.();
+      return started;
     } catch (err) {
       return runHere(err);
     }
@@ -214,6 +238,8 @@ export class TurnFiles {
   /** Files the agent edited in place, keyed by caseKey. */
   private readonly edited = new Set<string>();
   private watcher: ReturnType<WatchFn> | null = null;
+  /** The watch stopping (see close). */
+  private stopped: Promise<void> = Promise.resolve();
   private readonly stat: StatFn;
   private readonly platform: NodeJS.Platform;
 
@@ -227,7 +253,7 @@ export class TurnFiles {
     try {
       this.watcher = (opts.watch ?? watchInThread)(root, (rel) => this.note(rel), (err) => {
         logger.debug(`[turn-files] stopped watching ${root}:`, err);
-        this.close();
+        void this.close();
       });
     } catch (err) {
       // No list this turn (the folder is gone, or the OS refused the watch).
@@ -251,15 +277,13 @@ export class TurnFiles {
     this.edited.add(this.caseKey(path.resolve(this.root, filePath)));
   }
 
-  close(): void {
-    void this.stopWatching();
-  }
-
-  /** Stop watching. Settles once every change seen before is noted. */
-  private async stopWatching(): Promise<void> {
+  /** Stop watching. Settles once every change seen before is noted and the
+   *  watch has let go of the folder; called again, with the same stop. */
+  close(): Promise<void> {
     const watcher = this.watcher;
     this.watcher = null;
-    await watcher?.close();
+    if (watcher) this.stopped = Promise.resolve(watcher.close());
+    return this.stopped;
   }
 
   /**
@@ -270,7 +294,7 @@ export class TurnFiles {
    * come first, then by path; past MAX_LISTED they're counted in `more`.
    */
   async finish(): Promise<{ files: FoundFile[]; more: number }> {
-    await this.stopWatching();
+    await this.close();
     const since = this.startedAt - CLOCK_SLACK_MS;
     const found: FoundFile[] = [];
     await Promise.all([...this.candidates].map(async (rel) => {

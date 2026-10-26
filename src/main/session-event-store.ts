@@ -84,6 +84,10 @@ export class SessionEventStore {
   /** Logs kept open for appending (see appendTo), until closeLog or a
    *  rewrite closes them. */
   private handles = new Map<string, FileHandle>();
+  /** Sessions whose log closeLog has closed. A line that comes after (a
+   *  memory auto-save finishing) is still written, but doesn't open the log
+   *  again for good: nothing would close it. */
+  private closedLogs = new WeakSet<LoggedSession>();
   private searchIndexes = new SearchIndexCache(SEARCH_INDEX_BUDGET);
   /** Cross-conversation search sweeps in progress (see beginSearch). */
   private searchSweeps = 0;
@@ -142,18 +146,23 @@ export class SessionEventStore {
       session.logBufferBytes = 0;
       if (!data) return;
       label(`event log write, ${formatBytes(Buffer.byteLength(data))}`);
-      await this.appendTo(file, data);
+      if (this.closedLogs.has(session)) await fs.promises.appendFile(file, data);
+      else await this.appendTo(file, data);
     });
     this.waitingAppends.set(session, append);
     return append;
   }
 
-  /** Write what is queued, then close the log: the session is going. The
-   *  next append, if it comes back, opens it again. */
+  /** Write what is queued, then close the log: the session is going. A line
+   *  it gets after is appended on its own (opened, written and closed). */
   closeLog(session: LoggedSession): Promise<void> {
     void this.flush(session);
     const file = session.eventLogPath;
-    return this.write(file, () => this.closeHandle(file));
+    return this.write(file, async (label) => {
+      label('event log close');
+      this.closedLogs.add(session);
+      await this.closeHandle(file);
+    });
   }
 
   /** Replace a live session's history (rewind, /clear) and rewrite its log
