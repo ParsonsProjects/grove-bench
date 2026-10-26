@@ -226,6 +226,16 @@ function newSessionId(requested: unknown): string {
   return requested;
 }
 
+/** Open a file in VS Code, then Cursor (launchEditor handles Windows .cmd
+ *  shims), then the OS default opener, which goes straight to the OS
+ *  (ShellExecute on Windows) with no cmd.exe parsing of the path. False
+ *  when none could. */
+async function openInEditor(file: string, line: unknown): Promise<boolean> {
+  if (await launchEditor('code', file, line)) return true;
+  if (await launchEditor('cursor', file, line)) return true;
+  return (await shell.openPath(file)) === '';
+}
+
 export function registerHandlers() {
   // ─── Repo ───
 
@@ -1160,11 +1170,7 @@ export function registerHandlers() {
   ipcMain.handle(IPC.SKILLS_OPEN, async (_event, sessionId: string, fallbackPath: string, skillPath: unknown) => {
     const { root, dirs, skillPath: file } = await skillEditTarget(sessionId, fallbackPath, skillPath);
     const target = (await readSkillFile(root, dirs, file)).path;
-    // As for a worktree file: VS Code, then Cursor, then the OS default.
-    if (await launchEditor('code', target, undefined)) return;
-    if (await launchEditor('cursor', target, undefined)) return;
-    const openError = await shell.openPath(target);
-    if (openError) throw new Error('Could not open SKILL.md. Install the VS Code or Cursor CLI.');
+    if (!(await openInEditor(target, undefined))) throw new Error('Could not open SKILL.md. Install the VS Code or Cursor CLI.');
   });
 
   /** Where Share and Link work for a thread: its project root, and Claude
@@ -1359,15 +1365,7 @@ export function registerHandlers() {
       throw new Error('Path traversal not allowed');
     }
 
-    // Try VS Code, then Cursor (launchEditor handles Windows .cmd shims),
-    // then fall back to the OS default opener.
-    if (await launchEditor('code', resolved, line)) return;
-    if (await launchEditor('cursor', resolved, line)) return;
-
-    // Final fallback: system default opener. shell.openPath goes straight to
-    // the OS (ShellExecute on Windows), with no cmd.exe parsing of the path.
-    const openError = await shell.openPath(resolved);
-    if (openError) throw new Error('Could not open file. Install the VS Code or Cursor CLI.');
+    if (!(await openInEditor(resolved, line))) throw new Error('Could not open file. Install the VS Code or Cursor CLI.');
   });
 
   // ─── External links & process cleanup ───

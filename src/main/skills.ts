@@ -86,11 +86,16 @@ export function skillLinkTarget(scope: SkillScope, dirName: string): string {
     : path.join(userSkillsDir(SHARED_SKILLS_DIR), dirName, 'SKILL.md');
 }
 
+/** A SKILL.md's text with LF line endings and no byte order mark, as git
+ *  on Windows may check it out with CRLF. */
+export function skillText(raw: string): string {
+  return raw.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n');
+}
+
 /** A SKILL.md's frontmatter, without its `---` lines and with LF line
  *  endings; null when it has none. */
 export function skillFrontmatter(content: string): string | null {
-  const normalized = content.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n');
-  return normalized.match(/^---\n([\s\S]*?)\n---(?:\n|$)/)?.[1] ?? null;
+  return skillText(content).match(/^---\n([\s\S]*?)\n---(?:\n|$)/)?.[1] ?? null;
 }
 
 /** The link to a shared skill, given its SKILL.md content. */
@@ -255,11 +260,6 @@ export function writeSkill(worktreePath: string, def: SkillDefinition, dirs: Ski
 // written. A Claude Code link stands in for a shared skill, so the shared
 // file is the one edited, and Save brings the link in line with it.
 
-/** A SKILL.md's text with LF line endings and no byte order mark. */
-function skillText(raw: string): string {
-  return raw.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n');
-}
-
 /** The listed skill whose SKILL.md is at `skillPath`. */
 async function listedSkill(worktreePath: string, dirs: SkillDirs, skillPath: string): Promise<SkillInfo & { path: string; source: SkillScope }> {
   const wanted = path.resolve(skillPath);
@@ -321,7 +321,9 @@ export async function saveSkillFile(worktreePath: string, dirs: SkillDirs, skill
   await fs.promises.writeFile(target.path, target.raw.startsWith('\uFEFF') ? `\uFEFF${eol}` : eol);
   if (target.link) {
     const link = skillLinkContent(text, dirName, skillLinkTarget(skill.source, dirName));
-    if (skillText(target.link.raw) !== link) await fs.promises.writeFile(target.link.path, link);
+    // The skill is saved by now. A link that can't be written (open in
+    // another program, say) is left for Link, which the drawer then offers.
+    if (skillText(target.link.raw) !== link) await fs.promises.writeFile(target.link.path, link).catch(() => {});
   }
   return { name, description: meta.description ?? '', source: skill.source, path: skill.path };
 }

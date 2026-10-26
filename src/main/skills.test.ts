@@ -325,6 +325,21 @@ describe('readSkillFile and saveSkillFile', () => {
     expect(fs.readFileSync(linkPath, 'utf-8')).toBe(before);
   });
 
+  it("saves the skill even when its link can't be written, leaving the link for Link", async () => {
+    writeSkill(worktree, { name: 'release-notes', description: 'Draft notes', instructions: 'Do the thing', scope: 'project' });
+    const linkPath = path.join(worktree, '.claude', 'skills', 'release-notes', 'SKILL.md');
+    const sharedPath = path.join(worktree, '.agents', 'skills', 'release-notes', 'SKILL.md');
+    const read = await readSkillFile(worktree, CLAUDE_SKILL_DIRS, linkPath);
+    const write = fs.promises.writeFile.bind(fs.promises);
+    vi.spyOn(fs.promises, 'writeFile').mockImplementation(((file: fs.PathLike, data: string) =>
+      file === linkPath ? Promise.reject(new Error('EBUSY: resource busy or locked')) : write(file, data)) as typeof fs.promises.writeFile);
+
+    const edited = read.content.replace('Draft notes', 'Draft release notes');
+    await expect(saveSkillFile(worktree, CLAUDE_SKILL_DIRS, linkPath, read.content, edited)).resolves.toMatchObject({ description: 'Draft release notes' });
+    expect(fs.readFileSync(sharedPath, 'utf-8')).toBe(edited);
+    expect(parseSkillFrontmatter(fs.readFileSync(linkPath, 'utf-8')).description).toBe('Draft notes');
+  });
+
   it('says when a link points at a shared skill that is gone', async () => {
     writeSkill(worktree, { name: 'release-notes', description: 'Draft notes', instructions: 'Do the thing', scope: 'project' });
     fs.rmSync(path.join(worktree, '.agents'), { recursive: true });

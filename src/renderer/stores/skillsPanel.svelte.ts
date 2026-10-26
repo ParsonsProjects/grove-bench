@@ -35,12 +35,16 @@ class SkillsPanelStore {
   focusRepo = $state<string | null>(null);
   /** The schedule form, when one is open in the Scheduled tab. */
   form = $state<ScheduleFormState | null>(null);
-  /** The skill editor, when one is open in the This thread tab. */
+  /** The skill editor, when one is open in the This thread tab. It takes
+   *  the list's place whichever thread is open, so another thread opening
+   *  meanwhile can't hide it or its unsaved changes. */
   edit = $state<SkillEditState | null>(null);
   /** What runs once the editor's unsaved changes are dropped, while it asks. */
   pendingDiscard = $state<(() => void) | null>(null);
   /** The This thread tab's sections folded away, kept while the app runs. */
   collapsed = $state<SkillGroupId[]>([]);
+  /** The This thread tab's search, kept while a skill is edited. */
+  query = $state('');
 
   /** The editor's text differs from the file it read. */
   get unsaved(): boolean {
@@ -114,6 +118,7 @@ class SkillsPanelStore {
     this.form = null;
     this.edit = null;
     this.pendingDiscard = null;
+    this.query = '';
   }
 }
 

@@ -87,9 +87,10 @@ describe('skillsPanelStore', () => {
     expect(skillsPanelStore).toMatchObject({ open: false, form: null });
   });
 
-  it('closes without asking when told to, dropping the editor', () => {
+  it('closes without asking when told to, dropping the editor and the search', () => {
     editing(true);
+    skillsPanelStore.query = 'tri';
     skillsPanelStore.close();
-    expect(skillsPanelStore).toMatchObject({ open: false, edit: null, pendingDiscard: null });
+    expect(skillsPanelStore).toMatchObject({ open: false, edit: null, pendingDiscard: null, query: '' });
   });
 });

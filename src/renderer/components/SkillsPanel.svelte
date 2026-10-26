@@ -23,6 +23,7 @@
   import { schedulesStore } from '../stores/schedules.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
   import ThreadSkills from './ThreadSkills.svelte';
+  import SkillEditor from './SkillEditor.svelte';
   import ScheduledSkills from './ScheduledSkills.svelte';
 
   const motion = prefersReducedMotion() ? 0 : 1;
@@ -106,7 +107,9 @@
                 <Tabs.Trigger value="scheduled">Scheduled{schedulesStore.list.length ? ` (${schedulesStore.list.length})` : ''}</Tabs.Trigger>
               </Tabs.List>
               <Tabs.Content value="thread" class="flex-1 overflow-y-auto px-4 py-3 text-xs outline-none">
-                {#if activeId}
+                {#if skillsPanelStore.edit}
+                  <SkillEditor />
+                {:else if activeId}
                   {#key activeId}
                     <ThreadSkills sessionId={activeId} />
                   {/key}

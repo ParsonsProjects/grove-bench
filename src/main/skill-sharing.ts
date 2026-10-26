@@ -20,6 +20,7 @@ import {
   skillLinkContent,
   skillLinkTarget,
   skillsRoot,
+  skillText,
   type SkillDirs,
   type SkillScope,
 } from './skills.js';
@@ -92,7 +93,7 @@ async function plan(worktreePath: string, dirs: SkillDirs): Promise<LevelPlan[]>
       if (current && !isSkillLink(current.content)) continue;
       const link = skillLinkContent(m.content, m.dir, skillLinkTarget(scope, m.dir));
       // Git on Windows may check the link out with CRLF line endings.
-      if (current?.content.replace(/\r\n/g, '\n') !== link) level.toLink.push({ shared: m, link });
+      if (!current || skillText(current.content) !== link) level.toLink.push({ shared: m, link });
     }
     return level;
   }));

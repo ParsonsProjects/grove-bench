@@ -241,11 +241,10 @@ describe('ThreadSkills', () => {
     expect(screen.getByRole('button', { name: 'Run deploy in a new thread' })).toBeInTheDocument();
   });
 
-  it('edits a skill with a file, even one turned off, in place of the list', async () => {
+  it('offers Edit for a skill with a file, even one turned off, opening it in the editor', async () => {
     thread('claude-code');
     settingsStore.current = { ...settingsStore.current, disabledSkills: ['triage'] };
     mockGroveBench.listSkills.mockResolvedValue(many);
-    mockGroveBench.readSkill.mockResolvedValue({ path: many[1].path, content: '---\nname: triage\n---\n' });
     pluginSkill();
     render(ThreadSkills, { sessionId: 't1' });
     await screen.findByRole('button', { name: 'Edit triage' });
@@ -253,10 +252,7 @@ describe('ThreadSkills', () => {
     expect(screen.queryByRole('button', { name: 'Edit engineering:code-review' })).toBeNull();
 
     await fireEvent.click(screen.getByRole('button', { name: 'Edit triage' }));
-    expect(skillsPanelStore.edit).toMatchObject({ sessionId: 't1', skill: many[1] });
-    expect(await screen.findByRole('textbox', { name: 'SKILL.md for triage' })).toBeInTheDocument();
-    expect(screen.queryByRole('searchbox')).toBeNull();
-    expect(screen.queryByRole('button', { name: /Add skill/ })).toBeNull();
+    expect(skillsPanelStore.edit).toMatchObject({ sessionId: 't1', skill: many[1], file: null });
   });
 
   it("marks Claude Code's own skills that other agents can't see yet", async () => {
@@ -267,5 +263,16 @@ describe('ThreadSkills', () => {
     const badge = await screen.findByText('Claude only');
     expect(badge.closest('div')).toHaveTextContent('triage');
     expect(screen.getAllByText('Claude only')).toHaveLength(1);
+  });
+
+  it("marks no skill Claude only in another agent's thread, as Copilot and OpenCode read .claude/skills too", async () => {
+    thread('gemini-cli');
+    mockGroveBench.listSkills.mockResolvedValue(many);
+    mockGroveBench.getSkillSharing.mockResolvedValueOnce({ toShare: [many[1]], toLink: [], broken: [] });
+    render(ThreadSkills, { sessionId: 't1' });
+    // Shown once the sharing check is in.
+    await screen.findByText("1 skill isn't shared with every agent");
+    expect(screen.getByRole('button', { name: 'Edit triage' })).toBeInTheDocument();
+    expect(screen.queryByText('Claude only')).toBeNull();
   });
 });

@@ -149,6 +149,35 @@ describe('SkillsPanel', () => {
       return box;
     }
 
+    it('keeps the editor, its text and its question when another thread opens meanwhile', async () => {
+      await editTriage(true);
+      // As Ctrl+N or Ctrl+Shift+T can, with the drawer open.
+      store.sessions = [...store.sessions, { id: 't2', branch: 'c', repoPath: '/repo', status: 'running', agentType: 'gemini-cli', createdAt: 0 }] as typeof store.sessions;
+      store.activeSessionId = 't2';
+      await waitFor(() => expect(screen.getByRole('textbox', { name: 'SKILL.md for triage' })).toHaveValue('changed'));
+      expect(mockGroveBench.readSkill).toHaveBeenCalledOnce();
+
+      await escape();
+      expect(screen.getByText('Discard your changes to triage?')).toBeInTheDocument();
+      await fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+      // The list is the open thread's.
+      expect(await screen.findByRole('button', { name: 'Run triage in a new thread' })).toBeInTheDocument();
+      expect(mockGroveBench.listSkills).toHaveBeenLastCalledWith('t2', '/repo');
+    });
+
+    it('keeps the search while a skill is edited', async () => {
+      mockGroveBench.readSkill.mockResolvedValue({ path: triage.path, content: 'text' });
+      mockGroveBench.listSkills.mockResolvedValue([triage]);
+      skillsPanelStore.showThread();
+      render(SkillsPanel);
+      await fireEvent.input(await screen.findByRole('searchbox', { name: 'Search skills' }), { target: { value: 'sort' } });
+      await fireEvent.click(await screen.findByRole('button', { name: 'Edit triage' }));
+      expect(await screen.findByRole('textbox', { name: 'SKILL.md for triage' })).toBeInTheDocument();
+      expect(screen.queryByRole('searchbox')).toBeNull();
+      await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+      expect(await screen.findByRole('searchbox', { name: 'Search skills' })).toHaveValue('sort');
+    });
+
     it('goes back to the list on Escape, then closes', async () => {
       await editTriage(false);
       await escape();

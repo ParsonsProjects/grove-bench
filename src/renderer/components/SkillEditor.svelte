@@ -1,6 +1,7 @@
 <script lang="ts">
   /**
-   * The Skills drawer's skill editor, in place of the This thread tab's list:
+   * The Skills drawer's skill editor, in place of the This thread tab's list
+   * while skillsPanelStore.edit is set, whichever thread is open meanwhile:
    * a skill's SKILL.md as text, frontmatter and all, so fields the Add Skill
    * form doesn't know (allowed-tools, model, ...) stay as they are. Save
    * writes it back (skills.ts saveSkillFile), unless the file changed since
@@ -10,9 +11,10 @@
    */
   import { onMount } from 'svelte';
   import { skillsPanelStore } from '../stores/skillsPanel.svelte.js';
+  import { store } from '../stores/sessions.svelte.js';
   import { SKILL_GROUPS } from '../lib/skill-groups.js';
+  import { stripIpcErrorPrefix } from '../lib/mcp-errors.js';
   import { errorMessage } from '../../shared/error-message.js';
-  import type { SkillInfo } from '../../shared/types.js';
   import { Badge } from '$lib/components/ui/badge/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Confirm } from '$lib/components/ui/confirm/index.js';
@@ -22,14 +24,9 @@
   import ArrowLeftIcon from '@lucide/svelte/icons/arrow-left';
   import ExternalLinkIcon from '@lucide/svelte/icons/external-link';
 
-  let { repoPath, onsaved }: {
-    /** The thread's project, for a thread that isn't running. */
-    repoPath: string;
-    /** After a save, with the skill as it now is. */
-    onsaved: (skill: SkillInfo) => void;
-  } = $props();
-
   const edit = $derived(skillsPanelStore.edit);
+  /** The skill's thread's project, for a thread that isn't running. */
+  const repoPath = $derived(store.sessions.find((s) => s.id === edit?.sessionId)?.repoPath ?? '');
   const label = $derived(SKILL_GROUPS.find((g) => g.id === edit?.skill.source)?.label ?? '');
 
   let error = $state('');
@@ -37,6 +34,9 @@
   let stale = $state(false);
   let saving = $state(false);
   let textarea = $state<HTMLTextAreaElement | null>(null);
+
+  /** Main's message, without Electron's "Error invoking remote method" wrapper. */
+  const message = (e: unknown) => stripIpcErrorPrefix(errorMessage(e));
 
   async function load() {
     const current = skillsPanelStore.edit;
@@ -50,21 +50,22 @@
       current.file = file;
       current.text = file.content;
     } catch (e) {
-      if (skillsPanelStore.edit === current) error = errorMessage(e);
+      if (skillsPanelStore.edit === current) error = message(e);
     }
   }
 
   async function save() {
     const current = skillsPanelStore.edit;
-    if (!current?.file || !current.skill.path || saving || !skillsPanelStore.unsaved) return;
+    // Not while "Discard your changes?" waits for an answer.
+    if (!current?.file || !current.skill.path || saving || !skillsPanelStore.unsaved || skillsPanelStore.pendingDiscard) return;
     saving = true;
     error = '';
     try {
-      const saved = await window.groveBench.saveSkill(current.sessionId, repoPath, current.skill.path, current.file.content, current.text);
+      await window.groveBench.saveSkill(current.sessionId, repoPath, current.skill.path, current.file.content, current.text);
+      // The list comes back, reading the skills again.
       if (skillsPanelStore.edit === current) skillsPanelStore.edit = null;
-      onsaved(saved);
     } catch (e) {
-      error = errorMessage(e);
+      error = message(e);
       // Main says why in words only, so read the file again to tell a
       // change on disk (Reload helps) from a problem with the text.
       const now = await window.groveBench.readSkill(current.sessionId, repoPath, current.skill.path).catch(() => null);
@@ -80,13 +81,14 @@
     try {
       await window.groveBench.openSkillInEditor(current.sessionId, repoPath, current.skill.path);
     } catch (e) {
-      error = errorMessage(e);
+      error = message(e);
     }
   }
 
-  /** Ctrl+S saves, as in an editor. */
+  /** Ctrl+S saves, as in an editor, wherever the focus is in it. The key's
+   *  code is for a layout where S types another letter. */
   function handleKeydown(e: KeyboardEvent) {
-    if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 's') {
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key.toLowerCase() === 's' || e.code === 'KeyS')) {
       e.preventDefault();
       void save();
     }
@@ -96,7 +98,8 @@
 </script>
 
 {#if edit}
-  <div class="flex flex-col h-full min-h-0 gap-2">
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="flex flex-col h-full min-h-0 gap-2" onkeydown={handleKeydown}>
     <div class="flex items-center gap-1.5 min-w-0">
       <Button variant="quiet" size="icon-2xs" onclick={() => skillsPanelStore.leaveEdit()} title="Back to the skills" aria-label="Back to the skills"><ArrowLeftIcon /></Button>
       <span class="font-mono text-xs text-foreground truncate">{edit.skill.name}</span>
@@ -121,7 +124,7 @@
       <Textarea
         bind:ref={textarea}
         bind:value={edit.text}
-        onkeydown={handleKeydown}
+        readonly={saving}
         spellcheck={false}
         aria-label="SKILL.md for {edit.skill.name}"
         class="flex-1 min-h-48 resize-none font-mono text-xs md:text-xs leading-relaxed"
