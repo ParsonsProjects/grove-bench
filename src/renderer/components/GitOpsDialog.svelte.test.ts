@@ -20,7 +20,7 @@ afterEach(() => cleanup());
 
 async function openCherryPick() {
   render(GitOpsDialog, { sessionId: SID, onclose: () => {}, initialMode: 'cherry-pick' });
-  const source = await screen.findByLabelText('Pick from branch') as HTMLInputElement;
+  const source = await screen.findByLabelText<HTMLInputElement>('Pick from branch');
   // The last one is the run button; the first is the mode tab.
   const button = () => screen.getAllByRole('button', { name: 'Cherry-pick' }).at(-1)!;
   return { source, button };

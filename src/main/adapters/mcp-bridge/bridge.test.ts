@@ -63,7 +63,7 @@ describe('runBridge', () => {
     const seen: Array<Record<string, string>> = [];
     const fetchImpl = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
       seen.push(init?.headers as Record<string, string>);
-      const body = JSON.parse(String(init?.body));
+      const body = JSON.parse(init?.body as string);
       if (!('id' in body)) return new Response(null, { status: 202 });
       const result = body.method === 'initialize' ? { protocolVersion: '2025-06-18' } : {};
       return new Response(JSON.stringify({ jsonrpc: '2.0', id: body.id, result }), { headers: { 'content-type': 'application/json' } });
@@ -87,7 +87,7 @@ describe('runBridge', () => {
 
   it('answers with an error when a reply is cut off, and keeps running', async () => {
     const fetchImpl = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
-      const body = JSON.parse(String(init?.body));
+      const body = JSON.parse(init?.body as string);
       if (body.id === 2) {
         return { status: 200, ok: true, headers: new Headers({ 'content-type': 'application/json' }), text: () => Promise.reject(new Error('socket hang up')) } as unknown as Response;
       }

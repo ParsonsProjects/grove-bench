@@ -157,7 +157,7 @@ describe('CheckpointManager', () => {
       expect(String(copy[0][0])).toBe(path.resolve('/main/.git/worktrees/wt/index'));
       const tmpIndex = String(copy[0][1]);
       expect(mockGitEnv).not.toHaveBeenCalledWith(['read-tree', 'HEAD'], expect.anything(), expect.anything());
-      const msgFile = String(mockWriteFile.mock.calls[0][0]);
+      const msgFile = mockWriteFile.mock.calls[0][0] as string;
       expect(mockGitEnv).toHaveBeenCalledWith(['commit-tree', 'tree1', '-F', msgFile], '/repo', expect.anything());
       expect(vi.mocked(fs.promises.rm).mock.calls.map(([file]) => file).sort()).toEqual([msgFile, tmpIndex].sort());
     });
@@ -186,7 +186,7 @@ describe('CheckpointManager', () => {
       const mgr = new CheckpointManager();
       expect(await mgr.captureBaseline('sess1', '/repo')).toBe(true);
 
-      const msg = String(mockWriteFile.mock.calls.at(-1)![1]);
+      const msg = mockWriteFile.mock.calls.at(-1)![1] as string;
       expect(msg).toContain('uuid=__baseline__');
       expect(mockGit).toHaveBeenCalledWith(['update-ref', 'refs/grove/checkpoints/sess1/turn/1', expect.any(String)], '/repo');
     });
@@ -577,9 +577,9 @@ describe('CheckpointManager', () => {
     /** Helper: get the commit message written to the temp file by capture(). */
     function getWrittenCommitMsg(): string {
       const writeCall = mockWriteFile.mock.calls.find(
-        (c) => String(c[0]).includes('grove-msg-'),
+        (c) => (c[0] as string).includes('grove-msg-'),
       );
-      return writeCall ? String(writeCall[1]) : '';
+      return writeCall ? writeCall[1] as string : '';
     }
 
     it('includes text in commit message with double newline for body separation', async () => {

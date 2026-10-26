@@ -4820,7 +4820,7 @@ describe('AgentSessionManager session controls', () => {
     await createWithHandle('ctl-init');
 
     const history = sessionManager.getEventHistory('ctl-init');
-    const sync = history.find((e) => e.type === 'controls_sync') as Extract<AgentEvent, { type: 'controls_sync' }> | undefined;
+    const sync = history.find((e) => e.type === 'controls_sync');
     expect(sync?.descriptors.map((d) => d.id)).toEqual(['permissionMode', 'thinking', 'speed']);
     expect(sync?.values).toEqual({ thinking: 'high', speed: 'standard' });
 
@@ -4834,7 +4834,7 @@ describe('AgentSessionManager session controls', () => {
 
     expect(session.controls.thinking).toBe('low');
     expect(session.queryHandle?.setControl).toHaveBeenCalledWith('thinking', 'low');
-    const syncs = sessionManager.getEventHistory('ctl-set').filter((e) => e.type === 'controls_sync') as Extract<AgentEvent, { type: 'controls_sync' }>[];
+    const syncs = sessionManager.getEventHistory('ctl-set').filter((e) => e.type === 'controls_sync');
     expect(syncs.at(-1)?.values.thinking).toBe('low');
 
     await sessionManager.destroySession('ctl-set');
@@ -4852,7 +4852,7 @@ describe('AgentSessionManager session controls', () => {
     expect(session.queryHandle?.setControl).not.toHaveBeenCalled();
     const history = sessionManager.getEventHistory('ctl-agent');
     expect(history.some((e) => e.type === 'agent_controls')).toBe(false);
-    const syncs = history.filter((e) => e.type === 'controls_sync') as Extract<AgentEvent, { type: 'controls_sync' }>[];
+    const syncs = history.filter((e) => e.type === 'controls_sync');
     expect(syncs.at(-1)?.values.thinking).toBe('off');
 
     await sessionManager.destroySession('ctl-agent');
@@ -4891,7 +4891,7 @@ describe('AgentSessionManager session controls', () => {
     expect(controls.descriptors.map((d) => d.id)).toEqual(['permissionMode', 'thinking']);
     expect(controls.values).toEqual({ thinking: 'high' });
     expect(session.controls).toEqual({ thinking: 'high' });
-    const syncs = sessionManager.getEventHistory('ctl-model').filter((e) => e.type === 'controls_sync') as Extract<AgentEvent, { type: 'controls_sync' }>[];
+    const syncs = sessionManager.getEventHistory('ctl-model').filter((e) => e.type === 'controls_sync');
     expect(syncs.at(-1)?.values).toEqual({ thinking: 'high' });
 
     await sessionManager.destroySession('ctl-model');
@@ -4907,7 +4907,7 @@ describe('AgentSessionManager session controls', () => {
 
     expect(session.permissionMode).toBe('default');
     expect(session.queryHandle!.setPermissionMode).toHaveBeenLastCalledWith('default');
-    const syncs = sessionManager.getEventHistory('ctl-mode-model').filter((e) => e.type === 'mode_sync') as Extract<AgentEvent, { type: 'mode_sync' }>[];
+    const syncs = sessionManager.getEventHistory('ctl-mode-model').filter((e) => e.type === 'mode_sync');
     expect(syncs.at(-1)).toEqual({ type: 'mode_sync', mode: 'default', source: 'session' });
 
     // A mode the new model still offers is left alone.

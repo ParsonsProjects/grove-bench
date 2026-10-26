@@ -584,11 +584,11 @@ describe('StatusBar PR', () => {
   it('waits for the turn to end before creating a PR by hand, like the Create PR link', async () => {
     messageStore.isRunning = { [ACTIVE]: true };
     render(StatusBar, { props: { sessionId: ACTIVE } });
-    expect((await screen.findByRole('button', { name: 'Create PR' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((await screen.findByRole<HTMLButtonElement>('button', { name: 'Create PR' })).disabled).toBe(true);
 
     await fireEvent.click(screen.getByRole('button', { name: 'Create PR options' }));
 
-    const manual = screen.getByRole('button', { name: 'Create manually…' }) as HTMLButtonElement;
+    const manual = screen.getByRole<HTMLButtonElement>('button', { name: 'Create manually…' });
     expect(manual.disabled).toBe(true);
     expect(manual.getAttribute('title')).toMatch(/once the agent finishes its turn/);
   });

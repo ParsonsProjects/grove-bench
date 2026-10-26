@@ -458,7 +458,7 @@ describe('SESSION_CREATE', () => {
     }));
     // An install that runs until it is aborted.
     vi.mocked(installDependencies).mockImplementation((_cwd, _cache, signal) => new Promise((_resolve, reject) => {
-      signal.addEventListener('abort', () => reject(signal.reason));
+      signal.addEventListener('abort', () => reject(signal.reason as Error));
     }));
 
     const { id } = await create();

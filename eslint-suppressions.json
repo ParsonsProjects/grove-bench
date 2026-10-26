@@ -2,53 +2,21 @@
   "src/main/adapters/acp/acp-adapter.test.ts": {
     "@typescript-eslint/no-unsafe-argument": {
       "count": 1
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 3
     }
   },
   "src/main/adapters/acp/opencode.test.ts": {
     "@typescript-eslint/no-unsafe-argument": {
       "count": 2
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 4
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 11
-    },
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 1
     }
   },
   "src/main/adapters/claude-code-auth.test.ts": {
     "@typescript-eslint/no-unsafe-argument": {
       "count": 2
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 1
     }
   },
   "src/main/adapters/claude-code.test.ts": {
     "@typescript-eslint/no-unsafe-argument": {
       "count": 53
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 3
-    },
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 1
-    }
-  },
-  "src/main/adapters/grove-mcp-http.test.ts": {
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 2
     }
   },
   "src/main/adapters/grove-tools.ts": {
@@ -56,304 +24,34 @@
       "count": 1
     }
   },
-  "src/main/adapters/mcp-bridge/bridge.test.ts": {
-    "@typescript-eslint/no-base-to-string": {
-      "count": 2
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 6
-    },
-    "@typescript-eslint/no-unsafe-call": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 15
-    },
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 4
-    }
-  },
   "src/main/agent-session.test.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 5
-    },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 12
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 331
-    },
-    "@typescript-eslint/no-unsafe-call": {
-      "count": 55
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 102
-    },
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 24
-    }
-  },
-  "src/main/app-state.test.ts": {
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 28
-    },
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 9
-    }
-  },
-  "src/main/attachments.test.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 3
-    }
-  },
-  "src/main/attention-badge.test.ts": {
-    "@typescript-eslint/no-unsafe-call": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 1
-    }
-  },
-  "src/main/branch-name.test.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 1
-    }
-  },
-  "src/main/checkpoints.integration.test.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 1
-    }
-  },
-  "src/main/checkpoints.test.ts": {
-    "@typescript-eslint/no-base-to-string": {
-      "count": 4
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 11
-    },
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 1
-    }
-  },
-  "src/main/commit-message.test.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 3
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 2
-    }
-  },
-  "src/main/crash-handling.test.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 3
-    },
-    "@typescript-eslint/no-unsafe-call": {
-      "count": 3
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 5
-    },
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 2
-    }
-  },
-  "src/main/deps-install.test.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 1
-    }
-  },
-  "src/main/freeze-log.test.ts": {
-    "@typescript-eslint/no-unsafe-call": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 1
-    }
-  },
-  "src/main/fs-utils.test.ts": {
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 2
     }
   },
   "src/main/gh.test.ts": {
     "@typescript-eslint/no-unsafe-argument": {
       "count": 33
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 1
     }
   },
   "src/main/git.test.ts": {
     "@typescript-eslint/no-unsafe-argument": {
       "count": 76
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 3
-    },
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 1
     }
   },
   "src/main/ipc.test.ts": {
     "@typescript-eslint/no-unsafe-argument": {
       "count": 9
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 39
-    },
-    "@typescript-eslint/no-unsafe-call": {
-      "count": 4
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 25
-    },
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 8
-    },
-    "@typescript-eslint/prefer-promise-reject-errors": {
-      "count": 1
-    }
-  },
-  "src/main/memory-autosave-throttle.test.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 1
-    }
-  },
-  "src/main/memory-compact.test.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 1
-    }
-  },
-  "src/main/pr-review.test.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 5
-    },
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 1
-    }
-  },
-  "src/main/preview-policy.test.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 3
-    }
-  },
-  "src/main/preview-scripts.test.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 3
-    }
-  },
-  "src/main/process-host-callers.test.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 21
-    }
-  },
-  "src/main/process-host-protocol.test.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 2
-    }
-  },
-  "src/main/process-host-run.test.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 3
-    }
-  },
-  "src/main/process-host-spawn.test.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 5
-    }
-  },
-  "src/main/process-host.test.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 2
-    },
-    "@typescript-eslint/prefer-promise-reject-errors": {
-      "count": 1
-    },
-    "no-useless-assignment": {
-      "count": 1
-    }
-  },
-  "src/main/process-memory.test.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 4
-    },
-    "@typescript-eslint/no-unsafe-call": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 2
-    }
-  },
-  "src/main/process-tree.test.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 3
-    }
-  },
-  "src/main/session-event-store.test.ts": {
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 2
     }
   },
   "src/main/settings.test.ts": {
     "@typescript-eslint/no-unsafe-argument": {
       "count": 6
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 8
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 13
-    }
-  },
-  "src/main/skill-schedules.test.ts": {
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 1
-    }
-  },
-  "src/main/skill-sharing.test.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 1
-    }
-  },
-  "src/main/thread-export.test.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 1
-    }
-  },
-  "src/main/worktree-manager.test.ts": {
-    "@typescript-eslint/no-require-imports": {
-      "count": 2
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 4
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 14
-    },
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 2
     }
   },
   "src/renderer/App.svelte": {
     "@typescript-eslint/no-unsafe-argument": {
       "count": 3
-    }
-  },
-  "src/renderer/App.svelte.test.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 8
     }
   },
   "src/renderer/components/AddSkillDialog.svelte": {
@@ -366,16 +64,6 @@
       "count": 1
     }
   },
-  "src/renderer/components/BookmarksDrawer.svelte.test.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 1
-    }
-  },
-  "src/renderer/components/BranchPicker.svelte.test.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 1
-    }
-  },
   "src/renderer/components/ChangesReviewPanel.svelte": {
     "@typescript-eslint/no-unsafe-argument": {
       "count": 1
@@ -384,58 +72,12 @@
   "src/renderer/components/ChangesReviewPanel.svelte.test.ts": {
     "@typescript-eslint/no-unsafe-argument": {
       "count": 3
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 2
-    }
-  },
-  "src/renderer/components/CheckpointsPanel.svelte.test.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 2
-    }
-  },
-  "src/renderer/components/ConversationGoal.svelte.test.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 1
-    }
-  },
-  "src/renderer/components/DraftPane.svelte.test.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 1
-    }
-  },
-  "src/renderer/components/FilePickerPopup.svelte.test.ts": {
-    "@typescript-eslint/no-unsafe-call": {
-      "count": 5
-    }
-  },
-  "src/renderer/components/GitOpsDialog.svelte.test.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 1
-    }
-  },
-  "src/renderer/components/GroveEmptyState.svelte.test.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 4
     }
   },
   "src/renderer/components/MemoryPanel.svelte": {
     "@typescript-eslint/no-unsafe-argument": {
       "count": 1
     },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 2
-    }
-  },
-  "src/renderer/components/PlanUsageToast.svelte.test.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 1
-    }
-  },
-  "src/renderer/components/PreviewPanel.svelte.test.ts": {
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 2
     }
@@ -450,38 +92,12 @@
       "count": 3
     }
   },
-  "src/renderer/components/RewindDialog.svelte.test.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 2
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 1
-    }
-  },
   "src/renderer/components/ScheduleForm.svelte": {
     "@typescript-eslint/no-unsafe-argument": {
       "count": 2
     },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 2
-    }
-  },
-  "src/renderer/components/ScheduleForm.svelte.test.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 1
-    }
-  },
-  "src/renderer/components/SessionControlsPopover.svelte.test.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 5
-    }
-  },
-  "src/renderer/components/SessionFinder.svelte.test.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 5
     }
   },
   "src/renderer/components/SettingsPanel.svelte": {
@@ -509,12 +125,6 @@
   "src/renderer/components/Sidebar.svelte.test.ts": {
     "@typescript-eslint/no-unsafe-argument": {
       "count": 12
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 40
-    },
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 2
     }
   },
   "src/renderer/components/SkillsPanel.svelte": {
@@ -522,37 +132,11 @@
       "count": 1
     }
   },
-  "src/renderer/components/StatusBar.svelte.test.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 2
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 17
-    }
-  },
   "src/renderer/components/ThreadSkills.svelte": {
     "@typescript-eslint/no-unsafe-argument": {
       "count": 1
     },
     "@typescript-eslint/no-unsafe-member-access": {
-      "count": 1
-    }
-  },
-  "src/renderer/components/UpdateNotification.svelte.test.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 1
-    }
-  },
-  "src/renderer/components/UpdateSettings.svelte.test.ts": {
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 1
-    }
-  },
-  "src/renderer/components/WorkspacePane.svelte.test.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
       "count": 1
     }
   },
@@ -632,42 +216,9 @@
       "count": 2
     }
   },
-  "src/renderer/lib/file-attachments.test.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 1
-    }
-  },
   "src/renderer/lib/format-age.test.ts": {
     "@typescript-eslint/no-unsafe-argument": {
       "count": 1
-    }
-  },
-  "src/renderer/lib/mcp-json.test.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 5
-    }
-  },
-  "src/renderer/lib/perf-timing.test.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 1
-    }
-  },
-  "src/renderer/lib/pixel-meter.test.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 5
-    }
-  },
-  "src/renderer/lib/session-repo-color.test.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 3
-    }
-  },
-  "src/renderer/lib/skill-thread.test.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 5
     }
   },
   "src/renderer/stores/backgroundTask.svelte.test.ts": {
@@ -675,77 +226,9 @@
       "count": 17
     }
   },
-  "src/renderer/stores/draft.svelte.test.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 2
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 2
-    }
-  },
-  "src/renderer/stores/groups.svelte.test.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 2
-    },
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 1
-    }
-  },
-  "src/renderer/stores/memory.svelte.test.ts": {
-    "@typescript-eslint/no-unsafe-call": {
-      "count": 4
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 4
-    }
-  },
   "src/renderer/stores/messages.svelte.test.ts": {
     "@typescript-eslint/no-unsafe-argument": {
       "count": 2
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 34
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 59
-    },
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 4
-    }
-  },
-  "src/renderer/stores/planAlerts.svelte.test.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 4
-    }
-  },
-  "src/renderer/stores/schedules.svelte.test.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 1
-    }
-  },
-  "src/renderer/stores/settings.svelte.test.ts": {
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 1
-    }
-  },
-  "src/renderer/stores/todo.svelte.test.ts": {
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 1
-    }
-  },
-  "src/renderer/stores/usage.svelte.test.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 2
-    }
-  },
-  "src/shared/preview-url.ts": {
-    "no-control-regex": {
-      "count": 1
-    }
-  },
-  "src/shared/tool-rules.test.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 7
     }
   }
 }

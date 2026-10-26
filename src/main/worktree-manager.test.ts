@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import path from 'node:path';
+import crypto from 'node:crypto';
 
 const mockFs = vi.hoisted(() => ({
   readFile: vi.fn(),
@@ -1256,7 +1257,6 @@ describe('remove: default branch guard', () => {
 });
 
 describe('manifest safety', () => {
-  const crypto = require('node:crypto') as typeof import('node:crypto');
   // Built as the manager builds them, so they use the platform's separator.
   const wtPathFor = (repo: string, id: string) =>
     path.join('/mock/userData/worktrees', crypto.createHash('sha256').update(repo).digest('hex').slice(0, 8), id);
@@ -1357,7 +1357,6 @@ describe('manifest safety', () => {
 });
 
 describe('worktree trash', () => {
-  const crypto = require('node:crypto') as typeof import('node:crypto');
   const root = path.join('/mock/userData/worktrees');
   const trash = path.join(root, '.trash');
   const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

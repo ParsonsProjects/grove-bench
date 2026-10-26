@@ -158,7 +158,7 @@ describe('DraftPane skills', () => {
 
   it("lists the agent's skills on /, and Enter starts the message with the one picked", async () => {
     render(DraftPane);
-    const box = screen.getByLabelText('First message') as HTMLTextAreaElement;
+    const box = screen.getByLabelText<HTMLTextAreaElement>('First message');
     await waitFor(() => expect(box.placeholder).toMatch(/type \/ to use a skill/));
     await fireEvent.input(box, { target: { value: '/' } });
     expect(await screen.findByText('/triage')).toBeInTheDocument();

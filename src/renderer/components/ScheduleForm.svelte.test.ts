@@ -48,7 +48,7 @@ describe('ScheduleForm', () => {
   it('edits a schedule and saves a plain copy of it, then goes back', async () => {
     const onclose = vi.fn();
     render(ScheduleForm, { repoPath: '/repo', initial: existing, onclose });
-    const note = screen.getByLabelText(/Note/) as HTMLTextAreaElement;
+    const note = screen.getByLabelText<HTMLTextAreaElement>(/Note/);
     expect(note.value).toBe('Take the top agent-ready issue.');
     await fireEvent.input(note, { target: { value: 'Take the two top issues.' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
