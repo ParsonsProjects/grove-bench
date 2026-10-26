@@ -1142,8 +1142,19 @@ export function registerHandlers() {
     }
     const root = sessionManager.getWorktreePath(sessionId) ?? fallbackPath;
     if (!root) throw new Error('No project root available for this thread');
-    return adapter.addSkill(root, def);
+    return adapter.addSkill(root, def, accountLinkDirs());
   });
+
+  /** Every current Claude account's own user skills folder, which sees
+   *  personal shared skills only through links. Grove keeps one in each
+   *  (SkillDirs.userLinks), so a personal skill reaches every Claude thread.
+   *  An account taken out of Settings is left alone. */
+  function accountLinkDirs(): string[] {
+    const current = new Set(claudeAccounts(settings.getSettings().claudeAccounts).map((a) => a.id));
+    return adapterRegistry.list()
+      .filter((a) => !a.account || current.has(a.id))
+      .flatMap((a) => (a.skillDirs && !readsSharedSkills(a.skillDirs, 'user') ? [a.skillDirs.user[0]] : []));
+  }
 
   /** Where a thread's skills are edited: its project root and its agent's
    *  skill folders, which bound the files that can be read and written. */
@@ -1153,7 +1164,7 @@ export function registerHandlers() {
     if (!dirs) throw new Error("This thread's agent has no skill files Grove can edit");
     const root = sessionManager.getWorktreePath(sessionId) ?? fallbackPath;
     if (!root) throw new Error('No project root available for this thread');
-    return { root, dirs, skillPath };
+    return { root, dirs: { ...dirs, userLinks: accountLinkDirs() }, skillPath };
   }
 
   ipcMain.handle(IPC.SKILLS_READ, async (_event, sessionId: string, fallbackPath: string, skillPath: unknown) => {
@@ -1172,6 +1183,11 @@ export function registerHandlers() {
     return copySkillToUser(root, dirs, file);
   });
 
+  ipcMain.handle(IPC.SKILLS_SHOW_FOLDER, async (_event, sessionId: string, fallbackPath: string, skillPath: unknown) => {
+    const { root, dirs, skillPath: file } = await skillEditTarget(sessionId, fallbackPath, skillPath);
+    shell.showItemInFolder((await readSkillFile(root, dirs, file)).path);
+  });
+
   ipcMain.handle(IPC.SKILLS_OPEN, async (_event, sessionId: string, fallbackPath: string, skillPath: unknown) => {
     const { root, dirs, skillPath: file } = await skillEditTarget(sessionId, fallbackPath, skillPath);
     const target = (await readSkillFile(root, dirs, file)).path;
@@ -1187,7 +1203,7 @@ export function registerHandlers() {
     const links = !!own && (!readsSharedSkills(own, 'project') || !readsSharedSkills(own, 'user'));
     const root = sessionManager.getWorktreePath(sessionId) ?? fallbackPath;
     if (!root) throw new Error('No project root available for this thread');
-    return { root, dirs: links ? own : CLAUDE_SKILL_DIRS, links };
+    return { root, dirs: { ...(links ? own : CLAUDE_SKILL_DIRS), userLinks: accountLinkDirs() }, links };
   }
 
   ipcMain.handle(IPC.SKILLS_SHARING, async (_event, sessionId: string, fallbackPath: string) => {

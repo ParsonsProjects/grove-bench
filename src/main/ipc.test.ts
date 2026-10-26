@@ -1629,6 +1629,10 @@ describe('renderer input checks', () => {
 // ─── Adapters, skills, MCP ───
 
 describe('adapters, skills and MCP config', () => {
+  beforeEach(() => {
+    m.adapterRegistry.list.mockReturnValue([]);
+  });
+
   it('AGENT_GET_ADAPTER_CONTROLS describes the first model when none is chosen', () => {
     const getControls = vi.fn(() => ['c']);
     m.adapterRegistry.getDefault.mockReturnValue({ getModels: () => [{ id: 'm1' }, { id: 'm2' }], getControls });
@@ -1653,7 +1657,7 @@ describe('adapters, skills and MCP config', () => {
     await expect(invoke(IPC.SKILLS_ADD, 's1', '', { name: 'x' })).rejects.toThrow('No project root');
 
     await invoke(IPC.SKILLS_ADD, 's1', '/repo', { name: 'x' });
-    expect(addSkill).toHaveBeenCalledWith('/repo', { name: 'x' });
+    expect(addSkill).toHaveBeenCalledWith('/repo', { name: 'x' }, []);
   });
 
   it("skills of a thread that isn't running come from its own agent, and none from one that is gone", async () => {
@@ -1681,16 +1685,16 @@ describe('adapters, skills and MCP config', () => {
       ? { displayName: 'Claude (work)', skillDirs: accountDirs }
       : { displayName: 'Gemini CLI', skillDirs: { project: ['.agents/skills'], user: ['.agents/skills'] } }));
     expect(await invoke(IPC.SKILLS_SHARING, 's1', '/repo')).toEqual(found);
-    expect(sharing.skillSharing).toHaveBeenCalledWith('/wt', accountDirs);
+    expect(sharing.skillSharing).toHaveBeenCalledWith('/wt', { ...accountDirs, userLinks: [] });
     await invoke(IPC.SKILLS_LINK, 's1', '/repo');
-    expect(sharing.linkSkills).toHaveBeenCalledWith('/wt', accountDirs);
+    expect(sharing.linkSkills).toHaveBeenCalledWith('/wt', { ...accountDirs, userLinks: [] });
 
     // Another agent's thread can share Claude Code's skills, but isn't offered links.
     m.worktreeManager.getAdapterType.mockResolvedValue('gemini-cli');
     expect(await invoke(IPC.SKILLS_SHARING, 's1', '/repo')).toEqual({ toShare: [{ name: 'own' }], toLink: [], broken: [] });
-    expect(sharing.skillSharing).toHaveBeenLastCalledWith('/wt', { project: [path.join('.claude', 'skills')], user: [path.join('.claude', 'skills')], userFirst: true });
+    expect(sharing.skillSharing).toHaveBeenLastCalledWith('/wt', { project: [path.join('.claude', 'skills')], user: [path.join('.claude', 'skills')], userFirst: true, userLinks: [] });
     await invoke(IPC.SKILLS_SHARE, 's1', '/repo');
-    expect(sharing.shareSkills).toHaveBeenLastCalledWith('/wt', { project: [path.join('.claude', 'skills')], user: [path.join('.claude', 'skills')], userFirst: true }, undefined);
+    expect(sharing.shareSkills).toHaveBeenLastCalledWith('/wt', { project: [path.join('.claude', 'skills')], user: [path.join('.claude', 'skills')], userFirst: true, userLinks: [] }, undefined);
     // One skill, by the path its card has.
     await invoke(IPC.SKILLS_SHARE, 's1', '/repo', '/wt/.claude/skills/own/SKILL.md');
     expect(sharing.shareSkills).toHaveBeenLastCalledWith('/wt', expect.anything(), '/wt/.claude/skills/own/SKILL.md');
@@ -1705,13 +1709,17 @@ describe('adapters, skills and MCP config', () => {
     m.sessionManager.getWorktreePath.mockReturnValue('/wt');
     skillFiles.readSkillFile.mockResolvedValue({ path: shared, content: 'text', linkPath: listed });
     expect(await invoke(IPC.SKILLS_READ, 's1', '/repo', listed)).toEqual({ path: shared, content: 'text', linkPath: listed });
-    expect(skillFiles.readSkillFile).toHaveBeenCalledWith('/wt', dirs, listed);
+    expect(skillFiles.readSkillFile).toHaveBeenCalledWith('/wt', { ...dirs, userLinks: [] }, listed);
 
     await invoke(IPC.SKILLS_SAVE, 's1', '/repo', listed, 'text', 'new text');
-    expect(skillFiles.saveSkillFile).toHaveBeenCalledWith('/wt', dirs, listed, 'text', 'new text');
+    expect(skillFiles.saveSkillFile).toHaveBeenCalledWith('/wt', { ...dirs, userLinks: [] }, listed, 'text', 'new text');
 
     await invoke(IPC.SKILLS_COPY_TO_USER, 's1', '/repo', listed);
-    expect(skillFiles.copySkillToUser).toHaveBeenCalledWith('/wt', dirs, listed);
+    expect(skillFiles.copySkillToUser).toHaveBeenCalledWith('/wt', { ...dirs, userLinks: [] }, listed);
+
+    // Shows the file edited in its folder, not the link.
+    await invoke(IPC.SKILLS_SHOW_FOLDER, 's1', '/repo', listed);
+    expect(shell.showItemInFolder).toHaveBeenCalledWith(shared);
 
     // Opens the file edited, not the link, as a worktree file opens.
     vi.mocked(launchEditor).mockResolvedValueOnce(false).mockResolvedValueOnce(false);
@@ -1724,6 +1732,22 @@ describe('adapters, skills and MCP config', () => {
     await expect(invoke(IPC.SKILLS_OPEN, 's1', '/repo', listed)).rejects.toThrow('Could not open SKILL.md');
   });
 
+  it("links personal skills for every current Claude account, not other agents or accounts taken out of Settings", async () => {
+    const claudeDirs = { project: ['.claude/skills'], user: ['.claude/skills'], userFirst: true };
+    const account = (slug: string) => ({ id: `claude-account-${slug}`, account: { name: slug, configDir: `/h/.claude-${slug}` }, skillDirs: { ...claudeDirs, user: [`/h/.claude-${slug}/skills`] } });
+    m.adapterRegistry.list.mockReturnValue([
+      { id: 'claude-code', skillDirs: claudeDirs },
+      account('work'),
+      { id: 'gemini-cli', skillDirs: { project: ['.agents/skills'], user: ['.agents/skills'] } },
+      account('old'),
+    ]);
+    m.settings.getSettings.mockReturnValue({ claudeAccounts: [{ id: 'work', name: 'work', configDir: '/h/.claude-work' }] });
+    m.sessionManager.getSessionAdapter.mockReturnValue({ displayName: 'Gemini CLI', skillDirs: { project: ['.agents/skills'], user: ['.agents/skills'] } });
+    m.sessionManager.getWorktreePath.mockReturnValue('/wt');
+    await invoke(IPC.SKILLS_COPY_TO_USER, 's1', '/repo', '/wt/.agents/skills/x/SKILL.md');
+    expect(skillFiles.copySkillToUser).toHaveBeenCalledWith('/wt', expect.objectContaining({ userLinks: ['.claude/skills', '/h/.claude-work/skills'] }), '/wt/.agents/skills/x/SKILL.md');
+  });
+
   it('edits no skill without a path and text, an agent with skill folders, or a project root', async () => {
     m.sessionManager.getSessionAdapter.mockReturnValue({ displayName: 'Plain' });
     await expect(invoke(IPC.SKILLS_READ, 's1', '/repo', '/x/SKILL.md')).rejects.toThrow('no skill files');
@@ -1733,6 +1757,8 @@ describe('adapters, skills and MCP config', () => {
     m.sessionManager.getWorktreePath.mockReturnValue(null);
     await expect(invoke(IPC.SKILLS_SAVE, 's1', '', '/x/SKILL.md', 'old', 'new')).rejects.toThrow('No project root');
     await expect(invoke(IPC.SKILLS_COPY_TO_USER, 's1', '', '/x/SKILL.md')).rejects.toThrow('No project root');
+    await expect(invoke(IPC.SKILLS_SHOW_FOLDER, 's1', '', '/x/SKILL.md')).rejects.toThrow('No project root');
+    expect(shell.showItemInFolder).not.toHaveBeenCalled();
     expect(skillFiles.readSkillFile).not.toHaveBeenCalled();
     expect(skillFiles.saveSkillFile).not.toHaveBeenCalled();
     expect(skillFiles.copySkillToUser).not.toHaveBeenCalled();

@@ -88,6 +88,14 @@
   let sharing = $state<SkillSharing>({ toShare: [], toLink: [], broken: [] });
   let sharingBusy = $state(false);
   const toShareCount = $derived(sharing.toShare.length);
+  /** The skills folder a SKILL.md is in, by its last two names, e.g.
+   *  `.claude-work/skills` for a Claude account's. */
+  function skillsFolder(file: string): string {
+    return file.split(/[\\/]/).slice(-4, -2).join('/');
+  }
+
+  /** The thread's agent, as the drawer names it. */
+  const agentName = $derived(agentsStore.get(agentId)?.displayName ?? 'this agent');
   /** Claude Code's own skills, which other agents can't see until shared.
    *  Only marked in a Claude Code thread: Copilot and OpenCode read
    *  `.claude/skills` too, so there they aren't Claude's alone. */
@@ -107,7 +115,7 @@
 
   /** What Share and Link would change, in one line; the details are under it. */
   const sharingSummary = $derived([
-    toShareCount === 0 ? '' : toShareCount === 1 ? "1 skill isn't shared with every agent" : `${toShareCount} skills aren't shared with every agent`,
+    toShareCount === 0 ? '' : toShareCount === 1 ? "1 skill is only in Claude Agent's folders" : `${toShareCount} skills are only in Claude Agent's folders`,
     linkCount === 0 ? '' : linkCount === 1 ? '1 Claude Agent link needs updating' : `${linkCount} Claude Agent links need updating`,
   ].filter(Boolean).join(' · '));
   const sharingAction = $derived(toShareCount > 0 && linkCount > 0 ? 'Share and link' : toShareCount > 0 ? 'Share' : 'Link');
@@ -168,7 +176,7 @@
       await window.groveBench.copySkillToUser(sessionId, repoPath, skill.path);
       copied = skill.name;
     } catch (err) {
-      store.setError(`Couldn't copy "${skill.name}" to your personal skills: ${stripIpcErrorPrefix(errorMessage(err))}`);
+      store.setError(`Couldn't add "${skill.name}" to all your projects: ${stripIpcErrorPrefix(errorMessage(err))}`);
     } finally {
       copying = null;
       refresh();
@@ -185,17 +193,31 @@
     const items: { label: string; action: () => void; disabled?: boolean; separator?: boolean }[] = [];
     if (skill.path && skill.source !== 'session') {
       items.push({ label: 'Edit SKILL.md', action: () => skillsPanelStore.editSkill(sessionId, skill) });
+      items.push({ label: 'Open folder', action: () => void showFolder(skill) });
     }
+    // Each says which agents and which projects get the skill.
     if (skill.path && claudeOnly.has(skill.path)) {
-      items.push({ label: 'Share with every agent', action: () => void shareSkill(skill), disabled: sharingBusy });
+      const where = skill.source === 'project' ? 'this project' : 'all projects';
+      items.push({ label: `Let every agent use it (${where})`, action: () => void shareSkill(skill), disabled: sharingBusy });
     }
     if (skill.path && skill.source === 'project') {
-      items.push({ label: 'Copy to personal', action: () => void copyToPersonal(skill), disabled: copying !== null });
+      items.push({ label: 'Use in all my projects', action: () => void copyToPersonal(skill), disabled: copying !== null });
     }
     if (managed && !disabledSkills.includes(skill.name)) {
       items.push({ label: 'Disable', action: () => void setSkillEnabled(skill.name, false), disabled: skillsBusy[skill.name], separator: items.length > 0 });
     }
     return items;
+  }
+
+  /** Show the skill's SKILL.md in Explorer: for a Claude Code link, the
+   *  shared skill's. */
+  async function showFolder(skill: SkillInfo) {
+    if (!skill.path) return;
+    try {
+      await window.groveBench.showSkillFolder(sessionId, repoPath, skill.path);
+    } catch (err) {
+      store.setError(`Couldn't open the folder "${skill.name}" is in: ${stripIpcErrorPrefix(errorMessage(err))}`);
+    }
   }
 
   /** Under the card's ⋯ button. */
@@ -357,7 +379,7 @@
     {#snippet actions()}
       <Button variant="quiet" size="icon-2xs" onclick={() => { copied = null; }} title="Dismiss" aria-label="Dismiss"><XIcon /></Button>
     {/snippet}
-    <span class="font-mono">{copied}</span> is a personal skill now, so all your projects have it. The project keeps its copy for your team.
+    <span class="font-mono">{copied}</span> is in all your projects now, for every agent. The project keeps its copy for your team.
     {#if managed}Claude Agent uses yours where both are.{/if}
   </Notice>
 {/if}
@@ -378,13 +400,13 @@
       <div class="mt-1 space-y-1 text-muted-foreground">
         {#if toShareCount > 0}
           <p>
-            {nameList(sharing.toShare)} {toShareCount === 1 ? 'is' : 'are'} in <span class="font-mono">.claude/skills</span>, which only some agents read.
-            Share moves {toShareCount === 1 ? 'it' : 'them'} to <span class="font-mono">.agents/skills</span>, where every agent looks, and leaves a link so Claude Agent still finds {toShareCount === 1 ? 'it' : 'them'}.
+            {nameList(sharing.toShare)} {toShareCount === 1 ? 'is' : 'are'} only in Claude Agent's <span class="font-mono">.claude/skills</span>, which other agents don't read.
+            Share moves a project skill to the project's <span class="font-mono">.agents/skills</span> and a personal one to <span class="font-mono">~/.agents/skills</span>, where every agent looks, leaving links so every Claude account still finds {toShareCount === 1 ? 'it' : 'them'}.
           </p>
         {/if}
         {#if linkCount > 0}
           <p>
-            Claude Agent doesn't read <span class="font-mono">.agents/skills</span>, so it finds shared skills through links in <span class="font-mono">.claude/skills</span>.
+            Claude Agent doesn't read <span class="font-mono">.agents/skills</span>, so each Claude account finds shared skills through links in its own <span class="font-mono">.claude/skills</span>.
             {linkPlan(sharing)}
           </p>
         {/if}
@@ -430,7 +452,16 @@
           <SkillCard name={skill.name} active={!disabled} struck={disabled} nameTitle={skill.path ?? skill.name} oncontextmenu={(e: MouseEvent) => openMenuAt(e, skill)}>
             {#snippet tags()}
               {#if skill.path && claudeOnly.has(skill.path)}
-                <Badge tone="muted" title="Only Claude Agent reads .claude/skills. Share moves it to .agents/skills, where every agent looks, leaving a link for Claude Agent.">Claude only</Badge>
+                <!-- Named by its folder, as who reads it varies: a project's
+                     .claude/skills every Claude account (and Copilot and
+                     OpenCode), a personal one only the thread's account. -->
+                <Badge
+                  tone="muted"
+                  class="font-mono"
+                  title={skill.source === 'project'
+                    ? "Only in Claude Agent's folder, which some agents (such as Gemini CLI) don't read. Let every agent use it from the ⋯ menu."
+                    : `Only in ${agentName}'s own folder, which other Claude accounts and other agents don't read. Let every agent use it from the ⋯ menu, which links it for every Claude account too.`}
+                >{skillsFolder(skill.path)}</Badge>
               {/if}
             {/snippet}
             {#if skill.description}

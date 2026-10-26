@@ -165,6 +165,17 @@ describe('writeSkill', () => {
     expect(await listSkills(worktree)).toEqual([]);
   });
 
+  it("links a personal skill for every Claude account, not only the thread's", () => {
+    const work = path.join(fakeHome, '.claude-work', 'skills');
+    writeSkill(worktree, { ...def, scope: 'user' }, { ...CLAUDE_SKILL_DIRS, userLinks: ['.claude/skills', work] });
+    for (const root of [path.join(fakeHome, '.claude', 'skills'), work]) {
+      expect(isSkillLink(fs.readFileSync(path.join(root, 'release-notes', 'SKILL.md'), 'utf-8'))).toBe(true);
+    }
+    // From an agent that reads the shared folder: the Claude accounts still get one.
+    writeSkill(worktree, { ...def, name: 'notes', scope: 'user' }, { ...SHARED_SKILL_DIRS, userLinks: [work] });
+    expect(isSkillLink(fs.readFileSync(path.join(work, 'notes', 'SKILL.md'), 'utf-8'))).toBe(true);
+  });
+
   it('writes no link for an agent that reads the shared folder', () => {
     writeSkill(worktree, def, SHARED_SKILL_DIRS);
     expect(fs.existsSync(shared(worktree))).toBe(true);
@@ -346,14 +357,30 @@ describe('readSkillFile and saveSkillFile', () => {
     const linkPath = path.join(worktree, '.claude', 'skills', 'release-notes', 'SKILL.md');
     const sharedPath = path.join(worktree, '.agents', 'skills', 'release-notes', 'SKILL.md');
     const read = await readSkillFile(worktree, CLAUDE_SKILL_DIRS, linkPath);
-    const write = fs.promises.writeFile.bind(fs.promises);
-    vi.spyOn(fs.promises, 'writeFile').mockImplementation(((file: fs.PathLike, data: string) =>
-      file === linkPath ? Promise.reject(new Error('EBUSY: resource busy or locked')) : write(file, data)) as typeof fs.promises.writeFile);
+    const write = fs.writeFileSync.bind(fs);
+    vi.spyOn(fs, 'writeFileSync').mockImplementation(((file: fs.PathOrFileDescriptor, data: string) => {
+      if (file === linkPath) throw new Error('EBUSY: resource busy or locked');
+      write(file, data);
+    }) as typeof fs.writeFileSync);
 
     const edited = read.content.replace('Draft notes', 'Draft release notes');
     await expect(saveSkillFile(worktree, CLAUDE_SKILL_DIRS, linkPath, read.content, edited)).resolves.toMatchObject({ description: 'Draft release notes' });
     expect(fs.readFileSync(sharedPath, 'utf-8')).toBe(edited);
     expect(parseSkillFrontmatter(fs.readFileSync(linkPath, 'utf-8')).description).toBe('Draft notes');
+  });
+
+  it("refreshes every Claude account's link to a personal skill on Save, and adds none", async () => {
+    const work = path.join(fakeHome, '.claude-work', 'skills');
+    const client = path.join(fakeHome, '.claude-client', 'skills');
+    const dirs = { ...CLAUDE_SKILL_DIRS, userLinks: ['.claude/skills', work] };
+    writeSkill(worktree, { name: 'notes', description: 'Draft notes', instructions: 'Do it', scope: 'user' }, dirs);
+    const listed = path.join(fakeHome, '.claude', 'skills', 'notes', 'SKILL.md');
+    const read = await readSkillFile(worktree, dirs, listed);
+    await saveSkillFile(worktree, { ...dirs, userLinks: [...dirs.userLinks, client] }, listed, read.content, read.content.replace('Draft notes', 'Draft better notes'));
+    for (const root of [path.join(fakeHome, '.claude', 'skills'), work]) {
+      expect(parseSkillFrontmatter(fs.readFileSync(path.join(root, 'notes', 'SKILL.md'), 'utf-8')).description).toBe('Draft better notes');
+    }
+    expect(fs.existsSync(path.join(client, 'notes'))).toBe(false);
   });
 
   it('says when a link points at a shared skill that is gone', async () => {
@@ -445,6 +472,17 @@ describe('copySkillToUser', () => {
     const copied = fs.readFileSync(shared(fakeHome, 'release-notes'), 'utf-8');
     expect(isSkillLink(copied)).toBe(false);
     expect(copied).toContain('Do the thing');
+  });
+
+  it("links the copy for every Claude account, leaving one that has its own skill of that name alone", async () => {
+    put(own(worktree), review);
+    const work = path.join(fakeHome, '.claude-work', 'skills');
+    const client = path.join(fakeHome, '.claude-client', 'skills');
+    put(path.join(client, 'review', 'SKILL.md'), '---\nname: review\ndescription: The client one\n---\n');
+    await copySkillToUser(worktree, { ...CLAUDE_SKILL_DIRS, userLinks: ['.claude/skills', work, client] }, own(worktree));
+    expect(isSkillLink(fs.readFileSync(own(fakeHome), 'utf-8'))).toBe(true);
+    expect(isSkillLink(fs.readFileSync(path.join(work, 'review', 'SKILL.md'), 'utf-8'))).toBe(true);
+    expect(parseSkillFrontmatter(fs.readFileSync(path.join(client, 'review', 'SKILL.md'), 'utf-8')).description).toBe('The client one');
   });
 
   it('writes no link for an agent that reads the shared folder', async () => {

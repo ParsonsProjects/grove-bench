@@ -133,6 +133,39 @@ describe('shareSkills', () => {
   });
 });
 
+describe('every Claude account', () => {
+  const work = () => path.join(home, '.claude-work', 'skills');
+  const dirs = () => ({ ...CLAUDE_SKILL_DIRS, userLinks: ['.claude/skills', work()] });
+
+  it("finds a personal skill another Claude account can't see, once, and Link adds it there", async () => {
+    // Shared from the work account's thread: only it has a link.
+    put(sharedFile(home, 'notes'), skill('notes'));
+    put(path.join(work(), 'notes', 'SKILL.md'), skillLinkContent(skill('notes'), 'notes', path.join(home, '.agents', 'skills', 'notes', 'SKILL.md')));
+    put(path.join(work(), 'gone', 'SKILL.md'), skillLinkContent(skill('gone'), 'gone', path.join(home, '.agents', 'skills', 'gone', 'SKILL.md')));
+
+    const sharing = await skillSharing(worktree, dirs());
+    expect(names(sharing.toLink)).toEqual(['notes']);
+    expect(names(sharing.broken)).toEqual(['gone']);
+
+    await linkSkills(worktree, dirs());
+    expect(isSkillLink(fs.readFileSync(claudeFile(home, 'notes'), 'utf-8'))).toBe(true);
+    expect(fs.existsSync(path.join(work(), 'gone'))).toBe(false);
+    expect(await skillSharing(worktree, dirs())).toEqual({ toShare: [], toLink: [], broken: [] });
+  });
+
+  it("links a shared personal skill for every account, and shares only the thread's own", async () => {
+    put(claudeFile(home, 'mine'), skill('mine'));
+    put(path.join(work(), 'theirs', 'SKILL.md'), skill('theirs'));
+    expect(names((await skillSharing(worktree, dirs())).toShare)).toEqual(['mine']);
+
+    await shareSkills(worktree, dirs());
+    expect(fs.readFileSync(sharedFile(home, 'mine'), 'utf-8')).toBe(skill('mine'));
+    expect(isSkillLink(fs.readFileSync(claudeFile(home, 'mine'), 'utf-8'))).toBe(true);
+    expect(isSkillLink(fs.readFileSync(path.join(work(), 'mine', 'SKILL.md'), 'utf-8'))).toBe(true);
+    expect(fs.readFileSync(path.join(work(), 'theirs', 'SKILL.md'), 'utf-8')).toBe(skill('theirs'));
+  });
+});
+
 describe('linkSkills', () => {
   it('adds and updates links, removes ones to deleted skills, and leaves other files alone', async () => {
     put(sharedFile(worktree, 'team'), skill('team'));

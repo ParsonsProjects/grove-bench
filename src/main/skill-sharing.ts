@@ -14,6 +14,7 @@ import path from 'node:path';
 import type { SkillChanges, SkillInfo, SkillSharing } from '../shared/types.js';
 import {
   isSkillLink,
+  linkRoots,
   parseSkillFrontmatter,
   readsSharedSkills,
   SHARED_SKILLS_DIR,
@@ -21,6 +22,7 @@ import {
   skillLinkTarget,
   skillsRoot,
   skillText,
+  writeLinks,
   type SkillDirs,
   type SkillScope,
 } from './skills.js';
@@ -60,56 +62,68 @@ function infoOf(m: Manifest, scope: SkillScope): SkillInfo {
 
 interface LevelPlan {
   scope: SkillScope;
-  /** Claude Code's folder at this level, where links go. */
-  ownRoot: string;
   sharedRoot: string;
+  /** The folders links go in at this level: Claude Code's own, and at the
+   *  user level every Claude account's (linkRoots). */
+  linkRoots: string[];
+  /** The agent's own skills other agents can't see. */
   toShare: Manifest[];
-  /** Shared skills whose link is missing or out of date, with the link
-   *  each should have. */
-  toLink: { shared: Manifest; link: string }[];
+  /** Shared skills whose link in a folder is missing or out of date, with
+   *  the link each should have and where. */
+  toLink: { shared: Manifest; link: string; linkPath: string }[];
   /** Links whose shared skill is gone. */
   broken: Manifest[];
 }
 
-/** What Share and Link would do at each level the agent needs links at. */
+/** What Share and Link would do at each level links are kept at. */
 async function plan(worktreePath: string, dirs: SkillDirs): Promise<LevelPlan[]> {
-  const levels = SCOPES.filter((scope) => !readsSharedSkills(dirs, scope));
-  return Promise.all(levels.map(async (scope): Promise<LevelPlan> => {
-    const ownRoot = skillsRoot(worktreePath, scope, dirs[scope][0]);
+  const levels = SCOPES.map((scope) => ({ scope, roots: linkRoots(worktreePath, dirs, scope) })).filter((l) => l.roots.length > 0);
+  return Promise.all(levels.map(async ({ scope, roots }): Promise<LevelPlan> => {
     const sharedRoot = skillsRoot(worktreePath, scope, SHARED_SKILLS_DIR);
-    const [own, shared] = await Promise.all([readManifests(ownRoot), readManifests(sharedRoot)]);
-    const level: LevelPlan = { scope, ownRoot, sharedRoot, toShare: [], toLink: [], broken: [] };
-    for (const m of own.values()) {
-      if (isSkillLink(m.content)) {
-        if (!shared.has(m.dir)) level.broken.push(m);
-      } else if (!shared.has(m.dir)) {
-        // One in both folders under the same name stays as it is: Claude
-        // Code uses its own, the others the shared one.
-        level.toShare.push(m);
+    // The agent's own folder, when it needs links, is the first.
+    const ownRoot = readsSharedSkills(dirs, scope) ? null : roots[0];
+    const [shared, ...linked] = await Promise.all([readManifests(sharedRoot), ...roots.map(readManifests)]);
+    const level: LevelPlan = { scope, sharedRoot, linkRoots: roots, toShare: [], toLink: [], broken: [] };
+    roots.forEach((root, i) => {
+      const own = linked[i];
+      for (const m of own.values()) {
+        if (isSkillLink(m.content)) {
+          if (!shared.has(m.dir)) level.broken.push(m);
+        } else if (root === ownRoot && !shared.has(m.dir)) {
+          // One in both folders under the same name stays as it is: Claude
+          // Code uses its own, the others the shared one.
+          level.toShare.push(m);
+        }
       }
-    }
-    for (const m of shared.values()) {
-      const current = own.get(m.dir);
-      if (current && !isSkillLink(current.content)) continue;
-      const link = skillLinkContent(m.content, m.dir, skillLinkTarget(scope, m.dir));
-      // Git on Windows may check the link out with CRLF line endings.
-      if (!current || skillText(current.content) !== link) level.toLink.push({ shared: m, link });
-    }
+      for (const m of shared.values()) {
+        const current = own.get(m.dir);
+        if (current && !isSkillLink(current.content)) continue;
+        const link = skillLinkContent(m.content, m.dir, skillLinkTarget(scope, m.dir));
+        // Git on Windows may check the link out with CRLF line endings.
+        if (!current || skillText(current.content) !== link) level.toLink.push({ shared: m, link, linkPath: path.join(root, m.dir, 'SKILL.md') });
+      }
+    });
     return level;
   }));
+}
+
+/** One entry per skill, as several Claude accounts' links can stand for one. */
+function bySkill(skills: SkillInfo[]): SkillInfo[] {
+  return [...new Map(skills.map((s) => [`${s.source}:${s.name}`, s])).values()];
 }
 
 /**
  * What the Skills drawer offers, for an agent that needs links (`dirs` are
  * Claude Code's folders): its own skills other agents can't see, shared
- * skills it can't see (or sees an old copy of), and links to deleted skills.
+ * skills it, or another Claude account, can't see (or sees an old copy of),
+ * and links to deleted skills.
  */
 export async function skillSharing(worktreePath: string, dirs: SkillDirs): Promise<SkillSharing> {
   const levels = await plan(worktreePath, dirs);
   return {
     toShare: levels.flatMap((l) => l.toShare.map((m) => infoOf(m, l.scope))),
-    toLink: levels.flatMap((l) => l.toLink.map(({ shared }) => infoOf(shared, l.scope))),
-    broken: levels.flatMap((l) => l.broken.map((m) => infoOf(m, l.scope))),
+    toLink: bySkill(levels.flatMap((l) => l.toLink.map(({ shared }) => infoOf(shared, l.scope)))),
+    broken: bySkill(levels.flatMap((l) => l.broken.map((m) => infoOf(m, l.scope)))),
   };
 }
 
@@ -150,6 +164,8 @@ export async function shareSkills(worktreePath: string, dirs: SkillDirs, onlyPat
         await moveFolder(from, to);
         await fs.promises.mkdir(from, { recursive: true });
         await fs.promises.writeFile(m.path, skillLinkContent(m.content, m.dir, skillLinkTarget(level.scope, m.dir)));
+        // And every other Claude account's, for a personal skill.
+        writeLinks(level.linkRoots, level.scope, m.dir, m.content);
         result.done.push(name);
       } catch (err) {
         result.skipped.push({ name, reason: reasonOf(err) });
@@ -164,9 +180,8 @@ export async function shareSkills(worktreePath: string, dirs: SkillDirs, onlyPat
 export async function linkSkills(worktreePath: string, dirs: SkillDirs): Promise<SkillChanges> {
   const result: SkillChanges = { done: [], skipped: [] };
   for (const level of await plan(worktreePath, dirs)) {
-    for (const { shared, link } of level.toLink) {
+    for (const { shared, link, linkPath } of level.toLink) {
       const name = infoOf(shared, level.scope).name;
-      const linkPath = path.join(level.ownRoot, shared.dir, 'SKILL.md');
       try {
         await fs.promises.mkdir(path.dirname(linkPath), { recursive: true });
         await fs.promises.writeFile(linkPath, link);

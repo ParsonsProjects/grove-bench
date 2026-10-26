@@ -253,6 +253,7 @@ const mockGroveBench = {
   readSkill: vi.fn((_sessionId: string, _fallbackPath: string, _skillPath: string) => notMocked('readSkill') as Promise<import('../../shared/types.js').SkillFile>),
   saveSkill: vi.fn((_sessionId: string, _fallbackPath: string, _skillPath: string, _expected: string, _content: string) => notMocked('saveSkill') as Promise<import('../../shared/types.js').SkillInfo>),
   copySkillToUser: vi.fn((_sessionId: string, _fallbackPath: string, _skillPath: string) => notMocked('copySkillToUser') as Promise<import('../../shared/types.js').SkillInfo>),
+  showSkillFolder: vi.fn((_sessionId: string, _fallbackPath: string, _skillPath: string) => Promise.resolve()),
   openSkillInEditor: vi.fn((_sessionId: string, _fallbackPath: string, _skillPath: string) => Promise.resolve()),
   getSkillSharing: vi.fn((_sessionId: string, _fallbackPath: string) => Promise.resolve({ toShare: [], toLink: [], broken: [] } as import('../../shared/types.js').SkillSharing)),
   shareSkills: vi.fn((_sessionId: string, _fallbackPath: string, _skillPath?: string) => Promise.resolve({ done: [], skipped: [] } as import('../../shared/types.js').SkillChanges)),

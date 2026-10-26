@@ -23,6 +23,9 @@ async function openMenu(skill: string): Promise<string[]> {
   return screen.getAllByRole('menuitem').map((item) => item.textContent?.trim() ?? '');
 }
 
+/** The folder badges on cards of skills only Claude Agent's folders have. */
+const folderBadges = () => [...document.querySelectorAll<HTMLElement>('[data-slot="badge"].font-mono')];
+
 /** Choose an item from a skill card's ⋯ menu. */
 async function choose(skill: string, item: string) {
   await openMenu(skill);
@@ -140,14 +143,14 @@ describe('ThreadSkills', () => {
     });
     mockGroveBench.shareSkills.mockResolvedValueOnce({ done: ['triage'], skipped: [{ name: 'deploy', reason: 'a file in it is open in another program' }] });
     render(ThreadSkills, { sessionId: 't1' });
-    expect(await screen.findByText("2 skills aren't shared with every agent")).toBeInTheDocument();
-    expect(screen.getByText(/triage and deploy are in/)).toBeInTheDocument();
+    expect(await screen.findByText("2 skills are only in Claude Agent's folders")).toBeInTheDocument();
+    expect(screen.getByText(/triage and deploy are only in/)).toBeInTheDocument();
     expect(mockGroveBench.linkSkills).not.toHaveBeenCalled();
     mockGroveBench.listSkills.mockClear();
     await fireEvent.click(screen.getByRole('button', { name: 'Share' }));
     expect(mockGroveBench.shareSkills).toHaveBeenCalledWith('t1', '/repo');
     await waitFor(() => expect(store.error).toBe(`Couldn't share "deploy" (a file in it is open in another program).`));
-    await waitFor(() => expect(screen.queryByText("2 skills aren't shared with every agent")).toBeNull());
+    await waitFor(() => expect(screen.queryByText("2 skills are only in Claude Agent's folders")).toBeNull());
     expect(mockGroveBench.listSkills).toHaveBeenCalled();
     store.setError(null);
   });
@@ -180,7 +183,7 @@ describe('ThreadSkills', () => {
     mockGroveBench.shareSkills.mockImplementationOnce(async () => { order.push('share'); return { done: ['own'], skipped: [] }; });
     mockGroveBench.linkSkills.mockImplementationOnce(async () => { order.push('link'); return { done: [], skipped: [{ name: 'team', reason: 'denied' }] }; });
     render(ThreadSkills, { sessionId: 't1' });
-    expect(await screen.findByText("1 skill isn't shared with every agent · 1 Claude Agent link needs updating")).toBeInTheDocument();
+    expect(await screen.findByText("1 skill is only in Claude Agent's folders · 1 Claude Agent link needs updating")).toBeInTheDocument();
     await fireEvent.click(screen.getByRole('button', { name: 'Share and link' }));
     await waitFor(() => expect(order).toEqual(['share', 'link']));
     await waitFor(() => expect(store.error).toBe(`Couldn't link "team" (denied).`));
@@ -266,7 +269,7 @@ describe('ThreadSkills', () => {
     // A skill only the agent reports has no file to edit.
     expect(await openMenu('engineering:code-review')).toEqual(['Disable']);
 
-    expect(await openMenu('triage')).toEqual(['Edit SKILL.md', 'Copy to personal']);
+    expect(await openMenu('triage')).toEqual(['Edit SKILL.md', 'Open folder', 'Use in all my projects']);
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Edit SKILL.md' }));
     expect(skillsPanelStore.edit).toMatchObject({ sessionId: 't1', skill: many[1], file: null });
     expect(screen.queryByRole('menu')).toBeNull();
@@ -277,9 +280,9 @@ describe('ThreadSkills', () => {
     mockGroveBench.listSkills.mockResolvedValue(many);
     mockGroveBench.getSkillSharing.mockResolvedValueOnce({ toShare: [many[1]], toLink: [], broken: [] });
     render(ThreadSkills, { sessionId: 't1' });
-    const badge = await screen.findByText('Claude only');
-    expect(badge.closest('div')).toHaveTextContent('triage');
-    expect(screen.getAllByText('Claude only')).toHaveLength(1);
+    await waitFor(() => expect(folderBadges()).toHaveLength(1));
+    expect(folderBadges()[0]).toHaveTextContent('.claude/skills');
+    expect(folderBadges()[0].closest('div')).toHaveTextContent('triage');
   });
 
   it("shares one of Claude Code's own skills from its card", async () => {
@@ -288,15 +291,15 @@ describe('ThreadSkills', () => {
     mockGroveBench.getSkillSharing.mockResolvedValueOnce({ toShare: [many[1]], toLink: [], broken: [] });
     mockGroveBench.shareSkills.mockResolvedValueOnce({ done: ['triage'], skipped: [] });
     render(ThreadSkills, { sessionId: 't1' });
-    await screen.findByText('Claude only');
+    await waitFor(() => expect(folderBadges()).toHaveLength(1));
     // Only a skill other agents can't see yet has it.
-    expect(await openMenu('release-notes')).not.toContain('Share with every agent');
+    expect(await openMenu('release-notes')).not.toContain('Let every agent use it (this project)');
 
-    await choose('triage', 'Share with every agent');
+    await choose('triage', 'Let every agent use it (this project)');
     expect(mockGroveBench.shareSkills).toHaveBeenCalledWith('t1', '/repo', many[1].path);
     // Listed again: shared now.
-    await waitFor(() => expect(screen.queryByText('Claude only')).toBeNull());
-    expect(await openMenu('triage')).not.toContain('Share with every agent');
+    await waitFor(() => expect(folderBadges()).toHaveLength(0));
+    expect(await openMenu('triage')).not.toContain('Let every agent use it (this project)');
     expect(store.error).toBeNull();
   });
 
@@ -308,11 +311,11 @@ describe('ThreadSkills', () => {
       .mockResolvedValueOnce({ toShare: [many[1]], toLink: [], broken: [] });
     mockGroveBench.shareSkills.mockResolvedValueOnce({ done: [], skipped: [{ name: 'triage', reason: 'a file in it is open in another program' }] });
     render(ThreadSkills, { sessionId: 't1' });
-    await screen.findByText('Claude only');
-    await choose('triage', 'Share with every agent');
+    await waitFor(() => expect(folderBadges()).toHaveLength(1));
+    await choose('triage', 'Let every agent use it (this project)');
     await waitFor(() => expect(store.error).toBe('Couldn\'t share "triage" (a file in it is open in another program).'));
     await openMenu('triage');
-    expect(screen.getByRole('menuitem', { name: 'Share with every agent' })).toBeEnabled();
+    expect(screen.getByRole('menuitem', { name: 'Let every agent use it (this project)' })).toBeEnabled();
     store.setError(null);
   });
 
@@ -322,16 +325,16 @@ describe('ThreadSkills', () => {
     mockGroveBench.copySkillToUser.mockResolvedValueOnce({ ...many[1], source: 'user', path: '/home/me/.claude/skills/triage/SKILL.md' });
     render(ThreadSkills, { sessionId: 't1' });
     // Only project skills have it.
-    expect(await openMenu('deploy')).not.toContain('Copy to personal');
+    expect(await openMenu('deploy')).not.toContain('Use in all my projects');
 
     const listings = mockGroveBench.listSkills.mock.calls.length;
-    await choose('triage', 'Copy to personal');
+    await choose('triage', 'Use in all my projects');
     expect(mockGroveBench.copySkillToUser).toHaveBeenCalledWith('t1', '/repo', many[1].path);
-    const notice = await screen.findByText(/is a personal skill now/);
-    expect(notice).toHaveTextContent('triage is a personal skill now, so all your projects have it. The project keeps its copy for your team. Claude Agent uses yours where both are.');
+    const notice = await screen.findByText(/is in all your projects now/);
+    expect(notice).toHaveTextContent('triage is in all your projects now, for every agent. The project keeps its copy for your team. Claude Agent uses yours where both are.');
     await waitFor(() => expect(mockGroveBench.listSkills.mock.calls.length).toBeGreaterThan(listings));
     await fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
-    expect(screen.queryByText(/is a personal skill now/)).toBeNull();
+    expect(screen.queryByText(/is in all your projects now/)).toBeNull();
   });
 
   it("says why a skill couldn't be copied to the personal ones", async () => {
@@ -339,9 +342,9 @@ describe('ThreadSkills', () => {
     mockGroveBench.listSkills.mockResolvedValue(many);
     mockGroveBench.copySkillToUser.mockRejectedValueOnce(new Error('Error invoking remote method \'skills:copyToUser\': Error: You have a personal skill named "triage" already'));
     render(ThreadSkills, { sessionId: 't1' });
-    await choose('triage', 'Copy to personal');
-    await waitFor(() => expect(store.error).toBe('Couldn\'t copy "triage" to your personal skills: You have a personal skill named "triage" already'));
-    expect(screen.queryByText(/is a personal skill now/)).toBeNull();
+    await choose('triage', 'Use in all my projects');
+    await waitFor(() => expect(store.error).toBe('Couldn\'t add "triage" to all your projects: You have a personal skill named "triage" already'));
+    expect(screen.queryByText(/is in all your projects now/)).toBeNull();
     store.setError(null);
   });
 
@@ -351,9 +354,9 @@ describe('ThreadSkills', () => {
     mockGroveBench.getSkillSharing.mockResolvedValueOnce({ toShare: [many[1]], toLink: [], broken: [] });
     render(ThreadSkills, { sessionId: 't1' });
     // Shown once the sharing check is in.
-    await screen.findByText("1 skill isn't shared with every agent");
-    expect(screen.queryByText('Claude only')).toBeNull();
-    expect(await openMenu('triage')).toEqual(['Edit SKILL.md', 'Copy to personal']);
+    await screen.findByText("1 skill is only in Claude Agent's folders");
+    expect(folderBadges()).toHaveLength(0);
+    expect(await openMenu('triage')).toEqual(['Edit SKILL.md', 'Open folder', 'Use in all my projects']);
   });
 
   it("opens a card's menu on a right-click, and Escape closes it without closing the drawer", async () => {
@@ -363,9 +366,36 @@ describe('ThreadSkills', () => {
     const card = (await screen.findByText('deploy')).closest('[role="presentation"]')!;
     await fireEvent.contextMenu(card, { clientX: 10, clientY: 20 });
     expect(screen.getByRole('menu', { name: 'deploy' })).toBeInTheDocument();
-    expect(screen.getAllByRole('menuitem').map((i) => i.textContent?.trim())).toEqual(['Edit SKILL.md', 'Disable']);
+    expect(screen.getAllByRole('menuitem').map((i) => i.textContent?.trim())).toEqual(['Edit SKILL.md', 'Open folder', 'Disable']);
     await fireEvent.keyDown(window, { key: 'Escape' });
     expect(screen.queryByRole('menu')).toBeNull();
     expect(skillsPanelStore.open).toBe(true);
+  });
+
+  it("opens the folder a skill's SKILL.md is in, and says when it can't", async () => {
+    thread('claude-code');
+    mockGroveBench.listSkills.mockResolvedValue(many);
+    render(ThreadSkills, { sessionId: 't1' });
+    await choose('deploy', 'Open folder');
+    expect(mockGroveBench.showSkillFolder).toHaveBeenCalledWith('t1', '/repo', many[2].path);
+
+    mockGroveBench.showSkillFolder.mockRejectedValueOnce(new Error('Error invoking remote method \'skills:showFolder\': Error: That skill isn\'t in this thread\'s skill folders any more'));
+    await choose('triage', 'Open folder');
+    await waitFor(() => expect(store.error).toBe('Couldn\'t open the folder "triage" is in: That skill isn\'t in this thread\'s skill folders any more'));
+    store.setError(null);
+  });
+
+  it("says a personal skill only the thread's Claude account can use, and offers it to every agent in all projects", async () => {
+    thread('claude-code');
+    mockGroveBench.listSkills.mockResolvedValue(many);
+    mockGroveBench.getSkillSharing.mockResolvedValueOnce({ toShare: [many[1], many[2]], toLink: [], broken: [] });
+    render(ThreadSkills, { sessionId: 't1' });
+    await waitFor(() => expect(folderBadges()).toHaveLength(2));
+    const [project, personal] = folderBadges();
+    expect(project).toHaveAttribute('title', expect.stringContaining("Only in Claude Agent's folder"));
+    expect(personal).toHaveTextContent('.claude/skills');
+    expect(personal).toHaveAttribute('title', expect.stringContaining("Only in Claude Code's own folder, which other Claude accounts"));
+    expect(await openMenu('deploy')).toContain('Let every agent use it (all projects)');
+    expect(await openMenu('triage')).toContain('Let every agent use it (this project)');
   });
 });

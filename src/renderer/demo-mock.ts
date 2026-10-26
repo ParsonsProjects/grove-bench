@@ -405,6 +405,7 @@ const api: Record<string, unknown> = {
     DEMO_SKILLS.splice(DEMO_SKILLS.indexOf(skill), 1, copy);
     return copy;
   },
+  showSkillFolder: async () => {},
   openSkillInEditor: async () => {},
   getSkillSharing: async () => DEMO_SHARING,
   shareSkills: async (_sid: string, _fallback: string, skillPath?: string) => {

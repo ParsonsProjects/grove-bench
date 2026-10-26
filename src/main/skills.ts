@@ -34,6 +34,11 @@ export interface SkillDirs {
    *  Code ("personal over project", code.claude.com/docs/en/skills).
    *  Otherwise the project's wins, as in Gemini CLI (workspace over user). */
   userFirst?: boolean;
+  /** Other user folders that see personal shared skills only through links:
+   *  every Claude account's (each its own agent), filled in by IPC. Grove
+   *  keeps a link in each, as in the agent's own, so a personal skill
+   *  reaches every Claude thread whichever account it runs on. */
+  userLinks?: readonly string[];
 }
 
 /** A user-level skills folder, made absolute. */
@@ -122,6 +127,34 @@ export function skillLinkContent(sharedContent: string, dirName: string, target:
 /** Whether a SKILL.md is a link Grove made. */
 export function isSkillLink(content: string): boolean {
   return content.includes(`<!-- ${LINK_MARKER} `);
+}
+
+/** The folders, made absolute, where links to a level's shared skills go:
+ *  the agent's own first one when it doesn't read the shared folder, and at
+ *  the user level every Claude account's (userLinks). */
+export function linkRoots(worktreePath: string, dirs: SkillDirs, scope: SkillScope): string[] {
+  const roots = readsSharedSkills(dirs, scope) ? [] : [skillsRoot(worktreePath, scope, dirs[scope][0])];
+  if (scope === 'user') roots.push(...(dirs.userLinks ?? []).map(userSkillsDir));
+  return [...new Map(roots.map((root) => [path.resolve(root), root])).values()];
+}
+
+/**
+ * Bring the link to a shared skill up to date in each folder: written where
+ * it's missing or out of date, unless `onlyExisting`. A folder's own skill of
+ * that name is left alone. Best effort: a link that can't be written is left
+ * for Link, which the drawer then offers.
+ */
+export function writeLinks(roots: readonly string[], scope: SkillScope, dirName: string, sharedContent: string, onlyExisting = false): void {
+  const link = skillLinkContent(sharedContent, dirName, skillLinkTarget(scope, dirName));
+  for (const root of roots) {
+    const linkPath = path.join(root, dirName, 'SKILL.md');
+    try {
+      const current = fs.existsSync(linkPath) ? fs.readFileSync(linkPath, 'utf-8') : null;
+      if (current === null ? onlyExisting : !isSkillLink(current) || skillText(current) === link) continue;
+      fs.mkdirSync(path.dirname(linkPath), { recursive: true });
+      fs.writeFileSync(linkPath, link);
+    } catch { /* left for Link */ }
+  }
 }
 
 /**
@@ -252,6 +285,8 @@ export function writeSkill(worktreePath: string, def: SkillDefinition, dirs: Ski
     fs.mkdirSync(path.dirname(linkPath), { recursive: true });
     fs.writeFileSync(linkPath, skillLinkContent(content, def.name, skillLinkTarget(def.scope, def.name)));
   }
+  // A personal one for every other Claude account too.
+  writeLinks(linkRoots(worktreePath, dirs, def.scope), def.scope, def.name, content);
   return {
     name: def.name,
     description: def.description,
@@ -326,11 +361,14 @@ export async function saveSkillFile(worktreePath: string, dirs: SkillDirs, skill
   }
   const eol = target.raw.includes('\r\n') ? text.replace(/\n/g, '\r\n') : text;
   await fs.promises.writeFile(target.path, target.raw.startsWith('\uFEFF') ? `\uFEFF${eol}` : eol);
-  if (target.link) {
-    const link = skillLinkContent(text, dirName, skillLinkTarget(skill.source, dirName));
-    // The skill is saved by now. A link that can't be written (open in
-    // another program, say) is left for Link, which the drawer then offers.
-    if (skillText(target.link.raw) !== link) await fs.promises.writeFile(target.link.path, link).catch(() => {});
+  // A shared skill's links, in the agent's folder and every Claude
+  // account's, take its new name line and description. The skill is saved
+  // by now, so one that can't be written is left for Link.
+  const sharedRoot = skillsRoot(worktreePath, skill.source, SHARED_SKILLS_DIR);
+  if (target.link || path.resolve(path.dirname(path.dirname(target.path))) === path.resolve(sharedRoot)) {
+    const roots = linkRoots(worktreePath, dirs, skill.source);
+    if (target.link) roots.push(path.dirname(path.dirname(target.link.path)));
+    writeLinks(roots, skill.source, dirName, text, true);
   }
   return { name, description: meta.description ?? '', source: skill.source, path: skill.path };
 }
@@ -360,6 +398,7 @@ export async function copySkillToUser(worktreePath: string, dirs: SkillDirs, ski
     await fs.promises.mkdir(path.dirname(linkPath), { recursive: true });
     await fs.promises.writeFile(linkPath, skillLinkContent(target.raw, dirName, skillLinkTarget('user', dirName)));
   }
+  writeLinks(linkRoots(worktreePath, dirs, 'user'), 'user', dirName, target.raw);
   return { name: skill.name, description: parseSkillFrontmatter(target.raw).description ?? '', source: 'user', path: linkPath ?? path.join(to, 'SKILL.md') };
 }
 

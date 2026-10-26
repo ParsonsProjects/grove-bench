@@ -125,22 +125,38 @@ Each server in the popover shows a status dot:
 
 ## Skills
 
-**Skills** shows how many skills the thread's agent can use. Click it to open the Skills drawer on the right. **This thread** lists them, each with **Run** (a new thread that uses it now) and **Schedule**, and the rest in its **⋯** menu (or right-click the skill): **Edit SKILL.md**, **Share with every agent**, **Copy to personal** and, for Claude Agent, **Disable**. A turned-off skill keeps **Enable** in view; **Scheduled** lists every project's schedules. The clock on a project's header in the sidebar opens Scheduled too, and **Skills** at the foot of the sidebar opens the drawer even when a narrow status bar has no room for its Skills count. The drawer keeps the keyboard inside it until you close it with `Esc` or **×**. To start a thread with a skill and your own instructions, type `/` in a new thread's message box or use **Skills** at its foot (see [Starting a Thread](getting-started.md#starting-a-thread)).
+**Skills** shows how many skills the thread's agent can use. Click it to open the Skills drawer on the right. **This thread** lists them, each with **Run** (a new thread that uses it now) and **Schedule**, and the rest in its **⋯** menu (or right-click the skill): **Edit SKILL.md**, **Open folder** (shows the skill's `SKILL.md` in Explorer), the sharing actions below and, for Claude Agent, **Disable**. A turned-off skill keeps **Enable** in view. **Scheduled** lists every project's schedules. The clock on a project's header in the sidebar opens Scheduled too, and **Skills** at the foot of the sidebar opens the drawer even when a narrow status bar has no room for its Skills count. The drawer keeps the keyboard inside it until you close it with `Esc` or **×**. To start a thread with a skill and your own instructions, type `/` in a new thread's message box or use **Skills** at its foot (see [Starting a Thread](getting-started.md#starting-a-thread)).
 
-Skills are folders with a `SKILL.md` file, a format every agent Grove Bench knows reads. **Add skill** saves a new one in `.agents/skills` (in the project, or in your home folder for a user skill), the folder they all look in except Claude Agent. Claude Agent finds it through a small link file in `.claude/skills` with the same name and description, which tells it to read the shared one. Links are plain files, so they work in git for your whole team, with or without Grove Bench.
+**This thread** puts skills in sections by where they live: **Project** (in the project, for anyone working on it), **Personal** (in your user folder, for all your projects) and **Plugin and built-in** (reported by the running agent, with no file to edit). Click a section's heading to fold it. The search box above them finds skills by name or description in every section, folded or not; `Esc` clears it before closing the drawer.
 
-**This thread** puts skills in sections by where they live: **Project** (in the project, for anyone working on it), **Personal** (in your user folder, for all your projects) and **Plugin and built-in** (reported by the running agent, with no file to edit). Click a section's heading to fold it. The search box above them finds skills by name or description in every section, folded or not; `Esc` clears it before closing the drawer. In a Claude Agent thread, **Claude only** marks a skill in Claude Agent's own folder that other agents can't see yet, and its menu has **Share with every agent** for that one skill (see **Share** below).
+### Which agents, and which projects
 
-**Edit SKILL.md** opens the skill's `SKILL.md` in the drawer as plain text, frontmatter included, so settings the Add skill form doesn't have (such as `allowed-tools`) stay as they are. **Save** (`Ctrl+S`) writes it back, keeping the file's line endings. For a shared skill it edits the file in `.agents/skills` and updates Claude Agent's link to it. Save refuses if the file changed after you opened it (**Reload** shows the new version, dropping your changes) or if the text changes the skill's `name`, since schedules, links and turned-off skills go by it. **Open in editor** opens the file in VS Code, Cursor or your default app instead. Leaving the editor, switching tab or closing the drawer with unsaved changes asks first.
+Skills are folders with a `SKILL.md` file, a format every agent Grove Bench knows reads. Where a skill's folder is decides who has it:
 
-**Copy to personal** in a project skill's menu copies its folder to your user folder (`~/.agents/skills`, with a link in `~/.claude/skills` for Claude Agent), so all your projects have it. The project keeps its copy for your team. When a personal and a project skill have the same name, Claude Agent uses the personal one, so a Claude Agent thread lists that one; other agents' threads list the project's.
+| Folder | Agents | Projects |
+|---|---|---|
+| The project's `.claude/skills` | Claude Agent (every account), and Copilot and OpenCode | This one |
+| The project's `.agents/skills` | Every agent | This one |
+| `~/.claude/skills` | Your first Claude account, and OpenCode | All |
+| Another Claude account's folder, such as `~/.claude-work/skills` | That account only | All |
+| `~/.agents/skills` | Every agent | All |
 
-The drawer offers two buttons when skills need them:
+Claude Agent doesn't read `.agents/skills`, so it finds a shared skill through a small link file in its own folder, with the same name and description, which tells it to read the shared one. Links are plain files, so they work in git for your whole team, with or without Grove Bench. For a personal skill Grove Bench keeps a link in every Claude account's folder, so it reaches every Claude thread whichever account it runs on.
 
-- **Share**: skills that are only in Claude Agent's folders move to `.agents/skills`, each leaving a link, so every agent can use them. The button here shares them all; **Share with every agent** in a skill's menu shares just that one
-- **Link** (in a Claude Agent thread): adds links for shared skills Claude Agent can't see yet, updates a link when its skill's name or description changed, and removes links to skills that were deleted. Only links Grove Bench made are touched
+- **Add skill** saves a new skill in `.agents/skills`, in the project or, for a personal one, in your home folder, with its links
+- **Let every agent use it** (in the menu of a skill whose card names its folder, such as `.claude/skills`: one only Claude Agent's folders have) moves it to `.agents/skills` at the same level, leaving links: **(this project)** for a project skill, **(all projects)** for a personal one
+- **Use in all my projects** (in a project skill's menu) copies its folder to `~/.agents/skills`, with links. The project keeps its copy for your team. When a personal and a project skill have the same name, Claude Agent uses the personal one, so a Claude Agent thread lists that one; other agents' threads list the project's
 
-Both change files in the project, which show in the Changes tab for you to commit, as does saving a project skill. For Claude Agent you can also turn skills off and get suggestions from your past threads.
+When skills need it, a notice above the list offers to do the same for all of them at once:
+
+- **Share**: moves every skill only Claude Agent can use to `.agents/skills`, as **Let every agent use it** does for one
+- **Link** (in a Claude Agent thread): adds links for shared skills a Claude account can't see yet, updates a link when its skill's name or description changed, and removes links to skills that were deleted. Only links Grove Bench made are touched
+
+Project changes show in the Changes tab for you to commit, as does saving a project skill. For Claude Agent you can also turn skills off and get suggestions from your past threads.
+
+### Editing a skill
+
+**Edit SKILL.md** opens the skill's `SKILL.md` in the drawer as plain text, frontmatter included, so settings the Add skill form doesn't have (such as `allowed-tools`) stay as they are. **Save** (`Ctrl+S`) writes it back, keeping the file's line endings. For a shared skill it edits the file in `.agents/skills` and updates its links. Save refuses if the file changed after you opened it (**Reload** shows the new version, dropping your changes) or if the text changes the skill's `name`, since schedules, links and turned-off skills go by it. **Open in editor** opens the file in VS Code, Cursor or your default app instead. Leaving the editor, switching tab or closing the drawer with unsaved changes asks first.
 
 ## Context
 
