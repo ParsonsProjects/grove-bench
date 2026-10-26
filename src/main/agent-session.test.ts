@@ -150,6 +150,8 @@ const turnFiles = vi.hoisted(() => ({
   instances: [] as { root: string; closed: boolean; finished: boolean; edited: string[] }[],
   /** When set, listing a turn's files waits on it (a slow disk). */
   listing: null as Promise<void> | null,
+  /** When set, a watch stopping waits on it (the watcher thread busy). */
+  stopping: null as Promise<void> | null,
 }));
 vi.mock('./turn-files.js', () => ({
   TurnFiles: class {
@@ -158,10 +160,13 @@ vi.mock('./turn-files.js', () => ({
     edited: string[] = [];
     constructor(public root: string) { turnFiles.instances.push(this); }
     noteEdited(p: string) { this.edited.push(p); }
-    close() { this.closed = true; }
+    close() {
+      this.closed = true;
+      return turnFiles.stopping ?? Promise.resolve();
+    }
     async finish() {
       this.finished = true;
-      this.close();
+      await this.close();
       await turnFiles.listing;
       return { files: turnFiles.found, more: 0 };
     }
@@ -349,6 +354,7 @@ beforeEach(() => {
   turnFiles.found = [];
   turnFiles.instances = [];
   turnFiles.listing = null;
+  turnFiles.stopping = null;
 });
 
 describe('AgentSessionManager.createSession()', () => {
@@ -5489,6 +5495,23 @@ describe('AgentSessionManager files a turn makes', () => {
     await sessionManager.destroySession('files-closed');
     expect(watch.closed).toBe(true);
     expect(watch.finished).toBe(false);
+  });
+
+  it("finishes a delete only once the turn's watch has let go of the worktree", async () => {
+    await startSession('files-release');
+    await sessionManager.sendMessage('files-release', 'build it');
+    let release!: () => void;
+    turnFiles.stopping = new Promise<void>((r) => { release = r; });
+
+    let destroyed = false;
+    const destroying = sessionManager.destroySession('files-release').then(() => { destroyed = true; });
+    await vi.waitFor(() => expect(turnFiles.instances[0].closed).toBe(true));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(destroyed).toBe(false);
+
+    release();
+    await destroying;
+    expect(destroyed).toBe(true);
   });
 });
 

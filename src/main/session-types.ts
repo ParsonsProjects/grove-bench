@@ -181,6 +181,9 @@ export interface ManagedSession {
   /** Watches the worktree while a turn runs, for the files it makes
    *  (turn-files.ts). Null between turns. */
   turnFiles?: TurnFiles | null;
+  /** The last turn's watch stopping: settles once it has let go of the
+   *  worktree, which a shutdown waits for (see endTurnFiles). */
+  turnFilesStopped?: Promise<void>;
   /** The background tasks the agent says are running, by id, with their
    *  types when it says ('local_bash'): its live set (background_tasks_changed),
    *  emptied when its process starts again. Idle sleep would kill them, so it

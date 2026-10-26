@@ -1037,8 +1037,11 @@ class AgentSessionManager {
     const turnFiles = session.turnFiles;
     session.turnFiles = null;
     if (!turnFiles) return;
+    // The watch runs in the watcher thread, so it stops a moment later;
+    // kept so a shutdown can wait for it to let go of the folder.
+    session.turnFilesStopped = turnFiles.close();
     if (!emit) {
-      turnFiles.close();
+      await session.turnFilesStopped;
       return;
     }
     try {
@@ -2007,7 +2010,7 @@ class AgentSessionManager {
       } finally {
         // Written before the close settles: a resume waits on it, then reads
         // the log back from disk.
-        await this.events.flush(session);
+        await this.events.closeLog(session);
         this.events.forget(id);
         session.status = 'stopped';
         this.sendStatus(session, 'stopped');
@@ -2058,7 +2061,7 @@ class AgentSessionManager {
     // Wait for Windows file handles to release
     await new Promise((r) => setTimeout(r, this.handleReleaseMs));
 
-    await this.events.flush(session);
+    await this.events.closeLog(session);
     this.events.forget(id);
     this.sessions.delete(id);
   }
@@ -2126,6 +2129,11 @@ class AgentSessionManager {
     // Clean up completion callback and event listeners
     this.completionCallbacks.delete(id);
     this.eventListeners.delete(id);
+
+    // The worktree may be removed once this returns, and on Windows a watch
+    // holds its folder: wait for the turn's watch to stop (ended above, or by
+    // the run's tail before), at most UNWATCH_WAIT_MS.
+    await session.turnFilesStopped;
   }
 
   /** App quit: stop every live agent the way closing its conversation does.
