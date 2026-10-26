@@ -1,7 +1,7 @@
 import { app, ipcMain, BrowserWindow, dialog, shell } from 'electron';
 import { runProcess } from './process-host.js';
 import { IPC, isPermissionMode } from '../shared/types.js';
-import type { BranchSwitchResult, ClaudeAccountPreview, ClaudeAccountSetting, BranchSyncResult, ConversationGoal, CreateSessionOpts, EventHistoryPage, ThreadUsage, OpenPrSummary, PrerequisiteStatus, PermissionDecision, RegistryAgentSummary, SessionInfo, SkillDefinition, WorktreeInfo } from '../shared/types.js';
+import type { BranchSwitchResult, ClaudeAccountPreview, ClaudeAccountSetting, BranchSyncResult, ConversationGoal, CreateSessionOpts, EventHistoryPage, ThreadUsage, OpenPrSummary, PrerequisiteStatus, PermissionDecision, RegistryAgentSummary, SessionInfo, SkillDefinition, SkillReach, WorktreeInfo } from '../shared/types.js';
 import { sessionManager } from './agent-session.js';
 import { todaySpend } from './session-limits.js';
 import { searchEvents, findEventIndexByUuid, extractSessionPreview, firstUserPrompt } from './event-search.js';
@@ -42,8 +42,8 @@ import * as memory from './memory.js';
 import * as memoryCompact from './memory-compact.js';
 import * as bookmarks from './bookmarks.js';
 import { deleteSchedule, listSchedules, recordScheduleRun, saveSchedule } from './skill-schedules.js';
-import { linkSkills, shareSkills, skillSharing } from './skill-sharing.js';
-import { CLAUDE_SKILL_DIRS, copySkillToUser, readSkillFile, readsSharedSkills, saveSkillFile, type SkillDirs } from './skills.js';
+import { linkSkills, setSkillReach, skillSharing } from './skill-sharing.js';
+import { CLAUDE_SKILL_DIRS, readSkillFile, readsSharedSkills, saveSkillFile, type SkillDirs } from './skills.js';
 import { listProjects, rememberProject, forgetProject, loadOpenTabs, saveOpenTabs, loadCollapsedRepos, saveCollapsedRepos, loadSessionSort, saveSessionSort, loadSidebarWidth, saveSidebarWidth, loadCollapsedPanels, saveCollapsedPanels, loadConversationGroups, saveConversationGroups, saveUnreadSessionIds, loadUnreadSessionIds, saveTodoSessionIds, loadTodoSessionIds, loadPrerequisiteCache, savePrerequisiteCache, loadUsageSnapshot } from './app-state.js';
 import { logRendererError } from './crash-handling.js';
 import { freezeLog } from './freeze-log.js';
@@ -1178,9 +1178,11 @@ export function registerHandlers() {
     return saveSkillFile(root, dirs, file, expected, content);
   });
 
-  ipcMain.handle(IPC.SKILLS_COPY_TO_USER, async (_event, sessionId: string, fallbackPath: string, skillPath: unknown) => {
+  ipcMain.handle(IPC.SKILLS_SET_REACH, async (_event, sessionId: string, fallbackPath: string, skillPath: unknown, reach: unknown) => {
+    const r = reach as Partial<SkillReach> | null;
+    if (!r || (r.agents !== 'claude' && r.agents !== 'all') || (r.projects !== 'project' && r.projects !== 'all')) throw new Error('No reach given');
     const { root, dirs, skillPath: file } = await skillEditTarget(sessionId, fallbackPath, skillPath);
-    return copySkillToUser(root, dirs, file);
+    await setSkillReach(root, dirs, file, { agents: r.agents, projects: r.projects });
   });
 
   ipcMain.handle(IPC.SKILLS_SHOW_FOLDER, async (_event, sessionId: string, fallbackPath: string, skillPath: unknown) => {
@@ -1211,12 +1213,6 @@ export function registerHandlers() {
     const sharing = await skillSharing(root, dirs);
     // Links only where they help: in a Claude Code thread.
     return links ? sharing : { ...sharing, toLink: [], broken: [] };
-  });
-
-  ipcMain.handle(IPC.SKILLS_SHARE, async (_event, sessionId: string, fallbackPath: string, skillPath: unknown) => {
-    if (skillPath !== undefined && typeof skillPath !== 'string') throw new Error('No skill given');
-    const { root, dirs } = await sharingTarget(sessionId, fallbackPath);
-    return shareSkills(root, dirs, skillPath);
   });
 
   ipcMain.handle(IPC.SKILLS_LINK, async (_event, sessionId: string, fallbackPath: string) => {

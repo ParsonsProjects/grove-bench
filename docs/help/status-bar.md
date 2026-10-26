@@ -125,7 +125,7 @@ Each server in the popover shows a status dot:
 
 ## Skills
 
-**Skills** shows how many skills the thread's agent can use. Click it to open the Skills drawer on the right. **This thread** lists them, each with **Run** (a new thread that uses it now) and **Schedule**, and the rest in its **⋯** menu (or right-click the skill): **Edit SKILL.md**, **Open folder** (shows the skill's `SKILL.md` in Explorer), the sharing actions below and, for Claude Agent, **Disable**. A turned-off skill keeps **Enable** in view. **Scheduled** lists every project's schedules. The clock on a project's header in the sidebar opens Scheduled too, and **Skills** at the foot of the sidebar opens the drawer even when a narrow status bar has no room for its Skills count. The drawer keeps the keyboard inside it until you close it with `Esc` or **×**. To start a thread with a skill and your own instructions, type `/` in a new thread's message box or use **Skills** at its foot (see [Starting a Thread](getting-started.md#starting-a-thread)).
+**Skills** shows how many skills the thread's agent can use. Click it to open the Skills drawer on the right. **This thread** lists them, each with **Run** (a new thread that uses it now) and **Schedule**, and the rest in its **⋯** menu (or right-click the skill): **Edit SKILL.md**, **Open folder** (shows the skill's `SKILL.md` in Explorer), **Who can use it…** (below) and, for Claude Agent, **Disable**. A turned-off skill keeps **Enable** in view. **Scheduled** lists every project's schedules. The clock on a project's header in the sidebar opens Scheduled too, and **Skills** at the foot of the sidebar opens the drawer even when a narrow status bar has no room for its Skills count. The drawer keeps the keyboard inside it until you close it with `Esc` or **×**. To start a thread with a skill and your own instructions, type `/` in a new thread's message box or use **Skills** at its foot (see [Starting a Thread](getting-started.md#starting-a-thread)).
 
 **This thread** puts skills in sections by where they live: **Project** (in the project, for anyone working on it), **Personal** (in your user folder, for all your projects) and **Plugin and built-in** (reported by the running agent, with no file to edit). Click a section's heading to fold it. The search box above them finds skills by name or description in every section, folded or not; `Esc` clears it before closing the drawer.
 
@@ -141,18 +141,14 @@ Skills are folders with a `SKILL.md` file, a format every agent Grove Bench know
 | Another Claude account's folder, such as `~/.claude-work/skills` | That account only | All |
 | `~/.agents/skills` | Every agent | All |
 
-Claude Agent doesn't read `.agents/skills`, so it finds a shared skill through a small link file in its own folder, with the same name and description, which tells it to read the shared one. Links are plain files, so they work in git for your whole team, with or without Grove Bench. For a personal skill Grove Bench keeps a link in every Claude account's folder, so it reaches every Claude thread whichever account it runs on.
+Claude Agent doesn't read `.agents/skills`, so it finds a shared skill through a small link file in its own folder, with the same name and description, which tells it to read the shared one. Links are plain files, so they work in git for your whole team, with or without Grove Bench. In a Claude Agent thread Grove Bench keeps them up to date by itself each time the drawer opens: it adds missing ones (for a personal skill, in every Claude account's folder), updates ones whose skill's name or description changed, and removes ones to skills that were deleted. Only links Grove Bench made are touched, and a change to a project's shows in the Changes tab for you to commit.
 
-- **Add skill** saves a new skill in `.agents/skills`, in the project or, for a personal one, in your home folder, with its links
-- **Let every agent use it** (in the menu of a skill whose card names its folder, such as `.claude/skills`: one only Claude Agent's folders have) moves it to `.agents/skills` at the same level, leaving links: **(this project)** for a project skill, **(all projects)** for a personal one
-- **Use in all my projects** (in a project skill's menu) copies its folder to `~/.agents/skills`, with links. The project keeps its copy for your team. When a personal and a project skill have the same name, Claude Agent uses the personal one, so a Claude Agent thread lists that one; other agents' threads list the project's
+Each skill's card says who can use it, such as **Claude only · This project** or **All agents · All my projects**. To change it, choose **Who can use it…** in its menu and pick:
 
-When skills need it, a notice above the list offers to do the same for all of them at once:
+- **Agents**: **Claude only** keeps it in Claude Agent's folder (for a personal skill, the thread's Claude account's own); **All agents** moves it to `.agents/skills` at the same level, leaving links. Only asked in a Claude Agent thread
+- **Projects**: **All my projects** copies a project skill to your user folder: `~/.agents/skills` for all agents, or the Claude account's own folder for Claude only. The project keeps its copy for your team. A personal skill is in all your projects already
 
-- **Share**: moves every skill only Claude Agent can use to `.agents/skills`, as **Let every agent use it** does for one
-- **Link** (in a Claude Agent thread): adds links for shared skills a Claude account can't see yet, updates a link when its skill's name or description changed, and removes links to skills that were deleted. Only links Grove Bench made are touched
-
-Project changes show in the Changes tab for you to commit, as does saving a project skill. For Claude Agent you can also turn skills off and get suggestions from your past threads.
+A line under the choices says what **Apply** will do. When a personal and a project skill have the same name, Claude Agent uses the personal one, so a Claude Agent thread lists that one; other agents' threads list the project's. **Add skill** saves a new skill in `.agents/skills`, in the project or, for a personal one, in your home folder, with its links. Saving a project skill, or changing who can use one, changes files in the project, which show in the Changes tab. For Claude Agent you can also turn skills off and get suggestions from your past threads.
 
 ### Editing a skill
 

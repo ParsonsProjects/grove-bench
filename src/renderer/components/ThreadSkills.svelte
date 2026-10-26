@@ -24,10 +24,11 @@
   import { startSkillThread } from '../lib/skill-thread.js';
   import type { SkillPromptOpts } from '../lib/skill-prompt.js';
   import { lazyComponent } from '../lib/lazy-component.js';
-  import type { SkillInfo, SkillSharing, SkillSuggestion } from '../../shared/types.js';
+  import type { SkillInfo, SkillReach, SkillSharing, SkillSuggestion } from '../../shared/types.js';
   import { Badge } from '$lib/components/ui/badge/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Input } from '$lib/components/ui/input/index.js';
+  import * as Segmented from '$lib/components/ui/segmented/index.js';
   import { Notice } from '$lib/components/ui/notice/index.js';
   import { SectionLabel } from '$lib/components/ui/section-label/index.js';
   import XIcon from '@lucide/svelte/icons/x';
@@ -83,104 +84,123 @@
     } catch { /* keep the last snapshot */ }
   }
 
-  // ─── Share and Link (skills every agent can use) ───
+  // ─── Who can use a skill ───
 
+  /** Claude Code's own skills other agents can't see (skill-sharing.ts).
+   *  Only asked for in a Claude Code thread. */
   let sharing = $state<SkillSharing>({ toShare: [], toLink: [], broken: [] });
-  let sharingBusy = $state(false);
-  const toShareCount = $derived(sharing.toShare.length);
-  /** The skills folder a SKILL.md is in, by its last two names, e.g.
-   *  `.claude-work/skills` for a Claude account's. */
-  function skillsFolder(file: string): string {
-    return file.split(/[\\/]/).slice(-4, -2).join('/');
-  }
 
   /** The thread's agent, as the drawer names it. */
   const agentName = $derived(agentsStore.get(agentId)?.displayName ?? 'this agent');
   /** Claude Code's own skills, which other agents can't see until shared.
-   *  Only marked in a Claude Code thread: Copilot and OpenCode read
-   *  `.claude/skills` too, so there they aren't Claude's alone. */
+   *  Only in a Claude Code thread: Copilot and OpenCode read `.claude/skills`
+   *  too, so there they aren't Claude's alone. */
   const claudeOnly = $derived(managed ? new Set(sharing.toShare.map((s) => s.path)) : new Set<string | undefined>());
-  const linkCount = $derived(sharing.toLink.length + sharing.broken.length);
+
+  /** Who can use a skill now. Grove moves only Claude Code's skills between
+   *  its folders and the shared ones, so in another agent's thread that half
+   *  isn't asked. */
+  function reachOf(skill: SkillInfo): SkillReach {
+    return {
+      agents: skill.path && claudeOnly.has(skill.path) ? 'claude' : 'all',
+      projects: skill.source === 'user' ? 'all' : 'project',
+    };
+  }
+
+  /** Who can use a skill, in a few words, e.g. "Claude only · This project".
+   *  A personal skill in Claude Code's own folder is the thread's account's
+   *  alone; one in a project's is every Claude account's. */
+  function reachLabel(skill: SkillInfo): string {
+    const own = skill.source === 'project' ? 'Claude only' : `${agentName} only`;
+    const agents = managed
+      ? (reachOf(skill).agents === 'claude' ? own : 'All agents')
+      : (/[\\/]\.agents[\\/]skills[\\/]/.test(skill.path ?? '') ? 'All agents' : `${agentName} only`);
+    return `${agents} · ${skill.source === 'user' ? 'All my projects' : 'This project'}`;
+  }
 
   async function refreshSharing() {
+    if (!managed) return;
     try {
       sharing = await window.groveBench.getSkillSharing(sessionId, repoPath) ?? { toShare: [], toLink: [], broken: [] };
     } catch { /* keep the last snapshot */ }
   }
 
-  function refresh() {
-    void refreshSkills();
-    void refreshSharing();
+  /** Claude Code's links, kept in line with the shared folders without
+   *  asking: missing ones added, out-of-date ones updated, ones to deleted
+   *  skills removed. Only links Grove made. A project's show in the Changes
+   *  tab like any change. */
+  async function keepLinks() {
+    if (!managed) return;
+    try {
+      await window.groveBench.linkSkills(sessionId, repoPath);
+    } catch { /* left as they are; the next opening tries again */ }
   }
 
-  /** What Share and Link would change, in one line; the details are under it. */
-  const sharingSummary = $derived([
-    toShareCount === 0 ? '' : toShareCount === 1 ? "1 skill is only in Claude Agent's folders" : `${toShareCount} skills are only in Claude Agent's folders`,
-    linkCount === 0 ? '' : linkCount === 1 ? '1 Claude Agent link needs updating' : `${linkCount} Claude Agent links need updating`,
-  ].filter(Boolean).join(' · '));
-  const sharingAction = $derived(toShareCount > 0 && linkCount > 0 ? 'Share and link' : toShareCount > 0 ? 'Share' : 'Link');
+  async function refresh() {
+    await keepLinks();
+    await Promise.all([refreshSkills(), refreshSharing()]);
+  }
 
-  /** Share, then Link, as needed, and say what couldn't be done. Both change
-   *  files in the project, which show in the Changes tab. */
-  async function fixSharing() {
-    if (sharingBusy) return;
-    sharingBusy = true;
-    const failed: string[] = [];
+  // Links are kept once the agent list says this is a Claude Code thread.
+  let linksKept = false;
+  $effect(() => {
+    if (!managed || linksKept) return;
+    linksKept = true;
+    void refresh();
+  });
+
+  /** The "Who can use it" form, open on one skill's card. */
+  let reachForm = $state<({ skill: SkillInfo } & SkillReach) | null>(null);
+  let reachBusy = $state(false);
+  /** What the last change did, until dismissed. */
+  let reachDone = $state<string | null>(null);
+
+  function openReach(skill: SkillInfo) {
+    reachDone = null;
+    reachForm = { skill, ...reachOf(skill) };
+  }
+
+  /** What Apply will do, as a sentence; empty when nothing would change. */
+  const reachPlan = $derived.by(() => {
+    if (!reachForm) return '';
+    const now = reachOf(reachForm.skill);
+    if (now.projects === 'project' && reachForm.projects === 'all') {
+      return reachForm.agents === 'all'
+        ? 'Copies it to ~/.agents/skills, for every agent in all your projects, linked for each Claude account. The project keeps its copy as it is.'
+        : `Copies it to ${agentName}'s own folder, for it alone in all your projects. The project keeps its copy as it is.`;
+    }
+    if (now.agents === reachForm.agents) return '';
+    const level = now.projects === 'project' ? "the project's" : 'your';
+    return reachForm.agents === 'all'
+      ? `Moves it to ${level} .agents/skills, where every agent looks, leaving a link so Claude Agent still finds it.`
+      : "Moves it back into Claude Agent's own folder. Other agents won't see it.";
+  });
+
+  async function applyReach() {
+    const form = reachForm;
+    if (!form?.skill.path || reachBusy || !reachPlan) return;
+    reachBusy = true;
     try {
-      if (toShareCount > 0) {
-        const result = await window.groveBench.shareSkills(sessionId, repoPath);
-        failed.push(...result.skipped.map((s) => `share "${s.name}" (${s.reason})`));
-      }
-      if (linkCount > 0) {
-        const result = await window.groveBench.linkSkills(sessionId, repoPath);
-        failed.push(...result.skipped.map((s) => `link "${s.name}" (${s.reason})`));
-      }
-      if (failed.length > 0) store.setError(`Couldn't ${failed.join(', ')}.`);
+      await window.groveBench.setSkillReach(sessionId, repoPath, form.skill.path, { agents: form.agents, projects: form.projects });
+      const copied = form.skill.source === 'project' && form.projects === 'all';
+      const who = form.agents === 'all' ? 'every agent' : copied || form.skill.source === 'user' ? `${agentName} alone` : 'Claude Agent alone';
+      reachDone = `"${form.skill.name}" is for ${who} in ${form.projects === 'all' ? 'all your projects' : 'this project'} now.`
+        + (copied ? ' The project keeps its copy for your team.' + (managed ? ' Claude Agent uses yours where both are.' : '') : '');
+      reachForm = null;
     } catch (err) {
-      store.setError(`Couldn't ${sharingAction.toLowerCase()} the skills: ${err instanceof Error ? err.message : String(err)}`);
+      store.setError(`Couldn't change who can use "${form.skill.name}": ${stripIpcErrorPrefix(errorMessage(err))}`);
     } finally {
-      sharingBusy = false;
-      refresh();
+      reachBusy = false;
+      void refresh();
     }
   }
 
-  /** Share one of Claude Code's own skills from its card: move it to
-   *  `.agents/skills`, leaving a link, as Share does for all of them. */
-  async function shareSkill(skill: SkillInfo) {
-    if (sharingBusy || !skill.path) return;
-    sharingBusy = true;
-    try {
-      const result = await window.groveBench.shareSkills(sessionId, repoPath, skill.path);
-      const skipped = result.skipped[0];
-      if (skipped) store.setError(`Couldn't share "${skipped.name}" (${skipped.reason}).`);
-    } catch (err) {
-      store.setError(`Couldn't share "${skill.name}": ${stripIpcErrorPrefix(errorMessage(err))}`);
-    } finally {
-      sharingBusy = false;
-      refresh();
-    }
-  }
-
-  /** The project skill being copied to the user's own folders. */
-  let copying = $state<string | null>(null);
-  /** The skill last copied, which a notice names until dismissed. */
-  let copied = $state<string | null>(null);
-
-  /** Copy a project skill to the user's own folders, so every project has
-   *  it. The project keeps its copy for the team. */
-  async function copyToPersonal(skill: SkillInfo) {
-    if (copying || !skill.path) return;
-    copying = skill.name;
-    copied = null;
-    try {
-      await window.groveBench.copySkillToUser(sessionId, repoPath, skill.path);
-      copied = skill.name;
-    } catch (err) {
-      store.setError(`Couldn't add "${skill.name}" to all your projects: ${stripIpcErrorPrefix(errorMessage(err))}`);
-    } finally {
-      copying = null;
-      refresh();
-    }
+  /** Escape closes the form before it closes the drawer. */
+  function closeReachOnEscape(e: KeyboardEvent) {
+    if (e.key !== 'Escape') return;
+    e.preventDefault();
+    e.stopPropagation();
+    reachForm = null;
   }
 
   // ─── A card's menu (⋯, or right-click): what doesn't fit on it ───
@@ -195,13 +215,8 @@
       items.push({ label: 'Edit SKILL.md', action: () => skillsPanelStore.editSkill(sessionId, skill) });
       items.push({ label: 'Open folder', action: () => void showFolder(skill) });
     }
-    // Each says which agents and which projects get the skill.
-    if (skill.path && claudeOnly.has(skill.path)) {
-      const where = skill.source === 'project' ? 'this project' : 'all projects';
-      items.push({ label: `Let every agent use it (${where})`, action: () => void shareSkill(skill), disabled: sharingBusy });
-    }
-    if (skill.path && skill.source === 'project') {
-      items.push({ label: 'Use in all my projects', action: () => void copyToPersonal(skill), disabled: copying !== null });
+    if (skill.path && skill.source !== 'session') {
+      items.push({ label: 'Who can use it…', action: () => openReach(skill), disabled: reachBusy });
     }
     if (managed && !disabledSkills.includes(skill.name)) {
       items.push({ label: 'Disable', action: () => void setSkillEnabled(skill.name, false), disabled: skillsBusy[skill.name], separator: items.length > 0 });
@@ -231,21 +246,6 @@
     if (menuItems(skill).length === 0) return;
     e.preventDefault();
     menu = { x: e.clientX, y: e.clientY, skill };
-  }
-
-  /** What Link will do, as a sentence. */
-  function linkPlan({ toLink, broken }: SkillSharing): string {
-    const parts = [];
-    if (toLink.length > 0) parts.push(`adds or updates the links for ${nameList(toLink)}`);
-    if (broken.length > 0) parts.push(`removes the links to ${nameList(broken)}, which ${broken.length === 1 ? 'was' : 'were'} deleted`);
-    return `Link ${parts.join(', and ')}.`;
-  }
-
-  /** Up to three names, then how many more. */
-  function nameList(skills: SkillInfo[]): string {
-    const names = skills.map((s) => s.name);
-    if (names.length <= 3) return names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
-    return `${names.slice(0, 3).join(', ')} and ${names.length - 3} more`;
   }
 
   async function setSkillEnabled(name: string, enabled: boolean) {
@@ -341,7 +341,9 @@
 
   onMount(() => {
     void agentsStore.load();
-    refresh();
+    // The rest (links, what only Claude Code has) once the agent list says
+    // this is a Claude Code thread: the effect above.
+    void refreshSkills();
     void refreshSuggestions();
   });
 </script>
@@ -374,44 +376,12 @@
   <Notice tone="danger" class="mb-2 break-words">{settingsStore.error}</Notice>
 {/if}
 
-{#if copied}
+{#if reachDone}
   <Notice tone="success" class="mb-3">
     {#snippet actions()}
-      <Button variant="quiet" size="icon-2xs" onclick={() => { copied = null; }} title="Dismiss" aria-label="Dismiss"><XIcon /></Button>
+      <Button variant="quiet" size="icon-2xs" onclick={() => { reachDone = null; }} title="Dismiss" aria-label="Dismiss"><XIcon /></Button>
     {/snippet}
-    <span class="font-mono">{copied}</span> is in all your projects now, for every agent. The project keeps its copy for your team.
-    {#if managed}Claude Agent uses yours where both are.{/if}
-  </Notice>
-{/if}
-
-{#if toShareCount > 0 || linkCount > 0}
-  <Notice class="mb-3">
-    {#snippet actions()}
-      <Button
-        variant="link"
-        size="2xs"
-        onclick={fixSharing}
-        disabled={sharingBusy}
-        title="Move skills only Claude Agent's folder has to .agents/skills, and bring Claude Agent's links in line with it"
-      >{sharingBusy ? 'Working…' : sharingAction}</Button>
-    {/snippet}
-    <details>
-      <summary class="cursor-pointer">{sharingSummary}</summary>
-      <div class="mt-1 space-y-1 text-muted-foreground">
-        {#if toShareCount > 0}
-          <p>
-            {nameList(sharing.toShare)} {toShareCount === 1 ? 'is' : 'are'} only in Claude Agent's <span class="font-mono">.claude/skills</span>, which other agents don't read.
-            Share moves a project skill to the project's <span class="font-mono">.agents/skills</span> and a personal one to <span class="font-mono">~/.agents/skills</span>, where every agent looks, leaving links so every Claude account still finds {toShareCount === 1 ? 'it' : 'them'}.
-          </p>
-        {/if}
-        {#if linkCount > 0}
-          <p>
-            Claude Agent doesn't read <span class="font-mono">.agents/skills</span>, so each Claude account finds shared skills through links in its own <span class="font-mono">.claude/skills</span>.
-            {linkPlan(sharing)}
-          </p>
-        {/if}
-      </div>
-    </details>
+    {reachDone}
   </Notice>
 {/if}
 
@@ -450,22 +420,38 @@
         {#each group.skills as skill (skill.name)}
           {@const disabled = disabledSkills.includes(skill.name)}
           <SkillCard name={skill.name} active={!disabled} struck={disabled} nameTitle={skill.path ?? skill.name} oncontextmenu={(e: MouseEvent) => openMenuAt(e, skill)}>
-            {#snippet tags()}
-              {#if skill.path && claudeOnly.has(skill.path)}
-                <!-- Named by its folder, as who reads it varies: a project's
-                     .claude/skills every Claude account (and Copilot and
-                     OpenCode), a personal one only the thread's account. -->
-                <Badge
-                  tone="muted"
-                  class="font-mono"
-                  title={skill.source === 'project'
-                    ? "Only in Claude Agent's folder, which some agents (such as Gemini CLI) don't read. Let every agent use it from the ⋯ menu."
-                    : `Only in ${agentName}'s own folder, which other Claude accounts and other agents don't read. Let every agent use it from the ⋯ menu, which links it for every Claude account too.`}
-                >{skillsFolder(skill.path)}</Badge>
-              {/if}
-            {/snippet}
             {#if skill.description}
               <div class="line-clamp-2" title={skill.description}>{skill.description}</div>
+            {/if}
+            {#if skill.path && skill.source !== 'session'}
+              <div class="mt-0.5 text-micro">{reachLabel(skill)}</div>
+            {/if}
+            {#if reachForm && reachForm.skill.name === skill.name}
+              <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+              <div class="mt-2 pt-2 border-t border-border space-y-2" role="group" aria-label="Who can use {skill.name}" onkeydown={closeReachOnEscape}>
+                {#if managed}
+                  <div class="flex items-center gap-2">
+                    <span class="w-14 shrink-0">Agents</span>
+                    <Segmented.Root bind:value={reachForm.agents} aria-label="Agents">
+                      <Segmented.Item value="claude">{skill.source === 'project' ? 'Claude only' : `${agentName} only`}</Segmented.Item>
+                      <Segmented.Item value="all">All agents</Segmented.Item>
+                    </Segmented.Root>
+                  </div>
+                {/if}
+                <div class="flex items-center gap-2">
+                  <span class="w-14 shrink-0">Projects</span>
+                  <!-- A personal skill is in every project already. -->
+                  <Segmented.Root bind:value={reachForm.projects} aria-label="Projects">
+                    <Segmented.Item value="project" disabled={skill.source === 'user'}>This project</Segmented.Item>
+                    <Segmented.Item value="all">All my projects</Segmented.Item>
+                  </Segmented.Root>
+                </div>
+                <p class="text-foreground">{reachPlan || 'No change.'}</p>
+                <div class="flex justify-end gap-2">
+                  <Button variant="subtle" size="2xs" onclick={() => { reachForm = null; }}>Cancel</Button>
+                  <Button variant="subtle-primary" size="2xs" onclick={applyReach} disabled={!reachPlan || reachBusy}>{reachBusy ? 'Applying…' : 'Apply'}</Button>
+                </div>
+              </div>
             {/if}
             {#snippet actions()}
               {#if !disabled}
@@ -569,7 +555,7 @@
       initial={addSkillInitial}
       onclose={() => { addSkillOpen = false; addSkillInitial = null; }}
       oncreated={(skill) => {
-        refresh();
+        void refresh();
         // A created suggestion is resolved — drop it from the list for good.
         const created = suggestions.find((s) => s.name === skill.name);
         if (created) void dismissSkillSuggestion(created.id);

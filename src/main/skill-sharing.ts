@@ -11,9 +11,12 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import type { SkillChanges, SkillInfo, SkillSharing } from '../shared/types.js';
+import type { SkillChanges, SkillInfo, SkillReach, SkillSharing } from '../shared/types.js';
 import {
+  copySkillToUser,
+  editTarget,
   isSkillLink,
+  listedSkill,
   linkRoots,
   parseSkillFrontmatter,
   readsSharedSkills,
@@ -203,4 +206,67 @@ export async function linkSkills(worktreePath: string, dirs: SkillDirs): Promise
     }
   }
   return result;
+}
+
+/**
+ * Move a listed shared skill back into the agent's own folder, so only Claude
+ * Code sees it: the opposite of Share. The link it was listed by gives way
+ * to the skill itself, and its links in other Claude accounts' folders go, as
+ * they'd point at nothing.
+ */
+export async function unshareSkill(worktreePath: string, dirs: SkillDirs, skillPath: string): Promise<void> {
+  const skill = await listedSkill(worktreePath, dirs, skillPath);
+  if (readsSharedSkills(dirs, skill.source)) throw new Error("Only Claude Agent's skills can be kept for it alone");
+  const target = await editTarget(worktreePath, skill);
+  if (!target.link) return; // its own already
+  const shared = path.dirname(target.path);
+  const own = path.dirname(target.link.path);
+  const dirName = path.basename(shared);
+  // The link's folder holds the link alone, unless someone put more there.
+  await fs.promises.rm(target.link.path);
+  try {
+    await fs.promises.rmdir(own);
+  } catch (err) {
+    await fs.promises.writeFile(target.link.path, target.link.raw);
+    throw new Error(`${own} has other files in it, so the skill can't be moved there (${reasonOf(err)})`, { cause: err });
+  }
+  await moveFolder(shared, own);
+  for (const root of linkRoots(worktreePath, dirs, skill.source)) {
+    const link = path.join(root, dirName, 'SKILL.md');
+    if (path.resolve(link) === path.resolve(target.link.path)) continue;
+    try {
+      if (!isSkillLink(await fs.promises.readFile(link, 'utf-8'))) continue;
+      await fs.promises.rm(link);
+      await fs.promises.rmdir(path.dirname(link)).catch(() => {});
+    } catch { /* none there */ }
+  }
+}
+
+/**
+ * Set who can use a listed skill (SkillReach), doing what it takes:
+ * - Every agent: Share, moving it to `.agents/skills` at its level and
+ *   leaving links. Claude Agent alone: the opposite (unshareSkill)
+ * - All projects, for a project skill: a copy in the user's folders, for
+ *   those agents (copySkillToUser). The project keeps its copy for the team
+ *   as it is. A personal skill is in all projects already
+ */
+export async function setSkillReach(worktreePath: string, dirs: SkillDirs, skillPath: string, reach: SkillReach): Promise<void> {
+  const skill = await listedSkill(worktreePath, dirs, skillPath);
+  if (skill.source === 'user' && reach.projects === 'project') throw new Error(`"${skill.name}" is a personal skill, in all your projects already`);
+  if (skill.source === 'project' && reach.projects === 'all') {
+    await copySkillToUser(worktreePath, dirs, skillPath, reach.agents);
+    return;
+  }
+  const shared = path.dirname(path.dirname((await editTarget(worktreePath, skill)).path));
+  const agents = path.resolve(shared) === path.resolve(skillsRoot(worktreePath, skill.source, SHARED_SKILLS_DIR)) ? 'all' : 'claude';
+  if (agents === reach.agents) return;
+  if (reach.agents === 'claude') {
+    await unshareSkill(worktreePath, dirs, skillPath);
+    return;
+  }
+  if (readsSharedSkills(dirs, skill.source)) throw new Error("Only Claude Agent's skills can be shared from here");
+  const { done, skipped } = await shareSkills(worktreePath, dirs, skillPath);
+  if (skipped[0]) throw new Error(`Couldn't share "${skipped[0].name}": ${skipped[0].reason}`);
+  // Share leaves one alone that the shared folder has a skill of its name for.
+  if (done.length === 0) throw new Error(`.agents/skills has a skill named "${skill.name}" already`);
 }
