@@ -326,7 +326,7 @@ describe('agent output', () => {
 
   it('names how many changes the worktree watchers saw', () => {
     const { log, lines, advance } = setup();
-    for (let i = 0; i < 3; i++) log.noteWorktreeChange();
+    log.noteWorktreeChanges(3);
     advance(300); log.tick();
     expect(lines).toEqual(["main process didn't run for 300 ms; worktree file changes: 3"]);
   });

@@ -24,7 +24,9 @@
  * reaches the main process, where the agent SDK parses it and the session
  * hands on the events it holds (agent events: N from X of output, with the
  * time that took), and so are the file changes the worktree watchers see
- * during turns (turn-files.ts). And the process's CPU time over a stall is
+ * during turns (turn-files.ts). Those watch from a worker thread now, which
+ * sends its counts a batch at a time, so a stall names the batches that came
+ * in during it. And the process's CPU time over a stall is
  * named. That is every thread's, not the main thread's alone: Chromium's own
  * threads, V8's garbage collection helpers and libuv's pool doing file I/O
  * count too. So CPU far below the gap means the main process was waiting, on
@@ -475,8 +477,8 @@ export function createFreezeLog({ now = () => performance.now(), write = writeFr
     timeAgentOutput,
     /** Count an event a session handed on (agent-session.ts). */
     noteAgentEvent(): void { agent.events++; },
-    /** Count a change a turn's worktree watcher saw (turn-files.ts). */
-    noteWorktreeChange(): void { worktreeChanges++; },
+    /** Count changes the turns' worktree watches saw (turn-files.ts). */
+    noteWorktreeChanges(count: number): void { worktreeChanges += count; },
     watchGc,
     /** Write a stall still waiting for the next tick (at quit). */
     flush,
