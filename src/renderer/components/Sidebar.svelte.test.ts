@@ -12,6 +12,7 @@ import { settingsStore } from '../stores/settings.svelte.js';
 import { prStore } from '../stores/pr.svelte.js';
 import { panelStore } from '../stores/panels.svelte.js';
 import { mockGroveBench } from '../__mocks__/setup.js';
+import type { GitStatusResult } from '../../shared/types.js';
 import { DEFAULT_REPO_COLORS } from '../lib/repo-colors.js';
 import { AGENT_SPRITES } from '../lib/agent-sprite.js';
 import { agentsStore } from '../stores/agents.svelte.js';
@@ -1186,8 +1187,8 @@ describe('Sidebar clean-up dialog', () => {
 
   it('leaves a merged conversation with uncommitted changes unticked, even via "Select merged"', async () => {
     mockGroveBench.getGitStatus.mockImplementation((async (id: string) => ({
-      entries: id === 'merged' ? [{ filePath: 'a.ts', status: 'M', staged: false }] : [],
-    })) as any);
+      entries: id === 'merged' ? [{ filePath: 'a.ts', status: 'modified' as const, staged: false }] : [],
+    })));
     await openDialog();
 
     await screen.findByText('· uncommitted changes');
@@ -1241,7 +1242,7 @@ describe('Sidebar clean-up dialog', () => {
     const recent = (n: number) => ({ id: `new${n}`, branch: `b-new${n}`, repoPath: '/repo-a', status: 'stopped', displayName: `New ${n}`, lastActiveAt: Date.now() - 10 * DAY });
     store.sessions = [old(1), old(2), old(3), old(4), recent(1), recent(2), recent(3)] as any;
     const pending: Array<() => void> = [];
-    mockGroveBench.getPrs.mockImplementation((() => new Promise((res) => { pending.push(() => res([])); })) as any);
+    mockGroveBench.getPrs.mockImplementation((() => new Promise((res) => { pending.push(() => res([])); })));
 
     await openDialog();
     await waitFor(() => expect(mockGroveBench.getPrs).toHaveBeenCalled());
@@ -1263,7 +1264,7 @@ describe('Sidebar clean-up dialog', () => {
     const old = (n: number) => ({ id: `old${n}`, branch: `b-old${n}`, repoPath: '/repo-a', status: 'stopped', displayName: `Old ${n}`, lastActiveAt: longAgo });
     store.sessions = [old(1), old(2), old(3), old(4), old(5)] as any;
     const pending: Array<() => void> = [];
-    mockGroveBench.getGitStatus.mockImplementation((() => new Promise((res) => { pending.push(() => res({ entries: [] })); })) as any);
+    mockGroveBench.getGitStatus.mockImplementation((() => new Promise((res) => { pending.push(() => res({ entries: [] })); })));
 
     await openDialog();
     await waitFor(() => expect(mockGroveBench.getGitStatus).toHaveBeenCalledTimes(3));
@@ -1278,9 +1279,9 @@ describe('Sidebar clean-up dialog', () => {
   });
 
   it('does not tick a conversation until its status check comes back clean', async () => {
-    let finish!: (v: unknown) => void;
+    let finish!: (v: GitStatusResult) => void;
     mockGroveBench.getGitStatus.mockImplementation((async (id: string) =>
-      id === 'open' ? new Promise((r) => { finish = r; }) : { entries: [] }) as any);
+      id === 'open' ? new Promise<GitStatusResult>((r) => { finish = r; }) : { entries: [] }));
     await openDialog();
     await waitFor(() => expect(screen.getByLabelText(/Merged one/)).toBeChecked());
 
@@ -1294,7 +1295,7 @@ describe('Sidebar clean-up dialog', () => {
 
   it('leaves one whose status git could not read unticked, and says so', async () => {
     mockGroveBench.getGitStatus.mockImplementation((async (id: string) =>
-      id === 'nopr' ? { entries: [], error: 'fatal: index file corrupt' } : { entries: [] }) as any);
+      id === 'nopr' ? { entries: [], error: 'fatal: index file corrupt' } : { entries: [] }));
     await openDialog();
     await screen.findByText('· changes unknown');
 
@@ -1324,8 +1325,8 @@ describe('Sidebar clean-up dialog', () => {
 
   it('says how many "Select all" leaves out for uncommitted changes', async () => {
     mockGroveBench.getGitStatus.mockImplementation((async (id: string) => ({
-      entries: id === 'open' ? [{ filePath: 'a.ts', status: 'M', staged: false }] : [],
-    })) as any);
+      entries: id === 'open' ? [{ filePath: 'a.ts', status: 'modified' as const, staged: false }] : [],
+    })));
     await openDialog();
 
     await fireEvent.click(await screen.findByRole('button', { name: 'Select all except 1 with changes' }));
@@ -1363,7 +1364,7 @@ describe('Sidebar delete conversation', () => {
   }
 
   it('warns about uncommitted files before deleting', async () => {
-    mockGroveBench.getGitStatus.mockResolvedValueOnce({ entries: [{ filePath: 'a.ts', status: 'modified', staged: false }, { filePath: 'b.ts', status: 'untracked', staged: false }] } as any);
+    mockGroveBench.getGitStatus.mockResolvedValueOnce({ entries: [{ filePath: 'a.ts', status: 'modified', staged: false }, { filePath: 'b.ts', status: 'untracked', staged: false }] });
     const dialog = await openDeleteDialog();
     expect(dialog).toHaveTextContent('Delete thread?');
     expect(await screen.findByText('2 files have uncommitted changes that will be lost.')).toBeInTheDocument();
@@ -1400,7 +1401,7 @@ describe('Sidebar delete conversation', () => {
 
   it('waits for its checks before Delete can be pressed', async () => {
     let finish!: (v: { entries: [] }) => void;
-    mockGroveBench.getGitStatus.mockReturnValueOnce(new Promise((r) => { finish = r; }) as any);
+    mockGroveBench.getGitStatus.mockReturnValueOnce(new Promise((r) => { finish = r; }));
     await openDeleteDialog();
     expect(screen.getByRole('button', { name: 'Checking…' })).toBeDisabled();
     finish({ entries: [] });
@@ -1410,7 +1411,7 @@ describe('Sidebar delete conversation', () => {
   it('does not count the settings file Grove writes into every worktree', async () => {
     agentsStore.list = [{ id: 'claude-code', displayName: 'Claude Agent', capabilities: {}, generatedFiles: ['.claude/settings.local.json'] }];
     agentsStore.loaded = true;
-    mockGroveBench.getGitStatus.mockResolvedValueOnce({ entries: [{ filePath: '.claude/settings.local.json', status: 'untracked', staged: false }] } as any);
+    mockGroveBench.getGitStatus.mockResolvedValueOnce({ entries: [{ filePath: '.claude/settings.local.json', status: 'untracked', staged: false }] });
     await openDeleteDialog();
     await screen.findByRole('button', { name: 'Delete' });
     expect(screen.queryByText(/uncommitted changes that will be lost/)).toBeNull();
@@ -1509,7 +1510,7 @@ describe('Sidebar remove project', () => {
   it('warns about uncommitted changes, checking only worktree conversations', async () => {
     mockGroveBench.getGitStatus.mockImplementation((async (id: string) => ({
       entries: id === 'w2' ? [{ filePath: 'a.ts', status: 'modified', staged: false }] : [],
-    })) as any);
+    })));
     await openRemoveDialog();
     expect(await screen.findByText('1 thread has uncommitted changes that will be lost.')).toBeInTheDocument();
     expect(mockGroveBench.getGitStatus).not.toHaveBeenCalledWith('d1');
@@ -1517,7 +1518,7 @@ describe('Sidebar remove project', () => {
   });
 
   it('warns about unmerged commits once the branches are to be deleted too', async () => {
-    mockGroveBench.getBranchCommits.mockImplementation((async (id: string) => (id === 'w1' ? [{ subject: 'x', body: '' }] : [])) as any);
+    mockGroveBench.getBranchCommits.mockImplementation((async (id: string) => (id === 'w1' ? [{ subject: 'x', body: '' }] : [])));
     await openRemoveDialog();
     await screen.findByRole('button', { name: 'Remove' });
     expect(screen.queryByText(/aren't on main yet/)).toBeNull();
@@ -1528,7 +1529,7 @@ describe('Sidebar remove project', () => {
 
   it('waits for its checks before Remove can be pressed', async () => {
     let finish!: (v: { entries: [] }) => void;
-    mockGroveBench.getGitStatus.mockReturnValueOnce(new Promise((r) => { finish = r; }) as any);
+    mockGroveBench.getGitStatus.mockReturnValueOnce(new Promise((r) => { finish = r; }));
     await openRemoveDialog();
     expect(screen.getByRole('button', { name: 'Checking…' })).toBeDisabled();
     finish({ entries: [] });

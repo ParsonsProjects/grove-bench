@@ -7,9 +7,12 @@ vi.mock('./process-host-run.js', () => ({ runInAgentHost: vi.fn() }));
 
 import { execa } from 'execa';
 import { runInAgentHost } from './process-host-run.js';
+import type { ProcessResult } from './process-host-protocol.js';
 import { gh, ghVersion, ghAuthenticated, ghLogin, resetGhLoginCacheForTests, resetGhOfflineCooldownForTests, ghOffline, ghRateLimited, isNetworkError, isRateLimitError, summarizeChecks, failingCheckNames, commentSignature, prStatus, prList, prsForBranches, sortPrs, prCreate, prReviewComments, parseOpenPrs, openPrs, GH_TIMEOUT_MS, GH_OFFLINE_MESSAGE, GH_OFFLINE_COOLDOWN_MS, GH_RATE_LIMITED_MESSAGE, GH_RATE_LIMIT_COOLDOWN_MS, GH_RATE_LIMIT_MAX_COOLDOWN_MS } from './gh.js';
 
 const mockRun = vi.mocked(runInAgentHost);
+/** What runInAgentHost resolves with when gh prints `stdout` and exits 0. */
+const printed = (stdout: string): ProcessResult => ({ stdout, stderr: '', exitCode: 0, failed: false, timedOut: false });
 
 /** How a gh call that only reads runs: found on PATH as execa found it, and
  *  run once more if the agent host dies under it. */
@@ -106,7 +109,7 @@ describe('what callers make of gh failing, as runInAgentHost reports it', () => 
 
 describe('ghVersion()', () => {
   it('parses the version from gh --version output', async () => {
-    mockRun.mockResolvedValue({ stdout: 'gh version 2.40.1 (2023-12-13)\nhttps://github.com/cli/cli/releases/tag/v2.40.1' } as any);
+    mockRun.mockResolvedValue(printed('gh version 2.40.1 (2023-12-13)\nhttps://github.com/cli/cli/releases/tag/v2.40.1'));
     expect(await ghVersion()).toBe('2.40.1');
     expect(mockRun).toHaveBeenCalledWith('gh', ['--version'], READS);
   });
@@ -119,7 +122,7 @@ describe('ghVersion()', () => {
 
 describe('ghAuthenticated()', () => {
   it('returns true when gh auth status exits cleanly', async () => {
-    mockRun.mockResolvedValue({ stdout: '' } as any);
+    mockRun.mockResolvedValue(printed(''));
     expect(await ghAuthenticated()).toBe(true);
     expect(mockRun).toHaveBeenCalledWith('gh', ['auth', 'status'], READS);
   });
@@ -132,7 +135,7 @@ describe('ghAuthenticated()', () => {
 
 describe('ghLogin()', () => {
   it('returns and caches the authenticated login', async () => {
-    mockRun.mockResolvedValue({ stdout: JSON.stringify({ login: 'alan' }) } as any);
+    mockRun.mockResolvedValue(printed(JSON.stringify({ login: 'alan' })));
     expect(await ghLogin()).toBe('alan');
     expect(await ghLogin()).toBe('alan');
     expect(mockRun).toHaveBeenCalledTimes(1);
@@ -141,7 +144,7 @@ describe('ghLogin()', () => {
   it('returns null without caching when gh fails, then succeeds later', async () => {
     mockRun.mockRejectedValueOnce(new Error('not logged in'));
     expect(await ghLogin()).toBeNull();
-    mockRun.mockResolvedValueOnce({ stdout: JSON.stringify({ login: 'alan' }) } as any);
+    mockRun.mockResolvedValueOnce(printed(JSON.stringify({ login: 'alan' })));
     expect(await ghLogin()).toBe('alan');
   });
 });
@@ -175,8 +178,7 @@ describe('summarizeChecks()', () => {
 
 describe('prStatus()', () => {
   it('returns the parsed PR view', async () => {
-    mockRun.mockResolvedValue({
-      stdout: JSON.stringify({
+    mockRun.mockResolvedValue(printed(JSON.stringify({
         number: 42,
         url: 'https://github.com/o/r/pull/42',
         state: 'OPEN',
@@ -184,8 +186,7 @@ describe('prStatus()', () => {
         title: 'Add feature',
         reviewDecision: 'APPROVED',
         statusCheckRollup: [{ conclusion: 'SUCCESS' }],
-      }),
-    } as any);
+      })));
 
     const result = await prStatus('/repo', 'feat/x');
     expect(mockRun).toHaveBeenCalledWith(
@@ -207,8 +208,7 @@ describe('prStatus()', () => {
   });
 
   it('carries head SHA, failing check names, and the comment signature', async () => {
-    mockRun.mockResolvedValue({
-      stdout: JSON.stringify({
+    mockRun.mockResolvedValue(printed(JSON.stringify({
         number: 43,
         url: 'u',
         state: 'OPEN',
@@ -222,8 +222,7 @@ describe('prStatus()', () => {
           { id: 'R1', state: 'CHANGES_REQUESTED' },
           { id: 'R2', state: 'PENDING' },
         ],
-      }),
-    } as any);
+      })));
 
     const result = await prStatus('/repo', 'feat/x');
     expect(result?.headSha).toBe('abc123');
@@ -247,7 +246,7 @@ describe('prStatus()', () => {
   });
 
   it('returns null on malformed output', async () => {
-    mockRun.mockResolvedValue({ stdout: 'not json' } as any);
+    mockRun.mockResolvedValue(printed('not json'));
     expect(await prStatus('/repo', 'feat/x')).toBeNull();
   });
 });
@@ -256,12 +255,10 @@ describe('prList()', () => {
   const FIELDS = 'number,url,state,isDraft,title,reviewDecision,statusCheckRollup,headRefOid,comments,reviews,headRefName,baseRefName,author';
 
   it('lists every PR for the head branch, in any state, with head and base names', async () => {
-    mockRun.mockResolvedValue({
-      stdout: JSON.stringify([
+    mockRun.mockResolvedValue(printed(JSON.stringify([
         { number: 50, url: 'u50', state: 'OPEN', headRefName: 'feat/x', baseRefName: 'main', statusCheckRollup: [] },
         { number: 41, url: 'u41', state: 'MERGED', headRefName: 'feat/x', baseRefName: 'release' },
-      ]),
-    } as any);
+      ])));
 
     const result = await prList('/repo', 'feat/x');
     expect(mockRun).toHaveBeenCalledWith(
@@ -276,25 +273,23 @@ describe('prList()', () => {
   });
 
   it('returns an empty list when the branch has no PRs', async () => {
-    mockRun.mockResolvedValue({ stdout: '[]' } as any);
+    mockRun.mockResolvedValue(printed('[]'));
     expect(await prList('/repo', 'feat/x')).toEqual([]);
   });
 
   it('says whether the gh account opened each PR, only when its login is known', async () => {
-    mockRun.mockResolvedValue({
-      stdout: JSON.stringify([
+    mockRun.mockResolvedValue(printed(JSON.stringify([
         { number: 2, url: 'u2', author: { login: 'alan' } },
         { number: 3, url: 'u3', author: { login: 'grace' } },
-      ]),
-    } as any);
+      ])));
     expect((await prList('/repo', 'feat/x', 'alan')).map((pr) => pr.viewerIsAuthor)).toEqual([true, false]);
     expect((await prList('/repo', 'feat/x', null)).map((pr) => pr.viewerIsAuthor)).toEqual([undefined, undefined]);
   });
 
   it('drops entries that are not PRs and tolerates malformed output', async () => {
-    mockRun.mockResolvedValue({ stdout: JSON.stringify([{ number: 1, url: 'u' }, { title: 'no number' }, null]) } as any);
+    mockRun.mockResolvedValue(printed(JSON.stringify([{ number: 1, url: 'u' }, { title: 'no number' }, null])));
     expect((await prList('/repo', 'feat/x')).map((pr) => pr.number)).toEqual([1]);
-    mockRun.mockResolvedValue({ stdout: 'not json' } as any);
+    mockRun.mockResolvedValue(printed('not json'));
     expect(await prList('/repo', 'feat/x')).toEqual([]);
   });
 
@@ -348,7 +343,7 @@ describe('offline cooldown', () => {
 
       vi.advanceTimersByTime(GH_OFFLINE_COOLDOWN_MS + 1);
       mockRun.mockReset();
-      mockRun.mockResolvedValue({ stdout: '[]' } as any);
+      mockRun.mockResolvedValue(printed('[]'));
       expect(await prList('/repo', 'feat/x')).toEqual([]);
       expect(mockRun).toHaveBeenCalledTimes(1);
       expect(ghOffline()).toBe(false);
@@ -364,8 +359,8 @@ describe('offline cooldown', () => {
 
     mockRun.mockReset();
     mockRun
-      .mockResolvedValueOnce({ stdout: 'https://github.com/o/r/pull/9' } as any)
-      .mockResolvedValueOnce({ stdout: JSON.stringify({ number: 9, url: 'u' }) } as any);
+      .mockResolvedValueOnce(printed('https://github.com/o/r/pull/9'))
+      .mockResolvedValueOnce(printed(JSON.stringify({ number: 9, url: 'u' })));
     expect((await prCreate('/repo', 'feat/x', { title: 'T', body: 'B', base: '' })).number).toBe(9);
   });
 });
@@ -430,7 +425,7 @@ describe('rate-limit back-off', () => {
       expect(ghRateLimited()).toBe(false);
 
       // A success resets the doubling: the next hit waits the base cooldown again.
-      mockRun.mockResolvedValueOnce({ stdout: '[]' } as any);
+      mockRun.mockResolvedValueOnce(printed('[]'));
       expect(await prList('/repo', 'feat/x')).toEqual([]);
       await expect(prList('/repo', 'feat/x')).rejects.toThrow(/rate limit exceeded/);
       vi.advanceTimersByTime(GH_RATE_LIMIT_COOLDOWN_MS + 1);
@@ -447,8 +442,8 @@ describe('rate-limit back-off', () => {
 
     mockRun.mockReset();
     mockRun
-      .mockResolvedValueOnce({ stdout: 'https://github.com/o/r/pull/9' } as any)
-      .mockResolvedValueOnce({ stdout: JSON.stringify({ number: 9, url: 'u' }) } as any);
+      .mockResolvedValueOnce(printed('https://github.com/o/r/pull/9'))
+      .mockResolvedValueOnce(printed(JSON.stringify({ number: 9, url: 'u' })));
     expect((await prCreate('/repo', 'feat/x', { title: 'T', body: 'B', base: '' })).number).toBe(9);
   });
 });
@@ -467,13 +462,13 @@ describe('sortPrs()', () => {
 
 describe('prsForBranches()', () => {
   it('queries each distinct branch once and merges the results, deduplicated and sorted', async () => {
-    mockRun.mockImplementation(((_cmd: string, args: string[]) => {
+    mockRun.mockImplementation((_cmd, args) => {
       const head = args[args.indexOf('--head') + 1];
       const rows = head === 'feat/x'
         ? [{ number: 40, url: 'u', state: 'MERGED', headRefName: 'feat/x' }, { number: 45, url: 'u', state: 'OPEN', headRefName: 'feat/x' }]
         : [{ number: 48, url: 'u', state: 'OPEN', headRefName: 'feat/x-part-2' }];
-      return Promise.resolve({ stdout: JSON.stringify(rows) });
-    }) as any);
+      return Promise.resolve(printed(JSON.stringify(rows)));
+    });
 
     const result = await prsForBranches('/repo', ['feat/x', 'feat/x-part-2', 'feat/x', '']);
     expect(mockRun).toHaveBeenCalledTimes(2);
@@ -481,7 +476,7 @@ describe('prsForBranches()', () => {
   });
 
   it('returns an empty list when no branch has a PR', async () => {
-    mockRun.mockResolvedValue({ stdout: '[]' } as any);
+    mockRun.mockResolvedValue(printed('[]'));
     expect(await prsForBranches('/repo', ['feat/x'])).toEqual([]);
   });
 });
@@ -519,24 +514,18 @@ describe('failingCheckNames()', () => {
 describe('prReviewComments()', () => {
   it('merges review bodies, inline comments, and conversation comments', async () => {
     mockRun
-      .mockResolvedValueOnce({
-        stdout: JSON.stringify([
+      .mockResolvedValueOnce(printed(JSON.stringify([
           { id: 9, body: 'Rename this variable', path: 'src/a.ts', line: 12, user: { login: 'bob' }, author_association: 'COLLABORATOR' },
           { id: 10, body: '', path: 'src/b.ts' },
-        ]),
-      } as any) // pulls/N/comments
-      .mockResolvedValueOnce({
-        stdout: JSON.stringify([
+        ]))) // pulls/N/comments
+      .mockResolvedValueOnce(printed(JSON.stringify([
           { id: 5, body: 'Looks mostly good, two nits', state: 'CHANGES_REQUESTED', user: { login: 'alice' }, author_association: 'MEMBER' },
           { id: 6, body: 'wip', state: 'PENDING', user: { login: 'carol' } },
-        ]),
-      } as any) // pulls/N/reviews
-      .mockResolvedValueOnce({
-        stdout: JSON.stringify([
+        ]))) // pulls/N/reviews
+      .mockResolvedValueOnce(printed(JSON.stringify([
           { id: 21, body: 'Please also update the changelog', user: { login: 'dave' }, author_association: 'OWNER' },
           { id: 22, body: '  ' },
-        ]),
-      } as any); // issues/N/comments
+        ]))); // issues/N/comments
 
     const result = await prReviewComments('/repo', 42);
     expect(mockRun).toHaveBeenCalledWith('gh', ['api', 'repos/{owner}/{repo}/pulls/42/comments?per_page=100'], { cwd: '/repo', ...READS });
@@ -550,13 +539,11 @@ describe('prReviewComments()', () => {
 
   it('returns conversation comments even when a review never happened', async () => {
     mockRun
-      .mockResolvedValueOnce({ stdout: '[]' } as any) // pulls/N/comments
-      .mockResolvedValueOnce({ stdout: '[]' } as any) // pulls/N/reviews
-      .mockResolvedValueOnce({
-        stdout: JSON.stringify([
+      .mockResolvedValueOnce(printed('[]')) // pulls/N/comments
+      .mockResolvedValueOnce(printed('[]')) // pulls/N/reviews
+      .mockResolvedValueOnce(printed(JSON.stringify([
           { id: 30, body: 'Can you split this PR?', user: { login: 'erin' }, author_association: 'MEMBER' },
-        ]),
-      } as any); // issues/N/comments
+        ]))); // issues/N/comments
 
     expect(await prReviewComments('/repo', 42)).toEqual([
       { id: 'discussion-30', author: 'erin', authorAssociation: 'MEMBER', body: 'Can you split this PR?' },
@@ -572,10 +559,8 @@ describe('prReviewComments()', () => {
 describe('prCreate()', () => {
   it('creates the PR then returns its status', async () => {
     mockRun
-      .mockResolvedValueOnce({ stdout: 'https://github.com/o/r/pull/7' } as any) // pr create
-      .mockResolvedValueOnce({
-        stdout: JSON.stringify({ number: 7, url: 'https://github.com/o/r/pull/7', state: 'OPEN', isDraft: true }),
-      } as any); // pr view
+      .mockResolvedValueOnce(printed('https://github.com/o/r/pull/7')) // pr create
+      .mockResolvedValueOnce(printed(JSON.stringify({ number: 7, url: 'https://github.com/o/r/pull/7', state: 'OPEN', isDraft: true }))); // pr view
 
     const result = await prCreate('/repo', 'feat/x', { title: 'T', body: 'B', base: 'main', draft: true });
     expect(mockRun).toHaveBeenNthCalledWith(
@@ -592,8 +577,8 @@ describe('prCreate()', () => {
 
   it('omits --base and --draft when not requested', async () => {
     mockRun
-      .mockResolvedValueOnce({ stdout: '' } as any)
-      .mockResolvedValueOnce({ stdout: JSON.stringify({ number: 8, url: 'u' }) } as any);
+      .mockResolvedValueOnce(printed(''))
+      .mockResolvedValueOnce(printed(JSON.stringify({ number: 8, url: 'u' })));
 
     await prCreate('/repo', 'feat/x', { title: 'T', body: '', base: '' });
     expect(mockRun).toHaveBeenNthCalledWith(
@@ -614,7 +599,7 @@ describe('prCreate()', () => {
 
   it('throws when the created PR cannot be read back', async () => {
     mockRun
-      .mockResolvedValueOnce({ stdout: '' } as any)
+      .mockResolvedValueOnce(printed(''))
       .mockRejectedValueOnce(new Error('boom'));
     await expect(prCreate('/repo', 'feat/x', { title: 'T', body: '', base: 'main' }))
       .rejects.toThrow(/could not be read back/);
@@ -643,7 +628,7 @@ describe('parseOpenPrs()', () => {
 
 describe('openPrs()', () => {
   it('lists open PRs with the fields the picker needs', async () => {
-    mockRun.mockResolvedValue({ stdout: '[]' } as any);
+    mockRun.mockResolvedValue(printed('[]'));
     expect(await openPrs('/repo')).toEqual([]);
     const [cmd, args, opts] = mockRun.mock.calls[0] as unknown as [string, string[], any];
     expect(cmd).toBe('gh');
@@ -656,7 +641,7 @@ describe('openPrs()', () => {
     mockRun.mockRejectedValueOnce(Object.assign(new Error('x'), { stderr: 'error connecting to api.github.com' }));
     await expect(prStatus('/repo', 'b')).rejects.toThrow();
     expect(ghOffline()).toBe(true);
-    mockRun.mockResolvedValue({ stdout: '[]' } as any);
+    mockRun.mockResolvedValue(printed('[]'));
     expect(await openPrs('/repo')).toEqual([]);
   });
 

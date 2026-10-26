@@ -24,6 +24,7 @@ import { ClaudeCodeAdapter, CLAUDE_AUTH_ERROR_MESSAGE, envAuthMethod, pickCliPat
 import { getApiKey } from '../credentials.js';
 import { logger } from '../logger.js';
 import { net } from 'electron';
+import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 
 type ExecResult = { stdout: string } | Error;
 
@@ -313,23 +314,26 @@ describe('verifyAnthropicKey()', () => {
 });
 
 describe('a refused sign-in mid-conversation', () => {
+  /** An assistant message as the CLI sends it, with only the fields transformMessage reads. */
+  const sdk = (message: object) => message as SDKMessage;
+
   it("replaces the CLI's \"Invalid API key\" reply with Grove's own help, flagged as an auth failure", () => {
-    const events = transformMessage({
+    const events = transformMessage(sdk({
       type: 'assistant',
       error: 'authentication_failed',
       uuid: 'u1',
       message: { content: [{ type: 'text', text: 'Invalid API key · Fix external API key' }] },
-    } as any, { toolUseMap: new Map() });
+    }), { toolUseMap: new Map() });
     expect(events).toEqual([{ type: 'error', message: CLAUDE_AUTH_ERROR_MESSAGE, auth: true, keyRejected: true }]);
   });
 
   it('leaves other API errors as the CLI words them', () => {
-    const events = transformMessage({
+    const events = transformMessage(sdk({
       type: 'assistant',
       error: 'rate_limit',
       uuid: 'u1',
       message: { content: [{ type: 'text', text: 'Rate limited' }] },
-    } as any, { toolUseMap: new Map() });
+    }), { toolUseMap: new Map() });
     expect(events).toEqual([{ type: 'assistant_text', text: 'Rate limited', uuid: 'u1' }]);
   });
 

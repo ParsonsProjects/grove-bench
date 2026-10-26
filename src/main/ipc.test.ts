@@ -107,7 +107,7 @@ vi.mock('./session-goal.js', async (importOriginal) => ({
 import { ipcMain, BrowserWindow, dialog, shell } from 'electron';
 import { execa } from 'execa';
 import { IPC } from '../shared/types.js';
-import type { AgentEvent, GitStatusEntry } from '../shared/types.js';
+import type { AgentEvent, EventHistoryPage, GitStatusEntry, GroveBenchAPI, SessionPreview } from '../shared/types.js';
 import * as git from './git.js';
 import * as gh from './gh.js';
 import { generateBranchName } from './branch-name.js';
@@ -272,7 +272,7 @@ describe('AGENT_LIST_ADAPTERS', () => {
 
 describe('SESSION_CREATE', () => {
   const create = (opts: Record<string, unknown> = {}) =>
-    invoke(IPC.SESSION_CREATE, { repoPath: '/repo', branchName: '', ...opts });
+    invoke(IPC.SESSION_CREATE, { repoPath: '/repo', branchName: '', ...opts }) as ReturnType<GroveBenchAPI['createSession']>;
 
   it('refuses an invalid or taken branch name before any setup starts', async () => {
     vi.mocked(git.validateBranchName).mockResolvedValueOnce(false);
@@ -1035,14 +1035,14 @@ describe('history', () => {
     m.sessionManager.turnState.mockReturnValue(idle);
 
     expect(invoke(IPC.AGENT_HISTORY_COUNT, id)).toBe(5);
-    const newest = invoke(IPC.AGENT_HISTORY_PAGE, id, 2);
+    const newest = invoke(IPC.AGENT_HISTORY_PAGE, id, 2) as EventHistoryPage;
     expect(newest).toMatchObject({ totalCount: 5, startIndex: 3, turn: idle });
     expect(m.sessionManager.turnState).toHaveBeenCalledWith(id);
     expect(texts(newest)).toEqual(['h1', 'h2']);
-    const older = invoke(IPC.AGENT_HISTORY_PAGE, id, 2, 3);
+    const older = invoke(IPC.AGENT_HISTORY_PAGE, id, 2, 3) as EventHistoryPage;
     expect(older.startIndex).toBe(1);
     expect(texts(older)).toEqual(['Installing dependencies…', 'h0']);
-    expect(texts(invoke(IPC.AGENT_HISTORY_PAGE, id, 2, 1))).toEqual(['Creating worktree…']);
+    expect(texts(invoke(IPC.AGENT_HISTORY_PAGE, id, 2, 1) as EventHistoryPage)).toEqual(['Creating worktree…']);
 
     // Search hits land in the same index space.
     m.sessionManager.searchEventHistory.mockReturnValue([{ eventIndex: 1 }]);
@@ -1089,7 +1089,7 @@ describe('history', () => {
       if (id === 'bad') throw new Error('corrupt log');
       return [{ type: 'user_message', text: 'Hello there' }];
     });
-    const previews = await invoke(IPC.SESSION_PREVIEWS, ['ok', 'bad']);
+    const previews = await (invoke(IPC.SESSION_PREVIEWS, ['ok', 'bad']) as Promise<Record<string, SessionPreview>>);
     expect(Object.keys(previews)).toEqual(['ok']);
     expect(previews.ok.firstPrompt).toBe('Hello there');
   });

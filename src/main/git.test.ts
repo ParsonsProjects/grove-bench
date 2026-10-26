@@ -62,6 +62,9 @@ import {
 } from './git.js';
 
 const mockExeca = vi.mocked(execa);
+/** What execa resolves with when git prints `stdout`: git() reads only that. */
+type GitResult = Parameters<typeof mockExeca.mockResolvedValue>[0];
+const printed = (stdout: string | Buffer) => ({ stdout }) as GitResult;
 
 /** Answer git by command (args joined with spaces, matched by prefix)
  *  rather than by call order. Unmatched commands print nothing. */
@@ -81,7 +84,7 @@ beforeEach(() => {
 
 describe('git()', () => {
   it('calls execa with correct args and cwd', async () => {
-    mockExeca.mockResolvedValue({ stdout: 'output' } as any);
+    mockExeca.mockResolvedValue(printed('output'));
     const result = await git(['status'], '/repo');
     expect(mockExeca).toHaveBeenCalledWith('git', ['status'], { cwd: '/repo' });
     expect(result).toBe('output');
@@ -109,7 +112,7 @@ describe('git() without optional locks', () => {
 
 describe('gitVersion()', () => {
   it('parses version string', async () => {
-    mockExeca.mockResolvedValue({ stdout: 'git version 2.39.1' } as any);
+    mockExeca.mockResolvedValue(printed('git version 2.39.1'));
     const v = await gitVersion();
     expect(v).toEqual({ version: 'git version 2.39.1', major: 2, minor: 39, patch: 1 });
   });
@@ -125,14 +128,14 @@ describe('gitVersion()', () => {
   });
 
   it('returns null for unparseable output', async () => {
-    mockExeca.mockResolvedValue({ stdout: 'something weird' } as any);
+    mockExeca.mockResolvedValue(printed('something weird'));
     expect(await gitVersion()).toBeNull();
   });
 });
 
 describe('isGitRepo()', () => {
   it('returns true when git rev-parse succeeds', async () => {
-    mockExeca.mockResolvedValue({ stdout: '.git' } as any);
+    mockExeca.mockResolvedValue(printed('.git'));
     expect(await isGitRepo('/repo')).toBe(true);
     expect(mockExeca).toHaveBeenCalledWith('git', ['rev-parse', '--git-dir'], { cwd: '/repo' });
   });
@@ -146,7 +149,7 @@ describe('isGitRepo()', () => {
 
 describe('branchExists()', () => {
   it('returns true when branch exists', async () => {
-    mockExeca.mockResolvedValue({ stdout: 'abc123' } as any);
+    mockExeca.mockResolvedValue(printed('abc123'));
     expect(await branchExists('/repo', 'main')).toBe(true);
     expect(mockExeca).toHaveBeenCalledWith('git', ['rev-parse', '--verify', 'main'], { cwd: '/repo' });
   });
@@ -161,7 +164,7 @@ describe('branchExists()', () => {
 describe('branchExistsAnywhere()', () => {
   it('returns true when branch exists locally', async () => {
     // First call: branchExists succeeds
-    mockExeca.mockResolvedValueOnce({ stdout: 'abc123' } as any);
+    mockExeca.mockResolvedValueOnce(printed('abc123'));
     expect(await branchExistsAnywhere('/repo', 'main')).toBe(true);
   });
 
@@ -169,16 +172,14 @@ describe('branchExistsAnywhere()', () => {
     // branchExists fails (first call to rev-parse)
     mockExeca.mockRejectedValueOnce(new Error('not found'));
     // branch -r returns remote refs
-    mockExeca.mockResolvedValueOnce({
-      stdout: 'origin/main\norigin/feat/foo\nupstream/dev',
-    } as any);
+    mockExeca.mockResolvedValueOnce(printed('origin/main\norigin/feat/foo\nupstream/dev'));
 
     expect(await branchExistsAnywhere('/repo', 'feat/foo')).toBe(true);
   });
 
   it('returns false when not found anywhere', async () => {
     mockExeca.mockRejectedValueOnce(new Error('not found'));
-    mockExeca.mockResolvedValueOnce({ stdout: 'origin/main\norigin/dev' } as any);
+    mockExeca.mockResolvedValueOnce(printed('origin/main\norigin/dev'));
     expect(await branchExistsAnywhere('/repo', 'feat/missing')).toBe(false);
   });
 
@@ -191,7 +192,7 @@ describe('branchExistsAnywhere()', () => {
 
 describe('getDefaultBranch()', () => {
   it('uses origin/HEAD when set', async () => {
-    mockExeca.mockResolvedValueOnce({ stdout: 'origin/develop\n' } as any);
+    mockExeca.mockResolvedValueOnce(printed('origin/develop\n'));
     expect(await getDefaultBranch('/repo')).toBe('develop');
     expect(mockExeca).toHaveBeenCalledWith(
       'git',
@@ -202,16 +203,16 @@ describe('getDefaultBranch()', () => {
 
   it('falls back to main when it exists and origin/HEAD is unset', async () => {
     mockExeca.mockRejectedValueOnce(new Error('no origin/HEAD')); // symbolic-ref
-    mockExeca.mockResolvedValueOnce({ stdout: 'abc123' } as any); // rev-parse main
+    mockExeca.mockResolvedValueOnce(printed('abc123')); // rev-parse main
     expect(await getDefaultBranch('/repo')).toBe('main');
   });
 
   it('falls back to master when main does not exist', async () => {
     mockExeca.mockRejectedValueOnce(new Error('no origin/HEAD')); // symbolic-ref
     mockExeca.mockRejectedValueOnce(new Error('no main')); // rev-parse main
-    mockExeca.mockResolvedValueOnce({ stdout: 'origin/master' } as any); // branch -r for main
+    mockExeca.mockResolvedValueOnce(printed('origin/master')); // branch -r for main
     // "main" not in remote refs → try master
-    mockExeca.mockResolvedValueOnce({ stdout: 'abc123' } as any); // rev-parse master
+    mockExeca.mockResolvedValueOnce(printed('abc123')); // rev-parse master
     expect(await getDefaultBranch('/repo')).toBe('master');
   });
 
@@ -225,9 +226,9 @@ describe('listBranches()', () => {
   beforeEach(() => {
     // Default: fetch succeeds, remotes returns "origin", branch -a returns some branches
     mockExeca
-      .mockResolvedValueOnce({ stdout: '' } as any) // fetch --prune (via git())
-      .mockResolvedValueOnce({ stdout: 'origin' } as any) // remote (via git())
-      .mockResolvedValueOnce({ stdout: 'main\nfeat/foo\norigin/main\norigin/feat/bar\norigin/HEAD' } as any); // branch -a (via git())
+      .mockResolvedValueOnce(printed('')) // fetch --prune (via git())
+      .mockResolvedValueOnce(printed('origin')) // remote (via git())
+      .mockResolvedValueOnce(printed('main\nfeat/foo\norigin/main\norigin/feat/bar\norigin/HEAD')); // branch -a (via git())
   });
 
   it('deduplicates local and remote branches', async () => {
@@ -257,8 +258,8 @@ describe('listBranches()', () => {
   it('skips the fetch when asked', async () => {
     mockExeca.mockReset();
     mockExeca
-      .mockResolvedValueOnce({ stdout: 'origin' } as any) // remote
-      .mockResolvedValueOnce({ stdout: 'main\norigin/dev' } as any); // branch -a
+      .mockResolvedValueOnce(printed('origin')) // remote
+      .mockResolvedValueOnce(printed('main\norigin/dev')); // branch -a
     const branches = await listBranches('/repo', { fetch: false });
     expect(branches).toEqual(['main', 'dev']);
     expect(mockExeca).not.toHaveBeenCalledWith('git', ['fetch', '--prune'], expect.anything());
@@ -268,8 +269,8 @@ describe('listBranches()', () => {
     mockExeca.mockReset();
     mockExeca
       .mockRejectedValueOnce(new Error('offline')) // fetch fails
-      .mockResolvedValueOnce({ stdout: '' } as any) // remote
-      .mockResolvedValueOnce({ stdout: 'main\ndev' } as any); // branch -a
+      .mockResolvedValueOnce(printed('')) // remote
+      .mockResolvedValueOnce(printed('main\ndev')); // branch -a
     const branches = await listBranches('/repo');
     expect(branches).toContain('main');
     expect(branches).toContain('dev');
@@ -279,8 +280,8 @@ describe('listBranches()', () => {
 describe('mergeNoCommit()', () => {
   it('returns success when merge succeeds', async () => {
     mockExeca
-      .mockResolvedValueOnce({ stdout: '' } as any) // merge
-      .mockResolvedValueOnce({ stdout: '' } as any); // commit
+      .mockResolvedValueOnce(printed('')) // merge
+      .mockResolvedValueOnce(printed('')); // commit
     const result = await mergeNoCommit('/repo', 'feat/x');
     expect(result).toEqual({ success: true });
   });
@@ -289,7 +290,7 @@ describe('mergeNoCommit()', () => {
     // merge fails
     mockExeca.mockRejectedValueOnce(new Error('merge conflict'));
     // status --porcelain returns UU lines
-    mockExeca.mockResolvedValueOnce({ stdout: 'UU src/file1.ts\0UU src/file2.ts\0M  src/clean.ts\0' } as any);
+    mockExeca.mockResolvedValueOnce(printed('UU src/file1.ts\0UU src/file2.ts\0M  src/clean.ts\0'));
 
     const result = await mergeNoCommit('/repo', 'feat/x');
     expect(result.success).toBe(false);
@@ -300,7 +301,7 @@ describe('mergeNoCommit()', () => {
     mockExeca.mockRejectedValueOnce(new Error('merge conflict'));
     // -z: no quoting, and a rename's old name is a record of its own. This
     // one starts like a conflict, so reading it as a status would find one.
-    mockExeca.mockResolvedValueOnce({ stdout: 'R  docs/new name.md\0UU old\0UU src/café.ts\0 R b.ts\0AA x\0' } as any);
+    mockExeca.mockResolvedValueOnce(printed('R  docs/new name.md\0UU old\0UU src/café.ts\0 R b.ts\0AA x\0'));
 
     const result = await mergeNoCommit('/repo', 'feat/x');
     expect(result.conflicts).toEqual(['src/café.ts']);
@@ -309,7 +310,7 @@ describe('mergeNoCommit()', () => {
 
   it('detects conflicts from AA/DD/DU/UD/AU/UA patterns', async () => {
     mockExeca.mockRejectedValueOnce(new Error('merge conflict'));
-    mockExeca.mockResolvedValueOnce({ stdout: 'AA src/both-added.ts\0DD src/both-deleted.ts\0' } as any);
+    mockExeca.mockResolvedValueOnce(printed('AA src/both-added.ts\0DD src/both-deleted.ts\0'));
 
     const result = await mergeNoCommit('/repo', 'feat/x');
     expect(result.success).toBe(false);
@@ -320,9 +321,9 @@ describe('mergeNoCommit()', () => {
   it('falls back to diff --name-only when no UU lines', async () => {
     mockExeca.mockRejectedValueOnce(new Error('merge conflict'));
     // status shows no conflict markers
-    mockExeca.mockResolvedValueOnce({ stdout: 'M  src/clean.ts\0' } as any);
+    mockExeca.mockResolvedValueOnce(printed('M  src/clean.ts\0'));
     // diff --name-only returns conflicts
-    mockExeca.mockResolvedValueOnce({ stdout: 'src/conflicted.ts\0src/café.ts\0' } as any);
+    mockExeca.mockResolvedValueOnce(printed('src/conflicted.ts\0src/café.ts\0'));
 
     const result = await mergeNoCommit('/repo', 'feat/x');
     expect(result.success).toBe(false);
@@ -335,9 +336,9 @@ describe('mergeNoCommit()', () => {
     (mergeErr as any).stderr = 'CONFLICT (content): Merge conflict in src/index.ts';
     mockExeca.mockRejectedValueOnce(mergeErr);
     // status shows nothing useful
-    mockExeca.mockResolvedValueOnce({ stdout: '' } as any);
+    mockExeca.mockResolvedValueOnce(printed(''));
     // diff also empty
-    mockExeca.mockResolvedValueOnce({ stdout: '' } as any);
+    mockExeca.mockResolvedValueOnce(printed(''));
 
     const result = await mergeNoCommit('/repo', 'feat/x');
     expect(result.success).toBe(false);
@@ -348,8 +349,8 @@ describe('mergeNoCommit()', () => {
     const mergeErr = new Error('some unknown error');
     (mergeErr as any).stderr = 'fatal: some unknown error';
     mockExeca.mockRejectedValueOnce(mergeErr);
-    mockExeca.mockResolvedValueOnce({ stdout: '' } as any); // status
-    mockExeca.mockResolvedValueOnce({ stdout: '' } as any); // diff
+    mockExeca.mockResolvedValueOnce(printed('')); // status
+    mockExeca.mockResolvedValueOnce(printed('')); // diff
 
     const result = await mergeNoCommit('/repo', 'feat/x');
     expect(result.success).toBe(false);
@@ -372,7 +373,7 @@ describe('mergeNoCommit()', () => {
 
 describe('abortMerge()', () => {
   it('calls git merge --abort', async () => {
-    mockExeca.mockResolvedValue({ stdout: '' } as any);
+    mockExeca.mockResolvedValue(printed(''));
     await abortMerge('/repo');
     expect(mockExeca).toHaveBeenCalledWith('git', ['merge', '--abort'], { cwd: '/repo' });
   });
@@ -385,12 +386,12 @@ describe('abortMerge()', () => {
 
 describe('branchHasRemote()', () => {
   it('returns true when remote tracking branch exists', async () => {
-    mockExeca.mockResolvedValue({ stdout: '  origin/feat/x' } as any);
+    mockExeca.mockResolvedValue(printed('  origin/feat/x'));
     expect(await branchHasRemote('/repo', 'feat/x')).toBe(true);
   });
 
   it('returns false when no remote tracking branch', async () => {
-    mockExeca.mockResolvedValue({ stdout: '' } as any);
+    mockExeca.mockResolvedValue(printed(''));
     expect(await branchHasRemote('/repo', 'feat/x')).toBe(false);
   });
 
@@ -402,7 +403,7 @@ describe('branchHasRemote()', () => {
 
 describe('validateBranchName()', () => {
   it('returns true for valid names', async () => {
-    mockExeca.mockResolvedValue({ stdout: '' } as any);
+    mockExeca.mockResolvedValue(printed(''));
     expect(await validateBranchName('feat/valid-name')).toBe(true);
     expect(mockExeca).toHaveBeenCalledWith('git', ['check-ref-format', '--branch', 'feat/valid-name']);
   });
@@ -416,7 +417,7 @@ describe('validateBranchName()', () => {
 
 describe('renameBranch()', () => {
   it('calls git branch -m', async () => {
-    mockExeca.mockResolvedValue({ stdout: '' } as any);
+    mockExeca.mockResolvedValue(printed(''));
     await renameBranch('/repo', 'old', 'new');
     expect(mockExeca).toHaveBeenCalledWith('git', ['branch', '-m', 'old', 'new'], { cwd: '/repo' });
   });
@@ -424,7 +425,7 @@ describe('renameBranch()', () => {
 
 describe('stageFile()', () => {
   it('calls git add for the given path', async () => {
-    mockExeca.mockResolvedValue({ stdout: '' } as any);
+    mockExeca.mockResolvedValue(printed(''));
     await stageFile('/repo', 'src/a.ts');
     expect(mockExeca).toHaveBeenCalledWith('git', ['add', '--', ':(literal)src/a.ts'], { cwd: '/repo' });
   });
@@ -432,7 +433,7 @@ describe('stageFile()', () => {
 
 describe('unstageFile()', () => {
   it('calls git reset HEAD for the given path', async () => {
-    mockExeca.mockResolvedValue({ stdout: '' } as any);
+    mockExeca.mockResolvedValue(printed(''));
     await unstageFile('/repo', 'src/a.ts');
     expect(mockExeca).toHaveBeenCalledWith('git', ['reset', '-q', 'HEAD', '--', ':(literal)src/a.ts'], { cwd: '/repo' });
   });
@@ -440,7 +441,7 @@ describe('unstageFile()', () => {
 
 describe('commit()', () => {
   it('calls git commit with the message', async () => {
-    mockExeca.mockResolvedValue({ stdout: '' } as any);
+    mockExeca.mockResolvedValue(printed(''));
     await commit('/repo', 'my message');
     expect(mockExeca).toHaveBeenCalledWith('git', ['commit', '-m', 'my message'], { cwd: '/repo' });
   });
@@ -453,7 +454,7 @@ describe('commit()', () => {
 
 describe('isTracked()', () => {
   it('asks git whether the path is in the index', async () => {
-    mockExeca.mockResolvedValue({ stdout: 'src/a.ts' } as any);
+    mockExeca.mockResolvedValue(printed('src/a.ts'));
     expect(await isTracked('/repo', 'src/a.ts')).toBe(true);
     expect(mockExeca).toHaveBeenCalledWith('git', ['ls-files', '--error-unmatch', '--', 'src/a.ts'], { cwd: '/repo' });
 
@@ -464,27 +465,27 @@ describe('isTracked()', () => {
 
 describe('fileDiff()', () => {
   it('diffs the working tree against the index for unstaged changes', async () => {
-    mockExeca.mockResolvedValue({ stdout: 'unstaged patch' } as any);
+    mockExeca.mockResolvedValue(printed('unstaged patch'));
     const out = await fileDiff('/repo', 'src/a.ts', { staged: false });
     expect(mockExeca).toHaveBeenCalledWith('git', ['diff', '--', 'src/a.ts'], { cwd: '/repo', maxBuffer: MAX_TEXT_FILE_BYTES + 1 });
     expect(out).toBe('unstaged patch');
   });
 
   it('diffs the index against HEAD for staged changes (--cached)', async () => {
-    mockExeca.mockResolvedValue({ stdout: 'staged patch' } as any);
+    mockExeca.mockResolvedValue(printed('staged patch'));
     const out = await fileDiff('/repo', 'src/a.ts', { staged: true });
     expect(mockExeca).toHaveBeenCalledWith('git', ['diff', '--cached', '--', 'src/a.ts'], { cwd: '/repo', maxBuffer: MAX_TEXT_FILE_BYTES + 1 });
     expect(out).toBe('staged patch');
   });
 
   it('defaults to the unstaged (working-tree) diff', async () => {
-    mockExeca.mockResolvedValue({ stdout: '' } as any);
+    mockExeca.mockResolvedValue(printed(''));
     await fileDiff('/repo', 'src/a.ts');
     expect(mockExeca).toHaveBeenCalledWith('git', ['diff', '--', 'src/a.ts'], { cwd: '/repo', maxBuffer: MAX_TEXT_FILE_BYTES + 1 });
   });
 
   it('stops git at a limit the caller gives', async () => {
-    mockExeca.mockResolvedValue({ stdout: 'patch' } as any);
+    mockExeca.mockResolvedValue(printed('patch'));
     await gitPatch(['diff'], '/repo', 1000);
     expect(mockExeca).toHaveBeenCalledWith('git', ['diff'], { cwd: '/repo', maxBuffer: 1001 });
   });
@@ -498,7 +499,7 @@ describe('fileDiff()', () => {
 });
 
 describe('blobLines()', () => {
-  const bytes = (text: string) => ({ stdout: Buffer.from(text) }) as any;
+  const bytes = (text: string) => printed(Buffer.from(text));
 
   it("reads a file's raw bytes, stopping git past the size limit", async () => {
     mockExeca.mockResolvedValueOnce(bytes('one\ntwo\n'));
@@ -514,7 +515,7 @@ describe('blobLines()', () => {
   });
 
   it('gives null for a binary file', async () => {
-    mockExeca.mockResolvedValueOnce({ stdout: Buffer.from([0x50, 0x00, 0x01]) } as any);
+    mockExeca.mockResolvedValueOnce(printed(Buffer.from([0x50, 0x00, 0x01])));
     expect(await blobLines('/repo', '', 'logo.png')).toBeNull();
   });
 
@@ -624,7 +625,7 @@ describe('synthesizeUntrackedDiff()', () => {
 
 describe('push()', () => {
   it('pushes with --set-upstream to origin', async () => {
-    mockExeca.mockResolvedValue({ stdout: '' } as any);
+    mockExeca.mockResolvedValue(printed(''));
     await push('/repo', 'feat/x');
     expect(mockExeca).toHaveBeenCalledWith('git', ['push', '--set-upstream', 'origin', 'feat/x'], { cwd: '/repo' });
   });
@@ -645,15 +646,15 @@ describe('syncStatus()', () => {
 
   it('parses ahead/behind counts against the upstream', async () => {
     mockExeca
-      .mockResolvedValueOnce({ stdout: 'origin/feat/x\n' } as any)
-      .mockResolvedValueOnce({ stdout: '1\t3\n' } as any);
+      .mockResolvedValueOnce(printed('origin/feat/x\n'))
+      .mockResolvedValueOnce(printed('1\t3\n'));
     expect(await syncStatus('/repo')).toEqual({ upstream: 'origin/feat/x', ahead: 3, behind: 1 });
     expect(mockExeca).toHaveBeenNthCalledWith(2, 'git', ['rev-list', '--left-right', '--count', '@{u}...HEAD'], { cwd: '/repo' });
   });
 
   it('falls back to zero counts when rev-list fails', async () => {
     mockExeca
-      .mockResolvedValueOnce({ stdout: 'origin/feat/x' } as any)
+      .mockResolvedValueOnce(printed('origin/feat/x'))
       .mockRejectedValueOnce(new Error('bad revision'));
     expect(await syncStatus('/repo')).toEqual({ upstream: 'origin/feat/x', ahead: 0, behind: 0 });
   });
@@ -675,7 +676,7 @@ describe('parseBranchCommits()', () => {
 
 describe('branchCommits()', () => {
   it('logs commits between the base branch and HEAD', async () => {
-    mockExeca.mockResolvedValue({ stdout: 'subject\x1fbody\x1e' } as any);
+    mockExeca.mockResolvedValue(printed('subject\x1fbody\x1e'));
     const result = await branchCommits('/repo', 'main');
     expect(mockExeca).toHaveBeenCalledWith('git', ['log', '--format=%s%x1f%b%x1e', 'main..HEAD'], { cwd: '/repo' });
     expect(result).toEqual([{ subject: 'subject', body: 'body' }]);
@@ -743,21 +744,21 @@ describe('isRefArg()', () => {
 
 describe('listProjectFiles()', () => {
   it('lists tracked and untracked, unignored files, unquoted', async () => {
-    mockExeca.mockResolvedValue({ stdout: 'café.ts\0src/a b.ts\0' } as any);
+    mockExeca.mockResolvedValue(printed('café.ts\0src/a b.ts\0'));
     expect(await listProjectFiles('/repo')).toEqual(['café.ts', 'src/a b.ts']);
     expect(mockExeca).toHaveBeenCalledWith('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], { cwd: '/repo' });
   });
 
   it('lists a conflicted file once', async () => {
-    mockExeca.mockResolvedValue({ stdout: 'a.ts\0a.ts\0a.ts\0b.ts\0' } as any);
+    mockExeca.mockResolvedValue(printed('a.ts\0a.ts\0a.ts\0b.ts\0'));
     expect(await listProjectFiles('/repo')).toEqual(['a.ts', 'b.ts']);
   });
 });
 
 describe('revertFile()', () => {
   /** What `git status --porcelain=v1 -z` says now. */
-  const status = (...records: string[]) => mockExeca.mockResolvedValueOnce({ stdout: records.map((r) => `${r}\0`).join('') } as any);
-  const ok = () => mockExeca.mockResolvedValue({ stdout: '' } as any);
+  const status = (...records: string[]) => mockExeca.mockResolvedValueOnce(printed(records.map((r) => `${r}\0`).join('')));
+  const ok = () => mockExeca.mockResolvedValue(printed(''));
   const gitCalls = () => mockExeca.mock.calls.map((c) => c[1]);
 
   it('reads the whole tree, where a rename shows as one', async () => {
@@ -880,11 +881,11 @@ describe('revertFile()', () => {
 });
 
 describe('branch operations', () => {
-  const clean = () => mockExeca.mockResolvedValueOnce({ stdout: '' } as any); // status --porcelain
+  const clean = () => mockExeca.mockResolvedValueOnce(printed('')); // status --porcelain
 
   describe('rebaseOnto()', () => {
     it('refuses on a dirty tree without running rebase', async () => {
-      mockExeca.mockResolvedValueOnce({ stdout: ' M src/a.ts' } as any);
+      mockExeca.mockResolvedValueOnce(printed(' M src/a.ts'));
       const r = await rebaseOnto('/repo', 'main');
       expect(r.success).toBe(false);
       expect(r.error).toMatch(/uncommitted/);
@@ -893,7 +894,7 @@ describe('branch operations', () => {
 
     it('rebases a clean tree', async () => {
       clean();
-      mockExeca.mockResolvedValueOnce({ stdout: 'Successfully rebased' } as any);
+      mockExeca.mockResolvedValueOnce(printed('Successfully rebased'));
       const r = await rebaseOnto('/repo', 'main');
       expect(r).toEqual({ success: true });
       expect(mockExeca).toHaveBeenCalledWith('git', ['rebase', 'main'], { cwd: '/repo' });
@@ -902,8 +903,8 @@ describe('branch operations', () => {
     it('aborts and reports conflicting files', async () => {
       clean();
       mockExeca.mockRejectedValueOnce(Object.assign(new Error('rebase failed'), { stderr: 'CONFLICT (content): Merge conflict in src/a.ts' }));
-      mockExeca.mockResolvedValueOnce({ stdout: 'UU src/a.ts\0UU src/b.ts\0' } as any); // status
-      mockExeca.mockResolvedValueOnce({ stdout: '' } as any); // rebase --abort
+      mockExeca.mockResolvedValueOnce(printed('UU src/a.ts\0UU src/b.ts\0')); // status
+      mockExeca.mockResolvedValueOnce(printed('')); // rebase --abort
       const r = await rebaseOnto('/repo', 'main');
       expect(r).toEqual({ success: false, conflicts: ['src/a.ts', 'src/b.ts'] });
       expect(mockExeca).toHaveBeenCalledWith('git', ['rebase', '--abort'], { cwd: '/repo' });
@@ -929,7 +930,7 @@ describe('branch operations', () => {
 
     it('applies a commit on a clean tree', async () => {
       clean();
-      mockExeca.mockResolvedValueOnce({ stdout: '' } as any);
+      mockExeca.mockResolvedValueOnce(printed(''));
       const r = await cherryPick('/repo', 'abc1234');
       expect(r).toEqual({ success: true });
       expect(mockExeca).toHaveBeenCalledWith('git', ['cherry-pick', 'abc1234'], { cwd: '/repo' });
@@ -938,8 +939,8 @@ describe('branch operations', () => {
     it('aborts on conflict', async () => {
       clean();
       mockExeca.mockRejectedValueOnce(Object.assign(new Error('x'), { stderr: 'error: could not apply abc1234... subject\nCONFLICT (content): Merge conflict in src/c.ts' }));
-      mockExeca.mockResolvedValueOnce({ stdout: 'UU src/c.ts\0' } as any);
-      mockExeca.mockResolvedValueOnce({ stdout: '' } as any); // abort
+      mockExeca.mockResolvedValueOnce(printed('UU src/c.ts\0'));
+      mockExeca.mockResolvedValueOnce(printed('')); // abort
       const r = await cherryPick('/repo', 'abc1234');
       expect(r).toEqual({ success: false, conflicts: ['src/c.ts'] });
       expect(mockExeca).toHaveBeenCalledWith('git', ['cherry-pick', '--abort'], { cwd: '/repo' });
@@ -1005,7 +1006,7 @@ describe('branch operations', () => {
 
     it('falls back to origin/<base> when the local base is missing', async () => {
       mockExeca.mockRejectedValueOnce(new Error('unknown revision'));
-      mockExeca.mockResolvedValueOnce({ stdout: 'cccc\x1fc1\x1fThird\x1e' } as any);
+      mockExeca.mockResolvedValueOnce(printed('cccc\x1fc1\x1fThird\x1e'));
       const r = await logCommits('/repo', 'feat/x', 'main');
       expect(r).toEqual([{ sha: 'cccc', shortSha: 'c1', subject: 'Third' }]);
       expect(mockExeca).toHaveBeenLastCalledWith('git', ['log', '--format=%H%x1f%h%x1f%s%x1e', 'origin/main..feat/x'], { cwd: '/repo' });
@@ -1015,13 +1016,13 @@ describe('branch operations', () => {
 
 describe('currentBranch()', () => {
   it('returns the checked-out branch name', async () => {
-    mockExeca.mockResolvedValue({ stdout: 'feat/x\n' } as any);
+    mockExeca.mockResolvedValue(printed('feat/x\n'));
     expect(await currentBranch('/wt')).toBe('feat/x');
     expect(mockExeca).toHaveBeenCalledWith('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: '/wt' });
   });
 
   it('returns null when HEAD is detached or git fails', async () => {
-    mockExeca.mockResolvedValue({ stdout: 'HEAD\n' } as any);
+    mockExeca.mockResolvedValue(printed('HEAD\n'));
     expect(await currentBranch('/wt')).toBeNull();
     mockExeca.mockRejectedValue(new Error('not a git repo'));
     expect(await currentBranch('/wt')).toBeNull();
@@ -1058,7 +1059,7 @@ describe('parseCheckoutBranches()', () => {
 
 describe('recentCheckouts()', () => {
   it('reads the HEAD reflog with unix dates and parses it', async () => {
-    mockExeca.mockResolvedValue({ stdout: 'HEAD@{1700000300}\tcheckout: moving from feat/x to feat/y\n' } as any);
+    mockExeca.mockResolvedValue(printed('HEAD@{1700000300}\tcheckout: moving from feat/x to feat/y\n'));
     expect(await recentCheckouts('/wt', 1700000000 * 1000)).toEqual(['feat/y', 'feat/x']);
     expect(mockExeca).toHaveBeenCalledWith('git', ['reflog', 'show', '--date=unix', '--format=%gd%x09%gs', 'HEAD'], { cwd: '/wt' });
   });
@@ -1071,7 +1072,7 @@ describe('recentCheckouts()', () => {
 
 describe('localBranchExists()', () => {
   it('checks refs/heads only, so a tag or SHA with the name does not count', async () => {
-    mockExeca.mockResolvedValue({ stdout: '' } as any);
+    mockExeca.mockResolvedValue(printed(''));
     expect(await localBranchExists('/wt', 'feat/x')).toBe(true);
     expect(mockExeca).toHaveBeenCalledWith('git', ['show-ref', '--verify', '--quiet', 'refs/heads/feat/x'], { cwd: '/wt' });
   });
@@ -1087,7 +1088,7 @@ describe('getGitIdentity()', () => {
   function mockConfig(values: Record<string, string>) {
     mockExeca.mockImplementation(((_cmd: string, args: string[]) =>
       args[1] in values ? Promise.resolve({ stdout: `${values[args[1]]}\n` }) : Promise.reject(new Error('exit code 1'))
-    ) as any);
+    ) as never);
   }
 
   it('returns the configured name and email', async () => {
@@ -1114,7 +1115,7 @@ describe('remoteTrackingRef()', () => {
     mockExeca.mockImplementation(((_cmd: string, args: string[]) => {
       if (args[0] === 'remote') return Promise.resolve({ stdout: remotes });
       return present.includes(args[3]) ? Promise.resolve({ stdout: '' }) : Promise.reject(new Error('not a valid ref'));
-    }) as any);
+    }) as never);
   }
 
   it('prefers origin when several remotes have the branch', async () => {
@@ -1158,7 +1159,7 @@ describe('parseWorktreeBranches()', () => {
 
 describe('checkoutBranch()', () => {
   beforeEach(() => {
-    mockExeca.mockResolvedValue({ stdout: '' } as any);
+    mockExeca.mockResolvedValue(printed(''));
   });
 
   it('checks out an existing branch with -- so the name is never read as a path', async () => {
@@ -1179,13 +1180,13 @@ describe('checkoutBranch()', () => {
 
 describe('isWorkingTreeClean()', () => {
   it('counts untracked files by default', async () => {
-    mockExeca.mockResolvedValue({ stdout: '?? .claude/\n' } as any);
+    mockExeca.mockResolvedValue(printed('?? .claude/\n'));
     expect(await isWorkingTreeClean('/wt')).toBe(false);
     expect(mockExeca).toHaveBeenCalledWith('git', ['status', '--porcelain'], { cwd: '/wt' });
   });
 
   it('can leave untracked files out', async () => {
-    mockExeca.mockResolvedValue({ stdout: '' } as any);
+    mockExeca.mockResolvedValue(printed(''));
     expect(await isWorkingTreeClean('/wt', { ignoreUntracked: true })).toBe(true);
     expect(mockExeca).toHaveBeenCalledWith('git', ['status', '--porcelain', '--untracked-files=no'], { cwd: '/wt' });
   });

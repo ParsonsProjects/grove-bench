@@ -25,8 +25,8 @@ describe('backgroundTaskStore', () => {
   });
 
   it('progress merges into an existing task', () => {
-    backgroundTaskStore.start(SID, { type: 'task_started', taskId: 't1', description: 'Research' } as any);
-    backgroundTaskStore.progress(SID, { type: 'task_progress', taskId: 't1', description: 'Research', summary: 'Reading docs', totalTokens: 500, toolUses: 2, durationMs: 1000 } as any);
+    backgroundTaskStore.start(SID, { type: 'task_started', taskId: 't1', description: 'Research' });
+    backgroundTaskStore.progress(SID, { type: 'task_progress', taskId: 't1', description: 'Research', summary: 'Reading docs', totalTokens: 500, toolUses: 2, durationMs: 1000 });
     const t = backgroundTaskStore.get(SID)[0];
     expect(t.summary).toBe('Reading docs');
     expect(t.totalTokens).toBe(500);
@@ -34,21 +34,21 @@ describe('backgroundTaskStore', () => {
   });
 
   it('notify sets terminal status and returns the message label/text', () => {
-    backgroundTaskStore.start(SID, { type: 'task_started', taskId: 't1', description: 'Research' } as any);
-    const info = backgroundTaskStore.notify(SID, { type: 'task_notification', taskId: 't1', taskStatus: 'completed', summary: 'Found 3 endpoints' } as any);
+    backgroundTaskStore.start(SID, { type: 'task_started', taskId: 't1', description: 'Research' });
+    const info = backgroundTaskStore.notify(SID, { type: 'task_notification', taskId: 't1', taskStatus: 'completed', summary: 'Found 3 endpoints', outputFile: '' });
     expect(info).toEqual({ label: 'completed', text: 'Found 3 endpoints' });
     expect(backgroundTaskStore.get(SID)[0].status).toBe('completed');
   });
 
-  it('notify falls back to prior description when summary is absent', () => {
-    backgroundTaskStore.start(SID, { type: 'task_started', taskId: 't1', description: 'Research API' } as any);
-    const info = backgroundTaskStore.notify(SID, { type: 'task_notification', taskId: 't1', taskStatus: 'failed' } as any);
+  it('notify falls back to prior description when the summary is empty', () => {
+    backgroundTaskStore.start(SID, { type: 'task_started', taskId: 't1', description: 'Research API' });
+    const info = backgroundTaskStore.notify(SID, { type: 'task_notification', taskId: 't1', taskStatus: 'failed', summary: '', outputFile: '' });
     expect(info).toEqual({ label: 'failed', text: 'Research API' });
   });
 
   it('notify auto-removes the finished task after the delay', () => {
-    backgroundTaskStore.start(SID, { type: 'task_started', taskId: 't1', description: 'Research' } as any);
-    backgroundTaskStore.notify(SID, { type: 'task_notification', taskId: 't1', taskStatus: 'completed', summary: 'done' } as any);
+    backgroundTaskStore.start(SID, { type: 'task_started', taskId: 't1', description: 'Research' });
+    backgroundTaskStore.notify(SID, { type: 'task_notification', taskId: 't1', taskStatus: 'completed', summary: 'done', outputFile: '' });
     expect(backgroundTaskStore.get(SID)).toHaveLength(1);
     vi.advanceTimersByTime(3000);
     expect(backgroundTaskStore.get(SID)).toHaveLength(0);
@@ -96,13 +96,13 @@ describe('backgroundTaskStore', () => {
   });
 
   it('reconcile with an empty list clears every running task', () => {
-    backgroundTaskStore.start(SID, { type: 'task_started', taskId: 't1', description: 'a' } as any);
+    backgroundTaskStore.start(SID, { type: 'task_started', taskId: 't1', description: 'a' });
     backgroundTaskStore.reconcile(SID, { type: 'background_tasks_changed', tasks: [] });
     expect(backgroundTaskStore.get(SID)).toHaveLength(0);
   });
 
   it('stop calls the bridge and marks the task as stopping until the notification lands', async () => {
-    backgroundTaskStore.start(SID, { type: 'task_started', taskId: 't1', description: 'a' } as any);
+    backgroundTaskStore.start(SID, { type: 'task_started', taskId: 't1', description: 'a' });
     await backgroundTaskStore.stop(SID, 't1');
     expect(mockGroveBench.stopBackgroundTask).toHaveBeenCalledWith(SID, 't1');
     let t = backgroundTaskStore.get(SID)[0];
@@ -113,7 +113,7 @@ describe('backgroundTaskStore', () => {
     await backgroundTaskStore.stop(SID, 't1');
     expect(mockGroveBench.stopBackgroundTask).toHaveBeenCalledTimes(1);
 
-    backgroundTaskStore.notify(SID, { type: 'task_notification', taskId: 't1', taskStatus: 'stopped', summary: '', outputFile: '' } as any);
+    backgroundTaskStore.notify(SID, { type: 'task_notification', taskId: 't1', taskStatus: 'stopped', summary: '', outputFile: '' });
     t = backgroundTaskStore.get(SID)[0];
     expect(t.status).toBe('stopped');
     expect(t.stopping).toBe(false);
@@ -129,7 +129,7 @@ describe('backgroundTaskStore', () => {
   });
 
   it('stop clears the stopping flag and rethrows when the bridge fails', async () => {
-    backgroundTaskStore.start(SID, { type: 'task_started', taskId: 't1', description: 'a' } as any);
+    backgroundTaskStore.start(SID, { type: 'task_started', taskId: 't1', description: 'a' });
     mockGroveBench.stopBackgroundTask.mockRejectedValueOnce(new Error('no handle'));
     await expect(backgroundTaskStore.stop(SID, 't1')).rejects.toThrow('no handle');
     const t = backgroundTaskStore.get(SID)[0];
@@ -138,20 +138,20 @@ describe('backgroundTaskStore', () => {
   });
 
   it('remove deletes a single task', () => {
-    backgroundTaskStore.start(SID, { type: 'task_started', taskId: 't1', description: 'a' } as any);
-    backgroundTaskStore.start(SID, { type: 'task_started', taskId: 't2', description: 'b' } as any);
+    backgroundTaskStore.start(SID, { type: 'task_started', taskId: 't1', description: 'a' });
+    backgroundTaskStore.start(SID, { type: 'task_started', taskId: 't2', description: 'b' });
     backgroundTaskStore.remove(SID, 't1');
     expect(backgroundTaskStore.get(SID).map((t) => t.taskId)).toEqual(['t2']);
   });
 
   it('destroy cancels pending auto-remove timers and clears state', () => {
-    backgroundTaskStore.start(SID, { type: 'task_started', taskId: 't1', description: 'a' } as any);
-    backgroundTaskStore.notify(SID, { type: 'task_notification', taskId: 't1', taskStatus: 'completed', summary: 'done' } as any);
+    backgroundTaskStore.start(SID, { type: 'task_started', taskId: 't1', description: 'a' });
+    backgroundTaskStore.notify(SID, { type: 'task_notification', taskId: 't1', taskStatus: 'completed', summary: 'done', outputFile: '' });
     backgroundTaskStore.destroy(SID);
     expect(backgroundTaskStore.get(SID)).toEqual([]);
     expect(backgroundTaskStore.tasksBySession[SID]).toBeUndefined();
     // A leaked timer would remove a new task that reuses the id.
-    backgroundTaskStore.start(SID, { type: 'task_started', taskId: 't1', description: 'again' } as any);
+    backgroundTaskStore.start(SID, { type: 'task_started', taskId: 't1', description: 'again' });
     vi.advanceTimersByTime(3000);
     expect(backgroundTaskStore.get(SID).map((t) => t.description)).toEqual(['again']);
   });

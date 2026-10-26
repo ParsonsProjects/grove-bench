@@ -52,6 +52,6 @@ describe('formatAge', () => {
 
   it('returns empty string for falsy timestamps', () => {
     expect(formatAge(0)).toBe('');
-    expect(formatAge(undefined as any)).toBe('');
+    expect(formatAge(undefined as unknown as number)).toBe('');
   });
 });

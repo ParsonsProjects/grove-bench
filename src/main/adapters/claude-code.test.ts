@@ -5,6 +5,7 @@ import type { AgentEvent } from '../../shared/types.js';
 import { RunningCost, RunningTokens } from './running-cost.js';
 import { limitHook, LIMIT_STOP_REASON, titleListOptions, titleFromSessions } from './claude-code.js';
 import type { MessageFile } from './types.js';
+import type { HookInput, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 
 // ─── isPathInside (sandbox allowWrite containment) ───
 
@@ -651,6 +652,10 @@ function makeCtx() {
   return { toolUseMap: new Map<string, string>() };
 }
 
+/** An SDK message as these tests give it: only the fields transformMessage
+ *  reads, and sometimes an old or unknown shape the SDK's types don't have. */
+const sdk = (message: object) => message as SDKMessage;
+
 describe('missingConversationError()', () => {
   // What the CLI sends when asked to resume a conversation it no longer has.
   const missing = {
@@ -659,23 +664,23 @@ describe('missingConversationError()', () => {
   };
 
   it('picks out the missing-conversation error result', () => {
-    expect(missingConversationError(missing as any)).toBe('No conversation found with session ID: 1498a621-d151-4ae3-9f13-7416cfbdf170');
+    expect(missingConversationError(sdk(missing))).toBe('No conversation found with session ID: 1498a621-d151-4ae3-9f13-7416cfbdf170');
     // Still recognised if a CLI version prefixes the text.
-    expect(missingConversationError({ ...missing, errors: ['Error: No conversation found with session ID: x'] } as any))
+    expect(missingConversationError(sdk({ ...missing, errors: ['Error: No conversation found with session ID: x'] })))
       .toBe('Error: No conversation found with session ID: x');
   });
 
   it('ignores other results', () => {
-    expect(missingConversationError({ ...missing, errors: ['Request was aborted'] } as any)).toBeNull();
-    expect(missingConversationError({ type: 'result', subtype: 'success', is_error: false, result: 'No conversation found with session ID: x' } as any)).toBeNull();
-    expect(missingConversationError({ type: 'assistant', message: { content: [] } } as any)).toBeNull();
+    expect(missingConversationError(sdk({ ...missing, errors: ['Request was aborted'] }))).toBeNull();
+    expect(missingConversationError(sdk({ type: 'result', subtype: 'success', is_error: false, result: 'No conversation found with session ID: x' }))).toBeNull();
+    expect(missingConversationError(sdk({ type: 'assistant', message: { content: [] } }))).toBeNull();
   });
 });
 
 describe('transformMessage() tool results', () => {
   it('passes on the images in a tool result (a screenshot, an image file read)', () => {
     const ctx = { toolUseMap: new Map<string, string>() };
-    const events = transformMessage({
+    const events = transformMessage(sdk({
       type: 'user',
       message: {
         content: [{
@@ -691,7 +696,7 @@ describe('transformMessage() tool results', () => {
           ],
         }],
       },
-    } as any, ctx);
+    }), ctx);
 
     expect(events).toEqual([{
       type: 'tool_result',
@@ -707,10 +712,10 @@ describe('transformMessage() tool results', () => {
 
   it('leaves imageData off a tool result without images', () => {
     const ctx = { toolUseMap: new Map<string, string>() };
-    const events = transformMessage({
+    const events = transformMessage(sdk({
       type: 'user',
       message: { content: [{ type: 'tool_result', tool_use_id: 'tu1', content: [{ type: 'text', text: 'ok' }] }] },
-    } as any, ctx);
+    }), ctx);
     expect(events[0]).not.toHaveProperty('imageData');
   });
 });
@@ -719,7 +724,7 @@ describe('transformMessage()', () => {
   describe('informational messages', () => {
     it('shows the CLI\'s warnings, such as a sandbox that could not start', () => {
       const events = transformMessage(
-        { type: 'system', subtype: 'informational', level: 'warning', content: ' Sandbox unavailable; running commands unsandboxed ' } as any,
+        sdk({ type: 'system', subtype: 'informational', level: 'warning', content: ' Sandbox unavailable; running commands unsandboxed ' }),
         makeCtx(),
       );
       expect(events).toEqual([{ type: 'status', level: 'warning', message: 'Sandbox unavailable; running commands unsandboxed' }]);
@@ -727,7 +732,7 @@ describe('transformMessage()', () => {
 
     it('drops lower levels, which the CLI itself keeps to the transcript', () => {
       for (const level of ['info', 'notice', 'suggestion']) {
-        expect(transformMessage({ type: 'system', subtype: 'informational', level, content: 'x' } as any, makeCtx())).toEqual([]);
+        expect(transformMessage(sdk({ type: 'system', subtype: 'informational', level, content: 'x' }), makeCtx())).toEqual([]);
       }
     });
   });
@@ -735,14 +740,14 @@ describe('transformMessage()', () => {
   describe('background task messages', () => {
     it('maps background_tasks_changed to a replace-style task list, dropping ambient tasks', () => {
       const events = transformMessage(
-        {
+        sdk({
           type: 'system',
           subtype: 'background_tasks_changed',
           tasks: [
             { task_id: 'a1', task_type: 'local_agent', description: 'Explore repo' },
             { task_id: 'w1', task_type: 'monitor', description: 'watcher', ambient: true },
           ],
-        } as any,
+        }),
         makeCtx(),
       );
       expect(events).toEqual([{
@@ -753,7 +758,7 @@ describe('transformMessage()', () => {
 
     it('maps an empty background_tasks_changed list', () => {
       const events = transformMessage(
-        { type: 'system', subtype: 'background_tasks_changed', tasks: [] } as any,
+        sdk({ type: 'system', subtype: 'background_tasks_changed', tasks: [] }),
         makeCtx(),
       );
       expect(events).toEqual([{ type: 'background_tasks_changed', tasks: [] }]);
@@ -761,22 +766,22 @@ describe('transformMessage()', () => {
 
     it('skips ambient task_started and task_notification messages', () => {
       expect(transformMessage(
-        { type: 'system', subtype: 'task_started', task_id: 'w1', description: 'watcher', ambient: true } as any,
+        sdk({ type: 'system', subtype: 'task_started', task_id: 'w1', description: 'watcher', ambient: true }),
         makeCtx(),
       )).toEqual([]);
       expect(transformMessage(
-        { type: 'system', subtype: 'task_notification', task_id: 'w1', status: 'completed', summary: '', output_file: '', ambient: true } as any,
+        sdk({ type: 'system', subtype: 'task_notification', task_id: 'w1', status: 'completed', summary: '', output_file: '', ambient: true }),
         makeCtx(),
       )).toEqual([]);
     });
 
     it('still maps non-ambient task_started and stopped task_notification', () => {
       expect(transformMessage(
-        { type: 'system', subtype: 'task_started', task_id: 'a1', description: 'Explore', task_type: 'local_agent' } as any,
+        sdk({ type: 'system', subtype: 'task_started', task_id: 'a1', description: 'Explore', task_type: 'local_agent' }),
         makeCtx(),
       )).toEqual([{ type: 'task_started', taskId: 'a1', toolUseId: undefined, description: 'Explore', taskType: 'local_agent' }]);
       const events = transformMessage(
-        { type: 'system', subtype: 'task_notification', task_id: 'a1', status: 'stopped', summary: 'Stopped by user', output_file: '/tmp/o' } as any,
+        sdk({ type: 'system', subtype: 'task_notification', task_id: 'a1', status: 'stopped', summary: 'Stopped by user', output_file: '/tmp/o' }),
         makeCtx(),
       );
       expect(events).toHaveLength(1);
@@ -787,7 +792,7 @@ describe('transformMessage()', () => {
   describe('system messages', () => {
     it('transforms init into system_init', () => {
       const events = transformMessage(
-        { type: 'system', subtype: 'init', session_id: 's1', model: 'claude-opus-4-6', tools: ['Bash', 'Read'] } as any,
+        sdk({ type: 'system', subtype: 'init', session_id: 's1', model: 'claude-opus-4-6', tools: ['Bash', 'Read'] }),
         makeCtx(),
       );
       expect(events).toHaveLength(1);
@@ -800,7 +805,7 @@ describe('transformMessage()', () => {
 
     it('transforms compact_boundary with metadata', () => {
       const events = transformMessage(
-        { type: 'system', subtype: 'compact_boundary', compact_metadata: { trigger: 'auto', pre_tokens: 150000 } } as any,
+        sdk({ type: 'system', subtype: 'compact_boundary', compact_metadata: { trigger: 'auto', pre_tokens: 150000 } }),
         makeCtx(),
       );
       expect(events).toEqual([{ type: 'compact_boundary', trigger: 'auto', preTokens: 150000 }]);
@@ -808,7 +813,7 @@ describe('transformMessage()', () => {
 
     it('transforms compact_boundary with missing metadata gracefully', () => {
       const events = transformMessage(
-        { type: 'system', subtype: 'compact_boundary' } as any,
+        sdk({ type: 'system', subtype: 'compact_boundary' }),
         makeCtx(),
       );
       expect(events).toEqual([{ type: 'compact_boundary', trigger: 'manual', preTokens: 0 }]);
@@ -816,7 +821,7 @@ describe('transformMessage()', () => {
 
     it('extracts mode_sync from status message (camelCase)', () => {
       const events = transformMessage(
-        { type: 'system', subtype: 'status', permissionMode: 'plan' } as any,
+        sdk({ type: 'system', subtype: 'status', permissionMode: 'plan' }),
         makeCtx(),
       );
       expect(events).toContainEqual({ type: 'mode_sync', mode: 'plan', source: 'sdk' });
@@ -824,7 +829,7 @@ describe('transformMessage()', () => {
 
     it('extracts mode_sync from status message (snake_case)', () => {
       const events = transformMessage(
-        { type: 'system', subtype: 'status', permission_mode: 'default' } as any,
+        sdk({ type: 'system', subtype: 'status', permission_mode: 'default' }),
         makeCtx(),
       );
       expect(events).toContainEqual({ type: 'mode_sync', mode: 'default', source: 'sdk' });
@@ -833,7 +838,7 @@ describe('transformMessage()', () => {
     it('reports SDK acceptEdits as readSafe while Grove is in read-safe mode', () => {
       const ctx = { ...makeCtx(), groveMode: 'readSafe' as const };
       const events = transformMessage(
-        { type: 'system', subtype: 'status', permissionMode: 'acceptEdits' } as any,
+        sdk({ type: 'system', subtype: 'status', permissionMode: 'acceptEdits' }),
         ctx,
       );
       expect(events).toContainEqual({ type: 'mode_sync', mode: 'readSafe', source: 'sdk' });
@@ -858,7 +863,7 @@ describe('transformMessage()', () => {
       expect(toSdkPermissionMode('readSafe')).toBe('acceptEdits');
       expect(toSdkPermissionMode('plan')).toBe('plan');
       const events = transformMessage(
-        { type: 'system', subtype: 'status', permissionMode: 'auto' } as any,
+        sdk({ type: 'system', subtype: 'status', permissionMode: 'auto' }),
         { ...makeCtx(), groveMode: 'auto' as const },
       );
       expect(events).toContainEqual({ type: 'mode_sync', mode: 'auto', source: 'sdk' });
@@ -866,11 +871,11 @@ describe('transformMessage()', () => {
 
     it('surfaces classifier denials as a status line with ANSI stripped', () => {
       const events = transformMessage(
-        {
+        sdk({
           type: 'system', subtype: 'permission_denied', tool_name: 'Bash',
           decision_reason_type: 'classifier', decision_reason: '\x1b[31mforce push\x1b[0m outside scope',
           message: 'denied',
-        } as any,
+        }),
         makeCtx(),
       );
       expect(events).toContainEqual({ type: 'status', message: 'Auto mode blocked Bash: force push outside scope' });
@@ -879,7 +884,7 @@ describe('transformMessage()', () => {
 
     it('detects plan mode from local_command_output', () => {
       const events = transformMessage(
-        { type: 'system', subtype: 'local_command_output', content: 'Switched to plan mode' } as any,
+        sdk({ type: 'system', subtype: 'local_command_output', content: 'Switched to plan mode' }),
         makeCtx(),
       );
       expect(events).toContainEqual({ type: 'mode_sync', mode: 'plan', source: 'sdk' });
@@ -887,7 +892,7 @@ describe('transformMessage()', () => {
 
     it('emits compacting status', () => {
       const events = transformMessage(
-        { type: 'system', subtype: 'status', status: 'compacting' } as any,
+        sdk({ type: 'system', subtype: 'status', status: 'compacting' }),
         makeCtx(),
       );
       expect(events).toContainEqual({ type: 'status', message: 'Compacting thread...' });
@@ -897,11 +902,11 @@ describe('transformMessage()', () => {
   describe('assistant messages', () => {
     it('transforms text blocks', () => {
       const events = transformMessage(
-        {
+        sdk({
           type: 'assistant',
           uuid: 'u1',
           message: { content: [{ type: 'text', text: 'Hello world' }] },
-        } as any,
+        }),
         makeCtx(),
       );
       expect(events).toContainEqual({ type: 'assistant_text', text: 'Hello world', uuid: 'u1' });
@@ -910,11 +915,11 @@ describe('transformMessage()', () => {
     it('transforms tool_use blocks and registers in toolUseMap', () => {
       const ctx = makeCtx();
       const events = transformMessage(
-        {
+        sdk({
           type: 'assistant',
           uuid: 'u2',
           message: { content: [{ type: 'tool_use', id: 'tu1', name: 'Bash', input: { command: 'ls' } }] },
-        } as any,
+        }),
         ctx,
       );
       expect(events).toContainEqual({
@@ -930,11 +935,11 @@ describe('transformMessage()', () => {
 
     it('puts PowerShell in the shell category', () => {
       const events = transformMessage(
-        {
+        sdk({
           type: 'assistant',
           uuid: 'u2',
           message: { content: [{ type: 'tool_use', id: 'tu1', name: 'PowerShell', input: { command: 'Get-ChildItem' } }] },
-        } as any,
+        }),
         makeCtx(),
       );
       expect(events).toContainEqual(expect.objectContaining({ type: 'assistant_tool_use', toolName: 'PowerShell', toolCategory: 'bash' }));
@@ -942,11 +947,11 @@ describe('transformMessage()', () => {
 
     it('transforms thinking blocks', () => {
       const events = transformMessage(
-        {
+        sdk({
           type: 'assistant',
           uuid: 'u3',
           message: { content: [{ type: 'thinking', thinking: 'Let me think...' }] },
-        } as any,
+        }),
         makeCtx(),
       );
       expect(events).toContainEqual({ type: 'thinking', thinking: 'Let me think...', uuid: 'u3' });
@@ -954,14 +959,14 @@ describe('transformMessage()', () => {
 
     it('extracts usage from assistant message', () => {
       const events = transformMessage(
-        {
+        sdk({
           type: 'assistant',
           uuid: 'u4',
           message: {
             content: [{ type: 'text', text: 'hi' }],
             usage: { input_tokens: 100, output_tokens: 50, cache_read_input_tokens: 10 },
           },
-        } as any,
+        }),
         makeCtx(),
       );
       const usage = events.find((e) => e.type === 'usage');
@@ -975,7 +980,7 @@ describe('transformMessage()', () => {
 
     it('ignores usage from subagent assistant messages (parent_tool_use_id set)', () => {
       const events = transformMessage(
-        {
+        sdk({
           type: 'assistant',
           uuid: 'u5',
           parent_tool_use_id: 'tu-agent-123',
@@ -983,7 +988,7 @@ describe('transformMessage()', () => {
             content: [{ type: 'text', text: 'subagent reply' }],
             usage: { input_tokens: 200, output_tokens: 30 },
           },
-        } as any,
+        }),
         makeCtx(),
       );
       expect(events.find((e) => e.type === 'usage')).toBeUndefined();
@@ -992,7 +997,7 @@ describe('transformMessage()', () => {
     it('tags a subagent\'s text, thinking and tool calls with its Agent call, in order', () => {
       // Untagged, a subagent's report read as the main agent's reply.
       const events = transformMessage(
-        {
+        sdk({
           type: 'assistant',
           uuid: 'u6',
           parent_tool_use_id: 'tu-agent-123',
@@ -1003,7 +1008,7 @@ describe('transformMessage()', () => {
               { type: 'tool_use', id: 'tu-sub-1', name: 'Grep', input: { pattern: 'cron' } },
             ],
           },
-        } as any,
+        }),
         makeCtx(),
       );
       expect(events.map((e) => e.type)).toEqual(['thinking', 'assistant_text', 'assistant_tool_use']);
@@ -1012,7 +1017,7 @@ describe('transformMessage()', () => {
 
     it('leaves the main agent\'s events untagged', () => {
       const events = transformMessage(
-        { type: 'assistant', uuid: 'u7', parent_tool_use_id: null, message: { content: [{ type: 'text', text: 'hi' }] } } as any,
+        sdk({ type: 'assistant', uuid: 'u7', parent_tool_use_id: null, message: { content: [{ type: 'text', text: 'hi' }] } }),
         makeCtx(),
       );
       expect(events[0]).not.toHaveProperty('parentToolUseId');
@@ -1022,10 +1027,10 @@ describe('transformMessage()', () => {
   describe('user messages (tool results)', () => {
     it('transforms tool_result blocks', () => {
       const events = transformMessage(
-        {
+        sdk({
           type: 'user',
           message: { content: [{ type: 'tool_result', tool_use_id: 'tu1', content: 'file contents', is_error: false }] },
-        } as any,
+        }),
         makeCtx(),
       );
       expect(events).toEqual([{ type: 'tool_result', toolUseId: 'tu1', content: 'file contents', isError: false }]);
@@ -1033,10 +1038,10 @@ describe('transformMessage()', () => {
 
     it('handles array content in tool_result', () => {
       const events = transformMessage(
-        {
+        sdk({
           type: 'user',
           message: { content: [{ type: 'tool_result', tool_use_id: 'tu2', content: [{ text: 'part1' }, { text: 'part2' }], is_error: false }] },
-        } as any,
+        }),
         makeCtx(),
       );
       expect(events[0]).toMatchObject({ content: 'part1part2' });
@@ -1044,11 +1049,11 @@ describe('transformMessage()', () => {
 
     it('tags a subagent\'s tool results with its Agent call', () => {
       const events = transformMessage(
-        {
+        sdk({
           type: 'user',
           parent_tool_use_id: 'tu-agent-123',
           message: { content: [{ type: 'tool_result', tool_use_id: 'tu-sub-1', content: 'match', is_error: false }] },
-        } as any,
+        }),
         makeCtx(),
       );
       expect(events).toEqual([{ type: 'tool_result', toolUseId: 'tu-sub-1', content: 'match', isError: false, parentToolUseId: 'tu-agent-123' }]);
@@ -1058,7 +1063,7 @@ describe('transformMessage()', () => {
   describe('result messages', () => {
     it('picks contextWindow from the dominant model, not the first modelUsage entry', () => {
       const events = transformMessage(
-        {
+        sdk({
           type: 'result',
           subtype: 'success',
           is_error: false,
@@ -1077,7 +1082,7 @@ describe('transformMessage()', () => {
               contextWindow: 1_000_000,
             },
           },
-        } as any,
+        }),
         makeCtx(),
       );
       expect(events[0]).toMatchObject({ type: 'result', contextWindow: 1_000_000 });
@@ -1085,7 +1090,7 @@ describe('transformMessage()', () => {
 
     it('transforms result with cost and duration', () => {
       const events = transformMessage(
-        {
+        sdk({
           type: 'result',
           subtype: 'success',
           result: 'Done',
@@ -1093,7 +1098,7 @@ describe('transformMessage()', () => {
           duration_ms: 3000,
           is_error: false,
           num_turns: 3,
-        } as any,
+        }),
         makeCtx(),
       );
       expect(events[0]).toMatchObject({
@@ -1110,7 +1115,7 @@ describe('transformMessage()', () => {
     it('reports each turn\'s cost from the SDK\'s running total', () => {
       const ctx = { ...makeCtx(), cost: new RunningCost() };
       const result = (total: number) => transformMessage(
-        { type: 'result', subtype: 'success', total_cost_usd: total, duration_ms: 1, is_error: false, num_turns: 1 } as any,
+        sdk({ type: 'result', subtype: 'success', total_cost_usd: total, duration_ms: 1, is_error: false, num_turns: 1 }),
         ctx,
       )[0];
       expect(result(0.05)).toMatchObject({ totalCostUsd: 0.05, sessionCostUsd: 0.05 });
@@ -1126,7 +1131,7 @@ describe('transformMessage()', () => {
         'claude-haiku-5-5': { inputTokens: 5, outputTokens: 1, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 },
       });
       const result = (input: number, output: number) => transformMessage(
-        { type: 'result', subtype: 'success', modelUsage: usage(input, output), duration_ms: 1, is_error: false, num_turns: 1 } as any,
+        sdk({ type: 'result', subtype: 'success', modelUsage: usage(input, output), duration_ms: 1, is_error: false, num_turns: 1 }),
         ctx,
       )[0] as Extract<AgentEvent, { type: 'result' }>;
 
@@ -1138,7 +1143,7 @@ describe('transformMessage()', () => {
       const ctx = { ...makeCtx(), cost: new RunningCost(), tokens: new RunningTokens() };
       const usage = (input: number, output: number) => ({ 'claude-opus-5-5': { inputTokens: input, outputTokens: output, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 } });
       const result = (usd: number, input: number, output: number, isError: boolean) => transformMessage(
-        { type: 'result', subtype: isError ? 'error_during_execution' : 'success', total_cost_usd: usd, modelUsage: usage(input, output), duration_ms: 1, is_error: isError, num_turns: 1 } as any,
+        sdk({ type: 'result', subtype: isError ? 'error_during_execution' : 'success', total_cost_usd: usd, modelUsage: usage(input, output), duration_ms: 1, is_error: isError, num_turns: 1 }),
         ctx,
       )[0] as Extract<AgentEvent, { type: 'result' }>;
 
@@ -1153,12 +1158,12 @@ describe('transformMessage()', () => {
       const ctx = { ...makeCtx(), cost: new RunningCost(), tokens: new RunningTokens() };
       const usage = (input: number, output: number) => ({ 'claude-opus-5-5': { inputTokens: input, outputTokens: output, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 } });
       const result = (usd: number, input: number, output: number) => transformMessage(
-        { type: 'result', subtype: 'success', total_cost_usd: usd, modelUsage: usage(input, output), duration_ms: 1, is_error: false, num_turns: 1 } as any,
+        sdk({ type: 'result', subtype: 'success', total_cost_usd: usd, modelUsage: usage(input, output), duration_ms: 1, is_error: false, num_turns: 1 }),
         ctx,
       )[0] as Extract<AgentEvent, { type: 'result' }>;
 
       result(0.1, 30_000, 500);
-      transformMessage({ type: 'conversation_reset', trigger: 'clear', new_conversation_id: 'c2', uuid: 'u', session_id: 's2' } as any, ctx);
+      transformMessage(sdk({ type: 'conversation_reset', trigger: 'clear', new_conversation_id: 'c2', uuid: 'u', session_id: 's2' }), ctx);
       expect(result(0.4, 175_000, 3000)).toMatchObject({
         totalCostUsd: 0.4, sessionCostUsd: 0.4,
         turnTokens: { input: 175_000, output: 3000 }, sessionTokens: { input: 175_000, output: 3000 },
@@ -1168,17 +1173,17 @@ describe('transformMessage()', () => {
     it('leaves the totals running through a reset other than /clear', () => {
       const ctx = { ...makeCtx(), cost: new RunningCost() };
       const result = (usd: number) => transformMessage(
-        { type: 'result', subtype: 'success', total_cost_usd: usd, duration_ms: 1, is_error: false, num_turns: 1 } as any,
+        sdk({ type: 'result', subtype: 'success', total_cost_usd: usd, duration_ms: 1, is_error: false, num_turns: 1 }),
         ctx,
       )[0] as Extract<AgentEvent, { type: 'result' }>;
 
       result(0.1);
-      transformMessage({ type: 'conversation_reset', trigger: 'plan_mode_exit', new_conversation_id: 'c2', uuid: 'u', session_id: 's2' } as any, ctx);
+      transformMessage(sdk({ type: 'conversation_reset', trigger: 'plan_mode_exit', new_conversation_id: 'c2', uuid: 'u', session_id: 's2' }), ctx);
       expect(result(0.3).totalCostUsd).toBeCloseTo(0.2);
     });
 
     it('reports no tokens for a result without modelUsage', () => {
-      const event = transformMessage({ type: 'result', subtype: 'success', duration_ms: 1, is_error: false, num_turns: 1 } as any, makeCtx())[0];
+      const event = transformMessage(sdk({ type: 'result', subtype: 'success', duration_ms: 1, is_error: false, num_turns: 1 }), makeCtx())[0];
       expect(event).not.toHaveProperty('turnTokens');
     });
   });
@@ -1186,10 +1191,10 @@ describe('transformMessage()', () => {
   describe('stream_event messages', () => {
     it('transforms text_delta', () => {
       const events = transformMessage(
-        {
+        sdk({
           type: 'stream_event',
           event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'hi' } },
-        } as any,
+        }),
         makeCtx(),
       );
       expect(events).toEqual([{ type: 'partial_text', text: 'hi' }]);
@@ -1197,10 +1202,10 @@ describe('transformMessage()', () => {
 
     it('transforms thinking_delta', () => {
       const events = transformMessage(
-        {
+        sdk({
           type: 'stream_event',
           event: { type: 'content_block_delta', delta: { type: 'thinking_delta', thinking: 'hmm' } },
-        } as any,
+        }),
         makeCtx(),
       );
       expect(events).toEqual([{ type: 'partial_thinking', text: 'hmm' }]);
@@ -1212,14 +1217,14 @@ describe('transformMessage()', () => {
         { type: 'content_block_start', content_block: { type: 'text' } },
         { type: 'content_block_delta', delta: { type: 'text_delta', text: 'sub' } },
       ]) {
-        expect(transformMessage({ type: 'stream_event', parent_tool_use_id: 'tu-agent-123', event } as any, makeCtx())).toEqual([]);
+        expect(transformMessage(sdk({ type: 'stream_event', parent_tool_use_id: 'tu-agent-123', event }), makeCtx())).toEqual([]);
       }
     });
   });
 
   describe('unknown message types', () => {
     it('returns empty array for unknown type', () => {
-      const events = transformMessage({ type: 'unknown_type' } as any, makeCtx());
+      const events = transformMessage(sdk({ type: 'unknown_type' }), makeCtx());
       expect(events).toEqual([]);
     });
   });
@@ -1243,7 +1248,7 @@ describe('TEXT_GENERATION_OPTIONS', () => {
 // ─── limitHook (Grove's limits, before each tool call) ───
 
 describe('limitHook()', () => {
-  const input = { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: {}, tool_use_id: 'tu_1', session_id: 's', transcript_path: '', cwd: '' } as any;
+  const input: HookInput = { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: {}, tool_use_id: 'tu_1', session_id: 's', transcript_path: '', cwd: '' };
   const signal = new AbortController().signal;
 
   it('lets the call go ahead with no decision while no limit is reached', async () => {
@@ -1261,7 +1266,7 @@ describe('limitHook()', () => {
 
   it('ignores other hook events', async () => {
     const before = vi.fn();
-    await expect(limitHook(before)({ ...input, hook_event_name: 'PostToolUse' }, 'tu_1', { signal })).resolves.toEqual({});
+    await expect(limitHook(before)({ ...input, hook_event_name: 'PostToolUse' } as HookInput, 'tu_1', { signal })).resolves.toEqual({});
     expect(before).not.toHaveBeenCalled();
   });
 });

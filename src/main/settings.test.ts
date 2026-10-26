@@ -23,7 +23,7 @@ vi.mock('./logger.js', () => ({
 
 import { loadSettings, saveSettings, getSettings, applyImmediateEffects, windowBackground, upgradeSettings, validateSettings, resetSettingsCache, SETTINGS_SCHEMA_VERSION } from './settings.js';
 import { NIGHT, PAPER } from '../shared/brand.js';
-import { nativeTheme } from 'electron';
+import { nativeTheme, type BrowserWindow } from 'electron';
 
 const enoent = () => Object.assign(new Error('ENOENT: no such file'), { code: 'ENOENT' });
 
@@ -169,7 +169,7 @@ describe('saveSettings', () => {
 
 describe('applyImmediateEffects', () => {
   it('sets alwaysOnTop on the window', () => {
-    const win = { isDestroyed: vi.fn(() => false), setAlwaysOnTop: vi.fn(), setBackgroundColor: vi.fn() } as any;
+    const win = { isDestroyed: vi.fn(() => false), setAlwaysOnTop: vi.fn(), setBackgroundColor: vi.fn() } as unknown as BrowserWindow;
     const s = loadSettings();
     s.alwaysOnTop = true;
     applyImmediateEffects(win, s);
@@ -177,7 +177,7 @@ describe('applyImmediateEffects', () => {
   });
 
   it('applies the theme to nativeTheme, which sets prefers-color-scheme', () => {
-    const win = { isDestroyed: vi.fn(() => false), setAlwaysOnTop: vi.fn(), setBackgroundColor: vi.fn() } as any;
+    const win = { isDestroyed: vi.fn(() => false), setAlwaysOnTop: vi.fn(), setBackgroundColor: vi.fn() } as unknown as BrowserWindow;
     nativeTheme.themeSource = 'system';
     const s = loadSettings();
     for (const theme of ['light', 'dark', 'system'] as const) {
@@ -188,7 +188,7 @@ describe('applyImmediateEffects', () => {
   });
 
   it('paints the window behind the page in the theme\'s background', () => {
-    const win = { isDestroyed: vi.fn(() => false), setAlwaysOnTop: vi.fn(), setBackgroundColor: vi.fn() } as any;
+    const win = { isDestroyed: vi.fn(() => false), setAlwaysOnTop: vi.fn(), setBackgroundColor: vi.fn() } as unknown as BrowserWindow;
     const s = loadSettings();
     // Read-only in Electron's types; a plain field on the mock
     const theme = nativeTheme as { shouldUseDarkColors: boolean };
@@ -215,7 +215,7 @@ describe('applyImmediateEffects', () => {
   });
 
   it('handles destroyed window', () => {
-    const win = { isDestroyed: vi.fn(() => true), setAlwaysOnTop: vi.fn() } as any;
+    const win = { isDestroyed: vi.fn(() => true), setAlwaysOnTop: vi.fn() } as unknown as BrowserWindow;
     const s = loadSettings();
     applyImmediateEffects(win, s);
     expect(win.setAlwaysOnTop).not.toHaveBeenCalled();
@@ -232,7 +232,7 @@ describe('schema versioning', () => {
     expect((s as any).devCommand).toBeUndefined();
     // Migrated files are rewritten once so the migration does not rerun
     expect(mockWriteFileSync).toHaveBeenCalledTimes(1);
-    const written = JSON.parse(mockWriteFileSync.mock.calls[0][1] as string);
+    const written = JSON.parse(mockWriteFileSync.mock.calls[0][1] as string) as Record<string, unknown>;
     expect(written.schemaVersion).toBe(SETTINGS_SCHEMA_VERSION);
     expect(written.defaultBaseBranch).toBe('');
   });
@@ -343,7 +343,7 @@ describe('schema versioning', () => {
 
   it('saveSettings stamps the schema version', () => {
     saveSettings(loadSettings());
-    const written = JSON.parse(mockWriteFileSync.mock.calls.at(-1)![1] as string);
+    const written = JSON.parse(mockWriteFileSync.mock.calls.at(-1)![1] as string) as Record<string, unknown>;
     expect(Object.keys(written)[0]).toBe('schemaVersion');
     expect(written.schemaVersion).toBe(SETTINGS_SCHEMA_VERSION);
   });

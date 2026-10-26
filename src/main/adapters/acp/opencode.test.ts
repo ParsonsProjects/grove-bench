@@ -5,7 +5,15 @@ import { AcpAdapter } from './acp-adapter.js';
 
 vi.mock('../../logger.js', () => ({ logger: { warn: vi.fn(), info: vi.fn(), debug: vi.fn(), error: vi.fn() } }));
 
-const config = (env: Record<string, string>) => JSON.parse(env.OPENCODE_CONFIG_CONTENT);
+/** The parts of the config OpenCode is given that these tests read. */
+type OpenCodeConfig = {
+  model?: string;
+  small_model?: string;
+  mcp?: unknown;
+  permission: Record<string, unknown>;
+  agent: Record<string, { permission: Record<string, unknown> }>;
+};
+const config = (env: Record<string, string>) => JSON.parse(env.OPENCODE_CONFIG_CONTENT) as OpenCodeConfig;
 /** The model a Grove-saved OpenRouter key starts on, written out so a typo in the constant fails. */
 const FLASH = 'openrouter/deepseek/deepseek-v4.1-flash';
 
