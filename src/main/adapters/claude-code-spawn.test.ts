@@ -95,10 +95,10 @@ describe('spawnClaudeCodeProcess', () => {
 });
 
 describe('the agent SDK', () => {
-  // ClaudeCodeAdapter's processStarted() waits on the process the spawn hook
+  // ClaudeCodeAdapter's killProcessTree() kills the process the spawn hook
   // made. Were the SDK to start it later (as it does for a resume with a
   // sessionStore), start() would return with none, a close straight after
-  // would find nothing to wait for, and the agent's tree would not be killed.
+  // would find nothing to kill, and the agent's tree would not be killed.
   it('starts the agent process inside query(), through the spawn hook', () => {
     const proc = new HostedProcess('claude.exe');
     proc.connect(() => {});

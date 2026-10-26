@@ -213,16 +213,81 @@ describe('HostedProcess', () => {
       await expect(killed).rejects.toThrow("The process host stopped before claude.exe's process tree was killed");
     });
 
-    it(`rejects when no answer comes within ${TREE_KILL_ANSWER_MS / 1000} s`, async () => {
-      vi.useFakeTimers();
+    it('rejects too when its host goes before it has reported the pid: the process may have started there', async () => {
       const proc = new HostedProcess('claude.exe');
       proc.connect(() => {});
-      let outcome = 'waiting';
-      proc.killTree().then(() => { outcome = 'resolved'; }, (e: Error) => { outcome = e.message; });
-      await vi.advanceTimersByTimeAsync(TREE_KILL_ANSWER_MS - 1);
-      expect(outcome).toBe('waiting');
-      await vi.advanceTimersByTimeAsync(1);
-      expect(outcome).toBe(`No answer within ${TREE_KILL_ANSWER_MS / 1000} s to killing claude.exe's process tree`);
+      const killed = proc.killTree();
+      proc.lost(true);
+      await expect(killed).rejects.toThrow("The process host stopped before claude.exe's process tree was killed");
+    });
+
+    describe(`with no answer within ${TREE_KILL_ANSWER_MS / 1000} s`, () => {
+      /** A process its host has reported started, killed with `killTreeHere`. */
+      function running(killTreeHere?: KillTree) {
+        vi.useFakeTimers();
+        const proc = new HostedProcess('claude.exe', killTreeHere);
+        proc.connect(() => {});
+        proc.receive({ type: 'spawned', id: 1, pid: 4242, launchMs: 5 });
+        let outcome: string | boolean = 'waiting';
+        proc.killTree().then((killed) => { outcome = killed; }, (e: Error) => { outcome = e.message; });
+        return { proc, outcome: () => outcome };
+      }
+
+      it('kills the tree from here, by the pid its host reported', async () => {
+        const killTreeHere = vi.fn<KillTree>(() => Promise.resolve(undefined));
+        const { outcome } = running(killTreeHere);
+        await vi.advanceTimersByTimeAsync(TREE_KILL_ANSWER_MS - 1);
+        expect(killTreeHere).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1);
+        expect(killTreeHere).toHaveBeenCalledWith(4242);
+        expect(outcome()).toBe(true);
+      });
+
+      it('rejects with why, when that kill fails too', async () => {
+        const { outcome } = running(() => Promise.resolve('taskkill 4242 failed: ERROR: Access is denied.'));
+        await vi.advanceTimersByTimeAsync(TREE_KILL_ANSWER_MS);
+        expect(outcome()).toBe('taskkill 4242 failed: ERROR: Access is denied.');
+      });
+
+      it('takes the answer that comes first', async () => {
+        const killTreeHere = vi.fn<KillTree>(() => Promise.resolve(undefined));
+        const { proc, outcome } = running(killTreeHere);
+        proc.receive({ type: 'tree-killed', id: 1, killed: true });
+        await vi.advanceTimersByTimeAsync(TREE_KILL_ANSWER_MS);
+        expect(killTreeHere).not.toHaveBeenCalled();
+        expect(outcome()).toBe(true);
+      });
+
+      it("doesn't kill from here by the pid of a process that has said it exited", async () => {
+        const killTreeHere = vi.fn<KillTree>(() => Promise.resolve(undefined));
+        const { proc, outcome } = running(killTreeHere);
+        proc.receive({ type: 'exit', id: 1, code: 1, signal: null });
+        await vi.advanceTimersByTimeAsync(TREE_KILL_ANSWER_MS);
+        expect(killTreeHere).not.toHaveBeenCalled();
+        expect(outcome()).toBe(`No answer within ${TREE_KILL_ANSWER_MS / 1000} s to killing claude.exe's process tree`);
+      });
+
+      it('rejects when its host has the process but no pid has come, so it can only wait', async () => {
+        vi.useFakeTimers();
+        const killTreeHere = vi.fn<KillTree>(() => Promise.resolve(undefined));
+        const proc = new HostedProcess('claude.exe', killTreeHere);
+        proc.connect(() => {});
+        let outcome = 'waiting';
+        proc.killTree().then(() => { outcome = 'resolved'; }, (e: Error) => { outcome = e.message; });
+        await vi.advanceTimersByTimeAsync(TREE_KILL_ANSWER_MS);
+        expect(killTreeHere).not.toHaveBeenCalled();
+        expect(outcome).toBe(`No answer within ${TREE_KILL_ANSWER_MS / 1000} s to killing claude.exe's process tree`);
+      });
+
+      it('resolves false for a process still waiting for its host: it never starts', async () => {
+        vi.useFakeTimers();
+        const proc = new HostedProcess('claude.exe', () => Promise.resolve(undefined));
+        let outcome: string | boolean = 'waiting';
+        proc.killTree().then((killed) => { outcome = killed; }, (e: Error) => { outcome = e.message; });
+        await vi.advanceTimersByTimeAsync(TREE_KILL_ANSWER_MS);
+        expect(outcome).toBe(false);
+        expect(proc.stopRequested).toBe(true);
+      });
     });
   });
 });
@@ -418,7 +483,7 @@ describe('createSpawnRunner', () => {
       const events: SpawnEvent[] = [];
       const child = Object.assign(new EventEmitter(), {
         pid: 77, exitCode: null as number | null, signalCode: null as string | null,
-        stdin: new PassThrough(), stdout: null, stderr: null, kill: () => true,
+        stdin: new PassThrough(), stdout: null, stderr: null, kill: vi.fn((_signal?: string) => true),
       });
       const runner = createSpawnRunner((event) => events.push(event), killTree, (() => child) as unknown as Parameters<typeof createSpawnRunner>[2]);
       runner.handle({ type: 'spawn', id: 4, file: 'claude', args: [] });
@@ -437,6 +502,7 @@ describe('createSpawnRunner', () => {
       const { runner, exit, posted } = standIn(killTree);
 
       runner.handle({ type: 'kill-tree', id: 4 });
+      await settle();
       expect(killTree).toHaveBeenCalledWith(77);
       // taskkill ends the process before it has finished with the tree.
       exit(1);
@@ -472,14 +538,40 @@ describe('createSpawnRunner', () => {
       expect(posted()).toEqual([{ type: 'tree-killed', id: 4, killed: false }]);
     });
 
-    it('says why a kill failed, whether it resolved with the reason or threw', async () => {
+    it('says why a kill failed, whether it resolved with the reason or threw, and stops the process alone', async () => {
       const said = standIn(() => Promise.resolve('taskkill 77 failed: ERROR: Access is denied.'));
       said.runner.handle({ type: 'kill-tree', id: 4 });
       const threw = standIn(() => Promise.reject(new Error('spawn taskkill.exe ENOENT')));
       threw.runner.handle({ type: 'kill-tree', id: 4 });
       await settle();
-      expect(said.posted()).toEqual([{ type: 'tree-killed', id: 4, killed: false, failure: 'taskkill 77 failed: ERROR: Access is denied.' }]);
-      expect(threw.posted()).toEqual([{ type: 'tree-killed', id: 4, killed: false, failure: 'spawn taskkill.exe ENOENT' }]);
+      expect(said.posted()).toEqual([{ type: 'tree-killed', id: 4, killed: false, failure: 'taskkill 77 failed: ERROR: Access is denied. (stopped 77 alone instead)' }]);
+      expect(threw.posted()).toEqual([{ type: 'tree-killed', id: 4, killed: false, failure: 'spawn taskkill.exe ENOENT (stopped 77 alone instead)' }]);
+      expect(said.child.kill).toHaveBeenCalledWith('SIGKILL');
+      expect(threw.child.kill).toHaveBeenCalledWith('SIGKILL');
+    });
+
+    it("doesn't stop a process alone that exited while its tree kill failed", async () => {
+      let finish = (_failure?: string) => {};
+      const { runner, child, exit, posted } = standIn(() => new Promise((resolve) => { finish = resolve; }));
+      runner.handle({ type: 'kill-tree', id: 4 });
+      await settle();
+      exit(1);
+      finish('taskkill 77 failed: ERROR: Access is denied.');
+      await settle();
+      expect(child.kill).not.toHaveBeenCalled();
+      expect(posted()).toContainEqual({ type: 'tree-killed', id: 4, killed: false, failure: 'taskkill 77 failed: ERROR: Access is denied.' });
+    });
+
+    it('answers and closes even when the tree kill throws rather than rejecting', async () => {
+      const { runner, exit, posted } = standIn(() => { throw new Error('no taskkill'); });
+      runner.handle({ type: 'kill-tree', id: 4 });
+      exit(1);
+      await settle();
+      expect(posted()).toEqual([
+        { type: 'exit', id: 4, code: 1, signal: null },
+        { type: 'tree-killed', id: 4, killed: false, failure: 'no taskkill' },
+        { type: 'close', id: 4 },
+      ]);
     });
 
     it('kills once when asked again while it is killing', async () => {

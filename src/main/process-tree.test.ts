@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 
-// taskkill and ps start in the process host (runProcess), never here.
+// taskkill and ps start in the process host (runToKill), never here.
 const mockRun = vi.hoisted(() => vi.fn());
-vi.mock('./process-host.js', () => ({ runProcess: mockRun }));
+vi.mock('./process-host.js', () => ({ runToKill: mockRun }));
 const mockExeca = vi.hoisted(() => vi.fn());
 vi.mock('execa', () => ({ execa: mockExeca }));
 const mockFork = vi.hoisted(() => vi.fn());
@@ -68,9 +68,9 @@ describe('listProcesses', () => {
   it('uses ps, started in the process host', async () => {
     mockRun.mockResolvedValue(psOutput([{ pid: 1, ppid: 0 }]));
     expect(await listProcesses()).toEqual([{ pid: 1, ppid: 0 }]);
-    // It only reads: if the host dies under it, it runs again (idempotent).
-    // It lists a tree to kill, so it never waits for a restarting host (urgent).
-    expect(mockRun).toHaveBeenCalledWith('ps', ['-A', '-o', 'pid=,ppid='], { timeout: 10_000, reject: false, idempotent: true, urgent: true });
+    // runToKill: it never waits for a restarting host, and runs again if
+    // the host dies under it (process-host-fallback.test.ts).
+    expect(mockRun).toHaveBeenCalledWith('ps', ['-A', '-o', 'pid=,ppid='], { timeout: 10_000, reject: false });
     expect(mockExeca).not.toHaveBeenCalled();
   });
 
@@ -123,8 +123,7 @@ describe('killDescendants on Windows', () => {
     const [command, args, opts] = mockRun.mock.calls[0];
     expect(command).toMatch(/\\System32\\taskkill\.exe$/i);
     expect(args).toEqual(['/PID', '700', '/T', '/F']);
-    // Closing a terminal doesn't wait for a restarting host either.
-    expect(opts).toMatchObject({ idempotent: true, urgent: true });
+    expect(opts).toEqual({ timeout: 10_000, reject: false });
   });
 
   it('logs a taskkill that failed', async () => {

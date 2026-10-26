@@ -1,6 +1,7 @@
 /**
- * The real hosts (process-host.ts) once the agent host has given up: an
- * agent starts in the main process, and its tree is killed from there with
+ * The real hosts (process-host.ts) when the agent host can't kill an
+ * agent's tree: it has given up, so the agent started in the main process,
+ * or it doesn't answer. The tree is killed from the main process with
  * taskkill (ps off Windows) in the git host, never waiting for that host.
  *
  * Each test loads its own copy of the hosts, on stand-in utility processes.
@@ -9,8 +10,9 @@
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
+import { spawn } from 'node:child_process';
 import { HOST_READY, type HostRequest } from './process-host-protocol.js';
-import type { HostedProcess } from './process-host-spawn.js';
+import { TREE_KILL_ANSWER_MS, type HostedProcess } from './process-host-spawn.js';
 
 const mockExeca = vi.hoisted(() => vi.fn());
 vi.mock('execa', () => ({ execa: mockExeca }));
@@ -35,11 +37,15 @@ class FakeGitHost extends EventEmitter {
 
 let stopHosts = () => {};
 const agents: HostedProcess[] = [];
+/** Real processes standing in for an agent the agent host started. */
+const standIns: ReturnType<typeof spawn>[] = [];
 
 afterEach(() => {
+  vi.useRealTimers();
   stopHosts();
   // On Windows the stand-in git host's "taskkill" kills nothing.
   for (const proc of agents.splice(0)) if (proc.pid && proc.exitCode === null && proc.signalCode === null) process.kill(proc.pid);
+  for (const child of standIns.splice(0)) if (child.exitCode === null && child.signalCode === null) child.kill();
   mockExeca.mockReset();
 });
 
@@ -104,7 +110,8 @@ describe('process host: an agent started in the main process, the agent host giv
     gitHost.emit('exit', 1);
 
     const killed = proc.killTree();
-    // Started inside the call: no waiting.
+    // Started at once: not after the restart, or HOST_WAIT_MS.
+    await new Promise((resolve) => setImmediate(resolve));
     const { file, args } = killCommand(proc.pid!);
     expect(mockExeca.mock.calls).toEqual([[file, args, { timeout: 10_000, reject: false }]]);
     await expect(killed).resolves.toBe(true);
@@ -118,11 +125,54 @@ describe('process host: an agent started in the main process, the agent host giv
     gitHost.hold = true;
 
     const killed = proc.killTree();
+    await new Promise((resolve) => setImmediate(resolve));
     const { file, args } = killCommand(proc.pid!);
     expect(gitHost.sent.map((r) => ({ file: r.file, args: r.args }))).toEqual([{ file, args }]);
     gitHost.emit('exit', 1);
 
     await expect(killed).resolves.toBe(true);
     expect(mockExeca.mock.calls).toEqual([[file, args, { timeout: 10_000, reject: false }]]);
+  });
+});
+
+describe('process host: an agent whose agent host stops answering', () => {
+  it(`has its tree killed from here, in the git host, by the pid it reported, after ${TREE_KILL_ANSWER_MS / 1000} s with no answer`, async () => {
+    vi.resetModules();
+    const { utilityProcess } = await import('electron');
+    const gitHost = new FakeGitHost();
+    const agentHost = Object.assign(new EventEmitter(), {
+      pid: 5151, sent: [] as { type?: string; id?: number }[], kill: () => true,
+      postMessage(message: { type?: string; id?: number }) { this.sent.push(message); },
+    });
+    vi.mocked(utilityProcess.fork).mockImplementation(((_script: string, _args: string[], options: { serviceName?: string }) =>
+      (options.serviceName === 'Grove agent host' ? agentHost : gitHost)) as never);
+    const hosts = await import('./process-host.js');
+    stopHosts = hosts.stopProcessHost;
+    hosts.startProcessHost();
+    gitHost.emit('message', HOST_READY);
+    agentHost.emit('message', HOST_READY);
+
+    const proc = hosts.spawnProcess('claude.exe', []);
+    const [request] = agentHost.sent;
+    // A real process stands in for the agent the host started, so the
+    // pid killed by is this test's own.
+    const agent = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore', env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } });
+    standIns.push(agent);
+    agentHost.emit('message', { type: 'spawned', id: request.id, pid: agent.pid, launchMs: 5 });
+
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    let outcome: boolean | string = 'waiting';
+    proc.killTree().then((killed) => { outcome = killed; }, (e: Error) => { outcome = e.message; });
+    expect(agentHost.sent).toContainEqual({ type: 'kill-tree', id: request.id });
+    await vi.advanceTimersByTimeAsync(TREE_KILL_ANSWER_MS - 1);
+    expect(gitHost.sent).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    vi.useRealTimers();
+
+    await vi.waitFor(() => expect(outcome).toBe(true));
+    const { file, args } = killCommand(agent.pid!);
+    expect(gitHost.sent.map((r) => ({ file: r.file, args: r.args, options: r.options }))).toEqual([
+      { file, args, options: { timeout: 10_000, reject: false } },
+    ]);
   });
 });

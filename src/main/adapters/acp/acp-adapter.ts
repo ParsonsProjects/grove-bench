@@ -411,8 +411,9 @@ export class AcpAdapter implements AgentAdapter {
     } finally {
       rpc.close();
       // On Windows the agent runs under npm's .cmd shim: kill() would stop
-      // only cmd.exe and leave the agent running in the folder.
-      await proc.killTree().catch(() => proc.kill());
+      // only cmd.exe and leave the agent running in the folder. A tree kill
+      // that fails still stops cmd.exe (createSpawnRunner).
+      await proc.killTree().catch(() => { /* the check's answer stands */ });
       try {
         fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
       } catch (e) {

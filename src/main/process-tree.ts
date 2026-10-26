@@ -2,17 +2,15 @@ import path from 'node:path';
 import { fork } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { logger } from './logger.js';
-import { runProcess } from './process-host.js';
-import {
-  isKillable, killPids, listProcessesWith, taskkillWith, treeOf, type ProcessEntry, type RunCommand,
-} from './process-tree-kill.js';
+import { runToKill } from './process-host.js';
+import { isKillable, killPids, listProcessesWith, taskkillWith, treeOf, type ProcessEntry } from './process-tree-kill.js';
 
 /**
  * Kill what runs in a terminal (killDescendants), from the main process. How
  * a tree is killed, and why taskkill, is in process-tree-kill.ts; an agent's
  * tree is killed by the agent host, which started it (HostedProcess.killTree).
  *
- * taskkill (and ps) start in the process host (runProcess), so a slow launch
+ * taskkill (and ps) start in the process host (runToKill), so a slow launch
  * never freezes the window: they run whenever a terminal closes. At quit
  * they still have the host, which stops only after the threads have closed
  * (will-quit, index.ts); once it has stopped they run here. They never wait
@@ -22,10 +20,8 @@ import {
  * while taskkill runs, it runs again in the main process.
  */
 
-const LIST_TIMEOUT_MS = 10_000;
-
-/** taskkill and ps in the process host, never waiting for it. */
-const run: RunCommand = (file, args, options) => runProcess(file, args, { ...options, idempotent: true, urgent: true });
+/** How long node-pty's helper has to list a console's processes. */
+const CONSOLE_LIST_TIMEOUT_MS = 10_000;
 
 /**
  * Kill everything started from a PTY shell, leaving the shell itself to its
@@ -39,7 +35,7 @@ const run: RunCommand = (file, args, options) => runProcess(file, args, { ...opt
 export async function killDescendants(shellPid: number): Promise<number[]> {
   if (process.platform === 'win32') {
     const roots = (await consoleProcesses(shellPid)).filter((pid) => pid !== shellPid && isKillable(pid));
-    const failure = await taskkillWith(roots, run);
+    const failure = await taskkillWith(roots, runToKill);
     if (failure) logger.warn(`[process-tree] ${failure}`);
     return roots;
   }
@@ -75,7 +71,7 @@ function consoleProcesses(shellPid: number): Promise<number[]> {
     const timer = setTimeout(() => {
       helper.kill();
       settle([]);
-    }, LIST_TIMEOUT_MS);
+    }, CONSOLE_LIST_TIMEOUT_MS);
     // The helper is on the console while it asks, so it lists itself.
     helper.once('message', (m: { consoleProcessList?: number[] }) => {
       settle((m.consoleProcessList ?? []).filter((pid) => pid !== helper.pid));
@@ -101,7 +97,7 @@ export function listProcesses(): Promise<ProcessEntry[]> {
 
 async function queryProcesses(): Promise<ProcessEntry[]> {
   try {
-    return await listProcessesWith(run);
+    return await listProcessesWith(runToKill);
   } catch (err) {
     logger.warn('[process-tree] could not list processes:', err);
     return [];
