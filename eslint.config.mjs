@@ -106,11 +106,17 @@ export default defineConfig(
   {
     // Mocks and fixtures in tests are often loosely typed on purpose, and
     // expect(obj.method) and vi.mocked(obj.method) never call the method
-    // unbound.
+    // unbound. Reading, calling or returning those loose values is fine
+    // too, as typescript-eslint's own tests allow; passing one to the code
+    // under test still has to match what it takes (no-unsafe-argument).
     files: ['**/*.test.ts', '**/__mocks__/**'],
     rules: {
       '@typescript-eslint/no-explicit-any': 'off',
       '@typescript-eslint/unbound-method': 'off',
+      '@typescript-eslint/no-unsafe-assignment': 'off',
+      '@typescript-eslint/no-unsafe-call': 'off',
+      '@typescript-eslint/no-unsafe-member-access': 'off',
+      '@typescript-eslint/no-unsafe-return': 'off',
     },
   },
 );

@@ -97,7 +97,7 @@ describe('ConversationGoal', () => {
     await renderWith(goal());
 
     await fireEvent.click(screen.getByLabelText('Edit the goal'));
-    const input = screen.getByLabelText('Thread goal') as HTMLInputElement;
+    const input = screen.getByLabelText<HTMLInputElement>('Thread goal');
     expect(input.value).toBe('Add a dark mode toggle');
     await fireEvent.input(input, { target: { value: 'Ship dark mode' } });
     await fireEvent.keyDown(input, { key: 'Enter' });

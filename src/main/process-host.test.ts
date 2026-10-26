@@ -1064,6 +1064,7 @@ describe('process host: every way a command runs here settles it alike', () => {
       // a rejection that isn't an Error.
       const runHere = vi.fn((file: string, args: string[]) => {
         if (file === 'throws') throw new Error('spawn EINVAL');
+        // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
         if (file === 'rejects') return Promise.reject('not an Error');
         return Promise.resolve({ stdout: `here: ${file} ${args.join(' ')}` });
       });
@@ -1290,7 +1291,7 @@ describe('process host: spawned processes', () => {
 
     // Starting: it waits for the host, and starts there.
     host.start();
-    proc = host.spawnInHost('typeperf', ['-sc', '1']);
+    host.spawnInHost('typeperf', ['-sc', '1']);
     latest().ready();
     expect(latest().sent).toEqual([{ type: 'spawn', id: 1, file: 'typeperf', args: ['-sc', '1'] }]);
 
