@@ -54,7 +54,7 @@ import path from 'node:path';
 import { logger } from './logger.js';
 import { agentHostGaveUp, runProcessInHost } from './process-host.js';
 import { recordCommandPids, runInAgentHost, type AgentHostRunOptions } from './process-host-run.js';
-import { treeOf } from './process-tree.js';
+import { treeOf } from './process-tree-kill.js';
 
 /** One process, from a snapshot of the process table. */
 export interface ProcessSample {

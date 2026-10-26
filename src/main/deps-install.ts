@@ -1,5 +1,4 @@
 import { spawnProcess, type HostedProcess } from './process-host.js';
-import { killTree } from './process-tree.js';
 import { logger } from './logger.js';
 
 /**
@@ -23,14 +22,10 @@ export async function installDependencies(cwd: string, npmCache: string, signal:
   // stays in the agent host. Nobody reads it, and sent here it would be
   // timed as agent output in the freeze log and health line.
   const install = spawnProcess('npm', args, { cwd, findCommand: true, stdout: 'ignore' });
-  const stop = () => {
-    if (install.pid === undefined) return;
-    killTree(install.pid).catch((e) => logger.warn(`Failed to stop npm install in ${cwd}:`, e));
-  };
+  // Killed by the agent host, which has it: before the host says it has
+  // started too.
   const onAbort = () => {
-    // Not started yet (the host hasn't said): kill it once it has.
-    if (install.pid === undefined) install.once('spawn', stop);
-    else stop();
+    install.killTree().catch((e: unknown) => logger.warn(`Failed to stop npm install in ${cwd}:`, e));
   };
   signal.addEventListener('abort', onAbort, { once: true });
   try {
@@ -41,7 +36,6 @@ export async function installDependencies(cwd: string, npmCache: string, signal:
     throw e;
   } finally {
     signal.removeEventListener('abort', onAbort);
-    install.off('spawn', stop);
   }
 }
 

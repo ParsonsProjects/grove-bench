@@ -31,7 +31,6 @@ import { hasApiKey, isApiKeyRejected, markApiKeyRejected } from './credentials.j
 import { CheckpointManager } from './checkpoints.js';
 import type { EventSearchHit } from './event-search.js';
 import { noGitCheckpoints } from './no-git-checkpoints.js';
-import { killTree } from './process-tree.js';
 import { within } from './within.js';
 import { previewManager } from './preview.js';
 import type { Emit, ManagedSession, SessionCompletionResult } from './session-types.js';
@@ -127,19 +126,18 @@ function settleQueryReady(session: ManagedSession): void {
 }
 
 /** Kill the agent's process tree while it is still running. Once it exits,
- *  whatever it left running can no longer be traced back to it. An agent
- *  that has only just launched has no pid yet: start() returns before the
- *  agent host reports it. */
-async function killAgentTree(handle: AgentQueryHandle, id: string, waitMs: number): Promise<void> {
-  let pid = handle.processId?.();
-  if (pid === undefined && handle.processStarted) {
-    const started = handle.processStarted();
-    if (await within(started, waitMs)) pid = await started;
-    else logger.warn(`Agent for ${id} reported no pid within ${waitMs} ms: closing it without killing its process tree`);
+ *  whatever it left running can no longer be traced back to it. The agent
+ *  host that runs it kills it (killProcessTree), so an agent that has only
+ *  just launched, whose pid the host hasn't reported yet, is killed too.
+ *  Never throws: a kill that failed is logged, and the close goes on. */
+async function killAgentTree(handle: AgentQueryHandle, id: string): Promise<void> {
+  if (!handle.killProcessTree) return;
+  try {
+    const pid = await handle.killProcessTree();
+    if (pid !== undefined) logger.info(`Killed agent process tree for ${id}: pid=${pid}`);
+  } catch (e) {
+    logger.warn(`Couldn't kill the agent process tree for ${id}:`, e);
   }
-  if (!pid) return;
-  await killTree(pid);
-  logger.info(`Killed agent process tree for ${id}: pid=${pid}`);
 }
 
 class AgentSessionManager {
@@ -147,9 +145,8 @@ class AgentSessionManager {
    *  releases the files its processes held before the worktree is removed.
    *  Tests set it to 0. */
   handleReleaseMs = 500;
-  /** How long a close or delete waits for an agent that is still starting,
-   *  and, separately, for the agent host to report a new agent's pid. Tests
-   *  shorten it. */
+  /** How long a close or delete waits for an agent that is still starting.
+   *  Tests shorten it. */
   agentStartWaitMs = 10_000;
   private sessions = new Map<string, ManagedSession>();
   private completionCallbacks = new Map<string, (result: SessionCompletionResult) => void>();
@@ -650,11 +647,11 @@ class AgentSessionManager {
 
     // Closed or destroyed while start() was in flight: nothing will read this
     // handle, so kill the agent as shutDown() would. shutDown() waits for the
-    // kill, which can itself wait for the agent's pid. Before the restart
-    // below: a thread that is going gets no new agent.
+    // kill. Before the restart below: a thread that is going gets no new
+    // agent.
     if (session.destroying) {
       session.abandonedStart = (async () => {
-        await killAgentTree(handle, id, this.agentStartWaitMs).catch((e) => logger.warn(`[runQuery] session=${id} could not kill the agent it started as it closed:`, e));
+        await killAgentTree(handle, id);
         try { handle.close(); } catch { /* may already be closed */ }
       })();
       session.isStartingQuery = false;
@@ -668,7 +665,7 @@ class AgentSessionManager {
     // against a dead query). Killed first: on Windows close() alone leaves the
     // agent running for seconds beside the new one.
     if (session.restartRequested) {
-      await killAgentTree(handle, id, this.agentStartWaitMs).catch((e) => logger.warn(`[runQuery] session=${id} could not kill the agent a stop replaced:`, e));
+      await killAgentTree(handle, id);
       try { handle.close(); } catch { /* may already be closed */ }
       this.relaunchQuery(session);
       return;
@@ -1935,7 +1932,7 @@ class AgentSessionManager {
 
     const settled = (async () => {
       // Kill the tree while the agent is still running, as shutDown() does.
-      await killAgentTree(handle, id, this.agentStartWaitMs);
+      await killAgentTree(handle, id);
       try { handle.close(); } catch { /* may already be closed */ }
       abortController.abort();
     })();
@@ -2091,7 +2088,7 @@ class AgentSessionManager {
     }
     await session.abandonedStart;
 
-    if (session.queryHandle) await killAgentTree(session.queryHandle, id, this.agentStartWaitMs);
+    if (session.queryHandle) await killAgentTree(session.queryHandle, id);
 
     // Close the query and input stream before aborting so the SDK tidies up its side
     try {

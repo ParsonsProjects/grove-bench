@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
-import { createSpawnRunner, HostedProcess } from './process-host-spawn.js';
+import { createSpawnRunner, HostedProcess, type ProcessCommand } from './process-host-spawn.js';
 
 // npm install starts in the agent host (spawnProcess), never here.
 const hosted = vi.hoisted(() => ({ spawnProcess: vi.fn() }));
@@ -19,22 +19,24 @@ vi.mock('cross-spawn', () => ({
   },
 }));
 vi.mock('execa', () => ({ execa: vi.fn() }));
-vi.mock('./process-tree.js', () => ({ killTree: vi.fn(async () => {}) }));
 vi.mock('./logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
 import { execa } from 'execa';
-import { killTree } from './process-tree.js';
 import { installDependencies } from './deps-install.js';
 
-/** A running install, driven by the test as the host would drive it. */
+/** A running install, driven by the test as the host would drive it, and
+ *  what it was sent: once `connect`ed, as when the host has it. */
 function fakeInstall() {
   const proc = new HostedProcess('npm install');
   hosted.spawnProcess.mockReturnValue(proc);
   const send = (event: Parameters<HostedProcess['receive']>[0]) => proc.receive(event);
+  const sent: ProcessCommand[] = [];
   return {
     proc,
+    sent,
+    connect: () => proc.connect((command) => sent.push(command)),
     started: (pid = 4321) => send({ type: 'spawned', id: 1, pid, launchMs: 5 }),
     stderr: (data: string) => send({ type: 'stderr', id: 1, data }),
     /** It exits with `code` (or is killed) and its output ends. */
@@ -54,10 +56,10 @@ function fakeInstall() {
  * createSpawnRunner starts the process with `spawn` inside the call, before
  * it returns.
  */
-function spawnHere(spawn: Parameters<typeof createSpawnRunner>[1]) {
+function spawnHere(spawn: Parameters<typeof createSpawnRunner>[2]) {
   hosted.spawnProcess.mockImplementation((file: string, args: string[], options: object) => {
     const proc = new HostedProcess(file);
-    const runner = createSpawnRunner((event) => proc.receive(event), spawn);
+    const runner = createSpawnRunner((event) => proc.receive(event), () => Promise.resolve(undefined), spawn);
     runner.handle({ type: 'spawn', id: 1, file, args, ...options });
     proc.connect((command) => runner.handle({ ...command, id: 1 }));
     return proc;
@@ -114,31 +116,49 @@ describe('installDependencies', () => {
     expect(execa).not.toHaveBeenCalled();
   });
 
-  it('kills the whole install tree on abort and rejects with the abort', async () => {
+  it('kills the whole install tree on abort, in the agent host, and rejects with the abort', async () => {
     const install = fakeInstall();
+    install.connect();
     const abort = new AbortController();
     const done = installDependencies('/wt', '/cache', abort.signal);
     install.started(4321);
 
     abort.abort();
-    expect(killTree).toHaveBeenCalledWith(4321);
+    expect(install.sent).toEqual([{ type: 'kill-tree' }]);
+    install.proc.receive({ type: 'tree-killed', id: 1, killed: true });
     install.exit(1);
 
     await expect(done).rejects.toMatchObject({ name: 'AbortError' });
   });
 
-  it('kills an install aborted before it started once it starts', async () => {
+  it('kills an install aborted before the host said it started: the host kills it once it has', async () => {
     const install = fakeInstall();
+    install.connect();
     const abort = new AbortController();
     const done = installDependencies('/wt', '/cache', abort.signal);
 
     abort.abort();
-    expect(killTree).not.toHaveBeenCalled();
+    expect(install.sent).toEqual([{ type: 'kill-tree' }]);
     install.started(777);
-    expect(killTree).toHaveBeenCalledWith(777);
     install.exit(null, 'SIGKILL');
 
     await expect(done).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
+  it('says so when the abort could not kill the install', async () => {
+    const { logger } = await import('./logger.js');
+    const install = fakeInstall();
+    install.connect();
+    const abort = new AbortController();
+    const done = installDependencies('/wt', '/cache', abort.signal);
+    install.started(4321);
+
+    abort.abort();
+    install.proc.receive({ type: 'tree-killed', id: 1, killed: false, failure: 'taskkill 4321 failed: ERROR: Access is denied.' });
+    install.exit(1);
+
+    await expect(done).rejects.toMatchObject({ name: 'AbortError' });
+    expect(logger.warn).toHaveBeenCalledWith('Failed to stop npm install in /wt:', expect.objectContaining({ message: 'taskkill 4321 failed: ERROR: Access is denied.' }));
   });
 
   it('passes a real install failure through, with what npm wrote to stderr', async () => {
@@ -161,7 +181,7 @@ describe('installDependencies', () => {
   it('rejects with ENOENT on Windows too, where cmd.exe runs the missing npm and exits 1', async () => {
     setPlatform('win32');
     const cmd = fakeChild();
-    spawnHere((() => cmd) as unknown as Parameters<typeof createSpawnRunner>[1]);
+    spawnHere((() => cmd) as unknown as Parameters<typeof createSpawnRunner>[2]);
     const done = installDependencies('C:\\wt', 'C:\\cache', new AbortController().signal);
     cmd.stderr.end("'npm' is not recognized as an internal or external command,\r\noperable program or batch file.\r\n");
     await settle();

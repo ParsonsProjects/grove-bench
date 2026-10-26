@@ -67,7 +67,8 @@ import {
   HOST_READY, isHostReply, isHostStarted, isSpawnEvent, reviveError, serializeError,
   type HostedOptions, type HostReply, type HostRequest, type ProcessResult, type SpawnEvent, type SpawnRequest,
 } from './process-host-protocol.js';
-import { createSpawnRunner, HostedProcess, type SpawnRunner } from './process-host-spawn.js';
+import { createSpawnRunner, HostedProcess, type KillTree, type SpawnRunner } from './process-host-spawn.js';
+import { killTreeWith, type RunCommand } from './process-tree-kill.js';
 
 export type { HostedOptions, ProcessResult } from './process-host-protocol.js';
 export type { HostedProcess } from './process-host-spawn.js';
@@ -150,6 +151,10 @@ export interface ProcessHostDeps {
   runHere: (file: string, args: string[], options?: HostedOptions) => Promise<unknown>;
   /** Start processes in this process, posting what they do. */
   spawnHere?: (post: (event: SpawnEvent) => void) => SpawnRunner;
+  /** Kill a process's tree from this process: one that started here (the
+   *  host down), or one whose host doesn't answer a tree kill in time
+   *  (HostedProcess.killTree). By default with runHere. */
+  killTreeHere?: KillTree;
   /** Stop a process the host started, once the host is gone. */
   killPid?: (pid: number) => void;
   now?: () => number;
@@ -203,6 +208,8 @@ export function createProcessHost(deps: ProcessHostDeps) {
   const note = deps.note ?? noteInLogs;
   const name = deps.name ?? 'process host';
   const timeOutput = deps.timeOutput ?? ((_chars: number, deliver: () => void) => deliver());
+  const killTreeHere = deps.killTreeHere
+    ?? ((pid: number) => killTreeWith(pid, (file, args, options) => deps.runHere(file, args, options) as Promise<ProcessResult>));
 
   let state: State = 'idle';
   let host: HostProcess | null = null;
@@ -556,14 +563,14 @@ export function createProcessHost(deps: ProcessHostDeps) {
    * host can't take it, it fails to start instead ('error', then 'close').
    */
   function spawn(file: string, args: string[], options: SpawnProcessOptions = {}, hostOnly = false): HostedProcess {
-    const proc = new HostedProcess(launchLabel(file, [file, ...args]));
+    const proc = new HostedProcess(launchLabel(file, [file, ...args]), killTreeHere);
     // `agentOutput` stays here; the host gets the rest.
     const { agentOutput = true, ...spawnOptions } = options;
     if (!agentOutput) notAgents.add(proc);
     const request: Omit<SpawnRequest, 'id'> = { type: 'spawn', file, args, ...spawnOptions };
     const launch = (inHost: boolean) => {
       // Stopped before it started: there's nothing to start.
-      if (proc.killed) {
+      if (proc.stopRequested) {
         proc.lost();
         return;
       }
@@ -597,7 +604,8 @@ export function createProcessHost(deps: ProcessHostDeps) {
         });
         return;
       }
-      const runner = (deps.spawnHere ?? createSpawnRunner)((event) => deliver(proc, event));
+      const post = (event: SpawnEvent) => deliver(proc, event);
+      const runner = deps.spawnHere ? deps.spawnHere(post) : createSpawnRunner(post, killTreeHere);
       runner.handle({ ...request, id: 0 });
       proc.connect((command) => runner.handle({ ...command, id: 0 }));
     };
@@ -729,10 +737,21 @@ const processHost = createProcessHost({
   runHere: runInMain,
 });
 
+/** Run taskkill (or ps, off Windows) to kill a process tree
+ *  (process-tree-kill.ts) in the process host: never waiting for it when it
+ *  isn't up (urgent), since the processes keep running until they are
+ *  killed, and run again if it dies or stops under it (idempotent). */
+export const runToKill: RunCommand = (file, args, options) =>
+  processHost.run(file, args, { ...options, idempotent: true, urgent: true }) as Promise<ProcessResult>;
+
 /** The same host script, for the agents' long-running processes only. */
 const agentHost = createProcessHost({
   fork: () => utilityProcess.fork(hostScriptPath(), [], { serviceName: 'Grove agent host' }),
   runHere: runInMain,
+  // An agent started here (the agent host down), or one whose host doesn't
+  // answer a tree kill in time, has its tree killed from here: taskkill (ps
+  // off Windows) in the git host, as for a terminal (process-tree.ts).
+  killTreeHere: (pid) => killTreeWith(pid, runToKill),
   name: 'agent host',
   runs: 'agents',
   timeOutput: freezeLog.timeAgentOutput,

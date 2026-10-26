@@ -286,13 +286,15 @@ export interface AgentQueryHandle {
   /** Signal no more messages — for single-shot sessions */
   closeInput?(): void;
   /** PID of the local agent process while it is running: undefined before it
-   *  spawns and once it has exited. Closing the conversation kills this
-   *  process tree so background tasks don't keep ports open. */
+   *  spawns and once it has exited. */
   processId?(): number | undefined;
-  /** Resolves with processId() once the agent's process has started (start()
-   *  returns before the agent host reports its pid), or with undefined if it
-   *  ended first. */
-  processStarted?(): Promise<number | undefined>;
+  /** Kill the agent's process and everything it started, so background tasks
+   *  don't keep ports open once the conversation closes. The agent host that
+   *  runs it does it (HostedProcess.killTree), so it works before the host
+   *  has reported the pid. Resolves with the pid whose tree was killed, or
+   *  undefined when there was nothing to kill (no process yet, or it had
+   *  exited). Rejects when the kill failed. */
+  killProcessTree?(): Promise<number | undefined>;
   /** The executable processId() names, lowercase, as Windows lists the
    *  process (claude.exe), when the adapter knows it. The health line checks
    *  its process list against it (process-memory.ts). */

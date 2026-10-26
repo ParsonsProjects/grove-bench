@@ -52,10 +52,10 @@ vi.mock('./worktree-manager.js', () => ({
     getWorktreeOrManifest: vi.fn().mockResolvedValue(undefined),
   },
 }));
-const processTree = vi.hoisted(() => ({
-  killTree: vi.fn(async (_pid: number) => {}),
+/** The agent host killing a mock agent's process tree (killProcessTree). */
+const agentTree = vi.hoisted(() => ({
+  kill: vi.fn(async (_pid: number) => {}),
 }));
-vi.mock('./process-tree.js', () => processTree);
 vi.mock('./settings.js', () => ({
   getSettings: vi.fn(() => ({
     defaultSystemPromptAppend: null,
@@ -204,9 +204,6 @@ class MockAdapter implements AgentAdapter {
   startGate: Promise<void> | null = null;
   /** PID the query handle reports for its agent process. */
   pid: number | undefined = undefined;
-  /** Until this resolves, processStarted() waits: the agent host reports a
-   *  launched agent's pid a moment after start() returns. */
-  pidReported: Promise<void> | null = null;
   /** The handle the last start() returned. */
   lastHandle: AgentQueryHandle | null = null;
   /** Every handle start() has returned, to check none is left running. */
@@ -301,8 +298,9 @@ class MockAdapter implements AgentAdapter {
       }),
       getSessionId: () => sessionId,
       processId: () => this.pid,
-      processStarted: async () => {
-        await this.pidReported;
+      killProcessTree: async () => {
+        if (this.pid === undefined) return undefined;
+        await agentTree.kill(this.pid);
         return this.pid;
       },
       processExe: () => 'claude.exe',
@@ -1991,12 +1989,12 @@ describe('AgentSessionManager.destroySession()', () => {
     await sessionManager.createSession({ id: 'test-release', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
     await vi.waitFor(() => expect(sessionManager.getSession('test-release')?.queryHandle).toBeTruthy());
     let killedAt = 0;
-    processTree.killTree.mockImplementationOnce(async () => { killedAt = performance.now(); });
+    agentTree.kill.mockImplementationOnce(async () => { killedAt = performance.now(); });
     const before = sessionManager.handleReleaseMs;
     sessionManager.handleReleaseMs = 40;
     try {
       await sessionManager.destroySession('test-release');
-      expect(processTree.killTree).toHaveBeenCalledWith(4242);
+      expect(agentTree.kill).toHaveBeenCalledWith(4242);
       expect(performance.now() - killedAt).toBeGreaterThanOrEqual(35);
     } finally {
       sessionManager.handleReleaseMs = before;
@@ -2068,7 +2066,7 @@ describe('AgentSessionManager.closeSession()', () => {
     expect(session.checkpoints.cleanup).not.toHaveBeenCalled();
     expect(win._send).toHaveBeenCalledWith(expect.any(String), 'test-close', 'stopped');
     // No process to clean up when the handle reports none
-    expect(processTree.killTree).not.toHaveBeenCalled();
+    expect(agentTree.kill).not.toHaveBeenCalled();
   });
 
   it('kills the agent process tree before closing its query', async () => {
@@ -2078,15 +2076,15 @@ describe('AgentSessionManager.closeSession()', () => {
 
     await sessionManager.closeSession('test-close-tree');
 
-    expect(processTree.killTree).toHaveBeenCalledWith(4242);
-    expect(processTree.killTree.mock.invocationCallOrder[0])
+    expect(agentTree.kill).toHaveBeenCalledWith(4242);
+    expect(agentTree.kill.mock.invocationCallOrder[0])
       .toBeLessThan(vi.mocked(handle.close).mock.invocationCallOrder[0]);
   });
 
   it('does not report the killed agent process as an error', async () => {
     mockAdapter.pid = 4343;
     const { win } = await startSession('test-close-quiet');
-    processTree.killTree.mockImplementationOnce(async () => {
+    agentTree.kill.mockImplementationOnce(async () => {
       mockAdapter.control!.error(new Error('Claude Code process exited with code 1'));
       await new Promise((r) => setTimeout(r, 10));
     });
@@ -2101,7 +2099,7 @@ describe('AgentSessionManager.closeSession()', () => {
   it('does not report an error event the agent sends as it is killed', async () => {
     mockAdapter.pid = 4444;
     const { win, session } = await startSession('test-close-error-event');
-    processTree.killTree.mockImplementationOnce(async () => {
+    agentTree.kill.mockImplementationOnce(async () => {
       // As an ACP agent does when its process exits before its query closes.
       mockAdapter.control!.emitEvent({ type: 'error', message: 'Mock Agent exited with code 1' });
       await new Promise((r) => setTimeout(r, 10));
@@ -2119,7 +2117,7 @@ describe('AgentSessionManager.closeSession()', () => {
     mockAdapter.pid = 4545;
     await startSession('test-delete-stop');
     let releaseKill!: () => void;
-    processTree.killTree.mockImplementationOnce(() => new Promise<void>((r) => { releaseKill = r; }));
+    agentTree.kill.mockImplementationOnce(() => new Promise<void>((r) => { releaseKill = r; }));
     const deleting = sessionManager.destroySession('test-delete-stop');
     await vi.waitFor(() => expect(releaseKill).toBeDefined());
     const beforeRestart = vi.fn(async () => {});
@@ -2149,7 +2147,7 @@ describe('AgentSessionManager.closeSession()', () => {
     mockAdapter.pid = 5150;
     await startSession('test-reopen');
     let releaseExit!: () => void;
-    processTree.killTree.mockImplementationOnce(() => new Promise((r) => { releaseExit = () => r(); }));
+    agentTree.kill.mockImplementationOnce(() => new Promise((r) => { releaseExit = () => r(); }));
 
     const closing = sessionManager.closeSession('test-reopen');
     expect(sessionManager.getSession('test-reopen')).toBeUndefined();
@@ -2199,62 +2197,30 @@ describe('AgentSessionManager.closeSession()', () => {
       await ending;
 
       const handle = mockAdapter.lastHandle!;
-      expect(processTree.killTree).toHaveBeenCalledWith(6060);
-      expect(processTree.killTree.mock.invocationCallOrder[0])
+      expect(agentTree.kill).toHaveBeenCalledWith(6060);
+      expect(agentTree.kill.mock.invocationCallOrder[0])
         .toBeLessThan(vi.mocked(handle.close).mock.invocationCallOrder[0]);
     });
 
-    it('waits for the agent host to report the pid of an agent that has just launched', async () => {
-      let reportPid!: () => void;
-      mockAdapter.pidReported = new Promise<void>((r) => { reportPid = r; });
+    it('goes on with the close when the kill fails, and says so', async () => {
       let openGate!: () => void;
       mockAdapter.startGate = new Promise<void>((r) => { openGate = r; });
+      mockAdapter.pid = 6161;
+      agentTree.kill.mockRejectedValueOnce(new Error('taskkill 6161 failed: ERROR: Access is denied.'));
       await sessionManager.createSession({
-        id: 'test-end-launching', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+        id: 'test-end-kill-fails', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
       });
       await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(1));
 
-      const { ending } = await end('test-end-launching');
+      const { ending } = await end('test-end-kill-fails');
       openGate();
-      await new Promise((r) => setTimeout(r, 20));
-      expect(processTree.killTree).not.toHaveBeenCalled();
-      mockAdapter.pid = 6161;
-      reportPid();
       await ending;
 
-      expect(processTree.killTree).toHaveBeenCalledWith(6161);
-    });
-
-    it('waits for the start and then the kill, each up to its own limit', async () => {
-      const previous = sessionManager.agentStartWaitMs;
-      sessionManager.agentStartWaitMs = 400;
-      try {
-        let reportPid!: () => void;
-        mockAdapter.pidReported = new Promise<void>((r) => { reportPid = r; });
-        let openGate!: () => void;
-        mockAdapter.startGate = new Promise<void>((r) => { openGate = r; });
-        let killed = false;
-        processTree.killTree.mockImplementationOnce(async () => { killed = true; });
-        await sessionManager.createSession({
-          id: 'test-end-slow-launch', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
-        });
-        await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(1));
-
-        const { ending } = await end('test-end-slow-launch');
-        const killedFirst = ending.then(() => killed);
-        await new Promise((r) => setTimeout(r, 200));
-        openGate();
-        // Past the 400 ms the close waits for the start, but within the
-        // 400 ms the kill then waits for the pid.
-        await new Promise((r) => setTimeout(r, 300));
-        mockAdapter.pid = 6565;
-        reportPid();
-
-        expect(await killedFirst).toBe(true);
-        expect(processTree.killTree).toHaveBeenCalledWith(6565);
-      } finally {
-        sessionManager.agentStartWaitMs = previous;
-      }
+      expect(mockAdapter.lastHandle!.close).toHaveBeenCalled();
+      expect(logger.warn).toHaveBeenCalledWith(
+        "Couldn't kill the agent process tree for test-end-kill-fails:",
+        expect.objectContaining({ message: 'taskkill 6161 failed: ERROR: Access is denied.' }),
+      );
     });
 
     it('kills the agent, and starts no second one, for a stop that came during startup', async () => {
@@ -2273,7 +2239,7 @@ describe('AgentSessionManager.closeSession()', () => {
       await new Promise((r) => setTimeout(r, 20));
 
       expect(mockAdapter.startCallCount).toBe(1);
-      expect(processTree.killTree).toHaveBeenCalledWith(6363);
+      expect(agentTree.kill).toHaveBeenCalledWith(6363);
       expect(mockAdapter.lastHandle!.close).toHaveBeenCalled();
     });
 
@@ -2282,7 +2248,7 @@ describe('AgentSessionManager.closeSession()', () => {
       mockAdapter.startGate = new Promise<void>((r) => { openGate = r; });
       mockAdapter.pid = 6464;
       let releaseKill!: () => void;
-      processTree.killTree.mockImplementationOnce(() => new Promise<void>((r) => { releaseKill = r; }));
+      agentTree.kill.mockImplementationOnce(() => new Promise<void>((r) => { releaseKill = r; }));
       await sessionManager.createSession({
         id: 'test-end-replacing', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
       });
@@ -2338,21 +2304,21 @@ describe('AgentSessionManager.closeSession()', () => {
     });
   });
 
-  it('kills an agent deleted just after it launched, once the agent host reports its pid', async () => {
-    let reportPid!: () => void;
-    mockAdapter.pidReported = new Promise<void>((r) => { reportPid = r; });
+  it('waits for the agent host to kill a deleted agent before closing it', async () => {
+    mockAdapter.pid = 6262;
+    let finishKill!: () => void;
+    agentTree.kill.mockImplementationOnce(() => new Promise<void>((r) => { finishKill = r; }));
     const { session } = await startSession('test-delete-launched');
     const handle = session.queryHandle!;
 
     const deleting = sessionManager.destroySession('test-delete-launched');
+    await vi.waitFor(() => expect(agentTree.kill).toHaveBeenCalledWith(6262));
     await new Promise((r) => setTimeout(r, 20));
     expect(handle.close).not.toHaveBeenCalled();
-    mockAdapter.pid = 6262;
-    reportPid();
+    finishKill();
     await deleting;
 
-    expect(processTree.killTree).toHaveBeenCalledWith(6262);
-    expect(processTree.killTree.mock.invocationCallOrder[0])
+    expect(agentTree.kill.mock.invocationCallOrder[0])
       .toBeLessThan(vi.mocked(handle.close).mock.invocationCallOrder[0]);
   });
 
@@ -2754,7 +2720,7 @@ describe('AgentSessionManager turn state for a loading history', () => {
     turnFiles.found = [{ path: 'chart.png', absPath: '/repo/chart.png', kind: 'image', size: 70 }];
     let listed!: () => void;
     turnFiles.listing = new Promise<void>((r) => { listed = r; });
-    processTree.killTree.mockImplementationOnce(async () => {
+    agentTree.kill.mockImplementationOnce(async () => {
       // The agent finishes the turn as it is killed, and the turn's files
       // are still being listed when the kill ends.
       mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false });
@@ -2786,7 +2752,7 @@ describe('AgentSessionManager turn state for a loading history', () => {
       const { imageData: _images, ...rest } = event;
       return { ...rest, images: [{ file: 'tool0.png' }] };
     });
-    processTree.killTree.mockImplementationOnce(async () => {
+    agentTree.kill.mockImplementationOnce(async () => {
       // A background task finished: the agent takes it up by itself as it
       // is killed, and a screenshot it took is still being saved after.
       mockAdapter.control!.emitEvent({ type: 'assistant_text', text: 'The build finished', uuid: 'u1' });
@@ -2831,8 +2797,8 @@ describe('AgentSessionManager sleep and wake', () => {
 
     expect(await sessionManager.sleepSession('test-sleep')).toBe(true);
 
-    expect(processTree.killTree).toHaveBeenCalledWith(6100);
-    expect(processTree.killTree.mock.invocationCallOrder[0])
+    expect(agentTree.kill).toHaveBeenCalledWith(6100);
+    expect(agentTree.kill.mock.invocationCallOrder[0])
       .toBeLessThan(vi.mocked(handle.close).mock.invocationCallOrder[0]);
     expect(sessionManager.getSession('test-sleep')).toBe(session);
     expect(session.status).toBe('sleeping');
@@ -2857,7 +2823,7 @@ describe('AgentSessionManager sleep and wake', () => {
   it('is not reported as the conversation ending or as an error', async () => {
     mockAdapter.pid = 6200;
     const { win } = await startSession('test-sleep-quiet');
-    processTree.killTree.mockImplementationOnce(async () => {
+    agentTree.kill.mockImplementationOnce(async () => {
       mockAdapter.control!.error(new Error('Claude Code process exited with code 1'));
       await new Promise((r) => setTimeout(r, 10));
     });
@@ -2946,7 +2912,7 @@ describe('AgentSessionManager sleep and wake', () => {
     mockAdapter.pid = 7100;
     const { session } = await startSession('test-wake-stop');
     let releaseKill!: () => void;
-    processTree.killTree.mockImplementationOnce(() => new Promise<void>((r) => { releaseKill = () => r(); }));
+    agentTree.kill.mockImplementationOnce(() => new Promise<void>((r) => { releaseKill = () => r(); }));
     const sleeping = sessionManager.sleepSession('test-wake-stop');
     await vi.waitFor(() => expect(releaseKill).toBeDefined());
     const startsBefore = mockAdapter.startCallCount;
@@ -3159,7 +3125,7 @@ describe('AgentSessionManager sleep and wake', () => {
     mockAdapter.pid = 6300;
     await startSession('test-sleep-close-race');
     let releaseKill!: () => void;
-    processTree.killTree.mockImplementationOnce(() => new Promise((r) => { releaseKill = () => r(); }));
+    agentTree.kill.mockImplementationOnce(() => new Promise((r) => { releaseKill = () => r(); }));
 
     const sleeping = sessionManager.sleepSession('test-sleep-close-race');
     const closing = sessionManager.closeSession('test-sleep-close-race');
@@ -4425,8 +4391,8 @@ describe('AgentSessionManager stop/restart race', () => {
     await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(2));
 
     const [replaced] = mockAdapter.handles;
-    expect(processTree.killTree).toHaveBeenCalledWith(4646);
-    expect(processTree.killTree.mock.invocationCallOrder[0])
+    expect(agentTree.kill).toHaveBeenCalledWith(4646);
+    expect(agentTree.kill.mock.invocationCallOrder[0])
       .toBeLessThan(vi.mocked(replaced.close).mock.invocationCallOrder[0]);
     await sessionManager.destroySession('test-race-kill');
   });
@@ -5779,7 +5745,7 @@ describe('AgentSessionManager streamed text and thinking', () => {
     mockAdapter.pid = 7200;
     const { win, control } = await startSession('stream-wake', { running: true });
     let releaseKill!: () => void;
-    processTree.killTree.mockImplementationOnce(() => new Promise<void>((r) => { releaseKill = () => r(); }));
+    agentTree.kill.mockImplementationOnce(() => new Promise<void>((r) => { releaseKill = () => r(); }));
     holdTimers();
 
     const sleeping = sessionManager.sleepSession('stream-wake');
