@@ -857,6 +857,18 @@ export interface SkillInfo {
   path?: string;
 }
 
+/** A skill's SKILL.md as the Skills drawer edits it (skills.ts readSkillFile). */
+export interface SkillFile {
+  /** The file Save writes: a shared skill's own SKILL.md, not Claude Code's
+   *  link to it. */
+  path: string;
+  /** Its text, with LF line endings and no byte order mark. Save puts back
+   *  whichever the file had. */
+  content: string;
+  /** Claude Code's link to the skill, which Save brings up to date. */
+  linkPath?: string;
+}
+
 /** What Share and Link in the Skills drawer would change (skill-sharing.ts):
  *  skills only Claude Code can see, shared skills it can't see yet (or sees
  *  an old copy of), and its links to shared skills that were deleted. */
@@ -1458,6 +1470,14 @@ export interface GroveBenchAPI {
    *  the session's agent is Claude Code. Project scope writes into the
    *  session's worktree; user scope applies to all repos. */
   addSkill(sessionId: string, fallbackPath: string, def: SkillDefinition): Promise<SkillInfo>;
+  /** A listed skill's SKILL.md to edit (`skillPath` as listSkills gave it):
+   *  for a Claude Code link, the shared file it points to. */
+  readSkill(sessionId: string, fallbackPath: string, skillPath: string): Promise<SkillFile>;
+  /** Save a listed skill's SKILL.md. Rejects if the file no longer reads
+   *  `expected` (readSkill's content), or if the text renames the skill. */
+  saveSkill(sessionId: string, fallbackPath: string, skillPath: string, expected: string, content: string): Promise<SkillInfo>;
+  /** Open a listed skill's SKILL.md in VS Code, Cursor or the system default. */
+  openSkillInEditor(sessionId: string, fallbackPath: string, skillPath: string): Promise<void>;
   /** What Share and Link would change for the session's project. Links are
    *  only offered in a Claude Code thread. */
   getSkillSharing(sessionId: string, fallbackPath: string): Promise<SkillSharing>;
@@ -2270,6 +2290,9 @@ export const IPC = {
   SKILLS_LIST: 'skills:list',
   SKILLS_LIST_FOR_AGENT: 'skills:listForAgent',
   SKILLS_ADD: 'skills:add',
+  SKILLS_READ: 'skills:read',
+  SKILLS_SAVE: 'skills:save',
+  SKILLS_OPEN: 'skills:open',
   SKILLS_SHARING: 'skills:sharing',
   SKILLS_SHARE: 'skills:share',
   SKILLS_LINK: 'skills:link',

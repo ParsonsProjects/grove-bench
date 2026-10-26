@@ -1,4 +1,6 @@
 import type { SkillScheduleInput } from '../../shared/skill-schedules.js';
+import type { SkillFile, SkillInfo } from '../../shared/types.js';
+import type { SkillGroupId } from '../lib/skill-groups.js';
 
 export type SkillsPanelTab = 'thread' | 'scheduled';
 
@@ -6,6 +8,18 @@ export type SkillsPanelTab = 'thread' | 'scheduled';
 export interface ScheduleFormState {
   repoPath: string;
   initial?: Partial<SkillScheduleInput>;
+}
+
+/** A skill's SKILL.md open in the This thread tab's editor. */
+export interface SkillEditState {
+  /** The thread whose agent and worktree the skill is read from. */
+  sessionId: string;
+  /** As listed: reading and saving go by its path. */
+  skill: SkillInfo;
+  /** The file as last read; null while it loads. */
+  file: SkillFile | null;
+  /** The text in the editor. */
+  text: string;
 }
 
 /**
@@ -21,6 +35,21 @@ class SkillsPanelStore {
   focusRepo = $state<string | null>(null);
   /** The schedule form, when one is open in the Scheduled tab. */
   form = $state<ScheduleFormState | null>(null);
+  /** The skill editor, when one is open in the This thread tab. It takes
+   *  the list's place whichever thread is open, so another thread opening
+   *  meanwhile can't hide it or its unsaved changes. */
+  edit = $state<SkillEditState | null>(null);
+  /** What runs once the editor's unsaved changes are dropped, while it asks. */
+  pendingDiscard = $state<(() => void) | null>(null);
+  /** The This thread tab's sections folded away, kept while the app runs. */
+  collapsed = $state<SkillGroupId[]>([]);
+  /** The This thread tab's search, kept while a skill is edited. */
+  query = $state('');
+
+  /** The editor's text differs from the file it read. */
+  get unsaved(): boolean {
+    return !!this.edit?.file && this.edit.text !== this.edit.file.content;
+  }
 
   showThread(): void {
     this.tab = 'thread';
@@ -43,9 +72,53 @@ class SkillsPanelStore {
     this.open = true;
   }
 
+  /** Open a skill's SKILL.md in the This thread tab's editor. */
+  editSkill(sessionId: string, skill: SkillInfo): void {
+    this.tab = 'thread';
+    this.form = null;
+    this.pendingDiscard = null;
+    this.edit = { sessionId, skill, file: null, text: '' };
+    this.open = true;
+  }
+
+  /** Run `then` now, or once the editor's unsaved changes are discarded:
+   *  the editor asks in place of its Save. */
+  unlessUnsaved(then: () => void): void {
+    if (this.unsaved) {
+      this.pendingDiscard = then;
+      return;
+    }
+    then();
+  }
+
+  /** Drop the editor's changes and do what was waiting on that. */
+  discardEdit(): void {
+    const then = this.pendingDiscard;
+    this.pendingDiscard = null;
+    this.edit = null;
+    then?.();
+  }
+
+  /** Leave the editor for the list, asking first about unsaved changes. */
+  leaveEdit(): void {
+    this.unlessUnsaved(() => { this.edit = null; });
+  }
+
+  /** Close the drawer, asking first about unsaved changes. */
+  requestClose(): void {
+    this.unlessUnsaved(() => this.close());
+  }
+
+  toggleGroup(id: SkillGroupId): void {
+    this.collapsed = this.collapsed.includes(id) ? this.collapsed.filter((g) => g !== id) : [...this.collapsed, id];
+  }
+
   close(): void {
     this.open = false;
     this.form = null;
+    this.edit = null;
+    this.pendingDiscard = null;
+    this.query = '';
   }
 }
 

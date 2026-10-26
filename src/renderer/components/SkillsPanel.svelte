@@ -8,7 +8,9 @@
    *
    * It is a modal dialog (bits-ui), so keyboard focus moves into it, stays
    * there and goes back where it was on close, and a dropdown or dialog
-   * opened from it takes Escape and outside clicks first.
+   * opened from it takes Escape and outside clicks first. While a skill's
+   * SKILL.md is open with unsaved changes, closing the drawer or switching
+   * tab asks first (skillsPanelStore.unlessUnsaved).
    */
   import { Dialog as DialogPrimitive } from 'bits-ui';
   import { fly, fade } from 'svelte/transition';
@@ -21,6 +23,7 @@
   import { schedulesStore } from '../stores/schedules.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
   import ThreadSkills from './ThreadSkills.svelte';
+  import SkillEditor from './SkillEditor.svelte';
   import ScheduledSkills from './ScheduledSkills.svelte';
 
   const motion = prefersReducedMotion() ? 0 : 1;
@@ -43,15 +46,24 @@
     if (store.activeSessionId !== openedOn) e.preventDefault();
   }
 
-  /** Escape closes the form first, then the drawer. */
+  /** Escape leaves the skill editor or closes the form first, then the drawer. */
   function closeFormFirst(e: KeyboardEvent) {
+    if (skillsPanelStore.edit) {
+      e.preventDefault();
+      // A second Escape answers "Discard your changes?" with Cancel.
+      if (skillsPanelStore.pendingDiscard) skillsPanelStore.pendingDiscard = null;
+      else skillsPanelStore.leaveEdit();
+      return;
+    }
     if (!skillsPanelStore.form) return;
     e.preventDefault();
     skillsPanelStore.form = null;
   }
 </script>
 
-<DialogPrimitive.Root open={skillsPanelStore.open} onOpenChange={(open) => { if (!open) skillsPanelStore.close(); }}>
+<!-- Bound through the store, so a close it holds back for unsaved changes
+     leaves the drawer open. -->
+<DialogPrimitive.Root bind:open={() => skillsPanelStore.open, (open) => { if (!open) skillsPanelStore.requestClose(); }}>
   <DialogPrimitive.Portal>
     <DialogPrimitive.Overlay forceMount>
       {#snippet child({ props, open })}
@@ -77,15 +89,17 @@
             <PanelHeader>
               <DialogPrimitive.Title class="font-medium text-foreground">Skills</DialogPrimitive.Title>
               {#snippet actions()}
-                <Button size="icon-2xs" variant="quiet" onclick={() => skillsPanelStore.close()} title="Close (Esc)" aria-label="Close skills">
+                <Button size="icon-2xs" variant="quiet" onclick={() => skillsPanelStore.requestClose()} title="Close (Esc)" aria-label="Close skills">
                   <XIcon />
                 </Button>
               {/snippet}
             </PanelHeader>
 
             <Tabs.Root
-              value={skillsPanelStore.tab}
-              onValueChange={(v) => { if (v === 'thread' || v === 'scheduled') { skillsPanelStore.tab = v; skillsPanelStore.form = null; } }}
+              bind:value={() => skillsPanelStore.tab, (v) => {
+                if (v !== 'thread' && v !== 'scheduled') return;
+                skillsPanelStore.unlessUnsaved(() => { skillsPanelStore.tab = v; skillsPanelStore.form = null; skillsPanelStore.edit = null; });
+              }}
               class="flex-1 min-h-0 flex flex-col"
             >
               <Tabs.List class="px-3 border-b border-border" aria-label="Skills views">
@@ -93,7 +107,9 @@
                 <Tabs.Trigger value="scheduled">Scheduled{schedulesStore.list.length ? ` (${schedulesStore.list.length})` : ''}</Tabs.Trigger>
               </Tabs.List>
               <Tabs.Content value="thread" class="flex-1 overflow-y-auto px-4 py-3 text-xs outline-none">
-                {#if activeId}
+                {#if skillsPanelStore.edit}
+                  <SkillEditor />
+                {:else if activeId}
                   {#key activeId}
                     <ThreadSkills sessionId={activeId} />
                   {/key}

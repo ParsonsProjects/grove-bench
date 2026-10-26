@@ -1,11 +1,13 @@
 <script lang="ts">
   /**
    * The Skills drawer's This thread tab: the skills the thread's agent can
-   * use, each with Run (in a new thread now) and Schedule, and the Add Skill
-   * dialog, which writes to the shared `.agents/skills`. Share and Link keep
-   * skills usable by every agent (skill-sharing.ts). For Claude Code, whose
-   * skills Grove manages, also turning them off and on, and suggestions
-   * mined from past threads.
+   * use, in sections by where they live and searchable, each with Run (in a
+   * new thread now), Schedule and, for one with a file, Edit (SkillEditor,
+   * which the drawer shows in this tab's place); and the Add Skill dialog,
+   * which writes to the shared `.agents/skills`. Share and Link keep skills
+   * usable by every agent (skill-sharing.ts). For Claude Code, whose skills
+   * Grove manages, also turning them off and on, and suggestions mined from
+   * past threads.
    */
   import { onMount } from 'svelte';
   import { messageStore } from '../stores/messages.svelte.js';
@@ -15,12 +17,14 @@
   import { schedulesStore } from '../stores/schedules.svelte.js';
   import { skillsPanelStore } from '../stores/skillsPanel.svelte.js';
   import { mergeSkills } from '../lib/skills-merge.js';
+  import { groupSkills, searchSkills } from '../lib/skill-groups.js';
   import { startSkillThread } from '../lib/skill-thread.js';
   import type { SkillPromptOpts } from '../lib/skill-prompt.js';
   import { lazyComponent } from '../lib/lazy-component.js';
   import type { SkillInfo, SkillSharing, SkillSuggestion } from '../../shared/types.js';
   import { Badge } from '$lib/components/ui/badge/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
+  import { Input } from '$lib/components/ui/input/index.js';
   import { Notice } from '$lib/components/ui/notice/index.js';
   import { SectionLabel } from '$lib/components/ui/section-label/index.js';
   import XIcon from '@lucide/svelte/icons/x';
@@ -29,6 +33,8 @@
   import ClockIcon from '@lucide/svelte/icons/clock';
   import SparklesIcon from '@lucide/svelte/icons/sparkles';
   import RefreshIcon from '@lucide/svelte/icons/refresh-cw';
+  import PencilIcon from '@lucide/svelte/icons/pencil';
+  import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
   import SkillCard from './SkillCard.svelte';
 
   let { sessionId }: { sessionId: string } = $props();
@@ -55,11 +61,17 @@
    *  still uses them. */
   let disabledSkills = $derived(managed ? settingsStore.current.disabledSkills ?? [] : []);
 
-  const skillSourceLabels: Record<SkillInfo['source'], string> = {
-    project: 'project',
-    user: 'user',
-    session: 'plugin',
-  };
+  const searching = $derived(skillsPanelStore.query.trim().length > 0);
+  /** The sections, holding only the skills the search matches. */
+  const groups = $derived(groupSkills(searchSkills(allSkills, skillsPanelStore.query)));
+  /** Escape clears a search before it closes the drawer, whose Escape
+   *  listener is on the document. */
+  function clearSearchOnEscape(e: KeyboardEvent) {
+    if (e.key !== 'Escape' || !skillsPanelStore.query) return;
+    e.preventDefault();
+    e.stopPropagation();
+    skillsPanelStore.query = '';
+  }
 
   async function refreshSkills() {
     try {
@@ -72,6 +84,10 @@
   let sharing = $state<SkillSharing>({ toShare: [], toLink: [], broken: [] });
   let sharingBusy = $state(false);
   const toShareCount = $derived(sharing.toShare.length);
+  /** Claude Code's own skills, which other agents can't see until shared.
+   *  Only marked in a Claude Code thread: Copilot and OpenCode read
+   *  `.claude/skills` too, so there they aren't Claude's alone. */
+  const claudeOnly = $derived(managed ? new Set(sharing.toShare.map((s) => s.path)) : new Set<string | undefined>());
   const linkCount = $derived(sharing.toLink.length + sharing.broken.length);
 
   async function refreshSharing() {
@@ -288,52 +304,103 @@
   </Notice>
 {/if}
 
-<div class="space-y-2">
-  {#each allSkills as skill (skill.name)}
-    {@const disabled = disabledSkills.includes(skill.name)}
-    <SkillCard name={skill.name} active={!disabled} struck={disabled} nameTitle={skill.path ?? skill.name}>
-      {#snippet tags()}<Badge tone="muted">{skillSourceLabels[skill.source]}</Badge>{/snippet}
-      {#if skill.description}
-        <div class="line-clamp-2" title={skill.description}>{skill.description}</div>
-      {/if}
-      {#snippet actions()}
-        {#if !disabled}
-          <Button
-            variant="subtle-primary"
-            size="2xs"
-            onclick={() => runSkill(skill)}
-            title={store.isFolderProject(repoPath)
-              ? 'Run this skill now in a new thread in the project folder'
-              : 'Run this skill now in a new thread on a branch of its own'}
-            aria-label="Run {skill.name} in a new thread"
-          ><PlayIcon />Run</Button>
-          <Button
-            variant="subtle"
-            size="2xs"
-            onclick={() => skillsPanelStore.editSchedule(repoPath, { agentId, skill: skill.name })}
-            title="Run this skill on a schedule"
-            aria-label="Schedule {skill.name}"
-          ><ClockIcon />Schedule</Button>
-        {/if}
-      {/snippet}
-      {#snippet end()}
-        {#if managed}
-          <!-- Turning a skill off is reversible, so it stays quiet; red is
-               for what can't be undone. -->
-          {#if disabled}
-            <Button variant="subtle-primary" size="2xs" onclick={() => setSkillEnabled(skill.name, true)} disabled={skillsBusy[skill.name]} title="Re-enable this skill">Enable</Button>
-          {:else}
-            <Button variant="quiet" size="2xs" onclick={() => setSkillEnabled(skill.name, false)} disabled={skillsBusy[skill.name]} title="Hide this skill from agents">Disable</Button>
-          {/if}
-        {/if}
-      {/snippet}
-    </SkillCard>
-  {:else}
-    <p class="text-xs text-muted-foreground mt-4 text-center">
+{#if allSkills.length > 0}
+  <Input
+    type="search"
+    bind:value={skillsPanelStore.query}
+    onkeydown={clearSearchOnEscape}
+    placeholder="Search skills by name or description"
+    aria-label="Search skills"
+    class="h-7 text-xs md:text-xs mb-3"
+  />
+{/if}
+
+{#each groups as group (group.id)}
+  {@const open = searching || !skillsPanelStore.collapsed.includes(group.id)}
+  <section class="mb-3" aria-labelledby="skills-group-{group.id}">
+    <SectionLabel as="h3" class="mb-1.5">
+      <!-- Search shows every match, so sections only fold without one. -->
+      <button
+        type="button"
+        id="skills-group-{group.id}"
+        class="flex w-full min-w-0 items-center gap-1 text-start uppercase hover:text-foreground disabled:hover:text-muted-foreground"
+        aria-expanded={open}
+        disabled={searching}
+        onclick={() => skillsPanelStore.toggleGroup(group.id)}
+      >
+        <ChevronRightIcon class="size-3 shrink-0 transition-transform {open ? 'rotate-90' : ''}" />
+        {group.label}
+        <Badge tone="muted" count>{group.skills.length}</Badge>
+        <span class="ms-auto ps-2 truncate normal-case tracking-normal font-normal">{group.hint}</span>
+      </button>
+    </SectionLabel>
+    {#if open}
+      <div class="space-y-2">
+        {#each group.skills as skill (skill.name)}
+          {@const disabled = disabledSkills.includes(skill.name)}
+          <SkillCard name={skill.name} active={!disabled} struck={disabled} nameTitle={skill.path ?? skill.name}>
+            {#snippet tags()}
+              {#if skill.path && claudeOnly.has(skill.path)}
+                <Badge tone="muted" title="Only Claude Agent reads .claude/skills. Share moves it to .agents/skills, where every agent looks.">Claude only</Badge>
+              {/if}
+            {/snippet}
+            {#if skill.description}
+              <div class="line-clamp-2" title={skill.description}>{skill.description}</div>
+            {/if}
+            {#snippet actions()}
+              {#if !disabled}
+                <Button
+                  variant="subtle-primary"
+                  size="2xs"
+                  onclick={() => runSkill(skill)}
+                  title={store.isFolderProject(repoPath)
+                    ? 'Run this skill now in a new thread in the project folder'
+                    : 'Run this skill now in a new thread on a branch of its own'}
+                  aria-label="Run {skill.name} in a new thread"
+                ><PlayIcon />Run</Button>
+                <Button
+                  variant="subtle"
+                  size="2xs"
+                  onclick={() => skillsPanelStore.editSchedule(repoPath, { agentId, skill: skill.name })}
+                  title="Run this skill on a schedule"
+                  aria-label="Schedule {skill.name}"
+                ><ClockIcon />Schedule</Button>
+              {/if}
+              {#if skill.path && skill.source !== 'session'}
+                <Button
+                  variant="subtle"
+                  size="2xs"
+                  onclick={() => skillsPanelStore.editSkill(sessionId, skill)}
+                  title="Edit this skill's SKILL.md"
+                  aria-label="Edit {skill.name}"
+                ><PencilIcon />Edit</Button>
+              {/if}
+            {/snippet}
+            {#snippet end()}
+              {#if managed}
+                <!-- Turning a skill off is reversible, so it stays quiet; red is
+                     for what can't be undone. -->
+                {#if disabled}
+                  <Button variant="subtle-primary" size="2xs" onclick={() => setSkillEnabled(skill.name, true)} disabled={skillsBusy[skill.name]} title="Re-enable this skill">Enable</Button>
+                {:else}
+                  <Button variant="quiet" size="2xs" onclick={() => setSkillEnabled(skill.name, false)} disabled={skillsBusy[skill.name]} title="Hide this skill from agents">Disable</Button>
+                {/if}
+              {/if}
+            {/snippet}
+          </SkillCard>
+        {/each}
+      </div>
+    {/if}
+  </section>
+{:else}
+  <p class="text-xs text-muted-foreground mt-4 text-center">
+    {#if searching}
+      No skills match "{skillsPanelStore.query.trim()}".
+    {:else}
       {agentsStore.get(agentId)?.displayName ?? 'This agent'} has no skills in this project yet.
-    </p>
-  {/each}
-</div>
+    {/if}
+  </p>
+{/each}
 
 {#if managed && suggestions.length > 0}
   <div class="mt-3 pt-3 border-t border-border">

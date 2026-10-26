@@ -123,4 +123,120 @@ describe('SkillsPanel', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Close skills' }));
     expect(skillsPanelStore.open).toBe(false);
   });
+
+  it('clears a search on Escape before closing', async () => {
+    skillsPanelStore.showThread();
+    render(SkillsPanel);
+    const search = await screen.findByRole('searchbox', { name: 'Search skills' });
+    search.focus();
+    await fireEvent.input(search, { target: { value: 'tri' } });
+    await escape();
+    expect(search).toHaveValue('');
+    expect(skillsPanelStore.open).toBe(true);
+    await escape();
+    expect(skillsPanelStore.open).toBe(false);
+  });
+
+  describe('with a skill open in the editor', () => {
+    const triage = { name: 'triage', description: 'Sort new issues', source: 'project' as const, path: '/repo/.claude/skills/triage/SKILL.md' };
+
+    async function editTriage(change: boolean) {
+      mockGroveBench.readSkill.mockResolvedValue({ path: triage.path, content: 'text' });
+      skillsPanelStore.editSkill('t1', triage);
+      render(SkillsPanel);
+      const box = await screen.findByRole('textbox', { name: 'SKILL.md for triage' });
+      if (change) await fireEvent.input(box, { target: { value: 'changed' } });
+      return box;
+    }
+
+    it('keeps the editor, its text and its question when another thread opens meanwhile', async () => {
+      await editTriage(true);
+      // As Ctrl+N or Ctrl+Shift+T can, with the drawer open.
+      store.sessions = [...store.sessions, { id: 't2', branch: 'c', repoPath: '/repo', status: 'running', agentType: 'gemini-cli', createdAt: 0 }] as typeof store.sessions;
+      store.activeSessionId = 't2';
+      await waitFor(() => expect(screen.getByRole('textbox', { name: 'SKILL.md for triage' })).toHaveValue('changed'));
+      expect(mockGroveBench.readSkill).toHaveBeenCalledOnce();
+
+      await escape();
+      expect(screen.getByText('Discard your changes to triage?')).toBeInTheDocument();
+      await fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+      // The list is the open thread's.
+      expect(await screen.findByRole('button', { name: 'Run triage in a new thread' })).toBeInTheDocument();
+      expect(mockGroveBench.listSkills).toHaveBeenLastCalledWith('t2', '/repo');
+    });
+
+    it('keeps the search while a skill is edited', async () => {
+      mockGroveBench.readSkill.mockResolvedValue({ path: triage.path, content: 'text' });
+      mockGroveBench.listSkills.mockResolvedValue([triage]);
+      skillsPanelStore.showThread();
+      render(SkillsPanel);
+      await fireEvent.input(await screen.findByRole('searchbox', { name: 'Search skills' }), { target: { value: 'sort' } });
+      await fireEvent.click(await screen.findByRole('button', { name: 'Edit triage' }));
+      expect(await screen.findByRole('textbox', { name: 'SKILL.md for triage' })).toBeInTheDocument();
+      expect(screen.queryByRole('searchbox')).toBeNull();
+      await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+      expect(await screen.findByRole('searchbox', { name: 'Search skills' })).toHaveValue('sort');
+    });
+
+    it('goes back to the list on Escape, then closes', async () => {
+      await editTriage(false);
+      await escape();
+      expect(skillsPanelStore.edit).toBeNull();
+      expect(skillsPanelStore.open).toBe(true);
+      expect(await screen.findByRole('button', { name: 'Run triage in a new thread' })).toBeInTheDocument();
+      await escape();
+      expect(skillsPanelStore.open).toBe(false);
+    });
+
+    it('asks before Escape drops unsaved changes; a second Escape keeps editing', async () => {
+      await editTriage(true);
+      await escape();
+      expect(screen.getByText('Discard your changes to triage?')).toBeInTheDocument();
+      await escape();
+      expect(screen.queryByText('Discard your changes to triage?')).toBeNull();
+      expect(skillsPanelStore.edit?.text).toBe('changed');
+      expect(skillsPanelStore.open).toBe(true);
+    });
+
+    /** A click on the dimmed app beside the drawer: off the drawer's box,
+     *  which jsdom lays out at 0 by 0. */
+    async function clickOutside() {
+      const overlay = document.querySelector('[data-dialog-overlay]') ?? document.body;
+      // bits-ui starts listening a moment after the drawer opens.
+      await new Promise((r) => setTimeout(r, 20));
+      overlay.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, button: 0, pointerType: 'mouse', clientX: 5, clientY: 5 }));
+      // bits-ui waits 10 ms for a layer above to take it first.
+      await new Promise((r) => setTimeout(r, 50));
+    }
+
+    it('closes on a click outside, unless that would drop unsaved changes', async () => {
+      await editTriage(false);
+      await clickOutside();
+      await waitFor(() => expect(skillsPanelStore.open).toBe(false));
+      cleanup();
+
+      await editTriage(true);
+      await clickOutside();
+      expect(skillsPanelStore.open).toBe(true);
+      expect(screen.getByText('Discard your changes to triage?')).toBeInTheDocument();
+      await fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+      expect(skillsPanelStore.open).toBe(false);
+    });
+
+    it('asks before closing or switching tab drops unsaved changes, and does it on Discard', async () => {
+      await editTriage(true);
+      await fireEvent.click(screen.getByRole('button', { name: 'Close skills' }));
+      expect(skillsPanelStore.open).toBe(true);
+      expect(screen.getByRole('dialog', { name: 'Skills' })).toBeInTheDocument();
+      await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+      const scheduled = screen.getByRole('tab', { name: /Scheduled/ });
+      await fireEvent.mouseDown(scheduled);
+      await fireEvent.click(scheduled);
+      expect(screen.getByRole('tab', { name: 'This thread' })).toHaveAttribute('aria-selected', 'true');
+      await fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+      expect(skillsPanelStore).toMatchObject({ tab: 'scheduled', edit: null });
+      await waitFor(() => expect(screen.getByRole('tab', { name: /Scheduled/ })).toHaveAttribute('aria-selected', 'true'));
+    });
+  });
 });

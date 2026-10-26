@@ -71,6 +71,8 @@ vi.mock('./memory.js', () => ({
 vi.mock('./skill-suggestions.js', () => ({ getCachedSuggestions: vi.fn(), dismissSuggestion: vi.fn() }));
 const sharing = vi.hoisted(() => ({ skillSharing: vi.fn(), shareSkills: vi.fn(), linkSkills: vi.fn() }));
 vi.mock('./skill-sharing.js', () => sharing);
+const skillFiles = vi.hoisted(() => ({ readSkillFile: vi.fn(), saveSkillFile: vi.fn() }));
+vi.mock('./skills.js', async (importOriginal) => ({ ...(await importOriginal<typeof import('./skills.js')>()), ...skillFiles }));
 vi.mock('./background-tasks.js', () => ({ agentForProject: vi.fn(), recordedAgent: vi.fn(), backgroundModelFor: vi.fn() }));
 vi.mock('./editor-launch.js', () => ({ launchEditor: vi.fn() }));
 vi.mock('./deps-install.js', () => ({ installDependencies: vi.fn() }));
@@ -1689,6 +1691,42 @@ describe('adapters, skills and MCP config', () => {
     expect(sharing.skillSharing).toHaveBeenLastCalledWith('/wt', { project: [path.join('.claude', 'skills')], user: [path.join('.claude', 'skills')] });
     await invoke(IPC.SKILLS_SHARE, 's1', '/repo');
     expect(sharing.shareSkills).toHaveBeenLastCalledWith('/wt', { project: [path.join('.claude', 'skills')], user: [path.join('.claude', 'skills')] });
+  });
+
+  it("reads, saves and opens a skill in the thread's agent's folders and project root", async () => {
+    const dirs = { project: ['.claude/skills'], user: ['/home/me/.claude-work/skills'] };
+    const listed = '/wt/.claude/skills/notes/SKILL.md';
+    const shared = '/wt/.agents/skills/notes/SKILL.md';
+    m.sessionManager.getSessionAdapter.mockReturnValue({ displayName: 'Claude (work)', skillDirs: dirs });
+    m.sessionManager.getWorktreePath.mockReturnValue('/wt');
+    skillFiles.readSkillFile.mockResolvedValue({ path: shared, content: 'text', linkPath: listed });
+    expect(await invoke(IPC.SKILLS_READ, 's1', '/repo', listed)).toEqual({ path: shared, content: 'text', linkPath: listed });
+    expect(skillFiles.readSkillFile).toHaveBeenCalledWith('/wt', dirs, listed);
+
+    await invoke(IPC.SKILLS_SAVE, 's1', '/repo', listed, 'text', 'new text');
+    expect(skillFiles.saveSkillFile).toHaveBeenCalledWith('/wt', dirs, listed, 'text', 'new text');
+
+    // Opens the file edited, not the link, as a worktree file opens.
+    vi.mocked(launchEditor).mockResolvedValueOnce(false).mockResolvedValueOnce(false);
+    await invoke(IPC.SKILLS_OPEN, 's1', '/repo', listed);
+    expect(launchEditor).toHaveBeenNthCalledWith(1, 'code', shared, undefined);
+    expect(launchEditor).toHaveBeenNthCalledWith(2, 'cursor', shared, undefined);
+    expect(shell.openPath).toHaveBeenCalledWith(shared);
+    vi.mocked(launchEditor).mockResolvedValue(false);
+    vi.mocked(shell.openPath).mockResolvedValue('No application is associated');
+    await expect(invoke(IPC.SKILLS_OPEN, 's1', '/repo', listed)).rejects.toThrow('Could not open SKILL.md');
+  });
+
+  it('edits no skill without a path and text, an agent with skill folders, or a project root', async () => {
+    m.sessionManager.getSessionAdapter.mockReturnValue({ displayName: 'Plain' });
+    await expect(invoke(IPC.SKILLS_READ, 's1', '/repo', '/x/SKILL.md')).rejects.toThrow('no skill files');
+    m.sessionManager.getSessionAdapter.mockReturnValue({ displayName: 'Claude Code', skillDirs: { project: ['.claude/skills'], user: ['.claude/skills'] } });
+    await expect(invoke(IPC.SKILLS_READ, 's1', '/repo', 42)).rejects.toThrow('No skill given');
+    await expect(invoke(IPC.SKILLS_SAVE, 's1', '/repo', '/x/SKILL.md', 'old', undefined)).rejects.toThrow('No skill text given');
+    m.sessionManager.getWorktreePath.mockReturnValue(null);
+    await expect(invoke(IPC.SKILLS_SAVE, 's1', '', '/x/SKILL.md', 'old', 'new')).rejects.toThrow('No project root');
+    expect(skillFiles.readSkillFile).not.toHaveBeenCalled();
+    expect(skillFiles.saveSkillFile).not.toHaveBeenCalled();
   });
 
   it("refuses MCP and plugin calls for an agent that isn't registered, rather than change the default's", async () => {
