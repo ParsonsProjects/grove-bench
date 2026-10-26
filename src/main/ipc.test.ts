@@ -1690,7 +1690,11 @@ describe('adapters, skills and MCP config', () => {
     expect(await invoke(IPC.SKILLS_SHARING, 's1', '/repo')).toEqual({ toShare: [{ name: 'own' }], toLink: [], broken: [] });
     expect(sharing.skillSharing).toHaveBeenLastCalledWith('/wt', { project: [path.join('.claude', 'skills')], user: [path.join('.claude', 'skills')] });
     await invoke(IPC.SKILLS_SHARE, 's1', '/repo');
-    expect(sharing.shareSkills).toHaveBeenLastCalledWith('/wt', { project: [path.join('.claude', 'skills')], user: [path.join('.claude', 'skills')] });
+    expect(sharing.shareSkills).toHaveBeenLastCalledWith('/wt', { project: [path.join('.claude', 'skills')], user: [path.join('.claude', 'skills')] }, undefined);
+    // One skill, by the path its card has.
+    await invoke(IPC.SKILLS_SHARE, 's1', '/repo', '/wt/.claude/skills/own/SKILL.md');
+    expect(sharing.shareSkills).toHaveBeenLastCalledWith('/wt', expect.anything(), '/wt/.claude/skills/own/SKILL.md');
+    await expect(invoke(IPC.SKILLS_SHARE, 's1', '/repo', 42)).rejects.toThrow('No skill given');
   });
 
   it("reads, saves and opens a skill in the thread's agent's folders and project root", async () => {

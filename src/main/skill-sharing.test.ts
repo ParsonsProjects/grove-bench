@@ -109,6 +109,21 @@ describe('shareSkills', () => {
     expect(fs.readFileSync(claudeFile(worktree, 'a'), 'utf-8')).toBe(skill('a'));
   });
 
+  it('moves only the skill asked for, by its path, even when a personal one has the same name', async () => {
+    put(claudeFile(worktree, 'own'), skill('own'));
+    put(claudeFile(worktree, 'other'), skill('other'));
+    put(claudeFile(home, 'own'), skill('own', 'My own'));
+
+    expect(await shareSkills(worktree, CLAUDE_SKILL_DIRS, claudeFile(worktree, 'own'))).toEqual({ done: ['own'], skipped: [] });
+    expect(isSkillLink(fs.readFileSync(claudeFile(worktree, 'own'), 'utf-8'))).toBe(true);
+    expect(fs.readFileSync(claudeFile(worktree, 'other'), 'utf-8')).toBe(skill('other'));
+    expect(fs.readFileSync(claudeFile(home, 'own'), 'utf-8')).toBe(skill('own', 'My own'));
+    expect(names((await skillSharing(worktree, CLAUDE_SKILL_DIRS)).toShare)).toEqual(['other', 'own']);
+
+    // One that has nothing to share (it's already shared): nothing happens.
+    expect(await shareSkills(worktree, CLAUDE_SKILL_DIRS, claudeFile(worktree, 'own'))).toEqual({ done: [], skipped: [] });
+  });
+
   it('copies across drives when a rename cannot', async () => {
     put(claudeFile(worktree, 'a'), skill('a'));
     vi.spyOn(fs.promises, 'rename').mockRejectedValue(Object.assign(new Error('cross-device'), { code: 'EXDEV' }));

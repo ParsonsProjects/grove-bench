@@ -398,10 +398,11 @@ const api: Record<string, unknown> = {
   },
   openSkillInEditor: async () => {},
   getSkillSharing: async () => DEMO_SHARING,
-  shareSkills: async () => {
-    const done = DEMO_SHARING.toShare.map((s) => s.name);
+  shareSkills: async (_sid: string, _fallback: string, skillPath?: string) => {
+    const moving = DEMO_SHARING.toShare.filter((s) => skillPath === undefined || s.path === skillPath);
+    const done = moving.map((s) => s.name);
     for (const s of DEMO_SKILLS) if (done.includes(s.name)) s.path = s.path.replace('/.claude/', '/.agents/');
-    DEMO_SHARING = { ...DEMO_SHARING, toShare: [] };
+    DEMO_SHARING = { ...DEMO_SHARING, toShare: DEMO_SHARING.toShare.filter((s) => !moving.includes(s)) };
     return { done, skipped: [] };
   },
   linkSkills: async () => {

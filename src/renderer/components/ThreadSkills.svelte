@@ -18,6 +18,8 @@
   import { skillsPanelStore } from '../stores/skillsPanel.svelte.js';
   import { mergeSkills } from '../lib/skills-merge.js';
   import { groupSkills, searchSkills } from '../lib/skill-groups.js';
+  import { stripIpcErrorPrefix } from '../lib/mcp-errors.js';
+  import { errorMessage } from '../../shared/error-message.js';
   import { startSkillThread } from '../lib/skill-thread.js';
   import type { SkillPromptOpts } from '../lib/skill-prompt.js';
   import { lazyComponent } from '../lib/lazy-component.js';
@@ -35,6 +37,7 @@
   import RefreshIcon from '@lucide/svelte/icons/refresh-cw';
   import PencilIcon from '@lucide/svelte/icons/pencil';
   import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
+  import ShareIcon from '@lucide/svelte/icons/share-2';
   import SkillCard from './SkillCard.svelte';
 
   let { sessionId }: { sessionId: string } = $props();
@@ -126,6 +129,23 @@
       if (failed.length > 0) store.setError(`Couldn't ${failed.join(', ')}.`);
     } catch (err) {
       store.setError(`Couldn't ${sharingAction.toLowerCase()} the skills: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      sharingBusy = false;
+      refresh();
+    }
+  }
+
+  /** Share one of Claude Code's own skills from its card: move it to
+   *  `.agents/skills`, leaving a link, as Share does for all of them. */
+  async function shareSkill(skill: SkillInfo) {
+    if (sharingBusy || !skill.path) return;
+    sharingBusy = true;
+    try {
+      const result = await window.groveBench.shareSkills(sessionId, repoPath, skill.path);
+      const skipped = result.skipped[0];
+      if (skipped) store.setError(`Couldn't share "${skipped.name}" (${skipped.reason}).`);
+    } catch (err) {
+      store.setError(`Couldn't share "${skill.name}": ${stripIpcErrorPrefix(errorMessage(err))}`);
     } finally {
       sharingBusy = false;
       refresh();
@@ -341,7 +361,7 @@
           <SkillCard name={skill.name} active={!disabled} struck={disabled} nameTitle={skill.path ?? skill.name}>
             {#snippet tags()}
               {#if skill.path && claudeOnly.has(skill.path)}
-                <Badge tone="muted" title="Only Claude Agent reads .claude/skills. Share moves it to .agents/skills, where every agent looks.">Claude only</Badge>
+                <Badge tone="muted" title="Only Claude Agent reads .claude/skills. Share moves it to .agents/skills, where every agent looks, leaving a link for Claude Agent.">Claude only</Badge>
               {/if}
             {/snippet}
             {#if skill.description}
@@ -374,6 +394,16 @@
                   title="Edit this skill's SKILL.md"
                   aria-label="Edit {skill.name}"
                 ><PencilIcon />Edit</Button>
+              {/if}
+              {#if skill.path && claudeOnly.has(skill.path)}
+                <Button
+                  variant="subtle"
+                  size="2xs"
+                  onclick={() => shareSkill(skill)}
+                  disabled={sharingBusy}
+                  title="Move this skill to .agents/skills, where every agent looks, leaving a link for Claude Agent"
+                  aria-label="Share {skill.name} with every agent"
+                ><ShareIcon />Share</Button>
               {/if}
             {/snippet}
             {#snippet end()}

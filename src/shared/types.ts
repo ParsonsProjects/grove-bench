@@ -1481,8 +1481,9 @@ export interface GroveBenchAPI {
   /** What Share and Link would change for the session's project. Links are
    *  only offered in a Claude Code thread. */
   getSkillSharing(sessionId: string, fallbackPath: string): Promise<SkillSharing>;
-  /** Move Claude Code's own skills to the shared folder, leaving links. */
-  shareSkills(sessionId: string, fallbackPath: string): Promise<SkillChanges>;
+  /** Move Claude Code's own skills to the shared folder, leaving links: all
+   *  of them, or the one whose SKILL.md is at `skillPath` (as listed). */
+  shareSkills(sessionId: string, fallbackPath: string, skillPath?: string): Promise<SkillChanges>;
   /** Bring Claude Code's links in line with the shared folder. */
   linkSkills(sessionId: string, fallbackPath: string): Promise<SkillChanges>;
   /** Cached skill suggestions for a repo (last analysis result). */

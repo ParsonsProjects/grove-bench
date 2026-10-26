@@ -265,6 +265,38 @@ describe('ThreadSkills', () => {
     expect(screen.getAllByText('Claude only')).toHaveLength(1);
   });
 
+  it("shares one of Claude Code's own skills from its card", async () => {
+    thread('claude-code');
+    mockGroveBench.listSkills.mockResolvedValue(many);
+    mockGroveBench.getSkillSharing.mockResolvedValueOnce({ toShare: [many[1]], toLink: [], broken: [] });
+    mockGroveBench.shareSkills.mockResolvedValueOnce({ done: ['triage'], skipped: [] });
+    render(ThreadSkills, { sessionId: 't1' });
+    const share = await screen.findByRole('button', { name: 'Share triage with every agent' });
+    // Only a skill other agents can't see yet has one.
+    expect(screen.getAllByRole('button', { name: /^Share .+ with every agent$/ })).toHaveLength(1);
+
+    await fireEvent.click(share);
+    expect(mockGroveBench.shareSkills).toHaveBeenCalledWith('t1', '/repo', many[1].path);
+    // Listed again: shared now.
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Share triage with every agent' })).toBeNull());
+    expect(screen.queryByText('Claude only')).toBeNull();
+    expect(store.error).toBeNull();
+  });
+
+  it("says why a skill couldn't be shared from its card", async () => {
+    thread('claude-code');
+    mockGroveBench.listSkills.mockResolvedValue(many);
+    mockGroveBench.getSkillSharing
+      .mockResolvedValueOnce({ toShare: [many[1]], toLink: [], broken: [] })
+      .mockResolvedValueOnce({ toShare: [many[1]], toLink: [], broken: [] });
+    mockGroveBench.shareSkills.mockResolvedValueOnce({ done: [], skipped: [{ name: 'triage', reason: 'a file in it is open in another program' }] });
+    render(ThreadSkills, { sessionId: 't1' });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Share triage with every agent' }));
+    await waitFor(() => expect(store.error).toBe('Couldn\'t share "triage" (a file in it is open in another program).'));
+    expect(await screen.findByRole('button', { name: 'Share triage with every agent' })).toBeEnabled();
+    store.setError(null);
+  });
+
   it("marks no skill Claude only in another agent's thread, as Copilot and OpenCode read .claude/skills too", async () => {
     thread('gemini-cli');
     mockGroveBench.listSkills.mockResolvedValue(many);
@@ -274,5 +306,6 @@ describe('ThreadSkills', () => {
     await screen.findByText("1 skill isn't shared with every agent");
     expect(screen.getByRole('button', { name: 'Edit triage' })).toBeInTheDocument();
     expect(screen.queryByText('Claude only')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Share triage with every agent' })).toBeNull();
   });
 });

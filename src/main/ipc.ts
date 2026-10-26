@@ -1192,9 +1192,10 @@ export function registerHandlers() {
     return links ? sharing : { ...sharing, toLink: [], broken: [] };
   });
 
-  ipcMain.handle(IPC.SKILLS_SHARE, async (_event, sessionId: string, fallbackPath: string) => {
+  ipcMain.handle(IPC.SKILLS_SHARE, async (_event, sessionId: string, fallbackPath: string, skillPath: unknown) => {
+    if (skillPath !== undefined && typeof skillPath !== 'string') throw new Error('No skill given');
     const { root, dirs } = await sharingTarget(sessionId, fallbackPath);
-    return shareSkills(root, dirs);
+    return shareSkills(root, dirs, skillPath);
   });
 
   ipcMain.handle(IPC.SKILLS_LINK, async (_event, sessionId: string, fallbackPath: string) => {
