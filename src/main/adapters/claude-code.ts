@@ -149,6 +149,13 @@ async function getQuery() {
   return (await getSdk()).query;
 }
 
+/** Use `sdk` in place of the SDK, or load it again (undefined). Tests only:
+ *  Vitest's module runner gives the import above no way to run ("A dynamic
+ *  import callback was not specified"), so start() can't load the SDK. */
+export function setSdkForTests(sdk: typeof import('@anthropic-ai/claude-agent-sdk') | undefined): void {
+  _sdk = sdk;
+}
+
 // ─── Tool calls ───
 
 /** File-writing tools mapped to the input field that holds the target path. */
