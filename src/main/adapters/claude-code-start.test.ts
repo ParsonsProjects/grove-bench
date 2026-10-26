@@ -21,8 +21,8 @@ vi.mock('../logger.js', () => ({
 }));
 // Grove's tool servers, as the SDK would make them.
 const servers = vi.hoisted(() => ({
-  createMemoryMcpServer: vi.fn(() => Promise.resolve({ server: 'grove-memory' })),
-  createPreviewMcpServer: vi.fn(() => Promise.resolve({ server: 'grove-preview' })),
+  createMemoryMcpServer: vi.fn((_operations: unknown) => Promise.resolve({ server: 'grove-memory' })),
+  createPreviewMcpServer: vi.fn((_operations: unknown) => Promise.resolve({ server: 'grove-preview' })),
 }));
 vi.mock('./memory-mcp-server.js', () => ({ createMemoryMcpServer: servers.createMemoryMcpServer }));
 vi.mock('./preview-mcp-server.js', () => ({ createPreviewMcpServer: servers.createPreviewMcpServer }));
@@ -30,6 +30,7 @@ vi.mock('./preview-mcp-server.js', () => ({ createPreviewMcpServer: servers.crea
 import { ClaudeCodeAdapter, CONTEXT_1M_BETA, LIMIT_STOP_REASON, THINKING_LEVEL_TOKENS, setSdkForTests } from './claude-code.js';
 import { ResumeNotFoundError, type AdapterConfig, type AdapterEvent, type AgentQueryHandle, type PermissionResponse } from './types.js';
 import type { ClaudeAccount } from './claude-accounts.js';
+import type { Options } from '@anthropic-ai/claude-agent-sdk';
 
 /** What start() hands the SDK's query(). */
 interface QueryParams {
@@ -76,7 +77,8 @@ function fakeQuery() {
   };
 }
 
-const query = vi.fn((_params: QueryParams): unknown => fakeQuery().q);
+// No default: a test that hasn't given start() its fake fails at once.
+const query = vi.fn<(params: QueryParams) => unknown>();
 
 function config(extra: Partial<AdapterConfig> = {}): AdapterConfig {
   return {
@@ -117,9 +119,13 @@ const init = (sessionId: string) => ({
 
 beforeEach(() => {
   setSdkForTests({ query } as never);
-  query.mockClear();
+  // Reset, not cleared: a fake a failed start() left queued mustn't reach
+  // the next test.
+  query.mockReset();
   credentials.getApiKey.mockReset().mockReturnValue(null);
   hosted.spawnProcess.mockReset();
+  servers.createMemoryMcpServer.mockClear();
+  servers.createPreviewMcpServer.mockClear();
 });
 
 afterEach(() => {
@@ -145,9 +151,11 @@ describe('ClaudeCodeAdapter.start(): what it asks the SDK for', () => {
     expect(options.abortController).toBeInstanceOf(AbortController);
     expect(typeof options.canUseTool).toBe('function');
     expect(typeof options.spawnClaudeCodeProcess).toBe('function');
-    for (const unset of ['model', 'resume', 'resumeSessionAt', 'forkSession', 'mcpServers', 'hooks', 'onElicitation', 'skills', 'sandbox']) {
-      expect(options).not.toHaveProperty(unset);
-    }
+    const unset: (keyof Options)[] = [
+      'model', 'resume', 'resumeSessionAt', 'forkSession', 'mcpServers', 'hooks', 'onElicitation', 'skills', 'sandbox',
+      'settings', 'thinking', 'effort', 'promptSuggestions', 'outputFormat',
+    ];
+    for (const option of unset) expect(options).not.toHaveProperty(option);
   });
 
   it('runs Read-safe as acceptEdits, which the SDK has', async () => {
@@ -213,16 +221,25 @@ describe('ClaudeCodeAdapter.start(): what it asks the SDK for', () => {
     expect(env).not.toHaveProperty('ANTHROPIC_API_KEY');
   });
 
+  it("gives another account's agent the key saved for that account", async () => {
+    vi.stubEnv('ANTHROPIC_API_KEY', 'default-account-key');
+    credentials.getApiKey.mockImplementation((id) => (id === 'claude-account-work' ? 'work-key' : 'default-key'));
+    const work = { id: 'claude-account-work', name: 'Work', configDir: '/home/me/.claude-work' };
+    expect((await start({}, adapter(work))).options.env.ANTHROPIC_API_KEY).toBe('work-key');
+  });
+
   it("serves Grove's memory and Preview tools to the agent when the thread has them", async () => {
-    const memoryOperations = {} as NonNullable<AdapterConfig['memoryOperations']>;
-    const previewOperations = {} as NonNullable<AdapterConfig['previewOperations']>;
+    const memoryOperations = { memory: true } as unknown as NonNullable<AdapterConfig['memoryOperations']>;
+    const previewOperations = { preview: true } as unknown as NonNullable<AdapterConfig['previewOperations']>;
     expect((await start({ memoryOperations })).options.mcpServers).toEqual({ 'grove-memory': { server: 'grove-memory' } });
+    expect(servers.createPreviewMcpServer).not.toHaveBeenCalled();
     expect((await start({ memoryOperations, previewOperations })).options.mcpServers).toEqual({
       'grove-memory': { server: 'grove-memory' },
       'grove-preview': { server: 'grove-preview' },
     });
-    expect(servers.createMemoryMcpServer).toHaveBeenCalledWith(memoryOperations);
-    expect(servers.createPreviewMcpServer).toHaveBeenCalledWith(previewOperations);
+    // Each server with its own operations.
+    expect(servers.createMemoryMcpServer.mock.calls.map(([ops]) => ops)).toEqual([memoryOperations, memoryOperations]);
+    expect(servers.createPreviewMcpServer.mock.calls[0][0]).toBe(previewOperations);
   });
 
   it('holds each tool call for the thread\'s limits, for longer than Grove waits for an answer', async () => {
@@ -259,13 +276,14 @@ describe('ClaudeCodeAdapter.start(): what it asks the SDK for', () => {
 });
 
 describe('ClaudeCodeAdapter.start(): the agent process', () => {
-  /** The process the spawn hook starts, as the agent host reports it. */
+  /** The process the spawn hook starts, as the agent host reports it. Its
+   *  label isn't an exe name, so processExe() must come from the command. */
   function spawned(options: QueryParams['options']) {
-    const proc = new HostedProcess('claude.exe');
+    const proc = new HostedProcess('the agent');
     const sent: ProcessCommand[] = [];
     proc.connect((command) => sent.push(command));
     hosted.spawnProcess.mockReturnValueOnce(proc);
-    expect(options.spawnClaudeCodeProcess({ command: 'claude', args: ['--output-format', 'stream-json'], cwd: '/repo/wt', env: {} })).toBe(proc);
+    expect(options.spawnClaudeCodeProcess({ command: '/opt/sdk/claude', args: ['--output-format', 'stream-json'], cwd: '/repo/wt', env: {} })).toBe(proc);
     proc.receive({ type: 'spawned', id: 1, pid: 4242, launchMs: 5 });
     return { proc, sent };
   }
@@ -280,7 +298,7 @@ describe('ClaudeCodeAdapter.start(): the agent process', () => {
   it('kills the tree of the process its spawn hook started, saying which pid', async () => {
     const { handle, options } = await start();
     const { proc, sent } = spawned(options);
-    expect(hosted.spawnProcess).toHaveBeenCalledWith('claude', ['--output-format', 'stream-json'], { cwd: '/repo/wt', env: {} });
+    expect(hosted.spawnProcess).toHaveBeenCalledWith('/opt/sdk/claude', ['--output-format', 'stream-json'], { cwd: '/repo/wt', env: {} });
     expect(handle.processId!()).toBe(4242);
     expect(handle.processExe!()).toBe('claude.exe');
 
@@ -310,6 +328,13 @@ describe('ClaudeCodeAdapter.start(): the agent process', () => {
     proc.receive({ type: 'exit', id: 1, code: 0, signal: null });
     expect(handle.processId!()).toBeUndefined();
   });
+
+  it('gives no pid once the process was lost with its host (no exit code, SIGKILL)', async () => {
+    const { handle, options } = await start();
+    const { proc } = spawned(options);
+    proc.lost(true);
+    expect(handle.processId!()).toBeUndefined();
+  });
 });
 
 describe('ClaudeCodeAdapter.start(): the events', () => {
@@ -332,7 +357,9 @@ describe('ClaudeCodeAdapter.start(): the events', () => {
     const { handle, fake } = await start();
     fake.send({ type: 'result', subtype: 'error_during_execution', is_error: true, errors: ['No conversation found with session ID gone'] });
     fake.end();
-    await expect(drain(handle)).resolves.not.toHaveLength(0);
+    await expect(drain(handle)).resolves.toEqual([expect.objectContaining({
+      type: 'result', subtype: 'error_during_execution', isError: true, errors: ['No conversation found with session ID gone'],
+    })]);
   });
 
   it('stops reading once aborted', async () => {
@@ -340,7 +367,37 @@ describe('ClaudeCodeAdapter.start(): the events', () => {
     handle.abort();
     expect(options.abortController.signal.aborted).toBe(true);
     fake.send(init('sess-1'));
+    // Ended, so a read that didn't stop shows the init rather than hanging.
+    fake.end();
     await expect(drain(handle)).resolves.toEqual([]);
+  });
+
+  describe('the running cost and tokens', () => {
+    const result = {
+      type: 'result', subtype: 'success', is_error: false, result: 'done', duration_ms: 1, num_turns: 1,
+      total_cost_usd: 7, modelUsage: { 'claude-opus-4-8': { inputTokens: 700, outputTokens: 70 } },
+    };
+    const prior = { priorCostUsd: 5, priorTokens: { input: 500, output: 50 } };
+
+    it('count on from where a resumed conversation had reached', async () => {
+      const { handle, fake } = await start({ resumeSessionId: 's1', ...prior });
+      fake.send(result);
+      fake.end();
+      expect((await drain(handle))[0]).toMatchObject({
+        totalCostUsd: 2, sessionCostUsd: 7,
+        turnTokens: { input: 200, output: 20 }, sessionTokens: { input: 700, output: 70 },
+      });
+    });
+
+    it("start from nothing in a new conversation, whatever an earlier one reached", async () => {
+      const { handle, fake } = await start(prior);
+      fake.send(result);
+      fake.end();
+      expect((await drain(handle))[0]).toMatchObject({
+        totalCostUsd: 7, sessionCostUsd: 7,
+        turnTokens: { input: 700, output: 70 }, sessionTokens: { input: 700, output: 70 },
+      });
+    });
   });
 });
 
@@ -371,6 +428,25 @@ describe('ClaudeCodeAdapter.start(): tool calls', () => {
       decisionReason: 'Bash wants to run', suggestions: call.suggestions, isPlanExecution: false, planText: undefined,
     }));
     expect(answer).toEqual({ behavior: 'allow', updatedInput: { command: 'npm test' }, updatedPermissions: call.suggestions });
+  });
+
+  it("refuses a write outside the sandbox's folders, even for a tool the user always allows", async () => {
+    const onPermissionRequest = vi.fn();
+    const { options } = await start({
+      sandbox: { filesystem: { allowWrite: ['/repo/wt'] } }, alwaysAllowedTools: new Set(['Write']), onPermissionRequest,
+    });
+    expect(await options.canUseTool('Write', { file_path: '/etc/hosts', content: 'x' }, call))
+      .toEqual({ behavior: 'deny', message: 'Path "/etc/hosts" is outside the allowed write directories' });
+    expect(await options.canUseTool('Write', { file_path: 'src/a.ts', content: 'x' }, call))
+      .toEqual({ behavior: 'allow', updatedInput: { file_path: 'src/a.ts', content: 'x' } });
+    expect(onPermissionRequest).not.toHaveBeenCalled();
+  });
+
+  it('allows shell commands without asking in a sandbox that says so', async () => {
+    const onPermissionRequest = vi.fn();
+    const { options } = await start({ sandbox: { autoAllowBashIfSandboxed: true }, onPermissionRequest });
+    expect(await options.canUseTool('Bash', { command: 'npm test' }, call)).toEqual({ behavior: 'allow', updatedInput: { command: 'npm test' } });
+    expect(onPermissionRequest).not.toHaveBeenCalled();
   });
 
   it('asks about a plan with its text', async () => {
