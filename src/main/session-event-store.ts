@@ -5,6 +5,7 @@
  */
 import { app } from 'electron';
 import * as fs from 'node:fs';
+import type { FileHandle } from 'node:fs/promises';
 import * as path from 'node:path';
 import type { AgentEvent } from '../shared/types.js';
 import { formatBytes, freezeLog } from './freeze-log.js';
@@ -77,6 +78,12 @@ export class SessionEventStore {
   /** The last write queued for each log file. Writes to a file run one after
    *  another, so a rewrite never lands under an earlier append. */
   private writes = new Map<string, Promise<void>>();
+  /** For each session, its append queued behind the write under way that
+   *  hasn't started yet (see flush). */
+  private waitingAppends = new Map<LoggedSession, Promise<void>>();
+  /** Logs kept open for appending (see appendTo), until closeLog or a
+   *  rewrite closes them. */
+  private handles = new Map<string, FileHandle>();
   private searchIndexes = new SearchIndexCache(SEARCH_INDEX_BUDGET);
   /** Cross-conversation search sweeps in progress (see beginSearch). */
   private searchSweeps = 0;
@@ -113,15 +120,40 @@ export class SessionEventStore {
   }
 
   /** Write any queued log lines, after the writes already under way. Settles
-   *  (never rejects) once everything queued for the log so far is written. */
+   *  (never rejects) once everything queued for the log so far is written.
+   *
+   *  One append waits behind the write under way at most: a flush while it
+   *  waits joins it, and it takes every line queued by the time it starts.
+   *  On 26 Oct appends of a few hundred bytes took up to 26 s, and with a
+   *  flush every EVENT_LOG_FLUSH_MS each conversation queued a hundred
+   *  appends behind a slow one, each opening the file again. */
   flush(session: LoggedSession): Promise<void> {
     this.stopFlushTimer(session);
-    if (session.logBuffer.length === 0) return this.writes.get(session.eventLogPath) ?? Promise.resolve();
-    const data = session.logBuffer.join('');
-    session.logBuffer = [];
-    session.logBufferBytes = 0;
-    return this.write(session.eventLogPath, `event log write, ${formatBytes(Buffer.byteLength(data))}`, () =>
-      fs.promises.appendFile(session.eventLogPath, data));
+    const file = session.eventLogPath;
+    if (session.logBuffer.length === 0) return this.writes.get(file) ?? Promise.resolve();
+    const waiting = this.waitingAppends.get(session);
+    if (waiting) return waiting;
+    const append: Promise<void> = this.write(file, async (label) => {
+      // Cut by a rewrite (replace) while it waited: its lines went with it.
+      if (this.waitingAppends.get(session) !== append) return;
+      this.waitingAppends.delete(session);
+      const data = session.logBuffer.join('');
+      session.logBuffer = [];
+      session.logBufferBytes = 0;
+      if (!data) return;
+      label(`event log write, ${formatBytes(Buffer.byteLength(data))}`);
+      await this.appendTo(file, data);
+    });
+    this.waitingAppends.set(session, append);
+    return append;
+  }
+
+  /** Write what is queued, then close the log: the session is going. The
+   *  next append, if it comes back, opens it again. */
+  closeLog(session: LoggedSession): Promise<void> {
+    void this.flush(session);
+    const file = session.eventLogPath;
+    return this.write(file, () => this.closeHandle(file));
   }
 
   /** Replace a live session's history (rewind, /clear) and rewrite its log
@@ -132,9 +164,43 @@ export class SessionEventStore {
     this.stopFlushTimer(session);
     session.logBuffer = [];
     session.logBufferBytes = 0;
+    this.waitingAppends.delete(session);
+    const file = session.eventLogPath;
     const data = events.length > 0 ? events.map((e) => JSON.stringify(e)).join('\n') + '\n' : '';
-    return this.write(session.eventLogPath, `event log rewrite, ${events.length} events`, () =>
-      fs.promises.writeFile(session.eventLogPath, data));
+    return this.write(file, async (label) => {
+      label(`event log rewrite, ${events.length} events`);
+      // Closed first, so the rewrite starts the file afresh rather than
+      // racing the handle appends go through.
+      await this.closeHandle(file);
+      await fs.promises.writeFile(file, data);
+    });
+  }
+
+  /** Append `data` through the log's open handle, opening it first if need
+   *  be. Kept open, an append is one trip through libuv's thread pool rather
+   *  than three (open, write, close), and the pool's four threads are shared
+   *  with every other file read and write in the main process; on Windows
+   *  an antivirus can also hold each open. A failed append closes the
+   *  handle, so the next one opens the file again. */
+  private async appendTo(file: string, data: string): Promise<void> {
+    let handle = this.handles.get(file);
+    if (!handle) {
+      handle = await fs.promises.open(file, 'a');
+      this.handles.set(file, handle);
+    }
+    try {
+      await handle.appendFile(data);
+    } catch (e) {
+      await this.closeHandle(file);
+      throw e;
+    }
+  }
+
+  private async closeHandle(file: string): Promise<void> {
+    const handle = this.handles.get(file);
+    if (!handle) return;
+    this.handles.delete(file);
+    await handle.close().catch(() => { /* already gone */ });
   }
 
   private stopFlushTimer(session: LoggedSession): void {
@@ -148,16 +214,18 @@ export class SessionEventStore {
    * Run `write` on `file` once the writes queued before it are done. Writes
    * are off the main process, so a slow disk or an antivirus scan delays the
    * log, not the window; one that took SLOW_EVENT_LOG_WRITE_MS or more is
-   * noted. A failed write is skipped, as before.
+   * noted, by the name `write` gives it with `label` (one that names
+   * nothing had nothing to write). A failed write is skipped, as before.
    */
-  private write(file: string, label: string, write: () => Promise<void>): Promise<void> {
+  private write(file: string, write: (label: (name: string) => void) => Promise<void>): Promise<void> {
     const run = async () => {
       const start = performance.now();
+      const noted: { name?: string } = {};
       try {
-        await write();
+        await write((name) => { noted.name = name; });
       } catch { /* non-fatal */ }
       const ms = performance.now() - start;
-      if (ms >= SLOW_EVENT_LOG_WRITE_MS) perfLine('events', `${label} took ${Math.round(ms)} ms (the window kept responding)`);
+      if (noted.name && ms >= SLOW_EVENT_LOG_WRITE_MS) perfLine('events', `${noted.name} took ${Math.round(ms)} ms (the window kept responding)`);
     };
     const next = (this.writes.get(file) ?? Promise.resolve()).then(run);
     this.writes.set(file, next);

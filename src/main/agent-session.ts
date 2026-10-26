@@ -2007,7 +2007,7 @@ class AgentSessionManager {
       } finally {
         // Written before the close settles: a resume waits on it, then reads
         // the log back from disk.
-        await this.events.flush(session);
+        await this.events.closeLog(session);
         this.events.forget(id);
         session.status = 'stopped';
         this.sendStatus(session, 'stopped');
@@ -2058,7 +2058,7 @@ class AgentSessionManager {
     // Wait for Windows file handles to release
     await new Promise((r) => setTimeout(r, this.handleReleaseMs));
 
-    await this.events.flush(session);
+    await this.events.closeLog(session);
     this.events.forget(id);
     this.sessions.delete(id);
   }
