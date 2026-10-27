@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { parseSkillFrontmatter, scanSkillsDir, computeSkillsFilter, validateSkillName, skillManifestContent, writeSkill, listSkills, CLAUDE_SKILL_DIRS, SHARED_SKILL_DIRS, readsSharedSkills, skillLinkContent, skillFrontmatter, isSkillLink, readSkillFile, saveSkillFile, copySkillToUser } from './skills.js';
+import { parseSkillFrontmatter, scanSkillsDir, markWorktreeOnly, validateSkillName, skillManifestContent, writeSkill, listSkills, CLAUDE_SKILL_DIRS, SHARED_SKILL_DIRS, readsSharedSkills, skillLinkContent, skillFrontmatter, isSkillLink, readSkillFile, saveSkillFile, copySkillToUser } from './skills.js';
 
 describe('parseSkillFrontmatter', () => {
   it('reads name and description from a frontmatter block', () => {
@@ -32,6 +32,21 @@ describe('parseSkillFrontmatter', () => {
   it('keeps a description containing colons intact', () => {
     const md = '---\ndescription: Use when: reviewing, or fixing\n---\n';
     expect(parseSkillFrontmatter(md)).toEqual({ description: 'Use when: reviewing, or fixing' });
+  });
+});
+
+describe('parseSkillFrontmatter as YAML reads it', () => {
+  it('unescapes quoted values', () => {
+    expect(parseSkillFrontmatter('---\nname: q\ndescription: "Use \\"this\\" for C:\\\\temp\\tnow"\n---\n'))
+      .toEqual({ name: 'q', description: 'Use "this" for C:\\temp\tnow' });
+    expect(parseSkillFrontmatter("---\ndescription: 'It''s here'\n---\n")).toEqual({ description: "It's here" });
+  });
+
+  it('joins a value written over several lines', () => {
+    expect(parseSkillFrontmatter('---\nname: a\ndescription: >-\n  Long text\n  over lines\nallowed-tools: Bash\n---\n'))
+      .toEqual({ name: 'a', description: 'Long text over lines' });
+    expect(parseSkillFrontmatter('---\ndescription: |\n  First\n  Second\n---\n')).toEqual({ description: 'First\nSecond' });
+    expect(parseSkillFrontmatter('---\ndescription: Starts here\n  and goes on\nname: b\n---\n')).toEqual({ name: 'b', description: 'Starts here and goes on' });
   });
 });
 
@@ -71,6 +86,19 @@ describe('scanSkillsDir', () => {
     expect((await scanSkillsDir(dir, 'user'))[0]).toMatchObject({ name: 'deploy', source: 'user' });
   });
 
+  it('lists a skill whose folder is a symlink to one elsewhere, as Claude Code does', async () => {
+    const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'grove-skill-target-'));
+    try {
+      fs.writeFileSync(path.join(elsewhere, 'SKILL.md'), '---\nname: linked\ndescription: d\n---\n');
+      fs.symlinkSync(elsewhere, path.join(dir, 'linked'), 'junction');
+      fs.writeFileSync(path.join(dir, 'file.md'), 'x');
+      fs.symlinkSync(path.join(dir, 'file.md'), path.join(dir, 'to-a-file'));
+      expect(await scanSkillsDir(dir, 'project')).toEqual([{ name: 'linked', description: 'd', source: 'project', path: path.join(dir, 'linked', 'SKILL.md') }]);
+    } finally {
+      fs.rmSync(elsewhere, { recursive: true, force: true });
+    }
+  });
+
   it('skips directories without a SKILL.md and plain files', async () => {
     fs.mkdirSync(path.join(dir, 'not-a-skill'));
     fs.writeFileSync(path.join(dir, 'stray.md'), 'x');
@@ -89,6 +117,13 @@ describe('validateSkillName', () => {
     for (const bad of ['Release', 'my skill', '-lead', '../escape', 'a/b', '']) {
       expect(() => validateSkillName(bad)).toThrow();
     }
+  });
+
+  it('rejects what the Agent Skills format does: a trailing hyphen, two in a row, over 64 characters', () => {
+    for (const bad of ['trailing-', 'double--dash', 'a'.repeat(65)]) {
+      expect(() => validateSkillName(bad)).toThrow();
+    }
+    expect(() => validateSkillName('a'.repeat(64))).not.toThrow();
   });
 });
 
@@ -229,10 +264,25 @@ describe('writeSkill', () => {
     expect(fs.existsSync(shared(worktree, 'own'))).toBe(false);
   });
 
-  it('rejects invalid names and blank description or instructions', () => {
+  it('rejects invalid names, a blank or too long description, and blank instructions', () => {
     expect(() => writeSkill(worktree, { ...def, name: 'Bad Name' })).toThrow();
     expect(() => writeSkill(worktree, { ...def, description: '  ' })).toThrow(/description/);
+    expect(() => writeSkill(worktree, { ...def, description: 'x'.repeat(1025) })).toThrow(/1024/);
     expect(() => writeSkill(worktree, { ...def, instructions: '' })).toThrow(/instructions/);
+  });
+
+  it('lists a description with quotes and backslashes as it was written', async () => {
+    writeSkill(worktree, { ...def, name: 'quoted', description: 'Use "this" for C:\\temp' });
+    expect((await listSkills(worktree)).find((s) => s.name === 'quoted')?.description).toBe('Use "this" for C:\\temp');
+  });
+
+  it("takes the skill back out when its link can't be written, so nothing is left half made", () => {
+    // A file where the link's folder would go.
+    fs.mkdirSync(path.join(worktree, '.claude', 'skills'), { recursive: true });
+    fs.writeFileSync(path.join(worktree, '.claude', 'skills', 'blocked'), 'x');
+    expect(() => writeSkill(worktree, { ...def, name: 'blocked' })).toThrow();
+    expect(fs.existsSync(path.join(worktree, '.agents', 'skills', 'blocked'))).toBe(false);
+    expect(() => writeSkill(worktree, { ...def, name: 'blocked' }, SHARED_SKILL_DIRS)).not.toThrow();
   });
 });
 
@@ -512,20 +562,39 @@ describe('copySkillToUser', () => {
   });
 });
 
-describe('computeSkillsFilter', () => {
-  it('returns undefined when nothing is disabled (CLI defaults apply)', () => {
-    expect(computeSkillsFilter(['a', 'b'], [])).toBeUndefined();
+describe('markWorktreeOnly', () => {
+  let repo: string;
+  let wt: string;
+
+  beforeEach(() => {
+    repo = fs.mkdtempSync(path.join(os.tmpdir(), 'grove-skills-repo-'));
+    wt = fs.mkdtempSync(path.join(os.tmpdir(), 'grove-skills-wt-'));
   });
 
-  it('returns every known skill minus the disabled ones, sorted', () => {
-    expect(computeSkillsFilter(['pdf', 'docx', 'deploy'], ['deploy'])).toEqual(['docx', 'pdf']);
+  afterEach(() => {
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(wt, { recursive: true, force: true });
   });
 
-  it('dedupes known names and tolerates disabling an unknown skill', () => {
-    expect(computeSkillsFilter(['a', 'a', 'b'], ['ghost'])).toEqual(['a', 'b']);
-  });
+  const put = (file: string, content: string) => {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, content);
+  };
 
-  it('can produce an empty allowlist when everything is disabled', () => {
-    expect(computeSkillsFilter(['a'], ['a'])).toEqual([]);
+  it("marks the project skills the project folder doesn't have, by the shared skill for a link", async () => {
+    put(path.join(repo, '.claude', 'skills', 'old', 'SKILL.md'), '---\nname: old\n---\n');
+    put(path.join(wt, '.claude', 'skills', 'old', 'SKILL.md'), '---\nname: old\n---\n');
+    put(path.join(wt, '.claude', 'skills', 'new', 'SKILL.md'), '---\nname: new\n---\n');
+    // A shared skill the project has, though not its link; and one it hasn't.
+    put(path.join(repo, '.agents', 'skills', 'team', 'SKILL.md'), '---\nname: team\n---\n');
+    for (const name of ['team', 'fresh']) {
+      put(path.join(wt, '.agents', 'skills', name, 'SKILL.md'), `---\nname: ${name}\n---\n`);
+      put(path.join(wt, '.claude', 'skills', name, 'SKILL.md'), skillLinkContent(`---\nname: ${name}\n---\n`, name, `.agents/skills/${name}/SKILL.md`));
+    }
+    const listed = await listSkills(wt);
+    const marked = await markWorktreeOnly([...listed, { name: 'mine', description: '', source: 'user', path: '/home/me/x/SKILL.md' }], wt, repo);
+    expect(marked.filter((s) => s.worktreeOnly).map((s) => s.name)).toEqual(['fresh', 'new']);
+    // A thread in the project folder itself has nothing to mark.
+    expect(await markWorktreeOnly(listed, repo, repo)).toBe(listed);
   });
 });

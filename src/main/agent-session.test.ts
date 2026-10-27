@@ -336,6 +336,7 @@ function makeMockWindow() {
 
 // Import the module under test AFTER mocks are set up
 const { sessionManager } = await import('./agent-session.js');
+const { missingSkillWarning } = await import('./session-skills.js');
 // destroySession's wait for Windows to release file handles: no real files here.
 sessionManager.handleReleaseMs = 0;
 const { sanitizeElicitationResponse } = await import('./session-permissions.js');
@@ -801,6 +802,23 @@ describe('AgentSessionManager event processing', () => {
     );
 
     await sessionManager.destroySession('test-init');
+  });
+
+  it("warns once when the message asks for a skill the agent doesn't list", async () => {
+    await sessionManager.createSession({ id: 'test-missing-skill', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    const session = sessionManager.getSession('test-missing-skill')!;
+    session.eventHistory.push({ type: 'user_message', text: 'Use the `ghost` skill.' });
+
+    const warning = missingSkillWarning('ghost', 'Mock Agent');
+    const warnings = () => session.eventHistory.filter((e) => e.type === 'status' && e.message === warning);
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 's', model: 'mock-model', tools: [], skills: ['real'] });
+    await vi.waitFor(() => expect(warnings()).toHaveLength(1));
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 's', model: 'mock-model', tools: [], skills: ['real'] });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(warnings()).toHaveLength(1);
+
+    await sessionManager.destroySession('test-missing-skill');
   });
 
   it('emits events to the renderer window', async () => {

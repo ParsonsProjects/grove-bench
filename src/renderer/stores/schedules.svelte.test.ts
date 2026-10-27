@@ -7,6 +7,8 @@ vi.mock('./draft.svelte.js', () => ({ draftStore: { startThreadFor } }));
 
 import { schedulesStore } from './schedules.svelte.js';
 import { store as sessionStore } from './sessions.svelte.js';
+import { agentsStore } from './agents.svelte.js';
+import { settingsStore } from './settings.svelte.js';
 
 const schedule = (over: Partial<SkillSchedule> = {}): SkillSchedule => ({
   id: 's1',
@@ -154,6 +156,36 @@ describe('schedulesStore.run', () => {
     finish({ id: 'new1' });
     await running;
     expect(schedulesStore.starting).toEqual({});
+  });
+});
+
+describe('a skill turned off', () => {
+  beforeEach(() => {
+    agentsStore.list = [
+      { id: 'claude-code', displayName: 'Claude Code', capabilities: { skills: true }, isDefault: true },
+      { id: 'gemini-cli', displayName: 'Gemini CLI', capabilities: { skills: false } },
+    ] as typeof agentsStore.list;
+    agentsStore.loaded = true;
+    settingsStore.current = { ...settingsStore.current, disabledSkills: ['work-linear-issue'] };
+  });
+
+  it("skips a due run of a Claude Code skill that's turned off, and says why", async () => {
+    const off = schedule({ agentId: 'claude-code' });
+    schedulesStore.list = [off];
+    expect(schedulesStore.turnedOff(off)).toBe(true);
+    expect(await schedulesStore.run(off, { scheduled: true })).toBe(false);
+    expect(startThreadFor).not.toHaveBeenCalled();
+    expect(mockGroveBench.recordSkillScheduleRun).toHaveBeenCalledWith('s1', { skipped: 'the "work-linear-issue" skill is turned off' });
+
+    // By hand: a toast instead.
+    expect(await schedulesStore.run(off)).toBe(false);
+    expect(sessionStore.error).toMatch(/it's turned off/);
+  });
+
+  it("runs another agent's skill of the same name, which Grove doesn't turn off", async () => {
+    const other = schedule({ agentId: 'gemini-cli' });
+    expect(schedulesStore.turnedOff(other)).toBe(false);
+    expect(await schedulesStore.run(other, { scheduled: true })).toBe(true);
   });
 });
 

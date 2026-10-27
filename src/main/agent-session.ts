@@ -40,7 +40,7 @@ import {
   requestPermission, respondToPermission as answerPermission, denyPendingPermissions,
   awaitElicitation, respondToElicitation as answerElicitation, cancelElicitations,
 } from './session-permissions.js';
-import { SessionSkills } from './session-skills.js';
+import { missingSkill, missingSkillWarning, SessionSkills } from './session-skills.js';
 import { SessionPromptSuggestions } from './session-prompt-suggestions.js';
 import {
   beforeToolUse, cancelLimit, limitsFromHistory, promptSent, respondToLimit as answerLimit,
@@ -523,7 +523,10 @@ class AgentSessionManager {
     // lands mid-startup (restartRequested) retries the same truncated resume.
     const resumeAtUuid = session.pendingResumeAt;
 
-    const skillsFilter = await this.skills.filterFor(session, currentSettings.disabledSkills ?? []);
+    // Claude Code sees shared skills through links, which a new worktree
+    // has only if they were committed.
+    await this.skills.keepLinks(session);
+    const disabledSkills = this.skills.disabledFor(session, currentSettings.disabledSkills ?? []);
 
     // Read-safe mode leans on a sandbox that may not start: say so once per
     // conversation (eventHistory is reloaded from disk, so across restarts too).
@@ -576,7 +579,7 @@ class AgentSessionManager {
       appendSystemPrompt: session.appendSystemPrompt,
       customSystemPrompt: session.customSystemPrompt,
       allowedTools: session.allowedTools,
-      skills: skillsFilter ?? null,
+      disabledSkills: disabledSkills ?? null,
       outputFormat: caps.structuredOutput ? session.outputFormat : null,
       // Read-safe mode gets OS-level sandbox enforcement as a backstop beneath
       // the read-only classifier (explicit per-session sandbox settings win).
@@ -781,10 +784,12 @@ class AgentSessionManager {
           session.status = 'running';
           session.providerSessionId = handle.getSessionId();
           if (session.promptsBeforeInit?.handle === handle) session.promptsBeforeInit = null;
-          // Remember reported skills so the disabled-skills allowlist can
-          // include plugin skills the on-disk scan can't see.
-          if (event.skills && event.skills.length > 0) {
-            this.skills.record(session.repoPath, event.skills);
+          // A message that asks for a skill the agent doesn't have (turned
+          // off, renamed, or not on this branch) gets nowhere: say so once.
+          const missing = missingSkill(session.eventHistory, event.skills ?? [], event.slashCommands ?? []);
+          if (missing) {
+            const warning = missingSkillWarning(missing, session.adapter.displayName);
+            if (!session.eventHistory.some((e) => e.type === 'status' && e.message === warning)) emit({ type: 'status', level: 'warning', message: warning });
           }
           // Record the model the provider resolved, normalised back to a known
           // picker id. The SDK reports a dated alias (e.g. "claude-opus-4-8-

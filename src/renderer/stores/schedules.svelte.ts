@@ -2,6 +2,8 @@ import { CONTROL_IDS } from '../../shared/types.js';
 import { skillRunPrompt, type ScheduleOutcome, type SkillRun, type SkillSchedule, type SkillScheduleInput } from '../../shared/skill-schedules.js';
 import { store as sessionStore } from './sessions.svelte.js';
 import { draftStore, type ThreadStart } from './draft.svelte.js';
+import { agentsStore } from './agents.svelte.js';
+import { settingsStore } from './settings.svelte.js';
 
 /** How often, and how many times, to ask again while app-state.json can't be
  *  read (a passing lock, usually an antivirus scan). */
@@ -70,6 +72,15 @@ class SchedulesStore {
     return sessionStore.sessions.filter((s) => ids.has(s.id) && sessionStore.isOpenTab(s)).length;
   }
 
+  /** Whether the schedule's skill is one Grove turned off for its agent
+   *  (Claude Code), so a thread started for it couldn't use it. A skill
+   *  that's gone is told in the thread it starts: only the agent's own list
+   *  knows its plugin skills. */
+  turnedOff(schedule: Pick<SkillSchedule, 'agentId' | 'skill'>): boolean {
+    return agentsStore.loaded && agentsStore.supports(schedule.agentId, 'skills')
+      && (settingsStore.current.disabledSkills ?? []).includes(schedule.skill);
+  }
+
   /** Start a thread that runs the skill, on its own agent only. A refusal
    *  comes back with its reason rather than as a toast, and so does a start
    *  that threw. */
@@ -136,6 +147,12 @@ class SchedulesStore {
       // Kept until deleted in the Scheduled tab, and runs again if the
       // project comes back: noted each time, no toast.
       await this.record(schedule.id, { skipped: 'its project was removed' });
+      return false;
+    }
+    await agentsStore.load();
+    if (this.turnedOff(schedule)) {
+      if (scheduled) await this.record(schedule.id, { skipped: `the "${schedule.skill}" skill is turned off` });
+      else sessionStore.setError(`Scheduled skill "${schedule.skill}" didn't start a thread: it's turned off. Turn it back on in Skills to run it.`);
       return false;
     }
     if (scheduled) {
