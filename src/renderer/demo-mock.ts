@@ -196,9 +196,9 @@ const demoSkillFiles: Record<string, string> = {};
  *  see yet, so the drawer shows Share and Link. */
 let DEMO_SHARING = {
   toShare: DEMO_SKILLS.filter((s) => s.name === 'code-review' || s.name === 'deploy-preview'),
-  toLink: [{ name: 'triage-issue', description: 'Pick the top agent-ready issue and move it to In Progress', source: 'project', path: 'C:/dev/grove-bench/.agents/skills/triage-issue/SKILL.md' }],
-  broken: [] as typeof DEMO_SKILLS,
 };
+/** A shared skill Claude Agent sees once its link is made (linkSkills). */
+let DEMO_UNLINKED = [{ name: 'triage-issue', description: 'Pick the top agent-ready issue and move it to In Progress', source: 'project' as const, path: 'C:/dev/grove-bench/.claude/skills/triage-issue/SKILL.md' }];
 
 let DEMO_SUGGESTIONS = [
   {
@@ -428,9 +428,9 @@ const api: Record<string, unknown> = {
   openSkillInEditor: async () => {},
   getSkillSharing: async () => DEMO_SHARING,
   linkSkills: async () => {
-    DEMO_SKILLS.push(...DEMO_SHARING.toLink);
-    const done = DEMO_SHARING.toLink.map((s) => s.name);
-    DEMO_SHARING = { ...DEMO_SHARING, toLink: [], broken: [] };
+    DEMO_SKILLS.push(...DEMO_UNLINKED);
+    const done = DEMO_UNLINKED.map((s) => s.name);
+    DEMO_UNLINKED = [];
     return { done, skipped: [] };
   },
   getSkillSuggestions: async () => DEMO_SUGGESTIONS,

@@ -65,7 +65,7 @@ describe('DraftAgentControl', () => {
   it('shows the agent, model and mode the draft would start on', () => {
     render(DraftAgentControl);
     const trigger = screen.getByTitle(/Agent settings/);
-    expect(trigger).toHaveTextContent('Claude Agent');
+    expect(trigger).toHaveAccessibleName(/\(Claude Agent\)$/);
     expect(trigger).toHaveTextContent('Opus · Ask');
   });
 

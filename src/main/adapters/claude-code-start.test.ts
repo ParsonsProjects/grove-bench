@@ -188,10 +188,20 @@ describe('ClaudeCodeAdapter.start(): what it asks the SDK for', () => {
     expect(fresh).not.toHaveProperty('forkSession');
   });
 
-  it('passes on the skills, output format, prompt suggestions and sandbox it is given', async () => {
+  it('passes on the output format, prompt suggestions and sandbox it is given', async () => {
     const outputFormat = { type: 'json_schema' as const, schema: { type: 'object' } };
-    const { options } = await start({ skills: ['review'], outputFormat, promptSuggestions: true, sandbox: { enabled: true } });
-    expect(options).toMatchObject({ skills: ['review'], outputFormat, promptSuggestions: true, sandbox: { enabled: true } });
+    const { options } = await start({ outputFormat, promptSuggestions: true, sandbox: { enabled: true } });
+    expect(options).toMatchObject({ outputFormat, promptSuggestions: true, sandbox: { enabled: true } });
+  });
+
+  it('turns off the skills it is given by name, leaving the rest to the CLI (no allowlist)', async () => {
+    const { options } = await start({ disabledSkills: ['deploy', 'tools:lint'] });
+    expect(options.settings).toEqual({ skillOverrides: { deploy: 'off', 'tools:lint': 'off' } });
+    expect(options).not.toHaveProperty('skills');
+    // With fast mode, both settings go in.
+    const fast = (await start({ model: 'claude-opus-4-8', disabledSkills: ['deploy'], controls: { speed: 'fast' } })).options;
+    expect(fast.settings).toEqual({ fastMode: true, skillOverrides: { deploy: 'off' } });
+    expect((await start({ disabledSkills: [] })).options).not.toHaveProperty('settings');
   });
 
   it('turns the reasoning controls into thinking, effort and fast mode', async () => {

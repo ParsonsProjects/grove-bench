@@ -38,7 +38,7 @@ Everything below is what the code does now, so the plan can be checked against i
   existing checkout. This is the seed for folder workspaces.
 - **Everything keyed by repo path.** Memory lives at
   `<userData>/memory/<sanitised repoPath>` (`src/main/memory.ts`). App state
-  keys `collapsedRepos`, `knownSkills` and `skillSuggestions` by repo path
+  keys `collapsedRepos` and `skillSuggestions` by repo path
   (`src/main/app-state.ts`), and settings key `repoColors` the same way.
 - **Extra directories are stored but never used.** `workingDirectories` exists in
   `src/main/settings.ts` and has a Settings UI, but nothing in `src/main`
@@ -102,7 +102,7 @@ On first launch with the new code:
 3. Move `<userData>/memory/<sanitised repoPath>` to
    `<userData>/memory/<projectId>` and write the old key into the project's
    `index.json` so a failed move can be retried.
-4. Re-key `collapsedRepos`, `knownSkills`, `skillSuggestions` and `repoColors`
+4. Re-key `collapsedRepos`, `skillSuggestions` and `repoColors`
    by project id. Keep the old keys until the next schema bump, then drop them.
 
 The manifest already has a precedent for this kind of migration

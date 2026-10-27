@@ -62,21 +62,24 @@
 </script>
 
 {#if showContext}
-  <StatusBarPopover bind:open={contextExpanded} align="right" class="ml-auto shrink-0" panelClass="w-72">
+  <StatusBarPopover bind:open={contextExpanded} align="right" class="shrink-0" panelClass="w-72">
     {#snippet trigger()}
+      <!-- No border, unlike the lozenges: the meter is its own shape. A
+           narrow bar keeps only the number. -->
       <button
         onclick={() => contextExpanded = !contextExpanded}
-        class="flex flex-col items-end gap-1 leading-snug whitespace-nowrap hover:text-foreground transition-colors"
+        class="flex h-5 items-center gap-1.5 px-0.5 whitespace-nowrap hover:text-foreground transition-colors {contextExpanded ? 'text-foreground' : ''}"
         title="Context: {formatTokens(usedTokens)} of {formatTokens(contextWindow)} tokens used. Click for details."
         aria-label="Context {usedPercent.toFixed(0)}% used. Click for details."
         aria-expanded={contextExpanded}
       >
-        <span class="font-medium transition-colors {usedTextClass}">
-          Context {usedPercent.toFixed(0)}%
+        <span class="hidden @4xl:inline">Context</span>
+        <span class="font-medium transition-colors {usedTextClass}">{usedPercent.toFixed(0)}%</span>
+        <!-- Mini bar: five pixel blocks of 20%, coloured by how full it is.
+             A width that gives whole-pixel blocks with the 2px gaps. -->
+        <span class="hidden @2xl:block">
+          <PixelMeter percent={usedPercent} cells={5} fillClass={usedBarClass} class="w-[38px] h-1.5" data-testid="context-bar" />
         </span>
-        <!-- Mini bar: ten pixel blocks of 10%, coloured by how full it is.
-             Widths that give whole-pixel blocks with the 2px gaps. -->
-        <PixelMeter percent={usedPercent} cells={10} fillClass={usedBarClass} class="w-[58px] @3xl:w-[88px] h-1.5" data-testid="context-bar" />
       </button>
     {/snippet}
 
@@ -256,6 +259,4 @@
       {/if}
     </div>
   </StatusBarPopover>
-{:else}
-  <span class="ml-auto"></span>
 {/if}

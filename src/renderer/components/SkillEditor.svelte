@@ -151,7 +151,7 @@
       <Confirm
         message="Discard your changes to {edit.skill.name}?"
         confirm="Discard"
-        onconfirm={() => skillsPanelStore.discardEdit()}
+        onconfirm={() => skillsPanelStore.discardChanges()}
         oncancel={() => { skillsPanelStore.pendingDiscard = null; textarea?.focus(); }}
       />
     {:else}

@@ -15,7 +15,6 @@ import { backgroundTaskStore } from '../stores/backgroundTask.svelte.js';
 import { subagentPanelStore } from '../stores/subagentPanel.svelte.js';
 import { gitStatusStore } from '../stores/gitStatus.svelte.js';
 import { CONTROL_IDS } from '../../shared/types.js';
-import { TAB_BY_KEY, TAB_LABELS } from '../lib/keyboard-shortcuts.js';
 import type { PrInfo, ThreadUsage } from '../../shared/types.js';
 
 const ACTIVE = 's-active';
@@ -66,53 +65,6 @@ describe('StatusBar keyboard shortcuts', () => {
   });
 });
 
-describe('StatusBar Keys popover', () => {
-  it('lists each tab under the key that switches to it', async () => {
-    render(StatusBar, { props: { sessionId: ACTIVE } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Keys' }));
-
-    const popover = screen.getByRole('dialog', { name: 'Keyboard shortcuts' });
-    for (const [key, tab] of Object.entries(TAB_BY_KEY)) {
-      const row = within(popover).getByText(`${TAB_LABELS[tab]} tab`).closest('div')!;
-      expect(row).toHaveTextContent(`Alt+${key}`);
-    }
-    expect(within(popover).getByText('Settings').closest('div')).toHaveTextContent('Ctrl+,');
-  });
-
-  it('closes on Escape, with focus back on its button', async () => {
-    render(StatusBar, { props: { sessionId: ACTIVE } });
-    const button = screen.getByRole('button', { name: 'Keys' });
-    // A real click focuses the button; jsdom's doesn't.
-    button.focus();
-    await fireEvent.click(button);
-    expect(button).toHaveAttribute('aria-expanded', 'true');
-
-    await fireEvent.keyDown(window, { key: 'Escape' });
-
-    expect(screen.queryByRole('dialog', { name: 'Keyboard shortcuts' })).not.toBeInTheDocument();
-    expect(button).toHaveAttribute('aria-expanded', 'false');
-    expect(document.activeElement).toBe(button);
-  });
-
-  it('lets Escape through when focus is elsewhere, such as a dialog opened over it', async () => {
-    render(StatusBar, { props: { sessionId: ACTIVE } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Keys' }));
-    const elsewhere = document.createElement('input');
-    document.body.appendChild(elsewhere);
-    elsewhere.focus();
-    const reached = vi.fn();
-    document.addEventListener('keydown', reached);
-
-    await fireEvent.keyDown(elsewhere, { key: 'Escape' });
-
-    expect(reached).toHaveBeenCalled();
-    expect(document.activeElement).toBe(elsewhere);
-    expect(screen.queryByRole('dialog', { name: 'Keyboard shortcuts' })).not.toBeInTheDocument();
-    document.removeEventListener('keydown', reached);
-    elsewhere.remove();
-  });
-});
-
 describe('StatusBar MCP controls follow the agent', () => {
   const ID = 's-mcp';
   const NONE = { list: false, reconnect: false, toggle: false, signIn: false, contextCost: false };
@@ -138,6 +90,12 @@ describe('StatusBar MCP controls follow the agent', () => {
     });
   });
 
+  /** The drawer opens from the MCP · Skills lozenge's menu. */
+  async function openMcp() {
+    await fireEvent.click(await screen.findByTestId('capabilities'));
+    await fireEvent.click(within(screen.getByRole('dialog', { name: 'MCP and Skills' })).getByRole('button', { name: /^MCP servers/ }));
+  }
+
   afterEach(() => {
     // Unmount first: emptying the server list below would close an open
     // drawer, and its slide would need the animate mock restored next.
@@ -155,7 +113,7 @@ describe('StatusBar MCP controls follow the agent', () => {
     messageStore.systemInfoBySession[ID] = { tools: [], agents: [], skills: [], slashCommands: [], mcpServers: [{ name: 'docs', status: 'connected' }] };
     render(StatusBar, { props: { sessionId: ID } });
 
-    await fireEvent.click(screen.getByRole('button', { name: /MCP 1/ }));
+    await openMcp();
 
     const drawer = screen.getByRole('dialog', { name: 'MCP servers' });
     expect(drawer).toHaveAttribute('aria-modal', 'true');
@@ -170,7 +128,7 @@ describe('StatusBar MCP controls follow the agent', () => {
     useAgent({ controls: { ...NONE, list: true }, disconnectHint: '' });
     messageStore.systemInfoBySession[ID] = { tools: [], agents: [], skills: [], slashCommands: [], mcpServers: [{ name: 'docs', status: 'connected' }] };
     render(StatusBar, { props: { sessionId: ID } });
-    await fireEvent.click(screen.getByRole('button', { name: /MCP 1/ }));
+    await openMcp();
     expect(screen.getByRole('dialog', { name: 'MCP servers' })).toBeInTheDocument();
 
     store.activeSessionId = 'another-thread';
@@ -184,13 +142,13 @@ describe('StatusBar MCP controls follow the agent', () => {
     messageStore.systemInfoBySession[ID] = { tools: [], agents: [], skills: [], slashCommands: [], mcpServers: [{ name: 'cloudflare', status: 'needs-auth' }] };
     vi.mocked(window.groveBench.authenticateMcpServer).mockResolvedValueOnce({ authUrl: 'https://example.com/oauth', callbackExpected: true });
     render(StatusBar, { props: { sessionId: ID } });
-    await fireEvent.click(screen.getByRole('button', { name: /MCP 1/ }));
+    await openMcp();
     await fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
     await screen.findByRole('button', { name: 'Waiting...' });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Close MCP servers' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    await fireEvent.click(screen.getByRole('button', { name: /MCP 1/ }));
+    await openMcp();
 
     expect(screen.getByRole('button', { name: 'Waiting...' })).toBeDisabled();
     expect(screen.getByText(/Finish signing in to cloudflare/)).toBeInTheDocument();
@@ -201,7 +159,7 @@ describe('StatusBar MCP controls follow the agent', () => {
     messageStore.systemInfoBySession[ID] = { tools: [], agents: [], skills: [], slashCommands: [], mcpServers: [{ name: 'docs', status: 'connected' }] };
     render(StatusBar, { props: { sessionId: ID } });
 
-    await fireEvent.click(screen.getByRole('button', { name: /MCP 1/ }));
+    await openMcp();
 
     expect(screen.queryByRole('button', { name: 'Disconnect' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Reconnect' })).toBeNull();
@@ -213,18 +171,18 @@ describe('StatusBar MCP controls follow the agent', () => {
     messageStore.systemInfoBySession[ID] = { tools: [], agents: [], skills: [], slashCommands: [], mcpServers: [{ name: 'docs', status: 'connected' }] };
     render(StatusBar, { props: { sessionId: ID } });
 
-    await fireEvent.click(screen.getByRole('button', { name: /MCP 1/ }));
+    await openMcp();
 
     expect(screen.getByRole('button', { name: 'Disconnect' }).getAttribute('title')).toBe('Off until this thread restarts');
     expect(screen.queryByRole('button', { name: 'Reconnect' })).toBeNull();
   });
 
-  it('shows the badge for an agent that only reports servers when asked', async () => {
+  it('counts the servers of an agent that only reports them when asked', async () => {
     useAgent({ controls: { ...NONE, list: true }, disconnectHint: '' });
     vi.mocked(window.groveBench.listMcpServers).mockResolvedValueOnce([{ name: 'docs', status: 'connected' }]);
     render(StatusBar, { props: { sessionId: ID } });
 
-    await waitFor(() => expect(screen.getByRole('button', { name: /MCP 1/ })).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId('capabilities')).toHaveTextContent('MCP 1'));
   });
 
   it('makes Reconnect green only for a server that failed', async () => {
@@ -232,7 +190,7 @@ describe('StatusBar MCP controls follow the agent', () => {
     messageStore.systemInfoBySession[ID] = { tools: [], agents: [], skills: [], slashCommands: [], mcpServers: [{ name: 'docs', status: 'failed' }, { name: 'search', status: 'connected' }] };
     render(StatusBar, { props: { sessionId: ID } });
 
-    await fireEvent.click(screen.getByRole('button', { name: /MCP/ }));
+    await openMcp();
 
     const [failed, connected] = screen.getAllByRole('button', { name: 'Reconnect' });
     expect(failed).toHaveClass('text-primary');
@@ -247,7 +205,7 @@ describe('StatusBar MCP controls follow the agent', () => {
     vi.mocked(window.groveBench.authenticateMcpServer).mockResolvedValueOnce({ authUrl: 'https://claude.ai/connect', callbackExpected: false });
     render(StatusBar, { props: { sessionId: ID } });
 
-    await fireEvent.click(screen.getByRole('button', { name: /MCP 1/ }));
+    await openMcp();
     expect(screen.queryByRole('button', { name: 'Reconnect' })).toBeNull();
 
     await fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
@@ -263,7 +221,7 @@ describe('StatusBar MCP controls follow the agent', () => {
     vi.mocked(window.groveBench.authenticateMcpServer).mockResolvedValueOnce({ authUrl: 'https://example.com/oauth', callbackExpected: true });
     render(StatusBar, { props: { sessionId: ID } });
 
-    await fireEvent.click(screen.getByRole('button', { name: /MCP 1/ }));
+    await openMcp();
     await fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
 
     await screen.findByRole('button', { name: 'Waiting...' });
@@ -274,7 +232,7 @@ describe('StatusBar MCP controls follow the agent', () => {
     useAgent({ controls: { ...NONE, list: true }, disconnectHint: '' });
     messageStore.systemInfoBySession[ID] = { tools: [], agents: [], skills: [], slashCommands: [], mcpServers: [{ name: 'docs', status: 'connected' }] };
     render(StatusBar, { props: { sessionId: ID } });
-    await fireEvent.click(screen.getByRole('button', { name: /MCP 1/ }));
+    await openMcp();
 
     let answer!: (servers: import('../../shared/types.js').McpServerInfo[]) => void;
     vi.mocked(window.groveBench.listMcpServers).mockReturnValueOnce(new Promise((resolve) => { answer = resolve; }));
@@ -289,7 +247,7 @@ describe('StatusBar MCP controls follow the agent', () => {
     useAgent({ controls: { ...NONE, list: true, reconnect: true }, disconnectHint: '' });
     messageStore.systemInfoBySession[ID] = { tools: [], agents: [], skills: [], slashCommands: [], mcpServers: [{ name: 'linear', status: 'needs-auth' }] };
     render(StatusBar, { props: { sessionId: ID } });
-    await fireEvent.click(screen.getByRole('button', { name: /MCP 1/ }));
+    await openMcp();
     vi.mocked(window.groveBench.listMcpServers).mockClear();
 
     await fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
@@ -304,7 +262,7 @@ describe('StatusBar MCP controls follow the agent', () => {
     useAgent({ controls: { ...NONE, list: true }, disconnectHint: '' });
     messageStore.systemInfoBySession[ID] = { tools: [], agents: [], skills: [], slashCommands: [], mcpServers: [{ name: 'linear', status: 'failed' }] };
     render(StatusBar, { props: { sessionId: ID } });
-    await fireEvent.click(screen.getByRole('button', { name: /MCP 1/ }));
+    await openMcp();
 
     await fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
 
@@ -317,7 +275,7 @@ describe('StatusBar MCP controls follow the agent', () => {
     messageStore.systemInfoBySession[ID] = { tools: [], agents: [], skills: [], slashCommands: [], mcpServers: [{ name: 'claude.ai Linear', status: 'needs-auth' }] };
     vi.mocked(window.groveBench.authenticateMcpServer).mockResolvedValueOnce({ authUrl: 'https://claude.ai/connect', callbackExpected: false });
     render(StatusBar, { props: { sessionId: ID } });
-    await fireEvent.click(screen.getByRole('button', { name: /MCP 1/ }));
+    await openMcp();
     await fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
     await screen.findByText(/then click Reconnect/);
     expect(window.groveBench.reconnectDownMcpServers).not.toHaveBeenCalled();
@@ -333,7 +291,7 @@ describe('StatusBar MCP controls follow the agent', () => {
     messageStore.systemInfoBySession[ID] = { tools: [], agents: [], skills: [], slashCommands: [], mcpServers: [{ name: 'linear', status: 'failed' }] };
     vi.mocked(window.groveBench.listMcpServers).mockResolvedValue([{ name: 'linear', status: 'failed' }]);
     render(StatusBar, { props: { sessionId: ID } });
-    await fireEvent.click(screen.getByRole('button', { name: /MCP 1/ }));
+    await openMcp();
 
     await fireEvent.click(await screen.findByRole('button', { name: 'Reconnect' }));
 
@@ -347,7 +305,7 @@ describe('StatusBar MCP controls follow the agent', () => {
     // Only the last known status says connected; the live list can't be read.
     messageStore.systemInfoBySession[ID] = { tools: [], agents: [], skills: [], slashCommands: [], mcpServers: [{ name: 'linear', status: 'connected' }] };
     render(StatusBar, { props: { sessionId: ID } });
-    await fireEvent.click(screen.getByRole('button', { name: /MCP 1/ }));
+    await openMcp();
 
     await fireEvent.click(await screen.findByRole('button', { name: 'Reconnect' }));
 
@@ -360,7 +318,7 @@ describe('StatusBar MCP controls follow the agent', () => {
     useAgent({ controls: { ...NONE, list: true, reconnect: true }, disconnectHint: '' });
     messageStore.systemInfoBySession[ID] = { tools: [], agents: [], skills: [], slashCommands: [], mcpServers: [{ name: 'linear', status: 'needs-auth' }] };
     render(StatusBar, { props: { sessionId: ID } });
-    await fireEvent.click(screen.getByRole('button', { name: /MCP 1/ }));
+    await openMcp();
     await screen.findByText('needs-auth');
 
     messageStore.updateMcpServers(ID, [{ name: 'linear', status: 'connected', toolCount: 2, tools: [{ name: 'a' }, { name: 'b' }] }]);
@@ -369,37 +327,48 @@ describe('StatusBar MCP controls follow the agent', () => {
     expect(screen.getByRole('button', { name: '2 tools' })).toBeTruthy();
   });
 
-  // A narrow bar drops MCP and Skills to keep the branch in view, but not
-  // while a server is down: that is worth the room.
+  // A narrow bar keeps the lozenge's dot, which still shows a server down.
   it.each([
-    ['connected', true],
-    ['failed', false],
-  ] as const)('drops out of a narrow bar when %s: %s', (status, dropsOut) => {
+    ['connected', 'bg-green-500', 'MCP 1'],
+    ['failed', 'bg-red-500', 'MCP 0/1'],
+  ] as const)('keeps only its dot in a narrow bar, coloured by health, when %s', async (status, colour, text) => {
     useAgent();
     messageStore.systemInfoBySession[ID] = { tools: [], agents: [], skills: [], slashCommands: [], mcpServers: [{ name: 'docs', status }] };
     render(StatusBar, { props: { sessionId: ID } });
 
-    const stack = screen.getByRole('button', { name: /MCP 1/ }).closest('.flex-col')!;
-    expect(stack.classList.contains('hidden')).toBe(dropsOut);
+    const lozenge = await screen.findByTestId('capabilities');
+    expect(lozenge.querySelector(`.${colour}`)).not.toBeNull();
+    expect(within(lozenge).getByText(text)).toHaveClass('hidden', '@3xl:inline');
   });
 });
 
 describe('StatusBar rate limit', () => {
   afterEach(() => rateLimitStore.destroy(ACTIVE));
 
-  it('shows the warning under the activity line', () => {
+  it('marks the activity lozenge amber, and says why in its popup', async () => {
     rateLimitStore.set(ACTIVE, { status: 'allowed_warning', utilization: 0.85 });
-    const { getByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
-    const warning = getByTestId('rate-limit');
-    expect(warning.textContent).toMatch(/rate warning\s+\(85%\)/);
-    // In the same stack as "idle", since it explains why the agent waits.
-    expect(warning.closest('.flex-col')?.textContent).toContain('idle');
+    render(StatusBar, { props: { sessionId: ACTIVE } });
+    const lozenge = screen.getByTestId('activity');
+    expect(lozenge).toHaveTextContent('Ready');
+    expect(lozenge.querySelector('.bg-status-attention')).not.toBeNull();
+    expect(lozenge.getAttribute('title')).toContain('rate limit warning');
+
+    await fireEvent.click(lozenge);
+    expect(screen.getByTestId('rate-limit').textContent).toMatch(/Rate limit warning\s+\(85%\)/);
   });
 
-  it('shows nothing while requests are allowed', () => {
+  it('says so in the lozenge once requests are refused', () => {
+    rateLimitStore.set(ACTIVE, { status: 'rejected' });
+    render(StatusBar, { props: { sessionId: ACTIVE } });
+    expect(screen.getByTestId('activity')).toHaveTextContent('Rate limited');
+  });
+
+  it('shows nothing while requests are allowed', async () => {
     rateLimitStore.set(ACTIVE, { status: 'allowed' });
-    const { queryByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
-    expect(queryByTestId('rate-limit')).toBeNull();
+    render(StatusBar, { props: { sessionId: ACTIVE } });
+    expect(screen.getByTestId('activity').querySelector('.bg-status-attention')).toBeNull();
+    await fireEvent.click(screen.getByTestId('activity'));
+    expect(screen.queryByTestId('rate-limit')).toBeNull();
   });
 });
 
@@ -507,7 +476,7 @@ describe('StatusBar context actions', () => {
 
   it('labels the meter and says what context is', async () => {
     await openContext();
-    expect(screen.getByText('Context 75%')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Context 75% used. Click for details.' })).toHaveTextContent(/^Context\s*75%$/);
     expect(screen.getByText(/How much the agent can hold in mind at once/)).toBeTruthy();
   });
 
@@ -543,15 +512,16 @@ describe('StatusBar context actions', () => {
 
   it('colours the whole used length, cached tokens included', () => {
     // Nearly all of it cached, as it is with prompt caching: the bar still
-    // reads as 90% full (nine of ten blocks), in the full colour.
+    // reads as 90% full (four of five blocks and part of the last), in the
+    // full colour.
     messageStore.contextWindowBySession[ACTIVE] = 200_000;
     messageStore.usageBySession[ACTIVE] = { inputTokens: 2_000, cacheReadTokens: 170_000, cacheCreationTokens: 8_000 };
     const { getByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
 
     const blocks = [...getByTestId('context-bar').children] as HTMLElement[];
-    expect(blocks.map((b) => b.dataset.block)).toEqual([...Array(9).fill('full'), 'empty']);
-    for (const b of blocks.slice(0, 9)) expect(b.className).toContain('bg-red-400');
-    expect(screen.getByText('Context 90%').className).toContain('text-red-400');
+    expect(blocks.map((b) => b.dataset.block)).toEqual([...Array(4).fill('full'), 'part']);
+    for (const b of blocks.slice(0, 4)) expect(b.className).toContain('bg-red-400');
+    expect(screen.getByText('90%').className).toContain('text-red-400');
   });
 });
 
@@ -599,62 +569,150 @@ describe('StatusBar PR', () => {
     Element.prototype.animate = realAnimate;
   });
 
+  /** The branch lozenge, once the bar has drawn it. */
+  const lozenge = () => screen.getByTestId('branch');
+
   /** Render the active conversation with these PRs (primary first) and
-   *  wait for the pill. */
+   *  wait for the branch lozenge to know of them. */
   async function renderWithPrs(...prs: PrInfo[]) {
     vi.mocked(window.groveBench.getPrs).mockImplementation(async (id: string) => (id === ACTIVE ? prs : []));
     render(StatusBar, { props: { sessionId: ACTIVE } });
-    return screen.findByRole('button', { name: new RegExp(`^PR #${prs[0].number}`) });
+    await waitFor(() => expect(lozenge().getAttribute('title')).toContain(`PR #${prs[0].number}`));
+    return lozenge();
   }
 
-  it('says the PR health in words, not just with the dot colour', async () => {
-    const pill = await renderWithPrs(pr({ checks: { total: 2, passed: 1, failed: 1, pending: 0 }, failingChecks: ['e2e'] }));
-    expect(pill.getAttribute('title')).toContain('PR #42: CI failing');
+  /** Open the branch popup. */
+  async function openBranch() {
+    await fireEvent.click(lozenge());
+    return screen.getByRole('dialog', { name: 'Branch' });
+  }
+
+  it('says where the branch is in words, not just with the dots', async () => {
+    const branch = await renderWithPrs(pr({ checks: { total: 2, passed: 1, failed: 1, pending: 0 }, failingChecks: ['e2e'] }));
+    expect(branch.getAttribute('title')).toContain('repo / feat-a: PR #42 open, checks: 1 of 2 failed');
+    expect(branch).toHaveAccessibleName(/, something to do$/);
+  });
+
+  it('marks the lozenge green only when there is something to do', async () => {
+    vi.mocked(window.groveBench.getGitSyncStatus).mockResolvedValue({ upstream: 'origin/feat-a', ahead: 0, behind: 0 });
+    const branch = await renderWithPrs(pr({ checks: { total: 2, passed: 1, failed: 0, pending: 1 } }));
+    expect(branch.querySelector('.bg-primary')).toBeNull();
+    // Checks running, nothing for you to do: the third dot moves.
+    expect(branch.querySelectorAll('[aria-hidden="true"] > *')[2].className).toContain('animate-');
+
+    vi.mocked(window.groveBench.getGitSyncStatus).mockResolvedValue({ upstream: 'origin/feat-a', ahead: 2, behind: 0 });
+    await prStore.refresh(ACTIVE, true);
+    await waitFor(() => expect(lozenge().querySelector('.bg-primary')).not.toBeNull());
+  });
+
+  it('names each step in its popup', async () => {
+    await renderWithPrs(pr({ reviewDecision: 'REVIEW_REQUIRED' }));
+    const popup = await openBranch();
+    const steps = within(within(popup).getByRole('list', { name: 'Steps to merged' })).getAllByRole('listitem');
+    expect(steps.map((li) => li.textContent?.replace(/\s+/g, ' ').trim())).toEqual([
+      'Push',
+      'PR #42 open Fix token refresh Open ↗',
+      'Checks 2 passed',
+      'Review review required',
+      'Merge',
+    ]);
+  });
+
+  /** A step's row in the open popup. */
+  function stepRow(label: string) {
+    const list = screen.getByRole('list', { name: 'Steps to merged' });
+    return within(list).getAllByRole('listitem').find((li) => li.textContent?.trim().startsWith(label))!;
+  }
+
+  it('says each check and review once, on its step', async () => {
+    await renderWithPrs(pr({ reviewDecision: 'APPROVED' }));
+    const popup = await openBranch();
+    expect(within(popup).getAllByText(/passed/)).toHaveLength(1);
+    expect(within(popup).getAllByText(/approved/)).toHaveLength(1);
+    expect(within(popup).queryByText('Reviews')).toBeNull();
+  });
+
+  it('puts the failing checks, their "new" chip and the fix on the Checks row', async () => {
+    const fix = vi.spyOn(prStore, 'fixCiWithAgent').mockReturnValue(true);
+    await renderWithPrs(pr({ checks: { total: 3, passed: 1, failed: 2, pending: 0 }, failingChecks: ['e2e', 'lint'] }));
+    prStore.alertsBySession = { [ACTIVE]: [{ kind: 'ci_failed', checks: ['e2e'], id: 1, prNumber: 42 }] };
+    await openBranch();
+
+    const row = stepRow('Checks');
+    expect(within(row).getByText('2 of 3 failed')).toHaveAttribute('title', 'Failing: e2e, lint');
+    expect(within(row).getByText('e2e, lint')).toBeInTheDocument();
+    expect(within(row).getByRole('button', { name: 'new' })).toBeInTheDocument();
+    await fireEvent.click(within(row).getByRole('button', { name: 'fix with agent →' }));
+    expect(fix).toHaveBeenCalledWith(ACTIVE);
+    expect(screen.queryByRole('dialog', { name: 'Branch' })).toBeNull();
+  });
+
+  it('says on the Checks row when the agent is too busy to fix them', async () => {
+    vi.spyOn(prStore, 'fixCiWithAgent').mockReturnValue(false);
+    await renderWithPrs(pr({ checks: { total: 1, passed: 0, failed: 1, pending: 0 }, failingChecks: ['e2e'] }));
+    await openBranch();
+    await fireEvent.click(within(stepRow('Checks')).getByRole('button', { name: 'fix with agent →' }));
+    expect(within(stepRow('Checks')).getByText('The agent is busy: try again when it goes idle')).toBeInTheDocument();
+  });
+
+  it('puts new comments and the agent\'s answer to them on the Review row', async () => {
+    await renderWithPrs(pr({ reviewDecision: 'CHANGES_REQUESTED' }));
+    prStore.alertsBySession = { [ACTIVE]: [{ kind: 'new_comments', count: 2, id: 2, prNumber: 42 }] };
+    await openBranch();
+
+    const row = stepRow('Review');
+    expect(within(row).getByText('changes requested')).toBeInTheDocument();
+    expect(within(row).getByRole('button', { name: '2 new' })).toBeInTheDocument();
+    expect(within(row).getByRole('button', { name: 'address with agent →' })).toBeInTheDocument();
   });
 
   it('says in the tooltip when auto turns are on, since they are saved', async () => {
     prStore.setAuto(ACTIVE, { fixCi: true });
-    const pill = await renderWithPrs(pr());
-    expect(pill.getAttribute('title')).toContain('auto: fix CI');
+    const branch = await renderWithPrs(pr());
+    expect(branch.getAttribute('title')).toContain('auto: fix CI');
   });
 
-  it('closes the popover on Escape and hands focus back to the pill', async () => {
-    const pill = await renderWithPrs(pr());
-    await fireEvent.click(pill);
-    expect(pill.getAttribute('aria-expanded')).toBe('true');
+  it('closes the popup on Escape and hands focus back to the lozenge', async () => {
+    const branch = await renderWithPrs(pr());
+    await openBranch();
+    expect(branch.getAttribute('aria-expanded')).toBe('true');
     screen.getByRole('button', { name: 'Open ↗' }).focus();
 
     await fireEvent.keyDown(window, { key: 'Escape' });
 
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Open ↗' })).toBeNull());
-    expect(pill.getAttribute('aria-expanded')).toBe('false');
-    expect(document.activeElement).toBe(pill);
+    expect(branch.getAttribute('aria-expanded')).toBe('false');
+    expect(document.activeElement).toBe(branch);
   });
 
-  it('closes the Create PR menu on Escape', async () => {
-    render(StatusBar, { props: { sessionId: ACTIVE } });
-    await fireEvent.click(await screen.findByRole('button', { name: 'Create PR options' }));
-    expect(screen.getByRole('button', { name: 'Create manually…' })).toBeTruthy();
-
-    await fireEvent.keyDown(window, { key: 'Escape' });
-
-    expect(screen.queryByRole('button', { name: 'Create manually…' })).toBeNull();
-  });
-
-  it('waits for the turn to end before creating a PR by hand, like the Create PR link', async () => {
+  it('offers to create a PR with the agent or by hand, and waits for the turn to end', async () => {
     messageStore.isRunning = { [ACTIVE]: true };
     render(StatusBar, { props: { sessionId: ACTIVE } });
-    expect((await screen.findByRole<HTMLButtonElement>('button', { name: 'Create PR' })).disabled).toBe(true);
+    await waitFor(() => expect(lozenge()).toBeTruthy());
+    await openBranch();
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Create PR options' }));
-
-    const manual = screen.getByRole<HTMLButtonElement>('button', { name: 'Create manually…' });
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Create PR with agent' }).disabled).toBe(true);
+    const manual = screen.getByRole<HTMLButtonElement>('button', { name: 'Create PR manually…' });
     expect(manual.disabled).toBe(true);
     expect(manual.getAttribute('title')).toMatch(/once the agent finishes its turn/);
   });
 
-  it('clears the "new" chips once the popover is closed, but keeps a needs-human note', async () => {
-    const pill = await renderWithPrs(pr({ checks: { total: 1, passed: 0, failed: 1, pending: 0 }, reviewDecision: 'CHANGES_REQUESTED' }));
+  it('switches branch from the popup, in its place', async () => {
+    render(StatusBar, { props: { sessionId: ACTIVE } });
+    await openBranch();
+    await fireEvent.click(screen.getByRole('button', { name: 'Switch branch…' }));
+
+    expect(screen.queryByRole('dialog', { name: 'Branch' })).toBeNull();
+    expect(screen.getByPlaceholderText('Switch to a branch, or type a new name')).toBeInTheDocument();
+
+    // A click on the lozenge puts the picker away rather than open the popup.
+    await fireEvent.click(lozenge());
+    await waitFor(() => expect(screen.queryByPlaceholderText('Switch to a branch, or type a new name')).toBeNull());
+    expect(screen.queryByRole('dialog', { name: 'Branch' })).toBeNull();
+  });
+
+  it('clears the "new" chips once the popup is closed, but keeps a needs-human note', async () => {
+    const branch = await renderWithPrs(pr({ checks: { total: 1, passed: 0, failed: 1, pending: 0 }, reviewDecision: 'CHANGES_REQUESTED' }));
     prStore.alertsBySession = {
       [ACTIVE]: [
         { kind: 'ci_failed', checks: ['e2e'], id: 1, prNumber: 42 },
@@ -662,79 +720,87 @@ describe('StatusBar PR', () => {
         { kind: 'needs_human', reason: 'Auto-fix gave up', id: 3, prNumber: 42 },
       ],
     };
-    await fireEvent.click(pill);
+    await fireEvent.click(branch);
     expect(screen.getByText('2 new')).toBeTruthy();
 
-    await fireEvent.click(pill);
+    await fireEvent.click(branch);
 
     expect(prStore.getAlerts(ACTIVE)).toMatchObject([{ kind: 'needs_human' }]);
   });
 
-  it('shows "review required" for an open PR waiting on reviewers', async () => {
-    await fireEvent.click(await renderWithPrs(pr({ reviewDecision: 'REVIEW_REQUIRED' })));
-    expect(screen.getByText('Reviews')).toBeTruthy();
-    expect(screen.getByText('required')).toBeTruthy();
+  it('says why "review required" holds the PR up', async () => {
+    await renderWithPrs(pr({ reviewDecision: 'REVIEW_REQUIRED' }));
+    await openBranch();
+    expect(within(stepRow('Review')).getByText('review required')).toHaveAttribute('title', expect.stringMatching(/needs an approving review/));
   });
 
   it('offers no agent fixes or automation on a closed PR, and a way to start a new one', async () => {
-    await fireEvent.click(await renderWithPrs(pr({ state: 'CLOSED', checks: { total: 1, passed: 0, failed: 1, pending: 0 } })));
+    await renderWithPrs(pr({ state: 'CLOSED', checks: { total: 1, passed: 0, failed: 1, pending: 0 } }));
+    await openBranch();
 
     expect(screen.queryByRole('button', { name: /fix with agent/ })).toBeNull();
     expect(screen.queryByText('Auto')).toBeNull();
-    expect(screen.getByText('New PR')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'manually…' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Create PR with agent' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Create PR manually…' })).toBeInTheDocument();
+    expect(lozenge().querySelector('.bg-primary')).toBeNull();
   });
 
   it('does not offer a new PR while one is open', async () => {
-    await fireEvent.click(await renderWithPrs(pr(), pr({ number: 38, state: 'MERGED' })));
-    expect(screen.queryByText('New PR')).toBeNull();
+    await renderWithPrs(pr(), pr({ number: 38, state: 'MERGED' }));
+    await openBranch();
+    expect(screen.queryByRole('button', { name: /^Create PR/ })).toBeNull();
   });
 
-  it('colours other PRs the same way as the pill', async () => {
-    await fireEvent.click(await renderWithPrs(
+  it('colours other PRs by their health', async () => {
+    await renderWithPrs(
       pr(),
       pr({ number: 70, title: 'Stacked', reviewDecision: 'CHANGES_REQUESTED', checks: null, baseRefName: 'release' }),
-    ));
+    );
+    await openBranch();
     const row = screen.getByText('#70').closest('div')!;
     expect(row.querySelector('span')!.className).toContain('bg-amber-500');
     expect(screen.getByText('Other PRs in this thread')).toBeTruthy();
   });
 
-  it('drops a "push failed" note once nothing is left to push', async () => {
+  it('pushes from the popup, and drops a failed push once nothing is left to push', async () => {
     vi.mocked(window.groveBench.getGitSyncStatus).mockResolvedValue({ upstream: 'origin/feat-a', ahead: 2, behind: 0 });
     vi.mocked(window.groveBench.push).mockRejectedValue(new Error('rejected: non-fast-forward'));
     render(StatusBar, { props: { sessionId: ACTIVE } });
-    await fireEvent.click(await screen.findByRole('button', { name: '↑2' }));
-    expect(await screen.findByText('push failed')).toBeTruthy();
+    await waitFor(() => expect(lozenge().querySelector('.bg-primary')).not.toBeNull());
+    await openBranch();
+    await fireEvent.click(await screen.findByRole('button', { name: 'Push 2 commits' }));
+    expect(await screen.findByTestId('push-error')).toHaveTextContent('rejected: non-fast-forward');
 
     // The agent (or a terminal) pushed it; the next poll sees nothing to push.
     vi.mocked(window.groveBench.getGitSyncStatus).mockResolvedValue({ upstream: 'origin/feat-a', ahead: 0, behind: 0 });
     await prStore.refresh(ACTIVE, true);
 
-    await waitFor(() => expect(screen.queryByText('push failed')).toBeNull());
+    await waitFor(() => expect(screen.queryByTestId('push-error')).toBeNull());
+    expect(lozenge().getAttribute('title')).not.toContain('push failed');
   });
 
-  it('shows a push that failed in the Changes tab, with the error a click away', async () => {
+  it('shows a push that failed in the Changes tab, with the error in the popup', async () => {
     vi.mocked(window.groveBench.push).mockRejectedValue(new Error('rejected: non-fast-forward'));
     render(StatusBar, { props: { sessionId: ACTIVE } });
     // The Changes tab's "& Push" goes through the same store call.
     await prStore.push(ACTIVE).catch(() => {});
 
-    // Clicking it shows why: it used to dismiss the error unread.
-    await fireEvent.click(await screen.findByRole('button', { name: 'push failed' }));
+    await waitFor(() => expect(lozenge().getAttribute('title')).toContain('push failed'));
+    expect(lozenge().querySelector('.bg-red-500')).not.toBeNull();
+    await openBranch();
     expect(screen.getByTestId('push-error').textContent).toContain('rejected: non-fast-forward');
 
     await fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
 
-    expect(screen.queryByText('push failed')).toBeNull();
     expect(screen.queryByTestId('push-error')).toBeNull();
+    expect(lozenge().getAttribute('title')).not.toContain('push failed');
   });
 
-  it('retries a failed push from its popover: the new error on failure, closed on success', async () => {
+  it('retries a failed push from its popup: the new error on failure, gone on success', async () => {
     vi.mocked(window.groveBench.push).mockRejectedValueOnce(new Error('rejected: non-fast-forward'));
     render(StatusBar, { props: { sessionId: ACTIVE } });
     await prStore.push(ACTIVE).catch(() => {});
-    await fireEvent.click(await screen.findByRole('button', { name: 'push failed' }));
+    await openBranch();
 
     vi.mocked(window.groveBench.push).mockRejectedValueOnce(new Error('could not read Username'));
     await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
@@ -743,7 +809,6 @@ describe('StatusBar PR', () => {
     vi.mocked(window.groveBench.push).mockResolvedValueOnce(undefined);
     await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(screen.queryByTestId('push-error')).toBeNull());
-    expect(screen.queryByText('push failed')).toBeNull();
     expect(window.groveBench.push).toHaveBeenCalledTimes(3);
   });
 });
@@ -755,59 +820,73 @@ describe('StatusBar activity', () => {
     messageStore.isRunning = {};
   });
 
-  it('says it is waiting for you while a permission prompt is open, even mid-turn', () => {
+  /** Open the activity lozenge's popup. */
+  async function openActivity() {
+    await fireEvent.click(screen.getByTestId('activity'));
+    return screen.getByRole('dialog', { name: 'Activity' });
+  }
+
+  it('says it needs you while a permission prompt is open, even mid-turn, and fills amber', async () => {
     messageStore.setIsRunning(ACTIVE, true);
     messageStore.messagesBySession[ACTIVE] = [{ kind: 'permission', id: 'p1', resolved: false } as any];
-    const { getByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
-    expect(getByTestId('activity').textContent?.trim()).toBe('waiting for you');
-  });
-
-  it('does not reopen the pending tools popover when the next tool comes along', async () => {
-    const tool = { kind: 'tool_call', id: 't', toolName: 'Bash', toolUseId: 'tu1', toolInput: { command: 'ls' }, pending: true } as any;
-    messageStore.messagesBySession[ACTIVE] = [tool];
     render(StatusBar, { props: { sessionId: ACTIVE } });
-    await fireEvent.click(screen.getByRole('button', { name: /^1 tool/ }));
-    expect(screen.queryByText('Pending Tools')).not.toBeNull();
+    const lozenge = screen.getByTestId('activity');
+    expect(lozenge.textContent?.trim()).toBe('Needs you');
+    expect(lozenge.className).toContain('bg-status-attention/10');
 
-    // The tool finishes with the popover still open, then the next one starts.
-    messageStore.messagesBySession[ACTIVE] = [];
-    await waitFor(() => expect(screen.queryByRole('button', { name: /^1 tool/ })).toBeNull());
-    messageStore.messagesBySession[ACTIVE] = [{ ...tool, toolUseId: 'tu2' }];
-
-    await waitFor(() => expect(screen.queryByRole('button', { name: /^1 tool/ })).not.toBeNull());
-    expect(screen.queryByText('Pending Tools')).toBeNull();
+    await openActivity();
+    await fireEvent.click(screen.getByRole('button', { name: 'Show' }));
+    expect(messageStore.getActiveTab(ACTIVE)).toBe('activity');
+    expect(screen.queryByRole('dialog', { name: 'Activity' })).toBeNull();
   });
 
-  it("keeps a hidden conversation's pending tools as they were until it's open", async () => {
-    const tool = { kind: 'tool_call', id: 't', toolName: 'Bash', toolUseId: 'tu1', toolInput: { command: 'ls' }, pending: true } as any;
-    messageStore.messagesBySession[HIDDEN] = [tool];
+  it('names the running tool, with its command in the popup', async () => {
+    messageStore.setIsRunning(ACTIVE, true);
+    vi.spyOn(messageStore, 'getActivity').mockReturnValue({ activity: 'tool_starting', toolName: 'Bash', elapsedSeconds: 12 });
+    messageStore.messagesBySession[ACTIVE] = [
+      { kind: 'tool_call', id: 't', toolName: 'Bash', toolUseId: 'tu1', toolInput: { command: 'npm test' }, pending: true } as any,
+    ];
+    render(StatusBar, { props: { sessionId: ACTIVE } });
+    expect(screen.getByTestId('activity').textContent?.trim()).toBe('Bash');
+
+    const popup = await openActivity();
+    expect(within(popup).getByTestId('activity-now')).toHaveTextContent(/^Bash\s*12s$/);
+    expect(within(popup).getByText('npm test')).toBeInTheDocument();
+  });
+
+  it('keeps one width whatever the word, so the bar does not shift', () => {
+    render(StatusBar, { props: { sessionId: ACTIVE } });
+    expect(screen.getByTestId('activity')).toHaveClass('w-24', '@2xl:w-32');
+  });
+
+  it("keeps a hidden thread's pending tools as they were until it's open", async () => {
+    const agentCall = { kind: 'tool_call', id: 'a', toolName: 'Agent', toolUseId: 'tu-agent', toolInput: { subagent_type: 'Explore' }, pending: false } as any;
+    const subagentTool = { kind: 'tool_call', id: 't', toolName: 'Bash', toolUseId: 'tu1', toolInput: { command: 'ls' }, pending: true, parentToolUseId: 'tu-agent' } as any;
+    messageStore.messagesBySession[HIDDEN] = [agentCall];
     store.activeSessionId = HIDDEN;
     render(StatusBar, { props: { sessionId: HIDDEN } });
-    expect(screen.getByRole('button', { name: /^1 tool/ })).toBeInTheDocument();
+    expect(screen.getByTestId('activity').textContent?.trim()).toBe('Ready');
 
     store.activeSessionId = ACTIVE;
-    messageStore.messagesBySession[HIDDEN] = [tool, { ...tool, id: 't2', toolUseId: 'tu2' }];
+    messageStore.messagesBySession[HIDDEN] = [agentCall, subagentTool];
     await tick();
-    expect(screen.getByRole('button', { name: /^1 tool/ })).toBeInTheDocument();
+    expect(screen.getByTestId('activity').textContent?.trim()).toBe('Ready');
 
     store.activeSessionId = HIDDEN;
     await tick();
-    expect(screen.getByRole('button', { name: /^2 tools/ })).toBeInTheDocument();
+    expect(screen.getByTestId('activity').textContent?.trim()).toBe('Subagent');
   });
 
-  it('closes the pending tools popover when its conversation is hidden', async () => {
-    const tool = { kind: 'tool_call', id: 't', toolName: 'Bash', toolUseId: 'tu1', toolInput: { command: 'ls' }, pending: true } as any;
-    messageStore.messagesBySession[ACTIVE] = [tool];
+  it('closes the popup when its thread is hidden', async () => {
     render(StatusBar, { props: { sessionId: ACTIVE } });
-    await fireEvent.click(screen.getByRole('button', { name: /^1 tool/ }));
-    expect(screen.queryByText('Pending Tools')).not.toBeNull();
+    await openActivity();
 
     store.activeSessionId = HIDDEN;
     await tick();
     store.activeSessionId = ACTIVE;
     await tick();
 
-    expect(screen.queryByText('Pending Tools')).toBeNull();
+    expect(screen.queryByRole('dialog', { name: 'Activity' })).toBeNull();
   });
 
   describe('subagents', () => {
@@ -826,13 +905,15 @@ describe('StatusBar activity', () => {
     it('says a subagent\'s tool is one, and opens its thread from the list', async () => {
       messageStore.messagesBySession[ACTIVE] = [agentCall, subagentBash];
       render(StatusBar, { props: { sessionId: ACTIVE } });
-      await fireEvent.click(screen.getByRole('button', { name: /^1 subagent tool/ }));
+      expect(screen.getByTestId('activity').textContent?.trim()).toBe('Subagent');
+      const popup = await openActivity();
+      expect(within(popup).getByText('Subagent tools running')).toBeInTheDocument();
 
-      const row = screen.getByRole('button', { name: /node runs\.mjs/ });
+      const row = within(popup).getByRole('button', { name: /node runs\.mjs/ });
       expect(row).toHaveTextContent('in Explore');
       await fireEvent.click(row);
       expect(subagentPanelStore.isShowing(ACTIVE, 'tu-agent')).toBe(true);
-      expect(screen.queryByText('Pending Tools')).toBeNull();
+      expect(screen.queryByRole('dialog', { name: 'Activity' })).toBeNull();
     });
 
     it('opens a background subagent\'s thread from its task, and leaves other tasks alone', async () => {
@@ -845,7 +926,8 @@ describe('StatusBar activity', () => {
         },
       };
       render(StatusBar, { props: { sessionId: ACTIVE } });
-      await fireEvent.click(screen.getByRole('button', { name: /^2 bg tasks/ }));
+      expect(screen.getByTestId('activity').textContent?.trim()).toBe('Background');
+      await openActivity();
 
       expect(screen.queryByRole('button', { name: /npm run dev/ })).toBeNull();
       await fireEvent.click(screen.getByRole('button', { name: /Count failed runs/ }));
@@ -856,7 +938,7 @@ describe('StatusBar activity', () => {
   it('goes back to the agent\'s state once answered', () => {
     messageStore.messagesBySession[ACTIVE] = [{ kind: 'permission', id: 'p1', resolved: true } as any];
     const { getByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
-    expect(getByTestId('activity').textContent?.trim()).toBe('idle');
+    expect(getByTestId('activity').textContent?.trim()).toBe('Ready');
   });
 });
 
@@ -896,30 +978,45 @@ describe('StatusBar last turn', () => {
     messageStore.messagesBySession[ACTIVE] = [{ kind: 'result', id: 'r1', totalCostUsd, durationMs: 4200 } as any];
   }
 
-  it('shows the cost for an API key sign-in, rounded to cents', () => {
+  /** The last turn's figures, in the activity popup. */
+  async function lastTurn() {
+    if (!screen.queryByRole('dialog', { name: 'Activity' })) await fireEvent.click(screen.getByTestId('activity'));
+    return screen.getByTestId('last-turn');
+  }
+  const figures = async () => (await lastTurn()).querySelector('dd')!.textContent?.trim();
+
+  it('keeps the time and cost off the bar', () => {
     usageStore.byProvider = { 'claude-code': { available: false, windows: [], fetchedAt: Date.now() } };
     finishTurn(0.0423);
-    const { getByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
-    expect(getByTestId('last-turn').textContent?.replace(/\s+/g, ' ').trim()).toBe('$0.04 last turn 4.2s');
-    expect(getByTestId('last-turn').title).toContain('$0.0423 at list price');
+    render(StatusBar, { props: { sessionId: ACTIVE } });
+    expect(screen.queryByTestId('last-turn')).toBeNull();
+    expect(document.querySelector('[data-status-bar]')!.textContent).not.toContain('$');
   });
 
-  it('leaves the cost out on a plan, which it is not billed against', () => {
+  it('shows the cost for an API key sign-in, rounded to cents', async () => {
+    usageStore.byProvider = { 'claude-code': { available: false, windows: [], fetchedAt: Date.now() } };
+    finishTurn(0.0423);
+    render(StatusBar, { props: { sessionId: ACTIVE } });
+    expect(await figures()).toBe('4.2s · $0.04');
+    expect((await lastTurn()).title).toContain('$0.0423 at list price');
+  });
+
+  it('leaves the cost out on a plan, which it is not billed against', async () => {
     usageStore.byProvider = { 'claude-code': { available: true, plan: 'max', windows: [], fetchedAt: Date.now() } };
     finishTurn(0.0423);
-    const { getByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
-    expect(getByTestId('last-turn').textContent?.replace(/\s+/g, ' ').trim()).toBe('last turn 4.2s');
+    render(StatusBar, { props: { sessionId: ACTIVE } });
+    expect(await figures()).toBe('4.2s');
   });
 
-  it('waits to show a cost until it knows the sign-in, and asks', () => {
+  it('waits to show a cost until it knows the sign-in, and asks', async () => {
     // Claude reports plan usage; nothing has fetched it yet.
     agentsStore.list = [{ id: 'claude-code', displayName: 'Claude Agent', capabilities: { usage: true }, isDefault: true }];
     agentsStore.loaded = true;
     const refresh = vi.spyOn(usageStore, 'refresh').mockResolvedValue();
     try {
       finishTurn(0.0423);
-      const { getByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
-      expect(getByTestId('last-turn').textContent).not.toContain('$');
+      render(StatusBar, { props: { sessionId: ACTIVE } });
+      expect(await figures()).not.toContain('$');
       expect(refresh).toHaveBeenCalledWith(ACTIVE);
     } finally {
       agentsStore.list = [];
@@ -927,37 +1024,39 @@ describe('StatusBar last turn', () => {
     }
   });
 
-  it('shows the cost for an agent that cannot report plan usage', () => {
+  it('shows the cost for an agent that cannot report plan usage', async () => {
     agentsStore.list = [{ id: 'claude-code', displayName: 'Claude Agent', capabilities: {}, isDefault: true }];
     agentsStore.loaded = true;
     try {
       finishTurn(0.0423);
-      const { getByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
-      expect(getByTestId('last-turn').textContent).toContain('$0.04');
+      render(StatusBar, { props: { sessionId: ACTIVE } });
+      expect(await figures()).toContain('$0.04');
     } finally {
       agentsStore.list = [];
       agentsStore.loaded = false;
     }
   });
 
-  it('shows a free turn as $0.00, not under a cent', () => {
+  it('shows a free turn as $0.00, not under a cent', async () => {
     usageStore.byProvider = { 'claude-code': { available: false, windows: [], fetchedAt: Date.now() } };
     finishTurn(0);
-    const { getByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
-    expect(getByTestId('last-turn').textContent).toContain('$0.00');
+    render(StatusBar, { props: { sessionId: ACTIVE } });
+    expect(await figures()).toContain('$0.00');
   });
 
-  it('says when a turn cost under a cent', () => {
+  it('says when a turn cost under a cent', async () => {
     usageStore.byProvider = { 'claude-code': { available: false, windows: [], fetchedAt: Date.now() } };
     finishTurn(0.003);
-    const { getByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
-    expect(getByTestId('last-turn').textContent).toContain('<$0.01');
+    render(StatusBar, { props: { sessionId: ACTIVE } });
+    expect(await figures()).toContain('<$0.01');
   });
 
-  describe('usage popover', () => {
+  describe('usage, in the activity popup', () => {
     const api = () => window.groveBench as unknown as { getThreadUsage: ReturnType<typeof vi.fn>; getDailySpend: ReturnType<typeof vi.fn> };
     const usage = (spendUsd: number, input = 0, output = 0): ThreadUsage => ({ spendUsd, tokens: { input, output } });
-    const row = (name: string) => within(screen.getByRole('dialog', { name: 'Usage' })).getByText(name).nextElementSibling;
+    const row = (name: string) => within(screen.getByRole('dialog', { name: 'Activity' })).getByText(name).nextElementSibling;
+    /** The lozenge opens the popup and, clicked again, closes it. */
+    const toggle = () => fireEvent.click(screen.getByTestId('activity'));
 
     beforeEach(() => {
       usageStore.byProvider = { 'claude-code': { available: false, windows: [], fetchedAt: Date.now() } };
@@ -969,10 +1068,10 @@ describe('StatusBar last turn', () => {
       api().getDailySpend.mockReset().mockResolvedValue(0);
     });
 
-    it('opens from the last turn\'s cost with the thread\'s and today\'s totals', async () => {
+    it('shows the thread\'s and today\'s totals with the last turn\'s cost', async () => {
       finishTurn(0.0423);
       render(StatusBar, { props: { sessionId: ACTIVE } });
-      await fireEvent.click(screen.getByTestId('last-turn'));
+      await toggle();
 
       expect(api().getThreadUsage).toHaveBeenCalledWith(ACTIVE);
       await waitFor(() => expect(row('This thread')).toHaveTextContent('$1.23'));
@@ -983,7 +1082,7 @@ describe('StatusBar last turn', () => {
     it('asks again when a turn ends while it is open', async () => {
       finishTurn(0.0423);
       render(StatusBar, { props: { sessionId: ACTIVE } });
-      await fireEvent.click(screen.getByTestId('last-turn'));
+      await toggle();
       await waitFor(() => expect(row('This thread')).toHaveTextContent('$1.23'));
 
       api().getThreadUsage.mockResolvedValue(usage(2));
@@ -999,7 +1098,7 @@ describe('StatusBar last turn', () => {
       api().getThreadUsage.mockRejectedValue(new Error('gone'));
       finishTurn(0.0423);
       render(StatusBar, { props: { sessionId: ACTIVE } });
-      await fireEvent.click(screen.getByTestId('last-turn'));
+      await toggle();
       await waitFor(() => expect(row('This thread')).toHaveTextContent('unknown'));
       expect(row('Today, all threads')).toHaveTextContent('$6.30');
     });
@@ -1007,7 +1106,7 @@ describe('StatusBar last turn', () => {
     it('drops a total it could not read again, rather than show the old one', async () => {
       finishTurn(0.0423);
       render(StatusBar, { props: { sessionId: ACTIVE } });
-      await fireEvent.click(screen.getByTestId('last-turn'));
+      await toggle();
       await waitFor(() => expect(row('This thread')).toHaveTextContent('$1.23'));
 
       api().getThreadUsage.mockRejectedValue(new Error('gone'));
@@ -1018,30 +1117,30 @@ describe('StatusBar last turn', () => {
       await waitFor(() => expect(row('This thread')).toHaveTextContent('unknown'));
     });
 
-    it('ignores an answer that arrives after the popover was closed', async () => {
+    it('ignores an answer that arrives after the popup was closed', async () => {
       let answer!: (usage: ThreadUsage) => void;
       api().getThreadUsage.mockReturnValue(new Promise<ThreadUsage>((resolve) => { answer = resolve; }));
       finishTurn(0.0423);
       render(StatusBar, { props: { sessionId: ACTIVE } });
-      await fireEvent.click(screen.getByTestId('last-turn'));
-      await fireEvent.click(screen.getByTestId('last-turn'));
+      await toggle();
+      await toggle();
       answer(usage(9));
       await Promise.resolve();
 
       api().getThreadUsage.mockReturnValue(new Promise(() => {}));
-      await fireEvent.click(screen.getByTestId('last-turn'));
+      await toggle();
       expect(row('This thread')).toHaveTextContent('…');
     });
 
     it('asks afresh each time it opens, without showing the last answers meanwhile', async () => {
       finishTurn(0.0423);
       render(StatusBar, { props: { sessionId: ACTIVE } });
-      await fireEvent.click(screen.getByTestId('last-turn'));
+      await toggle();
       await waitFor(() => expect(row('This thread')).toHaveTextContent('$1.23'));
-      await fireEvent.click(screen.getByTestId('last-turn'));
+      await toggle();
 
       api().getThreadUsage.mockReturnValue(new Promise(() => {}));
-      await fireEvent.click(screen.getByTestId('last-turn'));
+      await toggle();
       expect(row('This thread')).toHaveTextContent('…');
     });
 
@@ -1050,10 +1149,10 @@ describe('StatusBar last turn', () => {
       try {
         finishTurn(0.0423);
         render(StatusBar, { props: { sessionId: ACTIVE } });
-        await fireEvent.click(screen.getByTestId('last-turn'));
+        await toggle();
         await fireEvent.click(screen.getByRole('button', { name: 'Limits & alerts' }));
         expect(openAt).toHaveBeenCalledWith('limits');
-        expect(screen.queryByRole('dialog', { name: 'Usage' })).toBeNull();
+        expect(screen.queryByRole('dialog', { name: 'Activity' })).toBeNull();
       } finally {
         openAt.mockRestore();
       }
@@ -1063,7 +1162,7 @@ describe('StatusBar last turn', () => {
       api().getThreadUsage.mockResolvedValue(usage(1.234, 1_240_000, 45_300));
       finishTurn(0.0423);
       render(StatusBar, { props: { sessionId: ACTIVE } });
-      await fireEvent.click(screen.getByTestId('last-turn'));
+      await toggle();
       await waitFor(() => expect(row('Tokens in, this thread')).toHaveTextContent('1.2M'));
       expect(row('Tokens out, this thread')).toHaveTextContent('45.3k');
     });
@@ -1071,7 +1170,7 @@ describe('StatusBar last turn', () => {
     it('says when the thread\'s agent has reported no tokens', async () => {
       finishTurn(0.0423);
       render(StatusBar, { props: { sessionId: ACTIVE } });
-      await fireEvent.click(screen.getByTestId('last-turn'));
+      await toggle();
       await waitFor(() => expect(row('Tokens, this thread')).toHaveTextContent('none reported'));
       expect(screen.queryByText('Tokens in, this thread')).toBeNull();
     });
@@ -1081,11 +1180,11 @@ describe('StatusBar last turn', () => {
       api().getThreadUsage.mockResolvedValue(usage(1.234, 5000, 700));
       finishTurn(0.0423);
       render(StatusBar, { props: { sessionId: ACTIVE } });
-      await fireEvent.click(screen.getByTestId('last-turn'));
+      await toggle();
 
       await waitFor(() => expect(row('Tokens in, this thread')).toHaveTextContent('5.0k'));
       expect(row('Tokens out, this thread')).toHaveTextContent('700');
-      const dialog = within(screen.getByRole('dialog', { name: 'Usage' }));
+      const dialog = within(screen.getByRole('dialog', { name: 'Activity' }));
       expect(dialog.queryByText('This thread')).toBeNull();
       expect(dialog.queryByText(/\$/)).toBeNull();
       expect(api().getDailySpend).not.toHaveBeenCalled();
@@ -1097,21 +1196,24 @@ describe('StatusBar last turn', () => {
 describe('StatusBar: a merge or rebase stopped part way', () => {
   afterEach(() => gitStatusStore.clear(ACTIVE));
 
-  it('shows it by the branch, and opens the Changes tab to finish it', async () => {
+  it('shows it on the branch lozenge, and opens the Changes tab from the popup to finish it', async () => {
     const refresh = vi.spyOn(gitStatusStore, 'refresh').mockResolvedValue(undefined);
     gitStatusStore.statusBySession = { ...gitStatusStore.statusBySession, [ACTIVE]: { entries: [], operation: { kind: 'rebase', branch: 'feat-a', incoming: 'main', step: 1, total: 2 } } };
     render(StatusBar, { props: { sessionId: ACTIVE } });
 
-    const hint = screen.getByRole('button', { name: 'rebasing 1/2' });
-    expect(hint).toHaveAttribute('title', 'Rebasing feat-a onto main, step 1 of 2: open the Changes tab to finish or abort it');
-    await fireEvent.click(hint);
+    const lozenge = screen.getByTestId('branch');
+    expect(lozenge).toHaveTextContent('rebasing 1/2');
+    expect(lozenge.title).toContain('Rebasing feat-a onto main, step 1 of 2 stopped part way');
+    await fireEvent.click(lozenge);
+    await fireEvent.click(within(screen.getByRole('dialog', { name: 'Branch' })).getByRole('button', { name: /stopped part way/ }));
     expect(messageStore.getActiveTab(ACTIVE)).toBe('changes');
     expect(refresh).toHaveBeenCalledWith(ACTIVE);
+    expect(screen.queryByRole('dialog', { name: 'Branch' })).toBeNull();
     refresh.mockRestore();
   });
 
   it('shows nothing when none is under way', () => {
     render(StatusBar, { props: { sessionId: ACTIVE } });
-    expect(screen.queryByRole('button', { name: /rebasing|merging/ })).toBeNull();
+    expect(screen.getByTestId('branch')).not.toHaveTextContent(/rebasing|merging/);
   });
 });

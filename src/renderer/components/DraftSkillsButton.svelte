@@ -5,7 +5,7 @@
    * with "Use the `x` skill for this task.", as / in the message box does,
    * for any agent. Shows the skill the message asks for, once there is one.
    */
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, tick } from 'svelte';
   import { fade } from 'svelte/transition';
   import { draftStore } from '../stores/draft.svelte.js';
   import { splitSkillLine } from '../../shared/skill-line.js';
@@ -17,13 +17,39 @@
 
   let open = $state(false);
   let ref = $state<HTMLDivElement | null>(null);
+  let trigger = $state<HTMLButtonElement | null>(null);
+  let menu = $state<HTMLDivElement | null>(null);
 
   const skills = $derived(draftStore.skills);
   const chosen = $derived(splitSkillLine(draftStore.draft?.text ?? '')?.skill ?? null);
 
   function toggle() {
     open = !open;
-    if (open) void draftStore.loadSkills();
+    if (open) {
+      void draftStore.loadSkills();
+      // Focus goes into the menu, on the skill asked for or the first.
+      void tick().then(() => (menu?.querySelector<HTMLElement>('[aria-checked="true"]') ?? items()[0])?.focus());
+    }
+  }
+
+  function items(): HTMLElement[] {
+    return [...(menu?.querySelectorAll<HTMLElement>('[role^="menuitem"]') ?? [])];
+  }
+
+  /** Up and Down move between the menu's items, Home and End to either
+   *  end, as in any menu. */
+  function moveFocus(e: KeyboardEvent) {
+    const list = items();
+    if (list.length === 0) return;
+    const at = list.indexOf(document.activeElement as HTMLElement);
+    const next = e.key === 'ArrowDown' ? (at + 1) % list.length
+      : e.key === 'ArrowUp' ? (at <= 0 ? list.length - 1 : at - 1)
+        : e.key === 'Home' ? 0
+          : e.key === 'End' ? list.length - 1
+            : null;
+    if (next === null) return;
+    e.preventDefault();
+    list[next].focus();
   }
 
   function pick(skill: string | null) {
@@ -40,6 +66,8 @@
   function handleKeydown(e: KeyboardEvent) {
     if (open && e.key === 'Escape') {
       e.stopPropagation();
+      // Back to the button, if focus was in the menu.
+      if (ref?.contains(document.activeElement)) trigger?.focus();
       open = false;
     }
   }
@@ -59,6 +87,7 @@
   <span class="w-px self-stretch bg-border"></span>
   <div class="relative flex flex-col gap-px leading-snug min-w-0" bind:this={ref}>
     <button
+      bind:this={trigger}
       type="button"
       onclick={toggle}
       class="flex items-center gap-1 min-w-0 text-left transition-colors {chosen ? 'text-foreground/80 hover:text-foreground' : 'text-muted-foreground hover:text-foreground'}"
@@ -76,18 +105,22 @@
     </button>
 
     {#if open}
+      <!-- svelte-ignore a11y_interactive_supports_focus -->
       <div
+        bind:this={menu}
         transition:fade={{ duration: 120 }}
         use:placeInPane
         class="{menuPanel()} absolute top-full left-0 mt-2 z-50 w-80 max-h-72 overflow-y-auto"
         role="menu"
         aria-label="Skills"
+        onkeydown={moveFocus}
       >
         <div class={menuLabel}>Start with a skill</div>
         {#each skills as skill (skill.name)}
           <button
             type="button"
-            role="menuitem"
+            role="menuitemradio"
+            aria-checked={skill.name === chosen}
             onclick={() => pick(skill.name)}
             class={menuItem({ selected: skill.name === chosen })}
             title={skill.description || skill.name}

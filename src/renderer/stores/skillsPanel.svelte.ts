@@ -39,16 +39,21 @@ class SkillsPanelStore {
    *  the list's place whichever thread is open, so another thread opening
    *  meanwhile can't hide it or its unsaved changes. */
   edit = $state<SkillEditState | null>(null);
-  /** What runs once the editor's unsaved changes are dropped, while it asks. */
+  /** The schedule form's fields differ from what it opened with
+   *  (ScheduleForm keeps this up to date). */
+  formDirty = $state(false);
+  /** What runs once the editor's or the schedule form's unsaved changes are
+   *  dropped, while it asks. */
   pendingDiscard = $state<(() => void) | null>(null);
   /** The This thread tab's sections folded away, kept while the app runs. */
   collapsed = $state<SkillGroupId[]>([]);
   /** The This thread tab's search, kept while a skill is edited. */
   query = $state('');
 
-  /** The editor's text differs from the file it read. */
+  /** The editor's text differs from the file it read, or the schedule
+   *  form has changes. */
   get unsaved(): boolean {
-    return !!this.edit?.file && this.edit.text !== this.edit.file.content;
+    return (!!this.edit?.file && this.edit.text !== this.edit.file.content) || (!!this.form && this.formDirty);
   }
 
   showThread(): void {
@@ -81,8 +86,8 @@ class SkillsPanelStore {
     this.open = true;
   }
 
-  /** Run `then` now, or once the editor's unsaved changes are discarded:
-   *  the editor asks in place of its Save. */
+  /** Run `then` now, or once unsaved changes are discarded: the editor or
+   *  the schedule form asks in place of its Save. */
   unlessUnsaved(then: () => void): void {
     if (this.unsaved) {
       this.pendingDiscard = then;
@@ -91,17 +96,27 @@ class SkillsPanelStore {
     then();
   }
 
-  /** Drop the editor's changes and do what was waiting on that. */
-  discardEdit(): void {
+  /** Drop the editor's or the schedule form's changes and do what was
+   *  waiting on that. */
+  discardChanges(): void {
     const then = this.pendingDiscard;
     this.pendingDiscard = null;
     this.edit = null;
+    this.formDirty = false;
     then?.();
   }
 
   /** Leave the editor for the list, asking first about unsaved changes. */
   leaveEdit(): void {
     this.unlessUnsaved(() => { this.edit = null; });
+  }
+
+  /** Leave the schedule form for the list, asking first about changes. */
+  leaveForm(): void {
+    this.unlessUnsaved(() => {
+      this.form = null;
+      this.formDirty = false;
+    });
   }
 
   /** Close the drawer, asking first about unsaved changes. */
@@ -116,6 +131,7 @@ class SkillsPanelStore {
   close(): void {
     this.open = false;
     this.form = null;
+    this.formDirty = false;
     this.edit = null;
     this.pendingDiscard = null;
     this.query = '';

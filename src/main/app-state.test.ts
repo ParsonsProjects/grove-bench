@@ -50,9 +50,9 @@ import { logger } from './logger.js';
 import {
   loadAppState, saveOpenTabs, saveUnreadSessionIds, loadUnreadSessionIds, saveSessionSort,
   loadOpenTabs, loadCollapsedRepos, loadSessionSort, loadSidebarWidth, loadCollapsedPanels,
-  saveKnownSkills, loadKnownSkills, saveCollapsedPanels, flushPendingSaves, validateAppState, upgradeAppState, APP_STATE_SCHEMA_VERSION,
+  saveCollapsedPanels, flushPendingSaves, validateAppState, upgradeAppState, APP_STATE_SCHEMA_VERSION,
   loadPrerequisiteCache, loadModelCatalog, saveModelCatalog, loadUsageSnapshot, saveUsageSnapshot,
-  loadSkillSuggestionCache,
+  loadSkillSuggestionCache, saveSkillSuggestionCache,
   mergeProjects, listProjects, rememberProject, forgetProject,
   loadConversationGroups, saveConversationGroups,
   loadTodoSessionIds, saveTodoSessionIds,
@@ -62,6 +62,8 @@ import {
 
 const FILE = path.join('/mock/userData', 'app-state.json');
 const V = APP_STATE_SCHEMA_VERSION;
+/** A suggestion cache, told apart by its one dismissed id. */
+const cache = (id: string) => ({ suggestions: [], dismissedIds: [id], analyzedAt: 1 });
 const { sync, promises } = disk;
 
 /** Put `initial` in the state file (none for undefined). */
@@ -152,9 +154,9 @@ describe('loadAppState', () => {
   it('reads the file once, then keeps the state in memory', async () => {
     useDisk({ schemaVersion: V, openTabIds: ['a'] });
     loadAppState();
-    saveKnownSkills('/r', ['x']);
+    saveSkillSuggestionCache('/r', cache('x'));
     await appStateSaved();
-    expect(loadKnownSkills('/r')).toEqual(['x']);
+    expect(loadSkillSuggestionCache('/r')?.dismissedIds).toEqual(['x']);
     expect(loadAppState().openTabIds).toEqual(['a']);
     expect(sync.readFileSync).toHaveBeenCalledTimes(1);
     expect(promises.readFile).not.toHaveBeenCalled();
@@ -255,7 +257,8 @@ describe('validateAppState', () => {
       skillSuggestions: { '/r': { suggestions: [], dismissedIds: [], analyzedAt: 1 } },
       prerequisiteCache: { status: {}, checkedAt: 'never' },
     });
-    expect(s.knownSkills).toEqual({ '/r': ['a'] });
+    // Older versions kept the skills each project reported; nothing reads them now.
+    expect(s).not.toHaveProperty('knownSkills');
     expect(s.skillSuggestions?.['/r']?.analyzedAt).toBe(1);
     expect(s.prerequisiteCache).toBeNull();
   });
@@ -286,10 +289,10 @@ describe('saving', () => {
   });
 
   it('writes the rare fields before returning, merged into the file, with changes waiting to be saved', async () => {
-    const file = useDisk({ schemaVersion: V, knownSkills: { '/a': ['x'] } });
+    const file = useDisk({ schemaVersion: V, skillSuggestions: { '/a': cache('x') } });
     saveOpenTabs(['t']);
-    saveKnownSkills('/b', ['y']);
-    expect(file.get()).toMatchObject({ openTabIds: ['t'], knownSkills: { '/a': ['x'], '/b': ['y'] } });
+    saveSkillSuggestionCache('/b', cache('y'));
+    expect(file.get()).toMatchObject({ openTabIds: ['t'], skillSuggestions: { '/a': cache('x'), '/b': cache('y') } });
     expect(syncWrites()).toBe(1);
     await vi.advanceTimersByTimeAsync(500);
     expect(asyncWrites()).toBe(0);
@@ -317,11 +320,11 @@ describe('saving', () => {
   });
 
   it('skips a save rather than write defaults over a file it can\'t read, and saves once it can', async () => {
-    const saved = { schemaVersion: V, openTabIds: ['keep'], knownSkills: { '/a': ['x'] } };
+    const saved = { schemaVersion: V, openTabIds: ['keep'], skillSuggestions: { '/a': cache('x') } };
     const file = useDisk(saved);
     const unlock = lockReads();
 
-    saveKnownSkills('/b', ['y']);
+    saveSkillSuggestionCache('/b', cache('y'));
     saveOpenTabs(['new']);
     flushPendingSaves();
     await vi.advanceTimersByTimeAsync(4_000); // the background read's lock retries
@@ -331,7 +334,7 @@ describe('saving', () => {
     unlock();
     await vi.advanceTimersByTimeAsync(5_000); // the next try
     await appStateSaved();
-    expect(file.get()).toMatchObject({ openTabIds: ['new'], knownSkills: { '/a': ['x'], '/b': ['y'] } });
+    expect(file.get()).toMatchObject({ openTabIds: ['new'], skillSuggestions: { '/a': cache('x'), '/b': cache('y') } });
   });
 });
 

@@ -1979,6 +1979,16 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     const thinkingDisplay = thinkingDisplayFor(config.thinkingSummaries);
     const { thinking, effort } = reasoningOptionsFor(config.model, config.controls, learned, thinkingDisplay);
     const fastMode = config.controls?.[CONTROL_IDS.speed] === 'fast' && supportsFastMode(config.model, learned);
+    // Skills turned off in Grove are off for the model and for /, by name.
+    // A deny list rather than the `skills` allowlist, so every other skill
+    // stays on, including one added while the thread runs.
+    const skillOverrides = config.disabledSkills?.length
+      ? Object.fromEntries(config.disabledSkills.map((name) => [name, 'off' as const]))
+      : null;
+    const flagSettings = {
+      ...(fastMode ? { fastMode: true } : {}),
+      ...(skillOverrides ? { skillOverrides } : {}),
+    };
 
     const q: Query = queryFn({
       prompt: readableStreamToAsyncIterable(inputStream),
@@ -1999,7 +2009,6 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         permissionMode: toSdkPermissionMode(config.permissionMode),
         ...(config.model ? { model: config.model } : {}),
         ...(supportsLargeContext(config.model) ? { betas: [CONTEXT_1M_BETA] } : {}),
-        ...(config.skills ? { skills: config.skills } : {}),
         ...(config.outputFormat ? { outputFormat: config.outputFormat } : {}),
         // One suggestion after each turn's result, made from the turn's
         // prompt cache. The CLI still holds it back on a thread's first
@@ -2007,7 +2016,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         ...(config.promptSuggestions ? { promptSuggestions: true } : {}),
         ...(thinking ? { thinking } : {}),
         ...(effort ? { effort } : {}),
-        ...(fastMode ? { settings: { fastMode: true } } : {}),
+        ...(Object.keys(flagSettings).length > 0 ? { settings: flagSettings } : {}),
         ...(config.sandbox ? { sandbox: config.sandbox } : {}),
         ...(mcpServers ? { mcpServers } : {}),
         ...(config.resumeSessionId ? { resume: config.resumeSessionId } : {}),

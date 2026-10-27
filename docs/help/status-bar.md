@@ -2,11 +2,13 @@
 
 The status bar sits at the bottom of the workspace, just above the prompt, and shows live information about the open thread.
 
-In a narrow window the bar drops its extras so the agent settings, the activity, the branch and the context meter keep their room. As it narrows it drops, in order: the last turn's cost and duration, the project name (the branch's tooltip still names it), then **Keys** (the same list is under Keyboard Shortcuts in Help, `F1`), the **MCP** and **Skills** badges, and **Tasks** and **Files**. The MCP badge stays while a server is down, and Tasks while a task is still to do.
+It is one row of small buttons, each a word or two and a coloured dot, with the details in a popup you open by clicking it. From the left: **Agent settings**, **Activity** and **Branch**, then on the right **MCP · Skills** and **Context**. `Esc` or clicking outside closes a popup and puts the focus back on its button.
+
+In a narrow window the buttons shrink rather than disappear. The model name and the branch name are cut shorter (hover for them in full), **MCP · Skills** keeps only its dot, and **Context** keeps only its percentage. The list of keyboard shortcuts is under Keyboard Shortcuts in Help (`F1`).
 
 ## Agent Settings
 
-The left side is a single **Agent settings** control. The first line is the model and the mode, for example `Opus 5.5 · Ask`; a long model name is cut short, and hovering shows it in full. The second line is the agent, followed by any control that is off its default, for example `Claude Agent · Low · Fast`. Click it to open a popup with one column per setting: **Agent**, **Model**, and each control the provider declares for that model (Mode, Effort, Thinking, Speed). Pick an option in any column; the change applies immediately. A line under the columns says what the current mode does, or what any option you point at or tab to does. `Esc` or clicking outside closes the popup. Picking another agent asks how to switch. **Switch and send the transcript** hands this thread to it: it starts its own session in the same worktree, and with your next message it gets a short transcript of the thread so far (your messages, the replies and the list of files changed, without tool output), which goes to that agent's provider. **Switch without it** does the same with no transcript, so the new agent starts knowing nothing but your files. Either way the thread, the files and the checkpoints stay, the thread marks where the switch happened, the model, mode and controls change to the new agent's (the mode is kept when it offers it), and memory notes and other background work on the new agent only read what came after the switch. **New thread instead** starts a draft with that agent in the same project and leaves this one as it is. In a draft (see [Getting started](getting-started.md#starting-a-thread)) every column can still change, the agent included.
+The left side is a single **Agent settings** control, on one line: the model and the mode, then any control that is off its default, for example `Opus 5.5 · Ask · Low · Fast`. A long model name is cut short; hovering shows it in full, with the agent's name. Click it to open a popup with one column per setting: **Agent**, **Model**, and each control the provider declares for that model (Mode, Effort, Thinking, Speed). Pick an option in any column; the change applies immediately. A line under the columns says what the current mode does, or what any option you point at or tab to does. `Esc` or clicking outside closes the popup. Picking another agent asks how to switch. **Switch and send the transcript** hands this thread to it: it starts its own session in the same worktree, and with your next message it gets a short transcript of the thread so far (your messages, the replies and the list of files changed, without tool output), which goes to that agent's provider. **Switch without it** does the same with no transcript, so the new agent starts knowing nothing but your files. Either way the thread, the files and the checkpoints stay, the thread marks where the switch happened, the model, mode and controls change to the new agent's (the mode is kept when it offers it), and memory notes and other background work on the new agent only read what came after the switch. **New thread instead** starts a draft with that agent in the same project and leaves this one as it is. In a draft (see [Getting started](getting-started.md#starting-a-thread)) every column can still change, the agent included.
 
 ### Usage
 
@@ -34,15 +36,29 @@ The Mode, Effort, Thinking and Speed columns are declared by the agent provider 
 
 ## Activity
 
-Next to the agent settings, the bar says what the agent is doing: **idle**, **thinking**, **writing**, or the tool it is running and for how long. While it works a blue square pulses beside the word. **waiting for you** (amber) means a permission prompt, a question or an MCP form is waiting for your answer in the Thread tab; it shows over whatever the agent was doing. Underneath are any rate-limit warning, pending tools, background tasks and memory compaction. Click a pending tool or background task count for details. When every pending tool belongs to a subagent, the count says so (**1 subagent tool**), since the agent itself may be idle.
+Next to the agent settings, one word says what the agent is doing:
 
-## Tasks and Files
+| Word | Meaning |
+|------|---------|
+| **Ready** | Waiting for your next message |
+| **Thinking** (purple), **Writing**, or a tool's name (yellow) | The agent is working on it; a blue square pulses beside the word |
+| **Needs you** (amber) | A permission prompt, a question or an MCP form is waiting for your answer in the Thread tab. It shows over whatever the agent was doing |
+| **Subagent** | Only a subagent's tools are still running, so the agent itself may be idle |
+| **Background** | A background task is still running |
+| **Compacting** | Project memory is being compacted |
+| **Rate limited** (red) | Requests are being throttled |
 
-Next to the activity, two lines show what the thread holds besides its messages. Each shows only once there is something in it.
+The button keeps one width whatever the word, so the bar doesn't shift. A rate-limit warning puts a small amber mark on its corner.
 
-**Tasks** is the agent's to-do list, for example `Tasks 2/5`: how many are done out of the total (cancelled tasks don't count). A blue square pulses while the agent works on one. Click it to see the list: done tasks are ticked and struck through, and the one in progress is in bold. **Show in thread** opens the Thread tab at the message that last changed the list. The list comes from Claude Code's to-do and task tools, the plan an ACP agent sends, and OpenCode's to-do tool. It is always the latest one, so a list from an earlier turn stays until the agent changes it.
+Click it for the details: what the agent is doing (with a running tool's command and how long it has taken), the rate limit and when it resets, the tools still running, the background tasks, and then the thread's **Tasks**, **Files** and **Last turn**. Under **Needs you**, **Show** opens the Thread tab. A subagent's tools show which subagent they run in (**in Explore**); click one to open that subagent's thread.
 
-**Files** counts the files that came into the thread. Click it for the list, newest first, in three groups:
+### Tasks and Files
+
+At the foot of the popup, two rows show what the thread holds besides its messages. Each shows only once there is something in it. Click one to see its list in the popup; **‹ Activity** goes back.
+
+**Tasks** is the agent's to-do list, for example `2 of 5 done` (cancelled tasks don't count). Done tasks are ticked and struck through, and the one in progress is in bold. **Show in thread** opens the Thread tab at the message that last changed the list. The list comes from Claude Code's to-do and task tools, the plan an ACP agent sends, and OpenCode's to-do tool. It is always the latest one, so a list from an earlier turn stays until the agent changes it.
+
+**Files** counts the files that came into the thread. Its list is newest first, in three groups:
 
 - **You attached**: images, text files and other files you added to your messages.
 - **Made by the agent**: what each turn's **Files made** list shows.
@@ -52,20 +68,50 @@ Click a file to open it the way its chip in the thread does: an image full size,
 
 A file that came in more than once is listed once, at the latest message. A subagent's own to-do list and screenshots stay in its thread.
 
-## Last turn
+### Last turn
 
-When the bar is wide enough, it shows how long the last turn took. With an API key sign-in it also shows what the turn cost, estimated at list price (hover for the exact figure). On a plan such as Pro or Max the cost is left out, because turns count toward the plan's limits rather than a bill; **Usage** in Agent settings shows how much of the plan you've used.
+The **Last turn** row says how long the last turn took. With an API key sign-in it also shows what the turn cost, estimated at list price (hover for the exact figure), with the thread's and today's totals and the tokens used. On a plan such as Pro or Max the cost is left out, because turns count toward the plan's limits rather than a bill; **Usage** in Agent settings shows how much of the plan you've used. **Limits & alerts** opens the settings for spending alerts.
 
-## Project and Branch
+## Branch
 
-The branch area shows the thread's project and branch, for example `grove-bench / feat/login`. The branch has a dashed underline while you can click it. Under it are the sync state (commits to push or pull) and the pull request. Click `↑N` to push those commits. If a push fails, from here or from the Changes tab, **push failed** appears: click it to see the error, copy it, **Retry** the push or **Dismiss** the note. It also goes away by itself once nothing is left to push.
+The **Branch** button shows the thread's branch and five dots, one for each step on its way to merged: **Push**, **PR**, **Checks**, **Review** and **Merge**.
 
-Click the branch name to switch branches. Type to filter local and remote branches, then click one or press `Enter`. If the name you type doesn't exist yet, **Create branch** makes it from the current commit and switches to it.
+| Dot | Meaning |
+|-----|---------|
+| Green | Done |
+| Hollow and bright | The step to take now, such as commits to push |
+| Blue pulsing | Running, such as checks |
+| Red | Failed: the push or a check |
+| Amber | Waiting on you, such as changes requested |
+| Purple | Merged |
+| Grey | The PR was closed without merging |
+| Hollow and faint | Not reached yet |
+
+A small green mark on the button's corner means the popup has something for you to do now: commits to push, a PR to open, a failed push or check, or changes requested. The dots pulse while there is PR activity you haven't looked at, and dim when the last fetch from GitHub failed, so they may be out of date. If a merge or rebase stopped part way, its word (for example **rebasing 1/2**) shows in amber beside the dots. Hovering the button says all of it in words.
+
+Click it for the popup. It names the project and branch (and how far behind its upstream the branch is), then lists the steps with what each stands at. Each step's row also has what goes with it:
+
+- **PR**: the pull request's number, state and title, with **Open ↗** to see it on GitHub. Hover the state for the branch it merges from and into.
+- **Checks**: the names of the failing checks, a **new** chip when they failed since you last looked, and **fix with agent →**, which sends a turn asking the agent to read the CI logs and fix them.
+- **Review**: a **2 new** chip for comments since you last looked, and **address with agent →**, which fetches the review comments and asks the agent to address them. Hover **review required** for what it means.
+
+Clicking a chip clears it, and so does closing the popup. When an auto turn gives up and needs you, a note says so under the steps until you dismiss it. Under them, **Auto** turns on the agent fixing CI or addressing reviews by itself (only for an open PR, and only while the thread is idle), and **Other PRs in this thread** lists any others, with **watch** to follow one of them instead.
+
+The actions are at the bottom:
+
+- **Push N commits** pushes the branch. If a push fails, from here or from the Changes tab, the error shows in the popup: copy it, **Retry** the push or **Dismiss** the note. It also goes away by itself once nothing is left to push.
+- **Create PR with agent** sends a turn asking the agent to commit, push and open a PR. **Create PR manually…** opens a form. They show while the thread has no open PR, so after a PR is merged or closed they start a new one. Both wait while the agent is working.
+- **Switch branch…** opens the branch picker in place of the popup.
+- A merge or rebase stopped part way has a line at the top that opens the Changes tab, where you finish or abort it.
+
+### Switching branch
+
+Type to filter local and remote branches, then click one or press `Enter`. If the name you type doesn't exist yet, **Create branch** makes it from the current commit and switches to it.
 
 - A branch that only exists on the remote gets a local branch that tracks it.
 - Switching is refused while the checkout has uncommitted changes or untracked files, so commit, stash or remove them first. Creating a new branch is still allowed: no files change, so your uncommitted work comes along.
 - A branch can only be checked out in one place. A branch in use by another worktree (your project folder included) can't be picked.
-- The branch name can't be clicked while the agent is working. Switch once its turn ends.
+- **Switch branch…** can't be clicked while the agent is working. Switch once its turn ends.
 - Threads that share a checkout move together. For a direct thread that checkout is your project folder, so your editor sees the switch too.
 - Closing a thread with "Also delete the branch" never deletes the project's default branch, even if the thread switched onto it.
 
@@ -96,11 +142,15 @@ On most models a **Thinking** control switches extended thinking **On** (the mod
 - Opus 5.5 and Fable 5 always think, so they show no Thinking control. Use a lower Effort to make them faster.
 - Haiku 4.5 has no Effort setting, so its Thinking control keeps fixed levels: **Off**, **Low**, **Medium**, and **High**.
 
-While the agent reasons, the status bar shows **thinking** in purple next to the blue working square.
+While the agent reasons, the status bar shows **Thinking** in purple next to the blue working square.
+
+## MCP and Skills
+
+On the right, the **MCP · Skills** button counts the thread's MCP servers and skills, for example `MCP 3 · Skills 12`. When some servers aren't connected it shows how many are, for example `MCP 1/2`, and when some skills are turned off, how many are on (`Skills 10/12`). Its dot is the servers' health: green when every connection is healthy, amber when some are down but others are still connected, and red when none are connected. With no MCP servers, the dot is green while any skill is on. In a narrow bar only the dot shows. Click it for a menu with a row for each, which opens its drawer on the right.
 
 ## MCP Servers
 
-When the agent has MCP servers configured, an **MCP** badge shows how many are configured. The dot is green when every connection is healthy, amber when some are down but others are still connected, and red when none are connected. It refreshes when each turn ends. Click it to open the MCP drawer on the right, where you manage the servers without restarting the thread. Press `Esc`, click the close button or click outside it to close it. If you close it during a browser sign-in, the sign-in carries on, and opening the drawer again shows how it went. Switching to another thread closes the drawer. The drawer only offers the controls the thread's agent supports:
+The **MCP servers** row opens the MCP drawer, where you manage the servers without restarting the thread. The counts refresh when each turn ends. Press `Esc`, click the close button or click outside it to close it. If you close it during a browser sign-in, the sign-in carries on, and opening the drawer again shows how it went. Switching to another thread closes the drawer. The drawer only offers the controls the thread's agent supports:
 
 - Each server shows where it comes from (for example user, project, plugin or claude.ai), its status and its tool count
 - Click the tool count to list the server's tools. Tools the server marks as destructive or read-only are tagged
@@ -125,7 +175,7 @@ Each server in the drawer shows a status dot:
 
 ## Skills
 
-**Skills** shows how many skills the thread's agent can use. Click it to open the Skills drawer on the right. **This thread** lists them, each with **Run** (a new thread that uses it now) and **Schedule**, and the rest in its **⋯** menu (or right-click the skill): **Edit SKILL.md**, **Open folder** (shows the skill's `SKILL.md` in Explorer), **Who can use it…** (below) and, for Claude Agent, **Disable**. A turned-off skill keeps **Enable** in view. **Scheduled** lists every project's schedules. The clock on a project's header in the sidebar opens Scheduled too, and **Skills** at the foot of the sidebar opens the drawer even when a narrow status bar has no room for its Skills count. The drawer keeps the keyboard inside it until you close it with `Esc` or **×**. To start a thread with a skill and your own instructions, type `/` in a new thread's message box or use **Skills** at its foot (see [Starting a Thread](getting-started.md#starting-a-thread)).
+The **Skills** row says how many skills the thread's agent can use and how many are on. Click it to open the Skills drawer on the right. **This thread** lists them, each with **Run** (a new thread that uses it now) and **Schedule**, and the rest in its **⋯** menu (or right-click the skill): **Edit SKILL.md**, **Open folder** (shows the skill's `SKILL.md` in Explorer), **Who can use it…** (below) and, for Claude Agent, **Disable**. A turned-off skill keeps **Enable** in view. **Scheduled** lists every project's schedules. The clock on a project's header in the sidebar opens Scheduled too, and **Skills** at the foot of the sidebar opens it too. The drawer keeps the keyboard inside it until you close it with `Esc` or **×**. To start a thread with a skill and your own instructions, type `/` in a new thread's message box or use **Skills** at its foot (see [Starting a Thread](getting-started.md#starting-a-thread)).
 
 **This thread** puts skills in sections by where they live: **Project** (in the project, for anyone working on it), **Personal** (in your user folder, for all your projects) and **Plugin and built-in** (reported by the running agent, with no file to edit). Click a section's heading to fold it. The search box above them finds skills by name or description in every section, folded or not; `Esc` clears it before closing the drawer.
 
@@ -156,7 +206,7 @@ A line under the choices says what **Apply** will do. When a personal and a proj
 
 ## Context
 
-**Context N%** and a bar of pixel blocks show how much of the agent's context window has been used. Each block is 10% (5% in the popup), and the block the usage is partway through shows dimmed. Context is what the agent can hold in mind at once: your messages, its replies, files it read and command output. Near the limit, Claude Code clears old tool output first, then summarises the thread, so details from early on can be lost ([How Claude Code works](https://code.claude.com/docs/en/how-claude-code-works#when-context-fills-up)).
+**Context N%** and a bar of pixel blocks show how much of the agent's context window has been used. Each block is 20% (5% in the popup), and the block the usage is partway through shows dimmed. In a narrower bar the word **Context** goes first, then the blocks, leaving the percentage. Context is what the agent can hold in mind at once: your messages, its replies, files it read and command output. Near the limit, Claude Code clears old tool output first, then summarises the thread, so details from early on can be lost ([How Claude Code works](https://code.claude.com/docs/en/how-claude-code-works#when-context-fills-up)).
 
 | Usage | Color | Meaning |
 |-------|-------|---------|
@@ -176,16 +226,11 @@ With **Show grove characters** on (Settings → General (The grove)), a strip of
 
 ## Rate Limiting
 
-If the agent hits API rate limits, an indicator appears:
-
-| Color | Meaning |
-|-------|---------|
-| Amber pulsing | Approaching rate limit |
-| Red pulsing | Rate limited — requests are being throttled |
+If the agent nears the API rate limit, a small amber mark appears on the **Activity** button, and its popup says how much of the limit is used and when it resets. Once requests are throttled, the button says **Rate limited** in red.
 
 ## Background Tasks
 
-When the agent runs background tasks (subagents), their status is shown:
+When the agent runs background tasks (subagents or long commands), the **Activity** popup lists them with their status, and the button says **Background** while one runs after the turn ends:
 
 | Color | Meaning |
 |-------|---------|
@@ -193,5 +238,4 @@ When the agent runs background tasks (subagents), their status is shown:
 | Green | Task completed |
 | Red | Task failed |
 
-Click a subagent's name in the list to open its thread, the same panel its line in the Thread tab opens. In the pending tools list, a subagent's tools show which subagent they run in (**in Explore**), and clicking one, or a running **Agent** call, opens that subagent's thread too.
-
+The square button beside a running task stops it, and **×** dismisses a finished one. Click a subagent's name in the list to open its thread, the same panel its line in the Thread tab opens.

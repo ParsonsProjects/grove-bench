@@ -31,6 +31,10 @@ export interface SkillSuggestionCache {
   suggestions: SkillSuggestion[];
   /** Suggestion ids the user dismissed — never resurface these. */
   dismissedIds: string[];
+  /** The examples dismissed suggestions were mined from. A suggestion mined
+   *  again from much the same requests stays dismissed, though its id moves
+   *  as older threads drop out of the ones read. */
+  dismissedEvidence?: string[];
   analyzedAt: number;
 }
 
@@ -42,11 +46,6 @@ export interface AppState {
   sidebarWidth?: number | null;
   /** Sidebars folded down to a rail. Absent = all open. */
   collapsedPanels?: CollapsedPanels;
-  /** Skill names each repo's sessions have ever reported (union, per repo
-   *  path). Lets the disabled-skills allowlist include plugin-provided skills
-   *  that the on-disk scan can't discover, even on the first query after an
-   *  app restart. */
-  knownSkills?: Record<string, string[]>;
   /** Last skill-suggestion analysis per repo path, including dismissals. */
   skillSuggestions?: Record<string, SkillSuggestionCache>;
   /** Last prerequisite check, pass or fail. Lets the renderer show the last
@@ -152,10 +151,10 @@ const appStateSchema = z.object({
   sessionSort: z.object({ key: z.enum(['name', 'age']), dir: z.enum(['asc', 'desc']) }).catch(DEFAULT_STATE.sessionSort),
   sidebarWidth: z.number().finite().nullable().optional().catch(null),
   collapsedPanels: collapsedPanelsSchema.optional().catch(undefined),
-  knownSkills: z.record(z.string(), z.array(z.string())).optional().catch(undefined),
   skillSuggestions: z.record(z.string(), z.object({
     suggestions: z.array(z.custom<SkillSuggestion>((v) => typeof v === 'object' && v !== null)),
     dismissedIds: z.array(z.string()),
+    dismissedEvidence: z.array(z.string()).optional(),
     analyzedAt: z.number(),
   })).optional().catch(undefined),
   prerequisiteCache: z.object({
@@ -578,17 +577,6 @@ export function loadTodoSessionIds(): string[] | null {
 export function saveTodoSessionIds(ids: unknown): void {
   const parsed = sessionIdsSchema.safeParse(ids);
   if (parsed.success) setSoon('todoSessionIds', parsed.data);
-}
-
-export function loadKnownSkills(repoPath: string): string[] {
-  return pick((state) => state.knownSkills?.[repoPath] ?? []);
-}
-
-/** Saved straight away (no delay): system_init events are rare. */
-export function saveKnownSkills(repoPath: string, skills: string[]): void {
-  change((state) => {
-    state.knownSkills = { ...(state.knownSkills ?? {}), [repoPath]: skills };
-  }, 0, `knownSkills:${repoPath}`);
 }
 
 export function loadSkillSuggestionCache(repoPath: string): SkillSuggestionCache | null {

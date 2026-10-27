@@ -72,7 +72,7 @@ When the agent is done, its work sits on the thread's own branch, in a separate 
 1. **Review**: open the **Changes** tab (`Alt+2`). **Uncommitted** shows what isn't committed yet; **Branch** shows everything since the thread left its base branch.
 2. **Commit**: stage files, write a message (or generate one) and click **Commit**. You can also ask the agent to commit for you.
 3. **Open a pull request or merge**:
-   - **Create PR** in the status bar pushes the branch and opens a pull request. It shows when the GitHub CLI (`gh`) is installed and signed in.
+   - **Create PR with agent** or **Create PR manually…**, in the status bar's **Branch** popup, pushes the branch and opens a pull request. It shows when the GitHub CLI (`gh`) is installed and signed in.
    - Without it, **& Push** next to **Commit** pushes the branch so you can open a pull request on your git host's website.
    - To merge without a pull request, run `git merge <branch>` in your project folder. The branch name is shown in the status bar.
 4. **Tidy up**: right-click the thread and choose **Close Thread** to stop its agent and take it off the Threads list, or **Delete Thread** to remove its copy of the project.
