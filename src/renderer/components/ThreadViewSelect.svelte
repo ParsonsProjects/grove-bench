@@ -8,7 +8,9 @@
   import { Select as SelectPrimitive } from 'bits-ui';
   import * as Select from '$lib/components/ui/select/index.js';
   import { messageStore } from '../stores/messages.svelte.js';
+  import { store } from '../stores/sessions.svelte.js';
   import { subagentPanelStore } from '../stores/subagentPanel.svelte.js';
+  import { whileShown } from '../lib/while-shown.js';
   import { ACTIVITY_VIEW_MODES, type ActivityViewMode } from '../../shared/types.js';
   import { filterVisibleMessages, threadMessages, VIEW_MODE_DESCRIPTIONS, VIEW_MODE_LABELS } from '../lib/message-view.js';
 
@@ -19,7 +21,13 @@
   } = $props();
 
   let viewMode = $derived(subagentOf ? subagentPanelStore.viewMode(sessionId) : messageStore.getViewMode(sessionId));
-  let thread = $derived(threadMessages(messageStore.getMessages(sessionId), subagentOf));
+  // A hidden conversation's tab bar is mounted too: its count waits until
+  // it's open, rather than going over the thread on every message.
+  let messages = $derived.by(whileShown(
+    () => !!subagentOf || store.activeSessionId === sessionId,
+    () => messageStore.getMessages(sessionId),
+  ));
+  let thread = $derived(threadMessages(messages, subagentOf));
   let hiddenCount = $derived(thread.length - filterVisibleMessages(thread, viewMode).length);
   let label = $derived(VIEW_MODE_LABELS[viewMode]);
   let hiddenText = $derived(hiddenCount > 0 ? `${hiddenCount} hidden` : '');

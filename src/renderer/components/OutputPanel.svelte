@@ -17,6 +17,7 @@
   import { settingsStore } from '../stores/settings.svelte.js';
   import { filterVisibleMessages, foldNarration, hasAgentReply, narrationIds, threadMessages } from '$lib/message-view.js';
   import { dayDividers, dayStart } from '$lib/message-dates.js';
+  import { whileShown } from '$lib/while-shown.js';
   import { sessionRepoColor } from '$lib/session-repo-color.js';
   import { sessionSpriteState } from '$lib/session-sprite-state.js';
   import type { EventSearchHit } from '../../shared/types.js';
@@ -27,12 +28,16 @@
   let scrollContainer = $state<HTMLDivElement>();
   let shouldAutoScroll = $state(true);
 
-  let allMessages = $derived(messageStore.getMessages(sessionId));
-  let streamingText = $derived(messageStore.getStreamingText(sessionId));
   // Every conversation's pane stays mounted, hidden but for the open one.
-  // A hidden one skips drawing its live reply (re-parsed on every flush);
+  // A hidden one's chat stands still at what it last showed (whileShown),
+  // and opening it brings in what came meanwhile. On another tab of the open
+  // conversation it keeps up, as a jump to a message can start from there.
+  let threadOpen = $derived(store.activeSessionId === sessionId);
+  let allMessages = $derived.by(whileShown(() => threadOpen, () => messageStore.getMessages(sessionId)));
+  let streamingText = $derived(messageStore.getStreamingText(sessionId));
+  // Nor does a hidden pane draw its live reply (re-parsed on every flush);
   // shown again, it draws what has arrived so far.
-  let paneShown = $derived(store.activeSessionId === sessionId && messageStore.getActiveTab(sessionId) === 'activity');
+  let paneShown = $derived(threadOpen && messageStore.getActiveTab(sessionId) === 'activity');
   let streamingThinking = $derived(messageStore.getStreamingThinking(sessionId));
   let isRunning = $derived(messageStore.getIsRunning(sessionId));
   let activity = $derived(messageStore.getActivity(sessionId));
@@ -73,6 +78,42 @@
     batchNextLoad = false;
     if (len > RENDER_BATCH) renderCap = RENDER_BATCH;
   });
+  // ─── Opening a conversation that worked on out of sight ───
+  // Its chat stood still (allMessages), so all it said meanwhile comes in at
+  // once. A prompt among it (one queued while away) follows the conversation
+  // again, as sending does. More than a batch of it, while following, draws
+  // newest first and the rest a batch per frame, as a load does: the rows
+  // in between are held back (`held`, by index in filteredMessages), and the
+  // rows already drawn stay, with whatever the reader opened in them. If the
+  // last message drawn is gone (the history was cleared or replaced), the
+  // new history draws as a load. Scrolled up, it all joins below the reader
+  // at once.
+  let held = $state<{ from: number; to: number } | null>(null);
+  // The newest message drawn while hidden. Not state: only this effect reads it.
+  let lastDrawnWhileHidden: { id: string | undefined } | null = null;
+  $effect.pre(() => {
+    const msgs = filteredMessages;
+    if (!threadOpen) {
+      lastDrawnWhileHidden = { id: msgs.at(-1)?.id };
+      return;
+    }
+    if (!lastDrawnWhileHidden) return;
+    const { id } = lastDrawnWhileHidden;
+    lastDrawnWhileHidden = null;
+    const seen = id === undefined ? -1 : msgs.findLastIndex((m) => m.id === id);
+    const came = msgs.length - seen - 1;
+    if (msgs.slice(seen + 1).some((m) => m.kind === 'user')) untrack(followLatest);
+    if (came <= RENDER_BATCH || !untrack(() => shouldAutoScroll)) return;
+    if (seen < 0) renderCap = RENDER_BATCH;
+    else held = { from: seen + 1, to: msgs.length - RENDER_BATCH };
+  });
+  $effect(() => {
+    if (!held) return;
+    const frame = requestAnimationFrame(() => {
+      if (held) held = held.to - RENDER_BATCH > held.from ? { ...held, to: held.to - RENDER_BATCH } : null;
+    });
+    return () => cancelAnimationFrame(frame);
+  });
   $effect(() => {
     if (renderCap === Infinity) return;
     if (renderCap >= Math.min(visibleCount, filteredMessages.length)) {
@@ -98,14 +139,18 @@
   /** Draw everything in the window now (before a change the user asked for). */
   function drawAll() {
     renderCap = Infinity;
+    held = null;
   }
 
   let renderedCount = $derived(Math.min(visibleCount, renderCap));
-  let messages = $derived(
-    filteredMessages.length > renderedCount
-      ? filteredMessages.slice(filteredMessages.length - renderedCount)
-      : filteredMessages
-  );
+  let messages = $derived.by(() => {
+    const all = filteredMessages;
+    const start = Math.max(0, all.length - renderedCount);
+    if (held && held.to > start && held.to <= all.length) {
+      return [...all.slice(start, Math.max(start, held.from)), ...all.slice(held.to)];
+    }
+    return start > 0 ? all.slice(start) : all;
+  });
   let rows = $derived(foldNarration(messages, notes));
 
   // ─── Day dividers above the first prompt of each day ───
@@ -149,11 +194,12 @@
   // there is nothing here to go on before then. A first message sent later,
   // in a conversation started without one, begins it here. It ends at the
   // reply, or when the agent stops or goes to sleep without one; Stop ends
-  // it too (PromptEditor).
+  // it too (PromptEditor). Hidden, the chat stands still, so a reply may not
+  // show in it yet: it only begins while open.
   $effect(() => {
     if (replied || !agentLive) {
       untrack(() => arrivalScene.end(sessionId));
-    } else if (isRunning && allMessages.some((m) => m.kind === 'user')) {
+    } else if (threadOpen && isRunning && allMessages.some((m) => m.kind === 'user')) {
       untrack(() => arrivalScene.begin(sessionId));
     }
   });
@@ -187,8 +233,9 @@
     drawAll();
     const prevScrollHeight = scrollContainer?.scrollHeight ?? 0;
     await messageStore.loadOlderEvents(sessionId);
-    // Show all messages after loading older events (they're already in the store)
-    visibleCount = filteredMessages.length;
+    // Show all messages after loading older events (they're already in the
+    // store). Counted there: switched away meanwhile, this chat stands still.
+    visibleCount = filterVisibleMessages(threadMessages(messageStore.getMessages(sessionId)), viewMode).length;
     await tick();
     if (scrollContainer) {
       scrollContainer.scrollTop += scrollContainer.scrollHeight - prevScrollHeight;
@@ -211,7 +258,9 @@
   async function jumpToEventIndex(eventIndex: number): Promise<boolean> {
     await messageStore.loadOlderUntil(sessionId, eventIndex);
     const id = await messageStore.findMessageForEvent(sessionId, eventIndex);
-    if (!id) return false;
+    // Switched away meanwhile: this chat stands still, so the target may not
+    // be in it yet. A bookmark's jump waits until it's open again.
+    if (!id || !threadOpen) return false;
     // The target must be drawn to scroll to it, even mid-way through a load.
     drawAll();
 
@@ -262,8 +311,8 @@
     const req = messageStore.pendingJumpBySession[sessionId];
     // Track message count so a jump requested before history replay retries once
     // the pane's history finishes loading.
-    const _loaded = messageStore.getMessages(sessionId).length;
-    if (!req || store.activeSessionId !== sessionId || jumpInFlight) return;
+    const _loaded = allMessages.length;
+    if (!req || !threadOpen || jumpInFlight) return;
     jumpInFlight = true;
     void (async () => {
       try {
@@ -272,7 +321,7 @@
           await resolveBookmarkJump(next);
           // A jump asked for while this one ran was skipped above: take it now.
           const pending: JumpRequest | undefined = messageStore.pendingJumpBySession[sessionId];
-          next = pending && !sameJump(pending, next) && store.activeSessionId === sessionId ? pending : undefined;
+          next = pending && !sameJump(pending, next) && threadOpen ? pending : undefined;
         }
       } finally {
         jumpInFlight = false;
@@ -323,10 +372,11 @@
       }
     }
 
-    // Still not found. If the pane simply hasn't replayed history yet, keep the
-    // request pending so the effect retries when messages arrive; otherwise the
+    // Still not found. If the pane simply hasn't replayed history yet, or the
+    // user switched away meanwhile, keep the request pending so the effect
+    // retries when messages arrive or the thread is open again; otherwise the
     // source is genuinely gone (e.g. cleared history) → show the stored text.
-    if (messageStore.getMessages(sessionId).length === 0) return;
+    if (!threadOpen || allMessages.length === 0) return;
     showBookmarkFallback(req.bookmarkId);
     finishJump(req);
   }
@@ -348,7 +398,7 @@
     // Inactive session panes stay mounted (hidden via CSS); only the active
     // session should toggle its search bar on Ctrl/Cmd+F, and only while its
     // Activity tab is showing (other tabs hide this pane the same way).
-    if (store.activeSessionId !== sessionId) return;
+    if (!threadOpen) return;
     if (messageStore.getActiveTab(sessionId) !== 'activity') return;
     if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
       e.preventDefault();
@@ -390,6 +440,8 @@
   });
 
   $effect(() => {
+    // Hidden, there's nothing to scroll: the observer below pins it on showing.
+    if (!paneShown) return;
     const _len = messages.length;
     const _st = streamingText;
     const _stk = streamingThinking; // follow the live thinking line as it grows
@@ -595,7 +647,7 @@
          Only the open conversation draws it, so it picks up from its start
          time when shown again rather than replaying a stale animation. -->
     <div class="flex-1 flex items-center justify-center py-6">
-      {#if store.activeSessionId === sessionId}
+      {#if threadOpen}
         <GroveWalk seed={sessionId} projectColor={sessionRepoColor(sessionId)} spriteState={session ? sessionSpriteState(session) : 'starting'} {arrival}>
           {#snippet caption()}
             <p class="text-sm mt-4 text-muted-foreground">
