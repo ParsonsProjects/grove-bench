@@ -96,7 +96,7 @@ Its colour says what matters most right now:
 | Grey | The PR was closed without merging |
 | Plain | A step is still to come, such as a push or a review |
 
-A small green mark on the button's corner means the popup has something for you to do now: commits to push, a PR to open, a failed push or check, or changes requested. The icon pulses while there is PR activity you haven't looked at, and dims when the last fetch from GitHub failed, so it may be out of date. If a merge or rebase stopped part way, its word (for example **rebasing 1/2**) shows in amber beside the branch name. Hovering the button says all of it in words.
+A small green square at the end of the button means the popup has something for you to do now: commits to push, a PR to open, a failed push or check, or changes requested. The icon pulses while there is PR activity you haven't looked at, and dims when the last fetch from GitHub failed, so it may be out of date. If a merge or rebase stopped part way, its word (for example **rebasing 1/2**) shows in amber beside the branch name. Hovering the button says all of it in words.
 
 Click it for the popup. It names the project and branch (and how far behind its upstream the branch is), then lists the steps on the way to merged, **Push**, **PR**, **Checks**, **Review** and **Merge**, each with a dot and what it stands at.
 

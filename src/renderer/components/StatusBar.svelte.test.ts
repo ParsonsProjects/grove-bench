@@ -606,6 +606,9 @@ describe('StatusBar PR', () => {
     vi.mocked(window.groveBench.getGitSyncStatus).mockResolvedValue({ upstream: 'origin/feat-a', ahead: 2, behind: 0 });
     await prStore.refresh(ACTIVE, true);
     await waitFor(() => expect(lozenge().querySelector('.bg-primary')).not.toBeNull());
+    // Inside the box, last in the line, not on its corner.
+    expect(lozenge().lastElementChild).toHaveClass('bg-primary');
+    expect(lozenge().lastElementChild).not.toHaveClass('absolute');
   });
 
   it('names each step in its popup', async () => {

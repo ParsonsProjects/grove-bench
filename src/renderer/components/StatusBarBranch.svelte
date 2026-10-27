@@ -3,7 +3,7 @@
    * The branch lozenge: one icon for where the branch is on its way to
    * merged (ShipIcon: its shape the stage, its colour the step that matters
    * most; lib/ship-track.ts), then the branch's name.
-   * A green mark on its corner says the popup holds something to do now
+   * A green mark at its end says the popup holds something to do now
    * (push, create a PR, fix failed checks, address requested changes). A
    * merge or rebase stopped part way adds its word in amber ("rebasing 1/2").
    *
@@ -211,7 +211,7 @@
               <span class="text-status-attention">{operationShort(operation)}</span>
             {/if}
             {#if track.actionable}
-              <span class={lozengeMark()}></span>
+              <span class={lozengeMark({ place: 'inside' })}></span>
             {/if}
           </button>
         {/snippet}
