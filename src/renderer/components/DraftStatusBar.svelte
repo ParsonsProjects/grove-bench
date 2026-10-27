@@ -2,7 +2,8 @@
   /**
    * Options for a draft conversation, along the foot of its message box
    * (DraftPane). Same layout as a running one's status bar: agent settings
-   * on the left, project / branch stack next to it. Everything here can
+   * on the left, project / branch stack next to it. Its parts are items of
+   * the box's footer row, which wraps them in a narrow pane. Everything here can
    * still change because nothing exists yet; sending the first message
    * fixes the agent, the project and where it runs. The box sits in the
    * middle of the pane, so its menus open downwards, or upwards when they
@@ -48,7 +49,7 @@
     if (start.kind === 'existing') return start.pr ? start.pr.title : 'existing branch · separate copy';
     const from = start.baseBranch.trim() ? `from ${start.baseBranch.trim()}` : 'from the default branch';
     if (draftStore.onGroupBranch) return `the group's branch · ${from}, or continued if the project has it`;
-    return start.branchName.trim() ? from : `${from} · named after the first reply`;
+    return start.branchName.trim() ? from : `${from} · named from your message`;
   });
 
   function handleClickOutside(e: MouseEvent) {
@@ -79,11 +80,9 @@
 </script>
 
 {#if draft}
-<!-- A container like the conversation bar, so the shared Agent settings
-     button sizes its model name from this row. The row is narrower than the
-     button's wide breakpoint, so the name keeps its short width here rather
-     than widening with some outer container. -->
-<div class="@container flex-1 min-w-0 flex items-center gap-4 text-xs text-muted-foreground">
+<!-- No box of its own: the parts below are the footer row's items, so the
+     row can wrap them (DraftPane). -->
+<div class="contents text-xs text-muted-foreground">
   <DraftAgentControl />
 
   <span class="w-px self-stretch bg-border"></span>

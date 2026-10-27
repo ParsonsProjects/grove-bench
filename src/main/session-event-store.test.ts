@@ -72,6 +72,21 @@ function wrapAppends(wrap: (append: () => Promise<void>) => Promise<void>) {
   });
 }
 
+/** Hold the first append to a log opened from now on until release().
+ *  `started` resolves once it is held, however long the log takes to open:
+ *  a fixed wait for it raced a slow open on CI. */
+function holdFirstAppend() {
+  let release!: () => void;
+  let held!: () => void;
+  const started = new Promise<void>((r) => { held = r; });
+  let appends = 0;
+  wrapAppends(async (append) => {
+    if (++appends === 1) await new Promise<void>((r) => { release = r; held(); });
+    return append();
+  });
+  return { started, release: () => release(), appends: () => appends };
+}
+
 const logLines = (id: string) => fs.readFileSync(eventLogPath(id), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
 
 beforeEach(() => {
@@ -167,20 +182,17 @@ describe('SessionEventStore', () => {
     const store = new TestStore();
     store.ensureDir();
     const s = liveSession('wait');
-    let release!: () => void;
-    wrapAppends(async (append) => {
-      await new Promise<void>((r) => { release = r; });
-      return append();
-    });
+    const slow = holdFirstAppend();
 
     store.append(s, text('slow'));
     void store.flush(s);
     let settled = false;
     const waiting = store.flush(s).then(() => { settled = true; });
+    await slow.started;
     await new Promise((r) => setTimeout(r, 10));
     expect(settled).toBe(false);
 
-    release();
+    slow.release();
     await waiting;
     expect(logLines('wait')).toEqual([text('slow')]);
   });
@@ -218,16 +230,11 @@ describe('SessionEventStore', () => {
     const store = new TestStore();
     store.ensureDir();
     const s = liveSession('join');
-    let release!: () => void;
-    let appends = 0;
-    wrapAppends(async (append) => {
-      if (++appends === 1) await new Promise<void>((r) => { release = r; });
-      return append();
-    });
+    const slow = holdFirstAppend();
 
     store.append(s, text('slow'));
     void store.flush(s);
-    await new Promise((r) => setTimeout(r, 10));
+    await slow.started;
     // Flushed one by one while the first append is stuck, as the timer would.
     const flushes = ['a', 'b', 'c'].map((t) => {
       store.append(s, text(t));
@@ -235,9 +242,9 @@ describe('SessionEventStore', () => {
     });
     expect(new Set(flushes).size).toBe(1);
 
-    release();
+    slow.release();
     await Promise.all(flushes);
-    expect(appends).toBe(2);
+    expect(slow.appends()).toBe(2);
     expect(logLines('join')).toEqual([text('slow'), text('a'), text('b'), text('c')]);
   });
 
@@ -245,23 +252,18 @@ describe('SessionEventStore', () => {
     const store = new TestStore();
     store.ensureDir();
     const s = liveSession('cut');
-    let release!: () => void;
-    let appends = 0;
-    wrapAppends(async (append) => {
-      if (++appends === 1) await new Promise<void>((r) => { release = r; });
-      return append();
-    });
+    const slow = holdFirstAppend();
 
     store.append(s, text('first'));
     void store.flush(s);
-    await new Promise((r) => setTimeout(r, 10));
+    await slow.started;
     store.append(s, text('cut'));
     void store.flush(s);
     void store.replace(s, [text('kept')]);
     store.append(s, text('after'));
     const done = store.flush(s);
 
-    release();
+    slow.release();
     await done;
     expect(logLines('cut')).toEqual([text('kept'), text('after')]);
   });

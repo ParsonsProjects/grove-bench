@@ -1256,6 +1256,123 @@ describe('remove: default branch guard', () => {
   });
 });
 
+describe('manifest in memory', () => {
+  const entry = (branch: string) => ({ repoPath: '/repo', branch, createdAt: 1 });
+  /** Make the next manifest write wait until `finish` is called. */
+  function holdNextWrite(): { finish: (err?: Error) => void } {
+    let finish!: (err?: Error) => void;
+    mockFs.writeFile.mockImplementationOnce((_path: string, data: string) => new Promise<void>((resolve, reject) => {
+      finish = (err) => {
+        if (err) return reject(err);
+        savedManifest = JSON.parse(data);
+        resolve();
+      };
+    }));
+    return { finish: (err) => finish(err) };
+  }
+
+  it('reads the file once, however many ask at the same time', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({ 'wt-1': { ...entry('a'), model: 'opus' } }));
+
+    const [model, agent, limits] = await Promise.all([
+      manager.getModel('wt-1'), manager.getAdapterType('wt-1'), manager.getThreadLimits('wt-1'),
+    ]);
+    await manager.getProviderSessionId('wt-1');
+
+    expect([model, agent, limits]).toEqual(['opus', 'claude-code', undefined]);
+    expect(mockFs.readFile).toHaveBeenCalledTimes(1);
+  });
+
+  it('reads the file again after a read that failed', async () => {
+    mockFs.readFile.mockRejectedValueOnce(Object.assign(new Error('EBUSY'), { code: 'EBUSY' }));
+    mockFs.readFile.mockResolvedValue(JSON.stringify({ 'wt-1': { ...entry('a'), model: 'opus' } }));
+
+    await expect(manager.getModel('wt-1')).rejects.toThrow('Could not read the worktree manifest');
+    expect(await manager.getModel('wt-1')).toBe('opus');
+  });
+
+  it('a read sees a save still being written, without waiting for it', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({ 'wt-1': entry('a') }));
+    const write = holdNextWrite();
+
+    const saving = manager.saveThreadLimits('wt-1', { spendUsd: 2.5 });
+    expect(await manager.getThreadLimits('wt-1')).toEqual({ spendUsd: 2.5 });
+
+    write.finish();
+    await saving;
+    expect(savedManifest).toEqual({ 'wt-1': { ...entry('a'), threadSpendUsd: 2.5 } });
+
+    // And once the manifest is in memory, the same holds for the next save.
+    const next = holdNextWrite();
+    const savingMore = manager.saveThreadLimits('wt-1', { spendUsd: 4 });
+    expect(await manager.getThreadLimits('wt-1')).toEqual({ spendUsd: 4 });
+    next.finish();
+    await savingMore;
+  });
+
+  it('changes made while a write is under way go in one write', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({ 'wt-1': entry('a'), 'wt-2': entry('b') }));
+    const write = holdNextWrite();
+
+    const first = manager.saveModel('wt-1', 'opus');
+    await vi.waitFor(() => expect(mockFs.writeFile).toHaveBeenCalledTimes(1));
+    const rest = [
+      manager.saveModel('wt-2', 'sonnet'),
+      manager.saveProviderSessionId('wt-1', 'prov-1'),
+      manager.saveDisplayName('wt-2', 'Fix the build'),
+    ];
+    write.finish();
+    await Promise.all([first, ...rest]);
+
+    expect(mockFs.writeFile).toHaveBeenCalledTimes(2);
+    expect(savedManifest).toEqual({
+      'wt-1': { ...entry('a'), model: 'opus', providerSessionId: 'prov-1' },
+      'wt-2': { ...entry('b'), model: 'sonnet', displayName: 'Fix the build', displayNameSource: 'user' },
+    });
+  });
+
+  it('a failed write rejects its change, which the next write carries', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({ 'wt-1': entry('a') }));
+    mockFs.writeFile.mockRejectedValueOnce(new Error('disk full'));
+
+    await expect(manager.saveModel('wt-1', 'opus')).rejects.toThrow('disk full');
+    expect(await manager.getModel('wt-1')).toBe('opus');
+
+    await manager.saveProviderSessionId('wt-1', 'prov-1');
+    expect(savedManifest).toEqual({ 'wt-1': { ...entry('a'), model: 'opus', providerSessionId: 'prov-1' } });
+  });
+
+  it('a change waiting behind a failed write is written by the next one', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({ 'wt-1': entry('a') }));
+    const write = holdNextWrite();
+
+    const first = manager.saveModel('wt-1', 'opus');
+    await vi.waitFor(() => expect(mockFs.writeFile).toHaveBeenCalledTimes(1));
+    const second = manager.saveProviderSessionId('wt-1', 'prov-1');
+    write.finish(new Error('disk full'));
+
+    await expect(first).rejects.toThrow('disk full');
+    await second;
+    expect(savedManifest).toEqual({ 'wt-1': { ...entry('a'), model: 'opus', providerSessionId: 'prov-1' } });
+  });
+
+  it('the orphan check doesn\'t hold up other changes while it looks at folders', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({ 'wt-1': entry('a') }));
+    mockGit.mockResolvedValue('');
+    let finishAccess!: () => void;
+    mockFs.access.mockImplementationOnce(() => new Promise<void>((resolve) => { finishAccess = resolve; }));
+
+    const sweeping = manager.cleanupOrphans('/repo');
+    await vi.waitFor(() => expect(mockFs.access).toHaveBeenCalled());
+    await manager.saveModel('wt-1', 'opus');
+    expect(savedManifest).toEqual({ 'wt-1': { ...entry('a'), model: 'opus' } });
+
+    finishAccess();
+    expect(await sweeping).toBe(1); // git doesn't list it
+    expect(savedManifest).toEqual({});
+  });
+});
+
 describe('manifest safety', () => {
   // Built as the manager builds them, so they use the platform's separator.
   const wtPathFor = (repo: string, id: string) =>
@@ -1299,7 +1416,8 @@ describe('manifest safety', () => {
 
     expect(await manager.cleanupOrphans('/repo')).toBe(0);
     expect(mockFsUtils.removeDirectory).not.toHaveBeenCalled();
-    expect(savedManifest).toHaveProperty('wt-1');
+    expect(await manager.getWorktreeOrManifest('wt-1')).toBeDefined();
+    expect(mockFs.writeFile).not.toHaveBeenCalled();
   });
 
   it('matches git\'s worktree paths without regard to case on Windows', async () => {
@@ -1417,7 +1535,8 @@ describe('worktree trash', () => {
     mockFs.rename.mockRejectedValue(Object.assign(new Error('EPERM'), { code: 'EPERM' }));
 
     expect(await manager.cleanupOrphans('/repo')).toBe(0);
-    expect(savedManifest).toHaveProperty('wt-1');
+    expect(await manager.getWorktreeOrManifest('wt-1')).toBeDefined();
+    expect(mockFs.writeFile).not.toHaveBeenCalled();
   });
 });
 

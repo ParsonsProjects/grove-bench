@@ -44,6 +44,9 @@ beforeEach(async () => {
   mockGroveBench.checkPrerequisites.mockResolvedValue(status(false));
   mockGroveBench.getModels.mockResolvedValue([{ id: 'opus', label: 'Opus' }]);
   mockGroveBench.getAdapterControls.mockResolvedValue([]);
+  // No skills unless a test gives some: clearAllMocks keeps the skills tests'
+  // list, and CI shuffles the order (the placeholder names skills).
+  mockGroveBench.listAgentSkills.mockResolvedValue([]);
   (mockGroveBench as unknown as { createSession: ReturnType<typeof vi.fn> }).createSession = vi.fn()
     .mockResolvedValue({ id: 'new1', branch: 'grove/new1', agentType: 'claude-code' });
   draftStore.discard();
@@ -69,17 +72,34 @@ describe('DraftPane', () => {
     expect(screen.getByText(/new branch from main, in a separate copy/)).toBeInTheDocument();
   });
 
-  it('says in words which mode the conversation will start in', async () => {
+  it('says in words which mode the conversation will start in, when it is not the default', async () => {
     mockGroveBench.getAdapterControls.mockResolvedValue([
       { id: 'permissionMode', label: 'Mode', default: 'default', options: [
         { value: 'default', label: 'Ask', description: 'Check with you before each edit or command' },
+        { value: 'auto', label: 'Auto', description: 'Approve or block each action instead of asking' },
       ] },
     ]);
     draftStore.discard();
     draftStore.open('/repo/one');
     await settle();
     render(DraftPane);
-    expect(await screen.findByText(/Check with you before each edit or command\./)).toHaveTextContent('Mode: Ask.');
+    await waitFor(() => expect(draftStore.descriptors).toHaveLength(1));
+    // The default needs no warning: the Agent settings button shows it.
+    expect(screen.queryByText(/Mode: Ask/)).toBeNull();
+    draftStore.setControl('permissionMode', 'auto');
+    expect(await screen.findByText(/Approve or block each action instead of asking\./)).toHaveTextContent('Mode: Auto.');
+  });
+
+  it('asks for a ticket ID only while the branch is to be named from the message', async () => {
+    render(DraftPane);
+    const box = screen.getByLabelText<HTMLTextAreaElement>('First message');
+    expect(box.placeholder).toBe('What should the agent work on? Include a ticket ID to put it in the branch name. Enter to start.');
+    draftStore.setStart({ kind: 'new', branchName: 'fix/login', baseBranch: 'main' });
+    await settle();
+    expect(box.placeholder).toBe('What should the agent work on? Enter to start.');
+    draftStore.setStart({ kind: 'folder' });
+    await settle();
+    expect(box.placeholder).toBe('What should the agent work on? Enter to start.');
   });
 
   it('starts on Enter and sends the message', async () => {
@@ -123,10 +143,19 @@ describe('DraftPane', () => {
     }
   });
 
-  it('discards the draft', async () => {
+  it('discards the draft, keeping one with a message to undo', async () => {
+    render(DraftPane);
+    await fireEvent.input(screen.getByLabelText('First message'), { target: { value: 'Fix the crash' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+    expect(draftStore.draft).toBeNull();
+    expect(draftStore.discarded?.text).toBe('Fix the crash');
+  });
+
+  it('discards an empty draft with nothing to undo', async () => {
     render(DraftPane);
     await fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
     expect(draftStore.draft).toBeNull();
+    expect(draftStore.discarded).toBeNull();
   });
 });
 
@@ -159,7 +188,7 @@ describe('DraftPane skills', () => {
   it("lists the agent's skills on /, and Enter starts the message with the one picked", async () => {
     render(DraftPane);
     const box = screen.getByLabelText<HTMLTextAreaElement>('First message');
-    await waitFor(() => expect(box.placeholder).toMatch(/type \/ to use a skill/));
+    await waitFor(() => expect(box.placeholder).toMatch(/Type \/ for a skill\./));
     await fireEvent.input(box, { target: { value: '/' } });
     expect(await screen.findByText('/triage')).toBeInTheDocument();
     expect(screen.getByText('/release-notes')).toBeInTheDocument();
@@ -559,7 +588,9 @@ describe('DraftPane git identity heads-up', () => {
     await settle();
     expect(mockGroveBench.hasGitIdentity).not.toHaveBeenCalled();
     expect(screen.getByText(/project folder itself, without git, so its edits land in place/)).toBeInTheDocument();
-    expect(screen.getByText('Change the agent, model or mode at the bottom of the message box. Nothing is created until you send.')).toBeInTheDocument();
+    expect(screen.getByText(/can't be rewound\. Nothing is created until you send\./)).toBeInTheDocument();
+    // Nothing is named from the message, so no ticket ID is asked for.
+    expect(screen.getByLabelText<HTMLTextAreaElement>('First message').placeholder).not.toMatch(/ticket ID/);
     store.setFolderProject('/repo/one', false);
     mockGroveBench.repoKind.mockResolvedValue('git');
   });

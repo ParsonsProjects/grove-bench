@@ -33,6 +33,8 @@
   let loadingPrs = $state(true);
   let prsError = $state('');
   let search = $state('');
+  /** Branch → the folder it is checked out in, the project folder included. */
+  let checkedOut = $state<Record<string, string>>({});
   let searchEl = $state<HTMLInputElement | null>(null);
 
   onMount(() => {
@@ -50,17 +52,57 @@
       .then((list) => { if (repo === repoPath) prs = list; })
       .catch(() => { prsError = 'Pull requests could not be listed. Check that the GitHub CLI is installed and signed in.'; })
       .finally(() => { loadingPrs = false; });
+    window.groveBench.listCheckedOutBranches(repo)
+      .then((map) => { if (repo === repoPath) checkedOut = map; })
+      .catch(() => {});
+  });
+
+  // ─── Branches checked out already ───
+  // Git checks a branch out in one place at a time, so a thread can't open
+  // one checked out in the project folder, another thread's copy or a
+  // worktree made outside Grove Bench. They're listed apart, greyed out,
+  // saying where they are, so a missing branch isn't a mystery. (Main
+  // refuses them too, for one checked out after this list was made.)
+
+  const pathKey = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+
+  /** Where `branch` is checked out already, in words, or null when a
+   *  thread can open it. */
+  function heldBy(branch: string): string | null {
+    const thread = store.sessions.find((s) => s.repoPath === repoPath && s.branch === branch);
+    if (thread) return thread.displayName ? `used by ${thread.displayName}` : 'used by another thread';
+    const at = checkedOut[branch];
+    if (!at) return null;
+    return pathKey(at) === pathKey(repoPath) ? 'checked out in the project folder' : `checked out at ${at}`;
+  }
+
+  /** Rows a thread can't open, with why: PRs first, then branches. */
+  type HeldRow = { branch: string; pr?: OpenPrSummary; held: string };
+  const heldRows = $derived.by((): HeldRow[] => {
+    const rows: HeldRow[] = [];
+    for (const pr of prs) {
+      const held = !pr.isCrossRepository ? heldBy(pr.headRefName) : null;
+      if (held) rows.push({ branch: pr.headRefName, pr, held });
+    }
+    const prHeads = new Set(prs.map((p) => p.headRefName));
+    for (const b of branches) {
+      const held = prHeads.has(b) ? null : heldBy(b);
+      if (held) rows.push({ branch: b, held });
+    }
+    return rows.filter((r) => !query || looseMatch(`${r.pr ? `#${r.pr.number} ${r.pr.title} ` : ''}${r.branch}`, query));
   });
 
   $effect(() => {
     if (tab === 'existing') searchEl?.focus();
   });
 
-  /** Branches another conversation in this project has checked out. Git
-   *  allows a branch in only one worktree at a time. */
-  const usedBranches = $derived(new Set(
-    store.sessions.filter((s) => s.repoPath === repoPath).map((s) => s.branch),
-  ));
+  /** Branches checked out already: by another conversation in this
+   *  project, or anywhere git knows of. Git allows a branch in only one
+   *  worktree at a time. Listed apart (heldRows), not as choices. */
+  const usedBranches = $derived(new Set([
+    ...store.sessions.filter((s) => s.repoPath === repoPath).map((s) => s.branch),
+    ...Object.keys(checkedOut),
+  ]));
 
   function looseMatch(text: string, query: string): boolean {
     const lower = text.toLowerCase();
@@ -142,7 +184,7 @@
         type="text"
         value={newStart?.branchName ?? ''}
         oninput={(e) => setNew({ branchName: e.currentTarget.value })}
-        placeholder="Named from your first message"
+        placeholder="Leave empty to name it from your message"
         class="w-full bg-background border border-input px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
       />
       <label class="block mt-3 mb-1 text-muted-foreground" for="draft-base">Base branch</label>
@@ -183,7 +225,7 @@
       <div class="mt-2 max-h-64 overflow-y-auto -mx-1">
         {#if (loadingPrs || loadingBranches) && filteredPrs.length === 0 && filteredBranches.length === 0}
           <div class="px-2 py-4 text-muted-foreground text-center">Loading…</div>
-        {:else if filteredPrs.length === 0 && filteredBranches.length === 0}
+        {:else if filteredPrs.length === 0 && filteredBranches.length === 0 && heldRows.length === 0}
           <div class="px-2 py-4 text-muted-foreground text-center">{query ? 'Nothing matches' : 'No branches available'}</div>
         {:else}
           {#if filteredPrs.length > 0}
@@ -210,6 +252,20 @@
                 class={menuItem({ selected: isBranch(name) })}
               >
                 <span class="truncate">{name}</span>
+              </button>
+            {/each}
+          {/if}
+          {#if heldRows.length > 0}
+            <SectionLabel class="px-2 pt-2 pb-0.5">Checked out already</SectionLabel>
+            {#each heldRows as row (row.branch)}
+              <button
+                type="button"
+                disabled
+                class={cn(menuItem(), 'flex-col items-stretch gap-0 py-1.5 cursor-not-allowed')}
+                title="Git checks a branch out in one place only, so a new thread can't open {row.branch}"
+              >
+                <span class="truncate">{row.pr ? `#${row.pr.number} ${row.pr.title}` : row.branch}</span>
+                <span class="truncate text-caption text-muted-foreground">{row.pr ? `${row.branch} · ` : ''}{row.held}</span>
               </button>
             {/each}
           {/if}

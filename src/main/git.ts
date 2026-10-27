@@ -23,6 +23,8 @@ export interface GitOptions {
    *  in the background: `git status` then doesn't rewrite the index, whose
    *  lock can make a git command run meanwhile fail. `git diff` ignores it. */
   optionalLocks?: false;
+  /** Written to git's standard input (`update-ref --stdin`). */
+  input?: string;
 }
 
 export async function git(args: string[], cwd: string, opts?: GitOptions): Promise<string> {
@@ -31,6 +33,7 @@ export async function git(args: string[], cwd: string, opts?: GitOptions): Promi
     ...(opts?.timeout ? { timeout: opts.timeout } : {}),
     ...(opts?.maxBuffer ? { maxBuffer: opts.maxBuffer } : {}),
     ...(opts?.optionalLocks === false ? { env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' } } : {}),
+    ...(opts?.input !== undefined ? { input: opts.input } : {}),
   });
   return result.stdout;
 }
@@ -76,10 +79,12 @@ export async function excludeFromGit(cwd: string, relPaths: readonly string[]): 
   return added;
 }
 
+/** `git <args>` with `env` added to the environment, and `input`, when
+ *  given, written to its standard input. */
 export async function gitEnv(
-  args: string[], cwd: string, env: Record<string, string>
+  args: string[], cwd: string, env: Record<string, string>, input?: string,
 ): Promise<string> {
-  const result = await runProcess('git', args, { cwd, env: { ...process.env, ...env } });
+  const result = await runProcess('git', args, { cwd, env: { ...process.env, ...env }, ...(input !== undefined ? { input } : {}) });
   return result.stdout;
 }
 

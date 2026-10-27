@@ -61,21 +61,63 @@ function keptRef(sessionId: string): string {
   return `refs/grove/checkpoints/${sessionId}/kept`;
 }
 
-/** The worktree's own index file: `.git/index` in a main checkout, or the
- *  `index` in the gitdir a linked worktree's `.git` file points to. Null when
- *  it can't be found. */
-async function realIndexPath(cwd: string): Promise<string | null> {
+/** The files a thread's snapshots use (see snapshotTree). */
+interface SnapshotPaths {
+  /** The thread's snapshot index, kept between snapshots. */
+  index: string;
+  /** The worktree's own index: `.git/index` in a main checkout, or the
+   *  `index` in the gitdir a linked worktree's `.git` file points to. */
+  realIndex: string;
+  /** The exclude rules `git add` follows besides .gitignore files: in the
+   *  main repository's git dir, which a linked worktree's `commondir` names. */
+  exclude: string;
+}
+
+/** Null when the worktree's git dir can't be found. */
+async function snapshotPaths(cwd: string, sessionId: string): Promise<SnapshotPaths | null> {
+  let gitDir: string | null;
   try {
-    const gitDir = await dotGitDir(cwd);
-    return gitDir ? path.join(gitDir, 'index') : null;
+    gitDir = await dotGitDir(cwd);
   } catch {
     return null;
   }
+  if (!gitDir) return null;
+  const dir = gitDir;
+  const common = await fs.promises.readFile(path.join(dir, 'commondir'), 'utf8')
+    .then((rel) => path.resolve(dir, rel.trim()), () => dir);
+  return {
+    index: path.join(dir, `grove-snapshot-${sessionId}.index`),
+    realIndex: path.join(dir, 'index'),
+    exclude: path.join(common, 'info', 'exclude'),
+  };
 }
 
-/** Delete a temp file, if it's there. Off the main process: creating and
- *  deleting files in the temp folder, which an antivirus watches, can take
- *  hundreds of ms, and checkpoints are taken every turn. */
+/** A file's size and modified time, to tell whether it changed: 'none' when
+ *  it isn't there. */
+async function fileStamp(file: string): Promise<string> {
+  const stat = await fs.promises.stat(file).catch(() => null);
+  return stat ? `${stat.size}:${stat.mtimeMs}` : 'none';
+}
+
+/** A line of `git add --verbose` (untranslated) adding or removing a
+ *  .gitignore. */
+const IGNORE_FILE_CHANGED = /(^|[/'])\.gitignore'\r?$/m;
+
+/** Delete `refs` in one git call, or one call each when that fails (a
+ *  batch fails whole, on a ref deleted meanwhile, say). */
+async function deleteRefs(cwd: string, refs: string[]): Promise<void> {
+  if (refs.length === 0) return;
+  try {
+    await git(['update-ref', '--stdin'], cwd, { input: refs.map((ref) => `delete ${ref}\n`).join('') });
+  } catch {
+    for (const ref of refs) await git(['update-ref', '-d', ref], cwd).catch(() => {});
+  }
+}
+
+/** Delete a file a snapshot made (a temp index, the snapshot index or its
+ *  lock), if it's there. Off the main process: creating and deleting files,
+ *  which an antivirus watches, can take hundreds of ms, and checkpoints are
+ *  taken every turn. */
 async function removeTemp(file: string): Promise<void> {
   try { await fs.promises.rm(file, { force: true }); } catch { /* ignore */ }
 }
@@ -103,6 +145,13 @@ interface SessionCheckpoints {
    *  an entry never goes stale; history() would otherwise re-run one git
    *  process per checkpoint on every refresh. */
   numstatCache: Map<string, DiffStats>;
+  /** The files its snapshots use, once found. */
+  snapshotPaths?: SnapshotPaths;
+  /** The worktree's index and exclude rules (fileStamp) when the snapshot
+   *  index was last started afresh from them; null when it must be again. */
+  snapshotSeed: string | null;
+  /** Snapshots run one at a time: they share the snapshot index. */
+  snapshotQueue: Promise<unknown>;
 }
 
 export interface CheckpointInfo {
@@ -120,7 +169,10 @@ export class CheckpointManager {
   private getOrCreate(sessionId: string): SessionCheckpoints {
     let s = this.sessions.get(sessionId);
     if (!s) {
-      s = { turnCount: 0, uuidToRef: new Map(), captureQueue: Promise.resolve(), numstatCache: new Map() };
+      s = {
+        turnCount: 0, uuidToRef: new Map(), captureQueue: Promise.resolve(), numstatCache: new Map(),
+        snapshotSeed: null, snapshotQueue: Promise.resolve(),
+      };
       this.sessions.set(sessionId, s);
     }
     return s;
@@ -128,7 +180,8 @@ export class CheckpointManager {
 
   /**
    * Capture a checkpoint of the current working tree state.
-   * Uses a temporary git index so we don't interfere with the user's real index.
+   * Uses the thread's own snapshot index (see snapshotTree) so we don't
+   * interfere with the user's real index.
    * Never throws: resolves true when the checkpoint ref was written, false
    * when the capture failed (the failure is logged) or was skipped.
    * @param text Optional user message text to store in the checkpoint for display.
@@ -198,77 +251,128 @@ export class CheckpointManager {
 
     const turn = ++s.turnCount;
     const ref = `refs/grove/checkpoints/${sessionId}/turn/${turn}`;
-    const tmpIndex = path.join(os.tmpdir(), `grove-idx-${sessionId}-${turn}-${Date.now()}`);
+    const treeOid = await this.snapshotTree(sessionId, cwd);
 
-    try {
-      const treeOid = await this.snapshotTree(sessionId, cwd, tmpIndex);
+    // Encode message text into commit message so list() can display it
+    // without depending on in-memory messages. Truncate to keep refs light.
+    // Given on standard input rather than with -m, because Windows mangles
+    // newlines in command-line arguments, which breaks the body (%(body)
+    // returns empty), and rather than in a temp file (-F), which an
+    // antivirus scans as it is made and deleted, every turn.
+    const safeText = text ? text.replace(/[\r\n]+/g, ' ').slice(0, 200) : '';
+    const commitMsg = `grove checkpoint turn=${turn} uuid=${uuid}${safeText ? `\n\ntext=${safeText}` : ''}`;
+    // commit-tree refuses to run without an author identity. Checkpoint
+    // commits are internal (never on a branch), so a fixed identity keeps
+    // captures working on machines where user.name/email are not set.
+    const commitOid = (await gitEnv(['commit-tree', treeOid], cwd, CHECKPOINT_IDENTITY_ENV, commitMsg)).trim();
 
-      // Encode message text into commit message so list() can display it
-      // without depending on in-memory messages. Truncate to keep refs light.
-      // Use a temp file (-F) instead of -m because Windows mangles newlines
-      // in command-line arguments, which breaks the body (%(body) returns empty).
-      const safeText = text ? text.replace(/[\r\n]+/g, ' ').slice(0, 200) : '';
-      const commitMsg = `grove checkpoint turn=${turn} uuid=${uuid}${safeText ? `\n\ntext=${safeText}` : ''}`;
-      const msgFile = path.join(os.tmpdir(), `grove-msg-${sessionId}-${turn}-${Date.now()}`);
-      let commitOid: string;
-      try {
-        await fs.promises.writeFile(msgFile, commitMsg);
-        // commit-tree refuses to run without an author identity. Checkpoint
-        // commits are internal (never on a branch), so a fixed identity keeps
-        // captures working on machines where user.name/email are not set.
-        commitOid = (await gitEnv(
-          ['commit-tree', treeOid, '-F', msgFile], cwd, CHECKPOINT_IDENTITY_ENV
-        )).trim();
-      } finally {
-        await removeTemp(msgFile);
-      }
+    // Store the ref
+    await git(['update-ref', ref, commitOid], cwd);
 
-      // Store the ref
-      await git(['update-ref', ref, commitOid], cwd);
-
-      s.uuidToRef.set(uuid, ref);
-      logger.debug(`[checkpoints] captured session=${sessionId} turn=${turn} uuid=${uuid}`);
-      return true;
-    } finally {
-      // Always clean up temp index
-      await removeTemp(tmpIndex);
-    }
+    s.uuidToRef.set(uuid, ref);
+    logger.debug(`[checkpoints] captured session=${sessionId} turn=${turn} uuid=${uuid}`);
+    return true;
   }
 
   /**
    * Write the working tree (tracked and untracked files, not ignored ones) as
-   * a tree object, staged through the temp index `tmpIndex`, and return its
-   * oid. The temp index starts as a copy of the worktree's own index, whose
-   * file stat data lets `git add -A` re-hash only the files that changed.
-   * Starting from `read-tree HEAD` (no stat data) hashes every file, about
-   * 10x slower on a 20k-file repo. Falls back to HEAD, then to an empty index
-   * on a branch with no commits yet.
+   * a tree object and return its oid.
+   *
+   * Staged through the thread's snapshot index, kept between snapshots
+   * beside the worktree's own index. Its file stat data lets `git add -A`
+   * re-hash only what changed since the last snapshot. Each snapshot used to
+   * stage through a temp copy of the worktree's index, which only knows the
+   * files as they were at the last commit or `git add`: every file changed
+   * since, and every untracked file, was hashed again each turn, a growing
+   * number while the agent worked without committing. Starting from
+   * `read-tree HEAD` (no stat data) hashes every file, about 10x slower on a
+   * 20k-file repo.
+   *
+   * The snapshot index starts afresh from the worktree's index on the
+   * thread's first snapshot this run, and again when that index or the
+   * exclude rules changed (a commit, a checkout, an exclude Grove added), or
+   * a .gitignore did (a file it took in while untracked may be ignored now).
+   * So it always holds what a fresh copy would. Falls back to a temp index
+   * from HEAD, then to an empty one on a branch with no commits yet.
    *
    * A copied index keeps skip-worktree and assume-unchanged bits: sparse
    * checkouts snapshot correctly, but a file the user marked
    * assume-unchanged is recorded as it is in the index.
    */
-  private async snapshotTree(sessionId: string, cwd: string, tmpIndex: string): Promise<string> {
-    const env = { GIT_INDEX_FILE: tmpIndex };
-    const realIndex = await realIndexPath(cwd);
-    if (realIndex) {
+  private snapshotTree(sessionId: string, cwd: string): Promise<string> {
+    const s = this.getOrCreate(sessionId);
+    const result = s.snapshotQueue.then(() => this.snapshotNow(s, sessionId, cwd));
+    s.snapshotQueue = result.catch(() => undefined);
+    return result;
+  }
+
+  private async snapshotNow(s: SessionCheckpoints, sessionId: string, cwd: string): Promise<string> {
+    s.snapshotPaths ??= (await snapshotPaths(cwd, sessionId)) ?? undefined;
+    const paths = s.snapshotPaths;
+    if (paths) {
+      const env = { GIT_INDEX_FILE: paths.index };
       try {
-        await fs.promises.copyFile(realIndex, tmpIndex);
-        await gitEnv(['add', '-A'], cwd, env);
+        const seed = `${await fileStamp(paths.realIndex)}|${await fileStamp(paths.exclude)}`;
+        const fresh = s.snapshotSeed !== seed;
+        if (fresh) await this.seedSnapshotIndex(s, sessionId, cwd, paths, seed);
+        // LC_ALL=C: git's own words for the paths it lists, in any language.
+        const added = await gitEnv(['add', '-A', '--verbose'], cwd, { ...env, LC_ALL: 'C' });
+        if (!fresh && IGNORE_FILE_CHANGED.test(added)) {
+          await this.seedSnapshotIndex(s, sessionId, cwd, paths, seed);
+          await gitEnv(['add', '-A'], cwd, env);
+        }
         return (await gitEnv(['write-tree'], cwd, env)).trim();
       } catch (err) {
-        logger.debug(`[checkpoints] snapshot from the worktree index failed session=${sessionId}, reading HEAD instead:`, err);
-        await removeTemp(tmpIndex);
+        s.snapshotSeed = null;
+        logger.debug(`[checkpoints] snapshot from the thread's index failed session=${sessionId}, reading HEAD instead:`, err);
       }
     }
+    const tmpIndex = path.join(os.tmpdir(), `grove-idx-${sessionId}-${Date.now()}`);
+    try {
+      await this.readHead(sessionId, cwd, tmpIndex);
+      const env = { GIT_INDEX_FILE: tmpIndex };
+      await gitEnv(['add', '-A'], cwd, env);
+      return (await gitEnv(['write-tree'], cwd, env)).trim();
+    } finally {
+      await removeTemp(tmpIndex);
+    }
+  }
+
+  /** Start the snapshot index afresh: a copy of the worktree's index, or
+   *  HEAD when there is none. A lock left by a snapshot the app quit during
+   *  goes first: snapshots run one at a time, so no git is using it. */
+  private async seedSnapshotIndex(
+    s: SessionCheckpoints, sessionId: string, cwd: string, paths: SnapshotPaths, seed: string,
+  ): Promise<void> {
+    s.snapshotSeed = null;
+    await removeTemp(`${paths.index}.lock`);
+    try {
+      const { mtimeMs } = await fs.promises.stat(paths.realIndex);
+      await fs.promises.copyFile(paths.realIndex, paths.index);
+      // The copy keeps the index's time, a second early so rounding can only
+      // make git check more files. Git re-reads a file changed in the same
+      // second as its index was written ("racily clean") rather than trust
+      // its size and time; timed now, as copyFile leaves it on Linux, the
+      // copy hid those, and an edit of the same size made in the second of a
+      // commit was snapshotted as the committed file.
+      const earlier = new Date(mtimeMs - 1000);
+      await fs.promises.utimes(paths.index, earlier, earlier);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+      await this.readHead(sessionId, cwd, paths.index);
+    }
+    s.snapshotSeed = seed;
+  }
+
+  /** Fill `index` from HEAD, or leave it empty on a branch with no commits yet. */
+  private async readHead(sessionId: string, cwd: string, index: string): Promise<void> {
+    const env = { GIT_INDEX_FILE: index };
     try {
       await gitEnv(['read-tree', 'HEAD'], cwd, env);
     } catch (err) {
       logger.debug(`[checkpoints] read-tree HEAD failed session=${sessionId}, using empty index:`, err);
       await gitEnv(['read-tree', '--empty'], cwd, env);
     }
-    await gitEnv(['add', '-A'], cwd, env);
-    return (await gitEnv(['write-tree'], cwd, env)).trim();
   }
 
   /**
@@ -384,20 +488,15 @@ export class CheckpointManager {
    *  is the copy before, so every copy stays reachable, and can be brought
    *  back, for as long as the thread has its refs. */
   private async keepFiles(sessionId: string, cwd: string): Promise<string> {
-    const tmpIndex = path.join(os.tmpdir(), `grove-idx-${sessionId}-kept-${Date.now()}`);
-    try {
-      const treeOid = await this.snapshotTree(sessionId, cwd, tmpIndex);
-      const before = (await git(['for-each-ref', '--format=%(objectname)', keptRef(sessionId)], cwd)).trim();
-      // No uuid= in the message: the checkpoint list, history and resume
-      // read only commits that have one.
-      const commitOid = (await gitEnv(
-        ['commit-tree', treeOid, ...(before ? ['-p', before] : []), '-m', 'grove kept files'], cwd, CHECKPOINT_IDENTITY_ENV,
-      )).trim();
-      await git(['update-ref', keptRef(sessionId), commitOid], cwd);
-      return commitOid;
-    } finally {
-      await removeTemp(tmpIndex);
-    }
+    const treeOid = await this.snapshotTree(sessionId, cwd);
+    const before = (await git(['for-each-ref', '--format=%(objectname)', keptRef(sessionId)], cwd)).trim();
+    // No uuid= in the message: the checkpoint list, history and resume
+    // read only commits that have one.
+    const commitOid = (await gitEnv(
+      ['commit-tree', treeOid, ...(before ? ['-p', before] : []), '-m', 'grove kept files'], cwd, CHECKPOINT_IDENTITY_ENV,
+    )).trim();
+    await git(['update-ref', keptRef(sessionId), commitOid], cwd);
+    return commitOid;
   }
 
   /**
@@ -406,7 +505,7 @@ export class CheckpointManager {
    * --stat list of the files it changes.
    *
    * Builds a tree object from the current working tree (incl. untracked files,
-   * excl. ignored) in a temp index, then diffs the checkpoint ref against it.
+   * excl. ignored; see snapshotTree), then diffs the checkpoint ref against it.
    * A bare `git diff <ref> -- .` omits untracked files, so files the agent
    * created since the checkpoint wouldn't appear — even though rewind deletes
    * them — making the preview understate what a rewind removes.
@@ -436,20 +535,15 @@ export class CheckpointManager {
 
   /**
    * Build a tree object for the current working tree (incl. untracked files,
-   * excl. ignored) using a temporary index, and return its oid. With
-   * `reuseRecent`, a snapshot taken within the last second is returned as is.
+   * excl. ignored; see snapshotTree) and return its oid. With `reuseRecent`,
+   * a snapshot taken within the last second is returned as is.
    */
   private async writeWorkingTree(sessionId: string, cwd: string, reuseRecent = false): Promise<string> {
     const memo = this.workingTreeMemo.get(sessionId);
     if (reuseRecent && memo && Date.now() - memo.at < CheckpointManager.WORKING_TREE_REUSE_MS) return memo.oid;
-    const tmpIndex = path.join(os.tmpdir(), `grove-diff-${sessionId}-${Date.now()}`);
-    try {
-      const oid = await this.snapshotTree(sessionId, cwd, tmpIndex);
-      this.workingTreeMemo.set(sessionId, { oid, at: Date.now() });
-      return oid;
-    } finally {
-      await removeTemp(tmpIndex);
-    }
+    const oid = await this.snapshotTree(sessionId, cwd);
+    this.workingTreeMemo.set(sessionId, { oid, at: Date.now() });
+    return oid;
   }
 
   /**
@@ -644,19 +738,16 @@ export class CheckpointManager {
         cwd
       );
       const s = this.sessions.get(sessionId);
-      for (const line of output.split('\n')) {
-        const r = line.trim();
-        if (!r) continue;
+      const later = output.split('\n').map((line) => line.trim()).filter((r) => {
         const m = r.match(/\/turn\/(\d+)$/);
-        if (!m) continue;
-        const turn = parseInt(m[1], 10);
-        if (turn > rewindTurn) {
-          await git(['update-ref', '-d', r], cwd).catch(() => {});
-          // Remove from in-memory map
-          if (s) {
-            for (const [u, cachedRef] of s.uuidToRef) {
-              if (cachedRef === r) { s.uuidToRef.delete(u); break; }
-            }
+        return m !== null && parseInt(m[1], 10) > rewindTurn;
+      });
+      await deleteRefs(cwd, later);
+      // Remove from in-memory map
+      if (s) {
+        for (const r of later) {
+          for (const [u, cachedRef] of s.uuidToRef) {
+            if (cachedRef === r) { s.uuidToRef.delete(u); break; }
           }
         }
       }
@@ -677,13 +768,15 @@ export class CheckpointManager {
         ['for-each-ref', '--format=%(refname)', `refs/grove/checkpoints/${sessionId}/`],
         cwd
       );
-      const refs = output.split('\n').map(l => l.trim()).filter(Boolean);
-      for (const ref of refs) {
-        await git(['update-ref', '-d', ref], cwd).catch(() => {});
-      }
+      await deleteRefs(cwd, output.split('\n').map(l => l.trim()).filter(Boolean));
     } catch {
       // No refs to clean up
     }
+    // And its snapshot index, once a snapshot under way is done with it.
+    const s = this.sessions.get(sessionId);
+    if (s) await s.snapshotQueue;
+    const paths = s?.snapshotPaths ?? await snapshotPaths(cwd, sessionId);
+    if (paths) await removeTemp(paths.index);
     this.sessions.delete(sessionId);
     logger.debug(`[checkpoints] cleaned up session=${sessionId}`);
   }

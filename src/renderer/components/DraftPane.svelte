@@ -12,6 +12,7 @@
   import { prerequisitesStore } from '../stores/prerequisites.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
   import { agentReady, gitReady } from '../../shared/prerequisites.js';
+  import { CONTROL_IDS } from '../../shared/types.js';
   import { controlHint } from '../lib/control-hint.js';
   import { processFiles } from '$lib/file-attachments.js';
   import AttachmentChips from './AttachmentChips.svelte';
@@ -150,7 +151,27 @@
     }
     return start.branchName.trim()
       ? `The agent will work on a new branch, ${start.branchName.trim()}, from ${from}, in a separate copy.`
-      : `The agent will work on a new branch from ${from}, in a separate copy. The branch is named from your message after the first reply.`;
+      : `The agent will work on a new branch from ${from}, in a separate copy. The branch is named from your message.`;
+  });
+
+  /** Whether the draft starts in a mode other than the agent's own default
+   *  (Ask, for Claude Code). The mode is named under the box only then: the
+   *  Agent settings button shows it, and the default needs no warning. */
+  const modeChanged = $derived.by(() => {
+    const mode = draftStore.descriptors.find((c) => c.id === CONTROL_IDS.permissionMode);
+    return !!mode && draftStore.controlValue(mode.id) !== mode.default;
+  });
+
+  /** The message box's placeholder. A ticket ID is asked for only when the
+   *  branch will be named from the message (branch-name.ts keeps it there). */
+  const placeholder = $derived.by(() => {
+    const naming = start?.kind === 'new' && !start.branchName.trim();
+    return [
+      'What should the agent work on?',
+      naming ? 'Include a ticket ID to put it in the branch name.' : '',
+      draftStore.skills.length > 0 ? 'Type / for a skill.' : '',
+      'Enter to start.',
+    ].filter(Boolean).join(' ');
   });
 
   /** Git has no name and email for this project, so the agent's commits
@@ -322,10 +343,11 @@
   ondragleave={handleDragLeave}
   ondrop={handleDrop}
 >
+  <!-- The project and agent are under the art and along the box's foot. -->
   <PanelHeader title="New thread">
-    <span class="truncate text-muted-foreground">in {store.repoDisplayName(draft.repoPath)}{agentName ? ` · ${agentName}` : ''}</span>
     {#snippet actions()}
-      <Button variant="quiet" size="xs" onclick={() => draftStore.discard()} title="Discard this draft">
+      <!-- A draft with a message or files can come back (DraftUndoToast). -->
+      <Button variant="quiet" size="xs" onclick={() => draftStore.discardWithUndo()} title="Discard this draft">
         Discard
       </Button>
     {/snippet}
@@ -460,9 +482,7 @@
             spellcheck={settingsStore.current.spellcheck}
             rows="6"
             aria-label="First message"
-            placeholder={draftStore.skills.length > 0
-              ? 'What should the agent work on? Include a ticket ID if there is one, or type / to use a skill. (Enter to start, Shift+Enter for a new line)'
-              : 'What should the agent work on? Include a ticket ID if there is one. (Enter to start, Shift+Enter for a new line)'}
+            {placeholder}
             class="block w-full bg-transparent px-4 py-3 text-sm text-foreground field-sizing-content min-h-40 max-h-[45vh]
               placeholder:text-muted-foreground resize-none focus:outline-none font-mono"
           ></textarea>
@@ -497,7 +517,11 @@
             </div>
           {/if}
         </div>
-        <div class="flex items-center gap-3 px-3 py-1.5 border-t border-border">
+        <!-- The options' parts are this row's own items (DraftStatusBar), so
+             in a narrow pane they wrap onto a second row rather than being
+             cut short. A container, so the Agent settings button sizes its
+             model name from this row's width. -->
+        <div class="@container flex flex-wrap items-center gap-x-4 gap-y-2 px-3 py-1.5 border-t border-border">
           <DraftStatusBar onskill={focusEnd} />
           <Button
             variant="default"
@@ -527,11 +551,10 @@
       <!-- What sending will do, then what changed or still needs doing first. -->
       {#if credentials === 'ready'}
         <div class="flex flex-col items-center gap-1 text-center text-xs text-muted-foreground">
-          <p class="max-w-lg">{plan}</p>
-          {#if modeHint}
+          <p class="max-w-lg">{plan} Nothing is created until you send.</p>
+          {#if modeHint && modeChanged}
             <p class="max-w-lg">Mode: <span class="text-foreground/80">{modeHint.label}</span>. {modeHint.description}.</p>
           {/if}
-          <p class="max-w-lg mt-1">{folderProject ? 'Change the agent, model or mode' : 'Change the agent, model, mode or branch'} at the bottom of the message box. Nothing is created until you send.</p>
           {#if credentialsNote}
             <p class="text-green-400 mt-2" role="status">✓ {credentialsNote}</p>
           {/if}
