@@ -10,6 +10,7 @@ import { pluginStore } from '../stores/plugins.svelte.js';
 import { store } from '../stores/sessions.svelte.js';
 import { SETTINGS_INDEX, SETTINGS_SECTIONS } from '$lib/settings-search.js';
 import type { AgentSummary, ControlDescriptor, GroveBenchSettings } from '../../shared/types.js';
+import { defaultStatusBarLayout } from '../../shared/status-bar-layout.js';
 
 const claude: AgentSummary = { id: 'claude-code', displayName: 'Claude Agent', capabilities: {}, isDefault: true };
 
@@ -32,7 +33,7 @@ function settings(adapterDefaults: GroveBenchSettings['adapterDefaults'] = {}): 
     defaultModels: {}, adapterDefaults, showThinkingSummaries: true, cavemanMode: 'off', workingDirectories: [], defaultSystemPromptAppend: '', acpAgents: [], claudeAccounts: [], enabledAlphaAgents: [], defaultAgent: '',
     memoryAutoSave: true, memoryCompactTimeoutSeconds: 300, backgroundModels: {},
     autoInstallDeps: false, previewAgentTools: true, idleSleepMinutes: 30, defaultBaseBranch: '', branchNamingRule: '', theme: 'system', alwaysOnTop: false, autoDownloadUpdates: true,
-    repoColors: {}, groveCharacters: true, diffViewMode: 'unified', defaultActivityView: 'summary', spellcheck: true,
+    repoColors: {}, groveCharacters: true, statusBarLayout: defaultStatusBarLayout(), diffViewMode: 'unified', defaultActivityView: 'summary', spellcheck: true,
     notifyOnTurnComplete: true, notifyOnPermission: true, notifyOnPrAlert: true, notifyTaskbarFlash: true, notifyTaskbarBadge: true, notifyOnPlanUsage: true,
     planUsageAlertPercent: 80, threadSpendLimitUsd: 0, dailySpendLimitUsd: 0, turnToolCallLimit: 0, turnMinutesLimit: 0,
     analyticsEnabled: false, analyticsPrompted: false, crashReportsEnabled: false, onlineCatalogs: true,

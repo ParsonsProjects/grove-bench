@@ -3,6 +3,7 @@ import type { GitConflictCode } from './git-conflicts.js';
 import type { LimitKind } from './limits.js';
 import type { ThreadItems } from './thread-items.js';
 import type { ScheduleOutcome, SkillSchedule, SkillScheduleInput } from './skill-schedules.js';
+import type { StatusBarPart } from './status-bar-layout.js';
 
 // ─── Worktree ───
 
@@ -1962,6 +1963,10 @@ export interface GroveBenchSettings {
    *  starts up again.
    *  Each status gets its own pose as well as its colour. Default true. */
   groveCharacters: boolean;
+  /** The thread status bar's parts: their order, side and whether each
+   *  shows (shared/status-bar-layout.ts). Default: every part, in the order
+   *  the bar has always had. */
+  statusBarLayout: StatusBarPart[];
 
   // Editor
   /** Default diff view mode in the Changes tab. */

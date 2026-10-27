@@ -3,6 +3,7 @@ import { mockGroveBench } from '../__mocks__/setup.js';
 
 import { settingsStore } from './settings.svelte.js';
 import type { GroveBenchSettings } from '../../shared/types.js';
+import { defaultStatusBarLayout } from '../../shared/status-bar-layout.js';
 
 const DEFAULT_SETTINGS: GroveBenchSettings = {
   toolAllowRules: [],
@@ -35,6 +36,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   autoDownloadUpdates: true,
   repoColors: {},
   groveCharacters: true,
+  statusBarLayout: defaultStatusBarLayout(),
   diffViewMode: 'unified',
   defaultActivityView: 'summary',
   spellcheck: true,

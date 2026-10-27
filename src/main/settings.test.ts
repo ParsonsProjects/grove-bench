@@ -23,6 +23,7 @@ vi.mock('./logger.js', () => ({
 
 import { loadSettings, saveSettings, getSettings, applyImmediateEffects, windowBackground, upgradeSettings, validateSettings, resetSettingsCache, SETTINGS_SCHEMA_VERSION } from './settings.js';
 import { NIGHT, PAPER } from '../shared/brand.js';
+import { defaultStatusBarLayout } from '../shared/status-bar-layout.js';
 import { nativeTheme, type BrowserWindow } from 'electron';
 
 const enoent = () => Object.assign(new Error('ENOENT: no such file'), { code: 'ENOENT' });
@@ -411,6 +412,14 @@ describe('validateSettings', () => {
     expect(validateSettings({}).showThinkingSummaries).toBe(true);
     expect(validateSettings({ showThinkingSummaries: false }).showThinkingSummaries).toBe(false);
     expect(validateSettings({ showThinkingSummaries: 'no' }).showThinkingSummaries).toBe(true);
+  });
+
+  it('stores the status bar layout as the bar will draw it', () => {
+    expect(validateSettings({}).statusBarLayout).toEqual(defaultStatusBarLayout());
+    expect(validateSettings({ statusBarLayout: 'tidy' }).statusBarLayout).toEqual(defaultStatusBarLayout());
+    const saved = validateSettings({ statusBarLayout: [{ id: 'keys', side: 'left', shown: false }, { id: 'clock', side: 'left' }] });
+    expect(saved.statusBarLayout[0]).toEqual({ id: 'keys', side: 'left', shown: false });
+    expect(saved.statusBarLayout).toHaveLength(defaultStatusBarLayout().length);
   });
 
   it('keeps a valid defaultActivityView', () => {

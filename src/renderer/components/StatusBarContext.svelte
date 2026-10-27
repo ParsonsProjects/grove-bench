@@ -62,7 +62,7 @@
 </script>
 
 {#if showContext}
-  <StatusBarPopover bind:open={contextExpanded} align="right" class="ml-auto shrink-0" panelClass="w-72">
+  <StatusBarPopover bind:open={contextExpanded} align="right" class="shrink-0" panelClass="w-72">
     {#snippet trigger()}
       <button
         onclick={() => contextExpanded = !contextExpanded}
@@ -256,6 +256,4 @@
       {/if}
     </div>
   </StatusBarPopover>
-{:else}
-  <span class="ml-auto"></span>
 {/if}

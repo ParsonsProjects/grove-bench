@@ -6,6 +6,7 @@
 
 import type { ThreadItems } from '../shared/thread-items.js';
 import type { SkillSchedule, SkillScheduleInput } from '../shared/skill-schedules.js';
+import { defaultStatusBarLayout } from '../shared/status-bar-layout.js';
 
 // Capture uncaught errors (a template error can kill Svelte's effect loop).
 const errs: string[] = [];
@@ -82,6 +83,7 @@ const SETTINGS = {
   autoDownloadUpdates: true,
   repoColors: {},
   groveCharacters: true,
+  statusBarLayout: defaultStatusBarLayout(),
   diffViewMode: 'unified',
   defaultActivityView: 'summary',
   spellcheck: true,

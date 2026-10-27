@@ -1,7 +1,8 @@
 <script lang="ts">
   /**
    * The last turn: its cost (API sign-ins only) over how long it took. Only
-   * on a wide bar; the separator after it goes with it. A click opens what
+   * on a wide bar; the divider after it goes with it (StatusBar says when
+   * it has one). A click opens what
    * the thread has used so far: its tokens, and with a cost, what it and
    * today have cost (main's figures, the ones the spend limits count).
    */
@@ -17,7 +18,7 @@
   import { Button } from '$lib/components/ui/button/index.js';
   import StatusBarPopover from './StatusBarPopover.svelte';
 
-  let { sessionId }: { sessionId: string } = $props();
+  let { sessionId, divider = true }: { sessionId: string; divider?: boolean } = $props();
 
   let lastResult = $derived(messageStore.lastResult(sessionId));
 
@@ -145,5 +146,7 @@
       Limits & alerts
     </Button>
   </StatusBarPopover>
-  <span class="hidden @5xl:block w-px self-stretch bg-border"></span>
+  {#if divider}
+    <span class="hidden @5xl:block w-px self-stretch bg-border"></span>
+  {/if}
 {/if}
