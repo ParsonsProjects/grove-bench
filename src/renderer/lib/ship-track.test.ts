@@ -63,6 +63,9 @@ describe('shipTrack', () => {
     expect(failing.actionable).toBe(true);
     expect(failing.summary).toBe('up to date, PR #42 open, checks: 1 of 2 failed');
 
+    // Checks still running on top of a failure are counted too.
+    expect(track({ pr: pr({ checks: { total: 4, passed: 1, failed: 1, pending: 2 } }) }).steps[2].detail).toBe('1 of 4 failed, 2 running');
+
     const changes = track({ pr: pr({ reviewDecision: 'CHANGES_REQUESTED' }) });
     expect(changes.steps[3].state).toBe('attention');
     expect(changes.actionable).toBe(true);

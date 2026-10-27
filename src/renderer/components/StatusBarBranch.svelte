@@ -6,11 +6,12 @@
    * (push, create a PR, fix failed checks, address requested changes). A
    * merge or rebase stopped part way adds its word in amber ("rebasing 1/2").
    *
-   * Its popup names each step and holds the actions: Push, Create PR (with
-   * the agent or by hand), a failed push's error with Retry, Switch branch
-   * (the branch picker, which opens over the lozenge in its place), and the
-   * PR's details (StatusBarPr). Also keeps the PR and sync status polled
-   * while the bar is mounted.
+   * Its popup lists the steps, each with what it needs (StatusBarSteps: the
+   * PR's link, new activity, failing checks, the agent's fixes), then the
+   * actions: Push, Create PR (with the agent or by hand) whenever no PR is
+   * open, a failed push's error with Retry, and Switch branch (the branch
+   * picker, which opens over the lozenge in its place). Also keeps the PR
+   * and sync status polled while the bar is mounted.
    */
   import { gitStatusStore } from '../stores/gitStatus.svelte.js';
   import { operationShort, operationTitle } from '../lib/git-operation.js';
@@ -21,14 +22,14 @@
   import { resolveBaseBranch } from '../lib/base-branch.js';
   import { lazyComponent } from '../lib/lazy-component.js';
   import { lozenge, lozengeMark } from '../lib/lozenge.js';
-  import { shipTrack, type ShipStepState } from '../lib/ship-track.js';
+  import { shipTrack } from '../lib/ship-track.js';
   import { Button } from '$lib/components/ui/button/index.js';
-  import { Pulse } from '$lib/components/ui/pulse/index.js';
   import GitBranchIcon from '@lucide/svelte/icons/git-branch';
   import BranchPicker from './BranchPicker.svelte';
   import CopyButton from './CopyButton.svelte';
   import StatusBarPopover from './StatusBarPopover.svelte';
-  import StatusBarPr from './StatusBarPr.svelte';
+  import StatusBarSteps from './StatusBarSteps.svelte';
+  import ShipDot from './ShipDot.svelte';
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -55,7 +56,10 @@
   let prInfo = $derived(prStore.getPr(sessionId));
   let gitSync = $derived(prStore.getSync(sessionId));
   let ghAvailable = $derived(store.prerequisites?.gh?.available === true);
-  let showCreatePr = $derived(!prInfo && !!sessionBranch && ghAvailable);
+  /** None of the thread's PRs is open: none yet, or the last one was merged
+   *  or closed, so more work on the branch needs a new one. */
+  let noOpenPr = $derived(!prStore.getPrs(sessionId).some((p) => p.state === 'OPEN' || !p.state));
+  let showCreatePr = $derived(noOpenPr && !!sessionBranch && ghAvailable);
 
   // ── Push ──
   let pushing = $state(false);
@@ -155,26 +159,6 @@
     return `${parts.join(', ')}. Click to push, open a pull request or switch branch`;
   });
 
-  const DOT: Record<Exclude<ShipStepState, 'running'>, string> = {
-    done: 'bg-green-500',
-    next: 'border border-foreground',
-    failed: 'bg-red-500',
-    attention: 'bg-amber-500',
-    merged: 'bg-purple-400',
-    closed: 'bg-muted-foreground/50',
-    todo: 'border border-muted-foreground/50',
-  };
-  const DETAIL: Record<ShipStepState, string> = {
-    done: 'text-foreground',
-    next: 'text-foreground',
-    running: 'text-foreground',
-    failed: 'text-red-400',
-    attention: 'text-amber-500',
-    merged: 'text-purple-400',
-    closed: 'text-muted-foreground',
-    todo: 'text-muted-foreground',
-  };
-
   // ── Creating a PR ──
   let createPrOpen = $state(false);
 
@@ -204,14 +188,6 @@
   }
 </script>
 
-{#snippet dot(state: ShipStepState)}
-  {#if state === 'running'}
-    <Pulse size="xs" />
-  {:else}
-    <span class="size-1.5 shrink-0 {DOT[state]}"></span>
-  {/if}
-{/snippet}
-
 {#if sessionBranch || prInfo || pushError || gitSync.ahead > 0 || gitSync.behind > 0}
   <!-- The picker opens above the lozenge, so the popup's popover is its trigger. -->
   <StatusBarPopover bind:open={branchPickerOpen} animate surface="none" panelClass="" class="flex min-w-0">
@@ -232,7 +208,7 @@
             <!-- Dimmed when the last GitHub fetch failed, so they may be old;
                  pulsing while there is PR activity you haven't looked at. -->
             <span class="flex items-center gap-0.5 {prAlerts.length > 0 ? 'animate-pulse' : ''} {prFetchFailed ? 'opacity-50' : ''}" aria-hidden="true">
-              {#each track.steps as step (step.id)}{@render dot(step.state)}{/each}
+              {#each track.steps as step (step.id)}<ShipDot state={step.state} />{/each}
             </span>
             {#if operation}
               <span class="text-status-attention">{operationShort(operation)}</span>
@@ -268,15 +244,7 @@
           </button>
         {/if}
 
-        <ol class="space-y-1" aria-label="Steps to merged">
-          {#each track.steps as step (step.id)}
-            <li class="flex items-center gap-2">
-              {@render dot(step.state)}
-              <span class="w-14 shrink-0 text-muted-foreground">{step.label}</span>
-              <span class="truncate {DETAIL[step.state]}">{step.detail}</span>
-            </li>
-          {/each}
-        </ol>
+        <StatusBarSteps {sessionId} {track} {prInfo} {canAgentCreatePr} onclose={() => (shipOpen = false)} />
 
         {#if pushError || retrying}
           <div class="mt-3 pt-2 border-t border-border" data-testid="push-error">
@@ -327,7 +295,11 @@
               onclick={() => createPr('agent')}
               disabled={!canAgentCreatePr || preparingPrTurn}
               class="disabled:cursor-not-allowed"
-              title={canAgentCreatePr ? 'Send a turn asking the agent to commit, push, and open the PR' : 'The agent must be idle and running to take this turn'}
+              title={!canAgentCreatePr
+                ? 'The agent must be idle and running to take this turn'
+                : prInfo
+                  ? 'Send a turn asking the agent to commit, push, and open a new PR for more work on this branch'
+                  : 'Send a turn asking the agent to commit, push, and open the PR'}
             >
               Create PR with agent
             </Button>
@@ -358,21 +330,6 @@
           </Button>
         </div>
 
-        {#if prInfo}
-          <div class="mt-3 pt-2 border-t border-border">
-            <StatusBarPr
-              {sessionId}
-              {prInfo}
-              {sessionBranch}
-              {ghAvailable}
-              {isRunning}
-              {canAgentCreatePr}
-              {preparingPrTurn}
-              oncreatepr={createPr}
-              onclose={() => (shipOpen = false)}
-            />
-          </div>
-        {/if}
       </StatusBarPopover>
     {/snippet}
 

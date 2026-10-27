@@ -89,14 +89,20 @@ The **Branch** button shows the thread's branch and five dots, one for each step
 
 A small green mark on the button's corner means the popup has something for you to do now: commits to push, a PR to open, a failed push or check, or changes requested. The dots pulse while there is PR activity you haven't looked at, and dim when the last fetch from GitHub failed, so they may be out of date. If a merge or rebase stopped part way, its word (for example **rebasing 1/2**) shows in amber beside the dots. Hovering the button says all of it in words.
 
-Click it for the popup. It names the project and branch (and how far behind its upstream the branch is), lists the steps with what each stands at, and has the actions:
+Click it for the popup. It names the project and branch (and how far behind its upstream the branch is), then lists the steps with what each stands at. Each step's row also has what goes with it:
+
+- **PR**: the pull request's number, state and title, with **Open ↗** to see it on GitHub. Hover the state for the branch it merges from and into.
+- **Checks**: the names of the failing checks, a **new** chip when they failed since you last looked, and **fix with agent →**, which sends a turn asking the agent to read the CI logs and fix them.
+- **Review**: a **2 new** chip for comments since you last looked, and **address with agent →**, which fetches the review comments and asks the agent to address them. Hover **review required** for what it means.
+
+Clicking a chip clears it, and so does closing the popup. When an auto turn gives up and needs you, a note says so under the steps until you dismiss it. Under them, **Auto** turns on the agent fixing CI or addressing reviews by itself (only for an open PR, and only while the thread is idle), and **Other PRs in this thread** lists any others, with **watch** to follow one of them instead.
+
+The actions are at the bottom:
 
 - **Push N commits** pushes the branch. If a push fails, from here or from the Changes tab, the error shows in the popup: copy it, **Retry** the push or **Dismiss** the note. It also goes away by itself once nothing is left to push.
-- **Create PR with agent** sends a turn asking the agent to commit, push and open the PR. **Create PR manually…** opens a form. Both wait while the agent is working.
+- **Create PR with agent** sends a turn asking the agent to commit, push and open a PR. **Create PR manually…** opens a form. They show while the thread has no open PR, so after a PR is merged or closed they start a new one. Both wait while the agent is working.
 - **Switch branch…** opens the branch picker in place of the popup.
 - A merge or rebase stopped part way has a line at the top that opens the Changes tab, where you finish or abort it.
-
-Under them are the pull request's details, as before: its checks, reviews, new comments, the watch settings that let the agent fix CI and address reviews by itself, and any other PRs from the thread.
 
 ### Switching branch
 
