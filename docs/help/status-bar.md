@@ -74,7 +74,31 @@ The **Last turn** row says how long the last turn took. With an API key sign-in 
 
 ## Branch
 
-The **Branch** button shows the thread's branch and five dots, one for each step on its way to merged: **Push**, **PR**, **Checks**, **Review** and **Merge**.
+The **Branch** button shows one icon and the thread's branch. The icon's shape says how far the branch has got on its way to merged:
+
+| Icon | Meaning |
+|------|---------|
+| Branch | No pull request yet |
+| Pull request | A PR is open |
+| Pull request, dashed | A draft PR |
+| Merge | The PR was merged |
+| Pull request with an X | The PR was closed without merging |
+
+Its colour says what matters most right now:
+
+| Colour | Meaning |
+|--------|---------|
+| Red | The push or a check failed |
+| Amber | Waiting on you, such as changes requested |
+| Blue pulsing | Checks running |
+| Green | Every step before the merge is done |
+| Purple | Merged |
+| Grey | The PR was closed without merging |
+| Plain | A step is still to come, such as a push or a review |
+
+A small green mark on the button's corner means the popup has something for you to do now: commits to push, a PR to open, a failed push or check, or changes requested. The icon pulses while there is PR activity you haven't looked at, and dims when the last fetch from GitHub failed, so it may be out of date. If a merge or rebase stopped part way, its word (for example **rebasing 1/2**) shows in amber beside the branch name. Hovering the button says all of it in words.
+
+Click it for the popup. It names the project and branch (and how far behind its upstream the branch is), then lists the steps on the way to merged, **Push**, **PR**, **Checks**, **Review** and **Merge**, each with a dot and what it stands at.
 
 | Dot | Meaning |
 |-----|---------|
@@ -87,9 +111,7 @@ The **Branch** button shows the thread's branch and five dots, one for each step
 | Grey | The PR was closed without merging |
 | Hollow and faint | Not reached yet |
 
-A small green mark on the button's corner means the popup has something for you to do now: commits to push, a PR to open, a failed push or check, or changes requested. The dots pulse while there is PR activity you haven't looked at, and dim when the last fetch from GitHub failed, so they may be out of date. If a merge or rebase stopped part way, its word (for example **rebasing 1/2**) shows in amber beside the dots. Hovering the button says all of it in words.
-
-Click it for the popup. It names the project and branch (and how far behind its upstream the branch is), then lists the steps with what each stands at. Each step's row also has what goes with it:
+Each step's row also has what goes with it:
 
 - **PR**: the pull request's number, state and title, with **Open ↗** to see it on GitHub. Hover the state for the branch it merges from and into.
 - **Checks**: the names of the failing checks, a **new** chip when they failed since you last looked, and **fix with agent →**, which sends a turn asking the agent to read the CI logs and fix them.

@@ -2,9 +2,10 @@ import type { GitSyncStatus, PrInfo } from '../../shared/types.js';
 
 /**
  * The branch lozenge's ship track: where a thread's branch is on its way to
- * merged, as five steps (push, PR, checks, review, merge), each drawn as a
- * dot on the lozenge and named in its popup. `actionable` puts the green
- * mark on the lozenge: there is something in the popup for you to do now.
+ * merged, as five steps (push, PR, checks, review, merge), each named with
+ * a dot in the lozenge's popup. `stage` sums them up as the lozenge's one
+ * icon. `actionable` puts the green mark on the lozenge: there is something
+ * in the popup for you to do now.
  */
 
 export type ShipStepId = 'push' | 'pr' | 'checks' | 'review' | 'merge';
@@ -23,8 +24,23 @@ export interface ShipStep {
   detail: string;
 }
 
+/** The lozenge's icon shape, how far the branch has got: a branch until
+ *  there is a PR, then the PR as it stands. */
+export type ShipStageIcon = 'branch' | 'draft' | 'pr' | 'merged' | 'closed';
+
+/** The icon's colour, the step that matters most now: a failure, then one
+ *  waiting on you, then one running, then how the PR ended. done (green)
+ *  once every step before the merge is; todo (plain) while one is to come. */
+export type ShipStageState = Exclude<ShipStepState, 'next'>;
+
+export interface ShipStage {
+  icon: ShipStageIcon;
+  state: ShipStageState;
+}
+
 export interface ShipTrack {
   steps: ShipStep[];
+  stage: ShipStage;
   actionable: boolean;
   /** The steps in one line, for the lozenge's tooltip and screen readers. */
   summary: string;
@@ -89,6 +105,13 @@ export function shipTrack({ sync, pr, pushFailed, canCreatePr }: ShipTrackInput)
       : { id: 'merge', label: 'Merge', state: 'todo', detail: '' };
 
   const steps = [push, prStep, checksStep, review, merge];
+  const states = steps.map((s) => s.state);
+  // Merged before closed: a merged PR's failed checks are greyed as closed.
+  const stage: ShipStage = {
+    icon: !pr ? 'branch' : pr.state === 'MERGED' ? 'merged' : pr.state === 'CLOSED' ? 'closed' : pr.isDraft ? 'draft' : 'pr',
+    state: (['failed', 'attention', 'running', 'merged', 'closed'] as const).find((s) => states.includes(s))
+      ?? (states.slice(0, 4).every((s) => s === 'done') ? 'done' : 'todo'),
+  };
   const actionable = pushFailed
     || sync.ahead > 0
     || prStep.state === 'next'
@@ -100,5 +123,5 @@ export function shipTrack({ sync, pr, pushFailed, canCreatePr }: ShipTrackInput)
     pr && checks ? `checks: ${checksStep.detail}` : '',
     pr?.reviewDecision ? review.detail : '',
   ].filter(Boolean).join(', ');
-  return { steps, actionable, summary: summary || 'nothing to push yet' };
+  return { steps, stage, actionable, summary: summary || 'nothing to push yet' };
 }

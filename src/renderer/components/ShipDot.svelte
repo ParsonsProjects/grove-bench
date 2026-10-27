@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * One step's dot on the branch lozenge and in its popup (lib/ship-track.ts):
+   * One step's dot in the branch lozenge's popup (lib/ship-track.ts):
    * filled when the step stands somewhere, hollow when it is to come (bright
    * for the one to take now), and moving while it runs.
    */
