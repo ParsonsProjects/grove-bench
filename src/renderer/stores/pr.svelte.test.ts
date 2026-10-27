@@ -285,9 +285,28 @@ describe('global sweep', () => {
 
     await vi.advanceTimersByTimeAsync(60_000 + 45_000); // sweep 1: A hangs, B done
     const afterFirst = calls;
-    // Neither is on screen, so the next refresh is due after the idle interval.
-    await vi.advanceTimersByTimeAsync(5 * 60_000 + 45_000); // later sweeps must still run
+    // Neither is on screen, so the next refresh is due after the idle
+    // interval, and the hang spaced the sweeps out a little.
+    await vi.advanceTimersByTimeAsync(10 * 60_000); // later sweeps must still run
     expect(calls).toBeGreaterThan(afterFirst);
+  });
+
+  it('spaces sweeps out while refreshes are slow, up to 8 minutes, and goes back to every minute once they are quick', async () => {
+    const at: number[] = [];
+    const start = Date.now();
+    mockGroveBench.getPrs.mockImplementation(() => {
+      at.push(Math.round((Date.now() - start) / 1000));
+      // The first six take 6 s: the PC is busy.
+      const ms = at.length <= 6 ? 6_000 : 0;
+      return new Promise((resolve) => setTimeout(() => resolve([pr()]), ms));
+    });
+    prStore.setViewing(A); // on screen: due every sweep
+    prStore.startGlobalPolling(() => [A]);
+
+    await vi.advanceTimersByTimeAsync(2_000_000);
+    // On open, then sweeps 1, 2, 4 and 8 minutes apart (from each one's end),
+    // then, quick again, a minute apart.
+    expect(at.slice(0, 8)).toEqual([0, 60, 186, 432, 918, 1404, 1890, 1950]);
   });
 
   it('skips sweeps while hidden and runs one immediately when shown again', async () => {

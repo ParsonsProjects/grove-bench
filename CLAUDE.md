@@ -20,6 +20,7 @@ src/
     preload.ts         # Context bridge (IPC exposure)
     ipc.ts             # IPC handler registration
     git.ts             # Git CLI wrapper (execa, through the process host)
+    background-work.ts # Marks the app's own polling (git status, PR status) so its git never runs in the main process
     process-host*.ts   # Utility processes git, gh and the agents' programs (claude, ACP agents) launch from, so launches can't freeze the window (3rd Vite entry)
     worktree-manager.ts
     agent-session.ts   # Session lifecycle management

@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 import {
-  createProcessHost, isReadOnly, type ProcessHostDeps, DEADLINE_MARGIN_MS, HEALTHY_UPTIME_MS, HOST_START_TIMEOUT_MS, HOST_STOPPED_MESSAGE, HOST_WAIT_MS,
-  MAX_FAILURES, RESTART_DELAY_MS, SLOW_HOSTED_LAUNCH_MS, type HostedOptions, type HostProcess,
+  createProcessHost, isReadOnly, type ProcessHostDeps, BACKGROUND_WAIT_MS, BACKOFF_RESTART_DELAY_MS, DEADLINE_MARGIN_MS, HEALTHY_UPTIME_MS,
+  HOST_START_TIMEOUT_MS, HOST_STOPPED_MESSAGE, HOST_WAIT_MS, MAX_BACKGROUND_IN_HOST, MAX_FAILURES, RESTART_DELAY_MS, SLOW_HOSTED_LAUNCH_MS,
+  type HostedOptions, type HostProcess,
 } from './process-host.js';
 import { HOST_READY, type HostReply, type HostRequest, type SpawnEvent, type SpawnRequest, type StdioRequest } from './process-host-protocol.js';
 import { createSpawnRunner, type HostedProcess } from './process-host-spawn.js';
@@ -225,11 +226,10 @@ describe('process host', () => {
     expect(host.ready).toBe(true);
   });
 
-  it(`gives up after ${MAX_FAILURES} failures and runs everything here`, async () => {
+  it(`gives up after ${MAX_FAILURES} failures of a host that never came up, and runs everything here`, async () => {
     const { host, hosts, notes, runHere, fire, latest } = setup();
     host.start();
     for (let i = 0; i < MAX_FAILURES; i++) {
-      latest().ready();
       latest().exit(1);
       fire(RESTART_DELAY_MS);
     }
@@ -244,7 +244,6 @@ describe('process host', () => {
     expect(host.gaveUp).toBe(false);
     host.start();
     for (let i = 0; i < MAX_FAILURES; i++) {
-      latest().ready();
       expect(host.gaveUp).toBe(false);
       latest().exit(1);
       // Down, but starting again.
@@ -486,6 +485,24 @@ describe('process host', () => {
     fire(RESTART_DELAY_MS);
     latest().ready();
     expect(latest().sent).toEqual([{ id: 3, file: 'git', args: ['status'], options: {} }]);
+  });
+
+  it('fails an overdue command but keeps a host that has answered others since it was sent', async () => {
+    const { host, hosts, notes, fire, latest } = setup();
+    host.start();
+    latest().ready();
+    const fetch = host.run('git', ['fetch'], { timeout: 30_000 });
+    const status = host.run('git', ['status']);
+    latest().reply(ok(2, 'clean'));
+    await expect(status).resolves.toMatchObject({ stdout: 'clean' });
+
+    fire(30_000 + DEADLINE_MARGIN_MS);
+    await expect(fetch).rejects.toMatchObject({ timedOut: true });
+    // Slow, not hung: it keeps running what it has.
+    expect(latest().killed).toBe(false);
+    expect(host.ready).toBe(true);
+    expect(hosts).toHaveLength(1);
+    expect(notes).toEqual(['git fetch got no answer in time, but the process host answered others meanwhile; leaving it running']);
   });
 
   it('gives a command its time again when its deadline comes late, as after sleep', async () => {
@@ -918,7 +935,7 @@ describe('process host: commands safe to repeat, in flight when it dies', () => 
     expect(hosts).toHaveLength(3);
   });
 
-  it(`run here, ahead of those waiting, once the host gives up after ${MAX_FAILURES} failures`, async () => {
+  it(`run here, ahead of those waiting, once the host backs off after ${MAX_FAILURES} failures`, async () => {
     const { host, runHere, notes, fire, latest } = setup();
     host.start();
     for (let i = 0; i < MAX_FAILURES - 1; i++) {
@@ -936,7 +953,7 @@ describe('process host: commands safe to repeat, in flight when it dies', () => 
     expect(runHere).not.toHaveBeenCalled();
 
     latest().exit(15);
-    expect(notes.at(-1)).toBe('process host exited with code 15; git commands run in the main process from now on');
+    expect(notes.at(-1)).toBe(`process host exited with code 15; starting it again in ${BACKOFF_RESTART_DELAY_MS / 1000} s, git commands run in the main process meanwhile`);
     expect(runHere.mock.calls.map(([file, args]) => `${file} ${args[0]}`)).toEqual(['git status', 'taskkill.exe /PID', 'git log']);
     await expect(status).resolves.toEqual({ stdout: 'here: git status' });
     await expect(kill).resolves.toEqual({ stdout: 'here: taskkill.exe /PID 4242 /T /F' });
@@ -947,10 +964,11 @@ describe('process host: commands safe to repeat, in flight when it dies', () => 
     const { host, runHere, killed, fire, latest } = setup();
     host.start();
     latest().ready();
-    const hung = host.run('gh', ['pr', 'list'], { timeout: 30_000 });
     const kill = host.run('taskkill.exe', ['/PID', '4242', '/T', '/F'], { reject: false, idempotent: true });
+    latest().started(1, 202);
+    // Nothing from the host after this: it has stopped answering.
+    const hung = host.run('gh', ['pr', 'list'], { timeout: 30_000 });
     const status = host.run('git', ['status']);
-    latest().started(2, 202);
     fire(30_000 + DEADLINE_MARGIN_MS);
     await expect(hung).rejects.toMatchObject({ timedOut: true });
     const commit = host.run('git', ['commit', '-m', 'x']);
@@ -1479,11 +1497,183 @@ describe('process host: spawned processes', () => {
     const { host, notes, fire, latest } = setup({ name: 'agent host', runs: 'agents' });
     host.start();
     for (let i = 0; i < MAX_FAILURES; i++) {
-      latest().ready();
       latest().exit(1);
       fire(RESTART_DELAY_MS);
     }
     expect(notes.at(-1)).toBe('agent host exited with code 1; agents run in the main process from now on');
+  });
+});
+
+describe('process host: after repeated failures, a host that has come up before', () => {
+  /** Start the host, and have it come up and die MAX_FAILURES times in a row. */
+  function failRepeatedly(env: ReturnType<typeof setup>) {
+    env.host.start();
+    for (let i = 0; i < MAX_FAILURES; i++) {
+      env.latest().ready();
+      env.latest().exit(1);
+      if (i < MAX_FAILURES - 1) env.fire(RESTART_DELAY_MS);
+    }
+  }
+
+  it(`starts again after ${BACKOFF_RESTART_DELAY_MS / 1000} s rather than give up, and commands run here meanwhile`, async () => {
+    const env = setup();
+    failRepeatedly(env);
+    expect(env.notes.at(-1)).toBe(`process host exited with code 1; starting it again in ${BACKOFF_RESTART_DELAY_MS / 1000} s, git commands run in the main process meanwhile`);
+    expect(env.host.gaveUp).toBe(false);
+    // They don't wait for it, as they would for a restart.
+    await expect(env.host.run('git', ['commit', '-m', 'x'])).resolves.toEqual({ stdout: 'here: git commit -m x' });
+
+    env.fire(RESTART_DELAY_MS);
+    expect(env.hosts).toHaveLength(MAX_FAILURES);
+    env.fire(BACKOFF_RESTART_DELAY_MS);
+    expect(env.hosts).toHaveLength(MAX_FAILURES + 1);
+    env.latest().ready();
+    void env.host.run('git', ['log']);
+    expect(env.latest().sent).toEqual([{ id: 1, file: 'git', args: ['log'] }]);
+    expect(env.runHere).toHaveBeenCalledTimes(1);
+  });
+
+  it('backs off again if it fails again soon after', () => {
+    const env = setup();
+    failRepeatedly(env);
+    env.fire(BACKOFF_RESTART_DELAY_MS);
+    env.latest().ready();
+    env.latest().exit(2);
+    expect(env.notes.at(-1)).toBe(`process host exited with code 2; starting it again in ${BACKOFF_RESTART_DELAY_MS / 1000} s, git commands run in the main process meanwhile`);
+  });
+
+  it('starts a process here at once while it waits, rather than wait for it', () => {
+    const env = setup();
+    failRepeatedly(env);
+    env.host.spawn('claude', ['-p']);
+    expect(env.local).toHaveLength(1);
+  });
+});
+
+describe('process host: background commands', () => {
+  const background = { background: true } as const;
+
+  it('go to the host when it is up, without the option', () => {
+    const { host, latest } = setup();
+    host.start();
+    latest().ready();
+    void host.run('git', ['status'], { cwd: '/a', background: true });
+    expect(latest().sent).toEqual([{ id: 1, file: 'git', args: ['status'], options: { cwd: '/a' } }]);
+  });
+
+  it('run here before the host is started, as every command does', async () => {
+    const { host, runHere } = setup();
+    await expect(host.run('git', ['status'], background)).resolves.toEqual({ stdout: 'here: git status' });
+    expect(runHere).toHaveBeenCalledWith('git', ['status'], {});
+  });
+
+  it(`wait for a start slower than ${HOST_WAIT_MS / 1000} s, never here, while the others run here`, async () => {
+    const { host, runHere, notes, fire, latest } = setup();
+    host.start();
+    const status = host.run('git', ['status'], background);
+    const log = host.run('git', ['log']);
+    fire(HOST_WAIT_MS);
+    await expect(log).resolves.toEqual({ stdout: 'here: git log' });
+    expect(notes).toEqual([`process host wasn't up after ${HOST_WAIT_MS / 1000} s; 1 command that waited for it, and those after them until it is, run in the main process; 1 command in the background wait on for it`]);
+    // Asked for once the others run here: it waits too.
+    void host.run('git', ['diff'], background);
+    expect(runHere).toHaveBeenCalledTimes(1);
+
+    latest().ready();
+    expect(latest().sent.map((r) => r.args[0])).toEqual(['status', 'diff']);
+    latest().reply(ok(1, 'clean'));
+    await expect(status).resolves.toMatchObject({ stdout: 'clean' });
+  });
+
+  it(`fail, rather than run here, when the host isn't up ${BACKGROUND_WAIT_MS / 1000} s after that`, async () => {
+    const { host, runHere, fire } = setup();
+    host.start();
+    const status = host.run('git', ['status'], background);
+    fire(HOST_WAIT_MS);
+    fire(BACKGROUND_WAIT_MS);
+    await expect(status).rejects.toThrow("The process host isn't up, so git status was skipped rather than run in the main process");
+    expect(runHere).not.toHaveBeenCalled();
+  });
+
+  it('fail at once while the host waits to start again after repeated failures', async () => {
+    const { host, runHere, fire, latest } = setup();
+    host.start();
+    const status = host.run('git', ['status'], background);
+    fire(HOST_WAIT_MS);
+    for (let i = 0; i < MAX_FAILURES; i++) {
+      latest().ready();
+      latest().exit(1);
+      if (i < MAX_FAILURES - 1) fire(RESTART_DELAY_MS);
+    }
+    await expect(host.run('git', ['diff'], background)).rejects.toThrow(/was skipped rather than run in the main process/);
+    // One already waiting (sent back by each host that died) stops waiting too.
+    await expect(status).rejects.toThrow("The process host isn't up, so git status was skipped rather than run in the main process");
+    expect(runHere).not.toHaveBeenCalled();
+  });
+
+  it('in flight when the host dies, wait for the restart, however long it takes, rather than run here', async () => {
+    const { host, runHere, fire, latest } = setup();
+    host.start();
+    latest().ready();
+    const status = host.run('git', ['status'], background);
+    latest().exit(1);
+    fire(HOST_WAIT_MS);
+    expect(runHere).not.toHaveBeenCalled();
+
+    fire(RESTART_DELAY_MS);
+    latest().ready();
+    expect(latest().sent).toEqual([{ id: 2, file: 'git', args: ['status'], options: {} }]);
+    latest().reply(ok(2, 'clean'));
+    await expect(status).resolves.toMatchObject({ stdout: 'clean' });
+  });
+
+  it('run here once a host that never came up gives up for good, those waiting included', async () => {
+    const { host, fire, latest } = setup();
+    host.start();
+    const status = host.run('git', ['status'], background);
+    for (let i = 0; i < MAX_FAILURES; i++) {
+      latest().exit(1);
+      if (i < MAX_FAILURES - 1) fire(RESTART_DELAY_MS);
+    }
+    await expect(status).resolves.toEqual({ stdout: 'here: git status' });
+    await expect(host.run('git', ['log'], background)).resolves.toEqual({ stdout: 'here: git log' });
+  });
+
+  it('waiting at quit, run here as the others waiting do', async () => {
+    const { host, fire } = setup();
+    host.start();
+    const status = host.run('git', ['status'], background);
+    fire(HOST_WAIT_MS);
+    host.stop();
+    await expect(status).resolves.toEqual({ stdout: 'here: git status' });
+  });
+
+  it(`run ${MAX_BACKGROUND_IN_HOST} at a time in the host, the rest in turn, without holding up the others`, async () => {
+    const { host, latest } = setup();
+    host.start();
+    latest().ready();
+    const dirs = Array.from({ length: MAX_BACKGROUND_IN_HOST + 2 }, (_, i) => `/${i}`);
+    const runs = dirs.map((cwd) => host.run('git', ['status'], { cwd, background: true }));
+    void host.run('git', ['commit', '-m', 'x']);
+    const sent = () => latest().sent.map((r) => r.options?.cwd ?? r.args[0]);
+    expect(sent()).toEqual([...dirs.slice(0, MAX_BACKGROUND_IN_HOST), 'commit']);
+
+    latest().reply(ok(2, 'clean'));
+    await expect(runs[1]).resolves.toMatchObject({ stdout: 'clean' });
+    expect(sent()).toEqual([...dirs.slice(0, MAX_BACKGROUND_IN_HOST), 'commit', dirs[MAX_BACKGROUND_IN_HOST]]);
+  });
+
+  it('waiting their turn when the host dies, wait for the restart and keep to the limit there', () => {
+    const { host, fire, latest } = setup();
+    host.start();
+    latest().ready();
+    for (let i = 0; i <= MAX_BACKGROUND_IN_HOST; i++) void host.run('git', ['status'], { cwd: `/${i}`, background: true });
+    latest().exit(1);
+    fire(RESTART_DELAY_MS);
+    latest().ready();
+    expect(latest().sent.map((r) => r.options?.cwd)).toEqual(Array.from({ length: MAX_BACKGROUND_IN_HOST }, (_, i) => `/${i}`));
+    latest().reply(ok(latest().sent[0].id, 'clean'));
+    expect(latest().sent.at(-1)?.options?.cwd).toBe(`/${MAX_BACKGROUND_IN_HOST}`);
   });
 });
 

@@ -44,6 +44,13 @@ export interface HostedOptions {
    *  running until it is, and a quit has only so long. Not an execa option
    *  either: the main process keeps it, and never sends it. */
   urgent?: boolean;
+  /** Started by the app on its own, to keep what it shows current
+   *  (background-work.ts): never runs in the main process once the host has
+   *  been started, unless it has given up for good. While the host is down
+   *  it waits for it (BACKGROUND_WAIT_MS at most) or fails, and at most
+   *  MAX_BACKGROUND_IN_HOST run in the host at once. runProcess sets it
+   *  inside `inBackground`. Kept by the main process, like `idempotent`. */
+  background?: boolean;
 }
 
 /** The fields of an execa result (or error) that callers read. */

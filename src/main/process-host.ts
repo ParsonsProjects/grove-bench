@@ -22,8 +22,17 @@
  * MAX_FAILURES times in a row, and after it has stopped at quit, commands run
  * in the main process as they did before, except those that can be skipped
  * (runProcessInHost: typeperf once the agent host has given up), which fail
- * instead. Tests never
+ * instead. A host that has come up before isn't given up for good: after
+ * MAX_FAILURES in a row it starts again every BACKOFF_RESTART_DELAY_MS, and
+ * commands run in the main process meanwhile. Tests never
  * start it, so their execa mocks see every call.
+ *
+ * Background commands (HostedOptions.background: git status, sync and PR
+ * status, set by background-work.ts) never run in the main process once the
+ * host has been started, unless it has given up for good: where another
+ * command would run here, they wait for the host (BACKGROUND_WAIT_MS at
+ * most, none while it waits out a back-off) and fail if it isn't up by then.
+ * At most MAX_BACKGROUND_IN_HOST of them run in the host at once.
  *
  * A command asked for while the host starts, or restarts after a crash or a
  * kill, waits for it (in order) rather than run here: at launch the app
@@ -43,7 +52,10 @@
  * they may have done their work, so they don't run twice. At quit (stop)
  * all but the idempotent ones fail, and those run here. A host that stops
  * answering is killed and takes no new commands until it has restarted; the
- * command that found it out fails as timed out, unless it is idempotent. A
+ * command that found it out fails as timed out, unless it is idempotent. One
+ * that has answered other commands since that one was sent is slow, not
+ * hung (a busy PC can take seconds to start each process): the command
+ * fails the same way, but the host keeps running what it has. A
  * spawned process can't outlive the host either (its pipes were the
  * host's): it is stopped and reported as exited.
  *
@@ -60,6 +72,7 @@ import { utilityProcess } from 'electron';
 import { execa } from 'execa';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isBackground } from './background-work.js';
 import { freezeLog, launchLabel } from './freeze-log.js';
 import { logger } from './logger.js';
 import { perfLine } from './perf-log.js';
@@ -102,9 +115,27 @@ export const HOST_START_TIMEOUT_MS = 10_000;
  *  wait for its git status all that time. */
 export const HOST_WAIT_MS = 5_000;
 /** After this many failures in a row (crashes, starts that never finished,
- *  hosts that stopped answering), the host stays down and commands run in
- *  the main process. */
+ *  hosts that stopped answering), a host that never came up stays down and
+ *  commands run in the main process. One that has come up before is started
+ *  again after BACKOFF_RESTART_DELAY_MS instead. */
 export const MAX_FAILURES = 3;
+/** How long a host that has come up before waits to start again once it
+ *  has failed MAX_FAILURES times in a row. Rather than give up for good:
+ *  what failed it can pass, such as a PC too busy to start it or answer in
+ *  time (27 Oct: it gave up, and git launches in the main process froze the
+ *  window for up to 42 s). Meanwhile commands run in the main process, as
+ *  when it has given up, except background ones (BACKGROUND_WAIT_MS). */
+export const BACKOFF_RESTART_DELAY_MS = 60_000;
+/** The longest a background command (HostedOptions.background) waits for a
+ *  host that is down, from when it would have run in the main process: then
+ *  it fails, and its caller keeps what it showed. One asked for while the
+ *  host waits out BACKOFF_RESTART_DELAY_MS fails at once. */
+export const BACKGROUND_WAIT_MS = 30_000;
+/** Background commands running in the host at once. The rest wait their
+ *  turn (their timeouts and deadlines count from when they are sent): when
+ *  a dozen threads end their turns together, their git status refreshes
+ *  don't all start at once on a PC that is already busy. */
+export const MAX_BACKGROUND_IN_HOST = 4;
 /** A host that ran this long before failing was healthy: its failure starts
  *  a new count, so crashes days apart don't add up to giving up. */
 export const HEALTHY_UPTIME_MS = 10 * 60_000;
@@ -182,6 +213,13 @@ interface Pending {
   idempotent: boolean;
   /** Never waits for the host (HostedOptions.urgent). */
   urgent: boolean;
+  /** Never runs here once the host is started (HostedOptions.background). */
+  background: boolean;
+  /** Ends its wait for a host that is down (BACKGROUND_WAIT_MS). */
+  heldTimer?: unknown;
+  /** How many answers the host had given when it was sent: one since means
+   *  the host is slow rather than hung, should this go overdue. */
+  answersAtSend?: number;
   /** A host died running it, and it went back to wait for the next. */
   requeued?: boolean;
   /** Captured when the command was asked for: errors keep the caller's stack. */
@@ -235,13 +273,31 @@ export function createProcessHost(deps: ProcessHostDeps) {
   const waitingForHost: ((ready: boolean) => void)[] = [];
   /** Processes whose output isn't an agent's (`agentOutput: false`). */
   const notAgents = new WeakSet<HostedProcess>();
+  /** start() has been called: background commands wait for the host from
+   *  now on, rather than run here. */
+  let started = false;
+  /** The host has come up at least once, so it can run on this PC: after
+   *  MAX_FAILURES it backs off rather than give up for good. */
+  let everReady = false;
+  /** Waiting out BACKOFF_RESTART_DELAY_MS: commands run here meanwhile,
+   *  rather than wait, as when it has given up. */
+  let backingOff = false;
+  /** Answers the host has given (replies, and notices of a start). */
+  let answers = 0;
+  /** Background commands waiting for a host that is down, never run here. */
+  const held: Pending[] = [];
+  /** Background commands the host is up for, waiting for one of the
+   *  MAX_BACKGROUND_IN_HOST running there to finish. Not sent. */
+  const backlog: Pending[] = [];
 
   function start(): void {
     if (state !== 'idle') return;
+    started = true;
     launch();
   }
 
   function launch(): void {
+    backingOff = false;
     state = 'starting';
     readyAt = null;
     launchedAt = now();
@@ -268,6 +324,7 @@ export function createProcessHost(deps: ProcessHostDeps) {
         clearTimer(startTimer);
         state = 'ready';
         readyAt = now();
+        everReady = true;
         sendQueued(child);
         hostCameUp(true);
         return;
@@ -277,11 +334,15 @@ export function createProcessHost(deps: ProcessHostDeps) {
         return;
       }
       if (isHostStarted(message)) {
+        answers++;
         const waiting = pending.get(message.id);
         if (waiting) waiting.pid = message.pid;
         return;
       }
-      if (isHostReply(message)) settle(message);
+      if (isHostReply(message)) {
+        answers++;
+        settle(message);
+      }
     });
     // Electron sends 'exit' after this one; without a listener it would
     // throw in the main process.
@@ -293,13 +354,16 @@ export function createProcessHost(deps: ProcessHostDeps) {
       host = null;
       clearTimer(startTimer);
       abandonPending(true);
+      // Never sent, so they can't have run: they wait for the restart.
+      for (const command of backlog.splice(0)) fallBack(command);
       loseSpawned();
       if (state === 'stopped') return;
       failed(`exited with code ${code}`);
     });
   }
 
-  /** The host failed: try again after a pause, or give up for good. */
+  /** The host failed: try again after a pause, a longer one after
+   *  MAX_FAILURES in a row, or, if it never came up, give up for good. */
   function failed(reason: string): void {
     // It never came up, as opposed to dying once it was (a crash, or a kill
     // for not answering).
@@ -312,20 +376,34 @@ export function createProcessHost(deps: ProcessHostDeps) {
     hostCameUp(false);
     // The next start gets its own wait.
     waitedOut = false;
-    if (failures >= MAX_FAILURES) {
+    const runs = deps.runs ?? 'git commands';
+    if (failures >= MAX_FAILURES && !everReady) {
       state = 'failed';
-      note(`${name} ${reason}; ${deps.runs ?? 'git commands'} run in the main process from now on`);
+      note(`${name} ${reason}; ${runs} run in the main process from now on`);
       runQueuedHere();
+      // Those that waited for it can run here now, as everything does.
+      for (const command of held.splice(0)) release(command);
       return;
     }
     state = 'idle';
-    note(`${name} ${reason}; starting it again`);
+    backingOff = failures >= MAX_FAILURES;
+    const delay = backingOff ? BACKOFF_RESTART_DELAY_MS : RESTART_DELAY_MS;
+    note(backingOff
+      ? `${name} ${reason}; starting it again in ${delay / 1000} s, ${runs} run in the main process meanwhile`
+      : `${name} ${reason}; starting it again`);
     const timer = setTimer(() => {
       restartTimer = null;
       if (state === 'idle') launch();
-    }, RESTART_DELAY_MS);
+    }, delay);
     timer.unref?.();
     restartTimer = timer;
+    if (backingOff) {
+      // As when it has given up: what waits runs here, but for background
+      // commands, which fail rather than wait that long.
+      runQueuedHere();
+      for (const command of held.splice(0)) skip(command);
+      return;
+    }
     // Commands waiting on this start run here too, as the spawns do.
     // Those waiting since the host died wait on for its restart (within
     // HOST_WAIT_MS): the restart is what they were waiting for.
@@ -341,7 +419,7 @@ export function createProcessHost(deps: ProcessHostDeps) {
    *  command asked for now waits for it, unless this start has already
    *  taken too long. */
   function comingUp(): boolean {
-    if (waitedOut) return false;
+    if (waitedOut || backingOff) return false;
     return state === 'starting' || state === 'stopping' || (state === 'idle' && restartTimer !== null);
   }
 
@@ -363,7 +441,10 @@ export function createProcessHost(deps: ProcessHostDeps) {
     waitTimer = null;
     if (queued.length === 0) return;
     waitedOut = true;
-    note(`${name} wasn't up after ${HOST_WAIT_MS / 1000} s; ${countOf(queued.length)} that waited for it, and those after them until it is, run in the main process`);
+    const background = queued.filter((c) => c.background && !c.urgent).length;
+    const here = queued.length - background;
+    const runsHere = here > 0 ? `${countOf(here)} that waited for it, and those after them until it is, run in the main process` : 'those asked for until it is run in the main process';
+    note(`${name} wasn't up after ${HOST_WAIT_MS / 1000} s; ${runsHere}${background > 0 ? `; ${countOf(background)} in the background wait on for it` : ''}`);
     runQueuedHere();
   }
 
@@ -377,9 +458,14 @@ export function createProcessHost(deps: ProcessHostDeps) {
   function sendQueued(child: HostProcess): void {
     stopWaitTimer();
     waitedOut = false;
-    if (queued.length === 0) return;
-    note(`${name} up in ${Math.round(now() - launchedAt)} ms; ${countOf(queued.length)} waited for it`);
+    const waited = queued.length + held.length;
+    if (waited === 0) return;
+    note(`${name} up in ${Math.round(now() - launchedAt)} ms; ${countOf(waited)} waited for it`);
     for (const command of queued.splice(0)) send(command, child);
+    for (const command of held.splice(0)) {
+      unhold(command);
+      send(command, child);
+    }
   }
 
   /** The host won't be up in time, or at all: what waited for it runs here
@@ -400,8 +486,53 @@ export function createProcessHost(deps: ProcessHostDeps) {
       command.reject(fromCaller(new Error(`The ${name} isn't running, so ${command.label} didn't run`), command.origin));
       return;
     }
+    if (command.background && !command.urgent && started && state !== 'failed' && state !== 'stopped') {
+      hold(command);
+      return;
+    }
     new Promise((resolve) => { resolve(deps.runHere(command.file, command.args, command.options)); })
       .then(command.resolve, (e: unknown) => command.reject(e instanceof Error ? e : fromCaller(new Error(String(e)), command.origin)));
+  }
+
+  /** A background command waits for the host rather than run here: sent
+   *  once it is up, failed after BACKGROUND_WAIT_MS, or at once while it
+   *  waits out a back-off. */
+  function hold(command: Pending): void {
+    if (backingOff) {
+      skip(command);
+      return;
+    }
+    const timer = setTimer(() => {
+      const at = held.indexOf(command);
+      if (at === -1) return;
+      held.splice(at, 1);
+      skip(command);
+    }, BACKGROUND_WAIT_MS);
+    timer.unref?.();
+    command.heldTimer = timer;
+    held.push(command);
+  }
+
+  /** A held command stops waiting. */
+  function unhold(command: Pending): void {
+    if (command.heldTimer === undefined) return;
+    clearTimer(command.heldTimer);
+    command.heldTimer = undefined;
+  }
+
+  /** A held command runs after all: here, now that everything does (the
+   *  host has given up, or stopped at quit). */
+  function release(command: Pending): void {
+    unhold(command);
+    fallBack(command);
+  }
+
+  /** A background command fails rather than run here (isSkipped): its
+   *  caller keeps what it showed. */
+  function skip(command: Pending): void {
+    unhold(command);
+    const error = Object.assign(new Error(`The ${name} isn't up, so ${command.label} was skipped rather than run in the main process`), { skipped: true });
+    command.reject(fromCaller(error, command.origin));
   }
 
   /** A spawned process did something: pass it on. */
@@ -443,13 +574,30 @@ export function createProcessHost(deps: ProcessHostDeps) {
     else waiting.reject(fromCaller(reviveError(reply.error), waiting.origin));
   }
 
-  /** Remove a command from the waiting list, with its deadline. */
+  /** Remove a command from the waiting list, with its deadline. A background
+   *  one makes room for the next waiting its turn. */
   function take(id: number): Pending | undefined {
     const waiting = pending.get(id);
     if (!waiting) return undefined;
     pending.delete(id);
     if (waiting.deadline) clearTimer(waiting.deadline);
+    if (waiting.background) sendBacklog();
     return waiting;
+  }
+
+  /** Background commands running in the host. */
+  function backgroundInHost(): number {
+    let count = 0;
+    for (const p of pending.values()) if (p.background) count++;
+    return count;
+  }
+
+  /** Send background commands waiting their turn, while there is room. */
+  function sendBacklog(): void {
+    const child = state === 'ready' ? host : null;
+    while (child && backlog.length > 0 && backgroundInHost() < MAX_BACKGROUND_IN_HOST) {
+      send(backlog.shift()!, child);
+    }
   }
 
   /** The host is gone: stop what it started, and fail the commands it was
@@ -505,10 +653,15 @@ export function createProcessHost(deps: ProcessHostDeps) {
     if (!waiting) return;
     const child = host;
     if (child && state === 'ready') {
-      note(`${name} stopped answering (${waiting.label}); restarting it`);
-      // Before anyone can retry: until the exit, `host` is still this one.
-      state = 'stopping';
-      child.kill();
+      if (answers > (waiting.answersAtSend ?? answers)) {
+        // Slow, not hung: a restart would only stop what it is running.
+        note(`${waiting.label} got no answer in time, but the ${name} answered others meanwhile; leaving it running`);
+      } else {
+        note(`${name} stopped answering (${waiting.label}); restarting it`);
+        // Before anyone can retry: until the exit, `host` is still this one.
+        state = 'stopping';
+        child.kill();
+      }
     }
     if (waiting.idempotent && !waiting.hostOnly) {
       fallBack(waiting);
@@ -524,12 +677,12 @@ export function createProcessHost(deps: ProcessHostDeps) {
   function run(file: string, args: string[], hostedOptions: HostedOptions | undefined, hostOnly: boolean): Promise<unknown> {
     const up = state === 'ready' ? host : null;
     const label = launchLabel(file, [file, ...args]);
-    // `idempotent` and `urgent` stay here; execa gets the rest.
-    const { idempotent = false, urgent = false, ...rest } = hostedOptions ?? {};
+    // `idempotent`, `urgent` and `background` stay here; execa gets the rest.
+    const { idempotent = false, urgent = false, background = false, ...rest } = hostedOptions ?? {};
     const options = hostedOptions === undefined ? undefined : rest;
     const origin = new Error();
     return new Promise((resolve, reject) => {
-      const command: Pending = { file, args, options, label, hostOnly, idempotent, urgent, origin, resolve, reject };
+      const command: Pending = { file, args, options, label, hostOnly, idempotent, urgent, background, origin, resolve, reject };
       if (up) send(command, up);
       else if (!urgent && comingUp()) wait([command]);
       else fallBack(command);
@@ -539,9 +692,14 @@ export function createProcessHost(deps: ProcessHostDeps) {
   /** Send a command to the host. Its deadline counts from now, as its
    *  timeout does in the host. */
   function send(command: Pending, child: HostProcess): void {
+    if (command.background && backgroundInHost() >= MAX_BACKGROUND_IN_HOST) {
+      backlog.push(command);
+      return;
+    }
     const { file, args, options } = command;
     const id = ++nextId;
     const request: HostRequest = options === undefined ? { id, file, args } : { id, file, args, options };
+    command.answersAtSend = answers;
     pending.set(id, command);
     try {
       child.postMessage(request);
@@ -610,7 +768,8 @@ export function createProcessHost(deps: ProcessHostDeps) {
       proc.connect((command) => runner.handle({ ...command, id: 0 }));
     };
     if (state === 'ready') launch(true);
-    else if (state === 'starting' || (state === 'idle' && restartTimer)) waitingForHost.push(launch);
+    // Not through a back-off: it starts here at once, as once it has given up.
+    else if (state === 'starting' || (state === 'idle' && restartTimer && !backingOff)) waitingForHost.push(launch);
     else launch(false);
     return proc;
   }
@@ -627,6 +786,8 @@ export function createProcessHost(deps: ProcessHostDeps) {
     host = null;
     abandonPending(false);
     runQueuedHere();
+    // Never sent: they run here, as the queued ones do.
+    for (const command of [...held.splice(0), ...backlog.splice(0)]) release(command);
     loseSpawned();
     hostCameUp(false);
     child?.kill();
@@ -659,6 +820,13 @@ function fromCaller(error: Error, origin: Error): Error {
   const frames = origin.stack?.split('\n').slice(1).join('\n');
   if (frames) error.stack = `${error.name}: ${error.message}\n${frames}`;
   return error;
+}
+
+/** Whether a background command failed because it was skipped, its host
+ *  down, rather than run: its caller keeps what it showed rather than read
+ *  the failure as an answer (no upstream, no branch, no changes). */
+export function isSkipped(e: unknown): boolean {
+  return e instanceof Error && (e as { skipped?: unknown }).skipped === true;
 }
 
 /** "1 command", "3 commands". */
@@ -761,12 +929,13 @@ const agentHost = createProcessHost({
  * Run `file` with `args` like execa, in the process host when it's up, or
  * once it is when it's starting (for HOST_WAIT_MS at most).
  * Resolves with execa's result fields, or rejects with an error that carries
- * them (`stderr`, `exitCode`, `timedOut`, `code`).
+ * them (`stderr`, `exitCode`, `timedOut`, `code`). Inside `inBackground`
+ * (background-work.ts), it is a background command (HostedOptions.background).
  */
 export function runProcess(file: string, args: string[], options: HostedOptions & { encoding: 'buffer' }): Promise<ProcessResult<Uint8Array>>;
 export function runProcess(file: string, args: string[], options?: HostedOptions): Promise<ProcessResult>;
 export function runProcess(file: string, args: string[], options?: HostedOptions): Promise<unknown> {
-  return processHost.run(file, args, options);
+  return processHost.run(file, args, isBackground() ? { ...options, background: true } : options);
 }
 
 /**

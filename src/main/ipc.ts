@@ -1,5 +1,6 @@
 import { app, ipcMain, BrowserWindow, dialog, shell } from 'electron';
-import { runProcess } from './process-host.js';
+import { isSkipped, runProcess } from './process-host.js';
+import { inBackground } from './background-work.js';
 import { IPC, isPermissionMode } from '../shared/types.js';
 import type { BranchSwitchResult, ClaudeAccountPreview, ClaudeAccountSetting, BranchSyncResult, ConversationGoal, CreateSessionOpts, EventHistoryPage, ThreadUsage, OpenPrSummary, PrerequisiteStatus, PermissionDecision, RegistryAgentSummary, SessionInfo, SkillDefinition, SkillReach, WorktreeInfo } from '../shared/types.js';
 import { sessionManager } from './agent-session.js';
@@ -902,14 +903,15 @@ export function registerHandlers() {
     return result;
   });
 
-  ipcMain.handle(IPC.BRANCH_SYNC, async (_event, sessionId: string): Promise<BranchSyncResult | null> => {
+  // Polled to keep what's shown current: background work (background-work.ts).
+  ipcMain.handle(IPC.BRANCH_SYNC, (_event, sessionId: string) => inBackground(async (): Promise<BranchSyncResult | null> => {
     const result = await worktreeManager.syncBranch(sessionId);
     if (result) {
       logger.info(`Session ${sessionId} checkout is now on branch ${result.branch}`);
       for (const id of result.sessionIds) sessionManager.setBranch(id, result.branch);
     }
     return result;
-  });
+  }));
 
   // ─── Worktrees ───
 
@@ -1584,16 +1586,19 @@ export function registerHandlers() {
     await push(worktree.path, worktree.branch);
   });
 
-  ipcMain.handle(IPC.GIT_SYNC_STATUS, async (_event, sessionId: string) => {
+  // Polled to keep what's shown current: background work (background-work.ts).
+  ipcMain.handle(IPC.GIT_SYNC_STATUS, (_event, sessionId: string) => inBackground(async () => {
     const worktree = worktreeManager.getWorktree(sessionId);
     if (!worktree || worktree.noGit) return { upstream: null, ahead: 0, behind: 0 };
     try {
       return await syncStatus(worktree.path);
     } catch (e) {
+      // Skipped (the process host down): the renderer keeps the last one.
+      if (isSkipped(e)) throw e;
       logger.warn(`git sync status failed for session ${sessionId}:`, e);
       return { upstream: null, ahead: 0, behind: 0 };
     }
-  });
+  }));
 
   // ─── Branch operations ───
   // Each handler resolves the session's worktree and returns a GitOpResult;
@@ -1688,7 +1693,8 @@ export function registerHandlers() {
 
   // ─── Git status ───
 
-  ipcMain.handle(IPC.GIT_STATUS, async (_event, sessionId: string, opts?: GitStatusOptions): Promise<GitStatusResult> => {
+  // Polled to keep what's shown current: background work (background-work.ts).
+  ipcMain.handle(IPC.GIT_STATUS, (_event, sessionId: string, opts?: GitStatusOptions) => inBackground(async (): Promise<GitStatusResult> => {
     const worktree = worktreeManager.getWorktree(sessionId);
     if (!worktree || worktree.noGit) return { entries: [] };
     const cwd = worktree.path;
@@ -1733,10 +1739,12 @@ export function registerHandlers() {
       await attachContentHashes(cwd, result.entries);
       return withOperation(result);
     } catch (e) {
+      // Skipped (the process host down): the renderer keeps the last status.
+      if (isSkipped(e)) throw e;
       logger.warn(`git status failed for session ${sessionId}:`, e);
       return { entries: [], error: e instanceof Error ? e.message : String(e) };
     }
-  });
+  }));
 
   // ─── PR info ───
 
@@ -1778,7 +1786,8 @@ export function registerHandlers() {
     throw new Error(rateLimited ? GH_RATE_LIMITED_MESSAGE : GH_OFFLINE_MESSAGE);
   }
 
-  ipcMain.handle(IPC.PR_LIST, async (_event, sessionId: string) => {
+  // Polled to keep what's shown current: background work (background-work.ts).
+  ipcMain.handle(IPC.PR_LIST, (_event, sessionId: string) => inBackground(async () => {
     const worktree = worktreeManager.getWorktree(sessionId);
     if (!worktree || worktree.noGit) return [];
     // Own comments are excluded from the feedback signature so the agent
@@ -1791,7 +1800,7 @@ export function registerHandlers() {
     } catch (e) {
       rethrowGhFailure(e);
     }
-  });
+  }));
 
   ipcMain.handle(IPC.PR_LIST_OPEN, async (_event, repoPath: string): Promise<OpenPrSummary[]> => {
     if (typeof repoPath !== 'string' || !(await worktreeManager.validateRepo(repoPath))) return [];

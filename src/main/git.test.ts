@@ -658,6 +658,15 @@ describe('syncStatus()', () => {
       .mockRejectedValueOnce(new Error('bad revision'));
     expect(await syncStatus('/repo')).toEqual({ upstream: 'origin/feat/x', ahead: 0, behind: 0 });
   });
+  it('passes on a background command skipped with its host down, rather than read it as no upstream or no counts', async () => {
+    const skipped = () => Object.assign(new Error('git rev-parse was skipped rather than run in the main process'), { skipped: true });
+    mockExeca.mockRejectedValueOnce(skipped());
+    await expect(syncStatus('/repo')).rejects.toMatchObject({ skipped: true });
+    mockExeca
+      .mockResolvedValueOnce(printed('origin/feat/x'))
+      .mockRejectedValueOnce(skipped());
+    await expect(syncStatus('/repo')).rejects.toMatchObject({ skipped: true });
+  });
 });
 
 describe('parseBranchCommits()', () => {
