@@ -67,7 +67,7 @@ export function shipTrack({ sync, pr, pushFailed, canCreatePr }: ShipTrackInput)
   const checksStep: ShipStep = !pr || !checks
     ? { id: 'checks', label: 'Checks', state: pr ? 'done' : 'todo', detail: pr ? 'none reported' : '' }
     : checks.failed > 0
-      ? { id: 'checks', label: 'Checks', state: open ? 'failed' : 'closed', detail: `${checks.failed} of ${checks.total} failed` }
+      ? { id: 'checks', label: 'Checks', state: open ? 'failed' : 'closed', detail: `${checks.failed} of ${checks.total} failed${checks.pending > 0 ? `, ${checks.pending} running` : ''}` }
       : checks.pending > 0
         ? { id: 'checks', label: 'Checks', state: open ? 'running' : 'closed', detail: `${checks.passed} of ${checks.total} passed, ${checks.pending} running` }
         : { id: 'checks', label: 'Checks', state: 'done', detail: `${checks.passed} passed` };

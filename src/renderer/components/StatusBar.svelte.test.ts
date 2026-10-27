@@ -611,11 +611,59 @@ describe('StatusBar PR', () => {
     const steps = within(within(popup).getByRole('list', { name: 'Steps to merged' })).getAllByRole('listitem');
     expect(steps.map((li) => li.textContent?.replace(/\s+/g, ' ').trim())).toEqual([
       'Push',
-      'PR #42 open',
+      'PR #42 open Fix token refresh Open ↗',
       'Checks 2 passed',
       'Review review required',
       'Merge',
     ]);
+  });
+
+  /** A step's row in the open popup. */
+  function stepRow(label: string) {
+    const list = screen.getByRole('list', { name: 'Steps to merged' });
+    return within(list).getAllByRole('listitem').find((li) => li.textContent?.trim().startsWith(label))!;
+  }
+
+  it('says each check and review once, on its step', async () => {
+    await renderWithPrs(pr({ reviewDecision: 'APPROVED' }));
+    const popup = await openBranch();
+    expect(within(popup).getAllByText(/passed/)).toHaveLength(1);
+    expect(within(popup).getAllByText(/approved/)).toHaveLength(1);
+    expect(within(popup).queryByText('Reviews')).toBeNull();
+  });
+
+  it('puts the failing checks, their "new" chip and the fix on the Checks row', async () => {
+    const fix = vi.spyOn(prStore, 'fixCiWithAgent').mockReturnValue(true);
+    await renderWithPrs(pr({ checks: { total: 3, passed: 1, failed: 2, pending: 0 }, failingChecks: ['e2e', 'lint'] }));
+    prStore.alertsBySession = { [ACTIVE]: [{ kind: 'ci_failed', checks: ['e2e'], id: 1, prNumber: 42 }] };
+    await openBranch();
+
+    const row = stepRow('Checks');
+    expect(within(row).getByText('2 of 3 failed')).toHaveAttribute('title', 'Failing: e2e, lint');
+    expect(within(row).getByText('e2e, lint')).toBeInTheDocument();
+    expect(within(row).getByRole('button', { name: 'new' })).toBeInTheDocument();
+    await fireEvent.click(within(row).getByRole('button', { name: 'fix with agent →' }));
+    expect(fix).toHaveBeenCalledWith(ACTIVE);
+    expect(screen.queryByRole('dialog', { name: 'Branch' })).toBeNull();
+  });
+
+  it('says on the Checks row when the agent is too busy to fix them', async () => {
+    vi.spyOn(prStore, 'fixCiWithAgent').mockReturnValue(false);
+    await renderWithPrs(pr({ checks: { total: 1, passed: 0, failed: 1, pending: 0 }, failingChecks: ['e2e'] }));
+    await openBranch();
+    await fireEvent.click(within(stepRow('Checks')).getByRole('button', { name: 'fix with agent →' }));
+    expect(within(stepRow('Checks')).getByText('The agent is busy: try again when it goes idle')).toBeInTheDocument();
+  });
+
+  it('puts new comments and the agent\'s answer to them on the Review row', async () => {
+    await renderWithPrs(pr({ reviewDecision: 'CHANGES_REQUESTED' }));
+    prStore.alertsBySession = { [ACTIVE]: [{ kind: 'new_comments', count: 2, id: 2, prNumber: 42 }] };
+    await openBranch();
+
+    const row = stepRow('Review');
+    expect(within(row).getByText('changes requested')).toBeInTheDocument();
+    expect(within(row).getByRole('button', { name: '2 new' })).toBeInTheDocument();
+    expect(within(row).getByRole('button', { name: 'address with agent →' })).toBeInTheDocument();
   });
 
   it('says in the tooltip when auto turns are on, since they are saved', async () => {
@@ -680,11 +728,10 @@ describe('StatusBar PR', () => {
     expect(prStore.getAlerts(ACTIVE)).toMatchObject([{ kind: 'needs_human' }]);
   });
 
-  it('shows "review required" for an open PR waiting on reviewers', async () => {
+  it('says why "review required" holds the PR up', async () => {
     await renderWithPrs(pr({ reviewDecision: 'REVIEW_REQUIRED' }));
     await openBranch();
-    expect(screen.getByText('Reviews')).toBeTruthy();
-    expect(screen.getByText('required')).toBeTruthy();
+    expect(within(stepRow('Review')).getByText('review required')).toHaveAttribute('title', expect.stringMatching(/needs an approving review/));
   });
 
   it('offers no agent fixes or automation on a closed PR, and a way to start a new one', async () => {
@@ -693,15 +740,15 @@ describe('StatusBar PR', () => {
 
     expect(screen.queryByRole('button', { name: /fix with agent/ })).toBeNull();
     expect(screen.queryByText('Auto')).toBeNull();
-    expect(screen.getByText('New PR')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'manually…' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Create PR with agent' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Create PR manually…' })).toBeInTheDocument();
     expect(lozenge().querySelector('.bg-primary')).toBeNull();
   });
 
   it('does not offer a new PR while one is open', async () => {
     await renderWithPrs(pr(), pr({ number: 38, state: 'MERGED' }));
     await openBranch();
-    expect(screen.queryByText('New PR')).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Create PR/ })).toBeNull();
   });
 
   it('colours other PRs by their health', async () => {
