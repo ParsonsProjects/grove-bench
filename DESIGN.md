@@ -123,9 +123,9 @@ class WorktreeManager {
 
 **Worktree location strategy:**
 
-Worktrees are created inside `<repoPath>/.grove-wt/<short-id>/` where `short-id` is the first 8 characters of a UUID. The short directory name (`.grove-wt` instead of `.grove-worktrees`) and truncated IDs help avoid Windows' 260-character PATH_MAX limit, which is a real concern when combined with deep `node_modules` paths. The `.grove-wt` directory should be added to `.gitignore` (the app can do this automatically).
+Worktrees are created in the app's data folder, `%APPDATA%\grove-bench\worktrees\<repo-hash>\<short-id>\`, where `repo-hash` is the first 8 hex characters of the project path's SHA-256 and `short-id` the first 8 characters of a UUID. The manifest (`manifest.json`), each project's `config.json` and the trash (`.trash`) live there too. Short IDs help avoid Windows' 260-character PATH_MAX limit, which is a real concern when combined with deep `node_modules` paths. (An earlier version of this document put worktrees in `<repoPath>/.grove-wt/<short-id>/`.)
 
-Alternative considered: `%APPDATA%/grove-bench/worktrees/` -- rejected because worktrees perform better when they're on the same filesystem as the repo, and it's easier to reason about where they are.
+Settings > Git > **Worktree folder** puts new worktrees in another folder instead, as `<folder>\<repo-hash>\<short-id>\`: a short folder on a Dev Drive, say, which can make installs faster. Their paths are recorded in the manifest (`path`), since the setting can change; the manifest and config stay in the data folder. That folder may hold the user's own folders too, so the sweep looks in it only for the folders of projects in the manifest, and moves orphans to that folder's own `.trash` so the move stays on its drive. `git worktree prune` is skipped while a project's worktree is in a folder that isn't there (a drive not connected yet): it would drop git's record of the worktree, which would then look like an orphan when the drive came back.
 
 Alternative considered: Full UUIDs as directory names -- rejected because a path like `C:\Users\username\Documents\Projects\my-app\.grove-worktrees\550e8400-e29b-41d4-a716-446655440000\node_modules\@scope\package\dist\index.js` easily exceeds 260 characters. 8-char IDs give us 16^8 (4 billion) unique values, more than enough for any number of concurrent sessions.
 
@@ -356,9 +356,10 @@ The agent's first task in a new worktree will often require running `npm install
 
 The "New Agent" dialog should display a note: "New worktrees don't include node_modules. Your agent may need to run `npm install` before starting work."
 
-**Future improvements (v2):**
-- Detect the project's package manager and auto-run install after worktree creation
-- If the team uses `pnpm`, its content-addressable store means installs are near-instant and deduped on disk, so this is a solved problem
+**Auto-install (opt-in):** with Settings > Git > **Auto-install dependencies** on, a new worktree with a `package.json` gets an install before the agent starts (`src/main/deps-install.ts`). It uses the package manager the project's lockfile names (looked for in package-manager-detector's order: Bun, pnpm, Yarn, npm), else the one `package.json` names in `packageManager`, else npm. Installs use the user's own package cache, which the main checkout's install has usually filled already; npm also skips the audit request (`--no-audit`). If the team uses `pnpm`, its content-addressable store means installs are near-instant and deduped on disk.
+
+**Future improvements:**
+- Copy `node_modules` from another worktree of the project when its lockfile matches (`findSiblingNodeModules` finds one), which skips install scripts and native builds
 - Symlink `node_modules` from the main checkout (fast, zero disk cost, but risky if agents install different packages)
 
 ### 6.2 Untracked Config Files (.env, etc.)

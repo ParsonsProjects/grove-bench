@@ -361,6 +361,13 @@ describe('validateSettings', () => {
     expect(timeout('soon')).toBe(300);
   });
 
+  it('stores the worktree folder trimmed, and empty (the data folder) when missing or not text', () => {
+    const folder = (v: unknown) => validateSettings({ worktreeFolder: v }).worktreeFolder;
+    expect(folder('  D:\\wt  ')).toBe('D:\\wt');
+    expect(folder(undefined)).toBe('');
+    expect(folder(42)).toBe('');
+  });
+
   it('falls back per field on invalid values instead of discarding the file', () => {
     const s = validateSettings({
       theme: 'neon',

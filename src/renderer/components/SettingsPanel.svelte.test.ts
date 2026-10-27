@@ -31,7 +31,7 @@ function settings(adapterDefaults: GroveBenchSettings['adapterDefaults'] = {}): 
     toolAllowRules: [], toolDenyRules: [], disabledSkills: [], autoSkillSuggestions: false, showConversationGoal: true, promptSuggestions: true, backgroundPromptSuggestions: false,
     defaultModels: {}, adapterDefaults, showThinkingSummaries: true, cavemanMode: 'off', workingDirectories: [], defaultSystemPromptAppend: '', acpAgents: [], claudeAccounts: [], enabledAlphaAgents: [], defaultAgent: '',
     memoryAutoSave: true, memoryCompactTimeoutSeconds: 300, backgroundModels: {},
-    autoInstallDeps: false, previewAgentTools: true, idleSleepMinutes: 30, defaultBaseBranch: '', branchNamingRule: '', theme: 'system', alwaysOnTop: false, autoDownloadUpdates: true,
+    autoInstallDeps: false, worktreeFolder: '', previewAgentTools: true, idleSleepMinutes: 30, defaultBaseBranch: '', branchNamingRule: '', theme: 'system', alwaysOnTop: false, autoDownloadUpdates: true,
     repoColors: {}, groveCharacters: true, diffViewMode: 'unified', defaultActivityView: 'summary', spellcheck: true,
     notifyOnTurnComplete: true, notifyOnPermission: true, notifyOnPrAlert: true, notifyTaskbarFlash: true, notifyTaskbarBadge: true, notifyOnPlanUsage: true,
     planUsageAlertPercent: 80, threadSpendLimitUsd: 0, dailySpendLimitUsd: 0, turnToolCallLimit: 0, turnMinutesLimit: 0,
@@ -184,6 +184,23 @@ describe('SettingsPanel auto-save', () => {
 
     // Well inside the half-second typing pause.
     await waitFor(() => expect(lastSaved().defaultBaseBranch).toBe('develop'), { timeout: 200 });
+  });
+
+  it('says what is wrong with a worktree folder as it is typed, and saves a good one', async () => {
+    await renderPanel();
+    await openSection('Git & worktrees');
+    const folder = screen.getByLabelText('Worktree folder');
+
+    await fireEvent.input(folder, { target: { value: 'wt' } });
+    expect(await screen.findByText('Use a full path, such as D:\\worktrees.')).toBeInTheDocument();
+
+    await fireEvent.input(folder, { target: { value: `D:\\${'projects\\'.repeat(8)}wt` } });
+    expect(await screen.findByText(/stop at 260 characters/)).toBeInTheDocument();
+    expect(screen.queryByText('Use a full path, such as D:\\worktrees.')).not.toBeInTheDocument();
+
+    await fireEvent.input(folder, { target: { value: 'D:\\wt' } });
+    await waitFor(() => expect(screen.queryByText(/stop at 260 characters/)).not.toBeInTheDocument());
+    await waitFor(() => expect(lastSaved().worktreeFolder).toBe('D:\\wt'), { timeout: 2000 });
   });
 
   it('shows a failed save, keeps the change and retries', async () => {

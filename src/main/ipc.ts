@@ -53,7 +53,7 @@ import { isThreadId } from './session-event-store.js';
 import { perfSteps, logWindowTiming } from './perf-steps.js';
 import { recordTrace, lastTracePath } from './perf-trace.js';
 import { perfLogPath } from './perf-log.js';
-import { installDependencies } from './deps-install.js';
+import { detectPackageManager, installDependencies, type PackageManager } from './deps-install.js';
 import { applyAttentionBadge } from './attention-badge.js';
 import { replaceMisspelling, addWordToDictionary } from './spellcheck.js';
 import crypto from 'node:crypto';
@@ -492,29 +492,30 @@ export function registerHandlers() {
         }
         perfSteps.step(id, 'copy files');
 
-        // Install npm dependencies if enabled and the project has a package.json
+        // Install dependencies if enabled and the project has a package.json,
+        // with the package manager the project uses
         if (settings.getSettings().autoInstallDeps) {
+          let manager: PackageManager = 'npm';
           try {
             await fs.access(path.join(worktree.path, 'package.json'));
             if (!win.isDestroyed()) {
               win.webContents.send(IPC.SESSION_STATUS, worktree.id, 'installing');
             }
 
-            // Run npm install with shared cache
-            const npmCache = await worktreeManager.getNpmCachePath(opts.repoPath);
+            manager = await detectPackageManager(worktree.path);
             emitPrelaunch({ type: 'status', message: 'Installing dependencies…' });
-            logger.info(`Running npm install in worktree ${worktree.id} (cache: ${npmCache})`);
-            await installDependencies(worktree.path, npmCache, signal);
+            logger.info(`Running ${manager} install in worktree ${worktree.id}`);
+            await installDependencies(worktree.path, manager, signal);
             perfSteps.step(id, 'install dependencies');
-            logger.info(`npm install completed for worktree ${worktree.id}`);
+            logger.info(`${manager} install completed for worktree ${worktree.id}`);
           } catch (e) {
             if (signal.aborted) throw e;
             if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
               perfSteps.step(id, 'install dependencies (failed)');
               const err = e as { stderr?: string; message?: string };
               const stderr = err.stderr || err.message || String(e);
-              logger.warn(`npm install failed for worktree ${worktree.id}:`, e);
-              emitPrelaunch({ type: 'error', message: `npm install failed:\n${stderr}` });
+              logger.warn(`${manager} install failed for worktree ${worktree.id}:`, e);
+              emitPrelaunch({ type: 'error', message: `${manager} install failed:\n${stderr}` });
             }
           }
         }

@@ -4,6 +4,11 @@
   import SettingRow from './SettingRow.svelte';
   import CheckboxSetting from './CheckboxSetting.svelte';
   import SettingsGroup from './SettingsGroup.svelte';
+  import { Notice } from '$lib/components/ui/notice/index.js';
+  import { worktreeFolderError, worktreeFolderTooLong } from '../../../shared/worktree-folder.js';
+
+  const folderError = $derived(worktreeFolderError(settingsStore.draft.worktreeFolder));
+  const folderTooLong = $derived(!folderError && worktreeFolderTooLong(settingsStore.draft.worktreeFolder));
 </script>
 
 <SettingsGroup title="New branches">
@@ -41,10 +46,33 @@
 </SettingsGroup>
 
 <SettingsGroup title="New worktrees">
+  <SettingRow
+    setting="worktree-folder"
+    label="Worktree folder"
+    for="settings-worktree-folder"
+    description="Where new worktrees go. A short folder on a Dev Drive, such as D:\wt, can make installs faster. Leave empty to use the app's data folder. Worktrees already made stay where they are."
+  >
+    <Input
+      id="settings-worktree-folder"
+      type="text"
+      class="max-w-sm"
+      spellcheck={false}
+      placeholder="App data folder"
+      bind:value={settingsStore.draft.worktreeFolder}
+    />
+    {#if folderError}
+      <Notice tone="danger" class="max-w-xl"><p>{folderError}</p></Notice>
+    {:else if folderTooLong}
+      <Notice tone="warning" class="max-w-xl">
+        <p>A long folder makes every path in its worktrees longer. Git and many build tools on Windows stop at 260 characters, and deep folders such as node_modules get close. A short one, such as D:\wt, is safest.</p>
+      </Notice>
+    {/if}
+  </SettingRow>
+
   <CheckboxSetting
     setting="auto-install-deps"
     label="Auto-install dependencies"
-    description="Run npm install when a new worktree is created."
+    description="Install dependencies when a new worktree is created, with the project's package manager: npm, pnpm, Yarn or Bun, picked from its lockfile."
     bind:checked={settingsStore.draft.autoInstallDeps}
   />
 </SettingsGroup>

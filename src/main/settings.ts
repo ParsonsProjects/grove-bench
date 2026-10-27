@@ -37,6 +37,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
 
   // Worktree
   autoInstallDeps: false,
+  worktreeFolder: '', // empty = the app's data folder
 
   // Preview
   previewAgentTools: true,
@@ -257,6 +258,7 @@ const settingsSchema = z.object({
   backgroundModels: z.record(z.string(), z.string()).catch(DEFAULT_SETTINGS.backgroundModels),
 
   autoInstallDeps: z.boolean().catch(DEFAULT_SETTINGS.autoInstallDeps),
+  worktreeFolder: z.string().trim().catch(DEFAULT_SETTINGS.worktreeFolder),
 
   previewAgentTools: z.boolean().catch(DEFAULT_SETTINGS.previewAgentTools),
 

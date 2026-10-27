@@ -412,10 +412,10 @@ describe('typeperf, for the health line, starts in the agent host', () => {
 
 describe('npm install starts in the agent host', () => {
   it('for a new worktree (installDependencies)', async () => {
-    await installDependencies('/wt', '/cache', new AbortController().signal);
+    await installDependencies('/wt', 'npm', new AbortController().signal);
     expect(processHost.sent).toEqual([]);
     expect(agentHost.sent).toEqual([
-      { type: 'spawn', id: expect.any(Number), file: 'npm', args: ['install', '--prefer-offline', '--cache', '/cache'], cwd: '/wt', findCommand: true, stdout: 'ignore' },
+      { type: 'spawn', id: expect.any(Number), file: 'npm', args: ['install', '--prefer-offline', '--no-audit', '--no-fund'], cwd: '/wt', findCommand: true, stdout: 'ignore' },
     ]);
   });
 });
