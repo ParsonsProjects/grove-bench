@@ -148,7 +148,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [ ] Per-repo agent instructions field in Settings (writes to `CLAUDE.md` or a memory `conventions/` note); today only the global system-prompt append exists
 - [ ] Agent-to-agent communication (one agent's output feeds another)
 - [ ] Orchestration engine (goal decomposition → parallel tasks → integration merge agent) — prototyped and removed; see user stories 20–28 in `docs/user-stories.md`
-- [ ] Worktree dependency optimizations: pnpm-store sharing, `node_modules` symlinking from main checkout (DESIGN.md §6.1)
+- [ ] Worktree dependency optimizations: copying `node_modules` from another worktree when the lockfile matches, `node_modules` symlinking from main checkout (DESIGN.md §6.1)
 
 ## Feature Requests
 
@@ -207,7 +207,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - **Project Memory System** — persistent markdown notes (repo, conventions, architecture, sessions); t3code has none
 - **Orphan Worktree Detection & Cleanup** — auto-detect on startup + 15-min background sweeps
 - **Auto-Copy `.env` Files** — automatically copies `.env`, `.npmrc`, etc. to new worktrees
-- **Auto-Install Dependencies** — optional npm install with shared cache in new worktrees
+- **Auto-Install Dependencies** — optional install in new worktrees with the project's package manager (npm, pnpm, Yarn, Bun), from the user's own cache
 - **Tool Visibility Control** — allow/deny rules with glob patterns (more granular than t3's sandbox modes)
 - **Power Monitoring** — flush state on suspend, health-check on resume
 - **Changes Review Panel** — dedicated panel with file staging/unstaging, revert individual files

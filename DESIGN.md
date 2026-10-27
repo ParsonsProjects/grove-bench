@@ -123,9 +123,15 @@ class WorktreeManager {
 
 **Worktree location strategy:**
 
-Worktrees are created inside `<repoPath>/.grove-wt/<short-id>/` where `short-id` is the first 8 characters of a UUID. The short directory name (`.grove-wt` instead of `.grove-worktrees`) and truncated IDs help avoid Windows' 260-character PATH_MAX limit, which is a real concern when combined with deep `node_modules` paths. The `.grove-wt` directory should be added to `.gitignore` (the app can do this automatically).
+Worktrees are created in the app's data folder, `%APPDATA%\grove-bench\worktrees\<repo-hash>\<short-id>\`, where `repo-hash` is the first 8 hex characters of the project path's SHA-256 and `short-id` the first 8 characters of a UUID. The manifest (`manifest.json`), each project's `config.json` and the trash (`.trash`) live there too. Short IDs help avoid Windows' 260-character PATH_MAX limit, which is a real concern when combined with deep `node_modules` paths. (An earlier version of this document put worktrees in `<repoPath>/.grove-wt/<short-id>/`.)
 
-Alternative considered: `%APPDATA%/grove-bench/worktrees/` -- rejected because worktrees perform better when they're on the same filesystem as the repo, and it's easier to reason about where they are.
+Settings > Git > **Worktree folder** puts new worktrees in another folder instead, as `<folder>\<repo-hash>\<short-id>\`: a short folder on a Dev Drive, say, which can make installs faster. The manifest and config stay in the data folder. How that folder is handled:
+
+- **Real path.** The folder is resolved with `fs.realpath` (the native call) before use, because git records a worktree under its real path, through a mapped or `subst` drive, a junction or a symlink. A typed path wouldn't match `git worktree list`, and the orphan check would take a live worktree for a leftover. The resulting path is recorded in the manifest (`path`), since the setting can change.
+- **Refused locations.** A folder inside the data folder (whose scan would take its project folders for leftovers) or inside the project (its git status and tools would see every worktree).
+- **Locked worktrees.** They are made with `git worktree add --lock`, git's own answer for worktrees on a drive that isn't always connected: no prune, Grove's or `git gc`'s, drops git's record of one it can't see. `remove()`, the deferred removal and the orphan check unlock one before removing or pruning it.
+- **Drive not connected.** A worktree whose folder isn't there isn't called an orphan, and a deferred removal there stays pending, until the folder is back.
+- **No leftover scan.** The sweep's scan for folders missing from the manifest covers the data folder only: the user's folder may hold their own folders, or another Windows account's worktrees. There only the manifest says what is Grove's. Orphans found from the manifest go to that folder's own `.trash`, so the move stays on its drive, and only names the trash gives are purged from it. A worktree left by a create that failed before its manifest entry was written stays (git still lists it), and a folder no longer named by the setting or any worktree isn't purged any more.
 
 Alternative considered: Full UUIDs as directory names -- rejected because a path like `C:\Users\username\Documents\Projects\my-app\.grove-worktrees\550e8400-e29b-41d4-a716-446655440000\node_modules\@scope\package\dist\index.js` easily exceeds 260 characters. 8-char IDs give us 16^8 (4 billion) unique values, more than enough for any number of concurrent sessions.
 
@@ -356,9 +362,10 @@ The agent's first task in a new worktree will often require running `npm install
 
 The "New Agent" dialog should display a note: "New worktrees don't include node_modules. Your agent may need to run `npm install` before starting work."
 
-**Future improvements (v2):**
-- Detect the project's package manager and auto-run install after worktree creation
-- If the team uses `pnpm`, its content-addressable store means installs are near-instant and deduped on disk, so this is a solved problem
+**Auto-install (opt-in):** with Settings > Git > **Auto-install dependencies** on, a new worktree with a `package.json` gets an install before the agent starts (`src/main/deps-install.ts`). It uses the package manager the project's lockfile names (looked for in package-manager-detector's order: Bun, pnpm, Yarn, npm), else the one `package.json` names in `packageManager`, else npm. Installs use the user's own package cache, which the main checkout's install has usually filled already; npm also skips the audit request (`--no-audit`). If the team uses `pnpm`, its content-addressable store means installs are near-instant and deduped on disk.
+
+**Future improvements:**
+- Copy `node_modules` from another worktree of the project when its lockfile matches, which skips install scripts and native builds
 - Symlink `node_modules` from the main checkout (fast, zero disk cost, but risky if agents install different packages)
 
 ### 6.2 Untracked Config Files (.env, etc.)

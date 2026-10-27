@@ -58,7 +58,8 @@ export const SETTINGS_INDEX: readonly SettingsEntry[] = [
 
   { id: 'default-base-branch', section: 'git', label: 'Default base branch', keywords: 'main master' },
   { id: 'branch-naming-rule', section: 'git', label: 'Branch naming rule', keywords: 'branch name ticket' },
-  { id: 'auto-install-deps', section: 'git', label: 'Auto-install dependencies', keywords: 'npm install' },
+  { id: 'worktree-folder', section: 'git', label: 'Worktree folder', keywords: 'dev drive location path disk' },
+  { id: 'auto-install-deps', section: 'git', label: 'Auto-install dependencies', keywords: 'npm pnpm yarn bun install' },
 
   { id: 'notify-turn-complete', section: 'notifications', label: 'Agent finishes a turn', keywords: 'done' },
   { id: 'notify-permission', section: 'notifications', label: 'Agent is waiting on a permission, question or limit', keywords: 'needs you paused' },

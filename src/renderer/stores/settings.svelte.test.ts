@@ -26,6 +26,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   memoryCompactTimeoutSeconds: 300,
   backgroundModels: {},
   autoInstallDeps: false,
+  worktreeFolder: '',
   previewAgentTools: true,
   idleSleepMinutes: 30,
   defaultBaseBranch: 'main',

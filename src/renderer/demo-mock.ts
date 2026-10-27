@@ -90,6 +90,7 @@ const SETTINGS = {
   memoryCompactTimeoutSeconds: 300,
   backgroundModels: {},
   autoInstallDeps: false,
+  worktreeFolder: '',
   previewAgentTools: true,
   idleSleepMinutes: 30,
   defaultBaseBranch: '',

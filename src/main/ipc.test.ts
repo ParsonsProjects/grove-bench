@@ -26,7 +26,7 @@ const m = vi.hoisted(() => {
     ),
     worktreeManager: fns(
       'validateRepo', 'cleanupOrphans', 'getWorktreeOrManifest', 'registerDirect', 'create', 'getRepoConfig',
-      'copyUntrackedFiles', 'getNpmCachePath', 'getProviderSessionId', 'getModel', 'getAdapterType', 'getThreadLimits', 'remove',
+      'copyUntrackedFiles', 'getProviderSessionId', 'getModel', 'getAdapterType', 'getThreadLimits', 'remove',
       'saveDisplayName', 'getDisplayNameState', 'saveAutoDisplayName', 'renameBranch', 'switchBranch',
       'syncBranch', 'list', 'register', 'listRepos', 'getWorktree', 'assertRemovable', 'checkoutSharers',
       'getGoal', 'getGoals', 'saveGoal', 'setGoalHidden',
@@ -75,7 +75,7 @@ const skillFiles = vi.hoisted(() => ({ readSkillFile: vi.fn(), saveSkillFile: vi
 vi.mock('./skills.js', async (importOriginal) => ({ ...(await importOriginal<typeof import('./skills.js')>()), ...skillFiles }));
 vi.mock('./background-tasks.js', () => ({ agentForProject: vi.fn(), recordedAgent: vi.fn(), backgroundModelFor: vi.fn() }));
 vi.mock('./editor-launch.js', () => ({ launchEditor: vi.fn() }));
-vi.mock('./deps-install.js', () => ({ installDependencies: vi.fn() }));
+vi.mock('./deps-install.js', () => ({ detectPackageManager: vi.fn(), installDependencies: vi.fn() }));
 vi.mock('./commit-message.js', () => ({ generateCommitMessage: vi.fn() }));
 vi.mock('./notifications.js', () => ({ showOsNotification: vi.fn() }));
 vi.mock('./auto-updater.js', () => ({ applyUpdateSettings: vi.fn(), checkForUpdate: vi.fn(), downloadUpdate: vi.fn(), getUpdateState: vi.fn(), restartToUpdate: vi.fn() }));
@@ -115,7 +115,7 @@ import * as gh from './gh.js';
 import { generateBranchName } from './branch-name.js';
 import { generateGoal } from './session-goal.js';
 import { launchEditor } from './editor-launch.js';
-import { installDependencies } from './deps-install.js';
+import { detectPackageManager, installDependencies } from './deps-install.js';
 import { logRendererError } from './crash-handling.js';
 import { applyAttentionBadge } from './attention-badge.js';
 import { recordedAgent } from './background-tasks.js';
@@ -195,7 +195,7 @@ beforeEach(() => {
     id: c.id, path: wt, branch: c.branchName, repoPath: '/repo', createdAt: 0,
   }));
   m.worktreeManager.getRepoConfig.mockResolvedValue({ copyFiles: [] });
-  m.worktreeManager.getNpmCachePath.mockResolvedValue('/cache');
+  vi.mocked(detectPackageManager).mockResolvedValue('npm');
 
   vi.mocked(git.validateBranchName).mockResolvedValue(true);
   vi.mocked(git.branchExists).mockResolvedValue(false);
@@ -429,8 +429,27 @@ describe('SESSION_CREATE', () => {
     const setup = lastSetup();
     await setup.promise;
 
-    expect(installDependencies).toHaveBeenCalledWith(withPkg, '/cache', setup.abort!.signal);
+    expect(detectPackageManager).toHaveBeenCalledWith(withPkg);
+    expect(installDependencies).toHaveBeenCalledWith(withPkg, 'npm', setup.abort!.signal);
     expect(win.webContents.send).toHaveBeenCalledWith(IPC.SESSION_STATUS, id, 'installing');
+  });
+
+  it("installs with the project's own package manager, and names it when the install fails", async () => {
+    m.settings.getSettings.mockReturnValue({ autoInstallDeps: true });
+    const withPkg = fs.mkdtempSync(path.join(tmp, 'pkg-'));
+    fs.writeFileSync(path.join(withPkg, 'package.json'), '{}');
+    m.worktreeManager.create.mockImplementation(async (c: { id: string; branchName: string }) => ({
+      id: c.id, path: withPkg, branch: c.branchName, repoPath: '/repo', createdAt: 0,
+    }));
+    vi.mocked(detectPackageManager).mockResolvedValue('pnpm');
+    vi.mocked(installDependencies).mockRejectedValue(Object.assign(new Error('failed'), { stderr: 'ERR_PNPM_FETCH_404' }));
+
+    const { id } = await create();
+    const setup = lastSetup();
+    await setup.promise;
+
+    expect(installDependencies).toHaveBeenCalledWith(withPkg, 'pnpm', setup.abort!.signal);
+    expect(tabEvents(id)).toContainEqual({ type: 'error', message: 'pnpm install failed:\nERR_PNPM_FETCH_404' });
   });
 
   it('reports a failed install and still starts the agent', async () => {
@@ -467,6 +486,26 @@ describe('SESSION_CREATE', () => {
     expect(m.sessionManager.createSession).toHaveBeenCalled();
   });
 
+  it("says so when the project's own package manager isn't installed, and still starts the agent", async () => {
+    m.settings.getSettings.mockReturnValue({ autoInstallDeps: true });
+    const withPkg = fs.mkdtempSync(path.join(tmp, 'pkg-'));
+    fs.writeFileSync(path.join(withPkg, 'package.json'), '{}');
+    m.worktreeManager.create.mockImplementation(async (c: { id: string; branchName: string }) => ({
+      id: c.id, path: withPkg, branch: c.branchName, repoPath: '/repo', createdAt: 0,
+    }));
+    vi.mocked(detectPackageManager).mockResolvedValue('pnpm');
+    vi.mocked(installDependencies).mockRejectedValue(Object.assign(new Error('spawn pnpm ENOENT'), { code: 'ENOENT', syscall: 'spawn pnpm' }));
+
+    const { id } = await create();
+    await lastSetup().promise;
+
+    expect(tabEvents(id)).toContainEqual({
+      type: 'error',
+      message: "This project uses pnpm, which isn't installed or isn't on PATH, so the worktree's dependencies weren't installed.",
+    });
+    expect(m.sessionManager.createSession).toHaveBeenCalled();
+  });
+
   it('tells the tab when setup fails', async () => {
     m.worktreeManager.create.mockRejectedValue(new Error('worktree add failed'));
 
@@ -486,7 +525,7 @@ describe('SESSION_CREATE', () => {
       id: c.id, path: withPkg, branch: c.branchName, repoPath: '/repo', createdAt: 0,
     }));
     // An install that runs until it is aborted.
-    vi.mocked(installDependencies).mockImplementation((_cwd, _cache, signal) => new Promise((_resolve, reject) => {
+    vi.mocked(installDependencies).mockImplementation((_cwd, _manager, signal) => new Promise((_resolve, reject) => {
       signal.addEventListener('abort', () => reject(signal.reason as Error));
     }));
 

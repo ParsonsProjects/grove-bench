@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import { createSpawnRunner, HostedProcess, type ProcessCommand } from './process-host-spawn.js';
 
@@ -24,7 +27,7 @@ vi.mock('./logger.js', () => ({
 }));
 
 import { execa } from 'execa';
-import { installDependencies } from './deps-install.js';
+import { detectPackageManager, installDependencies } from './deps-install.js';
 
 /** A running install, driven by the test as the host would drive it, and
  *  what it was sent: once `connect`ed, as when the host has it. */
@@ -88,18 +91,31 @@ afterEach(() => {
 });
 
 describe('installDependencies', () => {
-  it('runs npm install with the shared cache, found as a shell would find it', async () => {
+  it("runs npm install from the user's own cache, without the audit, found as a shell would find it", async () => {
     const install = fakeInstall();
-    const done = installDependencies('/wt', '/cache', new AbortController().signal);
+    const done = installDependencies('/wt', 'npm', new AbortController().signal);
     install.started();
     install.exit(0);
     await done;
-    expect(hosted.spawnProcess).toHaveBeenCalledWith('npm', ['install', '--prefer-offline', '--cache', '/cache'], expect.objectContaining({ cwd: '/wt', findCommand: true }));
+    expect(hosted.spawnProcess).toHaveBeenCalledWith('npm', ['install', '--prefer-offline', '--no-audit', '--no-fund'], expect.objectContaining({ cwd: '/wt', findCommand: true }));
+  });
+
+  it.each([
+    ['pnpm', ['install', '--prefer-offline']],
+    ['yarn', ['install']],
+    ['bun', ['install']],
+  ] as const)('runs %s install for a project that uses it', async (manager, args) => {
+    const install = fakeInstall();
+    const done = installDependencies('/wt', manager, new AbortController().signal);
+    install.started();
+    install.exit(0);
+    await done;
+    expect(hosted.spawnProcess).toHaveBeenCalledWith(manager, args, { cwd: '/wt', findCommand: true, stdout: 'ignore' });
   });
 
   it("leaves npm's output in the agent host, so it isn't timed as agent output, and keeps its stderr", async () => {
     const install = fakeInstall();
-    const done = installDependencies('/wt', '/cache', new AbortController().signal);
+    const done = installDependencies('/wt', 'npm', new AbortController().signal);
     install.started();
     install.exit(0);
     await done;
@@ -108,7 +124,7 @@ describe('installDependencies', () => {
 
   it('starts npm in the agent host, not in the main process', async () => {
     const install = fakeInstall();
-    const done = installDependencies('/wt', '/cache', new AbortController().signal);
+    const done = installDependencies('/wt', 'npm', new AbortController().signal);
     install.started();
     install.exit(0);
     await done;
@@ -120,7 +136,7 @@ describe('installDependencies', () => {
     const install = fakeInstall();
     install.connect();
     const abort = new AbortController();
-    const done = installDependencies('/wt', '/cache', abort.signal);
+    const done = installDependencies('/wt', 'npm', abort.signal);
     install.started(4321);
 
     abort.abort();
@@ -135,7 +151,7 @@ describe('installDependencies', () => {
     const install = fakeInstall();
     install.connect();
     const abort = new AbortController();
-    const done = installDependencies('/wt', '/cache', abort.signal);
+    const done = installDependencies('/wt', 'npm', abort.signal);
 
     abort.abort();
     expect(install.sent).toEqual([{ type: 'kill-tree' }]);
@@ -150,7 +166,7 @@ describe('installDependencies', () => {
     const install = fakeInstall();
     install.connect();
     const abort = new AbortController();
-    const done = installDependencies('/wt', '/cache', abort.signal);
+    const done = installDependencies('/wt', 'npm', abort.signal);
     install.started(4321);
 
     abort.abort();
@@ -163,7 +179,7 @@ describe('installDependencies', () => {
 
   it('passes a real install failure through, with what npm wrote to stderr', async () => {
     const install = fakeInstall();
-    const done = installDependencies('/wt', '/cache', new AbortController().signal);
+    const done = installDependencies('/wt', 'npm', new AbortController().signal);
     install.started();
     install.stderr('npm ERR! 404 Not Found\n');
     await settle();
@@ -173,7 +189,7 @@ describe('installDependencies', () => {
 
   it('rejects with the start error, ENOENT when npm is not installed', async () => {
     const install = fakeInstall();
-    const done = installDependencies('/wt', '/cache', new AbortController().signal);
+    const done = installDependencies('/wt', 'npm', new AbortController().signal);
     install.failedToStart({ name: 'Error', message: 'spawn npm ENOENT', code: 'ENOENT' });
     await expect(done).rejects.toMatchObject({ code: 'ENOENT' });
   });
@@ -182,7 +198,7 @@ describe('installDependencies', () => {
     setPlatform('win32');
     const cmd = fakeChild();
     spawnHere((() => cmd) as unknown as Parameters<typeof createSpawnRunner>[2]);
-    const done = installDependencies('C:\\wt', 'C:\\cache', new AbortController().signal);
+    const done = installDependencies('C:\\wt', 'npm', new AbortController().signal);
     cmd.stderr.end("'npm' is not recognized as an internal or external command,\r\noperable program or batch file.\r\n");
     await settle();
     cmd.emit('exit', 1, null);
@@ -195,13 +211,66 @@ describe('installDependencies', () => {
   it('settles when Node throws the start (the agent host down, so it starts here)', async () => {
     const einval = Object.assign(new Error('spawn EINVAL'), { code: 'EINVAL', syscall: 'spawn' });
     spawnHere(() => { throw einval; });
-    await expect(installDependencies('/wt', '/cache', new AbortController().signal)).rejects.toMatchObject({ code: 'EINVAL', message: 'spawn EINVAL' });
+    await expect(installDependencies('/wt', 'npm', new AbortController().signal)).rejects.toMatchObject({ code: 'EINVAL', message: 'spawn EINVAL' });
   });
 
   it('does not start when already aborted', async () => {
     const abort = new AbortController();
     abort.abort();
-    await expect(installDependencies('/wt', '/cache', abort.signal)).rejects.toMatchObject({ name: 'AbortError' });
+    await expect(installDependencies('/wt', 'npm', abort.signal)).rejects.toMatchObject({ name: 'AbortError' });
     expect(hosted.spawnProcess).not.toHaveBeenCalled();
+  });
+});
+
+describe('detectPackageManager', () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'grove-pm-'));
+  });
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+  const write = (file: string, content = '') => fs.writeFileSync(path.join(dir, file), content);
+
+  it.each([
+    ['package-lock.json', 'npm'],
+    ['npm-shrinkwrap.json', 'npm'],
+    ['pnpm-lock.yaml', 'pnpm'],
+    ['pnpm-workspace.yaml', 'pnpm'],
+    ['yarn.lock', 'yarn'],
+    ['bun.lock', 'bun'],
+    ['bun.lockb', 'bun'],
+  ])('reads %s as %s', async (lockfile, manager) => {
+    write('package.json', '{}');
+    write(lockfile);
+    expect(await detectPackageManager(dir)).toBe(manager);
+  });
+
+  it('picks the lockfile other tools pick when a project has two', async () => {
+    write('package-lock.json');
+    write('yarn.lock');
+    expect(await detectPackageManager(dir)).toBe('yarn');
+    write('pnpm-lock.yaml');
+    expect(await detectPackageManager(dir)).toBe('pnpm');
+  });
+
+  it("goes by the lockfile before package.json's packageManager", async () => {
+    write('package.json', JSON.stringify({ packageManager: 'yarn@4.5.0' }));
+    write('pnpm-lock.yaml');
+    expect(await detectPackageManager(dir)).toBe('pnpm');
+  });
+
+  it("uses package.json's packageManager when there is no lockfile", async () => {
+    write('package.json', JSON.stringify({ packageManager: 'pnpm@9.12.0+sha512.abc' }));
+    expect(await detectPackageManager(dir)).toBe('pnpm');
+  });
+
+  it('falls back to npm with no lockfile, an unknown packageManager or a package.json it cannot read', async () => {
+    write('package.json', '{}');
+    expect(await detectPackageManager(dir)).toBe('npm');
+    write('package.json', JSON.stringify({ packageManager: 'deno@2.0.0' }));
+    expect(await detectPackageManager(dir)).toBe('npm');
+    write('package.json', '{ not json');
+    expect(await detectPackageManager(dir)).toBe('npm');
   });
 });

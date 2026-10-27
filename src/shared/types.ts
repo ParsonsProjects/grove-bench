@@ -1924,8 +1924,12 @@ export interface GroveBenchSettings {
   backgroundModels: Record<string, string>;
 
   // Worktree
-  /** Automatically run npm install in new worktrees. Default false. */
+  /** Install dependencies in new worktrees, with the package manager the
+   *  project's lockfile names. Default false. */
   autoInstallDeps: boolean;
+  /** Folder new worktrees go in, a full path (shared/worktree-folder.ts).
+   *  Empty = the app's data folder. Existing worktrees stay where they are. */
+  worktreeFolder: string;
 
   // Preview
   /** Give the agent browser tools that drive its own page in the Preview tab
