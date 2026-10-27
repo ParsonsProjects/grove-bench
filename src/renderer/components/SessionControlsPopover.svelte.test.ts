@@ -76,12 +76,13 @@ describe('SessionControlsPopover', () => {
     planAlertStore.reset();
   });
 
-  it('summarises agent, model, and mode on the trigger, hiding controls at their default', async () => {
+  it('summarises model and mode on the trigger, naming the agent in its label, and hides controls at their default', async () => {
     render(SessionControlsPopover, { props: { sessionId: SID, modelOptions: MODELS } });
     await new Promise((r) => setTimeout(r, 0));
 
     const trigger = screen.getByTitle(/Agent settings/);
-    expect(trigger).toHaveTextContent('Claude Agent');
+    expect(trigger).not.toHaveTextContent('Claude Agent');
+    expect(trigger).toHaveAccessibleName(/\(Claude Agent\)$/);
     expect(trigger).toHaveTextContent('Opus 5');
     expect(trigger).toHaveTextContent('Ask');
     expect(trigger).not.toHaveTextContent('High');
@@ -96,7 +97,7 @@ describe('SessionControlsPopover', () => {
     await new Promise((r) => setTimeout(r, 0)); // listAdapters resolves
 
     expect(screen.getByTestId('agent-settings-headline')).toHaveTextContent(/^Opus 5 · Plan$/);
-    expect(screen.getByTestId('agent-settings-detail')).toHaveTextContent(/^Claude Agent · Low · Fast$/);
+    expect(screen.getByTestId('agent-settings-detail')).toHaveTextContent(/^· Low · Fast$/);
   });
 
   it('cuts a long model name short on the button but names it in full in the tooltip', async () => {

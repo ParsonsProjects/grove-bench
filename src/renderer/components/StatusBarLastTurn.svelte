@@ -1,9 +1,10 @@
 <script lang="ts">
   /**
-   * The last turn: its cost (API sign-ins only) over how long it took. Only
-   * on a wide bar; the separator after it goes with it. A click opens what
-   * the thread has used so far: its tokens, and with a cost, what it and
-   * today have cost (main's figures, the ones the spend limits count).
+   * The activity popup's usage rows: how long the last turn took and, on
+   * an API sign-in, what it cost; what the thread has used so far (its
+   * tokens) and, with a cost, what it and today have cost (main's figures,
+   * the ones the spend limits count). The thread's and today's figures are
+   * asked for while `active` (the popup is open) and again when a turn ends.
    */
   import { untrack } from 'svelte';
   import { messageStore } from '../stores/messages.svelte.js';
@@ -15,9 +16,18 @@
   import { formatTokens } from '../lib/context-usage.js';
   import type { ThreadUsage } from '../../shared/types.js';
   import { Button } from '$lib/components/ui/button/index.js';
-  import StatusBarPopover from './StatusBarPopover.svelte';
 
-  let { sessionId }: { sessionId: string } = $props();
+  let {
+    sessionId,
+    active,
+    onclose,
+  }: {
+    sessionId: string;
+    /** The popup is open: ask for the thread's and today's figures. */
+    active: boolean;
+    /** Called before Settings opens at Limits & alerts. */
+    onclose?: () => void;
+  } = $props();
 
   let lastResult = $derived(messageStore.lastResult(sessionId));
 
@@ -48,25 +58,26 @@
     const agentType = store.sessions.find((s) => s.id === sessionId)?.agentType ?? agentsStore.defaultId;
     return agentsStore.get(agentType)?.capabilities.usage !== false;
   });
+  /** How long the last turn took, as "18.4s". */
+  let took = $derived(lastResult?.durationMs !== undefined ? `${(lastResult.durationMs / 1000).toFixed(1)}s` : '');
   let lastTurnTitle = $derived.by(() => {
     const usd = lastResult?.totalCostUsd;
-    const took = lastResult?.durationMs !== undefined ? `took ${(lastResult.durationMs / 1000).toFixed(1)}s` : '';
+    const tookText = took ? `took ${took}` : '';
     const basis = reportsPlanUsage ? 'at list price (an estimate)' : 'as the agent reported it';
-    if (lastTurnCost && usd !== undefined) return `Last turn: $${usd.toFixed(4)} ${basis}${took ? `, ${took}` : ''}`;
-    return `Last turn ${took}${onPlan ? '. Your plan covers it: see Usage in Agent settings' : ''}`;
+    if (lastTurnCost && usd !== undefined) return `Last turn: $${usd.toFixed(4)} ${basis}${tookText ? `, ${tookText}` : ''}`;
+    return `Last turn ${tookText}${onPlan ? '. Your plan covers it: see Usage in Agent settings' : ''}`;
   });
 
-  let usageOpen = $state(false);
-  /** A figure in the popover: null while it's being asked for. */
+  /** A figure in the popup: null while it's being asked for. */
   type Asked<T> = T | 'unknown' | null;
-  /** The thread's usage and today's spend, asked for when the popover opens
+  /** The thread's usage and today's spend, asked for when the popup opens
    *  and again when a turn ends while it is open. Each settles on its own. */
   let thread = $state<Asked<ThreadUsage>>(null);
   let todayUsd = $state<Asked<number>>(null);
   /** Only the latest ask's answers are shown. */
   let asking = 0;
   $effect(() => {
-    if (!usageOpen) {
+    if (!active) {
       // Answers still on their way are for an open that has ended.
       asking++;
       thread = null;
@@ -97,53 +108,30 @@
   });
 </script>
 
-{#snippet summary()}
-  {#if lastTurnCost}
-    <span>{lastTurnCost}</span>
-  {/if}
-  <span class="text-caption text-muted-foreground">
-    last turn{#if lastResult?.durationMs !== undefined}&nbsp;{(lastResult.durationMs / 1000).toFixed(1)}s{/if}
-  </span>
-{/snippet}
-
 {#if lastTurnCost || lastResult?.durationMs !== undefined}
-  <StatusBarPopover bind:open={usageOpen} class="hidden @5xl:block" id="status-bar-usage-{sessionId}" label="Usage" panelClass="w-64">
-    {#snippet trigger()}
-      <button
-        onclick={() => usageOpen = !usageOpen}
-        class="flex flex-col gap-px leading-snug whitespace-nowrap text-left hover:text-foreground transition-colors"
-        title={lastTurnTitle}
-        aria-expanded={usageOpen}
-        aria-controls="status-bar-usage-{sessionId}"
-        data-testid="last-turn"
-      >
-        {@render summary()}
-      </button>
-    {/snippet}
-
-    <div class="font-medium text-foreground mb-2">Usage</div>
-    <dl class="space-y-1.5 text-muted-foreground">
-      {#if lastTurnCost}
-        <div class="flex justify-between gap-3"><dt>Last turn</dt><dd class="text-foreground">{lastTurnCost}</dd></div>
-        <div class="flex justify-between gap-3"><dt>This thread</dt><dd class="text-foreground">{threadUsd}</dd></div>
-        <div class="flex justify-between gap-3"><dt>Today, all threads</dt><dd class="text-foreground">{today}</dd></div>
-      {/if}
-      {#if tokens}
-        <div class="flex justify-between gap-3"><dt>Tokens in, this thread</dt><dd class="text-foreground">{tokens.in}</dd></div>
-        <div class="flex justify-between gap-3"><dt>Tokens out, this thread</dt><dd class="text-foreground">{tokens.out}</dd></div>
-      {:else}
-        <div class="flex justify-between gap-3"><dt>Tokens, this thread</dt><dd>none reported</dd></div>
-      {/if}
-    </dl>
-    <p class="mt-2 text-caption text-muted-foreground">
-      {#if lastTurnCost}
-        Estimates. This thread's are {reportsPlanUsage ? 'at list price' : 'as its agent reported them'}. Today's add up every thread since midnight as each agent estimates it, threads on a plan included.
-      {/if}
-      {reportsPlanUsage ? 'Tokens in count what the model read, prompt cache included.' : 'Tokens as the agent reported them.'}
-    </p>
-    <Button variant="link" size="inline" class="mt-2" onclick={() => { usageOpen = false; settingsStore.openAt('limits'); }}>
-      Limits & alerts
-    </Button>
-  </StatusBarPopover>
-  <span class="hidden @5xl:block w-px self-stretch bg-border"></span>
+  <dl class="space-y-1.5 text-muted-foreground">
+    <div class="flex justify-between gap-3" title={lastTurnTitle} data-testid="last-turn">
+      <dt>Last turn</dt>
+      <dd class="text-foreground">{[took, lastTurnCost].filter(Boolean).join(' · ')}</dd>
+    </div>
+    {#if lastTurnCost}
+      <div class="flex justify-between gap-3"><dt>This thread</dt><dd class="text-foreground">{threadUsd}</dd></div>
+      <div class="flex justify-between gap-3"><dt>Today, all threads</dt><dd class="text-foreground">{today}</dd></div>
+    {/if}
+    {#if tokens}
+      <div class="flex justify-between gap-3"><dt>Tokens in, this thread</dt><dd class="text-foreground">{tokens.in}</dd></div>
+      <div class="flex justify-between gap-3"><dt>Tokens out, this thread</dt><dd class="text-foreground">{tokens.out}</dd></div>
+    {:else}
+      <div class="flex justify-between gap-3"><dt>Tokens, this thread</dt><dd>none reported</dd></div>
+    {/if}
+  </dl>
+  <p class="mt-2 text-caption text-muted-foreground">
+    {#if lastTurnCost}
+      Estimates. This thread's are {reportsPlanUsage ? 'at list price' : 'as its agent reported them'}. Today's add up every thread since midnight as each agent estimates it, threads on a plan included.
+    {/if}
+    {reportsPlanUsage ? 'Tokens in count what the model read, prompt cache included.' : 'Tokens as the agent reported them.'}
+  </p>
+  <Button variant="link" size="inline" class="mt-2" onclick={() => { onclose?.(); settingsStore.openAt('limits'); }}>
+    Limits & alerts
+  </Button>
 {/if}
