@@ -168,8 +168,12 @@ describe('SessionEventStore', () => {
     store.ensureDir();
     const s = liveSession('wait');
     let release!: () => void;
+    // Resolves once the write has reached the disk call, however long the
+    // log takes to open: a fixed wait raced a slow open on CI.
+    let started!: () => void;
+    const writing = new Promise<void>((r) => { started = r; });
     wrapAppends(async (append) => {
-      await new Promise<void>((r) => { release = r; });
+      await new Promise<void>((r) => { release = r; started(); });
       return append();
     });
 
@@ -177,6 +181,7 @@ describe('SessionEventStore', () => {
     void store.flush(s);
     let settled = false;
     const waiting = store.flush(s).then(() => { settled = true; });
+    await writing;
     await new Promise((r) => setTimeout(r, 10));
     expect(settled).toBe(false);
 
