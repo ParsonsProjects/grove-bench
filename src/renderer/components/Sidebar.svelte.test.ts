@@ -246,18 +246,31 @@ describe('Sidebar session rows', () => {
       render(Sidebar);
       const row = () => screen.getAllByText('Sidebar revamp')[0].closest('button')!;
 
+      expect(row()).toHaveAttribute('aria-current', 'true');
+
       await fireEvent.click(row());
       expect(store.activeSessionId).toBeNull();
-      expect(row().className).not.toMatch(/bg-sidebar-accent(\s|$)/);
+      expect(row()).not.toHaveAttribute('aria-current');
       // Leaving it doesn't mark it read.
       expect(store.needsAttention['s1']).toBe(true);
 
       await fireEvent.click(row());
       expect(store.activeSessionId).toBe('s1');
+      expect(row()).toHaveAttribute('aria-current', 'true');
       expect(store.needsAttention['s1']).toBeUndefined();
     } finally {
       store.needsAttention = {};
     }
+  });
+
+  it("doesn't deselect the thread a double-click opened", async () => {
+    store.activeSessionId = null;
+    render(Sidebar);
+    const row = screen.getAllByText('Sidebar revamp')[0].closest('button')!;
+
+    await fireEvent.click(row, { detail: 1 });
+    await fireEvent.click(row, { detail: 2 });
+    expect(store.activeSessionId).toBe('s1');
   });
 
   it('goes back to the landing screen when the open conversation is closed', async () => {
@@ -469,6 +482,19 @@ describe('Sidebar attention triage', () => {
     store.activeSessionId = 'quiet';
     await tick();
     expect(screen.queryByText('Finished one')).not.toBeInTheDocument();
+  });
+
+  it('keeps an opened unread thread listed after it is deselected, so a click can open it again', async () => {
+    render(Sidebar);
+    await fireEvent.click(screen.getByTitle('Unread: 1'));
+
+    await fireEvent.click(screen.getByText('Finished one'));
+    await fireEvent.click(screen.getByText('Finished one'));
+    expect(store.activeSessionId).toBeNull();
+    expect(screen.getByText('Finished one')).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByText('Finished one'));
+    expect(store.activeSessionId).toBe('finished');
   });
 
   it('keeps a thread listed under Needs you after its prompt is answered, until another thread is focused', async () => {
@@ -1653,11 +1679,14 @@ describe('Sidebar rail', () => {
 
     await fireEvent.click(s2);
     expect(store.activeSessionId).toBe('s2');
+    expect(s2).toHaveAttribute('aria-current', 'true');
+    expect(s2.className).toMatch(/(^|\s)bg-sidebar-accent(\s|$)/);
     await fireEvent.click(s2);
     expect(store.activeSessionId).toBeNull();
+    expect(s2).not.toHaveAttribute('aria-current');
+    expect(s2.className).not.toMatch(/(^|\s)bg-sidebar-accent(\s|$)/);
     await fireEvent.click(s2);
     expect(store.activeSessionId).toBe('s2');
-    expect(s2.className).toContain('bg-sidebar-accent');
 
     // The full sidebar stays mounted but hidden, so use the rail's own button.
     await fireEvent.click(within(container.querySelector('[data-rail]') as HTMLElement).getByLabelText('Expand sidebar'));

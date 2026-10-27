@@ -504,10 +504,12 @@
   }
 
   /** Open a thread, or deselect it when it is the one open: back to the
-   *  landing screen, or to the draft if there is one. */
-  function toggleSession(id: string) {
+   *  landing screen, or to the draft if there is one. `clicks` is the
+   *  event's click count: a double-click's second click doesn't deselect
+   *  the thread its first one opened. */
+  function toggleSession(id: string, clicks: number) {
     if (store.activeSessionId === id) {
-      store.activeSessionId = null;
+      if (clicks < 2) store.activeSessionId = null;
       return;
     }
     store.activeSessionId = id;
@@ -858,7 +860,7 @@
   /** The focused thread, kept on the list under the chip it was listed under
    *  after it stops matching (opened and read, prompt answered, turn ended),
    *  so the row doesn't vanish on click. It goes once another thread is
-   *  focused or the chip changes. */
+   *  focused or the chip changes, not when the thread is deselected. */
   let keptRowId = $state<string | null>(null);
   // As of the last check. Focusing a thread clears its unread flag in the
   // same step, so it has to be caught from what matched just before.
@@ -871,11 +873,12 @@
     const filter = triageFilter;
     const matching = matchingIds;
     untrack(() => {
-      const keep = !!id && filter !== 'all' && (
-        matching.has(id)
-        || (filter === filterBefore && (matchedBefore.has(id) || keptRowId === id))
+      const target = id ?? keptRowId;
+      const keep = !!target && filter !== 'all' && (
+        matching.has(target)
+        || (filter === filterBefore && (matchedBefore.has(target) || keptRowId === target))
       );
-      keptRowId = keep ? id : null;
+      keptRowId = keep ? target : null;
       matchedBefore = matching;
       filterBefore = filter;
     });
@@ -1019,8 +1022,9 @@
       role="presentation"
     >
       <button
-        onclick={() => { if (!isDestroying) toggleSession(session.id); }}
+        onclick={(e) => { if (!isDestroying) toggleSession(session.id, e.detail); }}
         disabled={isDestroying}
+        aria-current={store.activeSessionId === session.id ? 'true' : undefined}
         title={rowTitle(session.id, label, subtitle)}
         class="w-full flex flex-col pl-4 pr-2 py-1.5 text-left transition-colors
           {isDestroying ? 'opacity-50 cursor-not-allowed' : store.activeSessionId === session.id ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}
@@ -1165,9 +1169,10 @@
         {@const subtitle = rowSubtitle(session)}
         {@const name = `${store.repoDisplayName(session.repoPath)} / ${sessionRowLabel(session)}`}
         <button
-          onclick={() => { if (!isDestroying) toggleSession(session.id); }}
+          onclick={(e) => { if (!isDestroying) toggleSession(session.id, e.detail); }}
           oncontextmenu={(e) => { if (isDestroying) { e.preventDefault(); return; } openContextMenu(e, session.id); }}
           disabled={isDestroying}
+          aria-current={store.activeSessionId === session.id ? 'true' : undefined}
           title={rowTitle(session.id, name, subtitle)}
           aria-label={name}
           data-rail-session={session.id}
