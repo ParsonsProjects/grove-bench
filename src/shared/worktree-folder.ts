@@ -11,17 +11,19 @@
  */
 export const WORKTREE_FOLDER_MAX_LENGTH = 60;
 
-/** A full path: a drive (`D:\`), a network share (`\\server\share`) or, off
- *  Windows, `/`. A relative one would depend on the folder Grove started in. */
-function isFullPath(folder: string): boolean {
-  return /^[a-zA-Z]:[\\/]/.test(folder) || /^\\\\[^\\]+\\[^\\]+/.test(folder) || folder.startsWith('/');
+/** A full path: a drive (`D:\`) or a network share (`\\server\share`), or off
+ *  Windows one from `/`. Anything else depends on where Grove started: on
+ *  Windows `/wt` is the root of whichever drive that was. */
+function isFullPath(folder: string, windows: boolean): boolean {
+  return /^[a-zA-Z]:[\\/]/.test(folder) || /^\\\\[^\\]+\\[^\\]+/.test(folder) || (!windows && folder.startsWith('/'));
 }
 
-/** Why new worktrees can't go in `folder`, or null when they can. */
-export function worktreeFolderError(folder: string): string | null {
+/** Why new worktrees can't go in `folder`, or null when they can. `windows`:
+ *  where the path is used (Settings only runs there; tests run elsewhere). */
+export function worktreeFolderError(folder: string, windows = true): string | null {
   const trimmed = folder.trim();
   if (!trimmed) return null;
-  if (!isFullPath(trimmed)) return 'Use a full path, such as D:\\worktrees.';
+  if (!isFullPath(trimmed, windows)) return 'Use a full path, such as D:\\worktrees.';
   return null;
 }
 

@@ -10,6 +10,7 @@ import { adapterRegistry } from './adapters/index.js';
 import type { AutoNameDecision, DisplayNameSource, DisplayNameState } from './session-auto-name.js';
 import type { SavedThreadLimits } from './session-limits.js';
 import { getSettings } from './settings.js';
+import { isPathInside } from './agent-utils.js';
 import { worktreeFolderError } from '../shared/worktree-folder.js';
 
 const CONFIG_FILE = 'config.json';
@@ -117,10 +118,9 @@ function samePath(a: string, b: string): boolean {
   return pathKey(a) === pathKey(b);
 }
 
-/** `child` is somewhere inside `parent`, not `parent` itself. */
-function isInside(child: string, parent: string): boolean {
-  const rel = path.relative(pathKey(parent), pathKey(child));
-  return rel !== '' && rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel);
+/** The folder a worktree is in: `<root>/<hash>/<id>`. */
+function rootOf(wtPath: string): string {
+  return path.dirname(path.dirname(wtPath));
 }
 
 export class WorktreeManager {
@@ -233,36 +233,56 @@ export class WorktreeManager {
   private worktreeRoots(manifest: ReadonlyManifest): string[] {
     const roots = [this.getWorktreeRoot()];
     const add = (root: string) => {
-      // One inside the data folder is never used (create refuses it): the
-      // data folder's own scan would take its project folders for leftovers.
-      if (isInside(root, roots[0])) return;
+      // The data folder, or one inside it, which create refuses.
+      if (isPathInside(roots[0], root)) return;
       if (!roots.some((r) => samePath(r, root))) roots.push(root);
     };
     const folder = this.worktreeFolder().trim();
-    if (folder && !worktreeFolderError(folder)) add(path.resolve(folder));
+    if (folder && !worktreeFolderError(folder, process.platform === 'win32')) add(path.resolve(folder));
     for (const entry of Object.values(manifest)) {
-      if (!entry.direct && entry.path) add(path.dirname(path.dirname(entry.path)));
+      if (!entry.direct && entry.path) add(rootOf(entry.path));
     }
     return roots;
   }
 
   /**
-   * `git worktree prune`, unless one of the project's worktrees is in a
-   * folder that isn't there right now (a Dev Drive or network share not
-   * connected yet). Prune would drop git's record of that worktree too, and
-   * when the folder came back the worktree would be broken and look like an
-   * orphan.
+   * Make Settings > Git's worktree folder ready for a worktree of `repoPath`
+   * and return its real path. Git records a worktree under its real path
+   * (through a mapped or subst drive, a junction or a symlink), and a typed
+   * path that doesn't match `git worktree list` makes a live worktree look
+   * like an orphan. fs.realpath is the native call, as git's is.
    */
-  private async pruneWorktrees(repoPath: string): Promise<void> {
-    for (const [id, entry] of Object.entries(await this.loadManifest())) {
-      if (entry.repoPath !== repoPath || entry.direct || !entry.path) continue;
-      const root = path.dirname(path.dirname(this.checkoutPath(id, entry)));
-      if (!(await pathExists(root))) {
-        logger.warn(`Not pruning ${repoPath}'s worktrees: ${root} isn't there`);
-        return;
-      }
+  private async customWorktreeRoot(folder: string, repoPath: string): Promise<string> {
+    const refuse = (why: string, cause?: unknown) =>
+      new Error(`Can't make the worktree in ${folder}: ${why} Change the worktree folder in Settings > Git.`, { cause });
+    const error = worktreeFolderError(folder, process.platform === 'win32');
+    if (error) throw refuse(error);
+    const dataRoot = this.getWorktreeRoot();
+    const check = (root: string) => {
+      // The data folder's own scan would take its project folders for leftovers.
+      if (isPathInside(dataRoot, root)) throw refuse(`it is inside the app's data folder, ${dataRoot}.`);
+      // Its worktrees would show in the project's git status, searches and builds.
+      if (isPathInside(repoPath, root)) throw refuse(`it is inside the project, ${repoPath}.`);
+    };
+    check(path.resolve(folder));
+    let real: string;
+    try {
+      await fs.mkdir(path.resolve(folder), { recursive: true });
+      real = await fs.realpath(path.resolve(folder));
+    } catch (e) {
+      throw refuse(`${(e as Error).message}.`, e);
     }
-    await git(['worktree', 'prune'], repoPath);
+    check(real);
+    return real;
+  }
+
+  /** Unlock a worktree made outside the data folder (create locks those), so
+   *  git can remove it and prune its record. */
+  private async unlockWorktree(repoPath: string, wtPath: string): Promise<void> {
+    if (isPathInside(this.getWorktreeRoot(), wtPath)) return;
+    try {
+      await git(['worktree', 'unlock', wtPath], repoPath);
+    } catch { /* not locked, or git no longer knows it */ }
   }
 
   /** Delete a project's folder of worktrees once none are left in it. What
@@ -341,38 +361,30 @@ export class WorktreeManager {
     const id = config.id ?? crypto.randomUUID().slice(0, 8);
     const hash = this.repoHash(repoPath);
     // Settings > Git's worktree folder (a Dev Drive, say), else the data folder.
+    const dataRoot = this.getWorktreeRoot();
     const folder = this.worktreeFolder().trim();
-    const folderError = worktreeFolderError(folder);
-    if (folderError) {
-      throw new Error(`Can't make the worktree in ${folder}: ${folderError} Change the worktree folder in Settings > Git.`);
-    }
-    const root = folder ? path.resolve(folder) : this.getWorktreeRoot();
-    if (isInside(root, this.getWorktreeRoot())) {
-      // The sweep would take its project folders for leftovers.
-      throw new Error(`Can't make the worktree in ${folder}: it is inside the app's data folder, ${this.getWorktreeRoot()}. Pick a folder outside it in Settings > Git, or leave the setting empty.`);
-    }
-    const inDataFolder = samePath(root, this.getWorktreeRoot());
+    const root = folder && !samePath(path.resolve(folder), dataRoot) ? await this.customWorktreeRoot(folder, repoPath) : dataRoot;
+    const inDataFolder = root === dataRoot;
     const wtPath = path.join(root, hash, id);
+    // Locked outside the data folder: that folder may be on a drive that
+    // isn't always connected, and a prune (Grove's, or git gc's) would drop
+    // git's record of a worktree it can't see. remove() unlocks it.
+    const lock = inDataFolder ? [] : ['--lock'];
 
     this.creating.add(id);
     try {
       // Ensure parent directory exists
-      try {
-        await fs.mkdir(path.dirname(wtPath), { recursive: true });
-      } catch (e) {
-        if (inDataFolder) throw e;
-        throw new Error(`Couldn't make the worktree folder ${path.dirname(wtPath)}: ${(e as Error).message}. Change the worktree folder in Settings > Git.`, { cause: e });
-      }
+      await fs.mkdir(path.dirname(wtPath), { recursive: true });
 
       // Create worktree: existing branch or new branch. A new branch whose
       // name is taken fails here: git refuses, and nothing is deleted to make
       // room (the name may belong to another conversation's worktree).
       if (useExisting) {
-        await git(['worktree', 'add', wtPath, branchName], repoPath);
+        await git(['worktree', 'add', ...lock, wtPath, branchName], repoPath);
       } else {
         // Pull the latest base branch so the new agent starts from what's on origin
         const startPoint = baseBranch ? await this.pullBaseBranch(repoPath, baseBranch) : undefined;
-        await git(['worktree', 'add', '-b', branchName, wtPath, ...(startPoint ? [startPoint] : [])], repoPath);
+        await git(['worktree', 'add', ...lock, '-b', branchName, wtPath, ...(startPoint ? [startPoint] : [])], repoPath);
       }
 
       // Generate agent-specific settings (e.g. .claude/settings.local.json)
@@ -762,6 +774,7 @@ export class WorktreeManager {
     await this.withRepoLock(repoPath, async () => {
       let dirRemoved = true;
       if (!info.direct) {
+        await this.unlockWorktree(repoPath, wtPath);
         // Retry chain for Windows file locking
         try {
           await git(['worktree', 'remove', wtPath], repoPath);
@@ -773,7 +786,7 @@ export class WorktreeManager {
               // A PTY shell or agent process may still be releasing its cwd;
               // back off briefly before giving up.
               await removeDirectoryWithRetry(wtPath);
-              await this.pruneWorktrees(repoPath);
+              await git(['worktree', 'prune'], repoPath);
             } catch (e) {
               dirRemoved = false;
               logger.warn(`Worktree ${id} is still locked; deferring removal to the background sweep: ${e}`);
@@ -872,12 +885,19 @@ export class WorktreeManager {
     let cleaned = 0;
     for (const [id, entry] of pending) {
       const wtPath = this.checkoutPath(id, entry);
+      // In a folder that isn't there (a drive not connected yet) there is
+      // nothing to remove yet: it stays pending, or it would be left behind.
+      if (!entry.direct && entry.path && !(await pathExists(rootOf(wtPath)))) {
+        logger.info(`Sweep: worktree ${id} is in ${rootOf(wtPath)}, which isn't there; will retry next sweep`);
+        continue;
+      }
       try {
         await this.withRepoLock(entry.repoPath, async () => {
           if (!entry.direct && (await pathExists(wtPath))) {
             await removeDirectory(wtPath);
           }
-          try { await this.pruneWorktrees(entry.repoPath); } catch { /* repo may be gone */ }
+          if (!entry.direct) await this.unlockWorktree(entry.repoPath, wtPath);
+          try { await git(['worktree', 'prune'], entry.repoPath); } catch { /* repo may be gone */ }
           if (entry.pendingBranchDelete && !entry.direct) {
             await this.deleteConversationBranches(entry.repoPath, wtPath, entry.branch, entry.createdBranches);
           }
@@ -1233,7 +1253,7 @@ export class WorktreeManager {
   private async moveToTrash(dirPath: string, now = Date.now()): Promise<string> {
     // The trash of the folder the worktree is in (<root>/<hash>/<id>), so
     // the move stays on its drive and is a rename.
-    const trash = path.join(path.dirname(path.dirname(dirPath)), TRASH_DIR);
+    const trash = path.join(rootOf(dirPath), TRASH_DIR);
     await fs.mkdir(trash, { recursive: true });
     const dest = path.join(trash, `${now}-${path.basename(path.dirname(dirPath))}-${path.basename(dirPath)}`);
     await fs.rename(dirPath, dest);
@@ -1310,8 +1330,8 @@ export class WorktreeManager {
         // permissions) says nothing about it: leave the entry for next time.
         if ((e as NodeJS.ErrnoException).code !== 'ENOENT') continue;
         // Nor does a worktree folder that isn't there (a drive not
-        // connected yet).
-        if (entry.path && !(await pathExists(path.dirname(path.dirname(wtPath))))) continue;
+        // connected yet). Its worktrees are locked, so prune leaves them.
+        if (entry.path && !(await pathExists(rootOf(wtPath)))) continue;
         dirExists = false;
       }
 
@@ -1328,6 +1348,8 @@ export class WorktreeManager {
             continue; // keep the entry; retry next sweep
           }
         }
+        // Deleted while its folder is there: unlocked, so prune clears it.
+        if (!dirExists) await this.unlockWorktree(repoPath, wtPath);
         orphans.push(id);
         hashDirs.add(path.dirname(wtPath));
       }
@@ -1347,7 +1369,7 @@ export class WorktreeManager {
 
     if (cleaned > 0) {
       try {
-        await this.pruneWorktrees(repoPath);
+        await git(['worktree', 'prune'], repoPath);
       } catch { /* ignore */ }
 
       // Clean up empty repoHash directories
@@ -1406,65 +1428,62 @@ export class WorktreeManager {
     }
 
     // Phase 2: scan for directories on disk that aren't tracked in the manifest at all.
-    // In the data folder every project's folder is looked in. Settings > Git's
-    // folder may hold the user's own folders too, so there only the folders
-    // of projects in the manifest are.
+    // Only in the data folder. Settings > Git's folder is the user's: it may
+    // hold their own folders, or another Windows account's worktrees that this
+    // manifest doesn't list. There only the manifest says what is Grove's
+    // (phase 1).
     const activeIds = new Set([...this.worktrees.keys(), ...this.creating]);
     const freshManifest = await this.loadManifest(); // re-read after phase 1 mutations
-    const knownHashes = [...new Set(Object.values(freshManifest).map((e) => this.repoHash(e.repoPath)))];
 
-    for (const scanRoot of this.worktreeRoots(freshManifest)) {
-      const inDataFolder = samePath(scanRoot, root);
-      try {
-        const hashDirs = inDataFolder ? await fs.readdir(scanRoot) : knownHashes;
-        for (const hashDir of hashDirs) {
-          if (hashDir === MANIFEST_FILE || hashDir === TRASH_DIR) continue;
-          const hashDirPath = path.join(scanRoot, hashDir);
-          const stat = await fs.stat(hashDirPath).catch(() => null);
-          if (!stat?.isDirectory()) continue;
+    try {
+      const hashDirs = await fs.readdir(root);
+      for (const hashDir of hashDirs) {
+        if (hashDir === MANIFEST_FILE || hashDir === TRASH_DIR) continue;
+        const hashDirPath = path.join(root, hashDir);
+        const stat = await fs.stat(hashDirPath).catch(() => null);
+        if (!stat?.isDirectory()) continue;
 
-          const entries = await fs.readdir(hashDirPath);
-          for (const entry of entries) {
-            if (entry === CONFIG_FILE) continue;
-            const entryPath = path.join(hashDirPath, entry);
-            if (entry === LEGACY_NPM_CACHE_DIR) {
-              // Installs use the user's own cache now.
-              try {
-                await removeDirectory(entryPath);
-                logger.info(`Sweep: deleted the old npm cache ${entryPath}`);
-              } catch (e) {
-                logger.warn(`Sweep: could not delete the old npm cache ${entryPath}, will retry: ${e}`);
-              }
-              continue;
+        const entries = await fs.readdir(hashDirPath);
+        for (const entry of entries) {
+          if (entry === CONFIG_FILE) continue;
+          const entryPath = path.join(hashDirPath, entry);
+          if (entry === LEGACY_NPM_CACHE_DIR) {
+            // Installs use the user's own cache now.
+            try {
+              await removeDirectory(entryPath);
+              logger.info(`Sweep: deleted the old npm cache ${entryPath}`);
+            } catch (e) {
+              logger.warn(`Sweep: could not delete the old npm cache ${entryPath}, will retry: ${e}`);
             }
-            const entryStat = await fs.stat(entryPath).catch(() => null);
-            if (!entryStat?.isDirectory()) continue;
+            continue;
+          }
+          const entryStat = await fs.stat(entryPath).catch(() => null);
+          if (!entryStat?.isDirectory()) continue;
 
-            // If this directory ID is not in the manifest and not an active session, remove it.
-            // Checked live, not just against the snapshot: a conversation may
-            // have been created while this loop awaited.
-            const live = activeIds.has(entry) || this.creating.has(entry) || this.worktrees.has(entry);
-            if (!freshManifest[entry] && !live) {
-              try {
-                await this.moveToTrash(entryPath);
-                totalCleaned++;
-              } catch {
-                logger.warn(`Sweep: directory busy, will retry next sweep: ${entryPath}`);
-              }
+          // If this directory ID is not in the manifest and not an active session, remove it.
+          // Checked live, not just against the snapshot: a conversation may
+          // have been created while this loop awaited.
+          const live = activeIds.has(entry) || this.creating.has(entry) || this.worktrees.has(entry);
+          if (!freshManifest[entry] && !live) {
+            try {
+              await this.moveToTrash(entryPath);
+              totalCleaned++;
+            } catch {
+              logger.warn(`Sweep: directory busy, will retry next sweep: ${entryPath}`);
             }
           }
-
-          // Clean up empty hash directory
-          try {
-            const remaining = (await fs.readdir(hashDirPath)).filter((e) => e !== CONFIG_FILE);
-            if (remaining.length === 0) {
-              await fs.rm(hashDirPath, { recursive: true, force: true });
-            }
-          } catch { /* ignore */ }
         }
-      } catch (e) {
-        logger.warn(`Sweep: failed to scan worktree folder ${scanRoot}:`, e);
+
+        // Clean up empty hash directory
+        try {
+          const remaining = (await fs.readdir(hashDirPath)).filter((e) => e !== CONFIG_FILE);
+          if (remaining.length === 0) {
+            await fs.rm(hashDirPath, { recursive: true, force: true });
+          }
+        } catch { /* ignore */ }
       }
+    } catch (e) {
+      logger.warn('Sweep: failed to scan worktree root:', e);
     }
 
     // Phase 3: clean stale direct entries whose project folder is gone. Only

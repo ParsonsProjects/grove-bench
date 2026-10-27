@@ -12,6 +12,7 @@ const mockFs = vi.hoisted(() => ({
   readdir: vi.fn(),
   access: vi.fn(),
   stat: vi.fn(),
+  realpath: vi.fn(),
 }));
 
 vi.mock('node:fs/promises', () => ({
@@ -81,6 +82,7 @@ beforeEach(() => {
     savedManifest = JSON.parse(data);
   });
   mockFs.mkdir.mockResolvedValue(undefined);
+  mockFs.realpath.mockImplementation(async (p: string) => p);
   vi.mocked(getDefaultBranch).mockResolvedValue('main');
 });
 
@@ -1587,6 +1589,7 @@ describe("Settings > Git's worktree folder", () => {
   const hash = crypto.createHash('sha256').update('/repo').digest('hex').slice(0, 8);
   const inFolder = (id: string) => path.join(folder, hash, id);
   const errno = (code: string) => Object.assign(new Error(code), { code });
+  const ranGit = (...args: string[]) => mockGit.mock.calls.some((c) => c[0].join(' ') === args.join(' '));
   let setting: string;
 
   beforeEach(() => {
@@ -1599,26 +1602,39 @@ describe("Settings > Git's worktree folder", () => {
     mockFs.rename.mockResolvedValue(undefined);
   });
 
-  it('makes new worktrees there, and records where, so they are found after the setting changes', async () => {
+  it('makes new worktrees there, locked, and records where, so they are found after the setting changes', async () => {
     const info = await manager.create({ repoPath: '/repo', branchName: 'feat', id: 'a1' });
     expect(info.path).toBe(inFolder('a1'));
     expect(mockFs.mkdir).toHaveBeenCalledWith(path.join(folder, hash), { recursive: true });
-    expect(mockGit).toHaveBeenCalledWith(['worktree', 'add', '-b', 'feat', inFolder('a1')], '/repo');
+    expect(mockGit).toHaveBeenCalledWith(['worktree', 'add', '--lock', '-b', 'feat', inFolder('a1')], '/repo');
     expect(savedManifest).toEqual({ a1: expect.objectContaining({ path: inFolder('a1') }) });
 
     setting = '';
     const restarted = new WorktreeManager(() => setting);
     mockFs.readFile.mockResolvedValue(JSON.stringify(savedManifest));
-    mockGit.mockResolvedValue(`worktree ${inFolder('a1')}\nbranch refs/heads/feat\n`);
+    mockGit.mockResolvedValue(`worktree ${inFolder('a1')}\nbranch refs/heads/feat\nlocked\n`);
     expect((await restarted.list('/repo')).map((w) => w.path)).toEqual([inFolder('a1')]);
     expect((await restarted.getWorktreeOrManifest('a1'))?.path).toBe(inFolder('a1'));
   });
 
-  it('keeps making them in the data folder, with no recorded path, when it is empty', async () => {
+  it('uses the real path, as git records it, when the folder is reached through a link or mapped drive', async () => {
+    const real = path.resolve('/mnt/share/wt');
+    mockFs.realpath.mockImplementation(async (p: string) => (p === folder ? real : p));
+
+    const info = await manager.create({ repoPath: '/repo', branchName: 'feat', id: 'a1', useExisting: true });
+
+    expect(info.path).toBe(path.join(real, hash, 'a1'));
+    expect(mockGit).toHaveBeenCalledWith(['worktree', 'add', '--lock', path.join(real, hash, 'a1'), 'feat'], '/repo');
+    expect(savedManifest.a1).toMatchObject({ path: path.join(real, hash, 'a1') });
+  });
+
+  it('keeps making them in the data folder, unlocked and with no recorded path, when it is empty', async () => {
     setting = '';
     const info = await manager.create({ repoPath: '/repo', branchName: 'feat', id: 'a1' });
     expect(info.path).toBe(path.join('/mock/userData/worktrees', hash, 'a1'));
+    expect(mockGit).toHaveBeenCalledWith(['worktree', 'add', '-b', 'feat', info.path], '/repo');
     expect(savedManifest.a1).not.toHaveProperty('path');
+    expect(mockFs.realpath).not.toHaveBeenCalled();
   });
 
   it("refuses a folder that isn't a full path, before touching git", async () => {
@@ -1630,15 +1646,39 @@ describe("Settings > Git's worktree folder", () => {
     expect(savedManifest).toEqual({});
   });
 
+  it('refuses a folder inside the project, whose git status and tools would see every worktree', async () => {
+    setting = '/repo/.worktrees';
+    await expect(manager.create({ repoPath: '/repo', branchName: 'feat', id: 'a1' })).rejects.toThrow('it is inside the project, /repo.');
+    expect(mockGit).not.toHaveBeenCalled();
+  });
+
+  it('refuses a folder that only turns out to be inside the project through a link', async () => {
+    mockFs.realpath.mockImplementation(async (p: string) => (p === folder ? path.resolve('/repo/wt') : p));
+    await expect(manager.create({ repoPath: '/repo', branchName: 'feat', id: 'a1' })).rejects.toThrow('it is inside the project');
+    expect(mockGit).not.toHaveBeenCalled();
+  });
+
   it("names the folder it couldn't make, such as one on a drive that isn't there", async () => {
     mockFs.mkdir.mockRejectedValueOnce(errno('ENOENT'));
     await expect(manager.create({ repoPath: '/repo', branchName: 'feat', id: 'a1' })).rejects.toThrow(
-      `Couldn't make the worktree folder ${path.join(folder, hash)}: ENOENT. Change the worktree folder in Settings > Git.`,
+      "Can't make the worktree in /dev-drive/wt: ENOENT. Change the worktree folder in Settings > Git.",
     );
     expect(mockGit).not.toHaveBeenCalled();
   });
 
-  it("keeps a worktree whose folder isn't there (a drive not connected yet), and doesn't prune its record", async () => {
+  it('unlocks a worktree there before removing it', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({ a1: { repoPath: '/repo', branch: 'feat', createdAt: 1, path: inFolder('a1') } }));
+    mockFs.readdir.mockResolvedValue([]);
+    mockFs.rm.mockResolvedValue(undefined);
+
+    await manager.remove('a1');
+
+    const ran = mockGit.mock.calls.map((c) => c[0].join(' '));
+    expect(ran.slice(0, 2)).toEqual([`worktree unlock ${inFolder('a1')}`, `worktree remove ${inFolder('a1')}`]);
+    expect(savedManifest).toEqual({});
+  });
+
+  it("keeps a worktree whose folder isn't there (a drive not connected yet); its lock keeps git's record through prune", async () => {
     mockFs.readFile.mockResolvedValue(JSON.stringify({
       a1: { repoPath: '/repo', branch: 'feat', createdAt: 1, path: inFolder('a1') },
       gone: { repoPath: '/repo', branch: 'old', createdAt: 1 },
@@ -1648,42 +1688,65 @@ describe("Settings > Git's worktree folder", () => {
 
     expect(await manager.cleanupOrphans('/repo')).toBe(1);
     expect(Object.keys(savedManifest)).toEqual(['a1']);
-    expect(mockGit).not.toHaveBeenCalledWith(['worktree', 'prune'], '/repo');
+    expect(ranGit('worktree', 'unlock', inFolder('a1'))).toBe(false);
+    expect(ranGit('worktree', 'prune')).toBe(true);
   });
 
-  it('prunes as before once the folder is back', async () => {
-    mockFs.readFile.mockResolvedValue(JSON.stringify({
-      a1: { repoPath: '/repo', branch: 'feat', createdAt: 1, path: inFolder('a1') },
-      gone: { repoPath: '/repo', branch: 'old', createdAt: 1 },
-    }));
-    mockFs.access.mockImplementation(async (p: string) => {
-      if (p !== inFolder('a1')) throw errno('ENOENT');
-    });
-    mockGit.mockResolvedValue(`worktree ${inFolder('a1')}\nbranch refs/heads/feat\n`);
+  it('drops one deleted while its folder is there, unlocking it so prune clears git\'s record', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({ a1: { repoPath: '/repo', branch: 'feat', createdAt: 1, path: inFolder('a1') } }));
+    mockFs.access.mockRejectedValue(errno('ENOENT'));
+    mockFs.readdir.mockResolvedValue([]);
 
     expect(await manager.cleanupOrphans('/repo')).toBe(1);
-    expect(mockGit).toHaveBeenCalledWith(['worktree', 'prune'], '/repo');
+    expect(savedManifest).toEqual({});
+    const ran = mockGit.mock.calls.map((c) => c[0].join(' '));
+    expect(ran.indexOf(`worktree unlock ${inFolder('a1')}`)).toBeLessThan(ran.indexOf('worktree prune'));
   });
 
-  it("the sweep only looks in known projects' folders there, and trashes on that drive", async () => {
+  it("leaves a pending removal pending while its folder isn't there", async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({
+      a1: { repoPath: '/repo', branch: 'feat', createdAt: 1, path: inFolder('a1'), pendingRemoval: true },
+    }));
+    mockFsUtils.pathExists.mockResolvedValue(false);
+
+    expect(await manager.processPendingRemovals()).toBe(0);
+    expect(mockGit).not.toHaveBeenCalled();
+    expect(mockFs.writeFile).not.toHaveBeenCalled();
+  });
+
+  it('finishes a pending removal there once the folder is back, unlocking before the prune', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({
+      a1: { repoPath: '/repo', branch: 'feat', createdAt: 1, path: inFolder('a1'), pendingRemoval: true },
+    }));
+    mockFsUtils.removeDirectory.mockResolvedValue(undefined);
+
+    expect(await manager.processPendingRemovals()).toBe(1);
+    expect(mockFsUtils.removeDirectory).toHaveBeenCalledWith(inFolder('a1'));
+    expect(mockGit.mock.calls.map((c) => c[0].join(' '))).toEqual([`worktree unlock ${inFolder('a1')}`, 'worktree prune']);
+    expect(savedManifest).toEqual({});
+  });
+
+  it('the sweep never scans that folder for leftovers: it may hold the user\'s folders or another account\'s worktrees', async () => {
     mockFs.readFile.mockResolvedValue(JSON.stringify({ a1: { repoPath: '/repo', branch: 'feat', createdAt: 1, path: inFolder('a1') } }));
     mockFs.access.mockResolvedValue(undefined);
     mockFs.stat.mockResolvedValue({ isDirectory: () => true });
     mockGit.mockResolvedValue(`worktree ${inFolder('a1')}\nbranch refs/heads/feat\n`);
-    mockFs.readdir.mockImplementation(async (p: string) => {
-      // The user's own folder next to Grove's.
-      if (p === folder) return ['my-project', hash];
-      if (p === path.join(folder, 'my-project')) return ['src'];
-      if (p === path.join(folder, hash)) return ['a1', 'lost0001'];
-      return [];
-    });
+    mockFs.readdir.mockImplementation(async (p: string) => (p === path.join(folder, hash) ? ['a1', 'other01'] : []));
 
     await manager.sweepStaleWorktrees();
 
     expect(mockFs.readdir).not.toHaveBeenCalledWith(folder);
-    expect(mockFs.readdir).not.toHaveBeenCalledWith(path.join(folder, 'my-project'));
-    expect(mockFs.rename).toHaveBeenCalledOnce();
-    expect(mockFs.rename).toHaveBeenCalledWith(inFolder('lost0001'), expect.stringContaining(path.join(folder, '.trash') + path.sep));
+    expect(mockFs.readdir).not.toHaveBeenCalledWith(path.join(folder, hash));
+    expect(mockFs.rename).not.toHaveBeenCalled();
+  });
+
+  it("moves an orphan there that git no longer lists to that folder's own trash, on its drive", async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({ a1: { repoPath: '/repo', branch: 'feat', createdAt: 1, path: inFolder('a1') } }));
+    mockFs.access.mockResolvedValue(undefined);
+    mockFs.readdir.mockResolvedValue([]);
+
+    expect(await manager.cleanupOrphans('/repo')).toBe(1);
+    expect(mockFs.rename).toHaveBeenCalledWith(inFolder('a1'), expect.stringContaining(path.join(folder, '.trash') + path.sep));
   });
 
   it("purges that folder's trash too", async () => {

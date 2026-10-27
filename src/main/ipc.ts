@@ -516,6 +516,11 @@ export function registerHandlers() {
               const stderr = err.stderr || err.message || String(e);
               logger.warn(`${manager} install failed for worktree ${worktree.id}:`, e);
               emitPrelaunch({ type: 'error', message: `${manager} install failed:\n${stderr}` });
+            } else if (manager !== 'npm') {
+              // The project asks for this tool, and npm used to run in its
+              // place. No package.json, or no npm at all, stays quiet as before.
+              logger.warn(`${manager} isn't installed; no dependencies installed in worktree ${worktree.id}`);
+              emitPrelaunch({ type: 'error', message: `This project uses ${manager}, which isn't installed or isn't on PATH, so the worktree's dependencies weren't installed.` });
             }
           }
         }

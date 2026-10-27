@@ -41,9 +41,9 @@ function isPackageManager(name: string): name is PackageManager {
  * lockfile to go on, and leave a package-lock.json in the worktree.
  */
 export async function detectPackageManager(cwd: string): Promise<PackageManager> {
-  for (const [file, manager] of LOCKFILES) {
-    if (await fs.access(path.join(cwd, file)).then(() => true, () => false)) return manager;
-  }
+  const names = new Set(await fs.readdir(cwd).catch((): string[] => []));
+  const lockfile = LOCKFILES.find(([file]) => names.has(file));
+  if (lockfile) return lockfile[1];
   try {
     const { packageManager } = JSON.parse(await fs.readFile(path.join(cwd, 'package.json'), 'utf-8')) as { packageManager?: unknown };
     const name = typeof packageManager === 'string' ? packageManager.split('@')[0] : '';

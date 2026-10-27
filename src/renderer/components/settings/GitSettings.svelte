@@ -50,7 +50,7 @@
     setting="worktree-folder"
     label="Worktree folder"
     for="settings-worktree-folder"
-    description="Where new worktrees go. A short folder on a Dev Drive, such as D:\wt, can make installs faster. Leave empty to use the app's data folder. Worktrees already made stay where they are."
+    description="Where new worktrees go, outside your projects. A short folder on a Dev Drive, such as D:\wt, can make installs faster. Leave empty to use the app's data folder. Worktrees already made stay where they are."
   >
     <Input
       id="settings-worktree-folder"

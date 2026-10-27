@@ -486,6 +486,26 @@ describe('SESSION_CREATE', () => {
     expect(m.sessionManager.createSession).toHaveBeenCalled();
   });
 
+  it("says so when the project's own package manager isn't installed, and still starts the agent", async () => {
+    m.settings.getSettings.mockReturnValue({ autoInstallDeps: true });
+    const withPkg = fs.mkdtempSync(path.join(tmp, 'pkg-'));
+    fs.writeFileSync(path.join(withPkg, 'package.json'), '{}');
+    m.worktreeManager.create.mockImplementation(async (c: { id: string; branchName: string }) => ({
+      id: c.id, path: withPkg, branch: c.branchName, repoPath: '/repo', createdAt: 0,
+    }));
+    vi.mocked(detectPackageManager).mockResolvedValue('pnpm');
+    vi.mocked(installDependencies).mockRejectedValue(Object.assign(new Error('spawn pnpm ENOENT'), { code: 'ENOENT', syscall: 'spawn pnpm' }));
+
+    const { id } = await create();
+    await lastSetup().promise;
+
+    expect(tabEvents(id)).toContainEqual({
+      type: 'error',
+      message: "This project uses pnpm, which isn't installed or isn't on PATH, so the worktree's dependencies weren't installed.",
+    });
+    expect(m.sessionManager.createSession).toHaveBeenCalled();
+  });
+
   it('tells the tab when setup fails', async () => {
     m.worktreeManager.create.mockRejectedValue(new Error('worktree add failed'));
 
