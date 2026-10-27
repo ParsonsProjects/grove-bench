@@ -1357,6 +1357,10 @@ export interface GroveBenchAPI {
   /** Local and remote branch names (remote prefix stripped). Fetches first
    *  unless `fetch` is false. */
   listBranches(repoPath: string, opts?: { fetch?: boolean }): Promise<string[]>;
+  /** Branches checked out somewhere in the project, the project folder
+   *  included, each with the folder it is checked out in. Git won't check
+   *  one out a second time, so a new thread can't open them. */
+  listCheckedOutBranches(repoPath: string): Promise<Record<string, string>>;
   /** The repo's default branch (origin/HEAD, falling back to main/master). */
   getDefaultBranch(repoPath: string): Promise<string>;
   renameBranch(sessionId: string, newBranchName: string): Promise<{ branch: string }>;
@@ -2232,6 +2236,7 @@ export const IPC = {
   WORKTREE_LIST: 'worktree:list',
   WORKTREE_LIST_REPOS: 'worktree:listRepos',
   BRANCH_LIST: 'branch:list',
+  BRANCH_CHECKED_OUT: 'branch:checkedOut',
   BRANCH_DEFAULT: 'branch:default',
   BRANCH_RENAME: 'branch:rename',
   BRANCH_SWITCH: 'branch:switch',

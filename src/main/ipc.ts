@@ -412,6 +412,25 @@ export function registerHandlers() {
       if (!exists) {
         throw new Error(`Branch "${branch}" does not exist`);
       }
+      // Git checks a branch out in one place at a time. Refused here, so the
+      // draft comes back with the reason, rather than the new thread failing
+      // as it makes its copy. (A group's branch was checked above.)
+      let held: Map<string, string> | null = null;
+      if (opts.useExisting) {
+        try {
+          held = await worktreeBranches(opts.repoPath);
+        } catch {
+          held = null; // git makes the copy, and says so, if it can't
+        }
+      }
+      const holder = held?.get(branch);
+      if (holder) {
+        // git prints its paths with forward slashes, in its own letter case.
+        const key = (p: string) => (process.platform === 'win32' ? path.resolve(p).toLowerCase() : path.resolve(p));
+        throw new Error(key(holder) === key(opts.repoPath)
+          ? `${branch} is checked out in the project folder. Pick Project folder to work there, or pick another branch.`
+          : `${branch} is checked out at ${holder}. A branch can only be checked out in one place, so pick another branch.`);
+      }
     } else {
       const exists = await branchExists(opts.repoPath, branch);
       const validName = await validateBranchName(branch);
@@ -813,6 +832,10 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.BRANCH_LIST, async (_event, repoPath: string, opts?: { fetch?: boolean }) => {
     return listBranches(repoPath, { fetch: opts?.fetch !== false });
+  });
+
+  ipcMain.handle(IPC.BRANCH_CHECKED_OUT, async (_event, repoPath: string) => {
+    return Object.fromEntries(await worktreeBranches(repoPath));
   });
 
   ipcMain.handle(IPC.BRANCH_DEFAULT, async (_event, repoPath: string) => {

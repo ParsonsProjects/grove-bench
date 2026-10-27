@@ -18,6 +18,7 @@
   import { SectionLabel } from '$lib/components/ui/section-label/index.js';
   import { menuItem, menuPanel } from '$lib/components/ui/menu/index.js';
   import { placeInPane } from '../lib/keep-in-viewport.js';
+  import { draftPrototype } from '$lib/draft-prototype.svelte.js';
   import { cn } from '$lib/utils.js';
 
   let open = $state(false);
@@ -70,6 +71,7 @@
     details={summary.details}
     {open}
     onclick={() => open = !open}
+    compact={draftPrototype.current.footer === 'compact'}
   />
 
   {#if open && draft}

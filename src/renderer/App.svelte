@@ -20,6 +20,7 @@
   import Sidebar from './components/Sidebar.svelte';
   import WorkspacePane from './components/WorkspacePane.svelte';
   import ErrorToast from './components/ErrorToast.svelte';
+  import DraftUndoToast from './components/DraftUndoToast.svelte';
   import MemoryToast from './components/MemoryToast.svelte';
   import PlanUsageToast from './components/PlanUsageToast.svelte';
   import { memoryStore } from './stores/memory.svelte.js';
@@ -640,6 +641,7 @@
 {/if}
 
 <ErrorToast />
+<DraftUndoToast />
 <!-- Toasts share one stack above the status bar, so two at once sit one
      above the other instead of on top of each other. -->
 <div class="fixed bottom-16 right-4 z-50 flex max-w-md flex-col items-end gap-2 pointer-events-none *:pointer-events-auto">

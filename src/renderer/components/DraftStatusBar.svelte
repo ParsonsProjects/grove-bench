@@ -18,6 +18,8 @@
   import { Button } from '$lib/components/ui/button/index.js';
   import { menuItem, menuPanel } from '$lib/components/ui/menu/index.js';
   import { placeInPane } from '../lib/keep-in-viewport.js';
+  import { draftPrototype } from '$lib/draft-prototype.svelte.js';
+  import { cn } from '$lib/utils.js';
   import XIcon from '@lucide/svelte/icons/x';
 
   /** After a skill is picked, so the message box takes the cursor back. */
@@ -48,8 +50,16 @@
     if (start.kind === 'existing') return start.pr ? start.pr.title : 'existing branch · separate copy';
     const from = start.baseBranch.trim() ? `from ${start.baseBranch.trim()}` : 'from the default branch';
     if (draftStore.onGroupBranch) return `the group's branch · ${from}, or continued if the project has it`;
-    return start.branchName.trim() ? from : `${from} · named after the first reply`;
+    if (start.branchName.trim()) return from;
+    return draftPrototype.current.copy === 'current' ? `${from} · named after the first reply` : `${from} · named from your message`;
   });
+
+  /** Prototype footer layouts (draft-prototype): 'compact' drops the
+   *  detail line and counts as the row narrows; 'wrap' hands the parts to
+   *  the message box's footer row to wrap; 'outside' is a row of its own
+   *  under the box. */
+  const footer = $derived(draftPrototype.current.footer);
+  const compact = $derived(footer === 'compact');
 
   function handleClickOutside(e: MouseEvent) {
     const target = e.target as Node;
@@ -83,18 +93,23 @@
      button sizes its model name from this row. The row is narrower than the
      button's wide breakpoint, so the name keeps its short width here rather
      than widening with some outer container. -->
-<div class="@container flex-1 min-w-0 flex items-center gap-4 text-xs text-muted-foreground">
+<div class={cn(
+  'text-xs text-muted-foreground',
+  footer === 'wrap' ? 'contents'
+    : footer === 'outside' ? '@container w-full flex flex-wrap items-center gap-x-4 gap-y-2'
+    : '@container flex-1 min-w-0 flex items-center gap-4',
+)}>
   <DraftAgentControl />
 
   <span class="w-px self-stretch bg-border"></span>
 
-  <div class="relative flex flex-col gap-px leading-snug min-w-0" bind:this={stackRef}>
+  <div class={cn('relative flex flex-col gap-px leading-snug min-w-0', compact && 'flex-1 min-w-24')} bind:this={stackRef}>
     <span class="flex items-center gap-1 min-w-0">
       {#if store.repos.length > 1}
         <button
           type="button"
           onclick={() => { projectMenuOpen = !projectMenuOpen; pickerOpen = false; }}
-          class="text-muted-foreground hover:text-foreground truncate max-w-32 transition-colors"
+          class={cn('text-muted-foreground hover:text-foreground truncate max-w-32 transition-colors', compact && '@max-md:max-w-16')}
           title="Project: {draft.repoPath}. Click to change"
           aria-haspopup="menu"
           aria-expanded={projectMenuOpen}
@@ -102,9 +117,9 @@
           {store.repoDisplayName(draft.repoPath)}
         </button>
       {:else}
-        <span class="text-muted-foreground truncate max-w-32" title={draft.repoPath}>{store.repoDisplayName(draft.repoPath)}</span>
+        <span class={cn('text-muted-foreground truncate max-w-32', compact && '@max-md:hidden')} title={draft.repoPath}>{store.repoDisplayName(draft.repoPath)}</span>
       {/if}
-      <span class="text-muted-foreground/30 shrink-0">/</span>
+      <span class={cn('text-muted-foreground/30 shrink-0', compact && store.repos.length <= 1 && '@max-md:hidden')}>/</span>
       <button
         type="button"
         onclick={() => { pickerOpen = !pickerOpen; projectMenuOpen = false; }}
@@ -116,7 +131,7 @@
         {whereLabel}
       </button>
     </span>
-    <span class="text-caption text-muted-foreground truncate max-w-80">{whereDetail}</span>
+    <span class={cn('text-caption text-muted-foreground truncate max-w-80', compact && '@max-md:hidden')}>{whereDetail}</span>
 
     {#if pickerOpen}
       <div transition:fade={{ duration: 120 }} use:placeInPane class="absolute top-full left-0 mt-2 z-50">
@@ -144,7 +159,7 @@
   {#if groupName}
     <span class="w-px self-stretch bg-border"></span>
     <span class="flex items-center gap-1 min-w-0 text-caption" title={newGroup ? `Starts the group ${groupName}` : `Joins the group ${groupName} when it starts`}>
-      <span class="text-muted-foreground shrink-0">{newGroup ? 'New group' : 'Group'}</span>
+      <span class={cn('text-muted-foreground shrink-0', compact && '@max-md:hidden')}>{newGroup ? 'New group' : 'Group'}</span>
       <span class="text-foreground/80 truncate max-w-32">{groupName}</span>
       <Button
         variant="quiet"

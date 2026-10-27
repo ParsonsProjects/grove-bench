@@ -17,6 +17,19 @@ window.addEventListener('unhandledrejection', (e) => {
   errs.push('rejection: ' + String((e.reason && (e.reason as Error).stack) || e.reason).slice(0, 800));
 });
 
+// ?footer=…&picker=…&copy=…&discard=… picks the new thread screen's
+// prototypes (src/renderer/lib/draft-prototype.svelte.ts), read at startup.
+{
+  const params = new URLSearchParams(location.search);
+  const picked = Object.fromEntries(['footer', 'picker', 'copy', 'discard'].flatMap((k) => {
+    const v = params.get(k);
+    return v ? [[k, v]] : [];
+  }));
+  if (Object.keys(picked).length > 0) {
+    try { localStorage.setItem('grove-bench:draft-prototype', JSON.stringify(picked)); } catch { /* none */ }
+  }
+}
+
 const now = Date.now();
 const min = 60_000;
 
@@ -33,6 +46,23 @@ const CLAUDE_MODE_OPTIONS = [
 
 const REPO_A = 'C:/dev/grove-bench';
 const REPO_B = 'C:/dev/api-service';
+
+/** Branches checked out per project: main in each project folder, the
+ *  threads' branches in their copies, and a worktree made outside Grove Bench. */
+const CHECKED_OUT: Record<string, Record<string, string>> = {
+  [REPO_A]: {
+    main: REPO_A,
+    'claude/sidebar-revamp': 'C:/Users/demo/.grove-bench/wt/a3/s-sidebar',
+    'claude/fix-oauth-refresh': 'C:/Users/demo/.grove-bench/wt/a3/s-oauth-ui',
+    'claude/update-readme': 'C:/Users/demo/.grove-bench/wt/a3/s-readme',
+    'hotfix/token-expiry': 'C:/dev/grove-bench-hotfix',
+  },
+  [REPO_B]: {
+    main: REPO_B,
+    'claude/fix-oauth-refresh': 'C:/Users/demo/.grove-bench/wt/b7/s-oauth',
+    'claude/flaky-e2e-retries': 'C:/Users/demo/.grove-bench/wt/b7/s-e2e',
+  },
+};
 
 /** Scheduled skills, kept in memory: one that ran, one paused. */
 let demoSchedules: SkillSchedule[] = [
@@ -438,6 +468,16 @@ const api: Record<string, unknown> = {
   hasGitIdentity: async () => true,
   listSessions: async () => [],
   resumeSession: async (id: string) => ({ id, branch: '' }),
+  // Refuses a branch that's checked out already, as main does; otherwise starts.
+  createSession: async (opts: { id?: string; repoPath: string; branchName: string; useExisting?: boolean; adapterType?: string }) => {
+    const holder = opts.useExisting ? CHECKED_OUT[opts.repoPath]?.[opts.branchName] : undefined;
+    if (holder) {
+      throw new Error(`Error invoking remote method 'session:create': Error: ${holder === opts.repoPath
+        ? `${opts.branchName} is checked out in the project folder. Pick Project folder to work there, or pick another branch.`
+        : `${opts.branchName} is checked out at ${holder}. A branch can only be checked out in one place, so pick another branch.`}`);
+    }
+    return { id: opts.id ?? 'demo', branch: opts.branchName || 'claude/new-thread', agentType: opts.adapterType ?? 'claude-code' };
+  },
   // Main reports a woken conversation 'running' straight away.
   wakeSession: async (id: string) => {
     const { store } = await import('./stores/sessions.svelte.js');
@@ -499,7 +539,8 @@ const api: Record<string, unknown> = {
   // from a worktree conversation shows the refusal.
   listBranches: async (repoPath: string) => repoPath === REPO_B
     ? ['main', 'develop', 'claude/fix-oauth-refresh', 'claude/flaky-e2e-retries', 'claude/perf-audit', 'feat/checkout-v2', 'release/1.4']
-    : ['main', 'claude/sidebar-revamp', 'claude/update-readme', 'feat/branch-picker'],
+    : ['main', 'claude/sidebar-revamp', 'claude/update-readme', 'feat/branch-picker', 'fix/login-loop', 'hotfix/token-expiry'],
+  listCheckedOutBranches: async (repoPath: string) => CHECKED_OUT[repoPath] ?? {},
   switchBranch: async (id: string, branch: string) => branch === 'main'
     ? { success: false, error: `"main" is already checked out in ${REPO_B}. A branch can only be checked out in one place.` }
     : { success: true, branch, sessionIds: [id] },

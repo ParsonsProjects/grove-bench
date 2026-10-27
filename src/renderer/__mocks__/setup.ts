@@ -95,6 +95,7 @@ const mockGroveBench = {
   winMaximize: vi.fn(),
   winClose: vi.fn(),
   listBranches: vi.fn((_repoPath: string, _opts?: { fetch?: boolean }) => Promise.resolve([] as string[])),
+  listCheckedOutBranches: vi.fn((_repoPath: string) => Promise.resolve({} as Record<string, string>)),
   switchBranch: vi.fn(() => Promise.resolve({ success: false, error: 'not mocked' } as import('../../shared/types.js').BranchSwitchResult)),
   syncBranch: vi.fn((_sessionId: string) => Promise.resolve(null as import('../../shared/types.js').BranchSyncResult | null)),
   getCheckoutSharers: vi.fn((sessionId: string) => Promise.resolve([sessionId])),

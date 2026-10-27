@@ -4,6 +4,7 @@ import { deriveSessionName } from '../../shared/session-name.js';
 import { tempBranchName } from '../../shared/temp-branch.js';
 import { withSkill } from '../../shared/skill-line.js';
 import { errorMessage } from '../../shared/error-message.js';
+import { stripIpcErrorPrefix } from '../lib/mcp-errors.js';
 import { store as sessionStore } from './sessions.svelte.js';
 import { groupStore } from './groups.svelte.js';
 import { todoStore } from './todo.svelte.js';
@@ -116,6 +117,10 @@ class DraftStore {
    *  Skills button, without Claude Code's turned-off ones. */
   skills = $state<SkillInfo[]>([]);
 
+  /** Prototype 'undo' Discard (draft-prototype): the draft the Discard
+   *  button dropped, kept until DraftUndoToast lets it go. */
+  discarded = $state<Draft | null>(null);
+
   /** Guards against an older agent-info load landing after a newer one. */
   private infoRequest = 0;
   /** The agent and project `skills` is being loaded for. */
@@ -182,6 +187,25 @@ class DraftStore {
     this.descriptors = [];
     this.skills = [];
     this.skillsFor = '';
+  }
+
+  /** Discard from the Discard button, keeping a draft with a message or
+   *  files so Undo can bring it back. */
+  discardWithUndo(): void {
+    const d = this.draft;
+    this.discard();
+    if (d && (d.text.trim() || d.attachments.length > 0)) this.discarded = d;
+  }
+
+  /** Bring back what discardWithUndo dropped, unless a new draft was opened
+   *  since: that one is the user's now. */
+  undoDiscard(): void {
+    const d = this.discarded;
+    this.discarded = null;
+    if (!d || this.draft) return;
+    this.draft = d;
+    void this.loadAgentInfo();
+    sessionStore.activeSessionId = null;
   }
 
   setText(text: string): void {
@@ -596,7 +620,7 @@ class DraftStore {
       if (sent && this.stillOpen(id)) window.groveBench.sendMessage(id, sent.outgoing, sent.images, sent.files);
       return id;
     } catch (e) {
-      const message = errorMessage(e);
+      const message = stripIpcErrorPrefix(errorMessage(e));
       const onScreen = sessionStore.activeSessionId === id;
       // Closed or deleted while main was checking: the user is done with it,
       // so the draft stays gone and nothing is reported.
