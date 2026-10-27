@@ -17,7 +17,6 @@
     details,
     open,
     onclick,
-    compact = false,
   }: {
     agentName: string;
     modelLabel: string;
@@ -27,9 +26,6 @@
     details: Setting[];
     open: boolean;
     onclick: () => void;
-    /** The draft's 'compact' footer prototype: in a narrow container the
-     *  agent line goes (the tooltip still names it). */
-    compact?: boolean;
   } = $props();
 
   let model = $derived(modelLabel || 'Provider default');
@@ -54,7 +50,7 @@
         <span class="shrink-0 px-1 text-muted-foreground/40 font-normal">{' · '}</span><span class="shrink-0 {mode.tone ? toneText(mode.tone) : ''}">{mode.label}</span>
       {/if}
     </span>
-    <span class="truncate max-w-40 @3xl:max-w-56 text-muted-foreground text-caption {compact ? '@max-md:hidden' : ''}" data-testid="agent-settings-detail">
+    <span class="truncate max-w-40 @3xl:max-w-56 text-muted-foreground text-caption" data-testid="agent-settings-detail">
       {agentName}{#each details as item (item.id)}<span class="text-muted-foreground/40">{' · '}</span>{item.label}{/each}
     </span>
   </span>

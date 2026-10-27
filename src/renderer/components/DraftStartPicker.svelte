@@ -12,7 +12,6 @@
   import { SectionLabel } from '$lib/components/ui/section-label/index.js';
   import { menuItem, menuPanel } from '$lib/components/ui/menu/index.js';
   import { tabTrigger } from '$lib/components/ui/tabs/index.js';
-  import { draftPrototype } from '$lib/draft-prototype.svelte.js';
   import { cn } from '$lib/utils.js';
 
   let { onclose }: { onclose: () => void } = $props();
@@ -34,6 +33,8 @@
   let loadingPrs = $state(true);
   let prsError = $state('');
   let search = $state('');
+  /** Branch → the folder it is checked out in, the project folder included. */
+  let checkedOut = $state<Record<string, string>>({});
   let searchEl = $state<HTMLInputElement | null>(null);
 
   onMount(() => {
@@ -56,30 +57,28 @@
       .catch(() => {});
   });
 
-  // ─── Prototype: branches checked out already (draft-prototype) ───
+  // ─── Branches checked out already ───
+  // Git checks a branch out in one place at a time, so a thread can't open
+  // one checked out in the project folder, another thread's copy or a
+  // worktree made outside Grove Bench. They're listed apart, greyed out,
+  // saying where they are, so a missing branch isn't a mystery. (Main
+  // refuses them too, for one checked out after this list was made.)
 
-  /** How the picker treats branches git won't check out again. 'current'
-   *  hides only those other threads have, and lists the rest. */
-  const heldMode = $derived(draftPrototype.current.picker);
-  /** Branch → the folder it is checked out in, the project folder included. */
-  let checkedOut = $state<Record<string, string>>({});
   const pathKey = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
 
-  type Held = { where: string; folder: boolean; thread: boolean };
-  /** Where `branch` is checked out already, or null when a thread can open it. */
-  function heldBy(branch: string): Held | null {
+  /** Where `branch` is checked out already, in words, or null when a
+   *  thread can open it. */
+  function heldBy(branch: string): string | null {
     const thread = store.sessions.find((s) => s.repoPath === repoPath && s.branch === branch);
-    if (thread) return { where: thread.displayName ? `open in ${thread.displayName}` : 'open in another thread', folder: false, thread: true };
+    if (thread) return thread.displayName ? `used by ${thread.displayName}` : 'used by another thread';
     const at = checkedOut[branch];
     if (!at) return null;
-    if (pathKey(at) === pathKey(repoPath)) return { where: 'checked out in the project folder', folder: true, thread: false };
-    return { where: `checked out at ${at}`, folder: false, thread: false };
+    return pathKey(at) === pathKey(repoPath) ? 'checked out in the project folder' : `checked out at ${at}`;
   }
 
-  /** Listed rows a thread can't open, with why, for 'grey' and 'redirect'. */
-  type HeldRow = { branch: string; pr?: OpenPrSummary; held: Held };
+  /** Rows a thread can't open, with why: PRs first, then branches. */
+  type HeldRow = { branch: string; pr?: OpenPrSummary; held: string };
   const heldRows = $derived.by((): HeldRow[] => {
-    if (heldMode !== 'grey' && heldMode !== 'redirect') return [];
     const rows: HeldRow[] = [];
     for (const pr of prs) {
       const held = !pr.isCrossRepository ? heldBy(pr.headRefName) : null;
@@ -92,42 +91,17 @@
     }
     return rows.filter((r) => !query || looseMatch(`${r.pr ? `#${r.pr.number} ${r.pr.title} ` : ''}${r.branch}`, query));
   });
-  /** 'redirect': the project folder's own branch, offered as working there. */
-  const folderRow = $derived(heldMode === 'redirect' ? heldRows.find((r) => r.held.folder) ?? null : null);
-  const greyRows = $derived(heldRows.filter((r) => r !== folderRow));
-
-  /** 'hide': what isn't listed, in one line. */
-  const hiddenNote = $derived.by(() => {
-    if (heldMode !== 'hide') return '';
-    const named: string[] = [];
-    let threads = 0;
-    for (const b of branches) {
-      const held = heldBy(b);
-      if (!held) continue;
-      if (held.thread) threads++;
-      else named.push(held.folder ? `${b} (the project folder)` : b);
-    }
-    if (threads > 0) named.push(`${threads} in other threads`);
-    if (named.length === 0) return '';
-    const list = named.length === 1 ? named[0] : `${named.slice(0, -1).join(', ')} and ${named.at(-1)}`;
-    return `Not listed, as they're checked out elsewhere: ${list}.`;
-  });
-
-  function pickFolder() {
-    draftStore.setStart({ kind: 'folder' });
-    onclose();
-  }
 
   $effect(() => {
     if (tab === 'existing') searchEl?.focus();
   });
 
-  /** Branches another conversation in this project has checked out. Git
-   *  allows a branch in only one worktree at a time. The prototypes other
-   *  than 'current' add the ones checked out outside Grove Bench. */
+  /** Branches checked out already: by another conversation in this
+   *  project, or anywhere git knows of. Git allows a branch in only one
+   *  worktree at a time. Listed apart (heldRows), not as choices. */
   const usedBranches = $derived(new Set([
     ...store.sessions.filter((s) => s.repoPath === repoPath).map((s) => s.branch),
-    ...(heldMode === 'current' ? [] : Object.keys(checkedOut)),
+    ...Object.keys(checkedOut),
   ]));
 
   function looseMatch(text: string, query: string): boolean {
@@ -210,7 +184,7 @@
         type="text"
         value={newStart?.branchName ?? ''}
         oninput={(e) => setNew({ branchName: e.currentTarget.value })}
-        placeholder={draftPrototype.current.copy === 'current' ? 'Named from your first message' : 'Leave empty to name it from your message'}
+        placeholder="Leave empty to name it from your message"
         class="w-full bg-background border border-input px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
       />
       <label class="block mt-3 mb-1 text-muted-foreground" for="draft-base">Base branch</label>
@@ -268,20 +242,8 @@
               </button>
             {/each}
           {/if}
-          {#if filteredBranches.length > 0 || folderRow}
+          {#if filteredBranches.length > 0}
             <SectionLabel class="px-2 pt-2 pb-0.5">Branches</SectionLabel>
-            {#if folderRow}
-              <button
-                type="button"
-                onclick={pickFolder}
-                aria-pressed={start?.kind === 'folder'}
-                class={cn(menuItem({ selected: start?.kind === 'folder' }), 'flex-col items-stretch gap-0 py-1.5')}
-                title="Work in the project folder, where {folderRow.branch} is checked out"
-              >
-                <span class="truncate">{folderRow.pr ? `#${folderRow.pr.number} ${folderRow.pr.title}` : folderRow.branch}</span>
-                <span class="truncate text-caption text-muted-foreground">in the project folder · works there, without a copy</span>
-              </button>
-            {/if}
             {#each filteredBranches as name (name)}
               <button
                 type="button"
@@ -293,9 +255,9 @@
               </button>
             {/each}
           {/if}
-          {#if greyRows.length > 0}
+          {#if heldRows.length > 0}
             <SectionLabel class="px-2 pt-2 pb-0.5">Checked out already</SectionLabel>
-            {#each greyRows as row (row.branch)}
+            {#each heldRows as row (row.branch)}
               <button
                 type="button"
                 disabled
@@ -303,15 +265,12 @@
                 title="Git checks a branch out in one place only, so a new thread can't open {row.branch}"
               >
                 <span class="truncate">{row.pr ? `#${row.pr.number} ${row.pr.title}` : row.branch}</span>
-                <span class="truncate text-caption text-muted-foreground">{row.pr ? `${row.branch} · ` : ''}{row.held.where}</span>
+                <span class="truncate text-caption text-muted-foreground">{row.pr ? `${row.branch} · ` : ''}{row.held}</span>
               </button>
             {/each}
           {/if}
         {/if}
       </div>
-      {#if hiddenNote}
-        <p class="text-muted-foreground mt-2">{hiddenNote}</p>
-      {/if}
       {#if prsError}
         <p class="text-muted-foreground mt-2">{prsError}</p>
       {/if}

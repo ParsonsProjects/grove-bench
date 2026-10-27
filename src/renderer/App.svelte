@@ -521,7 +521,8 @@
     {/snippet}
   </svelte:boundary>
 
-  <main class="flex-1 flex flex-col min-w-0 min-h-0">
+  <!-- relative: DraftUndoToast centres on this pane, not the window. -->
+  <main class="relative flex-1 flex flex-col min-w-0 min-h-0">
     {#if draftStore.visible}
       <svelte:boundary onerror={(e) => console.error('Draft pane crashed:', e)}>
         <DraftPane />
@@ -615,6 +616,7 @@
         </div>
       {/each}
     {/if}
+    <DraftUndoToast />
   </main>
 </div>
 <AnalyticsConsent visible={showAnalyticsConsent} />
@@ -641,7 +643,6 @@
 {/if}
 
 <ErrorToast />
-<DraftUndoToast />
 <!-- Toasts share one stack above the status bar, so two at once sit one
      above the other instead of on top of each other. -->
 <div class="fixed bottom-16 right-4 z-50 flex max-w-md flex-col items-end gap-2 pointer-events-none *:pointer-events-auto">

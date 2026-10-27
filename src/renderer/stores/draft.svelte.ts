@@ -117,8 +117,8 @@ class DraftStore {
    *  Skills button, without Claude Code's turned-off ones. */
   skills = $state<SkillInfo[]>([]);
 
-  /** Prototype 'undo' Discard (draft-prototype): the draft the Discard
-   *  button dropped, kept until DraftUndoToast lets it go. */
+  /** The draft the Discard button dropped, kept until DraftUndoToast lets
+   *  it go, so a message isn't lost to a misclick. */
   discarded = $state<Draft | null>(null);
 
   /** Guards against an older agent-info load landing after a newer one. */
@@ -168,6 +168,9 @@ class DraftStore {
         ...opts.group,
       };
       this.error = '';
+      // A new draft takes over from one discarded before: Undo can't bring
+      // that back over this one.
+      this.discarded = null;
       void this.prefillBaseBranch(repo);
       void this.loadAgentInfo();
       void this.refreshKind(repo);

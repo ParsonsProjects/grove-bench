@@ -11,8 +11,6 @@
   import { splitSkillLine } from '../../shared/skill-line.js';
   import { menuItem, menuLabel, menuPanel, menuSeparator } from '$lib/components/ui/menu/index.js';
   import { placeInPane } from '../lib/keep-in-viewport.js';
-  import { draftPrototype } from '$lib/draft-prototype.svelte.js';
-  import { cn } from '$lib/utils.js';
 
   /** After a pick, so the message box can take the cursor back. */
   let { onpick }: { onpick?: () => void } = $props();
@@ -22,8 +20,6 @@
 
   const skills = $derived(draftStore.skills);
   const chosen = $derived(splitSkillLine(draftStore.draft?.text ?? '')?.skill ?? null);
-  /** Prototype 'compact' footer: the count and a long name give way first. */
-  const compact = $derived(draftPrototype.current.footer === 'compact');
 
   function toggle() {
     open = !open;
@@ -60,9 +56,8 @@
 </script>
 
 {#if skills.length > 0 || chosen}
-  <span class={cn('w-px self-stretch bg-border', compact && !chosen && '@max-md:hidden')}></span>
-  <!-- 'compact', narrow: a skill not picked yet is left to / in the box. -->
-  <div class={cn('relative flex flex-col gap-px leading-snug min-w-0', compact && !chosen && '@max-md:hidden')} bind:this={ref}>
+  <span class="w-px self-stretch bg-border"></span>
+  <div class="relative flex flex-col gap-px leading-snug min-w-0" bind:this={ref}>
     <button
       type="button"
       onclick={toggle}
@@ -72,8 +67,8 @@
       aria-expanded={open}
     >
       {#if chosen}
-        <span class={cn('text-muted-foreground shrink-0', compact && '@max-md:hidden')}>Skill</span>
-        <span class={cn('font-mono truncate max-w-40 border-b border-dashed border-muted-foreground/40', compact && '@max-md:max-w-20')}>{chosen}</span>
+        <span class="text-muted-foreground shrink-0">Skill</span>
+        <span class="font-mono truncate max-w-40 border-b border-dashed border-muted-foreground/40">{chosen}</span>
       {:else}
         <span class="border-b border-dashed border-muted-foreground/40">Skills</span>
         <span class="text-caption">{skills.length}</span>

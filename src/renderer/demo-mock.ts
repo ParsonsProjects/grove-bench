@@ -17,19 +17,6 @@ window.addEventListener('unhandledrejection', (e) => {
   errs.push('rejection: ' + String((e.reason && (e.reason as Error).stack) || e.reason).slice(0, 800));
 });
 
-// ?footer=…&picker=…&copy=…&discard=… picks the new thread screen's
-// prototypes (src/renderer/lib/draft-prototype.svelte.ts), read at startup.
-{
-  const params = new URLSearchParams(location.search);
-  const picked = Object.fromEntries(['footer', 'picker', 'copy', 'discard'].flatMap((k) => {
-    const v = params.get(k);
-    return v ? [[k, v]] : [];
-  }));
-  if (Object.keys(picked).length > 0) {
-    try { localStorage.setItem('grove-bench:draft-prototype', JSON.stringify(picked)); } catch { /* none */ }
-  }
-}
-
 const now = Date.now();
 const min = 60_000;
 

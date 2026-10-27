@@ -22,22 +22,13 @@
   import GitIdentityNotice from './GitIdentityNotice.svelte';
   import GitNotice from './GitNotice.svelte';
   import DraftStatusBar from './DraftStatusBar.svelte';
-  import DraftPrototypeBar from './DraftPrototypeBar.svelte';
-  import { draftPrototype } from '$lib/draft-prototype.svelte.js';
-  import { cn } from '$lib/utils.js';
   import { Button } from '$lib/components/ui/button/index.js';
-  import { Kbd } from '$lib/components/ui/kbd/index.js';
   import { Notice } from '$lib/components/ui/notice/index.js';
   import { PanelHeader } from '$lib/components/ui/panel-header/index.js';
   import { Pulse } from '$lib/components/ui/pulse/index.js';
   import * as Command from '$lib/components/ui/command/index.js';
 
   let textEl = $state<HTMLTextAreaElement | null>(null);
-
-  /** The prototypes picked (draft-prototype); 'current' is the shipped screen. */
-  const proto = $derived(draftPrototype.current);
-  /** The switch between them, in dev builds only (not tests or the app). */
-  const showPrototypeBar = import.meta.env.DEV && import.meta.env.MODE !== 'test';
 
   const draft = $derived(draftStore.draft);
   const agentId = $derived(draft?.agentId ?? '');
@@ -158,51 +149,30 @@
     if (draftStore.onGroupBranch) {
       return `The agent will work on ${start.branchName.trim()}, the group's branch, in a separate copy: the project's own branch if it has one, else a new one from ${from}.`;
     }
-    if (start.branchName.trim()) return `The agent will work on a new branch, ${start.branchName.trim()}, from ${from}, in a separate copy.`;
-    return proto.copy === 'current'
-      ? `The agent will work on a new branch from ${from}, in a separate copy. The branch is named from your message after the first reply.`
+    return start.branchName.trim()
+      ? `The agent will work on a new branch, ${start.branchName.trim()}, from ${from}, in a separate copy.`
       : `The agent will work on a new branch from ${from}, in a separate copy. The branch is named from your message.`;
   });
 
   /** Whether the draft starts in a mode other than the agent's own default
-   *  (Ask, for Claude Code). The trimmed prototypes only name the mode then. */
+   *  (Ask, for Claude Code). The mode is named under the box only then: the
+   *  Agent settings button shows it, and the default needs no warning. */
   const modeChanged = $derived.by(() => {
     const mode = draftStore.descriptors.find((c) => c.id === CONTROL_IDS.permissionMode);
     return !!mode && draftStore.controlValue(mode.id) !== mode.default;
   });
 
-  /** The message box's placeholder. The trimmed prototypes ask for a ticket
-   *  ID only when the branch will be named from the message. */
+  /** The message box's placeholder. A ticket ID is asked for only when the
+   *  branch will be named from the message (branch-name.ts keeps it there). */
   const placeholder = $derived.by(() => {
-    const skill = draftStore.skills.length > 0;
-    if (proto.copy === 'current') {
-      return skill
-        ? 'What should the agent work on? Include a ticket ID if there is one, or type / to use a skill. (Enter to start, Shift+Enter for a new line)'
-        : 'What should the agent work on? Include a ticket ID if there is one. (Enter to start, Shift+Enter for a new line)';
-    }
     const naming = start?.kind === 'new' && !start.branchName.trim();
     return [
       'What should the agent work on?',
       naming ? 'Include a ticket ID to put it in the branch name.' : '',
-      skill ? 'Type / for a skill.' : '',
-      // The 'outside' footer has the keys next to Start.
-      proto.footer === 'outside' ? '' : 'Enter to start.',
+      draftStore.skills.length > 0 ? 'Type / for a skill.' : '',
+      'Enter to start.',
     ].filter(Boolean).join(' ');
   });
-
-  // ─── Discard (prototypes: 'confirm' asks first, 'undo' offers it back) ───
-
-  const hasContent = $derived(!!draft && (draft.text.trim() !== '' || draft.attachments.length > 0));
-  let confirmingDiscard = $state(false);
-  $effect(() => {
-    if (!hasContent || proto.discard !== 'confirm') confirmingDiscard = false;
-  });
-
-  function discardClicked() {
-    if (proto.discard === 'undo') draftStore.discardWithUndo();
-    else if (proto.discard === 'confirm' && hasContent) confirmingDiscard = true;
-    else draftStore.discard();
-  }
 
   /** Git has no name and email for this project, so the agent's commits
    *  would fail. Said before the first message rather than mid-task. */
@@ -373,22 +343,13 @@
   ondragleave={handleDragLeave}
   ondrop={handleDrop}
 >
+  <!-- The project and agent are under the art and along the box's foot. -->
   <PanelHeader title="New thread">
-    <!-- The trimmed prototypes leave the project and agent to the line
-         under the art and the box's footer, which say them already. -->
-    {#if proto.copy === 'current'}
-      <span class="truncate text-muted-foreground">in {store.repoDisplayName(draft.repoPath)}{agentName ? ` · ${agentName}` : ''}</span>
-    {/if}
     {#snippet actions()}
-      {#if confirmingDiscard}
-        <span class="text-xs text-muted-foreground mr-1" role="status">Discard this message?</span>
-        <Button variant="quiet" size="xs" onclick={() => { confirmingDiscard = false; textEl?.focus(); }}>Keep</Button>
-        <Button variant="quiet-destructive" size="xs" onclick={() => { confirmingDiscard = false; draftStore.discard(); }}>Discard</Button>
-      {:else}
-        <Button variant="quiet" size="xs" onclick={discardClicked} title="Discard this draft">
-          Discard
-        </Button>
-      {/if}
+      <!-- A draft with a message or files can come back (DraftUndoToast). -->
+      <Button variant="quiet" size="xs" onclick={() => draftStore.discardWithUndo()} title="Discard this draft">
+        Discard
+      </Button>
     {/snippet}
   </PanelHeader>
 
@@ -498,10 +459,6 @@
       {:else}
         <p class="text-center text-lg text-foreground/90">New thread in {store.repoDisplayName(draft.repoPath)}</p>
       {/if}
-      {#if credentials === 'ready' && proto.copy === 'plan'}
-        <!-- Prototype 'plan': what sending does, read before writing. -->
-        <p class="-mt-2 self-center max-w-lg text-center text-xs text-muted-foreground">{plan} Nothing is created until you send.</p>
-      {/if}
 
       <!-- The message box, with the options and Start along its foot. -->
       <div class="relative bg-card border border-input has-[textarea:focus]:ring-1 has-[textarea:focus]:ring-ring">
@@ -560,7 +517,12 @@
             </div>
           {/if}
         </div>
-        {#snippet startButton()}
+        <!-- The options' parts are this row's own items (DraftStatusBar), so
+             in a narrow pane they wrap onto a second row rather than being
+             cut short. A container, so the Agent settings button sizes its
+             model name from this row's width. -->
+        <div class="@container flex flex-wrap items-center gap-x-4 gap-y-2 px-3 py-1.5 border-t border-border">
+          <DraftStatusBar onskill={focusEnd} />
           <Button
             variant="default"
             size="sm"
@@ -571,23 +533,8 @@
           >
             Start
           </Button>
-        {/snippet}
-        {#if proto.footer === 'outside'}
-          <!-- Prototype 'outside': the keys and Start in the box, the options under it. -->
-          <div class="flex items-center gap-3 px-3 py-1.5 border-t border-border">
-            <span class="text-caption text-muted-foreground"><Kbd>Enter</Kbd> to start · <Kbd>Shift+Enter</Kbd> for a new line</span>
-            {@render startButton()}
-          </div>
-        {:else}
-          <div class={cn('flex items-center gap-3 px-3 py-1.5 border-t border-border', proto.footer === 'wrap' && 'flex-wrap gap-x-4 gap-y-2')}>
-            <DraftStatusBar onskill={focusEnd} />
-            {@render startButton()}
-          </div>
-        {/if}
+        </div>
       </div>
-      {#if proto.footer === 'outside'}
-        <div class="-mt-1 px-1"><DraftStatusBar onskill={focusEnd} /></div>
-      {/if}
       {#if (nudged && startBlocker) || draftStore.error}
         <div bind:this={feedbackEl} class="-mt-2 flex flex-col gap-2">
           {#if nudged && startBlocker}
@@ -604,19 +551,9 @@
       <!-- What sending will do, then what changed or still needs doing first. -->
       {#if credentials === 'ready'}
         <div class="flex flex-col items-center gap-1 text-center text-xs text-muted-foreground">
-          {#if proto.copy === 'current'}
-            <p class="max-w-lg">{plan}</p>
-            {#if modeHint}
-              <p class="max-w-lg">Mode: <span class="text-foreground/80">{modeHint.label}</span>. {modeHint.description}.</p>
-            {/if}
-            <p class="max-w-lg mt-1">{folderProject ? 'Change the agent, model or mode' : 'Change the agent, model, mode or branch'} at the bottom of the message box. Nothing is created until you send.</p>
-          {:else}
-            {#if proto.copy === 'trim'}
-              <p class="max-w-lg">{plan} Nothing is created until you send.</p>
-            {/if}
-            {#if modeHint && modeChanged}
-              <p class="max-w-lg">Mode: <span class="text-foreground/80">{modeHint.label}</span>. {modeHint.description}.</p>
-            {/if}
+          <p class="max-w-lg">{plan} Nothing is created until you send.</p>
+          {#if modeHint && modeChanged}
+            <p class="max-w-lg">Mode: <span class="text-foreground/80">{modeHint.label}</span>. {modeHint.description}.</p>
           {/if}
           {#if credentialsNote}
             <p class="text-green-400 mt-2" role="status">✓ {credentialsNote}</p>
@@ -631,8 +568,5 @@
       {/if}
     </div>
   </div>
-  {#if showPrototypeBar}
-    <DraftPrototypeBar />
-  {/if}
 </div>
 {/if}

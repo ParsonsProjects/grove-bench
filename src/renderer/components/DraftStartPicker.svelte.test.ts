@@ -50,6 +50,21 @@ async function openExisting() {
 }
 
 describe('DraftStartPicker', () => {
+  it('lists branches checked out already apart, greyed out, saying where', async () => {
+    mockGroveBench.listCheckedOutBranches.mockResolvedValueOnce({
+      main: '/repo/one/', taken: '/worktrees/old', 'fix/b': '/elsewhere/hotfix',
+    });
+    await openExisting();
+    expect(await screen.findByText('Checked out already')).toBeInTheDocument();
+    const main = screen.getByRole('button', { name: /^main/ });
+    expect(main).toBeDisabled();
+    expect(main).toHaveTextContent('checked out in the project folder');
+    expect(screen.getByRole('button', { name: /^taken/ })).toHaveTextContent('used by another thread');
+    expect(screen.getByRole('button', { name: /^fix\/b/ })).toHaveTextContent('checked out at /elsewhere/hotfix');
+    await fireEvent.click(main);
+    expect(draftStore.draft?.start.kind).toBe('new');
+  });
+
   it('lists open PRs and the branches not already covered or in use', async () => {
     await openExisting();
     expect(await screen.findByRole('button', { name: /#7 Add login/ })).toBeInTheDocument();
