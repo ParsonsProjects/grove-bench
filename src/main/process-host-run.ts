@@ -25,6 +25,7 @@ import {
   HOST_STOPPED_MESSAGE, spawnProcess, spawnProcessInHost, type HostedOptions, type HostedProcess, type ProcessResult,
   type SpawnProcessOptions,
 } from './process-host.js';
+import { isBackground } from './background-work.js';
 import { logger } from './logger.js';
 
 /** The execa options runInAgentHost takes, read as execa reads them, and
@@ -75,7 +76,8 @@ export async function runInAgentHost(file: string, args: string[], options: Agen
 
 function runOnce(file: string, args: string[], { cwd, env, extendEnv = true, shell, timeout, input, findCommand, hostOnly }: AgentHostRunOptions): Promise<ProcessResult> {
   const command = [file, ...args].join(' ');
-  const proc = (hostOnly ? spawnProcessInHost : spawnProcess)(file, args, {
+  // Background work (a PR status refresh) never starts in the main process.
+  const proc = (hostOnly || isBackground() ? spawnProcessInHost : spawnProcess)(file, args, {
     ...(cwd !== undefined ? { cwd } : {}),
     // A spawn's env is the whole environment: execa adds `env` to this one
     // unless told not to.

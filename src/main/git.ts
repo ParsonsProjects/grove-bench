@@ -1,4 +1,4 @@
-import { runProcess } from './process-host.js';
+import { isSkipped, runProcess } from './process-host.js';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import type { BranchCommit, CommitEntry, FileDiffResult, GitOperation, GitOpResult, GitSyncStatus } from '../shared/types.js';
@@ -861,7 +861,8 @@ export async function currentBranch(cwd: string): Promise<string | null> {
   try {
     const name = (await git(['rev-parse', '--abbrev-ref', 'HEAD'], cwd)).trim();
     return name && name !== 'HEAD' ? name : null;
-  } catch {
+  } catch (e) {
+    if (isSkipped(e)) throw e;
     return null;
   }
 }
@@ -874,7 +875,8 @@ export async function recentCheckouts(cwd: string, sinceMs: number): Promise<str
   try {
     const raw = await git(['reflog', 'show', '--date=unix', '--format=%gd%x09%gs', 'HEAD'], cwd);
     return parseCheckoutBranches(raw, sinceMs);
-  } catch {
+  } catch (e) {
+    if (isSkipped(e)) throw e;
     return [];
   }
 }
@@ -911,13 +913,17 @@ export async function syncStatus(cwd: string): Promise<GitSyncStatus> {
   let upstream: string | null = null;
   try {
     upstream = (await git(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], cwd)).trim() || null;
-  } catch { /* no upstream configured */ }
+  } catch (e) {
+    // Skipped isn't "no upstream": the caller keeps the last answer.
+    if (isSkipped(e)) throw e;
+  }
   if (!upstream) return { upstream: null, ahead: 0, behind: 0 };
   try {
     const counts = await git(['rev-list', '--left-right', '--count', '@{u}...HEAD'], cwd);
     const [behind, ahead] = counts.trim().split(/\s+/).map((n) => parseInt(n, 10));
     return { upstream, ahead: ahead || 0, behind: behind || 0 };
-  } catch {
+  } catch (e) {
+    if (isSkipped(e)) throw e;
     return { upstream, ahead: 0, behind: 0 };
   }
 }

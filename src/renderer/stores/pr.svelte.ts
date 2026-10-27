@@ -17,6 +17,12 @@ const IDLE_POLL_MS = 5 * 60_000;
  *  as recently viewed, and so stays on the full rate. */
 const RECENT_VIEW_MS = 10 * 60_000;
 const THROTTLE_MS = 5_000;
+/** A refresh this slow says the PC (or GitHub) is struggling: on 27 Oct a
+ *  busy PC took up to 42 s to start a git process. The next sweep then waits
+ *  twice as long as the last, up to MAX_POLL_MS, and one with no slow
+ *  refresh goes back to POLL_MS. */
+const SLOW_REFRESH_MS = 5_000;
+const MAX_POLL_MS = 8 * POLL_MS;
 /** The sweep stops waiting on one session's fetch after this long and moves
  *  on. The main-side gh call has its own (shorter) timeout; this is the
  *  backstop so a stuck IPC round-trip can never freeze polling for every
@@ -119,6 +125,8 @@ class PrStore {
   private autoFixAttempts = new Map<string, { prNumber: number; attempts: number }>();
   private globalTimer: ReturnType<typeof setTimeout> | null = null;
   private sweeping = false;
+  /** The wait before the next sweep: POLL_MS, longer after slow refreshes. */
+  private pollMs = POLL_MS;
   private getPolledSessionIds: (() => string[]) | null = null;
   private nextAlertId = 1;
 
@@ -286,7 +294,8 @@ class PrStore {
 
   /** Poll every open session (focused or not; idle ones less often, see
    *  pollsEverySweep) — started once from App.
-   *  Self-scheduling so a slow sweep never overlaps the next one. Sweeps are
+   *  Self-scheduling so a slow sweep never overlaps the next one, and spaced
+   *  out while refreshes are slow (SLOW_REFRESH_MS). Sweeps are
    *  skipped while the window is hidden and one runs as soon as it is shown
    *  again, so a minimised app doesn't come back to minute-old checks. */
   startGlobalPolling(getSessionIds: () => string[]): void {
@@ -303,6 +312,7 @@ class PrStore {
     if (this.globalTimer) clearTimeout(this.globalTimer);
     this.globalTimer = null;
     this.getPolledSessionIds = null;
+    this.pollMs = POLL_MS;
     if (typeof document !== 'undefined') {
       document.removeEventListener('visibilitychange', this.onVisibilityChange);
     }
@@ -325,17 +335,23 @@ class PrStore {
       // Each refresh is a `gh` network call plus two git processes per
       // session; skip the sweep entirely while the window is hidden.
       if (typeof document === 'undefined' || !document.hidden) {
+        let refreshed = false;
+        let slow = false;
         for (const id of this.getPolledSessionIds()) {
           const now = Date.now();
           if (!this.pollsEverySweep(id, now) && now - (this.lastFetch.get(id) ?? 0) < IDLE_POLL_MS) continue;
           await withTimeout(this.refresh(id, true), SWEEP_REFRESH_TIMEOUT_MS);
+          refreshed = true;
+          if (Date.now() - now >= SLOW_REFRESH_MS) slow = true;
         }
+        // A sweep with nothing due says nothing about how busy the PC is.
+        if (refreshed) this.pollMs = slow ? Math.min(this.pollMs * 2, MAX_POLL_MS) : POLL_MS;
       }
     } catch (e) {
       console.error('PR status sweep failed:', e);
     } finally {
       this.sweeping = false;
-      if (this.getPolledSessionIds !== null) this.globalTimer = setTimeout(() => void this.sweep(), POLL_MS);
+      if (this.getPolledSessionIds !== null) this.globalTimer = setTimeout(() => void this.sweep(), this.pollMs);
     }
   }
 

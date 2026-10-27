@@ -16,6 +16,7 @@ vi.mock('./logger.js', () => ({
 import { execa } from 'execa';
 import { HOST_STOPPED_MESSAGE } from './process-host.js';
 import { recordCommandPids, runInAgentHost, START_WAIT_MS } from './process-host-run.js';
+import { inBackground } from './background-work.js';
 import { isNetworkError } from './gh.js';
 
 /** The next command spawnProcess starts, driven by the test as the host
@@ -145,6 +146,17 @@ describe('runInAgentHost', () => {
     proc.receive({ type: 'error', id: 0, error: { name: 'Error', message: "The agent host isn't running, so typeperf.exe didn't start" } });
     proc.receive({ type: 'close', id: 0 });
     await expect(done).rejects.toThrow("The agent host isn't running, so typeperf.exe didn't start");
+  });
+
+  it('starts background work with spawnProcessInHost, so a PR refresh never starts gh here', async () => {
+    const proc = new HostedProcess('gh');
+    hosted.spawnProcessInHost.mockReturnValueOnce(proc);
+    const done = inBackground(() => runInAgentHost('gh', ['pr', 'list'], { timeout: 30_000 }));
+    expect(hosted.spawnProcessInHost).toHaveBeenCalledWith('gh', ['pr', 'list'], { agentOutput: false });
+    expect(hosted.spawnProcess).not.toHaveBeenCalled();
+    proc.receive({ type: 'error', id: 0, error: { name: 'Error', message: "The agent host isn't running, so gh pr list didn't start" } });
+    proc.receive({ type: 'close', id: 0 });
+    await expect(done).rejects.toThrow("The agent host isn't running, so gh pr list didn't start");
   });
 
   it('rejects as execa did when it exits non-zero', async () => {
