@@ -611,6 +611,21 @@ describe('StatusBar PR', () => {
     expect(lozenge().lastElementChild).not.toHaveClass('absolute');
   });
 
+  it('dims the icon after a failed fetch and pulses it for unseen activity, and running checks still move when dimmed', async () => {
+    const branch = await renderWithPrs(pr({ checks: { total: 2, passed: 1, failed: 0, pending: 1 } }));
+    const icon = () => within(lozenge()).getByTestId('ship-icon');
+    expect(within(branch).getByTestId('ship-icon')).not.toHaveClass('opacity-50');
+    expect(icon()).not.toHaveClass('animate-pulse');
+
+    prStore.fetchFailedBySession = { ...prStore.fetchFailedBySession, [ACTIVE]: true };
+    prStore.alertsBySession = { [ACTIVE]: [{ kind: 'new_comments', count: 2, id: 2, prNumber: 42 }] };
+    await waitFor(() => expect(icon()).toHaveClass('opacity-50', 'animate-pulse'));
+    // The pulse only fades to half, so on the dimmed element itself it would
+    // hold still. The checks' pulse is on the icon inside, which isn't dimmed.
+    expect(icon().querySelector('svg')).toHaveClass('animate-pulse');
+    expect(icon().querySelector('svg')).not.toHaveClass('opacity-50');
+  });
+
   it('names each step in its popup', async () => {
     await renderWithPrs(pr({ reviewDecision: 'REVIEW_REQUIRED' }));
     const popup = await openBranch();

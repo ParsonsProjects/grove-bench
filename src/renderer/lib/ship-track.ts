@@ -30,7 +30,8 @@ export type ShipStageIcon = 'branch' | 'draft' | 'pr' | 'merged' | 'closed';
 
 /** The icon's colour, the step that matters most now: a failure, then one
  *  waiting on you, then one running, then how the PR ended. done (green)
- *  once every step before the merge is; todo (plain) while one is to come. */
+ *  once every step before the merge is and the PR isn't a draft, which
+ *  can't be merged yet; todo (plain) otherwise. */
 export type ShipStageState = Exclude<ShipStepState, 'next'>;
 
 export interface ShipStage {
@@ -105,12 +106,16 @@ export function shipTrack({ sync, pr, pushFailed, canCreatePr }: ShipTrackInput)
       : { id: 'merge', label: 'Merge', state: 'todo', detail: '' };
 
   const steps = [push, prStep, checksStep, review, merge];
-  const states = steps.map((s) => s.state);
-  // Merged before closed: a merged PR's failed checks are greyed as closed.
+  const has = (state: ShipStepState) => steps.some((s) => s.state === state);
   const stage: ShipStage = {
     icon: !pr ? 'branch' : pr.state === 'MERGED' ? 'merged' : pr.state === 'CLOSED' ? 'closed' : pr.isDraft ? 'draft' : 'pr',
-    state: (['failed', 'attention', 'running', 'merged', 'closed'] as const).find((s) => states.includes(s))
-      ?? (states.slice(0, 4).every((s) => s === 'done') ? 'done' : 'todo'),
+    state: has('failed') ? 'failed'
+      : has('attention') ? 'attention'
+      : has('running') ? 'running'
+      : pr?.state === 'MERGED' ? 'merged'
+      : pr?.state === 'CLOSED' ? 'closed'
+      : !pr?.isDraft && [push, prStep, checksStep, review].every((s) => s.state === 'done') ? 'done'
+      : 'todo',
   };
   const actionable = pushFailed
     || sync.ahead > 0

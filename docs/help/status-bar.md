@@ -91,7 +91,7 @@ Its colour says what matters most right now:
 | Red | The push or a check failed |
 | Amber | Waiting on you, such as changes requested |
 | Blue pulsing | Checks running |
-| Green | Every step before the merge is done |
+| Green | Every step before the merge is done, on a PR that isn't a draft |
 | Purple | Merged |
 | Grey | The PR was closed without merging |
 | Plain | A step is still to come, such as a push or a review |

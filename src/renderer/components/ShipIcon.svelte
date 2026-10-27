@@ -12,7 +12,7 @@
   import GitPullRequestDraftIcon from '@lucide/svelte/icons/git-pull-request-draft';
   import type { ShipStage, ShipStageIcon, ShipStageState } from '../lib/ship-track.js';
 
-  let { stage, class: className = '' }: { stage: ShipStage; class?: string } = $props();
+  let { stage }: { stage: ShipStage } = $props();
 
   const ICON: Record<ShipStageIcon, typeof GitBranchIcon> = {
     branch: GitBranchIcon,
@@ -35,4 +35,4 @@
   let Icon = $derived(ICON[stage.icon]);
 </script>
 
-<Icon class="size-3 {TONE[stage.state]} {className}" aria-hidden="true" />
+<Icon class="size-3 {TONE[stage.state]}" aria-hidden="true" />

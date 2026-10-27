@@ -204,8 +204,12 @@
             data-testid="branch"
           >
             <!-- Dimmed when the last GitHub fetch failed, so it may be old;
-                 pulsing while there is PR activity you haven't looked at. -->
-            <ShipIcon stage={track.stage} class="{prAlerts.length > 0 ? 'animate-pulse' : ''} {prFetchFailed ? 'opacity-50' : ''}" />
+                 pulsing while there is PR activity you haven't looked at.
+                 On a wrapper: the pulse only fades to half, so on the icon
+                 itself a dimmed icon would hold still, checks running too. -->
+            <span class="flex shrink-0 {prAlerts.length > 0 ? 'animate-pulse' : ''} {prFetchFailed ? 'opacity-50' : ''}" data-testid="ship-icon">
+              <ShipIcon stage={track.stage} />
+            </span>
             <span class="truncate max-w-16 @2xl:max-w-32 @4xl:max-w-48">{sessionBranch || 'no branch'}</span>
             {#if operation}
               <span class="text-status-attention">{operationShort(operation)}</span>

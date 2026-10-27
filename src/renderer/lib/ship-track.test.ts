@@ -103,15 +103,17 @@ describe('shipTrack', () => {
     const passed = { total: 2, passed: 2, failed: 0, pending: 0 };
     expect(stage({ sync: { upstream: null, ahead: 0, behind: 0 } })).toEqual({ icon: 'branch', state: 'todo' });
     expect(stage({ pushFailed: true })).toEqual({ icon: 'branch', state: 'failed' });
-    expect(stage({ pr: pr({ isDraft: true, reviewDecision: '' }) })).toEqual({ icon: 'draft', state: 'done' });
+    // A draft can't be merged yet: never green, however far its steps got.
+    expect(stage({ pr: pr({ isDraft: true, checks: passed, reviewDecision: '' }) })).toEqual({ icon: 'draft', state: 'todo' });
     expect(stage({ pr: pr({ checks: passed, reviewDecision: 'APPROVED' }) })).toEqual({ icon: 'pr', state: 'done' });
     expect(stage({ pr: pr({ checks: passed, reviewDecision: 'REVIEW_REQUIRED' }) })).toEqual({ icon: 'pr', state: 'todo' });
     expect(stage({ pr: pr({ checks: { total: 2, passed: 1, failed: 0, pending: 1 } }) })).toEqual({ icon: 'pr', state: 'running' });
     // A failure outranks changes requested, which outranks checks running.
     expect(stage({ pr: pr({ checks: { total: 3, passed: 0, failed: 1, pending: 2 }, reviewDecision: 'CHANGES_REQUESTED' }) }).state).toBe('failed');
     expect(stage({ pr: pr({ checks: { total: 2, passed: 1, failed: 0, pending: 1 }, reviewDecision: 'CHANGES_REQUESTED' }) }).state).toBe('attention');
-    // A merged PR's failed checks are greyed as closed; merged still wins.
+    // A merged PR's failed checks are greyed as closed; it is still merged.
     expect(stage({ pr: pr({ state: 'MERGED', checks: { total: 1, passed: 0, failed: 1, pending: 0 } }) })).toEqual({ icon: 'merged', state: 'merged' });
+    expect(stage({ pushFailed: true, pr: pr({ state: 'MERGED' }) })).toEqual({ icon: 'merged', state: 'failed' });
     expect(stage({ pr: pr({ state: 'CLOSED' }) })).toEqual({ icon: 'closed', state: 'closed' });
   });
 
