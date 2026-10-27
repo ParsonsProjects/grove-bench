@@ -88,6 +88,8 @@ interface ManifestEntry {
 }
 
 type Manifest = Record<string, ManifestEntry>;
+/** The manifest as reads get it: changes go through withManifest. */
+type ReadonlyManifest = Readonly<Record<string, Readonly<ManifestEntry>>>;
 
 function goalOf(entry: ManifestEntry): ConversationGoal {
   return { text: entry.goal || null, source: entry.goalSource ?? null, hidden: !!entry.goalHidden };
@@ -110,7 +112,18 @@ export class WorktreeManager {
   /** Ids whose worktree directory is being created: on disk before it is in
    *  the manifest or in `worktrees`, so the sweep must leave it alone. */
   private creating = new Set<string>();
-  private manifestLock = Promise.resolve();
+  /** The manifest with every change made this run, on disk or still being
+   *  written. Read from disk once: this is the only copy of the app
+   *  (single-instance lock) and the only writer, so later reads never touch
+   *  the disk, and never wait behind a write when the disk is slow. */
+  private manifest: Manifest | null = null;
+  /** The first read of the manifest, shared by the callers that ask meanwhile. */
+  private manifestLoad: Promise<void> | null = null;
+  /** Bumped by every change; manifestWritten is the newest one on disk. */
+  private manifestVersion = 0;
+  private manifestWritten = 0;
+  /** The write under way, and the newest change it carries. */
+  private manifestWrite: { done: Promise<void>; version: number } | null = null;
   /** Per-repo locks to serialize git worktree operations (e.g. concurrent removes). */
   private repoLocks = new Map<string, Promise<void>>();
 
@@ -132,23 +145,53 @@ export class WorktreeManager {
     }
   }
 
-  /** Serialize manifest reads/writes to prevent concurrent clobber. The
-   *  manifest is written back unless `changed` says `fn` left it as it was. */
+  /**
+   * Change the manifest. `fn` changes a copy, which replaces the manifest at
+   * once, so every read from then on sees the change; then it is written,
+   * and this resolves once a write holding it is on disk. Changes made while
+   * a write is under way go in the next write together: ten agents finishing
+   * turns cost a write or two, not one each, and one change never waits
+   * behind a queue of whole-file writes. `fn` must be synchronous (do any
+   * I/O before), so no change can land between its read and its write. The
+   * manifest is written unless `changed` says `fn` left it as it was.
+   */
   private async withManifest<T>(
-    fn: (manifest: Manifest) => T | Promise<T>,
+    fn: (manifest: Manifest) => T,
     changed: (result: T) => boolean = () => true,
   ): Promise<T> {
-    const prev = this.manifestLock;
-    let resolve!: () => void;
-    this.manifestLock = new Promise((r) => { resolve = r; });
-    await prev;
-    try {
-      const manifest = await this.loadManifest();
-      const result = await fn(manifest);
-      if (changed(result)) await this.saveManifest(manifest);
-      return result;
-    } finally {
-      resolve();
+    // Applied as soon as the manifest is in memory (at once after the first
+    // read), so a read asked for after this one sees it.
+    if (!this.manifest) await this.firstManifestRead();
+    const draft = structuredClone(this.manifest!);
+    const result = fn(draft);
+    if (result instanceof Promise) throw new Error('withManifest needs a synchronous change');
+    if (!changed(result)) return result;
+    this.manifest = draft;
+    await this.writeManifest(++this.manifestVersion);
+    return result;
+  }
+
+  /**
+   * Wait until change `version` is on disk, starting a write of the latest
+   * manifest when none is under way. A failed write rejects the changes it
+   * carried. They stay in memory, so reads still see them, and go with the
+   * next write (the next change's, or a later change's waiting on this one).
+   */
+  private async writeManifest(version: number): Promise<void> {
+    while (this.manifestWritten < version) {
+      if (!this.manifestWrite) {
+        const carries = this.manifestVersion;
+        const done = this.saveManifest(this.manifest!)
+          .then(() => { this.manifestWritten = carries; })
+          .finally(() => { this.manifestWrite = null; });
+        this.manifestWrite = { done, version: carries };
+      }
+      const write = this.manifestWrite;
+      try {
+        await write.done;
+      } catch (e) {
+        if (write.version >= version) throw e;
+      }
     }
   }
 
@@ -160,13 +203,30 @@ export class WorktreeManager {
     return crypto.createHash('sha256').update(repoPath).digest('hex').slice(0, 8);
   }
 
+  /** The manifest, read from disk the first time (see `manifest`), with
+   *  every change asked for before this, even while that first read ran. */
+  private loadManifest(): Promise<ReadonlyManifest> {
+    if (this.manifest) return Promise.resolve(this.manifest);
+    return this.firstManifestRead().then(() => this.manifest!);
+  }
+
+  /** Read the file into `manifest`, once for everyone who asks meanwhile.
+   *  Who waits on it goes on in the order they asked (see withManifest). */
+  private firstManifestRead(): Promise<void> {
+    this.manifestLoad ??= this.readManifest()
+      .then((read) => { this.manifest ??= read; })
+      .finally(() => { this.manifestLoad = null; });
+    return this.manifestLoad;
+  }
+
   /**
-   * Read the manifest. Only a missing file reads as empty: an unreadable or
-   * corrupt one throws. Treating those as empty used to be destructive: the
-   * next write saved the empty manifest over every entry, and the sweep then
-   * deleted each worktree directory it no longer found listed.
+   * Read the manifest file. Only a missing file reads as empty: an
+   * unreadable or corrupt one throws (and the next read tries again).
+   * Treating those as empty used to be destructive: the next write saved the
+   * empty manifest over every entry, and the sweep then deleted each
+   * worktree directory it no longer found listed.
    */
-  private async loadManifest(): Promise<Manifest> {
+  private async readManifest(): Promise<Manifest> {
     const manifestPath = path.join(this.getWorktreeRoot(), MANIFEST_FILE);
     let data: string;
     try {
@@ -446,18 +506,16 @@ export class WorktreeManager {
 
   /** A thread's spend, allowance and tokens when last saved, or undefined when none
    *  was (an unknown thread, or one that hasn't been saved since this was
-   *  kept). Read in turn with writes, so a save still queued is seen. */
+   *  kept). A save still being written is seen: the manifest in memory has it. */
   async getThreadLimits(worktreeId: string): Promise<SavedThreadLimits | undefined> {
-    return this.withManifest((manifest) => {
-      const entry = manifest[worktreeId];
-      if (!entry || !isUsd(entry.threadSpendUsd)) return undefined;
-      return {
-        spendUsd: entry.threadSpendUsd,
-        ...(isUsd(entry.threadAllowanceUsd) ? { allowanceUsd: entry.threadAllowanceUsd } : {}),
-        ...(isUsd(entry.threadInputTokens) && isUsd(entry.threadOutputTokens)
-          ? { tokens: { input: entry.threadInputTokens, output: entry.threadOutputTokens } } : {}),
-      };
-    }, () => false);
+    const entry = (await this.loadManifest())[worktreeId];
+    if (!entry || !isUsd(entry.threadSpendUsd)) return undefined;
+    return {
+      spendUsd: entry.threadSpendUsd,
+      ...(isUsd(entry.threadAllowanceUsd) ? { allowanceUsd: entry.threadAllowanceUsd } : {}),
+      ...(isUsd(entry.threadInputTokens) && isUsd(entry.threadOutputTokens)
+        ? { tokens: { input: entry.threadInputTokens, output: entry.threadOutputTokens } } : {}),
+    };
   }
 
   /** The agent a session runs, or undefined for an unknown session. */
@@ -1143,47 +1201,54 @@ export class WorktreeManager {
 
     const hash = this.repoHash(repoPath);
 
-    const cleaned = await this.withManifest(async (manifest) => {
-      let count = 0;
+    // The folders are checked first and the orphans dropped together after,
+    // so no other change to the manifest waits on this I/O.
+    const orphans: string[] = [];
+    for (const [id, entry] of Object.entries(await this.loadManifest())) {
+      if (entry.repoPath !== repoPath) continue;
+      if (entry.direct) continue; // Direct sessions have no worktree to clean up
+      if (entry.pendingRemoval) continue; // handled by processPendingRemovals
 
-      for (const [id, entry] of Object.entries(manifest)) {
-        if (entry.repoPath !== repoPath) continue;
-        if (entry.direct) continue; // Direct sessions have no worktree to clean up
-        if (entry.pendingRemoval) continue; // handled by processPendingRemovals
+      const wtPath = path.join(this.getWorktreeRoot(), hash, id);
 
-        const wtPath = path.join(this.getWorktreeRoot(), hash, id);
-
-        let dirExists = true;
-        try {
-          await fs.access(wtPath);
-        } catch (e) {
-          // Only a missing directory is an orphan. Any other error (a lock,
-          // permissions) says nothing about it: leave the entry for next time.
-          if ((e as NodeJS.ErrnoException).code !== 'ENOENT') continue;
-          dirExists = false;
-        }
-
-        const gitKnows = gitPaths.has(pathKey(wtPath));
-
-        if (!dirExists || !gitKnows) {
-          logger.warn(`Found orphan worktree: ${id} (dir=${dirExists}, git=${gitKnows})`);
-          if (dirExists) {
-            // git no longer lists it, but the folder may still hold work.
-            try {
-              await this.moveToTrash(wtPath);
-            } catch (e) {
-              logger.error(`Failed to move orphan ${wtPath} to the trash:`, e);
-              continue; // keep the entry; retry next sweep
-            }
-          }
-          delete manifest[id];
-          count++;
-          logger.info(`Cleaned orphan: ${id}`);
-        }
+      let dirExists = true;
+      try {
+        await fs.access(wtPath);
+      } catch (e) {
+        // Only a missing directory is an orphan. Any other error (a lock,
+        // permissions) says nothing about it: leave the entry for next time.
+        if ((e as NodeJS.ErrnoException).code !== 'ENOENT') continue;
+        dirExists = false;
       }
 
+      const gitKnows = gitPaths.has(pathKey(wtPath));
+
+      if (!dirExists || !gitKnows) {
+        logger.warn(`Found orphan worktree: ${id} (dir=${dirExists}, git=${gitKnows})`);
+        if (dirExists) {
+          // git no longer lists it, but the folder may still hold work.
+          try {
+            await this.moveToTrash(wtPath);
+          } catch (e) {
+            logger.error(`Failed to move orphan ${wtPath} to the trash:`, e);
+            continue; // keep the entry; retry next sweep
+          }
+        }
+        orphans.push(id);
+      }
+    }
+
+    const cleaned = await this.withManifest((manifest) => {
+      let count = 0;
+      for (const id of orphans) {
+        // Removed meanwhile, or being removed (processPendingRemovals' now).
+        if (!manifest[id] || manifest[id].pendingRemoval) continue;
+        delete manifest[id];
+        count++;
+        logger.info(`Cleaned orphan: ${id}`);
+      }
       return count;
-    });
+    }, (count) => count > 0);
 
     if (cleaned > 0) {
       try {
@@ -1300,23 +1365,26 @@ export class WorktreeManager {
     // Phase 3: clean stale direct entries whose project folder is gone. Only
     // the folder counts, not whether git opens it: a missing or broken git at
     // launch must not delete conversations, and a folder project has no
-    // repository to check.
-    await this.withManifest(async (m) => {
-      for (const [id, entry] of Object.entries(m)) {
-        if (!entry.direct) continue;
-        if (activeIds.has(id)) continue;
-        try {
-          const valid = await fs.stat(entry.repoPath).then((st) => st.isDirectory(), () => false);
-          if (!valid) {
-            logger.info(`Sweep: removing stale direct entry ${id} (repo gone: ${entry.repoPath})`);
-            delete m[id];
-            totalCleaned++;
-          }
-        } catch {
-          // Can't verify — leave it alone
-        }
+    // repository to check. Checked first and dropped together, as in
+    // cleanupOrphans.
+    const goneDirect: string[] = [];
+    for (const [id, entry] of Object.entries(await this.loadManifest())) {
+      if (!entry.direct) continue;
+      if (activeIds.has(id)) continue;
+      const valid = await fs.stat(entry.repoPath).then((st) => st.isDirectory(), () => false);
+      if (!valid) goneDirect.push(id);
+    }
+    totalCleaned += await this.withManifest((m) => {
+      let count = 0;
+      for (const id of goneDirect) {
+        const entry = m[id];
+        if (!entry?.direct) continue; // removed meanwhile
+        logger.info(`Sweep: removing stale direct entry ${id} (repo gone: ${entry.repoPath})`);
+        delete m[id];
+        count++;
       }
-    });
+      return count;
+    }, (count) => count > 0);
 
     if (totalCleaned > 0) {
       logger.info(`Sweep: cleaned ${totalCleaned} stale worktree(s)`);

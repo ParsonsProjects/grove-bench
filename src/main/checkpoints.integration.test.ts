@@ -85,6 +85,57 @@ describe('checkpoints with real git', () => {
     expect(run(['diff', '--cached', '--name-only'], wt)).toBe('');
   });
 
+  it('keeps one snapshot index for the thread between snapshots, and deletes it with the thread', async () => {
+    const index = path.join(tmp, 'repo', '.git', 'worktrees', 'wt', 'grove-snapshot-s1.index');
+    const mgr = new CheckpointManager();
+    write('src/new.ts', 'new\n');
+    await mgr.capture('s1', wt, 'u1');
+    write('src/new.ts', 'newer\n');
+    fs.rmSync(path.join(wt, 'a.ts'));
+    await mgr.capture('s1', wt, 'u2');
+
+    expect(fs.existsSync(index)).toBe(true);
+    expect(run(['ls-tree', '-r', '--name-only', 'refs/grove/checkpoints/s1/turn/2'], wt).split('\n')).toEqual(['.gitignore', 'src/new.ts']);
+    expect(run(['show', 'refs/grove/checkpoints/s1/turn/2:src/new.ts'], wt)).toBe('newer');
+
+    await mgr.cleanup('s1', wt);
+    expect(fs.existsSync(index)).toBe(false);
+  });
+
+  it('leaves out files ignored since the last snapshot, by a .gitignore or info/exclude', async () => {
+    const mgr = new CheckpointManager();
+    write('out/build.js', 'built\n');
+    write('notes/todo.md', 'todo\n');
+    await mgr.capture('s1', wt, 'u1');
+    expect(run(['ls-tree', '-r', '--name-only', 'refs/grove/checkpoints/s1/turn/1'], wt)).toContain('out/build.js');
+
+    write('.gitignore', '*.log\nout/\n');
+    await mgr.capture('s1', wt, 'u2');
+    fs.appendFileSync(path.join(tmp, 'repo', '.git', 'info', 'exclude'), 'notes/\n');
+    await mgr.capture('s1', wt, 'u3');
+
+    const files = (turn: number) => run(['ls-tree', '-r', '--name-only', `refs/grove/checkpoints/s1/turn/${turn}`], wt).split('\n');
+    expect(files(2)).toEqual(['.gitignore', 'a.ts', 'notes/todo.md']);
+    expect(files(3)).toEqual(['.gitignore', 'a.ts']);
+  });
+
+  // Git checks the content of a file changed in the same second as its index
+  // was written. A copy of the index timed later would hide that.
+  it('snapshots a file edited in the second it was committed, at the same size', async () => {
+    // At the start of a second, so the commit and the edit share it (if a
+    // slow machine misses it, the test passes without testing anything)...
+    await new Promise((r) => setTimeout(r, 1050 - (Date.now() % 1000)));
+    write('a.ts', 'uno\n');
+    run(['commit', '-qam', 'uno'], wt);
+    write('a.ts', 'dos\n');
+    // ...and the snapshot in a later one.
+    await new Promise((r) => setTimeout(r, 1100));
+
+    const mgr = new CheckpointManager();
+    await mgr.capture('s1', wt, 'u1');
+    expect(run(['show', 'refs/grove/checkpoints/s1/turn/1:a.ts'], wt)).toBe('dos');
+  });
+
   it('gives a file\'s lines after a turn for expanding context, unless it\'s over the size limit', async () => {
     const mgr = new CheckpointManager();
     await mgr.capture('s1', wt, 'u1');
