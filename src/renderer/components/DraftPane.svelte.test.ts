@@ -44,6 +44,9 @@ beforeEach(async () => {
   mockGroveBench.checkPrerequisites.mockResolvedValue(status(false));
   mockGroveBench.getModels.mockResolvedValue([{ id: 'opus', label: 'Opus' }]);
   mockGroveBench.getAdapterControls.mockResolvedValue([]);
+  // No skills unless a test gives some: clearAllMocks keeps the skills tests'
+  // list, and CI shuffles the order (the placeholder names skills).
+  mockGroveBench.listAgentSkills.mockResolvedValue([]);
   (mockGroveBench as unknown as { createSession: ReturnType<typeof vi.fn> }).createSession = vi.fn()
     .mockResolvedValue({ id: 'new1', branch: 'grove/new1', agentType: 'claude-code' });
   draftStore.discard();
