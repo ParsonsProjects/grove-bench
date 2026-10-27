@@ -247,27 +247,49 @@ describe('ThreadSkills', () => {
   /** A skill card's text, by the skill's name. */
   const card = async (name: string) => (await screen.findByText(name, { selector: 'span.font-mono' })).closest('[role="presentation"]') as HTMLElement;
 
+  it("marks a project skill a new thread wouldn't have, and holds back Run and Schedule for it", async () => {
+    thread('claude-code');
+    mockGroveBench.listSkills.mockResolvedValue([{ ...many[0], worktreeOnly: true }, many[1]]);
+    render(ThreadSkills, { sessionId: 't1' });
+    expect(await card('release-notes')).toHaveTextContent("Only in this thread's branch so far");
+    expect(screen.getByRole('button', { name: 'Run release-notes in a new thread' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Schedule release-notes' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Run triage in a new thread' })).toBeEnabled();
+  });
+
+  it('says when Suggest finds nothing, or why it failed', async () => {
+    thread('claude-code');
+    render(ThreadSkills, { sessionId: 't1' });
+    mockGroveBench.analyzeSkillSuggestions.mockResolvedValueOnce([]);
+    await fireEvent.click(await screen.findByRole('button', { name: 'Suggest' }));
+    expect(await screen.findByText(/No suggestions\. One comes from a request or command that recurs in at least 3 threads/)).toBeInTheDocument();
+
+    mockGroveBench.analyzeSkillSuggestions.mockRejectedValueOnce(new Error("Error invoking remote method 'skills:analyzeSuggestions': Error: disk full"));
+    await fireEvent.click(screen.getByRole('button', { name: 'Suggest' }));
+    expect(await screen.findByText("Couldn't read this project's threads for suggestions: disk full")).toBeInTheDocument();
+  });
+
   it('says on each card who can use the skill: which agents, and which projects', async () => {
     thread('claude-code');
     mockGroveBench.listSkills.mockResolvedValue(many);
-    mockGroveBench.getSkillSharing.mockResolvedValue({ toShare: [many[1], many[2]], toLink: [], broken: [] });
+    mockGroveBench.getSkillSharing.mockResolvedValue({ toShare: [many[1], many[2]] });
     pluginSkill();
     render(ThreadSkills, { sessionId: 't1' });
-    await waitFor(async () => expect(await card('triage')).toHaveTextContent('Claude only · This project'));
+    // Named by its folder: Copilot and OpenCode read .claude/skills too.
+    await waitFor(async () => expect(await card('triage')).toHaveTextContent('In .claude/skills · This project'));
     expect(await card('release-notes')).toHaveTextContent('All agents · This project');
-    // A personal one in Claude Code's own folder is the thread's account's alone.
-    expect(await card('deploy')).toHaveTextContent('Claude Code only · All my projects');
+    expect(await card('deploy')).toHaveTextContent('In .claude/skills · All my projects');
     expect(await card('engineering:code-review')).not.toHaveTextContent('·');
   });
 
-  it("in another agent's thread, names its own folders as its alone and .agents/skills as every agent's", async () => {
+  it("in another agent's thread, names the folder a skill is in, and .agents/skills as every agent's", async () => {
     thread('gemini-cli');
     mockGroveBench.listSkills.mockResolvedValue([
       { name: 'mine', description: '', source: 'project', path: '/repo/.gemini/skills/mine/SKILL.md' },
       { name: 'ours', description: '', source: 'user', path: '/home/me/.agents/skills/ours/SKILL.md' },
     ]);
     render(ThreadSkills, { sessionId: 't1' });
-    expect(await card('mine')).toHaveTextContent('Gemini CLI only · This project');
+    expect(await card('mine')).toHaveTextContent('In .gemini/skills · This project');
     expect(await card('ours')).toHaveTextContent('All agents · All my projects');
     // Grove keeps no Claude links in it.
     expect(mockGroveBench.linkSkills).not.toHaveBeenCalled();
@@ -275,7 +297,7 @@ describe('ThreadSkills', () => {
 
   it('keeps Claude Agent links in line without asking, once the agent list says it is Claude Code, and has no notice', async () => {
     thread('claude-code');
-    mockGroveBench.getSkillSharing.mockResolvedValueOnce({ toShare: [{ name: 'own', description: '', source: 'project' }], toLink: [{ name: 'team', description: '', source: 'project' }], broken: [] });
+    mockGroveBench.getSkillSharing.mockResolvedValueOnce({ toShare: [{ name: 'own', description: '', source: 'project' }] });
     render(ThreadSkills, { sessionId: 't1' });
     await waitFor(() => expect(mockGroveBench.linkSkills).toHaveBeenCalledWith('t1', '/repo'));
     await screen.findByRole('button', { name: 'Run triage in a new thread' });
@@ -286,9 +308,9 @@ describe('ThreadSkills', () => {
   it('lets every agent use a Claude-only skill from "Who can use it", saying first what that does', async () => {
     thread('claude-code');
     mockGroveBench.listSkills.mockResolvedValue(many);
-    mockGroveBench.getSkillSharing.mockResolvedValue({ toShare: [many[1]], toLink: [], broken: [] });
+    mockGroveBench.getSkillSharing.mockResolvedValue({ toShare: [many[1]] });
     render(ThreadSkills, { sessionId: 't1' });
-    await waitFor(async () => expect(await card('triage')).toHaveTextContent('Claude only'));
+    await waitFor(async () => expect(await card('triage')).toHaveTextContent('In .claude/skills'));
     await choose('triage', 'Who can use it…');
     const form = screen.getByRole('group', { name: 'Who can use triage' });
     expect(within(form).getByText('No change.')).toBeInTheDocument();
@@ -310,11 +332,11 @@ describe('ThreadSkills', () => {
     let form = screen.getByRole('group', { name: 'Who can use release-notes' });
     await fireEvent.click(within(form).getByRole('radio', { name: 'All my projects' }));
     expect(within(form).getByText(/Copies it to ~\/\.agents\/skills, for every agent in all your projects/)).toBeInTheDocument();
-    await fireEvent.click(within(form).getByRole('radio', { name: 'Claude only' }));
-    expect(within(form).getByText(/Copies it to Claude Code's own folder, for it alone in all your projects/)).toBeInTheDocument();
+    await fireEvent.click(within(form).getByRole('radio', { name: "Claude's folder" }));
+    expect(within(form).getByText(/Copies it to Claude Code's own folder, for all your projects\. Agents that don't read that folder won't see it\./)).toBeInTheDocument();
     await fireEvent.click(within(form).getByRole('button', { name: 'Apply' }));
     expect(mockGroveBench.setSkillReach).toHaveBeenCalledWith('t1', '/repo', many[0].path, { agents: 'claude', projects: 'all' });
-    expect(await screen.findByText(/"release-notes" is for Claude Code alone in all your projects now\. The project keeps its copy for your team\./)).toBeInTheDocument();
+    expect(await screen.findByText(/"release-notes" is in all your projects now, in Claude Code's own folder\. The project keeps its copy for your team\./)).toBeInTheDocument();
 
     // A personal skill is in every project already.
     await choose('deploy', 'Who can use it…');

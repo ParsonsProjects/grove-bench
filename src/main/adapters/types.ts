@@ -36,7 +36,7 @@ export interface AgentCapabilities {
   /** Supports plugins/extensions */
   plugins: boolean;
   /** Supports packaged skill instructions (discovery via listSkills, authoring
-   *  via addSkill, and the AdapterConfig.skills allowlist filter). */
+   *  via addSkill, and turning them off with AdapterConfig.disabledSkills). */
   skills?: boolean;
   /** Reports account-level plan usage windows (see AgentQueryHandle.getUsage) */
   usage?: boolean;
@@ -187,10 +187,10 @@ export interface AdapterConfig {
   appendSystemPrompt?: string | null;
   customSystemPrompt?: string | null;
   allowedTools?: Set<string> | null;
-  /** Skill allowlist for the session. When unset, the provider's own defaults
-   *  apply (all discovered skills enabled). An array enables only the listed
-   *  skills — used to honor the user's disabled-skills setting. */
-  skills?: string[] | null;
+  /** Skills the user turned off, by name: hidden from the model and from
+   *  its commands. Every other skill stays on, including ones added while
+   *  the session runs. */
+  disabledSkills?: string[] | null;
   outputFormat?: { type: 'json_schema'; schema: Record<string, unknown> } | null;
   sandbox?: Record<string, unknown> | null;
   extraEnv?: Record<string, string> | null;

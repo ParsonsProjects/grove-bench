@@ -20,6 +20,8 @@ import { loadSkillSuggestionCache, saveSkillSuggestionCache } from './app-state.
 import { logger } from './logger.js';
 import { toolViewOf } from '../shared/tool-view.js';
 import { eventsSinceAgentChange } from './agent-handoff.js';
+import { isSkillPrompt } from '../shared/skill-line.js';
+import { MAX_SKILL_DESCRIPTION_LENGTH, MAX_SKILL_NAME_LENGTH, skillNameProblem } from '../shared/skill-name.js';
 
 // ─── Extraction from event logs ───
 
@@ -46,7 +48,9 @@ export function extractActivity(sessionId: string, events: AgentEvent[]): Sessio
     if (event.type === 'user_message' && typeof event.text === 'string') {
       const text = event.text.trim();
       // Skip Grove's own injected turns (memory restore notices, PR prompts…)
-      if (!text || text.startsWith('[System]')) continue;
+      // and the ones it writes to run or write a skill: a scheduled skill
+      // would otherwise come back as a suggestion to make it a skill.
+      if (!text || text.startsWith('[System]') || isSkillPrompt(text)) continue;
       prompts.push(text.slice(0, 500));
     } else if (event.type === 'assistant_tool_use') {
       const view = toolViewOf(event);
@@ -188,7 +192,7 @@ export function suggestionId(label: string): string {
 function kebabName(candidate: PatternCandidate): string {
   const source = candidate.kind === 'command' ? candidate.label.split(' ')[0] + ' workflow' : candidate.label;
   const words = [...tokenize(source)].slice(0, 3);
-  const name = words.join('-').replace(/[^a-z0-9-]/g, '');
+  const name = words.join('-').replace(/[^a-z0-9-]/g, '').slice(0, MAX_SKILL_NAME_LENGTH).replace(/-+$/, '');
   return name || 'recurring-workflow';
 }
 
@@ -213,6 +217,19 @@ export function suggestionFromPattern(candidate: PatternCandidate): SkillSuggest
 
 // ─── Coverage filter ───
 
+/** Drop suggestions mined from much the same requests or commands as one
+ *  the user dismissed. Its id alone can't say: a prompt cluster's id comes
+ *  from its first prompt, which changes as older threads drop out of the
+ *  ones read. */
+export function filterDismissed(suggestions: SkillSuggestion[], dismissedEvidence: readonly string[]): SkillSuggestion[] {
+  if (dismissedEvidence.length === 0) return suggestions;
+  const dismissed = dismissedEvidence.map(tokenize);
+  return suggestions.filter((s) => !s.evidence.some((e) => {
+    const tokens = tokenize(e);
+    return dismissed.some((d) => jaccard(d, tokens) >= 0.5);
+  }));
+}
+
 /** Drop suggestions an existing skill already covers: same name, or a
  *  description that substantially overlaps an existing skill's. */
 export function filterCovered(suggestions: SkillSuggestion[], existing: SkillInfo[]): SkillSuggestion[] {
@@ -227,22 +244,28 @@ export function filterCovered(suggestions: SkillSuggestion[], existing: SkillInf
 
 // ─── LLM distillation ───
 
-const distilledSchema = z.array(z.object({
+const distilledItemSchema = z.object({
   patternIndex: z.number().int().min(0),
-  name: z.string().regex(/^[a-z0-9][a-z0-9-]*$/),
-  description: z.string().min(1),
+  // A name Add skill would take (shared/skill-name.ts).
+  name: z.string().refine((name) => skillNameProblem(name) === null),
+  description: z.string().min(1).max(MAX_SKILL_DESCRIPTION_LENGTH),
   instructions: z.string().min(1),
   rationale: z.string().min(1),
-})).max(8);
+});
 
 /** Pull the first JSON array out of a model reply (tolerates code fences and
- *  prose around it) and validate it. Null when nothing usable came back. */
-export function parseDistilled(text: string): z.infer<typeof distilledSchema> | null {
+ *  prose around it) and keep its well-formed items, so one bad item doesn't
+ *  lose the rest. Null when no array came back. */
+export function parseDistilled(text: string): z.infer<typeof distilledItemSchema>[] | null {
   const match = text.match(/\[[\s\S]*\]/);
   if (!match) return null;
   try {
-    const result = distilledSchema.safeParse(JSON.parse(match[0]));
-    return result.success ? result.data : null;
+    const raw: unknown = JSON.parse(match[0]);
+    if (!Array.isArray(raw)) return null;
+    return raw.slice(0, 8).flatMap((item) => {
+      const parsed = distilledItemSchema.safeParse(item);
+      return parsed.success ? [parsed.data] : [];
+    });
   } catch {
     return null;
   }
@@ -297,29 +320,37 @@ export interface AnalyzeOptions {
   maxSessions?: number;
 }
 
-function readEventLog(eventsDir: string, sessionId: string): AgentEvent[] {
+/** The events of a thread's log that the analysis reads: user messages,
+ *  tool calls and agent switches. Read without blocking the main process,
+ *  and a line that can't be one of those isn't parsed. */
+async function readEventLog(eventsDir: string, sessionId: string): Promise<AgentEvent[]> {
+  let raw: string;
   try {
-    const raw = fs.readFileSync(path.join(eventsDir, `${sessionId}.jsonl`), 'utf-8');
-    const events: AgentEvent[] = [];
-    for (const line of raw.split('\n')) {
-      if (!line.trim()) continue;
-      try { events.push(JSON.parse(line) as AgentEvent); } catch { /* torn write — skip line */ }
-    }
-    return events;
+    raw = await fs.promises.readFile(path.join(eventsDir, `${sessionId}.jsonl`), 'utf-8');
   } catch {
     return []; // no log for this session
   }
+  const events: AgentEvent[] = [];
+  for (const line of raw.split('\n')) {
+    if (!line.includes('"user_message"') && !line.includes('"assistant_tool_use"') && !line.includes('"agent_changed"')) continue;
+    try { events.push(JSON.parse(line) as AgentEvent); } catch { /* torn write — skip line */ }
+  }
+  return events;
 }
 
 /** Mine the repo's session logs and refresh the cached suggestions. */
 export async function analyzeRepo(opts: AnalyzeOptions): Promise<SkillSuggestion[]> {
   const minSessions = opts.minSessions ?? 3;
   const sessionIds = opts.sessionIds.slice(-1 * (opts.maxSessions ?? 30));
-  const activities = sessionIds
+  const activities: SessionActivity[] = [];
+  // One log at a time, so a project with long threads doesn't hold them
+  // all in memory at once.
+  for (const id of sessionIds) {
     // A switched conversation's turns before the switch belong to another
     // provider (agent-handoff.ts).
-    .map((id) => extractActivity(id, eventsSinceAgentChange(readEventLog(opts.eventsDir, id))))
-    .filter((a) => a.prompts.length > 0 || a.bashCommands.length > 0);
+    const activity = extractActivity(id, eventsSinceAgentChange(await readEventLog(opts.eventsDir, id)));
+    if (activity.prompts.length > 0 || activity.bashCommands.length > 0) activities.push(activity);
+  }
 
   const candidates = findPatterns(activities, minSessions);
   let suggestions = candidates.map(suggestionFromPattern);
@@ -335,12 +366,14 @@ export async function analyzeRepo(opts: AnalyzeOptions): Promise<SkillSuggestion
 
   const cache = loadSkillSuggestionCache(opts.repoPath);
   const dismissed = new Set(cache?.dismissedIds ?? []);
-  suggestions = filterCovered(suggestions, opts.existingSkills)
+  const dismissedEvidence = cache?.dismissedEvidence ?? [];
+  suggestions = filterDismissed(filterCovered(suggestions, opts.existingSkills), dismissedEvidence)
     .filter((s) => !dismissed.has(s.id));
 
   saveSkillSuggestionCache(opts.repoPath, {
     suggestions,
     dismissedIds: [...dismissed],
+    ...(dismissedEvidence.length > 0 ? { dismissedEvidence } : {}),
     analyzedAt: Date.now(),
   });
   return suggestions;
@@ -350,9 +383,16 @@ export function getCachedSuggestions(repoPath: string): SkillSuggestion[] {
   return loadSkillSuggestionCache(repoPath)?.suggestions ?? [];
 }
 
+/** Examples kept from dismissed suggestions, newest last. */
+const MAX_DISMISSED_EVIDENCE = 200;
+
 export function dismissSuggestion(repoPath: string, suggestionId: string): void {
   const cache = loadSkillSuggestionCache(repoPath) ?? { suggestions: [], dismissedIds: [], analyzedAt: 0 };
   if (!cache.dismissedIds.includes(suggestionId)) cache.dismissedIds.push(suggestionId);
+  const evidence = cache.suggestions.find((s) => s.id === suggestionId)?.evidence ?? [];
+  if (evidence.length > 0) {
+    cache.dismissedEvidence = [...new Set([...(cache.dismissedEvidence ?? []), ...evidence])].slice(-MAX_DISMISSED_EVIDENCE);
+  }
   cache.suggestions = cache.suggestions.filter((s) => s.id !== suggestionId);
   saveSkillSuggestionCache(repoPath, cache);
 }

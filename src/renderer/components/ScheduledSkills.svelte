@@ -115,12 +115,15 @@
               {describeTiming(schedule.timing)}{schedule.paused ? ' · paused' : next ? ` · next ${when(next)}` : ''}
             </div>
             <div>{outcomeText(schedule)}{openCount ? ` · ${openCount} open` : ''}</div>
+            {#if schedulesStore.turnedOff(schedule)}
+              <div class="text-amber-400">The skill is turned off, so its runs are skipped. Turn it back on in This thread to run it.</div>
+            {/if}
             {#snippet actions()}
               <Button
                 size="2xs"
                 variant="subtle-primary"
-                disabled={group.removed || !!schedulesStore.starting[schedule.id]}
-                title={group.removed ? 'Its project was removed' : 'Run it now in a new thread'}
+                disabled={group.removed || !!schedulesStore.starting[schedule.id] || schedulesStore.turnedOff(schedule)}
+                title={group.removed ? 'Its project was removed' : schedulesStore.turnedOff(schedule) ? 'The skill is turned off' : 'Run it now in a new thread'}
                 onclick={() => runNow(schedule)}
               >Run now</Button>
               <Button size="2xs" variant="subtle" onclick={() => togglePaused(schedule)}>{schedule.paused ? 'Resume' : 'Pause'}</Button>

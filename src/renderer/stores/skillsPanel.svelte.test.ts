@@ -63,14 +63,14 @@ describe('skillsPanelStore', () => {
     skillsPanelStore.unlessUnsaved(then);
     expect(then).not.toHaveBeenCalled();
     expect(skillsPanelStore.pendingDiscard).toBe(then);
-    skillsPanelStore.discardEdit();
+    skillsPanelStore.discardChanges();
     expect(then).toHaveBeenCalledOnce();
     expect(skillsPanelStore).toMatchObject({ edit: null, pendingDiscard: null });
 
     editing(true);
     skillsPanelStore.requestClose();
     expect(skillsPanelStore.open).toBe(true);
-    skillsPanelStore.discardEdit();
+    skillsPanelStore.discardChanges();
     expect(skillsPanelStore.open).toBe(false);
   });
 

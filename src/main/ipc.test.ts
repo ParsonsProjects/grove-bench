@@ -1656,8 +1656,12 @@ describe('adapters, skills and MCP config', () => {
     m.sessionManager.getWorktreePath.mockReturnValue(undefined);
     await expect(invoke(IPC.SKILLS_ADD, 's1', '', { name: 'x' })).rejects.toThrow('No project root');
 
-    await invoke(IPC.SKILLS_ADD, 's1', '/repo', { name: 'x' });
-    expect(addSkill).toHaveBeenCalledWith('/repo', { name: 'x' }, []);
+    // Only a whole skill, at a scope there is, and only its fields.
+    const def = { name: 'x', description: 'd', instructions: 'i', scope: 'project' };
+    await expect(invoke(IPC.SKILLS_ADD, 's1', '/repo', { name: 'x' })).rejects.toThrow('No skill given');
+    await expect(invoke(IPC.SKILLS_ADD, 's1', '/repo', { ...def, scope: 'session' })).rejects.toThrow('No skill given');
+    await invoke(IPC.SKILLS_ADD, 's1', '/repo', { ...def, extra: true });
+    expect(addSkill).toHaveBeenCalledWith('/repo', def, []);
   });
 
   it("skills of a thread that isn't running come from its own agent, and none from one that is gone", async () => {
@@ -1675,7 +1679,7 @@ describe('adapters, skills and MCP config', () => {
   });
 
   it("shares and links in Claude Code's folders: the thread's agent's when it needs links, else the default's", async () => {
-    const found = { toShare: [{ name: 'own' }], toLink: [{ name: 'team' }], broken: [{ name: 'gone' }] };
+    const found = { toShare: [{ name: 'own' }] };
     sharing.skillSharing.mockResolvedValue(found);
     m.sessionManager.getSessionAdapter.mockReturnValue(undefined);
     m.sessionManager.getWorktreePath.mockReturnValue('/wt');
@@ -1689,9 +1693,9 @@ describe('adapters, skills and MCP config', () => {
     await invoke(IPC.SKILLS_LINK, 's1', '/repo');
     expect(sharing.linkSkills).toHaveBeenCalledWith('/wt', { ...accountDirs, userLinks: [] });
 
-    // Another agent's thread is told what Claude Code's folders have, but isn't offered links.
+    // Another agent's thread is told what Claude Code's folders have.
     m.worktreeManager.getAdapterType.mockResolvedValue('gemini-cli');
-    expect(await invoke(IPC.SKILLS_SHARING, 's1', '/repo')).toEqual({ toShare: [{ name: 'own' }], toLink: [], broken: [] });
+    expect(await invoke(IPC.SKILLS_SHARING, 's1', '/repo')).toEqual({ toShare: [{ name: 'own' }] });
     expect(sharing.skillSharing).toHaveBeenLastCalledWith('/wt', { project: [path.join('.claude', 'skills')], user: [path.join('.claude', 'skills')], userFirst: true, userLinks: [] });
   });
 

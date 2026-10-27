@@ -855,6 +855,10 @@ export interface SkillInfo {
   source: 'project' | 'user' | 'session';
   /** Absolute path to SKILL.md for on-disk skills. */
   path?: string;
+  /** A project skill in this thread's worktree that the project folder
+   *  doesn't have yet (skills.ts markWorktreeOnly): a new thread won't find
+   *  it until it is committed and merged. */
+  worktreeOnly?: boolean;
 }
 
 /** A skill's SKILL.md as the Skills drawer edits it (skills.ts readSkillFile). */
@@ -877,13 +881,10 @@ export interface SkillReach {
   projects: 'project' | 'all';
 }
 
-/** What Share and Link in the Skills drawer would change (skill-sharing.ts):
- *  skills only Claude Code can see, shared skills it can't see yet (or sees
- *  an old copy of), and its links to shared skills that were deleted. */
+/** What Share in the Skills drawer would change (skill-sharing.ts): the
+ *  skills only Claude Code can see. */
 export interface SkillSharing {
   toShare: SkillInfo[];
-  toLink: SkillInfo[];
-  broken: SkillInfo[];
 }
 
 /** What Share or Link did, by skill name. */
@@ -1852,9 +1853,10 @@ export interface GroveBenchSettings {
   // Permission & Security
   toolAllowRules: ToolRule[];
   toolDenyRules: ToolRule[];
-  /** Skill names hidden from agent sessions. Applied when a session's query
-   *  (re)starts — the SDK receives an allowlist of every known skill minus
-   *  these. Empty = all skills enabled (the CLI default). */
+  /** Skill names turned off for Claude Code threads. Applied when a
+   *  session's query (re)starts, as `skillOverrides` set to "off" for each:
+   *  every other skill stays on. Empty = all skills enabled (the CLI
+   *  default). */
   disabledSkills: string[];
   /** Auto-analyze finished sessions for recurring workflows and surface skill
    *  suggestions in the status bar. Off by default — each analysis is a model

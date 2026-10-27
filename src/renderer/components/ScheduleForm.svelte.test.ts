@@ -7,6 +7,7 @@ import ScheduleForm from './ScheduleForm.svelte';
 import { store } from '../stores/sessions.svelte.js';
 import { agentsStore } from '../stores/agents.svelte.js';
 import { settingsStore } from '../stores/settings.svelte.js';
+import { skillsPanelStore } from '../stores/skillsPanel.svelte.js';
 import type { SkillSchedule, SkillScheduleInput } from '../../shared/skill-schedules.js';
 import type { ControlDescriptor } from '../../shared/types.js';
 
@@ -45,6 +46,25 @@ afterEach(() => {
 });
 
 describe('ScheduleForm', () => {
+  it('asks before Cancel drops changes, and not when there are none', async () => {
+    const onclose = vi.fn();
+    skillsPanelStore.editSchedule('/repo', existing);
+    render(ScheduleForm, { repoPath: '/repo', initial: existing, onclose });
+    await waitFor(() => expect(mockGroveBench.listAgentSkills).toHaveBeenCalled());
+    // Untouched: Cancel just goes back.
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(onclose).toHaveBeenCalledTimes(1);
+
+    await fireEvent.input(screen.getByLabelText(/Note/), { target: { value: 'Something else' } });
+    await waitFor(() => expect(skillsPanelStore.formDirty).toBe(true));
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(onclose).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('Discard your changes to this schedule?')).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+    expect(onclose).toHaveBeenCalledTimes(2);
+    skillsPanelStore.close();
+  });
+
   it('edits a schedule and saves a plain copy of it, then goes back', async () => {
     const onclose = vi.fn();
     render(ScheduleForm, { repoPath: '/repo', initial: existing, onclose });

@@ -1,3 +1,5 @@
+import { CREATE_SKILL_LEAD } from '../../shared/skill-line.js';
+
 export interface SkillPromptOpts {
   name: string;
   description: string;
@@ -9,10 +11,11 @@ export interface SkillPromptOpts {
 /**
  * Build the first message of a thread started to have its agent author a
  * skill (startSkillThread). The skill goes in the shared `.agents/skills`
- * folder so every agent can use it; Claude Code then sees it once Link in
- * the Skills drawer adds its link. A project skill's thread has a branch of
- * its own (`ownBranch`) unless the project has no git; a user skill's runs in
- * the project folder, which it should leave alone.
+ * folder so every agent can use it; Claude Code sees it through a link
+ * Grove adds when a thread starts or the Skills drawer opens. A project
+ * skill's thread has a branch of its own (`ownBranch`) unless the project
+ * has no git; a user skill's runs in the project folder, which it should
+ * leave alone.
  */
 export function buildCreateSkillPrompt(opts: SkillPromptOpts, ownBranch = opts.scope === 'project'): string {
   const file = `${opts.scope === 'user' ? '~/' : ''}.agents/skills/${opts.name}/SKILL.md`;
@@ -22,7 +25,7 @@ export function buildCreateSkillPrompt(opts: SkillPromptOpts, ownBranch = opts.s
       ? `as \`${file}\` in this repository. This thread's branch is only for this skill, so change nothing else`
       : `as \`${file}\` in this project folder. Change nothing else`;
   const lines = [
-    `Create a new agent skill named \`${opts.name}\` ${location}.`,
+    `${CREATE_SKILL_LEAD} \`${opts.name}\` ${location}.`,
     '',
     `Trigger description (when the skill should be used): ${opts.description}`,
   ];

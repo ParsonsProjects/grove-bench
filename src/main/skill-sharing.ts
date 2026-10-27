@@ -4,14 +4,14 @@
  * agent it knows reads except Claude Code. Claude Code sees each through a
  * link in its own folder (skillLinkContent in skills.ts).
  *
- * Nothing here runs by itself: the Skills drawer offers Share (move Claude
- * Code's own skills to the shared folder, leaving links behind) and Link
- * (add, update or remove links to match the shared folder). Both change
- * files in the project, so the person chooses when.
+ * Links are kept up to date without asking (linkSkills): when a Claude Code
+ * thread starts, and when its Skills drawer opens. Moving a skill between
+ * Claude Code's folder and the shared one (Share, and its opposite) changes
+ * files in the project, so only the person does that, from the drawer.
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import type { SkillChanges, SkillInfo, SkillReach, SkillSharing } from '../shared/types.js';
+import type { SkillChanges, SkillReach, SkillSharing } from '../shared/types.js';
 import {
   copySkillToUser,
   editTarget,
@@ -19,48 +19,30 @@ import {
   listedSkill,
   linkRoots,
   parseSkillFrontmatter,
+  readSkillFolders,
   readsSharedSkills,
+  sameLink,
   SHARED_SKILLS_DIR,
   skillLinkContent,
   skillLinkTarget,
   skillsRoot,
-  skillText,
   writeLinks,
   type SkillDirs,
+  type SkillFolder,
   type SkillScope,
 } from './skills.js';
 
 const SCOPES: readonly SkillScope[] = ['project', 'user'];
 
-interface Manifest {
-  /** The skill's folder name, which links and moves go by. */
-  dir: string;
-  path: string;
-  content: string;
-}
+type Manifest = SkillFolder;
 
 /** The `<dir>/SKILL.md` manifests in a skills folder, by folder name. */
 async function readManifests(root: string): Promise<Map<string, Manifest>> {
-  let entries: fs.Dirent[];
-  try {
-    entries = await fs.promises.readdir(root, { withFileTypes: true });
-  } catch {
-    return new Map();
-  }
-  const found = await Promise.all(entries.filter((e) => e.isDirectory()).map(async (e): Promise<Manifest | null> => {
-    const manifestPath = path.join(root, e.name, 'SKILL.md');
-    try {
-      return { dir: e.name, path: manifestPath, content: await fs.promises.readFile(manifestPath, 'utf-8') };
-    } catch {
-      return null;
-    }
-  }));
-  return new Map(found.filter((m) => m !== null).map((m) => [m.dir, m]));
+  return new Map((await readSkillFolders(root)).map((m) => [m.dir, m]));
 }
 
-function infoOf(m: Manifest, scope: SkillScope): SkillInfo {
-  const meta = parseSkillFrontmatter(m.content);
-  return { name: meta.name || m.dir, description: meta.description ?? '', source: scope, path: m.path };
+function nameOf(m: Manifest): string {
+  return parseSkillFrontmatter(m.content).name || m.dir;
 }
 
 interface LevelPlan {
@@ -103,42 +85,56 @@ async function plan(worktreePath: string, dirs: SkillDirs): Promise<LevelPlan[]>
         if (current && !isSkillLink(current.content)) continue;
         const link = skillLinkContent(m.content, m.dir, skillLinkTarget(scope, m.dir));
         // Git on Windows may check the link out with CRLF line endings.
-        if (!current || skillText(current.content) !== link) level.toLink.push({ shared: m, link, linkPath: path.join(root, m.dir, 'SKILL.md') });
+        if (!current || !sameLink(current.content, link)) level.toLink.push({ shared: m, link, linkPath: path.join(root, m.dir, 'SKILL.md') });
       }
     });
     return level;
   }));
 }
 
-/** One entry per skill, as several Claude accounts' links can stand for one. */
-function bySkill(skills: SkillInfo[]): SkillInfo[] {
-  return [...new Map(skills.map((s) => [`${s.source}:${s.name}`, s])).values()];
-}
-
 /**
  * What the Skills drawer offers, for an agent that needs links (`dirs` are
- * Claude Code's folders): its own skills other agents can't see, shared
- * skills it, or another Claude account, can't see (or sees an old copy of),
- * and links to deleted skills.
+ * Claude Code's folders): its own skills other agents can't see.
  */
 export async function skillSharing(worktreePath: string, dirs: SkillDirs): Promise<SkillSharing> {
   const levels = await plan(worktreePath, dirs);
   return {
-    toShare: levels.flatMap((l) => l.toShare.map((m) => infoOf(m, l.scope))),
-    toLink: bySkill(levels.flatMap((l) => l.toLink.map(({ shared }) => infoOf(shared, l.scope)))),
-    broken: bySkill(levels.flatMap((l) => l.broken.map((m) => infoOf(m, l.scope)))),
+    toShare: levels.flatMap((l) => l.toShare.map((m) => {
+      const meta = parseSkillFrontmatter(m.content);
+      return { name: meta.name || m.dir, description: meta.description ?? '', source: l.scope, path: m.path };
+    })),
   };
 }
 
 /** Move a skill's folder, copying when it can't be renamed across drives
- *  (a Claude account's folder on another drive). */
+ *  (a Claude account's folder on another drive). A symlinked folder moves
+ *  as a link to the same place: renamed as it is, a relative link would
+ *  point somewhere else from its new folder. When this throws, the skill is
+ *  still at `from`: a copy that fails partway is cleared from `to`. */
 async function moveFolder(from: string, to: string): Promise<void> {
+  if ((await fs.promises.lstat(from)).isSymbolicLink()) {
+    // 'junction' on Windows, which needs no admin rights; ignored elsewhere.
+    await fs.promises.symlink(await fs.promises.realpath(from), to, 'junction');
+    try {
+      await fs.promises.unlink(from);
+    } catch (err) {
+      await fs.promises.unlink(to).catch(() => {});
+      throw err;
+    }
+    return;
+  }
   try {
     await fs.promises.rename(from, to);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== 'EXDEV') throw err;
-    await fs.promises.cp(from, to, { recursive: true, errorOnExist: true, force: false });
-    await fs.promises.rm(from, { recursive: true, force: true });
+    try {
+      await fs.promises.cp(from, to, { recursive: true, errorOnExist: true, force: false });
+    } catch (copyErr) {
+      await fs.promises.rm(to, { recursive: true, force: true }).catch(() => {});
+      throw copyErr;
+    }
+    // Copied: what's left at `from` is clean-up, not the skill.
+    await fs.promises.rm(from, { recursive: true, force: true }).catch(() => {});
   }
 }
 
@@ -157,7 +153,7 @@ export async function shareSkills(worktreePath: string, dirs: SkillDirs, onlyPat
   for (const level of await plan(worktreePath, dirs)) {
     for (const m of level.toShare) {
       if (only !== null && path.resolve(m.path) !== only) continue;
-      const name = infoOf(m, level.scope).name;
+      const name = nameOf(m);
       const from = path.dirname(m.path);
       const to = path.join(level.sharedRoot, m.dir);
       try {
@@ -184,7 +180,7 @@ export async function linkSkills(worktreePath: string, dirs: SkillDirs): Promise
   const result: SkillChanges = { done: [], skipped: [] };
   for (const level of await plan(worktreePath, dirs)) {
     for (const { shared, link, linkPath } of level.toLink) {
-      const name = infoOf(shared, level.scope).name;
+      const name = nameOf(shared);
       try {
         await fs.promises.mkdir(path.dirname(linkPath), { recursive: true });
         await fs.promises.writeFile(linkPath, link);
@@ -194,7 +190,7 @@ export async function linkSkills(worktreePath: string, dirs: SkillDirs): Promise
       }
     }
     for (const m of level.broken) {
-      const name = infoOf(m, level.scope).name;
+      const name = nameOf(m);
       try {
         await fs.promises.rm(m.path);
         // The folder goes too when the link was all it held.
@@ -220,24 +216,32 @@ export async function unshareSkill(worktreePath: string, dirs: SkillDirs, skillP
   const target = await editTarget(worktreePath, skill);
   if (!target.link) return; // its own already
   const shared = path.dirname(target.path);
-  const own = path.dirname(target.link.path);
+  const link = target.link;
+  const own = path.dirname(link.path);
   const dirName = path.basename(shared);
-  // The link's folder holds the link alone, unless someone put more there.
-  await fs.promises.rm(target.link.path);
+  // The skill moves in where its link is, so that folder must hold the link
+  // alone. Checked first, so a refusal changes nothing.
+  const others = (await fs.promises.readdir(own)).filter((f) => f !== path.basename(link.path));
+  if (others.length > 0) throw new Error(`${own} has other files in it, so "${skill.name}" can't be moved there`);
+  await fs.promises.rm(link.path);
   try {
     await fs.promises.rmdir(own);
+    await moveFolder(shared, own);
   } catch (err) {
-    await fs.promises.writeFile(target.link.path, target.link.raw);
-    throw new Error(`${own} has other files in it, so the skill can't be moved there (${reasonOf(err)})`, { cause: err });
+    // Still in the shared folder: the link goes back, so Claude Code keeps it.
+    if (!fs.existsSync(path.join(own, 'SKILL.md'))) {
+      await fs.promises.mkdir(own, { recursive: true }).catch(() => {});
+      await fs.promises.writeFile(link.path, link.raw).catch(() => {});
+    }
+    throw new Error(`Couldn't move "${skill.name}" into ${own}: ${reasonOf(err)}`, { cause: err });
   }
-  await moveFolder(shared, own);
   for (const root of linkRoots(worktreePath, dirs, skill.source)) {
-    const link = path.join(root, dirName, 'SKILL.md');
-    if (path.resolve(link) === path.resolve(target.link.path)) continue;
+    const other = path.join(root, dirName, 'SKILL.md');
+    if (path.resolve(other) === path.resolve(link.path)) continue;
     try {
-      if (!isSkillLink(await fs.promises.readFile(link, 'utf-8'))) continue;
-      await fs.promises.rm(link);
-      await fs.promises.rmdir(path.dirname(link)).catch(() => {});
+      if (!isSkillLink(await fs.promises.readFile(other, 'utf-8'))) continue;
+      await fs.promises.rm(other);
+      await fs.promises.rmdir(path.dirname(other)).catch(() => {});
     } catch { /* none there */ }
   }
 }

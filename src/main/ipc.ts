@@ -43,7 +43,8 @@ import * as memoryCompact from './memory-compact.js';
 import * as bookmarks from './bookmarks.js';
 import { deleteSchedule, listSchedules, recordScheduleRun, saveSchedule } from './skill-schedules.js';
 import { linkSkills, setSkillReach, skillSharing } from './skill-sharing.js';
-import { CLAUDE_SKILL_DIRS, readSkillFile, readsSharedSkills, saveSkillFile, type SkillDirs } from './skills.js';
+import { CLAUDE_SKILL_DIRS, markWorktreeOnly, readSkillFile, readsSharedSkills, saveSkillFile, type SkillDirs } from './skills.js';
+import { accountLinkDirs } from './session-skills.js';
 import { listProjects, rememberProject, forgetProject, loadOpenTabs, saveOpenTabs, loadCollapsedRepos, saveCollapsedRepos, loadSessionSort, saveSessionSort, loadSidebarWidth, saveSidebarWidth, loadCollapsedPanels, saveCollapsedPanels, loadConversationGroups, saveConversationGroups, saveUnreadSessionIds, loadUnreadSessionIds, saveTodoSessionIds, loadTodoSessionIds, loadPrerequisiteCache, savePrerequisiteCache, loadUsageSnapshot } from './app-state.js';
 import { logRendererError } from './crash-handling.js';
 import { freezeLog } from './freeze-log.js';
@@ -1124,7 +1125,11 @@ export function registerHandlers() {
     const adapter = await threadAgent(sessionId);
     const root = sessionManager.getWorktreePath(sessionId) ?? fallbackPath;
     if (!root || !adapter?.listSkills) return [];
-    return adapter.listSkills(root);
+    const skills = await adapter.listSkills(root);
+    // A thread in its own worktree may have project skills a new thread
+    // wouldn't (not committed, or only on its branch).
+    const repoPath = sessionManager.getSession(sessionId)?.repoPath;
+    return repoPath ? markWorktreeOnly(skills, root, repoPath) : skills;
   });
 
   ipcMain.handle(IPC.SKILLS_LIST_FOR_AGENT, async (_event, agentId: unknown, repoPath: unknown) => {
@@ -1134,7 +1139,7 @@ export function registerHandlers() {
     return adapter?.listSkills ? adapter.listSkills(repoPath) : [];
   });
 
-  ipcMain.handle(IPC.SKILLS_ADD, async (_event, sessionId: string, fallbackPath: string, def: SkillDefinition) => {
+  ipcMain.handle(IPC.SKILLS_ADD, async (_event, sessionId: string, fallbackPath: string, def: unknown) => {
     const adapter = await threadAgent(sessionId);
     if (!adapter) throw new Error("This thread's agent isn't available any more, so skills can't be added for it");
     if (!adapter.addSkill) {
@@ -1142,19 +1147,11 @@ export function registerHandlers() {
     }
     const root = sessionManager.getWorktreePath(sessionId) ?? fallbackPath;
     if (!root) throw new Error('No project root available for this thread');
-    return adapter.addSkill(root, def, accountLinkDirs());
+    const d = def as Partial<SkillDefinition> | null;
+    if (!d || typeof d.name !== 'string' || typeof d.description !== 'string' || typeof d.instructions !== 'string'
+      || (d.scope !== 'project' && d.scope !== 'user')) throw new Error('No skill given');
+    return adapter.addSkill(root, { name: d.name, description: d.description, instructions: d.instructions, scope: d.scope }, accountLinkDirs());
   });
-
-  /** Every current Claude account's own user skills folder, which sees
-   *  personal shared skills only through links. Grove keeps one in each
-   *  (SkillDirs.userLinks), so a personal skill reaches every Claude thread.
-   *  An account taken out of Settings is left alone. */
-  function accountLinkDirs(): string[] {
-    const current = new Set(claudeAccounts(settings.getSettings().claudeAccounts).map((a) => a.id));
-    return adapterRegistry.list()
-      .filter((a) => !a.account || current.has(a.id))
-      .flatMap((a) => (a.skillDirs && !readsSharedSkills(a.skillDirs, 'user') ? [a.skillDirs.user[0]] : []));
-  }
 
   /** Where a thread's skills are edited: its project root and its agent's
    *  skill folders, which bound the files that can be read and written. */
@@ -1200,19 +1197,17 @@ export function registerHandlers() {
    *  Code's folders — the thread's agent's when it needs links (a Claude
    *  account's user folder is its own), else the default's, as Share still
    *  helps other agents there. */
-  async function sharingTarget(sessionId: string, fallbackPath: string): Promise<{ root: string; dirs: SkillDirs; links: boolean }> {
+  async function sharingTarget(sessionId: string, fallbackPath: string): Promise<{ root: string; dirs: SkillDirs }> {
     const own = (await threadAgent(sessionId))?.skillDirs;
     const links = !!own && (!readsSharedSkills(own, 'project') || !readsSharedSkills(own, 'user'));
     const root = sessionManager.getWorktreePath(sessionId) ?? fallbackPath;
     if (!root) throw new Error('No project root available for this thread');
-    return { root, dirs: { ...(links ? own : CLAUDE_SKILL_DIRS), userLinks: accountLinkDirs() }, links };
+    return { root, dirs: { ...(links ? own : CLAUDE_SKILL_DIRS), userLinks: accountLinkDirs() } };
   }
 
   ipcMain.handle(IPC.SKILLS_SHARING, async (_event, sessionId: string, fallbackPath: string) => {
-    const { root, dirs, links } = await sharingTarget(sessionId, fallbackPath);
-    const sharing = await skillSharing(root, dirs);
-    // Links only where they help: in a Claude Code thread.
-    return links ? sharing : { ...sharing, toLink: [], broken: [] };
+    const { root, dirs } = await sharingTarget(sessionId, fallbackPath);
+    return skillSharing(root, dirs);
   });
 
   ipcMain.handle(IPC.SKILLS_LINK, async (_event, sessionId: string, fallbackPath: string) => {
