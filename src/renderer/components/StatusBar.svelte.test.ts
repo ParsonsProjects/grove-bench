@@ -587,7 +587,7 @@ describe('StatusBar PR', () => {
     return screen.getByRole('dialog', { name: 'Branch' });
   }
 
-  it('says where the branch is in words, not just with the dots', async () => {
+  it('says where the branch is in words, not just with the icon', async () => {
     const branch = await renderWithPrs(pr({ checks: { total: 2, passed: 1, failed: 1, pending: 0 }, failingChecks: ['e2e'] }));
     expect(branch.getAttribute('title')).toContain('repo / feat-a: PR #42 open, checks: 1 of 2 failed');
     expect(branch).toHaveAccessibleName(/, something to do$/);
@@ -597,12 +597,33 @@ describe('StatusBar PR', () => {
     vi.mocked(window.groveBench.getGitSyncStatus).mockResolvedValue({ upstream: 'origin/feat-a', ahead: 0, behind: 0 });
     const branch = await renderWithPrs(pr({ checks: { total: 2, passed: 1, failed: 0, pending: 1 } }));
     expect(branch.querySelector('.bg-primary')).toBeNull();
-    // Checks running, nothing for you to do: the third dot moves.
-    expect(branch.querySelectorAll('[aria-hidden="true"] > *')[2].className).toContain('animate-');
+    // Checks running, nothing for you to do: the lozenge's one icon is the
+    // PR's, blue and moving.
+    const icons = branch.querySelectorAll('svg');
+    expect(icons).toHaveLength(1);
+    expect(icons[0]).toHaveClass('lucide-git-pull-request', 'text-status-working', 'animate-pulse');
 
     vi.mocked(window.groveBench.getGitSyncStatus).mockResolvedValue({ upstream: 'origin/feat-a', ahead: 2, behind: 0 });
     await prStore.refresh(ACTIVE, true);
     await waitFor(() => expect(lozenge().querySelector('.bg-primary')).not.toBeNull());
+    // Inside the box, last in the line, not on its corner.
+    expect(lozenge().lastElementChild).toHaveClass('bg-primary');
+    expect(lozenge().lastElementChild).not.toHaveClass('absolute');
+  });
+
+  it('dims the icon after a failed fetch and pulses it for unseen activity, and running checks still move when dimmed', async () => {
+    const branch = await renderWithPrs(pr({ checks: { total: 2, passed: 1, failed: 0, pending: 1 } }));
+    const icon = () => within(lozenge()).getByTestId('ship-icon');
+    expect(within(branch).getByTestId('ship-icon')).not.toHaveClass('opacity-50');
+    expect(icon()).not.toHaveClass('animate-pulse');
+
+    prStore.fetchFailedBySession = { ...prStore.fetchFailedBySession, [ACTIVE]: true };
+    prStore.alertsBySession = { [ACTIVE]: [{ kind: 'new_comments', count: 2, id: 2, prNumber: 42 }] };
+    await waitFor(() => expect(icon()).toHaveClass('opacity-50', 'animate-pulse'));
+    // The pulse only fades to half, so on the dimmed element itself it would
+    // hold still. The checks' pulse is on the icon inside, which isn't dimmed.
+    expect(icon().querySelector('svg')).toHaveClass('animate-pulse');
+    expect(icon().querySelector('svg')).not.toHaveClass('opacity-50');
   });
 
   it('names each step in its popup', async () => {
@@ -786,7 +807,7 @@ describe('StatusBar PR', () => {
     await prStore.push(ACTIVE).catch(() => {});
 
     await waitFor(() => expect(lozenge().getAttribute('title')).toContain('push failed'));
-    expect(lozenge().querySelector('.bg-red-500')).not.toBeNull();
+    expect(lozenge().querySelector('svg')).toHaveClass('text-red-500');
     await openBranch();
     expect(screen.getByTestId('push-error').textContent).toContain('rejected: non-fast-forward');
 

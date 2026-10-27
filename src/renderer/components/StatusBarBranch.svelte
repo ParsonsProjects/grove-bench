@@ -1,8 +1,9 @@
 <script lang="ts">
   /**
-   * The branch lozenge: the branch's name and its ship track, five dots for
-   * the steps to merged (push, PR, checks, review, merge; lib/ship-track.ts).
-   * A green mark on its corner says the popup holds something to do now
+   * The branch lozenge: one icon for where the branch is on its way to
+   * merged (ShipIcon: its shape the stage, its colour the step that matters
+   * most; lib/ship-track.ts), then the branch's name.
+   * A green mark at its end says the popup holds something to do now
    * (push, create a PR, fix failed checks, address requested changes). A
    * merge or rebase stopped part way adds its word in amber ("rebasing 1/2").
    *
@@ -24,12 +25,11 @@
   import { lozenge, lozengeMark } from '../lib/lozenge.js';
   import { shipTrack } from '../lib/ship-track.js';
   import { Button } from '$lib/components/ui/button/index.js';
-  import GitBranchIcon from '@lucide/svelte/icons/git-branch';
   import BranchPicker from './BranchPicker.svelte';
   import CopyButton from './CopyButton.svelte';
   import StatusBarPopover from './StatusBarPopover.svelte';
   import StatusBarSteps from './StatusBarSteps.svelte';
-  import ShipDot from './ShipDot.svelte';
+  import ShipIcon from './ShipIcon.svelte';
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -146,7 +146,7 @@
   let otherPrCount = $derived(prInfo ? prStore.getPrs(sessionId).filter((p) => p.number !== prInfo.number).length : 0);
   let track = $derived(shipTrack({ sync: gitSync, pr: prInfo, pushFailed: !!pushError, canCreatePr: showCreatePr }));
   let repoName = $derived(sessionRepoPath ? store.repoDisplayName(sessionRepoPath) : '');
-  /** The lozenge's dots are colour only: the tooltip says it in words. */
+  /** The lozenge's icon is shape and colour only: the tooltip says it in words. */
   let lozengeTitle = $derived.by(() => {
     const parts = [`${repoName ? `${repoName} / ` : ''}${sessionBranch || 'no branch'}: ${track.summary}`];
     if (operation) parts.push(`${operationTitle(operation)} stopped part way`);
@@ -203,18 +203,19 @@
             aria-expanded={shipOpen}
             data-testid="branch"
           >
-            <GitBranchIcon class="size-3" />
-            <span class="truncate max-w-16 @2xl:max-w-32 @4xl:max-w-48">{sessionBranch || 'no branch'}</span>
-            <!-- Dimmed when the last GitHub fetch failed, so they may be old;
-                 pulsing while there is PR activity you haven't looked at. -->
-            <span class="flex items-center gap-0.5 {prAlerts.length > 0 ? 'animate-pulse' : ''} {prFetchFailed ? 'opacity-50' : ''}" aria-hidden="true">
-              {#each track.steps as step (step.id)}<ShipDot state={step.state} />{/each}
+            <!-- Dimmed when the last GitHub fetch failed, so it may be old;
+                 pulsing while there is PR activity you haven't looked at.
+                 On a wrapper: the pulse only fades to half, so on the icon
+                 itself a dimmed icon would hold still, checks running too. -->
+            <span class="flex shrink-0 {prAlerts.length > 0 ? 'animate-pulse' : ''} {prFetchFailed ? 'opacity-50' : ''}" data-testid="ship-icon">
+              <ShipIcon stage={track.stage} />
             </span>
+            <span class="truncate max-w-16 @2xl:max-w-32 @4xl:max-w-48">{sessionBranch || 'no branch'}</span>
             {#if operation}
               <span class="text-status-attention">{operationShort(operation)}</span>
             {/if}
             {#if track.actionable}
-              <span class={lozengeMark()}></span>
+              <span class={lozengeMark({ place: 'inside' })}></span>
             {/if}
           </button>
         {/snippet}

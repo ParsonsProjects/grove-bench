@@ -21,16 +21,21 @@ export const lozenge = tv({
   defaultVariants: { tone: 'default', open: false },
 });
 
-/** The square on a lozenge's top right corner: green when its popover holds
- *  something for you to do, amber for a warning. The ring cuts it out of
- *  the lozenge's border. Decorative: the lozenge's label says it in words. */
+/** The square that marks a lozenge: green when its popover holds something
+ *  for you to do, amber for a warning. On its top right corner, where the
+ *  ring cuts it out of the border, or inside, last in the line.
+ *  Decorative: the lozenge's label says it in words. */
 export const lozengeMark = tv({
-  base: 'pointer-events-none absolute -top-1 -right-1 size-1.5 ring-2 ring-card',
+  base: 'pointer-events-none size-1.5 shrink-0',
   variants: {
     tone: {
       action: 'bg-primary',
       warning: 'bg-status-attention',
     },
+    place: {
+      corner: 'absolute -top-1 -right-1 ring-2 ring-card',
+      inside: '',
+    },
   },
-  defaultVariants: { tone: 'action' },
+  defaultVariants: { tone: 'action', place: 'corner' },
 });
