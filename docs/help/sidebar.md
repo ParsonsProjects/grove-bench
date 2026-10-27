@@ -30,11 +30,11 @@ Each thread in the sidebar shows:
 - **Second line**: its group, if it is in one. Under **Threads**, which project it belongs to (when you have more than one), then what the agent is doing or last said
 - **Active indicator** — The currently selected thread is highlighted
 
-Click a thread to switch to it. The workspace will show that thread's activity, changes, and terminal.
+Click a thread to switch to it. The workspace will show that thread's activity, changes, and terminal. Click the open thread again to deselect it and go back to the landing screen, or to your new thread if you have one being written.
 
 ## Collapsing the sidebar
 
-Click the panel button next to the search box to fold the sidebar down to a thin rail. The rail shows one status dot (or grove character) per open thread, and you can click one to switch to it or right-click it for the context menu. Hover a dot to see its name, and its goal when goals are on. Above them, a **+** starts a new thread (once you have one, it shows as a dashed square for the draft). The rail also keeps search, bookmarks, memory, skills, clean-up and settings. To add a project, open the sidebar. Projects and the filters are only in the full sidebar, so the rail always lists every open thread. Click the panel button at the top of the rail to open the sidebar again. Grove Bench remembers whether it was collapsed.
+Click the panel button next to the search box to fold the sidebar down to a thin rail. The rail shows one status dot (or grove character) per open thread, and you can click one to switch to it (click the open one again to deselect it) or right-click it for the context menu. Hover a dot to see its name, and its goal when goals are on. Above them, a **+** starts a new thread (once you have one, it shows as a dashed square for the draft). The rail also keeps search, bookmarks, memory, skills, clean-up and settings. To add a project, open the sidebar. Projects and the filters are only in the full sidebar, so the rail always lists every open thread. Click the panel button at the top of the rail to open the sidebar again. Grove Bench remembers whether it was collapsed.
 
 ## Folding Groups and Projects
 

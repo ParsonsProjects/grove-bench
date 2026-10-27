@@ -240,6 +240,26 @@ describe('Sidebar session rows', () => {
     }
   });
 
+  it('deselects the open thread when its row is clicked again, and opens it on the next click', async () => {
+    store.needsAttention = { s1: true };
+    try {
+      render(Sidebar);
+      const row = () => screen.getAllByText('Sidebar revamp')[0].closest('button')!;
+
+      await fireEvent.click(row());
+      expect(store.activeSessionId).toBeNull();
+      expect(row().className).not.toMatch(/bg-sidebar-accent(\s|$)/);
+      // Leaving it doesn't mark it read.
+      expect(store.needsAttention['s1']).toBe(true);
+
+      await fireEvent.click(row());
+      expect(store.activeSessionId).toBe('s1');
+      expect(store.needsAttention['s1']).toBeUndefined();
+    } finally {
+      store.needsAttention = {};
+    }
+  });
+
   it('goes back to the landing screen when the open conversation is closed', async () => {
     store.sessions = [
       { id: 's1', branch: 'feat-x', repoPath: '/repo-a', status: 'running', displayName: 'Sidebar revamp' },
@@ -1631,6 +1651,10 @@ describe('Sidebar rail', () => {
     const s2 = container.querySelector('[data-rail-session="s2"]') as HTMLButtonElement;
     expect(s2.getAttribute('aria-label')).toBe('repo-a / Fix login');
 
+    await fireEvent.click(s2);
+    expect(store.activeSessionId).toBe('s2');
+    await fireEvent.click(s2);
+    expect(store.activeSessionId).toBeNull();
     await fireEvent.click(s2);
     expect(store.activeSessionId).toBe('s2');
     expect(s2.className).toContain('bg-sidebar-accent');

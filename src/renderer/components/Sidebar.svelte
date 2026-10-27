@@ -503,7 +503,13 @@
     return repoPath.split(/[/\\]/).pop() ?? repoPath;
   }
 
-  function focusSession(id: string) {
+  /** Open a thread, or deselect it when it is the one open: back to the
+   *  landing screen, or to the draft if there is one. */
+  function toggleSession(id: string) {
+    if (store.activeSessionId === id) {
+      store.activeSessionId = null;
+      return;
+    }
     store.activeSessionId = id;
     store.clearNeedsAttention(id);
   }
@@ -1013,7 +1019,7 @@
       role="presentation"
     >
       <button
-        onclick={() => { if (!isDestroying) focusSession(session.id); }}
+        onclick={() => { if (!isDestroying) toggleSession(session.id); }}
         disabled={isDestroying}
         title={rowTitle(session.id, label, subtitle)}
         class="w-full flex flex-col pl-4 pr-2 py-1.5 text-left transition-colors
@@ -1159,7 +1165,7 @@
         {@const subtitle = rowSubtitle(session)}
         {@const name = `${store.repoDisplayName(session.repoPath)} / ${sessionRowLabel(session)}`}
         <button
-          onclick={() => { if (!isDestroying) focusSession(session.id); }}
+          onclick={() => { if (!isDestroying) toggleSession(session.id); }}
           oncontextmenu={(e) => { if (isDestroying) { e.preventDefault(); return; } openContextMenu(e, session.id); }}
           disabled={isDestroying}
           title={rowTitle(session.id, name, subtitle)}
