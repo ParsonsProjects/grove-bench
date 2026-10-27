@@ -9,8 +9,8 @@
    * It is a modal dialog (bits-ui), so keyboard focus moves into it, stays
    * there and goes back where it was on close, and a dropdown or dialog
    * opened from it takes Escape and outside clicks first. While a skill's
-   * SKILL.md is open with unsaved changes, closing the drawer or switching
-   * tab asks first (skillsPanelStore.unlessUnsaved).
+   * SKILL.md or a schedule form is open with unsaved changes, closing the
+   * drawer or switching tab asks first (skillsPanelStore.unlessUnsaved).
    */
   import { Dialog as DialogPrimitive } from 'bits-ui';
   import { fly, fade } from 'svelte/transition';
@@ -46,18 +46,15 @@
     if (store.activeSessionId !== openedOn) e.preventDefault();
   }
 
-  /** Escape leaves the skill editor or closes the form first, then the drawer. */
+  /** Escape leaves the skill editor or the schedule form first, asking
+   *  about unsaved changes, then closes the drawer. */
   function closeFormFirst(e: KeyboardEvent) {
-    if (skillsPanelStore.edit) {
-      e.preventDefault();
-      // A second Escape answers "Discard your changes?" with Cancel.
-      if (skillsPanelStore.pendingDiscard) skillsPanelStore.pendingDiscard = null;
-      else skillsPanelStore.leaveEdit();
-      return;
-    }
-    if (!skillsPanelStore.form) return;
+    if (!skillsPanelStore.edit && !skillsPanelStore.form) return;
     e.preventDefault();
-    skillsPanelStore.form = null;
+    // A second Escape answers "Discard your changes?" with Cancel.
+    if (skillsPanelStore.pendingDiscard) skillsPanelStore.pendingDiscard = null;
+    else if (skillsPanelStore.edit) skillsPanelStore.leaveEdit();
+    else skillsPanelStore.leaveForm();
   }
 </script>
 

@@ -210,7 +210,7 @@ describe('DraftPane skills', () => {
     const box = screen.getByLabelText('First message');
     await fireEvent.input(box, { target: { value: 'Fix the login bug' } });
     await fireEvent.click(await screen.findByRole('button', { name: /^Skills\s*2/ }));
-    await fireEvent.click(screen.getByRole('menuitem', { name: /triage/ }));
+    await fireEvent.click(screen.getByRole('menuitemradio', { name: /triage/ }));
     expect(draftStore.draft?.text).toBe('Use the `triage` skill for this task.\n\nFix the login bug');
     await waitFor(() => expect(screen.queryByRole('menu', { name: 'Skills' })).toBeNull());
     await waitFor(() => expect(box).toHaveFocus());
@@ -218,6 +218,23 @@ describe('DraftPane skills', () => {
     await fireEvent.click(screen.getByRole('button', { name: /Skill\s*triage/ }));
     await fireEvent.click(screen.getByRole('menuitem', { name: 'No skill' }));
     expect(draftStore.draft?.text).toBe('Fix the login bug');
+  });
+
+  it('moves through the Skills menu with the arrow keys, and Escape goes back to the button', async () => {
+    render(DraftPane);
+    const button = await screen.findByRole('button', { name: /^Skills\s*2/ });
+    await fireEvent.click(button);
+    const items = screen.getAllByRole('menuitemradio');
+    await waitFor(() => expect(items[0]).toHaveFocus());
+    await fireEvent.keyDown(items[0], { key: 'ArrowDown' });
+    expect(items[1]).toHaveFocus();
+    await fireEvent.keyDown(items[1], { key: 'ArrowDown' });
+    expect(items[0]).toHaveFocus();
+    await fireEvent.keyDown(items[0], { key: 'End' });
+    expect(items[1]).toHaveFocus();
+    await fireEvent.keyDown(items[1], { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('menu', { name: 'Skills' })).toBeNull());
+    expect(button).toHaveFocus();
   });
 });
 

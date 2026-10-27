@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
 import { render, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/svelte';
+import { tick } from 'svelte';
 
 import StatusBar from './StatusBar.svelte';
 import { store } from '../stores/sessions.svelte.js';
@@ -768,6 +769,7 @@ describe('StatusBar PR', () => {
 describe('StatusBar activity', () => {
   afterEach(() => {
     delete messageStore.messagesBySession[ACTIVE];
+    delete messageStore.messagesBySession[HIDDEN];
     messageStore.isRunning = {};
   });
 
@@ -808,6 +810,36 @@ describe('StatusBar activity', () => {
   it('keeps one width whatever the word, so the bar does not shift', () => {
     render(StatusBar, { props: { sessionId: ACTIVE } });
     expect(screen.getByTestId('activity')).toHaveClass('w-24', '@2xl:w-32');
+  });
+
+  it("keeps a hidden thread's pending tools as they were until it's open", async () => {
+    const agentCall = { kind: 'tool_call', id: 'a', toolName: 'Agent', toolUseId: 'tu-agent', toolInput: { subagent_type: 'Explore' }, pending: false } as any;
+    const subagentTool = { kind: 'tool_call', id: 't', toolName: 'Bash', toolUseId: 'tu1', toolInput: { command: 'ls' }, pending: true, parentToolUseId: 'tu-agent' } as any;
+    messageStore.messagesBySession[HIDDEN] = [agentCall];
+    store.activeSessionId = HIDDEN;
+    render(StatusBar, { props: { sessionId: HIDDEN } });
+    expect(screen.getByTestId('activity').textContent?.trim()).toBe('Ready');
+
+    store.activeSessionId = ACTIVE;
+    messageStore.messagesBySession[HIDDEN] = [agentCall, subagentTool];
+    await tick();
+    expect(screen.getByTestId('activity').textContent?.trim()).toBe('Ready');
+
+    store.activeSessionId = HIDDEN;
+    await tick();
+    expect(screen.getByTestId('activity').textContent?.trim()).toBe('Subagent');
+  });
+
+  it('closes the popup when its thread is hidden', async () => {
+    render(StatusBar, { props: { sessionId: ACTIVE } });
+    await openActivity();
+
+    store.activeSessionId = HIDDEN;
+    await tick();
+    store.activeSessionId = ACTIVE;
+    await tick();
+
+    expect(screen.queryByRole('dialog', { name: 'Activity' })).toBeNull();
   });
 
   describe('subagents', () => {

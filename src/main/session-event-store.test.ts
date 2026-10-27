@@ -17,6 +17,24 @@ import { freezeLog } from './freeze-log.js';
 
 const text = (t: string): AgentEvent => ({ type: 'assistant_text', text: t } as AgentEvent);
 
+/** A store that closes the logs it opened once the test is over: a file
+ *  handle left to the garbage collector draws Node's DEP0137 warning. */
+const testStores: TestStore[] = [];
+class TestStore extends SessionEventStore {
+  private readonly appendedTo = new Set<Parameters<SessionEventStore['append']>[0]>();
+  constructor(...args: ConstructorParameters<typeof SessionEventStore>) {
+    super(...args);
+    testStores.push(this);
+  }
+  override append(...args: Parameters<SessionEventStore['append']>): void {
+    this.appendedTo.add(args[0]);
+    super.append(...args);
+  }
+  async closeLogs(): Promise<void> {
+    for (const session of this.appendedTo) await this.closeLog(session);
+  }
+}
+
 /** Write a one-event log of exactly `bytes` bytes. */
 function writeLog(id: string, bytes: number): number {
   const empty = JSON.stringify(text('')).length + 1;
@@ -42,14 +60,27 @@ function liveSession(id: string) {
   };
 }
 
+/** Route every append to a log opened from now on through `wrap`, around
+ *  the real handle's appendFile. Returns the spy on fs.promises.open. */
+function wrapAppends(wrap: (append: () => Promise<void>) => Promise<void>) {
+  const realOpen = fs.promises.open;
+  return vi.spyOn(fs.promises, 'open').mockImplementation(async (...args: Parameters<typeof realOpen>) => {
+    const handle = await realOpen(...args);
+    const realAppend = handle.appendFile.bind(handle);
+    handle.appendFile = (...a: Parameters<typeof realAppend>) => wrap(() => realAppend(...a));
+    return handle;
+  });
+}
+
 const logLines = (id: string) => fs.readFileSync(eventLogPath(id), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
 
 beforeEach(() => {
   userData = fs.mkdtempSync(path.join(os.tmpdir(), 'gb-events-'));
 });
 
-afterEach(() => {
+afterEach(async () => {
   vi.useRealTimers();
+  await Promise.all(testStores.splice(0).map((store) => store.closeLogs()));
   vi.restoreAllMocks();
   perf.perfLine.mockClear();
   fs.rmSync(userData, { recursive: true, force: true });
@@ -57,7 +88,7 @@ afterEach(() => {
 
 describe('SessionEventStore', () => {
   it('batches appends and writes them on flush', async () => {
-    const store = new SessionEventStore();
+    const store = new TestStore();
     store.ensureDir();
     const s = liveSession('a');
 
@@ -73,7 +104,7 @@ describe('SessionEventStore', () => {
   });
 
   it('writes off the main process: flush() returns before the lines are on disk', async () => {
-    const store = new SessionEventStore();
+    const store = new TestStore();
     store.ensureDir();
     const s = liveSession('async');
     store.append(s, text('one'));
@@ -87,7 +118,7 @@ describe('SessionEventStore', () => {
 
   it('flushes on its own after a short delay', async () => {
     vi.useFakeTimers();
-    const store = new SessionEventStore();
+    const store = new TestStore();
     store.ensureDir();
     const s = liveSession('b');
 
@@ -101,7 +132,7 @@ describe('SessionEventStore', () => {
   });
 
   it('replace() drops queued appends and rewrites the log to match', async () => {
-    const store = new SessionEventStore();
+    const store = new TestStore();
     store.ensureDir();
     const s = liveSession('c');
     store.append(s, text('keep'));
@@ -119,7 +150,7 @@ describe('SessionEventStore', () => {
   });
 
   it('writes to one log in the order they were asked for', async () => {
-    const store = new SessionEventStore();
+    const store = new TestStore();
     store.ensureDir();
     const s = liveSession('order');
 
@@ -133,14 +164,13 @@ describe('SessionEventStore', () => {
   });
 
   it('flush() with nothing queued still waits for the write under way', async () => {
-    const store = new SessionEventStore();
+    const store = new TestStore();
     store.ensureDir();
     const s = liveSession('wait');
     let release!: () => void;
-    const real = fs.promises.appendFile;
-    vi.spyOn(fs.promises, 'appendFile').mockImplementationOnce(async (...args: Parameters<typeof real>) => {
+    wrapAppends(async (append) => {
       await new Promise<void>((r) => { release = r; });
-      return real(...args);
+      return append();
     });
 
     store.append(s, text('slow'));
@@ -156,7 +186,7 @@ describe('SessionEventStore', () => {
   });
 
   it('a failed write is skipped and the next one still runs', async () => {
-    const store = new SessionEventStore();
+    const store = new TestStore();
     const s = liveSession('fail');
 
     // No events folder yet: the append fails, quietly.
@@ -169,16 +199,169 @@ describe('SessionEventStore', () => {
     expect(logLines('fail')).toEqual([text('kept')]);
   });
 
+  it('keeps the log open between appends', async () => {
+    const store = new TestStore();
+    store.ensureDir();
+    const s = liveSession('open');
+    const open = vi.spyOn(fs.promises, 'open');
+
+    for (const t of ['one', 'two', 'three']) {
+      store.append(s, text(t));
+      await store.flush(s);
+    }
+
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(logLines('open')).toEqual([text('one'), text('two'), text('three')]);
+  });
+
+  it('a flush while an append waits joins it: one append behind a slow one', async () => {
+    const store = new TestStore();
+    store.ensureDir();
+    const s = liveSession('join');
+    let release!: () => void;
+    let appends = 0;
+    wrapAppends(async (append) => {
+      if (++appends === 1) await new Promise<void>((r) => { release = r; });
+      return append();
+    });
+
+    store.append(s, text('slow'));
+    void store.flush(s);
+    await new Promise((r) => setTimeout(r, 10));
+    // Flushed one by one while the first append is stuck, as the timer would.
+    const flushes = ['a', 'b', 'c'].map((t) => {
+      store.append(s, text(t));
+      return store.flush(s);
+    });
+    expect(new Set(flushes).size).toBe(1);
+
+    release();
+    await Promise.all(flushes);
+    expect(appends).toBe(2);
+    expect(logLines('join')).toEqual([text('slow'), text('a'), text('b'), text('c')]);
+  });
+
+  it('a rewrite drops the append waiting behind a slow one, but not what comes after it', async () => {
+    const store = new TestStore();
+    store.ensureDir();
+    const s = liveSession('cut');
+    let release!: () => void;
+    let appends = 0;
+    wrapAppends(async (append) => {
+      if (++appends === 1) await new Promise<void>((r) => { release = r; });
+      return append();
+    });
+
+    store.append(s, text('first'));
+    void store.flush(s);
+    await new Promise((r) => setTimeout(r, 10));
+    store.append(s, text('cut'));
+    void store.flush(s);
+    void store.replace(s, [text('kept')]);
+    store.append(s, text('after'));
+    const done = store.flush(s);
+
+    release();
+    await done;
+    expect(logLines('cut')).toEqual([text('kept'), text('after')]);
+  });
+
+  it('closeLog() writes what is queued through the open log, then closes it', async () => {
+    const store = new TestStore();
+    store.ensureDir();
+    const s = liveSession('close');
+    const open = vi.spyOn(fs.promises, 'open');
+
+    store.append(s, text('one'));
+    await store.flush(s);
+    store.append(s, text('two'));
+    await store.closeLog(s);
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(logLines('close')).toEqual([text('one'), text('two')]);
+    expect(s.logFlushTimer).toBeNull();
+    expect((store as unknown as { handles: Map<string, unknown> }).handles.size).toBe(0);
+  });
+
+  it("writes a line that comes after closeLog without keeping the log open", async () => {
+    const store = new TestStore();
+    store.ensureDir();
+    const s = liveSession('late');
+    store.append(s, text('one'));
+    await store.closeLog(s);
+
+    // A memory auto-save finishing after the thread closed.
+    store.append(s, text('late'));
+    await store.flush(s);
+
+    expect(logLines('late')).toEqual([text('one'), text('late')]);
+    expect((store as unknown as { handles: Map<string, unknown> }).handles.size).toBe(0);
+  });
+
+  it('notes a slow close in the performance log', async () => {
+    const store = new TestStore();
+    store.ensureDir();
+    const s = liveSession('slow-close');
+    let t = 0;
+    vi.spyOn(performance, 'now').mockImplementation(() => t);
+    const realOpen = fs.promises.open;
+    vi.spyOn(fs.promises, 'open').mockImplementation(async (...args: Parameters<typeof realOpen>) => {
+      const handle = await realOpen(...args);
+      const realClose = handle.close.bind(handle);
+      handle.close = () => {
+        t += SLOW_EVENT_LOG_WRITE_MS + 500;
+        return realClose();
+      };
+      return handle;
+    });
+
+    store.append(s, text('x'));
+    await store.closeLog(s);
+
+    expect(perf.perfLine).toHaveBeenCalledWith('events', expect.stringMatching(/^event log close took 1500 ms/));
+  });
+
+  it('a failed append closes the file, and the next one opens it again', async () => {
+    const store = new TestStore();
+    store.ensureDir();
+    const s = liveSession('reopen');
+    let appends = 0;
+    const open = wrapAppends((append) => (++appends === 1 ? Promise.reject(new Error('EBUSY')) : append()));
+
+    store.append(s, text('lost'));
+    await expect(store.flush(s)).resolves.toBeUndefined();
+    store.append(s, text('kept'));
+    await store.flush(s);
+
+    expect(open).toHaveBeenCalledTimes(2);
+    expect(logLines('reopen')).toEqual([text('kept')]);
+  });
+
   it('notes a slow write in the performance log', async () => {
-    const store = new SessionEventStore();
+    const store = new TestStore();
     store.ensureDir();
     const s = liveSession('slow');
     let t = 0;
     vi.spyOn(performance, 'now').mockImplementation(() => t);
-    const real = fs.promises.appendFile;
-    vi.spyOn(fs.promises, 'appendFile').mockImplementation(async (...args: Parameters<typeof real>) => {
+    wrapAppends((append) => {
       t += SLOW_EVENT_LOG_WRITE_MS + 500;
-      return real(...args);
+      return append();
+    });
+
+    store.append(s, text('x'));
+    await store.flush(s);
+
+    expect(perf.perfLine).toHaveBeenCalledWith('events', expect.stringMatching(/^event log write, \d+ bytes took 1500 ms/));
+  });
+
+  it('notes a slow write that then fails', async () => {
+    const store = new TestStore();
+    store.ensureDir();
+    const s = liveSession('slow-fail');
+    let t = 0;
+    vi.spyOn(performance, 'now').mockImplementation(() => t);
+    wrapAppends(() => {
+      t += SLOW_EVENT_LOG_WRITE_MS + 500;
+      return Promise.reject(new Error('EBUSY'));
     });
 
     store.append(s, text('x'));
@@ -188,7 +371,7 @@ describe('SessionEventStore', () => {
   });
 
   it('load() skips corrupt lines and serves a cached copy until the log changes', () => {
-    const store = new SessionEventStore();
+    const store = new TestStore();
     store.ensureDir();
     fs.writeFileSync(eventLogPath('d'), `${JSON.stringify(text('ok'))}\n{"type":"assist\n`);
 
@@ -201,11 +384,11 @@ describe('SessionEventStore', () => {
   });
 
   it('load() gives an empty history for a conversation with no log', () => {
-    expect(new SessionEventStore().load('missing')).toEqual([]);
+    expect(new TestStore().load('missing')).toEqual([]);
   });
 
   it('clearStored() empties a stopped conversation\'s log', () => {
-    const store = new SessionEventStore();
+    const store = new TestStore();
     store.ensureDir();
     fs.writeFileSync(eventLogPath('e'), `${JSON.stringify(text('old'))}\n`);
     expect(store.load('e')).toHaveLength(1);
@@ -216,7 +399,7 @@ describe('SessionEventStore', () => {
   });
 
   it('searches a live history and a stopped conversation\'s log', () => {
-    const store = new SessionEventStore();
+    const store = new TestStore();
     store.ensureDir();
     fs.writeFileSync(eventLogPath('f'), `${JSON.stringify(text('the stored needle'))}\n`);
     store.beginSearch();
@@ -232,12 +415,12 @@ describe('SessionEventStore', () => {
 });
 
 describe('SessionEventStore history cache', () => {
-  beforeEach(() => new SessionEventStore().ensureDir());
+  beforeEach(() => new TestStore().ensureDir());
 
   it('parses each log once across the startup reads, with more threads open than the old cap of 12', () => {
     const ids = Array.from({ length: 27 }, (_, i) => `t${i}`);
     const total = ids.reduce((sum, id) => sum + writeLog(id, 300), 0);
-    const store = new SessionEventStore(total);
+    const store = new TestStore(total);
     const parses = countParses();
 
     for (const id of ids) store.load(id); // the sidebar's previews
@@ -252,7 +435,7 @@ describe('SessionEventStore history cache', () => {
     writeLog('b', 300);
     writeLog('c', 300);
     writeLog('big', 500);
-    const store = new SessionEventStore(3 * small);
+    const store = new TestStore(3 * small);
     const parses = countParses();
 
     store.load('a');
@@ -281,7 +464,7 @@ describe('SessionEventStore history cache', () => {
     // A 60 MB log against the 48 MB budget, scaled down.
     writeLog('huge', 5_000);
     writeLog('huge2', 6_000);
-    const store = new SessionEventStore(2 * small);
+    const store = new TestStore(2 * small);
     const parses = countParses();
 
     store.load('a');
@@ -312,7 +495,7 @@ describe('SessionEventStore history cache', () => {
     writeLog('b', 300);
     writeLog('c', 300);
     writeLog('huge', 5_000);
-    const store = new SessionEventStore(2 * small);
+    const store = new TestStore(2 * small);
     const parses = countParses();
 
     store.load('huge');
@@ -336,7 +519,7 @@ describe('SessionEventStore history cache', () => {
     const small = writeLog('a', 300);
     writeLog('huge', 5_000);
     writeLog('huge2', 5_000);
-    const store = new SessionEventStore(2 * small);
+    const store = new TestStore(2 * small);
     const kept = () => (store as unknown as { bigHistory: { id: string } | null }).bigHistory?.id ?? null;
     const parses = countParses();
 
@@ -363,7 +546,7 @@ describe('SessionEventStore history cache', () => {
     const small = writeLog('a', 300);
     writeLog('b', 300);
     writeLog('c', 300);
-    const store = new SessionEventStore(2 * small);
+    const store = new TestStore(2 * small);
     const parses = countParses();
 
     store.load('a');
@@ -381,7 +564,7 @@ describe('SessionEventStore history cache', () => {
     const small = writeLog('a', 300);
     writeLog('b', 300);
     writeLog('c', 300);
-    const store = new SessionEventStore(2 * small);
+    const store = new TestStore(2 * small);
     const searchIndexes = (store as unknown as { searchIndexes: { size: number } }).searchIndexes;
     const parses = countParses();
 
@@ -407,7 +590,7 @@ describe('SessionEventStore history cache', () => {
     const small = writeLog('a', 300);
     writeLog('b', 300);
     writeLog('c', 300);
-    const store = new SessionEventStore(2 * small);
+    const store = new TestStore(2 * small);
     const parses = countParses();
 
     store.load('a');
@@ -421,7 +604,7 @@ describe('SessionEventStore history cache', () => {
 
   it('requests for one thread that arrive together share one parse', async () => {
     writeLog('a', 300);
-    const store = new SessionEventStore();
+    const store = new TestStore();
     const parses = countParses();
 
     // A pane's first page, its thread items and its usage, as IPC calls ask.
@@ -435,7 +618,7 @@ describe('SessionEventStore history cache', () => {
 
 describe('SessionEventStore.beginSearch()', () => {
   it("doesn't let a single-conversation search start a new pass during a sweep", () => {
-    const store = new SessionEventStore();
+    const store = new TestStore();
     const beginPass = vi.spyOn((store as unknown as { searchIndexes: { beginPass(): void } }).searchIndexes, 'beginPass');
     const endSweep = store.beginSearch({ sweep: true });
     expect(beginPass).toHaveBeenCalledTimes(1);

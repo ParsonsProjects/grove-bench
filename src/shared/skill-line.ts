@@ -25,3 +25,14 @@ export function withSkill(text: string, skill: string | null): string {
   const rest = splitSkillLine(text)?.rest ?? text;
   return skill ? `${skillLine(skill)}\n\n${rest}` : rest;
 }
+
+/** How the first message of a thread started to write a skill (Ask agent)
+ *  begins. */
+export const CREATE_SKILL_LEAD = 'Create a new agent skill named';
+
+/** Whether a message is one Grove wrote to run or write a skill, rather
+ *  than one the user typed: the run of a skill (by hand or on a schedule,
+ *  with or without a note) or Ask agent's. */
+export function isSkillPrompt(text: string): boolean {
+  return splitSkillLine(text) !== null || text.startsWith(CREATE_SKILL_LEAD);
+}

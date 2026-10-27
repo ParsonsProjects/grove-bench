@@ -51,6 +51,18 @@ describe('extractActivity', () => {
   });
 });
 
+describe('extractActivity skips what Grove wrote', () => {
+  it('leaves out runs of a skill and Ask agent messages, which would only suggest the skill itself', () => {
+    const activity = extractActivity('s1', [
+      userMsg('Use the `release-notes` skill.'),
+      userMsg('Use the `release-notes` skill for this task.\n\nTake the top issue labelled agent-ready.'),
+      userMsg('Create a new agent skill named `notes` as `.agents/skills/notes/SKILL.md` in this repository.'),
+      userMsg('Draft the release notes for the next version'),
+    ]);
+    expect(activity.prompts).toEqual(['Draft the release notes for the next version']);
+  });
+});
+
 describe('tokenize / jaccard', () => {
   it('drops stopwords and short tokens', () => {
     const tokens = tokenize('Please can you update the changelog for release');
@@ -154,9 +166,12 @@ describe('parseDistilled', () => {
     expect(parseDistilled(reply)).toHaveLength(1);
   });
 
-  it('rejects invalid names and malformed replies', () => {
-    expect(parseDistilled('[{"patternIndex":0,"name":"Bad Name","description":"d","instructions":"i","rationale":"r"}]')).toBeNull();
+  it("drops items with a name Add skill wouldn't take, keeps the rest, and rejects malformed replies", () => {
+    const item = (name: string) => ({ patternIndex: 0, name, description: 'd', instructions: 'i', rationale: 'r' });
+    expect(parseDistilled(JSON.stringify([item('Bad Name'), item('trailing-'), item('a'.repeat(65)), item('fine-name')])))
+      .toEqual([item('fine-name')]);
     expect(parseDistilled('no json here')).toBeNull();
+    expect(parseDistilled('[not json]')).toBeNull();
   });
 });
 
@@ -221,6 +236,22 @@ describe('analyzeRepo (integration)', () => {
 
     // Re-analysis must not resurrect a dismissed suggestion
     expect(await analyzeRepo(opts)).toHaveLength(0);
+  });
+
+  it('keeps a prompt suggestion dismissed after older threads drop out of the ones read', async () => {
+    const prompts = [
+      'update the changelog for release notes today',
+      'update changelog release notes please now',
+      'update the changelog release notes again',
+      'update changelog for release notes now',
+    ];
+    prompts.forEach((prompt, i) => writeLog(`s${i + 1}`, [userMsg(prompt)]));
+    const first = await analyzeRepo({ repoPath, sessionIds: ['s1', 's2', 's3'], eventsDir, existingSkills: [] });
+    expect(first).toHaveLength(1);
+    dismissSuggestion(repoPath, first[0].id);
+
+    // The cluster now starts from s2's prompt, so its id is new.
+    expect(await analyzeRepo({ repoPath, sessionIds: ['s2', 's3', 's4'], eventsDir, existingSkills: [] })).toEqual([]);
   });
 
   it('prefers distilled drafts and falls back to heuristics on garbage output', async () => {

@@ -8,8 +8,8 @@
  * is the worktree — project skills are checked into git, so every worktree
  * carries them). Each adapter passes its folders (SkillDirs); Claude Code's
  * is `.claude/skills`. Plugin-provided skills have no stable on-disk
- * location we can scan; those are learned from the agent's system_init
- * message instead (see AgentSessionManager's known-skills registry).
+ * location we can scan; the Skills drawer shows those from the agent's
+ * system_init report instead.
  *
  * Grove writes new skills to the shared folder, `.agents/skills`, which every
  * agent it knows reads except Claude Code. Claude Code sees each through a
@@ -20,6 +20,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { SkillDefinition, SkillFile, SkillInfo } from '../shared/types.js';
+import { skillDescriptionProblem, skillNameProblem } from '../shared/skill-name.js';
 
 /** Where an agent looks for skills, relative to the project and to the
  *  user's home directory (often the same, e.g. `.claude/skills`). A user
@@ -108,6 +109,12 @@ export function skillFrontmatter(content: string): string | null {
   return skillText(content).match(/^---\n([\s\S]*?)\n---(?:\n|$)/)?.[1] ?? null;
 }
 
+/** The note a link carries for whoever opens it. Older Grove versions
+ *  worded it differently; sameLink ignores it, so rewording it doesn't
+ *  rewrite every link already made. */
+const LINK_NOTE_START = '<!-- Grove Bench made this link';
+const LINK_NOTE = /^<!-- Grove Bench made this link.*-->\n/m;
+
 /** The link to a shared skill, given its SKILL.md content. */
 export function skillLinkContent(sharedContent: string, dirName: string, target: string): string {
   const folder = target.replace(/[\\/]SKILL\.md$/, '');
@@ -117,7 +124,7 @@ export function skillLinkContent(sharedContent: string, dirName: string, target:
     '---',
     '',
     `<!-- ${LINK_MARKER} ${target} -->`,
-    `<!-- Grove Bench made this link so Claude Code can use a skill kept for every agent. Edit the skill in ${target}; Link in Grove's Skills drawer updates this copy. -->`,
+    `${LINK_NOTE_START} so Claude Code can use a skill kept for every agent. Edit the skill in ${target}; Grove updates this copy when a thread starts and when its Skills drawer opens. -->`,
     '',
     `This skill is kept in \`${target}\`, where every coding agent can find it. Read that file now and follow its instructions. Paths in it are relative to \`${folder}\`.`,
     '',
@@ -127,6 +134,12 @@ export function skillLinkContent(sharedContent: string, dirName: string, target:
 /** Whether a SKILL.md is a link Grove made. */
 export function isSkillLink(content: string): boolean {
   return content.includes(`<!-- ${LINK_MARKER} `);
+}
+
+/** Whether a link on disk says what `link` says, line endings and the note
+ *  aside. */
+export function sameLink(current: string, link: string): boolean {
+  return skillText(current).replace(LINK_NOTE, '') === link.replace(LINK_NOTE, '');
 }
 
 /** The folders, made absolute, where links to a level's shared skills go:
@@ -141,8 +154,8 @@ export function linkRoots(worktreePath: string, dirs: SkillDirs, scope: SkillSco
 /**
  * Bring the link to a shared skill up to date in each folder: written where
  * it's missing or out of date, unless `onlyExisting`. A folder's own skill of
- * that name is left alone. Best effort: a link that can't be written is left
- * for Link, which the drawer then offers.
+ * that name is left alone. Best effort: a link that can't be written is
+ * tried again when a thread starts or the Skills drawer opens (linkSkills).
  */
 export function writeLinks(roots: readonly string[], scope: SkillScope, dirName: string, sharedContent: string, onlyExisting = false): void {
   const link = skillLinkContent(sharedContent, dirName, skillLinkTarget(scope, dirName));
@@ -150,65 +163,102 @@ export function writeLinks(roots: readonly string[], scope: SkillScope, dirName:
     const linkPath = path.join(root, dirName, 'SKILL.md');
     try {
       const current = fs.existsSync(linkPath) ? fs.readFileSync(linkPath, 'utf-8') : null;
-      if (current === null ? onlyExisting : !isSkillLink(current) || skillText(current) === link) continue;
+      if (current === null ? onlyExisting : !isSkillLink(current) || sameLink(current, link)) continue;
       fs.mkdirSync(path.dirname(linkPath), { recursive: true });
       fs.writeFileSync(linkPath, link);
-    } catch { /* left for Link */ }
+    } catch { /* tried again by linkSkills */ }
   }
 }
 
+/** A flow scalar's value: unquoted and unescaped, as a YAML parser reads it. */
+function yamlScalar(raw: string): string {
+  if (raw.length >= 2 && raw.startsWith('"') && raw.endsWith('"')) {
+    return raw.slice(1, -1).replace(/\\(u[0-9a-fA-F]{4}|.)/g, (_m, c: string) => {
+      if (c.length === 5) return String.fromCharCode(parseInt(c.slice(1), 16));
+      return ({ n: '\n', t: '\t', r: '\r', '0': '\0' } as Record<string, string>)[c] ?? c;
+    });
+  }
+  if (raw.length >= 2 && raw.startsWith("'") && raw.endsWith("'")) return raw.slice(1, -1).replace(/''/g, "'");
+  return raw;
+}
+
 /**
- * Extract `name` and `description` from a SKILL.md YAML frontmatter block.
- * Only flat single-line `key: value` pairs are read — enough for the skill
- * manifest format — so a full YAML parser isn't pulled into the main process.
+ * Extract `name` and `description` from a SKILL.md YAML frontmatter block,
+ * as the agents read them: quoted values unescaped, and a value over several
+ * lines (a `>` or `|` block, or indented lines after the key) joined. Only
+ * those two top-level keys are read, so a full YAML parser isn't pulled
+ * into the main process.
  */
 export function parseSkillFrontmatter(content: string): { name?: string; description?: string } {
-  const normalized = content.replace(/^\uFEFF/, '');
-  const match = normalized.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
-  if (!match) return {};
+  const block = skillFrontmatter(content);
+  if (block === null) return {};
   const result: { name?: string; description?: string } = {};
-  for (const line of match[1].split(/\r?\n/)) {
-    const kv = line.match(/^(name|description):\s*(.*)$/);
+  const lines = block.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const kv = lines[i].match(/^(name|description):\s*(.*)$/);
     if (!kv) continue;
-    let value = kv[2].trim();
-    // Strip one layer of matching quotes
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-      value = value.slice(1, -1);
+    const first = kv[2].trim();
+    // The value's further lines: indented, or blank inside a block.
+    const more: string[] = [];
+    while (i + 1 < lines.length && /^(\s|$)/.test(lines[i + 1])) more.push(lines[++i].trim());
+    while (more.length > 0 && more[more.length - 1] === '') more.pop();
+    let value: string;
+    if (/^[>|][+-]?\d?$/.test(first)) {
+      // A literal block keeps its lines; a folded one joins them.
+      value = first.startsWith('|') ? more.join('\n') : more.filter(Boolean).join(' ');
+    } else {
+      value = yamlScalar([first, ...more].filter(Boolean).join(' '));
     }
     if (value) result[kv[1] as 'name' | 'description'] = value;
   }
   return result;
 }
 
-/** Scan one skills directory for `<name>/SKILL.md` manifests, in directory
- *  order. Reads without blocking: it runs on the main process each time a
- *  thread's Skills count shows, across up to five folders per agent. */
-export async function scanSkillsDir(dir: string, source: SkillInfo['source']): Promise<SkillInfo[]> {
+/** A `<dir>/SKILL.md` in a skills folder. */
+export interface SkillFolder {
+  /** The skill's folder name, which links and moves go by. */
+  dir: string;
+  path: string;
+  content: string;
+}
+
+/** The `<dir>/SKILL.md` manifests in a skills folder, in directory order.
+ *  A folder may be a symlink (or a Windows junction) to one elsewhere, as
+ *  Claude Code allows. Reads without blocking: it runs on the main process
+ *  each time a thread's Skills count shows, across up to five folders per
+ *  agent. */
+export async function readSkillFolders(root: string): Promise<SkillFolder[]> {
   let entries: fs.Dirent[];
   try {
-    entries = await fs.promises.readdir(dir, { withFileTypes: true });
+    entries = await fs.promises.readdir(root, { withFileTypes: true });
   } catch {
-    return []; // directory absent — no skills at this level
+    return []; // directory absent: no skills at this level
   }
-  const found = await Promise.all(entries.filter((e) => e.isDirectory()).map(async (entry): Promise<SkillInfo | null> => {
-    const manifestPath = path.join(dir, entry.name, 'SKILL.md');
-    let content: string;
+  const found = await Promise.all(entries.filter((e) => e.isDirectory() || e.isSymbolicLink()).map(async (e): Promise<SkillFolder | null> => {
+    const manifestPath = path.join(root, e.name, 'SKILL.md');
     try {
-      content = await fs.promises.readFile(manifestPath, 'utf-8');
+      return { dir: e.name, path: manifestPath, content: await fs.promises.readFile(manifestPath, 'utf-8') };
     } catch {
-      return null; // no manifest — not a skill
+      return null; // no manifest (or a link to a file): not a skill
     }
-    const meta = parseSkillFrontmatter(content);
+  }));
+  return found.filter((m) => m !== null);
+}
+
+/** Scan one skills directory for `<name>/SKILL.md` manifests, in directory
+ *  order. */
+export async function scanSkillsDir(dir: string, source: SkillInfo['source']): Promise<SkillInfo[]> {
+  return (await readSkillFolders(dir)).map((folder) => {
+    const meta = parseSkillFrontmatter(folder.content);
     return {
       // The CLI identifies a skill by its frontmatter name, falling back to
       // the directory name.
-      name: meta.name || entry.name,
+      name: meta.name || folder.dir,
       description: meta.description ?? '',
       source,
-      path: manifestPath,
+      path: folder.path,
     };
-  }));
-  return found.filter((s) => s !== null);
+  });
 }
 
 /**
@@ -232,14 +282,31 @@ export async function listSkills(worktreePath: string, dirs: SkillDirs = CLAUDE_
   return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
-/** Kebab-case identifier the CLI accepts as a skill directory name. */
+/**
+ * Mark the project skills a worktree has that the project folder doesn't:
+ * new on the thread's branch, or not committed. A new thread starts from
+ * the commit the project folder has checked out, so one started for such a
+ * skill (Run, a schedule) wouldn't find it. A link counts by the shared
+ * skill it stands for, as Grove links that in any worktree that has it.
+ */
+export async function markWorktreeOnly(skills: SkillInfo[], worktreePath: string, repoPath: string): Promise<SkillInfo[]> {
+  if (path.resolve(worktreePath) === path.resolve(repoPath)) return skills;
+  return Promise.all(skills.map(async (skill) => {
+    if (skill.source !== 'project' || !skill.path) return skill;
+    const own = path.dirname(skill.path);
+    const raw = await fs.promises.readFile(skill.path, 'utf-8').catch(() => '');
+    const folder = isSkillLink(raw) ? path.join(worktreePath, SHARED_SKILLS_DIR, path.basename(own)) : own;
+    const rel = path.relative(worktreePath, folder);
+    if (rel.startsWith('..') || path.isAbsolute(rel)) return skill;
+    const inProject = await fs.promises.access(path.join(repoPath, rel, 'SKILL.md')).then(() => true, () => false);
+    return inProject ? skill : { ...skill, worktreeOnly: true };
+  }));
+}
+
+/** A skill name as the Agent Skills format has it (shared/skill-name.ts). */
 export function validateSkillName(name: string): void {
-  if (!/^[a-z0-9][a-z0-9-]*$/.test(name)) {
-    throw new Error('Skill name must be kebab-case: lowercase letters, digits, and dashes (e.g. "release-notes")');
-  }
-  if (name.length > 64) {
-    throw new Error('Skill name must be 64 characters or fewer');
-  }
+  const problem = skillNameProblem(name);
+  if (problem) throw new Error(problem);
 }
 
 /** Serialize a neutral SkillDefinition into SKILL.md content. The description
@@ -268,7 +335,8 @@ export function skillManifestContent(def: SkillDefinition): string {
  */
 export function writeSkill(worktreePath: string, def: SkillDefinition, dirs: SkillDirs = CLAUDE_SKILL_DIRS): SkillInfo {
   validateSkillName(def.name);
-  if (!def.description.trim()) throw new Error('Skill description is required');
+  const descriptionProblem = skillDescriptionProblem(def.description);
+  if (descriptionProblem) throw new Error(descriptionProblem);
   if (!def.instructions.trim()) throw new Error('Skill instructions are required');
 
   const manifestPath = path.join(skillsRoot(worktreePath, def.scope, SHARED_SKILLS_DIR), def.name, 'SKILL.md');
@@ -279,11 +347,20 @@ export function writeSkill(worktreePath: string, def: SkillDefinition, dirs: Ski
     throw new Error(`A ${def.scope} skill named "${def.name}" already exists`);
   }
   const content = skillManifestContent(def);
-  fs.mkdirSync(path.dirname(manifestPath), { recursive: true });
+  const folder = path.dirname(manifestPath);
+  const newFolder = !fs.existsSync(folder);
+  fs.mkdirSync(folder, { recursive: true });
   fs.writeFileSync(manifestPath, content);
   if (linkPath) {
-    fs.mkdirSync(path.dirname(linkPath), { recursive: true });
-    fs.writeFileSync(linkPath, skillLinkContent(content, def.name, skillLinkTarget(def.scope, def.name)));
+    try {
+      fs.mkdirSync(path.dirname(linkPath), { recursive: true });
+      fs.writeFileSync(linkPath, skillLinkContent(content, def.name, skillLinkTarget(def.scope, def.name)));
+    } catch (err) {
+      // Claude Code can't see the skill without its link: take back what
+      // was written, so the error leaves nothing behind and a retry works.
+      fs.rmSync(newFolder ? folder : manifestPath, { recursive: true, force: true });
+      throw err;
+    }
   }
   // A personal one for every other Claude account too.
   writeLinks(linkRoots(worktreePath, dirs, def.scope), def.scope, def.name, content);
@@ -328,7 +405,7 @@ export async function editTarget(worktreePath: string, skill: { name: string; pa
   try {
     return { path: sharedPath, raw: await fs.promises.readFile(sharedPath, 'utf-8'), link: { path: skill.path, raw } };
   } catch {
-    throw new Error(`"${skill.name}" is a link to ${sharedPath}, which is gone. Link in the Skills drawer removes it.`);
+    throw new Error(`"${skill.name}" is a link to ${sharedPath}, which is gone. Grove removes the link when a thread starts or the Skills drawer opens.`);
   }
 }
 
@@ -404,22 +481,4 @@ export async function copySkillToUser(worktreePath: string, dirs: SkillDirs, ski
   }
   if (agents === 'all') writeLinks(linkRoots(worktreePath, dirs, 'user'), 'user', dirName, target.raw);
   return { name: skill.name, description: parseSkillFrontmatter(target.raw).description ?? '', source: 'user', path: linkPath ?? path.join(to, 'SKILL.md') };
-}
-
-/**
- * Compute the SDK `skills` allowlist for a session.
- *
- * Returns undefined when nothing is disabled — the option is then omitted so
- * the CLI's own defaults apply (all discovered skills enabled). With disabled
- * names present, the allowlist is every known skill minus the disabled ones.
- * `knownNames` should union on-disk skills with any names previous
- * system_init messages reported (covers plugin skills the scan can't see).
- */
-export function computeSkillsFilter(
-  knownNames: Iterable<string>,
-  disabledNames: string[],
-): string[] | undefined {
-  if (disabledNames.length === 0) return undefined;
-  const disabled = new Set(disabledNames);
-  return [...new Set(knownNames)].filter((name) => !disabled.has(name)).sort();
 }

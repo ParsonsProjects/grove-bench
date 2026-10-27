@@ -88,14 +88,21 @@
 
   /** Claude Code's own skills other agents can't see (skill-sharing.ts).
    *  Only asked for in a Claude Code thread. */
-  let sharing = $state<SkillSharing>({ toShare: [], toLink: [], broken: [] });
+  let sharing = $state<SkillSharing>({ toShare: [] });
 
   /** The thread's agent, as the drawer names it. */
   const agentName = $derived(agentsStore.get(agentId)?.displayName ?? 'this agent');
-  /** Claude Code's own skills, which other agents can't see until shared.
-   *  Only in a Claude Code thread: Copilot and OpenCode read `.claude/skills`
-   *  too, so there they aren't Claude's alone. */
+  /** Claude Code's own skills, which agents that read only `.agents/skills`
+   *  can't see until shared. Only in a Claude Code thread. */
   const claudeOnly = $derived(managed ? new Set(sharing.toShare.map((s) => s.path)) : new Set<string | undefined>());
+
+  /** The skills folder a SKILL.md is in, as its last two folder names
+   *  (`.claude/skills`, `.gemini/skills`): which agents read it isn't Grove's
+   *  to say, as several read `.claude/skills`. */
+  function folderOf(skillPath: string | undefined): string {
+    const parts = (skillPath ?? '').split(/[\\/]/);
+    return parts.slice(-4, -2).join('/');
+  }
 
   /** Who can use a skill now. Grove moves only Claude Code's skills between
    *  its folders and the shared ones, so in another agent's thread that half
@@ -107,15 +114,13 @@
     };
   }
 
-  /** Who can use a skill, in a few words, e.g. "Claude only · This project".
-   *  A personal skill in Claude Code's own folder is the thread's account's
-   *  alone; one in a project's is every Claude account's. */
+  /** Who can use a skill, in a few words, e.g. "In .claude/skills · This
+   *  project" or "All agents · All my projects". */
   function reachLabel(skill: SkillInfo): string {
-    const own = skill.source === 'project' ? 'Claude only' : `${agentName} only`;
-    const agents = managed
-      ? (reachOf(skill).agents === 'claude' ? own : 'All agents')
-      : (/[\\/]\.agents[\\/]skills[\\/]/.test(skill.path ?? '') ? 'All agents' : `${agentName} only`);
-    return `${agents} · ${skill.source === 'user' ? 'All my projects' : 'This project'}`;
+    const shared = managed
+      ? reachOf(skill).agents === 'all'
+      : /[\\/]\.agents[\\/]skills[\\/]/.test(skill.path ?? '');
+    return `${shared ? 'All agents' : `In ${folderOf(skill.path)}`} · ${skill.source === 'user' ? 'All my projects' : 'This project'}`;
   }
 
   async function refreshSharing() {
@@ -167,13 +172,13 @@
     if (now.projects === 'project' && reachForm.projects === 'all') {
       return reachForm.agents === 'all'
         ? 'Copies it to ~/.agents/skills, for every agent in all your projects, linked for each Claude account. The project keeps its copy as it is.'
-        : `Copies it to ${agentName}'s own folder, for it alone in all your projects. The project keeps its copy as it is.`;
+        : `Copies it to ${agentName}'s own folder, for all your projects. Agents that don't read that folder won't see it. The project keeps its copy as it is.`;
     }
     if (now.agents === reachForm.agents) return '';
     const level = now.projects === 'project' ? "the project's" : 'your';
     return reachForm.agents === 'all'
-      ? `Moves it to ${level} .agents/skills, where every agent looks, leaving a link so Claude Agent still finds it.`
-      : "Moves it back into Claude Agent's own folder. Other agents won't see it.";
+      ? `Moves it to ${level} .agents/skills, where every agent looks, leaving a link so ${agentName} still finds it.`
+      : `Moves it back into ${folderOf(reachForm.skill.path)}. Agents that don't read that folder won't see it.`;
   });
 
   async function applyReach() {
@@ -183,9 +188,13 @@
     try {
       await window.groveBench.setSkillReach(sessionId, repoPath, form.skill.path, { agents: form.agents, projects: form.projects });
       const copied = form.skill.source === 'project' && form.projects === 'all';
-      const who = form.agents === 'all' ? 'every agent' : copied || form.skill.source === 'user' ? `${agentName} alone` : 'Claude Agent alone';
-      reachDone = `"${form.skill.name}" is for ${who} in ${form.projects === 'all' ? 'all your projects' : 'this project'} now.`
-        + (copied ? ' The project keeps its copy for your team.' + (managed ? ' Claude Agent uses yours where both are.' : '') : '');
+      const where = form.projects === 'all' ? 'all your projects' : 'this project';
+      reachDone = copied
+        ? `"${form.skill.name}" is in all your projects now, ${form.agents === 'all' ? 'for every agent' : `in ${agentName}'s own folder`}. The project keeps its copy for your team.`
+          + (managed ? ` ${agentName} uses yours where both are.` : '')
+        : form.agents === 'all'
+          ? `"${form.skill.name}" is for every agent in ${where} now.`
+          : `"${form.skill.name}" is back in ${folderOf(form.skill.path)} now.`;
       reachForm = null;
     } catch (err) {
       store.setError(`Couldn't change who can use "${form.skill.name}": ${stripIpcErrorPrefix(errorMessage(err))}`);
@@ -214,8 +223,6 @@
     if (skill.path && skill.source !== 'session') {
       items.push({ label: 'Edit SKILL.md', action: () => skillsPanelStore.editSkill(sessionId, skill) });
       items.push({ label: 'Open folder', action: () => void showFolder(skill) });
-    }
-    if (skill.path && skill.source !== 'session') {
       items.push({ label: 'Who can use it…', action: () => openReach(skill), disabled: reachBusy });
     }
     if (managed && !disabledSkills.includes(skill.name)) {
@@ -279,6 +286,9 @@
 
   let suggestions = $state<SkillSuggestion[]>([]);
   let analyzingSuggestions = $state(false);
+  /** What the last Suggest found when it found nothing new, or why it
+   *  failed, until the next one. */
+  let suggestNote = $state<{ text: string; failed: boolean } | null>(null);
   let addSkillInitial = $state<{ name: string; description: string; instructions: string; scope?: 'project' | 'user' } | null>(null);
 
   async function refreshSuggestions() {
@@ -291,10 +301,15 @@
   async function analyzeSuggestions() {
     if (analyzingSuggestions || !repoPath) return;
     analyzingSuggestions = true;
+    suggestNote = null;
     try {
       suggestions = await window.groveBench.analyzeSkillSuggestions(repoPath) ?? [];
-    } catch { /* analysis is best-effort */ }
-    finally {
+      if (suggestions.length === 0) {
+        suggestNote = { text: 'No suggestions. One comes from a request or command that recurs in at least 3 threads.', failed: false };
+      }
+    } catch (err) {
+      suggestNote = { text: `Couldn't read this project's threads for suggestions: ${stripIpcErrorPrefix(errorMessage(err))}`, failed: true };
+    } finally {
       analyzingSuggestions = false;
     }
   }
@@ -376,6 +391,15 @@
   <Notice tone="danger" class="mb-2 break-words">{settingsStore.error}</Notice>
 {/if}
 
+{#if suggestNote}
+  <Notice tone={suggestNote.failed ? 'danger' : 'info'} class="mb-3 break-words">
+    {#snippet actions()}
+      <Button variant="quiet" size="icon-2xs" onclick={() => { suggestNote = null; }} title="Dismiss" aria-label="Dismiss"><XIcon /></Button>
+    {/snippet}
+    {suggestNote.text}
+  </Notice>
+{/if}
+
 {#if reachDone}
   <Notice tone="success" class="mb-3">
     {#snippet actions()}
@@ -426,6 +450,9 @@
             {#if skill.path && skill.source !== 'session'}
               <div class="mt-0.5 text-micro">{reachLabel(skill)}</div>
             {/if}
+            {#if skill.worktreeOnly}
+              <div class="mt-0.5 text-micro text-amber-400">Only in this thread's branch so far: a new thread won't have it until it's committed and merged.</div>
+            {/if}
             {#if reachForm && reachForm.skill.name === skill.name}
               <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
               <div class="mt-2 pt-2 border-t border-border space-y-2" role="group" aria-label="Who can use {skill.name}" onkeydown={closeReachOnEscape}>
@@ -433,7 +460,7 @@
                   <div class="flex items-center gap-2">
                     <span class="w-14 shrink-0">Agents</span>
                     <Segmented.Root bind:value={reachForm.agents} aria-label="Agents">
-                      <Segmented.Item value="claude">{skill.source === 'project' ? 'Claude only' : `${agentName} only`}</Segmented.Item>
+                      <Segmented.Item value="claude">{skill.source === 'project' ? "Claude's folder" : `${agentName}'s folder`}</Segmented.Item>
                       <Segmented.Item value="all">All agents</Segmented.Item>
                     </Segmented.Root>
                   </div>
@@ -459,16 +486,20 @@
                   variant="subtle-primary"
                   size="2xs"
                   onclick={() => runSkill(skill)}
-                  title={store.isFolderProject(repoPath)
-                    ? 'Run this skill now in a new thread in the project folder'
-                    : 'Run this skill now in a new thread on a branch of its own'}
+                  disabled={skill.worktreeOnly}
+                  title={skill.worktreeOnly
+                    ? "A new thread won't have this skill until it's committed and merged"
+                    : store.isFolderProject(repoPath)
+                      ? 'Run this skill now in a new thread in the project folder'
+                      : 'Run this skill now in a new thread on a branch of its own'}
                   aria-label="Run {skill.name} in a new thread"
                 ><PlayIcon />Run</Button>
                 <Button
                   variant="subtle"
                   size="2xs"
                   onclick={() => skillsPanelStore.editSchedule(repoPath, { agentId, skill: skill.name })}
-                  title="Run this skill on a schedule"
+                  disabled={skill.worktreeOnly}
+                  title={skill.worktreeOnly ? "A scheduled thread won't have this skill until it's committed and merged" : 'Run this skill on a schedule'}
                   aria-label="Schedule {skill.name}"
                 ><ClockIcon />Schedule</Button>
               {/if}
@@ -535,6 +566,7 @@
 <p class="text-muted-foreground text-caption mt-3 pt-3 border-t border-border">
   {#if managed}
     Turning a skill off applies to all projects, when a thread's agent (re)starts. Running turns keep their current skills.
+    Grove keeps {agentName}'s links to skills in <span class="font-mono">.agents/skills</span> up to date in <span class="font-mono">.claude/skills</span> when a thread starts and when this opens.
   {:else}
     Skills from {agentsStore.get(agentId)?.displayName ?? 'this agent'}'s own folders. Turn them off there.
   {/if}

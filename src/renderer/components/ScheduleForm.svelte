@@ -5,16 +5,18 @@
    * thread runs, when, and the open-thread cap. Shown in the Skills drawer's
    * Scheduled tab.
    */
-  import { onMount, untrack } from 'svelte';
+  import { onDestroy, onMount, untrack } from 'svelte';
   import * as Select from '$lib/components/ui/select/index.js';
   import * as Segmented from '$lib/components/ui/segmented/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
+  import { Confirm } from '$lib/components/ui/confirm/index.js';
   import { Checkbox } from '$lib/components/ui/checkbox/index.js';
   import { Input } from '$lib/components/ui/input/index.js';
   import { Label } from '$lib/components/ui/label/index.js';
   import { Notice } from '$lib/components/ui/notice/index.js';
   import { Textarea } from '$lib/components/ui/textarea/index.js';
   import { schedulesStore } from '../stores/schedules.svelte.js';
+  import { skillsPanelStore } from '../stores/skillsPanel.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
   import { agentsStore } from '../stores/agents.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
@@ -88,10 +90,20 @@
   const DEFAULT = '_default';
   const modes = $derived([{ value: DEFAULT, label: "Agent's default" }, ...modeOptions.map((o) => ({ value: o.value, label: o.label }))]);
 
+  /** The fields as the form opened with them, once the agent is filled in:
+   *  leaving with others asks first (skillsPanelStore.unlessUnsaved). */
+  let baseline = $state<string | null>(null);
+  $effect(() => {
+    const now = JSON.stringify(editing);
+    skillsPanelStore.formDirty = baseline !== null && now !== baseline;
+  });
+  onDestroy(() => { skillsPanelStore.formDirty = false; });
+
   onMount(() => {
     // Agents load on first use, and nothing may have used them yet.
     void agentsStore.load().then(() => {
       if (!editing.agentId) editing.agentId = agentsStore.defaultId ?? '';
+      baseline = JSON.stringify(editing);
     });
   });
 
@@ -131,6 +143,7 @@
     formError = '';
     try {
       await schedulesStore.save(editing);
+      skillsPanelStore.formDirty = false;
       onclose();
     } catch (e) {
       formError = stripIpcErrorPrefix(e instanceof Error ? e.message : String(e));
@@ -253,17 +266,26 @@
     <Notice tone="danger"><p>{formError}</p></Notice>
   {/if}
 
-  <div class="flex items-center justify-end gap-2 pt-1">
-    {#if saveBlocker}
-      <span id="schedule-save-blocker" class="text-caption text-muted-foreground mr-auto">{saveBlocker}</span>
-    {/if}
-    <Button variant="subtle" size="sm" onclick={onclose}>Cancel</Button>
-    <Button
-      size="sm"
-      disabled={saving || !!saveBlocker}
-      onclick={save}
-      title={saveBlocker ?? undefined}
-      aria-describedby={saveBlocker ? 'schedule-save-blocker' : undefined}
-    >Save</Button>
-  </div>
+  {#if skillsPanelStore.pendingDiscard}
+    <Confirm
+      message="Discard your changes to this schedule?"
+      confirm="Discard"
+      onconfirm={() => skillsPanelStore.discardChanges()}
+      oncancel={() => { skillsPanelStore.pendingDiscard = null; }}
+    />
+  {:else}
+    <div class="flex items-center justify-end gap-2 pt-1">
+      {#if saveBlocker}
+        <span id="schedule-save-blocker" class="text-caption text-muted-foreground mr-auto">{saveBlocker}</span>
+      {/if}
+      <Button variant="subtle" size="sm" onclick={() => skillsPanelStore.unlessUnsaved(onclose)}>Cancel</Button>
+      <Button
+        size="sm"
+        disabled={saving || !!saveBlocker}
+        onclick={save}
+        title={saveBlocker ?? undefined}
+        aria-describedby={saveBlocker ? 'schedule-save-blocker' : undefined}
+      >Save</Button>
+    </div>
+  {/if}
 </div>

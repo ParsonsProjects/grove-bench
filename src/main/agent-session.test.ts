@@ -150,6 +150,8 @@ const turnFiles = vi.hoisted(() => ({
   instances: [] as { root: string; closed: boolean; finished: boolean; edited: string[] }[],
   /** When set, listing a turn's files waits on it (a slow disk). */
   listing: null as Promise<void> | null,
+  /** When set, a watch stopping waits on it (the watcher thread busy). */
+  stopping: null as Promise<void> | null,
 }));
 vi.mock('./turn-files.js', () => ({
   TurnFiles: class {
@@ -158,10 +160,13 @@ vi.mock('./turn-files.js', () => ({
     edited: string[] = [];
     constructor(public root: string) { turnFiles.instances.push(this); }
     noteEdited(p: string) { this.edited.push(p); }
-    close() { this.closed = true; }
+    close() {
+      this.closed = true;
+      return turnFiles.stopping ?? Promise.resolve();
+    }
     async finish() {
       this.finished = true;
-      this.close();
+      await this.close();
       await turnFiles.listing;
       return { files: turnFiles.found, more: 0 };
     }
@@ -331,6 +336,7 @@ function makeMockWindow() {
 
 // Import the module under test AFTER mocks are set up
 const { sessionManager } = await import('./agent-session.js');
+const { missingSkillWarning } = await import('./session-skills.js');
 // destroySession's wait for Windows to release file handles: no real files here.
 sessionManager.handleReleaseMs = 0;
 const { sanitizeElicitationResponse } = await import('./session-permissions.js');
@@ -349,6 +355,7 @@ beforeEach(() => {
   turnFiles.found = [];
   turnFiles.instances = [];
   turnFiles.listing = null;
+  turnFiles.stopping = null;
 });
 
 describe('AgentSessionManager.createSession()', () => {
@@ -795,6 +802,23 @@ describe('AgentSessionManager event processing', () => {
     );
 
     await sessionManager.destroySession('test-init');
+  });
+
+  it("warns once when the message asks for a skill the agent doesn't list", async () => {
+    await sessionManager.createSession({ id: 'test-missing-skill', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    const session = sessionManager.getSession('test-missing-skill')!;
+    session.eventHistory.push({ type: 'user_message', text: 'Use the `ghost` skill.' });
+
+    const warning = missingSkillWarning('ghost', 'Mock Agent');
+    const warnings = () => session.eventHistory.filter((e) => e.type === 'status' && e.message === warning);
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 's', model: 'mock-model', tools: [], skills: ['real'] });
+    await vi.waitFor(() => expect(warnings()).toHaveLength(1));
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 's', model: 'mock-model', tools: [], skills: ['real'] });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(warnings()).toHaveLength(1);
+
+    await sessionManager.destroySession('test-missing-skill');
   });
 
   it('emits events to the renderer window', async () => {
@@ -5489,6 +5513,23 @@ describe('AgentSessionManager files a turn makes', () => {
     await sessionManager.destroySession('files-closed');
     expect(watch.closed).toBe(true);
     expect(watch.finished).toBe(false);
+  });
+
+  it("finishes a delete only once the turn's watch has let go of the worktree", async () => {
+    await startSession('files-release');
+    await sessionManager.sendMessage('files-release', 'build it');
+    let release!: () => void;
+    turnFiles.stopping = new Promise<void>((r) => { release = r; });
+
+    let destroyed = false;
+    const destroying = sessionManager.destroySession('files-release').then(() => { destroyed = true; });
+    await vi.waitFor(() => expect(turnFiles.instances[0].closed).toBe(true));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(destroyed).toBe(false);
+
+    release();
+    await destroying;
+    expect(destroyed).toBe(true);
   });
 });
 

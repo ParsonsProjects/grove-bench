@@ -22,6 +22,7 @@
   import { threadItemsStore } from '../stores/threadItems.svelte.js';
   import { formatResetTime } from '../lib/reset-time.js';
   import { formatTokens } from '../lib/context-usage.js';
+  import { whileShown } from '../lib/while-shown.js';
   import { lozenge, lozengeMark } from '../lib/lozenge.js';
   import { taskProgress } from '../../shared/thread-items.js';
   import { Button } from '$lib/components/ui/button/index.js';
@@ -45,7 +46,11 @@
   let needsInput = $derived(messageStore.needsInput(sessionId));
   let activity = $derived(messageStore.getActivity(sessionId));
 
-  let pendingTools = $derived(messageStore.getPendingTools(sessionId));
+  // Every conversation's status bar is mounted, hidden but for the open
+  // one's. The lists below go over the whole thread, so a hidden one keeps
+  // what it last showed until it's open again.
+  let threadOpen = $derived(store.activeSessionId === sessionId);
+  let pendingTools = $derived.by(whileShown(() => threadOpen, () => messageStore.getPendingTools(sessionId)));
   /** All of them are subagents' calls: the conversation itself may be idle. */
   let onlySubagentTools = $derived(pendingTools.length > 0 && pendingTools.every((t) => t.inSubagent));
   let rateLimit = $derived(rateLimitStore.get(sessionId));
@@ -60,9 +65,9 @@
   let backgroundTasks = $derived(backgroundTaskStore.get(sessionId));
   /** The Agent calls in the conversation, so a background subagent's task
    *  can open its thread. */
-  let agentCalls = $derived(new Set(
+  let agentCalls = $derived.by(whileShown(() => threadOpen, () => new Set(
     messageStore.getMessages(sessionId).filter(isAgentCall).map((m) => (m as ChatToolCallMessage).toolUseId),
-  ));
+  )));
   let runningBgTasks = $derived(backgroundTasks.filter((t) => t.status === 'running'));
   let bgTaskStopError = $state('');
 
@@ -70,7 +75,7 @@
   // (every pane is mounted, and a hidden one needn't ask), then stay current
   // with its live events.
   $effect(() => {
-    if (store.activeSessionId === sessionId) threadItemsStore.ensure(sessionId);
+    if (threadOpen) threadItemsStore.ensure(sessionId);
   });
   let items = $derived(threadItemsStore.get(sessionId));
   let tasks = $derived(items?.tasks ?? []);
@@ -133,6 +138,10 @@
       bgTaskStopError = err instanceof Error ? err.message : String(err);
     }
   }
+
+  // Hidden, the popup's lists keep what they last showed (whileShown), so
+  // close it rather than have it come back open and out of date.
+  $effect(() => { if (!threadOpen) open = false; });
 
   function openSubagent(toolUseId: string) {
     open = false;

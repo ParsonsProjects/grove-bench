@@ -7,10 +7,13 @@
   import { Notice } from '$lib/components/ui/notice/index.js';
   import { Pulse } from '$lib/components/ui/pulse/index.js';
   import * as Segmented from '$lib/components/ui/segmented/index.js';
+  import { Textarea } from '$lib/components/ui/textarea/index.js';
   import { store } from '../stores/sessions.svelte.js';
+  import { stripIpcErrorPrefix } from '../lib/mcp-errors.js';
   import type { SkillPromptOpts } from '../lib/skill-prompt.js';
   import type { SkillInfo } from '../../shared/types.js';
   import { errorMessage } from '../../shared/error-message.js';
+  import { MAX_SKILL_DESCRIPTION_LENGTH, skillNameProblem } from '../../shared/skill-name.js';
 
   let {
     sessionId,
@@ -23,7 +26,7 @@
     onclose: () => void;
     /** Fired after a manual create succeeds so the caller can refresh its list. */
     oncreated: (skill: SkillInfo) => void;
-    /** Ask Agent to Write It: the caller starts the agent's thread (and can
+    /** Ask agent to write it: the caller starts the agent's thread (and can
      *  open the dialog again with these if it can't start). */
     onaskagent: (skill: SkillPromptOpts) => void;
     /** Prefill (e.g. from a skill suggestion) — editable before creating. */
@@ -41,9 +44,11 @@
   let creating = $state(false);
   let dialogError = $state('');
 
-  let nameValid = $derived(/^[a-z0-9][a-z0-9-]*$/.test(name.trim()));
-  let canCreate = $derived(nameValid && description.trim().length > 0 && instructions.trim().length > 0);
-  let canSendToAgent = $derived(nameValid && description.trim().length > 0);
+  /** What's wrong with the name, by the Agent Skills rules main checks too. */
+  let nameProblem = $derived(skillNameProblem(name.trim()));
+  let descriptionOk = $derived(description.trim().length > 0 && description.trim().length <= MAX_SKILL_DESCRIPTION_LENGTH);
+  let canCreate = $derived(!nameProblem && descriptionOk && instructions.trim().length > 0);
+  let canSendToAgent = $derived(!nameProblem && descriptionOk);
   /** A project without git: every thread runs in its folder, so no branch. */
   let folderProject = $derived(store.isFolderProject(store.sessions.find((s) => s.id === sessionId)?.repoPath ?? ''));
 
@@ -67,7 +72,7 @@
       oncreated(skill);
       close();
     } catch (e) {
-      dialogError = errorMessage(e);
+      dialogError = stripIpcErrorPrefix(errorMessage(e));
     } finally {
       creating = false;
     }
@@ -93,9 +98,9 @@
 <Dialog.Root bind:open onOpenChange={handleOpenChange}>
   <Dialog.Content class="max-w-lg">
     <Dialog.Header>
-      <Dialog.Title>Add Skill</Dialog.Title>
+      <Dialog.Title>Add skill</Dialog.Title>
       <Dialog.Description>
-        Package instructions any agent can invoke by name. Saved in <span class="font-mono">.agents/skills</span>, which every agent reads (Claude Agent through a link). Loaded when a thread's agent (re)starts.
+        Package instructions any agent can invoke by name. Saved in <span class="font-mono">.agents/skills</span>, which every agent reads (Claude Agent through a link). A thread that's already running may need a restart to see it.
       </Dialog.Description>
     </Dialog.Header>
 
@@ -112,11 +117,11 @@
           />
         </div>
         <div>
-          <Label class="mb-1 block">Scope</Label>
+          <Label id="skill-scope" class="mb-1 block">Scope</Label>
           <Segmented.Root
             value={scope}
             onValueChange={(v) => { if (v === 'project' || v === 'user') scope = v; }}
-            aria-label="Scope"
+            aria-labelledby="skill-scope"
             class="h-9"
           >
             <Segmented.Item
@@ -127,15 +132,15 @@
             </Segmented.Item>
             <Segmented.Item
               value="user"
-              title="Written to .agents/skills in your user folder — applies to every project immediately"
+              title="Written to .agents/skills in your user folder, for all your projects"
             >
               User
             </Segmented.Item>
           </Segmented.Root>
         </div>
       </div>
-      {#if name.trim() && !nameValid}
-        <p class="text-micro text-destructive -mt-2">Use kebab-case: lowercase letters, digits, and dashes.</p>
+      {#if name.trim() && nameProblem}
+        <p class="text-micro text-destructive -mt-2">{nameProblem}.</p>
       {/if}
 
       <div>
@@ -146,23 +151,26 @@
           bind:value={description}
           placeholder="When should the agent use this skill?"
         />
+        {#if description.trim().length > MAX_SKILL_DESCRIPTION_LENGTH}
+          <p class="text-micro text-destructive mt-1">Keep the description to {MAX_SKILL_DESCRIPTION_LENGTH} characters or fewer ({description.trim().length} now).</p>
+        {/if}
       </div>
 
       <div>
         <Label for="skill-instructions" class="mb-1 block">Instructions</Label>
-        <textarea
+        <Textarea
           id="skill-instructions"
           bind:value={instructions}
-          rows="7"
-          placeholder="Markdown instruction body — or rough notes, if you hand it to the agent below…"
-          class="w-full text-sm bg-background border border-input px-3 py-2 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring resize-y font-mono"
-        ></textarea>
+          rows={7}
+          placeholder="Markdown instruction body, or rough notes if you hand it to the agent below…"
+          class="resize-y font-mono"
+        />
         <p class="text-micro text-muted-foreground mt-1">
           {scope === 'user'
             ? 'User skills apply to every project on this machine.'
             : folderProject
               ? 'Project skills are written into the project folder.'
-              : 'Create Skill writes it into this thread\'s worktree, where it shows up in the Changes tab. Ask Agent writes it on a new branch.'}
+              : 'Create skill writes it into this thread\'s worktree, where it shows up in the Changes tab: a new thread has it once it is committed and merged. Ask agent writes it on a new branch.'}
         </p>
       </div>
 
@@ -184,7 +192,7 @@
             ? 'Start a new thread on a branch of its own where the agent drafts and writes the skill (instructions above become optional notes)'
             : 'Start a new thread in the project folder where the agent drafts and writes the skill (instructions above become optional notes)'}
         >
-          Ask Agent to Write It
+          Ask agent to write it
         </Button>
         <Button onclick={handleCreate} disabled={!canCreate || creating}>
           {#if creating}
@@ -193,7 +201,7 @@
               Creating…
             </span>
           {:else}
-            Create Skill
+            Create skill
           {/if}
         </Button>
       </Dialog.Footer>
