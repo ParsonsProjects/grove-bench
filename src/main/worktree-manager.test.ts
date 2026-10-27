@@ -1593,7 +1593,8 @@ describe("Settings > Git's worktree folder", () => {
   let setting: string;
 
   beforeEach(() => {
-    setting = '/dev-drive/wt';
+    // Resolved, so it is a full path on Windows too (D:\\dev-drive\\wt there).
+    setting = folder;
     manager = new WorktreeManager(() => setting);
     mockFsUtils.pathExists.mockResolvedValue(true);
     vi.mocked(branchExists).mockResolvedValue(false);
@@ -1647,7 +1648,7 @@ describe("Settings > Git's worktree folder", () => {
   });
 
   it('refuses a folder inside the project, whose git status and tools would see every worktree', async () => {
-    setting = '/repo/.worktrees';
+    setting = path.resolve('/repo/.worktrees');
     await expect(manager.create({ repoPath: '/repo', branchName: 'feat', id: 'a1' })).rejects.toThrow('it is inside the project, /repo.');
     expect(mockGit).not.toHaveBeenCalled();
   });
@@ -1659,9 +1660,13 @@ describe("Settings > Git's worktree folder", () => {
   });
 
   it("names the folder it couldn't make, such as one on a drive that isn't there", async () => {
-    mockFs.mkdir.mockRejectedValueOnce(errno('ENOENT'));
+    // Not a once-value: if the create failed before mkdir, a shuffled later
+    // test would get it.
+    mockFs.mkdir.mockImplementation(async (p: string) => {
+      if (p === folder) throw errno('ENOENT');
+    });
     await expect(manager.create({ repoPath: '/repo', branchName: 'feat', id: 'a1' })).rejects.toThrow(
-      "Can't make the worktree in /dev-drive/wt: ENOENT. Change the worktree folder in Settings > Git.",
+      `Can't make the worktree in ${folder}: ENOENT. Change the worktree folder in Settings > Git.`,
     );
     expect(mockGit).not.toHaveBeenCalled();
   });
@@ -1762,7 +1767,7 @@ describe("Settings > Git's worktree folder", () => {
 
 describe('the npm cache each project had', () => {
   it("the sweep deletes it: installs use the user's own cache now", async () => {
-    const root = '/mock/userData/worktrees';
+    const root = path.join('/mock/userData/worktrees');
     const hash = crypto.createHash('sha256').update('/repo').digest('hex').slice(0, 8);
     mockFs.access.mockResolvedValue(undefined);
     mockFs.stat.mockResolvedValue({ isDirectory: () => true });
@@ -1786,13 +1791,13 @@ describe("Settings > Git's worktree folder: what is refused or left alone", () =
   });
 
   it("refuses a folder inside the app's data folder, whose scan would trash its project folders", async () => {
-    manager = new WorktreeManager(() => '/mock/userData/worktrees/mine');
+    manager = new WorktreeManager(() => path.resolve('/mock/userData/worktrees/mine'));
     await expect(manager.create({ repoPath: '/repo', branchName: 'feat', id: 'a1' })).rejects.toThrow("it is inside the app's data folder");
     expect(mockGit).not.toHaveBeenCalled();
   });
 
   it('takes the data folder itself, as if the setting were empty', async () => {
-    manager = new WorktreeManager(() => '/mock/userData/worktrees');
+    manager = new WorktreeManager(() => path.resolve('/mock/userData/worktrees'));
     const info = await manager.create({ repoPath: '/repo', branchName: 'feat', id: 'a1' });
     expect(info.path).toBe(path.join('/mock/userData/worktrees', hash, 'a1'));
     expect(savedManifest.a1).not.toHaveProperty('path');
