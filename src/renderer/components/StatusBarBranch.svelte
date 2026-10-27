@@ -1,21 +1,30 @@
 <script lang="ts">
+  /**
+   * The branch lozenge: the branch's name and its ship track, five dots for
+   * the steps to merged (push, PR, checks, review, merge; lib/ship-track.ts).
+   * A green mark on its corner says the popup holds something to do now
+   * (push, create a PR, fix failed checks, address requested changes). A
+   * merge or rebase stopped part way adds its word in amber ("rebasing 1/2").
+   *
+   * Its popup names each step and holds the actions: Push, Create PR (with
+   * the agent or by hand), a failed push's error with Retry, Switch branch
+   * (the branch picker, which opens over the lozenge in its place), and the
+   * PR's details (StatusBarPr). Also keeps the PR and sync status polled
+   * while the bar is mounted.
+   */
   import { gitStatusStore } from '../stores/gitStatus.svelte.js';
   import { operationShort, operationTitle } from '../lib/git-operation.js';
-  /**
-   * The branch stack: project / branch on top (click the branch to switch);
-   * underneath, its sync state (ahead / behind / push error) and the PR for
-   * this branch: "Create PR" before one exists, the PR pill once it does.
-   * The stack anchors every popover here, so they open above all of it.
-   * Also keeps the PR and sync status polled while the bar is mounted.
-   */
   import { messageStore } from '../stores/messages.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
   import { prStore } from '../stores/pr.svelte.js';
   import { buildCreatePrPrompt } from '../lib/pr-prompt.js';
   import { resolveBaseBranch } from '../lib/base-branch.js';
   import { lazyComponent } from '../lib/lazy-component.js';
+  import { lozenge, lozengeMark } from '../lib/lozenge.js';
+  import { shipTrack, type ShipStepState } from '../lib/ship-track.js';
   import { Button } from '$lib/components/ui/button/index.js';
-  import { menuItem } from '$lib/components/ui/menu/index.js';
+  import { Pulse } from '$lib/components/ui/pulse/index.js';
+  import GitBranchIcon from '@lucide/svelte/icons/git-branch';
   import BranchPicker from './BranchPicker.svelte';
   import CopyButton from './CopyButton.svelte';
   import StatusBarPopover from './StatusBarPopover.svelte';
@@ -35,6 +44,7 @@
   /** A merge, rebase, cherry-pick or revert stopped part way in the worktree. */
   let operation = $derived(gitStatusStore.getStatus(sessionId).operation);
   function openChanges() {
+    shipOpen = false;
     messageStore.setActiveTab(sessionId, 'changes');
     void gitStatusStore.refresh(sessionId);
   }
@@ -65,14 +75,12 @@
     }
   }
 
-  // "push failed" opens the error with Retry and Dismiss. The store clears
-  // the error as a push starts, so the popover keeps showing the last one
-  // while a retry runs, then closes if it went through.
-  let pushErrorOpen = $state(false);
+  // A failed push shows its error in the popup, with Retry and Dismiss. The
+  // store clears the error as a push starts, so the popup keeps showing the
+  // last one while a retry runs, then drops it if it went through.
   let retrying = $state(false);
   let shownPushError = $state('');
   $effect(() => { if (pushError) shownPushError = pushError; });
-  $effect(() => { if (!pushError && !retrying) pushErrorOpen = false; });
 
   async function retryPush() {
     retrying = true;
@@ -106,7 +114,8 @@
     prevBranch = branch;
   });
 
-  // ── Branch picker ──
+  // ── The popup and the branch picker ──
+  let shipOpen = $state(false);
   let branchPickerOpen = $state(false);
 
   // A turn starting mid-pick would switch files under the agent.
@@ -114,8 +123,59 @@
     if (isRunning) branchPickerOpen = false;
   });
 
+  /** The picker opens over the lozenge in the popup's place; a click on
+   *  the lozenge while it is open closes it. */
+  function toggleShip() {
+    if (branchPickerOpen) branchPickerOpen = false;
+    else shipOpen = !shipOpen;
+  }
+
+  function openBranchPicker() {
+    shipOpen = false;
+    branchPickerOpen = true;
+  }
+
+  // ── The ship track ──
+  let prAlerts = $derived(prStore.getAlerts(sessionId));
+  let prAuto = $derived(prStore.getAuto(sessionId));
+  let prFetchFailed = $derived(prStore.fetchFailedBySession[sessionId] ?? false);
+  let otherPrCount = $derived(prInfo ? prStore.getPrs(sessionId).filter((p) => p.number !== prInfo.number).length : 0);
+  let track = $derived(shipTrack({ sync: gitSync, pr: prInfo, pushFailed: !!pushError, canCreatePr: showCreatePr }));
+  let repoName = $derived(sessionRepoPath ? store.repoDisplayName(sessionRepoPath) : '');
+  /** The lozenge's dots are colour only: the tooltip says it in words. */
+  let lozengeTitle = $derived.by(() => {
+    const parts = [`${repoName ? `${repoName} / ` : ''}${sessionBranch || 'no branch'}: ${track.summary}`];
+    if (operation) parts.push(`${operationTitle(operation)} stopped part way`);
+    if (prAlerts.length > 0) parts.push('new PR activity');
+    if (prFetchFailed) parts.push('may be out of date, the last GitHub fetch failed');
+    // Saved across restarts, so say when it is on rather than leave it hidden.
+    const auto = [prAuto.fixCi && 'fix CI', prAuto.addressReviews && 'address reviews'].filter(Boolean);
+    if (prInfo?.state === 'OPEN' && auto.length > 0) parts.push(`auto: ${auto.join(' + ')}`);
+    if (otherPrCount > 0) parts.push(`+${otherPrCount} more PR${otherPrCount === 1 ? '' : 's'} in this thread`);
+    return `${parts.join(', ')}. Click to push, open a pull request or switch branch`;
+  });
+
+  const DOT: Record<Exclude<ShipStepState, 'running'>, string> = {
+    done: 'bg-green-500',
+    next: 'border border-foreground',
+    failed: 'bg-red-500',
+    attention: 'bg-amber-500',
+    merged: 'bg-purple-400',
+    closed: 'bg-muted-foreground/50',
+    todo: 'border border-muted-foreground/50',
+  };
+  const DETAIL: Record<ShipStepState, string> = {
+    done: 'text-foreground',
+    next: 'text-foreground',
+    running: 'text-foreground',
+    failed: 'text-red-400',
+    attention: 'text-amber-500',
+    merged: 'text-purple-400',
+    closed: 'text-muted-foreground',
+    todo: 'text-muted-foreground',
+  };
+
   // ── Creating a PR ──
-  let createPrMenuOpen = $state(false);
   let createPrOpen = $state(false);
 
   /** Set while the PR turn is being prepared (the base branch lookup runs
@@ -138,103 +198,93 @@
   }
 
   function createPr(how: 'agent' | 'manual') {
-    createPrMenuOpen = false;
+    shipOpen = false;
     if (how === 'agent') void sendAgentPrTurn();
     else createPrOpen = true;
   }
-
-  /** Default click: agent turn when the session can take one, manual dialog otherwise. */
-  function startCreatePr() {
-    createPr(canAgentCreatePr ? 'agent' : 'manual');
-  }
 </script>
 
-{#if sessionBranch || gitSync.ahead > 0 || gitSync.behind > 0 || pushError || prInfo}
-  <div class="relative flex flex-col gap-px leading-snug min-w-0">
-    {#if sessionBranch}
-      <div class="flex items-center gap-1 min-w-0">
-        {#if sessionRepoPath}
-          <span class="hidden @3xl:inline text-muted-foreground truncate max-w-28" title={sessionRepoPath}>
-            {store.repoDisplayName(sessionRepoPath)}
-          </span>
-          <span class="hidden @3xl:inline text-muted-foreground/30 shrink-0">/</span>
-        {/if}
-        <StatusBarPopover bind:open={branchPickerOpen} anchored={false} animate surface="none" panelClass="" class="flex min-w-0">
-          {#snippet trigger()}
-            <button
-              onclick={() => branchPickerOpen = !branchPickerOpen}
-              disabled={isRunning}
-              class="text-muted-foreground hover:text-foreground truncate max-w-40 transition-colors border-b border-dashed border-muted-foreground/40 disabled:border-transparent disabled:hover:text-muted-foreground"
-              title={`${sessionRepoPath ? `${store.repoDisplayName(sessionRepoPath)} / ` : ''}${sessionBranch}${isRunning
-                ? ' (switch branches once the agent finishes its turn)'
-                : ': click to switch branch'}`}
-              aria-expanded={branchPickerOpen}
-            >
-              {sessionBranch}
-            </button>
-          {/snippet}
+{#snippet dot(state: ShipStepState)}
+  {#if state === 'running'}
+    <Pulse size="xs" />
+  {:else}
+    <span class="size-1.5 shrink-0 {DOT[state]}"></span>
+  {/if}
+{/snippet}
 
-          <!-- The popover takes Escape first and hands focus back to the
-               branch; BranchPicker's own Escape is for it on its own. -->
-          <BranchPicker
-            {sessionId}
-            repoPath={sessionRepoPath}
-            currentBranch={sessionBranch}
-            direct={sessionDirect}
-            onclose={() => branchPickerOpen = false}
-          />
-        </StatusBarPopover>
-        {#if operation}
-          <!-- A merge or rebase stopped part way: noticed from any tab, finished
-               or aborted in the Changes tab (GitOperationNotice). -->
+{#if sessionBranch || prInfo || pushError || gitSync.ahead > 0 || gitSync.behind > 0}
+  <!-- The picker opens above the lozenge, so the popup's popover is its trigger. -->
+  <StatusBarPopover bind:open={branchPickerOpen} animate surface="none" panelClass="" class="flex min-w-0">
+    {#snippet trigger()}
+      <StatusBarPopover bind:open={shipOpen} anchored={false} label="Branch" panelClass="w-96 max-h-[70vh] overflow-y-auto" testid="branch-popup" class="flex min-w-0">
+        {#snippet trigger()}
           <button
-            class="ml-1.5 text-caption text-status-attention hover:underline whitespace-nowrap"
-            title={`${operationTitle(operation)}: open the Changes tab to finish or abort it`}
+            onclick={toggleShip}
+            class={lozenge({ open: shipOpen || branchPickerOpen, class: 'max-w-full' })}
+            title={lozengeTitle}
+            aria-label="Branch {sessionBranch || 'none'}: {track.summary}{track.actionable ? ', something to do' : ''}{operation ? `, ${operationTitle(operation)} stopped part way` : ''}"
+            aria-haspopup="dialog"
+            aria-expanded={shipOpen}
+            data-testid="branch"
+          >
+            <GitBranchIcon class="size-3" />
+            <span class="truncate max-w-16 @2xl:max-w-32 @4xl:max-w-48">{sessionBranch || 'no branch'}</span>
+            <!-- Dimmed when the last GitHub fetch failed, so they may be old;
+                 pulsing while there is PR activity you haven't looked at. -->
+            <span class="flex items-center gap-0.5 {prAlerts.length > 0 ? 'animate-pulse' : ''} {prFetchFailed ? 'opacity-50' : ''}" aria-hidden="true">
+              {#each track.steps as step (step.id)}{@render dot(step.state)}{/each}
+            </span>
+            {#if operation}
+              <span class="text-status-attention">{operationShort(operation)}</span>
+            {/if}
+            {#if track.actionable}
+              <span class={lozengeMark()}></span>
+            {/if}
+          </button>
+        {/snippet}
+
+        <div class="flex items-center gap-1 min-w-0 mb-2">
+          {#if repoName}
+            <span class="text-muted-foreground truncate max-w-32" title={sessionRepoPath}>{repoName}</span>
+            <span class="text-muted-foreground/40 shrink-0">/</span>
+          {/if}
+          <span class="font-medium text-foreground truncate">{sessionBranch || 'no branch'}</span>
+          {#if gitSync.behind > 0}
+            <span class="ml-auto shrink-0 text-muted-foreground" title="{gitSync.behind} commit{gitSync.behind > 1 ? 's' : ''} behind upstream (as of last fetch)">
+              {gitSync.behind} behind
+            </span>
+          {/if}
+        </div>
+
+        {#if operation}
+          <!-- Noticed here from any tab, finished or aborted in the Changes
+               tab (GitOperationNotice). -->
+          <button
+            class="mb-2 text-left text-status-attention hover:underline"
+            title="Open the Changes tab to finish or abort it"
             onclick={openChanges}
           >
-            {operationShort(operation)}
-          </button>
-        {/if}
-      </div>
-    {/if}
-
-    {#if gitSync.ahead > 0 || gitSync.behind > 0 || pushError || prInfo || showCreatePr}
-      <div class="flex items-center gap-2 text-caption whitespace-nowrap">
-        {#if gitSync.ahead > 0}
-          <button
-            onclick={doPush}
-            disabled={pushing}
-            class="flex items-center gap-1 text-amber-500 hover:text-amber-400 transition-colors disabled:opacity-50"
-            title={pushing ? 'Pushing…' : `${gitSync.ahead} unpushed commit${gitSync.ahead > 1 ? 's' : ''} — click to push`}
-          >
-            {pushing ? 'pushing…' : `↑${gitSync.ahead}`}
+            {operationTitle(operation)} stopped part way: finish or abort it in the Changes tab
           </button>
         {/if}
 
-        {#if gitSync.behind > 0}
-          <span class="text-muted-foreground" title="{gitSync.behind} commit{gitSync.behind > 1 ? 's' : ''} behind upstream (as of last fetch)">
-            ↓{gitSync.behind}
-          </span>
-        {/if}
+        <ol class="space-y-1" aria-label="Steps to merged">
+          {#each track.steps as step (step.id)}
+            <li class="flex items-center gap-2">
+              {@render dot(step.state)}
+              <span class="w-14 shrink-0 text-muted-foreground">{step.label}</span>
+              <span class="truncate {DETAIL[step.state]}">{step.detail}</span>
+            </li>
+          {/each}
+        </ol>
 
         {#if pushError || retrying}
-          <StatusBarPopover bind:open={pushErrorOpen} anchored={false} panelClass="w-96" testid="push-error">
-            {#snippet trigger()}
-              <button
-                onclick={() => pushErrorOpen = !pushErrorOpen}
-                class="text-red-400 hover:text-red-300 truncate max-w-32 transition-colors"
-                title="The last push failed. Click to see why, and to retry"
-                aria-expanded={pushErrorOpen}
-              >
-                push failed
-              </button>
-            {/snippet}
-
+          <div class="mt-3 pt-2 border-t border-border" data-testid="push-error">
             <div class="flex items-center justify-between gap-2 mb-2">
               <span class="font-medium text-foreground">Push failed</span>
               <CopyButton text={shownPushError} class="size-5 shrink-0" />
             </div>
-            <pre class="font-mono text-caption text-red-400 whitespace-pre-wrap break-words max-h-40 overflow-y-auto mb-3">{shownPushError}</pre>
+            <pre class="font-mono text-caption text-red-400 whitespace-pre-wrap break-words max-h-40 overflow-y-auto mb-2">{shownPushError}</pre>
             <div class="flex justify-end gap-2">
               <Button
                 variant="subtle"
@@ -254,80 +304,88 @@
                 {retrying ? 'Pushing…' : 'Retry'}
               </Button>
             </div>
-          </StatusBarPopover>
+          </div>
         {/if}
 
-        {#if prInfo}
-          <StatusBarPr
-            {sessionId}
-            {prInfo}
-            {sessionBranch}
-            {ghAvailable}
-            {isRunning}
-            {canAgentCreatePr}
-            {preparingPrTurn}
-            oncreatepr={createPr}
-          />
-        {:else if showCreatePr}
-          <StatusBarPopover bind:open={createPrMenuOpen} anchored={false} surface="list" panelClass="w-48">
-            {#snippet trigger()}
-              <span class="flex items-center">
-                <Button
-                  variant="link"
-                  size="inline"
-                  onclick={startCreatePr}
-                  disabled={isRunning || preparingPrTurn}
-                  class="disabled:no-underline"
-                  title={isRunning
-                    ? 'Create a pull request once the agent finishes its turn'
-                    : canAgentCreatePr
-                      ? 'Ask the agent to commit, push, and create a pull request in this thread'
-                      : 'Push this branch and create a pull request'}
-                >
-                  Create PR
-                </Button>
-                <Button
-                  variant="link"
-                  size="inline"
-                  data-popover-trigger
-                  onclick={() => createPrMenuOpen = !createPrMenuOpen}
-                  class="ml-0.5"
-                  title="Create PR options"
-                  aria-label="Create PR options"
-                  aria-expanded={createPrMenuOpen}
-                >
-                  <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="m18 15-6-6-6 6" />
-                  </svg>
-                </Button>
-              </span>
-            {/snippet}
-
-            <button
+        <div class="flex flex-wrap items-center gap-2 mt-3 pt-2 border-t border-border">
+          {#if gitSync.ahead > 0 && !pushError && !retrying}
+            <Button
+              variant="subtle-primary"
+              size="xs"
+              onclick={doPush}
+              disabled={pushing}
+              class="disabled:cursor-wait"
+              title="Push this branch's commits to its upstream"
+            >
+              {pushing ? 'Pushing…' : `Push ${gitSync.ahead} commit${gitSync.ahead > 1 ? 's' : ''}`}
+            </Button>
+          {/if}
+          {#if showCreatePr}
+            <Button
+              variant="subtle-primary"
+              size="xs"
               onclick={() => createPr('agent')}
-              disabled={!canAgentCreatePr}
-              class={menuItem({ class: 'disabled:cursor-not-allowed' })}
+              disabled={!canAgentCreatePr || preparingPrTurn}
+              class="disabled:cursor-not-allowed"
               title={canAgentCreatePr ? 'Send a turn asking the agent to commit, push, and open the PR' : 'The agent must be idle and running to take this turn'}
             >
-              Create with agent
-            </button>
-            <!-- Waits for the turn like the Create PR link beside it, so the
-                 push can't catch the agent part way through committing. -->
-            <button
+              Create PR with agent
+            </Button>
+            <!-- Waits for the turn like the agent's, so the push can't catch
+                 the agent part way through committing. -->
+            <Button
+              variant="subtle"
+              size="xs"
               onclick={() => createPr('manual')}
               disabled={isRunning}
-              class={menuItem({ class: 'disabled:cursor-not-allowed' })}
+              class="disabled:cursor-not-allowed"
               title={isRunning
                 ? 'Create a pull request once the agent finishes its turn'
-                : 'Open the PR dialog — title and description prefilled from the branch\'s commits'}
+                : 'Open the PR dialog: title and description prefilled from the branch\'s commits'}
             >
-              Create manually…
-            </button>
-          </StatusBarPopover>
+              Create PR manually…
+            </Button>
+          {/if}
+          <Button
+            variant="quiet"
+            size="xs"
+            class="ml-auto"
+            onclick={openBranchPicker}
+            disabled={isRunning}
+            title={isRunning ? 'Switch branches once the agent finishes its turn' : 'Switch to another branch, or create one'}
+          >
+            Switch branch…
+          </Button>
+        </div>
+
+        {#if prInfo}
+          <div class="mt-3 pt-2 border-t border-border">
+            <StatusBarPr
+              {sessionId}
+              {prInfo}
+              {sessionBranch}
+              {ghAvailable}
+              {isRunning}
+              {canAgentCreatePr}
+              {preparingPrTurn}
+              oncreatepr={createPr}
+              onclose={() => (shipOpen = false)}
+            />
+          </div>
         {/if}
-      </div>
-    {/if}
-  </div>
+      </StatusBarPopover>
+    {/snippet}
+
+    <!-- The popover takes Escape first and hands focus back to the lozenge;
+         BranchPicker's own Escape is for it on its own. -->
+    <BranchPicker
+      {sessionId}
+      repoPath={sessionRepoPath}
+      currentBranch={sessionBranch}
+      direct={sessionDirect}
+      onclose={() => (branchPickerOpen = false)}
+    />
+  </StatusBarPopover>
 {/if}
 
 {#if createPrOpen}

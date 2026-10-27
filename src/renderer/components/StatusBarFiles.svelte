@@ -1,19 +1,19 @@
 <script lang="ts">
   /**
-   * The Files badge and its popover: every file that came into the thread
-   * (shared/thread-items.ts), newest first, in three groups: the ones you
-   * attached, the ones the agent made, and images tools returned. A click
-   * opens the file as its chip in the thread does (an image full size, a
-   * text file in the Focus panel, a web page in the Preview tab, the rest
-   * in their default app); the button beside it shows the message it came
-   * with. Shows only once the thread has a file.
+   * Every file that came into the thread (shared/thread-items.ts), newest
+   * first, in three groups: the ones you attached, the ones the agent made,
+   * and images tools returned. A click opens the file as its chip in the
+   * thread does (an image full size, a text file in the Focus panel, a web
+   * page in the Preview tab, the rest in their default app); the button
+   * beside it shows the message it came with. Shown in the activity popup
+   * (StatusBarActivity), which closes on `onclose` and draws the image
+   * lightbox outside itself (`onimage`), since a popover closes on the
+   * click that lands in a dialog.
    */
   import LocateFixedIcon from '@lucide/svelte/icons/locate-fixed';
   import { Button } from '$lib/components/ui/button/index.js';
   import { SectionLabel } from '$lib/components/ui/section-label/index.js';
-  import StatusBarPopover from './StatusBarPopover.svelte';
   import AttachmentIcon from './AttachmentIcon.svelte';
-  import ImageLightbox from './ImageLightbox.svelte';
   import { formatFileSize } from '$lib/file-attachments.js';
   import { openWorktreeFile } from '$lib/worktree-files.js';
   import {
@@ -21,10 +21,20 @@
   } from '$lib/thread-files.js';
   import { threadFileKey, type ThreadFile } from '../../shared/thread-items.js';
 
-  let { sessionId, files }: { sessionId: string; files: ThreadFile[] } = $props();
+  let {
+    sessionId,
+    files,
+    onclose,
+    onimage,
+  }: {
+    sessionId: string;
+    files: ThreadFile[];
+    /** Called when what was clicked opens somewhere else in the app. */
+    onclose?: () => void;
+    /** Show an image full size. */
+    onimage: (image: { src: string; label: string }) => void;
+  } = $props();
 
-  let open = $state(false);
-  let lightbox = $state<{ src: string; label: string } | null>(null);
   /** Files that turned out to be gone (a cleared folder, a deleted worktree
    *  file, a message a rewind took), by threadFileKey. */
   let missing = $state<Record<string, true>>({});
@@ -55,8 +65,8 @@
     const name = threadFileName(f);
     const src = threadImageSrc(sessionId, f);
     if (src) {
-      open = false;
-      lightbox = { src, label: name };
+      onclose?.();
+      onimage({ src, label: name });
       return;
     }
     try {
@@ -66,13 +76,13 @@
           missing[key] = true;
           return;
         }
-        open = false;
+        onclose?.();
         showAttachedText(f.name, content);
       } else if (f.kind === 'file') {
         if (!(await window.groveBench.openAttachedFile(sessionId, f.file.file))) missing[key] = true;
       } else if (f.kind === 'made') {
         if (!(await openWorktreeFile(sessionId, f.made.path))) missing[key] = true;
-        else if (f.made.kind === 'html') open = false;
+        else if (f.made.kind === 'html') onclose?.();
       }
     } catch (err) {
       console.warn(`Could not open ${name}:`, err);
@@ -80,83 +90,63 @@
   }
 
   function jump(f: ThreadFile) {
-    open = false;
+    onclose?.();
     showInThread(sessionId, f.eventIndex);
   }
 </script>
 
-{#if files.length > 0}
-  <StatusBarPopover bind:open anchored={false} panelClass="w-96" label="Files">
-    {#snippet trigger()}
-      <button
-        onclick={() => (open = !open)}
-        class="flex items-center gap-1 whitespace-nowrap transition-colors text-muted-foreground hover:text-foreground"
-        title="Files you attached, the agent made, and tools returned"
-        aria-expanded={open}
-      >
-        <span class="w-1.5 h-1.5 bg-muted-foreground/50"></span>
-        Files {files.length}
-      </button>
-    {/snippet}
-
-    <div class="font-medium text-foreground mb-2">Files</div>
-    <div class="space-y-2 max-h-80 overflow-y-auto">
-      {#each groups as group (group.title)}
-        <section>
-          <SectionLabel class="mb-1">{group.title}</SectionLabel>
-          <ul class="space-y-0.5">
-            {#each group.files as f (threadFileKey(f))}
-              {@const key = threadFileKey(f)}
-              {@const name = threadFileName(f)}
-              {@const size = threadFileSize(f)}
-              {@const src = threadImageSrc(sessionId, f)}
-              {@const gone = !!missing[key]}
-              <li class="flex items-center gap-2">
-                <button
-                  type="button"
-                  onclick={() => openFile(f)}
-                  disabled={gone}
-                  class="group/open flex items-center gap-2 min-w-0 flex-1 text-left disabled:opacity-60"
-                  title={openTitle(f, name)}
-                >
-                  {#if src && !gone}
-                    <img
-                      {src}
-                      alt=""
-                      loading="lazy"
-                      decoding="async"
-                      onerror={() => (missing[key] = true)}
-                      class="size-6 shrink-0 object-cover border border-border/60
-                        bg-[repeating-conic-gradient(var(--checker-a)_0_25%,var(--checker-b)_0_50%)] bg-[length:8px_8px]"
-                    />
-                  {:else}
-                    <span class="size-6 shrink-0 flex items-center justify-center border border-border/60 text-muted-foreground">
-                      <AttachmentIcon mediaType={iconType(f)} />
-                    </span>
-                  {/if}
-                  <span class="font-mono truncate text-foreground {gone ? '' : 'group-hover/open:underline'}">{name}</span>
-                  {#if size !== undefined}
-                    <span class="text-caption text-muted-foreground shrink-0">{formatFileSize(size)}</span>
-                  {/if}
-                </button>
-                <Button
-                  variant="quiet"
-                  size="icon-2xs"
-                  onclick={() => jump(f)}
-                  title="Show the message it came with"
-                  aria-label="Show {name} in the thread"
-                >
-                  <LocateFixedIcon />
-                </Button>
-              </li>
-            {/each}
-          </ul>
-        </section>
-      {/each}
-    </div>
-  </StatusBarPopover>
-{/if}
-
-<!-- Outside the popover, which closes (and would take it along) on the
-     click that lands in the dialog. -->
-<ImageLightbox src={lightbox?.src ?? null} label={lightbox?.label ?? ''} onclose={() => (lightbox = null)} />
+<div class="font-medium text-foreground mb-2">Files</div>
+<div class="space-y-2 max-h-80 overflow-y-auto">
+  {#each groups as group (group.title)}
+    <section>
+      <SectionLabel class="mb-1">{group.title}</SectionLabel>
+      <ul class="space-y-0.5">
+        {#each group.files as f (threadFileKey(f))}
+          {@const key = threadFileKey(f)}
+          {@const name = threadFileName(f)}
+          {@const size = threadFileSize(f)}
+          {@const src = threadImageSrc(sessionId, f)}
+          {@const gone = !!missing[key]}
+          <li class="flex items-center gap-2">
+            <button
+              type="button"
+              onclick={() => openFile(f)}
+              disabled={gone}
+              class="group/open flex items-center gap-2 min-w-0 flex-1 text-left disabled:opacity-60"
+              title={openTitle(f, name)}
+            >
+              {#if src && !gone}
+                <img
+                  {src}
+                  alt=""
+                  loading="lazy"
+                  decoding="async"
+                  onerror={() => (missing[key] = true)}
+                  class="size-6 shrink-0 object-cover border border-border/60
+                    bg-[repeating-conic-gradient(var(--checker-a)_0_25%,var(--checker-b)_0_50%)] bg-[length:8px_8px]"
+                />
+              {:else}
+                <span class="size-6 shrink-0 flex items-center justify-center border border-border/60 text-muted-foreground">
+                  <AttachmentIcon mediaType={iconType(f)} />
+                </span>
+              {/if}
+              <span class="font-mono truncate text-foreground {gone ? '' : 'group-hover/open:underline'}">{name}</span>
+              {#if size !== undefined}
+                <span class="text-caption text-muted-foreground shrink-0">{formatFileSize(size)}</span>
+              {/if}
+            </button>
+            <Button
+              variant="quiet"
+              size="icon-2xs"
+              onclick={() => jump(f)}
+              title="Show the message it came with"
+              aria-label="Show {name} in the thread"
+            >
+              <LocateFixedIcon />
+            </Button>
+          </li>
+        {/each}
+      </ul>
+    </section>
+  {/each}
+</div>

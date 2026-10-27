@@ -21,24 +21,11 @@ afterEach(() => {
 });
 
 describe('StatusBarTasks', () => {
-  it('shows nothing while the agent keeps no list', () => {
-    render(StatusBarTasks, { sessionId: SID, tasks: [], eventIndex: null });
-    expect(screen.queryByRole('button', { name: /Tasks/ })).toBeNull();
-  });
-
-  it('counts done tasks, leaving cancelled ones out, and names the one in progress', () => {
+  it('lists every task with its state, and counts done ones leaving cancelled ones out', () => {
     render(StatusBarTasks, { sessionId: SID, tasks: TASKS, eventIndex: 7 });
-    const chip = screen.getByRole('button', { name: /Tasks 1\/3/ });
-    expect(chip).toHaveAttribute('title', 'Working on: Fixing the bug');
-  });
 
-  it('lists every task with its state', async () => {
-    render(StatusBarTasks, { sessionId: SID, tasks: TASKS, eventIndex: 7 });
-    await fireEvent.click(screen.getByRole('button', { name: /Tasks/ }));
-
-    const popover = screen.getByRole('dialog', { name: 'Tasks' });
-    expect(within(popover).getByText('1 of 3 done')).toBeInTheDocument();
-    const rows = within(popover).getAllByRole('listitem');
+    expect(screen.getByText('1 of 3 done')).toBeInTheDocument();
+    const rows = screen.getAllByRole('listitem');
     expect(rows.map((r) => r.textContent?.replace(/\s+/g, ' ').trim())).toEqual([
       'Done: Read the code',
       'In progress: Fix the bug',
@@ -46,16 +33,22 @@ describe('StatusBarTasks', () => {
       'Cancelled: Old idea',
     ]);
     expect(within(rows[0]).getByText('Read the code')).toHaveClass('line-through');
+    expect(rows[1]).toHaveAttribute('title', 'Fixing the bug');
   });
 
   it('shows the message that last changed the list in the Thread tab', async () => {
     messageStore.setActiveTab(SID, 'terminal');
-    render(StatusBarTasks, { sessionId: SID, tasks: TASKS, eventIndex: 7 });
-    await fireEvent.click(screen.getByRole('button', { name: /Tasks/ }));
+    const onjump = vi.fn();
+    render(StatusBarTasks, { sessionId: SID, tasks: TASKS, eventIndex: 7, onjump });
     await fireEvent.click(screen.getByRole('button', { name: 'Show in thread' }));
 
+    expect(onjump).toHaveBeenCalledOnce();
     expect(messageStore.getActiveTab(SID)).toBe('activity');
     expect(messageStore.pendingJumpBySession[SID]).toEqual({ eventIndex: 7, uuid: null, bookmarkId: '' });
-    expect(screen.queryByRole('dialog', { name: 'Tasks' })).toBeNull();
+  });
+
+  it('offers no way to the thread before it knows the message', () => {
+    render(StatusBarTasks, { sessionId: SID, tasks: TASKS, eventIndex: null });
+    expect(screen.queryByRole('button', { name: 'Show in thread' })).toBeNull();
   });
 });

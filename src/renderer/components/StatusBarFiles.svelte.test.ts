@@ -25,20 +25,15 @@ afterEach(() => {
   markdownPreviewStore.close();
 });
 
-async function openPopover() {
-  render(StatusBarFiles, { sessionId: SID, files: FILES });
-  await fireEvent.click(screen.getByRole('button', { name: /Files 5/ }));
-  return screen.getByRole('dialog', { name: 'Files' });
+/** The list, as the activity popup shows it. */
+function openPopover(props: { onclose?: () => void; onimage?: (image: { src: string; label: string }) => void } = {}) {
+  const { container } = render(StatusBarFiles, { sessionId: SID, files: FILES, onimage: () => {}, ...props });
+  return container;
 }
 
 describe('StatusBarFiles', () => {
-  it('shows nothing until the thread has a file', () => {
-    render(StatusBarFiles, { sessionId: SID, files: [] });
-    expect(screen.queryByRole('button', { name: /Files/ })).toBeNull();
-  });
-
   it('groups the files: yours, the agent\'s, then from tools', async () => {
-    const popover = await openPopover();
+    const popover = openPopover();
     const sections = within(popover).getAllByRole('list').map((list) => list.closest('section')!);
     expect(sections.map((s) => within(s).getAllByRole('listitem').map((li) => li.querySelector('.font-mono')?.textContent))).toEqual([
       ['spec.pdf', 'mock.png', 'notes.ts'],
@@ -52,7 +47,7 @@ describe('StatusBarFiles', () => {
   });
 
   it('opens an attached file and a made one as their chips do', async () => {
-    const popover = await openPopover();
+    const popover = openPopover();
     await fireEvent.click(within(popover).getByTitle(/^Open spec\.pdf/));
     expect(mockGroveBench.openAttachedFile).toHaveBeenCalledWith(SID, 'c.pdf');
     await fireEvent.click(within(popover).getByTitle(/^Open out\/report\.pdf/));
@@ -61,16 +56,18 @@ describe('StatusBarFiles', () => {
 
   it('marks a file that is gone', async () => {
     mockGroveBench.openAttachedFile.mockResolvedValueOnce(false);
-    const popover = await openPopover();
+    const popover = openPopover();
     await fireEvent.click(within(popover).getByTitle(/^Open spec\.pdf/));
     await waitFor(() => expect(within(popover).getByTitle('spec.pdf is no longer available')).toBeDisabled());
   });
 
-  it('shows an image full size', async () => {
-    const popover = await openPopover();
+  it('hands an image to be shown full size, and closes', async () => {
+    const onimage = vi.fn();
+    const onclose = vi.fn();
+    const popover = openPopover({ onimage, onclose });
     await fireEvent.click(within(popover).getByTitle(/^Open mock\.png/));
-    const dialog = await screen.findByRole('dialog', { name: 'mock.png' });
-    expect(within(dialog).getByRole('img', { name: 'mock.png' })).toHaveAttribute('src', `grove-attachment://image/${SID}/a.png`);
+    expect(onimage).toHaveBeenCalledWith({ src: `grove-attachment://image/${SID}/a.png`, label: 'mock.png' });
+    expect(onclose).toHaveBeenCalledOnce();
   });
 
   it('opens an attached text file in the Focus panel as numbered lines', async () => {
@@ -79,7 +76,7 @@ describe('StatusBarFiles', () => {
       totalCount: 10,
       startIndex: 2,
     } as never);
-    const popover = await openPopover();
+    const popover = openPopover();
     await fireEvent.click(within(popover).getByTitle(/^Open notes\.ts/));
     await waitFor(() => expect(markdownPreviewStore.open).toBe(true));
     expect(markdownPreviewStore).toMatchObject({ title: 'notes.ts', content: 'x()', code: { path: 'notes.ts', lines: null } });
@@ -91,16 +88,17 @@ describe('StatusBarFiles', () => {
       totalCount: 10,
       startIndex: 2,
     } as never);
-    render(StatusBarFiles, { sessionId: SID, files: [{ kind: 'text', name: 'plan.md', size: 6, eventIndex: 2 }] });
-    await fireEvent.click(screen.getByRole('button', { name: /Files 1/ }));
+    render(StatusBarFiles, { sessionId: SID, files: [{ kind: 'text', name: 'plan.md', size: 6, eventIndex: 2 }], onimage: () => {} });
     await fireEvent.click(screen.getByTitle(/^Open plan\.md/));
     await waitFor(() => expect(markdownPreviewStore.open).toBe(true));
     expect(markdownPreviewStore).toMatchObject({ title: 'plan.md', content: '# Plan', code: null });
   });
 
-  it('shows the message a file came with', async () => {
-    const popover = await openPopover();
+  it('shows the message a file came with, and closes', async () => {
+    const onclose = vi.fn();
+    const popover = openPopover({ onclose });
     await fireEvent.click(within(popover).getByRole('button', { name: 'Show out/report.pdf in the thread' }));
+    expect(onclose).toHaveBeenCalledOnce();
     expect(messageStore.getActiveTab(SID)).toBe('activity');
     expect(messageStore.pendingJumpBySession[SID]).toEqual({ eventIndex: 9, uuid: null, bookmarkId: '' });
   });

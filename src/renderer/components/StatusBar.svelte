@@ -1,10 +1,13 @@
 <script lang="ts">
   /**
-   * The bar between a conversation's tabs and its prompt. Each part is its
-   * own component (StatusBar*.svelte), and every popover in it is a
-   * StatusBarPopover, so they all open, close and take Escape the same way.
-   * This file lays the parts out and owns what they share: the model list
-   * and the Alt+M / Alt+T / Alt+E shortcuts.
+   * The bar between a conversation's tabs and its prompt: one line of
+   * lozenges, each a dot and a word or two that opens a popup with the
+   * detail (lib/lozenge.ts). The agent's settings, what it is doing, the
+   * branch and its way to merged, MCP · Skills, and the context meter. Each
+   * part is its own component (StatusBar*.svelte), and every popup in it is
+   * a StatusBarPopover, so they all open, close and take Escape the same
+   * way. This file lays the parts out and owns what they share: the model
+   * list and the Alt+M / Alt+T / Alt+E shortcuts.
    */
   import { onMount, onDestroy } from 'svelte';
   import { messageStore } from '../stores/messages.svelte.js';
@@ -15,12 +18,9 @@
   import SessionControlsPopover from './SessionControlsPopover.svelte';
   import ContextGrove from './ContextGrove.svelte';
   import StatusBarActivity from './StatusBarActivity.svelte';
-  import StatusBarLastTurn from './StatusBarLastTurn.svelte';
-  import StatusBarThreadItems from './StatusBarThreadItems.svelte';
   import StatusBarCapabilities from './StatusBarCapabilities.svelte';
   import StatusBarBranch from './StatusBarBranch.svelte';
   import StatusBarContext from './StatusBarContext.svelte';
-  import StatusBarKeys from './StatusBarKeys.svelte';
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -87,24 +87,15 @@
   <ContextGrove seed={sessionId} percent={usedPercent} animate={store.activeSessionId === sessionId} />
 {/if}
 <!-- The window can be 800px wide with the sidebar open, which leaves this
-     bar about 480px. Narrow, the extras drop out so the agent, activity,
-     branch and context keep their room: Keys (Help has the list), MCP /
-     Skills and Tasks / Files below 672px (MCP stays while a server is down,
-     Tasks while a task is still to do), the project name below 768px, and
-     the last turn's cost below 1024px. -->
-<div data-status-bar class="@container flex items-center gap-3 px-3 @3xl:gap-4 @3xl:px-4 py-1 bg-card border-t border-b border-border text-xs text-muted-foreground shrink-0">
+     bar about 480px. Everything stays; narrow, the parts shrink instead:
+     below 672px the activity lozenge narrows, the branch name is cut
+     shorter and the context meter goes; below 768px MCP · Skills keeps only
+     its dot; below 896px the context loses its word. -->
+<div data-status-bar class="@container flex items-center gap-2 h-8 px-3 bg-card border-t border-b border-border text-xs text-muted-foreground shrink-0">
   <SessionControlsPopover {sessionId} {modelOptions} />
-
-  <span class="w-px self-stretch bg-border"></span>
-
   <StatusBarActivity {sessionId} />
-
-  <span class="w-px self-stretch bg-border"></span>
-
-  <StatusBarThreadItems {sessionId} />
-  <StatusBarLastTurn {sessionId} />
-  <StatusBarCapabilities {sessionId} />
   <StatusBarBranch {sessionId} />
+  <span class="flex-1"></span>
+  <StatusBarCapabilities {sessionId} />
   <StatusBarContext {sessionId} {contextWindow} />
-  <StatusBarKeys />
 </div>

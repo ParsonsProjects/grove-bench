@@ -1,8 +1,9 @@
 <script lang="ts">
   /**
-   * The Skills badge in the status bar: how many skills the thread's agent
-   * has, how many are on and how many suggestions wait (Claude Code). Opens
-   * the Skills drawer (SkillsPanel). Reports its skill count to the bar.
+   * The thread's skills, counted for the bar's MCP · Skills lozenge
+   * (StatusBarCapabilities, which opens the Skills drawer): how many the
+   * thread's agent has, how many are on and how many suggestions wait
+   * (Claude Code). Draws nothing itself.
    */
   import { onMount } from 'svelte';
   import { messageStore } from '../stores/messages.svelte.js';
@@ -13,7 +14,20 @@
   import { mergeSkills } from '../lib/skills-merge.js';
   import type { SkillInfo } from '../../shared/types.js';
 
-  let { sessionId, count = $bindable(0) }: { sessionId: string; count?: number } = $props();
+  let {
+    sessionId,
+    count = $bindable(0),
+    enabled = $bindable(0),
+    suggestions = $bindable(0),
+  }: {
+    sessionId: string;
+    /** Every skill the agent has. */
+    count?: number;
+    /** The ones turned on. */
+    enabled?: number;
+    /** Suggested skills from your threads (Claude Code only). */
+    suggestions?: number;
+  } = $props();
 
   let systemInfo = $derived(messageStore.getSystemInfo(sessionId));
   let repoPath = $derived(store.sessions.find((s) => s.id === sessionId)?.repoPath ?? '');
@@ -27,7 +41,6 @@
   let allSkills = $derived(mergeSkills(diskSkills, systemInfo.skills));
   let disabledSkills = $derived(managed ? settingsStore.current.disabledSkills ?? [] : []);
   let enabledSkillCount = $derived(allSkills.filter((s) => !disabledSkills.includes(s.name)).length);
-  let disabledSkillCount = $derived(allSkills.length - enabledSkillCount);
 
   async function refresh() {
     try {
@@ -47,27 +60,12 @@
   });
 
   $effect(() => { count = allSkills.length; });
+  $effect(() => { enabled = enabledSkillCount; });
+  $effect(() => { suggestions = managed ? suggestionCount : 0; });
 
   onMount(() => {
     void agentsStore.load();
-    // Populate the badge up front: it shouldn't wait for the drawer.
+    // Count up front: the lozenge shouldn't wait for the drawer.
     void refresh();
   });
 </script>
-
-{#if allSkills.length > 0}
-  <button
-    onclick={() => skillsPanelStore.showThread()}
-    class="flex items-center gap-1 whitespace-nowrap transition-colors text-muted-foreground hover:text-foreground"
-    title="Skills — click to run, schedule or manage them{disabledSkillCount > 0 ? ` (${disabledSkillCount} disabled)` : ''}"
-    aria-haspopup="dialog"
-  >
-    <!-- Turning skills off is a choice, not a fault, so no warning
-         colours here (MCP's are for real failures): grey with none on. -->
-    <span class="w-1.5 h-1.5 {enabledSkillCount === 0 ? 'bg-muted-foreground/40' : 'bg-green-500'}"></span>
-    Skills {disabledSkillCount > 0 ? `${enabledSkillCount}/${allSkills.length}` : allSkills.length}
-    {#if managed && suggestionCount > 0}
-      <span class="text-blue-400" title="{suggestionCount} suggested skill{suggestionCount === 1 ? '' : 's'} from your threads">+{suggestionCount}</span>
-    {/if}
-  </button>
-{/if}

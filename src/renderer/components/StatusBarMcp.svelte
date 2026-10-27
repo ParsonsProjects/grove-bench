@@ -1,9 +1,9 @@
 <script lang="ts">
   /**
-   * The MCP badge and its drawer: each server's status, tools and context
-   * cost, with the controls the conversation's agent supports. Reports its
-   * server count and health to the bar, which keeps a failing server in
-   * view on a narrow bar.
+   * The MCP drawer: each server's status, tools and context cost, with the
+   * controls the conversation's agent supports. Its lozenge is the bar's
+   * MCP · Skills one (StatusBarCapabilities), which opens it through
+   * `drawerOpen` and shows the server count and health reported here.
    *
    * The drawer slides out on the right like the Skills drawer (a bits-ui
    * modal dialog), so it has room for long tool lists and errors. It is
@@ -37,14 +37,22 @@
     sessionId,
     count = $bindable(0),
     health = $bindable<McpHealth>('ok'),
-  }: { sessionId: string; count?: number; health?: McpHealth } = $props();
+    connected = $bindable(0),
+    drawerOpen = $bindable(false),
+  }: {
+    sessionId: string;
+    count?: number;
+    health?: McpHealth;
+    /** How many servers are connected. */
+    connected?: number;
+    drawerOpen?: boolean;
+  } = $props();
 
   let session = $derived(store.sessions.find((s) => s.id === sessionId));
   let sessionStatus = $derived(session?.status);
   let sessionAgentType = $derived(session?.agentType);
   let isRunning = $derived(messageStore.getIsRunning(sessionId));
   let systemInfo = $derived(messageStore.getSystemInfo(sessionId));
-  let drawerOpen = $state(false);
   const motion = prefersReducedMotion() ? 0 : 1;
 
   /** Live status, kept in the store so a reconnect main runs in the
@@ -157,11 +165,18 @@
     untrack(() => { if (mcpKnown.length === 0) void refreshMcpServers(); });
   });
 
-  function openDrawer() {
-    drawerOpen = true;
-    mcpError = null;
-    void refreshMcpServers();
-  }
+  // Opening the drawer starts clean and reads the servers' status afresh.
+  let drawerWasOpen = false;
+  $effect(() => {
+    const open = drawerOpen;
+    if (open && !drawerWasOpen) {
+      untrack(() => {
+        mcpError = null;
+        void refreshMcpServers();
+      });
+    }
+    drawerWasOpen = open;
+  });
 
   // The drawer lists this thread's servers. Every pane stays mounted, so
   // when another thread opens with it up (Ctrl+Tab, say) it closes rather
@@ -171,8 +186,8 @@
     if (drawerOpen && (store.activeSessionId !== sessionId || mcpRows.length === 0)) drawerOpen = false;
   });
 
-  /** Focus goes back to the badge, unless another thread is now open: that
-   *  thread has it, and this one's badge is hidden. */
+  /** Focus goes back to the bar, unless another thread is now open: that
+   *  thread has it, and this one's bar is hidden. */
   function keepOtherThreadFocus(e: Event) {
     if (store.activeSessionId !== sessionId) e.preventDefault();
   }
@@ -276,6 +291,7 @@
 
   $effect(() => { count = mcpRows.length; });
   $effect(() => { health = mcpHealth; });
+  $effect(() => { connected = mcpConnectedCount; });
 
   onMount(() => {
     // The controls depend on what the agent supports (loaded once).
@@ -289,24 +305,6 @@
     messageStore.clearLiveMcpServers(sessionId);
   });
 </script>
-
-{#if mcpRows.length > 0}
-  <button
-    onclick={openDrawer}
-    class="flex items-center gap-1 whitespace-nowrap transition-colors
-      {mcpHealth === 'down' ? 'text-red-400 hover:text-red-300'
-        : mcpHealth === 'partial' ? 'text-amber-500 hover:text-amber-400'
-        : 'text-muted-foreground hover:text-foreground'}"
-    title="MCP servers — click to manage connections{mcpDownCount > 0 ? ` (${mcpDownCount} down)` : ''}"
-    aria-haspopup="dialog"
-  >
-    <span class="w-1.5 h-1.5
-      {mcpHealth === 'down' ? 'bg-red-500'
-        : mcpHealth === 'partial' ? 'bg-amber-500'
-        : 'bg-green-500'}"></span>
-    MCP {mcpRows.length}
-  </button>
-{/if}
 
 <DialogPrimitive.Root bind:open={drawerOpen}>
   <DialogPrimitive.Portal>
