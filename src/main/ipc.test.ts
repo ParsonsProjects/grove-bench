@@ -325,6 +325,33 @@ describe('SESSION_CREATE', () => {
     expect(m.sessionManager.createSession).toHaveBeenCalledWith(expect.objectContaining({ adapterType: 'gemini-cli' }));
   });
 
+  describe('opening a branch that is checked out already', () => {
+    it('refuses the project folder\'s branch before any setup starts, naming Project folder', async () => {
+      vi.mocked(git.branchExistsAnywhere).mockResolvedValue(true);
+      vi.mocked(git.worktreeBranches).mockResolvedValueOnce(new Map([['main', '/repo']]));
+      await expect(create({ branchName: 'main', useExisting: true }))
+        .rejects.toThrow('main is checked out in the project folder. Pick Project folder to work there, or pick another branch.');
+      expect(m.worktreeManager.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses a branch another checkout has, saying where', async () => {
+      vi.mocked(git.branchExistsAnywhere).mockResolvedValue(true);
+      vi.mocked(git.worktreeBranches).mockResolvedValueOnce(new Map([['hotfix', '/elsewhere']]));
+      await expect(create({ branchName: 'hotfix', useExisting: true }))
+        .rejects.toThrow('hotfix is checked out at /elsewhere. A branch can only be checked out in one place');
+      expect(m.worktreeManager.create).not.toHaveBeenCalled();
+    });
+
+    it('opens a branch nothing has checked out', async () => {
+      vi.mocked(git.branchExistsAnywhere).mockResolvedValue(true);
+      vi.mocked(git.worktreeBranches).mockResolvedValueOnce(new Map([['main', '/repo']]));
+      const result = await create({ branchName: 'feat/free', useExisting: true });
+      await lastSetup().promise;
+      expect(result.branch).toBe('feat/free');
+      expect(m.worktreeManager.create).toHaveBeenCalledWith(expect.objectContaining({ branchName: 'feat/free', useExisting: true }));
+    });
+  });
+
   describe('joining a group on its branch (continueBranch)', () => {
     it('continues the branch when the project has it and nothing has it checked out', async () => {
       vi.mocked(git.branchExistsAnywhere).mockResolvedValue(true);

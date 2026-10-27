@@ -355,6 +355,31 @@ describe('draftStore.start', () => {
     expect(draftStore.draft?.attachments).toEqual([{ name: 'notes.md', content: 'steps', type: 'text' }]);
   });
 
+  it("shows main's refusal without Electron's wrapper", async () => {
+    createSessionMock().mockRejectedValue(new Error("Error invoking remote method 'session:create': Error: main is checked out in the project folder."));
+    draftStore.open('/repo/one');
+    await settle();
+    draftStore.setText('Fix the crash');
+
+    expect(await draftStore.start()).toBe(false);
+    expect(draftStore.error).toBe('main is checked out in the project folder.');
+  });
+
+  it('brings back a draft discarded with Undo, unless a new one was opened', async () => {
+    draftStore.open('/repo/one');
+    draftStore.setText('Fix the crash');
+    draftStore.discardWithUndo();
+    expect(draftStore.draft).toBeNull();
+    draftStore.undoDiscard();
+    expect(draftStore.draft?.text).toBe('Fix the crash');
+
+    draftStore.discardWithUndo();
+    draftStore.open('/repo/one');
+    draftStore.undoDiscard();
+    expect(draftStore.draft?.text).toBe('');
+    expect(draftStore.discarded).toBeNull();
+  });
+
   it('removes a dropped file', async () => {
     draftStore.open('/repo/one');
     draftStore.addAttachments([

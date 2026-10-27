@@ -20,6 +20,7 @@
   import Sidebar from './components/Sidebar.svelte';
   import WorkspacePane from './components/WorkspacePane.svelte';
   import ErrorToast from './components/ErrorToast.svelte';
+  import DraftUndoToast from './components/DraftUndoToast.svelte';
   import MemoryToast from './components/MemoryToast.svelte';
   import PlanUsageToast from './components/PlanUsageToast.svelte';
   import { memoryStore } from './stores/memory.svelte.js';
@@ -520,7 +521,8 @@
     {/snippet}
   </svelte:boundary>
 
-  <main class="flex-1 flex flex-col min-w-0 min-h-0">
+  <!-- relative: DraftUndoToast centres on this pane, not the window. -->
+  <main class="relative flex-1 flex flex-col min-w-0 min-h-0">
     {#if draftStore.visible}
       <svelte:boundary onerror={(e) => console.error('Draft pane crashed:', e)}>
         <DraftPane />
@@ -614,6 +616,7 @@
         </div>
       {/each}
     {/if}
+    <DraftUndoToast />
   </main>
 </div>
 <AnalyticsConsent visible={showAnalyticsConsent} />
