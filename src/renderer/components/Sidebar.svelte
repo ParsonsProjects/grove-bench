@@ -596,9 +596,10 @@
   let destroyAnyway = $state(false);
   /** The commits check only matters when the branch is deleted too. */
   let destroyNeedsAnyway = $derived(destroyCheckFailed.uncommitted || (deleteBranchOnDestroy && destroyCheckFailed.unmerged));
-  /** Local git has no timeout: a check that hangs counts as failed after this,
-   *  rather than leaving Delete disabled for good. */
-  const DESTROY_CHECK_TIMEOUT_MS = 15_000;
+  /** Local git has no timeout: a check in the delete or remove-project dialog
+   *  that hangs counts as failed after this, rather than leaving its button
+   *  disabled for good. */
+  const DELETE_CHECK_TIMEOUT_MS = 15_000;
   /** Bumped per request so a slow check from an earlier open is dropped. */
   let destroyGeneration = 0;
 
@@ -618,14 +619,14 @@
     const failed = (check: keyof typeof destroyCheckFailed) => () => {
       if (current()) destroyCheckFailed = { ...destroyCheckFailed, [check]: true };
     };
-    const uncommitted = withTimeout(window.groveBench.getGitStatus(id), DESTROY_CHECK_TIMEOUT_MS)
+    const uncommitted = withTimeout(window.groveBench.getGitStatus(id), DELETE_CHECK_TIMEOUT_MS)
       .then((status) => {
         // A status git couldn't read may hide changes.
         if (status.error) throw new Error(status.error);
         if (current()) destroyUncommitted = unsavedFileCount(status.entries, agentsStore.generatedFiles());
       })
       .catch(failed('uncommitted'));
-    const unmerged = withTimeout(resolveBaseBranch(session.repoPath).then(async (base) => ({ base, commits: await window.groveBench.getBranchCommits(id, base) })), DESTROY_CHECK_TIMEOUT_MS)
+    const unmerged = withTimeout(resolveBaseBranch(session.repoPath).then(async (base) => ({ base, commits: await window.groveBench.getBranchCommits(id, base) })), DELETE_CHECK_TIMEOUT_MS)
       .then(({ base, commits }) => { if (current()) destroyUnmerged = { count: commits.length, base }; })
       .catch(failed('unmerged'));
     void Promise.all([uncommitted, unmerged]).then(() => { if (current()) destroyChecking = false; });
@@ -685,6 +686,12 @@
   /** Remove waits for both checks, as Delete does for one conversation. */
   let removeRepoChecking = $state(false);
   let removeRepoDeleteBranches = $state(false);
+  /** How many threads, and branches, the checks couldn't answer for (failed
+   *  or ran out of time). As in the delete dialog, Remove then waits for
+   *  "Remove anyway", and the commits check only counts when the branches go. */
+  let removeRepoCheckFailed = $state({ uncommitted: 0, unmerged: 0 });
+  let removeRepoAnyway = $state(false);
+  let removeRepoNeedsAnyway = $derived(removeRepoCheckFailed.uncommitted > 0 || (removeRepoDeleteBranches && removeRepoCheckFailed.unmerged > 0));
   let removingRepo = $state(false);
   /** Set when conversations appeared while the dialog was open, so it checked again. */
   let removeRepoRechecked = $state(false);
@@ -703,6 +710,8 @@
     removeRepoRechecked = false;
     removeRepoDirty = null;
     removeRepoUnmerged = null;
+    removeRepoCheckFailed = { uncommitted: 0, unmerged: 0 };
+    removeRepoAnyway = false;
     removingRepo = false;
     // Direct conversations work in the project folder itself: removing one
     // deletes no files and keeps the branch, so there is nothing to check.
@@ -710,24 +719,28 @@
     removeRepoChecking = worktreeSessions.length > 0;
     if (!removeRepoChecking) return;
     const current = () => generation === removeRepoGeneration && confirmRemoveRepo === repo;
-    // Best effort: a failed check leaves its warning out. Uncommitted
-    // changes first, then unmerged commits (one per branch:
-    // conversations sharing a branch share its commits).
+    // Uncommitted changes first, then unmerged commits (one per branch:
+    // conversations sharing a branch share its commits). Null: a check that
+    // failed or didn't answer in time, which is counted and said.
     void (async () => {
       const dirty = await mapLimit(worktreeSessions, REMOVE_CHECK_CONCURRENCY, (s) =>
-        window.groveBench.getGitStatus(s.id)
-          .then((status) => unsavedFileCount(status.entries, agentsStore.generatedFiles()) > 0)
-          .catch(() => false),
+        withTimeout(window.groveBench.getGitStatus(s.id), DELETE_CHECK_TIMEOUT_MS)
+          // A status git couldn't read may hide changes.
+          .then((status) => (status.error ? null : unsavedFileCount(status.entries, agentsStore.generatedFiles()) > 0), () => null),
       );
       if (!current()) return;
       removeRepoDirty = dirty.filter(Boolean).length;
-      const base = await resolveBaseBranch(repo);
+      removeRepoCheckFailed = { ...removeRepoCheckFailed, uncommitted: dirty.filter((d) => d === null).length };
+      const base = await withTimeout(resolveBaseBranch(repo), DELETE_CHECK_TIMEOUT_MS).catch(() => null);
       const oneSessionPerBranch = [...new Map(worktreeSessions.map((s) => [s.branch, s])).values()];
       const commits = await mapLimit(oneSessionPerBranch, REMOVE_CHECK_CONCURRENCY, (s) =>
-        window.groveBench.getBranchCommits(s.id, base).then((c) => c.length).catch(() => 0),
+        base === null
+          ? Promise.resolve(null)
+          : withTimeout(window.groveBench.getBranchCommits(s.id, base), DELETE_CHECK_TIMEOUT_MS).then((c) => c.length, () => null),
       );
       if (!current()) return;
-      removeRepoUnmerged = { count: commits.filter((n) => n > 0).length, base };
+      if (base !== null) removeRepoUnmerged = { count: commits.filter((n) => n !== null && n > 0).length, base };
+      removeRepoCheckFailed = { ...removeRepoCheckFailed, unmerged: commits.filter((n) => n === null).length };
       removeRepoChecking = false;
     })();
   }
@@ -1801,6 +1814,12 @@
           {removeRepoDirty} {removeRepoDirty === 1 ? 'thread has' : 'threads have'} uncommitted changes that will be lost.
         </p>
       {/if}
+      {#if removeRepoCheckFailed.uncommitted}
+        {@const failed = removeRepoCheckFailed.uncommitted}
+        <p class="text-xs text-amber-500 mt-3" role="alert">
+          Couldn't check {failed} {failed === 1 ? 'thread' : 'threads'} for uncommitted changes. Any {failed === 1 ? 'it has' : 'they have'} will be lost.
+        </p>
+      {/if}
       {#if hasWorktrees}
         <label class="flex items-center gap-2 text-sm text-muted-foreground mt-3 cursor-pointer">
           <Checkbox bind:checked={removeRepoDeleteBranches} disabled={removingRepo} />
@@ -1812,12 +1831,25 @@
             Unless you've pushed them, deleting the branches can lose them.
           </p>
         {/if}
+        {#if removeRepoDeleteBranches && removeRepoCheckFailed.unmerged}
+          {@const failed = removeRepoCheckFailed.unmerged}
+          <p class="text-xs text-amber-500 mt-2" role="alert">
+            Couldn't check {failed} {failed === 1 ? 'branch' : 'branches'} for commits that aren't on {removeRepoUnmerged?.base ?? 'the base branch'} yet.
+            Unless you've pushed them, deleting the branches can lose them.
+          </p>
+        {/if}
+      {/if}
+      {#if removeRepoNeedsAnyway}
+        <label class="flex items-center gap-2 text-sm text-muted-foreground mt-3 cursor-pointer">
+          <Checkbox bind:checked={removeRepoAnyway} disabled={removingRepo} />
+          Remove anyway
+        </label>
       {/if}
       <Dialog.Footer>
         <Button variant="secondary" onclick={() => confirmRemoveRepo = null} disabled={removingRepo}>
           Cancel
         </Button>
-        <Button variant="destructive" onclick={confirmRemoveProject} disabled={removeRepoChecking || removingRepo}>
+        <Button variant="destructive" onclick={confirmRemoveProject} disabled={removeRepoChecking || removingRepo || (removeRepoNeedsAnyway && !removeRepoAnyway)}>
           {removingRepo ? 'Removing…' : removeRepoChecking ? 'Checking…' : 'Remove'}
         </Button>
       </Dialog.Footer>

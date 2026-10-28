@@ -1638,6 +1638,56 @@ describe('Sidebar remove project', () => {
     expect(await screen.findByRole('button', { name: 'Remove' })).not.toBeDisabled();
   });
 
+  it('counts the threads it could not check, and waits for Remove anyway', async () => {
+    mockGroveBench.getGitStatus.mockImplementation((async (id: string) => (
+      id === 'w2' ? { entries: [], error: 'fatal: not a git repository' } : { entries: [] }
+    )));
+    await openRemoveDialog();
+    expect(await screen.findByText("Couldn't check 1 thread for uncommitted changes. Any it has will be lost.")).toBeInTheDocument();
+    const remove = await screen.findByRole('button', { name: 'Remove' });
+    expect(remove).toBeDisabled();
+
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Remove anyway' }));
+    expect(remove).not.toBeDisabled();
+    await fireEvent.click(remove);
+    await waitFor(() => expect(removeRepo).toHaveBeenCalledWith('/repo-a'));
+  });
+
+  it('only holds Remove for a failed commits check when the branches go too', async () => {
+    mockGroveBench.getBranchCommits.mockImplementation((async (id: string) => {
+      if (id === 'w1') throw new Error('No merge base with main');
+      return [];
+    }));
+    await openRemoveDialog();
+    const remove = await screen.findByRole('button', { name: 'Remove' });
+    expect(remove).not.toBeDisabled();
+    expect(screen.queryByText(/Couldn't check/)).toBeNull();
+
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Also delete their branches' }));
+    expect(await screen.findByText(/Couldn't check 1 branch for commits that aren't on main yet/)).toBeInTheDocument();
+    expect(remove).toBeDisabled();
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Remove anyway' }));
+    expect(remove).not.toBeDisabled();
+  });
+
+  it('stops waiting on a check that hangs', async () => {
+    mockGroveBench.getGitStatus.mockImplementation(((id: string) => (id === 'w1' ? new Promise(() => {}) : Promise.resolve({ entries: [] }))) as never);
+    render(Sidebar);
+    const button = screen.getByRole('button', { name: 'Remove project repo-a' });
+    vi.useFakeTimers();
+    try {
+      await fireEvent.click(button);
+      await vi.advanceTimersByTimeAsync(14_000);
+      expect(screen.getByRole('button', { name: 'Checking…' })).toBeDisabled();
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(screen.getByText(/Couldn't check 1 thread for uncommitted changes/)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Remove' })).toBeDisabled();
+      expect(screen.getByRole('checkbox', { name: 'Remove anyway' })).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('says which conversations are running and will be stopped', async () => {
     messageStore.setIsRunning('w1', true);
     const dialog = await openRemoveDialog();
