@@ -311,7 +311,7 @@ describe('Sidebar session rows', () => {
 
     await fireEvent.click(screen.getByTitle(/^Close thread/));
     expect(await screen.findByText('Close thread?')).toBeInTheDocument();
-    expect(screen.getByText(/is in the middle of a turn/)).toBeInTheDocument();
+    expect(screen.getByText(/is still working/)).toBeInTheDocument();
     await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(mockGroveBench.closeSession).not.toHaveBeenCalled();
     expect(store.sessions[0].status).toBe('running');
@@ -322,6 +322,31 @@ describe('Sidebar session rows', () => {
     await fireEvent.click(await screen.findByRole('button', { name: 'Stop and close' }));
     expect(mockGroveBench.closeSession).toHaveBeenCalledWith('s1');
     expect(store.sessions[0].status).toBe('stopped');
+  });
+
+  it('asks before closing a conversation whose background agent is still running', async () => {
+    backgroundTaskStore.start('s1', { type: 'task_started', taskId: 'a1', description: 'Explore', taskType: 'local_agent' });
+    try {
+      render(Sidebar);
+      await fireEvent.click(screen.getByTitle(/^Close thread/));
+      expect(await screen.findByText('Close thread?')).toBeInTheDocument();
+      expect(screen.getByText(/background agents included/)).toBeInTheDocument();
+      expect(mockGroveBench.closeSession).not.toHaveBeenCalled();
+    } finally {
+      backgroundTaskStore.tasksBySession = {};
+    }
+  });
+
+  it('closes straight away when only a background shell is running', async () => {
+    backgroundTaskStore.start('s1', { type: 'task_started', taskId: 'b1', description: 'npm run dev', taskType: 'local_bash' });
+    try {
+      render(Sidebar);
+      await fireEvent.click(screen.getByTitle(/^Close thread/));
+      expect(mockGroveBench.closeSession).toHaveBeenCalledWith('s1');
+      expect(screen.queryByText('Close thread?')).toBeNull();
+    } finally {
+      backgroundTaskStore.tasksBySession = {};
+    }
   });
 
   it('colours the branch icon by the PR health shown in the status bar', async () => {
@@ -1127,7 +1152,7 @@ describe('Sidebar groups', () => {
     await fireEvent.contextMenu(within(groupEl(group.id)).getByText('Billing'));
     await fireEvent.click(screen.getByText('Close all threads'));
     expect(await screen.findByText('Close 2 threads?')).toBeInTheDocument();
-    expect(screen.getByText(/1 of them is in the middle of a turn/)).toBeInTheDocument();
+    expect(screen.getByText(/1 of them is still working/)).toBeInTheDocument();
     expect(mockGroveBench.closeSession).not.toHaveBeenCalled();
 
     await fireEvent.click(screen.getByRole('button', { name: 'Stop and close' }));

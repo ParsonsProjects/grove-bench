@@ -9,6 +9,7 @@
   import { trackEvent } from '../lib/analytics.js';
   import { getRepoColor } from '../lib/repo-colors.js';
   import { addProject } from '../lib/add-project.js';
+  import { threadWorking } from '../lib/thread-working.js';
   import { draftStore } from '../stores/draft.svelte.js';
   import { groupStore } from '../stores/groups.svelte.js';
   import { todoStore } from '../stores/todo.svelte.js';
@@ -543,14 +544,15 @@
   const CLOSE_HINT = 'Stops the agent and terminal and takes it off the Threads list. Open it again any time.';
 
   /** Conversations waiting on the close confirmation, and how many of them
-   *  were mid-turn when it was asked. */
-  let confirmClose = $state<{ ids: string[]; midTurn: number } | null>(null);
+   *  were working when it was asked. */
+  let confirmClose = $state<{ ids: string[]; working: number } | null>(null);
 
-  /** Close conversations, asking first when any is in the middle of a turn:
-   *  closing stops that turn, and the ✕ is easy to click in passing. */
+  /** Close conversations, asking first when any is working (mid-turn, or a
+   *  background agent still running): closing stops that work, and the ✕ is
+   *  easy to click in passing. */
   function requestClose(ids: string[]) {
-    const midTurn = ids.filter((id) => messageStore.getIsRunning(id)).length;
-    if (midTurn > 0) confirmClose = { ids, midTurn };
+    const working = ids.filter((id) => threadWorking(id)).length;
+    if (working > 0) confirmClose = { ids, working };
     else for (const id of ids) void stopSession(id);
   }
 
@@ -1655,9 +1657,9 @@
   </Dialog.Root>
 {/if}
 
-<!-- Close confirmation: only asked when a conversation is in the middle of a turn -->
+<!-- Close confirmation: only asked when a conversation is working -->
 {#if confirmClose}
-  {@const { ids, midTurn } = confirmClose}
+  {@const { ids, working } = confirmClose}
   {@const one = ids.length === 1 ? store.sessions.find((s) => s.id === ids[0]) : null}
   <Dialog.Root open={true} onOpenChange={(o) => { if (!o) confirmClose = null; }}>
     <Dialog.Content class="max-w-sm">
@@ -1665,11 +1667,11 @@
         <Dialog.Title>{ids.length === 1 ? 'Close thread?' : `Close ${ids.length} threads?`}</Dialog.Title>
         <Dialog.Description>
           {#if one}
-            <span class="text-foreground font-medium">{sessionRowLabel(one)}</span> is in the middle of a turn.
-            Closing it stops the turn and shuts down its terminal. You can open it again later.
+            <span class="text-foreground font-medium">{sessionRowLabel(one)}</span> is still working.
+            Closing stops its work, background agents included, and shuts down its terminal. You can open it again later.
           {:else}
-            {midTurn} of them {midTurn === 1 ? 'is' : 'are'} in the middle of a turn.
-            Closing stops {midTurn === 1 ? 'that turn' : 'those turns'} and shuts down their terminals. You can open them again later.
+            {working} of them {working === 1 ? 'is' : 'are'} still working.
+            Closing stops {working === 1 ? 'its' : 'their'} work, background agents included, and shuts down their terminals. You can open them again later.
           {/if}
         </Dialog.Description>
       </Dialog.Header>

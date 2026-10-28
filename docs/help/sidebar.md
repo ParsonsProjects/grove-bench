@@ -65,7 +65,7 @@ Right-click a thread and choose **Mark as To Do** to keep track of something you
 
 ## Closed threads
 
-To put a thread aside, whether it's done or you'll come back to it later, right-click it and choose **Close Thread**, or hover it and click the **✕**. This shuts down its agent, background commands and terminal, including any dev servers they started, and takes it off the **Threads** list. If its agent is in the middle of a turn, Grove Bench asks first, as closing stops that turn. Under **Projects** it shows as **Closed**. Its copy of the project and its branch are kept, so you can go back to it: press `Ctrl+R` to find it, or `Ctrl+Shift+T` for the last one you closed. Opening it starts its agent again and puts it back under **Threads**.
+To put a thread aside, whether it's done or you'll come back to it later, right-click it and choose **Close Thread**, or hover it and click the **✕**. This shuts down its agent, background commands and terminal, including any dev servers they started, and takes it off the **Threads** list. If it's still working (in the middle of a turn, or a background agent is running), Grove Bench asks first, as closing stops that work. Under **Projects** it shows as **Closed**. Its copy of the project and its branch are kept, so you can go back to it: press `Ctrl+R` to find it, or `Ctrl+Shift+T` for the last one you closed. Opening it starts its agent again and puts it back under **Threads**.
 
 ## Context Menu
 

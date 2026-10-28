@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { UpdateStatus } from '../../shared/types.js';
   import { store } from '../stores/sessions.svelte.js';
-  import { messageStore } from '../stores/messages.svelte.js';
+  import { threadWorking } from '../lib/thread-working.js';
   import { releaseNotesUrl } from '../lib/release-notes.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Badge } from '$lib/components/ui/badge/index.js';
@@ -23,7 +23,7 @@
   });
 
   async function restart() {
-    const working = store.sessions.filter((s) => messageStore.getIsRunning(s.id)).length;
+    const working = store.sessions.filter((s) => threadWorking(s.id)).length;
     if (working > 0) {
       const message = working === 1
         ? '1 thread is still working. Restarting stops it; it reopens after the update.'
