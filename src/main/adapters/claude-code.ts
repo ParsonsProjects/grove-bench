@@ -357,6 +357,7 @@ export function transformMessage(
           type: 'compact_boundary',
           trigger: meta.trigger ?? 'manual',
           preTokens: meta.pre_tokens ?? 0,
+          ...(typeof meta.post_tokens === 'number' ? { postTokens: meta.post_tokens } : {}),
         });
       } else if (message.subtype === 'status') {
         const m = message;
@@ -2208,6 +2209,13 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         if (typeof fn !== 'function') return null;
         const res = await (fn as () => Promise<ClaudeUsageResponse>).call(q);
         return mapClaudeUsage(res);
+      },
+
+      async getContextTokens() {
+        // 'full' counts each part (system prompt, tools, messages) with the
+        // token-count API; 'summary' would only estimate them.
+        const usage = await q.getContextUsage({ detail: 'full' });
+        return usage.totalTokens;
       },
 
       async listMcpServers(): Promise<McpServerInfo[]> {

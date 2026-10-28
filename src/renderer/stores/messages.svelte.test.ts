@@ -829,6 +829,16 @@ describe('ingestEvent — compact_boundary', () => {
   });
 });
 
+describe('ingestEvent — usage', () => {
+  it('keeps the cache split, or says a count has none', () => {
+    messageStore.ingestEvent(SID, { type: 'usage', inputTokens: 2_000, outputTokens: 1, cacheReadTokens: 140_000 });
+    expect(messageStore.getUsage(SID)).toEqual({ inputTokens: 2_000, cacheReadTokens: 140_000, cacheCreationTokens: 0 });
+
+    messageStore.ingestEvent(SID, { type: 'usage', inputTokens: 31_000, outputTokens: 0, noCacheSplit: true });
+    expect(messageStore.getUsage(SID)).toEqual({ inputTokens: 31_000, cacheReadTokens: 0, cacheCreationTokens: 0, noCacheSplit: true });
+  });
+});
+
 describe('ingestEvent — tool_progress', () => {
   it('updates activity with tool progress', () => {
     messageStore.ingestEvent(SID, {

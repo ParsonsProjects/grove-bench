@@ -437,12 +437,24 @@ describe('StatusBar context actions', () => {
     agentsStore.loaded = false;
   });
 
-  async function openContext() {
+  async function openContext(usage: Partial<(typeof messageStore.usageBySession)[string]> = {}) {
     messageStore.contextWindowBySession[ACTIVE] = 200_000;
-    messageStore.usageBySession[ACTIVE] = { inputTokens: 150_000, cacheReadTokens: 0, cacheCreationTokens: 0 };
+    messageStore.usageBySession[ACTIVE] = { inputTokens: 150_000, cacheReadTokens: 0, cacheCreationTokens: 0, ...usage };
     render(StatusBar, { props: { sessionId: ACTIVE } });
     await fireEvent.click(screen.getByRole('button', { name: 'Context 75% used. Click for details.' }));
   }
+
+  it('lists what of the context came from the cache', async () => {
+    await openContext({ inputTokens: 2_000, cacheReadTokens: 140_000, cacheCreationTokens: 8_000 });
+    expect(screen.getByText('Non-cached').nextElementSibling).toHaveTextContent('2.0k');
+    expect(screen.getByText('Cache read').nextElementSibling).toHaveTextContent('140.0k');
+  });
+
+  it('leaves the cache split out for a count after a compaction, which has none', async () => {
+    await openContext({ noCacheSplit: true });
+    expect(screen.getByText('Used (total input)').nextElementSibling).toHaveTextContent('150.0k');
+    expect(screen.queryByText('Non-cached')).toBeNull();
+  });
 
   it('shows the thread\'s output from main\'s totals, not the per-reply usage events', async () => {
     const getThreadUsage = window.groveBench.getThreadUsage as ReturnType<typeof vi.fn>;

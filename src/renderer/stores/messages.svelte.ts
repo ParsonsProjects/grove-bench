@@ -410,8 +410,9 @@ class MessageStore {
   /** The context each session's latest reply read (its input, as the
    *  context meter shows it). The thread's output total comes from main
    *  (getThreadUsage): a reply's output count here is a placeholder from
-   *  when it began, repeated on each of its messages. */
-  usageBySession = $state<Record<string, { inputTokens: number; cacheReadTokens: number; cacheCreationTokens: number }>>({});
+   *  when it began, repeated on each of its messages. `noCacheSplit`: a
+   *  count of the whole context (after a compaction), not split by cache. */
+  usageBySession = $state<Record<string, { inputTokens: number; cacheReadTokens: number; cacheCreationTokens: number; noCacheSplit?: boolean }>>({});
 
   /** System info per session (from system_init) */
   systemInfoBySession = $state<Record<string, {
@@ -1723,6 +1724,7 @@ class MessageStore {
           inputTokens: event.inputTokens,
           cacheReadTokens: event.cacheReadTokens ?? 0,
           cacheCreationTokens: event.cacheCreationTokens ?? 0,
+          ...(event.noCacheSplit ? { noCacheSplit: true } : {}),
         };
         break;
       }

@@ -845,8 +845,11 @@ class AgentSessionManager {
           }
         }
 
+        if (event.type === 'usage') session.compacted = null;
+
         // Auto-save memories before compaction wipes context
         if (event.type === 'compact_boundary') {
+          session.compacted = { postTokens: event.postTokens };
           memoryAutosave.triggerAutoSave({
             sessionId: session.id,
             repoPath: session.repoPath,
@@ -872,6 +875,7 @@ class AgentSessionManager {
         // Track result for completion callback
         if (event.type === 'result') {
           await this.logResult(session, handle, event, emit);
+          this.refreshContextAfterCompact(session, handle, emit);
           continue;
         }
 
@@ -1038,6 +1042,38 @@ class AgentSessionManager {
       logged();
     }
     this.runHeldMcpReconnects(session);
+  }
+
+  /** The context meter's size comes with each reply, so a turn that compacted
+   *  and then ended (a /compact) would leave it at the size from before. Ask
+   *  the agent for the size now, once per compaction, or use its estimate
+   *  when it can't say. Dropped if a reply, another compaction, a message
+   *  sent (a /clear among them) or a restart (stop, rewind, sleep) comes
+   *  first. */
+  private refreshContextAfterCompact(session: ManagedSession, handle: AgentQueryHandle, emit: Emit): void {
+    const compacted = session.compacted;
+    if (!compacted || compacted.asked) return;
+    compacted.asked = true;
+    const current = () => session.compacted === compacted && session.queryHandle === handle
+      && !session.destroying && this.sessions.get(session.id) === session;
+    void (async () => {
+      let tokens = compacted.postTokens;
+      if (handle.getContextTokens) {
+        try {
+          const counted = await handle.getContextTokens();
+          if (!Number.isFinite(counted)) throw new Error(`not a token count: ${String(counted)}`);
+          tokens = counted;
+        } catch (err) {
+          // A query closed by a restart rejects the call: nothing to report.
+          if (current()) logger.warn(`Failed to read the context size after compacting for session ${session.id}:`, err);
+        }
+      }
+      if (!current()) return;
+      session.compacted = null;
+      if (tokens !== undefined) emit({ type: 'usage', inputTokens: tokens, outputTokens: 0, noCacheSplit: true });
+    })().catch((err) => {
+      logger.warn(`Failed to send the context size after compacting for session ${session.id}:`, err);
+    });
   }
 
   /** Watch the worktree for the files this turn makes, unless a watch for
@@ -1207,6 +1243,9 @@ class AgentSessionManager {
     // A new turn supersedes any pending interrupt: don't let a stale flag
     // sanitize this turn's genuine result.
     session.interrupting = false;
+    // The context size after a compaction is no longer wanted: this turn's
+    // reply brings a newer one, and a /clear starts a new conversation.
+    session.compacted = null;
 
     // Record in event history with UUID for checkpoint tracking.
     // Use emit() which handles eventHistory, disk persistence, and renderer notification.
