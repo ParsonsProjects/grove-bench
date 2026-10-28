@@ -357,6 +357,7 @@ export function transformMessage(
           type: 'compact_boundary',
           trigger: meta.trigger ?? 'manual',
           preTokens: meta.pre_tokens ?? 0,
+          ...(typeof meta.post_tokens === 'number' ? { postTokens: meta.post_tokens } : {}),
         });
       } else if (message.subtype === 'status') {
         const m = message;

@@ -811,6 +811,14 @@ describe('transformMessage()', () => {
       expect(events).toEqual([{ type: 'compact_boundary', trigger: 'auto', preTokens: 150000 }]);
     });
 
+    it('passes on the size after compacting', () => {
+      const events = transformMessage(
+        sdk({ type: 'system', subtype: 'compact_boundary', compact_metadata: { trigger: 'manual', pre_tokens: 150000, post_tokens: 12000 } }),
+        makeCtx(),
+      );
+      expect(events).toEqual([{ type: 'compact_boundary', trigger: 'manual', preTokens: 150000, postTokens: 12000 }]);
+    });
+
     it('transforms compact_boundary with missing metadata gracefully', () => {
       const events = transformMessage(
         sdk({ type: 'system', subtype: 'compact_boundary' }),

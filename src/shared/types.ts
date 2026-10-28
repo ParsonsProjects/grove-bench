@@ -287,7 +287,9 @@ export type AgentEvent =
   | { type: 'partial_text'; text: string }
   | { type: 'partial_thinking'; text: string }
   | { type: 'usage'; inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheCreationTokens?: number }
-  | { type: 'compact_boundary'; trigger: 'manual' | 'auto'; preTokens: number }
+  /** `postTokens`: the agent's estimate of the context left after compacting
+   *  (Claude Code's post_tokens). Older history has none. */
+  | { type: 'compact_boundary'; trigger: 'manual' | 'auto'; preTokens: number; postTokens?: number }
   | { type: 'tool_progress'; toolName: string; toolUseId: string; elapsedSeconds: number }
   | { type: 'activity'; activity: 'thinking' | 'tool_starting' | 'generating' | 'idle' ; toolName?: string }
   /** `at`: when it was sent (epoch ms). Older history has none. */

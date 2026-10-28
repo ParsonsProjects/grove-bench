@@ -1728,6 +1728,12 @@ class MessageStore {
       }
 
       case 'compact_boundary':
+        // A /compact turn has no reply, so no usage event follows until the
+        // next one and the meter would keep the size from before. Claude Code
+        // counts the context as its post-compact estimate until then too.
+        if (event.postTokens !== undefined) {
+          this.usageBySession[sessionId] = { inputTokens: event.postTokens, cacheReadTokens: 0, cacheCreationTokens: 0 };
+        }
         this.pushMessage(sessionId, {
           kind: 'system',
           id: nextId(),

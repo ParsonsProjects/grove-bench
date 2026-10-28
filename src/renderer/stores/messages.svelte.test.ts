@@ -827,6 +827,20 @@ describe('ingestEvent — compact_boundary', () => {
     expect(msgs[0].kind).toBe('system');
     expect((msgs[0] as any).text).toContain('150k');
   });
+
+  it('sets the context usage to the size after compacting', () => {
+    messageStore.ingestEvent(SID, { type: 'usage', inputTokens: 2_000, outputTokens: 500, cacheReadTokens: 140_000, cacheCreationTokens: 8_000 });
+    messageStore.ingestEvent(SID, { type: 'compact_boundary', trigger: 'manual', preTokens: 150_000, postTokens: 12_000 });
+
+    expect(messageStore.getUsage(SID)).toEqual({ inputTokens: 12_000, cacheReadTokens: 0, cacheCreationTokens: 0 });
+  });
+
+  it('keeps the context usage when the agent gives no size after compacting', () => {
+    messageStore.ingestEvent(SID, { type: 'usage', inputTokens: 2_000, outputTokens: 500, cacheReadTokens: 140_000 });
+    messageStore.ingestEvent(SID, { type: 'compact_boundary', trigger: 'manual', preTokens: 150_000 });
+
+    expect(messageStore.getUsage(SID)).toEqual({ inputTokens: 2_000, cacheReadTokens: 140_000, cacheCreationTokens: 0 });
+  });
 });
 
 describe('ingestEvent — tool_progress', () => {
