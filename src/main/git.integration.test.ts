@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { resolveMergeBase, squashSince, branchCommits, excludeFromGit, fileDiff, blobLines, mergeNoCommit, revertFile, stageFile, MAX_TEXT_FILE_BYTES, gitOperation, continueGitOperation, abortGitOperation } from './git.js';
+import { resolveMergeBase, squashSince, branchCommits, MissingBaseError, excludeFromGit, fileDiff, blobLines, mergeNoCommit, revertFile, stageFile, MAX_TEXT_FILE_BYTES, gitOperation, continueGitOperation, abortGitOperation } from './git.js';
 import { parseGitStatusPorcelain, parseNumstat } from './git-status-parser.js';
 
 // Real git is slow to start on Windows, and each test runs a dozen commands.
@@ -74,6 +74,19 @@ describe('a local base behind origin', () => {
   it('branchCommits lists only the branch\'s own commits', async () => {
     staleLocalBase();
     expect((await branchCommits(repo, 'main')).map((c) => c.subject)).toEqual(['mine 2', 'mine 1']);
+  });
+});
+
+describe('branchCommits that can\'t list them', () => {
+  it('says the base is missing when the repository has no such branch', async () => {
+    await expect(branchCommits(repo, 'develop')).rejects.toBeInstanceOf(MissingBaseError);
+  });
+
+  it('says only that it failed when the folder is gone', async () => {
+    const gone = path.join(repo, 'no-such-folder');
+    const err = await branchCommits(gone, 'main').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(MissingBaseError);
   });
 });
 

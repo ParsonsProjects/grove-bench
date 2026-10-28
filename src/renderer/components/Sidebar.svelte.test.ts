@@ -1418,9 +1418,9 @@ describe('Sidebar delete conversation', () => {
   });
 
   it('warns about commits the base branch lacks once the branch is to be deleted too', async () => {
-    mockGroveBench.getBranchCommits.mockResolvedValueOnce([{ subject: 'Fix parser', body: '' }]);
+    mockGroveBench.getBranchCommits.mockResolvedValueOnce({ commits: [{ subject: 'Fix parser', body: '' }] });
     await openDeleteDialog();
-    await waitFor(() => expect(mockGroveBench.getBranchCommits).toHaveBeenCalledWith('s2', 'main'));
+    await waitFor(() => expect(mockGroveBench.getBranchCommits).toHaveBeenCalledWith('s2', 'main', { timeout: 15_000 }));
     expect(screen.queryByText(/isn't on main yet/)).toBeNull();
 
     await fireEvent.click(screen.getByRole('checkbox'));
@@ -1476,7 +1476,7 @@ describe('Sidebar delete conversation', () => {
   });
 
   it('only holds Delete for a failed commits check when the branch goes too', async () => {
-    mockGroveBench.getBranchCommits.mockRejectedValueOnce(new Error('No merge base with main'));
+    mockGroveBench.getBranchCommits.mockResolvedValueOnce({ commits: [], error: 'No merge base with main' });
     await openDeleteDialog();
     const del = await screen.findByRole('button', { name: 'Delete' });
     expect(del).not.toBeDisabled();
@@ -1489,7 +1489,23 @@ describe('Sidebar delete conversation', () => {
     expect(del).not.toBeDisabled();
   });
 
-  it('stops waiting on a check that hangs', async () => {
+  it('names the base branch the project lacks, so the setting can be fixed', async () => {
+    mockGroveBench.getBranchCommits.mockResolvedValueOnce({ commits: [], error: 'No branch named main', missingBase: true });
+    await openDeleteDialog();
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Also delete the branch' }));
+    expect(await screen.findByText(/This project has no branch named main, so fix-parser couldn't be checked/)).toBeInTheDocument();
+    expect(screen.getByText(/change Default base branch in Settings/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeDisabled();
+  });
+
+  it('asks main to kill each git command after 15 s', async () => {
+    await openDeleteDialog();
+    await screen.findByRole('button', { name: 'Delete' });
+    expect(mockGroveBench.getGitStatus).toHaveBeenCalledWith('s2', { timeout: 15_000 });
+    expect(mockGroveBench.getBranchCommits).toHaveBeenCalledWith('s2', 'main', { timeout: 15_000 });
+  });
+
+  it('stops waiting on an answer that never comes', async () => {
     mockGroveBench.getGitStatus.mockReturnValueOnce(new Promise(() => {}));
     store.sessions = [{ id: 's2', branch: 'fix-parser', repoPath: '/repo-a', status: 'stopped' }] as any;
     store.activeSessionId = null;
@@ -1499,7 +1515,7 @@ describe('Sidebar delete conversation', () => {
     vi.useFakeTimers();
     try {
       await fireEvent.click(bin);
-      await vi.advanceTimersByTimeAsync(14_000);
+      await vi.advanceTimersByTimeAsync(119_000);
       expect(screen.getByRole('button', { name: 'Checking…' })).toBeDisabled();
       await vi.advanceTimersByTimeAsync(1_000);
       expect(screen.getByText(/Couldn't check the worktree/)).toBeInTheDocument();
@@ -1594,7 +1610,7 @@ describe('Sidebar remove project', () => {
     mockGroveBench.getGitStatus.mockReset();
     mockGroveBench.getGitStatus.mockResolvedValue({ entries: [] });
     mockGroveBench.getBranchCommits.mockReset();
-    mockGroveBench.getBranchCommits.mockResolvedValue([]);
+    mockGroveBench.getBranchCommits.mockResolvedValue({ commits: [] });
   });
 
   async function openRemoveDialog() {
@@ -1615,12 +1631,13 @@ describe('Sidebar remove project', () => {
     })));
     await openRemoveDialog();
     expect(await screen.findByText('1 thread has uncommitted changes that will be lost.')).toBeInTheDocument();
-    expect(mockGroveBench.getGitStatus).not.toHaveBeenCalledWith('d1');
-    expect(mockGroveBench.getGitStatus).not.toHaveBeenCalledWith('other');
+    const checked = mockGroveBench.getGitStatus.mock.calls.map(([id]) => id);
+    expect(checked).not.toContain('d1');
+    expect(checked).not.toContain('other');
   });
 
   it('warns about unmerged commits once the branches are to be deleted too', async () => {
-    mockGroveBench.getBranchCommits.mockImplementation((async (id: string) => (id === 'w1' ? [{ subject: 'x', body: '' }] : [])));
+    mockGroveBench.getBranchCommits.mockImplementation((async (id: string) => ({ commits: id === 'w1' ? [{ subject: 'x', body: '' }] : [] })));
     await openRemoveDialog();
     await screen.findByRole('button', { name: 'Remove' });
     expect(screen.queryByText(/aren't on main yet/)).toBeNull();
@@ -1654,10 +1671,9 @@ describe('Sidebar remove project', () => {
   });
 
   it('only holds Remove for a failed commits check when the branches go too', async () => {
-    mockGroveBench.getBranchCommits.mockImplementation((async (id: string) => {
-      if (id === 'w1') throw new Error('No merge base with main');
-      return [];
-    }));
+    mockGroveBench.getBranchCommits.mockImplementation((async (id: string) => (
+      id === 'w1' ? { commits: [], error: 'fatal: bad object' } : { commits: [] }
+    )));
     await openRemoveDialog();
     const remove = await screen.findByRole('button', { name: 'Remove' });
     expect(remove).not.toBeDisabled();
@@ -1670,14 +1686,38 @@ describe('Sidebar remove project', () => {
     expect(remove).not.toBeDisabled();
   });
 
-  it('stops waiting on a check that hangs', async () => {
+  it('names the base branch the project lacks', async () => {
+    mockGroveBench.getBranchCommits.mockResolvedValue({ commits: [], error: 'No branch named main', missingBase: true });
+    await openRemoveDialog();
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Also delete their branches' }));
+    expect(await screen.findByText(/This project has no branch named main, so its threads' branches couldn't be checked/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Remove' })).toBeDisabled();
+  });
+
+  it('finishes its checks whatever an answer looks like', async () => {
+    // As in demo mode, where unknown calls resolve to undefined.
+    mockGroveBench.getGitStatus.mockResolvedValue(undefined as never);
+    mockGroveBench.getBranchCommits.mockResolvedValue(undefined as never);
+    await openRemoveDialog();
+    expect(await screen.findByRole('button', { name: 'Remove' })).toBeDisabled();
+    expect(screen.getByText("Couldn't check 2 threads for uncommitted changes. Any they have will be lost.")).toBeInTheDocument();
+  });
+
+  it('asks main to kill each git command after 15 s', async () => {
+    await openRemoveDialog();
+    await screen.findByRole('button', { name: 'Remove' });
+    expect(mockGroveBench.getGitStatus).toHaveBeenCalledWith('w1', { timeout: 15_000 });
+    expect(mockGroveBench.getBranchCommits).toHaveBeenCalledWith('w1', 'main', { timeout: 15_000 });
+  });
+
+  it('stops waiting on an answer that never comes', async () => {
     mockGroveBench.getGitStatus.mockImplementation(((id: string) => (id === 'w1' ? new Promise(() => {}) : Promise.resolve({ entries: [] }))) as never);
     render(Sidebar);
     const button = screen.getByRole('button', { name: 'Remove project repo-a' });
     vi.useFakeTimers();
     try {
       await fireEvent.click(button);
-      await vi.advanceTimersByTimeAsync(14_000);
+      await vi.advanceTimersByTimeAsync(119_000);
       expect(screen.getByRole('button', { name: 'Checking…' })).toBeDisabled();
       await vi.advanceTimersByTimeAsync(1_000);
       expect(screen.getByText(/Couldn't check 1 thread for uncommitted changes/)).toBeInTheDocument();
@@ -1723,7 +1763,7 @@ describe('Sidebar remove project', () => {
     expect(dialog).toHaveTextContent('New threads started in this project, so it checked again.');
     expect(dialog).toHaveTextContent('This also deletes its 4 threads');
     expect(screen.getByRole('checkbox')).toBeChecked();
-    await waitFor(() => expect(mockGroveBench.getGitStatus).toHaveBeenCalledWith('late'));
+    await waitFor(() => expect(mockGroveBench.getGitStatus).toHaveBeenCalledWith('late', { timeout: 15_000 }));
   });
 
   it("deletes each of the project's conversations, then the project", async () => {

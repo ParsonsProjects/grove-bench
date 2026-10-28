@@ -1381,7 +1381,7 @@ describe('git handlers', () => {
       expect.objectContaining({ filePath: 'new.ts', status: 'untracked', contentHash: 'h2' }),
     ]);
     expect(git.git).toHaveBeenCalledWith(
-      ['diff', 'mb', '--numstat', '-z', '--', 'src/a.ts', 'new.ts'], wt,
+      ['diff', 'mb', '--numstat', '-z', '--', 'src/a.ts', 'new.ts'], wt, { timeout: undefined },
     );
     // Without the index lock, so a git command run in the terminal meanwhile
     // can't fail on it.
@@ -1415,7 +1415,7 @@ describe('git handlers', () => {
       const result = await invoke(IPC.GIT_STATUS, 's1');
 
       // One missing path would fail the whole hash-object call.
-      expect(git.hashWorkingFiles).toHaveBeenCalledWith(wt, ['kept.txt', 'a.ts']);
+      expect(git.hashWorkingFiles).toHaveBeenCalledWith(wt, ['kept.txt', 'a.ts'], { timeout: undefined });
       expect(result.entries.map((e: GitStatusEntry) => [e.filePath, e.contentHash])).toEqual([
         ['gone.txt', 'deleted'], ['kept.txt', 'h1'], ['a.ts', 'h2'],
       ]);
@@ -1432,6 +1432,38 @@ describe('git handlers', () => {
 
     expect(await invoke(IPC.GIT_STATUS, 's1')).toMatchObject({ operation: rebase });
     expect(await invoke(IPC.GIT_STATUS, 's1', { scope: 'branch' })).toEqual({ entries: [], scopeError: 'No base branch', operation: rebase });
+  });
+
+  it('GIT_STATUS gives a timeout to each git command, and skips the merge or rebase check', async () => {
+    vi.mocked(git.git).mockImplementation(async (args: string[]) => (args[0] === 'status' ? ' M a.ts\0' : ''));
+    vi.mocked(git.hashWorkingFiles).mockResolvedValue('h1\n');
+
+    await invoke(IPC.GIT_STATUS, 's1', { timeout: 15_000 });
+
+    expect(git.git).toHaveBeenCalledWith(['status', '--porcelain=v1', '-z', '--untracked-files=all'], wt, { optionalLocks: false, timeout: 15_000 });
+    expect(git.git).toHaveBeenCalledWith(['diff', 'HEAD', '--numstat', '-z', '--', 'a.ts'], wt, { timeout: 15_000 });
+    expect(git.hashWorkingFiles).toHaveBeenCalledWith(wt, ['a.ts'], { timeout: 15_000 });
+    // It runs git with no time limit, and the delete checks don't read it.
+    expect(git.gitOperation).not.toHaveBeenCalled();
+  });
+
+  it('GIT_STATUS ignores a timeout that isn\'t a positive number', async () => {
+    vi.mocked(git.git).mockResolvedValue('');
+    await invoke(IPC.GIT_STATUS, 's1', { timeout: -1 });
+    await invoke(IPC.GIT_STATUS, 's1', { timeout: '15000' });
+    for (const call of vi.mocked(git.git).mock.calls) expect(call[2]?.timeout).toBeUndefined();
+  });
+
+  it('GIT_BRANCH_COMMITS answers, rather than throws, when it can\'t list them', async () => {
+    vi.mocked(git.branchCommits).mockResolvedValueOnce([{ subject: 's', body: '' }]);
+    expect(await invoke(IPC.GIT_BRANCH_COMMITS, 's1', 'main', { timeout: 15_000 })).toEqual({ commits: [{ subject: 's', body: '' }] });
+    expect(git.branchCommits).toHaveBeenCalledWith(wt, 'main', { timeout: 15_000 });
+
+    vi.mocked(git.branchCommits).mockRejectedValueOnce(new git.MissingBaseError('develop'));
+    expect(await invoke(IPC.GIT_BRANCH_COMMITS, 's1', 'develop')).toEqual({ commits: [], error: 'No branch named develop', missingBase: true });
+
+    vi.mocked(git.branchCommits).mockRejectedValueOnce(new Error('fatal: bad object'));
+    expect(await invoke(IPC.GIT_BRANCH_COMMITS, 's1', 'main')).toEqual({ commits: [], error: 'fatal: bad object' });
   });
 
   it('GIT_STATUS reads as no operation when checking for one fails', async () => {

@@ -40,8 +40,8 @@ export async function git(args: string[], cwd: string, opts?: GitOptions): Promi
 
 /** `git <args>`'s exit code and error output, without throwing on a non-zero
  *  exit: for commands whose exit code is the answer (merge-base --is-ancestor). */
-export async function gitExit(args: string[], cwd: string): Promise<{ exitCode: number; stderr: string }> {
-  const result = await runProcess('git', args, { cwd, reject: false });
+export async function gitExit(args: string[], cwd: string, opts?: Pick<GitOptions, 'timeout'>): Promise<{ exitCode: number; stderr: string }> {
+  const result = await runProcess('git', args, { cwd, reject: false, ...(opts?.timeout ? { timeout: opts.timeout } : {}) });
   return { exitCode: result.exitCode ?? -1, stderr: String(result.stderr ?? '') };
 }
 
@@ -494,27 +494,27 @@ export async function fileDiffAgainst(cwd: string, relPath: string, ref: string)
  * started from as its own: in the branch diff, and in what a squash folds in.
  * When they have diverged, the local branch wins.
  */
-export async function resolveMergeBase(cwd: string, base: string): Promise<{ ref: string; mergeBase: string } | null> {
+export async function resolveMergeBase(cwd: string, base: string, opts?: Pick<GitOptions, 'timeout'>): Promise<{ ref: string; mergeBase: string } | null> {
   if (!isRefArg(base)) return null;
   let best: { ref: string; mergeBase: string } | null = null;
   for (const ref of [base, `origin/${base}`]) {
     let mergeBase: string;
     try {
-      mergeBase = (await git(['merge-base', ref, 'HEAD'], cwd)).trim();
+      mergeBase = (await git(['merge-base', ref, 'HEAD'], cwd, opts)).trim();
     } catch { continue; /* ref missing */ }
     if (!mergeBase) continue;
     if (!best) {
       best = { ref, mergeBase };
-    } else if (mergeBase !== best.mergeBase && (await isAncestor(cwd, best.mergeBase, mergeBase))) {
+    } else if (mergeBase !== best.mergeBase && (await isAncestor(cwd, best.mergeBase, mergeBase, opts))) {
       best = { ref, mergeBase };
     }
   }
   return best;
 }
 
-async function isAncestor(cwd: string, ancestor: string, descendant: string): Promise<boolean> {
+async function isAncestor(cwd: string, ancestor: string, descendant: string, opts?: Pick<GitOptions, 'timeout'>): Promise<boolean> {
   try {
-    await git(['merge-base', '--is-ancestor', ancestor, descendant], cwd);
+    await git(['merge-base', '--is-ancestor', ancestor, descendant], cwd, opts);
     return true;
   } catch {
     return false;
@@ -545,9 +545,9 @@ export async function blobLines(cwd: string, rev: string, relPath: string): Prom
  *  one line per path in input order. Git fails the whole call on a path it
  *  cannot open, so callers pass only files that exist and treat a failure as
  *  "hashes unavailable this round". */
-export async function hashWorkingFiles(cwd: string, relPaths: string[]): Promise<string> {
+export async function hashWorkingFiles(cwd: string, relPaths: string[], opts?: Pick<GitOptions, 'timeout'>): Promise<string> {
   if (relPaths.length === 0) return '';
-  const result = await runProcess('git', ['hash-object', '--stdin-paths'], { cwd, input: relPaths.join('\n') + '\n' });
+  const result = await runProcess('git', ['hash-object', '--stdin-paths'], { cwd, input: relPaths.join('\n') + '\n', ...(opts?.timeout ? { timeout: opts.timeout } : {}) });
   return result.stdout;
 }
 
@@ -928,15 +928,31 @@ export async function syncStatus(cwd: string): Promise<GitSyncStatus> {
   }
 }
 
+/** branchCommits found neither <base> nor origin/<base> in a repository git
+ *  could read: the base setting names a branch the project doesn't have. */
+export class MissingBaseError extends Error {
+  constructor(readonly base: string) {
+    super(`No branch named ${base}`);
+  }
+}
+
 /** Commits on HEAD that aren't on the base branch, newest first. The base
  *  is the local branch or origin/<base>, whichever is further ahead. Throws
  *  when neither resolves or git fails: an empty list means there are none,
- *  not that they couldn't be listed. */
-export async function branchCommits(cwd: string, base: string): Promise<BranchCommit[]> {
+ *  not that they couldn't be listed. A base the repository doesn't have
+ *  throws MissingBaseError, so the caller can say why. */
+export async function branchCommits(cwd: string, base: string, opts?: Pick<GitOptions, 'timeout'>): Promise<BranchCommit[]> {
+  if (!isRefArg(base)) throw new Error('Not a branch name');
   // The local base or origin/<base>, whichever is further ahead (see resolveMergeBase).
-  const resolved = await resolveMergeBase(cwd, base);
-  if (!resolved) throw new Error(`No merge base with ${base}`);
-  return parseBranchCommits(await git(['log', '--format=%s%x1f%b%x1e', `${resolved.ref}..HEAD`], cwd));
+  const resolved = await resolveMergeBase(cwd, base, opts);
+  if (!resolved) {
+    // rev-parse exits 1 for a ref the repository doesn't have; 128 (or no
+    // exit code) means git couldn't read the repository at all.
+    const checks = await Promise.all([base, `origin/${base}`].map((ref) => gitExit(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], cwd, opts)));
+    if (checks.every((c) => c.exitCode === 1)) throw new MissingBaseError(base);
+    throw new Error(`No merge base with ${base}`);
+  }
+  return parseBranchCommits(await git(['log', '--format=%s%x1f%b%x1e', `${resolved.ref}..HEAD`], cwd, opts));
 }
 
 export function parseBranchCommits(raw: string): BranchCommit[] {

@@ -550,6 +550,8 @@ const api: Record<string, unknown> = {
   gitRebase: async () => ({ success: true }),
   gitCherryPick: async () => ({ success: false, conflicts: ['src/auth/session.ts'] }),
   gitSquash: async () => ({ success: true }),
+  // Read by the delete dialogs and Create PR; the Proxy's undefined isn't a result.
+  getBranchCommits: async () => ({ commits: [] }),
   // The Branch view (the default) names its base; Uncommitted doesn't.
   getGitStatus: async (id: string, opts?: { scope?: string }) => ({
     ...(GIT_STATUS[id] ?? { entries: [] }),

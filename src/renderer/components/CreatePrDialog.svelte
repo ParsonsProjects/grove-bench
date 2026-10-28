@@ -36,8 +36,9 @@
 
   async function prefillFromCommits() {
     try {
-      // Commits it can't list (no merge base): the title comes from the branch name.
-      const commits = await window.groveBench.getBranchCommits(sessionId, base).catch(() => []);
+      // Commits it can't list (an error, such as no base) leave the list
+      // empty: the title comes from the branch name.
+      const { commits } = await window.groveBench.getBranchCommits(sessionId, base);
       if (title.trim() || body.trim()) return; // user already typed something
       if (commits.length === 1) {
         title = commits[0].subject;
