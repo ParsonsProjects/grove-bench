@@ -314,6 +314,10 @@ export interface AgentQueryHandle {
    *  the provider has no such data. Check capabilities.usage first. */
   getUsage?(): Promise<ProviderUsage | null>;
 
+  /** The tokens the context window holds now, counted rather than taken
+   *  from the last reply. Read after a compaction, which no reply follows. */
+  getContextTokens?(): Promise<number>;
+
   // ─── Optional MCP server control — declare each in AgentAdapter.mcp.controls ───
 
   /** Current status of the agent's MCP server connections. */

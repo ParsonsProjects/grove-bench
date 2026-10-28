@@ -189,6 +189,10 @@ export interface ManagedSession {
    *  emptied when its process starts again. Idle sleep would kill them, so it
    *  waits. Not their descriptions, which can hold a command line's secrets. */
   backgroundTasks?: Map<string, string | undefined>;
+  /** Set when the agent compacts the context, with the size it estimated
+   *  after (if it gave one), and cleared by its next usage event. A turn that
+   *  ends with it set has no newer size, so one is asked for then. */
+  compacted?: { postTokens?: number } | null;
   /** Why idle sleep last refused, so the log says it once, not on every ask. */
   sleepRefusal?: string | null;
 }

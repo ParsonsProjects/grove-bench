@@ -986,6 +986,68 @@ describe('AgentSessionManager event processing', () => {
     await sessionManager.destroySession('test-transient');
   });
 
+  describe('context size after compacting', () => {
+    const usageSent = (win: any) => win._send.mock.calls
+      .filter((c: any[]) => c[0].includes('agent:event') && c[1].type === 'usage')
+      .map((c: any[]) => c[1]);
+
+    async function start(id: string, getContextTokens?: () => Promise<number>) {
+      const win = makeMockWindow();
+      await sessionManager.createSession({ id, branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock' });
+      await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+      if (getContextTokens) mockAdapter.lastHandle!.getContextTokens = vi.fn(getContextTokens);
+      return win;
+    }
+
+    it('sends the counted size when a turn ends after compacting', async () => {
+      const win = await start('test-compact-count', async () => 31_000);
+      mockAdapter.control!.emitEvent({ type: 'usage', inputTokens: 2_000, outputTokens: 1, cacheReadTokens: 150_000 });
+      mockAdapter.control!.emitEvent({ type: 'compact_boundary', trigger: 'manual', preTokens: 152_000, postTokens: 9_000 });
+      mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false });
+
+      await vi.waitFor(() => expect(usageSent(win).at(-1)).toEqual({ type: 'usage', inputTokens: 31_000, outputTokens: 0 }));
+      await sessionManager.destroySession('test-compact-count');
+    });
+
+    it("sends the agent's estimate when the count fails", async () => {
+      const win = await start('test-compact-estimate', async () => { throw new Error('count failed'); });
+      mockAdapter.control!.emitEvent({ type: 'compact_boundary', trigger: 'manual', preTokens: 152_000, postTokens: 9_000 });
+      mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false });
+
+      await vi.waitFor(() => expect(usageSent(win).at(-1)).toEqual({ type: 'usage', inputTokens: 9_000, outputTokens: 0 }));
+      await sessionManager.destroySession('test-compact-estimate');
+    });
+
+    it('does not ask when a reply came after the compaction', async () => {
+      const count = vi.fn(async () => 31_000);
+      const win = await start('test-compact-reply', count);
+      mockAdapter.control!.emitEvent({ type: 'compact_boundary', trigger: 'auto', preTokens: 152_000, postTokens: 9_000 });
+      mockAdapter.control!.emitEvent({ type: 'usage', inputTokens: 500, outputTokens: 1, cacheReadTokens: 30_000 });
+      mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false });
+      await vi.waitFor(() => expect(sessionManager.getEventHistory('test-compact-reply').some((e) => e.type === 'result')).toBe(true));
+      await new Promise((r) => setTimeout(r, 20));
+
+      expect(count).not.toHaveBeenCalled();
+      expect(usageSent(win)).toEqual([{ type: 'usage', inputTokens: 500, outputTokens: 1, cacheReadTokens: 30_000 }]);
+      await sessionManager.destroySession('test-compact-reply');
+    });
+
+    it('drops the count when a reply comes before it', async () => {
+      let answer!: (tokens: number) => void;
+      const win = await start('test-compact-late', () => new Promise<number>((resolve) => { answer = resolve; }));
+      mockAdapter.control!.emitEvent({ type: 'compact_boundary', trigger: 'manual', preTokens: 152_000, postTokens: 9_000 });
+      mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false });
+      await vi.waitFor(() => expect(mockAdapter.lastHandle!.getContextTokens).toHaveBeenCalled());
+      mockAdapter.control!.emitEvent({ type: 'usage', inputTokens: 500, outputTokens: 1, cacheReadTokens: 40_000 });
+      await vi.waitFor(() => expect(usageSent(win)).toHaveLength(1));
+      answer(31_000);
+      await new Promise((r) => setTimeout(r, 20));
+
+      expect(usageSent(win)).toEqual([{ type: 'usage', inputTokens: 500, outputTokens: 1, cacheReadTokens: 40_000 }]);
+      await sessionManager.destroySession('test-compact-late');
+    });
+  });
+
   it('destroySession does not trigger a memory auto-save from the ended event loop', async () => {
     const autosave = await import('./memory-autosave.js');
     vi.mocked(autosave.triggerAutoSaveImmediate).mockClear();

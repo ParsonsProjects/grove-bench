@@ -829,8 +829,11 @@ class AgentSessionManager {
           }
         }
 
+        if (event.type === 'usage') session.compacted = null;
+
         // Auto-save memories before compaction wipes context
         if (event.type === 'compact_boundary') {
+          session.compacted = event.postTokens !== undefined ? { postTokens: event.postTokens } : {};
           memoryAutosave.triggerAutoSave({
             sessionId: session.id,
             repoPath: session.repoPath,
@@ -856,6 +859,7 @@ class AgentSessionManager {
         // Track result for completion callback
         if (event.type === 'result') {
           await this.logResult(session, handle, event, emit);
+          this.refreshContextAfterCompact(session, handle, emit);
           continue;
         }
 
@@ -1022,6 +1026,31 @@ class AgentSessionManager {
       logged();
     }
     this.runHeldMcpReconnects(session);
+  }
+
+  /** The context meter's size comes with each reply, so a turn that compacted
+   *  and then ended (a /compact) would leave it at the size from before. Ask
+   *  the agent for the size now, or use its estimate when it can't say.
+   *  Dropped if a reply or another compaction comes first. */
+  private refreshContextAfterCompact(session: ManagedSession, handle: AgentQueryHandle, emit: Emit): void {
+    const compacted = session.compacted;
+    if (!compacted) return;
+    const send = (tokens: number) => {
+      if (session.compacted !== compacted || session.destroying || this.sessions.get(session.id) !== session) return;
+      session.compacted = null;
+      emit({ type: 'usage', inputTokens: tokens, outputTokens: 0 });
+    };
+    const sendEstimate = () => {
+      if (compacted.postTokens !== undefined) send(compacted.postTokens);
+    };
+    if (!handle.getContextTokens) {
+      sendEstimate();
+      return;
+    }
+    handle.getContextTokens().then(send, (err) => {
+      logger.warn(`Failed to read the context size after compacting for session ${session.id}:`, err);
+      sendEstimate();
+    });
   }
 
   /** Watch the worktree for the files this turn makes, unless a watch for

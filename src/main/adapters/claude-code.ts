@@ -2211,6 +2211,13 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         return mapClaudeUsage(res);
       },
 
+      async getContextTokens() {
+        // 'full' counts each part (system prompt, tools, messages) with the
+        // token-count API; 'summary' would only estimate them.
+        const usage = await q.getContextUsage({ detail: 'full' });
+        return usage.totalTokens;
+      },
+
       async listMcpServers(): Promise<McpServerInfo[]> {
         const statuses = await q.mcpServerStatus();
         return statuses.map((s) => ({
