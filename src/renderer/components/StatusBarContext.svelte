@@ -130,10 +130,13 @@
         <span>Used (total input)</span>
         <span class="font-medium {usedTextClass}">{formatTokens(usedTokens)}</span>
       </div>
-      <div class="flex justify-between text-micro pl-2">
-        <span>Non-cached</span>
-        <span class="text-foreground">{formatTokens(usage.inputTokens)}</span>
-      </div>
+      <!-- A count after a compaction has no cache split to show. -->
+      {#if !usage.noCacheSplit}
+        <div class="flex justify-between text-micro pl-2">
+          <span>Non-cached</span>
+          <span class="text-foreground">{formatTokens(usage.inputTokens)}</span>
+        </div>
+      {/if}
       {#if usage.cacheReadTokens > 0}
         <div class="flex justify-between text-micro pl-2">
           <span>Cache read</span>

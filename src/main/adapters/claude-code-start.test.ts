@@ -69,6 +69,7 @@ function fakeQuery() {
     setMaxThinkingTokens: vi.fn((_tokens: number | null, _display?: string) => Promise.resolve()),
     applyFlagSettings: vi.fn((_settings: Record<string, unknown>) => Promise.resolve()),
     supportedModels: vi.fn(() => Promise.resolve([])),
+    getContextUsage: vi.fn((_opts?: { detail?: string }) => Promise.resolve({ totalTokens: 31_000 })),
   };
   return {
     q,
@@ -523,5 +524,11 @@ describe('ClaudeCodeAdapter.start(): the handle', () => {
     expect(fake.q.setMaxThinkingTokens.mock.calls).toEqual([[THINKING_LEVEL_TOKENS.low, 'summarized'], [0, undefined]]);
     expect(fake.q.applyFlagSettings.mock.calls).toEqual([[{ effortLevel: 'max' }], [{ fastMode: true }], [{ fastMode: false }]]);
     await expect(handle.setControl!('temperature', 'hot')).rejects.toThrow('Unknown control "temperature" for Claude Code');
+  });
+
+  it('counts the context with the token-count API, not an estimate', async () => {
+    const { handle, fake } = await start();
+    expect(await handle.getContextTokens!()).toBe(31_000);
+    expect(fake.q.getContextUsage).toHaveBeenCalledWith({ detail: 'full' });
   });
 });

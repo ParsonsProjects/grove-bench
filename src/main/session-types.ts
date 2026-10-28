@@ -190,9 +190,10 @@ export interface ManagedSession {
    *  waits. Not their descriptions, which can hold a command line's secrets. */
   backgroundTasks?: Map<string, string | undefined>;
   /** Set when the agent compacts the context, with the size it estimated
-   *  after (if it gave one), and cleared by its next usage event. A turn that
-   *  ends with it set has no newer size, so one is asked for then. */
-  compacted?: { postTokens?: number } | null;
+   *  after (if it gave one), and cleared by its next usage event or the next
+   *  message sent. A turn that ends with it set has no newer size, so one is
+   *  asked for then (`asked`: already, so it isn't asked twice). */
+  compacted?: { postTokens?: number; asked?: boolean } | null;
   /** Why idle sleep last refused, so the log says it once, not on every ask. */
   sleepRefusal?: string | null;
 }
