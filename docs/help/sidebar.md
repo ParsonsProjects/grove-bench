@@ -78,7 +78,7 @@ Right-click a thread to access:
 - **Export Thread…**: save the thread to a file. As Markdown it has the messages and a line for each tool call, without tool output, thinking or the contents of attached files; pick JSON in the save dialog for every event the thread saved
 - **Close Thread** — Shut down a live thread's agent and take it off the Threads list, but keep the thread, so you can pick it up again later
 - **New Group…**, **Add to**, **Move to**, **Remove from**: put the thread in a group, or take it out (see Groups above)
-- **Delete Thread**: remove the thread and its copy of the project, and optionally its branch. It warns first when files have uncommitted changes, or, if you also delete the branch, when the branch has commits its base branch doesn't have
+- **Delete Thread**: remove the thread and its copy of the project, and optionally its branch. It warns first when files have uncommitted changes, or, if you also delete the branch, when the branch has commits its base branch doesn't have. If it can't check (the thread's copy is broken or gone, or git doesn't answer within 15 seconds), it says so, and **Delete** waits until you tick **Delete anyway**
 
 Hovering a row shows its full name and, when goals are on (see [Thread tab](thread-tab.md)), what the thread is trying to get done. Hovering it, or moving to it with Tab, also shows a quick button: an **✕** to close an open thread (it asks first if the agent is mid-turn), or a bin to delete a closed one (it always asks first).
 

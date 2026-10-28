@@ -929,16 +929,14 @@ export async function syncStatus(cwd: string): Promise<GitSyncStatus> {
 }
 
 /** Commits on HEAD that aren't on the base branch, newest first. The base
- *  is the local branch or origin/<base>, whichever is further ahead. */
+ *  is the local branch or origin/<base>, whichever is further ahead. Throws
+ *  when neither resolves or git fails: an empty list means there are none,
+ *  not that they couldn't be listed. */
 export async function branchCommits(cwd: string, base: string): Promise<BranchCommit[]> {
   // The local base or origin/<base>, whichever is further ahead (see resolveMergeBase).
   const resolved = await resolveMergeBase(cwd, base);
-  if (!resolved) return [];
-  try {
-    return parseBranchCommits(await git(['log', '--format=%s%x1f%b%x1e', `${resolved.ref}..HEAD`], cwd));
-  } catch {
-    return [];
-  }
+  if (!resolved) throw new Error(`No merge base with ${base}`);
+  return parseBranchCommits(await git(['log', '--format=%s%x1f%b%x1e', `${resolved.ref}..HEAD`], cwd));
 }
 
 export function parseBranchCommits(raw: string): BranchCommit[] {

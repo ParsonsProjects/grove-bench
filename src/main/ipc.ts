@@ -1675,8 +1675,9 @@ export function registerHandlers() {
     try {
       return await branchCommits(worktree.path, base);
     } catch (e) {
+      // Thrown, not []: the delete dialog warns when it can't tell.
       logger.warn(`branch commits failed for session ${sessionId}:`, e);
-      return [];
+      throw e;
     }
   });
 

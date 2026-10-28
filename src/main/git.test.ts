@@ -713,14 +713,23 @@ describe('branchCommits()', () => {
     expect(mockExeca).toHaveBeenCalledWith('git', ['log', '--format=%s%x1f%b%x1e', 'origin/main..HEAD'], { cwd: '/repo' });
   });
 
-  it('returns empty when neither ref resolves', async () => {
+  it('throws when neither ref resolves, rather than report no commits', async () => {
     mockExeca.mockRejectedValue(new Error('unknown revision'));
-    expect(await branchCommits('/repo', 'main')).toEqual([]);
+    await expect(branchCommits('/repo', 'main')).rejects.toThrow('No merge base with main');
+  });
+
+  it('throws when git log fails', async () => {
+    scriptGit({
+      'merge-base main HEAD': 'mb',
+      'merge-base origin/main HEAD': new Error('unknown revision'),
+      'log': new Error('fatal: bad object'),
+    });
+    await expect(branchCommits('/repo', 'main')).rejects.toThrow('bad object');
   });
 
   it('never passes a base that git would read as an option', async () => {
     // `git log --output=<file>..HEAD` would write a file.
-    expect(await branchCommits('/repo', '--output=/tmp/x')).toEqual([]);
+    await expect(branchCommits('/repo', '--output=/tmp/x')).rejects.toThrow();
     expect(mockExeca).not.toHaveBeenCalled();
   });
 });

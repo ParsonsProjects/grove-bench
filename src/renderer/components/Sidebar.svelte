@@ -589,28 +589,53 @@
   let destroyUnmerged = $state<{ count: number; base: string } | null>(null);
   /** Delete waits for both checks, so a quick click can't skip a warning. */
   let destroyChecking = $state(false);
+  /** Checks that failed or ran out of time. Each says so, and Delete then
+   *  waits for "Delete anyway" rather than staying disabled: a thread whose
+   *  worktree is broken or gone fails them, and still has to be deletable. */
+  let destroyCheckFailed = $state({ uncommitted: false, unmerged: false });
+  let destroyAnyway = $state(false);
+  /** The commits check only matters when the branch is deleted too. */
+  let destroyNeedsAnyway = $derived(destroyCheckFailed.uncommitted || (deleteBranchOnDestroy && destroyCheckFailed.unmerged));
+  /** Local git has no timeout: a check that hangs counts as failed after this,
+   *  rather than leaving Delete disabled for good. */
+  const DESTROY_CHECK_TIMEOUT_MS = 15_000;
+  /** Bumped per request so a slow check from an earlier open is dropped. */
+  let destroyGeneration = 0;
 
   function requestDestroy(id: string) {
+    const generation = ++destroyGeneration;
     confirmDestroyId = id;
     deleteBranchOnDestroy = false;
     destroyUncommitted = null;
     destroyUnmerged = null;
+    destroyCheckFailed = { uncommitted: false, unmerged: false };
+    destroyAnyway = false;
     destroyChecking = false;
     const session = store.sessions.find((s) => s.id === id);
     if (!session || session.direct) return;
     destroyChecking = true;
-    // Best effort: a failed check leaves its warning out rather than
-    // blocking the delete.
-    const uncommitted = window.groveBench.getGitStatus(id)
-      .then((status) => { if (confirmDestroyId === id) destroyUncommitted = unsavedFileCount(status.entries, agentsStore.generatedFiles()); })
-      .catch(() => {});
-    const unmerged = resolveBaseBranch(session.repoPath)
-      .then(async (base) => {
-        const commits = await window.groveBench.getBranchCommits(id, base);
-        if (confirmDestroyId === id) destroyUnmerged = { count: commits.length, base };
+    const current = () => generation === destroyGeneration && confirmDestroyId === id;
+    const failed = (check: keyof typeof destroyCheckFailed) => () => {
+      if (current()) destroyCheckFailed = { ...destroyCheckFailed, [check]: true };
+    };
+    const uncommitted = withTimeout(window.groveBench.getGitStatus(id), DESTROY_CHECK_TIMEOUT_MS)
+      .then((status) => {
+        // A status git couldn't read may hide changes.
+        if (status.error) throw new Error(status.error);
+        if (current()) destroyUncommitted = unsavedFileCount(status.entries, agentsStore.generatedFiles());
       })
-      .catch(() => {});
-    void Promise.all([uncommitted, unmerged]).then(() => { if (confirmDestroyId === id) destroyChecking = false; });
+      .catch(failed('uncommitted'));
+    const unmerged = withTimeout(resolveBaseBranch(session.repoPath).then(async (base) => ({ base, commits: await window.groveBench.getBranchCommits(id, base) })), DESTROY_CHECK_TIMEOUT_MS)
+      .then(({ base, commits }) => { if (current()) destroyUnmerged = { count: commits.length, base }; })
+      .catch(failed('unmerged'));
+    void Promise.all([uncommitted, unmerged]).then(() => { if (current()) destroyChecking = false; });
+  }
+
+  /** `promise`, or a rejection once `ms` pass without it settling. */
+  function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(`No answer within ${ms / 1000} s`)), ms); });
+    return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
   }
 
   /** Full teardown of one session: main-process destroy plus all per-session
@@ -685,8 +710,8 @@
     removeRepoChecking = worktreeSessions.length > 0;
     if (!removeRepoChecking) return;
     const current = () => generation === removeRepoGeneration && confirmRemoveRepo === repo;
-    // Best effort, like the single delete: a failed check leaves its warning
-    // out. Uncommitted changes first, then unmerged commits (one per branch:
+    // Best effort: a failed check leaves its warning out. Uncommitted
+    // changes first, then unmerged commits (one per branch:
     // conversations sharing a branch share its commits).
     void (async () => {
       const dirty = await mapLimit(worktreeSessions, REMOVE_CHECK_CONCURRENCY, (s) =>
@@ -1700,7 +1725,11 @@
         </Dialog.Description>
       </Dialog.Header>
       {#if !session?.direct}
-        {#if destroyUncommitted}
+        {#if destroyCheckFailed.uncommitted}
+          <p class="text-xs text-amber-500 mt-3" role="alert">
+            Couldn't check the worktree for uncommitted changes. Any it has will be lost.
+          </p>
+        {:else if destroyUncommitted}
           <p class="text-xs text-amber-500 mt-3" role="alert">
             {destroyUncommitted} {destroyUncommitted === 1 ? 'file has' : 'files have'} uncommitted changes that will be lost.
           </p>
@@ -1709,19 +1738,30 @@
           <Checkbox bind:checked={deleteBranchOnDestroy} />
           Also delete the branch
         </label>
-        {#if deleteBranchOnDestroy && destroyUnmerged?.count}
+        {#if deleteBranchOnDestroy && destroyCheckFailed.unmerged}
+          <p class="text-xs text-amber-500 mt-2" role="alert">
+            Couldn't check whether {branch} has commits that aren't on its base branch. Unless you've pushed
+            them, deleting the branch can lose them.
+          </p>
+        {:else if deleteBranchOnDestroy && destroyUnmerged?.count}
           <p class="text-xs text-amber-500 mt-2" role="alert">
             {destroyUnmerged.count} {destroyUnmerged.count === 1 ? 'commit' : 'commits'} on {branch}
             {destroyUnmerged.count === 1 ? "isn't" : "aren't"} on {destroyUnmerged.base} yet. Unless you've pushed
             {destroyUnmerged.count === 1 ? 'it' : 'them'}, deleting the branch can lose {destroyUnmerged.count === 1 ? 'it' : 'them'}.
           </p>
         {/if}
+        {#if destroyNeedsAnyway}
+          <label class="flex items-center gap-2 text-sm text-muted-foreground mt-3 cursor-pointer">
+            <Checkbox bind:checked={destroyAnyway} />
+            Delete anyway
+          </label>
+        {/if}
       {/if}
       <Dialog.Footer>
         <Button variant="secondary" onclick={() => confirmDestroyId = null}>
           Cancel
         </Button>
-        <Button variant="destructive" onclick={confirmDestroy} disabled={destroyChecking}>
+        <Button variant="destructive" onclick={confirmDestroy} disabled={destroyChecking || (destroyNeedsAnyway && !destroyAnyway)}>
           {destroyChecking ? 'Checking…' : 'Delete'}
         </Button>
       </Dialog.Footer>

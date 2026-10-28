@@ -1454,6 +1454,62 @@ describe('Sidebar delete conversation', () => {
     expect(await screen.findByRole('button', { name: 'Delete' })).not.toBeDisabled();
   });
 
+  it('says when it could not read the worktree, and waits for Delete anyway', async () => {
+    const { destroySession } = mockGroveBench;
+    mockGroveBench.getGitStatus.mockResolvedValueOnce({ entries: [], error: 'fatal: not a git repository' });
+    await openDeleteDialog();
+    expect(await screen.findByText(/Couldn't check the worktree for uncommitted changes/)).toBeInTheDocument();
+    const del = await screen.findByRole('button', { name: 'Delete' });
+    expect(del).toBeDisabled();
+
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Delete anyway' }));
+    expect(del).not.toBeDisabled();
+    await fireEvent.click(del);
+    await waitFor(() => expect(destroySession).toHaveBeenCalledWith('s2', false));
+  });
+
+  it('treats a git status that throws as a failed check', async () => {
+    mockGroveBench.getGitStatus.mockRejectedValueOnce(new Error('process host down'));
+    await openDeleteDialog();
+    expect(await screen.findByText(/Couldn't check the worktree/)).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Delete' })).toBeDisabled();
+  });
+
+  it('only holds Delete for a failed commits check when the branch goes too', async () => {
+    mockGroveBench.getBranchCommits.mockRejectedValueOnce(new Error('No merge base with main'));
+    await openDeleteDialog();
+    const del = await screen.findByRole('button', { name: 'Delete' });
+    expect(del).not.toBeDisabled();
+    expect(screen.queryByText(/Couldn't check whether/)).toBeNull();
+
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Also delete the branch' }));
+    expect(await screen.findByText(/Couldn't check whether fix-parser has commits/)).toBeInTheDocument();
+    expect(del).toBeDisabled();
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Delete anyway' }));
+    expect(del).not.toBeDisabled();
+  });
+
+  it('stops waiting on a check that hangs', async () => {
+    mockGroveBench.getGitStatus.mockReturnValueOnce(new Promise(() => {}));
+    store.sessions = [{ id: 's2', branch: 'fix-parser', repoPath: '/repo-a', status: 'stopped' }] as any;
+    store.activeSessionId = null;
+    mockGroveBench.getCollapsedRepos.mockResolvedValue({ '/repo-a': false });
+    render(Sidebar);
+    const bin = await screen.findByTitle('Delete thread');
+    vi.useFakeTimers();
+    try {
+      await fireEvent.click(bin);
+      await vi.advanceTimersByTimeAsync(14_000);
+      expect(screen.getByRole('button', { name: 'Checking…' })).toBeDisabled();
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(screen.getByText(/Couldn't check the worktree/)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Delete' })).toBeDisabled();
+      expect(screen.getByRole('checkbox', { name: 'Delete anyway' })).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('does not count the settings file Grove writes into every worktree', async () => {
     agentsStore.list = [{ id: 'claude-code', displayName: 'Claude Agent', capabilities: {}, generatedFiles: ['.claude/settings.local.json'] }];
     agentsStore.loaded = true;
