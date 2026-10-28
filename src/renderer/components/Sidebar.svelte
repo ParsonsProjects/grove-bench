@@ -1,6 +1,7 @@
 <script lang="ts">
   import { store } from '../stores/sessions.svelte.js';
   import { messageStore } from '../stores/messages.svelte.js';
+  import { backgroundTaskStore } from '../stores/backgroundTask.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
   import { gitStatusStore } from '../stores/gitStatus.svelte.js';
   import { terminalStore } from '../stores/terminal.svelte.js';
@@ -157,13 +158,14 @@
     const preview = sessionPreviewStore.get(session.id);
     const isRunning = messageStore.getIsRunning(session.id);
     const pendingTool = loaded ? pendingPermissionTool(msgs) : null;
+    const backgroundAgents = backgroundTaskStore.runningAgents(session.id).map((t) => t.description);
     // Past messages only show when nothing live does, so skip that work while
     // the agent runs (its reply grows with every update) or waits on you.
-    const quiet = !isRunning && !pendingTool;
+    const quiet = !isRunning && !pendingTool && backgroundAgents.length === 0;
     const lastText = quiet ? ((loaded ? lastTextSnippet(msgs) : null) ?? (preview?.lastText || null)) : null;
     const firstPrompt = quiet && !lastText ? ((loaded ? firstPromptSnippet(msgs) : null) ?? (preview?.firstPrompt || null)) : null;
     const pendingToolView = pendingTool ? pendingPermissionView(msgs) : undefined;
-    return sessionSubtitle({ isRunning, activity: messageStore.getActivity(session.id), pendingTool, pendingToolView, lastText, firstPrompt });
+    return sessionSubtitle({ isRunning, activity: messageStore.getActivity(session.id), pendingTool, pendingToolView, backgroundAgents, lastText, firstPrompt });
   }
 
   const SUBTITLE_TONE_CLASS: Record<SessionSubtitle['tone'], string> = {

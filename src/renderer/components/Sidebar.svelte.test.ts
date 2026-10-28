@@ -21,6 +21,7 @@ import { todoStore } from '../stores/todo.svelte.js';
 import { draftStore } from '../stores/draft.svelte.js';
 import { gitStatusStore } from '../stores/gitStatus.svelte.js';
 import { skillsPanelStore } from '../stores/skillsPanel.svelte.js';
+import { backgroundTaskStore } from '../stores/backgroundTask.svelte.js';
 
 beforeEach(() => {
   // Call counts start from zero in every test, whatever ran before it.
@@ -447,6 +448,29 @@ describe('Sidebar attention triage', () => {
     expect(group).toHaveTextContent('Working 1');
     expect(group).toHaveTextContent('Unread 1');
     expect(group).toHaveTextContent('Idle 1');
+  });
+
+  it('counts a thread as working while a background agent runs after its turn', async () => {
+    backgroundTaskStore.start('finished', { type: 'task_started', taskId: 'a1', description: 'Explore auth flow', taskType: 'local_agent' });
+    // A background shell (a dev server, say) doesn't keep a thread working.
+    backgroundTaskStore.start('quiet', { type: 'task_started', taskId: 'b1', description: 'npm run dev', taskType: 'local_bash' });
+    try {
+      render(Sidebar);
+
+      const group = screen.getByRole('group', { name: 'Filter threads' });
+      expect(group).toHaveTextContent('Working 2');
+      expect(group).toHaveTextContent('Unread 0');
+      expect(group).toHaveTextContent('Idle 1');
+      expect(screen.getAllByText('Background agent: Explore auth flow').length).toBeGreaterThan(0);
+
+      // Once it finishes, the turn it ended shows as unread again.
+      backgroundTaskStore.notify('finished', { type: 'task_notification', taskId: 'a1', taskStatus: 'completed', summary: '', outputFile: '' });
+      await tick();
+      expect(group).toHaveTextContent('Working 1');
+      expect(group).toHaveTextContent('Unread 1');
+    } finally {
+      backgroundTaskStore.tasksBySession = {};
+    }
   });
 
   it('filters the active list by the selected chip', async () => {

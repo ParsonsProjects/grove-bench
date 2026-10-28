@@ -47,7 +47,7 @@ When a section is further down than you have scrolled, its heading stays pinned 
 Above the thread lists, chips let you narrow the sidebar to what matters right now. Each shows a count. The first four are states, and a thread is in at most one of them:
 
 - **Needs you**: the agent is waiting on a permission or a question
-- **Working**: a turn is in progress, or the thread is starting up
+- **Working**: a turn is in progress, a background agent (a subagent or workflow) is still running after one, or the thread is starting up
 - **Unread**: the agent finished a turn (or a PR alert arrived) while you were in another thread, or you marked it unread
 - **Idle**: open and quiet, ready or asleep. Closed and red threads come under none of the four
 

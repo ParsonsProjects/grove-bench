@@ -32,6 +32,9 @@ export interface AgentSpriteInput {
   status: string;
   hasPending: boolean;
   isRunning: boolean;
+  /** A background agent (subagent or workflow) is still at work after the
+   *  turn that started it ended: the thread is working until it finishes. */
+  backgroundAgent: boolean;
   needsAttention: boolean;
 }
 
@@ -42,7 +45,7 @@ export function agentSpriteState(s: AgentSpriteInput): AgentSpriteState {
   if (s.status === 'starting') return 'starting';
   if (s.status === 'installing') return 'installing';
   if (s.hasPending) return 'permission';
-  if (s.isRunning) return 'working';
+  if (s.isRunning || s.backgroundAgent) return 'working';
   if (s.needsAttention) return 'unread';
   if (s.status === 'stopped') return 'stopped';
   if (s.status === 'sleeping') return 'sleeping';

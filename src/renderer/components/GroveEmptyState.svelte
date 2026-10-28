@@ -1,6 +1,7 @@
 <script lang="ts">
   import { store } from '../stores/sessions.svelte.js';
   import { messageStore } from '../stores/messages.svelte.js';
+  import { backgroundTaskStore } from '../stores/backgroundTask.svelte.js';
   import AgentSprite from './AgentSprite.svelte';
   import FirstSteps from './FirstSteps.svelte';
   import { sessionRepoColor } from '../lib/session-repo-color.js';
@@ -67,6 +68,7 @@
       status: s.status,
       hasPending: messageStore.needsInput(s.id),
       isRunning: messageStore.getIsRunning(s.id),
+      backgroundAgent: backgroundTaskStore.runningAgents(s.id).length > 0,
       needsAttention: !!store.needsAttention[s.id],
     });
   }

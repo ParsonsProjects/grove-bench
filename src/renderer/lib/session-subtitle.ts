@@ -71,6 +71,9 @@ export function firstPromptSnippet(messages: ChatMessage[], maxLen = MAX_LEN): s
 export interface SubtitleInput {
   /** Whether the agent is currently processing a turn. */
   isRunning: boolean;
+  /** What the background agents still running after the turn are doing
+   *  (their task descriptions), from backgroundTaskStore.runningAgents(). */
+  backgroundAgents?: string[];
   /** Current activity, from messageStore.getActivity(). */
   activity: { activity: 'thinking' | 'tool_starting' | 'generating' | 'idle'; toolName?: string; toolSummary?: string };
   /** Tool awaiting user approval (null when none). */
@@ -85,7 +88,8 @@ export interface SubtitleInput {
 
 /**
  * One-line context subtitle for a sidebar session row, most urgent first:
- * waiting-for-approval > live activity > last message > first prompt.
+ * waiting-for-approval > live activity > background agents > last message >
+ * first prompt.
  * Returns null when there is nothing meaningful to show.
  */
 export function sessionSubtitle(input: SubtitleInput): SessionSubtitle | null {
@@ -106,6 +110,12 @@ export function sessionSubtitle(input: SubtitleInput): SessionSubtitle | null {
     }
     if (activity === 'thinking') return { text: 'Thinking…', tone: 'working' };
     return { text: 'Working…', tone: 'working' };
+  }
+
+  const agents = input.backgroundAgents ?? [];
+  if (agents.length > 1) return { text: `${agents.length} background agents running…`, tone: 'working' };
+  if (agents.length === 1) {
+    return { text: agents[0] ? oneLine(`Background agent: ${agents[0]}`, MAX_LEN) : 'Background agent running…', tone: 'working' };
   }
 
   const context = input.lastText || input.firstPrompt;

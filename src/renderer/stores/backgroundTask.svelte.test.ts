@@ -95,6 +95,32 @@ describe('backgroundTaskStore', () => {
     expect(added.taskType).toBe('shell');
   });
 
+  it('runningAgents lists running subagents and workflows, not shells', () => {
+    backgroundTaskStore.start(SID, { type: 'task_started', taskId: 'agent', description: 'Explore', taskType: 'local_agent' });
+    backgroundTaskStore.start(SID, { type: 'task_started', taskId: 'flow', description: 'Spec', taskType: 'local_workflow' });
+    backgroundTaskStore.start(SID, { type: 'task_started', taskId: 'remote', description: 'Remote spec', taskType: 'remote_agent' });
+    backgroundTaskStore.start(SID, { type: 'task_started', taskId: 'shell', description: 'npm run dev', taskType: 'local_bash' });
+    backgroundTaskStore.start(SID, { type: 'task_started', taskId: 'untyped', description: 'old CLI' });
+    backgroundTaskStore.start(SID, { type: 'task_started', taskId: 'done', description: 'Review', taskType: 'local_agent' });
+    backgroundTaskStore.notify(SID, { type: 'task_notification', taskId: 'done', taskStatus: 'completed', summary: '', outputFile: '' });
+    expect(backgroundTaskStore.runningAgents(SID).map((t) => t.taskId).sort()).toEqual(['agent', 'flow', 'remote']);
+    expect(backgroundTaskStore.runningAgents('other')).toEqual([]);
+  });
+
+  it('keeps a task type the live list gave when task_started has none', () => {
+    backgroundTaskStore.reconcile(SID, { type: 'background_tasks_changed', tasks: [{ taskId: 't1', description: 'Explore', taskType: 'local_agent' }] });
+    backgroundTaskStore.start(SID, { type: 'task_started', taskId: 't1', toolUseId: 'tu1', description: 'Explore' });
+    expect(backgroundTaskStore.get(SID)[0]).toMatchObject({ taskType: 'local_agent', toolUseId: 'tu1' });
+
+    backgroundTaskStore.start(SID, { type: 'task_started', taskId: 't2', description: 'Review' });
+    backgroundTaskStore.progress(SID, { type: 'task_progress', taskId: 't2', description: 'Review', totalTokens: 7, toolUses: 1, durationMs: 1 });
+    backgroundTaskStore.reconcile(SID, {
+      type: 'background_tasks_changed',
+      tasks: [{ taskId: 't1', description: 'Explore', taskType: 'local_agent' }, { taskId: 't2', description: 'Review', taskType: 'local_agent' }],
+    });
+    expect(backgroundTaskStore.get(SID).find((t) => t.taskId === 't2')).toMatchObject({ taskType: 'local_agent', totalTokens: 7 });
+  });
+
   it('reconcile with an empty list clears every running task', () => {
     backgroundTaskStore.start(SID, { type: 'task_started', taskId: 't1', description: 'a' });
     backgroundTaskStore.reconcile(SID, { type: 'background_tasks_changed', tasks: [] });

@@ -19,6 +19,11 @@ export interface BackgroundTask {
 /** Auto-remove delay for finished tasks (ms). */
 const AUTO_REMOVE_MS = 3000;
 
+/** Task types that are an agent at work: a subagent, or a workflow run here
+ *  or remotely. Not a background shell ('local_bash'): that can be a dev
+ *  server that never ends. */
+const AGENT_TASK_TYPES = new Set(['local_agent', 'local_workflow', 'remote_agent']);
+
 /**
  * Tracks Task-tool background work per session. Owns only task state; the
  * system messages announcing task lifecycle are pushed by MessageStore, which
@@ -40,6 +45,13 @@ class BackgroundTaskStore {
     return this.get(sessionId).some((t) => t.toolUseId === toolUseId && t.status === 'running');
   }
 
+  /** The background agents still running: subagents and workflows that work
+   *  on after the turn that started them ended. The thread counts as working
+   *  while there are any. */
+  runningAgents(sessionId: string): BackgroundTask[] {
+    return this.get(sessionId).filter((t) => t.status === 'running' && !!t.taskType && AGENT_TASK_TYPES.has(t.taskType));
+  }
+
   /** Remove a completed/failed/stopped background task from the list */
   remove(sessionId: string, taskId: string): void {
     const tasks = this.tasksBySession[sessionId];
@@ -54,7 +66,8 @@ class BackgroundTaskStore {
       taskId: event.taskId,
       toolUseId: event.toolUseId,
       description: event.description,
-      taskType: event.taskType,
+      // The live list can come first, and may be the one that has the type.
+      taskType: event.taskType ?? tasks[event.taskId]?.taskType,
       status: 'running',
       totalTokens: 0,
       toolUses: 0,
@@ -97,7 +110,9 @@ class BackgroundTaskStore {
     const live = new Map(event.tasks.map((t) => [t.taskId, t]));
     const next: Record<string, BackgroundTask> = {};
     for (const [id, task] of Object.entries(tasks)) {
-      if (task.status !== 'running' || live.has(id)) next[id] = task;
+      const listed = live.get(id);
+      if (listed && !task.taskType && listed.taskType) next[id] = { ...task, taskType: listed.taskType };
+      else if (task.status !== 'running' || listed) next[id] = task;
     }
     for (const [id, t] of live) {
       if (next[id]) continue;
