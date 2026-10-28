@@ -5,6 +5,7 @@ import { render, cleanup, fireEvent, screen } from '@testing-library/svelte';
 import BranchPicker from './BranchPicker.svelte';
 import { store } from '../stores/sessions.svelte.js';
 import { messageStore } from '../stores/messages.svelte.js';
+import { backgroundTaskStore } from '../stores/backgroundTask.svelte.js';
 import { mockGroveBench } from '../__mocks__/setup.js';
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
@@ -55,6 +56,20 @@ describe('BranchPicker', () => {
     expect(mockGroveBench.switchBranch).toHaveBeenCalledWith('s1', 'feat-b', { create: false, busySessionIds: ['s3'] });
     expect(store.sessions.map((s) => s.branch)).toEqual(['feat-b', 'feat-b', 'other']);
     expect(onclose).toHaveBeenCalled();
+  });
+
+  it('counts a conversation with a background agent running as busy', async () => {
+    backgroundTaskStore.start('s2', { type: 'task_started', taskId: 'a1', description: 'Explore', taskType: 'local_agent' });
+    mockGroveBench.switchBranch.mockResolvedValue({ success: true, branch: 'feat-b', sessionIds: ['s1', 's2'] });
+    try {
+      renderPicker();
+      await flush();
+      await fireEvent.click(screen.getByText('feat-b'));
+      await flush();
+      expect(mockGroveBench.switchBranch).toHaveBeenCalledWith('s1', 'feat-b', { create: false, busySessionIds: ['s2'] });
+    } finally {
+      backgroundTaskStore.destroy('s2');
+    }
   });
 
   it('offers to create a typed name and creates it on Enter', async () => {

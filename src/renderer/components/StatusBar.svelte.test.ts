@@ -732,6 +732,19 @@ describe('StatusBar PR', () => {
     expect(screen.queryByRole('dialog', { name: 'Branch' })).toBeNull();
   });
 
+  it('waits for a background agent before switching branch', async () => {
+    backgroundTaskStore.start(ACTIVE, { type: 'task_started', taskId: 'a1', description: 'Explore', taskType: 'local_agent' });
+    try {
+      render(StatusBar, { props: { sessionId: ACTIVE } });
+      await openBranch();
+      const button = screen.getByRole<HTMLButtonElement>('button', { name: 'Switch branch…' });
+      expect(button.disabled).toBe(true);
+      expect(button.getAttribute('title')).toBe('Switch branches once the agent finishes');
+    } finally {
+      backgroundTaskStore.destroy(ACTIVE);
+    }
+  });
+
   it('clears the "new" chips once the popup is closed, but keeps a needs-human note', async () => {
     const branch = await renderWithPrs(pr({ checks: { total: 1, passed: 0, failed: 1, pending: 0 }, reviewDecision: 'CHANGES_REQUESTED' }));
     prStore.alertsBySession = {

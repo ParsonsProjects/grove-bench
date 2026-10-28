@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import { store } from '../stores/sessions.svelte.js';
-  import { messageStore } from '../stores/messages.svelte.js';
+  import { threadWorking } from '../lib/thread-working.js';
   import { prStore } from '../stores/pr.svelte.js';
   import { branchPickerRows } from '../lib/branch-picker.js';
   import { Kbd } from '$lib/components/ui/kbd/index.js';
@@ -63,7 +63,7 @@
     switching = true;
     error = null;
     try {
-      const busySessionIds = store.sessions.filter((s) => messageStore.getIsRunning(s.id)).map((s) => s.id);
+      const busySessionIds = store.sessions.filter((s) => threadWorking(s.id)).map((s) => s.id);
       const result = await window.groveBench.switchBranch(sessionId, name, { create, busySessionIds });
       if (!result.success) {
         error = result.error;

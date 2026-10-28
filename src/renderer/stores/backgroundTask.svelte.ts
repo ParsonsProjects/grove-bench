@@ -19,6 +19,11 @@ export interface BackgroundTask {
 /** Auto-remove delay for finished tasks (ms). */
 const AUTO_REMOVE_MS = 3000;
 
+/** Task types that are an agent at work: a subagent, or a workflow run here
+ *  or remotely. Not a background shell ('local_bash'): that can be a dev
+ *  server that never ends. */
+const AGENT_TASK_TYPES = new Set(['local_agent', 'local_workflow', 'remote_agent']);
+
 /**
  * Tracks Task-tool background work per session. Owns only task state; the
  * system messages announcing task lifecycle are pushed by MessageStore, which
@@ -30,6 +35,14 @@ class BackgroundTaskStore {
   /** Pending auto-remove timers per session, so they can be cancelled on destroy. */
   private timers = new Map<string, Set<ReturnType<typeof setTimeout>>>();
 
+  /** The threads with a background agent running, as one string: each
+   *  progress update replaces a thread's tasks, and this way what reads
+   *  hasRunningAgent (the sidebar's counts) only runs again when the set
+   *  itself changes. */
+  private agentThreadKey = $derived.by(() =>
+    Object.keys(this.tasksBySession).filter((id) => this.runningAgents(id).length > 0).sort().join('\n'));
+  private agentThreads = $derived(new Set(this.agentThreadKey ? this.agentThreadKey.split('\n') : []));
+
   get(sessionId: string): BackgroundTask[] {
     return Object.values(this.tasksBySession[sessionId] ?? {});
   }
@@ -38,6 +51,18 @@ class BackgroundTaskStore {
    *  subagent works on after its Agent call has returned. */
   isRunningFor(sessionId: string, toolUseId: string): boolean {
     return this.get(sessionId).some((t) => t.toolUseId === toolUseId && t.status === 'running');
+  }
+
+  /** The background agents still running: subagents and workflows that work
+   *  on after the turn that started them ended. The thread counts as working
+   *  while there are any and its agent is up (see thread-working.ts). */
+  runningAgents(sessionId: string): BackgroundTask[] {
+    return this.get(sessionId).filter((t) => t.status === 'running' && !!t.taskType && AGENT_TASK_TYPES.has(t.taskType));
+  }
+
+  /** Whether the thread has a background agent running (see runningAgents). */
+  hasRunningAgent(sessionId: string): boolean {
+    return this.agentThreads.has(sessionId);
   }
 
   /** Remove a completed/failed/stopped background task from the list */
@@ -54,7 +79,8 @@ class BackgroundTaskStore {
       taskId: event.taskId,
       toolUseId: event.toolUseId,
       description: event.description,
-      taskType: event.taskType,
+      // The live list can come first, and may be the one that has the type.
+      taskType: event.taskType ?? tasks[event.taskId]?.taskType,
       status: 'running',
       totalTokens: 0,
       toolUses: 0,
@@ -97,7 +123,9 @@ class BackgroundTaskStore {
     const live = new Map(event.tasks.map((t) => [t.taskId, t]));
     const next: Record<string, BackgroundTask> = {};
     for (const [id, task] of Object.entries(tasks)) {
-      if (task.status !== 'running' || live.has(id)) next[id] = task;
+      const listed = live.get(id);
+      if (listed && !task.taskType && listed.taskType) next[id] = { ...task, taskType: listed.taskType };
+      else if (task.status !== 'running' || listed) next[id] = task;
     }
     for (const [id, t] of live) {
       if (next[id]) continue;

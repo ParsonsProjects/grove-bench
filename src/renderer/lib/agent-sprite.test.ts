@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { agentSpriteState, agentLook, agentColors, toRuns, AGENT_SPRITES, SPRITE_MAPS, SPRITE_W, SPRITE_H, SIDE_WALK_MAPS, SIDE_WALK_W, SIDE_WALK_H, SKIN_TONES, HAIR_TONES, SCENERY_MAPS, SCENERY_PALETTE, type AgentSpriteInput } from './agent-sprite.js';
 
-const base: AgentSpriteInput = { destroying: false, status: 'running', hasPending: false, isRunning: false, needsAttention: false };
+const base: AgentSpriteInput = { destroying: false, status: 'running', hasPending: false, isRunning: false, backgroundAgent: false, needsAttention: false };
 
 describe('agentSpriteState', () => {
   it('follows the status dot precedence', () => {
@@ -11,6 +11,8 @@ describe('agentSpriteState', () => {
     expect(agentSpriteState({ ...base, status: 'installing' })).toBe('installing');
     expect(agentSpriteState({ ...base, hasPending: true, isRunning: true })).toBe('permission');
     expect(agentSpriteState({ ...base, isRunning: true, needsAttention: true })).toBe('working');
+    expect(agentSpriteState({ ...base, backgroundAgent: true, needsAttention: true })).toBe('working');
+    expect(agentSpriteState({ ...base, backgroundAgent: true, hasPending: true })).toBe('permission');
     expect(agentSpriteState({ ...base, status: 'stopped', needsAttention: true })).toBe('unread');
     expect(agentSpriteState({ ...base, status: 'stopped' })).toBe('stopped');
     expect(agentSpriteState({ ...base, status: 'sleeping' })).toBe('sleeping');

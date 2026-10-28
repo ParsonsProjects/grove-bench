@@ -6,6 +6,7 @@ import { mockGroveBench } from '../__mocks__/setup.js';
 import GitOpsDialog from './GitOpsDialog.svelte';
 import { store } from '../stores/sessions.svelte.js';
 import { messageStore } from '../stores/messages.svelte.js';
+import { backgroundTaskStore } from '../stores/backgroundTask.svelte.js';
 import type { CommitEntry } from '../../shared/types.js';
 
 const SID = 'gitops-session';
@@ -85,6 +86,24 @@ describe('GitOpsDialog while an agent works in the checkout', () => {
     expect(screen.getByRole('status')).toHaveTextContent('An agent is working in this checkout');
 
     messageStore.setIsRunning('attached', false);
+    await waitFor(() => expect(button()).toBeEnabled());
+  });
+
+  it('waits for a background agent working in the checkout', async () => {
+    store.sessions = [{ id: SID, branch: 'feat', repoPath: '/repo', status: 'running' }] as any;
+    mockGroveBench.gitLogCommits.mockResolvedValue([commit('s1', 'first')]);
+    const { source, button } = await openCherryPick();
+    await fireEvent.input(source, { target: { value: 'feature' } });
+    await screen.findByText('first');
+    expect(button()).toBeEnabled();
+
+    backgroundTaskStore.start(SID, { type: 'task_started', taskId: 'a1', description: 'Explore', taskType: 'local_agent' });
+    try {
+      await waitFor(() => expect(button()).toBeDisabled());
+      expect(screen.getByRole('status')).toHaveTextContent('An agent is working in this checkout. Wait for it to finish');
+    } finally {
+      backgroundTaskStore.destroy(SID);
+    }
     await waitFor(() => expect(button()).toBeEnabled());
   });
 

@@ -1,11 +1,11 @@
 <script lang="ts">
   import { store } from '../stores/sessions.svelte.js';
-  import { messageStore } from '../stores/messages.svelte.js';
   import AgentSprite from './AgentSprite.svelte';
   import FirstSteps from './FirstSteps.svelte';
   import { sessionRepoColor } from '../lib/session-repo-color.js';
+  import { sessionSpriteState } from '../lib/session-sprite-state.js';
   import {
-    agentSpriteState, toRuns, BENCH, LAMP, WATERING_CAN, SPROUT, FLAG, EASEL, SCENERY_PALETTE, SPRITE_H,
+    toRuns, BENCH, LAMP, WATERING_CAN, SPROUT, FLAG, EASEL, SCENERY_PALETTE, SPRITE_H,
     type AgentSpriteState, type GroveTab,
   } from '../lib/agent-sprite.js';
   import { PIXEL_TREE } from '../lib/pixel-tree.js';
@@ -60,16 +60,6 @@
   // Same list, same order as the sidebar's Conversations section (its triage
   // filter aside), so the landing never shows a conversation the sidebar doesn't.
   let picks = $derived(store.openConversations);
-
-  function stateFor(s: (typeof store.sessions)[number]) {
-    return agentSpriteState({
-      destroying: false,
-      status: s.status,
-      hasPending: messageStore.needsInput(s.id),
-      isRunning: messageStore.getIsRunning(s.id),
-      needsAttention: !!store.needsAttention[s.id],
-    });
-  }
 
   function open(id: string) {
     store.activeSessionId = id;
@@ -136,7 +126,7 @@
                 {/each}
               </svg>
               <span class="relative -mb-1.5 ml-3">
-                <AgentSprite state={stateFor(s)} seed={s.id} projectColor={sessionRepoColor(s.id)} scale={3} />
+                <AgentSprite state={sessionSpriteState(s)} seed={s.id} projectColor={sessionRepoColor(s.id)} scale={3} />
               </span>
             </span>
             <span class="text-xs text-muted-foreground truncate max-w-full">{name}</span>

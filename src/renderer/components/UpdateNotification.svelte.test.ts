@@ -6,6 +6,7 @@ import { tick } from 'svelte';
 import UpdateNotification from './UpdateNotification.svelte';
 import { messageStore } from '../stores/messages.svelte.js';
 import { store } from '../stores/sessions.svelte.js';
+import { backgroundTaskStore } from '../stores/backgroundTask.svelte.js';
 import type { UpdateState, UpdateStatus } from '../../shared/types.js';
 
 type Mock = ReturnType<typeof vi.fn>;
@@ -40,6 +41,7 @@ afterEach(() => {
   store.sessions = [];
   messageStore.setIsRunning('u1', false);
   messageStore.setIsRunning('u2', false);
+  backgroundTaskStore.tasksBySession = {};
 });
 
 describe('UpdateNotification', () => {
@@ -101,6 +103,19 @@ describe('UpdateNotification', () => {
     confirmSpy.mockReturnValue(true);
     await fireEvent.click(screen.getByRole('button', { name: 'Restart to update' }));
     await waitFor(() => expect(groveBench().restartToUpdate).toHaveBeenCalledTimes(1));
+  });
+
+  it('counts a thread whose background agent is still running as working', async () => {
+    store.sessions = [{ id: 'u1', branch: 'a', repoPath: '/r', status: 'running' }] as any;
+    backgroundTaskStore.start('u1', { type: 'task_started', taskId: 't1', description: 'Explore', taskType: 'local_agent' });
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+
+    render(UpdateNotification);
+    emit({ state: 'downloaded', info: INFO });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Restart to update' }));
+
+    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining('1 thread is still working'));
+    expect(groveBench().restartToUpdate).not.toHaveBeenCalled();
   });
 
   it("links to the ready version's release notes", async () => {

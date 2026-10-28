@@ -16,6 +16,7 @@
    */
   import { gitStatusStore } from '../stores/gitStatus.svelte.js';
   import { operationShort, operationTitle } from '../lib/git-operation.js';
+  import { threadWorking } from '../lib/thread-working.js';
   import { messageStore } from '../stores/messages.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
   import { prStore } from '../stores/pr.svelte.js';
@@ -42,6 +43,9 @@
   let sessionRepoPath = $derived(session?.repoPath ?? '');
   let sessionStatus = $derived(session?.status);
   let isRunning = $derived(messageStore.getIsRunning(sessionId));
+  /** A switch moves files under any agent at work here, a background one too
+   *  (the picker tells main the same, which refuses it). */
+  let working = $derived(threadWorking(sessionId));
   /** A merge, rebase, cherry-pick or revert stopped part way in the worktree. */
   let operation = $derived(gitStatusStore.getStatus(sessionId).operation);
   function openChanges() {
@@ -124,7 +128,7 @@
 
   // A turn starting mid-pick would switch files under the agent.
   $effect(() => {
-    if (isRunning) branchPickerOpen = false;
+    if (working) branchPickerOpen = false;
   });
 
   /** The picker opens over the lozenge in the popup's place; a click on
@@ -324,8 +328,8 @@
             size="xs"
             class="ml-auto"
             onclick={openBranchPicker}
-            disabled={isRunning}
-            title={isRunning ? 'Switch branches once the agent finishes its turn' : 'Switch to another branch, or create one'}
+            disabled={working}
+            title={working ? 'Switch branches once the agent finishes' : 'Switch to another branch, or create one'}
           >
             Switch branch…
           </Button>

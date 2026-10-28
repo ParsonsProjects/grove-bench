@@ -59,6 +59,21 @@ describe('sessionSubtitle', () => {
       .toEqual({ text: 'Working…', tone: 'working' });
   });
 
+  it('shows background agents still running after the turn', () => {
+    const idle = { isRunning: false, activity: IDLE, pendingTool: null, lastText: 'the answer', firstPrompt: 'the ask' };
+    expect(sessionSubtitle({ ...idle, backgroundAgents: ['Explore auth flow'] }))
+      .toEqual({ text: 'Background agent: Explore auth flow', tone: 'working' });
+    expect(sessionSubtitle({ ...idle, backgroundAgents: [''] }))
+      .toEqual({ text: 'Background agent running…', tone: 'working' });
+    expect(sessionSubtitle({ ...idle, backgroundAgents: ['a', 'b'] }))
+      .toEqual({ text: '2 background agents running…', tone: 'working' });
+    // The live turn and a pending answer come first.
+    expect(sessionSubtitle({ ...idle, isRunning: true, activity: { activity: 'thinking' }, backgroundAgents: ['a'] }))
+      .toEqual({ text: 'Thinking…', tone: 'working' });
+    expect(sessionSubtitle({ ...idle, pendingTool: 'question', backgroundAgents: ['a'] }))
+      .toEqual({ text: 'Waiting for your answer', tone: 'waiting' });
+  });
+
   it('falls back to last text, then first prompt, when idle', () => {
     expect(sessionSubtitle({ isRunning: false, activity: IDLE, pendingTool: null, lastText: 'the answer', firstPrompt: 'the ask' }))
       .toEqual({ text: 'the answer', tone: 'context' });

@@ -3050,6 +3050,37 @@ describe('AgentSessionManager sleep and wake', () => {
     await sessionManager.destroySession('test-sleep-bg-restart');
   });
 
+  it('tells the renderer the old background tasks are gone when the agent restarts, once', async () => {
+    const { session } = await startSession('test-bg-reset');
+    const resets = () => session.eventHistory.filter((e) => e.type === 'background_tasks_changed' && e.tasks.length === 0).length;
+    mockAdapter.control!.emitEvent({ type: 'task_started', taskId: 'a1', description: 'Explore', taskType: 'local_agent' });
+    await vi.waitFor(() => expect(session.eventHistory.some((e) => e.type === 'task_started')).toBe(true));
+    expect(resets()).toBe(0);
+
+    // A rewind or agent switch restarts the agent without a process_exit.
+    await sessionManager.stopQuery('test-bg-reset');
+    await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(2));
+    await vi.waitFor(() => expect(resets()).toBe(1));
+    const history = session.eventHistory;
+    expect(history.findIndex((e) => e.type === 'background_tasks_changed')).toBeGreaterThan(history.findIndex((e) => e.type === 'task_started'));
+
+    // Nothing left to clear: the next restart adds none.
+    await sessionManager.stopQuery('test-bg-reset');
+    await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(3));
+    await vi.waitFor(() => expect(session.queryHandle).toBeTruthy());
+    expect(resets()).toBe(1);
+    await sessionManager.destroySession('test-bg-reset');
+  });
+
+  it('sends no empty task list for a thread that never ran a background task', async () => {
+    const { session } = await startSession('test-bg-none');
+    await sessionManager.stopQuery('test-bg-none');
+    await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(2));
+    await vi.waitFor(() => expect(session.queryHandle).toBeTruthy());
+    expect(session.eventHistory.some((e) => e.type === 'background_tasks_changed')).toBe(false);
+    await sessionManager.destroySession('test-bg-none');
+  });
+
   it('logs why it stays awake, once per reason', async () => {
     await startSession('test-sleep-why');
     vi.mocked(logger.debug).mockClear();

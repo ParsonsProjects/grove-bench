@@ -1,6 +1,7 @@
 import type { SessionStatus } from '../../shared/types.js';
 import { store } from '../stores/sessions.svelte.js';
 import { messageStore } from '../stores/messages.svelte.js';
+import { backgroundAgentRunning } from './thread-working.js';
 import { agentSpriteState, type AgentSpriteState } from './agent-sprite.js';
 import { sessionRepoColor } from './session-repo-color.js';
 
@@ -19,6 +20,7 @@ export function sessionSpriteState(session: { id: string; status: SessionStatus 
     status: restoredTab ? 'sleeping' : session.status,
     hasPending: messageStore.needsInput(session.id),
     isRunning: messageStore.getIsRunning(session.id),
+    backgroundAgent: backgroundAgentRunning(session),
     needsAttention: store.isUnread(session),
   });
 }

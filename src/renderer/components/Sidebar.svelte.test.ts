@@ -21,6 +21,7 @@ import { todoStore } from '../stores/todo.svelte.js';
 import { draftStore } from '../stores/draft.svelte.js';
 import { gitStatusStore } from '../stores/gitStatus.svelte.js';
 import { skillsPanelStore } from '../stores/skillsPanel.svelte.js';
+import { backgroundTaskStore } from '../stores/backgroundTask.svelte.js';
 
 beforeEach(() => {
   // Call counts start from zero in every test, whatever ran before it.
@@ -51,6 +52,8 @@ afterEach(() => {
   messageStore.messagesBySession = {};
   messageStore.isRunning = {};
   messageStore.activityBySession = {};
+  // destroy, not a reset, so a finished task's auto-remove timer goes too.
+  for (const id of Object.keys(backgroundTaskStore.tasksBySession)) backgroundTaskStore.destroy(id);
 });
 
 describe('Sidebar session rows', () => {
@@ -323,6 +326,47 @@ describe('Sidebar session rows', () => {
     expect(store.sessions[0].status).toBe('stopped');
   });
 
+  it('asks before closing a conversation whose background agent is still running, then shows it closed', async () => {
+    backgroundTaskStore.start('s1', { type: 'task_started', taskId: 'a1', description: 'Explore', taskType: 'local_agent' });
+    render(Sidebar);
+    await fireEvent.click(screen.getByTitle(/^Close thread/));
+    expect(await screen.findByText('Close thread?')).toBeInTheDocument();
+    expect(screen.getByText(/has a background agent still running/)).toBeInTheDocument();
+    expect(screen.getByText(/shuts down its agent and terminal before that work is done/)).toBeInTheDocument();
+    expect(mockGroveBench.closeSession).not.toHaveBeenCalled();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Stop and close' }));
+    expect(mockGroveBench.closeSession).toHaveBeenCalledWith('s1');
+    // Its task is still listed (no process_exit comes for a close), but a
+    // closed thread's agent is gone, so it no longer counts as working.
+    expect(backgroundTaskStore.runningAgents('s1')).toHaveLength(1);
+    expect(screen.getByRole('group', { name: 'Filter threads' })).toHaveTextContent('Working 0');
+    expect(screen.queryByText('Background agent: Explore')).toBeNull();
+  });
+
+  it('says so when the turn and a background agent are both running', async () => {
+    messageStore.setIsRunning('s1', true);
+    backgroundTaskStore.start('s1', { type: 'task_started', taskId: 'a1', description: 'Explore', taskType: 'local_agent' });
+    render(Sidebar);
+    await fireEvent.click(screen.getByTitle(/^Close thread/));
+    expect(await screen.findByText(/is in the middle of a turn, with a background agent still running\./)).toBeInTheDocument();
+  });
+
+  it('closes straight away when only a background shell is running', async () => {
+    backgroundTaskStore.start('s1', { type: 'task_started', taskId: 'b1', description: 'npm run dev', taskType: 'local_bash' });
+    render(Sidebar);
+    await fireEvent.click(screen.getByTitle(/^Close thread/));
+    expect(mockGroveBench.closeSession).toHaveBeenCalledWith('s1');
+    expect(screen.queryByText('Close thread?')).toBeNull();
+  });
+
+  it("doesn't count a sleeping thread's leftover background agent as working", () => {
+    store.sessions = [{ id: 's1', branch: 'feat-x', repoPath: '/repo-a', status: 'sleeping', displayName: 'Asleep' }] as any;
+    backgroundTaskStore.start('s1', { type: 'task_started', taskId: 'a1', description: 'Explore', taskType: 'local_agent' });
+    render(Sidebar);
+    expect(screen.getByRole('group', { name: 'Filter threads' })).toHaveTextContent('Working 0');
+  });
+
   it('colours the branch icon by the PR health shown in the status bar', async () => {
     const icon = () => screen.getByRole('img', { name: /^Worktree/ });
     render(Sidebar);
@@ -447,6 +491,25 @@ describe('Sidebar attention triage', () => {
     expect(group).toHaveTextContent('Working 1');
     expect(group).toHaveTextContent('Unread 1');
     expect(group).toHaveTextContent('Idle 1');
+  });
+
+  it('counts a thread as working while a background agent runs after its turn', async () => {
+    backgroundTaskStore.start('finished', { type: 'task_started', taskId: 'a1', description: 'Explore auth flow', taskType: 'local_agent' });
+    // A background shell (a dev server, say) doesn't keep a thread working.
+    backgroundTaskStore.start('quiet', { type: 'task_started', taskId: 'b1', description: 'npm run dev', taskType: 'local_bash' });
+    render(Sidebar);
+
+    const group = screen.getByRole('group', { name: 'Filter threads' });
+    expect(group).toHaveTextContent('Working 2');
+    expect(group).toHaveTextContent('Unread 0');
+    expect(group).toHaveTextContent('Idle 1');
+    expect(screen.getAllByText('Background agent: Explore auth flow').length).toBeGreaterThan(0);
+
+    // Once it finishes, the turn it ended shows as unread again.
+    backgroundTaskStore.notify('finished', { type: 'task_notification', taskId: 'a1', taskStatus: 'completed', summary: '', outputFile: '' });
+    await tick();
+    expect(group).toHaveTextContent('Working 1');
+    expect(group).toHaveTextContent('Unread 1');
   });
 
   it('filters the active list by the selected chip', async () => {
@@ -1109,6 +1172,19 @@ describe('Sidebar groups', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Stop and close' }));
     expect(mockGroveBench.closeSession).toHaveBeenCalledWith('api1');
     expect(mockGroveBench.closeSession).toHaveBeenCalledWith('web1');
+  });
+
+  it('names both kinds of work when closing a group', async () => {
+    const group = make('Billing', ['api1', 'web1']);
+    messageStore.setIsRunning('api1', true);
+    backgroundTaskStore.start('web1', { type: 'task_started', taskId: 'a1', description: 'Explore', taskType: 'local_agent' });
+    render(Sidebar);
+
+    await fireEvent.contextMenu(within(groupEl(group.id)).getByText('Billing'));
+    await fireEvent.click(screen.getByText('Close all threads'));
+    expect(await screen.findByText(
+      /1 of them is in the middle of a turn, and 1 has a background agent still running\. Closing shuts down their agents and terminals before that work is done\./,
+    )).toBeInTheDocument();
   });
 
   it('counts only the rows the filter shows', async () => {

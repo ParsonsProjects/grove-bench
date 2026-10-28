@@ -4,7 +4,7 @@ import { agentSpriteState } from './agent-sprite.js';
 
 describe('triageForSprite', () => {
   const triage = (s: Partial<Parameters<typeof agentSpriteState>[0]>) =>
-    triageForSprite(agentSpriteState({ destroying: false, status: 'running', hasPending: false, isRunning: false, needsAttention: false, ...s }));
+    triageForSprite(agentSpriteState({ destroying: false, status: 'running', hasPending: false, isRunning: false, backgroundAgent: false, needsAttention: false, ...s }));
 
   it('prioritises needs-you over working over unread, as the status colour does', () => {
     expect(triage({ hasPending: true, isRunning: true, needsAttention: true })).toBe('needs-you');
