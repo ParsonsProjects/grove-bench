@@ -107,6 +107,20 @@ describe('backgroundTaskStore', () => {
     expect(backgroundTaskStore.runningAgents('other')).toEqual([]);
   });
 
+  it('hasRunningAgent follows the running agents, not other tasks', () => {
+    backgroundTaskStore.start(SID, { type: 'task_started', taskId: 'shell', description: 'npm run dev', taskType: 'local_bash' });
+    expect(backgroundTaskStore.hasRunningAgent(SID)).toBe(false);
+    backgroundTaskStore.start(SID, { type: 'task_started', taskId: 'agent', description: 'Explore', taskType: 'local_agent' });
+    expect(backgroundTaskStore.hasRunningAgent(SID)).toBe(true);
+    expect(backgroundTaskStore.hasRunningAgent('other')).toBe(false);
+    backgroundTaskStore.notify(SID, { type: 'task_notification', taskId: 'agent', taskStatus: 'completed', summary: '', outputFile: '' });
+    expect(backgroundTaskStore.hasRunningAgent(SID)).toBe(false);
+    // An empty live list, as main sends when the agent's process starts again.
+    backgroundTaskStore.start(SID, { type: 'task_started', taskId: 'agent2', description: 'Review', taskType: 'local_agent' });
+    backgroundTaskStore.reconcile(SID, { type: 'background_tasks_changed', tasks: [] });
+    expect(backgroundTaskStore.hasRunningAgent(SID)).toBe(false);
+  });
+
   it('keeps a task type the live list gave when task_started has none', () => {
     backgroundTaskStore.reconcile(SID, { type: 'background_tasks_changed', tasks: [{ taskId: 't1', description: 'Explore', taskType: 'local_agent' }] });
     backgroundTaskStore.start(SID, { type: 'task_started', taskId: 't1', toolUseId: 'tu1', description: 'Explore' });

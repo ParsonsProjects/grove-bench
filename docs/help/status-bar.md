@@ -133,7 +133,7 @@ Type to filter local and remote branches, then click one or press `Enter`. If th
 - A branch that only exists on the remote gets a local branch that tracks it.
 - Switching is refused while the checkout has uncommitted changes or untracked files, so commit, stash or remove them first. Creating a new branch is still allowed: no files change, so your uncommitted work comes along.
 - A branch can only be checked out in one place. A branch in use by another worktree (your project folder included) can't be picked.
-- **Switch branch…** can't be clicked while the agent is working. Switch once its turn ends.
+- **Switch branch…** can't be clicked while the agent is working, a background agent included. Switch once it's done.
 - Threads that share a checkout move together. For a direct thread that checkout is your project folder, so your editor sees the switch too.
 - Closing a thread with "Also delete the branch" never deletes the project's default branch, even if the thread switched onto it.
 

@@ -8,7 +8,7 @@
   import { Pulse } from '$lib/components/ui/pulse/index.js';
   import * as Tabs from '$lib/components/ui/tabs/index.js';
   import { store } from '../stores/sessions.svelte.js';
-  import { messageStore } from '../stores/messages.svelte.js';
+  import { threadWorking } from '../lib/thread-working.js';
   import { gitStatusStore } from '../stores/gitStatus.svelte.js';
   import { prStore } from '../stores/pr.svelte.js';
   import { checkpointStore } from '../stores/checkpoints.svelte.js';
@@ -47,10 +47,10 @@
   let session = $derived(store.sessions.find((s) => s.id === sessionId));
 
   // These rewrite the checkout under an agent that may be editing it, so
-  // they wait while any conversation working there is mid-turn (branch
-  // switching has the same rule).
+  // they wait while any conversation there is working: mid-turn, or with a
+  // background agent still running (branch switching has the same rule).
   let sharers = $state<string[]>(untrack(() => [sessionId]));
-  let agentBusy = $derived(sharers.some((id) => messageStore.getIsRunning(id)));
+  let agentBusy = $derived(sharers.some((id) => threadWorking(id)));
   let sessionBranch = $derived(session?.branch ?? '');
 
   const MODES: { id: GitOpMode; label: string }[] = [
@@ -268,7 +268,7 @@
 
         {#if agentBusy}
           <Notice tone="neutral">
-            <p>An agent is working in this checkout. Wait for its turn to finish, then try again.</p>
+            <p>An agent is working in this checkout. Wait for it to finish, then try again.</p>
           </Notice>
         {/if}
 

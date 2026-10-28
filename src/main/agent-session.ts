@@ -117,6 +117,18 @@ function sleepRefusal(session: ManagedSession): string | null {
   return null;
 }
 
+/** Whether the thread's history may still show background tasks running: a
+ *  task started, or a task list that wasn't empty, since the last empty
+ *  list. The renderer builds its list from these events. */
+function historyShowsBackgroundTasks(history: AgentEvent[]): boolean {
+  for (let i = history.length - 1; i >= 0; i--) {
+    const e = history[i];
+    if (e.type === 'task_started') return true;
+    if (e.type === 'background_tasks_changed') return e.tasks.length > 0;
+  }
+  return false;
+}
+
 /** The start in flight has ended: let sends waiting for its query handle go
  *  (see awaitQueryHandle), and shutDown(). */
 function settleQueryReady(session: ManagedSession): void {
@@ -680,8 +692,12 @@ class AgentSessionManager {
     session.queryHandle = handle;
     session.isStartingQuery = false;
     // A new agent process: the previous one's background tasks went with it,
-    // and the agent only reports its set when it changes.
+    // and the agent only reports its set when it changes. The renderer is
+    // told too, or tasks the old process was running would show as running
+    // for good (after a rewind, or reopening a closed thread). Kept in the
+    // history, so a replay ends with them gone as well.
     session.backgroundTasks = new Map();
+    if (historyShowsBackgroundTasks(session.eventHistory)) emit({ type: 'background_tasks_changed', tasks: [] });
     // Only a resumed conversation can turn out to be missing.
     session.promptsBeforeInit = resumingProviderSession ? { handle, prompts: [] } : null;
     // Before resolving queryReady below, so they go ahead of sends waiting on it.

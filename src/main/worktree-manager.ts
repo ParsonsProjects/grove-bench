@@ -1092,8 +1092,9 @@ export class WorktreeManager {
    * with `create` a new branch at HEAD. Every conversation sharing the
    * checkout moves with it, so all their recorded branches are updated.
    *
-   * Refused when a conversation sharing the checkout is mid-turn
-   * (`busySessionIds`, which only the renderer knows), when the tree has
+   * Refused when a conversation sharing the checkout is working, mid-turn
+   * or with a background agent running (`busySessionIds`, which only the
+   * renderer knows), when the tree has
    * uncommitted changes, or when the branch is checked out in another
    * worktree. A new branch at HEAD skips the dirty check: no file changes,
    * so the uncommitted work just comes along.
@@ -1116,7 +1117,7 @@ export class WorktreeManager {
       const sharers = await this.checkoutSharers(id);
       const busy = new Set(opts.busySessionIds ?? []);
       if (sharers.some((s) => busy.has(s))) {
-        return { success: false, error: 'An agent is working in this checkout. Wait for its turn to finish, then switch.' };
+        return { success: false, error: 'An agent is working in this checkout. Wait for it to finish, then switch.' };
       }
 
       try {

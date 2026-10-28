@@ -9,7 +9,7 @@
   import { trackEvent } from '../lib/analytics.js';
   import { getRepoColor } from '../lib/repo-colors.js';
   import { addProject } from '../lib/add-project.js';
-  import { threadWorking } from '../lib/thread-working.js';
+  import { backgroundAgentRunning } from '../lib/thread-working.js';
   import { draftStore } from '../stores/draft.svelte.js';
   import { groupStore } from '../stores/groups.svelte.js';
   import { todoStore } from '../stores/todo.svelte.js';
@@ -152,14 +152,15 @@
     return lines.join('\n');
   }
 
-  /** Context line under a session row: waiting-reason > live activity > last/first message. */
-  function rowSubtitle(session: { id: string }): SessionSubtitle | null {
+  /** Context line under a session row: waiting-reason > live activity >
+   *  background agents > last/first message. */
+  function rowSubtitle(session: { id: string; status: SessionStatus }): SessionSubtitle | null {
     const msgs = messageStore.getMessages(session.id);
     const loaded = msgs.length > 0;
     const preview = sessionPreviewStore.get(session.id);
     const isRunning = messageStore.getIsRunning(session.id);
     const pendingTool = loaded ? pendingPermissionTool(msgs) : null;
-    const backgroundAgents = backgroundTaskStore.runningAgents(session.id).map((t) => t.description);
+    const backgroundAgents = backgroundAgentRunning(session) ? backgroundTaskStore.runningAgents(session.id).map((t) => t.description) : [];
     // Past messages only show when nothing live does, so skip that work while
     // the agent runs (its reply grows with every update) or waits on you.
     const quiet = !isRunning && !pendingTool && backgroundAgents.length === 0;
@@ -543,17 +544,42 @@
    *  screen readers (which already read its name, so it isn't repeated). */
   const CLOSE_HINT = 'Stops the agent and terminal and takes it off the Threads list. Open it again any time.';
 
-  /** Conversations waiting on the close confirmation, and how many of them
-   *  were working when it was asked. */
-  let confirmClose = $state<{ ids: string[]; working: number } | null>(null);
+  /** Conversations waiting on the close confirmation, as they were when it
+   *  was asked: how many were mid-turn, how many more had a background agent
+   *  running, and whether any had one. */
+  type CloseAsk = { ids: string[]; midTurn: number; agentOnly: number; agents: boolean };
+  let confirmClose = $state<CloseAsk | null>(null);
 
   /** Close conversations, asking first when any is working (mid-turn, or a
-   *  background agent still running): closing stops that work, and the ✕ is
-   *  easy to click in passing. */
+   *  background agent still running): closing cuts that work off, and the ✕
+   *  is easy to click in passing. */
   function requestClose(ids: string[]) {
-    const working = ids.filter((id) => threadWorking(id)).length;
-    if (working > 0) confirmClose = { ids, working };
+    const threads = store.sessions.filter((s) => ids.includes(s.id));
+    const midTurn = threads.filter((s) => messageStore.getIsRunning(s.id)).length;
+    const withAgent = threads.filter((s) => backgroundAgentRunning(s));
+    const agentOnly = withAgent.filter((s) => !messageStore.getIsRunning(s.id)).length;
+    if (midTurn + agentOnly > 0) confirmClose = { ids, midTurn, agentOnly, agents: withAgent.length > 0 };
     else for (const id of ids) void stopSession(id);
+  }
+
+  /** The close confirmation's words: why the threads are still working, and
+   *  what closing does to that work. A remote agent may carry on in the
+   *  cloud, so it says the work won't be done, not that it stops. */
+  function closeWarning({ midTurn, agentOnly, agents }: CloseAsk, single: boolean): { why: string; then: string } {
+    if (single) {
+      return {
+        why: midTurn ? (agents ? 'is in the middle of a turn, with a background agent still running' : 'is in the middle of a turn') : 'has a background agent still running',
+        then: agents ? 'Closing it shuts down its agent and terminal before that work is done.' : 'Closing it stops the turn and shuts down its terminal.',
+      };
+    }
+    const why = [
+      midTurn ? `${midTurn} of them ${midTurn === 1 ? 'is' : 'are'} in the middle of a turn` : '',
+      agentOnly ? `${agentOnly}${midTurn ? '' : ' of them'} ${agentOnly === 1 ? 'has' : 'have'} a background agent still running` : '',
+    ].filter(Boolean).join(', and ');
+    return {
+      why,
+      then: agents ? 'Closing shuts down their agents and terminals before that work is done.' : `Closing stops ${midTurn === 1 ? 'that turn' : 'those turns'} and shuts down their terminals.`,
+    };
   }
 
   function closeConfirmed() {
@@ -1659,19 +1685,20 @@
 
 <!-- Close confirmation: only asked when a conversation is working -->
 {#if confirmClose}
-  {@const { ids, working } = confirmClose}
+  {@const { ids } = confirmClose}
   {@const one = ids.length === 1 ? store.sessions.find((s) => s.id === ids[0]) : null}
+  {@const warning = closeWarning(confirmClose, !!one)}
   <Dialog.Root open={true} onOpenChange={(o) => { if (!o) confirmClose = null; }}>
     <Dialog.Content class="max-w-sm">
       <Dialog.Header>
         <Dialog.Title>{ids.length === 1 ? 'Close thread?' : `Close ${ids.length} threads?`}</Dialog.Title>
         <Dialog.Description>
           {#if one}
-            <span class="text-foreground font-medium">{sessionRowLabel(one)}</span> is still working.
-            Closing stops its work, background agents included, and shuts down its terminal. You can open it again later.
+            <span class="text-foreground font-medium">{sessionRowLabel(one)}</span> {warning.why}.
+            {warning.then} You can open it again later.
           {:else}
-            {working} of them {working === 1 ? 'is' : 'are'} still working.
-            Closing stops {working === 1 ? 'its' : 'their'} work, background agents included, and shuts down their terminals. You can open them again later.
+            {warning.why}.
+            {warning.then} You can open them again later.
           {/if}
         </Dialog.Description>
       </Dialog.Header>

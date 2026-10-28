@@ -65,7 +65,7 @@ Right-click a thread and choose **Mark as To Do** to keep track of something you
 
 ## Closed threads
 
-To put a thread aside, whether it's done or you'll come back to it later, right-click it and choose **Close Thread**, or hover it and click the **✕**. This shuts down its agent, background commands and terminal, including any dev servers they started, and takes it off the **Threads** list. If it's still working (in the middle of a turn, or a background agent is running), Grove Bench asks first, as closing stops that work. Under **Projects** it shows as **Closed**. Its copy of the project and its branch are kept, so you can go back to it: press `Ctrl+R` to find it, or `Ctrl+Shift+T` for the last one you closed. Opening it starts its agent again and puts it back under **Threads**.
+To put a thread aside, whether it's done or you'll come back to it later, right-click it and choose **Close Thread**, or hover it and click the **✕**. This shuts down its agent, background commands and terminal, including any dev servers they started, and takes it off the **Threads** list. If it's still working (in the middle of a turn, or a background agent is running), Grove Bench asks first, as closing cuts that work off. Under **Projects** it shows as **Closed**. Its copy of the project and its branch are kept, so you can go back to it: press `Ctrl+R` to find it, or `Ctrl+Shift+T` for the last one you closed. Opening it starts its agent again and puts it back under **Threads**.
 
 ## Context Menu
 
@@ -80,7 +80,7 @@ Right-click a thread to access:
 - **New Group…**, **Add to**, **Move to**, **Remove from**: put the thread in a group, or take it out (see Groups above)
 - **Delete Thread**: remove the thread and its copy of the project, and optionally its branch. It warns first when files have uncommitted changes, or, if you also delete the branch, when the branch has commits its base branch doesn't have
 
-Hovering a row shows its full name and, when goals are on (see [Thread tab](thread-tab.md)), what the thread is trying to get done. Hovering it, or moving to it with Tab, also shows a quick button: an **✕** to close an open thread (it asks first if the agent is mid-turn), or a bin to delete a closed one (it always asks first).
+Hovering a row shows its full name and, when goals are on (see [Thread tab](thread-tab.md)), what the thread is trying to get done. Hovering it, or moving to it with Tab, also shows a quick button: an **✕** to close an open thread (it asks first if the thread is still working), or a bin to delete a closed one (it always asks first).
 
 Closing or deleting the thread you have open takes you back to the landing screen. It doesn't open another thread in its place.
 

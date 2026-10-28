@@ -35,6 +35,14 @@ class BackgroundTaskStore {
   /** Pending auto-remove timers per session, so they can be cancelled on destroy. */
   private timers = new Map<string, Set<ReturnType<typeof setTimeout>>>();
 
+  /** The threads with a background agent running, as one string: each
+   *  progress update replaces a thread's tasks, and this way what reads
+   *  hasRunningAgent (the sidebar's counts) only runs again when the set
+   *  itself changes. */
+  private agentThreadKey = $derived.by(() =>
+    Object.keys(this.tasksBySession).filter((id) => this.runningAgents(id).length > 0).sort().join('\n'));
+  private agentThreads = $derived(new Set(this.agentThreadKey ? this.agentThreadKey.split('\n') : []));
+
   get(sessionId: string): BackgroundTask[] {
     return Object.values(this.tasksBySession[sessionId] ?? {});
   }
@@ -47,9 +55,14 @@ class BackgroundTaskStore {
 
   /** The background agents still running: subagents and workflows that work
    *  on after the turn that started them ended. The thread counts as working
-   *  while there are any. */
+   *  while there are any and its agent is up (see thread-working.ts). */
   runningAgents(sessionId: string): BackgroundTask[] {
     return this.get(sessionId).filter((t) => t.status === 'running' && !!t.taskType && AGENT_TASK_TYPES.has(t.taskType));
+  }
+
+  /** Whether the thread has a background agent running (see runningAgents). */
+  hasRunningAgent(sessionId: string): boolean {
+    return this.agentThreads.has(sessionId);
   }
 
   /** Remove a completed/failed/stopped background task from the list */
