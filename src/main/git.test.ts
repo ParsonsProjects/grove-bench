@@ -38,6 +38,7 @@ import {
   push,
   syncStatus,
   branchCommits,
+  MissingBaseError,
   gitOperation,
   continueGitOperation,
   parseBranchCommits,
@@ -713,14 +714,46 @@ describe('branchCommits()', () => {
     expect(mockExeca).toHaveBeenCalledWith('git', ['log', '--format=%s%x1f%b%x1e', 'origin/main..HEAD'], { cwd: '/repo' });
   });
 
-  it('returns empty when neither ref resolves', async () => {
-    mockExeca.mockRejectedValue(new Error('unknown revision'));
-    expect(await branchCommits('/repo', 'main')).toEqual([]);
+  it('throws when neither ref resolves, rather than report no commits', async () => {
+    // rev-parse 128: git couldn't read the repository, so not a missing base.
+    mockExeca.mockImplementation((async (_cmd: string, args: string[]) => {
+      if (args[0] === 'rev-parse') return { stdout: '', exitCode: 128 };
+      throw new Error('not a git repository');
+    }) as never);
+    const err = await branchCommits('/repo', 'main').catch((e: unknown) => e);
+    expect(err).toEqual(new Error('No merge base with main'));
+    expect(err).not.toBeInstanceOf(MissingBaseError);
+  });
+
+  it('says when the repository has neither <base> nor origin/<base>', async () => {
+    mockExeca.mockImplementation((async (_cmd: string, args: string[]) => {
+      if (args[0] === 'rev-parse') return { stdout: '', exitCode: 1 };
+      throw new Error('unknown revision');
+    }) as never);
+    await expect(branchCommits('/repo', 'develop')).rejects.toBeInstanceOf(MissingBaseError);
+    expect(mockExeca).toHaveBeenCalledWith('git', ['rev-parse', '--verify', '--quiet', 'develop^{commit}'], { cwd: '/repo', reject: false });
+    expect(mockExeca).toHaveBeenCalledWith('git', ['rev-parse', '--verify', '--quiet', 'origin/develop^{commit}'], { cwd: '/repo', reject: false });
+  });
+
+  it('gives each git command the timeout it is asked for', async () => {
+    scriptGit({ 'merge-base main HEAD': 'mb', 'merge-base origin/main HEAD': new Error('unknown revision'), 'log': '' });
+    await branchCommits('/repo', 'main', { timeout: 15_000 });
+    expect(mockExeca).toHaveBeenCalledWith('git', ['merge-base', 'main', 'HEAD'], { cwd: '/repo', timeout: 15_000 });
+    expect(mockExeca).toHaveBeenCalledWith('git', ['log', '--format=%s%x1f%b%x1e', 'main..HEAD'], { cwd: '/repo', timeout: 15_000 });
+  });
+
+  it('throws when git log fails', async () => {
+    scriptGit({
+      'merge-base main HEAD': 'mb',
+      'merge-base origin/main HEAD': new Error('unknown revision'),
+      'log': new Error('fatal: bad object'),
+    });
+    await expect(branchCommits('/repo', 'main')).rejects.toThrow('bad object');
   });
 
   it('never passes a base that git would read as an option', async () => {
     // `git log --output=<file>..HEAD` would write a file.
-    expect(await branchCommits('/repo', '--output=/tmp/x')).toEqual([]);
+    await expect(branchCommits('/repo', '--output=/tmp/x')).rejects.toThrow();
     expect(mockExeca).not.toHaveBeenCalled();
   });
 });

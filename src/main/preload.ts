@@ -226,8 +226,8 @@ const api: GroveBenchAPI = {
   push: (sessionId: string) => ipcRenderer.invoke(IPC.GIT_PUSH, sessionId),
   getGitSyncStatus: (sessionId: string) =>
     ipcRenderer.invoke(IPC.GIT_SYNC_STATUS, sessionId),
-  getBranchCommits: (sessionId: string, base: string) =>
-    ipcRenderer.invoke(IPC.GIT_BRANCH_COMMITS, sessionId, base),
+  getBranchCommits: (sessionId: string, base: string, opts?: { timeout?: number }) =>
+    ipcRenderer.invoke(IPC.GIT_BRANCH_COMMITS, sessionId, base, opts),
 
   // Branch operations
   gitLogCommits: (sessionId: string, ref: string, base: string) =>
@@ -259,7 +259,7 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.AGENT_CHECKPOINT_FILE_LINES, sessionId, uuid, scope, filePath),
 
   // Git status
-  getGitStatus: (sessionId: string, opts?: { scope?: 'working' | 'branch'; base?: string }) =>
+  getGitStatus: (sessionId: string, opts?: { scope?: 'working' | 'branch'; base?: string; timeout?: number }) =>
     ipcRenderer.invoke(IPC.GIT_STATUS, sessionId, opts),
 
   // PR info

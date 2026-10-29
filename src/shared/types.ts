@@ -472,6 +472,9 @@ export interface GitStatusOptions {
   scope?: DiffScope;
   /** Base branch for `scope: 'branch'` (merge-base with HEAD is the comparison point). */
   base?: string;
+  /** Kill each git command after this many ms, answering with `error`: for
+   *  a check the user waits on (the delete and remove-project dialogs). */
+  timeout?: number;
 }
 
 /** A git operation stopped part way, waiting on the user: a merge, rebase,
@@ -699,6 +702,16 @@ export interface GitSyncStatus {
 export interface BranchCommit {
   subject: string;
   body: string;
+}
+
+/** getBranchCommits' answer. With `error` set, `commits` is empty because
+ *  they couldn't be listed, not because there are none. */
+export interface BranchCommitsResult {
+  commits: BranchCommit[];
+  error?: string;
+  /** The repository has neither <base> nor origin/<base>: the base branch
+   *  setting names a branch this project doesn't have. */
+  missingBase?: true;
 }
 
 /** A commit with its id, for pickers (cherry-pick source lists). */
@@ -1550,7 +1563,10 @@ export interface GroveBenchAPI {
   generateCommitMessage(sessionId: string, substituteAgent?: string): Promise<string>;
   push(sessionId: string): Promise<void>;
   getGitSyncStatus(sessionId: string): Promise<GitSyncStatus>;
-  getBranchCommits(sessionId: string, base: string): Promise<BranchCommit[]>;
+  /** Commits on the thread's branch that `base` doesn't have. Check `error`
+   *  before reading an empty list as none. `timeout`: kill each git command
+   *  after this many ms. */
+  getBranchCommits(sessionId: string, base: string, opts?: { timeout?: number }): Promise<BranchCommitsResult>;
   /** Commits on `ref` (a branch name or commit) that aren't on `base`, newest first, with ids. */
   gitLogCommits(sessionId: string, ref: string, base: string): Promise<CommitEntry[]>;
   /** Rebase the session branch onto another branch. Conflicts are aborted and reported. */

@@ -16,7 +16,7 @@ import { adapterRegistry, registerClaudeAccount } from './adapters/index.js';
 import { claudeAccounts, isClaudeAccountId, newClaudeAccount } from './adapters/claude-accounts.js';
 import type { AgentAdapter } from './adapters/types.js';
 import { agentForProject, recordedAgent } from './background-tasks.js';
-import { validateBranchName, branchExists, branchExistsAnywhere, worktreeBranches, listBranches, getDefaultBranch, git, fileDiff, fileDiffAgainst, isTracked, patchResult, patchOverLimit, MAX_TEXT_FILE_BYTES, resolveMergeBase, blobLines, hashWorkingFiles, listProjectFiles, revertFile, gitOperation, continueGitOperation, abortGitOperation, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, textLines, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, logCommits, rebaseOnto, cherryPick, squashSince, currentBranch, recentCheckouts, getGitIdentity, gitVersion } from './git.js';
+import { validateBranchName, branchExists, branchExistsAnywhere, worktreeBranches, listBranches, getDefaultBranch, git, fileDiff, fileDiffAgainst, isTracked, patchResult, patchOverLimit, MAX_TEXT_FILE_BYTES, resolveMergeBase, blobLines, hashWorkingFiles, listProjectFiles, revertFile, gitOperation, continueGitOperation, abortGitOperation, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, textLines, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, MissingBaseError, logCommits, rebaseOnto, cherryPick, squashSince, currentBranch, recentCheckouts, getGitIdentity, gitVersion } from './git.js';
 import { inspectProjectFolder, projectKind } from './project-path.js';
 import { prsForBranches, prCreate, prReviewComments, ghLogin, isNetworkError, isRateLimitError, openPrs, GH_OFFLINE_COOLDOWN_MS, GH_OFFLINE_MESSAGE, GH_RATE_LIMITED_MESSAGE } from './gh.js';
 import { tempBranchName, isTempBranch, generateBranchName } from './branch-name.js';
@@ -27,7 +27,7 @@ import { openWorktreeFile } from './worktree-files.js';
 import { generateCommitMessage } from './commit-message.js';
 import { exportFileName, threadJson, threadMarkdown, type ThreadExportInfo } from './thread-export.js';
 import type { PreviewBounds, PreviewCommand, PreviewPageKind } from '../shared/types.js';
-import type { CheckpointDiffScope, FileDiffResult, GitOperation, FileLinesResult, GitStatusOptions, GitStatusResult, GitStatusEntry, ImageDiffContent, OpenWorktreeFileResult, PrCreateOpts, PrReviewSubmitResult } from '../shared/types.js';
+import type { BranchCommitsResult, CheckpointDiffScope, FileDiffResult, GitOperation, FileLinesResult, GitStatusOptions, GitStatusResult, GitStatusEntry, ImageDiffContent, OpenWorktreeFileResult, PrCreateOpts, PrReviewSubmitResult } from '../shared/types.js';
 import { parsePrReviewSubmit, submitPrReview } from './pr-review.js';
 import { showOsNotification, showTestNotification } from './notifications.js';
 import { parseGitStatusPorcelain, parseNumstat, parseNameStatus, parseHashObjectOutput } from './git-status-parser.js';
@@ -160,13 +160,18 @@ function sanitizeWorktreeRelPath(worktreePath: string, filePath: string): { relP
  *  it rewrites the index as it reads, and that lock can make a git command
  *  typed in the terminal meanwhile fail ("index.lock exists"). The diffs
  *  after it still can, once, after files change: diff ignores the setting. */
-const statusGit = (cwd: string) => git(['status', '--porcelain=v1', '-z', '--untracked-files=all'], cwd, { optionalLocks: false });
+const statusGit = (cwd: string, timeout?: number) => git(['status', '--porcelain=v1', '-z', '--untracked-files=all'], cwd, { optionalLocks: false, timeout });
+
+/** A git timeout the window asked for, in ms: a positive number, or none. */
+function requestedTimeout(ms: unknown): number | undefined {
+  return typeof ms === 'number' && Number.isFinite(ms) && ms > 0 ? ms : undefined;
+}
 
 /** Attach per-file line counts (`git diff <base> --numstat`) as a sidebar hint.
  *  Scoped to the changed paths so this doesn't walk the whole tree after every
  *  agent edit; falls back to the full diff when the path list would be
  *  unreasonably long for a command line. Best-effort (e.g. no HEAD yet). */
-async function attachNumstat(cwd: string, entries: GitStatusEntry[], base: string): Promise<void> {
+async function attachNumstat(cwd: string, entries: GitStatusEntry[], base: string, timeout?: number): Promise<void> {
   try {
     const paths = new Set<string>();
     for (const e of entries) {
@@ -177,7 +182,7 @@ async function attachNumstat(cwd: string, entries: GitStatusEntry[], base: strin
     // name rather than "a => b", and a name outside ASCII unquoted.
     const numstatArgs = ['diff', base, '--numstat', '-z'];
     if (paths.size <= 200) numstatArgs.push('--', ...paths);
-    const numstatRaw = await git(numstatArgs, cwd);
+    const numstatRaw = await git(numstatArgs, cwd, { timeout });
     const stats = new Map(parseNumstat(numstatRaw).map(s => [s.path, s]));
     for (const entry of entries) {
       const stat = stats.get(entry.filePath);
@@ -192,7 +197,7 @@ async function attachNumstat(cwd: string, entries: GitStatusEntry[], base: strin
 /** Attach working-tree blob hashes so the UI can tell a file changed since the
  *  user marked it viewed. One `git hash-object --stdin-paths` call; deleted
  *  files get a fixed marker. Best-effort. */
-async function attachContentHashes(cwd: string, entries: GitStatusEntry[]): Promise<void> {
+async function attachContentHashes(cwd: string, entries: GitStatusEntry[], timeout?: number): Promise<void> {
   try {
     // A file in conflict can be gone (both sides deleted it, or someone did
     // since), and one missing path fails the whole call.
@@ -203,7 +208,7 @@ async function attachContentHashes(cwd: string, entries: GitStatusEntry[]): Prom
     const gone = (e: GitStatusEntry) => e.status === 'deleted' || missing.has(e.filePath);
     const present = [...new Set(entries.filter(e => !gone(e)).map(e => e.filePath))];
     if (present.length > 200) return;
-    const hashes = parseHashObjectOutput(await hashWorkingFiles(cwd, present), present);
+    const hashes = parseHashObjectOutput(await hashWorkingFiles(cwd, present, { timeout }), present);
     for (const entry of entries) {
       entry.contentHash = gone(entry) ? 'deleted' : hashes.get(entry.filePath);
     }
@@ -1669,14 +1674,16 @@ export function registerHandlers() {
     return squashSince(worktree.path, base.trim(), typeof message === 'string' ? message : '');
   });
 
-  ipcMain.handle(IPC.GIT_BRANCH_COMMITS, async (_event, sessionId: string, base: string) => {
+  ipcMain.handle(IPC.GIT_BRANCH_COMMITS, async (_event, sessionId: string, base: string, opts?: { timeout?: unknown }): Promise<BranchCommitsResult> => {
     const worktree = worktreeManager.getWorktree(sessionId);
-    if (!worktree) return [];
+    if (!worktree) return { commits: [] };
     try {
-      return await branchCommits(worktree.path, base);
+      return { commits: await branchCommits(worktree.path, base, { timeout: requestedTimeout(opts?.timeout) }) };
     } catch (e) {
+      // Answered, not thrown: the delete dialogs say they couldn't check.
+      if (e instanceof MissingBaseError) return { commits: [], error: e.message, missingBase: true };
       logger.warn(`branch commits failed for session ${sessionId}:`, e);
-      return [];
+      return { commits: [], error: e instanceof Error ? e.message : String(e) };
     }
   });
 
@@ -1727,8 +1734,11 @@ export function registerHandlers() {
     const worktree = worktreeManager.getWorktree(sessionId);
     if (!worktree || worktree.noGit) return { entries: [] };
     const cwd = worktree.path;
+    const timeout = requestedTimeout(opts?.timeout);
     // A merge or rebase stopped part way: the Changes tab finishes or aborts it.
-    const operation = Promise.resolve().then(() => gitOperation(cwd)).catch((e) => {
+    // A timed check skips it: it runs git with no time limit, and only the
+    // Changes tab reads it.
+    const operation = timeout ? Promise.resolve(null) : Promise.resolve().then(() => gitOperation(cwd)).catch((e) => {
       logger.warn(`git operation check failed for session ${sessionId}:`, e);
       return null;
     });
@@ -1742,14 +1752,14 @@ export function registerHandlers() {
       let numstatBase = 'HEAD';
       if (opts?.scope === 'branch') {
         const base = opts.base?.trim();
-        const mb = base ? await resolveMergeBase(cwd, base) : null;
+        const mb = base ? await resolveMergeBase(cwd, base, { timeout }) : null;
         if (!mb) {
           return withOperation({ entries: [], scopeError: base ? `No merge base with ${base}` : 'No base branch' });
         }
         numstatBase = mb.mergeBase;
         // Tracked changes (committed or not) since the merge base, plus untracked files.
-        const tracked = parseNameStatus(await git(['diff', '--name-status', '-z', mb.mergeBase], cwd));
-        const status = parseGitStatusPorcelain(await statusGit(cwd));
+        const tracked = parseNameStatus(await git(['diff', '--name-status', '-z', mb.mergeBase], cwd, { timeout }));
+        const status = parseGitStatusPorcelain(await statusGit(cwd, timeout));
         const untracked = status.entries.filter(e => e.status === 'untracked');
         // The diff from the base lists a file in conflict as an ordinary change.
         const conflicted = status.entries.filter(e => e.status === 'conflicted');
@@ -1760,12 +1770,12 @@ export function registerHandlers() {
           uncommitted: status.entries.length,
         };
       } else {
-        const raw = await statusGit(cwd);
+        const raw = await statusGit(cwd, timeout);
         result = parseGitStatusPorcelain(raw);
       }
       if (result.entries.length === 0) return withOperation(result);
-      await attachNumstat(cwd, result.entries, numstatBase);
-      await attachContentHashes(cwd, result.entries);
+      await attachNumstat(cwd, result.entries, numstatBase, timeout);
+      await attachContentHashes(cwd, result.entries, timeout);
       return withOperation(result);
     } catch (e) {
       // Skipped (the process host down): the renderer keeps the last status.
