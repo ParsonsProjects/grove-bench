@@ -38,6 +38,23 @@ beforeEach(() => {
 
 afterEach(() => cleanup());
 
+/** jsdom has no layout. Lays the chat out with each message drawn 100px
+ *  tall, one under another, in a scroller 500px tall, and returns it. With
+ *  no scroll anchoring, as Chromium at the very top. */
+function layOut(container: HTMLElement): HTMLElement {
+  const el = container.querySelector<HTMLElement>('.overflow-y-auto')!;
+  const rows = () => [...el.querySelectorAll<HTMLElement>(':scope > [data-msg-id]')];
+  Object.defineProperty(el, 'scrollHeight', { configurable: true, get: () => rows().length * 100 });
+  Object.defineProperty(el, 'clientHeight', { configurable: true, value: 500 });
+  vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+    const i = this === el ? -1 : rows().indexOf(this as HTMLElement);
+    const top = i < 0 ? 0 : i * 100 - el.scrollTop;
+    const height = this === el ? 500 : 100;
+    return { top, bottom: top + height, left: 0, right: 0, width: 0, height, x: 0, y: top, toJSON: () => ({}) };
+  });
+  return el;
+}
+
 async function pressCtrlF() {
   window.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', ctrlKey: true, bubbles: true }));
   await tick();
@@ -465,6 +482,7 @@ describe('OutputPanel: drawing a loaded page', () => {
     store.activeSessionId = SID;
     messageStore.setViewMode(SID, 'detailed');
   });
+  afterEach(() => vi.restoreAllMocks());
 
   it('draws history that loads into an empty thread newest first, then the rest a batch per frame', async () => {
     const { container } = render(OutputPanel, { sessionId: SID });
@@ -494,10 +512,7 @@ describe('OutputPanel: drawing a loaded page', () => {
   it('keeps a reader who scrolled up in place as older batches join above', async () => {
     messageStore.messagesBySession = { [SID]: replies(30) as never };
     const { container } = render(OutputPanel, { sessionId: SID });
-    const el = container.querySelector<HTMLElement>('.overflow-y-auto')!;
-    // jsdom has no layout: each drawn message stands 100px tall.
-    Object.defineProperty(el, 'scrollHeight', { configurable: true, get: () => drawn(container).length * 100 });
-    Object.defineProperty(el, 'clientHeight', { configurable: true, value: 500 });
+    const el = layOut(container);
     el.scrollTop = 200;
     el.dispatchEvent(new Event('scroll'));
 
@@ -505,6 +520,27 @@ describe('OutputPanel: drawing a loaded page', () => {
     await tick();
     // Two batches of ten joined above, 1000px each.
     expect(el.scrollTop).toBe(2200);
+  });
+
+  it('makes up only what the browser did not when older batches join above', async () => {
+    messageStore.messagesBySession = { [SID]: replies(20) as never };
+    const { container } = render(OutputPanel, { sessionId: SID });
+    const el = layOut(container);
+    el.scrollTop = 200;
+    el.dispatchEvent(new Event('scroll'));
+    // Scroll anchoring, as Chromium does above the top: rows drawn above the
+    // one in view move the scroll offset with them as they're laid out.
+    let rowsSeen = drawn(container).length;
+    new MutationObserver(() => {
+      const now = drawn(container).length;
+      el.scrollTop += (now - rowsSeen) * 100;
+      rowsSeen = now;
+    }).observe(el, { childList: true });
+
+    await vi.waitFor(() => expect(drawn(container)).toHaveLength(20));
+    await tick();
+    // One batch of ten, 1000px, moved by the browser alone.
+    expect(el.scrollTop).toBe(1200);
   });
 
   it('draws a short thread at once', () => {
@@ -534,6 +570,134 @@ describe('OutputPanel: drawing a loaded page', () => {
     await tick();
 
     expect(drawn(container)).toHaveLength(13);
+  });
+});
+
+describe('OutputPanel: scrolling up loads older messages', () => {
+  const texts = (prefix: string, n: number): ChatMessage[] =>
+    Array.from({ length: n }, (_, i) => ({ kind: 'text', id: `${prefix}${i}`, text: `${prefix} ${i}`, uuid: `${prefix}-${i}` }));
+  const drawn = (container: HTMLElement) => [...container.querySelectorAll<HTMLElement>('[data-msg-id]')].map((el) => el.dataset.msgId);
+  const scrollTo = (el: HTMLElement, top: number) => {
+    el.scrollTop = top;
+    el.dispatchEvent(new Event('scroll'));
+  };
+  const nextFrame = () => new Promise((r) => requestAnimationFrame(r));
+
+  beforeEach(() => {
+    store.activeSessionId = SID;
+    messageStore.setViewMode(SID, 'detailed');
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    Reflect.deleteProperty(Element.prototype, 'scrollIntoView');
+    messageStore.pendingJumpBySession = {};
+  });
+
+  it('draws the next older messages near the top, keeping the one in view where it is', async () => {
+    messageStore.messagesBySession = { [SID]: texts('m', 80) };
+    const { container } = render(OutputPanel, { sessionId: SID });
+    await vi.waitFor(() => expect(drawn(container)).toHaveLength(50));
+    const el = layOut(container);
+
+    // At the very top, reading m30, the oldest drawn.
+    scrollTo(el, 0);
+
+    await vi.waitFor(() => expect(drawn(container)).toHaveLength(80));
+    await tick();
+    expect(drawn(container)[0]).toBe('m0');
+    // Thirty rows of 100px joined above m30.
+    expect(el.scrollTop).toBe(3000);
+  });
+
+  it('draws them a batch per frame', async () => {
+    messageStore.messagesBySession = { [SID]: texts('m', 80) };
+    const { container } = render(OutputPanel, { sessionId: SID });
+    await vi.waitFor(() => expect(drawn(container)).toHaveLength(50));
+    const el = layOut(container);
+    const added: number[] = [];
+    new MutationObserver((records) => {
+      added.push(records.reduce((n, r) => n + [...r.addedNodes].filter((node) => node instanceof HTMLElement && node.dataset.msgId).length, 0));
+    }).observe(el, { childList: true });
+
+    scrollTo(el, 0);
+
+    await vi.waitFor(() => expect(drawn(container)).toHaveLength(80));
+    expect(Math.max(...added)).toBe(10);
+  });
+
+  it('leaves them until the reader is within a screen of the top', async () => {
+    messageStore.messagesBySession = { [SID]: texts('m', 80) };
+    const { container, findByTitle } = render(OutputPanel, { sessionId: SID });
+    await vi.waitFor(() => expect(drawn(container)).toHaveLength(50));
+    const el = layOut(container);
+
+    scrollTo(el, 600);
+    await findByTitle('Scroll to bottom');
+    await nextFrame();
+    await tick();
+
+    expect(drawn(container)).toHaveLength(50);
+  });
+
+  it('reads the next page of history once the loaded messages are all drawn', async () => {
+    messageStore.messagesBySession = { [SID]: texts('r', 20) };
+    messageStore.setPagination(SID, 300, 100);
+    const load = vi.spyOn(messageStore, 'loadOlderEvents').mockImplementation(async () => {
+      messageStore.messagesBySession = { [SID]: [...texts('o', 60), ...messageStore.getMessages(SID)] };
+      messageStore.setPagination(SID, 300, 0);
+    });
+    const { container, findByText } = render(OutputPanel, { sessionId: SID });
+    await vi.waitFor(() => expect(drawn(container)).toHaveLength(20));
+    const el = layOut(container);
+
+    scrollTo(el, 0);
+
+    // Fifty more of the sixty it read, above r0, which stays in place.
+    await vi.waitFor(() => expect(drawn(container)).toHaveLength(70));
+    await tick();
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(drawn(container)[0]).toBe('o10');
+    expect(el.scrollTop).toBe(5000);
+    await findByText(/Load 10 older messages/);
+    messageStore.paginationBySession = {};
+  });
+
+  it("doesn't follow the bottom when an older page joins above a prompt", async () => {
+    messageStore.messagesBySession = { [SID]: [...texts('r', 20), { kind: 'user', id: 'u1', text: 'go on' }] };
+    const { container, getByTitle, findByTitle } = render(OutputPanel, { sessionId: SID });
+    await vi.waitFor(() => expect(drawn(container)).toHaveLength(21));
+    const el = layOut(container);
+    scrollTo(el, 600);
+    await findByTitle('Scroll to bottom');
+
+    // As the "Load older events" button or a jump loads a page.
+    messageStore.messagesBySession = { [SID]: [...texts('o', 60), ...messageStore.getMessages(SID)] };
+    await tick();
+
+    expect(getByTitle('Scroll to bottom')).toBeInTheDocument();
+    expect(drawn(container)[0]).toBe('r0');
+  });
+
+  it("waits for the reader's own scroll after a jump", async () => {
+    Element.prototype.scrollIntoView = vi.fn();
+    messageStore.messagesBySession = { [SID]: texts('m', 80) };
+    vi.spyOn(messageStore, 'loadOlderUntil').mockResolvedValue();
+    vi.spyOn(messageStore, 'findMessageForEvent').mockResolvedValue('m30');
+    const { container } = render(OutputPanel, { sessionId: SID });
+    await vi.waitFor(() => expect(drawn(container)).toHaveLength(50));
+    const el = layOut(container);
+
+    messageStore.requestJump(SID, { eventIndex: 30, uuid: null, bookmarkId: '' });
+    await vi.waitFor(() => expect(Element.prototype.scrollIntoView).toHaveBeenCalled());
+    // The jump's smooth scroll passes near the top.
+    scrollTo(el, 100);
+    await nextFrame();
+    await tick();
+    expect(drawn(container)).toHaveLength(50);
+
+    await fireEvent.wheel(el);
+    scrollTo(el, 50);
+    await vi.waitFor(() => expect(drawn(container)).toHaveLength(80));
   });
 });
 
