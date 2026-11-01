@@ -120,20 +120,52 @@
       renderCap = Infinity;
       return;
     }
-    const frame = requestAnimationFrame(() => void drawOlderBatch());
+    const frame = requestAnimationFrame(drawOlderBatch);
     return () => cancelAnimationFrame(frame);
   });
 
-  async function drawOlderBatch() {
-    const el = scrollContainer;
+  function drawOlderBatch() {
     // Following the conversation, the scroll effect below keeps the bottom
     // in view. Scrolled up, keep the reader's place as messages join above.
-    const keepPlace = !shouldAutoScroll && !!el && el.clientHeight > 0;
-    const prevScrollHeight = keepPlace ? el.scrollHeight : 0;
-    renderCap += RENDER_BATCH;
-    if (!keepPlace) return;
+    if (shouldAutoScroll) renderCap += RENDER_BATCH;
+    else void keepingPlace(() => { renderCap += RENDER_BATCH; });
+  }
+
+  /** Make a change that draws rows above the reader without moving what
+   *  they see. Chromium's scroll anchoring does that itself, but not at the
+   *  very top (scrollTop 0), so the row in view is measured before and
+   *  after, and only what is left over is made up. */
+  async function keepingPlace(change: () => void) {
+    const el = scrollContainer;
+    const row = el && el.clientHeight > 0 ? rowInView(el) : undefined;
+    // A fold of notes is drawn anew when older notes join it (it's keyed by
+    // its first), so it's found again by a message it holds.
+    const id = row?.dataset.msgId ?? row?.querySelector<HTMLElement>('[data-msg-id]')?.dataset.msgId;
+    const before = row?.getBoundingClientRect().top ?? 0;
+    change();
     await tick();
-    el.scrollTop += el.scrollHeight - prevScrollHeight;
+    if (!el || !row) return;
+    const now = row.isConnected ? row : id ? rowHolding(el, id) : undefined;
+    if (!now) return;
+    const moved = now.getBoundingClientRect().top - before;
+    if (Math.abs(moved) >= 1) el.scrollTop += moved;
+  }
+
+  /** The first row (a message, or a fold of notes) at least partly in view. */
+  function rowInView(el: HTMLElement): HTMLElement | undefined {
+    const viewTop = el.getBoundingClientRect().top;
+    for (const child of Array.from(el.children)) {
+      if (!(child instanceof HTMLElement) || !(child.dataset.msgId || child.dataset.notes !== undefined)) continue;
+      if (child.getBoundingClientRect().bottom > viewTop) return child;
+    }
+    return undefined;
+  }
+
+  /** The row (the message's own, or the fold it's in) drawing a message. */
+  function rowHolding(el: HTMLElement, id: string): HTMLElement | undefined {
+    let node = el.querySelector(`[data-msg-id="${id}"]`);
+    while (node && node.parentElement !== el) node = node.parentElement;
+    return node instanceof HTMLElement ? node : undefined;
   }
 
   /** Draw everything in the window now (before a change the user asked for). */
@@ -211,35 +243,73 @@
     visibleCount = PAGE_SIZE;
   });
 
-  async function expandVisibleCount(newCount: number) {
-    drawAll();
-    const prevScrollHeight = scrollContainer?.scrollHeight ?? 0;
-    visibleCount = Math.min(newCount, filteredMessages.length);
-    await tick();
-    if (scrollContainer) {
-      scrollContainer.scrollTop += scrollContainer.scrollHeight - prevScrollHeight;
-    }
+  function expandVisibleCount(newCount: number) {
+    void keepingPlace(() => {
+      drawAll();
+      visibleCount = Math.min(newCount, filteredMessages.length);
+    });
   }
 
   function loadOlderMessages() {
-    void expandVisibleCount(visibleCount + PAGE_SIZE);
+    expandVisibleCount(visibleCount + PAGE_SIZE);
   }
 
   function showAllMessages() {
-    void expandVisibleCount(filteredMessages.length);
+    expandVisibleCount(filteredMessages.length);
   }
 
   async function loadOlderEvents() {
-    drawAll();
-    const prevScrollHeight = scrollContainer?.scrollHeight ?? 0;
     await messageStore.loadOlderEvents(sessionId);
     // Show all messages after loading older events (they're already in the
     // store). Counted there: switched away meanwhile, this chat stands still.
-    visibleCount = filterVisibleMessages(threadMessages(messageStore.getMessages(sessionId)), viewMode).length;
-    await tick();
-    if (scrollContainer) {
-      scrollContainer.scrollTop += scrollContainer.scrollHeight - prevScrollHeight;
+    const count = filterVisibleMessages(threadMessages(messageStore.getMessages(sessionId)), viewMode).length;
+    await keepingPlace(() => {
+      drawAll();
+      visibleCount = count;
+    });
+  }
+
+  // ─── Scrolling up near the top draws older messages ───
+  // Within a screen of the top, the next page of the loaded messages joins
+  // above, a batch per frame (drawOlderBatch) so scrolling doesn't stall.
+  // Once they're all drawn, the next page of history is read first, and
+  // more after it while a page holds nothing this view shows (Focus, say,
+  // over a run of tool calls): drawing nothing, it wouldn't move the view,
+  // so no scroll would ask again. Not while a jump scrolls to its message
+  // (drawing above would stop it short of it): the reader's next wheel,
+  // click, touch or key goes on.
+  let jumpScrolling = false;
+
+  async function loadOlderOnScroll() {
+    if (jumpScrolling || renderCap !== Infinity || held) return;
+    while (!hasOlderMessages) {
+      if (!hasUnloadedEvents || isLoadingOlderEvents) return;
+      const unloaded = unloadedEventCount;
+      await messageStore.loadOlderEvents(sessionId);
+      await tick();
+      // Back at the bottom, jumping or switched away meanwhile (this chat
+      // stands still), or the page didn't load.
+      if (shouldAutoScroll || jumpScrolling || !paneShown || renderCap !== Infinity || held) return;
+      if (unloadedEventCount >= unloaded) return;
     }
+    const drawn = Math.min(visibleCount, filteredMessages.length);
+    // The first batch now: the "Load older" row may go with it, and at the
+    // very top there is no scrolling up to make up for that alone.
+    await keepingPlace(() => {
+      visibleCount = Math.min(drawn + PAGE_SIZE, filteredMessages.length);
+      renderCap = drawn + RENDER_BATCH;
+    });
+  }
+
+  function endJumpScroll() {
+    jumpScrolling = false;
+  }
+
+  /** The reader's own wheel or click: any jump's scroll is over, and a
+   *  bookmark's ring goes (not on a key, which may be Ctrl+C). */
+  function readerMoved() {
+    endJumpScroll();
+    maybeClearHighlight();
   }
 
   // Message search state — results come from the main-process full-history
@@ -282,6 +352,7 @@
     // Stop following new output, or the next streamed chunk snaps back to the
     // bottom before the smooth scroll has moved far enough to say so itself.
     shouldAutoScroll = false;
+    jumpScrolling = true;
     requestAnimationFrame(() => {
       const el = scrollContainer?.querySelector(`[data-msg-id="${id}"]`);
       // A folded note: unfold it, or there is nothing to scroll to.
@@ -423,20 +494,32 @@
   // Re-enable auto-scroll when the user sends a message
   // Track filteredMessages (not the sliced `messages`) to avoid false triggers
   // when the user loads older messages and the visible window grows.
-  let prevMsgCount = $state(0);
-  $effect(() => {
-    const len = filteredMessages.length;
-    if (len > prevMsgCount) {
-      const last = filteredMessages[len - 1];
-      if (last?.kind === 'user') {
-        untrack(followLatest);
-      } else if (!untrack(() => shouldAutoScroll) && untrack(() => hasOlderMessages)) {
-        // Scrolled up to read: grow the window instead of sliding it, so the
-        // oldest rendered message (maybe the one being read) stays put.
-        untrack(() => { visibleCount += len - prevMsgCount; });
-      }
+  // Before drawing, so the window is set before its rows are.
+  // Not state: only this effect reads it.
+  let prevMessages: ChatMessage[] = [];
+  $effect.pre(() => {
+    const msgs = filteredMessages;
+    const prev = prevMessages;
+    prevMessages = msgs;
+    if (msgs.length <= prev.length) return;
+    const last = msgs.at(-1);
+    // A prompt sent, not one already last when an older page joined above.
+    if (last?.kind === 'user' && last.id !== prev.at(-1)?.id) {
+      untrack(followLatest);
+      return;
     }
-    prevMsgCount = len;
+    untrack(() => {
+      if (shouldAutoScroll || !hasOlderMessages) return;
+      // Scrolled up to read: the window runs from the oldest message drawn
+      // (maybe the one being read) to the end, so new output grows it
+      // instead of sliding it, and an older page joining above stays out.
+      const oldest = prev[Math.max(0, prev.length - visibleCount)];
+      const at = oldest ? msgs.findIndex((m) => m.id === oldest.id) : -1;
+      const next = at >= 0 ? msgs.length - at : visibleCount + msgs.length - prev.length;
+      // Mid-way through drawing a page, the rows drawn so far stay too.
+      if (renderCap !== Infinity) renderCap += Math.max(0, next - visibleCount);
+      visibleCount = next;
+    });
   });
 
   $effect(() => {
@@ -492,6 +575,7 @@
     // Hidden: no layout, so this says nothing about where the user is.
     if (clientHeight === 0) return;
     shouldAutoScroll = scrollHeight - scrollTop - clientHeight < 100;
+    if (!shouldAutoScroll && scrollTop < clientHeight) void loadOlderOnScroll();
   }
 
   function scrollToBottom() {
@@ -526,8 +610,10 @@
   onscroll={handleScroll}
   onloadcapture={followImageLoad}
   onerrorcapture={followImageLoad}
-  onmousedown={maybeClearHighlight}
-  onwheel={maybeClearHighlight}
+  onmousedown={readerMoved}
+  onwheel={readerMoved}
+  onkeydown={endJumpScroll}
+  ontouchstart={endJumpScroll}
 >
   <!-- Clipped to the view: the dots reach 726px down, and unclipped they
        made a short chat scroll, so following it hid the first messages. -->
@@ -554,7 +640,10 @@
     </div>
   {/if}
 
-  {#if hasUnloadedEvents}
+  <!-- One row at a time, the loaded messages (newer) first: a page of
+       history joining above then swaps the row for one as tall, which keeps
+       the reader's place at the very top too (see keepingPlace). -->
+  {#if !hasOlderMessages && hasUnloadedEvents}
     <div class="flex items-center justify-center gap-2 py-2 relative z-10">
       <Button
         variant="subtle"
