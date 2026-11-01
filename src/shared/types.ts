@@ -305,7 +305,9 @@ export type AgentEvent =
   | { type: 'error'; message: string; auth?: boolean; keyRejected?: boolean }
   | { type: 'process_exit'; exitCode?: number }
   // Rate limiting
-  | { type: 'rate_limit'; status: 'allowed' | 'allowed_warning' | 'rejected'; resetsAt?: number; utilization?: number; rateLimitType?: string }
+  /** `extraUsage`: the plan's own limit is reached but requests go on,
+   *  billed as extra usage (overage). Present only when true. */
+  | { type: 'rate_limit'; status: 'allowed' | 'allowed_warning' | 'rejected'; resetsAt?: number; utilization?: number; rateLimitType?: string; extraUsage?: boolean }
   // Background tasks (Agent tool sub-tasks)
   | { type: 'task_started'; taskId: string; toolUseId?: string; description: string; taskType?: string }
   | { type: 'task_progress'; taskId: string; toolUseId?: string; description: string; summary?: string; lastToolName?: string; totalTokens: number; toolUses: number; durationMs: number }
@@ -615,12 +617,14 @@ export interface OpenPrSummary {
 }
 
 /** A GitHub Actions run with failed jobs: what
- *  `gh run view <runId> --repo <repo> --log-failed` needs. */
+ *  `gh run view <runId> --repo <repo> --log-failed` needs, and the failed
+ *  jobs' ids for reading one job's log while the rest of the run goes on. */
 export interface FailingRun {
   /** OWNER/REPO, or HOST/OWNER/REPO off github.com (gh's --repo form). */
   repo: string;
-  /** Digits only. */
+  /** Digits only, as are the job ids. */
   runId: string;
+  jobIds: string[];
 }
 
 export interface PrInfo {

@@ -1230,6 +1230,23 @@ describe('transformMessage()', () => {
     });
   });
 
+  describe('rate_limit_event', () => {
+    const limit = (info: object) => transformMessage(sdk({ type: 'rate_limit_event', rate_limit_info: info }), makeCtx());
+
+    it('passes on the status, reset and window', () => {
+      expect(limit({ status: 'rejected', resetsAt: 1_900_000_000, rateLimitType: 'five_hour', utilization: 1 })).toEqual([
+        { type: 'rate_limit', status: 'rejected', resetsAt: 1_900_000_000, utilization: 1, rateLimitType: 'five_hour' },
+      ]);
+    });
+
+    it('says when extra usage lets requests go on past the limit', () => {
+      for (const info of [{ isUsingOverage: true }, { overageStatus: 'allowed' }, { overageStatus: 'allowed_warning' }]) {
+        expect(limit({ status: 'rejected', ...info })[0]).toMatchObject({ status: 'rejected', extraUsage: true });
+      }
+      expect(limit({ status: 'rejected', overageStatus: 'rejected', isUsingOverage: false })[0]).not.toHaveProperty('extraUsage');
+    });
+  });
+
   describe('unknown message types', () => {
     it('returns empty array for unknown type', () => {
       const events = transformMessage(sdk({ type: 'unknown_type' }), makeCtx());

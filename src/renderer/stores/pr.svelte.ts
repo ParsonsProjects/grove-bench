@@ -412,7 +412,7 @@ class PrStore {
   fixCiWithAgent(sessionId: string): boolean {
     const pr = this.getPr(sessionId);
     if (!pr || !this.sessionIdle(sessionId)) return false;
-    this.sendTurn(sessionId, buildFixCiPrompt(pr.number, this.branchOfPr(sessionId, pr), pr.failingChecks ?? [], pr.failingRuns ?? []));
+    this.sendTurn(sessionId, buildFixCiPrompt(pr, this.branchOfPr(sessionId, pr)));
     this.clearAlerts(sessionId, 'ci_failed');
     return true;
   }
@@ -473,9 +473,12 @@ class PrStore {
    *  even if the primary changes while an auto action is in flight. */
   private handleEvent(sessionId: string, prNumber: number, event: PrWatchEvent): void {
     const auto = this.getAuto(sessionId);
+    // At a usage limit an automatic turn would fail at once (and use up an
+    // auto-fix attempt), so it falls back to the alert, as when busy.
+    const limited = messageStore.isRateLimited(sessionId);
 
     if (event.kind === 'ci_failed') {
-      if (auto.fixCi) {
+      if (auto.fixCi && !limited) {
         const prev = this.autoFixAttempts.get(sessionId);
         const attempts = prev?.prNumber === prNumber ? prev.attempts : 0;
         if (attempts >= MAX_AUTO_FIX_ATTEMPTS) {
@@ -495,7 +498,7 @@ class PrStore {
     }
 
     if (event.kind === 'new_comments') {
-      if (auto.addressReviews) {
+      if (auto.addressReviews && !limited) {
         this.addressReviewsWithAgent(sessionId, { trustedOnly: true }).then((result) => {
           // Nothing sent (busy, or all comments from non-collaborators) → surface it
           if (result !== 'sent') this.addAlert(sessionId, prNumber, { kind: 'new_comments', count: event.count });

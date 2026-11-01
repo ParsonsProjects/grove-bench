@@ -708,12 +708,15 @@ export function transformMessage(
       const info = m.rate_limit_info ?? {};
       // Older SDKs sent these two in snake_case.
       const legacy = info as { resets_at?: number; rate_limit_type?: typeof info.rateLimitType };
+      // Past the plan's limit, requests go on when extra usage covers them.
+      const extraUsage = info.isUsingOverage === true || info.overageStatus === 'allowed' || info.overageStatus === 'allowed_warning';
       events.push({
         type: 'rate_limit',
         status: info.status ?? 'allowed',
         resetsAt: legacy.resets_at ?? info.resetsAt,
         utilization: info.utilization,
         rateLimitType: legacy.rate_limit_type ?? info.rateLimitType,
+        ...(extraUsage ? { extraUsage: true } : {}),
       });
       break;
     }

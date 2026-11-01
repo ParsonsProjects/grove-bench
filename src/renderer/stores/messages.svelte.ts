@@ -1108,21 +1108,36 @@ class MessageStore {
     return true;
   }
 
-  /** Lift a pause set by Stop/rewind and send the next queued item if idle. */
+  /** Lift a pause set by Stop/rewind or a usage limit and send the next
+   *  queued item if idle. The user's call: it goes out even while limited. */
   resumeQueue(sessionId: string) {
     delete this.queuePausedBySession[sessionId];
-    this.flushQueue(sessionId);
+    this.flushQueue(sessionId, { resumed: true });
+  }
+
+  /** Whether the thread's plan usage limit is reached and its reset still
+   *  ahead, with no extra usage to go on. Only with a reset time: one
+   *  without could stand forever, from replayed history. The SDK reports a
+   *  limit only when it changes, so later turns that hit it say nothing. */
+  isRateLimited(sessionId: string): boolean {
+    const limit = rateLimitStore.get(sessionId);
+    return limit?.status === 'rejected' && !!limit.resetsAt && !limit.extraUsage;
   }
 
   /** Send the oldest queued item if the session is idle and not paused.
    *  Only one is sent per call — the next goes out when its turn's result
-   *  arrives, so each queued prompt gets its own turn. */
-  flushQueue(sessionId: string) {
+   *  arrives, so each queued prompt gets its own turn. While the thread is
+   *  at a usage limit the queue pauses instead, unless the user resumed it. */
+  flushQueue(sessionId: string, opts?: { resumed?: boolean }) {
     // Never fire from replayed history: those results are old news.
     if (this._replayBuffer !== null) return;
     if (this.getIsRunning(sessionId) || this.isQueuePaused(sessionId)) return;
     const queue = this.getQueue(sessionId);
     if (queue.length === 0) return;
+    if (!opts?.resumed && this.isRateLimited(sessionId)) {
+      this.pauseQueue(sessionId);
+      return;
+    }
     const [next, ...rest] = queue;
     this.queuedBySession = { ...this.queuedBySession, [sessionId]: rest };
     this.dispatch(sessionId, next);
@@ -1741,12 +1756,15 @@ class MessageStore {
         break;
 
       case 'tool_progress': {
-        const prevSummary = this.activityBySession[sessionId]?.toolSummary;
+        // The summary of the call this progress is for: the one the activity
+        // already shows, or another still running (parallel calls).
+        const prev = this.activityBySession[sessionId];
+        const call = prev?.toolUseId === event.toolUseId ? undefined : this.findToolCall(sessionId, event.toolUseId);
         this.activityBySession[sessionId] = {
           activity: 'tool_starting',
           toolName: event.toolName,
           elapsedSeconds: event.elapsedSeconds,
-          toolSummary: prevSummary,
+          toolSummary: call ? this.summarizeToolInput(call) : prev?.toolUseId === event.toolUseId ? prev.toolSummary : undefined,
           toolUseId: event.toolUseId,
         };
         // Track per-tool progress
@@ -1795,6 +1813,7 @@ class MessageStore {
             resetsAt: event.resetsAt,
             utilization: event.utilization,
             rateLimitType: event.rateLimitType,
+            ...(event.extraUsage ? { extraUsage: true } : {}),
           });
           // Live only: a replayed one is from whenever that turn ran.
           if (this._replayBuffer === null) usageStore.applyRateLimitEvent(sessionId, event);
@@ -1806,9 +1825,10 @@ class MessageStore {
             text: `Rate limited${event.rateLimitType ? ` (${event.rateLimitType})` : ''}${event.resetsAt ? ` — resets ${new Date(event.resetsAt * 1000).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}` : ''}`,
           });
           // Hold queued follow-ups: each would go out when this turn's result
-          // arrives and hit the same limit. Live only: a replayed one is from
-          // whenever that turn ran.
-          if (this._replayBuffer === null) this.pauseQueue(sessionId);
+          // arrives and hit the same limit (flushQueue also checks, for ones
+          // queued after this). Not when extra usage lets turns go on. Live
+          // only: a replayed one is from whenever that turn ran.
+          if (this._replayBuffer === null && !event.extraUsage) this.pauseQueue(sessionId);
         }
         break;
 
@@ -2034,10 +2054,25 @@ class MessageStore {
     if (changed) this.setMessagesForMutation(sessionId, updated);
     // The sidebar and status bar read the activity, which was set from the
     // call as first reported: often just its kind ("execute") for ACP agents.
+    // ACP sends an update for each change to what the call shows (its
+    // output too), so only a new name or summary is worth a redraw.
     const activity = this.activityBySession[sessionId];
     if (call && activity?.activity === 'tool_starting' && activity.toolUseId === event.toolUseId) {
-      this.activityBySession[sessionId] = { ...activity, toolName: call.toolName, toolSummary: this.summarizeToolInput(call) };
+      const toolSummary = this.summarizeToolInput(call);
+      if (call.toolName !== activity.toolName || toolSummary !== activity.toolSummary) {
+        this.activityBySession[sessionId] = { ...activity, toolName: call.toolName, toolSummary };
+      }
     }
+  }
+
+  /** A tool call in the thread by its id, searched from the newest. */
+  private findToolCall(sessionId: string, toolUseId: string): ChatToolCallMessage | undefined {
+    const msgs = this.getMessagesForMutation(sessionId);
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const m = msgs[i];
+      if (m.kind === 'tool_call' && m.toolUseId === toolUseId) return m;
+    }
+    return undefined;
   }
 
   /**

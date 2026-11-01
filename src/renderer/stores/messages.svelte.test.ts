@@ -2936,6 +2936,65 @@ describe('outgoing message queue', () => {
     expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, 'next', undefined, undefined);
   });
 
+  it('a usage limit reported while nothing was queued still holds what is queued after it', () => {
+    const resetsAt = Math.floor(Date.now() / 1000) + 3600;
+    messageStore.submitMessage(SID, { displayText: 'first', outgoing: 'first' });
+    messageStore.ingestEvent(SID, { type: 'rate_limit', status: 'rejected', rateLimitType: 'five_hour', resetsAt });
+    messageStore.submitMessage(SID, { displayText: 'later', outgoing: 'later' });
+    mockGroveBench.sendMessage.mockClear();
+
+    messageStore.ingestEvent(SID, result);
+
+    expect(mockGroveBench.sendMessage).not.toHaveBeenCalled();
+    expect(messageStore.isQueuePaused(SID)).toBe(true);
+  });
+
+  it('after Resume, a turn that hits the same limit again holds the rest, with no new limit event', () => {
+    // The SDK reports a limit only when it changes.
+    const resetsAt = Math.floor(Date.now() / 1000) + 3600;
+    messageStore.submitMessage(SID, { displayText: 'first', outgoing: 'first' });
+    messageStore.submitMessage(SID, { displayText: 'second', outgoing: 'second' });
+    messageStore.submitMessage(SID, { displayText: 'third', outgoing: 'third' });
+    messageStore.ingestEvent(SID, { type: 'rate_limit', status: 'rejected', rateLimitType: 'five_hour', resetsAt });
+    messageStore.ingestEvent(SID, result);
+    mockGroveBench.sendMessage.mockClear();
+
+    messageStore.resumeQueue(SID);
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, 'second', undefined, undefined);
+
+    messageStore.ingestEvent(SID, result);
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledTimes(1);
+    expect(messageStore.isQueuePaused(SID)).toBe(true);
+    expect(messageStore.getQueue(SID).map((m) => m.displayText)).toEqual(['third']);
+  });
+
+  it('a limit that extra usage covers does not hold the queue', () => {
+    const resetsAt = Math.floor(Date.now() / 1000) + 3600;
+    messageStore.submitMessage(SID, { displayText: 'first', outgoing: 'first' });
+    messageStore.submitMessage(SID, { displayText: 'next', outgoing: 'next' });
+    mockGroveBench.sendMessage.mockClear();
+
+    messageStore.ingestEvent(SID, { type: 'rate_limit', status: 'rejected', rateLimitType: 'five_hour', resetsAt, extraUsage: true });
+    messageStore.ingestEvent(SID, result);
+
+    expect(messageStore.isRateLimited(SID)).toBe(false);
+    expect(messageStore.isQueuePaused(SID)).toBe(false);
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, 'next', undefined, undefined);
+  });
+
+  it('a limit whose reset has passed no longer holds the queue', () => {
+    messageStore.submitMessage(SID, { displayText: 'first', outgoing: 'first' });
+    messageStore.ingestEvent(SID, { type: 'rate_limit', status: 'rejected', rateLimitType: 'five_hour', resetsAt: Math.floor(Date.now() / 1000) - 60 });
+    messageStore.clearQueue(SID);
+    messageStore.submitMessage(SID, { displayText: 'next', outgoing: 'next' });
+    mockGroveBench.sendMessage.mockClear();
+
+    messageStore.ingestEvent(SID, result);
+
+    expect(messageStore.isRateLimited(SID)).toBe(false);
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, 'next', undefined, undefined);
+  });
+
   it('a usage limit in replayed history does not hold the queue', () => {
     messageStore.submitMessage(SID, { displayText: 'first', outgoing: 'first' });
     messageStore.submitMessage(SID, { displayText: 'next', outgoing: 'next' });
@@ -3276,6 +3335,18 @@ describe('ingestEvent — tool views', () => {
     expect(messageStore.getActivity(SID)).toMatchObject({ toolName: 'read', toolUseId: 't6' });
   });
 
+  it('keeps the same activity object when tool_update changes nothing it shows', () => {
+    // ACP sends an update for each chunk of a command's output.
+    messageStore.ingestEvent(SID, {
+      type: 'assistant_tool_use', toolName: 'execute', toolInput: {}, toolUseId: 't7', uuid: 'u7',
+      toolView: { kind: 'shell', command: 'npm test' },
+    });
+    const before = messageStore.getActivity(SID);
+    messageStore.ingestEvent(SID, { type: 'tool_update', toolUseId: 't7', toolView: { kind: 'shell', command: 'npm test' } });
+
+    expect(messageStore.getActivity(SID)).toBe(before);
+  });
+
   it('lists edits from adapter views in the turn\'s file changes', () => {
     messageStore.ingestEvent(SID, { type: 'user_message', text: 'go' });
     messageStore.ingestEvent(SID, {
@@ -3285,5 +3356,30 @@ describe('ingestEvent — tool views', () => {
     messageStore.ingestEvent(SID, { type: 'tool_result', toolUseId: 't3', content: 'ok' });
     messageStore.ingestEvent(SID, { type: 'result', subtype: 'success', isError: false });
     expect(messageStore.getLastTurnFileChanges(SID).map((c) => c.filePath)).toEqual(['/w/a.ts']);
+  });
+});
+
+describe('ingestEvent — tool_progress summary', () => {
+  it('shows the summary of the call the progress is for, not the last one started', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'assistant_tool_use', toolName: 'Bash', toolInput: { command: 'npm test' }, toolUseId: 'p1', uuid: 'u1',
+    });
+    messageStore.ingestEvent(SID, {
+      type: 'assistant_tool_use', toolName: 'Grep', toolInput: { pattern: 'foo' }, toolUseId: 'p2', uuid: 'u2',
+    });
+
+    messageStore.ingestEvent(SID, { type: 'tool_progress', toolName: 'Bash', toolUseId: 'p1', elapsedSeconds: 3 });
+
+    expect(messageStore.getActivity(SID)).toMatchObject({ toolName: 'Bash', toolSummary: 'npm test', toolUseId: 'p1', elapsedSeconds: 3 });
+  });
+
+  it('keeps the summary across progress for the same call', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'assistant_tool_use', toolName: 'Bash', toolInput: { command: 'npm run build' }, toolUseId: 'p3', uuid: 'u3',
+    });
+    messageStore.ingestEvent(SID, { type: 'tool_progress', toolName: 'Bash', toolUseId: 'p3', elapsedSeconds: 1 });
+    messageStore.ingestEvent(SID, { type: 'tool_progress', toolName: 'Bash', toolUseId: 'p3', elapsedSeconds: 2 });
+
+    expect(messageStore.getActivity(SID)).toMatchObject({ toolSummary: 'npm run build', elapsedSeconds: 2 });
   });
 });

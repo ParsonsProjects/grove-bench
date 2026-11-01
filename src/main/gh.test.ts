@@ -239,7 +239,7 @@ describe('prStatus()', () => {
       })));
 
     const result = await prStatus('/repo', 'feat/x');
-    expect(result?.failingRuns).toEqual([{ repo: 'o/r', runId: '123' }]);
+    expect(result?.failingRuns).toEqual([{ repo: 'o/r', runId: '123', jobIds: ['456'] }]);
   });
 
   it('returns null when no PR exists for the branch', async () => {
@@ -525,18 +525,26 @@ describe('failingCheckNames()', () => {
 
 describe('failingActionsRuns()', () => {
   const PR = 'https://github.com/Owner/Repo/pull/7';
-  const run = (id: string, conclusion = 'FAILURE', repo = 'Owner/Repo') =>
-    ({ name: `job-${id}`, conclusion, detailsUrl: `https://github.com/${repo}/actions/runs/${id}/job/9${id}` });
+  const run = (id: string, conclusion = 'FAILURE', repo = 'Owner/Repo', job = `9${id}`) =>
+    ({ name: `job-${job}`, conclusion, detailsUrl: `https://github.com/${repo}/actions/runs/${id}/job/${job}` });
 
-  it('lists each failing Actions run once', () => {
-    expect(failingActionsRuns([run('101'), run('101'), run('102', 'TIMED_OUT'), run('103', 'SUCCESS')], PR)).toEqual([
-      { repo: 'Owner/Repo', runId: '101' },
-      { repo: 'Owner/Repo', runId: '102' },
+  it('lists each failing Actions run once, with its failed jobs', () => {
+    expect(failingActionsRuns([
+      run('101'), run('101', 'FAILURE', 'Owner/Repo', '8101'), run('101'),
+      run('102', 'TIMED_OUT'), run('103', 'SUCCESS'),
+    ], PR)).toEqual([
+      { repo: 'Owner/Repo', runId: '101', jobIds: ['9101', '8101'] },
+      { repo: 'Owner/Repo', runId: '102', jobIds: ['9102'] },
     ]);
   });
 
   it('matches the PR repository whatever the letter case', () => {
-    expect(failingActionsRuns([run('104', 'FAILURE', 'owner/repo')], PR)).toEqual([{ repo: 'owner/repo', runId: '104' }]);
+    expect(failingActionsRuns([run('104', 'FAILURE', 'owner/repo')], PR)).toEqual([{ repo: 'owner/repo', runId: '104', jobIds: ['9104'] }]);
+  });
+
+  it('reads repositories whose name starts with a dot', () => {
+    expect(failingActionsRuns([run('107', 'FAILURE', 'acme/.github')], 'https://github.com/acme/.github/pull/12'))
+      .toEqual([{ repo: 'acme/.github', runId: '107', jobIds: ['9107'] }]);
   });
 
   it('leaves out checks whose logs are not in an Actions run of the PR repository', () => {
@@ -551,7 +559,7 @@ describe('failingActionsRuns()', () => {
 
   it('keeps the host for GitHub Enterprise', () => {
     const rollup = [{ name: 't', conclusion: 'FAILURE', detailsUrl: 'https://ghe.corp.io/team/app/actions/runs/55' }];
-    expect(failingActionsRuns(rollup, 'https://ghe.corp.io/team/app/pull/3')).toEqual([{ repo: 'ghe.corp.io/team/app', runId: '55' }]);
+    expect(failingActionsRuns(rollup, 'https://ghe.corp.io/team/app/pull/3')).toEqual([{ repo: 'ghe.corp.io/team/app', runId: '55', jobIds: [] }]);
   });
 
   it('returns none without a PR URL it can read', () => {
