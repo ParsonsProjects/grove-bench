@@ -588,8 +588,6 @@ const api: Record<string, unknown> = {
       '    Expected status 200, received 401',
       '##[error]Process completed with exit code 1.',
     ].join('\n'),
-    omittedBefore: 182,
-    omittedAfter: 0,
     errorLine: 5,
   }),
   rerunPrFailedJobs: async () => {},

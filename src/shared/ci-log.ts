@@ -7,8 +7,10 @@
 
 /** Lines shown at most. */
 export const CI_LOG_TAIL_LINES = 200;
-/** Characters shown at most: a minified bundle can be one long line. */
+/** Characters shown at most. */
 export const CI_LOG_TAIL_CHARS = 64 * 1024;
+/** Characters of one line shown at most. */
+export const CI_LOG_LINE_CHARS = 4 * 1024;
 /** Lines kept after the last error: the end of its step, not the cleanup after. */
 const LINES_AFTER_ERROR = 5;
 
@@ -35,36 +37,44 @@ function cleanLine(raw: string): string {
 
 export interface CiLogTail {
   text: string;
-  /** Lines of the cleaned log before and after the part shown. */
-  omittedBefore: number;
-  omittedAfter: number;
   /** 1-based line in `text` of the last error, when there is one. */
   errorLine?: number;
 }
 
-/** The last lines of a job's log, ending a few lines after its last error. */
+/** A line's first characters, marked as cut: a minified bundle or a
+ *  dumped payload can be one line of megabytes. */
+function capLine(line: string): string {
+  return line.length > CI_LOG_LINE_CHARS ? `${line.slice(0, CI_LOG_LINE_CHARS)}… (line cut short)` : line;
+}
+
+/** The last lines of a job's log, ending a few lines after its last error.
+ *  Within the character cap, lines after the error go first, then lines
+ *  before it; the error line itself always stays. */
 export function tailCiLog(raw: string): CiLogTail {
   const lines = raw.replace(/^\uFEFF/, '').split('\n').map(cleanLine)
     .filter((line) => line !== '##[endgroup]')
-    .map((line) => line.replace(/^##\[group\]/, ''));
+    .map((line) => capLine(line.replace(/^##\[group\]/, '')));
   while (lines.length > 0 && lines[lines.length - 1].trim() === '') lines.pop();
-  let end = lines.length;
   const lastError = lines.findLastIndex((line) => line.startsWith(ERROR_MARK));
-  if (lastError >= 0) end = Math.min(end, lastError + 1 + LINES_AFTER_ERROR);
+  let end = lastError >= 0 ? Math.min(lines.length, lastError + 1 + LINES_AFTER_ERROR) : lines.length;
   let start = Math.max(0, end - CI_LOG_TAIL_LINES);
-  // Within the character cap too, dropping whole lines from the start; a
-  // single line longer than the cap keeps its end.
   let size = lines.slice(start, end).reduce((n, line) => n + line.length + 1, 0);
-  while (size > CI_LOG_TAIL_CHARS && end - start > 1) {
+  while (size > CI_LOG_TAIL_CHARS && lastError >= 0 && end > lastError + 1) {
+    end--;
+    size -= lines[end].length + 1;
+  }
+  const keepFrom = lastError >= 0 ? lastError : end - 1;
+  while (size > CI_LOG_TAIL_CHARS && start < keepFrom) {
     size -= lines[start].length + 1;
     start++;
   }
-  const shown = lines.slice(start, end);
-  if (shown.length === 1 && shown[0].length > CI_LOG_TAIL_CHARS) shown[0] = shown[0].slice(-CI_LOG_TAIL_CHARS);
   return {
-    text: shown.join('\n'),
-    omittedBefore: start,
-    omittedAfter: lines.length - end,
+    text: lines.slice(start, end).join('\n'),
     ...(lastError >= start && lastError < end ? { errorLine: lastError - start + 1 } : {}),
   };
 }
+
+/** Thrown when asking GitHub for a rerun gets no answer in time: it may have
+ *  started, so the app keeps it marked as requested rather than offering it
+ *  again. */
+export const CI_RERUN_UNANSWERED = 'GitHub didn\'t answer in time. The rerun may still have started: check the PR before asking again.';

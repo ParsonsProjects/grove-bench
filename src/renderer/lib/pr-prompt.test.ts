@@ -59,6 +59,12 @@ describe('buildFixCiPrompt()', () => {
     expect(buildFixCiPrompt(pr(), 'b')).toContain('`gh run view <run-id> --repo o/r --log-failed`');
   });
 
+  it('gives no job log command for a job its check names no id for', () => {
+    const prompt = buildFixCiPrompt(pr({ failingRuns: [{ repo: 'o/r', runId: '7', jobs: [{ name: 'build' }] }] }), 'b');
+    expect(prompt).toContain('Run 7: `gh run view 7 --repo o/r --log-failed`\n');
+    expect(prompt).not.toContain('actions/jobs');
+  });
+
   it('leaves out --repo when the PR URL is not one it can read', () => {
     const prompt = buildFixCiPrompt(pr({ url: 'u' }), 'b');
     expect(prompt).toContain('`gh pr checks 59`');

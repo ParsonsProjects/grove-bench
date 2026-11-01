@@ -25,7 +25,8 @@ function jobLogCommand(repo: string, jobId: string): string {
 }
 
 function runLine(run: FailingRun): string {
-  const jobs = run.jobs.slice(0, MAX_JOBS_PER_RUN).map(({ id }) => `job ${id}: ${jobLogCommand(run.repo, id)}`);
+  const ids = run.jobs.flatMap((job) => (job.id ? [job.id] : []));
+  const jobs = ids.slice(0, MAX_JOBS_PER_RUN).map((id) => `job ${id}: ${jobLogCommand(run.repo, id)}`);
   return `  - Run ${run.runId}: \`gh run view ${run.runId} --repo ${run.repo} --log-failed\`${jobs.length > 0 ? `. While it is still going, ${jobs.join('; ')}` : ''}`;
 }
 

@@ -3,7 +3,7 @@ import { runInAgentHost } from './process-host-run.js';
 import type { FailingRun, OpenPrSummary, PrChecksSummary, PrCreateOpts, PrInfo, PrReviewComment, PrReviewEvent } from '../shared/types.js';
 import { isRecord } from './persisted-state.js';
 import { ghRepoArg, parseActionsLink, parsePrUrl, parseRepoArg, sameRepo } from '../shared/github-links.js';
-import { tailCiLog, type CiLogTail } from '../shared/ci-log.js';
+import { CI_RERUN_UNANSWERED, tailCiLog, type CiLogTail } from '../shared/ci-log.js';
 
 /** obj.a.b... in JSON of unknown shape: undefined where a step isn't an
  *  object, as `?.` would give. */
@@ -200,31 +200,38 @@ function checkVerdict(item: Record<string, unknown>): string {
   return String(item.conclusion || item.state || '').toUpperCase();
 }
 
+type CheckRow = Record<string, unknown>;
+
+/** Still queued or running: a check run whose status isn't COMPLETED, or a
+ *  pending status. A completed run whose conclusion is neither a pass nor a
+ *  failure (STALE, after 14 days unfinished) isn't. */
+function inProgress(item: CheckRow): boolean {
+  if (typeof item.status === 'string') return item.status.toUpperCase() !== 'COMPLETED';
+  return checkVerdict(item) === 'PENDING';
+}
+
 /**
  * Each check in a statusCheckRollup array once: its newest attempt. gh
- * passes on every attempt of a job that was rerun (its own `pr checks`
- * drops the older ones, keeping the newest by start time), so counting them
- * all would keep a PR red after a rerun passed. A check is one name in one
- * workflow run (`.../actions/runs/RUN`), or one name for other apps' checks;
- * a status is one context. A queued or running attempt is the newest:
- * GitHub reruns only finished jobs, and gh gives a queued one no start time.
- * Rows with nothing to match them by are kept as they are.
+ * passes on every attempt of a job that was rerun, and every run of a
+ * workflow started again on the same commit (marked ready for review,
+ * reopened). Counting them all would keep a PR red after a rerun passed, or
+ * after a cancelled run was followed by a passing one. gh's own `pr checks`
+ * keeps the newest by start time per name, workflow and event; the JSON has
+ * no event, so here a check is one name in one workflow (or one name, for
+ * other apps' checks), and a status is one context. An attempt still in
+ * progress is the newest: GitHub reruns only finished jobs, and gh gives a
+ * queued one no start time. Rows with nothing to match them by are kept.
  */
-export function latestChecks(rollup: unknown): Record<string, unknown>[] {
+export function latestChecks(rollup: unknown): CheckRow[] {
   if (!Array.isArray(rollup)) return [];
-  const keyOf = (item: Record<string, unknown>): string | null => {
+  const keyOf = (item: CheckRow): string | null => {
     if (typeof item.context === 'string' && item.context) return `status\0${item.context}`;
     if (typeof item.name !== 'string' || !item.name) return null;
-    const runId = parseActionsLink(typeof item.detailsUrl === 'string' ? item.detailsUrl : '')?.runId ?? '';
-    return `check\0${item.name}\0${typeof item.workflowName === 'string' ? item.workflowName : ''}\0${runId}`;
+    return `check\0${item.name}\0${typeof item.workflowName === 'string' ? item.workflowName : ''}`;
   };
-  const running = (item: Record<string, unknown>) => {
-    const verdict = checkVerdict(item);
-    return !PASSED_VERDICTS.has(verdict) && !FAILED_VERDICTS.has(verdict);
-  };
-  const newer = (a: Record<string, unknown>, b: Record<string, unknown>) =>
-    running(a) !== running(b) ? running(a) : String(a.startedAt ?? '') > String(b.startedAt ?? '');
-  const kept: Array<Record<string, unknown>> = [];
+  const newer = (a: CheckRow, b: CheckRow) =>
+    inProgress(a) !== inProgress(b) ? inProgress(a) : String(a.startedAt ?? '') > String(b.startedAt ?? '');
+  const kept: CheckRow[] = [];
   const slot = new Map<string, number>();
   for (const item of rollup.filter(isRecord)) {
     const key = keyOf(item);
@@ -239,33 +246,36 @@ export function latestChecks(rollup: unknown): Record<string, unknown>[] {
   return kept;
 }
 
+function checkName(item: CheckRow): string {
+  return String(item.name || item.context || 'check');
+}
+
 /** Names of the failing checks in a statusCheckRollup array. */
 export function failingCheckNames(rollup: unknown): string[] {
-  return latestChecks(rollup)
-    .filter((item) => FAILED_VERDICTS.has(checkVerdict(item)))
-    .map((item) => String(item.name || item.context || 'check'));
+  return latestChecks(rollup).filter((item) => FAILED_VERDICTS.has(checkVerdict(item))).map(checkName);
 }
 
 /**
- * The GitHub Actions runs behind the failing checks in a statusCheckRollup
- * array, once each, with their failed jobs. Only check runs linking to an
- * Actions run in the PR's own repository count: status contexts and other
- * CI services' checks keep their logs elsewhere, and a check from any app
- * may link anywhere.
+ * The failing checks (latestChecks'), split into the GitHub Actions runs
+ * behind them, once each with their failed jobs, and the names of the rest.
+ * Only check runs linking to an Actions run in the PR's own repository go
+ * in runs: status contexts and other CI services' checks keep their logs
+ * elsewhere, and a check from any app may link anywhere.
  */
-export function failingActionsRuns(rollup: unknown, prUrl: string): FailingRun[] {
+function splitFailing(checks: CheckRow[], prUrl: string): { runs: FailingRun[]; others: string[] } {
   const pr = parsePrUrl(prUrl);
-  if (!pr) return [];
-  const items = latestChecks(rollup);
-  const linkOf = (item: Record<string, unknown>) => {
-    const link = parseActionsLink(typeof item.detailsUrl === 'string' ? item.detailsUrl : '');
-    return link && sameRepo(link, pr) ? link : null;
-  };
+  const rows = checks.map((item) => {
+    const link = pr ? parseActionsLink(typeof item.detailsUrl === 'string' ? item.detailsUrl : '') : null;
+    return { item, link: link && pr && sameRepo(link, pr) ? link : null };
+  });
   const runs: FailingRun[] = [];
-  for (const item of items) {
+  const others: string[] = [];
+  for (const { item, link } of rows) {
     if (!FAILED_VERDICTS.has(checkVerdict(item))) continue;
-    const link = linkOf(item);
-    if (!link) continue;
+    if (!link) {
+      others.push(checkName(item));
+      continue;
+    }
     let run = runs.find((r) => r.runId === link.runId);
     if (!run) {
       const workflow = typeof item.workflowName === 'string' && item.workflowName ? item.workflowName : undefined;
@@ -273,18 +283,24 @@ export function failingActionsRuns(rollup: unknown, prUrl: string): FailingRun[]
       runs.push(run);
     }
     const { jobId } = link;
-    if (jobId && !run.jobs.some((j) => j.id === jobId)) {
-      run.jobs.push({ id: jobId, name: typeof item.name === 'string' && item.name ? item.name : `job ${jobId}` });
+    const name = typeof item.name === 'string' && item.name ? item.name : jobId ? `job ${jobId}` : 'job';
+    if (jobId ? !run.jobs.some((j) => j.id === jobId) : !run.jobs.some((j) => !j.id && j.name === name)) {
+      run.jobs.push({ ...(jobId ? { id: jobId } : {}), name });
     }
   }
-  // A check of the same run that has neither passed nor failed is still going.
-  for (const item of items) {
-    const verdict = checkVerdict(item);
-    if (PASSED_VERDICTS.has(verdict) || FAILED_VERDICTS.has(verdict)) continue;
-    const run = runs.find((r) => r.runId === linkOf(item)?.runId);
+  // A check of the same run still queued or running.
+  for (const { item, link } of rows) {
+    if (!link || !inProgress(item)) continue;
+    const run = runs.find((r) => r.runId === link.runId);
     if (run) run.pending = true;
   }
-  return runs;
+  return { runs, others };
+}
+
+/** The GitHub Actions runs behind the failing checks in a statusCheckRollup
+ *  array (see splitFailing). */
+export function failingActionsRuns(rollup: unknown, prUrl: string): FailingRun[] {
+  return splitFailing(latestChecks(rollup), prUrl).runs;
 }
 
 /** Opaque ids for conversation comments + submitted reviews, for new-feedback detection.
@@ -313,7 +329,10 @@ export function commentSignature(comments: unknown, reviews: unknown, ignoreLogi
 
 /** Fold gh's statusCheckRollup array into pass/fail/pending counts. */
 export function summarizeChecks(rollup: unknown): PrChecksSummary | null {
-  const checks = latestChecks(rollup);
+  return summarize(latestChecks(rollup));
+}
+
+function summarize(checks: CheckRow[]): PrChecksSummary | null {
   if (checks.length === 0) return null;
   const summary: PrChecksSummary = { total: checks.length, passed: 0, failed: 0, pending: 0 };
   for (const item of checks) {
@@ -349,7 +368,9 @@ function parsePr(json: unknown, selfLogin?: string | null): PrInfo | null {
   if (!isRecord(json)) return null;
   const data = json as GhPrJson;
   if (!data.number || !data.url) return null;
-  const failingRuns = failingActionsRuns(data.statusCheckRollup, data.url);
+  // Each check once, worked out once for all three.
+  const checks = latestChecks(data.statusCheckRollup);
+  const { runs: failingRuns, others: otherFailingChecks } = splitFailing(checks, data.url);
   return {
     number: data.number,
     url: data.url,
@@ -357,10 +378,11 @@ function parsePr(json: unknown, selfLogin?: string | null): PrInfo | null {
     isDraft: data.isDraft === true,
     title: data.title,
     reviewDecision: data.reviewDecision ?? '',
-    checks: summarizeChecks(data.statusCheckRollup),
+    checks: summarize(checks),
     headSha: data.headRefOid,
-    failingChecks: failingCheckNames(data.statusCheckRollup),
+    failingChecks: checks.filter((item) => FAILED_VERDICTS.has(checkVerdict(item))).map(checkName),
     ...(failingRuns.length > 0 ? { failingRuns } : {}),
+    ...(failingRuns.length > 0 && otherFailingChecks.length > 0 ? { otherFailingChecks } : {}),
     commentSignature: commentSignature(data.comments, data.reviews, selfLogin),
     ...(typeof data.headRefName === 'string' && data.headRefName ? { headRefName: data.headRefName } : {}),
     ...(typeof data.baseRefName === 'string' && data.baseRefName ? { baseRefName: data.baseRefName } : {}),
@@ -620,10 +642,10 @@ function ghHttpStatus(e: unknown): number | null {
 export async function prJobLog(cwd: string, repo: string, jobId: string): Promise<CiLogTail> {
   const ref = parseRepoArg(repo);
   if (!ref || !/^\d{1,20}$/.test(jobId)) throw new Error('Not a GitHub Actions job');
-  const hostArgs = ref.host.toLowerCase() === 'github.com' ? [] : ['--hostname', ref.host];
   try {
     const raw = await gh(
-      ['api', ...hostArgs, `repos/${ref.owner}/${ref.name}/actions/jobs/${jobId}/logs`],
+      // The host always: with GH_HOST set, gh api would send it there.
+      ['api', '--hostname', ref.host, `repos/${ref.owner}/${ref.name}/actions/jobs/${jobId}/logs`],
       cwd,
       undefined,
       { timeout: GH_LOG_TIMEOUT_MS, keepLastChars: JOB_LOG_KEEP_CHARS },
@@ -633,26 +655,41 @@ export async function prJobLog(cwd: string, repo: string, jobId: string): Promis
     if ((e as { timedOut?: unknown } | null)?.timedOut === true) {
       throw new Error('GitHub took too long to send the log. Try again, or open the check on GitHub.', { cause: e });
     }
+    if (isRateLimitError(e)) throw new Error(GH_API_LIMIT_MESSAGE, { cause: e });
     const status = ghHttpStatus(e);
-    if (status === 404 || status === 410) throw new Error('GitHub has no log for this job any more. Logs are kept for 90 days unless the repository says otherwise.', { cause: e });
-    if (status === 403) throw new Error('Your gh account can\'t read this repository\'s Actions logs.', { cause: e });
-    throw new Error(ghApiErrorMessage(e), { cause: e });
+    if (status === 404 || status === 410) {
+      throw new Error('GitHub has no log for this job. It may have expired (logs are kept for 90 days unless the repository says otherwise), or this gh account can\'t see the repository.', { cause: e });
+    }
+    if (status === 403) throw new Error(`GitHub refused to send the log: ${ghReason(e)}`, { cause: e });
+    throw new Error(ghReason(e), { cause: e });
   }
 }
 
 /** Rerun a run's failed jobs, and the jobs that depend on them. GitHub
  *  refuses while any job of the run is still going. */
 export async function prRerunFailed(cwd: string, repo: string, runId: string): Promise<void> {
-  if (!parseRepoArg(repo) || !/^\d{1,20}$/.test(runId)) throw new Error('Not a GitHub Actions run');
+  const ref = parseRepoArg(repo);
+  if (!ref || !/^\d{1,20}$/.test(runId)) throw new Error('Not a GitHub Actions run');
   try {
-    await gh(['run', 'rerun', runId, '--failed', '--repo', repo], cwd, undefined, { timeout: GH_RERUN_TIMEOUT_MS });
+    // HOST/OWNER/REPO always: with GH_HOST set, OWNER/REPO would mean there.
+    await gh(['run', 'rerun', runId, '--failed', '--repo', `${ref.host}/${ref.owner}/${ref.name}`], cwd, undefined, { timeout: GH_RERUN_TIMEOUT_MS });
   } catch (e) {
-    if ((e as { timedOut?: unknown } | null)?.timedOut === true) {
-      throw new Error('GitHub didn\'t answer in time. The rerun may still have started: check the PR before asking again.', { cause: e });
-    }
-    if (ghHttpStatus(e) === 403) throw new Error('Your gh account can\'t rerun jobs in this repository. It needs write access.', { cause: e });
-    throw new Error(ghApiErrorMessage(e), { cause: e });
+    if ((e as { timedOut?: unknown } | null)?.timedOut === true) throw new Error(CI_RERUN_UNANSWERED, { cause: e });
+    if (isRateLimitError(e)) throw new Error(GH_API_LIMIT_MESSAGE, { cause: e });
+    if (ghHttpStatus(e) === 403) throw new Error(`GitHub refused the rerun: ${ghReason(e)}`, { cause: e });
+    throw new Error(ghReason(e), { cause: e });
   }
+}
+
+/** For a call the user asked for, when GitHub's rate limit stopped it. */
+const GH_API_LIMIT_MESSAGE = 'GitHub\'s API rate limit is reached for this gh account. Try again in a few minutes.';
+
+/** GitHub's reason for a failed call, without gh's wrapping: "failed to
+ *  rerun: HTTP 403: Must have admin rights to Repository. (https://...)"
+ *  reads "HTTP 403: Must have admin rights to Repository.", and "gh: Not
+ *  Found (HTTP 404)" reads "Not Found (HTTP 404)". */
+function ghReason(e: unknown): string {
+  return ghApiErrorMessage(e).replace(/^gh: /, '').replace(/^failed to [^:]*: /, '').replace(/\s*\(https?:\/\/[^)]*\)\s*$/, '');
 }
 
 /** The PR's head commit, read fresh. Throws a readable error. */

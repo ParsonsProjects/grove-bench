@@ -1532,8 +1532,8 @@ describe('pull requests', () => {
   });
 
   it('PR_JOB_LOG reads the job log from the project', async () => {
-    vi.mocked(gh.prJobLog).mockResolvedValue({ text: 'log', omittedBefore: 0, omittedAfter: 0 });
-    await expect(invoke(IPC.PR_JOB_LOG, 's1', 'o/r', '456')).resolves.toEqual({ text: 'log', omittedBefore: 0, omittedAfter: 0 });
+    vi.mocked(gh.prJobLog).mockResolvedValue({ text: 'log' });
+    await expect(invoke(IPC.PR_JOB_LOG, 's1', 'o/r', '456')).resolves.toEqual({ text: 'log' });
     expect(gh.prJobLog).toHaveBeenCalledWith('/repo', 'o/r', '456');
   });
 
@@ -1546,7 +1546,7 @@ describe('pull requests', () => {
   it('PR_JOB_LOG and PR_RERUN_FAILED refuse arguments that are not strings, and unknown threads', async () => {
     await expect(invoke(IPC.PR_JOB_LOG, 's1', 'o/r', 456)).rejects.toThrow('Not a GitHub Actions job');
     await expect(invoke(IPC.PR_RERUN_FAILED, 's1', ['o/r'], '1')).rejects.toThrow('Not a GitHub Actions run');
-    await expect(invoke(IPC.PR_RERUN_FAILED, 'nope', 'o/r', '1')).rejects.toThrow('Worktree not found');
+    await expect(invoke(IPC.PR_RERUN_FAILED, 'nope', 'o/r', '1')).rejects.toThrow("This thread's worktree isn't there any more");
     expect(gh.prJobLog).not.toHaveBeenCalled();
     expect(gh.prRerunFailed).not.toHaveBeenCalled();
   });

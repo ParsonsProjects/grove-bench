@@ -19,6 +19,7 @@
   import type { ShipStep, ShipStepState, ShipTrack } from '../lib/ship-track.js';
   import type { FailingJob, FailingRun, PrInfo } from '../../shared/types.js';
   import ShipDot from './ShipDot.svelte';
+  import { errorMessage } from '../../shared/error-message.js';
 
   let {
     sessionId,
@@ -62,11 +63,9 @@
    *  with a rerun. */
   let failingRuns = $derived(prInfo?.failingRuns ?? []);
   /** Failing checks with no Actions job here to show: other CI services',
-   *  whose logs are with the service that ran them. */
-  let otherFailing = $derived.by(() => {
-    const jobs = new Set(failingRuns.flatMap((run) => run.jobs.map((job) => job.name)));
-    return failingChecks.filter((name) => !jobs.has(name));
-  });
+   *  whose logs are with the service that ran them. Without failing runs,
+   *  every failing check. */
+  let otherFailing = $derived(failingRuns.length > 0 ? (prInfo?.otherFailingChecks ?? []) : failingChecks);
   let loadingLog = $state<string | null>(null);
   let checksNotice = $state<string | null>(null);
   let canFixCi = $derived(prOpen && (prInfo?.checks?.failed ?? 0) > 0);
@@ -82,13 +81,16 @@
   }
 
   async function openLog(run: FailingRun, job: FailingJob) {
-    if (loadingLog) return;
+    if (loadingLog || !job.id) return;
     loadingLog = job.id;
     checksNotice = null;
     try {
       await prStore.openJobLog(sessionId, run, job);
+      // The log is in the Focus panel now. Left open, this popup would take
+      // the first Escape and any click in the panel.
+      onclose();
     } catch (e) {
-      checksNotice = e instanceof Error ? e.message : 'Could not read the log';
+      checksNotice = errorMessage(e, 'Could not read the log');
     } finally {
       loadingLog = null;
     }
@@ -99,7 +101,7 @@
     try {
       await prStore.rerunFailedJobs(sessionId, run);
     } catch (e) {
-      checksNotice = e instanceof Error ? e.message : 'Rerun failed';
+      checksNotice = errorMessage(e, 'Rerun failed');
     }
   }
 
@@ -233,19 +235,21 @@
             <div class="flex items-start gap-2 min-w-0" data-testid="failed-run">
               <span class="shrink-0 text-muted-foreground" title="GitHub Actions run {run.runId}">{run.workflow ?? 'Actions'}</span>
               <span class="flex min-w-0 flex-wrap items-center gap-x-2">
-                {#each run.jobs as job (job.id)}
+                {#each run.jobs as job (job.id ?? job.name)}
                   <span class="inline-flex min-w-0 items-center gap-1">
                     <span class="min-w-0 truncate text-red-400" title={job.name}>{job.name}</span>
-                    <Button
-                      variant="link"
-                      size="inline"
-                      class="shrink-0 disabled:no-underline"
-                      onclick={() => openLog(run, job)}
-                      disabled={loadingLog !== null}
-                      title="Read the end of this job's log"
-                    >
-                      {loadingLog === job.id ? 'loading…' : 'log'}
-                    </Button>
+                    {#if job.id}
+                      <Button
+                        variant="link"
+                        size="inline"
+                        class="shrink-0 disabled:no-underline"
+                        onclick={() => openLog(run, job)}
+                        disabled={loadingLog !== null}
+                        title="Read the end of this job's log"
+                      >
+                        {loadingLog === job.id ? 'loading…' : 'log'}
+                      </Button>
+                    {/if}
                   </span>
                 {/each}
               </span>

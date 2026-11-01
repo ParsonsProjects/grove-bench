@@ -692,8 +692,8 @@ describe('StatusBar PR', () => {
   const ciRun = { repo: 'o/r', runId: '900', workflow: 'CI', jobs: [{ id: '901', name: 'e2e' }] };
 
   it('lists the failed Actions jobs with their logs, and other failing checks plainly', async () => {
-    vi.mocked(window.groveBench.getPrJobLog).mockResolvedValueOnce({ text: 'build\n##[error]boom\ndone', omittedBefore: 40, omittedAfter: 3, errorLine: 2 });
-    await renderWithPrs(pr({ checks: { total: 3, passed: 1, failed: 2, pending: 0 }, failingChecks: ['e2e', 'codecov'], failingRuns: [ciRun] }));
+    vi.mocked(window.groveBench.getPrJobLog).mockResolvedValueOnce({ text: 'build\n##[error]boom\ndone', errorLine: 2 });
+    await renderWithPrs(pr({ checks: { total: 3, passed: 1, failed: 2, pending: 0 }, failingChecks: ['e2e', 'codecov'], failingRuns: [ciRun], otherFailingChecks: ['codecov'] }));
     await openBranch();
 
     const row = stepRow('Checks');
@@ -703,11 +703,21 @@ describe('StatusBar PR', () => {
 
     await fireEvent.click(within(row).getByRole('button', { name: 'log' }));
     await waitFor(() => expect(markdownPreviewStore.open).toBe(true));
+    // Out of the way, so Escape and clicks reach the log.
+    expect(screen.queryByRole('dialog', { name: 'Branch' })).toBeNull();
     expect(window.groveBench.getPrJobLog).toHaveBeenCalledWith(ACTIVE, 'o/r', '901');
     expect(markdownPreviewStore.title).toBe('CI / e2e: end of log');
     expect(markdownPreviewStore.content).toBe('build\n##[error]boom\ndone');
     expect(markdownPreviewStore.code).toEqual({ path: 'CI / e2e: end of log', lines: { start: 2, end: 2 } });
     markdownPreviewStore.close();
+  });
+
+  it('shows a job its check names no id for by name, with no log', async () => {
+    await renderWithPrs(pr({ checks: { total: 1, passed: 0, failed: 1, pending: 0 }, failingChecks: ['build'], failingRuns: [{ ...ciRun, jobs: [{ name: 'build' }] }] }));
+    await openBranch();
+    const run = within(stepRow('Checks')).getByTestId('failed-run');
+    expect(run.textContent?.replace(/\s+/g, ' ').trim()).toBe('CI build rerun failed');
+    expect(within(run).queryByRole('button', { name: 'log' })).toBeNull();
   });
 
   it('says on the Checks row when a log can\'t be read', async () => {

@@ -5,6 +5,7 @@ import { prStore } from './pr.svelte.js';
 import { store as sessionStore } from './sessions.svelte.js';
 import { messageStore } from './messages.svelte.js';
 import type { PrInfo, SessionStatus } from '../../shared/types.js';
+import { CI_RERUN_UNANSWERED } from '../../shared/ci-log.js';
 
 const SID = 'pr-test-session';
 
@@ -539,14 +540,20 @@ describe('auto toggles', () => {
 
 describe('reruns of failed jobs', () => {
   const run = { repo: 'o/r', runId: '900', jobs: [{ id: '901', name: 'e2e' }] };
+  const failing = () => pr({ checks: { total: 1, passed: 0, failed: 1, pending: 0 }, failingChecks: ['e2e'], failingRuns: [run] });
+
+  beforeEach(() => {
+    // What GitHub shows just after the request: the run still failed.
+    mockGroveBench.getPrs.mockResolvedValue([failing()]);
+  });
 
   afterEach(() => {
     vi.useRealTimers();
     prStore.clear(SID);
   });
 
-  it('marks a run as requested, and lets it be asked again if GitHub never starts it', async () => {
-    vi.useFakeTimers({ toFake: ['Date'] });
+  it('marks a run as requested, and lets it be asked again once the mark runs out', async () => {
+    vi.useFakeTimers();
     await prStore.rerunFailedJobs(SID, run);
     expect(mockGroveBench.rerunPrFailedJobs).toHaveBeenCalledTimes(1);
     expect(prStore.getRerun(SID, '900')).toBe('requested');
@@ -554,15 +561,41 @@ describe('reruns of failed jobs', () => {
     await prStore.rerunFailedJobs(SID, run);
     expect(mockGroveBench.rerunPrFailedJobs).toHaveBeenCalledTimes(1);
 
-    vi.setSystemTime(Date.now() + 3 * 60_000 + 1);
-    expect(prStore.getRerun(SID, '900')).toBeUndefined();
+    // A change to the state, so a screen showing it redraws.
+    vi.advanceTimersByTime(3 * 60_000);
+    expect(prStore.rerunsBySession[SID]).toEqual({});
     await prStore.rerunFailedJobs(SID, run);
     expect(mockGroveBench.rerunPrFailedJobs).toHaveBeenCalledTimes(2);
   });
 
-  it('drops the mark when asking fails, and passes on the reason without the IPC wrapping', async () => {
-    mockGroveBench.rerunPrFailedJobs.mockRejectedValueOnce(new Error("Error invoking remote method 'pr:rerunFailed': Error: GitHub didn't answer in time."));
-    await expect(prStore.rerunFailedJobs(SID, run)).rejects.toThrow(/^GitHub didn't answer in time\.$/);
+  it('drops the mark when GitHub refuses, passing on the reason without the IPC wrapping', async () => {
+    mockGroveBench.rerunPrFailedJobs.mockRejectedValueOnce(new Error("Error invoking remote method 'pr:rerunFailed': Error: GitHub refused the rerun: HTTP 403: Must have admin rights to Repository."));
+    await expect(prStore.rerunFailedJobs(SID, run)).rejects.toThrow(/^GitHub refused the rerun: HTTP 403: Must have admin rights to Repository\.$/);
+    expect(prStore.getRerun(SID, '900')).toBeUndefined();
+  });
+
+  it('keeps the mark when GitHub didn\'t answer in time, as the rerun may have started', async () => {
+    mockGroveBench.rerunPrFailedJobs.mockRejectedValueOnce(new Error(`Error invoking remote method 'pr:rerunFailed': Error: ${CI_RERUN_UNANSWERED}`));
+    await expect(prStore.rerunFailedJobs(SID, run)).rejects.toThrow(CI_RERUN_UNANSWERED);
+    expect(prStore.getRerun(SID, '900')).toBe('requested');
+  });
+
+  it('drops the mark once the failed jobs are a new attempt\'s, or the run is going', async () => {
+    setStatus('running');
+    await prStore.rerunFailedJobs(SID, run);
+    expect(prStore.getRerun(SID, '900')).toBe('requested');
+
+    // Still the same failed job: GitHub hasn't started the rerun yet.
+    await refreshWith(failing());
+    expect(prStore.getRerun(SID, '900')).toBe('requested');
+
+    // The rerun ran and failed again, between two polls: a new job id.
+    await refreshWith(pr({ checks: { total: 1, passed: 0, failed: 1, pending: 0 }, failingChecks: ['e2e'], failingRuns: [{ ...run, jobs: [{ id: '911', name: 'e2e' }] }] }));
+    expect(prStore.getRerun(SID, '900')).toBeUndefined();
+
+    await refreshWith(failing());
+    await prStore.rerunFailedJobs(SID, run);
+    await refreshWith(pr({ checks: { total: 2, passed: 0, failed: 1, pending: 1 }, failingChecks: ['e2e'], failingRuns: [{ ...run, pending: true }] }));
     expect(prStore.getRerun(SID, '900')).toBeUndefined();
   });
 });

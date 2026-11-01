@@ -1866,18 +1866,21 @@ export function registerHandlers() {
     return submitPrReview(worktree.path, worktree.repoPath, parsePrReviewSubmit(review));
   });
 
+  // Shown in the branch popup, so in the UI's words.
+  const THREAD_FOLDER_GONE = 'This thread\'s worktree isn\'t there any more';
+
   // A failed Actions job's log, and a rerun of a run's failed jobs. prJobLog
   // and prRerunFailed take only a plain repository and digits.
   ipcMain.handle(IPC.PR_JOB_LOG, async (_event, sessionId: string, repo: unknown, jobId: unknown) => {
     const worktree = worktreeManager.getWorktree(sessionId);
-    if (!worktree || worktree.noGit) throw new Error(`Worktree not found for session ${sessionId}`);
+    if (!worktree || worktree.noGit) throw new Error(THREAD_FOLDER_GONE);
     if (typeof repo !== 'string' || typeof jobId !== 'string') throw new Error('Not a GitHub Actions job');
     return prJobLog(worktree.repoPath, repo, jobId);
   });
 
   ipcMain.handle(IPC.PR_RERUN_FAILED, async (_event, sessionId: string, repo: unknown, runId: unknown) => {
     const worktree = worktreeManager.getWorktree(sessionId);
-    if (!worktree || worktree.noGit) throw new Error(`Worktree not found for session ${sessionId}`);
+    if (!worktree || worktree.noGit) throw new Error(THREAD_FOLDER_GONE);
     if (typeof repo !== 'string' || typeof runId !== 'string') throw new Error('Not a GitHub Actions run');
     await prRerunFailed(worktree.repoPath, repo, runId);
   });

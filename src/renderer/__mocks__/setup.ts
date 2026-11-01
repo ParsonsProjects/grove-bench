@@ -106,7 +106,7 @@ const mockGroveBench = {
   submitPrReview: vi.fn((_sessionId: string, _review: import('../../shared/types.js').PrReviewSubmit) =>
     Promise.resolve({ url: null, inline: 0, quoted: 0 } as import('../../shared/types.js').PrReviewSubmitResult)),
   getPrJobLog: vi.fn((_sessionId: string, _repo: string, _jobId: string) =>
-    Promise.resolve({ text: '', omittedBefore: 0, omittedAfter: 0 } as import('../../shared/ci-log.js').CiLogTail)),
+    Promise.resolve({ text: '' } as import('../../shared/ci-log.js').CiLogTail)),
   rerunPrFailedJobs: vi.fn((_sessionId: string, _repo: string, _runId: string) => Promise.resolve()),
   rewindSession: vi.fn(() => Promise.resolve()),
   bringBackFiles: vi.fn(() => Promise.resolve()),

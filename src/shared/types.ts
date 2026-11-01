@@ -619,8 +619,9 @@ export interface OpenPrSummary {
 
 /** A failed job of a GitHub Actions run, by the check that reports it. */
 export interface FailingJob {
-  /** Digits only. */
-  id: string;
+  /** Digits only. Absent when the check's link names only the run, so
+   *  there is no job log to read. */
+  id?: string;
   /** The check's name, as GitHub shows it. */
   name: string;
 }
@@ -635,7 +636,7 @@ export interface FailingRun {
   runId: string;
   /** The workflow's name, when GitHub gives it. */
   workflow?: string;
-  /** Its failed jobs whose check links name them. */
+  /** Its failed jobs. */
   jobs: FailingJob[];
   /** Other jobs of the run are still going. gh shows the run's log, and
    *  GitHub reruns its failed jobs, only once the whole run has finished. */
@@ -659,6 +660,11 @@ export interface PrInfo {
    *  repository. Absent when there are none: checks from other CI services
    *  keep their logs elsewhere. */
   failingRuns?: FailingRun[];
+  /** With failingRuns, the names of the failing checks that are not jobs in
+   *  them: other CI services', or Actions runs in another repository.
+   *  Absent when none, and without failingRuns (then every failing check is
+   *  one of these). */
+  otherFailingChecks?: string[];
   /** Opaque ids of conversation comments + submitted reviews — diffed to detect new feedback. */
   commentSignature?: string[];
   /** Branch the PR merges from. Not always the session's recorded branch: the
