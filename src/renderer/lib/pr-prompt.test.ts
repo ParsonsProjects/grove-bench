@@ -35,8 +35,8 @@ describe('buildFixCiPrompt()', () => {
 
   it('gives the run log command for each failing run, and the API one for each failed job', () => {
     const prompt = buildFixCiPrompt(pr({ failingRuns: [
-      { repo: 'o/r', runId: '101', jobIds: ['901', '902'] },
-      { repo: 'o/r', runId: '102', jobIds: [] },
+      { repo: 'o/r', runId: '101', jobs: [{ id: '901', name: 'test' }, { id: '902', name: 'lint' }] },
+      { repo: 'o/r', runId: '102', jobs: [] },
     ] }), 'feat/thing');
     expect(prompt).toContain('Run 101: `gh run view 101 --repo o/r --log-failed`. While it is still going, job 901: `gh api repos/o/r/actions/jobs/901/logs`; job 902: `gh api repos/o/r/actions/jobs/902/logs`');
     expect(prompt).toContain('Run 102: `gh run view 102 --repo o/r --log-failed`\n');
@@ -44,7 +44,7 @@ describe('buildFixCiPrompt()', () => {
   });
 
   it('names the host for GitHub Enterprise', () => {
-    const prompt = buildFixCiPrompt(pr({ url: 'https://ghe.corp.io/t/a/pull/59', failingRuns: [{ repo: 'ghe.corp.io/t/a', runId: '5', jobIds: ['6'] }] }), 'b');
+    const prompt = buildFixCiPrompt(pr({ url: 'https://ghe.corp.io/t/a/pull/59', failingRuns: [{ repo: 'ghe.corp.io/t/a', runId: '5', jobs: [{ id: '6', name: 't' }] }] }), 'b');
     expect(prompt).toContain('`gh run view 5 --repo ghe.corp.io/t/a --log-failed`');
     expect(prompt).toContain('`gh api --hostname ghe.corp.io repos/t/a/actions/jobs/6/logs`');
     expect(prompt).toContain('`gh pr checks 59 --repo ghe.corp.io/t/a`');
@@ -52,7 +52,7 @@ describe('buildFixCiPrompt()', () => {
 
   it('never asks for gh run view without a run id', () => {
     // Without an id gh prompts for one, which fails in the agent's shell.
-    const withRuns = buildFixCiPrompt(pr({ failingRuns: [{ repo: 'o/r', runId: '1', jobIds: [] }] }), 'b');
+    const withRuns = buildFixCiPrompt(pr({ failingRuns: [{ repo: 'o/r', runId: '1', jobs: [] }] }), 'b');
     for (const prompt of [buildFixCiPrompt(pr(), 'b'), withRuns]) {
       expect(prompt).not.toMatch(/gh run view (--repo \S+ )?--log-failed/);
     }
@@ -66,7 +66,7 @@ describe('buildFixCiPrompt()', () => {
   });
 
   it('caps the runs and jobs listed and points to the rest', () => {
-    const runs = Array.from({ length: 7 }, (_, i) => ({ repo: 'o/r', runId: String(i + 1), jobIds: ['1', '2', '3', '4'] }));
+    const runs = Array.from({ length: 7 }, (_, i) => ({ repo: 'o/r', runId: String(i + 1), jobs: ['1', '2', '3', '4'].map((id) => ({ id, name: `j${id}` })) }));
     const prompt = buildFixCiPrompt(pr({ failingRuns: runs }), 'b');
     expect(prompt.match(/gh run view \d+/g)).toHaveLength(5);
     expect(prompt.match(/actions\/jobs\/\d+\/logs/g)).toHaveLength(15);

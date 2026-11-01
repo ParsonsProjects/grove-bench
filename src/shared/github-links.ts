@@ -26,6 +26,14 @@ export function ghRepoArg(ref: GithubRepoRef): string {
   return ref.host.toLowerCase() === 'github.com' ? `${ref.owner}/${ref.name}` : `${ref.host}/${ref.owner}/${ref.name}`;
 }
 
+const REPO_ARG = new RegExp(`^(?:(${HOST})/)?(${OWNER})/(${REPO})$`);
+
+/** The repository named by gh's --repo form, as ghRepoArg writes it. */
+export function parseRepoArg(arg: string): GithubRepoRef | null {
+  const m = REPO_ARG.exec(arg);
+  return m ? repoRef(m[1] ?? 'github.com', m[2], m[3]) : null;
+}
+
 /** The same repository, whatever the letter case. */
 export function sameRepo(a: GithubRepoRef, b: GithubRepoRef): boolean {
   return [a.host, a.owner, a.name].join('/').toLowerCase() === [b.host, b.owner, b.name].join('/').toLowerCase();

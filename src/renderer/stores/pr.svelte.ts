@@ -1,4 +1,5 @@
-import type { PrInfo, GitSyncStatus, PrCreateOpts, PrReviewSubmit, PrReviewSubmitResult } from '../../shared/types.js';
+import type { FailingJob, FailingRun, PrInfo, GitSyncStatus, PrCreateOpts, PrReviewSubmit, PrReviewSubmitResult } from '../../shared/types.js';
+import type { CiLogTail } from '../../shared/ci-log.js';
 import { messageStore } from './messages.svelte.js';
 import { store as sessionStore } from './sessions.svelte.js';
 import { gitStatusStore } from './gitStatus.svelte.js';
@@ -7,6 +8,7 @@ import { notifyOs } from '../lib/os-notify.js';
 import { detectPrEvents, newPrWatchState, isTrustedAssociation } from '../lib/pr-watch.js';
 import type { PrWatchState, PrWatchEvent } from '../lib/pr-watch.js';
 import { stripIpcErrorPrefix } from '../lib/mcp-errors.js';
+import { markdownPreviewStore } from './markdownPreview.svelte.js';
 
 const POLL_MS = 60_000;
 /** Conversations the user hasn't looked at for a while are refreshed this
@@ -30,6 +32,9 @@ const MAX_POLL_MS = 8 * POLL_MS;
 const SWEEP_REFRESH_TIMEOUT_MS = 45_000;
 /** Auto-fix gives up on a head commit after this many attempts and asks for a human. */
 const MAX_AUTO_FIX_ATTEMPTS = 2;
+/** How long "rerun requested" stands without the PR showing the run going
+ *  again: past it, a rerun GitHub never started can be asked for again. */
+const RERUN_MARK_MS = 3 * 60_000;
 
 const EMPTY_SYNC: GitSyncStatus = { upstream: null, ahead: 0, behind: 0 };
 
@@ -106,6 +111,10 @@ class PrStore {
   /** The last failed push per session, whichever button started it (the
    *  status bar's ↑N or the Changes tab's "& Push"), so both agree. */
   pushErrorBySession = $state<Record<string, PushError>>({});
+  /** Runs whose failed jobs the user asked GitHub to rerun, per session:
+   *  'requesting' while asking, then when it was asked, until the PR shows
+   *  the run going again or passing (or RERUN_MARK_MS has passed). */
+  rerunsBySession = $state<Record<string, Record<string, 'requesting' | number>>>({});
 
   /** Auto toggles read from storage but not changed since. Kept outside the
    *  reactive record so a read from inside a $derived never mutates state. */
@@ -257,6 +266,7 @@ class PrStore {
     if (pr.status === 'fulfilled') {
       const baseBefore = this.reviewablePr(sessionId)?.baseRefName;
       this.prsBySession = { ...this.prsBySession, [sessionId]: pr.value };
+      this.pruneReruns(sessionId);
       if (this.reviewablePr(sessionId)?.baseRefName !== baseBefore) gitStatusStore.prBaseChanged(sessionId);
     }
     const failed = pr.status === 'rejected';
@@ -403,6 +413,60 @@ class PrStore {
     }
     void this.refresh(sessionId, true);
     return result;
+  }
+
+  // ── Failed CI jobs: their logs, and reruns ──
+
+  /** Show the end of a failed job's log in the Focus panel, at its last
+   *  error. Throws a readable error. */
+  async openJobLog(sessionId: string, run: FailingRun, job: FailingJob): Promise<void> {
+    let log: CiLogTail;
+    try {
+      log = await window.groveBench.getPrJobLog(sessionId, run.repo, job.id);
+    } catch (e) {
+      throw new Error(stripIpcErrorPrefix(e instanceof Error ? e.message : String(e ?? '')) || 'Could not read the log', { cause: e });
+    }
+    // Ends in words, so a job named like a file ("lint.ts") isn't
+    // highlighted as that kind of code.
+    const title = `${run.workflow ? `${run.workflow} / ` : ''}${job.name}: end of log`;
+    markdownPreviewStore.showCode(log.text || '(The log is empty)', title, sessionId, log.errorLine ? { start: log.errorLine, end: log.errorLine } : undefined);
+  }
+
+  /** Where a rerun of the run's failed jobs stands, as far as this app knows. */
+  getRerun(sessionId: string, runId: string): 'requesting' | 'requested' | undefined {
+    const mark = this.rerunsBySession[sessionId]?.[runId];
+    if (mark === 'requesting') return 'requesting';
+    return mark !== undefined && Date.now() - mark < RERUN_MARK_MS ? 'requested' : undefined;
+  }
+
+  /** Ask GitHub to rerun a run's failed jobs. Throws a readable error. */
+  async rerunFailedJobs(sessionId: string, run: FailingRun): Promise<void> {
+    if (this.getRerun(sessionId, run.runId)) return;
+    this.markRerun(sessionId, run.runId, 'requesting');
+    try {
+      await window.groveBench.rerunPrFailedJobs(sessionId, run.repo, run.runId);
+    } catch (e) {
+      this.markRerun(sessionId, run.runId, undefined);
+      throw new Error(stripIpcErrorPrefix(e instanceof Error ? e.message : String(e ?? '')) || 'Rerun failed', { cause: e });
+    }
+    this.markRerun(sessionId, run.runId, Date.now());
+    void this.refresh(sessionId, true);
+  }
+
+  private markRerun(sessionId: string, runId: string, mark: 'requesting' | number | undefined): void {
+    const { [runId]: _old, ...rest } = this.rerunsBySession[sessionId] ?? {};
+    this.rerunsBySession = { ...this.rerunsBySession, [sessionId]: mark === undefined ? rest : { ...rest, [runId]: mark } };
+  }
+
+  /** Drop the rerun marks the PR data has caught up with: the run going
+   *  again, or no longer failing. */
+  private pruneReruns(sessionId: string): void {
+    const marks = this.rerunsBySession[sessionId];
+    if (!marks) return;
+    const stillFailed = new Set((this.prsBySession[sessionId] ?? [])
+      .flatMap((pr) => (pr.failingRuns ?? []).filter((run) => !run.pending).map((run) => run.runId)));
+    const kept = Object.entries(marks).filter(([runId, mark]) => mark === 'requesting' || stillFailed.has(runId));
+    if (kept.length !== Object.keys(marks).length) this.rerunsBySession = { ...this.rerunsBySession, [sessionId]: Object.fromEntries(kept) };
   }
 
   // ── Agent actions ──
@@ -574,6 +638,8 @@ class PrStore {
     persistAuto(sessionId, AUTO_OFF); // drops the saved toggles
     const { [sessionId]: _f, ...restFailed } = this.fetchFailedBySession;
     this.fetchFailedBySession = restFailed;
+    const { [sessionId]: _r, ...restReruns } = this.rerunsBySession;
+    this.rerunsBySession = restReruns;
     this.dismissPushError(sessionId);
   }
 }

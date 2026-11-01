@@ -536,3 +536,33 @@ describe('auto toggles', () => {
     expect(prStore.getAuto(OTHER)).toEqual({ fixCi: false, addressReviews: false });
   });
 });
+
+describe('reruns of failed jobs', () => {
+  const run = { repo: 'o/r', runId: '900', jobs: [{ id: '901', name: 'e2e' }] };
+
+  afterEach(() => {
+    vi.useRealTimers();
+    prStore.clear(SID);
+  });
+
+  it('marks a run as requested, and lets it be asked again if GitHub never starts it', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    await prStore.rerunFailedJobs(SID, run);
+    expect(mockGroveBench.rerunPrFailedJobs).toHaveBeenCalledTimes(1);
+    expect(prStore.getRerun(SID, '900')).toBe('requested');
+
+    await prStore.rerunFailedJobs(SID, run);
+    expect(mockGroveBench.rerunPrFailedJobs).toHaveBeenCalledTimes(1);
+
+    vi.setSystemTime(Date.now() + 3 * 60_000 + 1);
+    expect(prStore.getRerun(SID, '900')).toBeUndefined();
+    await prStore.rerunFailedJobs(SID, run);
+    expect(mockGroveBench.rerunPrFailedJobs).toHaveBeenCalledTimes(2);
+  });
+
+  it('drops the mark when asking fails, and passes on the reason without the IPC wrapping', async () => {
+    mockGroveBench.rerunPrFailedJobs.mockRejectedValueOnce(new Error("Error invoking remote method 'pr:rerunFailed': Error: GitHub didn't answer in time."));
+    await expect(prStore.rerunFailedJobs(SID, run)).rejects.toThrow(/^GitHub didn't answer in time\.$/);
+    expect(prStore.getRerun(SID, '900')).toBeUndefined();
+  });
+});

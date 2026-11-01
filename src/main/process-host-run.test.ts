@@ -71,6 +71,16 @@ describe('runInAgentHost', () => {
     expect(hosted.spawnProcess).toHaveBeenCalledWith('claude', ['plugin', 'list', '--json'], { cwd: '/repo', shell: true, agentOutput: false });
   });
 
+  it('keeps only the end of a long stdout when asked (keepLastChars), and all of stderr', async () => {
+    const cmd = nextCommand();
+    const done = runInAgentHost('gh', ['api', 'repos/o/r/actions/jobs/1/logs'], { keepLastChars: 10 });
+    cmd.started();
+    for (const chunk of ['0123456789', 'abcdefghij', 'KLMNOPQRST', 'uvwxyz']) cmd.stdout(chunk);
+    cmd.stderr('a long warning that stays whole');
+    cmd.exit(0);
+    await expect(done).resolves.toMatchObject({ stdout: 'QRSTuvwxyz', stderr: 'a long warning that stays whole' });
+  });
+
   it('gives it the environment execa would', async () => {
     // None: the host's own, as execa's extended environment would be.
     let cmd = nextCommand();

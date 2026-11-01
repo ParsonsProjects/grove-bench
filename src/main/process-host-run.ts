@@ -36,7 +36,12 @@ import { logger } from './logger.js';
  *  there (spawnProcessInHost), for work that can be skipped, such as the
  *  health line's process list (process-memory.ts). */
 export type AgentHostRunOptions = Pick<HostedOptions, 'cwd' | 'env' | 'extendEnv' | 'shell' | 'timeout' | 'idempotent' | 'input'>
-  & Pick<SpawnProcessOptions, 'findCommand'> & { hostOnly?: boolean };
+  & Pick<SpawnProcessOptions, 'findCommand'> & {
+    hostOnly?: boolean;
+    /** Keep only this many characters from the end of stdout, for output
+     *  that can be far longer than the part read (a CI job's log). */
+    keepLastChars?: number;
+  };
 
 /** The longest a command with a `timeout` waits to start; the timeout counts
  *  from then. spawnProcess waits for a starting or restarting agent host
@@ -74,7 +79,7 @@ export async function runInAgentHost(file: string, args: string[], options: Agen
   }
 }
 
-function runOnce(file: string, args: string[], { cwd, env, extendEnv = true, shell, timeout, input, findCommand, hostOnly }: AgentHostRunOptions): Promise<ProcessResult> {
+function runOnce(file: string, args: string[], { cwd, env, extendEnv = true, shell, timeout, input, findCommand, hostOnly, keepLastChars }: AgentHostRunOptions): Promise<ProcessResult> {
   const command = [file, ...args].join(' ');
   // Background work (a PR status refresh) never starts in the main process.
   const proc = (hostOnly || isBackground() ? spawnProcessInHost : spawnProcess)(file, args, {
@@ -97,8 +102,15 @@ function runOnce(file: string, args: string[], { cwd, env, extendEnv = true, she
   }
   const output = { stdout: '', stderr: '' };
   const ended = (['stdout', 'stderr'] as const).map((name) => new Promise<void>((resolve) => {
-    proc[name].on('data', (chunk: string) => { output[name] += chunk; });
-    proc[name].once('end', () => resolve());
+    proc[name].on('data', (chunk: string) => {
+      output[name] += chunk;
+      // Trimmed once it is twice the size kept, so each chunk isn't a copy.
+      if (name === 'stdout' && keepLastChars && output.stdout.length > keepLastChars * 2) output.stdout = output.stdout.slice(-keepLastChars);
+    });
+    proc[name].once('end', () => {
+      if (name === 'stdout' && keepLastChars && output.stdout.length > keepLastChars) output.stdout = output.stdout.slice(-keepLastChars);
+      resolve();
+    });
   }));
   let startError: Error | undefined;
   proc.on('error', (e: Error) => { startError ??= e; });

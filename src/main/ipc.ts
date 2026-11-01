@@ -18,7 +18,7 @@ import type { AgentAdapter } from './adapters/types.js';
 import { agentForProject, recordedAgent } from './background-tasks.js';
 import { validateBranchName, branchExists, branchExistsAnywhere, worktreeBranches, listBranches, getDefaultBranch, git, fileDiff, fileDiffAgainst, isTracked, patchResult, patchOverLimit, MAX_TEXT_FILE_BYTES, resolveMergeBase, blobLines, hashWorkingFiles, listProjectFiles, revertFile, gitOperation, continueGitOperation, abortGitOperation, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, textLines, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, MissingBaseError, logCommits, rebaseOnto, cherryPick, squashSince, currentBranch, recentCheckouts, getGitIdentity, gitVersion } from './git.js';
 import { inspectProjectFolder, projectKind } from './project-path.js';
-import { prsForBranches, prCreate, prReviewComments, ghLogin, isNetworkError, isRateLimitError, openPrs, GH_OFFLINE_COOLDOWN_MS, GH_OFFLINE_MESSAGE, GH_RATE_LIMITED_MESSAGE } from './gh.js';
+import { prsForBranches, prCreate, prReviewComments, prJobLog, prRerunFailed, ghLogin, isNetworkError, isRateLimitError, openPrs, GH_OFFLINE_COOLDOWN_MS, GH_OFFLINE_MESSAGE, GH_RATE_LIMITED_MESSAGE } from './gh.js';
 import { tempBranchName, isTempBranch, generateBranchName } from './branch-name.js';
 import { displayTextFromSent } from '../shared/prompt-text.js';
 import { EMPTY_THREAD_ITEMS, threadItems } from '../shared/thread-items.js';
@@ -1864,6 +1864,22 @@ export function registerHandlers() {
     const worktree = worktreeManager.getWorktree(sessionId);
     if (!worktree || worktree.noGit) throw new Error(`Worktree not found for session ${sessionId}`);
     return submitPrReview(worktree.path, worktree.repoPath, parsePrReviewSubmit(review));
+  });
+
+  // A failed Actions job's log, and a rerun of a run's failed jobs. prJobLog
+  // and prRerunFailed take only a plain repository and digits.
+  ipcMain.handle(IPC.PR_JOB_LOG, async (_event, sessionId: string, repo: unknown, jobId: unknown) => {
+    const worktree = worktreeManager.getWorktree(sessionId);
+    if (!worktree || worktree.noGit) throw new Error(`Worktree not found for session ${sessionId}`);
+    if (typeof repo !== 'string' || typeof jobId !== 'string') throw new Error('Not a GitHub Actions job');
+    return prJobLog(worktree.repoPath, repo, jobId);
+  });
+
+  ipcMain.handle(IPC.PR_RERUN_FAILED, async (_event, sessionId: string, repo: unknown, runId: unknown) => {
+    const worktree = worktreeManager.getWorktree(sessionId);
+    if (!worktree || worktree.noGit) throw new Error(`Worktree not found for session ${sessionId}`);
+    if (typeof repo !== 'string' || typeof runId !== 'string') throw new Error('Not a GitHub Actions run');
+    await prRerunFailed(worktree.repoPath, repo, runId);
   });
 
   ipcMain.handle(IPC.PR_CREATE, async (_event, sessionId: string, opts: PrCreateOpts) => {

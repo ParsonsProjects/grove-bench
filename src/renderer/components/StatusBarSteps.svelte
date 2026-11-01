@@ -17,7 +17,7 @@
   import XIcon from '@lucide/svelte/icons/x';
   import { prHealth } from '../lib/pr-state.js';
   import type { ShipStep, ShipStepState, ShipTrack } from '../lib/ship-track.js';
-  import type { PrInfo } from '../../shared/types.js';
+  import type { FailingJob, FailingRun, PrInfo } from '../../shared/types.js';
   import ShipDot from './ShipDot.svelte';
 
   let {
@@ -58,6 +58,17 @@
    *  gets the agent actions and automation. */
   let prOpen = $derived(prInfo?.state === 'OPEN');
   let failingChecks = $derived(prInfo?.failingChecks ?? []);
+  /** The failed GitHub Actions jobs, by run: each with its log, each run
+   *  with a rerun. */
+  let failingRuns = $derived(prInfo?.failingRuns ?? []);
+  /** Failing checks with no Actions job here to show: other CI services',
+   *  whose logs are with the service that ran them. */
+  let otherFailing = $derived.by(() => {
+    const jobs = new Set(failingRuns.flatMap((run) => run.jobs.map((job) => job.name)));
+    return failingChecks.filter((name) => !jobs.has(name));
+  });
+  let loadingLog = $state<string | null>(null);
+  let checksNotice = $state<string | null>(null);
   let canFixCi = $derived(prOpen && (prInfo?.checks?.failed ?? 0) > 0);
   let canAddressReviews = $derived(prOpen && (prInfo?.reviewDecision === 'CHANGES_REQUESTED' || !!commentsAlert));
 
@@ -68,6 +79,34 @@
     fixCiNotice = null;
     if (prStore.fixCiWithAgent(sessionId)) onclose();
     else fixCiNotice = 'The agent is busy: try again when it goes idle';
+  }
+
+  async function openLog(run: FailingRun, job: FailingJob) {
+    if (loadingLog) return;
+    loadingLog = job.id;
+    checksNotice = null;
+    try {
+      await prStore.openJobLog(sessionId, run, job);
+    } catch (e) {
+      checksNotice = e instanceof Error ? e.message : 'Could not read the log';
+    } finally {
+      loadingLog = null;
+    }
+  }
+
+  async function rerun(run: FailingRun) {
+    checksNotice = null;
+    try {
+      await prStore.rerunFailedJobs(sessionId, run);
+    } catch (e) {
+      checksNotice = e instanceof Error ? e.message : 'Rerun failed';
+    }
+  }
+
+  function rerunTitle(run: FailingRun, state: 'requesting' | 'requested' | undefined): string {
+    if (state === 'requested') return 'Rerun requested. The checks show it once GitHub starts it';
+    if (run.pending) return 'Wait for this run to finish: GitHub reruns failed jobs only once every job in it is done';
+    return 'Rerun this run\'s failed jobs, and the jobs that need them, on GitHub';
   }
 
   async function addressReviews() {
@@ -189,8 +228,49 @@
         </div>
 
         {#if step.id === 'checks'}
-          {#if failingChecks.length > 0}
-            <div class="text-muted-foreground truncate" title={failingChecks.join(', ')}>{failingChecks.join(', ')}</div>
+          {#each failingRuns as run (run.runId)}
+            {@const rerunState = prStore.getRerun(sessionId, run.runId)}
+            <div class="flex items-start gap-2 min-w-0" data-testid="failed-run">
+              <span class="shrink-0 text-muted-foreground" title="GitHub Actions run {run.runId}">{run.workflow ?? 'Actions'}</span>
+              <span class="flex min-w-0 flex-wrap items-center gap-x-2">
+                {#each run.jobs as job (job.id)}
+                  <span class="inline-flex min-w-0 items-center gap-1">
+                    <span class="min-w-0 truncate text-red-400" title={job.name}>{job.name}</span>
+                    <Button
+                      variant="link"
+                      size="inline"
+                      class="shrink-0 disabled:no-underline"
+                      onclick={() => openLog(run, job)}
+                      disabled={loadingLog !== null}
+                      title="Read the end of this job's log"
+                    >
+                      {loadingLog === job.id ? 'loading…' : 'log'}
+                    </Button>
+                  </span>
+                {/each}
+              </span>
+              {#if prOpen}
+                <Button
+                  variant="link"
+                  size="inline"
+                  class="ml-auto shrink-0 disabled:no-underline disabled:cursor-not-allowed"
+                  onclick={() => rerun(run)}
+                  disabled={run.pending || rerunState !== undefined}
+                  title={rerunTitle(run, rerunState)}
+                >
+                  {rerunState === 'requesting' ? 'asking…' : rerunState === 'requested' ? 'rerun requested' : 'rerun failed'}
+                </Button>
+              {/if}
+            </div>
+          {/each}
+          {#if otherFailing.length > 0}
+            <div
+              class="text-muted-foreground truncate"
+              title="{otherFailing.join(', ')}{failingRuns.length > 0 ? '. Not GitHub Actions jobs of this repository: their logs are with the service that ran them' : ''}"
+            >{otherFailing.join(', ')}</div>
+          {/if}
+          {#if checksNotice}
+            <div class="text-amber-500 truncate" title={checksNotice}>{checksNotice}</div>
           {/if}
           {#if fixCiNotice}
             <div class="text-amber-500 truncate" title={fixCiNotice}>{fixCiNotice}</div>

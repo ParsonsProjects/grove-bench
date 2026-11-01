@@ -14,6 +14,7 @@ import { usageStore } from '../stores/usage.svelte.js';
 import { backgroundTaskStore } from '../stores/backgroundTask.svelte.js';
 import { subagentPanelStore } from '../stores/subagentPanel.svelte.js';
 import { gitStatusStore } from '../stores/gitStatus.svelte.js';
+import { markdownPreviewStore } from '../stores/markdownPreview.svelte.js';
 import { CONTROL_IDS } from '../../shared/types.js';
 import type { PrInfo, ThreadUsage } from '../../shared/types.js';
 
@@ -686,6 +687,66 @@ describe('StatusBar PR', () => {
     await openBranch();
     await fireEvent.click(within(stepRow('Checks')).getByRole('button', { name: 'fix with agent →' }));
     expect(within(stepRow('Checks')).getByText('The agent is busy: try again when it goes idle')).toBeInTheDocument();
+  });
+
+  const ciRun = { repo: 'o/r', runId: '900', workflow: 'CI', jobs: [{ id: '901', name: 'e2e' }] };
+
+  it('lists the failed Actions jobs with their logs, and other failing checks plainly', async () => {
+    vi.mocked(window.groveBench.getPrJobLog).mockResolvedValueOnce({ text: 'build\n##[error]boom\ndone', omittedBefore: 40, omittedAfter: 3, errorLine: 2 });
+    await renderWithPrs(pr({ checks: { total: 3, passed: 1, failed: 2, pending: 0 }, failingChecks: ['e2e', 'codecov'], failingRuns: [ciRun] }));
+    await openBranch();
+
+    const row = stepRow('Checks');
+    expect(within(row).getByTestId('failed-run').textContent?.replace(/\s+/g, ' ').trim()).toBe('CI e2e log rerun failed');
+    expect(within(row).getByText('codecov')).toBeInTheDocument();
+    expect(within(row).queryByText('e2e, codecov')).toBeNull();
+
+    await fireEvent.click(within(row).getByRole('button', { name: 'log' }));
+    await waitFor(() => expect(markdownPreviewStore.open).toBe(true));
+    expect(window.groveBench.getPrJobLog).toHaveBeenCalledWith(ACTIVE, 'o/r', '901');
+    expect(markdownPreviewStore.title).toBe('CI / e2e: end of log');
+    expect(markdownPreviewStore.content).toBe('build\n##[error]boom\ndone');
+    expect(markdownPreviewStore.code).toEqual({ path: 'CI / e2e: end of log', lines: { start: 2, end: 2 } });
+    markdownPreviewStore.close();
+  });
+
+  it('says on the Checks row when a log can\'t be read', async () => {
+    vi.mocked(window.groveBench.getPrJobLog).mockRejectedValueOnce(new Error("Error invoking remote method 'pr:jobLog': Error: GitHub has no log for this job any more."));
+    await renderWithPrs(pr({ checks: { total: 1, passed: 0, failed: 1, pending: 0 }, failingChecks: ['e2e'], failingRuns: [ciRun] }));
+    await openBranch();
+    await fireEvent.click(within(stepRow('Checks')).getByRole('button', { name: 'log' }));
+    await waitFor(() => expect(within(stepRow('Checks')).getByText('GitHub has no log for this job any more.')).toBeInTheDocument());
+  });
+
+  it('asks GitHub to rerun a run\'s failed jobs, then says so until the run goes again', async () => {
+    const failing = pr({ checks: { total: 1, passed: 0, failed: 1, pending: 0 }, failingChecks: ['e2e'], failingRuns: [ciRun] });
+    await renderWithPrs(failing);
+    await openBranch();
+
+    await fireEvent.click(within(stepRow('Checks')).getByRole('button', { name: 'rerun failed' }));
+    expect(window.groveBench.rerunPrFailedJobs).toHaveBeenCalledWith(ACTIVE, 'o/r', '900');
+    await waitFor(() => expect(within(stepRow('Checks')).getByRole('button', { name: 'rerun requested' })).toBeDisabled());
+
+    // GitHub has started it: the run is going, so the mark goes.
+    vi.mocked(window.groveBench.getPrs).mockResolvedValue([pr({ checks: { total: 1, passed: 0, failed: 0, pending: 1 } })]);
+    await prStore.refresh(ACTIVE, true);
+    expect(prStore.getRerun(ACTIVE, '900')).toBeUndefined();
+  });
+
+  it('holds the rerun while other jobs of the run still go, and says why a rerun failed', async () => {
+    await renderWithPrs(pr({ checks: { total: 2, passed: 0, failed: 1, pending: 1 }, failingChecks: ['e2e'], failingRuns: [{ ...ciRun, pending: true }] }));
+    await openBranch();
+    const button = within(stepRow('Checks')).getByRole('button', { name: 'rerun failed' });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute('title', expect.stringContaining('Wait for this run to finish'));
+
+    vi.mocked(window.groveBench.getPrs).mockResolvedValue([pr({ checks: { total: 2, passed: 1, failed: 1, pending: 0 }, failingChecks: ['e2e'], failingRuns: [ciRun] })]);
+    await prStore.refresh(ACTIVE, true);
+    vi.mocked(window.groveBench.rerunPrFailedJobs).mockRejectedValueOnce(new Error("Error invoking remote method 'pr:rerunFailed': Error: Your gh account can't rerun jobs in this repository. It needs write access."));
+    await waitFor(() => expect(within(stepRow('Checks')).getByRole('button', { name: 'rerun failed' })).toBeEnabled());
+    await fireEvent.click(within(stepRow('Checks')).getByRole('button', { name: 'rerun failed' }));
+    await waitFor(() => expect(within(stepRow('Checks')).getByText(/It needs write access/)).toBeInTheDocument());
+    expect(within(stepRow('Checks')).getByRole('button', { name: 'rerun failed' })).toBeEnabled();
   });
 
   it('puts new comments and the agent\'s answer to them on the Review row', async () => {

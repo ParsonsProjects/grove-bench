@@ -271,6 +271,10 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.PR_REVIEW_COMMENTS, sessionId, prNumber),
   submitPrReview: (sessionId: string, review: import('../shared/types.js').PrReviewSubmit) =>
     ipcRenderer.invoke(IPC.PR_SUBMIT_REVIEW, sessionId, review),
+  getPrJobLog: (sessionId: string, repo: string, jobId: string) =>
+    ipcRenderer.invoke(IPC.PR_JOB_LOG, sessionId, repo, jobId),
+  rerunPrFailedJobs: (sessionId: string, repo: string, runId: string) =>
+    ipcRenderer.invoke(IPC.PR_RERUN_FAILED, sessionId, repo, runId),
 
   // External links
   openExternal: (url: string) => ipcRenderer.invoke(IPC.OPEN_EXTERNAL, url),

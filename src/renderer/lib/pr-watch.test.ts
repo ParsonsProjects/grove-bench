@@ -62,6 +62,24 @@ describe('detectPrEvents()', () => {
     expect(detectPrEvents(state, failing)).toEqual([{ kind: 'ci_failed', checks: ['test'] }]);
   });
 
+  it('re-arms when the failed checks run again on the same commit (a rerun)', () => {
+    const state = newPrWatchState();
+    detectPrEvents(state, pr());
+    const failing = pr({ checks: { total: 3, passed: 2, failed: 1, pending: 0 }, failingChecks: ['test'] });
+    detectPrEvents(state, failing);                                                          // alert
+    detectPrEvents(state, pr({ checks: { total: 3, passed: 2, failed: 0, pending: 1 } }));   // rerun going
+    expect(detectPrEvents(state, failing)).toEqual([{ kind: 'ci_failed', checks: ['test'] }]);
+  });
+
+  it('does not re-arm while a failed check stays failed and others still run', () => {
+    const state = newPrWatchState();
+    detectPrEvents(state, pr());
+    const failingWhileRunning = pr({ checks: { total: 3, passed: 1, failed: 1, pending: 1 }, failingChecks: ['test'] });
+    detectPrEvents(state, failingWhileRunning);
+    expect(detectPrEvents(state, failingWhileRunning)).toEqual([]);
+    expect(detectPrEvents(state, pr({ checks: { total: 3, passed: 2, failed: 1, pending: 0 }, failingChecks: ['test'] }))).toEqual([]);
+  });
+
   it('reports new comments once', () => {
     const state = newPrWatchState();
     detectPrEvents(state, pr({ commentSignature: ['c:1'] })); // seed
