@@ -38,18 +38,19 @@ beforeEach(() => {
 
 afterEach(() => cleanup());
 
-/** jsdom has no layout. Lays the chat out with each message drawn 100px
- *  tall, one under another, in a scroller 500px tall, and returns it. With
- *  no scroll anchoring, as Chromium at the very top. */
-function layOut(container: HTMLElement): HTMLElement {
+/** jsdom has no layout. Lays the chat out with each row (a message, or a
+ *  fold of notes) drawn `rowHeight` tall, one under another, in a scroller
+ *  500px tall, and returns it. With no scroll anchoring, as Chromium at the
+ *  very top. */
+function layOut(container: HTMLElement, rowHeight = 100): HTMLElement {
   const el = container.querySelector<HTMLElement>('.overflow-y-auto')!;
-  const rows = () => [...el.querySelectorAll<HTMLElement>(':scope > [data-msg-id]')];
-  Object.defineProperty(el, 'scrollHeight', { configurable: true, get: () => rows().length * 100 });
+  const rows = () => [...el.querySelectorAll<HTMLElement>(':scope > [data-msg-id], :scope > details[data-notes]')];
+  Object.defineProperty(el, 'scrollHeight', { configurable: true, get: () => rows().length * rowHeight });
   Object.defineProperty(el, 'clientHeight', { configurable: true, value: 500 });
   vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
     const i = this === el ? -1 : rows().indexOf(this as HTMLElement);
-    const top = i < 0 ? 0 : i * 100 - el.scrollTop;
-    const height = this === el ? 500 : 100;
+    const top = i < 0 ? 0 : i * rowHeight - el.scrollTop;
+    const height = this === el ? 500 : rowHeight;
     return { top, bottom: top + height, left: 0, right: 0, width: 0, height, x: 0, y: top, toJSON: () => ({}) };
   });
   return el;
@@ -576,7 +577,9 @@ describe('OutputPanel: drawing a loaded page', () => {
 describe('OutputPanel: scrolling up loads older messages', () => {
   const texts = (prefix: string, n: number): ChatMessage[] =>
     Array.from({ length: n }, (_, i) => ({ kind: 'text', id: `${prefix}${i}`, text: `${prefix} ${i}`, uuid: `${prefix}-${i}` }));
-  const drawn = (container: HTMLElement) => [...container.querySelectorAll<HTMLElement>('[data-msg-id]')].map((el) => el.dataset.msgId);
+  const tools = (prefix: string, n: number): ChatMessage[] =>
+    Array.from({ length: n }, (_, i) => ({ kind: 'tool_call', id: `${prefix}${i}`, toolName: 'Read', toolInput: { file_path: 'a.ts' }, toolUseId: `${prefix}-tu${i}`, uuid: `${prefix}-${i}`, pending: false }));
+  const drawn =(container: HTMLElement) => [...container.querySelectorAll<HTMLElement>('[data-msg-id]')].map((el) => el.dataset.msgId);
   const scrollTo = (el: HTMLElement, top: number) => {
     el.scrollTop = top;
     el.dispatchEvent(new Event('scroll'));
@@ -659,7 +662,75 @@ describe('OutputPanel: scrolling up loads older messages', () => {
     expect(drawn(container)[0]).toBe('o10');
     expect(el.scrollTop).toBe(5000);
     await findByText(/Load 10 older messages/);
-    messageStore.paginationBySession = {};
+  });
+
+  it('reads on past a page of history that holds nothing the view shows', async () => {
+    messageStore.setViewMode(SID, 'focus');
+    messageStore.messagesBySession = { [SID]: texts('r', 20) };
+    messageStore.setPagination(SID, 600, 400);
+    // Tool calls only (Focus hides them), then replies.
+    const pages = [tools('t', 10), [...texts('o', 60), { kind: 'user', id: 'u0', text: 'next' } as ChatMessage]];
+    const load = vi.spyOn(messageStore, 'loadOlderEvents').mockImplementation(async () => {
+      messageStore.messagesBySession = { [SID]: [...pages.shift()!, ...messageStore.getMessages(SID)] };
+      messageStore.setPagination(SID, 600, pages.length * 200);
+    });
+    const { container } = render(OutputPanel, { sessionId: SID });
+    await vi.waitFor(() => expect(drawn(container)).toHaveLength(20));
+    const el = layOut(container);
+
+    scrollTo(el, 0);
+
+    await vi.waitFor(() => expect(drawn(container)).toHaveLength(70));
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps a fold of notes at the top in place as older notes join it', async () => {
+    messageStore.setViewMode(SID, 'focus');
+    // One run of notes between tool calls (hidden in Focus), so one fold.
+    const run = Array.from({ length: 70 }, (_, i) => [texts('n', 70)[i], tools('t', 70)[i]]).flat();
+    messageStore.messagesBySession = { [SID]: [{ kind: 'user', id: 'u1', text: 'fix it' }, ...run, { kind: 'text', id: 'ans', text: 'Done', uuid: 'a-ans' }] };
+    const { container } = render(OutputPanel, { sessionId: SID });
+    await vi.waitFor(() => expect(drawn(container)).toHaveLength(50));
+    const el = layOut(container, 400);
+
+    // Reading the fold, drawn anew as each batch of older notes joins it.
+    scrollTo(el, 0);
+
+    await vi.waitFor(() => expect(drawn(container)).toContain('u1'));
+    await tick();
+    // The prompt, one 400px row, joined above it.
+    expect(el.scrollTop).toBe(400);
+  });
+
+  it('draws nothing above a jump that began while a page of history loaded', async () => {
+    Element.prototype.scrollIntoView = vi.fn();
+    messageStore.messagesBySession = { [SID]: texts('r', 20) };
+    messageStore.setPagination(SID, 300, 100);
+    let finishLoad!: () => void;
+    const load = vi.spyOn(messageStore, 'loadOlderEvents').mockImplementation(() => new Promise<void>((resolve) => {
+      finishLoad = () => {
+        messageStore.messagesBySession = { [SID]: [...texts('o', 60), ...messageStore.getMessages(SID)] };
+        messageStore.setPagination(SID, 300, 0);
+        resolve();
+      };
+    }));
+    vi.spyOn(messageStore, 'loadOlderUntil').mockResolvedValue();
+    vi.spyOn(messageStore, 'findMessageForEvent').mockResolvedValue('r5');
+    const { container } = render(OutputPanel, { sessionId: SID });
+    await vi.waitFor(() => expect(drawn(container)).toHaveLength(20));
+    const el = layOut(container);
+    scrollTo(el, 0);
+    await vi.waitFor(() => expect(load).toHaveBeenCalled());
+
+    messageStore.requestJump(SID, { eventIndex: 105, uuid: null, bookmarkId: '' });
+    await vi.waitFor(() => expect(Element.prototype.scrollIntoView).toHaveBeenCalled());
+    finishLoad();
+    await tick();
+    await nextFrame();
+    await nextFrame();
+    await tick();
+
+    expect(drawn(container)).toHaveLength(20);
   });
 
   it("doesn't follow the bottom when an older page joins above a prompt", async () => {

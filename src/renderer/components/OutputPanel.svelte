@@ -138,11 +138,16 @@
   async function keepingPlace(change: () => void) {
     const el = scrollContainer;
     const row = el && el.clientHeight > 0 ? rowInView(el) : undefined;
+    // A fold of notes is drawn anew when older notes join it (it's keyed by
+    // its first), so it's found again by a message it holds.
+    const id = row?.dataset.msgId ?? row?.querySelector<HTMLElement>('[data-msg-id]')?.dataset.msgId;
     const before = row?.getBoundingClientRect().top ?? 0;
     change();
     await tick();
-    if (!el || !row?.isConnected) return;
-    const moved = row.getBoundingClientRect().top - before;
+    if (!el || !row) return;
+    const now = row.isConnected ? row : id ? rowHolding(el, id) : undefined;
+    if (!now) return;
+    const moved = now.getBoundingClientRect().top - before;
     if (Math.abs(moved) >= 1) el.scrollTop += moved;
   }
 
@@ -154,6 +159,13 @@
       if (child.getBoundingClientRect().bottom > viewTop) return child;
     }
     return undefined;
+  }
+
+  /** The row (the message's own, or the fold it's in) drawing a message. */
+  function rowHolding(el: HTMLElement, id: string): HTMLElement | undefined {
+    let node = el.querySelector(`[data-msg-id="${id}"]`);
+    while (node && node.parentElement !== el) node = node.parentElement;
+    return node instanceof HTMLElement ? node : undefined;
   }
 
   /** Draw everything in the window now (before a change the user asked for). */
@@ -260,19 +272,25 @@
   // ─── Scrolling up near the top draws older messages ───
   // Within a screen of the top, the next page of the loaded messages joins
   // above, a batch per frame (drawOlderBatch) so scrolling doesn't stall.
-  // Once they're all drawn, the next page of history is read first. Not
-  // while a jump scrolls to its message (drawing above would stop it short
-  // of it): the reader's next wheel, click, touch or key goes on.
+  // Once they're all drawn, the next page of history is read first, and
+  // more after it while a page holds nothing this view shows (Focus, say,
+  // over a run of tool calls): drawing nothing, it wouldn't move the view,
+  // so no scroll would ask again. Not while a jump scrolls to its message
+  // (drawing above would stop it short of it): the reader's next wheel,
+  // click, touch or key goes on.
   let jumpScrolling = false;
 
   async function loadOlderOnScroll() {
     if (jumpScrolling || renderCap !== Infinity || held) return;
-    if (!hasOlderMessages) {
+    while (!hasOlderMessages) {
       if (!hasUnloadedEvents || isLoadingOlderEvents) return;
+      const unloaded = unloadedEventCount;
       await messageStore.loadOlderEvents(sessionId);
       await tick();
-      // Back at the bottom or switched away meanwhile (this chat stands still).
-      if (shouldAutoScroll || !paneShown || renderCap !== Infinity || held || !hasOlderMessages) return;
+      // Back at the bottom, jumping or switched away meanwhile (this chat
+      // stands still), or the page didn't load.
+      if (shouldAutoScroll || jumpScrolling || !paneShown || renderCap !== Infinity || held) return;
+      if (unloadedEventCount >= unloaded) return;
     }
     const drawn = Math.min(visibleCount, filteredMessages.length);
     // The first batch now: the "Load older" row may go with it, and at the
@@ -283,8 +301,15 @@
     });
   }
 
-  function readerScrolls() {
+  function endJumpScroll() {
     jumpScrolling = false;
+  }
+
+  /** The reader's own wheel or click: any jump's scroll is over, and a
+   *  bookmark's ring goes (not on a key, which may be Ctrl+C). */
+  function readerMoved() {
+    endJumpScroll();
+    maybeClearHighlight();
   }
 
   // Message search state — results come from the main-process full-history
@@ -585,10 +610,10 @@
   onscroll={handleScroll}
   onloadcapture={followImageLoad}
   onerrorcapture={followImageLoad}
-  onmousedown={() => { readerScrolls(); maybeClearHighlight(); }}
-  onwheel={() => { readerScrolls(); maybeClearHighlight(); }}
-  onkeydown={readerScrolls}
-  ontouchstart={readerScrolls}
+  onmousedown={readerMoved}
+  onwheel={readerMoved}
+  onkeydown={endJumpScroll}
+  ontouchstart={endJumpScroll}
 >
   <!-- Clipped to the view: the dots reach 726px down, and unclipped they
        made a short chat scroll, so following it hid the first messages. -->
