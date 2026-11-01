@@ -24,11 +24,34 @@ describe('buildFixCiPrompt()', () => {
     expect(prompt).toContain('PR #59');
     expect(prompt).toContain('feat/thing');
     expect(prompt).toContain('test, lint');
-    expect(prompt).toContain('gh run view --log-failed');
   });
 
   it('omits the check list when names are unknown', () => {
     expect(buildFixCiPrompt(59, 'feat/thing', [])).not.toContain('Failing checks');
+  });
+
+  it('gives the exact log command for each failing run', () => {
+    const prompt = buildFixCiPrompt(59, 'feat/thing', ['test'], [
+      { repo: 'o/r', runId: '101' },
+      { repo: 'o/r', runId: '102' },
+    ]);
+    expect(prompt).toContain('`gh run view 101 --repo o/r --log-failed`, `gh run view 102 --repo o/r --log-failed`');
+    expect(prompt).toContain('`gh pr checks 59`');
+  });
+
+  it('never asks for gh run view without a run id', () => {
+    // Without an id gh prompts for one, which fails in the agent's shell.
+    for (const prompt of [buildFixCiPrompt(59, 'b', ['test']), buildFixCiPrompt(59, 'b', ['test'], [{ repo: 'o/r', runId: '1' }])]) {
+      expect(prompt).not.toMatch(/gh run view --log-failed/);
+    }
+    expect(buildFixCiPrompt(59, 'b', ['test'])).toContain('`gh run view <run-id> --log-failed`');
+  });
+
+  it('caps the commands and points to the rest', () => {
+    const runs = Array.from({ length: 7 }, (_, i) => ({ repo: 'o/r', runId: String(i + 1) }));
+    const prompt = buildFixCiPrompt(59, 'b', [], runs);
+    expect(prompt.match(/gh run view \d+/g)).toHaveLength(5);
+    expect(prompt).toContain('2 more runs failed');
   });
 });
 

@@ -2908,6 +2908,43 @@ describe('outgoing message queue', () => {
     expect(messageStore.getQueue(SID)).toHaveLength(1);
   });
 
+  it('a usage limit holds the queue instead of sending the next item into it', () => {
+    messageStore.submitMessage(SID, { displayText: 'first', outgoing: 'first' });
+    messageStore.submitMessage(SID, { displayText: 'held', outgoing: 'held' });
+    mockGroveBench.sendMessage.mockClear();
+
+    messageStore.ingestEvent(SID, { type: 'rate_limit', status: 'rejected', rateLimitType: 'five_hour', resetsAt: 1_900_000_000 });
+    messageStore.ingestEvent(SID, result);
+
+    expect(messageStore.isQueuePaused(SID)).toBe(true);
+    expect(mockGroveBench.sendMessage).not.toHaveBeenCalled();
+    expect(messageStore.getQueue(SID).map((m) => m.displayText)).toEqual(['held']);
+
+    messageStore.resumeQueue(SID);
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, 'held', undefined, undefined);
+  });
+
+  it('a usage warning does not hold the queue', () => {
+    messageStore.submitMessage(SID, { displayText: 'first', outgoing: 'first' });
+    messageStore.submitMessage(SID, { displayText: 'next', outgoing: 'next' });
+    mockGroveBench.sendMessage.mockClear();
+
+    messageStore.ingestEvent(SID, { type: 'rate_limit', status: 'allowed_warning', utilization: 0.9 });
+    messageStore.ingestEvent(SID, result);
+
+    expect(messageStore.isQueuePaused(SID)).toBe(false);
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, 'next', undefined, undefined);
+  });
+
+  it('a usage limit in replayed history does not hold the queue', () => {
+    messageStore.submitMessage(SID, { displayText: 'first', outgoing: 'first' });
+    messageStore.submitMessage(SID, { displayText: 'next', outgoing: 'next' });
+
+    messageStore.replayEvents(SID, [{ type: 'rate_limit', status: 'rejected', rateLimitType: 'five_hour' }]);
+
+    expect(messageStore.isQueuePaused(SID)).toBe(false);
+  });
+
   it('slash commands queue while running and dispatch through sendCommand', () => {
     messageStore.submitMessage(SID, { displayText: 'first', outgoing: 'first' });
     mockGroveBench.sendMessage.mockClear();
@@ -3205,6 +3242,38 @@ describe('ingestEvent — tool views', () => {
     const perm = msgs.find((m) => m.kind === 'permission');
     expect(call && call.kind === 'tool_call' && [call.toolName, call.toolView]).toEqual(['replace', view]);
     expect(perm && perm.kind === 'permission' && perm.toolView).toEqual(view);
+  });
+
+  it('refreshes the running activity when tool_update fills in its call', () => {
+    // ACP agents report a call by its kind first, then its command.
+    messageStore.ingestEvent(SID, {
+      type: 'assistant_tool_use', toolName: 'execute', toolInput: {}, toolUseId: 't4', uuid: 'u4',
+      toolView: { kind: 'shell', summary: 'Running a command' },
+    });
+    messageStore.ingestEvent(SID, {
+      type: 'tool_update', toolUseId: 't4', toolName: 'run_shell_command', toolInput: { command: 'npm test' },
+      toolView: { kind: 'shell', command: 'npm test' },
+    });
+
+    expect(messageStore.getActivity(SID)).toMatchObject({
+      activity: 'tool_starting', toolName: 'run_shell_command', toolSummary: 'npm test', toolUseId: 't4',
+    });
+  });
+
+  it('leaves the activity alone when tool_update is for another call', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'assistant_tool_use', toolName: 'execute', toolInput: {}, toolUseId: 't5', uuid: 'u5',
+      toolView: { kind: 'shell', command: 'npm run build' },
+    });
+    messageStore.ingestEvent(SID, {
+      type: 'assistant_tool_use', toolName: 'read', toolInput: {}, toolUseId: 't6', uuid: 'u6',
+      toolView: { kind: 'read', path: 'a.ts' },
+    });
+    messageStore.ingestEvent(SID, {
+      type: 'tool_update', toolUseId: 't5', toolView: { kind: 'shell', command: 'npm run build -- --watch' },
+    });
+
+    expect(messageStore.getActivity(SID)).toMatchObject({ toolName: 'read', toolUseId: 't6' });
   });
 
   it('lists edits from adapter views in the turn\'s file changes', () => {

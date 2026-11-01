@@ -1,6 +1,6 @@
 import { isReadOnly } from './process-host.js';
 import { runInAgentHost } from './process-host-run.js';
-import type { OpenPrSummary, PrChecksSummary, PrCreateOpts, PrInfo, PrReviewComment, PrReviewEvent } from '../shared/types.js';
+import type { FailingRun, OpenPrSummary, PrChecksSummary, PrCreateOpts, PrInfo, PrReviewComment, PrReviewEvent } from '../shared/types.js';
 import { isRecord } from './persisted-state.js';
 
 /** obj.a.b... in JSON of unknown shape: undefined where a step isn't an
@@ -205,6 +205,40 @@ export function failingCheckNames(rollup: unknown): string[] {
     .map((item) => String(item.name || item.context || 'check'));
 }
 
+/** A plain owner or repository name (GitHub's own rules are narrower). */
+const REPO_PART = '[A-Za-z0-9][A-Za-z0-9_.-]*';
+/** HOST, OWNER and REPO of a PR's URL (https://HOST/OWNER/REPO/pull/N). */
+const PR_URL = new RegExp(`^https://([A-Za-z0-9.-]+)/(${REPO_PART})/(${REPO_PART})/pull/\\d+`);
+/** HOST, OWNER, REPO and run id of an Actions check's link
+ *  (https://HOST/OWNER/REPO/actions/runs/RUN/job/JOB). */
+const ACTIONS_RUN_LINK = new RegExp(`^https://([A-Za-z0-9.-]+)/(${REPO_PART})/(${REPO_PART})/actions/runs/(\\d{1,20})(?:[/?#]|$)`);
+
+/**
+ * The GitHub Actions runs behind the failing checks in a statusCheckRollup
+ * array, once each. Only check runs linking to an Actions run in the PR's
+ * own repository count: status contexts and other CI services' checks keep
+ * their logs elsewhere, and a check from any app may link anywhere. The
+ * parts go into the fix-CI prompt, so only plain names and digits pass.
+ */
+export function failingActionsRuns(rollup: unknown, prUrl: string): FailingRun[] {
+  const pr = PR_URL.exec(prUrl);
+  if (!pr || !Array.isArray(rollup)) return [];
+  const [, prHost, prOwner, prName] = pr;
+  const sameRepo = (host: string, owner: string, name: string) =>
+    [host, owner, name].join('/').toLowerCase() === [prHost, prOwner, prName].join('/').toLowerCase();
+  const runs: FailingRun[] = [];
+  for (const item of rollup as Array<Record<string, unknown>>) {
+    if (!FAILED_VERDICTS.has(checkVerdict(item))) continue;
+    const link = ACTIONS_RUN_LINK.exec(typeof item.detailsUrl === 'string' ? item.detailsUrl : '');
+    if (!link) continue;
+    const [, host, owner, name, runId] = link;
+    if (!sameRepo(host, owner, name)) continue;
+    const repo = host.toLowerCase() === 'github.com' ? `${owner}/${name}` : `${host}/${owner}/${name}`;
+    if (!runs.some((r) => r.runId === runId)) runs.push({ repo, runId });
+  }
+  return runs;
+}
+
 /** Opaque ids for conversation comments + submitted reviews, for new-feedback detection.
  *  ignoreLogin drops entries authored by that user (the gh-authenticated account):
  *  the agent replying on the PR must not read as new feedback, or auto
@@ -266,6 +300,7 @@ function parsePr(json: unknown, selfLogin?: string | null): PrInfo | null {
   if (!isRecord(json)) return null;
   const data = json as GhPrJson;
   if (!data.number || !data.url) return null;
+  const failingRuns = failingActionsRuns(data.statusCheckRollup, data.url);
   return {
     number: data.number,
     url: data.url,
@@ -276,6 +311,7 @@ function parsePr(json: unknown, selfLogin?: string | null): PrInfo | null {
     checks: summarizeChecks(data.statusCheckRollup),
     headSha: data.headRefOid,
     failingChecks: failingCheckNames(data.statusCheckRollup),
+    ...(failingRuns.length > 0 ? { failingRuns } : {}),
     commentSignature: commentSignature(data.comments, data.reviews, selfLogin),
     ...(typeof data.headRefName === 'string' && data.headRefName ? { headRefName: data.headRefName } : {}),
     ...(typeof data.baseRefName === 'string' && data.baseRefName ? { baseRefName: data.baseRefName } : {}),

@@ -1,4 +1,4 @@
-import type { PrReviewComment } from '../../shared/types.js';
+import type { FailingRun, PrReviewComment } from '../../shared/types.js';
 import { isTrustedAssociation } from './pr-watch.js';
 
 /** The turn sent to the session's agent when the user clicks Create PR. */
@@ -12,12 +12,25 @@ export function buildCreatePrPrompt(branch: string, baseBranch: string): string 
   ].join('\n');
 }
 
+const MAX_RUNS_IN_PROMPT = 5;
+
+/** How the agent reads the failing logs. `gh run view` needs the run's id
+ *  when it can't ask for one, which it can't in the agent's shell. */
+function readLogsStep(prNumber: number, runs: FailingRun[]): string {
+  if (runs.length === 0) {
+    return `- Inspect the failures with \`gh pr checks ${prNumber}\`, then read each failing log with \`gh run view <run-id> --log-failed\`, taking the run id from the check's link (\`.../actions/runs/<run-id>/...\`).`;
+  }
+  const shown = runs.slice(0, MAX_RUNS_IN_PROMPT).map((r) => `\`gh run view ${r.runId} --repo ${r.repo} --log-failed\``);
+  const more = runs.length > shown.length ? ` (${runs.length - shown.length} more runs failed: see \`gh pr checks ${prNumber}\`)` : '';
+  return `- Read the failing logs with ${shown.join(', ')}${more}. \`gh pr checks ${prNumber}\` lists every check, including any from other CI services.`;
+}
+
 /** The turn sent to fix failing CI checks on the branch's PR. */
-export function buildFixCiPrompt(prNumber: number, branch: string, failingChecks: string[]): string {
+export function buildFixCiPrompt(prNumber: number, branch: string, failingChecks: string[], failingRuns: FailingRun[] = []): string {
   const checks = failingChecks.length > 0 ? ` Failing checks: ${failingChecks.join(', ')}.` : '';
   return [
     `CI is failing on PR #${prNumber} for this branch (${branch}).${checks}`,
-    '- Inspect the failures with `gh pr checks` and `gh run view --log-failed` to read the failing logs.',
+    readLogsStep(prNumber, failingRuns),
     '- Diagnose and fix the code (or workflow) causing each failure.',
     '- Run the relevant tests locally to confirm, then commit and push the fix.',
     '- If a failure is unrelated to this branch (flaky or broken on the base branch), say so instead of forcing a fix.',

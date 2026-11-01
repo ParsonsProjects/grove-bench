@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import path from 'node:path';
-import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS, thinkingConfigFor, parseMcpListOutput, mcpServerManager, claudeMcpOrigin, mcpToolServerKey, mcpContextCostByServer, toMcpElicitationRequest, withMcpjsonApproval, mcpjsonApprovalsFrom, withoutLegacyDenyRules, buildMcpAddArgs, quoteArg, validatePluginId, validateConfigScope, claudeControlsFor, supportsAdaptiveThinking, supportsFastMode, supportsAutoMode, claudeModelCaps, effortFor, reasoningOptionsFor, toSdkPermissionMode, fromSdkSyncMode, stripAnsi, mapClaudeUsage, thinkingDisplayFor, TEXT_GENERATION_OPTIONS, missingConversationError, userMessageContent, sandboxDecision } from './claude-code.js';
+import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS, thinkingConfigFor, parseMcpListOutput, mcpServerManager, claudeMcpOrigin, mcpToolServerKey, mcpContextCostByServer, toMcpElicitationRequest, withMcpjsonApproval, mcpjsonApprovalsFrom, withoutLegacyDenyRules, buildMcpAddArgs, quoteArg, validatePluginId, validateConfigScope, claudeControlsFor, supportsAdaptiveThinking, supportsFastMode, supportsAutoMode, claudeModelCaps, effortFor, reasoningOptionsFor, toSdkPermissionMode, fromSdkSyncMode, stripAnsi, mapClaudeUsage, thinkingDisplayFor, TEXT_GENERATION_OPTIONS, collectGeneratedText, missingConversationError, userMessageContent, sandboxDecision } from './claude-code.js';
 import type { AgentEvent } from '../../shared/types.js';
 import { RunningCost, RunningTokens } from './running-cost.js';
 import { limitHook, LIMIT_STOP_REASON, titleListOptions, titleFromSessions } from './claude-code.js';
@@ -1250,6 +1250,44 @@ describe('TEXT_GENERATION_OPTIONS', () => {
 
   it('stays out of plan mode, whose reminder sends the model exploring', () => {
     expect(TEXT_GENERATION_OPTIONS.permissionMode).toBe('dontAsk');
+  });
+});
+
+describe('collectGeneratedText()', () => {
+  async function* stream(...messages: object[]) {
+    for (const m of messages) yield sdk(m);
+  }
+  const reply = (text: string, extra: object = {}) =>
+    ({ type: 'assistant', message: { content: [{ type: 'text', text }] }, parent_tool_use_id: null, ...extra });
+
+  it('joins the reply text and ignores other messages', async () => {
+    await expect(collectGeneratedText(stream(
+      { type: 'system', subtype: 'init' },
+      reply('fix: '),
+      { type: 'assistant', message: { content: [{ type: 'thinking', thinking: 'hmm' }, { type: 'text', text: 'handle nulls' }] } },
+      { type: 'result', subtype: 'success', is_error: false },
+    ))).resolves.toBe('fix: handle nulls');
+  });
+
+  it('throws the notice when the API refused the request, so it never reads as the reply', async () => {
+    await expect(collectGeneratedText(stream(
+      reply("You've hit your limit · resets 3pm", { error: 'rate_limit' }),
+      { type: 'result', subtype: 'success', is_error: true },
+    ))).rejects.toThrow("You've hit your limit · resets 3pm");
+  });
+
+  it('names the error when the notice has no text', async () => {
+    await expect(collectGeneratedText(stream({ type: 'assistant', message: { content: [] }, error: 'overloaded' })))
+      .rejects.toThrow('Claude Code reported an error: overloaded');
+  });
+
+  it('says where to fix a rejected sign-in', async () => {
+    await expect(collectGeneratedText(stream(reply('Invalid API key · Fix external API key', { error: 'authentication_failed' })), 'Check account X'))
+      .rejects.toThrow('Check account X');
+  });
+
+  it('keeps a reply cut short at the output limit', async () => {
+    await expect(collectGeneratedText(stream(reply('feat: add', { error: 'max_output_tokens' })))).resolves.toBe('feat: add');
   });
 });
 

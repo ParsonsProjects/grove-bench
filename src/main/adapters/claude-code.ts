@@ -1609,6 +1609,30 @@ export const TEXT_GENERATION_OPTIONS: Pick<
   maxTurns: 1,
 };
 
+/**
+ * The reply text of a one-turn text query (generateText). The CLI reports an
+ * API failure (a usage limit, a rejected key, an outage) as an assistant
+ * message flagged with `error`, whose text is the notice. That is not the
+ * reply: returned, a commit message or memory note would read "You've hit
+ * your limit". So it throws with the notice instead, as a timeout does.
+ * 'max_output_tokens' is left as before: the reply may be there, cut short.
+ */
+export async function collectGeneratedText(messages: AsyncIterable<SDKMessage>, authErrorMessage = CLAUDE_AUTH_ERROR_MESSAGE): Promise<string> {
+  let text = '';
+  for await (const message of messages) {
+    if (message.type !== 'assistant') continue;
+    const content = message.message?.content;
+    const blockText = Array.isArray(content)
+      ? content.map((block) => (block.type === 'text' ? block.text : '')).join('')
+      : '';
+    const { error } = message;
+    if (error === 'authentication_failed') throw new Error(authErrorMessage);
+    if (error && error !== 'max_output_tokens') throw new Error(blockText.trim() || `Claude Code reported an error: ${error}`);
+    text += blockText;
+  }
+  return text;
+}
+
 // ─── Claude Code Adapter ───
 
 export class ClaudeCodeAdapter implements AgentAdapter {
@@ -2380,7 +2404,6 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       options.abortSignal.addEventListener('abort', () => abortController.abort());
     }
 
-    let resultText = '';
     const keyEnv = this.savedKeyEnv();
     // `env` replaces the inherited environment rather than merging, so the
     // default account passes it only when there is a saved key to add.
@@ -2400,20 +2423,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       },
     });
 
-    for await (const message of q) {
-      if (message.type === 'assistant') {
-        const content = message.message?.content;
-        if (Array.isArray(content)) {
-          for (const block of content) {
-            if (block.type === 'text') {
-              resultText += block.text;
-            }
-          }
-        }
-      }
-    }
-
-    return resultText;
+    return collectGeneratedText(q, this.authErrorMessage);
   }
 
   // ─── Conversation title ───

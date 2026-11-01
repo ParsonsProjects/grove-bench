@@ -387,8 +387,10 @@ class MessageStore {
   /** Whether a /clear was issued and we're waiting for re-init */
   pendingClear = $state<Record<string, boolean>>({});
 
-  /** Current activity per session (what the LLM is doing right now) */
-  activityBySession = $state<Record<string, { activity: 'thinking' | 'tool_starting' | 'generating' | 'idle'; toolName?: string; elapsedSeconds?: number; toolSummary?: string }>>({});
+  /** Current activity per session (what the LLM is doing right now).
+   *  `toolUseId`: the call it describes, so a later tool_update to that call
+   *  (ACP agents fill a call in as it runs) can refresh the name and summary. */
+  activityBySession = $state<Record<string, { activity: 'thinking' | 'tool_starting' | 'generating' | 'idle'; toolName?: string; elapsedSeconds?: number; toolSummary?: string; toolUseId?: string }>>({});
 
   /** Per-tool progress tracking — maps toolUseId to progress info */
   toolProgressBySession = $state<Record<string, Record<string, { toolName: string; elapsedSeconds: number }>>>({});
@@ -1608,6 +1610,7 @@ class MessageStore {
           activity: 'tool_starting',
           toolName: event.toolName,
           toolSummary: this.summarizeToolInput(event),
+          toolUseId: event.toolUseId,
         };
         this.pushMessage(sessionId, {
           kind: 'tool_call',
@@ -1744,6 +1747,7 @@ class MessageStore {
           toolName: event.toolName,
           elapsedSeconds: event.elapsedSeconds,
           toolSummary: prevSummary,
+          toolUseId: event.toolUseId,
         };
         // Track per-tool progress
         const prog = this.toolProgressBySession[sessionId] ?? {};
@@ -1801,6 +1805,10 @@ class MessageStore {
             id: nextId(),
             text: `Rate limited${event.rateLimitType ? ` (${event.rateLimitType})` : ''}${event.resetsAt ? ` — resets ${new Date(event.resetsAt * 1000).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}` : ''}`,
           });
+          // Hold queued follow-ups: each would go out when this turn's result
+          // arrives and hit the same limit. Live only: a replayed one is from
+          // whenever that turn ran.
+          if (this._replayBuffer === null) this.pauseQueue(sessionId);
         }
         break;
 
@@ -2012,15 +2020,24 @@ class MessageStore {
       ...(event.toolCategory !== undefined ? { toolCategory: event.toolCategory } : {}),
       ...(event.toolView !== undefined ? { toolView: event.toolView } : {}),
     };
+    let call: ChatToolCallMessage | undefined;
     const updated = msgs.map((m) => {
       // The permission prompt for the call shows the same details.
       if ((m.kind === 'tool_call' || m.kind === 'permission') && m.toolUseId === event.toolUseId) {
         changed = true;
-        return { ...m, ...patch };
+        const next = { ...m, ...patch };
+        if (next.kind === 'tool_call') call = next;
+        return next;
       }
       return m;
     });
     if (changed) this.setMessagesForMutation(sessionId, updated);
+    // The sidebar and status bar read the activity, which was set from the
+    // call as first reported: often just its kind ("execute") for ACP agents.
+    const activity = this.activityBySession[sessionId];
+    if (call && activity?.activity === 'tool_starting' && activity.toolUseId === event.toolUseId) {
+      this.activityBySession[sessionId] = { ...activity, toolName: call.toolName, toolSummary: this.summarizeToolInput(call) };
+    }
   }
 
   /**

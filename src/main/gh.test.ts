@@ -8,7 +8,7 @@ vi.mock('./process-host-run.js', () => ({ runInAgentHost: vi.fn() }));
 import { execa } from 'execa';
 import { runInAgentHost } from './process-host-run.js';
 import type { ProcessResult } from './process-host-protocol.js';
-import { gh, ghVersion, ghAuthenticated, ghLogin, resetGhLoginCacheForTests, resetGhOfflineCooldownForTests, ghOffline, ghRateLimited, isNetworkError, isRateLimitError, summarizeChecks, failingCheckNames, commentSignature, prStatus, prList, prsForBranches, sortPrs, prCreate, prReviewComments, parseOpenPrs, openPrs, GH_TIMEOUT_MS, GH_OFFLINE_MESSAGE, GH_OFFLINE_COOLDOWN_MS, GH_RATE_LIMITED_MESSAGE, GH_RATE_LIMIT_COOLDOWN_MS, GH_RATE_LIMIT_MAX_COOLDOWN_MS } from './gh.js';
+import { gh, ghVersion, ghAuthenticated, ghLogin, resetGhLoginCacheForTests, resetGhOfflineCooldownForTests, ghOffline, ghRateLimited, isNetworkError, isRateLimitError, summarizeChecks, failingCheckNames, failingActionsRuns, commentSignature, prStatus, prList, prsForBranches, sortPrs, prCreate, prReviewComments, parseOpenPrs, openPrs, GH_TIMEOUT_MS, GH_OFFLINE_MESSAGE, GH_OFFLINE_COOLDOWN_MS, GH_RATE_LIMITED_MESSAGE, GH_RATE_LIMIT_COOLDOWN_MS, GH_RATE_LIMIT_MAX_COOLDOWN_MS } from './gh.js';
 
 const mockRun = vi.mocked(runInAgentHost);
 /** What runInAgentHost resolves with when gh prints `stdout` and exits 0. */
@@ -228,6 +228,18 @@ describe('prStatus()', () => {
     expect(result?.headSha).toBe('abc123');
     expect(result?.failingChecks).toEqual(['test']);
     expect(result?.commentSignature).toEqual(['c:C1', 'r:R1']);
+    expect(result).not.toHaveProperty('failingRuns');
+  });
+
+  it('carries the Actions runs behind failing checks', async () => {
+    mockRun.mockResolvedValue(printed(JSON.stringify({
+        number: 44,
+        url: 'https://github.com/o/r/pull/44',
+        statusCheckRollup: [{ name: 'test', conclusion: 'FAILURE', detailsUrl: 'https://github.com/o/r/actions/runs/123/job/456' }],
+      })));
+
+    const result = await prStatus('/repo', 'feat/x');
+    expect(result?.failingRuns).toEqual([{ repo: 'o/r', runId: '123' }]);
   });
 
   it('returns null when no PR exists for the branch', async () => {
@@ -508,6 +520,43 @@ describe('failingCheckNames()', () => {
 
   it('returns empty for non-arrays', () => {
     expect(failingCheckNames(undefined)).toEqual([]);
+  });
+});
+
+describe('failingActionsRuns()', () => {
+  const PR = 'https://github.com/Owner/Repo/pull/7';
+  const run = (id: string, conclusion = 'FAILURE', repo = 'Owner/Repo') =>
+    ({ name: `job-${id}`, conclusion, detailsUrl: `https://github.com/${repo}/actions/runs/${id}/job/9${id}` });
+
+  it('lists each failing Actions run once', () => {
+    expect(failingActionsRuns([run('101'), run('101'), run('102', 'TIMED_OUT'), run('103', 'SUCCESS')], PR)).toEqual([
+      { repo: 'Owner/Repo', runId: '101' },
+      { repo: 'Owner/Repo', runId: '102' },
+    ]);
+  });
+
+  it('matches the PR repository whatever the letter case', () => {
+    expect(failingActionsRuns([run('104', 'FAILURE', 'owner/repo')], PR)).toEqual([{ repo: 'owner/repo', runId: '104' }]);
+  });
+
+  it('leaves out checks whose logs are not in an Actions run of the PR repository', () => {
+    expect(failingActionsRuns([
+      { context: 'ci/legacy', state: 'ERROR', targetUrl: 'https://ci.example.com/build/1' },
+      { name: 'external', conclusion: 'FAILURE', detailsUrl: 'https://ci.example.com/o/r/actions/runs/1' },
+      run('105', 'FAILURE', 'someone/else'),
+      { name: 'odd', conclusion: 'FAILURE', detailsUrl: 'https://github.com/Owner/Repo/actions/runs/12x' },
+      { name: 'no link', conclusion: 'FAILURE' },
+    ], PR)).toEqual([]);
+  });
+
+  it('keeps the host for GitHub Enterprise', () => {
+    const rollup = [{ name: 't', conclusion: 'FAILURE', detailsUrl: 'https://ghe.corp.io/team/app/actions/runs/55' }];
+    expect(failingActionsRuns(rollup, 'https://ghe.corp.io/team/app/pull/3')).toEqual([{ repo: 'ghe.corp.io/team/app', runId: '55' }]);
+  });
+
+  it('returns none without a PR URL it can read', () => {
+    expect(failingActionsRuns([run('106')], 'u')).toEqual([]);
+    expect(failingActionsRuns(undefined, PR)).toEqual([]);
   });
 });
 

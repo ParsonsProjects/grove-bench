@@ -614,6 +614,15 @@ export interface OpenPrSummary {
   url: string;
 }
 
+/** A GitHub Actions run with failed jobs: what
+ *  `gh run view <runId> --repo <repo> --log-failed` needs. */
+export interface FailingRun {
+  /** OWNER/REPO, or HOST/OWNER/REPO off github.com (gh's --repo form). */
+  repo: string;
+  /** Digits only. */
+  runId: string;
+}
+
 export interface PrInfo {
   number: number;
   url: string;
@@ -627,6 +636,10 @@ export interface PrInfo {
   headSha?: string;
   /** Names of the currently failing checks. */
   failingChecks?: string[];
+  /** The GitHub Actions runs behind the failing checks, in the PR's own
+   *  repository. Absent when there are none: checks from other CI services
+   *  keep their logs elsewhere. */
+  failingRuns?: FailingRun[];
   /** Opaque ids of conversation comments + submitted reviews — diffed to detect new feedback. */
   commentSignature?: string[];
   /** Branch the PR merges from. Not always the session's recorded branch: the

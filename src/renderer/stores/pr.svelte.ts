@@ -412,7 +412,7 @@ class PrStore {
   fixCiWithAgent(sessionId: string): boolean {
     const pr = this.getPr(sessionId);
     if (!pr || !this.sessionIdle(sessionId)) return false;
-    this.sendTurn(sessionId, buildFixCiPrompt(pr.number, this.branchOfPr(sessionId, pr), pr.failingChecks ?? []));
+    this.sendTurn(sessionId, buildFixCiPrompt(pr.number, this.branchOfPr(sessionId, pr), pr.failingChecks ?? [], pr.failingRuns ?? []));
     this.clearAlerts(sessionId, 'ci_failed');
     return true;
   }

@@ -50,6 +50,8 @@ While the agent is processing, the prompt editor shows a stop button (the red sq
 
 You can keep typing while it works. **Enter**, or the send button (a list with a plus while the agent works), adds your message to the queue, and it is sent once the agent is free.
 
+The queue pauses when you stop the agent, rewind, or the agent hits its plan's usage limit, so queued messages don't go out into a turn you interrupted or one that can't run. **Resume** in the queue sends the next one when you're ready.
+
 ## Tips
 
 - Be specific about what you want — include file names, function names, or line numbers when possible
