@@ -1,4 +1,5 @@
-import type { PrReviewComment } from '../../shared/types.js';
+import type { FailingRun, PrInfo, PrReviewComment } from '../../shared/types.js';
+import { ghRepoArg, parsePrUrl } from '../../shared/github-links.js';
 import { isTrustedAssociation } from './pr-watch.js';
 
 /** The turn sent to the session's agent when the user clicks Create PR. */
@@ -12,12 +13,46 @@ export function buildCreatePrPrompt(branch: string, baseBranch: string): string 
   ].join('\n');
 }
 
-/** The turn sent to fix failing CI checks on the branch's PR. */
-export function buildFixCiPrompt(prNumber: number, branch: string, failingChecks: string[]): string {
-  const checks = failingChecks.length > 0 ? ` Failing checks: ${failingChecks.join(', ')}.` : '';
+const MAX_RUNS_IN_PROMPT = 5;
+const MAX_JOBS_PER_RUN = 3;
+
+/** `gh api` for one job's whole log. Reachable as soon as that job ends,
+ *  while `gh run view --log-failed` waits for the whole run, `--job` or not. */
+function jobLogCommand(repo: string, jobId: string): string {
+  const parts = repo.split('/');
+  const [hostname, path] = parts.length === 3 ? [parts[0], `${parts[1]}/${parts[2]}`] : [null, repo];
+  return `\`gh api ${hostname ? `--hostname ${hostname} ` : ''}repos/${path}/actions/jobs/${jobId}/logs\``;
+}
+
+function runLine(run: FailingRun): string {
+  const jobs = run.jobIds.slice(0, MAX_JOBS_PER_RUN).map((id) => `job ${id}: ${jobLogCommand(run.repo, id)}`);
+  return `  - Run ${run.runId}: \`gh run view ${run.runId} --repo ${run.repo} --log-failed\`${jobs.length > 0 ? `. While it is still going, ${jobs.join('; ')}` : ''}`;
+}
+
+/** How the agent reads the failing logs. `gh run view` needs the run's id
+ *  when it can't ask for one, which it can't in the agent's shell. */
+function readLogsSteps(prNumber: number, repo: string | null, runs: FailingRun[]): string[] {
+  const checks = `\`gh pr checks ${prNumber}${repo ? ` --repo ${repo}` : ''}\``;
+  if (runs.length === 0) {
+    return [`- Inspect the failures with ${checks}, then read each failing log with \`gh run view <run-id>${repo ? ` --repo ${repo}` : ''} --log-failed\`, taking the run id from the check's link (\`.../actions/runs/<run-id>/...\`).`];
+  }
+  const shown = runs.slice(0, MAX_RUNS_IN_PROMPT);
+  const hidden = runs.length - shown.length;
   return [
-    `CI is failing on PR #${prNumber} for this branch (${branch}).${checks}`,
-    '- Inspect the failures with `gh pr checks` and `gh run view --log-failed` to read the failing logs.',
+    "- Read the failing logs. gh shows a run's log only once every job in it has finished; until then, read a failed job's own log (the whole log: look near its end) through the API:",
+    ...shown.map(runLine),
+    `- ${checks} lists every check, including any from other CI services${hidden > 0 ? ` and the ${hidden} more failed ${hidden === 1 ? 'run' : 'runs'} not listed here` : ''}.`,
+  ];
+}
+
+/** The turn sent to fix failing CI checks on the branch's PR. */
+export function buildFixCiPrompt(pr: Pick<PrInfo, 'number' | 'url' | 'failingChecks' | 'failingRuns'>, branch: string): string {
+  const failingChecks = pr.failingChecks ?? [];
+  const checks = failingChecks.length > 0 ? ` Failing checks: ${failingChecks.join(', ')}.` : '';
+  const repo = parsePrUrl(pr.url);
+  return [
+    `CI is failing on PR #${pr.number} for this branch (${branch}).${checks}`,
+    ...readLogsSteps(pr.number, repo ? ghRepoArg(repo) : null, pr.failingRuns ?? []),
     '- Diagnose and fix the code (or workflow) causing each failure.',
     '- Run the relevant tests locally to confirm, then commit and push the fix.',
     '- If a failure is unrelated to this branch (flaky or broken on the base branch), say so instead of forcing a fix.',

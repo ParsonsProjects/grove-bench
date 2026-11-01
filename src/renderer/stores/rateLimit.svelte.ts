@@ -3,6 +3,8 @@ export interface RateLimitState {
   resetsAt?: number;
   utilization?: number;
   rateLimitType?: string;
+  /** Past the plan's limit, but extra usage (overage) lets requests go on. */
+  extraUsage?: boolean;
 }
 
 /** Tracks the latest rate-limit status reported for each session. */

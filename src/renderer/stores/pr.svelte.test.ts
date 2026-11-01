@@ -437,6 +437,19 @@ describe('auto-fix CI limit', () => {
     expect(fixTurns()).toBe(3);
     expect(prStore.getAlerts(SID).some((a) => a.kind === 'needs_human')).toBe(false);
   });
+
+  it('alerts instead of sending a fix turn while the thread is at a usage limit', async () => {
+    const limited = vi.spyOn(messageStore, 'isRateLimited').mockReturnValue(true);
+    try {
+      await refreshWith(passing('sha-1'));
+      await refreshWith(failing('sha-2'));
+
+      expect(fixTurns()).toBe(0);
+      expect(prStore.getAlerts(SID)).toMatchObject([{ kind: 'ci_failed' }]);
+    } finally {
+      limited.mockRestore();
+    }
+  });
 });
 
 describe('push errors', () => {

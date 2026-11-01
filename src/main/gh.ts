@@ -1,7 +1,8 @@
 import { isReadOnly } from './process-host.js';
 import { runInAgentHost } from './process-host-run.js';
-import type { OpenPrSummary, PrChecksSummary, PrCreateOpts, PrInfo, PrReviewComment, PrReviewEvent } from '../shared/types.js';
+import type { FailingRun, OpenPrSummary, PrChecksSummary, PrCreateOpts, PrInfo, PrReviewComment, PrReviewEvent } from '../shared/types.js';
 import { isRecord } from './persisted-state.js';
+import { ghRepoArg, parseActionsLink, parsePrUrl, sameRepo } from '../shared/github-links.js';
 
 /** obj.a.b... in JSON of unknown shape: undefined where a step isn't an
  *  object, as `?.` would give. */
@@ -205,6 +206,31 @@ export function failingCheckNames(rollup: unknown): string[] {
     .map((item) => String(item.name || item.context || 'check'));
 }
 
+/**
+ * The GitHub Actions runs behind the failing checks in a statusCheckRollup
+ * array, once each, with their failed jobs. Only check runs linking to an
+ * Actions run in the PR's own repository count: status contexts and other
+ * CI services' checks keep their logs elsewhere, and a check from any app
+ * may link anywhere.
+ */
+export function failingActionsRuns(rollup: unknown, prUrl: string): FailingRun[] {
+  const pr = parsePrUrl(prUrl);
+  if (!pr || !Array.isArray(rollup)) return [];
+  const runs: FailingRun[] = [];
+  for (const item of rollup as Array<Record<string, unknown>>) {
+    if (!FAILED_VERDICTS.has(checkVerdict(item))) continue;
+    const link = parseActionsLink(typeof item.detailsUrl === 'string' ? item.detailsUrl : '');
+    if (!link || !sameRepo(link, pr)) continue;
+    let run = runs.find((r) => r.runId === link.runId);
+    if (!run) {
+      run = { repo: ghRepoArg(link), runId: link.runId, jobIds: [] };
+      runs.push(run);
+    }
+    if (link.jobId && !run.jobIds.includes(link.jobId)) run.jobIds.push(link.jobId);
+  }
+  return runs;
+}
+
 /** Opaque ids for conversation comments + submitted reviews, for new-feedback detection.
  *  ignoreLogin drops entries authored by that user (the gh-authenticated account):
  *  the agent replying on the PR must not read as new feedback, or auto
@@ -266,6 +292,7 @@ function parsePr(json: unknown, selfLogin?: string | null): PrInfo | null {
   if (!isRecord(json)) return null;
   const data = json as GhPrJson;
   if (!data.number || !data.url) return null;
+  const failingRuns = failingActionsRuns(data.statusCheckRollup, data.url);
   return {
     number: data.number,
     url: data.url,
@@ -276,6 +303,7 @@ function parsePr(json: unknown, selfLogin?: string | null): PrInfo | null {
     checks: summarizeChecks(data.statusCheckRollup),
     headSha: data.headRefOid,
     failingChecks: failingCheckNames(data.statusCheckRollup),
+    ...(failingRuns.length > 0 ? { failingRuns } : {}),
     commentSignature: commentSignature(data.comments, data.reviews, selfLogin),
     ...(typeof data.headRefName === 'string' && data.headRefName ? { headRefName: data.headRefName } : {}),
     ...(typeof data.baseRefName === 'string' && data.baseRefName ? { baseRefName: data.baseRefName } : {}),

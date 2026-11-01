@@ -2908,6 +2908,102 @@ describe('outgoing message queue', () => {
     expect(messageStore.getQueue(SID)).toHaveLength(1);
   });
 
+  it('a usage limit holds the queue instead of sending the next item into it', () => {
+    messageStore.submitMessage(SID, { displayText: 'first', outgoing: 'first' });
+    messageStore.submitMessage(SID, { displayText: 'held', outgoing: 'held' });
+    mockGroveBench.sendMessage.mockClear();
+
+    messageStore.ingestEvent(SID, { type: 'rate_limit', status: 'rejected', rateLimitType: 'five_hour', resetsAt: 1_900_000_000 });
+    messageStore.ingestEvent(SID, result);
+
+    expect(messageStore.isQueuePaused(SID)).toBe(true);
+    expect(mockGroveBench.sendMessage).not.toHaveBeenCalled();
+    expect(messageStore.getQueue(SID).map((m) => m.displayText)).toEqual(['held']);
+
+    messageStore.resumeQueue(SID);
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, 'held', undefined, undefined);
+  });
+
+  it('a usage warning does not hold the queue', () => {
+    messageStore.submitMessage(SID, { displayText: 'first', outgoing: 'first' });
+    messageStore.submitMessage(SID, { displayText: 'next', outgoing: 'next' });
+    mockGroveBench.sendMessage.mockClear();
+
+    messageStore.ingestEvent(SID, { type: 'rate_limit', status: 'allowed_warning', utilization: 0.9 });
+    messageStore.ingestEvent(SID, result);
+
+    expect(messageStore.isQueuePaused(SID)).toBe(false);
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, 'next', undefined, undefined);
+  });
+
+  it('a usage limit reported while nothing was queued still holds what is queued after it', () => {
+    const resetsAt = Math.floor(Date.now() / 1000) + 3600;
+    messageStore.submitMessage(SID, { displayText: 'first', outgoing: 'first' });
+    messageStore.ingestEvent(SID, { type: 'rate_limit', status: 'rejected', rateLimitType: 'five_hour', resetsAt });
+    messageStore.submitMessage(SID, { displayText: 'later', outgoing: 'later' });
+    mockGroveBench.sendMessage.mockClear();
+
+    messageStore.ingestEvent(SID, result);
+
+    expect(mockGroveBench.sendMessage).not.toHaveBeenCalled();
+    expect(messageStore.isQueuePaused(SID)).toBe(true);
+  });
+
+  it('after Resume, a turn that hits the same limit again holds the rest, with no new limit event', () => {
+    // The SDK reports a limit only when it changes.
+    const resetsAt = Math.floor(Date.now() / 1000) + 3600;
+    messageStore.submitMessage(SID, { displayText: 'first', outgoing: 'first' });
+    messageStore.submitMessage(SID, { displayText: 'second', outgoing: 'second' });
+    messageStore.submitMessage(SID, { displayText: 'third', outgoing: 'third' });
+    messageStore.ingestEvent(SID, { type: 'rate_limit', status: 'rejected', rateLimitType: 'five_hour', resetsAt });
+    messageStore.ingestEvent(SID, result);
+    mockGroveBench.sendMessage.mockClear();
+
+    messageStore.resumeQueue(SID);
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, 'second', undefined, undefined);
+
+    messageStore.ingestEvent(SID, result);
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledTimes(1);
+    expect(messageStore.isQueuePaused(SID)).toBe(true);
+    expect(messageStore.getQueue(SID).map((m) => m.displayText)).toEqual(['third']);
+  });
+
+  it('a limit that extra usage covers does not hold the queue', () => {
+    const resetsAt = Math.floor(Date.now() / 1000) + 3600;
+    messageStore.submitMessage(SID, { displayText: 'first', outgoing: 'first' });
+    messageStore.submitMessage(SID, { displayText: 'next', outgoing: 'next' });
+    mockGroveBench.sendMessage.mockClear();
+
+    messageStore.ingestEvent(SID, { type: 'rate_limit', status: 'rejected', rateLimitType: 'five_hour', resetsAt, extraUsage: true });
+    messageStore.ingestEvent(SID, result);
+
+    expect(messageStore.isRateLimited(SID)).toBe(false);
+    expect(messageStore.isQueuePaused(SID)).toBe(false);
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, 'next', undefined, undefined);
+  });
+
+  it('a limit whose reset has passed no longer holds the queue', () => {
+    messageStore.submitMessage(SID, { displayText: 'first', outgoing: 'first' });
+    messageStore.ingestEvent(SID, { type: 'rate_limit', status: 'rejected', rateLimitType: 'five_hour', resetsAt: Math.floor(Date.now() / 1000) - 60 });
+    messageStore.clearQueue(SID);
+    messageStore.submitMessage(SID, { displayText: 'next', outgoing: 'next' });
+    mockGroveBench.sendMessage.mockClear();
+
+    messageStore.ingestEvent(SID, result);
+
+    expect(messageStore.isRateLimited(SID)).toBe(false);
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, 'next', undefined, undefined);
+  });
+
+  it('a usage limit in replayed history does not hold the queue', () => {
+    messageStore.submitMessage(SID, { displayText: 'first', outgoing: 'first' });
+    messageStore.submitMessage(SID, { displayText: 'next', outgoing: 'next' });
+
+    messageStore.replayEvents(SID, [{ type: 'rate_limit', status: 'rejected', rateLimitType: 'five_hour' }]);
+
+    expect(messageStore.isQueuePaused(SID)).toBe(false);
+  });
+
   it('slash commands queue while running and dispatch through sendCommand', () => {
     messageStore.submitMessage(SID, { displayText: 'first', outgoing: 'first' });
     mockGroveBench.sendMessage.mockClear();
@@ -3207,6 +3303,50 @@ describe('ingestEvent — tool views', () => {
     expect(perm && perm.kind === 'permission' && perm.toolView).toEqual(view);
   });
 
+  it('refreshes the running activity when tool_update fills in its call', () => {
+    // ACP agents report a call by its kind first, then its command.
+    messageStore.ingestEvent(SID, {
+      type: 'assistant_tool_use', toolName: 'execute', toolInput: {}, toolUseId: 't4', uuid: 'u4',
+      toolView: { kind: 'shell', summary: 'Running a command' },
+    });
+    messageStore.ingestEvent(SID, {
+      type: 'tool_update', toolUseId: 't4', toolName: 'run_shell_command', toolInput: { command: 'npm test' },
+      toolView: { kind: 'shell', command: 'npm test' },
+    });
+
+    expect(messageStore.getActivity(SID)).toMatchObject({
+      activity: 'tool_starting', toolName: 'run_shell_command', toolSummary: 'npm test', toolUseId: 't4',
+    });
+  });
+
+  it('leaves the activity alone when tool_update is for another call', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'assistant_tool_use', toolName: 'execute', toolInput: {}, toolUseId: 't5', uuid: 'u5',
+      toolView: { kind: 'shell', command: 'npm run build' },
+    });
+    messageStore.ingestEvent(SID, {
+      type: 'assistant_tool_use', toolName: 'read', toolInput: {}, toolUseId: 't6', uuid: 'u6',
+      toolView: { kind: 'read', path: 'a.ts' },
+    });
+    messageStore.ingestEvent(SID, {
+      type: 'tool_update', toolUseId: 't5', toolView: { kind: 'shell', command: 'npm run build -- --watch' },
+    });
+
+    expect(messageStore.getActivity(SID)).toMatchObject({ toolName: 'read', toolUseId: 't6' });
+  });
+
+  it('keeps the same activity object when tool_update changes nothing it shows', () => {
+    // ACP sends an update for each chunk of a command's output.
+    messageStore.ingestEvent(SID, {
+      type: 'assistant_tool_use', toolName: 'execute', toolInput: {}, toolUseId: 't7', uuid: 'u7',
+      toolView: { kind: 'shell', command: 'npm test' },
+    });
+    const before = messageStore.getActivity(SID);
+    messageStore.ingestEvent(SID, { type: 'tool_update', toolUseId: 't7', toolView: { kind: 'shell', command: 'npm test' } });
+
+    expect(messageStore.getActivity(SID)).toBe(before);
+  });
+
   it('lists edits from adapter views in the turn\'s file changes', () => {
     messageStore.ingestEvent(SID, { type: 'user_message', text: 'go' });
     messageStore.ingestEvent(SID, {
@@ -3216,5 +3356,30 @@ describe('ingestEvent — tool views', () => {
     messageStore.ingestEvent(SID, { type: 'tool_result', toolUseId: 't3', content: 'ok' });
     messageStore.ingestEvent(SID, { type: 'result', subtype: 'success', isError: false });
     expect(messageStore.getLastTurnFileChanges(SID).map((c) => c.filePath)).toEqual(['/w/a.ts']);
+  });
+});
+
+describe('ingestEvent — tool_progress summary', () => {
+  it('shows the summary of the call the progress is for, not the last one started', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'assistant_tool_use', toolName: 'Bash', toolInput: { command: 'npm test' }, toolUseId: 'p1', uuid: 'u1',
+    });
+    messageStore.ingestEvent(SID, {
+      type: 'assistant_tool_use', toolName: 'Grep', toolInput: { pattern: 'foo' }, toolUseId: 'p2', uuid: 'u2',
+    });
+
+    messageStore.ingestEvent(SID, { type: 'tool_progress', toolName: 'Bash', toolUseId: 'p1', elapsedSeconds: 3 });
+
+    expect(messageStore.getActivity(SID)).toMatchObject({ toolName: 'Bash', toolSummary: 'npm test', toolUseId: 'p1', elapsedSeconds: 3 });
+  });
+
+  it('keeps the summary across progress for the same call', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'assistant_tool_use', toolName: 'Bash', toolInput: { command: 'npm run build' }, toolUseId: 'p3', uuid: 'u3',
+    });
+    messageStore.ingestEvent(SID, { type: 'tool_progress', toolName: 'Bash', toolUseId: 'p3', elapsedSeconds: 1 });
+    messageStore.ingestEvent(SID, { type: 'tool_progress', toolName: 'Bash', toolUseId: 'p3', elapsedSeconds: 2 });
+
+    expect(messageStore.getActivity(SID)).toMatchObject({ toolSummary: 'npm run build', elapsedSeconds: 2 });
   });
 });
