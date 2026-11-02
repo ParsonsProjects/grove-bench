@@ -15,7 +15,7 @@ Every page in a project shares one set of cookies and site storage: both pages o
 
 - **Clear sign-ins** (the sign-out button at the right of the toolbar) signs out of every site in this project's Preview, in every thread. Open pages reload. **Remove project** clears them too
 - Cookies are stored encrypted with your Windows account, as Chrome does. Other site storage (localStorage, IndexedDB) isn't encrypted on disk, the same as in Chrome. Some apps keep their sign-in there
-- The agent's page sends no cookies to sites other than this computer, so a page it opens can't act on a site you signed in to in your page
+- Requests from the agent's page to sites other than this computer go without cookies, and those sites can't set any. So a page the agent opens can't act on a site you signed in to in your page, or sign you in to one as someone else. The same goes for service workers your local pages start: Grove can't tell which page started them
 - To test two users at once, use a private window in your system browser for the second one
 
 ## Opening a page

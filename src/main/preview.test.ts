@@ -4,7 +4,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { app, session } from 'electron';
-import { PreviewManager, isOffMachineRequest, previewPartition, withoutCookies } from './preview.js';
+import { PreviewManager, blocksCookies, isOffMachineRequest, previewPartition, withoutHeader } from './preview.js';
 
 afterEach(() => {
   vi.useRealTimers();
@@ -96,7 +96,7 @@ describe('previewPartition', () => {
   });
 });
 
-describe('isOffMachineRequest and withoutCookies', () => {
+describe('isOffMachineRequest, blocksCookies and withoutHeader', () => {
   it('counts requests to other sites, in any scheme, as off this machine', () => {
     expect(isOffMachineRequest('https://github.com/login')).toBe(true);
     expect(isOffMachineRequest('wss://api.example.com/socket')).toBe(true);
@@ -108,8 +108,23 @@ describe('isOffMachineRequest and withoutCookies', () => {
     expect(isOffMachineRequest('not a url')).toBe(false);
   });
 
-  it('drops the cookie header in any case and keeps the rest', () => {
-    expect(withoutCookies({ Cookie: 'a=1', cookie: 'b=2', Accept: '*/*' })).toEqual({ Accept: '*/*' });
+  it('blocks cookies to other sites for the agent\'s page and for workers a local page started', () => {
+    const site = 'https://github.com/api';
+    expect(blocksCookies('agent', site, 'http://localhost:3000/')).toBe(true);
+    expect(blocksCookies('user', site, 'http://localhost:3000/')).toBe(false);
+    // A service worker's request has no page; its referrer is its own origin.
+    expect(blocksCookies(null, site, 'http://localhost:3000/')).toBe(true);
+    expect(blocksCookies(null, site, '')).toBe(true);
+    expect(blocksCookies(null, site, undefined)).toBe(true);
+    expect(blocksCookies(null, site, 'https://github.com/sw.js')).toBe(false);
+    // Local requests keep their cookies, whoever makes them.
+    expect(blocksCookies('agent', 'http://localhost:3000/api', 'http://localhost:3000/')).toBe(false);
+    expect(blocksCookies(null, 'ws://127.0.0.1:5173/', '')).toBe(false);
+  });
+
+  it('drops a header in any case and keeps the rest', () => {
+    expect(withoutHeader({ Cookie: 'a=1', cookie: 'b=2', Accept: '*/*' }, 'cookie')).toEqual({ Accept: '*/*' });
+    expect(withoutHeader({ 'Set-Cookie': ['a=1'], 'content-type': ['text/html'] }, 'set-cookie')).toEqual({ 'content-type': ['text/html'] });
   });
 });
 
@@ -131,6 +146,7 @@ describe('PreviewManager: one store per project', () => {
       webRequest: {
         onBeforeRequest: capture('beforeRequest'),
         onBeforeSendHeaders: capture('beforeSendHeaders'),
+        onHeadersReceived: capture('headersReceived'),
         onCompleted: vi.fn(),
         onErrorOccurred: vi.fn(),
       },
@@ -187,15 +203,28 @@ describe('PreviewManager: one store per project', () => {
     expect(request('beforeRequest', { url: 'https://example.com/', webContentsId: 1 })).toEqual({});
   });
 
-  it('sends no cookies from the agent\'s page to other sites', () => {
+  it('sends no cookies from the agent\'s page or a local worker to other sites, and takes none back', () => {
     internals.ensureEntry('s1', wt1, repo).user = userPage(1);
     internals.entries.get('s1')!.agent = agentPage(2);
-    const headers = { Cookie: 'session=secret', Accept: '*/*' };
+    const requestHeaders = { Cookie: 'session=secret', Accept: '*/*' };
+    const responseHeaders = { 'Set-Cookie': ['planted=1'], 'Content-Type': ['text/html'] };
+    const local = 'http://localhost:3000/';
+    const send = (url: string, webContentsId: number | undefined, referrer = local) =>
+      request('beforeSendHeaders', { url, webContentsId, referrer, requestHeaders });
+    const reply = (url: string, webContentsId: number | undefined, referrer = local) =>
+      request('headersReceived', { url, webContentsId, referrer, responseHeaders });
 
-    expect(request('beforeSendHeaders', { url: 'https://github.com/api', webContentsId: 2, requestHeaders: headers }))
-      .toEqual({ requestHeaders: { Accept: '*/*' } });
-    expect(request('beforeSendHeaders', { url: 'http://localhost:3000/api', webContentsId: 2, requestHeaders: headers })).toEqual({});
-    expect(request('beforeSendHeaders', { url: 'https://github.com/api', webContentsId: 1, requestHeaders: headers })).toEqual({});
+    expect(send('https://github.com/api', 2)).toEqual({ requestHeaders: { Accept: '*/*' } });
+    expect(reply('https://github.com/login', 2)).toEqual({ responseHeaders: { 'Content-Type': ['text/html'] } });
+    // A service worker the local page started: no page, local referrer.
+    expect(send('https://github.com/api', undefined)).toEqual({ requestHeaders: { Accept: '*/*' } });
+    expect(reply('https://github.com/login', undefined, '')).toEqual({ responseHeaders: { 'Content-Type': ['text/html'] } });
+
+    expect(send('http://localhost:3000/api', 2)).toEqual({});
+    expect(reply('http://localhost:3000/login', 2)).toEqual({});
+    expect(send('https://github.com/api', 1)).toEqual({});
+    expect(reply('https://github.com/login', 1)).toEqual({});
+    expect(send('https://github.com/api', undefined, 'https://github.com/sw.js')).toEqual({});
   });
 
   it('closing a thread keeps the project\'s sign-ins', () => {

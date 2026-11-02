@@ -80,9 +80,28 @@ export function isOffMachineRequest(url: string): boolean {
   return !!u.hostname && !isLocalHostname(u.hostname);
 }
 
-/** A request header list without its cookies. */
-export function withoutCookies(headers: Record<string, string>): Record<string, string> {
-  return Object.fromEntries(Object.entries(headers).filter(([name]) => name.toLowerCase() !== 'cookie'));
+/**
+ * Whether a request goes without cookies, and its reply can't set any: one
+ * to a site off this machine, from the agent's page or from a worker a
+ * local page started. The agent's page only opens local pages, but those
+ * can load or fetch from other sites, and the store is shared with your
+ * page, so this keeps a page the agent writes from acting on a site you
+ * signed in to, or signing you in to one as someone else.
+ *
+ * A service worker's request has no page (`owner` null) and its referrer is
+ * its own origin, or none when it asks for none. A worker from a site you
+ * opened in your page has that site's referrer and keeps its cookies; one
+ * from a local page, or with no referrer, could be the agent's.
+ */
+export function blocksCookies(owner: PreviewPageKind | null, url: string, referrer: string | undefined): boolean {
+  if (!isOffMachineRequest(url)) return false;
+  if (owner) return owner === 'agent';
+  return !isOffMachineRequest(referrer ?? '');
+}
+
+/** A header list without the named header, in any case. */
+export function withoutHeader<T>(headers: Record<string, T>, name: string): Record<string, T> {
+  return Object.fromEntries(Object.entries(headers).filter(([key]) => key.toLowerCase() !== name));
 }
 
 interface UserPage {
@@ -227,7 +246,11 @@ export class PreviewManager {
    *  there. Electron keeps the emptied folder. */
   async forgetProject(repoPath: string): Promise<void> {
     const name = previewPartition(repoPath, app.isPackaged).slice('persist:'.length);
-    if (!fs.existsSync(path.join(app.getPath('userData'), 'Partitions', name))) return;
+    try {
+      await fs.promises.access(path.join(app.getPath('userData'), 'Partitions', name));
+    } catch {
+      return;
+    }
     await this.clearSignIns(repoPath);
   }
 
@@ -298,12 +321,17 @@ export class PreviewManager {
       callback({ cancel: !check.ok });
     });
 
-    // The agent's page only opens local pages, but those can still load or
-    // fetch from other sites. They go without cookies, so a page the agent
-    // writes can't act on a site you signed in to in your page.
+    // Cookies to and from other sites, for requests the agent may have
+    // written (blocksCookies).
+    const blocked = (details: { webContentsId?: number; url: string; referrer: string }) =>
+      blocksCookies(this.ownerOf(details.webContentsId)?.kind ?? null, details.url, details.referrer);
     ses.webRequest.onBeforeSendHeaders((details, callback) => {
-      const strip = !!this.agentPageFor(details.webContentsId) && isOffMachineRequest(details.url);
-      callback(strip ? { requestHeaders: withoutCookies(details.requestHeaders) } : {});
+      callback(blocked(details) ? { requestHeaders: withoutHeader(details.requestHeaders, 'cookie') } : {});
+    });
+    ses.webRequest.onHeadersReceived((details, callback) => {
+      callback(blocked(details) && details.responseHeaders
+        ? { responseHeaders: withoutHeader(details.responseHeaders, 'set-cookie') }
+        : {});
     });
 
     // The agent reads failed requests with preview_logs. Handlers look the page
