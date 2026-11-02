@@ -45,6 +45,7 @@ export const SETTINGS_INDEX: readonly SettingsEntry[] = [
   { id: 'background-model', section: 'agents', label: 'Background model', keywords: 'cheap model memory commit messages' },
   { id: 'default-controls', section: 'agents', label: 'Default permission mode, effort, thinking and speed', keywords: 'ask plan edit auto read-safe fast' },
   { id: 'system-prompt', section: 'agents', label: 'System prompt append', keywords: 'custom instructions' },
+  { id: 'project-instructions', section: 'agents', label: 'Project instructions', keywords: 'custom instructions system prompt per project repository' },
   { id: 'working-directories', section: 'agents', label: 'Additional working directories', keywords: 'folders paths access' },
   { id: 'claude-accounts', section: 'agents', label: 'Add a Claude account', keywords: 'second another account work personal subscription plan sign in switch profile config dir' },
   { id: 'acp-agents', section: 'agents', label: 'Other agents (ACP)', keywords: 'agent client protocol gemini copilot codex custom add' },

@@ -389,6 +389,13 @@ describe('validateSettings', () => {
     expect(s.notifyOnPermission).toBe(true);
   });
 
+  it('keeps project instructions, and drops a malformed list of them', () => {
+    expect(validateSettings({ repoInstructions: { 'C:\\dev\\app': 'Use pnpm.' } }).repoInstructions)
+      .toEqual({ 'C:\\dev\\app': 'Use pnpm.' });
+    expect(validateSettings({ repoInstructions: { '/repo': 42 } }).repoInstructions).toEqual({});
+    expect(validateSettings({}).repoInstructions).toEqual({});
+  });
+
   it('drops unknown keys and fills in missing ones', () => {
     const s = validateSettings({ bogus: 1 });
     expect((s as any).bogus).toBeUndefined();

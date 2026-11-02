@@ -29,7 +29,7 @@ const MODE: ControlDescriptor = {
 function settings(adapterDefaults: GroveBenchSettings['adapterDefaults'] = {}): GroveBenchSettings {
   return {
     toolAllowRules: [], toolDenyRules: [], disabledSkills: [], autoSkillSuggestions: false, showConversationGoal: true, promptSuggestions: true, backgroundPromptSuggestions: false,
-    defaultModels: {}, adapterDefaults, showThinkingSummaries: true, cavemanMode: 'off', workingDirectories: [], defaultSystemPromptAppend: '', acpAgents: [], claudeAccounts: [], enabledAlphaAgents: [], defaultAgent: '',
+    defaultModels: {}, adapterDefaults, showThinkingSummaries: true, cavemanMode: 'off', workingDirectories: [], defaultSystemPromptAppend: '', repoInstructions: {}, acpAgents: [], claudeAccounts: [], enabledAlphaAgents: [], defaultAgent: '',
     memoryAutoSave: true, memoryCompactTimeoutSeconds: 300, backgroundModels: {},
     autoInstallDeps: false, worktreeFolder: '', previewAgentTools: true, idleSleepMinutes: 30, defaultBaseBranch: '', branchNamingRule: '', theme: 'system', alwaysOnTop: false, autoDownloadUpdates: true,
     repoColors: {}, groveCharacters: true, diffViewMode: 'unified', defaultActivityView: 'summary', spellcheck: true,
@@ -488,6 +488,38 @@ describe('SettingsPanel project colors', () => {
       await waitFor(() => expect(lastSaved().repoColors).toEqual({ 'C:/dev/grove-bench': '#112233' }));
     } finally {
       store.repos = [];
+    }
+  });
+});
+
+describe('SettingsPanel project instructions', () => {
+  it('saves a project\'s instructions after a pause in typing, and drops them when cleared', async () => {
+    store.repos = ['C:/dev/grove-bench'];
+    try {
+      await openAgentSection();
+      const field = await screen.findByRole('textbox', { name: 'grove-bench' });
+
+      await fireEvent.input(field, { target: { value: 'Use pnpm.' } });
+      await waitFor(() => expect(lastSaved().repoInstructions).toEqual({ 'C:/dev/grove-bench': 'Use pnpm.' }), { timeout: 2000 });
+
+      await fireEvent.input(field, { target: { value: '' } });
+      await waitFor(() => expect(lastSaved().repoInstructions).toEqual({}), { timeout: 2000 });
+    } finally {
+      store.repos = [];
+    }
+  });
+
+  it('opens at one project\'s instructions, ready to type', async () => {
+    store.repos = ['C:/dev/other', 'C:\\dev\\grove-bench'];
+    try {
+      settingsStore.openAt('agents', 'project-instructions/C:\\dev\\grove-bench');
+      await renderPanel();
+
+      await waitFor(() => expect(screen.getByRole('textbox', { name: 'grove-bench' })).toHaveFocus());
+      expect(settingsStore.requestedSetting).toBeNull();
+    } finally {
+      store.repos = [];
+      settingsStore.panelOpen = false;
     }
   });
 });

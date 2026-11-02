@@ -16,6 +16,7 @@
   import { schedulesStore } from '../stores/schedules.svelte.js';
   import { skillsPanelStore } from '../stores/skillsPanel.svelte.js';
   import WandSparklesIcon from '@lucide/svelte/icons/wand-sparkles';
+  import ScrollTextIcon from '@lucide/svelte/icons/scroll-text';
   import SidebarGroups from './SidebarGroups.svelte';
   import SidebarSection from './SidebarSection.svelte';
   import AttentionCounts from './AttentionCounts.svelte';
@@ -1471,6 +1472,17 @@
                   aria-label="Remove project {store.repoDisplayName(repo)}"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+                </Button>
+                <!-- Opens Settings at this project's instructions. Shown when it has some, else on hover like the bin. -->
+                <Button
+                  variant="quiet"
+                  size="icon-2xs"
+                  onclick={() => settingsStore.openAt('agents', `project-instructions/${repo}`)}
+                  class={settingsStore.current.repoInstructions[repo]?.trim() ? '' : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100'}
+                  title="Instructions for {store.repoDisplayName(repo)}"
+                  aria-label="Instructions for {store.repoDisplayName(repo)}"
+                >
+                  <ScrollTextIcon class="size-3" aria-hidden="true" />
                 </Button>
                 <!-- Shown when the project has scheduled skills, else on hover like the bin. -->
                 <Button

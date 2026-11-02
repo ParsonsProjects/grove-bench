@@ -9,6 +9,7 @@
   import { prerequisitesStore } from '../../stores/prerequisites.svelte.js';
   import * as Select from '$lib/components/ui/select/index.js';
   import { Textarea } from '$lib/components/ui/textarea/index.js';
+  import { Label } from '$lib/components/ui/label/index.js';
   import { defaultModelChoices, DEFAULT_MODEL_VALUE } from '$lib/model-choices.js';
   import type { AgentStage, CavemanMode, ControlDescriptor, ControlOption } from '../../../shared/types.js';
   import { CONTROL_IDS, controlShortcut } from '../../../shared/types.js';
@@ -24,6 +25,13 @@
   import { Notice } from '$lib/components/ui/notice/index.js';
   import XIcon from '@lucide/svelte/icons/x';
   import PlusIcon from '@lucide/svelte/icons/plus';
+
+  /** A project's instructions, typed in Project instructions. Cleared text
+   *  drops the project's entry rather than keeping an empty one. */
+  function setProjectInstructions(repo: string, text: string) {
+    const { [repo]: _, ...rest } = settingsStore.draft.repoInstructions;
+    settingsStore.draft.repoInstructions = text ? { ...settingsStore.draft.repoInstructions, [repo]: text } : rest;
+  }
 
   // ── Per-agent defaults ──
   // One group per registered agent: its credentials, its default model and
@@ -454,6 +462,30 @@
       class="min-h-20 max-h-52 resize-y"
     />
   </SettingRow>
+
+  {#if store.repos.length > 0}
+    <div data-setting="project-instructions" class="flex flex-col gap-1.5">
+      <Label>Project instructions</Label>
+      <p class="text-xs text-muted-foreground leading-relaxed">
+        Added to the system prompt of one project's threads, after the text above. Saved in Grove Bench, not in the project.
+        A thread reads them when it starts or reopens.
+      </p>
+      <ul class="flex flex-col gap-3 mt-1">
+        {#each store.repos as repo, i (repo)}
+          {@const name = store.repoDisplayName(repo)}
+          <li data-setting="project-instructions/{repo}" class="flex flex-col gap-1 min-w-0">
+            <label for="settings-project-instructions-{i}" class="text-xs text-foreground truncate" title={repo}>{name}</label>
+            <Textarea
+              id="settings-project-instructions-{i}"
+              bind:value={() => settingsStore.draft.repoInstructions[repo] ?? '', (v: unknown) => setProjectInstructions(repo, typeof v === 'string' ? v : '')}
+              placeholder="e.g. Run npm test before you finish."
+              class="min-h-16 max-h-52 resize-y"
+            />
+          </li>
+        {/each}
+      </ul>
+    </div>
+  {/if}
 
   <ListSetting
     setting="working-directories"

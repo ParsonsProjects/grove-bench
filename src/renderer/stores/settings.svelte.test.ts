@@ -18,6 +18,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   cavemanMode: 'off',
   workingDirectories: [],
   defaultSystemPromptAppend: '',
+  repoInstructions: {},
   acpAgents: [],
   claudeAccounts: [],
   enabledAlphaAgents: [],

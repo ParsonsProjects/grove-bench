@@ -25,6 +25,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   cavemanMode: 'off',
   workingDirectories: [],
   defaultSystemPromptAppend: '',
+  repoInstructions: {},
   acpAgents: [],
   claudeAccounts: [],
   enabledAlphaAgents: [],
@@ -237,6 +238,7 @@ const settingsSchema = z.object({
   cavemanMode: z.enum(['off', 'lite', 'full', 'ultra']).catch(DEFAULT_SETTINGS.cavemanMode),
   workingDirectories: z.array(z.string()).catch(DEFAULT_SETTINGS.workingDirectories),
   defaultSystemPromptAppend: z.string().catch(DEFAULT_SETTINGS.defaultSystemPromptAppend),
+  repoInstructions: z.record(z.string(), z.string()).catch(DEFAULT_SETTINGS.repoInstructions),
   acpAgents: z.array(z.object({
     id: z.string().catch(''),
     name: z.string().catch(''),

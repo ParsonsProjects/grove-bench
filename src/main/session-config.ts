@@ -123,13 +123,16 @@ export function normalizeModelId(raw: string | undefined, adapter: Pick<AgentAda
 
 /**
  * The text Grove appends to the agent's system prompt: path rules, project
- * memory, caveman mode and the user's own addition, in that order. Null when
- * there is nothing to add.
+ * memory, caveman mode, the user's own addition and then the project's
+ * instructions, in that order. The project's come last so they win where the
+ * two disagree. Null when there is nothing to add.
  */
 export function appendedSystemPrompt(opts: {
   cwd: string;
   repoPath: string;
   userAppend: string | null;
+  /** The project's own instructions (Settings > Agents, Project instructions). */
+  projectInstructions?: string | null;
   cavemanMode: Parameters<typeof getCavemanPrompt>[0];
 }): string | null {
   const builtInPrompt = [
@@ -143,5 +146,6 @@ export function appendedSystemPrompt(opts: {
   ].join('\n');
   const memoryPrompt = memory.getMemoryForSystemPrompt(opts.repoPath);
   const cavemanPrompt = getCavemanPrompt(opts.cavemanMode);
-  return [builtInPrompt, memoryPrompt, cavemanPrompt, opts.userAppend].filter(Boolean).join('\n\n') || null;
+  const projectInstructions = opts.projectInstructions?.trim() || null;
+  return [builtInPrompt, memoryPrompt, cavemanPrompt, opts.userAppend, projectInstructions].filter(Boolean).join('\n\n') || null;
 }

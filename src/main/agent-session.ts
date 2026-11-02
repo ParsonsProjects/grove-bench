@@ -323,11 +323,13 @@ class AgentSessionManager {
     );
     // Archive expired thread notes first, so the memory index never lists them.
     memoryCompact.expireSessionNotes(repoPath);
-    // Path rules, project memory, caveman mode and the user's own addition.
+    // Path rules, project memory, caveman mode, the user's own addition and
+    // the project's instructions.
     const effectiveAppendPrompt = appendedSystemPrompt({
       cwd,
       repoPath,
       userAppend: opts.appendSystemPrompt ?? (appSettings.defaultSystemPromptAppend || null),
+      projectInstructions: appSettings.repoInstructions?.[repoPath] ?? null,
       cavemanMode: appSettings.cavemanMode,
     });
 

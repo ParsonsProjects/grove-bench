@@ -17,6 +17,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   cavemanMode: 'off',
   workingDirectories: [],
   defaultSystemPromptAppend: '',
+  repoInstructions: {},
   acpAgents: [],
   claudeAccounts: [],
   enabledAlphaAgents: [],
@@ -58,7 +59,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
 /** Settings edited in a text field. Typing saves them after a pause rather
  *  than on every key; everything else saves as soon as it changes. */
 const TEXT_SETTINGS: ReadonlySet<string> = new Set<keyof GroveBenchSettings>([
-  'defaultSystemPromptAppend', 'defaultBaseBranch', 'branchNamingRule',
+  'defaultSystemPromptAppend', 'repoInstructions', 'defaultBaseBranch', 'branchNamingRule',
 ]);
 const TEXT_SAVE_DELAY_MS = 500;
 
@@ -79,13 +80,17 @@ class SettingsStore {
   panelOpen = $state(false);
   /** The section Settings should show when it next opens (see openAt). */
   requestedSection = $state<SettingsSectionId | null>(null);
+  /** The setting row (its `data-setting`) to scroll to and focus then. */
+  requestedSetting = $state<string | null>(null);
   /** Settings groups folded or opened, by their collapse key, for this run
    *  of the app, so they show as left after switching section or reopening. */
   readonly folds = new Map<string, boolean>();
 
-  /** Open Settings at one section, for links such as "fix your sign-in". */
-  openAt(section: SettingsSectionId) {
+  /** Open Settings at one section, for links such as "fix your sign-in".
+   *  With `setting` (a row's `data-setting`), scroll to that row and focus it. */
+  openAt(section: SettingsSectionId, setting?: string) {
     this.requestedSection = section;
+    this.requestedSetting = setting ?? null;
     this.panelOpen = true;
   }
 

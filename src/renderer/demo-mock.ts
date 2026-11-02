@@ -82,6 +82,7 @@ const SETTINGS = {
   cavemanMode: 'off',
   workingDirectories: [],
   defaultSystemPromptAppend: '',
+  repoInstructions: {},
   acpAgents: [],
   claudeAccounts: [],
   enabledAlphaAgents: [],

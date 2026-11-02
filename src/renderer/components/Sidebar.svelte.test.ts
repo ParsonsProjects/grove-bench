@@ -1666,6 +1666,35 @@ describe('Sidebar projects tree', () => {
   });
 });
 
+describe('Sidebar project instructions', () => {
+  afterEach(() => {
+    settingsStore.current = { ...settingsStore.current, repoInstructions: {} };
+    settingsStore.panelOpen = false;
+    settingsStore.requestedSection = null;
+    settingsStore.requestedSetting = null;
+  });
+
+  it('opens Settings at the project\'s instructions', async () => {
+    store.repos = ['/repo-a', '/repo-b'];
+    render(Sidebar);
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Instructions for repo-b' }));
+
+    expect(settingsStore.panelOpen).toBe(true);
+    expect(settingsStore.requestedSection).toBe('agents');
+    expect(settingsStore.requestedSetting).toBe('project-instructions//repo-b');
+  });
+
+  it('stays shown for a project that has instructions, and only on hover for one without', async () => {
+    store.repos = ['/repo-a', '/repo-b'];
+    settingsStore.current = { ...settingsStore.current, repoInstructions: { '/repo-a': 'Use pnpm.' } };
+    render(Sidebar);
+
+    expect(screen.getByRole('button', { name: 'Instructions for repo-a' })).not.toHaveClass('opacity-0');
+    expect(screen.getByRole('button', { name: 'Instructions for repo-b' })).toHaveClass('opacity-0');
+  });
+});
+
 describe('Sidebar remove project', () => {
   const { destroySession, removeRepo } = mockGroveBench;
 

@@ -81,13 +81,17 @@
     if (!visibleSections.some((s) => s.id === section)) section = 'general';
   });
 
-  // Opened at a section (settingsStore.openAt): show that one.
+  // Opened at a section (settingsStore.openAt): show that one, and the
+  // setting asked for in it.
   $effect(() => {
     const wanted = settingsStore.requestedSection;
     if (!open || !wanted) return;
     untrack(() => {
       section = wanted;
+      const setting = settingsStore.requestedSetting;
       settingsStore.requestedSection = null;
+      settingsStore.requestedSetting = null;
+      if (setting) void revealSetting(setting);
     });
   });
 
@@ -105,6 +109,7 @@
     'alpha-agents': () => agentsStore.list.some((a) => a.stage === 'alpha'),
     'claude-accounts': () => agentsStore.list.some((a) => a.capabilities.accounts && !a.account),
     'project-colors': () => store.repos.length > 0,
+    'project-instructions': () => store.repos.length > 0,
   };
   const results = $derived(
     searchSettings(query, visibleSections.map((s) => s.id)).filter((e) => SHOWN_WHEN[e.id]?.() ?? true),
@@ -115,15 +120,22 @@
   }
 
   /** Open a search result: its section, scrolled to the setting. */
-  async function goTo(entry: SettingsEntry) {
+  function goTo(entry: SettingsEntry) {
     section = entry.section;
     query = '';
+    void revealSetting(entry.id);
+  }
+
+  /** Scroll to the row whose `data-setting` is `id` in the section showing. */
+  async function revealSetting(id: string) {
     // A section can still be loading its rows (Agents fetches each agent's
     // models), so look for the row for a little while.
     for (let i = 0; i < 40; i++) {
       await tick();
+      // Compared, not put in a selector: a project's row names its path,
+      // whose backslashes and colon a selector would need escaped.
       // A setting can show once per agent: prefer one that isn't folded away.
-      const rows = [...content?.querySelectorAll<HTMLElement>(`[data-setting="${entry.id}"]`) ?? []];
+      const rows = [...content?.querySelectorAll<HTMLElement>('[data-setting]') ?? []].filter((r) => r.dataset.setting === id);
       const row = rows.find((r) => !r.closest('details:not([open])')) ?? rows[0];
       if (row) {
         reveal(row);
@@ -149,7 +161,7 @@
   function onSearchKeydown(e: KeyboardEvent) {
     if (e.key === 'Enter' && results[0]) {
       e.preventDefault();
-      void goTo(results[0]);
+      goTo(results[0]);
     } else if (e.key === 'Escape' && query) {
       // Clear the search first; the next Escape closes Settings.
       e.preventDefault();

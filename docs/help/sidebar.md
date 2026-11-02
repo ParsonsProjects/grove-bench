@@ -10,6 +10,8 @@ Threads within a project are listed below the project name, including the ones t
 
 To remove a project, hover its header and click the bin. Grove Bench asks first and says what goes with it: every thread in the project and its copy of the project (worktree). It warns you when any of them is still running (its agent will be stopped) or has uncommitted changes. You can also delete their branches, and it warns you when a branch has commits its base branch doesn't. If it can't check a thread (its copy is broken or gone, or git doesn't answer within 15 seconds), it says how many, and **Remove** waits until you tick **Remove anyway**. If the project has no branch by the base branch's name, it says so: set **Default base branch** in Settings (Git & worktrees) to the one it uses. The project folder itself is never touched.
 
+To give one project's threads their own instructions, hover its header and click the scroll button. It opens **Project instructions** in Settings (Agents) at that project. The button stays shown for a project that has some.
+
 ## Groups
 
 A group is a few threads that belong to one piece of work, usually one per project. For example, an API change in one project and the web change that uses it in another. Each thread still runs in its own project with its own agent, branch and project instructions. The group only lists them together, so you can see how the whole piece of work is going.

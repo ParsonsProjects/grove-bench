@@ -1987,7 +1987,13 @@ export interface GroveBenchSettings {
   /** Caveman mode — terse output to reduce token usage. Default 'off'. */
   cavemanMode: CavemanMode;
   workingDirectories: string[];
+  /** Added to the system prompt of every thread. */
   defaultSystemPromptAppend: string;
+  /** Instructions added to the system prompt of one project's threads, after
+   *  `defaultSystemPromptAppend`. Keys are project (repo) paths. Read when a
+   *  thread's agent session is set up (a new thread, or one reopened after a
+   *  restart), like the global append. */
+  repoInstructions: Record<string, string>;
   /** The user's own ACP agents. Read at launch, so a change applies after a restart. */
   acpAgents: AcpAgentSetting[];
   /** Claude accounts besides the default one, each offered as its own agent.

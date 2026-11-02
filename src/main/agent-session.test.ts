@@ -747,6 +747,73 @@ describe('AgentSessionManager caveman mode', () => {
   });
 });
 
+describe('AgentSessionManager project instructions', () => {
+  afterEach(() => {
+    settingsMock.getSettings.mockReturnValue({
+      defaultSystemPromptAppend: null,
+      toolAllowRules: [],
+      toolDenyRules: [],
+      cavemanMode: 'off',
+    });
+  });
+
+  it('adds the project\'s instructions after the global append', async () => {
+    settingsMock.getSettings.mockReturnValue({
+      defaultSystemPromptAppend: 'Global rule.',
+      repoInstructions: { '/repo': '  Project rule.  ', '/other': 'Other rule.' },
+      toolAllowRules: [],
+      toolDenyRules: [],
+      cavemanMode: 'off',
+    });
+
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-project-instructions',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+
+    await vi.waitFor(() => expect(mockAdapter.lastConfig).not.toBeNull());
+    const prompt = mockAdapter.lastConfig?.appendSystemPrompt ?? '';
+    expect(prompt).toContain('\n\nProject rule.');
+    expect(prompt).not.toContain('  Project rule.');
+    expect(prompt).not.toContain('Other rule.');
+    expect(prompt.indexOf('Project rule.')).toBeGreaterThan(prompt.indexOf('Global rule.'));
+
+    await sessionManager.destroySession('test-project-instructions');
+  });
+
+  it('adds nothing for a project whose instructions are blank', async () => {
+    settingsMock.getSettings.mockReturnValue({
+      defaultSystemPromptAppend: null,
+      repoInstructions: { '/repo': '   ' },
+      toolAllowRules: [],
+      toolDenyRules: [],
+      cavemanMode: 'off',
+    });
+
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-project-instructions-blank',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+
+    await vi.waitFor(() => expect(mockAdapter.lastConfig).not.toBeNull());
+    // The path rules end the prompt, with no blank section after them.
+    const prompt = mockAdapter.lastConfig?.appendSystemPrompt ?? '';
+    expect(prompt).toBe(prompt.trimEnd());
+
+    await sessionManager.destroySession('test-project-instructions-blank');
+  });
+});
+
 describe('AgentSessionManager event processing', () => {
   it('saves a finished turn as the thread\'s last activity', async () => {
     const win = makeMockWindow();
