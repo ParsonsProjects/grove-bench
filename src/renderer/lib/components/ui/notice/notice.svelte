@@ -6,13 +6,14 @@
 		ref = $bindable(null),
 		class: className,
 		tone = "info",
+		layout = "inline",
 		title,
 		actions,
 		children,
 		...restProps
 	}: NoticeProps = $props();
 
-	const styles = $derived(noticeVariants({ tone }));
+	const styles = $derived(noticeVariants({ tone, layout }));
 </script>
 
 <!-- Errors interrupt a screen reader; everything else waits its turn. -->

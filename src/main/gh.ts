@@ -1,6 +1,6 @@
 import { isReadOnly } from './process-host.js';
 import { runInAgentHost } from './process-host-run.js';
-import type { FailingRun, OpenPrSummary, PrChecksSummary, PrCreateOpts, PrInfo, PrReviewComment, PrReviewEvent } from '../shared/types.js';
+import type { FailingRun, OpenPrSummary, PrChecksSummary, PrCreateOpts, PrInfo, PrMergeState, PrReviewComment, PrReviewer, PrReviewEvent } from '../shared/types.js';
 import { isRecord } from './persisted-state.js';
 import { ghRepoArg, parseActionsLink, parsePrUrl, parseRepoArg, sameRepo } from '../shared/github-links.js';
 import { CI_RERUN_UNANSWERED, tailCiLog, type CiLogTail } from '../shared/ci-log.js';
@@ -188,7 +188,7 @@ export function resetGhLoginCacheForTests(): void {
   cachedLogin = null;
 }
 
-const PR_VIEW_FIELDS = 'number,url,state,isDraft,title,reviewDecision,statusCheckRollup,headRefOid,comments,reviews,headRefName,baseRefName,author';
+const PR_VIEW_FIELDS = 'number,url,state,isDraft,title,reviewDecision,statusCheckRollup,headRefOid,comments,reviews,headRefName,baseRefName,author,mergeStateStatus,autoMergeRequest,latestReviews,reviewRequests';
 /** Upper bound on PRs read per head branch. A branch rarely has more than a
  *  handful (GitHub allows one open PR per head+base pair); the rest are history. */
 const PR_LIST_LIMIT = 20;
@@ -246,6 +246,15 @@ export function latestChecks(rollup: unknown): CheckRow[] {
   return kept;
 }
 
+/** Whole seconds from one of gh's times to another, if both are real:
+ *  gh writes a time GitHub didn't give as 0001-01-01. */
+function secondsBetween(from: unknown, to: unknown): number | undefined {
+  const start = typeof from === 'string' ? Date.parse(from) : NaN;
+  const end = typeof to === 'string' ? Date.parse(to) : NaN;
+  if (!(start > 0) || !(end >= start)) return undefined;
+  return Math.round((end - start) / 1000);
+}
+
 function checkName(item: CheckRow): string {
   return String(item.name || item.context || 'check');
 }
@@ -285,7 +294,8 @@ function splitFailing(checks: CheckRow[], prUrl: string): { runs: FailingRun[]; 
     const { jobId } = link;
     const name = typeof item.name === 'string' && item.name ? item.name : jobId ? `job ${jobId}` : 'job';
     if (jobId ? !run.jobs.some((j) => j.id === jobId) : !run.jobs.some((j) => !j.id && j.name === name)) {
-      run.jobs.push({ ...(jobId ? { id: jobId } : {}), name });
+      const seconds = secondsBetween(item.startedAt, item.completedAt);
+      run.jobs.push({ ...(jobId ? { id: jobId } : {}), name, ...(seconds !== undefined ? { seconds } : {}) });
     }
   }
   // A check of the same run still queued or running.
@@ -361,6 +371,44 @@ interface GhPrJson {
   comments?: unknown;
   reviews?: unknown;
   author?: { login?: string };
+  mergeStateStatus?: string;
+  autoMergeRequest?: unknown;
+  latestReviews?: unknown;
+  reviewRequests?: unknown;
+}
+
+const MERGE_STATES = new Set<PrMergeState>(['clean', 'behind', 'blocked', 'dirty', 'unstable', 'has_hooks', 'draft', 'unknown']);
+
+function mergeStateOf(status: unknown): PrMergeState | undefined {
+  const state = typeof status === 'string' ? status.toLowerCase() : '';
+  return MERGE_STATES.has(state as PrMergeState) ? (state as PrMergeState) : undefined;
+}
+
+const REVIEW_STATES: Record<string, PrReviewer['state']> = {
+  APPROVED: 'approved',
+  CHANGES_REQUESTED: 'changes_requested',
+  COMMENTED: 'commented',
+};
+
+/** Each reviewer's latest review that counts (latestReviews): pending and
+ *  dismissed ones don't. */
+function reviewersOf(latestReviews: unknown): PrReviewer[] {
+  if (!Array.isArray(latestReviews)) return [];
+  const reviewers: PrReviewer[] = [];
+  for (const review of latestReviews) {
+    const login = at(review, 'author', 'login');
+    const state = REVIEW_STATES[String(at(review, 'state') ?? '').toUpperCase()];
+    if (typeof login === 'string' && login && state && !reviewers.some((r) => r.login === login)) reviewers.push({ login, state });
+  }
+  return reviewers;
+}
+
+/** Whom a review is asked of (reviewRequests): a user's login, a team's name. */
+function requestedReviewersOf(reviewRequests: unknown): string[] {
+  if (!Array.isArray(reviewRequests)) return [];
+  return reviewRequests
+    .map((request) => at(request, 'login') ?? at(request, 'name') ?? at(request, 'slug'))
+    .filter((name): name is string => typeof name === 'string' && name.length > 0);
 }
 
 /** Shape one gh PR JSON object into PrInfo; null when it isn't a PR. */
@@ -371,6 +419,10 @@ function parsePr(json: unknown, selfLogin?: string | null): PrInfo | null {
   // Each check once, worked out once for all three.
   const checks = latestChecks(data.statusCheckRollup);
   const { runs: failingRuns, others: otherFailingChecks } = splitFailing(checks, data.url);
+  const runningChecks = checks.filter(inProgress).map(checkName);
+  const mergeState = mergeStateOf(data.mergeStateStatus);
+  const reviewers = reviewersOf(data.latestReviews);
+  const requestedReviewers = requestedReviewersOf(data.reviewRequests);
   return {
     number: data.number,
     url: data.url,
@@ -389,6 +441,11 @@ function parsePr(json: unknown, selfLogin?: string | null): PrInfo | null {
     // Only when both logins are known: an unknown answer must not hide the
     // review options for a PR someone else opened.
     ...(selfLogin && typeof data.author?.login === 'string' ? { viewerIsAuthor: data.author.login === selfLogin } : {}),
+    ...(mergeState ? { mergeState } : {}),
+    ...(isRecord(data.autoMergeRequest) ? { autoMerge: true } : {}),
+    ...(reviewers.length > 0 ? { reviewers } : {}),
+    ...(requestedReviewers.length > 0 ? { requestedReviewers } : {}),
+    ...(runningChecks.length > 0 ? { runningChecks } : {}),
   };
 }
 

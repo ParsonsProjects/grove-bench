@@ -26,14 +26,23 @@ export const noticeVariants = tv({
 			danger: { root: "border-destructive bg-destructive/10", title: "text-red-300" },
 			neutral: { root: "border-border bg-muted/50", title: "text-foreground" },
 		},
+		/** Where the actions go: beside the text (the default), or under it,
+		 *  for a narrow place such as a popover, where beside it they squeeze
+		 *  the text and are easy to miss. */
+		layout: {
+			inline: {},
+			stacked: { root: "flex-col items-stretch gap-2", actions: "self-start" },
+		},
 	},
-	defaultVariants: { tone: "info" },
+	defaultVariants: { tone: "info", layout: "inline" },
 });
 
 export type NoticeTone = VariantProps<typeof noticeVariants>["tone"];
+export type NoticeLayout = VariantProps<typeof noticeVariants>["layout"];
 
 export type NoticeProps = WithElementRef<HTMLAttributes<HTMLDivElement>> & {
 	tone?: NoticeTone;
+	layout?: NoticeLayout;
 	title?: string;
 	/** Buttons on the right, such as "Try again". */
 	actions?: Snippet;

@@ -596,7 +596,7 @@ const api: Record<string, unknown> = {
   // link (s-sidebar with unpushed commits).
   getPrs: async (id: string) => id === 's-oauth'
     ? [
-      { number: 42, url: 'https://github.com/example/api-service/pull/42', state: 'OPEN', title: 'Fix OAuth token refresh', reviewDecision: 'REVIEW_REQUIRED', checks: { total: 3, passed: 2, failed: 1, pending: 0 }, failingChecks: ['e2e'], failingRuns: [{ repo: 'example/api-service', runId: '9120', workflow: 'CI', jobs: [{ id: '30111', name: 'e2e' }] }], headSha: 'b2c3d4e', headRefName: 'claude/fix-oauth-refresh', baseRefName: 'main' },
+      { number: 42, url: 'https://github.com/example/api-service/pull/42', state: 'OPEN', title: 'Fix OAuth token refresh', reviewDecision: 'REVIEW_REQUIRED', checks: { total: 3, passed: 2, failed: 1, pending: 0 }, failingChecks: ['e2e'], failingRuns: [{ repo: 'example/api-service', runId: '9120', workflow: 'CI', jobs: [{ id: '30111', name: 'e2e', seconds: 252 }] }], requestedReviewers: ['maya'], mergeState: 'blocked', headSha: 'b2c3d4e', headRefName: 'claude/fix-oauth-refresh', baseRefName: 'main' },
       { number: 38, url: 'https://github.com/example/api-service/pull/38', state: 'MERGED', title: 'OAuth: add refresh token storage', reviewDecision: 'APPROVED', checks: { total: 3, passed: 3, failed: 0, pending: 0 }, failingChecks: [], headSha: 'a1b2c3d', headRefName: 'claude/fix-oauth-refresh', baseRefName: 'main' },
     ]
     : [],

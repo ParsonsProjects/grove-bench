@@ -122,3 +122,63 @@ describe('shipTrack', () => {
     expect(track().summary).toBe('up to date');
   });
 });
+
+describe('shipTrack next', () => {
+  const failing = { total: 3, passed: 2, failed: 1, pending: 0 };
+  const running = { total: 3, passed: 2, failed: 0, pending: 1 };
+  const green = { total: 3, passed: 3, failed: 0, pending: 0 };
+  /** The Next notice as "tone: headline [action]", and whether the lozenge is marked. */
+  function next(over: Partial<ShipTrackInput> = {}) {
+    const t = track(over);
+    return { next: t.next && `${t.next.tone}: ${t.next.headline}${t.next.action ? ` [${t.next.action}]` : ''}`, marked: t.actionable };
+  }
+
+  it('says nothing with no PR when none can be made here', () => {
+    expect(next()).toEqual({ next: null, marked: false });
+  });
+
+  it('puts a failed push first', () => {
+    expect(next({ pushFailed: true, pr: pr({ checks: failing }) })).toEqual({ next: 'act: Push failed [retry-push]', marked: true });
+  });
+
+  it('offers a PR, by the agent, once pushed or with commits waiting; before that only shows the way', () => {
+    expect(next({ canCreatePr: true })).toEqual({ next: 'act: No PR yet [create-pr]', marked: true });
+    expect(next({ canCreatePr: true, sync: { upstream: null, ahead: 0, behind: 0 } })).toEqual({ next: 'wait: Not pushed yet [create-pr]', marked: false });
+    expect(next({ canCreatePr: true, sync: { ...pushed, ahead: 1 }, pr: pr({ state: 'MERGED' }) })).toEqual({ next: 'act: More work since #42 merged [create-pr]', marked: true });
+  });
+
+  it('pushes first on an open PR, and says the failed checks are on the pushed commit', () => {
+    const t = track({ sync: { ...pushed, ahead: 1 }, pr: pr({ checks: failing }) });
+    expect(t.next).toMatchObject({ step: 'push', headline: '1 commit not pushed', action: 'push', tone: 'act' });
+    expect(t.next?.detail).toContain('ran on the last pushed commit');
+  });
+
+  it('fixes failed checks, then answers requested changes, naming who asked', () => {
+    expect(next({ pr: pr({ checks: failing, reviewDecision: 'CHANGES_REQUESTED' }) })).toEqual({ next: 'act: 1 of 3 checks failed [fix-ci]', marked: true });
+    const t = track({ pr: pr({ checks: green, reviewDecision: 'CHANGES_REQUESTED', reviewers: [{ login: 'alice', state: 'changes_requested' }, { login: 'bob', state: 'approved' }] }) });
+    expect(t.next).toMatchObject({ headline: 'Changes requested', detail: 'From alice.', action: 'address-reviews', tone: 'act' });
+  });
+
+  it('calls for conflicts and a branch behind its base, but only waits on a draft, running checks or a review', () => {
+    expect(next({ pr: pr({ checks: green, mergeState: 'dirty', baseRefName: 'main' }) })).toEqual({ next: 'act: Conflicts with main [open-pr]', marked: true });
+    expect(next({ pr: pr({ checks: green, mergeState: 'behind', baseRefName: 'main' }) })).toEqual({ next: 'act: Behind main [open-pr]', marked: true });
+    expect(next({ pr: pr({ checks: green, isDraft: true, mergeState: 'draft' }) })).toEqual({ next: 'wait: Draft PR [open-pr]', marked: false });
+    expect(next({ pr: pr({ checks: running }) })).toEqual({ next: 'wait: Checks running', marked: false });
+    expect(track({ pr: pr({ checks: green, reviewDecision: 'REVIEW_REQUIRED', requestedReviewers: ['bob', 'api-team'] }) }).next)
+      .toMatchObject({ headline: 'Waiting for a review', detail: 'Asked of bob, api-team.', tone: 'wait' });
+  });
+
+  it('marks a PR GitHub says is ready, unless auto-merge will merge it', () => {
+    expect(next({ pr: pr({ checks: green, reviewDecision: 'APPROVED', mergeState: 'clean' }) })).toEqual({ next: 'done: Ready to merge [merge-on-github]', marked: true });
+    expect(next({ pr: pr({ checks: green, mergeState: 'clean', autoMerge: true }) })).toEqual({ next: 'wait: Merges by itself', marked: false });
+    expect(track({ pr: pr({ checks: green, mergeState: 'unstable' }) }).next?.detail).toContain("aren't required");
+  });
+
+  it('waits on a rule or on GitHub\'s verdict, and finishes on a merged PR', () => {
+    expect(next({ pr: pr({ checks: green, mergeState: 'blocked' }) })).toEqual({ next: 'wait: Blocked [open-pr]', marked: false });
+    expect(next({ pr: pr({ checks: green }) })).toEqual({ next: 'wait: Waiting for GitHub [open-pr]', marked: false });
+    expect(next({ pr: pr({ state: 'MERGED' }) })).toEqual({ next: 'done: #42 merged', marked: false });
+    expect(next({ pr: pr({ state: 'MERGED' }), canCreatePr: true })).toEqual({ next: 'done: #42 merged [create-pr]', marked: false });
+    expect(next({ pr: pr({ state: 'CLOSED' }), canCreatePr: true })).toEqual({ next: 'wait: #42 closed without merging [create-pr]', marked: false });
+  });
+});

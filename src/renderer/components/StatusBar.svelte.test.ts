@@ -639,54 +639,69 @@ describe('StatusBar PR', () => {
     expect(icon().querySelector('svg')).not.toHaveClass('opacity-50');
   });
 
-  it('names each step in its popup', async () => {
-    await renderWithPrs(pr({ reviewDecision: 'REVIEW_REQUIRED' }));
+  /** Text with its white space folded, as it reads. */
+  const words = (el: Element) => el.textContent?.replace(/\s+/g, ' ').trim();
+  /** The popup's Next notice, and a step's row. */
+  const nextNotice = () => screen.getByTestId('next');
+  const row = (step: 'checks' | 'review' | 'merge') => screen.getByTestId(`step-${step}`);
+
+  it('shows the PR and where it goes, then the next step, then a row per step', async () => {
+    await renderWithPrs(pr({ reviewDecision: 'REVIEW_REQUIRED', requestedReviewers: ['bob'] }));
     const popup = await openBranch();
+
+    expect(within(popup).getByText('#42')).toBeInTheDocument();
+    expect(within(popup).getByText('Fix token refresh')).toBeInTheDocument();
+    expect(within(popup).getByText('feat-a')).toBeInTheDocument();
+    expect(within(popup).getByText('→ main')).toBeInTheDocument();
+    expect(words(nextNotice())).toBe('Waiting for a review Asked of bob.');
     const steps = within(within(popup).getByRole('list', { name: 'Steps to merged' })).getAllByRole('listitem');
-    expect(steps.map((li) => li.textContent?.replace(/\s+/g, ' ').trim())).toEqual([
-      'Push',
-      'PR #42 open Fix token refresh Open ↗',
-      'Checks 2 passed',
-      'Review review required',
-      'Merge',
+    expect(steps.map(words)).toEqual([
+      'Not pushed yet',
+      '2 checks passed Fix automatically when checks fail',
+      'No approving review yet Asked of bob Address new comments automatically',
+      "GitHub hasn't said yet whether it can merge",
     ]);
   });
-
-  /** A step's row in the open popup. */
-  function stepRow(label: string) {
-    const list = screen.getByRole('list', { name: 'Steps to merged' });
-    return within(list).getAllByRole('listitem').find((li) => li.textContent?.trim().startsWith(label))!;
-  }
 
   it('says each check and review once, on its step', async () => {
     await renderWithPrs(pr({ reviewDecision: 'APPROVED' }));
     const popup = await openBranch();
     expect(within(popup).getAllByText(/passed/)).toHaveLength(1);
-    expect(within(popup).getAllByText(/approved/)).toHaveLength(1);
+    expect(within(popup).getAllByText(/approved/i)).toHaveLength(1);
     expect(within(popup).queryByText('Reviews')).toBeNull();
   });
 
-  it('puts the failing checks, their "new" chip and the fix on the Checks row', async () => {
+  it('makes fixing failed checks the next step, with the failures and their "new" chip on the Checks row', async () => {
     const fix = vi.spyOn(prStore, 'fixCiWithAgent').mockReturnValue(true);
     await renderWithPrs(pr({ checks: { total: 3, passed: 1, failed: 2, pending: 0 }, failingChecks: ['e2e', 'lint'] }));
     prStore.alertsBySession = { [ACTIVE]: [{ kind: 'ci_failed', checks: ['e2e'], id: 1, prNumber: 42 }] };
     await openBranch();
 
-    const row = stepRow('Checks');
-    expect(within(row).getByText('2 of 3 failed')).toHaveAttribute('title', 'Failing: e2e, lint');
-    expect(within(row).getByText('e2e, lint')).toBeInTheDocument();
-    expect(within(row).getByRole('button', { name: 'new' })).toBeInTheDocument();
-    await fireEvent.click(within(row).getByRole('button', { name: 'fix with agent →' }));
+    expect(within(nextNotice()).getByText('2 of 3 checks failed')).toBeInTheDocument();
+    expect(within(row('checks')).getByText('e2e, lint')).toBeInTheDocument();
+    expect(within(row('checks')).getByRole('button', { name: 'new' })).toBeInTheDocument();
+    // Offered once: in the Next notice, not again on the row.
+    expect(screen.getAllByRole('button', { name: 'Fix with agent' })).toHaveLength(1);
+    await fireEvent.click(within(nextNotice()).getByRole('button', { name: 'Fix with agent' }));
     expect(fix).toHaveBeenCalledWith(ACTIVE);
     expect(screen.queryByRole('dialog', { name: 'Branch' })).toBeNull();
   });
 
-  it('says on the Checks row when the agent is too busy to fix them', async () => {
+  it('says when the agent is too busy to fix them', async () => {
     vi.spyOn(prStore, 'fixCiWithAgent').mockReturnValue(false);
     await renderWithPrs(pr({ checks: { total: 1, passed: 0, failed: 1, pending: 0 }, failingChecks: ['e2e'] }));
+    const popup = await openBranch();
+    await fireEvent.click(within(nextNotice()).getByRole('button', { name: 'Fix with agent' }));
+    expect(within(popup).getByText('The agent is busy: try again when it goes idle')).toBeInTheDocument();
+  });
+
+  it('offers the fix on the Checks row, in grey, while pushing is next', async () => {
+    vi.mocked(window.groveBench.getGitSyncStatus).mockResolvedValue({ upstream: 'origin/feat-a', ahead: 1, behind: 0 });
+    await renderWithPrs(pr({ checks: { total: 1, passed: 0, failed: 1, pending: 0 }, failingChecks: ['e2e'] }));
     await openBranch();
-    await fireEvent.click(within(stepRow('Checks')).getByRole('button', { name: 'fix with agent →' }));
-    expect(within(stepRow('Checks')).getByText('The agent is busy: try again when it goes idle')).toBeInTheDocument();
+    await waitFor(() => expect(within(nextNotice()).getByRole('button', { name: 'Push 1 commit' })).toBeInTheDocument());
+    expect(within(nextNotice()).getByText(/ran on the last pushed commit/)).toBeInTheDocument();
+    expect(within(row('checks')).getByRole('button', { name: 'Fix with agent' })).toBeInTheDocument();
   });
 
   const ciRun = { repo: 'o/r', runId: '900', workflow: 'CI', jobs: [{ id: '901', name: 'e2e' }] };
@@ -696,12 +711,12 @@ describe('StatusBar PR', () => {
     await renderWithPrs(pr({ checks: { total: 3, passed: 1, failed: 2, pending: 0 }, failingChecks: ['e2e', 'codecov'], failingRuns: [ciRun], otherFailingChecks: ['codecov'] }));
     await openBranch();
 
-    const row = stepRow('Checks');
-    expect(within(row).getByTestId('failed-run').textContent?.replace(/\s+/g, ' ').trim()).toBe('CI e2e log rerun failed');
-    expect(within(row).getByText('codecov')).toBeInTheDocument();
-    expect(within(row).queryByText('e2e, codecov')).toBeNull();
+    const checksRow = row('checks');
+    expect(words(within(checksRow).getByTestId('failed-job'))).toBe('CI / e2e log rerun');
+    expect(within(checksRow).getByText('codecov')).toBeInTheDocument();
+    expect(within(checksRow).queryByText('e2e, codecov')).toBeNull();
 
-    await fireEvent.click(within(row).getByRole('button', { name: 'log' }));
+    await fireEvent.click(within(checksRow).getByRole('button', { name: 'log' }));
     await waitFor(() => expect(markdownPreviewStore.open).toBe(true));
     // Out of the way, so Escape and clicks reach the log.
     expect(screen.queryByRole('dialog', { name: 'Branch' })).toBeNull();
@@ -715,17 +730,17 @@ describe('StatusBar PR', () => {
   it('shows a job its check names no id for by name, with no log', async () => {
     await renderWithPrs(pr({ checks: { total: 1, passed: 0, failed: 1, pending: 0 }, failingChecks: ['build'], failingRuns: [{ ...ciRun, jobs: [{ name: 'build' }] }] }));
     await openBranch();
-    const run = within(stepRow('Checks')).getByTestId('failed-run');
-    expect(run.textContent?.replace(/\s+/g, ' ').trim()).toBe('CI build rerun failed');
-    expect(within(run).queryByRole('button', { name: 'log' })).toBeNull();
+    const job = within(row('checks')).getByTestId('failed-job');
+    expect(words(job)).toBe('CI / build rerun');
+    expect(within(job).queryByRole('button', { name: 'log' })).toBeNull();
   });
 
   it('says on the Checks row when a log can\'t be read', async () => {
     vi.mocked(window.groveBench.getPrJobLog).mockRejectedValueOnce(new Error("Error invoking remote method 'pr:jobLog': Error: GitHub has no log for this job any more."));
     await renderWithPrs(pr({ checks: { total: 1, passed: 0, failed: 1, pending: 0 }, failingChecks: ['e2e'], failingRuns: [ciRun] }));
-    await openBranch();
-    await fireEvent.click(within(stepRow('Checks')).getByRole('button', { name: 'log' }));
-    await waitFor(() => expect(within(stepRow('Checks')).getByText('GitHub has no log for this job any more.')).toBeInTheDocument());
+    const popup = await openBranch();
+    await fireEvent.click(within(row('checks')).getByRole('button', { name: 'log' }));
+    await waitFor(() => expect(within(popup).getByText('GitHub has no log for this job any more.')).toBeInTheDocument());
   });
 
   it('asks GitHub to rerun a run\'s failed jobs, then says so until the run goes again', async () => {
@@ -733,9 +748,9 @@ describe('StatusBar PR', () => {
     await renderWithPrs(failing);
     await openBranch();
 
-    await fireEvent.click(within(stepRow('Checks')).getByRole('button', { name: 'rerun failed' }));
+    await fireEvent.click(within(row('checks')).getByRole('button', { name: 'rerun' }));
     expect(window.groveBench.rerunPrFailedJobs).toHaveBeenCalledWith(ACTIVE, 'o/r', '900');
-    await waitFor(() => expect(within(stepRow('Checks')).getByRole('button', { name: 'rerun requested' })).toBeDisabled());
+    await waitFor(() => expect(within(row('checks')).getByRole('button', { name: 'rerun requested' })).toBeDisabled());
 
     // GitHub has started it: the run is going, so the mark goes.
     vi.mocked(window.groveBench.getPrs).mockResolvedValue([pr({ checks: { total: 1, passed: 0, failed: 0, pending: 1 } })]);
@@ -745,29 +760,47 @@ describe('StatusBar PR', () => {
 
   it('holds the rerun while other jobs of the run still go, and says why a rerun failed', async () => {
     await renderWithPrs(pr({ checks: { total: 2, passed: 0, failed: 1, pending: 1 }, failingChecks: ['e2e'], failingRuns: [{ ...ciRun, pending: true }] }));
-    await openBranch();
-    const button = within(stepRow('Checks')).getByRole('button', { name: 'rerun failed' });
+    const popup = await openBranch();
+    const button = within(row('checks')).getByRole('button', { name: 'rerun' });
     expect(button).toBeDisabled();
     expect(button).toHaveAttribute('title', expect.stringContaining('Wait for this run to finish'));
 
     vi.mocked(window.groveBench.getPrs).mockResolvedValue([pr({ checks: { total: 2, passed: 1, failed: 1, pending: 0 }, failingChecks: ['e2e'], failingRuns: [ciRun] })]);
     await prStore.refresh(ACTIVE, true);
-    vi.mocked(window.groveBench.rerunPrFailedJobs).mockRejectedValueOnce(new Error("Error invoking remote method 'pr:rerunFailed': Error: Your gh account can't rerun jobs in this repository. It needs write access."));
-    await waitFor(() => expect(within(stepRow('Checks')).getByRole('button', { name: 'rerun failed' })).toBeEnabled());
-    await fireEvent.click(within(stepRow('Checks')).getByRole('button', { name: 'rerun failed' }));
-    await waitFor(() => expect(within(stepRow('Checks')).getByText(/It needs write access/)).toBeInTheDocument());
-    expect(within(stepRow('Checks')).getByRole('button', { name: 'rerun failed' })).toBeEnabled();
+    vi.mocked(window.groveBench.rerunPrFailedJobs).mockRejectedValueOnce(new Error("Error invoking remote method 'pr:rerunFailed': Error: GitHub refused the rerun: HTTP 403: Must have admin rights to Repository."));
+    await waitFor(() => expect(within(row('checks')).getByRole('button', { name: 'rerun' })).toBeEnabled());
+    await fireEvent.click(within(row('checks')).getByRole('button', { name: 'rerun' }));
+    await waitFor(() => expect(within(popup).getByText(/Must have admin rights/)).toBeInTheDocument());
+    expect(within(row('checks')).getByRole('button', { name: 'rerun' })).toBeEnabled();
   });
 
-  it('puts new comments and the agent\'s answer to them on the Review row', async () => {
-    await renderWithPrs(pr({ reviewDecision: 'CHANGES_REQUESTED' }));
+  it('makes answering requested changes the next step, naming who asked, with the new comments on the Review row', async () => {
+    await renderWithPrs(pr({ reviewDecision: 'CHANGES_REQUESTED', reviewers: [{ login: 'alice', state: 'changes_requested' }, { login: 'bob', state: 'approved' }] }));
     prStore.alertsBySession = { [ACTIVE]: [{ kind: 'new_comments', count: 2, id: 2, prNumber: 42 }] };
     await openBranch();
 
-    const row = stepRow('Review');
-    expect(within(row).getByText('changes requested')).toBeInTheDocument();
-    expect(within(row).getByRole('button', { name: '2 new' })).toBeInTheDocument();
-    expect(within(row).getByRole('button', { name: 'address with agent →' })).toBeInTheDocument();
+    expect(words(nextNotice())).toBe('Changes requested From alice. Address with agent');
+    expect(words(within(row('review')).getByText(/requested changes/).parentElement!)).toBe('alice requested changes · bob approved');
+    expect(within(row('review')).getByRole('button', { name: '2 new' })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'Address with agent' })).toHaveLength(1);
+  });
+
+  it('says what GitHub says about merging, and offers the merge there once it is ready', async () => {
+    const open = vi.mocked(window.groveBench.openExternal);
+    await renderWithPrs(pr({ reviewDecision: 'APPROVED', mergeState: 'clean' }));
+    await waitFor(() => expect(lozenge().querySelector('.bg-primary')).not.toBeNull());
+    await openBranch();
+    expect(within(nextNotice()).getByText('Ready to merge')).toBeInTheDocument();
+    expect(within(row('merge')).getByText('Nothing stops the merge')).toBeInTheDocument();
+    await fireEvent.click(within(nextNotice()).getByRole('button', { name: 'Merge on GitHub' }));
+    expect(open).toHaveBeenCalledWith('https://github.com/o/r/pull/42');
+  });
+
+  it('waits, without the green mark, while auto-merge will merge it', async () => {
+    await renderWithPrs(pr({ reviewDecision: 'APPROVED', mergeState: 'clean', autoMerge: true }));
+    await openBranch();
+    expect(words(nextNotice())).toBe('Merges by itself Auto-merge is on: GitHub merges it once nothing stops it.');
+    expect(lozenge().querySelector('.bg-primary')).toBeNull();
   });
 
   it('says in the tooltip when auto turns are on, since they are saved', async () => {
@@ -780,11 +813,11 @@ describe('StatusBar PR', () => {
     const branch = await renderWithPrs(pr());
     await openBranch();
     expect(branch.getAttribute('aria-expanded')).toBe('true');
-    screen.getByRole('button', { name: 'Open ↗' }).focus();
+    screen.getByRole('button', { name: 'Open #42 on GitHub' }).focus();
 
     await fireEvent.keyDown(window, { key: 'Escape' });
 
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Open ↗' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Open #42 on GitHub' })).toBeNull());
     expect(branch.getAttribute('aria-expanded')).toBe('false');
     expect(document.activeElement).toBe(branch);
   });
@@ -848,7 +881,7 @@ describe('StatusBar PR', () => {
   it('says why "review required" holds the PR up', async () => {
     await renderWithPrs(pr({ reviewDecision: 'REVIEW_REQUIRED' }));
     await openBranch();
-    expect(within(stepRow('Review')).getByText('review required')).toHaveAttribute('title', expect.stringMatching(/needs an approving review/));
+    expect(within(row('review')).getByText('main needs an approving review to merge.')).toBeInTheDocument();
   });
 
   it('offers no agent fixes or automation on a closed PR, and a way to start a new one', async () => {
@@ -874,9 +907,12 @@ describe('StatusBar PR', () => {
       pr({ number: 70, title: 'Stacked', reviewDecision: 'CHANGES_REQUESTED', checks: null, baseRefName: 'release' }),
     );
     await openBranch();
-    const row = screen.getByText('#70').closest('div')!;
-    expect(row.querySelector('span')!.className).toContain('bg-amber-500');
-    expect(screen.getByText('Other PRs in this thread')).toBeTruthy();
+    // Folded until asked for.
+    expect(screen.queryByText('#70')).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: '1 other PR in this thread' }));
+    const other = screen.getByText('#70').closest('div')!;
+    expect(other.querySelector('span')!.className).toContain('bg-amber-500');
+    expect(words(other)).toBe('#70 open: Stacked watch');
   });
 
   it('pushes from the popup, and drops a failed push once nothing is left to push', async () => {
@@ -885,8 +921,12 @@ describe('StatusBar PR', () => {
     render(StatusBar, { props: { sessionId: ACTIVE } });
     await waitFor(() => expect(lozenge().querySelector('.bg-primary')).not.toBeNull());
     await openBranch();
-    await fireEvent.click(await screen.findByRole('button', { name: 'Push 2 commits' }));
+    // With no PR yet the agent's PR is next (it pushes too); a push on its
+    // own is on the branch row.
+    expect(within(nextNotice()).getByRole('button', { name: 'Create PR with agent' })).toBeInTheDocument();
+    await fireEvent.click(await screen.findByRole('button', { name: 'Push' }));
     expect(await screen.findByTestId('push-error')).toHaveTextContent('rejected: non-fast-forward');
+    expect(within(nextNotice()).getByText('Push failed')).toBeInTheDocument();
 
     // The agent (or a terminal) pushed it; the next poll sees nothing to push.
     vi.mocked(window.groveBench.getGitSyncStatus).mockResolvedValue({ upstream: 'origin/feat-a', ahead: 0, behind: 0 });
@@ -920,11 +960,11 @@ describe('StatusBar PR', () => {
     await openBranch();
 
     vi.mocked(window.groveBench.push).mockRejectedValueOnce(new Error('could not read Username'));
-    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry push' }));
     await waitFor(() => expect(screen.getByTestId('push-error').textContent).toContain('could not read Username'));
 
     vi.mocked(window.groveBench.push).mockResolvedValueOnce(undefined);
-    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry push' }));
     await waitFor(() => expect(screen.queryByTestId('push-error')).toBeNull());
     expect(window.groveBench.push).toHaveBeenCalledTimes(3);
   });

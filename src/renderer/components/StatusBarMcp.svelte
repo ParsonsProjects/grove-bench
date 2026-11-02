@@ -435,7 +435,7 @@
                    Reconnect finishes one the agent won't pick up by itself. -->
               {#if mcpControls.signIn}
               <Button
-                variant="default"
+                variant="subtle-primary"
                 size="2xs"
                 onclick={() => mcpSignIn(server.name)}
                 disabled={mcpBusy[server.name] || mcpSigningIn[server.name]}

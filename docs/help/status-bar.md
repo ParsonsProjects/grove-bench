@@ -96,9 +96,13 @@ Its colour says what matters most right now:
 | Grey | The PR was closed without merging |
 | Plain | A step is still to come, such as a push or a review |
 
-A small green square at the end of the button means the popup has something for you to do now: commits to push, a PR to open, a failed push or check, or changes requested. The icon pulses while there is PR activity you haven't looked at, and dims when the last fetch from GitHub failed, so it may be out of date. If a merge or rebase stopped part way, its word (for example **rebasing 1/2**) shows in amber beside the branch name. Hovering the button says all of it in words.
+A small green square at the end of the button means the popup has something for you to do now: commits to push, a PR to open, a failed push or check, changes requested, conflicts or a branch behind its base, or a PR that GitHub says is ready to merge (unless auto-merge will merge it). The icon pulses while there is PR activity you haven't looked at, and dims when the last fetch from GitHub failed, so it may be out of date. If a merge or rebase stopped part way, its word (for example **rebasing 1/2**) shows in amber beside the branch name. Hovering the button says all of it in words.
 
-Click it for the popup. It names the project and branch (and how far behind its upstream the branch is), then lists the steps on the way to merged, **Push**, **PR**, **Checks**, **Review** and **Merge**, each with a dot and what it stands at.
+Click it for the popup. At the top are the pull request's number, title and state, with ↗ to open it on GitHub, and under them the project, the branch and the branch it merges into.
+
+**Next** says the one thing to do now, why, and offers it as the popup's one main button: **Push N commits**, **Create PR with agent** (or **Create PR manually…**), **Fix with agent**, **Address with agent**, **Retry push**, or **Merge on GitHub** once GitHub says nothing stops the merge. It's green when there is something to do and blue while you can only wait, such as for checks or a review. Grove doesn't merge PRs itself: the merge happens on GitHub.
+
+Under it, a row per step, each with a dot and what it stands at:
 
 | Dot | Meaning |
 |-----|---------|
@@ -111,23 +115,18 @@ Click it for the popup. It names the project and branch (and how far behind its 
 | Grey | The PR was closed without merging |
 | Hollow and faint | Not reached yet |
 
-Each step's row also has what goes with it:
+- **The branch**: what there is to push to origin and to pull from it, or that it's up to date.
+- **Checks**: how many failed, are running or passed, a **new** chip when they failed since you last looked, and each GitHub Actions job that failed, with how long it ran:
+  - **log** shows the end of the job's log in the Focus panel, scrolled to the last error. It works as soon as that job has finished, even while the rest of the run goes on.
+  - **rerun** asks GitHub to run the workflow's failed jobs again, and the jobs that need them. It waits until every job in the run has finished, as GitHub only reruns a finished run, then reads **rerun requested** until the checks show it going.
+  - Failing checks from other CI services are listed by name. Their logs are with the service that ran them: ↗ at the top gets you to the PR.
+  - **Fix automatically when checks fail** sends the fix turn by itself, while the thread is idle. After 2 tries without CI going green, it asks for you.
+- **Review**: approved, changes requested, or still to come, who reviewed and how, whom a review is asked of, and a **2 new** chip for comments since you last looked. **Address new comments automatically** sends the turn by itself when repository collaborators leave feedback, while the thread is idle.
+- **Merge**: what GitHub says about merging: nothing stops it, conflicts with the base branch, behind it, blocked by a required review, check or rule, or auto-merge on.
 
-- **PR**: the pull request's number, state and title, with **Open ↗** to see it on GitHub. Hover the state for the branch it merges from and into.
-- **Checks**: a **new** chip when they failed since you last looked, and **fix with agent →**, which sends a turn asking the agent to read the CI logs and fix them. Under it, each GitHub Actions workflow with failed jobs:
-  - **log** beside a failed job shows the end of its log in the Focus panel, scrolled to the last error. It works as soon as that job has finished, even while the rest of the run goes on.
-  - **rerun failed** asks GitHub to run the workflow's failed jobs again, and the jobs that need them. It waits until every job in the run has finished, as GitHub only reruns a finished run, then reads **rerun requested** until the checks show it going.
-  - Failing checks from other CI services are listed by name. Their logs are with the service that ran them: **Open ↗** on the PR row gets you there.
-- **Review**: a **2 new** chip for comments since you last looked, and **address with agent →**, which fetches the review comments and asks the agent to address them. Hover **review required** for what it means.
+A row offers its own action, in grey, only when it isn't the next step, so nothing is offered twice: with commits to push next, the Checks row still has **Fix with agent**. Clicking a chip clears it, and so does closing the popup. When an auto turn gives up and needs you, a note says so under the steps until you dismiss it. Other PRs in this thread are folded at the bottom: open them to see each one, with **watch** to follow it instead.
 
-Clicking a chip clears it, and so does closing the popup. When an auto turn gives up and needs you, a note says so under the steps until you dismiss it. Under them, **Auto** turns on the agent fixing CI or addressing reviews by itself (only for an open PR, and only while the thread is idle), and **Other PRs in this thread** lists any others, with **watch** to follow one of them instead.
-
-The actions are at the bottom:
-
-- **Push N commits** pushes the branch. If a push fails, from here or from the Changes tab, the error shows in the popup: copy it, **Retry** the push or **Dismiss** the note. It also goes away by itself once nothing is left to push.
-- **Create PR with agent** sends a turn asking the agent to commit, push and open a PR. **Create PR manually…** opens a form. They show while the thread has no open PR, so after a PR is merged or closed they start a new one. Both wait while the agent is working.
-- **Switch branch…** opens the branch picker in place of the popup.
-- A merge or rebase stopped part way has a line at the top that opens the Changes tab, where you finish or abort it.
+If a push fails, from here or from the Changes tab, the error shows in the popup: copy it, or **Dismiss** it, while **Next** offers **Retry push**. It also goes away by itself once nothing is left to push. **Switch branch…** at the bottom opens the branch picker in place of the popup. A merge or rebase stopped part way has a line at the top that opens the Changes tab, where you finish or abort it.
 
 ### Switching branch
 

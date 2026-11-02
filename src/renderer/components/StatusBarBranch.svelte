@@ -4,14 +4,16 @@
    * merged (ShipIcon: its shape the stage, its colour the step that matters
    * most; lib/ship-track.ts), then the branch's name.
    * A green mark at its end says the popup holds something to do now
-   * (push, create a PR, fix failed checks, address requested changes). A
-   * merge or rebase stopped part way adds its word in amber ("rebasing 1/2").
+   * (ship-track's Next: push, create a PR, fix failed checks, address
+   * requested changes, conflicts, a branch behind its base, or a PR GitHub
+   * says is ready to merge). A merge or rebase stopped part way adds its
+   * word in amber ("rebasing 1/2").
    *
-   * Its popup lists the steps, each with what it needs (StatusBarSteps: the
-   * PR's link, new activity, failing checks, the agent's fixes), then the
-   * actions: Push, Create PR (with the agent or by hand) whenever no PR is
-   * open, a failed push's error with Retry, and Switch branch (the branch
-   * picker, which opens over the lozenge in its place). Also keeps the PR
+   * Its popup: the PR and where it goes, then StatusBarSteps (the Next
+   * notice with the one main action, and a row per step), a failed push's
+   * error, and Switch branch (the branch picker, which opens over the
+   * lozenge in its place). Push and Create PR are actions of the Next
+   * notice, or of the branch row when they aren't next. Also keeps the PR
    * and sync status polled while the bar is mounted.
    */
   import { gitStatusStore } from '../stores/gitStatus.svelte.js';
@@ -26,6 +28,8 @@
   import { lozenge, lozengeMark } from '../lib/lozenge.js';
   import { shipTrack } from '../lib/ship-track.js';
   import { Button } from '$lib/components/ui/button/index.js';
+  import { Badge } from '$lib/components/ui/badge/index.js';
+  import ExternalLink from '@lucide/svelte/icons/external-link';
   import BranchPicker from './BranchPicker.svelte';
   import CopyButton from './CopyButton.svelte';
   import StatusBarPopover from './StatusBarPopover.svelte';
@@ -150,6 +154,14 @@
   let otherPrCount = $derived(prInfo ? prStore.getPrs(sessionId).filter((p) => p.number !== prInfo.number).length : 0);
   let track = $derived(shipTrack({ sync: gitSync, pr: prInfo, pushFailed: !!pushError, canCreatePr: showCreatePr }));
   let repoName = $derived(sessionRepoPath ? store.repoDisplayName(sessionRepoPath) : '');
+  /** The PR's state on its badge: neutral while open (green is for acting
+   *  and finishing), purple once merged, as merged PRs are. */
+  let prBadge = $derived<{ tone: 'neutral' | 'muted' | 'accent'; label: string }>(
+    prInfo?.state === 'MERGED' ? { tone: 'accent', label: 'merged' }
+      : prInfo?.state === 'CLOSED' ? { tone: 'muted', label: 'closed' }
+      : prInfo?.isDraft ? { tone: 'muted', label: 'draft' }
+      : { tone: 'neutral', label: 'open' },
+  );
   /** The lozenge's icon is shape and colour only: the tooltip says it in words. */
   let lozengeTitle = $derived.by(() => {
     const parts = [`${repoName ? `${repoName} / ` : ''}${sessionBranch || 'no branch'}: ${track.summary}`];
@@ -224,17 +236,31 @@
           </button>
         {/snippet}
 
-        <div class="flex items-center gap-1 min-w-0 mb-2">
+        <!-- The PR, then where it goes. -->
+        {#if prInfo}
+          <div class="flex items-center gap-2 min-w-0">
+            <span class="font-medium text-foreground shrink-0">#{prInfo.number}</span>
+            {#if prInfo.title}<span class="truncate text-foreground" title={prInfo.title}>{prInfo.title}</span>{/if}
+            <Badge tone={prBadge.tone} class="shrink-0">{prBadge.label}</Badge>
+            <Button
+              variant="external"
+              size="icon-2xs"
+              class="ml-auto shrink-0"
+              onclick={() => window.groveBench.openExternal(prInfo.url)}
+              title="Open #{prInfo.number} on GitHub"
+              aria-label="Open #{prInfo.number} on GitHub"
+            >
+              <ExternalLink />
+            </Button>
+          </div>
+        {/if}
+        <div class="flex items-center gap-1 min-w-0 mb-3 text-muted-foreground">
           {#if repoName}
-            <span class="text-muted-foreground truncate max-w-32" title={sessionRepoPath}>{repoName}</span>
-            <span class="text-muted-foreground/40 shrink-0">/</span>
+            <span class="truncate max-w-32 shrink-0" title={sessionRepoPath}>{repoName}</span>
+            <span class="shrink-0">·</span>
           {/if}
-          <span class="font-medium text-foreground truncate">{sessionBranch || 'no branch'}</span>
-          {#if gitSync.behind > 0}
-            <span class="ml-auto shrink-0 text-muted-foreground" title="{gitSync.behind} commit{gitSync.behind > 1 ? 's' : ''} behind upstream (as of last fetch)">
-              {gitSync.behind} behind
-            </span>
-          {/if}
+          <span class="truncate {prInfo ? '' : 'font-medium text-foreground'}">{sessionBranch || 'no branch'}</span>
+          {#if prInfo?.baseRefName}<span class="shrink-0">→ {prInfo.baseRefName}</span>{/if}
         </div>
 
         {#if operation}
@@ -249,7 +275,23 @@
           </button>
         {/if}
 
-        <StatusBarSteps {sessionId} {track} {prInfo} {canAgentCreatePr} onclose={() => (shipOpen = false)} />
+        <StatusBarSteps
+          {sessionId}
+          {track}
+          {prInfo}
+          sync={gitSync}
+          {canAgentCreatePr}
+          pushFailed={!!pushError}
+          {pushing}
+          {retrying}
+          {showCreatePr}
+          {preparingPrTurn}
+          {isRunning}
+          onpush={doPush}
+          onretrypush={retryPush}
+          oncreatepr={createPr}
+          onclose={() => (shipOpen = false)}
+        />
 
         {#if pushError || retrying}
           <div class="mt-3 pt-2 border-t border-border" data-testid="push-error">
@@ -258,71 +300,20 @@
               <CopyButton text={shownPushError} class="size-5 shrink-0" />
             </div>
             <pre class="font-mono text-caption text-red-400 whitespace-pre-wrap break-words max-h-40 overflow-y-auto mb-2">{shownPushError}</pre>
-            <div class="flex justify-end gap-2">
+            <div class="flex justify-end">
               <Button
-                variant="subtle"
+                variant="quiet"
                 size="xs"
                 onclick={() => prStore.dismissPushError(sessionId)}
                 disabled={retrying}
               >
                 Dismiss
               </Button>
-              <Button
-                variant="subtle-primary"
-                size="xs"
-                onclick={retryPush}
-                disabled={retrying || pushing}
-                class="disabled:cursor-wait"
-              >
-                {retrying ? 'Pushing…' : 'Retry'}
-              </Button>
             </div>
           </div>
         {/if}
 
-        <div class="flex flex-wrap items-center gap-2 mt-3 pt-2 border-t border-border">
-          {#if gitSync.ahead > 0 && !pushError && !retrying}
-            <Button
-              variant="subtle-primary"
-              size="xs"
-              onclick={doPush}
-              disabled={pushing}
-              class="disabled:cursor-wait"
-              title="Push this branch's commits to its upstream"
-            >
-              {pushing ? 'Pushing…' : `Push ${gitSync.ahead} commit${gitSync.ahead > 1 ? 's' : ''}`}
-            </Button>
-          {/if}
-          {#if showCreatePr}
-            <Button
-              variant="subtle-primary"
-              size="xs"
-              onclick={() => createPr('agent')}
-              disabled={!canAgentCreatePr || preparingPrTurn}
-              class="disabled:cursor-not-allowed"
-              title={!canAgentCreatePr
-                ? 'The agent must be idle and running to take this turn'
-                : prInfo
-                  ? 'Send a turn asking the agent to commit, push, and open a new PR for more work on this branch'
-                  : 'Send a turn asking the agent to commit, push, and open the PR'}
-            >
-              Create PR with agent
-            </Button>
-            <!-- Waits for the turn like the agent's, so the push can't catch
-                 the agent part way through committing. -->
-            <Button
-              variant="subtle"
-              size="xs"
-              onclick={() => createPr('manual')}
-              disabled={isRunning}
-              class="disabled:cursor-not-allowed"
-              title={isRunning
-                ? 'Create a pull request once the agent finishes its turn'
-                : 'Open the PR dialog: title and description prefilled from the branch\'s commits'}
-            >
-              Create PR manually…
-            </Button>
-          {/if}
+        <div class="flex items-center mt-2 pt-2 border-t border-border">
           <Button
             variant="quiet"
             size="xs"

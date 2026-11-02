@@ -261,6 +261,15 @@
           </Notice>
         {/each}
       </div>
+      <!-- A Next notice: what to do now at the top of a popover, stacked,
+           with the popover's one filled button (docs/ui-kit.md). -->
+      <div class="w-96 border border-border bg-popover p-3 text-xs">
+        <SectionLabel class="mb-1">Next</SectionLabel>
+        <Notice tone="success" title="1 commit not pushed" layout="stacked">
+          {#snippet actions()}<Button size="xs">Push 1 commit</Button>{/snippet}
+          <p>The failed checks ran on the last pushed commit. Push to check this one.</p>
+        </Notice>
+      </div>
       <!-- Asking before an action that discards something, in place. -->
       <Confirm
         class="max-w-xl"

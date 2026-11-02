@@ -191,7 +191,7 @@ describe('prStatus()', () => {
     const result = await prStatus('/repo', 'feat/x');
     expect(mockRun).toHaveBeenCalledWith(
       'gh',
-      ['pr', 'view', 'feat/x', '--json', 'number,url,state,isDraft,title,reviewDecision,statusCheckRollup,headRefOid,comments,reviews,headRefName,baseRefName,author'],
+      ['pr', 'view', 'feat/x', '--json', 'number,url,state,isDraft,title,reviewDecision,statusCheckRollup,headRefOid,comments,reviews,headRefName,baseRefName,author,mergeStateStatus,autoMergeRequest,latestReviews,reviewRequests'],
       { cwd: '/repo', ...READS },
     );
     expect(result).toEqual({
@@ -246,6 +246,42 @@ describe('prStatus()', () => {
     expect(result?.otherFailingChecks).toEqual(['codecov/patch']);
   });
 
+  it('carries GitHub\'s merge verdict, auto-merge, reviewers, requested reviewers and running checks', async () => {
+    mockRun.mockResolvedValue(printed(JSON.stringify({
+        number: 45,
+        url: 'https://github.com/o/r/pull/45',
+        mergeStateStatus: 'BLOCKED',
+        autoMergeRequest: { mergeMethod: 'SQUASH', enabledAt: '2026-11-01T10:00:00Z' },
+        latestReviews: [
+          { author: { login: 'alice' }, state: 'CHANGES_REQUESTED' },
+          { author: { login: 'bob' }, state: 'APPROVED' },
+          { author: { login: 'carol' }, state: 'DISMISSED' },
+          { author: { login: 'dave' }, state: 'PENDING' },
+          { author: {}, state: 'APPROVED' },
+        ],
+        reviewRequests: [{ __typename: 'User', login: 'erin' }, { __typename: 'Team', name: 'api-team', slug: 'org/api-team' }],
+        statusCheckRollup: [
+          { name: 'e2e', status: 'IN_PROGRESS', conclusion: '', workflowName: 'CI' },
+          { name: 'lint', status: 'COMPLETED', conclusion: 'SUCCESS', workflowName: 'CI' },
+        ],
+      })));
+
+    const result = await prStatus('/repo', 'feat/x');
+    expect(result).toMatchObject({
+      mergeState: 'blocked',
+      autoMerge: true,
+      reviewers: [{ login: 'alice', state: 'changes_requested' }, { login: 'bob', state: 'approved' }],
+      requestedReviewers: ['erin', 'api-team'],
+      runningChecks: ['e2e'],
+    });
+  });
+
+  it('leaves the new fields out when GitHub gives none, or a merge state it doesn\'t know', async () => {
+    mockRun.mockResolvedValue(printed(JSON.stringify({ number: 46, url: 'u', mergeStateStatus: 'SOMETHING_NEW', autoMergeRequest: null, latestReviews: [], reviewRequests: [] })));
+    const result = await prStatus('/repo', 'feat/x');
+    for (const key of ['mergeState', 'autoMerge', 'reviewers', 'requestedReviewers', 'runningChecks']) expect(result).not.toHaveProperty(key);
+  });
+
   it('returns null when no PR exists for the branch', async () => {
     mockRun.mockRejectedValue(new Error('no pull requests found'));
     expect(await prStatus('/repo', 'feat/x')).toBeNull();
@@ -268,7 +304,7 @@ describe('prStatus()', () => {
 });
 
 describe('prList()', () => {
-  const FIELDS = 'number,url,state,isDraft,title,reviewDecision,statusCheckRollup,headRefOid,comments,reviews,headRefName,baseRefName,author';
+  const FIELDS = 'number,url,state,isDraft,title,reviewDecision,statusCheckRollup,headRefOid,comments,reviews,headRefName,baseRefName,author,mergeStateStatus,autoMergeRequest,latestReviews,reviewRequests';
 
   it('lists every PR for the head branch, in any state, with head and base names', async () => {
     mockRun.mockResolvedValue(printed(JSON.stringify([
@@ -554,6 +590,14 @@ describe('failingActionsRuns()', () => {
       { repo: 'Owner/Repo', runId: '201', workflow: 'CI', jobs: [{ id: '9201', name: 'job-9201' }], pending: true },
       { repo: 'Owner/Repo', runId: '202', jobs: [{ id: '9202', name: 'job-9202' }] },
     ]);
+  });
+
+  it('gives a failed job how long it ran, when GitHub says', () => {
+    const timed = { ...run('501'), startedAt: '2026-11-01T10:00:00Z', completedAt: '2026-11-01T10:04:12Z' };
+    const queued = { ...run('502'), startedAt: '0001-01-01T00:00:00Z', completedAt: '0001-01-01T00:00:00Z' };
+    const [first, second] = failingActionsRuns([timed, queued], PR);
+    expect(first.jobs).toEqual([{ id: '9501', name: 'job-9501', seconds: 252 }]);
+    expect(second.jobs).toEqual([{ id: '9502', name: 'job-9502' }]);
   });
 
   it('keeps a check whose link names only the run, as a job with no log', () => {
