@@ -1,4 +1,5 @@
 import type { Bookmark } from '../../shared/types.js';
+import { dockStore } from './dock.svelte.js';
 
 export interface BookmarkSessionGroup {
   sessionId: string;
@@ -64,6 +65,8 @@ class BookmarkStore {
 
   toggleDrawer(open?: boolean) {
     this.drawerOpen = open ?? !this.drawerOpen;
+    if (this.drawerOpen) dockStore.raise('bookmarks');
+    else dockStore.drop('bookmarks');
   }
 
   /** Group by repo → session, preserving the list's newest-first ordering within

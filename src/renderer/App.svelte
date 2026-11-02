@@ -31,8 +31,7 @@
   import GroveWalk from './components/GroveWalk.svelte';
   import TitleBar from './components/TitleBar.svelte';
   import AnalyticsConsent from './components/AnalyticsConsent.svelte';
-  import BookmarksDrawer from './components/BookmarksDrawer.svelte';
-  import MarkdownPreviewPanel from './components/MarkdownPreviewPanel.svelte';
+  import SideDock from './components/SideDock.svelte';
   import SpellcheckMenu from './components/SpellcheckMenu.svelte';
   import { bookmarkStore } from './stores/bookmarks.svelte.js';
   import { groupStore } from './stores/groups.svelte.js';
@@ -42,7 +41,6 @@
   import { goalStore } from './stores/goals.svelte.js';
   import { panelStore } from './stores/panels.svelte.js';
   import { previewStore } from './stores/preview.svelte.js';
-  import { subagentPanelStore } from './stores/subagentPanel.svelte.js';
   import { backgroundAgentStore } from './stores/background-agent.svelte.js';
   import type { AppErrorReport } from '../shared/types.js';
   import { isTempBranch } from '../shared/temp-branch.js';
@@ -56,12 +54,19 @@
   let showAnalyticsConsent = $state(false);
   // Loaded the first time it opens (Ctrl+R or the search button).
   const loadSessionFinder = lazyComponent(() => import('./components/SessionFinder.svelte'));
-  const loadSubagentPanel = lazyComponent(() => import('./components/SubagentPanel.svelte'));
   const loadBackgroundAgentDialog = lazyComponent(() => import('./components/BackgroundAgentDialog.svelte'));
   const loadSkillsPanel = lazyComponent(() => import('./components/SkillsPanel.svelte'));
   // The Skills drawer stays mounted once opened, as Settings and Memory do.
   let skillsPanelOpened = $state(false);
   $effect(() => { if (skillsPanelStore.open) skillsPanelOpened = true; });
+
+  /** Whether a thread's pane (WorkspacePane) is mounted: while it runs or
+   *  can be woken. Otherwise the walk shows while it reconnects. */
+  function isLive(session: { status: string }): boolean {
+    return session.status === 'running' || session.status === 'sleeping' || session.status === 'starting' || session.status === 'installing' || session.status === 'error';
+  }
+  /** Whether the open thread's pane shows: Bookmarks docks there if so. */
+  let threadPaneShown = $derived(!!store.activeSession && isLive(store.activeSession));
 
   // ── Global error handling ──
   // Uncaught renderer errors (window.onerror / unhandledrejection / a Svelte
@@ -568,7 +573,7 @@
            mounted under the draft and the landing too (all hidden), so their
            terminals, scroll and half-typed prompts survive a trip there. -->
       {#each store.sessions as session (session.id)}
-        {@const live = session.status === 'running' || session.status === 'sleeping' || session.status === 'starting' || session.status === 'installing' || session.status === 'error'}
+        {@const live = isLive(session)}
         {@const scene = wakeScene.for(session.id)}
         {@const loading = live && !messageStore.isHistoryLoaded(session.id)}
         <!-- A new conversation's chat shows its own walk (OutputPanel) from
@@ -618,6 +623,10 @@
     {/if}
     <DraftUndoToast />
   </main>
+  <!-- Bookmarks, docked here when no thread shows (the draft, the landing, a
+       thread still reconnecting). In a thread it docks in the thread's pane,
+       above its bottom bar. -->
+  <SideDock bookmarks={!threadPaneShown} />
 </div>
 <AnalyticsConsent visible={showAnalyticsConsent} />
 </div>
@@ -649,15 +658,5 @@
   <PlanUsageToast />
   <MemoryToast />
 </div>
-
-<BookmarksDrawer />
-<!-- Mounted from its first opening on, so closing plays its transition.
-     Before the Focus panel, which can open over it. -->
-{#if subagentPanelStore.opened}
-  {#await loadSubagentPanel() then SubagentPanel}
-    <SubagentPanel />
-  {/await}
-{/if}
-<MarkdownPreviewPanel />
 
 <SpellcheckMenu />

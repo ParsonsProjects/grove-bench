@@ -1,14 +1,11 @@
 <script lang="ts">
   /**
-   * A subagent's own thread in a slide-out, like the Focus panel: what it was
-   * asked, its notes, tool calls and report, with its own view picker. Opened
-   * from its Agent call (AgentCallBlock); one instance, mounted in App.
+   * A subagent's own thread, docked beside its thread like the Focus panel
+   * (SideDock): what it was asked, its notes, tool calls and report, with
+   * its own view picker. Opened from its Agent call (AgentCallBlock).
    */
-  import { fly, fade } from 'svelte/transition';
   import { messageStore, type ChatMessage, type ChatToolCallMessage } from '../stores/messages.svelte.js';
-  import { store } from '../stores/sessions.svelte.js';
   import { backgroundTaskStore } from '../stores/backgroundTask.svelte.js';
-  import { markdownPreviewStore } from '../stores/markdownPreview.svelte.js';
   import { subagentPanelStore } from '../stores/subagentPanel.svelte.js';
   import { agentCallInput, filterVisibleMessages, threadMessages } from '../lib/message-view.js';
   import { toolViewOf, toolViewSummary } from '../../shared/tool-view.js';
@@ -40,10 +37,10 @@
     return latest && !visible.includes(latest) ? latest : undefined;
   });
 
-  // Nothing to show once its call is gone (rewound away, cleared) or another
-  // conversation is open.
+  // Nothing to show once its call is gone (rewound away, cleared). Another
+  // thread opening leaves it be: it stays docked in its own.
   $effect(() => {
-    if (subagentPanelStore.open && (!call || store.activeSessionId !== sessionId)) subagentPanelStore.close();
+    if (subagentPanelStore.open && !call) subagentPanelStore.close();
   });
 
   let promptOpen = $state(false);
@@ -70,32 +67,34 @@
     follow = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80;
   }
 
-  // Esc closes the panel, unless something over it takes the key: a dialog
-  // or menu (bits-ui marks it handled), or the Focus panel, whose own Esc
-  // handler has closed it by the time this one runs, so ask first.
-  let focusPanelWasOpen = false;
-  function noteFocusPanel(e: KeyboardEvent) {
-    if (e.key === 'Escape') focusPanelWasOpen = markdownPreviewStore.open;
-  }
+  // Focused when it shows a subagent, so Esc and the arrow keys work on it.
+  let focusedFor = '';
+  $effect(() => {
+    const el = scroller;
+    if (el && toolUseId !== focusedFor) {
+      focusedFor = toolUseId;
+      el.focus({ preventScroll: true });
+    }
+  });
+
+  // Esc closes it from inside only: in the message box beside it, Esc is
+  // the box's own. Not when a menu in it took the key (bits-ui marks it
+  // handled).
   function handleKeydown(e: KeyboardEvent) {
-    if (e.key !== 'Escape' || !subagentPanelStore.open || focusPanelWasOpen || e.defaultPrevented) return;
+    if (e.key !== 'Escape' || e.defaultPrevented) return;
+    e.stopPropagation();
     subagentPanelStore.close();
   }
 </script>
 
-<svelte:window onkeydowncapture={noteFocusPanel} onkeydown={handleKeydown} />
-
 {#if subagentPanelStore.open && call}
-  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-  <div
-    class="fixed inset-0 z-40 bg-black/40"
-    transition:fade={{ duration: 150 }}
-    onclick={() => subagentPanelStore.close()}
-  ></div>
+  <!-- Focusable (tabindex -1) so a click anywhere in it lets Esc close it. -->
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <aside
-    class="fixed top-0 right-0 z-50 h-full w-[720px] max-w-[90vw] bg-card border-l border-border shadow-xl flex flex-col"
-    transition:fly={{ x: 400, duration: 200 }}
+    class="flex-1 min-h-0 flex flex-col outline-none"
     aria-label="Subagent thread"
+    tabindex="-1"
+    onkeydown={handleKeydown}
   >
     <div class="flex items-center gap-2 px-4 py-3 border-b border-border shrink-0">
       {#if call.parentToolUseId}
@@ -137,7 +136,7 @@
       </Button>
     </div>
 
-    <div class="flex-1 overflow-y-auto overflow-x-hidden px-4 py-3" bind:this={scroller} onscroll={handleScroll}>
+    <div class="flex-1 overflow-y-auto overflow-x-hidden px-4 py-3 outline-none" tabindex="-1" bind:this={scroller} onscroll={handleScroll}>
       {#if input.prompt}
         <div class="mb-2 border-l-4 border-border pl-3">
           <button

@@ -15,6 +15,7 @@
   import { lazyComponent } from '../lib/lazy-component.js';
   import GitNotice from './GitNotice.svelte';
   import LazyTab from './LazyTab.svelte';
+  import SideDock from './SideDock.svelte';
   import GroveEmptyState from './GroveEmptyState.svelte';
   import { settingsStore } from '../stores/settings.svelte.js';
   import { conversationAgent } from '$lib/session-sprite-state.js';
@@ -382,43 +383,50 @@
     </button>
   </div>
 
-  <!-- Tab content -->
-  <div class="flex-1 overflow-hidden flex flex-col {activeTab === 'activity' ? '' : 'hidden'}">
-    <ConversationGoal {sessionId} />
-    <OutputPanel {sessionId} />
-  </div>
-  <div class="flex-1 overflow-hidden flex flex-col {activeTab === 'changes' ? '' : 'hidden'}">
-    <GitNotice />
-    {#if noGit}
-      {@render noGitNote('changes', 'Changes', 'there is nothing to compare the files against. The agent edits your files in place; check them in your editor or file explorer.')}
-    {:else if changesMounted}
-      <LazyTab load={loadChangesPanel} tab="Changes">
-        {#snippet children(ChangesReviewPanel)}<ChangesReviewPanel {sessionId} />{/snippet}
-      </LazyTab>
-    {/if}
-  </div>
-  <div class="flex-1 overflow-hidden flex flex-col {activeTab === 'checkpoints' ? '' : 'hidden'}">
-    {#if noGit}
-      {@render noGitNote('checkpoints', 'Checkpoints', 'no checkpoints are saved and file edits can\'t be restored. You can still rewind the thread from a message in the Thread tab; files stay as they are.')}
-    {:else if checkpointsMounted}
-      <LazyTab load={loadCheckpointsPanel} tab="Checkpoints">
-        {#snippet children(CheckpointsPanel)}<CheckpointsPanel {sessionId} />{/snippet}
-      </LazyTab>
-    {/if}
-  </div>
-  <div class="flex-1 overflow-hidden flex flex-col {activeTab === 'terminal' ? '' : 'hidden'}">
-    {#if terminalMounted}
-      <LazyTab load={loadTerminalPanel} tab="Terminal">
-        {#snippet children(TerminalPanel)}<TerminalPanel {sessionId} />{/snippet}
-      </LazyTab>
-    {/if}
-  </div>
-  <div class="flex-1 overflow-hidden flex flex-col {activeTab === 'preview' ? '' : 'hidden'}">
-    {#if previewMounted}
-      <LazyTab load={loadPreviewPanel} tab="Preview">
-        {#snippet children(PreviewPanel)}<PreviewPanel {sessionId} active={previewVisible} />{/snippet}
-      </LazyTab>
-    {/if}
+  <!-- Tab content, and the dock beside it (SideDock): the Focus panel, a
+       subagent's thread or Bookmarks open here, between the tab bar and the
+       bottom bar, which stays full width so the message box is in reach. -->
+  <div class="flex-1 min-h-0 flex">
+    <div class="flex-1 min-w-0 flex flex-col">
+      <div class="flex-1 overflow-hidden flex flex-col {activeTab === 'activity' ? '' : 'hidden'}">
+        <ConversationGoal {sessionId} />
+        <OutputPanel {sessionId} />
+      </div>
+      <div class="flex-1 overflow-hidden flex flex-col {activeTab === 'changes' ? '' : 'hidden'}">
+        <GitNotice />
+        {#if noGit}
+          {@render noGitNote('changes', 'Changes', 'there is nothing to compare the files against. The agent edits your files in place; check them in your editor or file explorer.')}
+        {:else if changesMounted}
+          <LazyTab load={loadChangesPanel} tab="Changes">
+            {#snippet children(ChangesReviewPanel)}<ChangesReviewPanel {sessionId} />{/snippet}
+          </LazyTab>
+        {/if}
+      </div>
+      <div class="flex-1 overflow-hidden flex flex-col {activeTab === 'checkpoints' ? '' : 'hidden'}">
+        {#if noGit}
+          {@render noGitNote('checkpoints', 'Checkpoints', 'no checkpoints are saved and file edits can\'t be restored. You can still rewind the thread from a message in the Thread tab; files stay as they are.')}
+        {:else if checkpointsMounted}
+          <LazyTab load={loadCheckpointsPanel} tab="Checkpoints">
+            {#snippet children(CheckpointsPanel)}<CheckpointsPanel {sessionId} />{/snippet}
+          </LazyTab>
+        {/if}
+      </div>
+      <div class="flex-1 overflow-hidden flex flex-col {activeTab === 'terminal' ? '' : 'hidden'}">
+        {#if terminalMounted}
+          <LazyTab load={loadTerminalPanel} tab="Terminal">
+            {#snippet children(TerminalPanel)}<TerminalPanel {sessionId} />{/snippet}
+          </LazyTab>
+        {/if}
+      </div>
+      <div class="flex-1 overflow-hidden flex flex-col {activeTab === 'preview' ? '' : 'hidden'}">
+        {#if previewMounted}
+          <LazyTab load={loadPreviewPanel} tab="Preview">
+            {#snippet children(PreviewPanel)}<PreviewPanel {sessionId} active={previewVisible} />{/snippet}
+          </LazyTab>
+        {/if}
+      </div>
+    </div>
+    <SideDock {sessionId} bookmarks={store.activeSessionId === sessionId} />
   </div>
 
   <StatusBar {sessionId} />

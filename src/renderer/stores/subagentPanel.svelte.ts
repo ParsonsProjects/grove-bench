@@ -1,12 +1,11 @@
 import { messageStore } from './messages.svelte.js';
+import { dockStore } from './dock.svelte.js';
 import type { MessageViewMode } from '../lib/message-view.js';
 
-/** State for the subagent slide-out (one instance, mounted in App): which
- *  subagent's thread it shows, and the view picked for it. */
+/** State for the subagent panel (one instance, docked in its thread by
+ *  SideDock): which subagent's thread it shows, and the view picked for it. */
 class SubagentPanelStore {
   open = $state(false);
-  /** Whether it has been opened yet: App loads it on first use. */
-  opened = $state(false);
   sessionId = $state('');
   /** The Agent call that started the subagent shown. */
   toolUseId = $state('');
@@ -17,11 +16,12 @@ class SubagentPanelStore {
     this.sessionId = sessionId;
     this.toolUseId = toolUseId;
     this.open = true;
-    this.opened = true;
+    dockStore.raise('subagent');
   }
 
   close(): void {
     this.open = false;
+    dockStore.drop('subagent');
   }
 
   isShowing(sessionId: string, toolUseId: string): boolean {
