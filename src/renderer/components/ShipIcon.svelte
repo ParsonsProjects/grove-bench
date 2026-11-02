@@ -3,16 +3,19 @@
    * The branch lozenge's one icon (lib/ship-track.ts, `stage`): its shape
    * says how far the branch has got (a branch, then the PR: draft, open,
    * merged or closed), its colour the step that matters most now, as the
-   * popup's dots (ShipDot) colour each step.
+   * popup's dots (ShipDot) colour each step. The sidebar's thread rows show
+   * the same icon, a size up to sit with their 14px names (`class`).
+   * `todo` has no colour of its own: it takes the text colour around it.
    */
   import GitBranchIcon from '@lucide/svelte/icons/git-branch';
   import GitMergeIcon from '@lucide/svelte/icons/git-merge';
   import GitPullRequestIcon from '@lucide/svelte/icons/git-pull-request';
   import GitPullRequestClosedIcon from '@lucide/svelte/icons/git-pull-request-closed';
   import GitPullRequestDraftIcon from '@lucide/svelte/icons/git-pull-request-draft';
+  import { cn } from '$lib/utils.js';
   import type { ShipStage, ShipStageIcon, ShipStageState } from '../lib/ship-track.js';
 
-  let { stage }: { stage: ShipStage } = $props();
+  let { stage, class: className = '' }: { stage: ShipStage; class?: string } = $props();
 
   const ICON: Record<ShipStageIcon, typeof GitBranchIcon> = {
     branch: GitBranchIcon,
@@ -35,4 +38,4 @@
   let Icon = $derived(ICON[stage.icon]);
 </script>
 
-<Icon class="size-3 {TONE[stage.state]}" aria-hidden="true" />
+<Icon class={cn('size-3', TONE[stage.state], className)} aria-hidden="true" />

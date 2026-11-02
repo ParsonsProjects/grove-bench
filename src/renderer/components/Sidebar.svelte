@@ -16,6 +16,7 @@
   import { schedulesStore } from '../stores/schedules.svelte.js';
   import { skillsPanelStore } from '../stores/skillsPanel.svelte.js';
   import WandSparklesIcon from '@lucide/svelte/icons/wand-sparkles';
+  import FolderIcon from '@lucide/svelte/icons/folder';
   import SidebarGroups from './SidebarGroups.svelte';
   import SidebarSection from './SidebarSection.svelte';
   import AttentionCounts from './AttentionCounts.svelte';
@@ -41,8 +42,10 @@
   import { sessionSubtitle, pendingPermissionTool, pendingPermissionView, lastTextSnippet, firstPromptSnippet, type SessionSubtitle } from '../lib/session-subtitle.js';
   import { sessionPreviewStore } from '../stores/sessionPreviews.svelte.js';
   import { goalStore } from '../stores/goals.svelte.js';
-  import { prStateFlag, isPrMerged, prHealth } from '../lib/pr-state.js';
+  import { prStateFlag, isPrMerged } from '../lib/pr-state.js';
   import { prStore } from '../stores/pr.svelte.js';
+  import { shipTrack, type ShipStage, type ShipTrack } from '../lib/ship-track.js';
+  import ShipIcon from './ShipIcon.svelte';
   import { forgetConversation } from '$lib/forget-conversation.js';
   import { sessionSpriteState } from '../lib/session-sprite-state.js';
   import AgentSprite from './AgentSprite.svelte';
@@ -612,6 +615,22 @@
     ? { lead: 'w-5', indent: 'pl-7' }
     : { lead: 'w-2 justify-center', indent: 'pl-4' });
 
+  /** A thread row's branch icon follows the status bar's branch lozenge
+   *  (shipTrack), so a thread shows the same icon in both. PR and sync data
+   *  are only polled for open tabs; anything else would be stale, so those
+   *  rows get null and a plain branch. canCreatePr only changes the popup's
+   *  Next, not the stage, so the row doesn't need gh's state for it. */
+  function rowShipTrack(session: (typeof store.sessions)[number]): ShipTrack | null {
+    if (session.noGit || !store.isOpenTab(session)) return null;
+    return shipTrack({
+      sync: prStore.getSync(session.id),
+      pr: prStore.getPr(session.id),
+      pushFailed: !!prStore.getPushError(session.id),
+      canCreatePr: false,
+    });
+  }
+  const PLAIN_BRANCH: ShipStage = { icon: 'branch', state: 'todo' };
+
   /** What deleting the conversation in the confirm dialog would lose: files
    *  with uncommitted changes in its worktree, and commits on its branch
    *  that its base branch doesn't have. Null while unknown. */
@@ -1106,10 +1125,9 @@
     {@const changedCount = isStopped ? 0 : (gitState.uncommitted ?? gitState.entries.length)}
     {@const label = labelOverride ?? sessionRowLabel(session)}
     {@const group = showGroup ? groupStore.groupOf(session.id) : null}
-    <!-- PR data is only polled for open tabs; anything else would be stale, so it stays neutral. -->
-    {@const pr = store.isOpenTab(session) ? prStore.getPr(session.id) : null}
-    {@const health = prHealth(pr)}
-    {@const branchIconLabel = (session.noGit ? 'In the project folder (no git)' : session.direct ? 'Direct (no worktree)' : 'Worktree') + (pr ? `, PR #${pr.number}: ${health.label}` : '')}
+    {@const track = rowShipTrack(session)}
+    {@const stage = track?.stage ?? PLAIN_BRANCH}
+    {@const branchIconLabel = (session.noGit ? 'In the project folder (no git)' : session.direct ? 'Direct (no worktree)' : 'Worktree') + (track ? `: ${track.summary}` : '')}
     <!-- The quick action is a sibling of the row button, not inside it: a button can't hold another. -->
     <div
       class="relative group/session"
@@ -1128,11 +1146,24 @@
         <!-- Line 1 is the conversation's name, so it gets the width; the project goes on line 2. -->
         <div class="w-full flex items-center gap-2 min-w-0">
           {@render statusMark(session, isDestroying, repoColor)}
-          {#if session.direct}
-            <svg class="w-3.5 h-3.5 shrink-0 {health.textClass}" xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 24 24" role="img" aria-label={branchIconLabel} title={branchIconLabel} data-pr-health={health.kind}><path d="M6 4H4v16h2zm10-2H6v2h10zm4 4h-2v14h2zm-2 14H6v2h12zM16 4h2v2h-2zm-4 0h2v6h-2z"/><path d="M12 8h6v2h-6z"/></svg>
-          {:else}
-            <svg class="w-3.5 h-3.5 shrink-0 {health.textClass}" xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 24 24" role="img" aria-label={branchIconLabel} title={branchIconLabel} data-pr-health={health.kind}><path d="M4 2h4v2H4zm0 6h4v2H4zM2 4h2v4H2zm6 0h2v4H8zm8 0h4v2h-4zm0 6h4v2h-4zm-2-4h2v4h-2zm6 0h2v4h-2zm-8 13h5v2h-5zm5-5h2v5h-2zM5 12h2v10H5z"/></svg>
-          {/if}
+          <!-- The status bar's icon (ShipIcon): its shape how far the branch
+               has got, its colour the step that matters most. Grey like the
+               lozenge's text when nothing stands out. Worktree or direct is
+               in the tooltip. No git: no branch, so a folder. -->
+          <span
+            class="flex shrink-0 text-muted-foreground"
+            role="img"
+            aria-label={branchIconLabel}
+            title={branchIconLabel}
+            data-ship-icon={session.noGit ? 'folder' : stage.icon}
+            data-ship-state={stage.state}
+          >
+            {#if session.noGit}
+              <FolderIcon class="size-3.5" aria-hidden="true" />
+            {:else}
+              <ShipIcon {stage} class="size-3.5" />
+            {/if}
+          </span>
           <span class="text-sm truncate min-w-0 flex-1">{label}</span>
           {#if todoStore.has(session.id)}
             <span class="shrink-0 flex text-foreground/80" role="img" aria-label="To do" title="To do (right-click to clear)" data-row-todo><TodoMark /></span>

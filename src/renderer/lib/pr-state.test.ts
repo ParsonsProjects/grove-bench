@@ -38,7 +38,7 @@ describe('prHealth', () => {
     expect(prHealth(null).kind).toBe('none');
     expect(prHealth(undefined).kind).toBe('none');
     expect(prHealth({ ...base, state: 'OPEN' }).kind).toBe('open');
-    expect(prHealth({ ...base, state: 'OPEN' }).textClass).toBe(prHealth(null).textClass);
+    expect(prHealth({ ...base, state: 'OPEN' }).bgClass).toBe(prHealth(null).bgClass);
   });
 
   it('lets merged and closed win over checks', () => {
@@ -57,9 +57,7 @@ describe('prHealth', () => {
     expect(prHealth({ ...base, checks: checks(0, 0) }).kind).toBe('passing');
   });
 
-  it('gives each kind matching background and text colours', () => {
-    const failing = prHealth({ ...base, checks: checks(1, 0) });
-    expect(failing.bgClass).toBe('bg-red-500');
-    expect(failing.textClass).toBe('text-red-500');
+  it('gives each kind its colour', () => {
+    expect(prHealth({ ...base, checks: checks(1, 0) }).bgClass).toBe('bg-red-500');
   });
 });

@@ -117,6 +117,20 @@ describe('shipTrack', () => {
     expect(stage({ pr: pr({ state: 'CLOSED' }) })).toEqual({ icon: 'closed', state: 'closed' });
   });
 
+  it("gives the same icon whether a PR can be created here or not (the sidebar doesn't know)", () => {
+    const inputs: Partial<ShipTrackInput>[] = [
+      {},
+      { sync: { upstream: null, ahead: 0, behind: 0 } },
+      { sync: { ...pushed, ahead: 2 } },
+      { pushFailed: true },
+      { pr: pr({ state: 'MERGED' }), sync: { ...pushed, ahead: 1 } },
+      { pr: pr({ state: 'CLOSED' }) },
+    ];
+    for (const over of inputs) {
+      expect(track({ ...over, canCreatePr: true }).stage).toEqual(track({ ...over, canCreatePr: false }).stage);
+    }
+  });
+
   it('has something to say before anything happened', () => {
     expect(track({ sync: { upstream: null, ahead: 0, behind: 0 } }).summary).toBe('not pushed yet');
     expect(track().summary).toBe('up to date');
