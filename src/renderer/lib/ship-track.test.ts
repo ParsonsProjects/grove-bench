@@ -171,7 +171,17 @@ describe('shipTrack next', () => {
   it('marks a PR GitHub says is ready, unless auto-merge will merge it', () => {
     expect(next({ pr: pr({ checks: green, reviewDecision: 'APPROVED', mergeState: 'clean' }) })).toEqual({ next: 'done: Ready to merge [merge-on-github]', marked: true });
     expect(next({ pr: pr({ checks: green, mergeState: 'clean', autoMerge: true }) })).toEqual({ next: 'wait: Merges by itself', marked: false });
-    expect(track({ pr: pr({ checks: green, mergeState: 'unstable' }) }).next?.detail).toContain("aren't required");
+    // Ready, but someone else's to merge: no mark.
+    expect(next({ pr: pr({ checks: green, mergeState: 'clean', viewerIsAuthor: false }) })).toEqual({ next: 'done: Ready to merge [merge-on-github]', marked: false });
+  });
+
+  it('colours the merge step, and the lozenge, by GitHub\'s verdict', () => {
+    const conflicts = track({ pr: pr({ checks: green, reviewDecision: 'APPROVED', mergeState: 'dirty' }) });
+    expect(conflicts.steps[4]).toMatchObject({ state: 'attention', detail: 'conflicts' });
+    expect(conflicts.stage.state).toBe('attention');
+    expect(track({ pr: pr({ checks: green, mergeState: 'behind' }) }).steps[4]).toMatchObject({ state: 'attention', detail: 'behind its base' });
+    expect(track({ pr: pr({ checks: green, mergeState: 'clean' }) }).steps[4]).toMatchObject({ state: 'next', detail: 'ready' });
+    expect(track({ pr: pr({ checks: green, mergeState: 'blocked' }) }).steps[4].state).toBe('todo');
   });
 
   it('waits on a rule or on GitHub\'s verdict, and finishes on a merged PR', () => {

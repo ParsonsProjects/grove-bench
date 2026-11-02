@@ -8,7 +8,7 @@ vi.mock('./process-host-run.js', () => ({ runInAgentHost: vi.fn() }));
 import { execa } from 'execa';
 import { runInAgentHost } from './process-host-run.js';
 import type { ProcessResult } from './process-host-protocol.js';
-import { gh, ghVersion, ghAuthenticated, ghLogin, resetGhLoginCacheForTests, resetGhOfflineCooldownForTests, ghOffline, ghRateLimited, isNetworkError, isRateLimitError, summarizeChecks, failingCheckNames, failingActionsRuns, latestChecks, commentSignature, prStatus, prList, prsForBranches, sortPrs, prCreate, prReviewComments, parseOpenPrs, openPrs, prJobLog, prRerunFailed, GH_LOG_TIMEOUT_MS, GH_RERUN_TIMEOUT_MS, GH_TIMEOUT_MS, GH_OFFLINE_MESSAGE, GH_OFFLINE_COOLDOWN_MS, GH_RATE_LIMITED_MESSAGE, GH_RATE_LIMIT_COOLDOWN_MS, GH_RATE_LIMIT_MAX_COOLDOWN_MS } from './gh.js';
+import { gh, ghVersion, ghAuthenticated, ghLogin, resetGhLoginCacheForTests, resetGhOfflineCooldownForTests, ghOffline, ghRateLimited, isNetworkError, isRateLimitError, summarizeChecks, failingCheckNames, failingActionsRuns, latestChecks, resetPrFieldsForTests, commentSignature, prStatus, prList, prsForBranches, sortPrs, prCreate, prReviewComments, parseOpenPrs, openPrs, prJobLog, prRerunFailed, GH_LOG_TIMEOUT_MS, GH_RERUN_TIMEOUT_MS, GH_TIMEOUT_MS, GH_OFFLINE_MESSAGE, GH_OFFLINE_COOLDOWN_MS, GH_RATE_LIMITED_MESSAGE, GH_RATE_LIMIT_COOLDOWN_MS, GH_RATE_LIMIT_MAX_COOLDOWN_MS } from './gh.js';
 
 const mockRun = vi.mocked(runInAgentHost);
 /** What runInAgentHost resolves with when gh prints `stdout` and exits 0. */
@@ -32,6 +32,7 @@ beforeEach(() => {
   mockRun.mockReset();
   resetGhLoginCacheForTests();
   resetGhOfflineCooldownForTests();
+  resetPrFieldsForTests();
 });
 
 afterEach(() => {
@@ -191,7 +192,7 @@ describe('prStatus()', () => {
     const result = await prStatus('/repo', 'feat/x');
     expect(mockRun).toHaveBeenCalledWith(
       'gh',
-      ['pr', 'view', 'feat/x', '--json', 'number,url,state,isDraft,title,reviewDecision,statusCheckRollup,headRefOid,comments,reviews,headRefName,baseRefName,author,mergeStateStatus,autoMergeRequest,latestReviews,reviewRequests'],
+      ['pr', 'view', 'feat/x', '--json', 'number,url,state,isDraft,title,reviewDecision,statusCheckRollup,headRefOid,comments,reviews,headRefName,baseRefName,author,mergeStateStatus,autoMergeRequest,reviewRequests'],
       { cwd: '/repo', ...READS },
     );
     expect(result).toEqual({
@@ -252,12 +253,21 @@ describe('prStatus()', () => {
         url: 'https://github.com/o/r/pull/45',
         mergeStateStatus: 'BLOCKED',
         autoMergeRequest: { mergeMethod: 'SQUASH', enabledAt: '2026-11-01T10:00:00Z' },
-        latestReviews: [
+        author: { login: 'me' },
+        reviews: [
           { author: { login: 'alice' }, state: 'CHANGES_REQUESTED' },
           { author: { login: 'bob' }, state: 'APPROVED' },
+          // A comment after a request for changes doesn't take it back.
+          { author: { login: 'alice' }, state: 'COMMENTED' },
+          // A dismissed approval no longer counts; the comment does.
+          { author: { login: 'carol' }, state: 'APPROVED' },
           { author: { login: 'carol' }, state: 'DISMISSED' },
+          { author: { login: 'carol' }, state: 'COMMENTED' },
           { author: { login: 'dave' }, state: 'PENDING' },
           { author: {}, state: 'APPROVED' },
+          // The PR's author and the gh account: the agent answering reviews.
+          { author: { login: 'me' }, state: 'COMMENTED' },
+          { author: { login: 'gh-user' }, state: 'COMMENTED' },
         ],
         reviewRequests: [{ __typename: 'User', login: 'erin' }, { __typename: 'Team', name: 'api-team', slug: 'org/api-team' }],
         statusCheckRollup: [
@@ -266,20 +276,43 @@ describe('prStatus()', () => {
         ],
       })));
 
-    const result = await prStatus('/repo', 'feat/x');
+    const result = await prStatus('/repo', 'feat/x', 'gh-user');
     expect(result).toMatchObject({
       mergeState: 'blocked',
       autoMerge: true,
-      reviewers: [{ login: 'alice', state: 'changes_requested' }, { login: 'bob', state: 'approved' }],
+      reviewers: [{ login: 'alice', state: 'changes_requested' }, { login: 'bob', state: 'approved' }, { login: 'carol', state: 'commented' }],
       requestedReviewers: ['erin', 'api-team'],
       runningChecks: ['e2e'],
     });
   });
 
   it('leaves the new fields out when GitHub gives none, or a merge state it doesn\'t know', async () => {
-    mockRun.mockResolvedValue(printed(JSON.stringify({ number: 46, url: 'u', mergeStateStatus: 'SOMETHING_NEW', autoMergeRequest: null, latestReviews: [], reviewRequests: [] })));
+    mockRun.mockResolvedValue(printed(JSON.stringify({ number: 46, url: 'u', mergeStateStatus: 'SOMETHING_NEW', autoMergeRequest: null, reviews: [], reviewRequests: [] })));
     const result = await prStatus('/repo', 'feat/x');
     for (const key of ['mergeState', 'autoMerge', 'reviewers', 'requestedReviewers', 'runningChecks']) expect(result).not.toHaveProperty(key);
+  });
+
+  it('asks again without the merge fields when this gh doesn\'t know them, and from then on', async () => {
+    mockRun
+      .mockRejectedValueOnce(exited(1, 'Unknown JSON field: "autoMergeRequest"\nAvailable fields:\n  additions'))
+      .mockResolvedValueOnce(printed(JSON.stringify({ number: 47, url: 'u' })))
+      .mockResolvedValueOnce(printed(JSON.stringify([])));
+
+    await expect(prStatus('/repo', 'feat/x')).resolves.toMatchObject({ number: 47 });
+    await prList('/repo', 'feat/x');
+
+    const fields = mockRun.mock.calls.map(([, args]) => args.at(-1));
+    expect(fields[0]).toContain('mergeStateStatus');
+    expect(fields[1]).toBe('number,url,state,isDraft,title,reviewDecision,statusCheckRollup,headRefOid,comments,reviews,headRefName,baseRefName,author');
+    expect(fields[2]).toBe(fields[1]);
+  });
+
+  it('does not drop the merge fields for other failures', async () => {
+    mockRun.mockRejectedValueOnce(exited(1, 'HTTP 502: Bad Gateway'));
+    await expect(prStatus('/repo', 'feat/x')).rejects.toThrow(/Bad Gateway/);
+    mockRun.mockResolvedValueOnce(printed(JSON.stringify({ number: 48, url: 'u' })));
+    await prStatus('/repo', 'feat/x');
+    expect(mockRun.mock.calls[1][1].at(-1)).toContain('mergeStateStatus');
   });
 
   it('returns null when no PR exists for the branch', async () => {
@@ -304,7 +337,7 @@ describe('prStatus()', () => {
 });
 
 describe('prList()', () => {
-  const FIELDS = 'number,url,state,isDraft,title,reviewDecision,statusCheckRollup,headRefOid,comments,reviews,headRefName,baseRefName,author,mergeStateStatus,autoMergeRequest,latestReviews,reviewRequests';
+  const FIELDS = 'number,url,state,isDraft,title,reviewDecision,statusCheckRollup,headRefOid,comments,reviews,headRefName,baseRefName,author,mergeStateStatus,autoMergeRequest,reviewRequests';
 
   it('lists every PR for the head branch, in any state, with head and base names', async () => {
     mockRun.mockResolvedValue(printed(JSON.stringify([

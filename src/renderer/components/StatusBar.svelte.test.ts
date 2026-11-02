@@ -656,7 +656,8 @@ describe('StatusBar PR', () => {
     expect(words(nextNotice())).toBe('Waiting for a review Asked of bob.');
     const steps = within(within(popup).getByRole('list', { name: 'Steps to merged' })).getAllByRole('listitem');
     expect(steps.map(words)).toEqual([
-      'Not pushed yet',
+      // No upstream read yet, but a PR stands on the pushed branch.
+      'Pushed',
       '2 checks passed Fix automatically when checks fail',
       'No approving review yet Asked of bob Address new comments automatically',
       "GitHub hasn't said yet whether it can merge",
@@ -796,6 +797,38 @@ describe('StatusBar PR', () => {
     expect(open).toHaveBeenCalledWith('https://github.com/o/r/pull/42');
   });
 
+  it('names the PR\'s own head branch, which may not be the thread\'s', async () => {
+    await renderWithPrs(pr({ number: 70, headRefName: 'feat-b', baseRefName: 'release' }));
+    const popup = await openBranch();
+    expect(within(popup).getByText('feat-b')).toBeInTheDocument();
+    expect(within(popup).getByText('→ release')).toBeInTheDocument();
+  });
+
+  it('shows conflicts on the Merge row even with auto-merge on', async () => {
+    await renderWithPrs(pr({ mergeState: 'dirty', autoMerge: true }));
+    await openBranch();
+    expect(words(nextNotice())).toMatch(/^Conflicts with main/);
+    expect(within(row('merge')).getByText('Conflicts with main')).toBeInTheDocument();
+  });
+
+  it('keeps Create PR in reach on the PR row while something else is next', async () => {
+    vi.mocked(window.groveBench.push).mockRejectedValue(new Error('rejected: non-fast-forward'));
+    render(StatusBar, { props: { sessionId: ACTIVE } });
+    await prStore.push(ACTIVE).catch(() => {});
+    await openBranch();
+    expect(within(nextNotice()).getByRole('button', { name: 'Retry push' })).toBeInTheDocument();
+    const prRow = screen.getByTestId('step-pr');
+    expect(within(prRow).getByRole('button', { name: 'Create PR with agent' })).toBeInTheDocument();
+    expect(within(prRow).getByRole('button', { name: 'manually…' })).toBeInTheDocument();
+  });
+
+  it('does not mark a ready PR someone else opened: its author merges it', async () => {
+    await renderWithPrs(pr({ mergeState: 'clean', reviewDecision: 'APPROVED', viewerIsAuthor: false }));
+    await openBranch();
+    expect(within(nextNotice()).getByText('Ready to merge')).toBeInTheDocument();
+    expect(lozenge().querySelector('.bg-primary')).toBeNull();
+  });
+
   it('waits, without the green mark, while auto-merge will merge it', async () => {
     await renderWithPrs(pr({ reviewDecision: 'APPROVED', mergeState: 'clean', autoMerge: true }));
     await openBranch();
@@ -880,8 +913,10 @@ describe('StatusBar PR', () => {
 
   it('says why "review required" holds the PR up', async () => {
     await renderWithPrs(pr({ reviewDecision: 'REVIEW_REQUIRED' }));
-    await openBranch();
-    expect(within(row('review')).getByText('main needs an approving review to merge.')).toBeInTheDocument();
+    const popup = await openBranch();
+    // Once: in the Next notice, not again on the Review row.
+    expect(within(popup).getAllByText('main needs an approving review to merge.')).toHaveLength(1);
+    expect(within(nextNotice()).getByText('main needs an approving review to merge.')).toBeInTheDocument();
   });
 
   it('offers no agent fixes or automation on a closed PR, and a way to start a new one', async () => {

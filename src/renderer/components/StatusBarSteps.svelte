@@ -21,7 +21,7 @@
   import ExternalLink from '@lucide/svelte/icons/external-link';
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import { prHealth } from '../lib/pr-state.js';
-  import type { ShipAction, ShipStepId, ShipStepState, ShipTrack } from '../lib/ship-track.js';
+  import { plural, type ShipAction, type ShipStepId, type ShipStepState, type ShipTrack } from '../lib/ship-track.js';
   import type { FailingJob, FailingRun, GitSyncStatus, PrInfo, PrReviewer } from '../../shared/types.js';
   import { errorMessage } from '../../shared/error-message.js';
   import ShipDot from './ShipDot.svelte';
@@ -32,7 +32,6 @@
     prInfo,
     sync,
     canAgentCreatePr,
-    pushFailed,
     pushing,
     retrying,
     showCreatePr,
@@ -51,9 +50,9 @@
     /** Agent turns need a live, idle session (StatusBarBranch decides, so
      *  the Create PR button and these can't drift apart). */
     canAgentCreatePr: boolean;
-    pushFailed: boolean;
     pushing: boolean;
     retrying: boolean;
+    /** A PR can be made here: offered on the PR row when it isn't next. */
     showCreatePr: boolean;
     preparingPrTurn: boolean;
     isRunning: boolean;
@@ -66,6 +65,7 @@
 
   let next = $derived(track.next);
   const stepState = (id: ShipStepId): ShipStepState => track.steps.find((s) => s.id === id)?.state ?? 'todo';
+  let pushFailed = $derived(stepState('push') === 'failed');
 
   /** The session's other PRs (replaced, stacked, or from another branch). */
   let otherPrs = $derived(prInfo ? prStore.getPrs(sessionId).filter((p) => p.number !== prInfo.number) : []);
@@ -163,7 +163,6 @@
   }
 
   const AGENT_BUSY = 'The agent must be idle and running';
-  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
   function duration(seconds: number | undefined): string {
     if (seconds === undefined) return '';
@@ -198,13 +197,14 @@
     if (prInfo.state === 'MERGED') return { text: 'Merged', tone: 'text-purple-400' };
     if (prInfo.state === 'CLOSED') return { text: 'Closed without merging', tone: 'text-muted-foreground' };
     if (prInfo.isDraft) return { text: 'Draft: not ready for review yet', tone: 'text-muted-foreground' };
+    // What stands in the way first: auto-merge waits on it too.
+    if (prInfo.mergeState === 'dirty') return { text: `Conflicts with ${base}`, tone: 'text-status-attention' };
+    if (prInfo.mergeState === 'behind') return { text: `Behind ${base}: update the branch first`, tone: 'text-status-attention' };
     if (prInfo.autoMerge) return { text: 'Auto-merge is on', tone: 'text-foreground' };
     switch (prInfo.mergeState) {
       case 'clean':
       case 'has_hooks': return { text: 'Nothing stops the merge', tone: 'text-foreground' };
       case 'unstable': return { text: 'Can merge; some checks that aren\'t required failed', tone: 'text-foreground' };
-      case 'dirty': return { text: `Conflicts with ${base}`, tone: 'text-red-400' };
-      case 'behind': return { text: `Behind ${base}: update the branch first`, tone: 'text-status-attention' };
       case 'blocked': return { text: 'Blocked by a required review, check or rule', tone: 'text-muted-foreground' };
       default: return { text: 'GitHub hasn\'t said yet whether it can merge', tone: 'text-muted-foreground' };
     }
@@ -214,7 +214,10 @@
     pushFailed ? 'Push failed'
       : sync.ahead > 0 || sync.behind > 0
         ? [sync.ahead > 0 && `${sync.ahead} to push`, sync.behind > 0 && `${sync.behind} to pull`].filter(Boolean).join(' · ')
-        : !sync.upstream ? 'Not pushed yet' : 'Up to date with origin',
+        : sync.upstream ? 'Up to date with origin'
+        // No upstream recorded (pushed without -u, or the sync not read yet),
+        // but a PR stands on the pushed branch.
+        : prInfo ? 'Pushed' : 'Not pushed yet',
   );
 
   /** The "new" chips: amber, as a caution, and a button, since a click
@@ -286,7 +289,7 @@
     tone={next.tone === 'wait' ? 'info' : 'success'}
     title={next.headline}
     layout="stacked"
-    actions={next.action && !(next.action === 'create-pr' && !showCreatePr) ? nextActions : undefined}
+    actions={next.action ? nextActions : undefined}
     data-testid="next"
   >
     {#if next.detail}<p>{next.detail}</p>{/if}
@@ -308,12 +311,25 @@
     {/if}
   </div>
 
-  {#if !prInfo}
-    <div class="flex items-center gap-2 py-1.5" role="listitem">
-      <ShipDot state={stepState('pr')} />
-      <span class="text-muted-foreground">No PR yet</span>
+  {#if !prInfo || (showCreatePr && next?.action !== 'create-pr')}
+    <!-- A PR to make: Next offers it when it's the step to take; here
+         otherwise, in grey, so it's never out of reach. -->
+    <div class="flex items-center gap-2 py-1.5" role="listitem" data-testid="step-pr">
+      <ShipDot state={prInfo ? 'todo' : stepState('pr')} />
+      <span class="text-muted-foreground">{prInfo ? 'No open PR' : 'No PR yet'}</span>
+      {#if showCreatePr && next?.action !== 'create-pr'}
+        <span class="ml-auto flex shrink-0 items-center gap-1">
+          <Button size="2xs" variant="subtle" onclick={() => oncreatepr('agent')} disabled={!canAgentCreatePr || preparingPrTurn} title={!canAgentCreatePr ? 'The agent must be idle and running to take this turn' : 'Send a turn asking the agent to commit, push, and open the PR'}>
+            Create PR with agent
+          </Button>
+          <Button size="2xs" variant="quiet" onclick={() => oncreatepr('manual')} disabled={isRunning} title={isRunning ? 'Create a pull request once the agent finishes its turn' : 'Open the PR dialog: title and description prefilled from the branch\'s commits'}>
+            manually…
+          </Button>
+        </span>
+      {/if}
     </div>
-  {:else}
+  {/if}
+  {#if prInfo}
     <!-- Checks -->
     <div class="py-1.5" role="listitem" data-testid="step-checks">
       <div class="flex items-center gap-2 min-w-0">
@@ -405,7 +421,7 @@
       {/if}
       {#if prInfo.requestedReviewers?.length}
         <div class="{detail} truncate" title="Review asked of {prInfo.requestedReviewers.join(', ')}">Asked of {prInfo.requestedReviewers.join(', ')}</div>
-      {:else if prInfo.reviewDecision === 'REVIEW_REQUIRED' && !prInfo.reviewers?.length}
+      {:else if prInfo.reviewDecision === 'REVIEW_REQUIRED' && !prInfo.reviewers?.length && next?.step !== 'review'}
         <div class={detail}>{base} needs an approving review to merge.</div>
       {/if}
       {#if prOpen}

@@ -13,8 +13,8 @@
    * notice with the one main action, and a row per step), a failed push's
    * error, and Switch branch (the branch picker, which opens over the
    * lozenge in its place). Push and Create PR are actions of the Next
-   * notice, or of the branch row when they aren't next. Also keeps the PR
-   * and sync status polled while the bar is mounted.
+   * notice, or, when they aren't next, of the branch row and the PR row.
+   * Also keeps the PR and sync status polled while the bar is mounted.
    */
   import { gitStatusStore } from '../stores/gitStatus.svelte.js';
   import { operationShort, operationTitle } from '../lib/git-operation.js';
@@ -259,7 +259,9 @@
             <span class="truncate max-w-32 shrink-0" title={sessionRepoPath}>{repoName}</span>
             <span class="shrink-0">·</span>
           {/if}
-          <span class="truncate {prInfo ? '' : 'font-medium text-foreground'}">{sessionBranch || 'no branch'}</span>
+          <!-- The PR's own head: it may be another branch than the thread's
+               (a PR the agent opened from a second branch, or one watched). -->
+          <span class="truncate {prInfo ? '' : 'font-medium text-foreground'}">{prInfo?.headRefName ?? (sessionBranch || 'no branch')}</span>
           {#if prInfo?.baseRefName}<span class="shrink-0">→ {prInfo.baseRefName}</span>{/if}
         </div>
 
@@ -281,7 +283,6 @@
           {prInfo}
           sync={gitSync}
           {canAgentCreatePr}
-          pushFailed={!!pushError}
           {pushing}
           {retrying}
           {showCreatePr}

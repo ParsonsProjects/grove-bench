@@ -74,7 +74,8 @@ export interface ShipTrackInput {
   canCreatePr: boolean;
 }
 
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+/** "1 commit", "2 commits". */
+export const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 export function shipTrack({ sync, pr, pushFailed, canCreatePr }: ShipTrackInput): ShipTrack {
   const open = pr?.state === 'OPEN' || (!!pr && !pr.state);
@@ -116,11 +117,17 @@ export function shipTrack({ sync, pr, pushFailed, canCreatePr }: ShipTrackInput)
           ? { id: 'review', label: 'Review', state: open ? 'todo' : 'closed', detail: 'review required' }
           : { id: 'review', label: 'Review', state: 'done', detail: 'none required' };
 
+  // GitHub's verdict on an open PR: conflicts or a branch behind its base
+  // wait on you; nothing in the way makes merging the step to take.
   const merge: ShipStep = pr?.state === 'MERGED'
     ? { id: 'merge', label: 'Merge', state: 'merged', detail: 'merged' }
     : pr?.state === 'CLOSED'
       ? { id: 'merge', label: 'Merge', state: 'closed', detail: 'closed without merging' }
-      : { id: 'merge', label: 'Merge', state: 'todo', detail: '' };
+      : open && (pr?.mergeState === 'dirty' || pr?.mergeState === 'behind')
+        ? { id: 'merge', label: 'Merge', state: 'attention', detail: pr.mergeState === 'dirty' ? 'conflicts' : 'behind its base' }
+        : open && !pr?.isDraft && (pr?.mergeState === 'clean' || pr?.mergeState === 'has_hooks' || pr?.mergeState === 'unstable')
+          ? { id: 'merge', label: 'Merge', state: 'next', detail: 'ready' }
+          : { id: 'merge', label: 'Merge', state: 'todo', detail: '' };
 
   const steps = [push, prStep, checksStep, review, merge];
   const has = (state: ShipStepState) => steps.some((s) => s.state === state);
@@ -136,8 +143,9 @@ export function shipTrack({ sync, pr, pushFailed, canCreatePr }: ShipTrackInput)
   };
   const next = nextStep({ sync, pr, pushFailed, canCreatePr }, open, pushed);
   // The green mark: something to do now, or a PR GitHub says is ready that
-  // only you can merge (Grove doesn't).
-  const actionable = !!next && (next.tone === 'act' || next.action === 'merge-on-github');
+  // you merge (Grove doesn't). Not for one someone else opened, such as a PR
+  // you watch to another repository: its author or a maintainer merges it.
+  const actionable = !!next && (next.tone === 'act' || (next.action === 'merge-on-github' && pr?.viewerIsAuthor !== false));
   const summary = [
     push.detail,
     pr ? `PR ${prStep.detail}` : canCreatePr ? 'no PR yet' : '',
@@ -205,13 +213,7 @@ function nextStep({ sync, pr, pushFailed, canCreatePr }: ShipTrackInput, open: b
   }
   if (pr!.autoMerge) return { step: 'merge', headline: 'Merges by itself', detail: 'Auto-merge is on: GitHub merges it once nothing stops it.', tone: 'wait' };
   if (pr!.mergeState === 'clean' || pr!.mergeState === 'has_hooks' || pr!.mergeState === 'unstable') {
-    return {
-      step: 'merge',
-      headline: 'Ready to merge',
-      ...(pr!.mergeState === 'unstable' ? { detail: 'Some checks that aren\'t required failed.' } : {}),
-      action: 'merge-on-github',
-      tone: 'done',
-    };
+    return { step: 'merge', headline: 'Ready to merge', action: 'merge-on-github', tone: 'done' };
   }
   if (pr!.mergeState === 'blocked') return { step: 'merge', headline: 'Blocked', detail: 'A branch rule stops the merge: see the PR on GitHub.', action: 'open-pr', tone: 'wait' };
   // GitHub hasn't given a verdict yet (unknown, or none).

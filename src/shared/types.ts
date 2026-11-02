@@ -700,7 +700,9 @@ export interface PrInfo {
   /** Whom a review is asked of and hasn't come from yet: logins, or team
    *  names. Absent when none. */
   requestedReviewers?: string[];
-  /** Names of the checks still queued or running. Absent when none. */
+  /** Names of the checks not yet passed or failed (checks.pending counts
+   *  them): queued, running, or a required status not reported yet. Absent
+   *  when none. */
   runningChecks?: string[];
 }
 
