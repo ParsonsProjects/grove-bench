@@ -18,7 +18,7 @@
   import { markdownPreviewStore } from '../stores/markdownPreview.svelte.js';
   import { subagentPanelStore } from '../stores/subagentPanel.svelte.js';
   import { bookmarkStore } from '../stores/bookmarks.svelte.js';
-  import { dockStore, DOCK_MIN_WIDTH, DOCK_THREAD_MIN_WIDTH, type DockPanel } from '../stores/dock.svelte.js';
+  import { dockStore, lastOpened, DOCK_MIN_WIDTH, DOCK_THREAD_MIN_WIDTH, type DockPanel } from '../stores/dock.svelte.js';
   import MarkdownPreviewPanel from './MarkdownPreviewPanel.svelte';
   import BookmarksDrawer from './BookmarksDrawer.svelte';
 
@@ -27,10 +27,10 @@
   let focusHere = $derived(markdownPreviewStore.open && sessionId !== null && markdownPreviewStore.threadId === sessionId);
   let subagentHere = $derived(subagentPanelStore.open && sessionId !== null && subagentPanelStore.sessionId === sessionId);
   let bookmarksHere = $derived(bookmarks && bookmarkStore.drawerOpen);
-  let showing = $derived(dockStore.showing([
-    ...(focusHere ? ['focus' as const] : []),
-    ...(subagentHere ? ['subagent' as const] : []),
-    ...(bookmarksHere ? ['bookmarks' as const] : []),
+  let showing = $derived(lastOpened([
+    ...(focusHere ? [{ panel: 'focus' as const, opening: markdownPreviewStore.opening }] : []),
+    ...(subagentHere ? [{ panel: 'subagent' as const, opening: subagentPanelStore.opening }] : []),
+    ...(bookmarksHere ? [{ panel: 'bookmarks' as const, opening: bookmarkStore.opening }] : []),
   ]));
 
   /** Until dragged: up to 720px for reading (Bookmarks 24rem), never more
@@ -50,25 +50,42 @@
   let dockEl = $state<HTMLDivElement | null>(null);
   let resizing = $state(false);
 
+  // The drag ends on the button coming up, however it ends: a release this
+  // page never hears (over the Preview tab's page, which is a native view,
+  // or outside the window) shows on the next move as no button held.
   function startResize(e: PointerEvent) {
     const panel = showing;
     const room = dockEl?.parentElement?.getBoundingClientRect().width;
     if (!panel || !dockEl || !room) return;
     e.preventDefault();
+    const grip = e.currentTarget as HTMLElement;
+    try {
+      grip.setPointerCapture(e.pointerId);
+    } catch {
+      // No capture (jsdom, or the pointer is already gone): the checks below still end it.
+    }
     const startX = e.clientX;
     const startWidth = dockEl.getBoundingClientRect().width;
     const max = Math.max(DOCK_MIN_WIDTH, room - DOCK_THREAD_MIN_WIDTH);
     resizing = true;
     const onMove = (ev: PointerEvent) => {
+      if (ev.buttons === 0) {
+        end();
+        return;
+      }
       dockStore.setWidth(panel, Math.round(Math.min(max, Math.max(DOCK_MIN_WIDTH, startWidth - (ev.clientX - startX)))));
     };
-    const onUp = () => {
+    const end = () => {
       resizing = false;
       window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointerup', end);
+      window.removeEventListener('pointercancel', end);
+      window.removeEventListener('blur', end);
     };
     window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointerup', end);
+    window.addEventListener('pointercancel', end);
+    window.addEventListener('blur', end);
   }
 
   /** Panels open here but under the one showing stay mounted, hidden, so

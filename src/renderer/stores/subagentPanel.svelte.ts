@@ -1,5 +1,5 @@
 import { messageStore } from './messages.svelte.js';
-import { dockStore } from './dock.svelte.js';
+import { nextOpening } from './dock.svelte.js';
 import type { MessageViewMode } from '../lib/message-view.js';
 
 /** State for the subagent panel (one instance, docked in its thread by
@@ -9,6 +9,8 @@ class SubagentPanelStore {
   sessionId = $state('');
   /** The Agent call that started the subagent shown. */
   toolUseId = $state('');
+  /** When it was last opened (dock.svelte: nextOpening). */
+  opening = $state(0);
   /** The view picked in the panel; until one is, it follows the conversation's. */
   private pickedView = $state<MessageViewMode | null>(null);
 
@@ -16,12 +18,11 @@ class SubagentPanelStore {
     this.sessionId = sessionId;
     this.toolUseId = toolUseId;
     this.open = true;
-    dockStore.raise('subagent');
+    this.opening = nextOpening();
   }
 
   close(): void {
     this.open = false;
-    dockStore.drop('subagent');
   }
 
   isShowing(sessionId: string, toolUseId: string): boolean {

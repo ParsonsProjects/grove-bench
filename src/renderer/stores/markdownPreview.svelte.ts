@@ -1,5 +1,5 @@
 import type { LineRange } from '../lib/worktree-files.js';
-import { dockStore } from './dock.svelte.js';
+import { nextOpening } from './dock.svelte.js';
 
 /** State for the Focus panel (one instance, docked in a thread by SideDock). */
 class MarkdownPreviewStore {
@@ -18,6 +18,8 @@ class MarkdownPreviewStore {
   /** Set when `content` is a text file to show as numbered lines rather
    *  than Markdown: its path, and the lines a link pointed at in it. */
   code = $state<{ path: string; lines: LineRange | null } | null>(null);
+  /** When it was last opened (dock.svelte: nextOpening). */
+  opening = $state(0);
 
   show(content: string, title = 'Preview', sessionId?: string, baseDir = '', threadId = sessionId): void {
     this.content = content;
@@ -27,7 +29,7 @@ class MarkdownPreviewStore {
     this.baseDir = baseDir;
     this.code = null;
     this.open = true;
-    dockStore.raise('focus');
+    this.opening = nextOpening();
   }
 
   /** Show a text file read-only, scrolled to `lines` when given. */
@@ -39,12 +41,11 @@ class MarkdownPreviewStore {
     this.baseDir = '';
     this.code = { path, lines: lines ?? null };
     this.open = true;
-    dockStore.raise('focus');
+    this.opening = nextOpening();
   }
 
   close(): void {
     this.open = false;
-    dockStore.drop('focus');
   }
 }
 

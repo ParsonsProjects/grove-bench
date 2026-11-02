@@ -1,3 +1,10 @@
+<script module lang="ts">
+  /** The opening (dock.svelte: nextOpening) it last took the keyboard for:
+   *  mounting again for the same one (it moves to the thread you switch
+   *  to) leaves the keyboard where it is. */
+  let focusedOpening = 0;
+</script>
+
 <script lang="ts">
   /**
    * Bookmarks from every thread, docked beside the thread you're in
@@ -56,7 +63,10 @@
   // Focused as it opens (Ctrl+B), so Esc and the arrow keys work on it.
   let listEl = $state<HTMLDivElement | null>(null);
   $effect(() => {
-    listEl?.focus({ preventScroll: true });
+    const opening = bookmarkStore.opening;
+    if (!listEl || opening === focusedOpening) return;
+    focusedOpening = opening;
+    listEl.focus({ preventScroll: true });
   });
 
   // Esc closes it from inside only: in the message box beside it, Esc is

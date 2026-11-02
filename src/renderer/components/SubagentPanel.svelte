@@ -1,3 +1,10 @@
+<script module lang="ts">
+  /** The opening (dock.svelte: nextOpening) it last took the keyboard for:
+   *  mounting again for the same one (its thread's pane coming back) leaves
+   *  the keyboard where it is. */
+  let focusedOpening = 0;
+</script>
+
 <script lang="ts">
   /**
    * A subagent's own thread, docked beside its thread like the Focus panel
@@ -37,10 +44,12 @@
     return latest && !visible.includes(latest) ? latest : undefined;
   });
 
-  // Nothing to show once its call is gone (rewound away, cleared). Another
-  // thread opening leaves it be: it stays docked in its own.
+  // Nothing to show once its call is gone (rewound away, cleared). Not
+  // while the history loads: a pane mounting again (a thread resumed)
+  // empties its messages to replay them. Another thread opening leaves it
+  // be: it stays docked in its own.
   $effect(() => {
-    if (subagentPanelStore.open && !call) subagentPanelStore.close();
+    if (subagentPanelStore.open && !call && messageStore.isHistoryLoaded(sessionId)) subagentPanelStore.close();
   });
 
   let promptOpen = $state(false);
@@ -67,14 +76,13 @@
     follow = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80;
   }
 
-  // Focused when it shows a subagent, so Esc and the arrow keys work on it.
-  let focusedFor = '';
+  // Focused when opened (a subagent, or the one that started it), so Esc
+  // and the arrow keys work on it at once.
   $effect(() => {
-    const el = scroller;
-    if (el && toolUseId !== focusedFor) {
-      focusedFor = toolUseId;
-      el.focus({ preventScroll: true });
-    }
+    const opening = subagentPanelStore.opening;
+    if (!scroller || opening === focusedOpening) return;
+    focusedOpening = opening;
+    scroller.focus({ preventScroll: true });
   });
 
   // Esc closes it from inside only: in the message box beside it, Esc is

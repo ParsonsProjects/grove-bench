@@ -1,5 +1,5 @@
 import type { Bookmark } from '../../shared/types.js';
-import { dockStore } from './dock.svelte.js';
+import { nextOpening } from './dock.svelte.js';
 
 export interface BookmarkSessionGroup {
   sessionId: string;
@@ -17,6 +17,8 @@ class BookmarkStore {
   list = $state<Bookmark[]>([]);
   loading = $state(true);
   drawerOpen = $state(false);
+  /** When the drawer was last opened (dock.svelte: nextOpening). */
+  opening = $state(0);
 
   async load() {
     try {
@@ -64,9 +66,9 @@ class BookmarkStore {
   }
 
   toggleDrawer(open?: boolean) {
+    const wasOpen = this.drawerOpen;
     this.drawerOpen = open ?? !this.drawerOpen;
-    if (this.drawerOpen) dockStore.raise('bookmarks');
-    else dockStore.drop('bookmarks');
+    if (this.drawerOpen && !wasOpen) this.opening = nextOpening();
   }
 
   /** Group by repo → session, preserving the list's newest-first ordering within

@@ -43,6 +43,7 @@ beforeEach(() => {
     [SID]: [{ kind: 'user', id: 'u1', text: 'why the burst?' }, agentCall, ...subagentThread, { kind: 'text', id: 'm2', text: 'The cause is the cron job.', uuid: 'a2' }],
   };
   messageStore.viewModeBySession = { [SID]: 'focus' };
+  messageStore.setHistoryLoaded(SID, true);
   backgroundTaskStore.tasksBySession = {};
   subagentPanelStore.close();
   markdownPreviewStore.close();
@@ -141,6 +142,22 @@ describe('SubagentPanel', () => {
     store.activeSessionId = 'another';
     await tick();
     expect(subagentPanelStore.open).toBe(true);
+  });
+
+  it('stays open while its thread\'s history replays, and closes if its call never comes back', async () => {
+    subagentPanelStore.show(SID, 'tu-agent');
+    render(SubagentPanel);
+    await tick();
+
+    // A pane mounting again (a thread resumed) empties its messages to replay them.
+    messageStore.setHistoryLoaded(SID, false);
+    messageStore.messagesBySession = { [SID]: [] };
+    await tick();
+    expect(subagentPanelStore.open).toBe(true);
+
+    messageStore.setHistoryLoaded(SID, true);
+    await tick();
+    expect(subagentPanelStore.open).toBe(false);
   });
 
   it('closes once its call is gone (rewound away)', async () => {

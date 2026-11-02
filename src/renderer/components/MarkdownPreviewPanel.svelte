@@ -1,3 +1,10 @@
+<script module lang="ts">
+  /** The opening (dock.svelte: nextOpening) it last took the keyboard for:
+   *  mounting again for the same one (its thread's pane coming back) leaves
+   *  the keyboard where it is. */
+  let focusedOpening = 0;
+</script>
+
 <script lang="ts">
   /**
    * The Focus panel: a Markdown file, plan or response as it reads, or a
@@ -30,7 +37,7 @@
 
   // Scroll back to the top whenever new content is shown, or to the first
   // line a link pointed at, a third of the way down so the lines after it
-  // show too. Focused, so Esc and the arrow keys work on it at once.
+  // show too.
   $effect(() => {
     markdownPreviewStore.content; // track
     const lines = markdownPreviewStore.code?.lines;
@@ -39,6 +46,13 @@
     contentEl.scrollTop = target
       ? target.getBoundingClientRect().top - contentEl.getBoundingClientRect().top + contentEl.scrollTop - contentEl.clientHeight / 3
       : 0;
+  });
+
+  // Focused when opened, so Esc and the arrow keys work on it at once.
+  $effect(() => {
+    const opening = markdownPreviewStore.opening;
+    if (!contentEl || opening === focusedOpening) return;
+    focusedOpening = opening;
     contentEl.focus({ preventScroll: true });
   });
 </script>
