@@ -93,6 +93,27 @@ describe('App shortcuts', () => {
     await fireEvent.keyDown(window, { key: ',', ctrlKey: true });
     expect(settingsStore.panelOpen).toBe(false);
   });
+
+  it('docks Bookmarks beside the landing when no thread is open, and Ctrl+B closes it again', async () => {
+    mockGroveBench.getSettings.mockResolvedValue(JSON.parse(JSON.stringify(settingsStore.current)));
+    render(App);
+
+    await fireEvent.keyDown(window, { key: 'b', ctrlKey: true });
+    expect(await screen.findByRole('complementary', { name: 'Bookmarks' })).toBeInTheDocument();
+    await fireEvent.keyDown(window, { key: 'b', ctrlKey: true });
+    expect(screen.queryByRole('complementary', { name: 'Bookmarks' })).toBeNull();
+  });
+
+  it('docks Bookmarks beside a thread that is stopped, whose pane isn\'t shown', async () => {
+    mockGroveBench.getSettings.mockResolvedValue(JSON.parse(JSON.stringify(settingsStore.current)));
+    render(App);
+    store.sessions = [{ id: 'gone', branch: 'feat-x', repoPath: '/repo', status: 'stopped' }];
+    store.activeSessionId = 'gone';
+
+    await fireEvent.keyDown(window, { key: 'b', ctrlKey: true });
+    expect(await screen.findByRole('complementary', { name: 'Bookmarks' })).toBeInTheDocument();
+    await fireEvent.keyDown(window, { key: 'b', ctrlKey: true });
+  });
 });
 
 describe('App unread flag', () => {

@@ -161,9 +161,9 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [x] Any file as an attachment: saved with the thread and given by path (Claude Code: a note, and reads in that folder allowed without a prompt; ACP: `resource_link`). Only audio goes inline, to ACP agents that take it (listed formats, 5 MB a clip, 10 MB per conversation counted from the thread's history). PDFs go by path: inline ones stay in the history and count toward every later request's size and page limits. 50 MB per message
 
 ### Markdown Preview Panel
-- [x] Slide-out panel rendering markdown full-width (reuses the marked + highlight.js + DOMPurify pipeline; Esc / backdrop click to close, copy button)
+- [x] Focus panel rendering markdown, docked beside the thread between its tab bar and bottom bar so the message box stays usable (reuses the marked + highlight.js + DOMPurify pipeline; Esc from inside it or × to close, drag to resize, copy button). The Subagent panel and Bookmarks dock the same way (`SideDock`)
 - [x] Hover "Focus" button on in-turn assistant responses with document-like markdown (≥2 headings, a table, ≥3 code fences, or structure + length) — works in both Detailed and Summary view modes
-- [x] "Focus" on plan-approval blocks so a proposed plan can be read full-width before approving
+- [x] "Focus" on plan-approval blocks so a proposed plan can be read in the Focus panel before approving
 - [x] Secondary: preview `.md` files the agent writes: **preview** on an edit block, **Preview** in the Changes tab, and links to `.md` files in replies open the file as it is now in the Focus panel (`openWorktreeFile` returns its text, up to 1 MB; `isMarkdownFile`). Markdown stays out of "Files made", which lists output, not files edited as source. Not done: a preview in the @ file picker
 
 ### Agent Capabilities

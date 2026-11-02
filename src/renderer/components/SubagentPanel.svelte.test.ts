@@ -11,7 +11,6 @@ vi.mock('dompurify', () => ({
 
 import OutputPanel from './OutputPanel.svelte';
 import SubagentPanel from './SubagentPanel.svelte';
-import MarkdownPreviewPanel from './MarkdownPreviewPanel.svelte';
 import { messageStore, type ChatMessage } from '../stores/messages.svelte.js';
 import { store } from '../stores/sessions.svelte.js';
 import { subagentPanelStore } from '../stores/subagentPanel.svelte.js';
@@ -20,8 +19,7 @@ import { backgroundTaskStore } from '../stores/backgroundTask.svelte.js';
 
 const SID = 'subagent-session';
 
-// The panel slides in and out. jsdom has no Web Animations, so each
-// animation here finishes at once.
+// jsdom has no Web Animations, so each animation here finishes at once.
 const realAnimate = Element.prototype.animate;
 
 const agentCall: ChatMessage = {
@@ -45,13 +43,14 @@ beforeEach(() => {
     [SID]: [{ kind: 'user', id: 'u1', text: 'why the burst?' }, agentCall, ...subagentThread, { kind: 'text', id: 'm2', text: 'The cause is the cron job.', uuid: 'a2' }],
   };
   messageStore.viewModeBySession = { [SID]: 'focus' };
+  messageStore.setHistoryLoaded(SID, true);
   backgroundTaskStore.tasksBySession = {};
   subagentPanelStore.close();
   markdownPreviewStore.close();
 });
 
 afterEach(() => {
-  // Unmount first: the panel's outro still needs the animate stub.
+  // Unmount first: an outro still needs the animate stub.
   cleanup();
   Element.prototype.animate = realAnimate;
 });
@@ -104,43 +103,69 @@ describe('SubagentPanel', () => {
     expect(getByLabelText(/Subagent view: Detailed/).textContent?.trim()).toBe('Detailed');
   });
 
-  const pressEsc = () => document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  const pressEsc = (el: Element) => el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
 
-  it('closes on Esc, but leaves Esc to the Focus panel open over it', async () => {
+  it('closes on Esc from inside it, but not from the message box beside it', async () => {
     subagentPanelStore.show(SID, 'tu-agent');
-    render(SubagentPanel);
+    const { getByRole } = render(SubagentPanel);
     await tick();
 
-    // The Focus panel's own handler closes it as the key reaches the window.
-    render(MarkdownPreviewPanel);
-    markdownPreviewStore.show('report', 'Agent response');
-    await tick();
-    pressEsc();
-    expect(markdownPreviewStore.open).toBe(false);
+    const box = document.body.appendChild(document.createElement('textarea'));
+    pressEsc(box);
     expect(subagentPanelStore.open).toBe(true);
+    box.remove();
 
-    pressEsc();
+    // Focused as it opens, so Esc works at once.
+    const panel = getByRole('complementary', { name: 'Subagent thread' });
+    expect(panel.contains(document.activeElement)).toBe(true);
+    pressEsc(document.activeElement!);
     expect(subagentPanelStore.open).toBe(false);
   });
 
   it('leaves Esc to a dialog or menu open in it', async () => {
     subagentPanelStore.show(SID, 'tu-agent');
-    render(SubagentPanel);
+    const { getByRole } = render(SubagentPanel);
     await tick();
 
     // As bits-ui does for its dialogs and menus.
-    const handled = (e: Event) => e.preventDefault();
-    document.addEventListener('keydown', handled, { once: true });
-    pressEsc();
+    const inner = getByRole('button', { name: /Prompt/ });
+    inner.addEventListener('keydown', (e) => e.preventDefault(), { once: true });
+    pressEsc(inner);
     expect(subagentPanelStore.open).toBe(true);
   });
 
-  it('closes when its conversation is no longer the open one', async () => {
+  it('stays open in its thread when another thread is opened', async () => {
     subagentPanelStore.show(SID, 'tu-agent');
     render(SubagentPanel);
     await tick();
 
     store.activeSessionId = 'another';
+    await tick();
+    expect(subagentPanelStore.open).toBe(true);
+  });
+
+  it('stays open while its thread\'s history replays, and closes if its call never comes back', async () => {
+    subagentPanelStore.show(SID, 'tu-agent');
+    render(SubagentPanel);
+    await tick();
+
+    // A pane mounting again (a thread resumed) empties its messages to replay them.
+    messageStore.setHistoryLoaded(SID, false);
+    messageStore.messagesBySession = { [SID]: [] };
+    await tick();
+    expect(subagentPanelStore.open).toBe(true);
+
+    messageStore.setHistoryLoaded(SID, true);
+    await tick();
+    expect(subagentPanelStore.open).toBe(false);
+  });
+
+  it('closes once its call is gone (rewound away)', async () => {
+    subagentPanelStore.show(SID, 'tu-agent');
+    render(SubagentPanel);
+    await tick();
+
+    messageStore.messagesBySession = { [SID]: [{ kind: 'user', id: 'u1', text: 'why the burst?' }] };
     await tick();
     expect(subagentPanelStore.open).toBe(false);
   });

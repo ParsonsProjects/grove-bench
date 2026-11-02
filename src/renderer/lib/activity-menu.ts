@@ -122,7 +122,7 @@ function messageEntries(msg: ChatMessage): Entry[] {
     case 'text': {
       const entries = [copy('Copy message', msg.text)];
       if (isPreviewableMarkdown(msg.text)) {
-        entries.push({ label: 'Read full-width', action: { kind: 'focus', content: msg.text } });
+        entries.push({ label: 'Read in the Focus panel', action: { kind: 'focus', content: msg.text } });
       }
       return entries;
     }

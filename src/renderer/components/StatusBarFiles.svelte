@@ -77,7 +77,7 @@
           return;
         }
         onclose?.();
-        showAttachedText(f.name, content);
+        showAttachedText(f.name, content, sessionId);
       } else if (f.kind === 'file') {
         if (!(await window.groveBench.openAttachedFile(sessionId, f.file.file))) missing[key] = true;
       } else if (f.kind === 'made') {

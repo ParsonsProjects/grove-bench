@@ -1,15 +1,16 @@
 import { messageStore } from './messages.svelte.js';
+import { nextOpening } from './dock.svelte.js';
 import type { MessageViewMode } from '../lib/message-view.js';
 
-/** State for the subagent slide-out (one instance, mounted in App): which
- *  subagent's thread it shows, and the view picked for it. */
+/** State for the subagent panel (one instance, docked in its thread by
+ *  SideDock): which subagent's thread it shows, and the view picked for it. */
 class SubagentPanelStore {
   open = $state(false);
-  /** Whether it has been opened yet: App loads it on first use. */
-  opened = $state(false);
   sessionId = $state('');
   /** The Agent call that started the subagent shown. */
   toolUseId = $state('');
+  /** When it was last opened (dock.svelte: nextOpening). */
+  opening = $state(0);
   /** The view picked in the panel; until one is, it follows the conversation's. */
   private pickedView = $state<MessageViewMode | null>(null);
 
@@ -17,7 +18,7 @@ class SubagentPanelStore {
     this.sessionId = sessionId;
     this.toolUseId = toolUseId;
     this.open = true;
-    this.opened = true;
+    this.opening = nextOpening();
   }
 
   close(): void {

@@ -1,4 +1,16 @@
+<script module lang="ts">
+  /** The opening (dock.svelte: nextOpening) it last took the keyboard for:
+   *  mounting again for the same one (it moves to the thread you switch
+   *  to) leaves the keyboard where it is. */
+  let focusedOpening = 0;
+</script>
+
 <script lang="ts">
+  /**
+   * Bookmarks from every thread, docked beside the thread you're in
+   * (SideDock), or beside the new-thread draft or the landing when no
+   * thread is open. Opened from the sidebar or with Ctrl+B.
+   */
   import { bookmarkStore } from '../stores/bookmarks.svelte.js';
   import { messageStore } from '../stores/messages.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
@@ -47,17 +59,34 @@
     await bookmarkStore.updateNote(b.id, noteDraft.trim());
     editingId = null;
   }
+
+  // Focused as it opens (Ctrl+B), so Esc and the arrow keys work on it.
+  let listEl = $state<HTMLDivElement | null>(null);
+  $effect(() => {
+    const opening = bookmarkStore.opening;
+    if (!listEl || opening === focusedOpening) return;
+    focusedOpening = opening;
+    listEl.focus({ preventScroll: true });
+  });
+
+  // Esc closes it from inside only: in the message box beside it, Esc is
+  // the box's own.
+  function handleKeydown(e: KeyboardEvent) {
+    if (e.key !== 'Escape' || e.defaultPrevented) return;
+    e.stopPropagation();
+    bookmarkStore.toggleDrawer(false);
+  }
 </script>
 
 {#if bookmarkStore.drawerOpen}
-  <!-- Backdrop -->
-  <button
-    class="fixed inset-0 z-40 bg-black/40"
-    onclick={() => bookmarkStore.toggleDrawer(false)}
-    aria-label="Close bookmarks"
-  ></button>
-
-  <aside class="fixed top-0 right-0 z-50 h-full w-96 max-w-[90vw] bg-card border-l border-border shadow-xl flex flex-col">
+  <!-- Focusable (tabindex -1) so a click anywhere in it lets Esc close it. -->
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+  <aside
+    class="flex-1 min-h-0 flex flex-col outline-none"
+    aria-label="Bookmarks"
+    tabindex="-1"
+    onkeydown={handleKeydown}
+  >
     <PanelHeader>
       <h2 class="flex items-center gap-2 font-medium text-foreground">
         <svg class="size-3" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></svg>
@@ -68,13 +97,13 @@
           variant="quiet"
           size="icon-2xs"
           onclick={() => bookmarkStore.toggleDrawer(false)}
-          title="Close"
-          aria-label="Close"
+          title="Close (Esc)"
+          aria-label="Close bookmarks"
         ><XIcon /></Button>
       {/snippet}
     </PanelHeader>
 
-    <div class="flex-1 overflow-y-auto px-3 py-2">
+    <div class="flex-1 overflow-y-auto px-3 py-2 outline-none" tabindex="-1" bind:this={listEl}>
       {#if groups.length === 0}
         <p class="text-xs text-muted-foreground mt-4 text-center">
           No bookmarks yet. Select text in the activity thread and click <em>Bookmark</em>.
@@ -106,7 +135,7 @@
                       bind:value={noteDraft}
                       placeholder="Add a note…"
                       autofocus
-                      onkeydown={(e) => { if (e.key === 'Enter') void saveNote(b); if (e.key === 'Escape') editingId = null; }}
+                      onkeydown={(e) => { if (e.key === 'Enter') void saveNote(b); if (e.key === 'Escape') { e.stopPropagation(); editingId = null; } }}
                       onblur={() => saveNote(b)}
                     />
                   {:else if b.note}

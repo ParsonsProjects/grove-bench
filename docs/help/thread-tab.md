@@ -30,7 +30,9 @@ The agent's text responses are rendered as markdown with syntax highlighting for
 
 When a response shows an image saved in the thread's worktree (for example `![Home page](screenshots/home.png)`), the image appears in the response. A link to a file in the worktree opens it: a web page in the Preview tab, a Markdown file or any other text file (such as source code or a script) read-only in the Focus panel, and a PDF, image, video, audio file, spreadsheet or document in its default app. A link to a folder opens it in File Explorer. Clicking a link never runs a file: anything else is shown in its folder. A text file shows with line numbers. When the link names a line or lines (`src/app.ts:42`, or `src/app.ts#L42-L50`), it opens scrolled to them, with those lines highlighted. Paths outside the worktree don't load or open, and a link to a file that isn't there says so next to it.
 
-Document-like responses — plans, reports, audits, anything with multiple headings, a table, or several code blocks — show a **Focus** button on hover. It opens the response rendered full-width in a slide-out panel, which is easier to read than the chat column (especially in Summary view). Plan-approval prompts have the same button so you can review a proposed plan full-width before approving. Press `Esc` or click outside the panel to close it.
+Document-like responses — plans, reports, audits, anything with multiple headings, a table, or several code blocks — show a **Focus** button on hover. It opens the response rendered in the Focus panel, which is easier to read than the chat column (especially in Summary view). Plan-approval prompts have the same button so you can review a proposed plan before approving.
+
+The Focus panel, a subagent's thread and your bookmarks open docked on the right, between the tab bar and the status bar, so the message box and the thread stay usable while you read: type, send and scroll as normal. Drag the panel's left edge to make it wider or narrower. To close it, click **×**, or click in the panel and press `Esc`; `Esc` in the message box leaves it open. The Focus panel and a subagent's thread stay with their thread: switch to another thread and back, and the panel is still open where you left it. If you open one panel while another is open, the new one shows; close it and the one before comes back.
 
 ### Tool Calls
 When the agent uses tools (editing files, running commands, reading files), each action is shown as a collapsible block. Click to expand and see full details including inputs and outputs.
@@ -49,7 +51,7 @@ When a turn creates or changes files in the worktree that are worth looking at, 
 The list leaves out source code, files in dependency, cache and compiled output folders (such as `node_modules`, `dist` and `coverage`), web pages the agent edited rather than created, and files outside the worktree (such as a temp folder). It shows up to 24 files and counts the rest. Images are copied when the turn ends, so an older turn keeps showing the image as it was, even after the agent saves a new one with the same name.
 
 ### Subagents
-When the agent hands work to a subagent (the **Agent** tool), the thread shows one line for it in every view: the subagent's type, its task, how many tool calls it has made, and whether it is still running. The subagent's own messages and tool calls stay out of the thread, so its notes are never mistaken for the agent's reply. Screenshots and other images the subagent's tools returned show under its line. Click the line, or the subagent among the running tools or background tasks in the status bar's **Activity** popup, to open the subagent's thread in a slide-out panel: the prompt it was given, its notes, its tool calls and its report, with its own **Detailed**, **Summary** and **Focus** picker. A subagent that started another one shows it the same way, with a back arrow to return. Press `Esc` or click outside the panel to close it. In threads recorded before Grove kept subagents' threads, a subagent's work shows in the main thread as it did then, and its panel shows only its result.
+When the agent hands work to a subagent (the **Agent** tool), the thread shows one line for it in every view: the subagent's type, its task, how many tool calls it has made, and whether it is still running. The subagent's own messages and tool calls stay out of the thread, so its notes are never mistaken for the agent's reply. Screenshots and other images the subagent's tools returned show under its line. Click the line, or the subagent among the running tools or background tasks in the status bar's **Activity** popup, to open the subagent's thread in a panel docked beside the thread: the prompt it was given, its notes, its tool calls and its report, with its own **Detailed**, **Summary** and **Focus** picker. A subagent that started another one shows it the same way, with a back arrow to return. Click **×**, or press `Esc` in the panel, to close it. In threads recorded before Grove kept subagents' threads, a subagent's work shows in the main thread as it did then, and its panel shows only its result.
 
 ### Permission Requests
 When the agent wants to perform an action that requires approval, a permission block appears with **Allow**, **Deny**, and a third button that approves every later call of the same kind in this thread. Its label says what it covers: **Allow all commands** for shell commands (any command, not just this one), **Allow all web fetches** for any web address, and **Always allow** plus the tool's name for other tools. These last while the thread is live, through idle sleep, until you close the thread or restart Grove Bench. On a file edit it reads **Allow all edits (Edit mode)**: it switches the thread to Edit mode, so file edits in the worktree, new files included, no longer ask, while commands still do. Switch back in the agent settings (`Alt+M`). Hover the button for details. For file edits, a diff preview is shown so you can review changes before approving.
@@ -58,7 +60,7 @@ A request or question nobody answers within 30 minutes is closed, so the agent i
 
 ### Plan Approval
 
-In **Plan** mode the agent explores and writes a plan instead of changing files. When it is ready, a **plan ready** block shows the plan (**Focus** reads it full-width) and three choices, each explained when you hover it:
+In **Plan** mode the agent explores and writes a plan instead of changing files. When it is ready, a **plan ready** block shows the plan (**Focus** opens it in the Focus panel) and three choices, each explained when you hover it:
 
 - **Approve**: the agent starts making the changes. The thread switches to **Edit** mode, so the plan's file edits don't each ask; commands still do.
 - **Approve and start fresh…**: clears this thread's messages and sends the plan as a new first message, so the agent starts with a clean context. It asks you to confirm first. Your files are not changed.
@@ -74,13 +76,13 @@ Extended thinking from the agent appears as expandable sections. Click to see th
 
 Hover a code block or a table to reveal its copy icon. A table copies as cells: spreadsheets and documents paste a real table, and places that take plain text get the columns separated by tabs. For the Markdown source, Shift+click the copy icon, or right-click the table and choose **Copy table as Markdown**.
 
-Select text to get **Bookmark** and **To prompt**.
+Select text to get **Bookmark** and **To prompt**. Your bookmarks open with `Ctrl+B` or the bookmark button at the foot of the sidebar, docked on the right like the Focus panel.
 
 Right-click anything in the thread for a menu of what you can do there. It lists the most specific things first:
 
 - **Selected text**: **Copy**, **Bookmark selection**, **Copy to prompt**
 - **A code block, table or link**: **Copy code**, **Copy table**, **Copy table as Markdown**, **Copy link**
-- **The message itself**: **Copy message**. Your messages also get **Rewind to this message**, and document-like responses get **Read full-width**. Tool calls offer **Copy command**, **Copy path**, **Copy pattern** or **Copy input**, and **Copy output**.
+- **The message itself**: **Copy message**. Your messages also get **Rewind to this message**, and document-like responses get **Read in the Focus panel**. Tool calls offer **Copy command**, **Copy path**, **Copy pattern** or **Copy input**, and **Copy output**.
 
 Text boxes keep their own spell check menu.
 

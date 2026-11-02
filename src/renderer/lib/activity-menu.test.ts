@@ -50,12 +50,12 @@ describe('activityMenuEntries', () => {
     expect(labels(activityMenuEntries({ message: imageOnly }))).toEqual(['Rewind to this message']);
   });
 
-  it('offers the full-width view only for document-like replies', () => {
+  it('offers the Focus panel only for document-like replies', () => {
     const short: ChatMessage = { kind: 'text', id: 'a', text: 'Done.', uuid: '' };
     const doc: ChatMessage = { kind: 'text', id: 'b', text: '## One\n\ntext\n\n## Two\n\ntext\n\n## Three\n\ntext', uuid: '' };
     expect(labels(activityMenuEntries({ message: short }))).toEqual(['Copy message']);
     const entries = activityMenuEntries({ message: doc });
-    expect(labels(entries)).toEqual(['Copy message', 'Read full-width']);
+    expect(labels(entries)).toEqual(['Copy message', 'Read in the Focus panel']);
     expect(entries[1].action).toEqual({ kind: 'focus', content: doc.text });
   });
 
