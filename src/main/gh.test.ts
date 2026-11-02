@@ -8,7 +8,7 @@ vi.mock('./process-host-run.js', () => ({ runInAgentHost: vi.fn() }));
 import { execa } from 'execa';
 import { runInAgentHost } from './process-host-run.js';
 import type { ProcessResult } from './process-host-protocol.js';
-import { gh, ghVersion, ghAuthenticated, ghLogin, resetGhLoginCacheForTests, resetGhOfflineCooldownForTests, ghOffline, ghRateLimited, isNetworkError, isRateLimitError, summarizeChecks, failingCheckNames, failingActionsRuns, commentSignature, prStatus, prList, prsForBranches, sortPrs, prCreate, prReviewComments, parseOpenPrs, openPrs, GH_TIMEOUT_MS, GH_OFFLINE_MESSAGE, GH_OFFLINE_COOLDOWN_MS, GH_RATE_LIMITED_MESSAGE, GH_RATE_LIMIT_COOLDOWN_MS, GH_RATE_LIMIT_MAX_COOLDOWN_MS } from './gh.js';
+import { gh, ghVersion, ghAuthenticated, ghLogin, resetGhLoginCacheForTests, resetGhOfflineCooldownForTests, ghOffline, ghRateLimited, isNetworkError, isRateLimitError, summarizeChecks, failingCheckNames, failingActionsRuns, latestChecks, commentSignature, prStatus, prList, prsForBranches, sortPrs, prCreate, prReviewComments, parseOpenPrs, openPrs, prJobLog, prRerunFailed, GH_LOG_TIMEOUT_MS, GH_RERUN_TIMEOUT_MS, GH_TIMEOUT_MS, GH_OFFLINE_MESSAGE, GH_OFFLINE_COOLDOWN_MS, GH_RATE_LIMITED_MESSAGE, GH_RATE_LIMIT_COOLDOWN_MS, GH_RATE_LIMIT_MAX_COOLDOWN_MS } from './gh.js';
 
 const mockRun = vi.mocked(runInAgentHost);
 /** What runInAgentHost resolves with when gh prints `stdout` and exits 0. */
@@ -235,11 +235,15 @@ describe('prStatus()', () => {
     mockRun.mockResolvedValue(printed(JSON.stringify({
         number: 44,
         url: 'https://github.com/o/r/pull/44',
-        statusCheckRollup: [{ name: 'test', conclusion: 'FAILURE', detailsUrl: 'https://github.com/o/r/actions/runs/123/job/456' }],
+        statusCheckRollup: [
+          { name: 'test', conclusion: 'FAILURE', detailsUrl: 'https://github.com/o/r/actions/runs/123/job/456' },
+          { context: 'codecov/patch', state: 'FAILURE', targetUrl: 'https://codecov.io/x' },
+        ],
       })));
 
     const result = await prStatus('/repo', 'feat/x');
-    expect(result?.failingRuns).toEqual([{ repo: 'o/r', runId: '123', jobIds: ['456'] }]);
+    expect(result?.failingRuns).toEqual([{ repo: 'o/r', runId: '123', jobs: [{ id: '456', name: 'test' }] }]);
+    expect(result?.otherFailingChecks).toEqual(['codecov/patch']);
   });
 
   it('returns null when no PR exists for the branch', async () => {
@@ -533,18 +537,44 @@ describe('failingActionsRuns()', () => {
       run('101'), run('101', 'FAILURE', 'Owner/Repo', '8101'), run('101'),
       run('102', 'TIMED_OUT'), run('103', 'SUCCESS'),
     ], PR)).toEqual([
-      { repo: 'Owner/Repo', runId: '101', jobIds: ['9101', '8101'] },
-      { repo: 'Owner/Repo', runId: '102', jobIds: ['9102'] },
+      { repo: 'Owner/Repo', runId: '101', jobs: [{ id: '9101', name: 'job-9101' }, { id: '8101', name: 'job-8101' }] },
+      { repo: 'Owner/Repo', runId: '102', jobs: [{ id: '9102', name: 'job-9102' }] },
     ]);
   });
 
+  it('names the workflow, and marks a run with jobs still going', () => {
+    const going = { name: 'e2e', conclusion: '', status: 'IN_PROGRESS', detailsUrl: 'https://github.com/Owner/Repo/actions/runs/201/job/3' };
+    expect(failingActionsRuns([
+      { ...run('201'), workflowName: 'CI' },
+      going,
+      { ...run('202'), workflowName: '' },
+      { ...run('203', 'SUCCESS'), status: 'COMPLETED' },
+      { ...going, detailsUrl: 'https://github.com/someone/else/actions/runs/202/job/4' },
+    ], PR)).toEqual([
+      { repo: 'Owner/Repo', runId: '201', workflow: 'CI', jobs: [{ id: '9201', name: 'job-9201' }], pending: true },
+      { repo: 'Owner/Repo', runId: '202', jobs: [{ id: '9202', name: 'job-9202' }] },
+    ]);
+  });
+
+  it('keeps a check whose link names only the run, as a job with no log', () => {
+    expect(failingActionsRuns([{ name: 'build', conclusion: 'FAILURE', detailsUrl: 'https://github.com/Owner/Repo/actions/runs/301' }], PR))
+      .toEqual([{ repo: 'Owner/Repo', runId: '301', jobs: [{ name: 'build' }] }]);
+  });
+
+  it('marks a run going only for checks not completed, not a stale one', () => {
+    expect(failingActionsRuns([
+      run('401'),
+      { name: 'old', conclusion: 'STALE', status: 'COMPLETED', detailsUrl: 'https://github.com/Owner/Repo/actions/runs/401/job/7' },
+    ], PR)[0]).not.toHaveProperty('pending');
+  });
+
   it('matches the PR repository whatever the letter case', () => {
-    expect(failingActionsRuns([run('104', 'FAILURE', 'owner/repo')], PR)).toEqual([{ repo: 'owner/repo', runId: '104', jobIds: ['9104'] }]);
+    expect(failingActionsRuns([run('104', 'FAILURE', 'owner/repo')], PR)).toEqual([{ repo: 'owner/repo', runId: '104', jobs: [{ id: '9104', name: 'job-9104' }] }]);
   });
 
   it('reads repositories whose name starts with a dot', () => {
     expect(failingActionsRuns([run('107', 'FAILURE', 'acme/.github')], 'https://github.com/acme/.github/pull/12'))
-      .toEqual([{ repo: 'acme/.github', runId: '107', jobIds: ['9107'] }]);
+      .toEqual([{ repo: 'acme/.github', runId: '107', jobs: [{ id: '9107', name: 'job-9107' }] }]);
   });
 
   it('leaves out checks whose logs are not in an Actions run of the PR repository', () => {
@@ -559,7 +589,7 @@ describe('failingActionsRuns()', () => {
 
   it('keeps the host for GitHub Enterprise', () => {
     const rollup = [{ name: 't', conclusion: 'FAILURE', detailsUrl: 'https://ghe.corp.io/team/app/actions/runs/55' }];
-    expect(failingActionsRuns(rollup, 'https://ghe.corp.io/team/app/pull/3')).toEqual([{ repo: 'ghe.corp.io/team/app', runId: '55', jobIds: [] }]);
+    expect(failingActionsRuns(rollup, 'https://ghe.corp.io/team/app/pull/3')).toEqual([{ repo: 'ghe.corp.io/team/app', runId: '55', jobs: [{ name: 't' }] }]);
   });
 
   it('returns none without a PR URL it can read', () => {
@@ -705,5 +735,121 @@ describe('openPrs()', () => {
   it('throws when gh fails', async () => {
     mockRun.mockRejectedValue(Object.assign(new Error('gh failed'), { stderr: 'not logged in' }));
     await expect(openPrs('/repo')).rejects.toThrow();
+  });
+});
+
+describe('prJobLog()', () => {
+  it("reads the job's log through the API, keeping only its end, and gives the readable tail", async () => {
+    mockRun.mockResolvedValueOnce(printed('2026-11-01T12:00:00.0000000Z build\n2026-11-01T12:00:01.0000000Z ##[error]boom\n'));
+
+    await expect(prJobLog('/repo', 'o/r', '456')).resolves.toEqual({ text: 'build\n##[error]boom', errorLine: 2 });
+    // The host always, so GH_HOST can't send it elsewhere.
+    expect(mockRun).toHaveBeenCalledWith('gh', ['api', '--hostname', 'github.com', 'repos/o/r/actions/jobs/456/logs'], {
+      cwd: '/repo', timeout: GH_LOG_TIMEOUT_MS, findCommand: true, idempotent: true, keepLastChars: 2 * 1024 * 1024,
+    });
+  });
+
+  it('names the host off github.com', async () => {
+    mockRun.mockResolvedValueOnce(printed('ok'));
+    await prJobLog('/repo', 'ghe.corp.io/t/a', '7');
+    expect(mockRun.mock.calls[0][1]).toEqual(['api', '--hostname', 'ghe.corp.io', 'repos/t/a/actions/jobs/7/logs']);
+  });
+
+  it('refuses ids and repositories that are not plain', async () => {
+    await expect(prJobLog('/repo', 'o/r', '45x')).rejects.toThrow('Not a GitHub Actions job');
+    await expect(prJobLog('/repo', 'o/r;x', '45')).rejects.toThrow('Not a GitHub Actions job');
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+
+  it('says plainly when the log is gone, refused, rate-limited or slow, and a slow one does not mark GitHub offline', async () => {
+    mockRun.mockRejectedValueOnce(exited(1, 'gh: Not Found (HTTP 404)', '{"message":"Not Found"}'));
+    await expect(prJobLog('/repo', 'o/r', '1')).rejects.toThrow("GitHub has no log for this job. It may have expired (logs are kept for 90 days unless the repository says otherwise), or this gh account can't see the repository.");
+    mockRun.mockRejectedValueOnce(exited(1, 'gh: Resource protected by organization SAML enforcement. (HTTP 403)'));
+    await expect(prJobLog('/repo', 'o/r', '1')).rejects.toThrow(/^GitHub refused to send the log: Resource protected by organization SAML enforcement\. \(HTTP 403\)$/);
+    mockRun.mockRejectedValueOnce(exited(1, 'gh: API rate limit exceeded for user ID 1. (HTTP 403)'));
+    await expect(prJobLog('/repo', 'o/r', '1')).rejects.toThrow("GitHub's API rate limit is reached");
+    mockRun.mockRejectedValueOnce(Object.assign(new Error('Command timed out after 60000 milliseconds: gh api'), { stdout: '', stderr: '', timedOut: true }));
+    await expect(prJobLog('/repo', 'o/r', '1')).rejects.toThrow('GitHub took too long to send the log');
+    expect(ghOffline()).toBe(false);
+  });
+});
+
+describe('prRerunFailed()', () => {
+  it("asks GitHub to rerun the run's failed jobs, once (never retried)", async () => {
+    mockRun.mockResolvedValueOnce(printed(''));
+    await prRerunFailed('/repo', 'o/r', '123');
+    // HOST/OWNER/REPO always, so GH_HOST can't send it elsewhere.
+    expect(mockRun).toHaveBeenCalledWith('gh', ['run', 'rerun', '123', '--failed', '--repo', 'github.com/o/r'], { cwd: '/repo', timeout: GH_RERUN_TIMEOUT_MS, findCommand: true });
+  });
+
+  it('refuses ids and repositories that are not plain', async () => {
+    await expect(prRerunFailed('/repo', 'o/r', '1 --debug')).rejects.toThrow('Not a GitHub Actions run');
+    await expect(prRerunFailed('/repo', '../r', '1')).rejects.toThrow('Not a GitHub Actions run');
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+
+  it('says what went wrong: no write access, no answer, or GitHub refusing', async () => {
+    mockRun.mockRejectedValueOnce(exited(1, 'failed to rerun: HTTP 403: Must have admin rights to Repository. (https://api.github.com/repos/o/r/actions/runs/1/rerun-failed-jobs)'));
+    await expect(prRerunFailed('/repo', 'o/r', '1')).rejects.toThrow(/^GitHub refused the rerun: HTTP 403: Must have admin rights to Repository\.$/);
+    mockRun.mockRejectedValueOnce(Object.assign(new Error('Command timed out'), { stdout: '', stderr: '', timedOut: true }));
+    await expect(prRerunFailed('/repo', 'o/r', '1')).rejects.toThrow('The rerun may still have started');
+    mockRun.mockRejectedValueOnce(exited(1, 'run 1 cannot be rerun; This workflow is already running'));
+    await expect(prRerunFailed('/repo', 'o/r', '1')).rejects.toThrow('run 1 cannot be rerun; This workflow is already running');
+  });
+});
+
+describe('latestChecks()', () => {
+  const job = (name: string, run: string, job: string, conclusion: string, startedAt: string, status = 'COMPLETED') =>
+    ({ __typename: 'CheckRun', name, workflowName: 'CI', status, conclusion, startedAt, detailsUrl: `https://github.com/o/r/actions/runs/${run}/job/${job}` });
+
+  it('keeps only the newest attempt of a rerun job, so a passing rerun turns the PR green', () => {
+    const rollup = [
+      job('test', '1', '10', 'FAILURE', '2026-11-01T10:00:00Z'),
+      job('test', '1', '11', 'SUCCESS', '2026-11-01T10:30:00Z'),
+    ];
+    expect(latestChecks(rollup)).toEqual([rollup[1]]);
+    expect(summarizeChecks(rollup)).toEqual({ total: 1, passed: 1, failed: 0, pending: 0 });
+    expect(failingCheckNames(rollup)).toEqual([]);
+    expect(failingActionsRuns(rollup, 'https://github.com/o/r/pull/1')).toEqual([]);
+  });
+
+  it('counts a queued rerun as the newest, though gh gives it no start time', () => {
+    const rollup = [
+      job('test', '1', '10', 'FAILURE', '2026-11-01T10:00:00Z'),
+      job('test', '1', '11', '', '0001-01-01T00:00:00Z', 'QUEUED'),
+    ];
+    expect(summarizeChecks(rollup)).toEqual({ total: 1, passed: 0, failed: 0, pending: 1 });
+  });
+
+  it('keeps the newest run of a workflow started again on the same commit, so a cancelled one goes', () => {
+    // Run 1 cancelled when the PR left draft; run 2, on the same commit, passed.
+    const rollup = [
+      job('test', '1', '10', 'CANCELLED', '2026-11-01T10:00:00Z'),
+      job('test', '2', '20', 'SUCCESS', '2026-11-01T10:05:00Z'),
+      { ...job('test', '3', '30', 'SUCCESS', '2026-11-01T09:00:00Z'), workflowName: 'Nightly' },
+    ];
+    expect(summarizeChecks(rollup)).toEqual({ total: 2, passed: 2, failed: 0, pending: 0 });
+    expect(failingCheckNames(rollup)).toEqual([]);
+  });
+
+  it('keeps other apps\' checks by name, and a newer completed attempt over a stale one', () => {
+    const rollup = [
+      { name: 'codecov', conclusion: 'FAILURE', startedAt: '2026-11-01T09:00:00Z', detailsUrl: 'https://codecov.io/x' },
+      { name: 'codecov', conclusion: 'SUCCESS', startedAt: '2026-11-01T09:30:00Z', detailsUrl: 'https://codecov.io/y' },
+      { name: 'lint', status: 'COMPLETED', conclusion: 'STALE', startedAt: '2026-10-01T09:00:00Z' },
+      { name: 'lint', status: 'COMPLETED', conclusion: 'FAILURE', startedAt: '2026-11-01T09:00:00Z' },
+    ];
+    expect(summarizeChecks(rollup)).toEqual({ total: 2, passed: 1, failed: 1, pending: 0 });
+    expect(failingCheckNames(rollup)).toEqual(['lint']);
+  });
+
+  it('keeps the newest of a status context, in its first place, and rows with nothing to match by', () => {
+    const rollup = [
+      { context: 'ci/legacy', state: 'ERROR', startedAt: '2026-11-01T08:00:00Z' },
+      { conclusion: 'TIMED_OUT' },
+      { context: 'ci/legacy', state: 'SUCCESS', startedAt: '2026-11-01T08:10:00Z' },
+      { conclusion: 'TIMED_OUT' },
+    ];
+    expect(latestChecks(rollup)).toEqual([rollup[2], rollup[1], rollup[3]]);
   });
 });

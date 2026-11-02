@@ -54,8 +54,9 @@ export function detectPrEvents(state: PrWatchState, pr: PrInfo | null): PrWatchE
     state.alertedFailureSha = pr.headSha;
     events.push({ kind: 'ci_failed', checks: pr.failingChecks ?? [] });
   }
-  // Checks recovered on this SHA → allow alerting again if they fail later on it
-  if (!failed && (pr.checks?.pending ?? 0) === 0 && state.alertedFailureSha === pr.headSha) {
+  // Checks recovered on this SHA, or are running again on it (a rerun, from
+  // here or GitHub) → allow alerting again if they fail later on it
+  if (!failed && state.alertedFailureSha === pr.headSha) {
     state.alertedFailureSha = undefined;
   }
 

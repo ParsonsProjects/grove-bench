@@ -96,6 +96,7 @@ vi.mock('./git.js', async (importOriginal) => {
 vi.mock('./gh.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./gh.js')>()),
   prsForBranches: vi.fn(), prCreate: vi.fn(), prReviewComments: vi.fn(), ghLogin: vi.fn(), openPrs: vi.fn(),
+  prJobLog: vi.fn(), prRerunFailed: vi.fn(),
 }));
 vi.mock('./branch-name.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./branch-name.js')>()),
@@ -1528,6 +1529,26 @@ describe('pull requests', () => {
     await invoke(IPC.PR_CREATE, 's1', { title: 't', body: 'b' });
     expect(git.push).toHaveBeenCalledWith(wt, 'feat');
     expect(vi.mocked(git.push).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(gh.prCreate).mock.invocationCallOrder[0]);
+  });
+
+  it('PR_JOB_LOG reads the job log from the project', async () => {
+    vi.mocked(gh.prJobLog).mockResolvedValue({ text: 'log' });
+    await expect(invoke(IPC.PR_JOB_LOG, 's1', 'o/r', '456')).resolves.toEqual({ text: 'log' });
+    expect(gh.prJobLog).toHaveBeenCalledWith('/repo', 'o/r', '456');
+  });
+
+  it('PR_RERUN_FAILED asks for the rerun from the project', async () => {
+    vi.mocked(gh.prRerunFailed).mockResolvedValue();
+    await invoke(IPC.PR_RERUN_FAILED, 's1', 'o/r', '123');
+    expect(gh.prRerunFailed).toHaveBeenCalledWith('/repo', 'o/r', '123');
+  });
+
+  it('PR_JOB_LOG and PR_RERUN_FAILED refuse arguments that are not strings, and unknown threads', async () => {
+    await expect(invoke(IPC.PR_JOB_LOG, 's1', 'o/r', 456)).rejects.toThrow('Not a GitHub Actions job');
+    await expect(invoke(IPC.PR_RERUN_FAILED, 's1', ['o/r'], '1')).rejects.toThrow('Not a GitHub Actions run');
+    await expect(invoke(IPC.PR_RERUN_FAILED, 'nope', 'o/r', '1')).rejects.toThrow("This thread's worktree isn't there any more");
+    expect(gh.prJobLog).not.toHaveBeenCalled();
+    expect(gh.prRerunFailed).not.toHaveBeenCalled();
   });
 
   it('PR_LIST_OPEN returns nothing for a path that is not a repository', async () => {

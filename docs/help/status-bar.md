@@ -114,7 +114,10 @@ Click it for the popup. It names the project and branch (and how far behind its 
 Each step's row also has what goes with it:
 
 - **PR**: the pull request's number, state and title, with **Open ↗** to see it on GitHub. Hover the state for the branch it merges from and into.
-- **Checks**: the names of the failing checks, a **new** chip when they failed since you last looked, and **fix with agent →**, which sends a turn asking the agent to read the CI logs and fix them.
+- **Checks**: a **new** chip when they failed since you last looked, and **fix with agent →**, which sends a turn asking the agent to read the CI logs and fix them. Under it, each GitHub Actions workflow with failed jobs:
+  - **log** beside a failed job shows the end of its log in the Focus panel, scrolled to the last error. It works as soon as that job has finished, even while the rest of the run goes on.
+  - **rerun failed** asks GitHub to run the workflow's failed jobs again, and the jobs that need them. It waits until every job in the run has finished, as GitHub only reruns a finished run, then reads **rerun requested** until the checks show it going.
+  - Failing checks from other CI services are listed by name. Their logs are with the service that ran them: **Open ↗** on the PR row gets you there.
 - **Review**: a **2 new** chip for comments since you last looked, and **address with agent →**, which fetches the review comments and asks the agent to address them. Hover **review required** for what it means.
 
 Clicking a chip clears it, and so does closing the popup. When an auto turn gives up and needs you, a note says so under the steps until you dismiss it. Under them, **Auto** turns on the agent fixing CI or addressing reviews by itself (only for an open PR, and only while the thread is idle), and **Other PRs in this thread** lists any others, with **watch** to follow one of them instead.

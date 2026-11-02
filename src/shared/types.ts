@@ -3,6 +3,7 @@ import type { GitConflictCode } from './git-conflicts.js';
 import type { LimitKind } from './limits.js';
 import type { ThreadItems } from './thread-items.js';
 import type { ScheduleOutcome, SkillSchedule, SkillScheduleInput } from './skill-schedules.js';
+import type { CiLogTail } from './ci-log.js';
 
 // ─── Worktree ───
 
@@ -616,15 +617,30 @@ export interface OpenPrSummary {
   url: string;
 }
 
+/** A failed job of a GitHub Actions run, by the check that reports it. */
+export interface FailingJob {
+  /** Digits only. Absent when the check's link names only the run, so
+   *  there is no job log to read. */
+  id?: string;
+  /** The check's name, as GitHub shows it. */
+  name: string;
+}
+
 /** A GitHub Actions run with failed jobs: what
  *  `gh run view <runId> --repo <repo> --log-failed` needs, and the failed
- *  jobs' ids for reading one job's log while the rest of the run goes on. */
+ *  jobs, whose own logs can be read while the rest of the run goes on. */
 export interface FailingRun {
   /** OWNER/REPO, or HOST/OWNER/REPO off github.com (gh's --repo form). */
   repo: string;
-  /** Digits only, as are the job ids. */
+  /** Digits only. */
   runId: string;
-  jobIds: string[];
+  /** The workflow's name, when GitHub gives it. */
+  workflow?: string;
+  /** Its failed jobs. */
+  jobs: FailingJob[];
+  /** Other jobs of the run are still going. gh shows the run's log, and
+   *  GitHub reruns its failed jobs, only once the whole run has finished. */
+  pending?: boolean;
 }
 
 export interface PrInfo {
@@ -644,6 +660,11 @@ export interface PrInfo {
    *  repository. Absent when there are none: checks from other CI services
    *  keep their logs elsewhere. */
   failingRuns?: FailingRun[];
+  /** With failingRuns, the names of the failing checks that are not jobs in
+   *  them: other CI services', or Actions runs in another repository.
+   *  Absent when none, and without failingRuns (then every failing check is
+   *  one of these). */
+  otherFailingChecks?: string[];
   /** Opaque ids of conversation comments + submitted reviews — diffed to detect new feedback. */
   commentSignature?: string[];
   /** Branch the PR merges from. Not always the session's recorded branch: the
@@ -1621,6 +1642,11 @@ export interface GroveBenchAPI {
   /** Post a review (approve, request changes or comment) on one of the
    *  session's PRs, with line comments placed inline where GitHub can take them. */
   submitPrReview(sessionId: string, review: PrReviewSubmit): Promise<PrReviewSubmitResult>;
+  /** The readable end of a failed GitHub Actions job's log, for one of the
+   *  session's PRs (FailingRun's repo and a job id). */
+  getPrJobLog(sessionId: string, repo: string, jobId: string): Promise<CiLogTail>;
+  /** Ask GitHub to rerun a run's failed jobs. */
+  rerunPrFailedJobs(sessionId: string, repo: string, runId: string): Promise<void>;
 
   // External links
   openExternal(url: string): Promise<void>;
@@ -2341,6 +2367,8 @@ export const IPC = {
   PR_CREATE: 'pr:create',
   PR_REVIEW_COMMENTS: 'pr:reviewComments',
   PR_SUBMIT_REVIEW: 'pr:submitReview',
+  PR_JOB_LOG: 'pr:jobLog',
+  PR_RERUN_FAILED: 'pr:rerunFailed',
   AGENT_SET_MODEL: 'agent:setModel',
   AGENT_SET_CONTROL: 'agent:setControl',
   AGENT_GET_CONTROLS: 'agent:getControls',
