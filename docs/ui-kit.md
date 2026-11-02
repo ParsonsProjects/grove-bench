@@ -97,7 +97,7 @@ All in `src/renderer/lib/components/ui/`. Import from the folder's `index.js`:
 
 | Variant | Use |
 |---|---|
-| `default` | The main action in a view: Send, Start, Restart to update. One per view. |
+| `default` | The main action in a view: Send, Start, Restart to update. One per view. A popover that opens with a Next notice (the branch popup) counts as its own view: that notice's action is its one `default` button. |
 | `secondary` | Other actions next to it |
 | `subtle` | A group's other bordered actions, and tools that sit side by side as equals: toolbars, the status bar, Cancel in a dialog. Not a notice's action (see Notice) |
 | `subtle-primary` | The main action of a group inside a view, in green: Add in a section's header, Run on a skill, Retry after a failure, Add beside the field it adds. One per group; a toolbar of equal tools has none |
@@ -135,6 +135,10 @@ A disabled `Button` still gets hover events, so its `title` tooltip can say why 
 `tone`: `info`, `success`, `warning`, `danger`, `neutral`. Errors are announced at once (`role="alert"`); other tones wait their turn (`role="status"`). Titles use the tone's 300 shade, the one that keeps 4.5:1 on the tinted background in both themes; `light-theme.test.ts` checks each tone.
 
 Its main action is a `link` button, green as an action, or `external` (blue) when it opens a web page; anything else, such as Dismiss, is `quiet`. A `subtle` button's border is lost on the notice's tint (about 1.1:1), so it reads as grey text.
+
+`layout`: `inline` (default) puts the actions beside the text; `stacked` puts them under it, for a narrow place such as a popover, where beside the text they squeeze it and are easy to miss.
+
+**A Next notice** says what to do now at the top of a popover (the branch popup's Next): `success` when there is something to do, `info` while waiting, always `stacked`. Its action is a `default` button, the popover's one main action, or `external` when it opens a web page. The rows under it offer their own actions only when they aren't the next one, in grey (`subtle`), so nothing is offered twice.
 
 ```svelte
 <Notice tone="danger" title="Couldn't save settings">

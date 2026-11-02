@@ -115,6 +115,16 @@ describe('Notice', () => {
     render(Notice, { tone: 'warning', title: 'No git identity' });
     expect(screen.getByRole('status')).toHaveTextContent('No git identity');
   });
+
+  it('puts the actions beside the text, or under it when stacked', () => {
+    const actions = createRawSnippet(() => ({ render: () => '<button>Push 1 commit</button>' }));
+    render(Notice, { tone: 'success', title: '1 commit not pushed', actions });
+    expect(screen.getByRole('status')).not.toHaveClass('flex-col');
+    cleanup();
+    render(Notice, { tone: 'success', title: '1 commit not pushed', layout: 'stacked', actions });
+    expect(screen.getByRole('status')).toHaveClass('flex-col');
+    expect(screen.getByRole('button', { name: 'Push 1 commit' }).parentElement).toHaveClass('self-start');
+  });
 });
 
 describe('SectionLabel', () => {

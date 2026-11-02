@@ -624,6 +624,21 @@ export interface FailingJob {
   id?: string;
   /** The check's name, as GitHub shows it. */
   name: string;
+  /** How long it ran, in whole seconds, when GitHub says. */
+  seconds?: number;
+}
+
+/** GitHub's own verdict on merging a PR (mergeStateStatus), lower case:
+ *  clean (nothing stops it), behind (its base moved on and must be merged
+ *  in first), blocked (a required review, check or rule), dirty
+ *  (conflicts), unstable (checks that aren't required failed), has_hooks
+ *  (clean, with pre-receive hooks), draft, unknown (not worked out yet). */
+export type PrMergeState = 'clean' | 'behind' | 'blocked' | 'dirty' | 'unstable' | 'has_hooks' | 'draft' | 'unknown';
+
+/** A reviewer's latest review that counts. */
+export interface PrReviewer {
+  login: string;
+  state: 'approved' | 'changes_requested' | 'commented';
 }
 
 /** A GitHub Actions run with failed jobs: what
@@ -676,6 +691,19 @@ export interface PrInfo {
    *  approve or request changes on their own PR. Absent when either login
    *  is unknown. */
   viewerIsAuthor?: boolean;
+  /** GitHub's verdict on merging, when it gives one. */
+  mergeState?: PrMergeState;
+  /** Auto-merge is on: GitHub merges the PR by itself once nothing stops it. */
+  autoMerge?: boolean;
+  /** Each reviewer's latest review that counts, oldest first. Absent when none. */
+  reviewers?: PrReviewer[];
+  /** Whom a review is asked of and hasn't come from yet: logins, or team
+   *  names. Absent when none. */
+  requestedReviewers?: string[];
+  /** Names of the checks not yet passed or failed (checks.pending counts
+   *  them): queued, running, or a required status not reported yet. Absent
+   *  when none. */
+  runningChecks?: string[];
 }
 
 export type PrReviewEvent = 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT';

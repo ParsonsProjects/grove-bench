@@ -1,6 +1,6 @@
 import { isReadOnly } from './process-host.js';
 import { runInAgentHost } from './process-host-run.js';
-import type { FailingRun, OpenPrSummary, PrChecksSummary, PrCreateOpts, PrInfo, PrReviewComment, PrReviewEvent } from '../shared/types.js';
+import type { FailingRun, OpenPrSummary, PrChecksSummary, PrCreateOpts, PrInfo, PrMergeState, PrReviewComment, PrReviewer, PrReviewEvent } from '../shared/types.js';
 import { isRecord } from './persisted-state.js';
 import { ghRepoArg, parseActionsLink, parsePrUrl, parseRepoArg, sameRepo } from '../shared/github-links.js';
 import { CI_RERUN_UNANSWERED, tailCiLog, type CiLogTail } from '../shared/ci-log.js';
@@ -188,7 +188,33 @@ export function resetGhLoginCacheForTests(): void {
   cachedLogin = null;
 }
 
-const PR_VIEW_FIELDS = 'number,url,state,isDraft,title,reviewDecision,statusCheckRollup,headRefOid,comments,reviews,headRefName,baseRefName,author';
+const PR_BASE_FIELDS = 'number,url,state,isDraft,title,reviewDecision,statusCheckRollup,headRefOid,comments,reviews,headRefName,baseRefName,author';
+/** What the branch popup shows of merging and reviewing. Fields a gh too
+ *  old to know them would refuse the whole call over ("Unknown JSON
+ *  field"), so prFields drops them once one has. */
+const PR_MERGE_FIELDS = 'mergeStateStatus,autoMergeRequest,reviewRequests';
+let mergeFieldsUnknown = false;
+
+function prFields(): string {
+  return mergeFieldsUnknown ? PR_BASE_FIELDS : `${PR_BASE_FIELDS},${PR_MERGE_FIELDS}`;
+}
+
+/** Run a `gh pr view/list --json` call, once more without the merge fields
+ *  if this gh doesn't know them. */
+async function ghPrJson(args: string[], repoPath: string): Promise<string> {
+  try {
+    return await ghOnline([...args, '--json', prFields()], repoPath);
+  } catch (e) {
+    const stderr = (e as { stderr?: unknown } | null)?.stderr;
+    if (mergeFieldsUnknown || typeof stderr !== 'string' || !/Unknown JSON field/i.test(stderr)) throw e;
+    mergeFieldsUnknown = true;
+    return ghOnline([...args, '--json', prFields()], repoPath);
+  }
+}
+
+export function resetPrFieldsForTests(): void {
+  mergeFieldsUnknown = false;
+}
 /** Upper bound on PRs read per head branch. A branch rarely has more than a
  *  handful (GitHub allows one open PR per head+base pair); the rest are history. */
 const PR_LIST_LIMIT = 20;
@@ -246,6 +272,15 @@ export function latestChecks(rollup: unknown): CheckRow[] {
   return kept;
 }
 
+/** Whole seconds from one of gh's times to another, if both are real:
+ *  gh writes a time GitHub didn't give as 0001-01-01. */
+function secondsBetween(from: unknown, to: unknown): number | undefined {
+  const start = typeof from === 'string' ? Date.parse(from) : NaN;
+  const end = typeof to === 'string' ? Date.parse(to) : NaN;
+  if (!(start > 0) || !(end >= start)) return undefined;
+  return Math.round((end - start) / 1000);
+}
+
 function checkName(item: CheckRow): string {
   return String(item.name || item.context || 'check');
 }
@@ -285,7 +320,8 @@ function splitFailing(checks: CheckRow[], prUrl: string): { runs: FailingRun[]; 
     const { jobId } = link;
     const name = typeof item.name === 'string' && item.name ? item.name : jobId ? `job ${jobId}` : 'job';
     if (jobId ? !run.jobs.some((j) => j.id === jobId) : !run.jobs.some((j) => !j.id && j.name === name)) {
-      run.jobs.push({ ...(jobId ? { id: jobId } : {}), name });
+      const seconds = secondsBetween(item.startedAt, item.completedAt);
+      run.jobs.push({ ...(jobId ? { id: jobId } : {}), name, ...(seconds !== undefined ? { seconds } : {}) });
     }
   }
   // A check of the same run still queued or running.
@@ -345,7 +381,7 @@ function summarize(checks: CheckRow[]): PrChecksSummary | null {
   return summary;
 }
 
-/** The fields of gh's PR JSON (PR_VIEW_FIELDS) that parsePr reads. gh's own
+/** The fields of gh's PR JSON (prFields) that parsePr reads. gh's own
  *  output, so trusted to have these types where they are there at all. */
 interface GhPrJson {
   number?: number;
@@ -361,6 +397,56 @@ interface GhPrJson {
   comments?: unknown;
   reviews?: unknown;
   author?: { login?: string };
+  mergeStateStatus?: string;
+  autoMergeRequest?: unknown;
+  reviewRequests?: unknown;
+}
+
+const MERGE_STATES = new Set<PrMergeState>(['clean', 'behind', 'blocked', 'dirty', 'unstable', 'has_hooks', 'draft', 'unknown']);
+
+function mergeStateOf(status: unknown): PrMergeState | undefined {
+  const state = typeof status === 'string' ? status.toLowerCase() : '';
+  return MERGE_STATES.has(state as PrMergeState) ? (state as PrMergeState) : undefined;
+}
+
+/**
+ * Each reviewer's standing review, from all the PR's reviews in order: their
+ * last approval or request for changes (a dismissed one no longer counts),
+ * else that they commented. A comment after a request for changes doesn't
+ * take it back, as GitHub's reviewDecision doesn't. The PR's author and the
+ * gh account are left out: the agent answers reviews as the gh account,
+ * which reads as a comment review, as commentSignature also allows for.
+ */
+function reviewersOf(reviews: unknown, leaveOut: (string | null | undefined)[]): PrReviewer[] {
+  if (!Array.isArray(reviews)) return [];
+  const skip = new Set(leaveOut.filter((login): login is string => !!login));
+  const byLogin = new Map<string, { opinion?: 'approved' | 'changes_requested'; commented?: boolean }>();
+  for (const review of reviews) {
+    const login = at(review, 'author', 'login');
+    if (typeof login !== 'string' || !login || skip.has(login)) continue;
+    const entry = byLogin.get(login) ?? {};
+    const state = String(at(review, 'state') ?? '').toUpperCase();
+    if (state === 'APPROVED') entry.opinion = 'approved';
+    else if (state === 'CHANGES_REQUESTED') entry.opinion = 'changes_requested';
+    else if (state === 'DISMISSED') entry.opinion = undefined;
+    else if (state === 'COMMENTED') entry.commented = true;
+    else continue;
+    byLogin.set(login, entry);
+  }
+  const reviewers: PrReviewer[] = [];
+  for (const [login, entry] of byLogin) {
+    const state = entry.opinion ?? (entry.commented ? 'commented' : undefined);
+    if (state) reviewers.push({ login, state });
+  }
+  return reviewers;
+}
+
+/** Whom a review is asked of (reviewRequests): a user's login, a team's name. */
+function requestedReviewersOf(reviewRequests: unknown): string[] {
+  if (!Array.isArray(reviewRequests)) return [];
+  return reviewRequests
+    .map((request) => at(request, 'login') ?? at(request, 'name') ?? at(request, 'slug'))
+    .filter((name): name is string => typeof name === 'string' && name.length > 0);
 }
 
 /** Shape one gh PR JSON object into PrInfo; null when it isn't a PR. */
@@ -371,6 +457,11 @@ function parsePr(json: unknown, selfLogin?: string | null): PrInfo | null {
   // Each check once, worked out once for all three.
   const checks = latestChecks(data.statusCheckRollup);
   const { runs: failingRuns, others: otherFailingChecks } = splitFailing(checks, data.url);
+  // The checks summarize counts as pending: neither passed nor failed.
+  const runningChecks = checks.filter((item) => { const v = checkVerdict(item); return !PASSED_VERDICTS.has(v) && !FAILED_VERDICTS.has(v); }).map(checkName);
+  const mergeState = mergeStateOf(data.mergeStateStatus);
+  const reviewers = reviewersOf(data.reviews, [data.author?.login, selfLogin]);
+  const requestedReviewers = requestedReviewersOf(data.reviewRequests);
   return {
     number: data.number,
     url: data.url,
@@ -389,6 +480,11 @@ function parsePr(json: unknown, selfLogin?: string | null): PrInfo | null {
     // Only when both logins are known: an unknown answer must not hide the
     // review options for a PR someone else opened.
     ...(selfLogin && typeof data.author?.login === 'string' ? { viewerIsAuthor: data.author.login === selfLogin } : {}),
+    ...(mergeState ? { mergeState } : {}),
+    ...(isRecord(data.autoMergeRequest) ? { autoMerge: true } : {}),
+    ...(reviewers.length > 0 ? { reviewers } : {}),
+    ...(requestedReviewers.length > 0 ? { requestedReviewers } : {}),
+    ...(runningChecks.length > 0 ? { runningChecks } : {}),
   };
 }
 
@@ -403,7 +499,7 @@ function parsePr(json: unknown, selfLogin?: string | null): PrInfo | null {
 export async function prStatus(repoPath: string, branch: string, selfLogin?: string | null): Promise<PrInfo | null> {
   let stdout: string;
   try {
-    stdout = await ghOnline(['pr', 'view', branch, '--json', PR_VIEW_FIELDS], repoPath);
+    stdout = await ghPrJson(['pr', 'view', branch], repoPath);
   } catch (e) {
     if (isNoPrError(e)) return null;
     const err = e as { stderr?: string; message?: string };
@@ -421,7 +517,7 @@ export async function prStatus(repoPath: string, branch: string, selfLogin?: str
 export async function prList(repoPath: string, branch: string, selfLogin?: string | null): Promise<PrInfo[]> {
   let stdout: string;
   try {
-    stdout = await ghOnline(['pr', 'list', '--head', branch, '--state', 'all', '--limit', String(PR_LIST_LIMIT), '--json', PR_VIEW_FIELDS], repoPath);
+    stdout = await ghPrJson(['pr', 'list', '--head', branch, '--state', 'all', '--limit', String(PR_LIST_LIMIT)], repoPath);
   } catch (e) {
     const err = e as { stderr?: string; message?: string };
     throw new Error(`gh pr list failed: ${err.stderr?.trim() || err.message || String(e)}`, { cause: e });
