@@ -215,6 +215,7 @@ const mockGroveBench = {
   previewSetViewport: vi.fn(),
   previewSnapshot: vi.fn(() => Promise.resolve(null as string | null)),
   previewAgentFrame: vi.fn(() => Promise.resolve(null as { version: number; dataUrl: string } | null)),
+  previewClearSignIns: vi.fn(() => Promise.resolve()),
   previewGetStates: vi.fn(() => Promise.resolve({} as Record<string, { user: import('../../shared/types.js').PreviewPageState | null; agent: import('../../shared/types.js').PreviewPageState | null }>)),
   onPreviewState: vi.fn((_cb: (sessionId: string, page: import('../../shared/types.js').PreviewPageKind, state: import('../../shared/types.js').PreviewPageState | null) => void) => () => {}),
   onPreviewKey: vi.fn((_cb: (sessionId: string, key: import('../../shared/types.js').PreviewKeyForward) => void) => () => {}),

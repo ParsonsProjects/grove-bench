@@ -1,5 +1,10 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
-import { PreviewManager } from './preview.js';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
+import { app, session } from 'electron';
+import { PreviewManager, isOffMachineRequest, previewPartition, withoutCookies } from './preview.js';
 
 afterEach(() => {
   vi.useRealTimers();
@@ -74,5 +79,168 @@ describe('PreviewManager.closeAgentPage', () => {
     m.closeAgentPage('unknown');
     expect(win.destroy).toHaveBeenCalledOnce();
     expect(send).toHaveBeenCalledOnce();
+  });
+});
+
+describe('previewPartition', () => {
+  it('gives each project one store kept on disk, whatever the path\'s case', () => {
+    const a = previewPartition('C:/dev/App', true);
+    expect(a).toMatch(/^persist:grove-preview-[0-9a-f]{16}$/);
+    expect(previewPartition('c:/DEV/app', true)).toBe(a);
+    expect(previewPartition('C:/dev/other', true)).not.toBe(a);
+  });
+
+  it('gives a dev build its own store, which the installed app\'s encrypted cookies would break', () => {
+    expect(previewPartition('C:/dev/App', false)).toMatch(/^persist:grove-preview-dev-[0-9a-f]{16}$/);
+    expect(previewPartition('C:/dev/App', false).slice(-16)).toBe(previewPartition('C:/dev/App', true).slice(-16));
+  });
+});
+
+describe('isOffMachineRequest and withoutCookies', () => {
+  it('counts requests to other sites, in any scheme, as off this machine', () => {
+    expect(isOffMachineRequest('https://github.com/login')).toBe(true);
+    expect(isOffMachineRequest('wss://api.example.com/socket')).toBe(true);
+    for (const local of ['http://localhost:3000/', 'ws://localhost:5173/', 'http://127.0.0.1:8080', 'http://[::1]:3000', 'http://app.localhost/']) {
+      expect(isOffMachineRequest(local)).toBe(false);
+    }
+    expect(isOffMachineRequest('file:///C:/repo/index.html')).toBe(false);
+    expect(isOffMachineRequest('data:text/plain,hi')).toBe(false);
+    expect(isOffMachineRequest('not a url')).toBe(false);
+  });
+
+  it('drops the cookie header in any case and keeps the rest', () => {
+    expect(withoutCookies({ Cookie: 'a=1', cookie: 'b=2', Accept: '*/*' })).toEqual({ Accept: '*/*' });
+  });
+});
+
+describe('PreviewManager: one store per project', () => {
+  type Handler = (details: Record<string, unknown>, callback: (r: unknown) => void) => void;
+  type Internals = {
+    ensureEntry(sessionId: string, worktreePath: string, repoPath: string): { partition: string; user: unknown; agent: unknown };
+    entries: Map<string, { partition: string; user: unknown; agent: unknown }>;
+  };
+
+  function fakeSession() {
+    const handlers: Record<string, Handler> = {};
+    const capture = (name: string) => vi.fn((fn: Handler) => { handlers[name] = fn; });
+    return {
+      handlers,
+      setPermissionRequestHandler: vi.fn(),
+      setPermissionCheckHandler: vi.fn(),
+      setDevicePermissionHandler: vi.fn(),
+      webRequest: {
+        onBeforeRequest: capture('beforeRequest'),
+        onBeforeSendHeaders: capture('beforeSendHeaders'),
+        onCompleted: vi.fn(),
+        onErrorOccurred: vi.fn(),
+      },
+      on: vi.fn(),
+      clearStorageData: vi.fn(() => Promise.resolve()),
+      clearCache: vi.fn(() => Promise.resolve()),
+      clearAuthCache: vi.fn(() => Promise.resolve()),
+    };
+  }
+
+  const contents = (id: number, url = 'http://localhost:3000/') =>
+    ({ id, isDestroyed: () => false, getURL: () => url, reload: vi.fn() });
+  const userPage = (id: number, url?: string) => ({ view: { webContents: contents(id, url) } });
+  const agentPage = (id: number, url?: string) => ({ win: { isDestroyed: () => false, webContents: contents(id, url) } });
+
+  const repo = path.resolve('/projects/app');
+  const wt1 = path.join(repo, 'wt1');
+  const wt2 = path.join(repo, 'wt2');
+  let ses: ReturnType<typeof fakeSession>;
+  let m: PreviewManager;
+  let internals: Internals;
+
+  beforeEach(() => {
+    ses = fakeSession();
+    vi.mocked(session.fromPartition).mockReset().mockReturnValue(ses as never);
+    m = new PreviewManager();
+    internals = m as unknown as Internals;
+  });
+
+  function request(handler: string, details: Record<string, unknown>): unknown {
+    let result: unknown;
+    ses.handlers[handler](details, (r) => { result = r; });
+    return result;
+  }
+
+  it('sets up a project\'s store once, for all its threads', () => {
+    const a = internals.ensureEntry('s1', wt1, repo);
+    const b = internals.ensureEntry('s2', wt2, repo);
+    expect(a.partition).toBe(b.partition);
+    expect(ses.webRequest.onBeforeRequest).toHaveBeenCalledOnce();
+    expect(internals.ensureEntry('s3', '/elsewhere/wt', '/elsewhere').partition).not.toBe(a.partition);
+  });
+
+  it('loads a file only for the page whose worktree holds it', () => {
+    internals.ensureEntry('s1', wt1, repo).user = userPage(1);
+    internals.ensureEntry('s2', wt2, repo).user = userPage(2);
+    const file = pathToFileURL(path.join(wt2, 'index.html')).href;
+
+    expect(request('beforeRequest', { url: file, webContentsId: 2 })).toEqual({ cancel: false });
+    expect(request('beforeRequest', { url: file, webContentsId: 1 })).toEqual({ cancel: true });
+    // A request no open page made has no worktree, so no file loads.
+    expect(request('beforeRequest', { url: file, webContentsId: 99 })).toEqual({ cancel: true });
+    expect(request('beforeRequest', { url: file })).toEqual({ cancel: true });
+    expect(request('beforeRequest', { url: 'https://example.com/', webContentsId: 1 })).toEqual({});
+  });
+
+  it('sends no cookies from the agent\'s page to other sites', () => {
+    internals.ensureEntry('s1', wt1, repo).user = userPage(1);
+    internals.entries.get('s1')!.agent = agentPage(2);
+    const headers = { Cookie: 'session=secret', Accept: '*/*' };
+
+    expect(request('beforeSendHeaders', { url: 'https://github.com/api', webContentsId: 2, requestHeaders: headers }))
+      .toEqual({ requestHeaders: { Accept: '*/*' } });
+    expect(request('beforeSendHeaders', { url: 'http://localhost:3000/api', webContentsId: 2, requestHeaders: headers })).toEqual({});
+    expect(request('beforeSendHeaders', { url: 'https://github.com/api', webContentsId: 1, requestHeaders: headers })).toEqual({});
+  });
+
+  it('closing a thread keeps the project\'s sign-ins', () => {
+    internals.ensureEntry('s1', wt1, repo);
+    m.close('s1');
+    expect(ses.clearStorageData).not.toHaveBeenCalled();
+    expect(ses.clearCache).not.toHaveBeenCalled();
+  });
+
+  it('Clear sign-ins empties the project\'s store and reloads its open pages only', async () => {
+    const mine = userPage(1);
+    const mineAgent = agentPage(2);
+    const blank = userPage(3, '');
+    internals.ensureEntry('s1', wt1, repo).user = mine;
+    internals.entries.get('s1')!.agent = mineAgent;
+    internals.ensureEntry('s2', wt2, repo).user = blank;
+    const other = userPage(4);
+    internals.ensureEntry('s3', '/elsewhere/wt', '/elsewhere').user = other;
+
+    await m.clearSignIns(repo);
+
+    expect(session.fromPartition).toHaveBeenLastCalledWith(previewPartition(repo, false));
+    expect(ses.clearStorageData).toHaveBeenCalledOnce();
+    expect(ses.clearCache).toHaveBeenCalledOnce();
+    expect(ses.clearAuthCache).toHaveBeenCalledOnce();
+    expect(mine.view.webContents.reload).toHaveBeenCalledOnce();
+    expect(mineAgent.win.webContents.reload).toHaveBeenCalledOnce();
+    expect(blank.view.webContents.reload).not.toHaveBeenCalled();
+    expect(other.view.webContents.reload).not.toHaveBeenCalled();
+  });
+
+  it('Remove project clears its store only if Preview was used there', async () => {
+    const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'gb-preview-'));
+    vi.mocked(app.getPath).mockReturnValue(userData);
+    try {
+      await m.forgetProject(repo);
+      expect(ses.clearStorageData).not.toHaveBeenCalled();
+
+      const name = previewPartition(repo, false).slice('persist:'.length);
+      fs.mkdirSync(path.join(userData, 'Partitions', name), { recursive: true });
+      await m.forgetProject(repo);
+      expect(ses.clearStorageData).toHaveBeenCalledOnce();
+    } finally {
+      vi.mocked(app.getPath).mockImplementation((n: string) => `/mock/${n}`);
+      fs.rmSync(userData, { recursive: true, force: true });
+    }
   });
 });

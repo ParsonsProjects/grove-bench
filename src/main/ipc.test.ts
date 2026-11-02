@@ -32,7 +32,7 @@ const m = vi.hoisted(() => {
       'getGoal', 'getGoals', 'saveGoal', 'setGoalHidden',
     ),
     terminalManager: fns('killAllForSession', 'spawnPty', 'write', 'resize', 'killPty', 'isAlive'),
-    previewManager: fns('close', 'closeAgentPage', 'navigate', 'command', 'setViewport', 'snapshot', 'agentFrame', 'getStates'),
+    previewManager: fns('close', 'closeAgentPage', 'navigate', 'command', 'setViewport', 'snapshot', 'agentFrame', 'getStates', 'clearSignIns', 'forgetProject'),
     adapterRegistry: fns('get', 'getDefault', 'getBuiltInDefault', 'list'),
     registerClaudeAccount: vi.fn((account: { id: string }) => ({ id: account.id })),
     settings: fns('getSettings', 'saveSettings', 'applyImmediateEffects'),
@@ -189,6 +189,7 @@ beforeEach(() => {
   m.sessionManager.isMidTurn.mockReturnValue(false);
   m.sessionManager.beginSearch.mockReturnValue(vi.fn());
   m.projectPath.projectKind.mockResolvedValue('git');
+  m.previewManager.forgetProject.mockResolvedValue(undefined);
   m.sessionManager.createSession.mockImplementation(async (o: { id: string; branch: string }) => ({ id: o.id, branch: o.branch, agentType: 'claude' }));
 
   m.worktreeManager.getWorktree.mockImplementation((id: string) => (id === 's1' ? wtInfo() : undefined));
@@ -231,6 +232,16 @@ describe('repos', () => {
     m.sessionManager.getSessionsByRepo.mockReturnValue([{ id: 's1' }]);
     await expect(invoke(IPC.REPO_REMOVE, '/repo')).rejects.toThrow('active threads');
     expect(m.worktreeManager.cleanupOrphans).not.toHaveBeenCalled();
+    expect(m.previewManager.forgetProject).not.toHaveBeenCalled();
+  });
+
+  it('REPO_REMOVE clears the project\'s Preview sign-ins, and still forgets it when that fails', async () => {
+    m.sessionManager.getSessionsByRepo.mockReturnValue([]);
+    m.projectPath.projectKind.mockResolvedValue('folder');
+    m.previewManager.forgetProject.mockRejectedValueOnce(new Error('locked'));
+    await invoke(IPC.REPO_REMOVE, '/repo');
+    expect(m.previewManager.forgetProject).toHaveBeenCalledWith('/repo');
+    expect(m.appState.forgetProject).toHaveBeenCalledWith('/repo');
   });
 });
 
@@ -1647,12 +1658,21 @@ describe('renderer input checks', () => {
     expect(() => invoke(IPC.PREVIEW_NAVIGATE, 'nope', 'user', 'http://localhost:3000')).toThrow("isn't ready");
 
     invoke(IPC.PREVIEW_NAVIGATE, 's1', 'user', 'http://localhost:3000');
-    expect(m.previewManager.navigate).toHaveBeenCalledWith('s1', wt, 'user', 'http://localhost:3000');
+    expect(m.previewManager.navigate).toHaveBeenCalledWith('s1', wt, '/repo', 'user', 'http://localhost:3000');
 
     invoke(IPC.PREVIEW_SET_VIEWPORT, 's1', { x: 0, y: 0, width: Number.NaN, height: 10 });
     expect(m.previewManager.setViewport).not.toHaveBeenCalled();
     invoke(IPC.PREVIEW_SET_VIEWPORT, 's1', null);
     expect(m.previewManager.setViewport).toHaveBeenCalledWith('s1', null);
+  });
+
+  it('preview: Clear sign-ins clears the thread\'s project, and refuses anything else', async () => {
+    await expect(invoke(IPC.PREVIEW_CLEAR_SIGN_INS, 42)).rejects.toThrow('Invalid preview request');
+    await expect(invoke(IPC.PREVIEW_CLEAR_SIGN_INS, 'nope')).rejects.toThrow("isn't ready");
+    expect(m.previewManager.clearSignIns).not.toHaveBeenCalled();
+
+    await invoke(IPC.PREVIEW_CLEAR_SIGN_INS, 's1');
+    expect(m.previewManager.clearSignIns).toHaveBeenCalledWith('/repo');
   });
 
   it('OPEN_EXTERNAL opens web links only', async () => {

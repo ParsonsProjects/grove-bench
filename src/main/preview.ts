@@ -1,8 +1,10 @@
 /**
  * Preview tab: a browser per conversation.
  *
- * Each conversation gets two pages that share one in-memory storage partition
- * (cookies, localStorage), so logging in on one logs in the other:
+ * Each conversation gets two pages. They use its project's storage partition
+ * (cookies, localStorage), which every thread in the project shares and which
+ * is kept on disk, so signing in once signs in both pages of every thread,
+ * after a restart too (see previewPartition):
  *
  * - Your page: a WebContentsView in the Grove window. The renderer reports
  *   where the Preview tab's content area is and the view is placed on top of
@@ -16,13 +18,17 @@
  *
  * Both pages run sandboxed with no preload and no Node, deny permission
  * requests (except writing to the clipboard) and are closed with the
- * conversation.
+ * conversation. The project's storage stays until Clear sign-ins or Remove
+ * project.
  */
-import { BrowserWindow, Menu, WebContentsView, clipboard, session as electronSession, shell } from 'electron';
+import { createHash } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import { BrowserWindow, Menu, WebContentsView, app, clipboard, session as electronSession, shell } from 'electron';
 import type { MenuItemConstructorOptions, NativeImage, Session, WebContents } from 'electron';
 import { IPC } from '../shared/types.js';
 import type { PreviewBounds, PreviewCommand, PreviewKeyForward, PreviewPageKind, PreviewPageState } from '../shared/types.js';
-import { isLocalHttpUrl, normalizeTypedUrl } from '../shared/preview-url.js';
+import { isLocalHostname, isLocalHttpUrl, normalizeTypedUrl } from '../shared/preview-url.js';
 import { checkFileRequest, checkNavigation } from './preview-policy.js';
 import { PreviewLog, consoleLevel, formatLogEntries } from './preview-log.js';
 import { previewKeyAction } from './preview-keys.js';
@@ -50,6 +56,35 @@ const MAX_PNG_BYTES = 1_500_000;
 /** Errors that just mean a load was replaced by another one. */
 const ERR_ABORTED = -3;
 
+const PARTITION_PREFIX = 'grove-preview-';
+
+/**
+ * The storage partition a project's Preview pages share. `persist:` keeps it
+ * on disk, under `<userData>/Partitions/<name>`, so sign-ins outlive the
+ * thread and the app. The installed app encrypts its cookies there (the
+ * enableCookieEncryption fuse, electron-builder.yml). A dev build runs plain
+ * Electron with that fuse off, which can't read those cookies and leaves
+ * the store unusable for the installed app, so it gets a store of its own.
+ * Windows paths ignore case, so neither does the name.
+ */
+export function previewPartition(repoPath: string, packaged: boolean): string {
+  const hash = createHash('sha256').update(path.resolve(repoPath).toLowerCase()).digest('hex').slice(0, 16);
+  return `persist:${PARTITION_PREFIX}${packaged ? '' : 'dev-'}${hash}`;
+}
+
+/** Whether a request goes to a site other than this machine (any scheme:
+ *  a dev server's ws:// socket is local too). */
+export function isOffMachineRequest(url: string): boolean {
+  let u: URL;
+  try { u = new URL(url); } catch { return false; }
+  return !!u.hostname && !isLocalHostname(u.hostname);
+}
+
+/** A request header list without its cookies. */
+export function withoutCookies(headers: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(Object.entries(headers).filter(([name]) => name.toLowerCase() !== 'cookie'));
+}
+
 interface UserPage {
   view: WebContentsView;
   state: PreviewPageState;
@@ -73,6 +108,7 @@ interface AgentPage {
 interface Entry {
   sessionId: string;
   worktreePath: string;
+  repoPath: string;
   partition: string;
   user: UserPage | null;
   agent: AgentPage | null;
@@ -137,24 +173,21 @@ export class PreviewManager {
 
   // ─── Lifecycle ───
 
-  private partitionFor(sessionId: string): string {
-    // No "persist:" prefix: storage lives in memory and is cleared on close.
-    return `grove-preview-${sessionId}`;
-  }
-
-  private ensureEntry(sessionId: string, worktreePath: string): Entry {
+  private ensureEntry(sessionId: string, worktreePath: string, repoPath: string): Entry {
     let entry = this.entries.get(sessionId);
     if (!entry) {
-      entry = { sessionId, worktreePath, partition: this.partitionFor(sessionId), user: null, agent: null, viewport: null };
+      const partition = previewPartition(repoPath, app.isPackaged);
+      entry = { sessionId, worktreePath, repoPath, partition, user: null, agent: null, viewport: null };
       this.entries.set(sessionId, entry);
-      this.configurePartition(entry.partition, sessionId);
+      this.configurePartition(partition);
     } else if (worktreePath) {
       entry.worktreePath = worktreePath;
     }
     return entry;
   }
 
-  /** Close both pages and forget the conversation's storage. */
+  /** Close both pages. The project's storage (sign-ins) stays for its other
+   *  threads and the next start. */
   close(sessionId: string): void {
     const entry = this.entries.get(sessionId);
     if (!entry) return;
@@ -170,9 +203,32 @@ export class PreviewManager {
       if (!entry.agent.win.isDestroyed()) entry.agent.win.destroy();
       this.sendState(sessionId, 'agent', null);
     }
-    const ses = electronSession.fromPartition(entry.partition);
-    ses.clearStorageData().catch(() => { /* best effort */ });
-    ses.clearCache().catch(() => { /* best effort */ });
+  }
+
+  /**
+   * Sign out of everything in a project's Preview: cookies, storage, service
+   * workers, the cache and HTTP sign-ins. Open pages reload, since they still
+   * hold the old sign-in in memory.
+   */
+  async clearSignIns(repoPath: string): Promise<void> {
+    const partition = previewPartition(repoPath, app.isPackaged);
+    const ses = electronSession.fromPartition(partition);
+    await Promise.all([ses.clearStorageData(), ses.clearCache(), ses.clearAuthCache()]);
+    logger.info(`[preview] cleared sign-ins for ${repoPath}`);
+    for (const entry of this.entries.values()) {
+      if (entry.partition !== partition) continue;
+      for (const wc of [entry.user?.view.webContents, entry.agent?.win.webContents]) {
+        if (wc && !wc.isDestroyed() && wc.getURL()) wc.reload();
+      }
+    }
+  }
+
+  /** Remove project: clear its stored sign-ins, if Preview was ever used
+   *  there. Electron keeps the emptied folder. */
+  async forgetProject(repoPath: string): Promise<void> {
+    const name = previewPartition(repoPath, app.isPackaged).slice('persist:'.length);
+    if (!fs.existsSync(path.join(app.getPath('userData'), 'Partitions', name))) return;
+    await this.clearSignIns(repoPath);
   }
 
   /** Close the agent's page, e.g. when the conversation goes to sleep: nothing
@@ -192,9 +248,27 @@ export class PreviewManager {
     for (const id of [...this.entries.keys()]) this.close(id);
   }
 
-  // ─── Partition (shared by both pages) ───
+  // ─── Partition (shared by every page in a project) ───
 
-  private configurePartition(partition: string, sessionId: string): void {
+  /** The thread and page a request came from: the partition is shared, so
+   *  the handlers can't go by thread. */
+  private ownerOf(webContentsId: number | undefined): { entry: Entry; kind: PreviewPageKind } | null {
+    if (webContentsId === undefined) return null;
+    for (const entry of this.entries.values()) {
+      const user = entry.user?.view.webContents;
+      if (user && !user.isDestroyed() && user.id === webContentsId) return { entry, kind: 'user' };
+      const agent = entry.agent?.win;
+      if (agent && !agent.isDestroyed() && agent.webContents.id === webContentsId) return { entry, kind: 'agent' };
+    }
+    return null;
+  }
+
+  private agentPageFor(webContentsId: number | undefined): AgentPage | null {
+    const owner = this.ownerOf(webContentsId);
+    return owner?.kind === 'agent' ? owner.entry.agent : null;
+  }
+
+  private configurePartition(partition: string): void {
     if (this.configuredPartitions.has(partition)) return;
     this.configuredPartitions.add(partition);
     const ses: Session = electronSession.fromPartition(partition);
@@ -205,50 +279,53 @@ export class PreviewManager {
     ses.setPermissionCheckHandler((_wc, permission) => permission === 'clipboard-sanitized-write');
     ses.setDevicePermissionHandler(() => false);
 
-    // Files load only from inside the worktree, and the agent's page only loads
-    // web file types: an iframe or script tag could otherwise show it any file.
+    // Files load only from inside the page's own worktree, and the agent's page
+    // only loads web file types: an iframe or script tag could otherwise show
+    // it any file. A request no open page made (no worktree) loads no file.
     // No URL filter: 'file:///*' would miss UNC paths (file://server/share).
     ses.webRequest.onBeforeRequest((details, callback) => {
       if (!details.url.startsWith('file:')) {
         callback({});
         return;
       }
-      const entry = this.entries.get(sessionId);
-      const agent = this.agentPageFor(sessionId, details.webContentsId);
-      const check = checkFileRequest(details.url, agent ? 'agent' : 'user', entry?.worktreePath ?? '');
+      const owner = this.ownerOf(details.webContentsId);
+      const agent = owner?.kind === 'agent' ? owner.entry.agent : null;
+      const check = checkFileRequest(details.url, owner?.kind ?? 'agent', owner?.entry.worktreePath ?? '');
       if (!check.ok) {
         agent?.log.add({ kind: 'page', level: 'warning', text: check.reason });
-        logger.info(`[preview] ${sessionId}: ${check.reason}`);
+        logger.info(`[preview] ${owner?.entry.sessionId ?? 'no page'}: ${check.reason}`);
       }
       callback({ cancel: !check.ok });
     });
 
-    // The agent reads failed requests with preview_logs. Handlers look the entry
+    // The agent's page only opens local pages, but those can still load or
+    // fetch from other sites. They go without cookies, so a page the agent
+    // writes can't act on a site you signed in to in your page.
+    ses.webRequest.onBeforeSendHeaders((details, callback) => {
+      const strip = !!this.agentPageFor(details.webContentsId) && isOffMachineRequest(details.url);
+      callback(strip ? { requestHeaders: withoutCookies(details.requestHeaders) } : {});
+    });
+
+    // The agent reads failed requests with preview_logs. Handlers look the page
     // up on each call: the partition outlives a closed and reopened page.
     ses.webRequest.onCompleted((details) => {
       if (details.statusCode < 400) return;
-      const agent = this.agentPageFor(sessionId, details.webContentsId);
+      const agent = this.agentPageFor(details.webContentsId);
       agent?.log.add({ kind: 'network', level: 'error', text: `${details.method} ${details.url} → ${details.statusCode}${details.statusLine ? ` ${details.statusLine.replace(/^HTTP\/[\d.]+ \d+ ?/, '')}` : ''}`.trimEnd() });
     });
     ses.webRequest.onErrorOccurred((details) => {
       if (details.error === 'net::ERR_ABORTED') return;
-      const agent = this.agentPageFor(sessionId, details.webContentsId);
+      const agent = this.agentPageFor(details.webContentsId);
       agent?.log.add({ kind: 'network', level: 'error', text: `${details.method} ${details.url} failed: ${details.error}` });
     });
 
     // Downloads from the agent's page would open a save dialog nobody asked for.
     ses.on('will-download', (event, item, wc) => {
-      const agent = this.agentPageFor(sessionId, wc?.id);
+      const agent = this.agentPageFor(wc?.id);
       if (!agent) return;
       event.preventDefault();
       agent.log.add({ kind: 'page', level: 'warning', text: `Download blocked: ${item.getURL()}` });
     });
-  }
-
-  private agentPageFor(sessionId: string, webContentsId: number | undefined): AgentPage | null {
-    const agent = this.entries.get(sessionId)?.agent;
-    if (!agent || agent.win.isDestroyed() || webContentsId === undefined) return null;
-    return agent.win.webContents.id === webContentsId ? agent : null;
   }
 
   // ─── Pages ───
@@ -500,12 +577,12 @@ export class PreviewManager {
 
   /** Load a URL the user typed or clicked. Throws a readable reason when the
    *  URL isn't allowed; load errors show up in the page state instead. */
-  navigate(sessionId: string, worktreePath: string, kind: PreviewPageKind, input: string): void {
+  navigate(sessionId: string, worktreePath: string, repoPath: string, kind: PreviewPageKind, input: string): void {
     const url = normalizeTypedUrl(input);
     if (!url) throw new Error(`"${input}" isn't a web address. Try something like localhost:3000.`);
     const check = checkNavigation(url, kind, worktreePath);
     if (!check.ok) throw new Error(check.reason);
-    const entry = this.ensureEntry(sessionId, worktreePath);
+    const entry = this.ensureEntry(sessionId, worktreePath, repoPath);
     const wc = kind === 'user' ? this.ensureUserPage(entry).view.webContents : this.ensureAgentPage(entry).win.webContents;
     wc.loadURL(url).catch(() => { /* did-fail-load reports it */ });
   }
@@ -598,10 +675,10 @@ export class PreviewManager {
   // ─── Agent tools ───
 
   /** The operations the agent's browser tools call, bound to a conversation. */
-  operationsFor(sessionId: string, worktreePath: string): PreviewOperations {
+  operationsFor(sessionId: string, worktreePath: string, repoPath: string): PreviewOperations {
     const run = <T>(what: string, fn: () => Promise<T>) => this.serial(sessionId, what, fn);
     return {
-      open: (opts) => run('Opening the page', () => this.agentOpen(sessionId, worktreePath, opts)),
+      open: (opts) => run('Opening the page', () => this.agentOpen(sessionId, worktreePath, repoPath, opts)),
       screenshot: () => run('The screenshot', () => this.agentScreenshot(sessionId)),
       read: (opts) => run('Reading the page', () => this.agentRead(sessionId, opts)),
       logs: (opts) => run('Reading the log', async () => this.agentLogs(sessionId, opts)),
@@ -646,8 +723,8 @@ export class PreviewManager {
     if (entry?.agent) this.updateState(entry, 'agent', { lastAction: { text, at: Date.now() } });
   }
 
-  private async agentOpen(sessionId: string, worktreePath: string, opts: { url?: string; width?: number; height?: number }): Promise<string> {
-    const entry = this.ensureEntry(sessionId, worktreePath);
+  private async agentOpen(sessionId: string, worktreePath: string, repoPath: string, opts: { url?: string; width?: number; height?: number }): Promise<string> {
+    const entry = this.ensureEntry(sessionId, worktreePath, repoPath);
     const existing = entry.agent && !entry.agent.win.isDestroyed() ? entry.agent : null;
 
     let url: string | null = null;

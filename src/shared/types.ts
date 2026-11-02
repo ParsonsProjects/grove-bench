@@ -1693,6 +1693,9 @@ export interface GroveBenchAPI {
   previewAgentFrame(sessionId: string, sinceVersion: number): Promise<{ version: number; dataUrl: string } | null>;
   /** Every conversation's open pages, for the renderer to catch up after a reload. */
   previewGetStates(): Promise<Record<string, { user: PreviewPageState | null; agent: PreviewPageState | null }>>;
+  /** Sign out of everything in the thread's project's Preview (every thread
+   *  in the project shares it). Open pages reload. */
+  previewClearSignIns(sessionId: string): Promise<void>;
   /** A page's state changed; null means the page was closed. */
   onPreviewState(callback: (sessionId: string, page: PreviewPageKind, state: PreviewPageState | null) => void): () => void;
   onPreviewKey(callback: (sessionId: string, key: PreviewKeyForward) => void): () => void;
@@ -2544,6 +2547,7 @@ export const IPC = {
   PREVIEW_SNAPSHOT: 'preview:snapshot',
   PREVIEW_AGENT_FRAME: 'preview:agentFrame',
   PREVIEW_GET_STATES: 'preview:getStates',
+  PREVIEW_CLEAR_SIGN_INS: 'preview:clearSignIns',
   /** Main → renderer: (sessionId, page, state | null). */
   PREVIEW_STATE: 'preview:state',
   /** Main → renderer: (sessionId, PreviewKeyForward). */

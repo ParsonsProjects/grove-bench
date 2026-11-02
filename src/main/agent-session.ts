@@ -606,7 +606,7 @@ class AgentSessionManager {
         delete: (p) => memory.deleteMemoryFile(session.repoPath, p),
       },
       previewOperations: currentSettings.previewAgentTools
-        ? previewManager.operationsFor(id, session.worktreePath)
+        ? previewManager.operationsFor(id, session.worktreePath, session.repoPath)
         : null,
       extraEnv: { ...gitIdentityEnv, ...(session.extraEnv ?? {}) },
       controls: session.controls,

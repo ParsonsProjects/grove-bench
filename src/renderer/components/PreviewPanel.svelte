@@ -9,6 +9,7 @@
   import UserIcon from '@lucide/svelte/icons/user';
   import BotIcon from '@lucide/svelte/icons/bot';
   import GlobeIcon from '@lucide/svelte/icons/globe';
+  import LogOutIcon from '@lucide/svelte/icons/log-out';
   import { previewStore, type PreviewMode } from '../stores/preview.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
@@ -42,6 +43,9 @@
   let addressFocused = $state(false);
   let addressEl: HTMLInputElement | undefined = $state();
   let navError = $state('');
+  /** Shown for a few seconds after Clear sign-ins. */
+  let signedOut = $state(false);
+  let clearing = $state(false);
   let hostEl: HTMLDivElement | undefined = $state();
   /** Picture of your page shown in its place while an overlay covers it. */
   let snapshot = $state<string | null>(null);
@@ -218,6 +222,25 @@
     if (await go('agent', url)) setMode('agent');
   }
 
+  let signedOutTimer: ReturnType<typeof setTimeout> | undefined;
+  $effect(() => () => clearTimeout(signedOutTimer));
+
+  async function clearSignIns() {
+    navError = '';
+    signedOut = false;
+    clearing = true;
+    try {
+      await window.groveBench.previewClearSignIns(sessionId);
+      signedOut = true;
+      clearTimeout(signedOutTimer);
+      signedOutTimer = setTimeout(() => { signedOut = false; }, 5000);
+    } catch (err) {
+      navError = errorText(err);
+    } finally {
+      clearing = false;
+    }
+  }
+
   function cmd(command: 'back' | 'forward' | 'reload' | 'stop' | 'devtools') {
     previewStore.command(sessionId, mode, command);
   }
@@ -336,11 +359,18 @@
     <Button size="icon-xs" variant="quiet" onclick={() => cmd('devtools')} disabled={!page?.url} title="Developer tools (F12)" aria-label="Developer tools">
       <CodeXmlIcon />
     </Button>
+    <Button size="icon-xs" variant="quiet" onclick={clearSignIns} disabled={clearing} title="Clear sign-ins: sign out of every site in this project's Preview, in every thread" aria-label="Clear sign-ins">
+      <LogOutIcon />
+    </Button>
   </div>
 
   {#if navError}
     <Notice tone="danger" class="shrink-0 border-b border-b-border">
       <p>{navError}</p>
+    </Notice>
+  {:else if signedOut}
+    <Notice tone="success" class="shrink-0 border-b border-b-border">
+      <p>Signed out. Cookies and site data are cleared for every thread in this project.</p>
     </Notice>
   {/if}
 
