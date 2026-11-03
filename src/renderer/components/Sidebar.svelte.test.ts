@@ -367,25 +367,74 @@ describe('Sidebar session rows', () => {
     expect(screen.getByRole('group', { name: 'Filter threads' })).toHaveTextContent('Working 0');
   });
 
-  it('colours the branch icon by the PR health shown in the status bar', async () => {
+  it("shows the status bar's branch icon, its shape and colour by the same rule", async () => {
     const icon = () => screen.getByRole('img', { name: /^Worktree/ });
+    const svg = () => icon().querySelector('svg')!;
     render(Sidebar);
-    expect(icon()).toHaveAttribute('data-pr-health', 'none');
+    expect(icon()).toHaveAttribute('data-ship-icon', 'branch');
+    expect(icon()).toHaveAttribute('data-ship-state', 'todo');
+    // No colour of its own: grey from around it, as in the lozenge.
     expect(icon()).toHaveClass('text-muted-foreground');
+    // Lucide beside text-sm (docs/ui-kit.md).
+    expect(svg()).toHaveClass('size-4');
+    // Nothing fetched yet: no words, rather than "not pushed yet" for a
+    // branch that may well be pushed.
+    expect(icon()).toHaveAccessibleName('Worktree');
 
-    prStore.prsBySession = { s1: [{ number: 12, url: 'u', state: 'OPEN', checks: { total: 2, passed: 1, failed: 1, pending: 0 } }] };
+    prStore.syncBySession = { s1: { upstream: 'origin/feat-x', ahead: 0, behind: 0 } };
     try {
-      await waitFor(() => expect(icon()).toHaveAttribute('data-pr-health', 'failing'));
-      expect(icon()).toHaveClass('text-red-500');
-      expect(icon()).toHaveAccessibleName('Worktree, PR #12: CI failing');
-      // The app's tooltip layer reads title attributes, so hovering the icon explains the colour.
-      expect(icon()).toHaveAttribute('title', 'Worktree, PR #12: CI failing');
+      await waitFor(() => expect(icon()).toHaveAccessibleName('Worktree: up to date'));
+      prStore.prsBySession = { s1: [{ number: 12, url: 'u', state: 'OPEN', checks: { total: 2, passed: 1, failed: 1, pending: 0 } }] };
+      await waitFor(() => expect(icon()).toHaveAttribute('data-ship-state', 'failed'));
+      expect(icon()).toHaveAttribute('data-ship-icon', 'pr');
+      expect(svg()).toHaveClass('text-red-500');
+      expect(icon()).toHaveAccessibleName('Worktree: up to date, PR #12 open, checks: 1 of 2 failed');
+      // The app's tooltip layer reads title attributes, so hovering the icon explains it.
+      expect(icon()).toHaveAttribute('title', 'Worktree: up to date, PR #12 open, checks: 1 of 2 failed');
+
+      // Where the sidebar's own rule used to disagree with the status bar:
+      // running checks were yellow (now blue, moving), a closed PR red (now grey).
+      prStore.prsBySession = { s1: [{ number: 12, url: 'u', state: 'OPEN', checks: { total: 2, passed: 1, failed: 0, pending: 1 } }] };
+      await waitFor(() => expect(icon()).toHaveAttribute('data-ship-state', 'running'));
+      expect(svg()).toHaveClass('text-status-working');
+      prStore.prsBySession = { s1: [{ number: 12, url: 'u', state: 'CLOSED', checks: { total: 2, passed: 1, failed: 1, pending: 0 } }] };
+      await waitFor(() => expect(icon()).toHaveAttribute('data-ship-icon', 'closed'));
+      expect(icon()).toHaveAttribute('data-ship-state', 'closed');
+      expect(svg()).toHaveClass('text-muted-foreground/50');
+
+      // Commits not pushed take the green away from an approved PR there too.
+      prStore.syncBySession = { s1: { upstream: 'origin/feat-x', ahead: 1, behind: 0 } };
+      prStore.prsBySession = { s1: [{ number: 12, url: 'u', state: 'OPEN', reviewDecision: 'APPROVED' }] };
+      await waitFor(() => expect(icon()).toHaveAttribute('data-ship-state', 'todo'));
+      prStore.syncBySession = { s1: { upstream: 'origin/feat-x', ahead: 0, behind: 0 } };
+      await waitFor(() => expect(icon()).toHaveAttribute('data-ship-state', 'done'));
+      expect(svg()).toHaveClass('text-green-500');
+
+      // Dimmed after a failed GitHub fetch and pulsing for unseen activity,
+      // as the lozenge's icon is.
+      expect(icon()).not.toHaveClass('opacity-50');
+      expect(icon()).not.toHaveClass('animate-pulse');
+      prStore.fetchFailedBySession = { s1: true };
+      prStore.alertsBySession = { s1: [{ kind: 'new_comments', count: 1, id: 1, prNumber: 12 }] };
+      await waitFor(() => expect(icon()).toHaveClass('opacity-50', 'animate-pulse'));
     } finally {
       prStore.clear('s1');
     }
   });
 
-  it('keeps the branch icon neutral for stopped conversations, whose PR data is not polled', async () => {
+  it('says "no PR yet" in the tooltip when the status bar does: gh is there and none is open', async () => {
+    store.prerequisites = { gh: { available: true } } as any;
+    prStore.syncBySession = { s1: { upstream: 'origin/feat-x', ahead: 0, behind: 0 } };
+    try {
+      render(Sidebar);
+      expect(screen.getByRole('img', { name: /^Worktree/ })).toHaveAccessibleName('Worktree: up to date, no PR yet');
+    } finally {
+      store.prerequisites = null;
+      prStore.clear('s1');
+    }
+  });
+
+  it('keeps the branch icon plain for stopped threads, whose PR data is not polled', async () => {
     store.sessions = [
       { id: 's2', branch: 'fix-parser', repoPath: '/repo-a', status: 'stopped' },
     ] as any;
@@ -394,10 +443,21 @@ describe('Sidebar session rows', () => {
     try {
       render(Sidebar);
       const icon = await screen.findByRole('img', { name: 'Worktree' });
-      expect(icon).toHaveAttribute('data-pr-health', 'none');
+      expect(icon).toHaveAttribute('data-ship-icon', 'branch');
+      expect(icon).toHaveAttribute('data-ship-state', 'todo');
     } finally {
       prStore.clear('s2');
     }
+  });
+
+  it('says direct and no-git in the branch icon, a folder for no git', () => {
+    store.sessions = [
+      { id: 's1', branch: 'main', repoPath: '/repo-a', status: 'running', displayName: 'On main', direct: true },
+      { id: 's3', branch: '', repoPath: '/repo-a', status: 'running', displayName: 'Notes', direct: true, noGit: true },
+    ] as any;
+    render(Sidebar);
+    expect(screen.getByRole('img', { name: /^Direct \(no worktree\)/ })).toHaveAttribute('data-ship-icon', 'branch');
+    expect(screen.getByRole('img', { name: 'In the project folder (no git)' })).toHaveAttribute('data-ship-icon', 'folder');
   });
 
   describe('goal tooltip', () => {

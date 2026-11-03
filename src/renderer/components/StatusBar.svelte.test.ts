@@ -936,18 +936,23 @@ describe('StatusBar PR', () => {
     expect(screen.queryByRole('button', { name: /^Create PR/ })).toBeNull();
   });
 
-  it('colours other PRs by their health', async () => {
+  it("colours other PRs as the lozenge's icon would be", async () => {
     await renderWithPrs(
       pr(),
       pr({ number: 70, title: 'Stacked', reviewDecision: 'CHANGES_REQUESTED', checks: null, baseRefName: 'release' }),
+      // Closed is grey, as on the icon (it used to be red here).
+      pr({ number: 60, title: 'Replaced', state: 'CLOSED', checks: { total: 1, passed: 0, failed: 1, pending: 0 } }),
     );
     await openBranch();
     // Folded until asked for.
     expect(screen.queryByText('#70')).toBeNull();
-    await fireEvent.click(screen.getByRole('button', { name: '1 other PR in this thread' }));
+    await fireEvent.click(screen.getByRole('button', { name: '2 other PRs in this thread' }));
     const other = screen.getByText('#70').closest('div')!;
     expect(other.querySelector('span')!.className).toContain('bg-amber-500');
     expect(words(other)).toBe('#70 open: Stacked watch');
+    expect(other.querySelector('[title]')).toHaveAttribute('title', expect.stringContaining('(PR #70 open, changes requested)'));
+    const closed = screen.getByText('#60').closest('div')!;
+    expect(closed.querySelector('span')!.className).toContain('bg-muted-foreground/50');
   });
 
   it('pushes from the popup, and drops a failed push once nothing is left to push', async () => {

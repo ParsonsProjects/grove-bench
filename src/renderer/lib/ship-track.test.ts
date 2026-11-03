@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { shipTrack, type ShipTrackInput } from './ship-track.js';
+import { shipTrack, prShipTrack, type ShipTrackInput } from './ship-track.js';
 import type { PrInfo } from '../../shared/types.js';
 
 const pushed = { upstream: 'origin/feat', ahead: 0, behind: 0 };
@@ -115,6 +115,14 @@ describe('shipTrack', () => {
     expect(stage({ pr: pr({ state: 'MERGED', checks: { total: 1, passed: 0, failed: 1, pending: 0 } }) })).toEqual({ icon: 'merged', state: 'merged' });
     expect(stage({ pushFailed: true, pr: pr({ state: 'MERGED' }) })).toEqual({ icon: 'merged', state: 'failed' });
     expect(stage({ pr: pr({ state: 'CLOSED' }) })).toEqual({ icon: 'closed', state: 'closed' });
+  });
+
+  it("reads another PR on its own, not by the thread's branch", () => {
+    // Its branch's push state isn't fetched: done, and nothing said about it.
+    expect(prShipTrack(pr()).summary).toBe('PR #42 open');
+    expect(prShipTrack(pr()).stage).toEqual({ icon: 'pr', state: 'done' });
+    expect(prShipTrack(pr({ reviewDecision: 'CHANGES_REQUESTED' })).stage.state).toBe('attention');
+    expect(prShipTrack(pr({ state: 'CLOSED', checks: { total: 1, passed: 0, failed: 1, pending: 0 } })).stage).toEqual({ icon: 'closed', state: 'closed' });
   });
 
   it('has something to say before anything happened', () => {
