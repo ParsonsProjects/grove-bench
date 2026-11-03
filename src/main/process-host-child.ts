@@ -13,6 +13,7 @@ import { execa } from 'execa';
 import {
   HOST_READY, isHostRequest, isSpawnRequest, isStdioRequest, runRequest, serializeError, type HostStarted,
 } from './process-host-protocol.js';
+import { timeFinds } from './process-host-launch.js';
 import { createSpawnRunner } from './process-host-spawn.js';
 import { killTreeWith } from './process-tree-kill.js';
 
@@ -25,6 +26,8 @@ const parentPort = (process as unknown as { parentPort?: ParentPort }).parentPor
 
 if (parentPort) {
   const port = parentPort;
+  // How much of each command's launch was execa's PATH search.
+  const takeFindMs = timeFinds();
   // A process's tree is killed from here, while this process holds it:
   // taskkill (ps off Windows) starts here too.
   const spawns = createSpawnRunner((event) => {
@@ -39,13 +42,13 @@ if (parentPort) {
     }
     if (!isHostRequest(data)) return;
     const started = (pid: number) => port.postMessage({ type: 'started', id: data.id, pid } satisfies HostStarted);
-    void runRequest(data, (file, args, options) => execa(file, args, options), undefined, started).then((reply) => {
+    void runRequest(data, (file, args, options) => execa(file, args, options), undefined, started, takeFindMs).then((reply) => {
       try {
         port.postMessage(reply);
       } catch (e) {
         // The main process waits for every id, so a reply that can't be
         // sent still gets an answer.
-        port.postMessage({ id: data.id, ok: false, error: serializeError(e), launchMs: reply.launchMs });
+        port.postMessage({ id: data.id, ok: false, error: serializeError(e), launchMs: reply.launchMs, findMs: reply.findMs });
       }
     });
   });

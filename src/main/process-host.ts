@@ -157,6 +157,19 @@ export const LATE_DEADLINE_MS = 30_000;
  *  frozen the window for that long. */
 export const SLOW_HOSTED_LAUNCH_MS = 1_000;
 
+/**
+ * The line a slow launch gets: how long it held the host, and, when the host
+ * timed it (process-host-launch.ts), how much of that was finding the
+ * program and how much the OS creating its process (an antivirus checks it
+ * there). "finding it 0 ms": it was given by its full path, as claude.exe is.
+ */
+export function slowLaunchNote(label: string, launchMs: number, findMs: number | undefined, host: string): string {
+  const total = Math.round(launchMs);
+  const find = findMs === undefined ? undefined : Math.min(total, Math.round(findMs));
+  const split = find === undefined ? '' : ` (finding it ${find} ms, creating the process ${total - find} ms)`;
+  return `${label} took ${total} ms to start${split}, in the ${host} (the window kept responding)`;
+}
+
 /** Thrown for a command in flight when the host stops, unless it only reads
  *  (isReadOnly) or is idempotent, in which case it runs again (in the
  *  restarted host, or here). */
@@ -540,7 +553,7 @@ export function createProcessHost(deps: ProcessHostDeps) {
     const proc = spawned.get(event.id);
     if (!proc) return;
     if (event.type === 'spawned' && event.launchMs >= SLOW_HOSTED_LAUNCH_MS) {
-      note(`${proc.label} took ${Math.round(event.launchMs)} ms to start, in the ${name} (the window kept responding)`);
+      note(slowLaunchNote(proc.label, event.launchMs, event.findMs, name));
     }
     if (event.type === 'close') spawned.delete(event.id);
     deliver(proc, event);
@@ -568,7 +581,7 @@ export function createProcessHost(deps: ProcessHostDeps) {
     const waiting = take(reply.id);
     if (!waiting) return;
     if (reply.launchMs >= SLOW_HOSTED_LAUNCH_MS) {
-      note(`${waiting.label} took ${Math.round(reply.launchMs)} ms to start, in the ${name} (the window kept responding)`);
+      note(slowLaunchNote(waiting.label, reply.launchMs, reply.findMs, name));
     }
     if (reply.ok) waiting.resolve(reply.result);
     else waiting.reject(fromCaller(reviveError(reply.error), waiting.origin));

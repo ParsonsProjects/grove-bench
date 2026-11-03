@@ -92,9 +92,11 @@ export interface HostRequest {
   options?: HostedOptions;
 }
 
+/** `findMs`, when the host timed it: the part of `launchMs` spent finding the
+ *  program before starting it (process-host-launch.ts). */
 export type HostReply =
-  | { id: number; ok: true; result: ProcessResult<string | Uint8Array>; launchMs: number }
-  | { id: number; ok: false; error: SerializedError; launchMs: number };
+  | { id: number; ok: true; result: ProcessResult<string | Uint8Array>; launchMs: number; findMs?: number }
+  | { id: number; ok: false; error: SerializedError; launchMs: number; findMs?: number };
 
 /** Posted as soon as a command's process exists, so the main process can
  *  stop it if the host dies first (an orphan would otherwise keep running,
@@ -151,7 +153,7 @@ export type StdioRequest =
  *  when the kill failed. `close` comes last, once the process has exited,
  *  its output has ended and a tree kill asked for has finished. */
 export type SpawnEvent =
-  | { type: 'spawned'; id: number; pid: number; launchMs: number }
+  | { type: 'spawned'; id: number; pid: number; launchMs: number; findMs?: number }
   | { type: 'stdout' | 'stderr'; id: number; data: string }
   | { type: 'stdout-end' | 'stderr-end'; id: number }
   | { type: 'stdin-error' | 'error'; id: number; error: SerializedError }
@@ -222,28 +224,37 @@ export type Exec = (file: string, args: string[], options?: HostedOptions) => Pr
 /**
  * Run one request with `exec` (execa) and say how it went. `launchMs` is how
  * long the call held this process before it started waiting: execa's PATH
- * search plus the OS creating the process. `onStarted` gets the process id
- * as soon as there is one.
+ * search plus the OS creating the process. `takeFindMs` (timeFinds(),
+ * process-host-launch.ts) gives the part that was the search, sent as
+ * `findMs`. `onStarted` gets the process id as soon as there is one.
  */
 export async function runRequest(
   request: HostRequest,
   exec: Exec,
   now: () => number = () => performance.now(),
   onStarted?: (pid: number) => void,
+  takeFindMs?: () => number | undefined,
 ): Promise<HostReply> {
+  // From zero: a parse before this call isn't this launch's.
+  takeFindMs?.();
   const start = now();
   let launchMs: number | null = null;
+  let findMs: number | undefined;
   try {
     const running = request.options === undefined
       ? exec(request.file, request.args)
       : exec(request.file, request.args, request.options);
     launchMs = now() - start;
+    findMs = takeFindMs?.();
     if (typeof running.pid === 'number') onStarted?.(running.pid);
-    return { id: request.id, ok: true, result: serializeResult(await running), launchMs };
+    return { id: request.id, ok: true, result: serializeResult(await running), launchMs, ...found(findMs) };
   } catch (e) {
-    return { id: request.id, ok: false, error: serializeError(e), launchMs: launchMs ?? now() - start };
+    findMs ??= takeFindMs?.();
+    return { id: request.id, ok: false, error: serializeError(e), launchMs: launchMs ?? now() - start, ...found(findMs) };
   }
 }
+
+const found = (findMs: number | undefined) => (findMs === undefined ? {} : { findMs });
 
 /** Whether `value` is a request the host can run. */
 export function isHostRequest(value: unknown): value is HostRequest {
@@ -267,6 +278,7 @@ export function isHostStarted(value: unknown): value is HostStarted {
 export function isHostReply(value: unknown): value is HostReply {
   const r = value as Partial<HostReply> | null;
   if (!r || typeof r !== 'object' || typeof r.id !== 'number' || typeof r.launchMs !== 'number') return false;
+  if (r.findMs !== undefined && typeof r.findMs !== 'number') return false;
   return r.ok === true ? typeof r.result === 'object' && r.result !== null
     : r.ok === false && typeof r.error === 'object' && r.error !== null;
 }
