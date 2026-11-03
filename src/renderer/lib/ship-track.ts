@@ -155,6 +155,14 @@ export function shipTrack({ sync, pr, pushFailed, canCreatePr }: ShipTrackInput)
   return { steps, stage, next, actionable, summary: summary || 'nothing to push yet' };
 }
 
+/** A PR's own track, apart from the thread's branch, for the popup's list
+ *  of a thread's other PRs: coloured by the same rule as the lozenge's icon.
+ *  Their branch's push state isn't fetched, so it counts as done and says
+ *  nothing. */
+export function prShipTrack(pr: PrInfo): ShipTrack {
+  return shipTrack({ sync: { upstream: null, ahead: 0, behind: 0 }, pr, pushFailed: false, canCreatePr: false });
+}
+
 function nextStep({ sync, pr, pushFailed, canCreatePr }: ShipTrackInput, open: boolean, pushed: boolean): ShipNext | null {
   const base = pr?.baseRefName ?? 'the base branch';
   if (pushFailed) return { step: 'push', headline: 'Push failed', detail: 'The error is below.', action: 'retry-push', tone: 'act' };

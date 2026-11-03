@@ -155,6 +155,56 @@ describe('refresh — partial failure', () => {
   });
 });
 
+describe('branchShip: the branch icon and its words, for the status bar and the sidebar', () => {
+  afterEach(() => {
+    sessionStore.prerequisites = null;
+  });
+
+  it('says nothing until the sync status or a PR has come in, not "not pushed yet"', async () => {
+    setStatus('running');
+    expect(prStore.branchShip(SID).summary).toBe('');
+    expect(prStore.branchShip(SID).track.stage).toEqual({ icon: 'branch', state: 'todo' });
+
+    // The sync fetch fails: still nothing known about the push.
+    mockGroveBench.getGitSyncStatus.mockRejectedValueOnce(new Error('git timed out'));
+    await refreshWith();
+    expect(prStore.branchShip(SID).summary).toBe('');
+
+    mockGroveBench.getGitSyncStatus.mockResolvedValueOnce({ upstream: null, ahead: 0, behind: 0 });
+    await refreshWith();
+    expect(prStore.branchShip(SID).summary).toBe('not pushed yet');
+  });
+
+  it("takes a PR's word without the sync status: its push step doesn't need it", async () => {
+    setStatus('running');
+    mockGroveBench.getGitSyncStatus.mockRejectedValueOnce(new Error('git timed out'));
+    await refreshWith(pr({ checks: null }));
+    expect(prStore.branchShip(SID).summary).toBe('PR #7 open');
+  });
+
+  it('offers a PR only with gh, a branch, and no open PR', async () => {
+    setStatus('running');
+    expect(prStore.canCreatePr(SID)).toBe(false);
+    sessionStore.prerequisites = { gh: { available: true } } as any;
+    expect(prStore.canCreatePr(SID)).toBe(true);
+    await refreshWith(pr());
+    expect(prStore.canCreatePr(SID)).toBe(false);
+    await refreshWith(pr({ state: 'MERGED' }));
+    expect(prStore.canCreatePr(SID)).toBe(true);
+    sessionStore.sessions = [{ id: SID, branch: '', repoPath: 'C:/repo', status: 'running' }];
+    expect(prStore.canCreatePr(SID)).toBe(false);
+  });
+
+  it('carries the failed fetch and unseen activity the icon shows', async () => {
+    setStatus('running');
+    await refreshWith(pr());
+    expect(prStore.branchShip(SID)).toMatchObject({ stale: false, alert: false });
+    prStore.fetchFailedBySession = { [SID]: true };
+    prStore.alertsBySession = { [SID]: [{ kind: 'new_comments', count: 1, id: 1, prNumber: 7 }] };
+    expect(prStore.branchShip(SID)).toMatchObject({ stale: true, alert: true });
+  });
+});
+
 describe('multiple PRs per session', () => {
   const open = () => pr({ number: 50, state: 'OPEN', headRefName: 'feat/x', baseRefName: 'main', commentSignature: ['c50'] });
   const merged = () => pr({ number: 41, state: 'MERGED', headRefName: 'feat/x', baseRefName: 'main', commentSignature: ['c41'] });

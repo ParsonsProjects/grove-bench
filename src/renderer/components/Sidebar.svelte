@@ -43,8 +43,8 @@
   import { sessionPreviewStore } from '../stores/sessionPreviews.svelte.js';
   import { goalStore } from '../stores/goals.svelte.js';
   import { prStateFlag, isPrMerged } from '../lib/pr-state.js';
-  import { prStore } from '../stores/pr.svelte.js';
-  import { shipTrack, type ShipStage, type ShipTrack } from '../lib/ship-track.js';
+  import { prStore, type BranchShip } from '../stores/pr.svelte.js';
+  import type { ShipStage } from '../lib/ship-track.js';
   import ShipIcon from './ShipIcon.svelte';
   import { forgetConversation } from '$lib/forget-conversation.js';
   import { sessionSpriteState } from '../lib/session-sprite-state.js';
@@ -615,19 +615,13 @@
     ? { lead: 'w-5', indent: 'pl-7' }
     : { lead: 'w-2 justify-center', indent: 'pl-4' });
 
-  /** A thread row's branch icon follows the status bar's branch lozenge
-   *  (shipTrack), so a thread shows the same icon in both. PR and sync data
-   *  are only polled for open tabs; anything else would be stale, so those
-   *  rows get null and a plain branch. canCreatePr only changes the popup's
-   *  Next, not the stage, so the row doesn't need gh's state for it. */
-  function rowShipTrack(session: (typeof store.sessions)[number]): ShipTrack | null {
+  /** A thread row's branch icon is the status bar's (prStore.branchShip),
+   *  so a thread shows the same icon in both. PR and sync data are only
+   *  polled for open tabs; anything else would be stale, so those rows get
+   *  null and a plain branch. */
+  function rowShip(session: (typeof store.sessions)[number]): BranchShip | null {
     if (session.noGit || !store.isOpenTab(session)) return null;
-    return shipTrack({
-      sync: prStore.getSync(session.id),
-      pr: prStore.getPr(session.id),
-      pushFailed: !!prStore.getPushError(session.id),
-      canCreatePr: false,
-    });
+    return prStore.branchShip(session.id);
   }
   const PLAIN_BRANCH: ShipStage = { icon: 'branch', state: 'todo' };
 
@@ -1125,9 +1119,9 @@
     {@const changedCount = isStopped ? 0 : (gitState.uncommitted ?? gitState.entries.length)}
     {@const label = labelOverride ?? sessionRowLabel(session)}
     {@const group = showGroup ? groupStore.groupOf(session.id) : null}
-    {@const track = rowShipTrack(session)}
-    {@const stage = track?.stage ?? PLAIN_BRANCH}
-    {@const branchIconLabel = (session.noGit ? 'In the project folder (no git)' : session.direct ? 'Direct (no worktree)' : 'Worktree') + (track ? `: ${track.summary}` : '')}
+    {@const ship = rowShip(session)}
+    {@const stage = ship?.track.stage ?? PLAIN_BRANCH}
+    {@const branchIconLabel = (session.noGit ? 'In the project folder (no git)' : session.direct ? 'Direct (no worktree)' : 'Worktree') + (ship?.summary ? `: ${ship.summary}` : '')}
     <!-- The quick action is a sibling of the row button, not inside it: a button can't hold another. -->
     <div
       class="relative group/session"
@@ -1147,23 +1141,28 @@
         <div class="w-full flex items-center gap-2 min-w-0">
           {@render statusMark(session, isDestroying, repoColor)}
           <!-- The status bar's icon (ShipIcon): its shape how far the branch
-               has got, its colour the step that matters most. Grey like the
-               lozenge's text when nothing stands out. Worktree or direct is
-               in the tooltip. No git: no branch, so a folder. -->
-          <span
-            class="flex shrink-0 text-muted-foreground"
-            role="img"
-            aria-label={branchIconLabel}
-            title={branchIconLabel}
-            data-ship-icon={session.noGit ? 'folder' : stage.icon}
-            data-ship-state={stage.state}
-          >
-            {#if session.noGit}
-              <FolderIcon class="size-3.5" aria-hidden="true" />
-            {:else}
-              <ShipIcon {stage} class="size-3.5" />
-            {/if}
-          </span>
+               has got, its colour the step that matters most, dimmed and
+               pulsing as there. Grey like the lozenge's text when nothing
+               stands out. Worktree or direct is in the tooltip. No git: no
+               branch, so a folder. size-4 beside text-sm (docs/ui-kit.md). -->
+          {#if session.noGit}
+            <span class="flex shrink-0 text-muted-foreground" role="img" aria-label={branchIconLabel} title={branchIconLabel} data-ship-icon="folder">
+              <FolderIcon class="size-4" aria-hidden="true" />
+            </span>
+          {:else}
+            <ShipIcon
+              {stage}
+              stale={ship?.stale}
+              alert={ship?.alert}
+              iconClass="size-4"
+              class="text-muted-foreground"
+              role="img"
+              aria-label={branchIconLabel}
+              title={branchIconLabel}
+              data-ship-icon={stage.icon}
+              data-ship-state={stage.state}
+            />
+          {/if}
           <span class="text-sm truncate min-w-0 flex-1">{label}</span>
           {#if todoStore.has(session.id)}
             <span class="shrink-0 flex text-foreground/80" role="img" aria-label="To do" title="To do (right-click to clear)" data-row-todo><TodoMark /></span>

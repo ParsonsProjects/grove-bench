@@ -375,10 +375,16 @@ describe('Sidebar session rows', () => {
     expect(icon()).toHaveAttribute('data-ship-state', 'todo');
     // No colour of its own: grey from around it, as in the lozenge.
     expect(icon()).toHaveClass('text-muted-foreground');
+    // Lucide beside text-sm (docs/ui-kit.md).
+    expect(svg()).toHaveClass('size-4');
+    // Nothing fetched yet: no words, rather than "not pushed yet" for a
+    // branch that may well be pushed.
+    expect(icon()).toHaveAccessibleName('Worktree');
 
     prStore.syncBySession = { s1: { upstream: 'origin/feat-x', ahead: 0, behind: 0 } };
-    prStore.prsBySession = { s1: [{ number: 12, url: 'u', state: 'OPEN', checks: { total: 2, passed: 1, failed: 1, pending: 0 } }] };
     try {
+      await waitFor(() => expect(icon()).toHaveAccessibleName('Worktree: up to date'));
+      prStore.prsBySession = { s1: [{ number: 12, url: 'u', state: 'OPEN', checks: { total: 2, passed: 1, failed: 1, pending: 0 } }] };
       await waitFor(() => expect(icon()).toHaveAttribute('data-ship-state', 'failed'));
       expect(icon()).toHaveAttribute('data-ship-icon', 'pr');
       expect(svg()).toHaveClass('text-red-500');
@@ -403,7 +409,27 @@ describe('Sidebar session rows', () => {
       prStore.syncBySession = { s1: { upstream: 'origin/feat-x', ahead: 0, behind: 0 } };
       await waitFor(() => expect(icon()).toHaveAttribute('data-ship-state', 'done'));
       expect(svg()).toHaveClass('text-green-500');
+
+      // Dimmed after a failed GitHub fetch and pulsing for unseen activity,
+      // as the lozenge's icon is.
+      expect(icon()).not.toHaveClass('opacity-50');
+      expect(icon()).not.toHaveClass('animate-pulse');
+      prStore.fetchFailedBySession = { s1: true };
+      prStore.alertsBySession = { s1: [{ kind: 'new_comments', count: 1, id: 1, prNumber: 12 }] };
+      await waitFor(() => expect(icon()).toHaveClass('opacity-50', 'animate-pulse'));
     } finally {
+      prStore.clear('s1');
+    }
+  });
+
+  it('says "no PR yet" in the tooltip when the status bar does: gh is there and none is open', async () => {
+    store.prerequisites = { gh: { available: true } } as any;
+    prStore.syncBySession = { s1: { upstream: 'origin/feat-x', ahead: 0, behind: 0 } };
+    try {
+      render(Sidebar);
+      expect(screen.getByRole('img', { name: /^Worktree/ })).toHaveAccessibleName('Worktree: up to date, no PR yet');
+    } finally {
+      store.prerequisites = null;
       prStore.clear('s1');
     }
   });

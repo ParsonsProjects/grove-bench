@@ -9,6 +9,7 @@ import { notifyOs } from '../lib/os-notify.js';
 import { detectPrEvents, newPrWatchState, isTrustedAssociation } from '../lib/pr-watch.js';
 import type { PrWatchState, PrWatchEvent } from '../lib/pr-watch.js';
 import { stripIpcErrorPrefix } from '../lib/mcp-errors.js';
+import { shipTrack, type ShipTrack } from '../lib/ship-track.js';
 import { markdownPreviewStore } from './markdownPreview.svelte.js';
 
 const POLL_MS = 60_000;
@@ -94,6 +95,17 @@ interface PushError {
   /** The last sync fetch started before it failed (see syncFetches), so
    *  that fetch landing late can't clear it with a count from before. */
   afterFetch: number;
+}
+
+/** What the branch's icon shows and says (PrStore.branchShip). */
+export interface BranchShip {
+  track: ShipTrack;
+  /** The steps in one line, or '' until the branch's status has come in. */
+  summary: string;
+  /** The last GitHub fetch failed, so the PR part may be out of date. */
+  stale: boolean;
+  /** PR activity you haven't looked at yet. */
+  alert: boolean;
 }
 
 /** PR + branch-sync state per session. Polls all sessions once App starts the
@@ -189,6 +201,36 @@ class PrStore {
 
   getSync(sessionId: string): GitSyncStatus {
     return this.syncBySession[sessionId] ?? EMPTY_SYNC;
+  }
+
+  /** A PR can be created from here: gh is installed, the thread is on a
+   *  branch, and none of its PRs is open (none yet, or the last one was
+   *  merged or closed, so more work on the branch needs a new one). */
+  canCreatePr(sessionId: string): boolean {
+    const branch = sessionStore.sessions.find((s) => s.id === sessionId)?.branch;
+    const noOpenPr = !this.getPrs(sessionId).some((p) => p.state === 'OPEN' || !p.state);
+    return noOpenPr && !!branch && sessionStore.prerequisites?.gh?.available === true;
+  }
+
+  /** The branch's icon and its words, for the status bar's branch lozenge
+   *  and the sidebar's thread rows: worked out here once, so the two agree. */
+  branchShip(sessionId: string): BranchShip {
+    const pr = this.getPr(sessionId);
+    const track = shipTrack({
+      sync: this.getSync(sessionId),
+      pr,
+      pushFailed: !!this.getPushError(sessionId),
+      canCreatePr: this.canCreatePr(sessionId),
+    });
+    // Before the sync status comes in, getSync's empty default would read
+    // as "not pushed yet". A PR's own push step doesn't lean on it.
+    const known = this.syncBySession[sessionId] !== undefined || !!pr;
+    return {
+      track,
+      summary: known ? track.summary : '',
+      stale: this.fetchFailedBySession[sessionId] ?? false,
+      alert: this.getAlerts(sessionId).length > 0,
+    };
   }
 
   /** Alerts for the session's primary PR. */

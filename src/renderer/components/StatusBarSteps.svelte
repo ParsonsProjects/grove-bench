@@ -20,8 +20,7 @@
   import XIcon from '@lucide/svelte/icons/x';
   import ExternalLink from '@lucide/svelte/icons/external-link';
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
-  import { prHealth } from '../lib/pr-state.js';
-  import { plural, type ShipAction, type ShipStepId, type ShipStepState, type ShipTrack } from '../lib/ship-track.js';
+  import { plural, prShipTrack, type ShipAction, type ShipStepId, type ShipStepState, type ShipTrack } from '../lib/ship-track.js';
   import type { FailingJob, FailingRun, GitSyncStatus, PrInfo, PrReviewer } from '../../shared/types.js';
   import { errorMessage } from '../../shared/error-message.js';
   import ShipDot from './ShipDot.svelte';
@@ -471,12 +470,13 @@
     {#if otherPrsOpen}
       <div class="space-y-0.5 pl-3.5">
         {#each otherPrs as other (other.number)}
-          {@const otherHealth = prHealth(other)}
+          {@const otherTrack = prShipTrack(other)}
+          <!-- Coloured as the lozenge's icon would be, were it watched. -->
           <div class="flex items-center gap-2">
-            <span class="size-1.5 {otherHealth.bgClass} shrink-0"></span>
+            <ShipDot state={otherTrack.stage.state} />
             <span
               class="flex-1 min-w-0 truncate text-muted-foreground"
-              title="{other.title ? `${other.title}: ` : ''}{other.headRefName ?? '?'} → {other.baseRefName ?? '?'} ({otherHealth.label})"
+              title="{other.title ? `${other.title}: ` : ''}{other.headRefName ?? '?'} → {other.baseRefName ?? '?'} ({otherTrack.summary})"
             ><span class="text-foreground">#{other.number}</span> {other.isDraft ? 'draft' : (other.state ?? 'open').toLowerCase()}{other.title ? `: ${other.title}` : ''}</span>
             <Button
               variant="link"

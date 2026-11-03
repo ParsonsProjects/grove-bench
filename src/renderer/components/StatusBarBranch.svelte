@@ -26,7 +26,6 @@
   import { resolveBaseBranch } from '../lib/base-branch.js';
   import { lazyComponent } from '../lib/lazy-component.js';
   import { lozenge, lozengeMark } from '../lib/lozenge.js';
-  import { shipTrack } from '../lib/ship-track.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Badge } from '$lib/components/ui/badge/index.js';
   import ExternalLink from '@lucide/svelte/icons/external-link';
@@ -63,11 +62,7 @@
   /** The primary PR: what the pill, alerts, and automation follow. */
   let prInfo = $derived(prStore.getPr(sessionId));
   let gitSync = $derived(prStore.getSync(sessionId));
-  let ghAvailable = $derived(store.prerequisites?.gh?.available === true);
-  /** None of the thread's PRs is open: none yet, or the last one was merged
-   *  or closed, so more work on the branch needs a new one. */
-  let noOpenPr = $derived(!prStore.getPrs(sessionId).some((p) => p.state === 'OPEN' || !p.state));
-  let showCreatePr = $derived(noOpenPr && !!sessionBranch && ghAvailable);
+  let showCreatePr = $derived(prStore.canCreatePr(sessionId));
 
   // ── Push ──
   let pushing = $state(false);
@@ -148,11 +143,11 @@
   }
 
   // ── The ship track ──
-  let prAlerts = $derived(prStore.getAlerts(sessionId));
   let prAuto = $derived(prStore.getAuto(sessionId));
-  let prFetchFailed = $derived(prStore.fetchFailedBySession[sessionId] ?? false);
   let otherPrCount = $derived(prInfo ? prStore.getPrs(sessionId).filter((p) => p.number !== prInfo.number).length : 0);
-  let track = $derived(shipTrack({ sync: gitSync, pr: prInfo, pushFailed: !!pushError, canCreatePr: showCreatePr }));
+  /** The same icon and words as the sidebar's row for this thread. */
+  let ship = $derived(prStore.branchShip(sessionId));
+  let track = $derived(ship.track);
   let repoName = $derived(sessionRepoPath ? store.repoDisplayName(sessionRepoPath) : '');
   /** The PR's state on its badge: neutral while open (green is for acting
    *  and finishing), purple once merged, as merged PRs are. */
@@ -164,10 +159,10 @@
   );
   /** The lozenge's icon is shape and colour only: the tooltip says it in words. */
   let lozengeTitle = $derived.by(() => {
-    const parts = [`${repoName ? `${repoName} / ` : ''}${sessionBranch || 'no branch'}: ${track.summary}`];
+    const parts = [`${repoName ? `${repoName} / ` : ''}${sessionBranch || 'no branch'}${ship.summary ? `: ${ship.summary}` : ''}`];
     if (operation) parts.push(`${operationTitle(operation)} stopped part way`);
-    if (prAlerts.length > 0) parts.push('new PR activity');
-    if (prFetchFailed) parts.push('may be out of date, the last GitHub fetch failed');
+    if (ship.alert) parts.push('new PR activity');
+    if (ship.stale) parts.push('may be out of date, the last GitHub fetch failed');
     // Saved across restarts, so say when it is on rather than leave it hidden.
     const auto = [prAuto.fixCi && 'fix CI', prAuto.addressReviews && 'address reviews'].filter(Boolean);
     if (prInfo?.state === 'OPEN' && auto.length > 0) parts.push(`auto: ${auto.join(' + ')}`);
@@ -214,18 +209,14 @@
             onclick={toggleShip}
             class={lozenge({ open: shipOpen || branchPickerOpen, class: 'max-w-full' })}
             title={lozengeTitle}
-            aria-label="Branch {sessionBranch || 'none'}: {track.summary}{track.actionable ? ', something to do' : ''}{operation ? `, ${operationTitle(operation)} stopped part way` : ''}"
+            aria-label="Branch {sessionBranch || 'none'}{ship.summary ? `: ${ship.summary}` : ''}{track.actionable ? ', something to do' : ''}{operation ? `, ${operationTitle(operation)} stopped part way` : ''}"
             aria-haspopup="dialog"
             aria-expanded={shipOpen}
             data-testid="branch"
           >
             <!-- Dimmed when the last GitHub fetch failed, so it may be old;
-                 pulsing while there is PR activity you haven't looked at.
-                 On a wrapper: the pulse only fades to half, so on the icon
-                 itself a dimmed icon would hold still, checks running too. -->
-            <span class="flex shrink-0 {prAlerts.length > 0 ? 'animate-pulse' : ''} {prFetchFailed ? 'opacity-50' : ''}" data-testid="ship-icon">
-              <ShipIcon stage={track.stage} />
-            </span>
+                 pulsing while there is PR activity you haven't looked at. -->
+            <ShipIcon stage={track.stage} stale={ship.stale} alert={ship.alert} data-testid="ship-icon" />
             <span class="truncate max-w-16 @2xl:max-w-32 @4xl:max-w-48">{sessionBranch || 'no branch'}</span>
             {#if operation}
               <span class="text-status-attention">{operationShort(operation)}</span>
