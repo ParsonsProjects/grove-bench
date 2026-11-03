@@ -21,6 +21,7 @@ import { handleAttachmentProtocol, registerAttachmentScheme, removeDeletedFolder
 import { freezeLog, startStallWatch } from './freeze-log.js';
 import { closePerfLog } from './perf-log.js';
 import { startHealthLog } from './perf-health.js';
+import { measureSystem } from './perf-system.js';
 import { agentHostPid, startProcessHost, stopProcessHost } from './process-host.js';
 import { measureProcesses, windowsExeName } from './process-memory.js';
 import { startSkillScheduler, stopSkillScheduler } from './skill-schedules.js';
@@ -224,6 +225,10 @@ void app.whenReady().then(() => {
       main: { pid: process.pid, exe: windowsExeName(process.execPath) },
       devServer: !app.isPackaged,
     }),
+    // The whole PC's CPU, disks and memory through each period (Windows only,
+    // sampled in the agent host), to tell busy cores, a busy disk and paging
+    // apart from an antivirus holding launches and writes.
+    system: (windowMs) => measureSystem(windowMs),
   });
 
   // ─── Power monitor: flush state on suspend, health-check on resume ───

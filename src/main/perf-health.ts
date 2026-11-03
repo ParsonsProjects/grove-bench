@@ -8,6 +8,10 @@
  *   slowest git worktree 120 ms); agent output 12 MB, 4210 events (12.5 s);
  *   CPU main 2%, pages 4%, gpu 1%, other 0%;
  *   memory main 210 MB, pages 480 MB, gpu 120 MB, other 90 MB;
+ *   system over 38 samples: CPU avg 62%, max 100% (kernel avg 18%),
+ *   threads waiting for a CPU avg 3.0, max 41 (16 cores);
+ *   disk busy avg 35%, max 100%, avg 4.2 ms per transfer, max 220 ms;
+ *   free memory min 21 GB, paging in avg 12 pages/s, max 800/s;
  *   agents 3, 2.0 GB: node.exe 9 (1.2 GB), claude.exe 3 (800 MB),
  *   conhost.exe 3 (40 MB), cmd.exe 4 (25 MB); dev server 900 MB: node.exe 2
  *   (880 MB), esbuild.exe 1 (15 MB), cmd.exe 1 (5.0 MB);
@@ -19,6 +23,10 @@
  *   largest agent processes: node.exe 700 MB (pid 4312, thread 1a2b3c4d,
  *   under claude.exe > cmd.exe > node.exe), claude.exe 310 MB (pid 2210,
  *   thread 1a2b3c4d), ...
+ *
+ * The system parts are the whole PC's, sampled through the period
+ * (perf-system.ts), so a slow period can be put down to full cores, a busy
+ * disk or paging, or to none of them.
  *
  * It uses the stall timer's numbers (freeze-log.ts) rather than a timer of
  * its own. (Node's event-loop utilization isn't used: Electron runs Node's
@@ -40,6 +48,7 @@
 import type { ProcessMetric } from 'electron';
 import { formatBytes, type FreezeStats } from './freeze-log.js';
 import { perfLine } from './perf-log.js';
+import type { SystemLoad } from './perf-system.js';
 import type { AgentTreeProcess, ExeTotal, ProcessMemory, SkippedSample } from './process-memory.js';
 import { within } from './within.js';
 
@@ -68,6 +77,8 @@ export interface HealthInput {
   /** The agents' processes, and the dev server's (Windows only), or a
    *  sample of them that was skipped. */
   processes?: ProcessMemory | SkippedSample | null;
+  /** The whole PC's load over the period (perf-system.ts), when sampled. */
+  system?: SystemLoad | null;
 }
 
 const ms = (v: number) => (v >= 1000 ? `${(v / 1000).toFixed(1)} s` : `${Math.round(v)} ms`);
@@ -80,6 +91,28 @@ function exeList(totals: ExeTotal[]): string {
   const items = named.map((t) => `${t.name} ${t.count} (${formatBytes(t.bytes)})`);
   if (rest.length > 0) items.push(`other ${rest.reduce((n, t) => n + t.count, 0)} (${formatBytes(total(rest))})`);
   return items.join(', ');
+}
+
+/** 4.2 under 10, whole numbers above. */
+const short = (v: number) => (v < 10 ? v.toFixed(1) : String(Math.round(v)));
+
+/** The system parts of the line, each left out when nothing in it was read. */
+function systemParts(s: SystemLoad): string[] {
+  const cpu: string[] = [];
+  if (s.cpu) cpu.push(`CPU avg ${Math.round(s.cpu.avg)}%, max ${Math.round(s.cpu.max)}%${s.kernel ? ` (kernel avg ${Math.round(s.kernel.avg)}%)` : ''}`);
+  if (s.queue) cpu.push(`threads waiting for a CPU avg ${short(s.queue.avg)}, max ${Math.round(s.queue.max)} (${s.cores} cores)`);
+  const disk: string[] = [];
+  if (s.diskBusy) disk.push(`busy avg ${Math.round(s.diskBusy.avg)}%, max ${Math.round(s.diskBusy.max)}%`);
+  if (s.diskMs) disk.push(`avg ${short(s.diskMs.avg)} ms per transfer, max ${short(s.diskMs.max)} ms`);
+  const memory: string[] = [];
+  if (s.freeBytes !== undefined) memory.push(`min ${formatBytes(s.freeBytes)}`);
+  if (s.pagesIn) memory.push(`paging in avg ${Math.round(s.pagesIn.avg)} pages/s, max ${Math.round(s.pagesIn.max)}/s`);
+  const parts: string[] = [];
+  if (cpu.length > 0) parts.push(cpu.join(', '));
+  if (disk.length > 0) parts.push(`disk ${disk.join(', ')}`);
+  if (memory.length > 0) parts.push(`free memory ${memory.join(', ')}`);
+  if (parts.length > 0) parts[0] = `system over ${s.samples} samples: ${parts[0]}`;
+  return parts;
 }
 
 export function formatHealth(h: HealthInput): string {
@@ -114,6 +147,8 @@ export function formatHealth(h: HealthInput): string {
     parts.push(`CPU ${groups.map((g) => `${g} ${Math.round(cpu.get(g)!)}%`).join(', ')}`);
     parts.push(`memory ${groups.map((g) => `${g} ${Math.round(mem.get(g)! / 1024)} MB`).join(', ')}`);
   }
+
+  if (h.system) parts.push(...systemParts(h.system));
 
   if (h.processes && 'skipped' in h.processes) {
     parts.push('agents: sample inconsistent, skipped');
@@ -152,6 +187,10 @@ export interface HealthSources {
   /** The agents' processes (process-memory.ts). Null, a failure or a wait
    *  past PROCESSES_WAIT_MS leaves them out of the line. */
   processes?: () => Promise<ProcessMemory | SkippedSample | null>;
+  /** Samples the PC's load through the period of `windowMs` starting now,
+   *  for the line at its end (perf-system.ts). Null, a failure or a wait
+   *  past PROCESSES_WAIT_MS at the line leaves it out. */
+  system?: (windowMs: number) => Promise<SystemLoad | null>;
 }
 
 /** Write a health line now and then. Returns a function that stops it. */
@@ -172,6 +211,16 @@ export function startHealthLog(
   sources.getAppMetrics();
   sources.takeFreezeStats();
 
+  const sampleSystem = (windowMs: number): Promise<SystemLoad | null> | undefined => {
+    try {
+      return sources.system?.(windowMs);
+    } catch {
+      return undefined;
+    }
+  };
+  // The sampling for the period under way, which its line waits for.
+  let systemRun = sampleSystem(firstMs);
+
   const report = () => {
     const now = performance.now();
     const minutes = Math.max(1, Math.round((now - lastAt) / 60_000));
@@ -182,21 +231,26 @@ export function startHealthLog(
       metrics: sources.getAppMetrics(),
       ...sources.counts(),
     };
+    const system = systemRun;
+    systemRun = sampleSystem(everyMs);
     let measuring: Promise<ProcessMemory | SkippedSample | null> | undefined;
     try {
       measuring = sources.processes?.();
     } catch { /* left out */ }
-    if (!measuring) {
+    if (!measuring && !system) {
       write(formatHealth(input));
       return;
     }
-    // The rest of the line is as of now; the processes follow within seconds,
-    // or are left out if measuring them fails or takes too long.
-    let measured: ProcessMemory | SkippedSample | null = null;
-    void within(measuring.then((m) => { measured = m; }), processesWaitMs).catch(() => false).then((inTime) => {
+    // The rest of the line is as of now; the processes follow within
+    // seconds, and the period's system samples are done or nearly. Either is
+    // left out if it fails or takes too long.
+    let processes: ProcessMemory | SkippedSample | null = null;
+    let load: SystemLoad | null = null;
+    const waits = [measuring?.then((m) => { processes = m; }), system?.then((s) => { load = s; })]
+      .filter((w): w is Promise<void> => w !== undefined);
+    void within(Promise.allSettled(waits), processesWaitMs).catch(() => false).then(() => {
       if (stopped) return;
-      const processes = inTime ? measured : null;
-      write(formatHealth({ ...input, processes }));
+      write(formatHealth({ ...input, processes, system: load }));
       if (processes && 'agents' in processes && processes.counters === 'Process V2' && processes.agents.largest.length > 0) {
         write(formatLargest(processes.agents.largest));
       }
