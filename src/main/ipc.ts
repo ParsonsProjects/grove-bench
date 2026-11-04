@@ -305,6 +305,11 @@ export function registerHandlers() {
         logger.info(`Cleaned up ${orphans} orphan worktree(s) on repo remove for ${repoPath}`);
       }
     }
+    // Its Preview sign-ins go with it. A failure leaves them for Clear
+    // sign-ins; it doesn't keep the project.
+    await previewManager.forgetProject(repoPath).catch((e: unknown) => {
+      logger.warn(`[preview] couldn't clear sign-ins for ${repoPath}:`, e);
+    });
     // Last, so a failed cleanup leaves the project both shown and remembered.
     forgetProject(repoPath);
   });
@@ -1437,7 +1442,14 @@ export function registerHandlers() {
     if (!isPreviewPage(page) || typeof url !== 'string') throw new Error('Invalid preview request');
     const worktree = worktreeManager.getWorktree(sessionId);
     if (!worktree) throw new Error("This thread's worktree isn't ready yet.");
-    previewManager.navigate(sessionId, worktree.path, page, url);
+    previewManager.navigate(sessionId, worktree.path, worktree.repoPath, page, url);
+  });
+
+  ipcMain.handle(IPC.PREVIEW_CLEAR_SIGN_INS, async (_event, sessionId: unknown) => {
+    if (typeof sessionId !== 'string') throw new Error('Invalid preview request');
+    const worktree = worktreeManager.getWorktree(sessionId);
+    if (!worktree) throw new Error("This thread's worktree isn't ready yet.");
+    await previewManager.clearSignIns(worktree.repoPath);
   });
 
   ipcMain.handle(IPC.PREVIEW_COMMAND, (_event, sessionId: string, page: unknown, command: unknown) => {

@@ -50,6 +50,20 @@ describe('PreviewPanel', () => {
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('"hello" isn\'t a web address.'));
   });
 
+  it('clears the project\'s sign-ins and says so, or says why it could not', async () => {
+    render(PreviewPanel, { sessionId: 's1', active: true });
+    await fireEvent.click(screen.getByRole('button', { name: 'Clear sign-ins' }));
+    expect(mockGroveBench.previewClearSignIns).toHaveBeenCalledWith('s1');
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Signed out. Cookies and site data are cleared for every thread in this project.'));
+
+    mockGroveBench.previewClearSignIns.mockRejectedValueOnce(
+      new Error("Error invoking remote method 'preview:clearSignIns': Error: This thread's worktree isn't ready yet."),
+    );
+    await fireEvent.click(screen.getByRole('button', { name: 'Clear sign-ins' }));
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent("This thread's worktree isn't ready yet."));
+    expect(screen.queryByText(/Signed out\./)).not.toBeInTheDocument();
+  });
+
   it('explains a failed load and retries with a reload', async () => {
     previewStore.applyState('s1', 'user', page({ error: { code: -102, description: 'ERR_CONNECTION_REFUSED', url: 'http://localhost:5173/' } }));
     render(PreviewPanel, { sessionId: 's1', active: true });

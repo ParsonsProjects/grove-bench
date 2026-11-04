@@ -25,6 +25,13 @@ extraResources:
 npmRebuild: false
 
 asar: true
+
+# Encrypt cookies on disk the way Chrome does (Electron leaves them as plain
+# text). Preview keeps each project's sign-ins across restarts. One way only:
+# turning it off again leaves stored cookies unreadable. Dev builds don't get
+# it, so they use their own Preview store (previewPartition in preview.ts).
+electronFuses:
+  enableCookieEncryption: true
 asarUnpack:
   - "**/*.node"
   - "**/*.dll"

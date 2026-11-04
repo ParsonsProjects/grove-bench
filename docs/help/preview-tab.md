@@ -9,7 +9,14 @@ Each thread has two pages. Switch between them with **Yours** and **Agent's** at
 - **Yours** is a normal browser page you click around in. It opens any web address, and files inside the thread's worktree, such as a built HTML page.
 - **Agent's** is the page the agent drives with its browser tools. You see it update as the agent opens pages, clicks and types. It's view only. **Open in yours** (the person button beside the address) loads the same address in your page.
 
-The two pages share cookies and storage, so signing in on one signs in the other. Each thread's storage is separate from other threads and is cleared when the thread closes.
+## Sign-ins
+
+Every page in a project shares one set of cookies and site storage: both pages of every thread. Sign in to your app once and every thread in that project is signed in, the agent's page too. Sign-ins stay after a thread closes and after Grove Bench restarts. Other projects have their own.
+
+- **Clear sign-ins** (the sign-out button at the right of the toolbar) signs out of every site in this project's Preview, in every thread. Open pages reload. **Remove project** clears them too
+- Cookies are stored encrypted with your Windows account, as Chrome does. Other site storage (localStorage, IndexedDB) isn't encrypted on disk, the same as in Chrome. Some apps keep their sign-in there
+- Requests from the agent's page to sites other than this computer go without cookies, and those sites can't set any. So a page the agent opens can't act on a site you signed in to in your page, or sign you in to one as someone else. The same goes for service workers your local pages start: Grove can't tell which page started them
+- To test two users at once, use a private window in your system browser for the second one
 
 ## Opening a page
 
@@ -17,7 +24,7 @@ The two pages share cookies and storage, so signing in on one signs in the other
 - Click a localhost link in the thread (in agent output, markdown or the Terminal tab). `Ctrl+click` opens it in your system browser instead
 - When a dev server prints its address in the Terminal tab or in the agent's output, the address shows up in the empty Preview tab. Click it to open it
 
-The toolbar has back, forward, reload, **Open in system browser** and **Developer tools**. Right-click the page for copy, paste, back, reload and **Inspect Element**.
+The toolbar has back, forward, reload, **Open in system browser**, **Developer tools** and **Clear sign-ins**. Right-click the page for copy, paste, back, reload and **Inspect Element**.
 
 When a page can't load, the tab says why. For example, a refused connection usually means the dev server isn't running.
 
@@ -44,7 +51,7 @@ The agent can open a local page, take a screenshot, read the page's text, click,
 - Files load only from the thread's worktree, and the agent's page only loads web files (HTML, CSS, scripts, images, fonts, media)
 - A dot on the Preview tab means the agent used its browser since you last looked
 - The page is 1280×800 unless the agent picks another size, for example a phone size
-- The agent's page closes when the thread goes to sleep, so it isn't left running. The agent opens it again next time it uses the browser. Your page and the shared sign-ins stay
+- The agent's page closes when the thread goes to sleep, so it isn't left running. The agent opens it again next time it uses the browser. Your page and the project's sign-ins stay
 - The agent is told to look at pages in this browser, not in a hidden one of its own (a Playwright script, say). It can still run your project's own browser tests
 
 Turn the agent's browser off under **Settings → Agents (Grovekeepers) → Let the agent use the Preview browser**. The change applies to agents started after it.
