@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
-import { render, cleanup, screen, fireEvent, waitFor } from '@testing-library/svelte';
+import { render, cleanup, screen, fireEvent, waitFor, within } from '@testing-library/svelte';
 import { mockGroveBench } from '../__mocks__/setup.js';
 import DraftPane from './DraftPane.svelte';
 import { draftStore } from '../stores/draft.svelte.js';
@@ -50,6 +50,7 @@ beforeEach(async () => {
   (mockGroveBench as unknown as { createSession: ReturnType<typeof vi.fn> }).createSession = vi.fn()
     .mockResolvedValue({ id: 'new1', branch: 'grove/new1', agentType: 'claude-code' });
   draftStore.discard();
+  draftStore.forgetSkills();
   draftStore.open('/repo/one');
   await settle();
 });
@@ -231,7 +232,24 @@ describe('DraftPane skills', () => {
     render(DraftPane);
     await fireEvent.input(screen.getByLabelText('First message'), { target: { value: '/' } });
     expect(await screen.findByText('Claude Agent has no skills in this project.')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^Skills/ })).toBeNull();
+    // The button stays, at 0, so the row doesn't shift once the list is in.
+    expect(screen.getByRole('button', { name: /^Skills\s*0/ })).toHaveAttribute('title', 'The agent has no skills in this project');
+  });
+
+  it('holds the Skills button in place while it looks, and says so in both menus', async () => {
+    let answer!: (list: typeof skills) => void;
+    mockGroveBench.listAgentSkills.mockReturnValue(new Promise((r) => { answer = r; }));
+    render(DraftPane);
+    const button = await screen.findByRole('button', { name: /^Skills\s*Loading/ });
+    expect(button).toHaveAttribute('aria-busy', 'true');
+    await fireEvent.input(screen.getByLabelText('First message'), { target: { value: '/' } });
+    expect(await screen.findByText('Looking for skills…')).toBeInTheDocument();
+    await fireEvent.input(screen.getByLabelText('First message'), { target: { value: '' } });
+    await fireEvent.click(button);
+    expect(within(await screen.findByRole('menu', { name: 'Skills' })).getByText('Looking for skills…')).toBeInTheDocument();
+    answer(skills);
+    expect(await screen.findByRole('menuitemradio', { name: /triage/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Skills\s*2/ })).not.toHaveAttribute('aria-busy');
   });
 
   it('picks a skill from the Skills button too, shows it, and can take it off', async () => {

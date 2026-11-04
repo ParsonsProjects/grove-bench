@@ -116,6 +116,9 @@ class DraftStore {
   /** The draft agent's skills in its project, for the / menu and the
    *  Skills button, without Claude Code's turned-off ones. */
   skills = $state<SkillInfo[]>([]);
+  /** Whether a fresh list of `skills` is on its way. With none to show yet,
+   *  the Skills button and the / menu say they're looking. */
+  skillsLoading = $state(false);
 
   /** The draft the Discard button dropped, kept until DraftUndoToast lets
    *  it go, so a message isn't lost to a misclick. */
@@ -125,6 +128,12 @@ class DraftStore {
   private infoRequest = 0;
   /** The agent and project `skills` is being loaded for. */
   private skillsFor = '';
+  /** The newest skills load: an older one's answer is dropped. */
+  private skillsRequest = 0;
+  /** The last list each agent had in each project, by `skillsFor` key, for
+   *  as long as the app runs. Shown at once the next time, while a fresh
+   *  list loads, as listing the skills can take a while. */
+  private skillsSeen = new Map<string, SkillInfo[]>();
 
   /** Whether the main pane shows the draft: one exists and no conversation
    *  is open over it. */
@@ -190,6 +199,13 @@ class DraftStore {
     this.descriptors = [];
     this.skills = [];
     this.skillsFor = '';
+    this.skillsLoading = false;
+    this.skillsRequest++;
+  }
+
+  /** Forget the skill lists seen so far, so the next draft looks afresh. */
+  forgetSkills(): void {
+    this.skillsSeen.clear();
   }
 
   /** Discard from the Discard button, keeping a draft with a message or
@@ -216,23 +232,37 @@ class DraftStore {
   }
 
   /** List the draft agent's skills in its project: when either changes, and
-   *  again as a skill menu opens. Another agent's go at once; an answer for
-   *  an agent or project the draft has since left is dropped. */
+   *  again as a skill menu opens. Another agent's go at once, replaced by
+   *  the list it had last time, if any; an answer for an agent or project
+   *  the draft has since left, or from an older load, is dropped. */
   async loadSkills(): Promise<void> {
     const d = this.draft;
     const key = d?.agentId && d.repoPath ? `${d.agentId}\n${d.repoPath}` : '';
-    if (key !== this.skillsFor) this.skills = [];
+    const request = ++this.skillsRequest;
+    if (key !== this.skillsFor) {
+      const seen = d && key ? this.skillsSeen.get(key) : undefined;
+      this.skills = d && seen ? this.withoutTurnedOff(d.agentId, seen) : [];
+    }
     this.skillsFor = key;
+    this.skillsLoading = !!d && !!key;
     if (!d || !key) return;
     const { agentId, repoPath } = d;
     try {
       const list = await window.groveBench.listAgentSkills(agentId, repoPath);
-      if (this.skillsFor !== key) return;
-      const off = agentsStore.supports(agentId, 'skills') ? settingsStore.current.disabledSkills ?? [] : [];
-      this.skills = list.filter((s) => !off.includes(s.name));
+      if (request !== this.skillsRequest) return;
+      this.skillsSeen.set(key, list);
+      this.skills = this.withoutTurnedOff(agentId, list);
     } catch (err) {
       console.warn('[draft] could not list the agent\'s skills:', err);
+    } finally {
+      if (request === this.skillsRequest) this.skillsLoading = false;
     }
+  }
+
+  /** Claude Code's skills without those turned off in Settings. */
+  private withoutTurnedOff(agentId: string, list: SkillInfo[]): SkillInfo[] {
+    const off = agentsStore.supports(agentId, 'skills') ? settingsStore.current.disabledSkills ?? [] : [];
+    return list.filter((s) => !off.includes(s.name));
   }
 
   /** Start the first message by asking for `skill` (null: for none), keeping

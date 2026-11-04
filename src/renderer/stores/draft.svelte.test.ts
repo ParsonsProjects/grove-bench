@@ -29,6 +29,7 @@ const settle = () => new Promise((r) => setTimeout(r, 0));
 beforeEach(() => {
   vi.clearAllMocks();
   draftStore.discard();
+  draftStore.forgetSkills();
   // The store picks the new conversation's id; pin it to 'new1', the id the
   // mocked createSession returns. Starting with a message begins its
   // arrival scene.
@@ -243,6 +244,49 @@ describe('draftStore skills', () => {
     answer([skill('stale')]);
     await late;
     expect(draftStore.skills.map((s) => s.name)).toEqual(['deploy']);
+  });
+
+  it('says a list is on its way until the newest load answers', async () => {
+    const answers: ((list: ReturnType<typeof skill>[]) => void)[] = [];
+    mockGroveBench.listAgentSkills.mockImplementation(() => new Promise((r) => { answers.push(r); }));
+    const first = draftStore.loadSkills();
+    expect(draftStore.skillsLoading).toBe(true);
+    // A menu opening loads again: the first answer is older, so it is dropped.
+    const second = draftStore.loadSkills();
+    answers[0]([skill('stale')]);
+    await first;
+    expect(draftStore.skillsLoading).toBe(true);
+    expect(draftStore.skills).toEqual([]);
+    answers[1]([skill('triage')]);
+    await second;
+    expect(draftStore.skillsLoading).toBe(false);
+    expect(draftStore.skills.map((s) => s.name)).toEqual(['triage']);
+  });
+
+  it("shows the list an agent had last time at once, while a fresh one loads", async () => {
+    settingsStore.current = { ...settingsStore.current, disabledSkills: ['old'] };
+    agentsStore.list = [{ id: 'claude-code', displayName: 'Claude Agent', capabilities: { skills: true }, isDefault: true }];
+    mockGroveBench.listAgentSkills.mockResolvedValueOnce([skill('triage'), skill('old')]);
+    await draftStore.loadSkills();
+
+    draftStore.discard();
+    draftStore.open('/repo/one');
+    let answer!: (list: ReturnType<typeof skill>[]) => void;
+    mockGroveBench.listAgentSkills.mockReturnValueOnce(new Promise((r) => { answer = r; }));
+    const fresh = draftStore.loadSkills();
+    // Turned-off skills stay out of the remembered list too.
+    expect(draftStore.skills.map((s) => s.name)).toEqual(['triage']);
+    expect(draftStore.skillsLoading).toBe(true);
+    answer([skill('triage'), skill('deploy')]);
+    await fresh;
+    expect(draftStore.skills.map((s) => s.name)).toEqual(['triage', 'deploy']);
+    expect(draftStore.skillsLoading).toBe(false);
+
+    // Another project has a list of its own: none seen there yet.
+    draftStore.setRepo('/repo/two');
+    mockGroveBench.listAgentSkills.mockReturnValueOnce(new Promise(() => {}));
+    void draftStore.loadSkills();
+    expect(draftStore.skills).toEqual([]);
   });
 
   it('starts the message by asking for a skill, swapping one already there', () => {

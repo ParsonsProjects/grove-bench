@@ -507,6 +507,10 @@
                         </Command.Item>
                       {/each}
                     </Command.Group>
+                  {:else if draftStore.skills.length === 0 && draftStore.skillsLoading}
+                    <p class="flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground" role="status">
+                      <Pulse size="xs" /> Looking for skills…
+                    </p>
                   {:else}
                     <p class="px-3 py-2 text-xs text-muted-foreground">
                       {draftStore.skills.length > 0 ? 'No skill matches.' : `${agentName || 'This agent'} has no skills in this project.`}
