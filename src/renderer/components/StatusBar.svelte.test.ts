@@ -1257,8 +1257,10 @@ describe('StatusBar last turn', () => {
 
     beforeEach(() => {
       usageStore.byProvider = { 'claude-code': { available: false, windows: [], fetchedAt: Date.now() } };
-      api().getThreadUsage.mockResolvedValue(usage(1.234));
-      api().getDailySpend.mockResolvedValue(6.3);
+      // Cleared here too, not only after: the popup tests outside this block
+      // call them, and in a shuffled run one of them can come just before.
+      api().getThreadUsage.mockClear().mockResolvedValue(usage(1.234));
+      api().getDailySpend.mockClear().mockResolvedValue(6.3);
     });
     afterEach(() => {
       api().getThreadUsage.mockReset().mockResolvedValue(usage(0));

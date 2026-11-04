@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { formatHealth, formatLargest, startHealthLog, type HealthInput } from './perf-health.js';
 import type { FreezeStats } from './freeze-log.js';
+import type { SystemLoad } from './perf-system.js';
 import type { ProcessMemory, SkippedSample } from './process-memory.js';
 
 const noOutput = { events: 0, chars: 0, ms: 0 };
@@ -108,6 +109,27 @@ describe('formatHealth', () => {
       .toBe('last 10 min: freezes: main 0, window 0; process launches 0; agents: sample inconsistent, skipped; conversations 16, terminals 0');
   });
 
+  it("adds the whole PC's load, after Electron's own", () => {
+    const system: SystemLoad = {
+      samples: 38, cores: 16,
+      cpu: { avg: 61.6, max: 100 }, kernel: { avg: 18.2, max: 40 }, queue: { avg: 3.04, max: 41 },
+      diskBusy: { avg: 35.4, max: 100 }, diskMs: { avg: 4.2, max: 220.4 },
+      freeBytes: 21 * 1024 * MB, pagesIn: { avg: 12.2, max: 800 },
+    };
+    const line = formatHealth({ minutes: 10, freeze: quiet, metrics: [metric('Browser', 1, 1024)], conversations: 1, asleep: 0, terminals: 0, system });
+    expect(line).toBe('last 10 min: freezes: main 0, window 0; process launches 0; CPU main 1%; memory main 1 MB; '
+      + 'system over 38 samples: CPU avg 62%, max 100% (kernel avg 18%), threads waiting for a CPU avg 3.0, max 41 (16 cores); '
+      + 'disk busy avg 35%, max 100%, avg 4.2 ms per transfer, max 220 ms; '
+      + 'free memory min 21 GB, paging in avg 12 pages/s, max 800/s; conversations 1, terminals 0');
+  });
+
+  it('gives only the system counters that were read', () => {
+    const line = formatHealth({ minutes: 10, freeze: quiet, metrics: [], conversations: 1, asleep: 0, terminals: 0, system: { samples: 2, cores: 8, freeBytes: 30 * 1024 * MB } });
+    expect(line).toBe('last 10 min: freezes: main 0, window 0; process launches 0; system over 2 samples: free memory min 30 GB; conversations 1, terminals 0');
+    const none = formatHealth({ minutes: 10, freeze: quiet, metrics: [], conversations: 1, asleep: 0, terminals: 0, system: { samples: 2, cores: 8 } });
+    expect(none).not.toContain('system');
+  });
+
   it('uses the working set where private bytes are not reported', () => {
     const line = formatHealth({ minutes: 1, freeze: quiet, metrics: [metric('Browser', 0, 102_400)], conversations: 1, asleep: 0, terminals: 0 });
     expect(line).toBe('last 1 min: freezes: main 0, window 0; process launches 0; CPU main 0%; memory main 100 MB; conversations 1, terminals 0');
@@ -213,6 +235,31 @@ describe('startHealthLog', () => {
     await vi.advanceTimersByTimeAsync(600_000);
     expect(lines).toHaveLength(3);
     expect(lines[2]).not.toContain('agents');
+  });
+
+  it("samples the PC through each period from its start, and waits for it at the period's line", async () => {
+    vi.useFakeTimers();
+    const lines: string[] = [];
+    const finishes: Array<(s: SystemLoad | null) => void> = [];
+    const system = vi.fn((_windowMs: number) => new Promise<SystemLoad | null>((r) => { finishes.push(r); }));
+    startHealthLog(
+      { takeFreezeStats: () => quiet, getAppMetrics: () => [], counts: () => ({ conversations: 1, asleep: 0, terminals: 0 }), system },
+      { write: (l) => lines.push(l), firstMs: 60_000, everyMs: 600_000, processesWaitMs: 45_000 },
+    );
+    // The first period's sampling starts with it; the next starts at its line.
+    expect(system.mock.calls).toEqual([[60_000]]);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(system.mock.calls).toEqual([[60_000], [600_000]]);
+    expect(lines).toHaveLength(0);
+    finishes[0]({ samples: 2, cores: 8, cpu: { avg: 97, max: 100 } });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(lines).toEqual([expect.stringContaining('; system over 2 samples: CPU avg 97%, max 100%; conversations 1')]);
+
+    // One that doesn't finish in time is left out of its line.
+    await vi.advanceTimersByTimeAsync(600_000 + 45_000);
+    expect(lines).toHaveLength(2);
+    expect(lines[1]).not.toContain('system');
   });
 
   it('writes nothing for a measurement that finishes after it was stopped', async () => {

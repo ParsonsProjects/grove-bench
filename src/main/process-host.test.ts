@@ -151,6 +151,11 @@ describe('process host', () => {
     latest().reply(ok(2, '', 20_009));
     await slow;
     expect(notes).toEqual(['gh pr took 20009 ms to start, in the process host (the window kept responding)']);
+
+    const searched = host.run('git', ['merge-base']);
+    latest().reply({ ...ok(3, '', 9_000), findMs: 8_200 });
+    await searched;
+    expect(notes[1]).toBe('git merge-base took 9000 ms to start (finding it 8200 ms, creating the process 800 ms), in the process host (the window kept responding)');
   });
 
   it('runs a command here when it cannot be sent', async () => {
@@ -1482,6 +1487,10 @@ describe('process host: spawned processes', () => {
     host.spawn('C:\\sdk\\claude.exe', []);
     latest().emit('message', { type: 'spawned', id: 1, pid: 42, launchMs: 21_446 });
     expect(notes).toEqual(['claude.exe took 21446 ms to start, in the process host (the window kept responding)']);
+
+    host.spawn('C:\\sdk\\claude.exe', []);
+    latest().emit('message', { type: 'spawned', id: 2, pid: 43, launchMs: 2_072.4, findMs: 0 });
+    expect(notes[1]).toBe('claude.exe took 2072 ms to start (finding it 0 ms, creating the process 2072 ms), in the process host (the window kept responding)');
   });
 
   it('starts the process here when the request cannot be sent', () => {

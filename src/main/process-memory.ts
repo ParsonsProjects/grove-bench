@@ -441,13 +441,13 @@ const LEADING_ID = /^[([]?(\d+)[)\]\s:_#-]+(.+)$/;
 const INSTANCE_INDEX = /#\d+$/;
 
 /** The fields of a CSV line whose fields are all quoted, as typeperf's are. */
-function quotedFields(line: string): string[] {
+export function quotedFields(line: string): string[] {
   return [...line.matchAll(QUOTED_FIELD)].map((m) => m[1].replace(DOUBLED_QUOTE, '"'));
 }
 
 /** A counter value; NaN for a blank one (the process exited before the
- *  sample was taken). */
-function counterValue(text: string): number {
+ *  sample was taken, or the counter couldn't be read for that sample). */
+export function counterValue(text: string): number {
   const t = text.trim();
   return t === '' ? NaN : Number(t.replace(',', '.'));
 }
@@ -576,23 +576,23 @@ let notedSkip = false;
 const runTypeperf: RunTypeperf = (file, args, options) =>
   agentHostGaveUp() ? runProcessInHost(file, args, { timeout: options.timeout }) : runInAgentHost(file, args, options);
 
-interface TypeperfRun {
+export interface TypeperfRun {
   /** What it printed, stdout then stderr. */
   output: string;
   exitCode: number;
 }
 
 /**
- * What typeperf printed reading `set`, once it has run to the end, whatever
- * its exit code: it may exit with an error when it turns the counters down.
+ * What typeperf printed run with `args`, once it has run to the end, whatever
+ * its exit code: it may exit with an error when it turns counters down.
  * Throws when it didn't run to the end (it timed out, or couldn't start, as
- * when the agent host is down).
+ * when the agent host is down). Never in the main process (`hostOnly`).
  */
-async function typeperf(run: RunTypeperf, set: Counterset): Promise<TypeperfRun> {
+export async function typeperfOutput(run: RunTypeperf, args: string[], timeout: number): Promise<TypeperfRun> {
   // Full path, so a typeperf.exe in the working folder or on PATH can't stand in.
   const exe = path.win32.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'typeperf.exe');
   try {
-    return { output: (await run(exe, typeperfArgs(set), { timeout: TYPEPERF_TIMEOUT_MS, hostOnly: true })).stdout, exitCode: 0 };
+    return { output: (await run(exe, args, { timeout, hostOnly: true })).stdout, exitCode: 0 };
   } catch (e) {
     const { exitCode, timedOut, stdout, stderr } = (e ?? {}) as { exitCode?: unknown; timedOut?: unknown; stdout?: unknown; stderr?: unknown };
     if (typeof exitCode !== 'number' || timedOut) throw e;
@@ -600,7 +600,13 @@ async function typeperf(run: RunTypeperf, set: Counterset): Promise<TypeperfRun>
   }
 }
 
-const excerpt = (output: string) => output.trim().slice(0, 200);
+/** What typeperf printed reading `set` (typeperfOutput()). */
+function typeperf(run: RunTypeperf, set: Counterset): Promise<TypeperfRun> {
+  return typeperfOutput(run, typeperfArgs(set), TYPEPERF_TIMEOUT_MS);
+}
+
+/** The start of what typeperf printed, for a note. */
+export const excerpt = (output: string) => output.trim().slice(0, 200);
 
 /** typeperf's answer when none of the counter paths it was given exists, as
  *  for Process V2 on Windows 10 (PdhAddCounter fails for each). */

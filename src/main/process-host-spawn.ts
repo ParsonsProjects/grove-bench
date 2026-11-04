@@ -307,6 +307,9 @@ export function createSpawnRunner(
     const startedAt = now();
     let child: ChildProcess;
     let notFound = false;
+    // The part of the launch that was finding the command (process-host-launch.ts):
+    // none when it wasn't searched for.
+    let findMs = 0;
     try {
       // stdout 'ignore': the process's output goes nowhere, so none is posted.
       const stdio: SpawnOptions['stdio'] = stdout === 'ignore' ? ['pipe', 'ignore', 'pipe'] : 'pipe';
@@ -316,7 +319,9 @@ export function createSpawnRunner(
       // cross-spawn's parse finds the command and wraps a .cmd shim in
       // cmd.exe, as execa does before it spawns. It reads the disk, which is
       // why it runs here and not on the main process.
+      const findStart = now();
       const parsed = !shell && findCommand ? crossSpawn._parse(file, args, options) : undefined;
+      if (parsed) findMs = now() - findStart;
       const launch = shell ? { command: [file, ...args].join(' '), args: [], options }
         : parsed ?? { command: file, args, options };
       // On Windows a command it didn't find (no `file`) still starts, as
@@ -339,7 +344,7 @@ export function createSpawnRunner(
     }
     const launchMs = now() - startedAt;
     children.set(id, child);
-    if (typeof child.pid === 'number') post({ type: 'spawned', id, pid: child.pid, launchMs });
+    if (typeof child.pid === 'number') post({ type: 'spawned', id, pid: child.pid, launchMs, findMs });
     for (const name of ['stdout', 'stderr'] as const) {
       const stream = child[name];
       if (!stream) {

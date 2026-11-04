@@ -20,6 +20,7 @@ vi.mock('cross-spawn', () => ({
   },
 }));
 
+import crossSpawnModule from 'cross-spawn';
 import { createSpawnRunner, HostedProcess, TREE_KILL_ANSWER_MS, type KillTree, type ProcessCommand } from './process-host-spawn.js';
 import type { SpawnEvent } from './process-host-protocol.js';
 import { killTreeWith } from './process-tree-kill.js';
@@ -360,6 +361,27 @@ describe('createSpawnRunner', () => {
     expect(calls[1]).toMatchObject({ file: '/abs/claude', args: ['--x'], options: { cwd: '/w', stdio: 'pipe', windowsHide: true } });
   });
 
+  it('says how much of a launch was finding the command, and none when it had its full path', () => {
+    let t = 0;
+    const events: SpawnEvent[] = [];
+    const child = () => Object.assign(new EventEmitter(), { pid: 77, stdin: new PassThrough(), stdout: null, stderr: null, kill: () => true });
+    // Spawning takes 300 ms on this clock; the parse, when there is one, 40.
+    const fakeSpawn = (() => { t += 300; return child(); }) as unknown as Parameters<typeof createSpawnRunner>[2];
+    const parse = vi.spyOn(crossSpawnModule, '_parse');
+    parse.mockImplementation((command, args, options) => { t += 40; return { command, args: [...args], options }; });
+    try {
+      const runner = createSpawnRunner((event) => events.push(event), noKill, fakeSpawn, () => t);
+      runner.handle({ type: 'spawn', id: 1, file: 'gh', args: ['pr'], findCommand: true });
+      runner.handle({ type: 'spawn', id: 2, file: '/abs/claude', args: [] });
+    } finally {
+      parse.mockRestore();
+    }
+    expect(events.filter((e) => e.type === 'spawned')).toEqual([
+      { type: 'spawned', id: 1, pid: 77, launchMs: 340, findMs: 40 },
+      { type: 'spawned', id: 2, pid: 77, launchMs: 300, findMs: 0 },
+    ]);
+  });
+
   it('reports a start Node throws (EINVAL) on the next tick, as Node reports the others', async () => {
     const events: SpawnEvent[] = [];
     const einval = Object.assign(new Error('spawn EINVAL'), { code: 'EINVAL', errno: -4071, syscall: 'spawn' });
@@ -450,7 +472,7 @@ describe('createSpawnRunner', () => {
     it("on Windows, when it wasn't found (cmd.exe: \"is not recognized\"), is ENOENT, as Node reports a missing program", () => {
       setPlatform('win32');
       expect(exitsOne('npm')).toEqual([
-        { type: 'spawned', id: 4, pid: 77, launchMs: expect.any(Number) },
+        { type: 'spawned', id: 4, pid: 77, launchMs: expect.any(Number), findMs: expect.any(Number) },
         { type: 'error', id: 4, error: expect.objectContaining({ code: 'ENOENT', syscall: 'spawn npm', path: 'npm', message: 'spawn npm ENOENT' }) },
         { type: 'close', id: 4 },
       ]);

@@ -22,6 +22,29 @@ describe('runRequest', () => {
     expect(reply).toEqual({ id: 7, ok: true, launchMs: 40, result: { stdout: 'main', stderr: '', exitCode: 0, failed: false, timedOut: false } });
   });
 
+  it("sends how much of the launch was the PATH search, counting only this launch's", async () => {
+    const { now, advance } = clock();
+    let parsed: number | undefined = 999; // left over from a parse before this request
+    const takeFindMs = () => { const ms = parsed; parsed = undefined; return ms; };
+    const exec = () => {
+      advance(15);
+      parsed = 15; // execa's parse, timed by timeFinds()
+      advance(25);
+      return Promise.resolve({ stdout: '' });
+    };
+    const reply = await runRequest({ id: 1, file: 'git', args: ['status'] }, exec, now, undefined, takeFindMs);
+    expect(reply).toMatchObject({ ok: true, launchMs: 40, findMs: 15 });
+  });
+
+  it('sends the PATH search time when the launch then fails, and none when nothing timed it', async () => {
+    let parsed: number | undefined;
+    const takeFindMs = () => { const ms = parsed; parsed = undefined; return ms; };
+    const failed = await runRequest({ id: 1, file: 'git', args: [] }, () => { parsed = 7; throw new Error('spawn EPERM'); }, undefined, undefined, takeFindMs);
+    expect(failed).toMatchObject({ ok: false, findMs: 7 });
+    const untimed = await runRequest({ id: 2, file: 'git', args: [] }, () => Promise.resolve({ stdout: '' }));
+    expect(untimed).not.toHaveProperty('findMs');
+  });
+
   it('passes no options argument when the request has none', async () => {
     const calls: unknown[][] = [];
     await runRequest({ id: 1, file: 'git', args: ['--version'] }, (...a) => { calls.push(a); return Promise.resolve({}); });
@@ -167,5 +190,7 @@ describe('message checks', () => {
     expect(isHostReply({ id: 1, ok: true, launchMs: 1 })).toBe(false);
     expect(isHostReply({ id: 1, ok: false, error: { name: 'Error', message: 'x' } })).toBe(false);
     expect(isHostReply('grove-process-host-ready')).toBe(false);
+    expect(isHostReply({ ...ok, findMs: 12 })).toBe(true);
+    expect(isHostReply({ ...ok, findMs: '12' })).toBe(false);
   });
 });
