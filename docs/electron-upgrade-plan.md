@@ -1,10 +1,10 @@
 # Electron upgrade plan
 
 > **Status: Plan, not started.** Recommendation:
-> - Move to Electron 44.9.x in one jump, on or after 28 Oct 2026 (44.9.3, or at least 44.9.1).
-> - Move to 45 in a second PR, once 45 has had a few patch releases and well before 46 ships.
+> - Move to Electron 45.2.x in one PR, on or after 10 Nov 2026, 21:43 UTC (45.2.2). Never below 45.2.1, which npm allows from 7 Nov 2026, 01:03 UTC.
+> - Don't stop at 44 any more. No 44.x release is known to fix four critical Chromium bugs that Chrome fixed on 27 Oct 2026 (see [Chromium security fixes](#chromium-security-fixes)).
 >
-> Checked on 25 Oct 2026, against the lockfile's Electron 33.3.2.
+> Checked on 25 Oct 2026, against the lockfile's Electron 33.3.2. Updated on 4 Nov 2026 for the Chromium fixes.
 
 ## Where things stand
 
@@ -17,23 +17,41 @@
 
 `min-release-age=7` and the Dependency age workflow only allow versions 7 days old or more.
 
-| Version | Published (UTC) | Allowed from | Chromium | Node | Notes |
+| Version | Published (UTC) | Allowed from (UTC) | Chromium | Node | Notes |
 |---|---|---|---|---|---|
 | 44.9.0 | 17 Oct, 05:50 | now | 152.0.7977.167 | 24.22.0 | Still has GHSA-jr5w-w6x2-84p9 (high) |
-| 44.9.1 | 20 Oct, 02:53 | 27 Oct | not checked | not checked | Fixes GHSA-jr5w-w6x2-84p9 |
-| 44.9.3 | 21 Oct, 03:31 | 28 Oct | 152.0.7977.167 | 24.22.0 | Newest 44 today |
-| 45.0.0 | 21 Oct, 06:03 | 28 Oct | 156.0.8078.48 | 24.22.0 | Only 45 release so far |
+| 44.9.1 | 20 Oct, 02:53 | now | not checked | not checked | Fixes GHSA-jr5w-w6x2-84p9 |
+| 44.9.3 | 21 Oct, 03:31 | now | 152.0.7977.167 | 24.22.0 | The 25 Oct pick |
+| 44.10.2 | 3 Nov, 19:00 | 10 Nov, 19:00 | 152.0.7977.169 | 24.22.2 | Newest 44. Chromium fixes not confirmed |
+| 45.0.0 | 21 Oct, 06:03 | now | 156.0.8078.48 | 24.22.0 | Older than the Chromium fixes |
+| 45.1.0 | 27 Oct, 19:56 | now | 156.0.8078.49 | not checked | Older than the Chromium fixes |
+| 45.2.0 | 30 Oct, 18:18 | 6 Nov, 18:18 | 156.0.8078.49 | not checked | Older than the Chromium fixes |
+| 45.2.1 | 31 Oct, 01:03 | 7 Nov, 01:03 | 156.0.8078.75 | 24.22.1 | First with the Chromium fixes |
+| 45.2.2 | 3 Nov, 21:43 | 10 Nov, 21:43 | 156.0.8078.80 | 24.22.2 | Newest 45 on 4 Nov |
 
-**Recommended: 44.9.3 (never below 44.9.1).** Why:
+"now" means on 4 Nov 2026.
 
-- **It fixes every advisory.** npm audit names 45.0.0, but the advisory ranges say 44.9.1 and later are clear of all 46 too. One of the 46, GHSA-jr5w-w6x2-84p9, also covers 44.0.0 to 44.9.0, which is why 44.9.0 is not enough.
-- **Same Node as 45.** 44.9.3 and 45.0.0 both bundle Node 24.22.0, so 45 adds nothing on the Node side.
-- **44 has settled.** It has had 22 releases since 25 Aug 2026. 45.0.0 is four days old, and 42, 43 and 44 each had 2 to 4 more releases in the three weeks after their .0.
-- **45 needs more code changes.** It changes the trace file format and deprecates the sync `safeStorage` calls (both below). 44 only needs small fixes.
+**Recommended: 45.2.2 (never below 45.2.1).** Why:
 
-The cost is a shorter support window. 44 stops getting fixes when 47 ships, one major before 45 does. Electron's breaking-changes doc says 43 reaches end of life in January 2027, which is when 46 is due. At the 8-week cadence, 47 would follow about 8 weeks later. That is an estimate: the release schedule page couldn't be reached from here.
+- **It has the Chromium fixes.** Only 45.2.1 and later ship a Chromium at or past the build that fixes the four critical bugs below. 45.0.0 to 45.2.0 don't, and for 44.x it's unknown.
+- **It fixes every npm advisory.** All 46 advisories against 33.3.2 are clear from 45.2.1 and 45.2.2 (checked 4 Nov).
+- **Node is the same either way.** 45.2.2 and 44.10.2 both bundle Node 24.22.2.
+- **The typings match 45.0.0.** Against 45.0.0, the 45.2.2 `electron.d.ts` only adds new APIs and doc text. Nothing is removed or changed, and the `safeStorage` and `contentTracing` lines below are the same.
 
-If you'd rather have one PR, go straight to 45.0.x on 28 Oct and do both PRs' changes together.
+The cost is the extra code 45 needs: the trace file format and the async `safeStorage` calls (both below). These were already planned for PR 2, so they move into the one PR. 45 also gets fixes for longer than 44 would have.
+
+If the upgrade has to ship before 7 Nov, there is no Electron release npm will install that is known to have the Chromium fixes. Either wait, or limit the Preview tab to local pages until it ships (see [Chromium security fixes](#chromium-security-fixes)).
+
+## Chromium security fixes
+
+Checked on 4 Nov 2026.
+
+- On 27 Oct 2026 Chrome 156.0.8078.73 fixed four critical bugs: CVE-2026-118306 (FileSystem), CVE-2026-118331 (FileAPI), CVE-2026-118348 (Skia) and CVE-2026-118344 (Layout). The record for CVE-2026-118306 says it can lead to code running outside the sandbox.
+- **Why it matters here.** Your page in the Preview tab can open any http(s) site (`preview-policy.ts:4`). Both preview pages are sandboxed (`preview.ts:263`, `:291`), but a sandbox escape bug gets past that. The agent's page only opens local pages, which lowers the risk from prompt-injected pages.
+- **Which Electron releases have the fixes.** 45.2.1 ships Chromium 156.0.8078.75 and 45.2.2 ships 156.0.8078.80. Both are later builds on the same Chromium branch as 156.0.8078.73, so they include it. No Electron release note names these four CVEs, so this is inferred from the build numbers, not stated by Electron.
+- **44.x is unknown.** 44.10.0 to 44.10.2 stay on Chromium 152.0.7977.169. 44.10.1 and 44.10.2 say "Backported fixes from upstream Chromium..." without naming CVEs, so there's no way to tell if these four are in them.
+- **33.3.2 (now) is far worse.** Chromium 130 has had no Electron fixes since April 2025, so the gap is much larger than these four bugs.
+- **Not checked.** Google's own Chrome Releases post was blocked by the proxy. The fix build comes from news write-ups that quote it (see Sources). It isn't known whether these bugs exist in Chromium 130 or 152 at all.
 
 ## Breaking changes that touch the app
 
@@ -93,10 +111,10 @@ The other run-time packages (the SDK's main package, electron-updater) contain n
 
 ## Node and Chromium
 
-| | 33.3.2 (now) | 44.9.3 | 45.0.0 |
-|---|---|---|---|
-| Chromium | 130.0.6723.191 | 152.0.7977.167 | 156.0.8078.48 |
-| Node | 20.18.1 | 24.22.0 | 24.22.0 |
+| | 33.3.2 (now) | 44.9.3 | 45.0.0 | 45.2.2 (target) |
+|---|---|---|---|---|
+| Chromium | 130.0.6723.191 | 152.0.7977.167 | 156.0.8078.48 | 156.0.8078.80 |
+| Node | 20.18.1 | 24.22.0 | 24.22.0 | 24.22.2 |
 
 The app's main process moves from Node 20 to 24. CI already runs the tests on Node 24 (`node-version: 24`), so plain Node code is tested there today. What depends on the Node version:
 
@@ -104,7 +122,7 @@ The app's main process moves from Node 20 to 24. CI already runs the tests on No
 - **Shell spawns.** Node 24 warns at run time when `spawn` or `execFile` get `args` together with `shell` (DEP0190). The app joins the command line itself (`process-host-spawn.ts:209-216`), and so does execa 9.6.1, so no warning is expected.
 - **Removed Node APIs.** Searching `src/main` and `src/shared` for `url.parse`, `new Buffer(`, `util.is*`, `fs.rmdir`, `punycode`, `SlowBuffer`, `createCipher(` and `process.binding` found nothing.
 - **Installing.** electron 44 and 45, `@electron/get` 5 and `@electron-internal/extract-zip` need Node 22.12.0 or later (`engines`). With `engine-strict=true`, an older Node stops `npm install`. CI is fine; check the Windows dev machine.
-- **Typings.** electron 44 and 45 depend on `@types/node` ^24.9.0 (33 used ^20.9.0); the root has 22.19.11. In a scratch copy, `tsc --noEmit` passed against the 44.9.0 and 45.0.0 `electron.d.ts`, using the root `@types/node`. The real install will nest a 24.x copy. svelte-check was not run.
+- **Typings.** electron 44 and 45 depend on `@types/node` ^24.9.0 (33 used ^20.9.0); the root has 22.19.11. In a scratch copy, `tsc --noEmit` passed against the 44.9.0 and 45.0.0 `electron.d.ts`, using the root `@types/node`. The real install will nest a 24.x copy. svelte-check was not run. `tsc` was not rerun against 45.2.2, but its `electron.d.ts` only adds to 45.0.0's, and its `package.json` has the same `engines`, dependencies and `abi_version` (150).
 
 ## electron-builder and electron-updater
 
@@ -119,16 +137,20 @@ The lockfile moved from electron-builder 26.8.1 and electron-updater 6.8.3 to 26
 
 ### Why one jump
 
-Go straight from 33 to 44. 34 to 43 are all out of support, so stopping at any of them ships versions that get no fixes. The changes that hit the app are few and listed above. Each stop would also need its own Package run and hand test. If something breaks and the cause isn't clear, bisect locally with an in-between major, without shipping it.
+Go straight from 33 to 45. 34 to 42 are all out of support, so stopping at any of them ships versions that get no fixes. 43 and 44 are supported, but no release of either is known to have the Chromium fixes above. The changes that hit the app are few and listed above. Each stop would also need its own Package run and hand test. If something breaks and the cause isn't clear, bisect locally with an in-between major, without shipping it.
 
-### PR 1: Electron 44 (on or after 28 Oct 2026, 03:31 UTC)
+This used to be two PRs (44 first, then 45). It is one now: the 45 changes (trace files, async `safeStorage`) move into it.
 
-1. With npm 11.19.0 or later, run `npm install -D electron@~44.9.3`. `package.json` and the lockfiles were changing while this was written, so start from `main` as it is then.
-2. In the lockfile, check for: electron 44.9.3 with no `hasInstallScript`, `@electron/get` 5.x, `@electron-internal/extract-zip` 1.0.x, and a nested `@types/node` 24.x. npm picks versions that are 7 days old, so the Dependency age check should pass.
+### The PR: Electron 45.2.x (on or after 10 Nov 2026, 21:43 UTC)
+
+1. With npm 11.19.0 or later, run `npm install -D electron@~45.2.2`. If it has to go in between 7 and 10 Nov, use `electron@45.2.1` (never lower). `package.json` and the lockfiles were changing while this was written, so start from `main` as it is then.
+2. In the lockfile, check for: electron 45.2.2 (or 45.2.1) with no `hasInstallScript`, `@electron/get` 5.x, `@electron-internal/extract-zip` 1.0.x, and a nested `@types/node` 24.x. npm picks versions that are 7 days old, so the Dependency age check should pass.
 3. In `package.json`, remove `"electron": true` from `allowScripts`.
 4. Code:
    - `ipc.ts:237`: pass a `defaultPath`.
    - `preview.ts:425`: catch the `writeText` promise.
+   - Make the trace file changes listed above.
+   - Move `credentials.ts` to the async `safeStorage` calls.
    - Optional: `preview.ts:305`, read the event object.
 5. Text:
    - "Electron 33" in `CLAUDE.md:7`, `CONTRIBUTING.md:21` and `demo-mock.ts:228`.
@@ -137,12 +159,7 @@ Go straight from 33 to 44. 34 to 43 are all out of support, so stopping at any o
 7. Let CI, Dependency age and Package pass. Package runs on `windows-latest`: `npm ci`, type check, tests, `npm run dist`, then `smoke-deps.mjs`, `smoke-pty.mjs` and `smoke-agent.mjs`.
 8. Install the Package artifact and do the hand tests below.
 9. Ship it in the normal weekly alpha, then check that the previous alpha updates to it.
-
-### PR 2: Electron 45 (after a few 45.x patches, well before 46)
-
-1. Make the trace file changes listed above.
-2. Move `credentials.ts` to the async `safeStorage` calls. This could also go into PR 1, since 44.9.0 has them.
-3. Run `npm install -D electron@~45.<newest allowed>`, then the same checks and hand tests.
+10. After it ships, stay on the newest 45.x patch. Chromium security fixes reach Electron through those patches.
 
 ### Hand tests
 
@@ -179,12 +196,13 @@ Go straight from 33 to 44. 34 to 43 are all out of support, so stopping at any o
 
 ## Open questions
 
-- **44 then 45, or 45 directly?** Ship 44 now and 45 later, or go to 45 on 28 Oct in one PR?
+- **44 then 45, or 45 directly?** Answered on 4 Nov: 45 directly, because of the Chromium fixes.
+- **Limit the Preview tab until the upgrade ships?** Your page can open any site on Chromium 130. Limiting it to local pages (like the agent's page) would close that gap until 45.2.x ships, at the cost of browsing other sites in it.
 - **Project folder dialog.** Where should it start: the parent folder of the last project added?
 - **Trace files.** What should they be named once they are protobuf?
-- **Rolling back.** Can a 33-based build open a data folder that a 44-based build has used? Not checked. If it can't, a problem after release needs a fix forward, not a rollback.
+- **Rolling back.** Can a 33-based build open a data folder that a 45-based build has used? Not checked. If it can't, a problem after release needs a fix forward, not a rollback.
 - **Stale `allowScripts` entry.** Does npm warn about an entry for a package with no install script? Not checked. The plan removes it anyway.
-- **Not verified from here.** The proxy blocked releases.electronjs.org and github.com (release notes, schedule), so no Electron release notes were read and no end-of-life dates were confirmed. Nothing was run in Electron: the behaviour changes above come from the docs and the typings.
+- **Not verified from here.** On 25 Oct the proxy blocked releases.electronjs.org and github.com, so no release notes were read then. On 4 Nov the GitHub release pages and `DEPS` files for 43.8.4 to 45.2.2 were read through a web fetch, but releases.electronjs.org and chromereleases.googleblog.com still couldn't be reached. No end-of-life dates were confirmed. Nothing was run in Electron: the behaviour changes above come from the docs and the typings.
 
 ## Sources
 
@@ -226,3 +244,11 @@ Go straight from 33 to 44. 34 to 43 are all out of support, so stopping at any o
   - `tsc --noEmit` gave 0 errors with 33.3.2, 44.9.0 and 45.0.0.
   - ESLint (this repo's config) on `preview.ts`, `credentials.ts`, `perf-trace.ts` and `ipc.ts` with 44.9.0 found no new errors.
 - **This repo:** the files and lines named above, `.github/workflows/package.yml`, `ci.yml`, `dependency-age.yml`, `.npmrc`, `electron-builder.yml`, and `package-lock.json` at c030666 (electron 33.3.2, node-pty 1.1.0, electron-builder 26.17.0, electron-updater 6.8.10).
+- **Chromium security fixes, read 4 Nov 2026:**
+  - Publish times: `https://registry.npmjs.org/electron` (`time`).
+  - Chromium per Electron version: `full-versions.json` in `electron-to-chromium` 1.5.475 (npm), checked against the release notes and `DEPS` below.
+  - Release notes: https://github.com/electron/electron/releases/tag/v45.1.0, and the same URL for v45.2.0, v45.2.1, v45.2.2, v44.10.0, v44.10.1, v44.10.2, and v43.8.4 to v43.8.7. None names the four CVEs.
+  - `DEPS` (`chromium_version`, `node_version`): https://github.com/electron/electron/blob/v45.2.1/DEPS, https://github.com/electron/electron/blob/v45.2.2/DEPS, https://github.com/electron/electron/blob/v44.10.2/DEPS.
+  - Advisories: `POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk` with `{"electron":["33.3.2","44.9.3","44.10.2","45.0.0","45.2.1","45.2.2"]}`. 46 for 33.3.2, none for the rest.
+  - Typings: `npm pack electron@45.0.0` and `electron@45.2.2`, then a diff of `package/electron.d.ts`, `package/package.json` and `package/abi_version`.
+  - The Chrome fix (156.0.8078.73, 27 Oct 2026, the four CVEs): https://www.malwarebytes.com/blog/bugs/2026/10/update-chrome-and-chromeos-to-fix-critical-security-issues and https://secoralens.com/advisories/454b2682-9341-4ef8-b130-1b2cb1d2243b. CVE-2026-118306 details: https://cvemon.intruder.io/cves/CVE-2026-118306. Google's Chrome Releases post was not read.
