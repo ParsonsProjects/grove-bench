@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { tick } from 'svelte';
 import '@testing-library/jest-dom/vitest';
 import { render, cleanup, screen, fireEvent, waitFor, within } from '@testing-library/svelte';
 import { mockGroveBench } from '../__mocks__/setup.js';
@@ -611,5 +612,63 @@ describe('DraftPane git identity heads-up', () => {
     expect(screen.getByLabelText<HTMLTextAreaElement>('First message').placeholder).not.toMatch(/ticket ID/);
     store.setFolderProject('/repo/one', false);
     mockGroveBench.repoKind.mockResolvedValue('git');
+  });
+});
+
+describe('DraftPane layout', () => {
+  // jsdom has no layout or ResizeObserver: stub both, with the scrolling
+  // area as wide as `width`.
+  let width = 600;
+  const observed: ResizeObserverCallback[] = [];
+  async function resize(to: number) {
+    width = to;
+    for (const cb of observed) cb([], {} as ResizeObserver);
+    await tick();
+  }
+
+  beforeEach(() => {
+    width = 600;
+    observed.length = 0;
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(cb: ResizeObserverCallback) { observed.push(cb); }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    });
+    Object.defineProperty(HTMLDivElement.prototype, 'clientWidth', { configurable: true, get: () => width });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    Reflect.deleteProperty(HTMLDivElement.prototype, 'clientWidth');
+  });
+
+  const box = () => screen.getByLabelText('First message').closest('.bg-card')!;
+  const options = () => screen.getByRole('group', { name: 'Thread options' });
+
+  it('puts the options beside the box in a wide pane and along its top in a narrow one, with Skills and Start at its foot', async () => {
+    width = 900;
+    render(DraftPane);
+    await waitFor(() => expect(options()).toHaveTextContent('Runs in'));
+    expect(box().contains(options())).toBe(false);
+
+    await resize(700);
+    expect(box().contains(options())).toBe(true);
+    expect(options()).not.toHaveTextContent('Runs in');
+    expect(box()).toContainElement(screen.getByRole('button', { name: 'Start' }));
+    expect(box()).toContainElement(screen.getByRole('button', { name: /^Skills/ }));
+  });
+
+  it("doesn't flip back and forth just under the width it switches at", async () => {
+    render(DraftPane);
+    await resize(830);
+    expect(box().contains(options())).toBe(true);
+    await resize(850);
+    expect(box().contains(options())).toBe(false);
+    // A scrollbar showing takes a few pixels: it stays beside the box.
+    await resize(830);
+    expect(box().contains(options())).toBe(false);
+    await resize(800);
+    expect(box().contains(options())).toBe(true);
   });
 });

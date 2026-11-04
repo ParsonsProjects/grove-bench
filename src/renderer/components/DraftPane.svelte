@@ -2,8 +2,10 @@
   /**
    * The main pane for a draft conversation: a large message box in the
    * middle of the pane, the draft's options (agent, model, mode, where it
-   * runs) along its foot, and what will happen under it. Sending the first
-   * message starts the conversation. Replaces the old New Conversation dialog.
+   * runs) in a column beside it when the pane has room and along its top
+   * when not (DraftOptions), Skills and Start at its foot, and what will
+   * happen under it. Sending the first message starts the conversation.
+   * Replaces the old New Conversation dialog.
    */
   import { onMount, tick, untrack } from 'svelte';
   import { store } from '../stores/sessions.svelte.js';
@@ -21,7 +23,8 @@
   import GroveEmptyState from './GroveEmptyState.svelte';
   import GitIdentityNotice from './GitIdentityNotice.svelte';
   import GitNotice from './GitNotice.svelte';
-  import DraftStatusBar from './DraftStatusBar.svelte';
+  import DraftOptions from './DraftOptions.svelte';
+  import DraftSkillsButton from './DraftSkillsButton.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Notice } from '$lib/components/ui/notice/index.js';
   import { PanelHeader } from '$lib/components/ui/panel-header/index.js';
@@ -191,6 +194,26 @@
   /** The mode the conversation will start in, in words. */
   const modeHint = $derived(controlHint(draftStore.descriptors, (id) => draftStore.controlValue(id), null));
 
+  /** From this width the options sit in a column beside the message box,
+   *  each in full; narrower, they're a strip along its top. Measured on the
+   *  scrolling area, so a panel docked beside the thread counts. It goes
+   *  back to the strip a little below, so a scrollbar coming and going at
+   *  the edge can't flip it back and forth. */
+  const WIDE_PANE = 840;
+  let scrollEl = $state<HTMLDivElement | null>(null);
+  let wide = $state(false);
+  $effect(() => {
+    const el = scrollEl;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const measure = () => {
+      wide = el.clientWidth >= (untrack(() => wide) ? WIDE_PANE - 24 : WIDE_PANE);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  });
+
   onMount(() => {
     void agentsStore.load().finally(() => { agentsTried = true; });
     textEl?.focus();
@@ -354,10 +377,11 @@
   </PanelHeader>
 
   <!-- The column sits in the middle while it fits, with auto margins
-       rather than centring, so a tall one scrolls from its top. The
+       rather than centring, so a tall one scrolls from its top. It grows
+       when the options sit beside the box, so the box keeps its width. The
        options' menus open downwards, or upwards when that fits better. -->
-  <div class="pixel-bg flex-1 min-h-0 flex flex-col text-muted-foreground relative overflow-y-auto px-6">
-    <div class="relative z-10 m-auto w-full max-w-2xl flex flex-col gap-4 py-8">
+  <div bind:this={scrollEl} class="pixel-bg flex-1 min-h-0 flex flex-col text-muted-foreground relative overflow-y-auto px-6">
+    <div class="relative z-10 m-auto w-full {wide ? 'max-w-[56rem]' : 'max-w-2xl'} flex flex-col gap-4 py-8">
       {#if credentials === 'checking'}
         <div class="flex items-center justify-center gap-2 text-sm">
           <Pulse motion="spin" tone="muted" size="sm" />
@@ -460,97 +484,105 @@
         <p class="text-center text-lg text-foreground/90">New thread in {store.repoDisplayName(draft.repoPath)}</p>
       {/if}
 
-      <!-- The message box, with the options and Start along its foot. -->
-      <div class="relative bg-card border border-input has-[textarea:focus]:ring-1 has-[textarea:focus]:ring-ring">
-        {#if dragOver}
-          <div class="absolute -inset-px z-20 border-2 border-primary bg-primary/10 flex items-center justify-center pointer-events-none">
-            <span class="text-primary text-sm font-medium">Drop files to attach</span>
+      <!-- The message box, with the options beside it or along its top, and
+           Skills and Start at its foot. -->
+      <div class="grid gap-4 items-start {wide ? 'grid-cols-[minmax(0,1fr)_13rem]' : 'grid-cols-1'}">
+        <div class="flex flex-col gap-4 min-w-0">
+          <div class="relative bg-card border border-input has-[textarea:focus]:ring-1 has-[textarea:focus]:ring-ring">
+            {#if dragOver}
+              <div class="absolute -inset-px z-20 border-2 border-primary bg-primary/10 flex items-center justify-center pointer-events-none">
+                <span class="text-primary text-sm font-medium">Drop files to attach</span>
+              </div>
+            {/if}
+            {#if !wide}
+              <DraftOptions layout="strip" />
+            {/if}
+            {#if dropMessage}
+              <p class="px-4 pt-2 text-xs text-destructive" role="status">{dropMessage}</p>
+            {/if}
+            {#if draft.attachments.length > 0}
+              <AttachmentChips files={draft.attachments} onremove={removeAttachment} class="px-4 pt-3" />
+            {/if}
+            <div class="relative">
+              <textarea
+                bind:this={textEl}
+                value={draft.text}
+                oninput={(e) => handleInput(e.currentTarget.value)}
+                onkeydown={handleKeydown}
+                spellcheck={settingsStore.current.spellcheck}
+                rows="6"
+                aria-label="First message"
+                {placeholder}
+                class="block w-full bg-transparent px-4 py-3 text-sm text-foreground field-sizing-content min-h-40 max-h-[45vh]
+                  placeholder:text-muted-foreground resize-none focus:outline-none font-mono"
+              ></textarea>
+              {#if slashOpen}
+                <!-- Under the first line, over the empty box below it. -->
+                <div class="absolute left-3 right-3 top-10 z-50 max-w-md">
+                  <Command.Root shouldFilter={false} class="border border-border shadow-xl">
+                    <Command.List class="max-h-64">
+                      {#if slashSkills.length > 0}
+                        <Command.Group heading="Start with a skill">
+                          {#each slashSkills as skill, i (skill.name)}
+                            <Command.Item
+                              value={skill.name}
+                              onSelect={() => pickSlashSkill(skill.name)}
+                              data-selected={i === slashIndex || undefined}
+                              class={i === slashIndex ? 'bg-accent text-accent-foreground' : ''}
+                            >
+                              <span class="font-mono text-primary shrink-0">/{skill.name}</span>
+                              {#if skill.description}
+                                <span class="ms-auto min-w-0 truncate text-xs text-muted-foreground" title={skill.description}>{skill.description}</span>
+                              {/if}
+                            </Command.Item>
+                          {/each}
+                        </Command.Group>
+                      {:else if draftStore.skills.length === 0 && draftStore.skillsLoading}
+                        <p class="flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground" role="status">
+                          <Pulse size="xs" /> Looking for skills…
+                        </p>
+                      {:else}
+                        <p class="px-3 py-2 text-xs text-muted-foreground">
+                          {draftStore.skills.length > 0 ? 'No skill matches.' : `${agentName || 'This agent'} has no skills in this project.`}
+                        </p>
+                      {/if}
+                    </Command.List>
+                  </Command.Root>
+                </div>
+              {/if}
+            </div>
+            <!-- Two items, so the row never wraps and Start never moves. -->
+            <div class="flex items-center gap-x-4 px-3 py-1.5 border-t border-border text-xs text-muted-foreground">
+              <DraftSkillsButton onpick={focusEnd} />
+              <Button
+                variant="default"
+                size="sm"
+                onclick={() => draftStore.start()}
+                disabled={!canStart}
+                title={startBlocker ?? `Start the thread${draft.text.trim() ? ' and send this message' : ''}`}
+                class="ml-auto"
+              >
+                Start
+              </Button>
+            </div>
           </div>
-        {/if}
-        {#if dropMessage}
-          <p class="px-4 pt-2 text-xs text-destructive" role="status">{dropMessage}</p>
-        {/if}
-        {#if draft.attachments.length > 0}
-          <AttachmentChips files={draft.attachments} onremove={removeAttachment} class="px-4 pt-3" />
-        {/if}
-        <div class="relative">
-          <textarea
-            bind:this={textEl}
-            value={draft.text}
-            oninput={(e) => handleInput(e.currentTarget.value)}
-            onkeydown={handleKeydown}
-            spellcheck={settingsStore.current.spellcheck}
-            rows="6"
-            aria-label="First message"
-            {placeholder}
-            class="block w-full bg-transparent px-4 py-3 text-sm text-foreground field-sizing-content min-h-40 max-h-[45vh]
-              placeholder:text-muted-foreground resize-none focus:outline-none font-mono"
-          ></textarea>
-          {#if slashOpen}
-            <!-- Under the first line, over the empty box below it. -->
-            <div class="absolute left-3 right-3 top-10 z-50 max-w-md">
-              <Command.Root shouldFilter={false} class="border border-border shadow-xl">
-                <Command.List class="max-h-64">
-                  {#if slashSkills.length > 0}
-                    <Command.Group heading="Start with a skill">
-                      {#each slashSkills as skill, i (skill.name)}
-                        <Command.Item
-                          value={skill.name}
-                          onSelect={() => pickSlashSkill(skill.name)}
-                          data-selected={i === slashIndex || undefined}
-                          class={i === slashIndex ? 'bg-accent text-accent-foreground' : ''}
-                        >
-                          <span class="font-mono text-primary shrink-0">/{skill.name}</span>
-                          {#if skill.description}
-                            <span class="ms-auto min-w-0 truncate text-xs text-muted-foreground" title={skill.description}>{skill.description}</span>
-                          {/if}
-                        </Command.Item>
-                      {/each}
-                    </Command.Group>
-                  {:else if draftStore.skills.length === 0 && draftStore.skillsLoading}
-                    <p class="flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground" role="status">
-                      <Pulse size="xs" /> Looking for skills…
-                    </p>
-                  {:else}
-                    <p class="px-3 py-2 text-xs text-muted-foreground">
-                      {draftStore.skills.length > 0 ? 'No skill matches.' : `${agentName || 'This agent'} has no skills in this project.`}
-                    </p>
-                  {/if}
-                </Command.List>
-              </Command.Root>
+          {#if (nudged && startBlocker) || draftStore.error}
+            <div bind:this={feedbackEl} class="-mt-2 flex flex-col gap-2">
+              {#if nudged && startBlocker}
+                <p class="text-xs text-amber-500" role="status">{startBlocker}</p>
+              {/if}
+              {#if draftStore.error}
+                <Notice tone="danger">
+                  <p>{draftStore.error}</p>
+                </Notice>
+              {/if}
             </div>
           {/if}
         </div>
-        <!-- The options' parts are this row's own items (DraftStatusBar), so
-             in a narrow pane they wrap onto a second row rather than being
-             cut short. A container, so the Agent settings button sizes its
-             model name from this row's width. -->
-        <div class="@container flex flex-wrap items-center gap-x-4 gap-y-2 px-3 py-1.5 border-t border-border">
-          <DraftStatusBar onskill={focusEnd} />
-          <Button
-            variant="default"
-            size="sm"
-            onclick={() => draftStore.start()}
-            disabled={!canStart}
-            title={startBlocker ?? `Start the thread${draft.text.trim() ? ' and send this message' : ''}`}
-            class="ml-auto"
-          >
-            Start
-          </Button>
-        </div>
+        {#if wide}
+          <DraftOptions layout="column" />
+        {/if}
       </div>
-      {#if (nudged && startBlocker) || draftStore.error}
-        <div bind:this={feedbackEl} class="-mt-2 flex flex-col gap-2">
-          {#if nudged && startBlocker}
-            <p class="text-xs text-amber-500" role="status">{startBlocker}</p>
-          {/if}
-          {#if draftStore.error}
-            <Notice tone="danger">
-              <p>{draftStore.error}</p>
-            </Notice>
-          {/if}
-        </div>
-      {/if}
 
       <!-- What sending will do, then what changed or still needs doing first. -->
       {#if credentials === 'ready'}

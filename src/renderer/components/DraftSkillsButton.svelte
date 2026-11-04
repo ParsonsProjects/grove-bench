@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * Skills, along the foot of the new thread's message box (DraftStatusBar):
+   * Skills, at the foot of the new thread's message box, next to Start:
    * the draft agent's skills in its project. Picking one starts the message
    * with "Use the `x` skill for this task.", as / in the message box does,
    * for any agent. Shows the skill the message asks for, once there is one.
@@ -92,7 +92,6 @@
 </script>
 
 {#if hasAgent || chosen}
-  <span class="w-px self-stretch bg-border"></span>
   <div class="relative flex flex-col gap-px leading-snug min-w-0" bind:this={ref}>
     <button
       bind:this={trigger}
