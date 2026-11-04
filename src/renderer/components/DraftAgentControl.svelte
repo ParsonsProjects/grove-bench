@@ -20,6 +20,10 @@
   import { placeInPane } from '../lib/keep-in-viewport.js';
   import { cn } from '$lib/utils.js';
 
+  /** Let the button shrink to the space it has, cutting its text short,
+   *  rather than run past the edge of the row or column it is in. */
+  let { fit = false }: { fit?: boolean } = $props();
+
   let open = $state(false);
   /** Option under the pointer or focus, explained in the footer. Removing
    *  the popover fires no mouseleave, so closing it clears this too. */
@@ -62,8 +66,9 @@
   });
 </script>
 
-<div class="relative" bind:this={rootRef}>
+<div class="relative {fit ? 'flex min-w-0 max-w-full' : ''}" bind:this={rootRef}>
   <AgentSettingsTrigger
+    class={fit ? 'shrink' : undefined}
     {agentName}
     {modelLabel}
     mode={summary.mode}

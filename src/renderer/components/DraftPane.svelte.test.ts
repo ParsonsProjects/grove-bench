@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
-import { render, cleanup, screen, fireEvent, waitFor } from '@testing-library/svelte';
+import { render, cleanup, screen, fireEvent, waitFor, within } from '@testing-library/svelte';
 import { mockGroveBench } from '../__mocks__/setup.js';
 import DraftPane from './DraftPane.svelte';
 import { draftStore } from '../stores/draft.svelte.js';
@@ -50,6 +50,7 @@ beforeEach(async () => {
   (mockGroveBench as unknown as { createSession: ReturnType<typeof vi.fn> }).createSession = vi.fn()
     .mockResolvedValue({ id: 'new1', branch: 'grove/new1', agentType: 'claude-code' });
   draftStore.discard();
+  draftStore.forgetSkills();
   draftStore.open('/repo/one');
   await settle();
 });
@@ -226,12 +227,39 @@ describe('DraftPane skills', () => {
     expect(screen.queryByText('/triage')).toBeNull();
   });
 
+  it("doesn't say it's looking again once it knows there are none", async () => {
+    mockGroveBench.listAgentSkills.mockResolvedValueOnce([]).mockReturnValueOnce(new Promise(() => {}));
+    render(DraftPane);
+    await waitFor(() => expect(screen.getByRole('button', { name: /^Skills\s*0/ })).toBeInTheDocument());
+    await fireEvent.input(screen.getByLabelText('First message'), { target: { value: '/' } });
+    expect(await screen.findByText('Claude Agent has no skills in this project.')).toBeInTheDocument();
+    expect(screen.queryByText('Looking for skills…')).toBeNull();
+    expect(screen.getByRole('button', { name: /^Skills\s*0/ })).not.toHaveAttribute('aria-busy');
+  });
+
   it('says so when the agent has no skills', async () => {
     mockGroveBench.listAgentSkills.mockResolvedValue([]);
     render(DraftPane);
     await fireEvent.input(screen.getByLabelText('First message'), { target: { value: '/' } });
     expect(await screen.findByText('Claude Agent has no skills in this project.')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^Skills/ })).toBeNull();
+    // The button stays, at 0, so the row doesn't shift once the list is in.
+    expect(screen.getByRole('button', { name: /^Skills\s*0/ })).toHaveAttribute('title', 'The agent has no skills in this project');
+  });
+
+  it('holds the Skills button in place while it looks, and says so in both menus', async () => {
+    let answer!: (list: typeof skills) => void;
+    mockGroveBench.listAgentSkills.mockReturnValue(new Promise((r) => { answer = r; }));
+    render(DraftPane);
+    const button = await screen.findByRole('button', { name: /^Skills\s*Loading/ });
+    expect(button).toHaveAttribute('aria-busy', 'true');
+    await fireEvent.input(screen.getByLabelText('First message'), { target: { value: '/' } });
+    expect(await screen.findByText('Looking for skills…')).toBeInTheDocument();
+    await fireEvent.input(screen.getByLabelText('First message'), { target: { value: '' } });
+    await fireEvent.click(button);
+    expect(within(await screen.findByRole('menu', { name: 'Skills' })).getByText('Looking for skills…')).toBeInTheDocument();
+    answer(skills);
+    expect(await screen.findByRole('menuitemradio', { name: /triage/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Skills\s*2/ })).not.toHaveAttribute('aria-busy');
   });
 
   it('picks a skill from the Skills button too, shows it, and can take it off', async () => {
@@ -593,5 +621,26 @@ describe('DraftPane git identity heads-up', () => {
     expect(screen.getByLabelText<HTMLTextAreaElement>('First message').placeholder).not.toMatch(/ticket ID/);
     store.setFolderProject('/repo/one', false);
     mockGroveBench.repoKind.mockResolvedValue('git');
+  });
+});
+
+describe('DraftPane layout', () => {
+  // jsdom can't lay out: the width picks the strip or the column in CSS
+  // (draft-narrow / draft-wide), so these check what CSS works on.
+  it('has one set of options, before the message box, with Skills and Start after it', () => {
+    render(DraftPane);
+    const options = screen.getAllByRole('group', { name: 'Thread options' });
+    expect(options).toHaveLength(1);
+    const box = screen.getByLabelText('First message');
+    expect(options[0].compareDocumentPosition(box) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    for (const name of [/^Skills/, 'Start']) {
+      expect(box.compareDocumentPosition(screen.getByRole('button', { name })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+  });
+
+  it('measures the pane with room kept for the scrollbar, so one showing cannot flip the layout', () => {
+    render(DraftPane);
+    const pane = screen.getByRole('group', { name: 'Thread options' }).closest('.overflow-y-auto');
+    expect(pane).toHaveClass('@container/draft', '[scrollbar-gutter:stable]');
   });
 });

@@ -3,7 +3,7 @@
    * Where a draft conversation will run: a new branch (optionally named, from
    * a base), an existing branch or open PR, or the project folder itself.
    * Opened from the branch area of the draft's options. Choices apply as
-   * they're made; a click outside or Escape closes it (DraftStatusBar).
+   * they're made; a click outside or Escape closes it (DraftOptions).
    */
   import { onMount } from 'svelte';
   import { store } from '../stores/sessions.svelte.js';

@@ -29,6 +29,7 @@ const settle = () => new Promise((r) => setTimeout(r, 0));
 beforeEach(() => {
   vi.clearAllMocks();
   draftStore.discard();
+  draftStore.forgetSkills();
   // The store picks the new conversation's id; pin it to 'new1', the id the
   // mocked createSession returns. Starting with a message begins its
   // arrival scene.
@@ -243,6 +244,123 @@ describe('draftStore skills', () => {
     answer([skill('stale')]);
     await late;
     expect(draftStore.skills.map((s) => s.name)).toEqual(['deploy']);
+  });
+
+  /** A load the test answers when it likes, given as the next answer. */
+  function nextAnswer() {
+    let answer!: (list: ReturnType<typeof skill>[]) => void;
+    let fail!: (err: Error) => void;
+    mockGroveBench.listAgentSkills.mockReturnValueOnce(new Promise((resolve, reject) => { answer = resolve; fail = reject; }));
+    return { answer: (list: ReturnType<typeof skill>[]) => answer(list), fail: (err: Error) => fail(err) };
+  }
+
+  it('says it is looking until the newest load answers, keeping its answer', async () => {
+    const older = nextAnswer();
+    const newer = nextAnswer();
+    const first = draftStore.loadSkills();
+    expect(draftStore.lookingForSkills).toBe(true);
+    // A menu opening loads again: the first answer is older, so it isn't shown.
+    const second = draftStore.loadSkills();
+    older.answer([skill('stale')]);
+    await first;
+    expect(draftStore.lookingForSkills).toBe(true);
+    expect(draftStore.skills).toEqual([]);
+    newer.answer([skill('triage')]);
+    await second;
+    expect(draftStore.skillsLoading).toBe(false);
+    expect(draftStore.lookingForSkills).toBe(false);
+    expect(draftStore.skills.map((s) => s.name)).toEqual(['triage']);
+  });
+
+  it("doesn't say it is looking again once it knows there are none", async () => {
+    mockGroveBench.listAgentSkills.mockResolvedValueOnce([]);
+    await draftStore.loadSkills();
+    nextAnswer();
+    void draftStore.loadSkills();
+    expect(draftStore.skillsLoading).toBe(true);
+    expect(draftStore.lookingForSkills).toBe(false);
+  });
+
+  it('shows the list an agent had last time at once, while a fresh one loads', async () => {
+    settingsStore.current = { ...settingsStore.current, disabledSkills: ['old'] };
+    agentsStore.list = [{ id: 'claude-code', displayName: 'Claude Agent', capabilities: { skills: true }, isDefault: true }];
+    mockGroveBench.listAgentSkills.mockResolvedValueOnce([skill('triage'), skill('old')]);
+    await draftStore.loadSkills();
+
+    draftStore.discard();
+    draftStore.open('/repo/one');
+    const fresh = nextAnswer();
+    const load = draftStore.loadSkills();
+    // Turned-off skills stay out of the remembered list too.
+    expect(draftStore.skills.map((s) => s.name)).toEqual(['triage']);
+    expect(draftStore.skillsLoading).toBe(true);
+    expect(draftStore.lookingForSkills).toBe(false);
+    fresh.answer([skill('triage'), skill('deploy')]);
+    await load;
+    expect(draftStore.skills.map((s) => s.name)).toEqual(['triage', 'deploy']);
+
+    // Another project has a list of its own: none seen there yet.
+    draftStore.setRepo('/repo/two');
+    nextAnswer();
+    void draftStore.loadSkills();
+    expect(draftStore.skills).toEqual([]);
+  });
+
+  it('remembers an answer that came in after the draft moved to another agent', async () => {
+    const claude = nextAnswer();
+    const first = draftStore.loadSkills();
+    draftStore.setAgent('codex');
+    mockGroveBench.listAgentSkills.mockResolvedValueOnce([skill('deploy')]);
+    await draftStore.loadSkills();
+    claude.answer([skill('triage')]);
+    await first;
+    expect(draftStore.skills.map((s) => s.name)).toEqual(['deploy']);
+
+    draftStore.setAgent('claude-code');
+    nextAnswer();
+    void draftStore.loadSkills();
+    expect(draftStore.skills.map((s) => s.name)).toEqual(['triage']);
+  });
+
+  it("drops a remembered list it couldn't check, rather than offer skills that may be gone", async () => {
+    mockGroveBench.listAgentSkills.mockResolvedValueOnce([skill('triage')]);
+    await draftStore.loadSkills();
+    draftStore.discard();
+    draftStore.open('/repo/one');
+    const refresh = nextAnswer();
+    const load = draftStore.loadSkills();
+    expect(draftStore.skills.map((s) => s.name)).toEqual(['triage']);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    refresh.fail(new Error('no disk'));
+    await load;
+    warn.mockRestore();
+    expect(draftStore.skills).toEqual([]);
+
+    draftStore.discard();
+    draftStore.open('/repo/one');
+    nextAnswer();
+    void draftStore.loadSkills();
+    expect(draftStore.skills).toEqual([]);
+    expect(draftStore.lookingForSkills).toBe(true);
+  });
+
+  it('forgets the lists when skills change, and looks again for the draft', async () => {
+    mockGroveBench.listAgentSkills.mockResolvedValueOnce([skill('triage')]);
+    await draftStore.loadSkills();
+    // A load from before the change answers after it: not remembered.
+    const before = nextAnswer();
+    const old = draftStore.loadSkills();
+    nextAnswer();
+    draftStore.forgetSkills();
+    expect(mockGroveBench.listAgentSkills).toHaveBeenCalledTimes(3);
+    before.answer([skill('triage')]);
+    await old;
+
+    draftStore.discard();
+    draftStore.open('/repo/one');
+    nextAnswer();
+    void draftStore.loadSkills();
+    expect(draftStore.skills).toEqual([]);
   });
 
   it('starts the message by asking for a skill, swapping one already there', () => {

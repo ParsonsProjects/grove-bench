@@ -17,6 +17,7 @@
   import { agentsStore } from '../stores/agents.svelte.js';
   import { schedulesStore } from '../stores/schedules.svelte.js';
   import { skillsPanelStore } from '../stores/skillsPanel.svelte.js';
+  import { draftStore } from '../stores/draft.svelte.js';
   import { mergeSkills } from '../lib/skills-merge.js';
   import { groupSkills, searchSkills } from '../lib/skill-groups.js';
   import { stripIpcErrorPrefix } from '../lib/mcp-errors.js';
@@ -187,6 +188,8 @@
     reachBusy = true;
     try {
       await window.groveBench.setSkillReach(sessionId, repoPath, form.skill.path, { agents: form.agents, projects: form.projects });
+      // Other agents and projects may have it now, in a new thread's list too.
+      draftStore.forgetSkills();
       const copied = form.skill.source === 'project' && form.projects === 'all';
       const where = form.projects === 'all' ? 'all your projects' : 'this project';
       reachDone = copied

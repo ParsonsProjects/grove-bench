@@ -1,9 +1,12 @@
 <script lang="ts">
   /**
-   * Skills, along the foot of the new thread's message box (DraftStatusBar):
+   * Skills, at the foot of the new thread's message box, next to Start:
    * the draft agent's skills in its project. Picking one starts the message
    * with "Use the `x` skill for this task.", as / in the message box does,
    * for any agent. Shows the skill the message asks for, once there is one.
+   * It holds its place from the start, with a loading square until the
+   * first list arrives, so the row doesn't shift when it does; with no
+   * skills it stays, at 0, for the same reason.
    */
   import { onMount, onDestroy, tick } from 'svelte';
   import { fade } from 'svelte/transition';
@@ -11,6 +14,7 @@
   import { splitSkillLine } from '../../shared/skill-line.js';
   import { menuItem, menuLabel, menuPanel, menuSeparator } from '$lib/components/ui/menu/index.js';
   import { placeInPane } from '../lib/keep-in-viewport.js';
+  import { Pulse } from '$lib/components/ui/pulse/index.js';
 
   /** After a pick, so the message box can take the cursor back. */
   let { onpick }: { onpick?: () => void } = $props();
@@ -21,6 +25,10 @@
   let menu = $state<HTMLDivElement | null>(null);
 
   const skills = $derived(draftStore.skills);
+  /** Looking for skills with no list yet. Once there is one, even an empty
+   *  one, it shows while a fresh one loads. */
+  const looking = $derived(draftStore.lookingForSkills);
+  const hasAgent = $derived(!!draftStore.draft?.agentId);
   const chosen = $derived(splitSkillLine(draftStore.draft?.text ?? '')?.skill ?? null);
 
   function toggle() {
@@ -83,24 +91,30 @@
   });
 </script>
 
-{#if skills.length > 0 || chosen}
-  <span class="w-px self-stretch bg-border"></span>
+{#if hasAgent || chosen}
   <div class="relative flex flex-col gap-px leading-snug min-w-0" bind:this={ref}>
     <button
       bind:this={trigger}
       type="button"
       onclick={toggle}
-      class="flex items-center gap-1 min-w-0 text-left transition-colors {chosen ? 'text-foreground/80 hover:text-foreground' : 'text-muted-foreground hover:text-foreground'}"
-      title={chosen ? `The message starts by asking for the ${chosen} skill. Click to change it` : 'Start the message with one of the agent\'s skills (or type / in the message box)'}
+      class="flex items-center gap-1 min-w-0 text-left transition-colors {chosen ? 'text-foreground/80 hover:text-foreground' : skills.length > 0 || looking ? 'text-muted-foreground hover:text-foreground' : 'text-muted-foreground/60 hover:text-foreground'}"
+      title={chosen ? `The message starts by asking for the ${chosen} skill. Click to change it`
+        : looking ? 'Looking for the agent\'s skills in this project'
+          : skills.length > 0 ? 'Start the message with one of the agent\'s skills (or type / in the message box)'
+            : 'The agent has no skills in this project'}
       aria-haspopup="menu"
       aria-expanded={open}
+      aria-busy={looking || undefined}
     >
       {#if chosen}
         <span class="text-muted-foreground shrink-0">Skill</span>
         <span class="font-mono truncate max-w-40 border-b border-dashed border-muted-foreground/40">{chosen}</span>
       {:else}
         <span class="border-b border-dashed border-muted-foreground/40">Skills</span>
-        <span class="text-caption">{skills.length}</span>
+        <!-- The square takes the count's place, so the row keeps its width. -->
+        <span class="text-caption inline-flex justify-center min-w-[1ch]">
+          {#if looking}<Pulse size="xs" label="Loading" />{:else}{skills.length}{/if}
+        </span>
       {/if}
     </button>
 
@@ -115,7 +129,10 @@
         aria-label="Skills"
         onkeydown={moveFocus}
       >
-        <div class={menuLabel}>Start with a skill</div>
+        <div class="{menuLabel} flex items-center justify-between gap-2">
+          Start with a skill
+          {#if draftStore.skillsLoading && !looking}<Pulse size="xs" label="Checking for new skills" />{/if}
+        </div>
         {#each skills as skill (skill.name)}
           <button
             type="button"
@@ -133,7 +150,13 @@
             </span>
           </button>
         {:else}
-          <p class="px-2 py-1 text-muted-foreground">This agent has no skills in this project.</p>
+          {#if looking}
+            <p class="flex items-center gap-2 px-2 py-1 text-muted-foreground" role="status">
+              <Pulse size="xs" /> Looking for skills…
+            </p>
+          {:else}
+            <p class="px-2 py-1 text-muted-foreground">This agent has no skills in this project.</p>
+          {/if}
         {/each}
         {#if chosen}
           <div class={menuSeparator}></div>

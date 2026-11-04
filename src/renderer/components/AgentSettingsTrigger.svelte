@@ -19,6 +19,7 @@
     details,
     open,
     onclick,
+    class: className,
   }: {
     agentName: string;
     modelLabel: string;
@@ -28,6 +29,8 @@
     details: Setting[];
     open: boolean;
     onclick: () => void;
+    /** Merged into the lozenge's own classes. */
+    class?: string;
   } = $props();
 
   let model = $derived(modelLabel || 'Provider default');
@@ -39,7 +42,7 @@
 
 <button
   {onclick}
-  class={lozenge({ open, class: 'pr-1' })}
+  class={lozenge({ open, class: ['pr-1', className] })}
   title="{label}. Click to change"
   aria-label={label}
   aria-haspopup="dialog"
