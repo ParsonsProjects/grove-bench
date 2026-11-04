@@ -3,12 +3,15 @@
    * A draft thread's options: agent settings, where it runs (project and
    * branch) and the group it joins. Everything here can still change
    * because nothing exists yet; sending the first message fixes the agent,
-   * the project and where it runs. DraftPane shows them one of two ways:
+   * the project and where it runs. DraftPane lays them out by its width, in
+   * CSS (the draft-wide and draft-narrow variants), so this is one element
+   * whichever way they show and an open menu stays open as the pane resizes:
    *
-   * - `column`, beside the message box when the pane has room: each option
-   *   under its own label, with nothing cut short.
-   * - `strip`, one row along the top of the box otherwise. It never wraps:
-   *   the names are cut short instead (their tooltips have them whole).
+   * - wide: a column beside the message box, each option under its own
+   *   label, with nothing cut short.
+   * - narrow: one row along the top of the box. It never wraps: the names
+   *   are cut short instead (their tooltips have them whole), the branch
+   *   first and the agent settings last.
    *
    * Skills and Start stay at the box's foot either way, so they never move.
    * The menus open downwards, or upwards when they only fit there, and are
@@ -26,9 +29,6 @@
   import { menuItem, menuPanel } from '$lib/components/ui/menu/index.js';
   import { placeInPane } from '../lib/keep-in-viewport.js';
   import XIcon from '@lucide/svelte/icons/x';
-
-  let { layout = 'strip' }: { layout?: 'strip' | 'column' } = $props();
-  const column = $derived(layout === 'column');
 
   let pickerOpen = $state(false);
   let projectMenuOpen = $state(false);
@@ -85,109 +85,101 @@
   });
 </script>
 
-<!-- Project / branch, the detail under them, and their menus. In the
-     column the names wrap rather than being cut short. -->
-{#snippet where(d: NonNullable<typeof draft>)}
-  <div class="relative flex flex-col gap-px leading-snug min-w-0" bind:this={stackRef}>
-    <span class="flex items-center gap-1 min-w-0 {column ? 'flex-wrap' : ''}">
-      {#if store.repos.length > 1}
-        <button
-          type="button"
-          onclick={() => { projectMenuOpen = !projectMenuOpen; pickerOpen = false; }}
-          class="text-muted-foreground hover:text-foreground truncate transition-colors {column ? 'max-w-full' : 'max-w-32'}"
-          title="Project: {d.repoPath}. Click to change"
-          aria-haspopup="menu"
-          aria-expanded={projectMenuOpen}
-        >
-          {store.repoDisplayName(d.repoPath)}
-        </button>
-      {:else}
-        <span class="text-muted-foreground truncate {column ? 'max-w-full' : 'max-w-32'}" title={d.repoPath}>{store.repoDisplayName(d.repoPath)}</span>
-      {/if}
-      <span class="text-muted-foreground/30 shrink-0">/</span>
-      <button
-        type="button"
-        onclick={() => { pickerOpen = !pickerOpen; projectMenuOpen = false; }}
-        class="text-foreground/80 hover:text-foreground text-left transition-colors border-b border-dashed border-muted-foreground/40
-          {column ? 'max-w-full break-all' : 'truncate max-w-56'}"
-        title="Where this thread runs: {whereLabel}. Click to pick a branch, a pull request or the project folder"
-        aria-haspopup="dialog"
-        aria-expanded={pickerOpen}
-      >
-        {whereLabel}
-      </button>
-    </span>
-    <span class="text-caption text-muted-foreground {column ? '' : 'truncate max-w-80'}" title={column ? undefined : whereDetail}>{whereDetail}</span>
+{#if draft}
+  <!-- Each part is an item of the row when narrow and a labelled section
+       of the column when wide. A container, so the Agent settings button
+       sizes its model name from the space it has. -->
+  <div
+    class="@container flex items-center gap-x-4 min-w-0 text-xs text-muted-foreground
+      draft-narrow:px-3 draft-narrow:py-1.5 draft-narrow:border-b draft-narrow:border-border
+      draft-wide:col-start-2 draft-wide:row-start-1 draft-wide:flex-col draft-wide:items-stretch draft-wide:gap-0
+      draft-wide:bg-card/60 draft-wide:border draft-wide:border-border"
+    role="group"
+    aria-label="Thread options"
+  >
+    <!-- Gives way last in the row: the branch is cut short first. -->
+    <div class="flex min-w-0 shrink-[0.3] draft-wide:flex-col draft-wide:items-start draft-wide:gap-1.5 draft-wide:px-3 draft-wide:py-2">
+      <SectionLabel class="draft-narrow:hidden">Agent</SectionLabel>
+      <DraftAgentControl fit />
+    </div>
 
-    {#if pickerOpen}
-      <div transition:fade={{ duration: 120 }} use:placeInPane class="absolute top-full left-0 mt-2 z-50">
-        <DraftStartPicker onclose={() => pickerOpen = false} />
-      </div>
-    {/if}
+    <span class="w-px self-stretch bg-border shrink-0 draft-wide:hidden"></span>
 
-    {#if projectMenuOpen}
-      <div transition:fade={{ duration: 120 }} use:placeInPane class="{menuPanel()} absolute top-full left-0 mt-2 z-50 min-w-48" role="menu" aria-label="Project">
-        {#each store.repos as repo (repo)}
+    <div class="min-w-0 draft-wide:flex draft-wide:flex-col draft-wide:gap-1.5 draft-wide:px-3 draft-wide:py-2 draft-wide:border-t draft-wide:border-border">
+      <SectionLabel class="draft-narrow:hidden">Runs in</SectionLabel>
+      <div class="relative flex flex-col gap-px leading-snug min-w-0" bind:this={stackRef}>
+        <span class="flex items-center gap-1 min-w-0 draft-wide:flex-wrap">
+          {#if store.repos.length > 1}
+            <button
+              type="button"
+              onclick={() => { projectMenuOpen = !projectMenuOpen; pickerOpen = false; }}
+              class="text-muted-foreground hover:text-foreground truncate max-w-32 draft-wide:max-w-full transition-colors"
+              title="Project: {draft.repoPath}. Click to change"
+              aria-haspopup="menu"
+              aria-expanded={projectMenuOpen}
+            >
+              {store.repoDisplayName(draft.repoPath)}
+            </button>
+          {:else}
+            <span class="text-muted-foreground truncate max-w-32 draft-wide:max-w-full" title={draft.repoPath}>{store.repoDisplayName(draft.repoPath)}</span>
+          {/if}
+          <span class="text-muted-foreground/30 shrink-0">/</span>
           <button
             type="button"
-            role="menuitem"
-            onclick={() => { draftStore.setRepo(repo); projectMenuOpen = false; }}
-            class={menuItem({ selected: repo === d.repoPath })}
-            title={repo}
+            onclick={() => { pickerOpen = !pickerOpen; projectMenuOpen = false; }}
+            class="text-foreground/80 hover:text-foreground text-left truncate max-w-56 transition-colors border-b border-dashed border-muted-foreground/40
+              draft-wide:max-w-full draft-wide:whitespace-normal draft-wide:break-all"
+            title="Where this thread runs: {whereLabel}. Click to pick a branch, a pull request or the project folder"
+            aria-haspopup="dialog"
+            aria-expanded={pickerOpen}
           >
-            <span class="truncate">{store.repoDisplayName(repo)}</span>
+            {whereLabel}
           </button>
-        {/each}
+        </span>
+        <span class="text-caption text-muted-foreground truncate max-w-80 draft-wide:max-w-none draft-wide:whitespace-normal" title={whereDetail}>{whereDetail}</span>
+
+        {#if pickerOpen}
+          <div transition:fade={{ duration: 120 }} use:placeInPane class="absolute top-full left-0 mt-2 z-50">
+            <DraftStartPicker onclose={() => pickerOpen = false} />
+          </div>
+        {/if}
+
+        {#if projectMenuOpen}
+          <div transition:fade={{ duration: 120 }} use:placeInPane class="{menuPanel()} absolute top-full left-0 mt-2 z-50 min-w-48" role="menu" aria-label="Project">
+            {#each store.repos as repo (repo)}
+              <button
+                type="button"
+                role="menuitem"
+                onclick={() => { draftStore.setRepo(repo); projectMenuOpen = false; }}
+                class={menuItem({ selected: repo === draft.repoPath })}
+                title={repo}
+              >
+                <span class="truncate">{store.repoDisplayName(repo)}</span>
+              </button>
+            {/each}
+          </div>
+        {/if}
+      </div>
+    </div>
+
+    {#if groupName}
+      <span class="w-px self-stretch bg-border shrink-0 draft-wide:hidden"></span>
+      <div class="min-w-0 draft-wide:flex draft-wide:flex-col draft-wide:gap-1.5 draft-wide:px-3 draft-wide:py-2 draft-wide:border-t draft-wide:border-border">
+        <SectionLabel class="draft-narrow:hidden">{newGroup ? 'New group' : 'Group'}</SectionLabel>
+        <span class="flex items-center gap-1 min-w-0 text-caption" title={newGroup ? `Starts the group ${groupName}` : `Joins the group ${groupName} when it starts`}>
+          <span class="text-muted-foreground shrink-0 draft-wide:hidden">{newGroup ? 'New group' : 'Group'}</span>
+          <span class="text-foreground/80 truncate max-w-32 draft-wide:max-w-none draft-wide:whitespace-normal draft-wide:break-all">{groupName}</span>
+          <Button
+            variant="quiet"
+            size="icon-2xs"
+            onclick={() => draftStore.leaveGroup()}
+            title="Start it outside the group"
+            aria-label="Don't add to {groupName}"
+          >
+            <XIcon />
+          </Button>
+        </span>
       </div>
     {/if}
   </div>
-{/snippet}
-
-{#snippet group(name: string)}
-  <span class="flex items-center gap-1 min-w-0 text-caption" title={newGroup ? `Starts the group ${name}` : `Joins the group ${name} when it starts`}>
-    {#if !column}<span class="text-muted-foreground shrink-0">{newGroup ? 'New group' : 'Group'}</span>{/if}
-    <span class="text-foreground/80 {column ? 'break-all' : 'truncate max-w-32'}">{name}</span>
-    <Button
-      variant="quiet"
-      size="icon-2xs"
-      onclick={() => draftStore.leaveGroup()}
-      title="Start it outside the group"
-      aria-label="Don't add to {name}"
-    >
-      <XIcon />
-    </Button>
-  </span>
-{/snippet}
-
-{#if draft}
-  {#if column}
-    <!-- A container, so the Agent settings button sizes its model name
-         from the column's width. -->
-    <div class="@container flex flex-col bg-card/60 border border-border text-xs text-muted-foreground" role="group" aria-label="Thread options">
-      <div class="flex flex-col items-start gap-1.5 px-3 py-2 min-w-0">
-        <SectionLabel>Agent</SectionLabel>
-        <DraftAgentControl fit />
-      </div>
-      <div class="flex flex-col gap-1.5 px-3 py-2 min-w-0 border-t border-border">
-        <SectionLabel>Runs in</SectionLabel>
-        {@render where(draft)}
-      </div>
-      {#if groupName}
-        <div class="flex flex-col gap-1.5 px-3 py-2 min-w-0 border-t border-border">
-          <SectionLabel>{newGroup ? 'New group' : 'Group'}</SectionLabel>
-          {@render group(groupName)}
-        </div>
-      {/if}
-    </div>
-  {:else}
-    <div class="@container flex items-center gap-x-4 px-3 py-1.5 min-w-0 border-b border-border text-xs text-muted-foreground" role="group" aria-label="Thread options">
-      <DraftAgentControl fit />
-      <span class="w-px self-stretch bg-border shrink-0"></span>
-      {@render where(draft)}
-      {#if groupName}
-        <span class="w-px self-stretch bg-border shrink-0"></span>
-        {@render group(groupName)}
-      {/if}
-    </div>
-  {/if}
 {/if}

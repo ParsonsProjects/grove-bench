@@ -116,9 +116,18 @@ class DraftStore {
   /** The draft agent's skills in its project, for the / menu and the
    *  Skills button, without Claude Code's turned-off ones. */
   skills = $state<SkillInfo[]>([]);
-  /** Whether a fresh list of `skills` is on its way. With none to show yet,
-   *  the Skills button and the / menu say they're looking. */
+  /** Whether a fresh list of `skills` is on its way. */
   skillsLoading = $state(false);
+  /** Where `skills` came from: nothing yet, the list the agent had last
+   *  time (not checked in this draft yet), or a load for this draft. */
+  private skillsFrom = $state<'none' | 'remembered' | 'loaded'>('none');
+
+  /** Looking for the agent's skills with no list to show yet, not even an
+   *  empty one, so the Skills button and the / menu say they're looking.
+   *  Looking again, they keep showing the list they have. */
+  get lookingForSkills(): boolean {
+    return this.skillsLoading && this.skillsFrom === 'none';
+  }
 
   /** The draft the Discard button dropped, kept until DraftUndoToast lets
    *  it go, so a message isn't lost to a misclick. */
@@ -130,10 +139,14 @@ class DraftStore {
   private skillsFor = '';
   /** The newest skills load: an older one's answer is dropped. */
   private skillsRequest = 0;
-  /** The last list each agent had in each project, by `skillsFor` key, for
-   *  as long as the app runs. Shown at once the next time, while a fresh
-   *  list loads, as listing the skills can take a while. */
-  private skillsSeen = new Map<string, SkillInfo[]>();
+  /** The last list each agent had in each project, by `skillsFor` key, and
+   *  the load that answered it, for as long as the app runs. Shown at once
+   *  the next time, while a fresh list loads, as listing the skills can
+   *  take a while. */
+  private skillsSeen = new Map<string, { list: SkillInfo[]; request: number }>();
+  /** The newest load when the lists were last forgotten: an answer from an
+   *  older one may be from before the change, so it isn't kept. */
+  private skillsForgotten = 0;
 
   /** Whether the main pane shows the draft: one exists and no conversation
    *  is open over it. */
@@ -200,12 +213,17 @@ class DraftStore {
     this.skills = [];
     this.skillsFor = '';
     this.skillsLoading = false;
+    this.skillsFrom = 'none';
     this.skillsRequest++;
   }
 
-  /** Forget the skill lists seen so far, so the next draft looks afresh. */
+  /** Skills were added or changed in the app: forget the lists seen so far,
+   *  so the next draft doesn't show one without the change, and look again
+   *  for this draft's. */
   forgetSkills(): void {
     this.skillsSeen.clear();
+    this.skillsForgotten = this.skillsRequest;
+    if (this.draft) void this.loadSkills();
   }
 
   /** Discard from the Discard button, keeping a draft with a message or
@@ -234,14 +252,15 @@ class DraftStore {
   /** List the draft agent's skills in its project: when either changes, and
    *  again as a skill menu opens. Another agent's go at once, replaced by
    *  the list it had last time, if any; an answer for an agent or project
-   *  the draft has since left, or from an older load, is dropped. */
+   *  the draft has since left, or from an older load, is only remembered. */
   async loadSkills(): Promise<void> {
     const d = this.draft;
     const key = d?.agentId && d.repoPath ? `${d.agentId}\n${d.repoPath}` : '';
     const request = ++this.skillsRequest;
     if (key !== this.skillsFor) {
       const seen = d && key ? this.skillsSeen.get(key) : undefined;
-      this.skills = d && seen ? this.withoutTurnedOff(d.agentId, seen) : [];
+      this.skills = d && seen ? this.withoutTurnedOff(d.agentId, seen.list) : [];
+      this.skillsFrom = seen ? 'remembered' : 'none';
     }
     this.skillsFor = key;
     this.skillsLoading = !!d && !!key;
@@ -249,11 +268,22 @@ class DraftStore {
     const { agentId, repoPath } = d;
     try {
       const list = await window.groveBench.listAgentSkills(agentId, repoPath);
+      // The agent's list in that project even if the draft has moved on,
+      // unless a newer answer is in already or it's from before a change.
+      const seen = this.skillsSeen.get(key);
+      if (request > this.skillsForgotten && (!seen || seen.request < request)) this.skillsSeen.set(key, { list, request });
       if (request !== this.skillsRequest) return;
-      this.skillsSeen.set(key, list);
       this.skills = this.withoutTurnedOff(agentId, list);
+      this.skillsFrom = 'loaded';
     } catch (err) {
       console.warn('[draft] could not list the agent\'s skills:', err);
+      // A remembered list this draft couldn't check may name skills that
+      // are gone: drop it rather than offer them.
+      if (request === this.skillsRequest && this.skillsFrom === 'remembered') {
+        this.skillsSeen.delete(key);
+        this.skills = [];
+        this.skillsFrom = 'none';
+      }
     } finally {
       if (request === this.skillsRequest) this.skillsLoading = false;
     }

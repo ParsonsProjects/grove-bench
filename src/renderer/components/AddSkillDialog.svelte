@@ -9,6 +9,7 @@
   import * as Segmented from '$lib/components/ui/segmented/index.js';
   import { Textarea } from '$lib/components/ui/textarea/index.js';
   import { store } from '../stores/sessions.svelte.js';
+  import { draftStore } from '../stores/draft.svelte.js';
   import { stripIpcErrorPrefix } from '../lib/mcp-errors.js';
   import type { SkillPromptOpts } from '../lib/skill-prompt.js';
   import type { SkillInfo } from '../../shared/types.js';
@@ -69,6 +70,8 @@
         instructions,
         scope,
       });
+      // A new thread's Skills list mustn't miss it.
+      draftStore.forgetSkills();
       oncreated(skill);
       close();
     } catch (e) {

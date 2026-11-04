@@ -1,5 +1,4 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { tick } from 'svelte';
 import '@testing-library/jest-dom/vitest';
 import { render, cleanup, screen, fireEvent, waitFor, within } from '@testing-library/svelte';
 import { mockGroveBench } from '../__mocks__/setup.js';
@@ -226,6 +225,16 @@ describe('DraftPane skills', () => {
     await screen.findByText('/triage');
     await fireEvent.input(box, { target: { value: '/t x' } });
     expect(screen.queryByText('/triage')).toBeNull();
+  });
+
+  it("doesn't say it's looking again once it knows there are none", async () => {
+    mockGroveBench.listAgentSkills.mockResolvedValueOnce([]).mockReturnValueOnce(new Promise(() => {}));
+    render(DraftPane);
+    await waitFor(() => expect(screen.getByRole('button', { name: /^Skills\s*0/ })).toBeInTheDocument());
+    await fireEvent.input(screen.getByLabelText('First message'), { target: { value: '/' } });
+    expect(await screen.findByText('Claude Agent has no skills in this project.')).toBeInTheDocument();
+    expect(screen.queryByText('Looking for skills…')).toBeNull();
+    expect(screen.getByRole('button', { name: /^Skills\s*0/ })).not.toHaveAttribute('aria-busy');
   });
 
   it('says so when the agent has no skills', async () => {
@@ -616,59 +625,22 @@ describe('DraftPane git identity heads-up', () => {
 });
 
 describe('DraftPane layout', () => {
-  // jsdom has no layout or ResizeObserver: stub both, with the scrolling
-  // area as wide as `width`.
-  let width = 600;
-  const observed: ResizeObserverCallback[] = [];
-  async function resize(to: number) {
-    width = to;
-    for (const cb of observed) cb([], {} as ResizeObserver);
-    await tick();
-  }
-
-  beforeEach(() => {
-    width = 600;
-    observed.length = 0;
-    vi.stubGlobal('ResizeObserver', class {
-      constructor(cb: ResizeObserverCallback) { observed.push(cb); }
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-    });
-    Object.defineProperty(HTMLDivElement.prototype, 'clientWidth', { configurable: true, get: () => width });
-  });
-
-  afterEach(() => {
-    vi.unstubAllGlobals();
-    Reflect.deleteProperty(HTMLDivElement.prototype, 'clientWidth');
-  });
-
-  const box = () => screen.getByLabelText('First message').closest('.bg-card')!;
-  const options = () => screen.getByRole('group', { name: 'Thread options' });
-
-  it('puts the options beside the box in a wide pane and along its top in a narrow one, with Skills and Start at its foot', async () => {
-    width = 900;
+  // jsdom can't lay out: the width picks the strip or the column in CSS
+  // (draft-narrow / draft-wide), so these check what CSS works on.
+  it('has one set of options, before the message box, with Skills and Start after it', () => {
     render(DraftPane);
-    await waitFor(() => expect(options()).toHaveTextContent('Runs in'));
-    expect(box().contains(options())).toBe(false);
-
-    await resize(700);
-    expect(box().contains(options())).toBe(true);
-    expect(options()).not.toHaveTextContent('Runs in');
-    expect(box()).toContainElement(screen.getByRole('button', { name: 'Start' }));
-    expect(box()).toContainElement(screen.getByRole('button', { name: /^Skills/ }));
+    const options = screen.getAllByRole('group', { name: 'Thread options' });
+    expect(options).toHaveLength(1);
+    const box = screen.getByLabelText('First message');
+    expect(options[0].compareDocumentPosition(box) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    for (const name of [/^Skills/, 'Start']) {
+      expect(box.compareDocumentPosition(screen.getByRole('button', { name })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
   });
 
-  it("doesn't flip back and forth just under the width it switches at", async () => {
+  it('measures the pane with room kept for the scrollbar, so one showing cannot flip the layout', () => {
     render(DraftPane);
-    await resize(830);
-    expect(box().contains(options())).toBe(true);
-    await resize(850);
-    expect(box().contains(options())).toBe(false);
-    // A scrollbar showing takes a few pixels: it stays beside the box.
-    await resize(830);
-    expect(box().contains(options())).toBe(false);
-    await resize(800);
-    expect(box().contains(options())).toBe(true);
+    const pane = screen.getByRole('group', { name: 'Thread options' }).closest('.overflow-y-auto');
+    expect(pane).toHaveClass('@container/draft', '[scrollbar-gutter:stable]');
   });
 });

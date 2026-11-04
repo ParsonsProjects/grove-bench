@@ -25,9 +25,9 @@
   let menu = $state<HTMLDivElement | null>(null);
 
   const skills = $derived(draftStore.skills);
-  /** Looking for skills with none to show yet: the first list for this
-   *  agent and project. Once there is one, it shows while a fresh one loads. */
-  const looking = $derived(draftStore.skillsLoading && skills.length === 0);
+  /** Looking for skills with no list yet. Once there is one, even an empty
+   *  one, it shows while a fresh one loads. */
+  const looking = $derived(draftStore.lookingForSkills);
   const hasAgent = $derived(!!draftStore.draft?.agentId);
   const chosen = $derived(splitSkillLine(draftStore.draft?.text ?? '')?.skill ?? null);
 

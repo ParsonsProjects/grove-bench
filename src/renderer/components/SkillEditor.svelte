@@ -12,6 +12,7 @@
   import { onMount } from 'svelte';
   import { skillsPanelStore } from '../stores/skillsPanel.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
+  import { draftStore } from '../stores/draft.svelte.js';
   import { SKILL_GROUPS } from '../lib/skill-groups.js';
   import { stripIpcErrorPrefix } from '../lib/mcp-errors.js';
   import { errorMessage } from '../../shared/error-message.js';
@@ -62,6 +63,8 @@
     error = '';
     try {
       await window.groveBench.saveSkill(current.sessionId, repoPath, current.skill.path, current.file.content, current.text);
+      // Its name or description may have changed in a new thread's list.
+      draftStore.forgetSkills();
       // The list comes back, reading the skills again.
       if (skillsPanelStore.edit === current) skillsPanelStore.edit = null;
     } catch (e) {

@@ -66,7 +66,7 @@
   });
 </script>
 
-<div class="relative {fit ? 'flex min-w-0 max-w-full shrink-0' : ''}" bind:this={rootRef}>
+<div class="relative {fit ? 'flex min-w-0 max-w-full' : ''}" bind:this={rootRef}>
   <AgentSettingsTrigger
     class={fit ? 'shrink' : undefined}
     {agentName}

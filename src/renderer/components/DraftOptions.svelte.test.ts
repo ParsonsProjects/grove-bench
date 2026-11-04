@@ -65,24 +65,18 @@ describe('DraftOptions', () => {
     await waitFor(() => expect(picker()).not.toBeInTheDocument());
   });
 
-  it('puts each option under its own label in the column, and the detail in full', () => {
+  it('labels each option for the column, and gives names cut short in the row their tooltips', () => {
     draftStore.open('/repo/one', { group: { newGroupName: 'Auth rework' } });
-    render(DraftOptions, { layout: 'column' });
-    const options = screen.getByRole('group', { name: 'Thread options' });
-    expect(options).toHaveTextContent(/^Agent.*Runs in.*New group\s*Auth rework/);
-    const detail = screen.getByText('from main · named from your message');
-    expect(detail).not.toHaveClass('truncate');
+    render(DraftOptions);
+    // One element either way: CSS shows the labels in the column only
+    // (draft-wide) and the group's inline label in the row only.
+    expect(screen.getAllByRole('group', { name: 'Thread options' })).toHaveLength(1);
+    for (const label of ['Agent', 'Runs in']) expect(screen.getByText(label)).toHaveClass('draft-narrow:hidden');
+    const [columnLabel, rowLabel] = screen.getAllByText('New group');
+    expect(columnLabel).toHaveClass('draft-narrow:hidden');
+    expect(rowLabel).toHaveClass('draft-wide:hidden');
+    expect(screen.getByText('from main · named from your message')).toHaveAttribute('title', 'from main · named from your message');
+    expect(screen.getByTitle(/^Where this thread runs: new branch\./)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: "Don't add to Auth rework" })).toBeInTheDocument();
-  });
-
-  it('keeps the strip to one row, cutting names short with their tooltips whole', () => {
-    draftStore.open('/repo/one', { group: { newGroupName: 'Auth rework' } });
-    render(DraftOptions, { layout: 'strip' });
-    expect(screen.getByRole('group', { name: 'Thread options' })).not.toHaveClass('flex-wrap');
-    expect(screen.queryByText('Runs in')).toBeNull();
-    const detail = screen.getByText('from main · named from your message');
-    expect(detail).toHaveClass('truncate');
-    expect(detail).toHaveAttribute('title', 'from main · named from your message');
-    expect(screen.getByText('New group')).toBeInTheDocument();
   });
 });

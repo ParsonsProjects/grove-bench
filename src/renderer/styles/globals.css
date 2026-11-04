@@ -10,6 +10,21 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* The new thread's pane (DraftPane, the `draft` container) with room for
+   the options in a column beside a full-width message box: 56rem, the
+   widest the two get together (the box's 42rem, the gap and the column's
+   13rem). Narrower, the options are a strip along the top of the box. */
+@custom-variant draft-wide {
+  @container draft (width >= 56rem) {
+    @slot;
+  }
+}
+@custom-variant draft-narrow {
+  @container draft (width < 56rem) {
+    @slot;
+  }
+}
+
 /*
   Grove Bench theme. Dark ("the bench at night") is the default; the light
   theme ("paper") overrides it further down. Every colour is a named brand
