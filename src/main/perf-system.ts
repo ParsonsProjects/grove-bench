@@ -100,6 +100,8 @@ const LINE_BREAK = /\r?\n/;
 const BY_PATH = new Map(Object.entries(SYSTEM_COUNTERS).map(([key, p]) => [p.toLowerCase(), key as CounterKey]));
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+/** Shares of time, which stray a little past 0 and 100 and are clamped back. */
+const PERCENTS: ReadonlySet<CounterKey> = new Set(['cpu', 'kernel', 'diskIdle']);
 
 function spread(values: number[], map: (v: number) => number = (v) => v): Spread | undefined {
   if (values.length === 0) return undefined;
@@ -107,13 +109,30 @@ function spread(values: number[], map: (v: number) => number = (v) => v): Spread
   return { avg: mapped.reduce((n, v) => n + v, 0) / mapped.length, max: Math.max(...mapped) };
 }
 
+/** What parseSystemCounters() read: the load, and the sample lines it skipped
+ *  because their values didn't line up with the header. */
+export type ParsedSystemCounters = Omit<SystemLoad, 'cores'> & {
+  misaligned?: { lines: number; example: string };
+};
+
+/** A sample's time, which typeperf prints before its values: a date and a
+ *  time ("11/04/2026 15:27:41.288"), never a number. */
+const isSampleTime = (field: string) => field.includes(':') && !Number.isFinite(counterValue(field));
+
 /**
  * The load from typeperf's CSV output (systemCounterArgs()): a header of
  * counter paths, then a line of values per sample, each starting with its
- * time. A blank value (the counter couldn't be read that time) is skipped.
- * Null when there is no sample of any of the counters.
+ * time. Values are matched to the header from that time on. On 4 to 6 Nov
+ * one run in six on a PC printed lines with one field more than the header
+ * before the values, so read by position each counter showed the value of
+ * the one before it (disk idle % as ms per transfer, free MB as pages paged
+ * in). A
+ * line whose values still don't line up is skipped, and counted. A blank
+ * value (the counter couldn't be read that time) and a negative one (none of
+ * these can be negative; PDH gives one for a disk's time per transfer now
+ * and then) are skipped, but for shares of time, which are clamped. Null when there is no sample of any of the counters.
  */
-export function parseSystemCounters(stdout: string): Omit<SystemLoad, 'cores'> | null {
+export function parseSystemCounters(stdout: string): ParsedSystemCounters | null {
   const lines = stdout.split(LINE_BREAK);
   const headerAt = lines.findIndex((l) => l.startsWith('"(PDH-CSV'));
   if (headerAt < 0) return null;
@@ -127,13 +146,20 @@ export function parseSystemCounters(stdout: string): Omit<SystemLoad, 'cores'> |
 
   const values = new Map<CounterKey, number[]>();
   let samples = 0;
+  let misaligned: ParsedSystemCounters['misaligned'];
   for (const line of lines.slice(headerAt + 1)) {
     if (!line.startsWith('"')) continue;
     const fields = quotedFields(line);
+    // Where the time is, the header's first field is.
+    const at = fields.findIndex(isSampleTime);
+    if (at < 0 || fields.length - at !== header.length) {
+      misaligned = { lines: (misaligned?.lines ?? 0) + 1, example: misaligned?.example ?? `${lines[headerAt].slice(0, 300)} / ${line.slice(0, 300)}` };
+      continue;
+    }
     let read = false;
     for (const [i, key] of columns) {
-      const v = i < fields.length ? counterValue(fields[i]) : NaN;
-      if (!Number.isFinite(v)) continue;
+      const v = counterValue(fields[at + i]);
+      if (!Number.isFinite(v) || (v < 0 && !PERCENTS.has(key))) continue;
       read = true;
       const list = values.get(key) ?? [];
       list.push(v);
@@ -141,11 +167,11 @@ export function parseSystemCounters(stdout: string): Omit<SystemLoad, 'cores'> |
     }
     if (read) samples++;
   }
-  if (samples === 0) return null;
+  if (samples === 0) return misaligned ? { samples: 0, misaligned } : null;
 
   const of = (key: CounterKey) => values.get(key) ?? [];
   const free = of('freeMB');
-  const load: Omit<SystemLoad, 'cores'> = {
+  const load: ParsedSystemCounters = {
     samples,
     cpu: spread(of('cpu'), (v) => clamp(v, 0, 100)),
     kernel: spread(of('kernel'), (v) => clamp(v, 0, 100)),
@@ -154,6 +180,7 @@ export function parseSystemCounters(stdout: string): Omit<SystemLoad, 'cores'> |
     diskMs: spread(of('diskSec'), (v) => v * 1000),
     freeBytes: free.length > 0 ? Math.min(...free) * 1024 * 1024 : undefined,
     pagesIn: spread(of('pagesIn')),
+    misaligned,
   };
   for (const key of Object.keys(load) as (keyof typeof load)[]) {
     if (load[key] === undefined) delete load[key];
@@ -173,6 +200,9 @@ export interface MeasureSystemOptions {
 }
 
 let notedFailure = false;
+let notedMisaligned = false;
+/** Where a note goes: the app log, unless the caller says. */
+const note = (opts: MeasureSystemOptions) => opts.note ?? ((line: string) => logger.info(line));
 
 /**
  * Sample the PC's load through the next `windowMs`, for the line at its end.
@@ -187,13 +217,18 @@ export async function measureSystem(windowMs: number, opts: MeasureSystemOptions
   if (samples < 1) return null;
   try {
     const { output } = await typeperfOutput(opts.run ?? runInAgentHost, systemCounterArgs(samples), samples * SAMPLE_SEC * 1000 + TYPEPERF_TIMEOUT_MS);
-    const load = parseSystemCounters(output);
-    if (!load) throw new Error(`no sample in its output: ${excerpt(output) || 'none'}`);
+    const parsed = parseSystemCounters(output);
+    const { misaligned, ...load } = parsed ?? { samples: 0 };
+    if (misaligned && !notedMisaligned) {
+      notedMisaligned = true;
+      note(opts)(`[perf-system] typeperf printed ${misaligned.lines} sample line(s) whose values don't line up with its header, so they were left out of the health line; noted only here. Header / first such line: ${misaligned.example}`);
+    }
+    if (load.samples === 0) throw new Error(`no sample in its output: ${excerpt(output) || 'none'}`);
     return { ...load, cores: opts.cores ?? os.availableParallelism() };
   } catch (e) {
     if (!notedFailure) {
       notedFailure = true;
-      (opts.note ?? ((line: string) => logger.info(line)))(`[perf-system] Couldn't sample the PC's load with typeperf, so the health line leaves it out: ${e instanceof Error ? e.message : String(e)}`);
+      note(opts)(`[perf-system] Couldn't sample the PC's load with typeperf, so the health line leaves it out: ${e instanceof Error ? e.message : String(e)}`);
     }
     return null;
   }
@@ -202,4 +237,5 @@ export async function measureSystem(windowMs: number, opts: MeasureSystemOptions
 /** Forget what was noted. */
 export function resetForTests(): void {
   notedFailure = false;
+  notedMisaligned = false;
 }

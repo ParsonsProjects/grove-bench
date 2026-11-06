@@ -64,6 +64,43 @@ describe('parseSystemCounters', () => {
     expect(load?.cpu).toEqual({ avg: 12.5, max: 12.5 });
   });
 
+  it('reads values from the time on, when a line has a field more before it, as one run in six did on 4 to 6 Nov', () => {
+    // Read by position, these gave "disk busy 100%, 72010 ms per transfer,
+    // free memory 919 bytes, paging in 11732 pages/s" and no CPU.
+    const shifted = typeperfOutput([['13.0', '7.0', '0', '72.01', '0.000877', '11732', '40']])
+      .replace(/^"11\/03/m, '"","11/03');
+    expect(parseSystemCounters(shifted)).toEqual({
+      samples: 1,
+      cpu: { avg: 13, max: 13 },
+      kernel: { avg: 7, max: 7 },
+      queue: { avg: 0, max: 0 },
+      diskBusy: { avg: expect.closeTo(27.99, 6), max: expect.closeTo(27.99, 6) },
+      diskMs: { avg: expect.closeTo(0.877, 6), max: expect.closeTo(0.877, 6) },
+      freeBytes: 11732 * MB,
+      pagesIn: { avg: 40, max: 40 },
+    });
+  });
+
+  it("skips a line whose values still don't line up with the header, and says how many", () => {
+    const output = typeperfOutput([
+      ['50.0', '10.0', '1', '50.0', '0.004', '20000', '5'],
+      ['50.0', '10.0', '1', '50.0', '0.004', '20000'], // a value short
+    ]);
+    const load = parseSystemCounters(output);
+    expect(load).toMatchObject({ samples: 1, cpu: { avg: 50, max: 50 }, misaligned: { lines: 1 } });
+    expect(load?.misaligned?.example).toContain('PDH-CSV');
+    const none = parseSystemCounters(typeperfOutput([['50.0', '10.0', '1', '50.0', '0.004', '20000']]));
+    expect(none).toMatchObject({ samples: 0, misaligned: { lines: 1 } });
+  });
+
+  it('skips a negative value, as PDH gives for a disk transfer now and then', () => {
+    const load = parseSystemCounters(typeperfOutput([
+      ['50.0', '10.0', '1', '50.0', '-0.0245', '20000', '5'],
+      ['50.0', '10.0', '1', '50.0', '0.002', '20000', '5'],
+    ]));
+    expect(load?.diskMs).toEqual({ avg: 2, max: 2 });
+  });
+
   it('is null with no header, no counter it knows, or no sample', () => {
     expect(parseSystemCounters('Error: No valid counters.\r\n')).toBeNull();
     expect(parseSystemCounters(typeperfOutput([['1']], ['\\Process(node)\\ID Process']))).toBeNull();
@@ -99,6 +136,24 @@ describe('measureSystem', () => {
     expect(await measureSystem(600_000, { run, platform: 'win32', gaveUp: () => true })).toBeNull();
     expect(await measureSystem(SLACK_MS + SAMPLE_SEC * 1000 - 1, { run, platform: 'win32', gaveUp: () => false })).toBeNull();
     expect(run).not.toHaveBeenCalled();
+  });
+
+  it("notes lines that don't line up once, with what typeperf printed, and keeps the rest", async () => {
+    const note = vi.fn();
+    const good = ['50.0', '10.0', '1', '50.0', '0.004', '20000', '5'];
+    const run = async () => ({ stdout: typeperfOutput([good, good.slice(0, 6)]) });
+    const opts = { run, platform: 'win32' as const, gaveUp: () => false, cores: 8, note };
+    const load = await measureSystem(600_000, opts);
+    expect(load).toMatchObject({ samples: 1, cpu: { avg: 50 } });
+    expect(load).not.toHaveProperty('misaligned');
+    await measureSystem(600_000, opts);
+    expect(note).toHaveBeenCalledOnce();
+    expect(note.mock.calls[0][0]).toMatch(/^\[perf-system\] typeperf printed 1 sample line\(s\) whose values don't line up with its header, .*PDH-CSV/);
+  });
+
+  it('is null when every line is out of line', async () => {
+    const run = async () => ({ stdout: typeperfOutput([['50.0', '10.0', '1', '50.0', '0.004', '20000']]) });
+    expect(await measureSystem(600_000, { run, platform: 'win32', gaveUp: () => false, note: () => {} })).toBeNull();
   });
 
   it('is null when typeperf fails, times out or prints no sample, noting the first failure only', async () => {
