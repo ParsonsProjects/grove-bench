@@ -26,7 +26,10 @@
  *
  * The system parts are the whole PC's, sampled through the period
  * (perf-system.ts), so a slow period can be put down to full cores, a busy
- * disk or paging, or to none of them.
+ * disk or paging, or to none of them. Sample lines that didn't line up with
+ * typeperf's header are left out, and the line says how many: "system over
+ * 30 samples (8 more didn't line up, left out)", or, when none did, "system:
+ * 38 sample line(s) didn't line up with typeperf's header, skipped".
  *
  * It uses the stall timer's numbers (freeze-log.ts) rather than a timer of
  * its own. (Node's event-loop utilization isn't used: Electron runs Node's
@@ -48,7 +51,7 @@
 import type { ProcessMetric } from 'electron';
 import { formatBytes, type FreezeStats } from './freeze-log.js';
 import { perfLine } from './perf-log.js';
-import type { SystemLoad } from './perf-system.js';
+import type { SystemLoad, SystemSkipped } from './perf-system.js';
 import type { AgentTreeProcess, ExeTotal, ProcessMemory, SkippedSample } from './process-memory.js';
 import { within } from './within.js';
 
@@ -78,7 +81,7 @@ export interface HealthInput {
    *  sample of them that was skipped. */
   processes?: ProcessMemory | SkippedSample | null;
   /** The whole PC's load over the period (perf-system.ts), when sampled. */
-  system?: SystemLoad | null;
+  system?: SystemLoad | SystemSkipped | null;
 }
 
 const ms = (v: number) => (v >= 1000 ? `${(v / 1000).toFixed(1)} s` : `${Math.round(v)} ms`);
@@ -96,8 +99,11 @@ function exeList(totals: ExeTotal[]): string {
 /** 4.2 under 10, whole numbers above. */
 const short = (v: number) => (v < 10 ? v.toFixed(1) : String(Math.round(v)));
 
-/** The system parts of the line, each left out when nothing in it was read. */
-function systemParts(s: SystemLoad): string[] {
+/** The system parts of the line, each left out when nothing in it was read.
+ *  A period whose sample lines were all left out says so, as the agents'
+ *  sample does. */
+function systemParts(s: SystemLoad | SystemSkipped): string[] {
+  if ('skipped' in s) return [`system: ${s.lines} sample line(s) didn't line up with typeperf's header, skipped`];
   const cpu: string[] = [];
   if (s.cpu) cpu.push(`CPU avg ${Math.round(s.cpu.avg)}%, max ${Math.round(s.cpu.max)}%${s.kernel ? ` (kernel avg ${Math.round(s.kernel.avg)}%)` : ''}`);
   if (s.queue) cpu.push(`threads waiting for a CPU avg ${short(s.queue.avg)}, max ${Math.round(s.queue.max)} (${s.cores} cores)`);
@@ -111,7 +117,8 @@ function systemParts(s: SystemLoad): string[] {
   if (cpu.length > 0) parts.push(cpu.join(', '));
   if (disk.length > 0) parts.push(`disk ${disk.join(', ')}`);
   if (memory.length > 0) parts.push(`free memory ${memory.join(', ')}`);
-  if (parts.length > 0) parts[0] = `system over ${s.samples} samples: ${parts[0]}`;
+  const leftOut = s.leftOut ? ` (${s.leftOut} more didn't line up, left out)` : '';
+  if (parts.length > 0) parts[0] = `system over ${s.samples} samples${leftOut}: ${parts[0]}`;
   return parts;
 }
 
@@ -190,7 +197,7 @@ export interface HealthSources {
   /** Samples the PC's load through the period of `windowMs` starting now,
    *  for the line at its end (perf-system.ts). Null, a failure or a wait
    *  past PROCESSES_WAIT_MS at the line leaves it out. */
-  system?: (windowMs: number) => Promise<SystemLoad | null>;
+  system?: (windowMs: number) => Promise<SystemLoad | SystemSkipped | null>;
 }
 
 /** Write a health line now and then. Returns a function that stops it. */
@@ -211,7 +218,7 @@ export function startHealthLog(
   sources.getAppMetrics();
   sources.takeFreezeStats();
 
-  const sampleSystem = (windowMs: number): Promise<SystemLoad | null> | undefined => {
+  const sampleSystem = (windowMs: number): Promise<SystemLoad | SystemSkipped | null> | undefined => {
     try {
       return sources.system?.(windowMs);
     } catch {
@@ -245,7 +252,7 @@ export function startHealthLog(
     // seconds, and the period's system samples are done or nearly. Either is
     // left out if it fails or takes too long.
     let processes: ProcessMemory | SkippedSample | null = null;
-    let load: SystemLoad | null = null;
+    let load: SystemLoad | SystemSkipped | null = null;
     const waits = [measuring?.then((m) => { processes = m; }), system?.then((s) => { load = s; })]
       .filter((w): w is Promise<void> => w !== undefined);
     void within(Promise.allSettled(waits), processesWaitMs).catch(() => false).then(() => {
