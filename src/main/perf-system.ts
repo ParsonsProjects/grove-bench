@@ -91,6 +91,16 @@ export interface SystemLoad {
   freeBytes?: number;
   /** Pages read back from disk, per second. */
   pagesIn?: Spread;
+  /** Sample lines left out because their values didn't line up with
+   *  typeperf's header, when there were any (parseSystemCounters()). */
+  leftOut?: number;
+}
+
+/** A period whose every sample line was left out (parseSystemCounters()):
+ *  the health line says so rather than leave the system part out unexplained. */
+export interface SystemSkipped {
+  skipped: 'misaligned';
+  lines: number;
 }
 
 /** A counter's path in typeperf's header, without the computer's name:
@@ -109,11 +119,14 @@ function spread(values: number[], map: (v: number) => number = (v) => v): Spread
   return { avg: mapped.reduce((n, v) => n + v, 0) / mapped.length, max: Math.max(...mapped) };
 }
 
-/** What parseSystemCounters() read: the load, and the sample lines it skipped
- *  because their values didn't line up with the header. */
-export type ParsedSystemCounters = Omit<SystemLoad, 'cores'> & {
+/** What parseSystemCounters() read. */
+export interface ParsedSystemCounters {
+  /** The load, or null when no line held a sample of any of the counters. */
+  load: Omit<SystemLoad, 'cores' | 'leftOut'> | null;
+  /** The sample lines left out because their values didn't line up with the
+   *  header: how many, and the header with the first of them. */
   misaligned?: { lines: number; example: string };
-};
+}
 
 /** A sample's time, which typeperf prints before its values: a date and a
  *  time ("11/04/2026 15:27:41.288"), never a number. */
@@ -122,27 +135,33 @@ const isSampleTime = (field: string) => field.includes(':') && !Number.isFinite(
 /**
  * The load from typeperf's CSV output (systemCounterArgs()): a header of
  * counter paths, then a line of values per sample, each starting with its
- * time. Values are matched to the header from that time on. On 4 to 6 Nov
- * one run in six on a PC printed lines with one field more than the header
- * before the values, so read by position each counter showed the value of
- * the one before it (disk idle % as ms per transfer, free MB as pages paged
- * in). A
- * line whose values still don't line up is skipped, and counted. A blank
- * value (the counter couldn't be read that time) and a negative one (none of
- * these can be negative; PDH gives one for a disk's time per transfer now
- * and then) are skipped, but for shares of time, which are clamped. Null when there is no sample of any of the counters.
+ * time. Values are matched to the header from that time on, and a line
+ * whose values then don't fit the header is left out and counted.
+ *
+ * On 4 to 6 Nov, 16 of 90 runs on one PC gave lines with one field more than
+ * their header, which read by position showed each counter the value of the
+ * one before it (disk idle % as ms per transfer, free MB as pages paged in).
+ * Their raw output wasn't kept, so the cause is unknown: a field before the
+ * time, which is read correctly here, or a header without its first counter,
+ * which is left out, as there is no telling which counter is missing.
+ * measureSystem() notes the first such line in the app log.
+ *
+ * A blank value (the counter couldn't be read that time) is skipped, and so
+ * is a negative one, which none of these counters can have (PDH gives one
+ * for a disk's time per transfer now and then); shares of time are clamped
+ * to 0 to 100 instead.
  */
-export function parseSystemCounters(stdout: string): ParsedSystemCounters | null {
+export function parseSystemCounters(stdout: string): ParsedSystemCounters {
   const lines = stdout.split(LINE_BREAK);
   const headerAt = lines.findIndex((l) => l.startsWith('"(PDH-CSV'));
-  if (headerAt < 0) return null;
+  if (headerAt < 0) return { load: null };
   const header = quotedFields(lines[headerAt]);
   const columns = new Map<number, CounterKey>();
   for (let i = 1; i < header.length; i++) {
     const key = BY_PATH.get(COUNTER_PATH.exec(header[i])?.[1].toLowerCase() ?? '');
     if (key) columns.set(i, key);
   }
-  if (columns.size === 0) return null;
+  if (columns.size === 0) return { load: null };
 
   const values = new Map<CounterKey, number[]>();
   let samples = 0;
@@ -167,11 +186,12 @@ export function parseSystemCounters(stdout: string): ParsedSystemCounters | null
     }
     if (read) samples++;
   }
-  if (samples === 0) return misaligned ? { samples: 0, misaligned } : null;
+  const withMisaligned = misaligned ? { misaligned } : {};
+  if (samples === 0) return { load: null, ...withMisaligned };
 
   const of = (key: CounterKey) => values.get(key) ?? [];
   const free = of('freeMB');
-  const load: ParsedSystemCounters = {
+  const load: NonNullable<ParsedSystemCounters['load']> = {
     samples,
     cpu: spread(of('cpu'), (v) => clamp(v, 0, 100)),
     kernel: spread(of('kernel'), (v) => clamp(v, 0, 100)),
@@ -180,12 +200,11 @@ export function parseSystemCounters(stdout: string): ParsedSystemCounters | null
     diskMs: spread(of('diskSec'), (v) => v * 1000),
     freeBytes: free.length > 0 ? Math.min(...free) * 1024 * 1024 : undefined,
     pagesIn: spread(of('pagesIn')),
-    misaligned,
   };
   for (const key of Object.keys(load) as (keyof typeof load)[]) {
     if (load[key] === undefined) delete load[key];
   }
-  return load;
+  return { load, ...withMisaligned };
 }
 
 export interface MeasureSystemOptions {
@@ -206,25 +225,30 @@ const note = (opts: MeasureSystemOptions) => opts.note ?? ((line: string) => log
 
 /**
  * Sample the PC's load through the next `windowMs`, for the line at its end.
- * Null on any platform but Windows, once the agent host has given up, for a
- * period too short to sample, and when typeperf fails, times out or prints
- * no sample. Never throws.
+ * Skipped when every sample line was left out for not lining up with the
+ * header (noted once in the app log, not as a failure). Null on any platform
+ * but Windows, once the agent host has given up, for a period too short to
+ * sample, and when typeperf fails, times out or prints no sample. Never
+ * throws.
  */
-export async function measureSystem(windowMs: number, opts: MeasureSystemOptions = {}): Promise<SystemLoad | null> {
+export async function measureSystem(windowMs: number, opts: MeasureSystemOptions = {}): Promise<SystemLoad | SystemSkipped | null> {
   if ((opts.platform ?? process.platform) !== 'win32') return null;
   if ((opts.gaveUp ?? agentHostGaveUp)()) return null;
   const samples = Math.floor((windowMs - SLACK_MS) / (SAMPLE_SEC * 1000));
   if (samples < 1) return null;
   try {
     const { output } = await typeperfOutput(opts.run ?? runInAgentHost, systemCounterArgs(samples), samples * SAMPLE_SEC * 1000 + TYPEPERF_TIMEOUT_MS);
-    const parsed = parseSystemCounters(output);
-    const { misaligned, ...load } = parsed ?? { samples: 0 };
+    const { load, misaligned } = parseSystemCounters(output);
     if (misaligned && !notedMisaligned) {
       notedMisaligned = true;
       note(opts)(`[perf-system] typeperf printed ${misaligned.lines} sample line(s) whose values don't line up with its header, so they were left out of the health line; noted only here. Header / first such line: ${misaligned.example}`);
     }
-    if (load.samples === 0) throw new Error(`no sample in its output: ${excerpt(output) || 'none'}`);
-    return { ...load, cores: opts.cores ?? os.availableParallelism() };
+    if (!load) {
+      // Not a failure: the health line says so, and the note above has why.
+      if (misaligned) return { skipped: 'misaligned', lines: misaligned.lines };
+      throw new Error(`no sample in its output: ${excerpt(output) || 'none'}`);
+    }
+    return { ...load, ...(misaligned ? { leftOut: misaligned.lines } : {}), cores: opts.cores ?? os.availableParallelism() };
   } catch (e) {
     if (!notedFailure) {
       notedFailure = true;

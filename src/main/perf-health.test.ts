@@ -130,6 +130,14 @@ describe('formatHealth', () => {
     expect(none).not.toContain('system');
   });
 
+  it("says how many sample lines didn't line up with typeperf's header, or that all were skipped", () => {
+    const base = { minutes: 10, freeze: quiet, metrics: [], conversations: 1, asleep: 0, terminals: 0 };
+    const some = formatHealth({ ...base, system: { samples: 30, cores: 8, leftOut: 8, cpu: { avg: 40, max: 60 } } });
+    expect(some).toContain('; system over 30 samples (8 more didn\'t line up, left out): CPU avg 40%, max 60%; conversations 1');
+    const all = formatHealth({ ...base, system: { skipped: 'misaligned', lines: 38 } });
+    expect(all).toBe("last 10 min: freezes: main 0, window 0; process launches 0; system: 38 sample line(s) didn't line up with typeperf's header, skipped; conversations 1, terminals 0");
+  });
+
   it('uses the working set where private bytes are not reported', () => {
     const line = formatHealth({ minutes: 1, freeze: quiet, metrics: [metric('Browser', 0, 102_400)], conversations: 1, asleep: 0, terminals: 0 });
     expect(line).toBe('last 1 min: freezes: main 0, window 0; process launches 0; CPU main 0%; memory main 100 MB; conversations 1, terminals 0');
