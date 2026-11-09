@@ -34,6 +34,11 @@ const MAX_POLL_MS = 8 * POLL_MS;
 const SWEEP_REFRESH_TIMEOUT_MS = 45_000;
 /** Auto-fix gives up on a head commit after this many attempts and asks for a human. */
 const MAX_AUTO_FIX_ATTEMPTS = 2;
+/** A queued auto turn (PendingAuto) goes out on a fresh fetch this long after
+ *  the thread was seen free, not on the fetch at the end of its turn: a push
+ *  just before the turn ended may not show on GitHub yet, and the PR would
+ *  still read as failing on the commit before. */
+const AUTO_SETTLE_MS = 10_000;
 /** How long "rerun requested" stands without the PR showing the run going
  *  again: past it, a rerun GitHub never started can be asked for again. */
 const RERUN_MARK_MS = 3 * 60_000;
@@ -63,6 +68,21 @@ export interface PrAutoConfig {
 }
 
 const AUTO_OFF: PrAutoConfig = { fixCi: false, addressReviews: false };
+
+/** An auto turn that found the thread busy or at a usage limit, sent once the
+ *  thread is free (runPendingAuto). Detection raises an event once per head
+ *  commit or comment, so without this the turn would be lost. */
+interface PendingAuto {
+  /** The PR it is for: dropped if another becomes primary or it closes. */
+  prNumber: number;
+  /** Fix the checks failing on this head commit. Dropped on a new commit or
+   *  once they stop failing (a later failure is a new event). */
+  fixSha?: string;
+  /** Address the PR's review comments. */
+  comments?: boolean;
+  /** The thread has been free for AUTO_SETTLE_MS (see settleThenRefresh). */
+  settled: boolean;
+}
 
 /** The Auto toggles are kept per conversation in localStorage, so a restart
  *  keeps them (the key is dropped when both are off, or the conversation is
@@ -110,7 +130,8 @@ export interface BranchShip {
 
 /** PR + branch-sync state per session. Polls all sessions once App starts the
  *  global sweep; detects new CI failures / review feedback and either surfaces
- *  an alert or (when auto mode is on) sends a fix turn to the session's agent.
+ *  an alert or (when auto mode is on) sends a fix turn to the session's agent,
+ *  then or, if the agent is busy, once it is free (PendingAuto).
  *
  *  A session can have several PRs: one replaced by another on the same
  *  branch, stacked PRs from one branch into different bases, or a PR the
@@ -155,6 +176,12 @@ class PrStore {
    *  session. Counted per PR, not per commit: each fix the agent pushes is a
    *  new commit, so a per-commit count would never reach the limit. */
   private autoFixAttempts = new Map<string, { prNumber: number; attempts: number }>();
+  /** Auto turns waiting for the thread to be free, per session. */
+  private pendingAuto = new Map<string, PendingAuto>();
+  private settleTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Sessions whose auto address-reviews fetch is in flight, so a refresh
+   *  landing during it can't send a second turn. */
+  private addressing = new Set<string>();
   private globalTimer: ReturnType<typeof setTimeout> | null = null;
   private sweeping = false;
   /** The wait before the next sweep: POLL_MS, longer after slow refreshes. */
@@ -252,10 +279,27 @@ class PrStore {
   }
 
   setAuto(sessionId: string, patch: Partial<PrAutoConfig>): void {
-    const next = { ...this.getAuto(sessionId), ...patch };
+    const before = this.getAuto(sessionId);
+    const next = { ...before, ...patch };
     this.loadedAuto.set(sessionId, next);
     this.autoBySession = { ...this.autoBySession, [sessionId]: next };
     persistAuto(sessionId, next);
+    if (!next.fixCi) this.dropPending(sessionId, 'fix');
+    if (!next.addressReviews) this.dropPending(sessionId, 'comments');
+    if (next.fixCi && !before.fixCi) this.fixExistingFailure(sessionId);
+  }
+
+  /** "Fix automatically" ticked while the primary PR's checks already fail:
+   *  the fix turn now, or once the thread is free. Detection counts a failure
+   *  from before it first looked as old news, so on its own it would wait
+   *  for the next commit to fail. Comments aren't treated the same way: the
+   *  other box is for new ones. */
+  private fixExistingFailure(sessionId: string): void {
+    const status = sessionStore.sessions.find((s) => s.id === sessionId)?.status;
+    if (status !== 'running' && status !== 'sleeping') return;
+    const pr = this.getPr(sessionId);
+    if (!pr || pr.state !== 'OPEN' || !pr.headSha || (pr.checks?.failed ?? 0) === 0) return;
+    if (this.autoFixCi(sessionId, pr.number) === 'wait') this.queueAuto(sessionId, pr.number, { fixSha: pr.headSha });
   }
 
   /** The last push error, while the conversation is still on the branch it
@@ -554,6 +598,8 @@ class PrStore {
     if (!pr || !this.sessionIdle(sessionId)) return false;
     this.sendTurn(sessionId, buildFixCiPrompt(pr, this.branchOfPr(sessionId, pr)));
     this.clearAlerts(sessionId, 'ci_failed');
+    // Asked for now, by hand or by auto mode: a queued one would repeat it.
+    this.dropPending(sessionId, 'fix');
     return true;
   }
 
@@ -569,6 +615,7 @@ class PrStore {
     if (!this.sessionIdle(sessionId)) return 'busy'; // may have changed during the fetch
     this.sendTurn(sessionId, buildAddressReviewsPrompt(pr.number, this.branchOfPr(sessionId, pr), comments));
     this.clearAlerts(sessionId, 'new_comments');
+    this.dropPending(sessionId, 'comments');
     return 'sent';
   }
 
@@ -605,50 +652,152 @@ class PrStore {
       states.set(pr.number, state);
     }
     for (const event of detectPrEvents(state, pr)) {
-      this.handleEvent(sessionId, pr.number, event);
+      this.handleEvent(sessionId, pr, event);
     }
+    this.runPendingAuto(sessionId, pr);
   }
 
-  /** prNumber is the PR the event was detected on; alerts are pinned to it
-   *  even if the primary changes while an auto action is in flight. */
-  private handleEvent(sessionId: string, prNumber: number, event: PrWatchEvent): void {
+  /** pr is the PR the event was detected on; alerts are pinned to it even
+   *  if the primary changes while an auto action is in flight. */
+  private handleEvent(sessionId: string, pr: PrInfo, event: PrWatchEvent): void {
     const auto = this.getAuto(sessionId);
-    // At a usage limit an automatic turn would fail at once (and use up an
-    // auto-fix attempt), so it falls back to the alert, as when busy.
-    const limited = messageStore.isRateLimited(sessionId);
 
     if (event.kind === 'ci_failed') {
-      if (auto.fixCi && !limited) {
-        const prev = this.autoFixAttempts.get(sessionId);
-        const attempts = prev?.prNumber === prNumber ? prev.attempts : 0;
-        if (attempts >= MAX_AUTO_FIX_ATTEMPTS) {
-          this.addAlert(sessionId, prNumber, {
-            kind: 'needs_human',
-            reason: `Auto-fix tried ${attempts} times on this PR and CI is still failing. Take a look`,
-          });
-          return;
-        }
-        if (this.fixCiWithAgent(sessionId)) {
-          this.autoFixAttempts.set(sessionId, { prNumber, attempts: attempts + 1 });
-          return;
-        }
+      if (auto.fixCi) {
+        const result = this.autoFixCi(sessionId, pr.number);
+        if (result !== 'wait') return;
+        // Busy or at a usage limit: it goes out once the thread is free.
+        // The alert shows meanwhile.
+        if (pr.headSha) this.queueAuto(sessionId, pr.number, { fixSha: pr.headSha });
       }
-      this.addAlert(sessionId, prNumber, { kind: 'ci_failed', checks: event.checks });
+      this.addAlert(sessionId, pr.number, { kind: 'ci_failed', checks: event.checks });
       return;
     }
 
     if (event.kind === 'new_comments') {
-      if (auto.addressReviews && !limited) {
-        this.addressReviewsWithAgent(sessionId, { trustedOnly: true }).then((result) => {
-          // Nothing sent (busy, or all comments from non-collaborators) → surface it
-          if (result !== 'sent') this.addAlert(sessionId, prNumber, { kind: 'new_comments', count: event.count });
-        }).catch(() => {
-          this.addAlert(sessionId, prNumber, { kind: 'new_comments', count: event.count });
-        });
+      if (auto.addressReviews) {
+        this.autoAddressReviews(sessionId, pr.number, () => this.addAlert(sessionId, pr.number, { kind: 'new_comments', count: event.count }));
         return;
       }
-      this.addAlert(sessionId, prNumber, { kind: 'new_comments', count: event.count });
+      this.addAlert(sessionId, pr.number, { kind: 'new_comments', count: event.count });
     }
+  }
+
+  /** The automatic fix turn for the primary PR's failing checks. 'wait' when
+   *  the thread is busy or at a usage limit, where an automatic turn would
+   *  fail at once and use up an attempt. 'gave_up' after
+   *  MAX_AUTO_FIX_ATTEMPTS, with a note asking for you. */
+  private autoFixCi(sessionId: string, prNumber: number): 'sent' | 'wait' | 'gave_up' {
+    const prev = this.autoFixAttempts.get(sessionId);
+    const attempts = prev?.prNumber === prNumber ? prev.attempts : 0;
+    if (attempts >= MAX_AUTO_FIX_ATTEMPTS) {
+      this.dropPending(sessionId, 'fix');
+      this.addAlert(sessionId, prNumber, {
+        kind: 'needs_human',
+        reason: `Auto-fix tried ${attempts} times on this PR and CI is still failing. Take a look`,
+      });
+      return 'gave_up';
+    }
+    if (messageStore.isRateLimited(sessionId) || !this.fixCiWithAgent(sessionId)) return 'wait';
+    this.autoFixAttempts.set(sessionId, { prNumber, attempts: attempts + 1 });
+    return 'sent';
+  }
+
+  /** Fetch the review comments and send the automatic turn, collaborators'
+   *  comments only. Busy or at a usage limit, it waits for the thread to be
+   *  free. notSent runs when nothing went out: busy, none from a
+   *  collaborator, or the fetch failed. */
+  private autoAddressReviews(sessionId: string, prNumber: number, notSent?: () => void): void {
+    if (messageStore.isRateLimited(sessionId)) {
+      this.queueAuto(sessionId, prNumber, { comments: true });
+      notSent?.();
+      return;
+    }
+    this.addressing.add(sessionId);
+    this.addressReviewsWithAgent(sessionId, { trustedOnly: true }).then((result) => {
+      if (result === 'busy') this.queueAuto(sessionId, prNumber, { comments: true });
+      else if (result === 'empty') this.dropPending(sessionId, 'comments');
+      if (result !== 'sent') notSent?.();
+    }).catch(() => {
+      // Left to the alert: retrying each poll would call gh for nothing
+      // while it keeps failing (auth, network).
+      this.dropPending(sessionId, 'comments');
+      notSent?.();
+    }).finally(() => {
+      this.addressing.delete(sessionId);
+    });
+  }
+
+  // ── Auto turns waiting for the thread to be free ──
+
+  private queueAuto(sessionId: string, prNumber: number, part: { fixSha: string } | { comments: true }): void {
+    const prev = this.pendingAuto.get(sessionId);
+    const kept = prev?.prNumber === prNumber ? prev : { prNumber };
+    // Queued because the thread can't take a turn now, so it isn't settled.
+    this.pendingAuto.set(sessionId, { ...kept, ...part, settled: false });
+    this.clearSettleTimer(sessionId);
+  }
+
+  /** Drop one queued turn, or all of them. */
+  private dropPending(sessionId: string, part?: 'fix' | 'comments'): void {
+    const pending = this.pendingAuto.get(sessionId);
+    if (!pending) return;
+    if (part === 'fix') pending.fixSha = undefined;
+    if (part === 'comments') pending.comments = undefined;
+    if (part && (pending.fixSha || pending.comments)) return;
+    this.pendingAuto.delete(sessionId);
+    this.clearSettleTimer(sessionId);
+  }
+
+  /** Send a queued auto turn once the thread is free, on fresh PR data, one
+   *  turn per free moment (the CI fix first). Called after each detection. */
+  private runPendingAuto(sessionId: string, pr: PrInfo): void {
+    const pending = this.pendingAuto.get(sessionId);
+    if (!pending) return;
+    if (pr.number !== pending.prNumber || pr.state !== 'OPEN') {
+      this.dropPending(sessionId);
+      return;
+    }
+    const auto = this.getAuto(sessionId);
+    // A new commit, or checks no longer failing (green, or running again):
+    // the failure it was for is gone. A later one is a new event.
+    if (pending.fixSha && (!auto.fixCi || pr.headSha !== pending.fixSha || (pr.checks?.failed ?? 0) === 0)) {
+      this.dropPending(sessionId, 'fix');
+    }
+    if (pending.comments && !auto.addressReviews) this.dropPending(sessionId, 'comments');
+
+    const left = this.pendingAuto.get(sessionId);
+    if (!left || this.addressing.has(sessionId)) return;
+    if (!this.sessionIdle(sessionId) || messageStore.isRateLimited(sessionId)) {
+      left.settled = false;
+      this.clearSettleTimer(sessionId);
+      return;
+    }
+    if (!left.settled) {
+      this.settleThenRefresh(sessionId);
+      return;
+    }
+    left.settled = false;
+    if (left.fixSha) this.autoFixCi(sessionId, pr.number);
+    else this.autoAddressReviews(sessionId, pr.number);
+  }
+
+  /** Mark the queued turn settled AUTO_SETTLE_MS from now, then fetch: that
+   *  fetch's detection sends it if the thread is still free. */
+  private settleThenRefresh(sessionId: string): void {
+    if (this.settleTimers.has(sessionId)) return;
+    this.settleTimers.set(sessionId, setTimeout(() => {
+      this.settleTimers.delete(sessionId);
+      const pending = this.pendingAuto.get(sessionId);
+      if (!pending) return;
+      pending.settled = true;
+      void this.refresh(sessionId, true);
+    }, AUTO_SETTLE_MS));
+  }
+
+  private clearSettleTimer(sessionId: string): void {
+    clearTimeout(this.settleTimers.get(sessionId));
+    this.settleTimers.delete(sessionId);
   }
 
   private addAlert(sessionId: string, prNumber: number, alert: PrAlertInput): void {
@@ -700,6 +849,8 @@ class PrStore {
     this.lastViewed.delete(sessionId);
     this.watchStates.delete(sessionId);
     this.autoFixAttempts.delete(sessionId);
+    this.dropPending(sessionId);
+    this.addressing.delete(sessionId);
     const { [sessionId]: _p, ...restPrs } = this.prsBySession;
     this.prsBySession = restPrs;
     const { [sessionId]: _pri, ...restPrimary } = this.primaryBySession;

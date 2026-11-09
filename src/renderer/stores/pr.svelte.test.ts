@@ -503,6 +503,211 @@ describe('auto-fix CI limit', () => {
   });
 });
 
+describe('auto turns: checks already failing, and a thread that was busy', () => {
+  const failing = (sha: string) => pr({ headSha: sha, checks: { total: 1, passed: 0, failed: 1, pending: 0 }, failingChecks: ['build'] });
+  const running = (sha: string) => pr({ headSha: sha, checks: { total: 1, passed: 0, failed: 0, pending: 1 } });
+  const turns = () => mockGroveBench.sendMessage.mock.calls.filter(([id]) => id === SID);
+  const busy = () => messageStore.setIsRunning(SID, true);
+  const free = () => messageStore.setIsRunning(SID, false);
+  /** The wait after the thread is seen free (AUTO_SETTLE_MS), then the fetch it starts. */
+  const settle = () => vi.advanceTimersByTimeAsync(10_000);
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    setStatus('running');
+    free();
+  });
+
+  afterEach(() => {
+    prStore.setAuto(SID, { fixCi: false, addressReviews: false });
+    messageStore.destroySession(SID);
+    vi.useRealTimers();
+  });
+
+  it('sends the fix when the box is ticked while checks already fail', async () => {
+    await refreshWith(failing('sha-1')); // seen before the box: old news to detection
+    expect(turns()).toHaveLength(0);
+
+    prStore.setAuto(SID, { fixCi: true });
+    expect(turns()).toHaveLength(1);
+    expect(turns()[0][1]).toContain('CI is failing on PR #7');
+
+    // Not sent again by the next poll of the same failure.
+    free();
+    await refreshWith(failing('sha-1'));
+    await settle();
+    expect(turns()).toHaveLength(1);
+  });
+
+  it('does nothing when the box is ticked with checks passing, or on a stopped thread', async () => {
+    await refreshWith(pr());
+    prStore.setAuto(SID, { fixCi: true });
+    prStore.setAuto(SID, { fixCi: false });
+
+    await refreshWith(failing('sha-1'));
+    setStatus('stopped');
+    prStore.setAuto(SID, { fixCi: true });
+    expect(turns()).toHaveLength(0);
+  });
+
+  it('ticked while the agent is busy, sends the fix once the thread has been free a while', async () => {
+    await refreshWith(failing('sha-1'));
+    busy();
+    prStore.setAuto(SID, { fixCi: true });
+    expect(turns()).toHaveLength(0);
+
+    free();
+    await refreshWith(failing('sha-1')); // the fetch as the turn ends
+    expect(turns()).toHaveLength(0);
+    await settle();
+    expect(turns()).toHaveLength(1);
+  });
+
+  it('sends a fix for checks that failed mid-turn once the turn is over, and only once', async () => {
+    prStore.setAuto(SID, { fixCi: true });
+    await refreshWith(running('sha-2')); // seeds
+    busy();
+    await refreshWith(failing('sha-2'));
+    expect(turns()).toHaveLength(0);
+    expect(prStore.getAlerts(SID)).toMatchObject([{ kind: 'ci_failed' }]);
+
+    free();
+    await refreshWith(failing('sha-2'));
+    await settle();
+    expect(turns()).toHaveLength(1);
+    expect(prStore.getAlerts(SID)).toEqual([]);
+
+    free();
+    await refreshWith(failing('sha-2'));
+    await settle();
+    expect(turns()).toHaveLength(1);
+  });
+
+  it('waits again if a turn starts before the thread has been free long enough', async () => {
+    prStore.setAuto(SID, { fixCi: true });
+    await refreshWith(running('sha-2'));
+    busy();
+    await refreshWith(failing('sha-2'));
+    free();
+    await refreshWith(failing('sha-2'));
+
+    busy(); // the user sent a message
+    await settle();
+    expect(turns()).toHaveLength(0);
+
+    free();
+    await refreshWith(failing('sha-2'));
+    await settle();
+    expect(turns()).toHaveLength(1);
+  });
+
+  it('drops the queued fix once the agent pushed a new commit, or the checks stop failing', async () => {
+    prStore.setAuto(SID, { fixCi: true });
+    await refreshWith(running('sha-2'));
+    busy();
+    await refreshWith(failing('sha-2'));
+    free();
+    // The push that ended the turn shows on GitHub before the wait is over.
+    await refreshWith(failing('sha-2'));
+    mockGroveBench.getPrs.mockResolvedValue([running('sha-3')]);
+    await settle();
+    expect(turns()).toHaveLength(0);
+
+    // A rerun of the same commit: no longer failing, so nothing to fix.
+    await refreshWith(running('sha-3'));
+    busy();
+    await refreshWith(failing('sha-3'));
+    free();
+    await refreshWith(failing('sha-3'));
+    mockGroveBench.getPrs.mockResolvedValue([running('sha-3')]);
+    await settle();
+    expect(turns()).toHaveLength(0);
+  });
+
+  it('drops the queued fix when the box is unticked, or Fix with agent is used', async () => {
+    prStore.setAuto(SID, { fixCi: true });
+    await refreshWith(running('sha-2'));
+    busy();
+    await refreshWith(failing('sha-2'));
+    prStore.setAuto(SID, { fixCi: false });
+    free();
+    await refreshWith(failing('sha-2'));
+    await settle();
+    expect(turns()).toHaveLength(0);
+
+    prStore.setAuto(SID, { fixCi: true }); // still failing: sends now
+    expect(turns()).toHaveLength(1);
+    await refreshWith(failing('sha-3')); // the agent's fix failed too
+    expect(turns()).toHaveLength(1); // busy: queued
+    free();
+    await refreshWith(failing('sha-3'));
+    expect(prStore.fixCiWithAgent(SID)).toBe(true); // by hand, before the wait is over
+    free();
+    await settle();
+    expect(turns()).toHaveLength(2);
+  });
+
+  it('holds a queued fix while the thread is at a usage limit', async () => {
+    const limited = vi.spyOn(messageStore, 'isRateLimited').mockReturnValue(true);
+    try {
+      prStore.setAuto(SID, { fixCi: true });
+      await refreshWith(running('sha-2'));
+      await refreshWith(failing('sha-2'));
+      await settle();
+      expect(turns()).toHaveLength(0);
+
+      limited.mockReturnValue(false);
+      await refreshWith(failing('sha-2'));
+      await settle();
+      expect(turns()).toHaveLength(1);
+    } finally {
+      limited.mockRestore();
+    }
+  });
+
+  it('addresses new comments that came in mid-turn once the thread is free', async () => {
+    mockGroveBench.getPrReviewComments.mockResolvedValue([
+      { id: 'r1', author: 'reviewer', authorAssociation: 'MEMBER', body: 'please rename this' },
+    ]);
+    prStore.setAuto(SID, { addressReviews: true });
+    await refreshWith(pr({ commentSignature: ['c1'] })); // seeds
+    busy();
+    await refreshWith(pr({ commentSignature: ['c1', 'c2'] }));
+    await vi.advanceTimersByTimeAsync(0); // the comments fetch
+    expect(turns()).toHaveLength(0);
+    expect(prStore.getAlerts(SID)).toMatchObject([{ kind: 'new_comments', count: 1 }]);
+
+    free();
+    await refreshWith(pr({ commentSignature: ['c1', 'c2'] }));
+    await settle();
+    expect(turns()).toHaveLength(1);
+    expect(turns()[0][1]).toContain('please rename this');
+  });
+
+  it('sends the queued fix first, then the comments the next time the thread is free', async () => {
+    mockGroveBench.getPrReviewComments.mockResolvedValue([
+      { id: 'r1', author: 'reviewer', authorAssociation: 'MEMBER', body: 'please rename this' },
+    ]);
+    prStore.setAuto(SID, { fixCi: true, addressReviews: true });
+    await refreshWith(running('sha-2'));
+    busy();
+    await refreshWith({ ...failing('sha-2'), commentSignature: ['c1'] });
+    await vi.advanceTimersByTimeAsync(0);
+
+    free();
+    await refreshWith({ ...failing('sha-2'), commentSignature: ['c1'] });
+    await settle();
+    expect(turns()).toHaveLength(1);
+    expect(turns()[0][1]).toContain('CI is failing');
+
+    free();
+    await refreshWith({ ...failing('sha-2'), commentSignature: ['c1'] });
+    await settle();
+    expect(turns()).toHaveLength(2);
+    expect(turns()[1][1]).toContain('please rename this');
+  });
+});
+
 describe('push errors', () => {
   const IPC_WRAPPED = "Error invoking remote method 'git:push': Error: ! [rejected] feat/x -> feat/x (fetch first)";
 

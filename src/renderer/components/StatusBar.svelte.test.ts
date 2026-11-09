@@ -696,6 +696,18 @@ describe('StatusBar PR', () => {
     expect(within(popup).getByText('The agent is busy: try again when it goes idle')).toBeInTheDocument();
   });
 
+  it('sends the fix when "Fix automatically" is ticked while checks are already failing', async () => {
+    vi.mocked(window.groveBench.sendMessage).mockClear();
+    await renderWithPrs(pr({ checks: { total: 1, passed: 0, failed: 1, pending: 0 }, failingChecks: ['e2e'] }));
+    await openBranch();
+    expect(window.groveBench.sendMessage).not.toHaveBeenCalled();
+
+    await fireEvent.click(within(row('checks')).getByRole('checkbox'));
+
+    expect(window.groveBench.sendMessage).toHaveBeenCalledWith(ACTIVE, expect.stringContaining('CI is failing on PR #42'));
+    expect(within(row('checks')).getByRole('checkbox')).toBeChecked();
+  });
+
   it('offers the fix on the Checks row, in grey, while pushing is next', async () => {
     vi.mocked(window.groveBench.getGitSyncStatus).mockResolvedValue({ upstream: 'origin/feat-a', ahead: 1, behind: 0 });
     await renderWithPrs(pr({ checks: { total: 1, passed: 0, failed: 1, pending: 0 }, failingChecks: ['e2e'] }));
