@@ -386,7 +386,7 @@
         </div>
       {/if}
       {#if prOpen}
-        <label class="{detail} mt-1 flex items-center gap-1.5 cursor-pointer hover:text-foreground" title="Send a fix turn when CI fails, and straight away if it is failing now. A busy thread gets it once it is free. After 2 tries without CI going green, it asks for you. git push and gh may need to be allowed">
+        <label class="{detail} mt-1 flex items-center gap-1.5 cursor-pointer hover:text-foreground" title="Send a fix turn when CI fails, and straight away if it is failing now. A busy thread gets it once it is free. After 2 tries without CI going green, it asks for you: tick it again for 2 more. git push and gh may need to be allowed">
           <Checkbox class="size-3.5" checked={prAuto.fixCi} onCheckedChange={(v) => prStore.setAuto(sessionId, { fixCi: v === true })} />
           Fix automatically when checks fail
         </label>

@@ -423,7 +423,7 @@
   }
 
   function handleStop() {
-    messageStore.markSessionStopped(sessionId);
+    messageStore.markSessionStopped(sessionId, { byUser: true });
     // A stopped turn may report no result, so nothing else would end it.
     arrivalScene.end(sessionId);
     void window.groveBench.stopSession(sessionId);

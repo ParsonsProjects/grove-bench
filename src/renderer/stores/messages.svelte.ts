@@ -731,7 +731,24 @@ class MessageStore {
     this.isRunning = { ...this.isRunning, [sessionId]: value };
     // A turn starting moves the thread on from the suggestion, however it
     // starts: a prompt, or the agent on its own (a background task ended).
-    if (value) this.clearPromptSuggestion(sessionId);
+    if (value) {
+      this.turnsStarted.set(sessionId, this.turnCount(sessionId) + 1);
+      this.clearPromptSuggestion(sessionId);
+    }
+  }
+
+  /** Turns started and Stops the user asked for, per session. Read, not
+   *  watched, by prStore: whether a thread stayed free between two looks (no
+   *  turn ran in between, however short), and whether the user took over. */
+  private turnsStarted = new Map<string, number>();
+  private userStops = new Map<string, number>();
+
+  turnCount(sessionId: string): number {
+    return this.turnsStarted.get(sessionId) ?? 0;
+  }
+
+  userStopCount(sessionId: string): number {
+    return this.userStops.get(sessionId) ?? 0;
   }
 
   // ─── Streaming delta coalescing ───
@@ -1514,8 +1531,11 @@ class MessageStore {
     }
   }
 
-  /** Reset running state for a session (e.g. after stop is clicked) */
-  markSessionStopped(sessionId: string) {
+  /** Reset running state for a session (e.g. after stop is clicked). byUser:
+   *  the user stopped it (Stop, or stopping at a limit), not its process
+   *  ending. */
+  markSessionStopped(sessionId: string, opts?: { byUser?: boolean }) {
+    if (opts?.byUser) this.userStops.set(sessionId, this.userStopCount(sessionId) + 1);
     // Apply deltas still waiting on the stream timer first, or they would
     // show up after the stop as a new fragment of the stopped reply.
     this.settleStreamBuffer(sessionId, 'process_exit');
@@ -2286,7 +2306,8 @@ class MessageStore {
     // Stopping at a limit is a stop like the Stop button's: hold queued
     // prompts until the user resumes. Main is stopping the turn already.
     if (changed && event.decision === 'stop' && this._replayBuffer === null && this.sideEffects) {
-      this.markSessionStopped(sessionId);
+      // A question that timed out stopped without the user.
+      this.markSessionStopped(sessionId, { byUser: event.reason !== 'timeout' });
     }
   }
 
@@ -2827,7 +2848,7 @@ class MessageStore {
   }
 
   private perSessionMaps(): Map<string, unknown>[] {
-    return [this.sourceIndexBySession, this.orphanReplayEvents, this.streamBuf];
+    return [this.sourceIndexBySession, this.orphanReplayEvents, this.streamBuf, this.turnsStarted, this.userStops];
   }
 
   /** Live events that arrived while a pane was loading the history page,

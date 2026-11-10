@@ -539,15 +539,57 @@ describe('auto turns: checks already failing, and a thread that was busy', () =>
     expect(turns()).toHaveLength(1);
   });
 
-  it('does nothing when the box is ticked with checks passing, or on a stopped thread', async () => {
+  it('does nothing when the box is ticked with checks passing', async () => {
     await refreshWith(pr());
     prStore.setAuto(SID, { fixCi: true });
-    prStore.setAuto(SID, { fixCi: false });
+    await refreshWith(pr());
+    await settle();
+    expect(turns()).toHaveLength(0);
+  });
 
-    await refreshWith(failing('sha-1'));
+  it('ticked on a thread that is not running, sends the fix once it is', async () => {
     setStatus('stopped');
+    await refreshWith(failing('sha-1'));
     prStore.setAuto(SID, { fixCi: true });
     expect(turns()).toHaveLength(0);
+
+    setStatus('running');
+    await refreshWith(failing('sha-1'));
+    await settle();
+    expect(turns()).toHaveLength(1);
+  });
+
+  it('counts a failure fixed from the box as handled, so a later poll does not raise it again', async () => {
+    await refreshWith(running('sha-1')); // seeds
+    setStatus('stopped');
+    await refreshWith(failing('sha-1')); // not looked at while stopped
+    setStatus('running');
+    prStore.setAuto(SID, { fixCi: true });
+    expect(turns()).toHaveLength(1);
+
+    await refreshWith(failing('sha-1')); // the fix turn is still going
+    expect(prStore.getAlerts(SID)).toEqual([]);
+    free();
+    await refreshWith(failing('sha-1'));
+    await settle();
+    expect(turns()).toHaveLength(1);
+  });
+
+  it('gives 2 more tries when the box is ticked again after auto-fix gave up', async () => {
+    prStore.setAuto(SID, { fixCi: true });
+    await refreshWith(running('sha-1'));
+    await refreshWith(failing('sha-2'));
+    free();
+    await refreshWith(failing('sha-3'));
+    free();
+    await refreshWith(failing('sha-4'));
+    expect(turns()).toHaveLength(2);
+    expect(prStore.getAlerts(SID)).toMatchObject([{ kind: 'needs_human' }]);
+
+    prStore.setAuto(SID, { fixCi: false });
+    prStore.setAuto(SID, { fixCi: true });
+    expect(turns()).toHaveLength(3);
+    expect(prStore.getAlerts(SID)).toEqual([]);
   });
 
   it('ticked while the agent is busy, sends the fix once the thread has been free a while', async () => {
@@ -599,6 +641,97 @@ describe('auto turns: checks already failing, and a thread that was busy', () =>
     await refreshWith(failing('sha-2'));
     await settle();
     expect(turns()).toHaveLength(1);
+  });
+
+  it('waits the full time again when the fetch after the wait failed and a turn has run since', async () => {
+    prStore.setAuto(SID, { fixCi: true });
+    await refreshWith(running('sha-2'));
+    busy();
+    await refreshWith(failing('sha-2'));
+    free();
+    await refreshWith(failing('sha-2'));
+    mockGroveBench.getPrs.mockRejectedValueOnce(new Error('gh timed out'));
+    await settle();
+    expect(turns()).toHaveLength(0);
+
+    // A turn between two polls, which no fetch saw.
+    busy();
+    free();
+    await refreshWith(failing('sha-2')); // as it ends: GitHub may not show its push yet
+    expect(turns()).toHaveLength(0);
+    await settle();
+    expect(turns()).toHaveLength(1);
+  });
+
+  it('does not count a turn that started and ended within the wait as free time', async () => {
+    prStore.setAuto(SID, { fixCi: true });
+    await refreshWith(running('sha-2'));
+    busy();
+    await refreshWith(failing('sha-2'));
+    free();
+    await refreshWith(failing('sha-2'));
+    busy();
+    free();
+    await settle();
+    expect(turns()).toHaveLength(0);
+    await settle();
+    expect(turns()).toHaveLength(1);
+  });
+
+  it("drops a queued turn when the user presses Stop, but not when the agent's process ends", async () => {
+    prStore.setAuto(SID, { fixCi: true });
+    await refreshWith(running('sha-2'));
+    busy();
+    await refreshWith(failing('sha-2'));
+    messageStore.markSessionStopped(SID, { byUser: true });
+    await refreshWith(failing('sha-2'));
+    await settle();
+    expect(turns()).toHaveLength(0);
+
+    await refreshWith(running('sha-3'));
+    busy();
+    await refreshWith(failing('sha-3'));
+    messageStore.markSessionStopped(SID); // the process ended on its own
+    await refreshWith(failing('sha-3'));
+    await settle();
+    expect(turns()).toHaveLength(1);
+  });
+
+  it('waits while the window is hidden, and sends on the first fetch once it shows', async () => {
+    let hidden = false;
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => hidden });
+    try {
+      prStore.setAuto(SID, { fixCi: true });
+      await refreshWith(running('sha-2'));
+      busy();
+      await refreshWith(failing('sha-2'));
+      free();
+      await refreshWith(failing('sha-2'));
+      hidden = true;
+      mockGroveBench.getPrs.mockClear();
+      await settle();
+      expect(mockGroveBench.getPrs).not.toHaveBeenCalled();
+
+      hidden = false;
+      await refreshWith(failing('sha-2')); // the sweep as the window shows
+      expect(turns()).toHaveLength(1);
+    } finally {
+      Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
+    }
+  });
+
+  it('stops the wait with the global polling', async () => {
+    prStore.setAuto(SID, { fixCi: true });
+    await refreshWith(running('sha-2'));
+    busy();
+    await refreshWith(failing('sha-2'));
+    free();
+    await refreshWith(failing('sha-2'));
+    mockGroveBench.getPrs.mockClear();
+    prStore.stopGlobalPolling();
+    await settle();
+    expect(mockGroveBench.getPrs).not.toHaveBeenCalled();
+    expect(turns()).toHaveLength(0);
   });
 
   it('drops the queued fix once the agent pushed a new commit, or the checks stop failing', async () => {
@@ -682,6 +815,82 @@ describe('auto turns: checks already failing, and a thread that was busy', () =>
     await settle();
     expect(turns()).toHaveLength(1);
     expect(turns()[0][1]).toContain('please rename this');
+  });
+
+  /** A review comments fetch that answers when told to. */
+  function slowComments() {
+    let answer!: () => void;
+    mockGroveBench.getPrReviewComments.mockImplementationOnce(() => new Promise((resolve) => {
+      answer = () => resolve([{ id: 'r1', author: 'reviewer', authorAssociation: 'MEMBER', body: 'please rename this' }]);
+    }));
+    return () => answer();
+  }
+
+  it('sends one turn when Address with agent runs while comments are queued', async () => {
+    prStore.setAuto(SID, { addressReviews: true });
+    await refreshWith(pr({ commentSignature: ['c1'] }));
+    busy();
+    await refreshWith(pr({ commentSignature: ['c1', 'c2'] }));
+    await vi.advanceTimersByTimeAsync(0);
+    free();
+    await refreshWith(pr({ commentSignature: ['c1', 'c2'] })); // the wait starts
+
+    const answer = slowComments();
+    const byHand = prStore.addressReviewsWithAgent(SID);
+    await settle(); // the queued one's turn comes while the fetch by hand is out
+    answer();
+    expect(await byHand).toBe('sent');
+
+    free();
+    await refreshWith(pr({ commentSignature: ['c1', 'c2'] }));
+    await settle();
+    await settle();
+    expect(turns()).toHaveLength(1);
+    expect(mockGroveBench.getPrReviewComments).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends one turn for comments that come in while the last ones are still being fetched', async () => {
+    prStore.setAuto(SID, { addressReviews: true });
+    await refreshWith(pr({ commentSignature: ['c1'] }));
+    const answer = slowComments();
+    await refreshWith(pr({ commentSignature: ['c1', 'c2'] }));
+    await refreshWith(pr({ commentSignature: ['c1', 'c2', 'c3'] }));
+    answer();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(turns()).toHaveLength(1);
+
+    free();
+    await refreshWith(pr({ commentSignature: ['c1', 'c2', 'c3'] }));
+    await settle();
+    await settle();
+    expect(turns()).toHaveLength(1);
+    expect(mockGroveBench.getPrReviewComments).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves nothing behind for a thread deleted while its comments were being fetched', async () => {
+    prStore.setAuto(SID, { addressReviews: true });
+    await refreshWith(pr({ commentSignature: ['c1'] }));
+    const answer = slowComments();
+    await refreshWith(pr({ commentSignature: ['c1', 'c2'] }));
+
+    // As forgetConversation does.
+    sessionStore.sessions = [];
+    messageStore.destroySession(SID);
+    prStore.clear(SID);
+    answer();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(prStore.alertsBySession[SID]).toBeUndefined();
+
+    // Nothing queued: a thread with the same id later sends nothing by
+    // itself, though there are comments to address.
+    mockGroveBench.getPrReviewComments.mockResolvedValue([
+      { id: 'r1', author: 'reviewer', authorAssociation: 'MEMBER', body: 'please rename this' },
+    ]);
+    setStatus('running');
+    await refreshWith(pr({ commentSignature: ['c1', 'c2'] }));
+    await settle();
+    await settle();
+    expect(turns()).toHaveLength(0);
   });
 
   it('sends the queued fix first, then the comments the next time the thread is free', async () => {
