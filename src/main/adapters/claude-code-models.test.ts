@@ -12,7 +12,7 @@ import { CONTROL_IDS } from '../../shared/types.js';
 const SDK_ROWS = [
   { value: 'default', resolvedModel: 'claude-sonnet-5', displayName: 'Default (recommended)', description: 'Sonnet 5 · Efficient for routine tasks', supportsEffort: true, supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'], supportsAdaptiveThinking: true, supportsAutoMode: true },
   { value: 'sonnet', resolvedModel: 'claude-sonnet-5', displayName: 'Sonnet', description: 'Sonnet 5 · Efficient for routine tasks', supportsEffort: true, supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'], supportsAdaptiveThinking: true, supportsAutoMode: true },
-  { value: 'claude-fable-5-1', resolvedModel: 'claude-fable-5-1', displayName: 'Fable', description: 'Fable 5.1 · Most capable for your hardest and longest-running tasks', supportsEffort: true, supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'], supportsAdaptiveThinking: true, supportsAutoMode: true },
+  { value: 'claude-fable-5-2', resolvedModel: 'claude-fable-5-2', displayName: 'Fable', description: 'Fable 5.2 · Most capable for your hardest and longest-running tasks', supportsEffort: true, supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'], supportsAdaptiveThinking: true, supportsAutoMode: true },
   { value: 'opus', resolvedModel: 'claude-opus-5-5', displayName: 'Opus', description: 'Opus 5.5 · Best for everyday, complex tasks', supportsEffort: true, supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'], supportsAdaptiveThinking: true, supportsFastMode: true, supportsAutoMode: true },
   { value: 'haiku', resolvedModel: 'claude-haiku-4-5-20251001', displayName: 'Haiku', description: 'Haiku 4.5 · Fastest for quick answers' },
 ] as const;
@@ -30,11 +30,11 @@ describe('modelsFromSdk()', () => {
   const models = modelsFromSdk(SDK_ROWS as never);
 
   it('keeps one row per concrete model, Opus first, without the "default" row', () => {
-    expect(models.map((m) => m.id)).toEqual(['claude-opus-5-5', 'claude-sonnet-5', 'claude-fable-5-1', 'claude-haiku-4-5-20251001']);
+    expect(models.map((m) => m.id)).toEqual(['claude-opus-5-5', 'claude-sonnet-5', 'claude-fable-5-2', 'claude-haiku-4-5-20251001']);
   });
 
   it('labels each model with its version, not just its family', () => {
-    expect(models.map((m) => m.label)).toEqual(['Opus 5.5', 'Sonnet 5', 'Fable 5.1', 'Haiku 4.5']);
+    expect(models.map((m) => m.label)).toEqual(['Opus 5.5', 'Sonnet 5', 'Fable 5.2', 'Haiku 4.5']);
   });
 
   it('records aliases only where the SDK used one', () => {
@@ -81,7 +81,7 @@ describe('ClaudeCodeAdapter model list', () => {
     expect(adapter.getModels()).toEqual([
       { id: 'claude-opus-5-5', label: 'Opus 5.5', family: 'Claude', contextWindow: 1_000_000 },
       { id: 'claude-sonnet-5', label: 'Sonnet 5', family: 'Claude', contextWindow: 1_000_000 },
-      { id: 'claude-fable-5-1', label: 'Fable 5.1', family: 'Claude', contextWindow: 1_000_000 },
+      { id: 'claude-fable-5-2', label: 'Fable 5.2', family: 'Claude', contextWindow: 1_000_000 },
       { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5', family: 'Claude', contextWindow: 200_000 },
     ]);
     expect(store.saved).toHaveLength(1);
