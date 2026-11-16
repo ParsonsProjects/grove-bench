@@ -787,7 +787,7 @@ export const THINKING_LEVEL_TOKENS: Record<ThinkingLevel, number | null> = {
 
 /**
  * How thinking text is returned: a readable summary, or none. Opus 4.7+,
- * Opus 5/5.5, Fable 5/5.1 and Sonnet 5/5.5 default to 'omitted' (thinking
+ * Opus 5/5.5, Fable 5/5.1/5.2 and Sonnet 5/5.5 default to 'omitted' (thinking
  * blocks with empty text), and Claude Code doesn't ask for anything else in
  * SDK mode, so we always send one. Claude Code drops the field for models
  * that don't take it (Haiku 4.5, Claude 3).
@@ -833,7 +833,7 @@ export interface ClaudeModelCaps {
   defaultEffort: EffortLevel | null;
   /** Adaptive thinking (the model decides when and how much to think). */
   adaptiveThinking: boolean;
-  /** Thinking can be switched off. Fable 5/5.1 and Opus 5.5 reject it, and
+  /** Thinking can be switched off. Fable 5/5.1/5.2 and Opus 5.5 reject it, and
    *  Claude Code keeps thinking on for them regardless of what is sent. */
   thinkingOff: boolean;
 }
@@ -1037,7 +1037,7 @@ type SdkModelInfo = import('@anthropic-ai/claude-agent-sdk').ModelInfo;
  */
 export const FALLBACK_MODELS: readonly ModelInfo[] = [
   { id: 'claude-opus-5-5', label: 'Opus 5.5', family: 'Claude', contextWindow: 1_000_000 },
-  { id: 'claude-fable-5-1', label: 'Fable 5.1', family: 'Claude', contextWindow: 1_000_000 },
+  { id: 'claude-fable-5-2', label: 'Fable 5.2', family: 'Claude', contextWindow: 1_000_000 },
   { id: 'claude-sonnet-5', label: 'Sonnet 5', family: 'Claude', contextWindow: 1_000_000 },
   { id: 'claude-opus-5', label: 'Opus 5', family: 'Claude', contextWindow: 1_000_000 },
   { id: 'claude-fable-5', label: 'Fable 5', family: 'Claude', contextWindow: 1_000_000 },
