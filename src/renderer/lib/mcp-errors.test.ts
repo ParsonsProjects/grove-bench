@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatMcpActionError, stripIpcErrorPrefix, mcpNeedsAuthHint } from './mcp-errors.js';
+import { formatMcpActionError, stripIpcErrorPrefix, mcpNeedsAuthHint, ipcErrorText } from './mcp-errors.js';
 
 describe('stripIpcErrorPrefix', () => {
   it('removes the Electron remote-method wrapper', () => {
@@ -42,5 +42,17 @@ describe('formatMcpActionError', () => {
   it('handles non-Error and empty throws', () => {
     expect(formatMcpActionError('nope', 'reconnect', 'x')).toBe('nope');
     expect(formatMcpActionError(undefined, 'reconnect', 'x')).toBe('Failed to reconnect x');
+  });
+});
+
+describe('ipcErrorText', () => {
+  it("shows the message without Electron's wrapper", () => {
+    expect(ipcErrorText(new Error("Error invoking remote method 'pty:spawn': Error: boom"))).toBe('boom');
+    expect(ipcErrorText('plain text')).toBe('plain text');
+  });
+
+  it('never comes back empty, which would read as no error', () => {
+    expect(ipcErrorText(new Error("Error invoking remote method 'git:status': Error: "))).toBe('no reason given');
+    expect(ipcErrorText('', 'git status failed')).toBe('git status failed');
   });
 });

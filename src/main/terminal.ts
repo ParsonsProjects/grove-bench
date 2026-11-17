@@ -1,7 +1,7 @@
 import * as pty from 'node-pty';
 import type { IPty } from 'node-pty';
 import type { WebContents } from 'electron';
-import { IPC } from '../shared/types.js';
+import { IPC, type PtySpawnResult } from '../shared/types.js';
 import { logger } from './logger.js';
 import { killDescendants } from './process-tree.js';
 
@@ -14,9 +14,12 @@ interface PtySession {
 
 export class TerminalManager {
   private sessions = new Map<string, PtySession>();
+  /** One per session whose terminal may be opened (openTicket); dropped
+   *  when it's closed or deleted, so none outlive their thread. */
+  private openTickets = new Map<string, object>();
 
-  /** Spawn a persistent PTY shell for a session. Returns true if spawned. */
-  spawnPty(sessionId: string, cwd: string, sender: WebContents): boolean {
+  /** Spawn a persistent PTY shell for a session. */
+  spawnPty(sessionId: string, cwd: string, sender: WebContents): PtySpawnResult {
     // Kill existing PTY if any (it leaves the map synchronously)
     if (this.sessions.has(sessionId)) {
       void this.killPty(sessionId);
@@ -96,10 +99,11 @@ export class TerminalManager {
 
       this.sessions.set(sessionId, { pty: ptyProcess, sessionId, sender, cwd });
       logger.info(`PTY spawned: session=${sessionId}, shell=${shell}, cwd=${cwd}`);
-      return true;
+      return { ok: true };
     } catch (err) {
-      logger.error(`PTY spawn failed for session ${sessionId}:`, err instanceof Error ? err.message : String(err));
-      return false;
+      const error = (err instanceof Error ? err.message : String(err)) || 'no reason given';
+      logger.error(`PTY spawn failed for session ${sessionId}:`, error);
+      return { ok: false, error };
     }
   }
 
@@ -155,9 +159,28 @@ export class TerminalManager {
     await Promise.all([...this.sessions.keys()].map((sessionId) => this.killPty(sessionId)));
   }
 
-  /** Kill PTY for a specific session (conversation close or destroy). */
+  /** Kill PTY for a specific session (conversation close or destroy). A
+   *  start still waiting (PTY_SPAWN, for a new thread's worktree) no longer
+   *  holds its ticket, so it doesn't open one after this. */
   async killAllForSession(sessionId: string): Promise<void> {
+    this.openTickets.delete(sessionId);
     await this.killPty(sessionId);
+  }
+
+  /** The session's ticket to open a terminal, until it is closed or
+   *  deleted (killAllForSession). */
+  openTicket(sessionId: string): object {
+    let ticket = this.openTickets.get(sessionId);
+    if (!ticket) {
+      ticket = {};
+      this.openTickets.set(sessionId, ticket);
+    }
+    return ticket;
+  }
+
+  /** Whether `ticket` is still the session's: false once it was closed. */
+  holdsTicket(sessionId: string, ticket: object): boolean {
+    return this.openTickets.get(sessionId) === ticket;
   }
 }
 

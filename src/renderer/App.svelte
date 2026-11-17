@@ -512,6 +512,12 @@
 
 </script>
 
+<!-- The walk's caption over a live thread whose history is still loading:
+     its agent may well be up already, so not "Starting agent". -->
+{#snippet threadLoading()}
+  <p class="text-sm mt-4 text-muted-foreground">Loading thread...</p>
+{/snippet}
+
 {#snippet crashed(what: string, error: unknown, reset: () => void)}
   <div class="flex-1 h-full flex items-center justify-center p-6 text-center">
     <Notice tone="danger" title="{what} hit an error." class="max-w-md text-left">
@@ -583,6 +589,8 @@
         {@const live = isLive(session)}
         {@const scene = wakeScene.for(session.id)}
         {@const loading = live && !messageStore.isHistoryLoaded(session.id)}
+        <!-- Only the history keeps it covered (not a reconnect or a wake). -->
+        {@const historyOnly = loading && !scene}
         <!-- A new conversation's chat shows its own walk (OutputPanel) from
              the start, so the loading walk would only cut in on it. -->
         {@const arriving = settingsStore.current.groveCharacters && arrivalScene.for(session.id) !== null}
@@ -613,14 +621,14 @@
               {#if settingsStore.current.groveCharacters}
                 <!-- Only the open conversation's walk is drawn; hidden panes skip it. -->
                 {#if store.activeSessionId === session.id}
-                  <GroveWalk seed={session.id} projectColor={sessionRepoColor(session.id)} spriteState={sessionSpriteState(session)} wake={scene} />
+                  <GroveWalk seed={session.id} projectColor={sessionRepoColor(session.id)} spriteState={sessionSpriteState(session)} wake={scene} caption={historyOnly ? threadLoading : undefined} />
                 {/if}
                 {#if scene}
                   <button type="button" class="absolute inset-0 z-30 cursor-default" aria-label="Skip the wake-up" onclick={() => wakeScene.end()}></button>
                 {/if}
               {:else}
                 <Pulse class="size-4 relative z-10" />
-                <span class="ml-3 text-sm relative z-10">Starting agent...</span>
+                <span class="ml-3 text-sm relative z-10">{historyOnly ? 'Loading thread...' : 'Starting agent...'}</span>
               {/if}
             </div>
             </div>

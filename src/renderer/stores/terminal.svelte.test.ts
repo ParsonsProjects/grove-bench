@@ -61,3 +61,55 @@ describe('terminalStore: a command typed in the terminal', () => {
     expect(asked()).toHaveLength(0);
   });
 });
+
+describe('terminalStore: starting the shell', () => {
+  it('says Starting while the shell starts, and Running once it has', async () => {
+    let answer: ((r: { ok: true }) => void) | undefined;
+    mockGroveBench.ptyIsAlive.mockResolvedValueOnce(false);
+    mockGroveBench.ptySpawn.mockImplementationOnce(() => new Promise((r) => { answer = r; }));
+    const starting = terminalStore.ensureAlive(SID);
+    expect(terminalStore.isStarting(SID)).toBe(true);
+    await vi.waitFor(() => expect(answer).toBeDefined());
+    answer!({ ok: true });
+    await expect(starting).resolves.toBe(true);
+    expect(terminalStore.isStarting(SID)).toBe(false);
+    expect(terminalStore.isAlive(SID)).toBe(true);
+    expect(terminalStore.startError(SID)).toBeNull();
+  });
+
+  it('keeps why a start failed, until a start works', async () => {
+    mockGroveBench.ptyIsAlive.mockResolvedValueOnce(false);
+    mockGroveBench.ptySpawn.mockResolvedValueOnce({ ok: false, error: 'cmd.exe not found' });
+    await expect(terminalStore.ensureAlive(SID)).resolves.toBe(false);
+    expect(terminalStore.isStarting(SID)).toBe(false);
+    expect(terminalStore.isAlive(SID)).toBe(false);
+    expect(terminalStore.startError(SID)).toBe('cmd.exe not found');
+
+    mockGroveBench.ptySpawn.mockResolvedValueOnce({ ok: true });
+    await expect(terminalStore.restart(SID)).resolves.toBe(true);
+    expect(terminalStore.startError(SID)).toBeNull();
+  });
+
+  it('reads a failed request as a failed start', async () => {
+    mockGroveBench.ptySpawn.mockRejectedValueOnce(new Error("Error invoking remote method 'pty:spawn': Error: boom"));
+    await expect(terminalStore.spawn(SID)).resolves.toBe(false);
+    expect(terminalStore.startError(SID)).toBe('boom');
+  });
+});
+
+describe('terminalStore: a start that ends after its thread was deleted', () => {
+  it('puts none of its state back', async () => {
+    let answer: ((r: { ok: false; error: string }) => void) | undefined;
+    mockGroveBench.ptyIsAlive.mockResolvedValueOnce(false);
+    mockGroveBench.ptySpawn.mockImplementationOnce(() => new Promise((r) => { answer = r; }));
+    const starting = terminalStore.ensureAlive(SID);
+    await vi.waitFor(() => expect(answer).toBeDefined());
+
+    terminalStore.destroySession(SID);
+    answer!({ ok: false, error: 'The thread was closed.' });
+    await expect(starting).resolves.toBe(false);
+    expect(SID in terminalStore.aliveBySession).toBe(false);
+    expect(SID in terminalStore.startingBySession).toBe(false);
+    expect(SID in terminalStore.startErrorBySession).toBe(false);
+  });
+});

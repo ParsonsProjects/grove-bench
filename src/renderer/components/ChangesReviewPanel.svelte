@@ -120,10 +120,16 @@
     posted = { prNumber, event: p.event, result: p.result };
   }
 
+  /** A status has been read: before that, no files means not read yet. */
+  let statusRead = $derived(gitStatusStore.hasStatus(sessionId));
   let emptyTitle = $derived(
-    isBranchScope
-      ? (gitStatus.scopeError ?? `No changes on this branch vs ${gitStatus.baseRef ?? scopeState.base ?? 'base'}`)
-      : 'Working tree clean',
+    !statusRead
+      ? 'Loading changes…'
+      : gitStatus.error !== undefined
+        ? "Couldn't read the changes"
+        : isBranchScope
+          ? (gitStatus.scopeError ?? `No changes on this branch vs ${gitStatus.baseRef ?? scopeState.base ?? 'base'}`)
+          : 'Working tree clean',
   );
 
   // Pass `staged` so the index-vs-HEAD and working-tree-vs-index diffs differ
@@ -518,14 +524,15 @@
   changesLabel={isBranchScope ? 'Changed on branch' : 'Changes'}
   {loadDiff}
   {loadFileLines}
-  onRefresh={() => gitStatusStore.refresh(sessionId)}
+  onRefresh={() => gitStatusStore.reload(sessionId)}
   onStage={isBranchScope ? undefined : stageEntry}
   onUnstage={isBranchScope ? undefined : unstageEntry}
   onStageAll={isBranchScope ? undefined : stageAll}
   onUnstageAll={isBranchScope ? undefined : unstageAll}
   {commentContext}
   {emptyTitle}
-  emptyHint={isRunning ? 'Edits show up here as the agent makes them' : undefined}
+  emptyHint={isRunning && statusRead && gitStatus.error === undefined ? 'Edits show up here as the agent makes them' : undefined}
+  emptyError={gitStatus.error}
   emptyScene="changes"
   panel="changesFiles"
   {sidebarTop}

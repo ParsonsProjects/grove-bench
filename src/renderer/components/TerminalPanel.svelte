@@ -12,6 +12,7 @@
   import { PanelHeader } from '$lib/components/ui/panel-header/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Pulse } from '$lib/components/ui/pulse/index.js';
+  import { Notice } from '$lib/components/ui/notice/index.js';
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -30,6 +31,9 @@
   });
 
   let isAlive = $derived(terminalStore.isAlive(sessionId));
+  /** Starting, or waiting for a new thread's worktree first. */
+  let isStarting = $derived(terminalStore.isStarting(sessionId));
+  let startError = $derived(terminalStore.startError(sessionId));
 
   function createTerminal() {
     if (!containerEl) return;
@@ -152,6 +156,12 @@
       {#if isAlive}
         <Pulse size="xs" motion="none" />
         Running
+      {:else if isStarting}
+        <Pulse size="xs" />
+        Starting…
+      {:else if startError !== null}
+        <Pulse tone="error" size="xs" motion="none" />
+        Couldn't start
       {:else}
         <Pulse tone="muted" size="xs" motion="none" />
         Stopped
@@ -171,7 +181,7 @@
           Kill
         </Button>
       {/if}
-      <Button size="2xs" variant="subtle" onclick={handleRestart} title="Restart terminal">
+      <Button size="2xs" variant="subtle" onclick={handleRestart} disabled={isStarting} title="Restart terminal">
         Restart
       </Button>
       <Button size="2xs" variant="subtle" onclick={handleClear} title="Clear terminal output">
@@ -179,6 +189,15 @@
       </Button>
     {/snippet}
   </PanelHeader>
+
+  {#if startError !== null && !isAlive && !isStarting}
+    <Notice tone="danger" class="items-center shrink-0 border-b border-b-border">
+      {#snippet actions()}
+        <Button size="2xs" variant="subtle" onclick={handleRestart}>Try again</Button>
+      {/snippet}
+      <p>Couldn't start the terminal: {startError}</p>
+    </Notice>
+  {/if}
 
   <!-- xterm.js container -->
   <div

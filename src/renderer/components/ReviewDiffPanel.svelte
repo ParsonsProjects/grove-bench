@@ -32,6 +32,7 @@
   import { PanelHeader } from '$lib/components/ui/panel-header/index.js';
   import { Pulse } from '$lib/components/ui/pulse/index.js';
   import { menuPanel, menuItem } from '$lib/components/ui/menu/index.js';
+  import { ipcErrorText } from '$lib/mcp-errors.js';
 
   /**
    * Shared review UI: a file sidebar (search, sections, viewed marks, comment
@@ -59,6 +60,7 @@
     commentContext,
     emptyTitle,
     emptyHint,
+    emptyError,
     emptyScene,
     panel,
     sidebarTop,
@@ -97,6 +99,9 @@
     commentContext?: string;
     emptyTitle: string;
     emptyHint?: string;
+    /** Why the files couldn't be read: shown under the empty message, with
+     *  Try again (onRefresh), so a failed read doesn't look like no changes. */
+    emptyError?: string;
     /** Which tab's props the grove scene over the empty message shows. */
     emptyScene?: GroveTab;
     /** Which saved flag folds the file sidebar down to a rail. */
@@ -176,6 +181,8 @@
   let sideBySide = $state(settingsStore.current.diffViewMode === 'side-by-side');
   let editHistoryExpanded = $state<Set<string>>(new Set());
   let fileDiffs = $state<Record<string, FileDiffResult>>({});
+  /** Why a file's diff couldn't be read, by file key, until it is. */
+  let diffErrors = $state<Record<string, string>>({});
 
   // Search filter
   let searchQuery = $state('');
@@ -288,6 +295,7 @@
         diffInFlight.clear();
       }
       fileDiffs = kept;
+      diffErrors = Object.fromEntries(Object.entries(diffErrors).filter(([k]) => k in kept));
       if (scopeChanged) { revealedByKey = {}; fileLinesByKey = {}; composer = null; largeDiffShown = {}; largeEditShown = {}; }
 
       // Auto-select first file if no selection or selection no longer exists:
@@ -363,21 +371,30 @@
 
   async function loadDiff(entry: GitStatusEntry, forceReload = false) {
     const key = fileKey(entry);
-    if (!forceReload && (fileDiffs[key] !== undefined || diffInFlight.has(key))) return;
+    // A diff that failed is read again when asked for (selected, or a
+    // neighbour of the one selected), not kept as the answer.
+    if (!forceReload && (diffInFlight.has(key) || (fileDiffs[key] !== undefined && !(key in diffErrors)))) return;
     const seq = (diffRequestSeq.get(key) ?? 0) + 1;
     const gen = diffGen;
     diffRequestSeq.set(key, seq);
     diffInFlight.add(key);
     let diff: FileDiffResult;
+    let failure: string | null = null;
     try {
       diff = await fetchDiff(entry);
-    } catch {
+    } catch (e) {
       diff = { kind: 'text', patch: '' };
+      failure = ipcErrorText(e);
     }
     if (gen !== diffGen || diffRequestSeq.get(key) !== seq) return;
     diffInFlight.delete(key);
     diffSigByKey.set(key, entrySig(entry));
     fileDiffs = { ...fileDiffs, [key]: diff };
+    if (failure !== null) diffErrors = { ...diffErrors, [key]: failure };
+    else if (key in diffErrors) {
+      const { [key]: _fixed, ...rest } = diffErrors;
+      diffErrors = rest;
+    }
   }
 
   function selectFile(entry: GitStatusEntry) {
@@ -753,7 +770,7 @@
 
 <svelte:window onkeydown={handleShortcuts} />
 
-{#snippet emptyPane(title: string, hint: string | undefined)}
+{#snippet emptyPane(title: string, hint: string | undefined, error: string | undefined)}
   <div class="pixel-bg flex-1 flex items-center justify-center text-muted-foreground text-sm relative overflow-hidden">
     {#each Array(20) as _, i (i)}
       <span
@@ -767,7 +784,18 @@
       ></span>
     {/each}
     {#snippet emptyDetails()}
-      {#if hint}
+      {#if error !== undefined}
+        <Notice tone="danger" class="max-w-md text-left">
+          {#snippet actions()}
+            {#if onRefresh}
+              <Button size="2xs" variant="subtle" onclick={onRefresh} disabled={isLoading}>
+                {isLoading ? 'Trying…' : 'Try again'}
+              </Button>
+            {/if}
+          {/snippet}
+          <p class="break-words">{error}</p>
+        </Notice>
+      {:else if hint}
         <span class="text-xs text-muted-foreground flex items-center gap-1.5">
           <Pulse size="xs" />
           {hint}
@@ -1113,6 +1141,16 @@
             onRemoveComment={(id) => reviewStore.removeComment(sessionId, id)}
             conflict={selectedEntry.status === 'conflicted' ? { operation } : null}
           />
+        {:else if key in diffErrors}
+          <Notice tone="danger" class="items-center">
+            {#snippet actions()}
+              <Button size="2xs" variant="subtle" onclick={() => loadDiff(selectedEntry, true)}>Try again</Button>
+            {/snippet}
+            <p class="break-words">Couldn't load the diff: {diffErrors[key]}</p>
+          </Notice>
+        {:else if diffResult === undefined}
+          <!-- Its first read: a reload keeps the last diff on screen instead. -->
+          <div class="text-xs text-muted-foreground py-2">Loading diff…</div>
         {:else}
           <div class="text-xs text-muted-foreground py-2">No diff available</div>
         {/if}
@@ -1159,9 +1197,9 @@
         </div>
       {/if}
     {:else if entries.length === 0}
-      {@render emptyPane(emptyTitle, emptyHint)}
+      {@render emptyPane(emptyTitle, emptyHint, emptyError)}
     {:else}
-      {@render emptyPane('Select a file to view changes', undefined)}
+      {@render emptyPane('Select a file to view changes', undefined, undefined)}
     {/if}
   </div>
 </div>

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { checkpointStore, FULL_THREAD_UUID, type CheckpointDiffMode } from '../stores/checkpoints.svelte.js';
   import { messageStore } from '../stores/messages.svelte.js';
   import { store as sessionStore } from '../stores/sessions.svelte.js';
@@ -25,6 +26,10 @@
 
   let checkpoints = $derived(checkpointStore.getCheckpoints(sessionId));
   let isLoading = $derived(checkpointStore.isLoading(sessionId));
+  /** The list has been read: before that, none listed means not read yet. */
+  let loaded = $derived(checkpointStore.hasLoaded(sessionId));
+  /** Why the list couldn't be read (the last one read stays). */
+  let listError = $derived(checkpointStore.getError(sessionId));
   let selectedUuid = $derived(checkpointStore.getSelected(sessionId));
   let files = $derived(checkpointStore.getFiles(sessionId));
   let sourceKey = $derived(checkpointStore.getSourceKey(sessionId));
@@ -124,11 +129,27 @@
   // (empty) file sidebar, rather than swapping the whole layout out.
   let emptyTitle = $derived(
     isDiffLoading && !files
-      ? 'Loading diff...'
-      : files?.scopeError
-        ?? (isFullThread ? 'No file changes in this thread' : diffMode === 'turn' ? 'No file changes in this turn' : 'No file changes since this checkpoint'),
+      ? 'Loading diff…'
+      : files?.error !== undefined
+        ? "Couldn't read the changes"
+        : files?.scopeError
+          ?? (isFullThread ? 'No file changes in this thread' : diffMode === 'turn' ? 'No file changes in this turn' : 'No file changes since this checkpoint'),
   );
+
+  // Opening the tab reads the list (WorkspacePane); this covers the panel
+  // showing without that, so it can't sit on Loading.
+  // Not while a read is out: one that started before this mounted (the
+  // tab's code can take longer than the throttle) would be read twice.
+  onMount(() => {
+    if (!checkpointStore.hasLoaded(sessionId) && !checkpointStore.isLoading(sessionId)) void checkpointStore.refresh(sessionId);
+  });
 </script>
+
+{#snippet retry()}
+  <Button size="2xs" variant="subtle" onclick={() => checkpointStore.reload(sessionId)} disabled={isLoading}>
+    {isLoading ? 'Trying…' : 'Try again'}
+  </Button>
+{/snippet}
 
 {#snippet statsBadge(stats: DiffStats | undefined)}
   {#if stats && stats.filesChanged > 0}
@@ -139,9 +160,18 @@
   {/if}
 {/snippet}
 
-{#if isLoading && checkpoints.length === 0}
+{#if checkpoints.length === 0 && listError !== null}
+  <div class="pixel-bg flex-1 flex items-center justify-center p-6 relative overflow-hidden">
+    <div class="max-w-md flex flex-col items-center gap-2 text-center">
+      <p class="text-sm text-foreground">Couldn't load the checkpoints</p>
+      <Notice tone="danger" class="items-center text-left" actions={retry}>
+        <p class="break-words">{listError}</p>
+      </Notice>
+    </div>
+  </div>
+{:else if checkpoints.length === 0 && !loaded}
   <div class="pixel-bg flex-1 flex items-center justify-center text-muted-foreground text-xs relative overflow-hidden">
-    Loading checkpoints...
+    Loading checkpoints…
   </div>
 {:else if checkpoints.length === 0}
   <div class="pixel-bg flex-1 flex items-center justify-center text-muted-foreground text-xs relative overflow-hidden">
@@ -155,6 +185,11 @@
     {/if}
   </div>
 {:else}
+  {#if listError !== null}
+    <Notice tone="danger" class="items-center shrink-0 border-b border-b-border" actions={retry}>
+      <p>Couldn't refresh the checkpoints: {listError}</p>
+    </Notice>
+  {/if}
   <div class="flex-1 flex overflow-hidden">
     <!-- Left: Checkpoint list -->
     <div class="{listCollapsed ? 'w-9' : 'w-56'} flex flex-col border-r border-border bg-sidebar shrink-0 overflow-hidden">
@@ -351,6 +386,7 @@
           onRefresh={() => checkpointStore.reloadFiles(sessionId)}
           commentContext={comparisonLabel}
           {emptyTitle}
+          emptyError={files?.error}
           emptyScene="checkpoints"
           panel="checkpointFiles"
         />

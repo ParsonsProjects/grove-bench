@@ -17,7 +17,7 @@
   import { conversationAgent } from '$lib/session-sprite-state.js';
   import { isCovered, sameBounds, toBounds, tooltipCovers } from '$lib/preview-viewport.js';
   import { loadErrorHint } from '$lib/preview-text.js';
-  import { stripIpcErrorPrefix } from '$lib/mcp-errors.js';
+  import { ipcErrorText } from '$lib/mcp-errors.js';
   import { formatAge } from '$lib/format-age.js';
   import type { PreviewBounds } from '../../shared/types.js';
   import { Button } from '$lib/components/ui/button/index.js';
@@ -188,9 +188,6 @@
 
   // ─── Actions ───
 
-  function errorText(err: unknown): string {
-    return stripIpcErrorPrefix(err instanceof Error ? err.message : String(err));
-  }
 
   async function go(target: PreviewMode, url: string) {
     navError = '';
@@ -198,7 +195,7 @@
       await previewStore.navigate(sessionId, target, url);
       return true;
     } catch (err) {
-      navError = errorText(err);
+      navError = ipcErrorText(err);
       return false;
     }
   }
@@ -235,7 +232,7 @@
       clearTimeout(signedOutTimer);
       signedOutTimer = setTimeout(() => { signedOut = false; }, 5000);
     } catch (err) {
-      navError = errorText(err);
+      navError = ipcErrorText(err);
     } finally {
       clearing = false;
     }
@@ -419,8 +416,11 @@
               </Button>
             </div>
           </div>
-        {:else}
-          <!-- The page itself is a native view placed over this box. -->
+        {:else if user.loading}
+          <!-- The page itself is a native view placed over this box. This
+               shows until it draws, so only while it loads: a page that has
+               loaded, hidden under a menu with no picture of it (snapshot),
+               leaves the box plain rather than saying Loading. -->
           <div class="h-full flex items-center justify-center text-xs text-muted-foreground">Loading…</div>
         {/if}
         {#if snapshot}

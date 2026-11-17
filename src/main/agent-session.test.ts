@@ -2617,6 +2617,16 @@ describe('AgentSessionManager close/destroy during setup', () => {
     expect(abort.signal.aborted).toBe(false);
   });
 
+  it('hands out the setup in flight to wait on, which settles even when it fails', async () => {
+    let fail!: (e: Error) => void;
+    sessionManager.trackPendingSetup('test-settled', new Promise((_r, reject) => { fail = reject; }));
+    const settled = sessionManager.setupSettled('test-settled');
+    expect(settled).toBeDefined();
+    fail(new Error('worktree failed'));
+    await expect(settled).resolves.toBeUndefined();
+    expect(sessionManager.setupSettled('test-settled')).toBeUndefined();
+  });
+
   it('a failed setup leaves nothing to close', async () => {
     sessionManager.trackPendingSetup('test-close-failed', Promise.reject(new Error('worktree failed')));
     await expect(sessionManager.closeSession('test-close-failed')).resolves.toBeUndefined();

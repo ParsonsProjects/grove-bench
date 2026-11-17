@@ -2017,3 +2017,28 @@ describe("Settings > Git's worktree folder: what is refused or left alone", () =
     expect(mockFsUtils.removeDirectory).toHaveBeenCalledWith(path.join(folder, '.trash', names[0]));
   });
 });
+
+describe('whenRegistered', () => {
+  const info = { id: 'wt-new', path: '/wt/new', branch: 'feat-new', repoPath: '/repo', createdAt: 1000 };
+
+  it('answers at once for a worktree it has', async () => {
+    manager.register(info);
+    await expect(manager.whenRegistered('wt-new', new AbortController().signal)).resolves.toEqual(info);
+  });
+
+  it('waits for the worktree to be registered', async () => {
+    const waiting = manager.whenRegistered('wt-new', new AbortController().signal);
+    manager.register({ ...info, id: 'wt-other' });
+    manager.register(info);
+    await expect(waiting).resolves.toEqual(info);
+  });
+
+  it('gives up when told to, and isn\'t woken after', async () => {
+    const stop = new AbortController();
+    const waiting = manager.whenRegistered('wt-new', stop.signal);
+    stop.abort();
+    await expect(waiting).resolves.toBeUndefined();
+    manager.register(info);
+    await expect(manager.whenRegistered('wt-new', AbortSignal.abort())).resolves.toEqual(info);
+  });
+});

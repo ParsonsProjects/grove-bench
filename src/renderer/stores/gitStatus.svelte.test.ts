@@ -304,3 +304,23 @@ describe('gitStatusStore — back in the window', () => {
     }
   });
 });
+
+describe('gitStatusStore: a read that fails', () => {
+  afterEach(() => gitStatusStore.clear('failing'));
+
+  it('keeps the last status when a later read fails, and says why when there is none', async () => {
+    gitStatusStore.scopeBySession = { failing: { scope: 'working' } };
+    expect(gitStatusStore.hasStatus('failing')).toBe(false);
+
+    mockGroveBench.getGitStatus.mockRejectedValueOnce(new Error('host down'));
+    await gitStatusStore.refresh('failing');
+    expect(gitStatusStore.getStatus('failing')).toEqual({ entries: [], error: 'host down' });
+
+    const ok: GitStatusResult = { entries: [{ filePath: 'a.ts', status: 'modified', staged: false }] };
+    mockGroveBench.getGitStatus.mockResolvedValueOnce(ok);
+    await gitStatusStore.reload('failing');
+    mockGroveBench.getGitStatus.mockRejectedValueOnce(new Error('host down'));
+    await gitStatusStore.reload('failing');
+    expect(gitStatusStore.getStatus('failing')).toEqual(ok);
+  });
+});

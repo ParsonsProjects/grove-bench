@@ -26,7 +26,7 @@ import { openAttachedFile, readAttachedFile, removeAttachments } from './attachm
 import { openWorktreeFile } from './worktree-files.js';
 import { generateCommitMessage } from './commit-message.js';
 import { exportFileName, threadJson, threadMarkdown, type ThreadExportInfo } from './thread-export.js';
-import type { MemoryCompactionOptions, PreviewBounds, PreviewCommand, PreviewPageKind } from '../shared/types.js';
+import type { MemoryCompactionOptions, PreviewBounds, PreviewCommand, PreviewPageKind, PtySpawnResult } from '../shared/types.js';
 import type { BranchCommitsResult, CheckpointDiffScope, FileDiffResult, GitOperation, FileLinesResult, GitStatusOptions, GitStatusResult, GitStatusEntry, ImageDiffContent, OpenWorktreeFileResult, PrCreateOpts, PrReviewSubmitResult } from '../shared/types.js';
 import { parsePrReviewSubmit, submitPrReview } from './pr-review.js';
 import { showOsNotification, showTestNotification } from './notifications.js';
@@ -1800,7 +1800,8 @@ export function registerHandlers() {
       // Skipped (the process host down): the renderer keeps the last status.
       if (isSkipped(e)) throw e;
       logger.warn(`git status failed for session ${sessionId}:`, e);
-      return { entries: [], error: e instanceof Error ? e.message : String(e) };
+      // Never empty: an empty `error` would read as no error, a clean tree.
+      return { entries: [], error: (e instanceof Error ? e.message : String(e)) || 'git status failed' };
     }
   }));
 
@@ -2003,14 +2004,35 @@ export function registerHandlers() {
 
   // ─── PTY Terminal (per-session persistent shell) ───
 
-  ipcMain.handle(IPC.PTY_SPAWN, (event, sessionId: string) => {
-    const worktree = worktreeManager.getWorktree(sessionId);
-    if (!worktree) {
-      // Worktree may not exist yet (still being created in background).
-      // Return false so the renderer can retry later instead of showing an error.
-      logger.debug(`[PTY_SPAWN] Worktree not ready for session ${sessionId}`);
-      return false;
+  ipcMain.handle(IPC.PTY_SPAWN, async (event, sessionId: string): Promise<PtySpawnResult> => {
+    // Taken before any wait: closing or deleting the thread meanwhile drops
+    // it, so no shell opens after the thread's were killed (one in a
+    // worktree being deleted would hold the folder on Windows).
+    const ticket = terminalManager.openTicket(sessionId);
+    // A new thread's tab opens before its worktree is made (see
+    // SESSION_CREATE): wait for it while the setup runs, so the terminal
+    // opens once it's there. Each step of the setup ends, made or not
+    // (failed, or the thread deleted), and so does this.
+    let worktree = worktreeManager.getWorktree(sessionId);
+    let setup = sessionManager.setupSettled(sessionId);
+    while (!worktree && setup) {
+      const stop = new AbortController();
+      worktree = await Promise.race([
+        worktreeManager.whenRegistered(sessionId, stop.signal),
+        setup.then(() => worktreeManager.getWorktree(sessionId)),
+      ]);
+      stop.abort();
+      // The next step's, if one took over; the same one again means it
+      // hasn't let go yet, and waiting on it again would spin.
+      const next = sessionManager.setupSettled(sessionId);
+      setup = next === setup ? undefined : next;
     }
+    if (!terminalManager.holdsTicket(sessionId, ticket)) return { ok: false, error: 'The thread was closed.' };
+    if (!worktree) {
+      logger.debug(`[PTY_SPAWN] No worktree for session ${sessionId}`);
+      return { ok: false, error: "This thread has no worktree, so there's nowhere to open the terminal." };
+    }
+    if (event.sender.isDestroyed()) return { ok: false, error: 'The window closed.' };
     return terminalManager.spawnPty(sessionId, worktree.path, event.sender);
   });
 

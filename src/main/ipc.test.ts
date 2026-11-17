@@ -15,7 +15,7 @@ const m = vi.hoisted(() => {
     Object.fromEntries(names.map((n) => [n, vi.fn()])) as Record<T, Mock<(...args: any[]) => any>>;
   return {
     sessionManager: fns(
-      'getSessionsByRepo', 'createSession', 'getSession', 'reattachWindow', 'trackPendingSetup', 'hasPendingSetup', 'interruptQuery',
+      'getSessionsByRepo', 'createSession', 'getSession', 'reattachWindow', 'trackPendingSetup', 'hasPendingSetup', 'setupSettled', 'interruptQuery',
       'closeSession', 'sleepSession', 'wakeSession', 'stopTask', 'destroySession', 'listSessions', 'renameSession',
       'setBranch', 'isMidTurn', 'turnState', 'getEventHistory', 'getEventHistoryPage', 'getEventHistoryCount', 'searchEventHistory',
       'beginSearch', 'clearEventHistory', 'sendMessage', 'setMode', 'setModel', 'getControls', 'getUsage', 'setControl',
@@ -28,10 +28,10 @@ const m = vi.hoisted(() => {
       'validateRepo', 'cleanupOrphans', 'getWorktreeOrManifest', 'registerDirect', 'create', 'getRepoConfig',
       'copyUntrackedFiles', 'getProviderSessionId', 'getModel', 'getAdapterType', 'getThreadLimits', 'remove',
       'saveDisplayName', 'getDisplayNameState', 'saveAutoDisplayName', 'renameBranch', 'switchBranch',
-      'syncBranch', 'list', 'register', 'listRepos', 'getWorktree', 'assertRemovable', 'checkoutSharers',
+      'syncBranch', 'list', 'register', 'listRepos', 'getWorktree', 'whenRegistered', 'assertRemovable', 'checkoutSharers',
       'getGoal', 'getGoals', 'saveGoal', 'setGoalHidden',
     ),
-    terminalManager: fns('killAllForSession', 'spawnPty', 'write', 'resize', 'killPty', 'isAlive'),
+    terminalManager: fns('killAllForSession', 'spawnPty', 'write', 'resize', 'killPty', 'isAlive', 'openTicket', 'holdsTicket'),
     previewManager: fns('close', 'closeAgentPage', 'navigate', 'command', 'setViewport', 'snapshot', 'agentFrame', 'getStates', 'clearSignIns', 'forgetProject'),
     adapterRegistry: fns('get', 'getDefault', 'getBuiltInDefault', 'list'),
     registerClaudeAccount: vi.fn((account: { id: string }) => ({ id: account.id })),
@@ -1782,10 +1782,97 @@ describe('renderer input checks', () => {
     ]);
   });
 
-  it('PTY_SPAWN waits for the worktree instead of failing', () => {
-    expect(invoke(IPC.PTY_SPAWN, 'nope')).toBe(false);
-    invoke(IPC.PTY_SPAWN, 's1');
-    expect(m.terminalManager.spawnPty).toHaveBeenCalledWith('s1', wt, sender);
+  describe('PTY_SPAWN', () => {
+    /** The real ticket rule: one per session, dropped when it's closed. */
+    let tickets: Map<string, object>;
+    beforeEach(() => {
+      tickets = new Map();
+      m.terminalManager.openTicket.mockImplementation((id: string) => {
+        if (!tickets.has(id)) tickets.set(id, {});
+        return tickets.get(id);
+      });
+      m.terminalManager.holdsTicket.mockImplementation((id: string, t: object) => tickets.get(id) === t);
+      m.terminalManager.spawnPty.mockReturnValue({ ok: true });
+    });
+
+    /** A new thread still being set up: its worktree comes when `make` is
+     *  called, and its setup ends when `finish` is. */
+    function settingUp(id: string) {
+      let made = false;
+      let wake: ((info: unknown) => void) | undefined;
+      let finish!: () => void;
+      const setup = new Promise<void>((r) => { finish = r; });
+      m.sessionManager.setupSettled.mockImplementation((s: string) => (s === id ? setup : undefined));
+      m.worktreeManager.getWorktree.mockImplementation((s: string) => (s === id && made ? { ...wtInfo(), id } : undefined));
+      m.worktreeManager.whenRegistered.mockImplementation((s: string, signal: AbortSignal) =>
+        new Promise((resolve) => {
+          wake = resolve;
+          signal.addEventListener('abort', () => resolve(undefined));
+        }));
+      return {
+        make: () => { made = true; wake?.({ ...wtInfo(), id }); },
+        finish: () => {
+          m.sessionManager.setupSettled.mockReturnValue(undefined);
+          finish();
+        },
+      };
+    }
+
+    it("opens the terminal in the thread's worktree", async () => {
+      await expect(invoke(IPC.PTY_SPAWN, 's1')).resolves.toEqual({ ok: true });
+      expect(m.terminalManager.spawnPty).toHaveBeenCalledWith('s1', wt, sender);
+    });
+
+    it('says why when the thread has no worktree', async () => {
+      await expect(invoke(IPC.PTY_SPAWN, 'nope')).resolves.toEqual({ ok: false, error: expect.stringContaining('no worktree') });
+      expect(m.terminalManager.spawnPty).not.toHaveBeenCalled();
+    });
+
+    it("waits for a new thread's worktree instead of failing", async () => {
+      const thread = settingUp('new');
+      const spawning = invoke(IPC.PTY_SPAWN, 'new');
+      await flush();
+      expect(m.terminalManager.spawnPty).not.toHaveBeenCalled();
+      thread.make();
+      await expect(spawning).resolves.toEqual({ ok: true });
+      expect(m.terminalManager.spawnPty).toHaveBeenCalledWith('new', wt, sender);
+    });
+
+    it('stops waiting when the setup ends without one', async () => {
+      const thread = settingUp('new');
+      const spawning = invoke(IPC.PTY_SPAWN, 'new');
+      await flush();
+      thread.finish();
+      await expect(spawning).resolves.toEqual({ ok: false, error: expect.stringContaining('no worktree') });
+      expect(m.terminalManager.spawnPty).not.toHaveBeenCalled();
+    });
+
+    it('waits through the next step when one takes over (the checks, then the setup)', async () => {
+      let endChecks!: () => void;
+      const checks = new Promise<void>((r) => { endChecks = r; });
+      const thread = settingUp('new');
+      const setup = m.sessionManager.setupSettled.getMockImplementation()!('new');
+      m.sessionManager.setupSettled.mockReturnValueOnce(checks);
+      const spawning = invoke(IPC.PTY_SPAWN, 'new');
+      await flush();
+      m.sessionManager.setupSettled.mockReturnValue(setup);
+      endChecks();
+      await flush();
+      expect(m.terminalManager.spawnPty).not.toHaveBeenCalled();
+      thread.make();
+      await expect(spawning).resolves.toEqual({ ok: true });
+    });
+
+    it('opens nothing once the thread was closed or deleted while it waited', async () => {
+      const thread = settingUp('new');
+      const spawning = invoke(IPC.PTY_SPAWN, 'new');
+      await flush();
+      // SESSION_CLOSE / SESSION_DESTROY: killAllForSession drops the ticket.
+      tickets.delete('new');
+      thread.make();
+      await expect(spawning).resolves.toEqual({ ok: false, error: 'The thread was closed.' });
+      expect(m.terminalManager.spawnPty).not.toHaveBeenCalled();
+    });
   });
 });
 

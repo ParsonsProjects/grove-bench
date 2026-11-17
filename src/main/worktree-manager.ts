@@ -170,6 +170,8 @@ function rootOf(wtPath: string): string {
 
 export class WorktreeManager {
   private worktrees = new Map<string, WorktreeInfo>();
+  /** What waits for a worktree to be registered (whenRegistered), by id. */
+  private registrationWaiters = new Map<string, Set<(info: WorktreeInfo) => void>>();
   /** Ids whose worktree directory is being created: on disk before it is in
    *  the manifest or in `worktrees`, so the sweep must leave it alone. */
   private creating = new Set<string>();
@@ -446,7 +448,7 @@ export class WorktreeManager {
         createdAt: Date.now(),
       };
 
-      this.worktrees.set(id, info);
+      this.setWorktree(info);
 
       // Write entry to manifest
       await this.withManifest((manifest) => {
@@ -573,7 +575,7 @@ export class WorktreeManager {
       ...(opts.noGit ? { noGit: true } : {}),
     };
 
-    this.worktrees.set(id, info);
+    this.setWorktree(info);
 
     await this.withManifest((manifest) => {
       manifest[id] = {
@@ -1320,15 +1322,52 @@ export class WorktreeManager {
     };
 
     // Cache in memory for subsequent lookups
-    this.worktrees.set(id, info);
+    this.setWorktree(info);
     return info;
   }
 
   /** Register a worktree discovered on disk (e.g. surviving a restart) into the internal map so it can be destroyed later. */
   register(info: WorktreeInfo): void {
     if (!this.worktrees.has(info.id)) {
-      this.worktrees.set(info.id, info);
+      this.setWorktree(info);
     }
+  }
+
+  /** Put a worktree in the in-memory map, and wake what waits for it
+   *  (whenRegistered). Every worktree goes in through here. */
+  private setWorktree(info: WorktreeInfo): void {
+    this.worktrees.set(info.id, info);
+    const waiting = this.registrationWaiters.get(info.id);
+    if (!waiting) return;
+    this.registrationWaiters.delete(info.id);
+    for (const wake of waiting) wake(info);
+  }
+
+  /** The worktree once it's registered (a new thread's, still being made),
+   *  or undefined if `signal` fires first. */
+  whenRegistered(id: string, signal: AbortSignal): Promise<WorktreeInfo | undefined> {
+    const known = this.worktrees.get(id);
+    if (known) return Promise.resolve(known);
+    if (signal.aborted) return Promise.resolve(undefined);
+    return new Promise((resolve) => {
+      const wake = (info: WorktreeInfo) => {
+        signal.removeEventListener('abort', stop);
+        resolve(info);
+      };
+      const stop = () => {
+        const waiting = this.registrationWaiters.get(id);
+        waiting?.delete(wake);
+        if (waiting?.size === 0) this.registrationWaiters.delete(id);
+        resolve(undefined);
+      };
+      let waiting = this.registrationWaiters.get(id);
+      if (!waiting) {
+        waiting = new Set();
+        this.registrationWaiters.set(id, waiting);
+      }
+      waiting.add(wake);
+      signal.addEventListener('abort', stop, { once: true });
+    });
   }
 
   /** Move a worktree folder into REMOVING_DIR of the folder that holds it

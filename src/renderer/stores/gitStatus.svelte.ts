@@ -1,6 +1,7 @@
 import type { DiffScope, GitOperation, GitStatusResult } from '../../shared/types.js';
 import { store as sessionStore } from './sessions.svelte.js';
 import { settingsStore } from './settings.svelte.js';
+import { ipcErrorText } from '../lib/mcp-errors.js';
 
 export interface ScopeState {
   scope: DiffScope;
@@ -47,6 +48,12 @@ class GitStatusStore {
 
   getStatus(sessionId: string): GitStatusResult {
     return this.statusBySession[sessionId] ?? { entries: [] };
+  }
+
+  /** Whether a status has been read for this session yet: until then an
+   *  empty list means "not read", not "no changes". */
+  hasStatus(sessionId: string): boolean {
+    return sessionId in this.statusBySession;
   }
 
   getScope(sessionId: string): ScopeState {
@@ -141,6 +148,11 @@ class GitStatusStore {
       this.statusBySession = { ...this.statusBySession, [sessionId]: result };
     } catch (e) {
       console.error('Failed to fetch git status:', e);
+      // The last status stays (it was right a moment ago), but with none
+      // yet the tab would wait on it for good: say why there isn't one.
+      if (this.requestSeq.get(sessionId) === seq && !this.hasStatus(sessionId)) {
+        this.statusBySession = { ...this.statusBySession, [sessionId]: { entries: [], error: ipcErrorText(e) } };
+      }
     } finally {
       if (this.requestSeq.get(sessionId) === seq) {
         this.loadingBySession = { ...this.loadingBySession, [sessionId]: false };
@@ -231,8 +243,9 @@ class GitStatusStore {
   }
 
   /** Refresh now, however soon after the last, in place of one scheduled
-   *  (which would start another, and could overtake this one). */
-  private reload(sessionId: string): Promise<void> {
+   *  (which would start another, and could overtake this one). For a
+   *  refresh someone asked for (Try again, the refresh button). */
+  reload(sessionId: string): Promise<void> {
     const pending = this.pendingTimeout.get(sessionId);
     if (pending) clearTimeout(pending);
     this.pendingTimeout.delete(sessionId);

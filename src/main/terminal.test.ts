@@ -70,18 +70,37 @@ describe('TerminalManager', () => {
     vi.useRealTimers();
   });
 
+  describe('open tickets', () => {
+    it('keeps one ticket per session until its terminals are killed for a close or delete', async () => {
+      const ticket = tm.openTicket('s1');
+      expect(tm.openTicket('s1')).toBe(ticket);
+      expect(tm.holdsTicket('s1', ticket)).toBe(true);
+      expect(tm.holdsTicket('s2', ticket)).toBe(false);
+
+      await tm.killAllForSession('s1');
+      expect(tm.holdsTicket('s1', ticket)).toBe(false);
+      // Opened again (the thread reopened): a new one, the old one still out.
+      expect(tm.holdsTicket('s1', tm.openTicket('s1'))).toBe(true);
+      expect(tm.holdsTicket('s1', ticket)).toBe(false);
+    });
+  });
+
   describe('spawn and kill basics', () => {
     it('spawns a PTY and marks session alive', () => {
-      const ok = tm.spawnPty('s1', '/tmp', sender);
-      expect(ok).toBe(true);
+      expect(tm.spawnPty('s1', '/tmp', sender)).toEqual({ ok: true });
       expect(tm.isAlive('s1')).toBe(true);
       expect(pty.spawn).toHaveBeenCalledOnce();
     });
 
-    it('returns false and marks dead when pty.spawn throws', () => {
+    it('says why and marks dead when pty.spawn throws', () => {
       vi.mocked(pty.spawn).mockImplementationOnce(() => { throw new Error('fail'); });
-      const ok = tm.spawnPty('s1', '/tmp', sender);
-      expect(ok).toBe(false);
+      expect(tm.spawnPty('s1', '/tmp', sender)).toEqual({ ok: false, error: 'fail' });
+      expect(tm.isAlive('s1')).toBe(false);
+    });
+
+    it('never says why with nothing', () => {
+      vi.mocked(pty.spawn).mockImplementationOnce(() => { throw new Error(''); });
+      expect(tm.spawnPty('s1', '/tmp', sender)).toEqual({ ok: false, error: 'no reason given' });
       expect(tm.isAlive('s1')).toBe(false);
     });
 
