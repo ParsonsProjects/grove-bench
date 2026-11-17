@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { liveEventsMissingFrom, systemInitBeforePage } from './live-events.js';
+import { lastSystemInit, liveEventsMissingFrom, systemInitBeforePage } from './live-events.js';
 import type { AgentEvent } from './types.js';
 
 const status = (message: string): AgentEvent => ({ type: 'status', message });
@@ -47,6 +47,12 @@ describe('systemInitBeforePage()', () => {
 
   it('gives none when the page holds one: replaying the page sets it', () => {
     expect(systemInitBeforePage(history, 2, history.length)).toBeUndefined();
+  });
+
+  it('lastSystemInit() gives the newest report, or the newest before an index', () => {
+    expect(lastSystemInit(history)).toEqual(init('newest'));
+    expect(lastSystemInit(history, 2)).toEqual(init('old'));
+    expect(lastSystemInit([user('a', 'u1')])).toBeUndefined();
   });
 
   it('gives none for an older page, or a history with no report', () => {

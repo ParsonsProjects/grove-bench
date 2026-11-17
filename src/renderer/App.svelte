@@ -483,6 +483,11 @@
       // Not for a thread closed or deleted meanwhile.
       if (store.sessions.some((s) => s.id === sessionId)) messageStore.updateMcpServers(sessionId, servers);
     });
+    // A thread's agent started (woken, reopened): its commands and skills,
+    // which it otherwise reports only with the first prompt.
+    const unsubSlashCommands = window.groveBench.onSlashCommands((sessionId, names) => {
+      if (store.sessions.some((s) => s.id === sessionId)) messageStore.updateSlashCommands(sessionId, names);
+    });
 
     // Put idle conversations to sleep to free their agent processes.
     const stopIdleManager = startIdleManager();
@@ -492,6 +497,7 @@
       unsubPower();
       unsubFocus();
       unsubMcp();
+      unsubSlashCommands();
       unsubAppError();
       uninstallErrors();
       uninstallTooltips();

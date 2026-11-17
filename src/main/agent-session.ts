@@ -35,7 +35,7 @@ import { within } from './within.js';
 import { previewManager } from './preview.js';
 import type { Emit, ManagedSession, SessionCompletionResult } from './session-types.js';
 import { SessionEventStore, TRANSIENT_EVENT_TYPES, eventLogPath } from './session-event-store.js';
-import { systemInitBeforePage } from '../shared/live-events.js';
+import { lastSystemInit, systemInitBeforePage } from '../shared/live-events.js';
 import { StreamDeltas, isStreamDelta } from './session-stream.js';
 import {
   requestPermission, respondToPermission as answerPermission, denyPendingPermissions,
@@ -158,11 +158,11 @@ class AgentSessionManager {
    *  releases the files its processes held before the worktree is removed.
    *  Tests set it to 0. */
   handleReleaseMs = 500;
-  /** A starting agent is asked for its MCP servers this often, and at most
-   *  this many times, while one of them is still connecting (see
-   *  reportMcpServersOnStart): 30 s in all. Tests shorten the wait. */
+  /** A starting agent is asked for its MCP servers and commands this often,
+   *  and at most this many times, while one of its servers is still
+   *  connecting (see reportOnStart): 30 s in all. Tests change both. */
   mcpStartPollMs = 2_000;
-  readonly mcpStartPolls = 15;
+  mcpStartPolls = 15;
   /** How long a close or delete waits for an agent that is still starting.
    *  Tests shorten it. */
   agentStartWaitMs = 10_000;
@@ -726,7 +726,7 @@ class AgentSessionManager {
 
     // Show a connecting message in the thread while waiting for system_init
     emit({ type: 'status', message: `Connecting to ${session.adapter.displayName} — ${session.branch || 'project folder'} · ${session.permissionMode}` });
-    void this.reportMcpServersOnStart(session, handle);
+    void this.reportOnStart(session, handle);
 
     // Process event stream from the adapter
     try {
@@ -1744,37 +1744,55 @@ class AgentSessionManager {
   }
 
   /**
-   * Tell the renderer the MCP servers of an agent that has just started, and
-   * again as the ones still connecting finish. Claude Code's own report of
-   * them (system_init) only comes with the first prompt, so a thread woken
-   * from sleep or reopened showed none, or the ones it last reported, until
-   * a message was sent. Ends once this run is replaced (a stop, a sleep, a
-   * close). An agent that can't list its servers reports them as it starts.
+   * Tell the renderer the MCP servers and slash commands (skills among them)
+   * of an agent that has just started, and again as the servers still
+   * connecting finish. Claude Code's own report of them (system_init) only
+   * comes with the first prompt, so a thread woken from sleep or reopened
+   * showed none, or the ones it last reported, until a message was sent.
+   * Commands stop once this run has sent its report. All of it ends once
+   * this run is replaced (a stop, a sleep, a close). An agent that can't
+   * list them reports them as it starts.
    */
-  private async reportMcpServersOnStart(session: ManagedSession, handle: AgentQueryHandle): Promise<void> {
-    if (!handle.listMcpServers) return;
+  private async reportOnStart(session: ManagedSession, handle: AgentQueryHandle): Promise<void> {
+    if (!handle.listMcpServers && !handle.listSlashCommands) return;
     const current = () => session.queryHandle === handle && !session.destroying;
-    let sent = '';
+    const reported = lastSystemInit(session.eventHistory);
+    let sentServers = '';
+    let sentCommands = '';
     for (let i = 0; i < this.mcpStartPolls; i++) {
       if (i > 0) await new Promise((resolve) => setTimeout(resolve, this.mcpStartPollMs));
       if (!current()) return;
-      let servers: McpServerInfo[];
-      try {
-        servers = await handle.listMcpServers();
-      } catch (e) {
-        logger.debug(`[mcp] session=${session.id} could not list MCP servers at start:`, e);
-        return;
+      let servers: McpServerInfo[] | null = null;
+      if (handle.listMcpServers) {
+        try {
+          servers = await handle.listMcpServers();
+        } catch (e) {
+          logger.debug(`[mcp] session=${session.id} could not list MCP servers at start:`, e);
+        }
+        if (!current()) return;
+        // None yet: the agent may not have read its config. Keep what the
+        // renderer has (the last report) rather than clear it.
+        const key = JSON.stringify(servers);
+        if (servers?.length && key !== sentServers && !session.window.isDestroyed()) {
+          sentServers = key;
+          session.window.webContents.send(IPC.AGENT_MCP_STATUS, session.id, servers);
+        }
       }
-      if (!current()) return;
-      // None yet: the agent may not have read its config. Keep what the
-      // renderer has (the last report) rather than clear it.
-      if (servers.length === 0) continue;
-      const key = JSON.stringify(servers);
-      if (key !== sent && !session.window.isDestroyed()) {
-        sent = key;
-        session.window.webContents.send(IPC.AGENT_MCP_STATUS, session.id, servers);
+      if (handle.listSlashCommands && lastSystemInit(session.eventHistory) === reported) {
+        let names: string[] | null = null;
+        try {
+          names = await handle.listSlashCommands(reported?.slashCommands ?? []);
+        } catch (e) {
+          logger.debug(`[skills] session=${session.id} could not list slash commands at start:`, e);
+        }
+        if (!current()) return;
+        const key = JSON.stringify(names);
+        if (names && key !== sentCommands && lastSystemInit(session.eventHistory) === reported && !session.window.isDestroyed()) {
+          sentCommands = key;
+          session.window.webContents.send(IPC.AGENT_SLASH_COMMANDS, session.id, names);
+        }
       }
-      if (!servers.some((s) => s.status === 'pending')) return;
+      if (!servers || (servers.length > 0 && !servers.some((s) => s.status === 'pending'))) return;
     }
   }
 

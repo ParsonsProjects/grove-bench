@@ -1991,6 +1991,27 @@ describe('session controls', () => {
   });
 });
 
+describe('updateSlashCommands', () => {
+  const report = (slashCommands: string[]) => ({ type: 'system_init' as const, sessionId: SID, model: 'm', tools: [], skills: ['review'], slashCommands });
+
+  it("replaces only the commands: the agent listed them as it started", () => {
+    messageStore.ingestEvent(SID, report(['review']));
+    messageStore.updateSlashCommands(SID, ['review', 'new-skill']);
+    expect(messageStore.getSystemInfo(SID)).toMatchObject({ skills: ['review'], slashCommands: ['review', 'new-skill'] });
+  });
+
+  it('keeps them over an older report from the history, until one arrives live', () => {
+    messageStore.updateSlashCommands(SID, ['new-skill']);
+    // A pane loading the history after they came: its report is older.
+    messageStore.setSystemInfo(SID, report(['old-skill']), true);
+    messageStore.replayEvents(SID, [report(['older-skill'])]);
+    expect(messageStore.getSystemInfo(SID).slashCommands).toEqual(['new-skill']);
+
+    messageStore.ingestEvent(SID, report(['fresh-skill']));
+    expect(messageStore.getSystemInfo(SID).slashCommands).toEqual(['fresh-skill']);
+  });
+});
+
 describe('updateMcpServers', () => {
   it('replaces the MCP snapshot while preserving other system info', () => {
     messageStore.ingestEvent(SID, {

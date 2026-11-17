@@ -202,7 +202,7 @@
       // The agent's last report of its MCP servers and skills, when it is
       // further back than the page. Claude Code only sends another with the
       // next prompt, so a woken or reopened thread would show none till then.
-      if (page.lastSystemInit) messageStore.setSystemInfo(sessionId, page.lastSystemInit);
+      if (page.lastSystemInit) messageStore.setSystemInfo(sessionId, page.lastSystemInit, true);
 
       // Batch-replay events. replayEvents accumulates messages in a plain
       // array and flushes to the reactive store in one assignment at the end,

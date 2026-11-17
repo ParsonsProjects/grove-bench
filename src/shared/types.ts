@@ -1609,6 +1609,9 @@ export interface GroveBenchAPI {
   reconnectDownMcpServers(sessionId: string, serverName?: string): Promise<void>;
   /** A thread's live MCP status, sent after a background reconnect. */
   onMcpStatus(callback: (sessionId: string, servers: McpServerInfo[]) => void): () => void;
+  /** A thread's slash commands (its skills among them), sent as its agent
+   *  starts, for an agent that otherwise reports them with the first prompt. */
+  onSlashCommands(callback: (sessionId: string, names: string[]) => void): () => void;
 
   // File operations (for @ file picker)
   listFiles(sessionId: string): Promise<string[]>;
@@ -2432,6 +2435,8 @@ export const IPC = {
   AGENT_MCP_RECONNECT_DOWN: 'agent:mcpReconnectDown',
   /** main → renderer: a thread's live MCP status after a background reconnect. */
   AGENT_MCP_STATUS: 'agent:mcpStatus',
+  /** main → renderer: a thread's slash commands as its agent starts. */
+  AGENT_SLASH_COMMANDS: 'agent:slashCommands',
   AGENT_ELICITATION: 'agent:elicitation',
   AGENT_LIMIT: 'agent:limit',
   LIMITS_DAILY_SPEND: 'limits:dailySpend',

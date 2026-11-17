@@ -34,6 +34,17 @@ export function liveEventsMissingFrom(page: readonly AgentEvent[], held: readonl
   return live;
 }
 
+/** The agent's newest report of what it has (system_init) before `before`. */
+export function lastSystemInit(
+  events: readonly AgentEvent[], before = events.length,
+): Extract<AgentEvent, { type: 'system_init' }> | undefined {
+  for (let i = before - 1; i >= 0; i--) {
+    const event = events[i];
+    if (event.type === 'system_init') return event;
+  }
+  return undefined;
+}
+
 /** The newest system_init before `start`, for the newest page (`end` at the
  *  history's end) when the page holds none: see EventHistoryPage. */
 export function systemInitBeforePage(
@@ -41,9 +52,5 @@ export function systemInitBeforePage(
 ): Extract<AgentEvent, { type: 'system_init' }> | undefined {
   if (end < events.length) return undefined;
   for (let i = end - 1; i >= start; i--) if (events[i].type === 'system_init') return undefined;
-  for (let i = start - 1; i >= 0; i--) {
-    const event = events[i];
-    if (event.type === 'system_init') return event;
-  }
-  return undefined;
+  return lastSystemInit(events, start);
 }

@@ -215,6 +215,8 @@ class MockAdapter implements AgentAdapter {
   handles: AgentQueryHandle[] = [];
   /** When set, each handle lists the agent's MCP servers with it. */
   mcpServers: (() => Promise<McpServerInfo[]>) | null = null;
+  /** When set, each handle lists the agent's slash commands with it. */
+  slashCommands: ((lastReported: readonly string[]) => Promise<string[]>) | null = null;
 
   getModels() { return [{ id: 'mock-model', label: 'Mock' }, { id: 'mock-lite', label: 'Mock Lite' }]; }
   /** Two universal controls plus one ('speed') that only the full model offers,
@@ -318,6 +320,7 @@ class MockAdapter implements AgentAdapter {
       getUsage: vi.fn(async () => ({ available: true, plan: 'max', windows: [{ id: 'five_hour', label: '5-hour', utilization: 0.4 }], fetchedAt: 1 })),
     };
     if (this.mcpServers) handle.listMcpServers = vi.fn(this.mcpServers);
+    if (this.slashCommands) handle.listSlashCommands = vi.fn(this.slashCommands);
     this.lastHandle = handle;
     this.handles.push(handle);
     return handle;
@@ -2998,7 +3001,7 @@ describe('AgentSessionManager sleep and wake', () => {
     await sessionManager.destroySession('test-sleep-quiet');
   });
 
-  const mcpStatusesSent = (win: ReturnType<typeof makeMockWindow>, id: string) =>
+  const mcpStatusesSent = (win: ReturnType<typeof makeMockWindow>, id: string): McpServerInfo[][] =>
     win._send.mock.calls
       .filter(([channel, sessionId]: [string, string]) => channel === IPC.AGENT_MCP_STATUS && sessionId === id)
       .map(([, , servers]: [string, string, McpServerInfo[]]) => servers);
@@ -3044,6 +3047,58 @@ describe('AgentSessionManager sleep and wake', () => {
       await sessionManager.destroySession('test-mcp-poll');
     } finally {
       sessionManager.mcpStartPollMs = pollMs;
+    }
+  });
+
+  const commandsSent = (win: ReturnType<typeof makeMockWindow>, id: string): string[][] =>
+    win._send.mock.calls
+      .filter(([channel, sessionId]: [string, string]) => channel === IPC.AGENT_SLASH_COMMANDS && sessionId === id)
+      .map(([, , names]: [string, string, string[]]) => names);
+
+  it("tells the renderer the agent's slash commands when it wakes, given its last report's", async () => {
+    mockAdapter.slashCommands = async (last) => ['new-skill', ...last];
+    const win = makeMockWindow();
+    await sessionManager.createSession({ id: 'test-wake-cmds', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock' });
+    await vi.waitFor(() => expect(sessionManager.getSession('test-wake-cmds')?.queryHandle).toBeTruthy());
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 'provider-1', model: 'mock-model', tools: [], slashCommands: ['review', 'mcp__tiny__greet'] });
+    await vi.waitFor(() => expect(sessionManager.getSession('test-wake-cmds')?.status).toBe('running'));
+    await sessionManager.sleepSession('test-wake-cmds');
+    win._send.mockClear();
+
+    sessionManager.wakeSession('test-wake-cmds');
+
+    await vi.waitFor(() => expect(commandsSent(win, 'test-wake-cmds')).toEqual([['new-skill', 'review', 'mcp__tiny__greet']]));
+    expect(mockAdapter.lastHandle!.listSlashCommands).toHaveBeenCalledWith(['review', 'mcp__tiny__greet']);
+
+    await sessionManager.destroySession('test-wake-cmds');
+  });
+
+  it('stops sending slash commands once the agent has reported its own', async () => {
+    const { mcpStartPollMs, mcpStartPolls } = sessionManager;
+    // Still asking when the report comes, however slow the machine.
+    sessionManager.mcpStartPollMs = 10;
+    sessionManager.mcpStartPolls = 1_000;
+    try {
+      mockAdapter.mcpServers = async () => [{ name: 'linear', status: 'pending' }];
+      let n = 0;
+      mockAdapter.slashCommands = async () => [`skill-${n++}`];
+      const win = makeMockWindow();
+      await sessionManager.createSession({ id: 'test-cmds-init', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock' });
+      await vi.waitFor(() => expect(commandsSent(win, 'test-cmds-init').length).toBeGreaterThan(0));
+
+      // A prompt went: the agent's report is the newest now.
+      mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 'provider-1', model: 'mock-model', tools: [], slashCommands: ['review'] });
+      await vi.waitFor(() => expect(sessionManager.getSession('test-cmds-init')?.status).toBe('running'));
+      const sent = commandsSent(win, 'test-cmds-init').length;
+      const asked = vi.mocked(mockAdapter.lastHandle!.listMcpServers!).mock.calls.length;
+      await new Promise((r) => setTimeout(r, 80));
+      // Its servers are still asked about; its commands no longer.
+      expect(vi.mocked(mockAdapter.lastHandle!.listMcpServers!).mock.calls.length).toBeGreaterThan(asked);
+      expect(commandsSent(win, 'test-cmds-init')).toHaveLength(sent);
+
+      await sessionManager.destroySession('test-cmds-init');
+    } finally {
+      Object.assign(sessionManager, { mcpStartPollMs, mcpStartPolls });
     }
   });
 

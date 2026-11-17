@@ -495,6 +495,9 @@ class MessageStore {
    *  page is loaded; cleared once the whole history is. */
   private orphanReplayEvents = new Map<string, AgentEvent[]>();
   private _replaySessionId: string | null = null;
+  /** Slash commands the agent listed as it started, since its last report
+   *  arrived live (see updateSlashCommands). */
+  private liveSlashCommands = new Map<string, string[]>();
 
   /** Absolute (prelaunch-prefixed) index of the event currently being replayed,
    *  or null for live events. Used to stamp messages so full-history search hits
@@ -976,17 +979,27 @@ class MessageStore {
   }
 
   /** What the agent has (tools, skills, commands, MCP servers), as one of
-   *  its system_init reports gave it. Also for the last report from before
-   *  the history page a pane loads (EventHistoryPage.lastSystemInit), which
-   *  is nothing else of that event: no "Connected" line, no model. */
-  setSystemInfo(sessionId: string, event: Extract<AgentEvent, { type: 'system_init' }>) {
+   *  its system_init reports gave it. `remembered`: one from the history (a
+   *  replayed page, or the last report from before it, which is nothing
+   *  else of that event: no "Connected" line, no model). Those are older
+   *  than the commands the agent listed as it started, which stay. A report
+   *  that arrives live is the newest. */
+  setSystemInfo(sessionId: string, event: Extract<AgentEvent, { type: 'system_init' }>, remembered = false) {
+    if (!remembered) this.liveSlashCommands.delete(sessionId);
     this.systemInfoBySession[sessionId] = {
       tools: event.tools ?? [],
       agents: event.agents ?? [],
       skills: event.skills ?? [],
-      slashCommands: event.slashCommands ?? [],
+      slashCommands: this.liveSlashCommands.get(sessionId) ?? event.slashCommands ?? [],
       mcpServers: event.mcpServers ?? [],
     };
+  }
+
+  /** The agent's slash commands (its skills among them) as it listed them
+   *  when it started, before it reports itself with the first prompt. */
+  updateSlashCommands(sessionId: string, names: string[]) {
+    this.liveSlashCommands.set(sessionId, names);
+    this.systemInfoBySession[sessionId] = { ...this.getSystemInfo(sessionId), slashCommands: names };
   }
 
   /** Replace the MCP server list with a live status snapshot (from listMcpServers). */
@@ -2036,7 +2049,7 @@ class MessageStore {
     delete this.stoppingSession[sessionId];
     delete this.userExplicitMode[sessionId];
     this.modelBySession[sessionId] = event.model;
-    this.setSystemInfo(sessionId, event);
+    this.setSystemInfo(sessionId, event, this._replayBuffer !== null);
     this.pushMessage(sessionId, {
       kind: 'system',
       id: nextId(),
@@ -2856,7 +2869,7 @@ class MessageStore {
   }
 
   private perSessionMaps(): Map<string, unknown>[] {
-    return [this.sourceIndexBySession, this.orphanReplayEvents, this.streamBuf, this.turnsStarted, this.userStops];
+    return [this.sourceIndexBySession, this.orphanReplayEvents, this.streamBuf, this.turnsStarted, this.userStops, this.liveSlashCommands];
   }
 
   /** Live events that arrived while a pane was loading the history page,

@@ -167,6 +167,13 @@ const api: GroveBenchAPI = {
       ipcRenderer.removeListener(IPC.AGENT_MCP_STATUS, handler);
     };
   },
+  onSlashCommands: (callback: (sessionId: string, names: string[]) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, sessionId: string, names: string[]) => callback(sessionId, names);
+    ipcRenderer.on(IPC.AGENT_SLASH_COMMANDS, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC.AGENT_SLASH_COMMANDS, handler);
+    };
+  },
 
   // Skills
   listSkills: (sessionId: string, fallbackPath: string) =>
