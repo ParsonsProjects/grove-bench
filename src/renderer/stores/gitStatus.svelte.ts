@@ -1,8 +1,7 @@
 import type { DiffScope, GitOperation, GitStatusResult } from '../../shared/types.js';
 import { store as sessionStore } from './sessions.svelte.js';
 import { settingsStore } from './settings.svelte.js';
-import { errorMessage } from '../../shared/error-message.js';
-import { stripIpcErrorPrefix } from '../lib/mcp-errors.js';
+import { ipcErrorText } from '../lib/mcp-errors.js';
 
 export interface ScopeState {
   scope: DiffScope;
@@ -152,7 +151,7 @@ class GitStatusStore {
       // The last status stays (it was right a moment ago), but with none
       // yet the tab would wait on it for good: say why there isn't one.
       if (this.requestSeq.get(sessionId) === seq && !this.hasStatus(sessionId)) {
-        this.statusBySession = { ...this.statusBySession, [sessionId]: { entries: [], error: stripIpcErrorPrefix(errorMessage(e)) } };
+        this.statusBySession = { ...this.statusBySession, [sessionId]: { entries: [], error: ipcErrorText(e) } };
       }
     } finally {
       if (this.requestSeq.get(sessionId) === seq) {

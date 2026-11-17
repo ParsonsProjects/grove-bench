@@ -338,3 +338,30 @@ describe('CheckpointsPanel: before and when the list is read', () => {
     expect(getByText('bad ref')).toBeInTheDocument();
   });
 });
+
+describe('CheckpointsPanel: the first read', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    mockGroveBench.listCheckpoints.mockReset();
+    mockGroveBench.listCheckpoints.mockResolvedValue([]);
+  });
+
+  it("doesn't read the list again on mount while the tab's own read is still out", async () => {
+    checkpointStore.clear(SID);
+    mockGroveBench.listCheckpoints.mockReturnValueOnce(new Promise(() => {}));
+    void checkpointStore.refresh(SID); // the tab opening (WorkspacePane)
+    // Its code took longer than the throttle to load.
+    const later = Date.now() + 2000;
+    vi.spyOn(Date, 'now').mockReturnValue(later);
+    render(CheckpointsPanel, { sessionId: SID });
+    expect(mockGroveBench.listCheckpoints).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows an error with no words as an error, not as loading for good', () => {
+    checkpointStore.clear(SID);
+    checkpointStore.errorBySession = { [SID]: '' };
+    const { getByText, queryByText } = render(CheckpointsPanel, { sessionId: SID });
+    expect(getByText("Couldn't load the checkpoints")).toBeInTheDocument();
+    expect(queryByText('Loading checkpoints…')).toBeNull();
+  });
+});

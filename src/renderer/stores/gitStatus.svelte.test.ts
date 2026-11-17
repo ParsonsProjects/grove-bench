@@ -305,7 +305,7 @@ describe('gitStatusStore — back in the window', () => {
   });
 });
 
-describe('gitStatusStore — a read that fails', () => {
+describe('gitStatusStore: a read that fails', () => {
   afterEach(() => gitStatusStore.clear('failing'));
 
   it('keeps the last status when a later read fails, and says why when there is none', async () => {

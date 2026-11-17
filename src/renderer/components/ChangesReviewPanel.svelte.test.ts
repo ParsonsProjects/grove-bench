@@ -1292,3 +1292,25 @@ describe('ChangesReviewPanel: a file diff on its way, or failed', () => {
     expect(queryByText(/Couldn't load the diff/)).toBeNull();
   });
 });
+
+describe('ChangesReviewPanel: a neighbour whose diff failed to load', () => {
+  it('reads it again when selected, rather than showing the old failure', async () => {
+    let bFailed = false;
+    mockGroveBench.getFileDiff.mockImplementation(async (_sid: string, filePath: string) => {
+      if (filePath === 'src/b.ts' && !bFailed) {
+        bFailed = true;
+        throw new Error('git lock held');
+      }
+      return { kind: 'text', patch: patch(filePath === 'src/b.ts' ? 'bee' : 'ay') };
+    });
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('src/a.ts'), entry('src/b.ts')] } };
+    const { container, queryByText } = render(ChangesReviewPanel, { sessionId: SID });
+    await waitFor(() => expect(diffText(container)).toContain('ay'));
+    // b.ts, next to the selected file, was read ahead of time and failed.
+    await waitFor(() => expect(bFailed).toBe(true));
+
+    await fireEvent.click(container.querySelector('[data-file-key="src/b.ts:false"]')!);
+    await waitFor(() => expect(diffText(container)).toContain('bee'));
+    expect(queryByText(/Couldn't load the diff/)).toBeNull();
+  });
+});

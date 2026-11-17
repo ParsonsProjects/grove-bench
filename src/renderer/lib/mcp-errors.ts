@@ -8,6 +8,8 @@
  * with the terse `Server status: needs-auth`. Neither is useful on its own.
  */
 
+import { errorMessage } from '../../shared/error-message.js';
+
 const IPC_PREFIX = /^Error invoking remote method '[^']*':\s*(?:\w*Error:\s*)?/;
 
 export type McpAction = 'reconnect' | 'enable' | 'disable';
@@ -15,6 +17,13 @@ export type McpAction = 'reconnect' | 'enable' | 'disable';
 /** Strip Electron's "Error invoking remote method" wrapper from a message. */
 export function stripIpcErrorPrefix(message: string): string {
   return message.replace(IPC_PREFIX, '').trim();
+}
+
+/** What to show for an error from an IPC call: its message without
+ *  Electron's wrapper, or `fallback` when that leaves nothing (an empty
+ *  message would read as no error at all). */
+export function ipcErrorText(e: unknown, fallback = 'no reason given'): string {
+  return stripIpcErrorPrefix(errorMessage(e)) || fallback;
 }
 
 /** Human-readable instruction for a server stuck in `needs-auth`. */

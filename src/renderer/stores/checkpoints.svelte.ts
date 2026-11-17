@@ -1,6 +1,5 @@
 import type { CheckpointDiffScope, CheckpointListItem, DiffHistoryEntry, DiffHistoryResult, FileDiffResult, FileLinesResult, GitStatusEntry, GitStatusResult } from '../../shared/types.js';
-import { errorMessage } from '../../shared/error-message.js';
-import { stripIpcErrorPrefix } from '../lib/mcp-errors.js';
+import { ipcErrorText } from '../lib/mcp-errors.js';
 
 const THROTTLE_MS = 500;
 
@@ -127,7 +126,7 @@ class CheckpointStore {
       console.error('Failed to fetch checkpoints:', e);
       // The list read last stays on screen, with this said above it.
       if (this.requestSeq.get(sessionId) === seq) {
-        this.errorBySession = { ...this.errorBySession, [sessionId]: stripIpcErrorPrefix(errorMessage(e)) };
+        this.errorBySession = { ...this.errorBySession, [sessionId]: ipcErrorText(e) };
       }
     } finally {
       if (this.requestSeq.get(sessionId) === seq) {
@@ -205,7 +204,7 @@ class CheckpointStore {
     } catch (e) {
       console.error('Failed to load checkpoint files:', e);
       if (this.getSelected(sessionId) === selected && this.getScope(sessionId) === scope) {
-        this.filesBySession = { ...this.filesBySession, [sessionId]: { entries: [], error: stripIpcErrorPrefix(errorMessage(e)) } };
+        this.filesBySession = { ...this.filesBySession, [sessionId]: { entries: [], error: ipcErrorText(e) } };
       }
     } finally {
       if (this.getSelected(sessionId) === selected && this.getScope(sessionId) === scope) {

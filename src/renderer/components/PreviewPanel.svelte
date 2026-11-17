@@ -17,7 +17,7 @@
   import { conversationAgent } from '$lib/session-sprite-state.js';
   import { isCovered, sameBounds, toBounds, tooltipCovers } from '$lib/preview-viewport.js';
   import { loadErrorHint } from '$lib/preview-text.js';
-  import { stripIpcErrorPrefix } from '$lib/mcp-errors.js';
+  import { ipcErrorText } from '$lib/mcp-errors.js';
   import { formatAge } from '$lib/format-age.js';
   import type { PreviewBounds } from '../../shared/types.js';
   import { Button } from '$lib/components/ui/button/index.js';
@@ -188,9 +188,6 @@
 
   // ─── Actions ───
 
-  function errorText(err: unknown): string {
-    return stripIpcErrorPrefix(err instanceof Error ? err.message : String(err));
-  }
 
   async function go(target: PreviewMode, url: string) {
     navError = '';
@@ -198,7 +195,7 @@
       await previewStore.navigate(sessionId, target, url);
       return true;
     } catch (err) {
-      navError = errorText(err);
+      navError = ipcErrorText(err);
       return false;
     }
   }
@@ -235,7 +232,7 @@
       clearTimeout(signedOutTimer);
       signedOutTimer = setTimeout(() => { signedOut = false; }, 5000);
     } catch (err) {
-      navError = errorText(err);
+      navError = ipcErrorText(err);
     } finally {
       clearing = false;
     }

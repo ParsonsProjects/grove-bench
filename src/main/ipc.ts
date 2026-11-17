@@ -106,10 +106,6 @@ const goalInFlight = new Set<string>();
 const goalAutoAttempts = new Map<string, number>();
 const MAX_GOAL_AUTO_ATTEMPTS = 2;
 
-/** How often the Terminal's start checks whether a new thread's worktree
- *  is there yet (PTY_SPAWN). */
-const PTY_WORKTREE_POLL_MS = 200;
-
 /** Longest idle sleep loop line written to the app log (APP_LOG_IDLE). */
 export const IDLE_LOG_MAX_CHARS = 500;
 
@@ -1804,7 +1800,8 @@ export function registerHandlers() {
       // Skipped (the process host down): the renderer keeps the last status.
       if (isSkipped(e)) throw e;
       logger.warn(`git status failed for session ${sessionId}:`, e);
-      return { entries: [], error: e instanceof Error ? e.message : String(e) };
+      // Never empty: an empty `error` would read as no error, a clean tree.
+      return { entries: [], error: (e instanceof Error ? e.message : String(e)) || 'git status failed' };
     }
   }));
 
@@ -2008,15 +2005,29 @@ export function registerHandlers() {
   // ─── PTY Terminal (per-session persistent shell) ───
 
   ipcMain.handle(IPC.PTY_SPAWN, async (event, sessionId: string): Promise<PtySpawnResult> => {
+    // Taken before any wait: closing or deleting the thread meanwhile drops
+    // it, so no shell opens after the thread's were killed (one in a
+    // worktree being deleted would hold the folder on Windows).
+    const ticket = terminalManager.openTicket(sessionId);
     // A new thread's tab opens before its worktree is made (see
     // SESSION_CREATE): wait for it while the setup runs, so the terminal
-    // opens once it's there. The setup ends either way (made, failed, or
-    // the thread deleted), and so does this.
+    // opens once it's there. Each step of the setup ends, made or not
+    // (failed, or the thread deleted), and so does this.
     let worktree = worktreeManager.getWorktree(sessionId);
-    while (!worktree && sessionManager.hasPendingSetup(sessionId)) {
-      await new Promise((resolve) => setTimeout(resolve, PTY_WORKTREE_POLL_MS));
-      worktree = worktreeManager.getWorktree(sessionId);
+    let setup = sessionManager.setupSettled(sessionId);
+    while (!worktree && setup) {
+      const stop = new AbortController();
+      worktree = await Promise.race([
+        worktreeManager.whenRegistered(sessionId, stop.signal),
+        setup.then(() => worktreeManager.getWorktree(sessionId)),
+      ]);
+      stop.abort();
+      // The next step's, if one took over; the same one again means it
+      // hasn't let go yet, and waiting on it again would spin.
+      const next = sessionManager.setupSettled(sessionId);
+      setup = next === setup ? undefined : next;
     }
+    if (!terminalManager.holdsTicket(sessionId, ticket)) return { ok: false, error: 'The thread was closed.' };
     if (!worktree) {
       logger.debug(`[PTY_SPAWN] No worktree for session ${sessionId}`);
       return { ok: false, error: "This thread has no worktree, so there's nowhere to open the terminal." };

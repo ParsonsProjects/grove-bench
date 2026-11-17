@@ -96,3 +96,20 @@ describe('terminalStore: starting the shell', () => {
     expect(terminalStore.startError(SID)).toBe('boom');
   });
 });
+
+describe('terminalStore: a start that ends after its thread was deleted', () => {
+  it('puts none of its state back', async () => {
+    let answer: ((r: { ok: false; error: string }) => void) | undefined;
+    mockGroveBench.ptyIsAlive.mockResolvedValueOnce(false);
+    mockGroveBench.ptySpawn.mockImplementationOnce(() => new Promise((r) => { answer = r; }));
+    const starting = terminalStore.ensureAlive(SID);
+    await vi.waitFor(() => expect(answer).toBeDefined());
+
+    terminalStore.destroySession(SID);
+    answer!({ ok: false, error: 'The thread was closed.' });
+    await expect(starting).resolves.toBe(false);
+    expect(SID in terminalStore.aliveBySession).toBe(false);
+    expect(SID in terminalStore.startingBySession).toBe(false);
+    expect(SID in terminalStore.startErrorBySession).toBe(false);
+  });
+});

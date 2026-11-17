@@ -125,7 +125,7 @@
   let emptyTitle = $derived(
     !statusRead
       ? 'Loading changes…'
-      : gitStatus.error
+      : gitStatus.error !== undefined
         ? "Couldn't read the changes"
         : isBranchScope
           ? (gitStatus.scopeError ?? `No changes on this branch vs ${gitStatus.baseRef ?? scopeState.base ?? 'base'}`)
@@ -531,7 +531,7 @@
   onUnstageAll={isBranchScope ? undefined : unstageAll}
   {commentContext}
   {emptyTitle}
-  emptyHint={isRunning && statusRead && !gitStatus.error ? 'Edits show up here as the agent makes them' : undefined}
+  emptyHint={isRunning && statusRead && gitStatus.error === undefined ? 'Edits show up here as the agent makes them' : undefined}
   emptyError={gitStatus.error}
   emptyScene="changes"
   panel="changesFiles"

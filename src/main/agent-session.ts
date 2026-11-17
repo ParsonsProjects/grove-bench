@@ -1186,6 +1186,14 @@ class AgentSessionManager {
     return this.pendingSetups.has(id);
   }
 
+  /** Settles when the setup for `id` in flight now ends, made or not (it
+   *  never rejects); undefined when there is none. One step can replace
+   *  another (the checks, then the worktree and the rest), so ask again
+   *  once it settles. */
+  setupSettled(id: string): Promise<void> | undefined {
+    return this.pendingSetups.get(id);
+  }
+
   /**
    * Resolve once the session has a live query handle. If none is installed
    * but a new query is being initialized (e.g. right after stop), waits for it

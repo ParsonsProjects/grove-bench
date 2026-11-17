@@ -159,7 +159,7 @@
       {:else if isStarting}
         <Pulse size="xs" />
         Starting…
-      {:else if startError}
+      {:else if startError !== null}
         <Pulse tone="error" size="xs" motion="none" />
         Couldn't start
       {:else}
@@ -190,7 +190,7 @@
     {/snippet}
   </PanelHeader>
 
-  {#if startError && !isAlive && !isStarting}
+  {#if startError !== null && !isAlive && !isStarting}
     <Notice tone="danger" class="items-center shrink-0 border-b border-b-border">
       {#snippet actions()}
         <Button size="2xs" variant="subtle" onclick={handleRestart}>Try again</Button>

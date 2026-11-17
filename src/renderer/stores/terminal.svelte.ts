@@ -1,7 +1,6 @@
 import { previewStore } from './preview.svelte.js';
 import { gitStatusStore } from './gitStatus.svelte.js';
-import { errorMessage } from '../../shared/error-message.js';
-import { stripIpcErrorPrefix } from '../lib/mcp-errors.js';
+import { ipcErrorText } from '../lib/mcp-errors.js';
 import type { PtySpawnResult } from '../../shared/types.js';
 
 /** After Enter in a thread's terminal, how long its output must stay quiet
@@ -61,12 +60,32 @@ class TerminalStore {
     return this.startErrorBySession[sessionId] ?? null;
   }
 
+  /** One per session, until destroySession drops it. A reply that comes
+   *  back after its session was destroyed (a start can wait seconds for a
+   *  new thread's worktree) sees its token gone and writes nothing, so a
+   *  deleted thread's state isn't put back. */
+  private tokens = new Map<string, object>();
+  private tokenOf(sessionId: string): object {
+    let token = this.tokens.get(sessionId);
+    if (!token) {
+      token = {};
+      this.tokens.set(sessionId, token);
+    }
+    return token;
+  }
+  private destroyedSince(sessionId: string, token: object): boolean {
+    return this.tokens.get(sessionId) !== token;
+  }
+
   private async whileStarting<T>(sessionId: string, run: () => Promise<T>): Promise<T> {
+    const token = this.tokenOf(sessionId);
     this.startingBySession[sessionId] = (this.startingBySession[sessionId] ?? 0) + 1;
     try {
       return await run();
     } finally {
-      this.startingBySession[sessionId] = Math.max(0, (this.startingBySession[sessionId] ?? 1) - 1);
+      if (!this.destroyedSince(sessionId, token)) {
+        this.startingBySession[sessionId] = Math.max(0, (this.startingBySession[sessionId] ?? 1) - 1);
+      }
     }
   }
 
@@ -126,6 +145,7 @@ class TerminalStore {
 
   /** Tear down all state for a permanently destroyed session. */
   destroySession(sessionId: string) {
+    this.tokens.delete(sessionId);
     this.unsubscribe(sessionId);
     const { [sessionId]: _drop, ...rest } = this.aliveBySession;
     this.aliveBySession = rest;
@@ -137,13 +157,15 @@ class TerminalStore {
 
   /** Spawn a PTY for the session. */
   async spawn(sessionId: string): Promise<boolean> {
+    const token = this.tokenOf(sessionId);
     delete this.startErrorBySession[sessionId];
     let result: PtySpawnResult;
     try {
       result = await window.groveBench.ptySpawn(sessionId);
     } catch (e) {
-      result = { ok: false, error: stripIpcErrorPrefix(errorMessage(e)) };
+      result = { ok: false, error: ipcErrorText(e) };
     }
+    if (this.destroyedSince(sessionId, token)) return false;
     this.aliveBySession[sessionId] = result.ok;
     if (!result.ok) this.startErrorBySession[sessionId] = result.error;
     return result.ok;
@@ -182,8 +204,9 @@ class TerminalStore {
 
   /** Kill the PTY. */
   async kill(sessionId: string) {
+    const token = this.tokenOf(sessionId);
     await window.groveBench.ptyKill(sessionId);
-    this.aliveBySession[sessionId] = false;
+    if (!this.destroyedSince(sessionId, token)) this.aliveBySession[sessionId] = false;
   }
 
   /** Kill and respawn the PTY (same as what happens on tab open). */
@@ -196,8 +219,9 @@ class TerminalStore {
 
   /** Check if the PTY is alive (queries main process). */
   async checkAlive(sessionId: string): Promise<boolean> {
+    const token = this.tokenOf(sessionId);
     const alive = await window.groveBench.ptyIsAlive(sessionId);
-    this.aliveBySession[sessionId] = alive;
+    if (!this.destroyedSince(sessionId, token)) this.aliveBySession[sessionId] = alive;
     return alive;
   }
 }

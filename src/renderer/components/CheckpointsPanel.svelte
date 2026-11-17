@@ -130,7 +130,7 @@
   let emptyTitle = $derived(
     isDiffLoading && !files
       ? 'Loading diff…'
-      : files?.error
+      : files?.error !== undefined
         ? "Couldn't read the changes"
         : files?.scopeError
           ?? (isFullThread ? 'No file changes in this thread' : diffMode === 'turn' ? 'No file changes in this turn' : 'No file changes since this checkpoint'),
@@ -138,8 +138,10 @@
 
   // Opening the tab reads the list (WorkspacePane); this covers the panel
   // showing without that, so it can't sit on Loading.
+  // Not while a read is out: one that started before this mounted (the
+  // tab's code can take longer than the throttle) would be read twice.
   onMount(() => {
-    if (!checkpointStore.hasLoaded(sessionId)) void checkpointStore.refresh(sessionId);
+    if (!checkpointStore.hasLoaded(sessionId) && !checkpointStore.isLoading(sessionId)) void checkpointStore.refresh(sessionId);
   });
 </script>
 
@@ -158,7 +160,7 @@
   {/if}
 {/snippet}
 
-{#if checkpoints.length === 0 && listError}
+{#if checkpoints.length === 0 && listError !== null}
   <div class="pixel-bg flex-1 flex items-center justify-center p-6 relative overflow-hidden">
     <div class="max-w-md flex flex-col items-center gap-2 text-center">
       <p class="text-sm text-foreground">Couldn't load the checkpoints</p>
@@ -183,7 +185,7 @@
     {/if}
   </div>
 {:else}
-  {#if listError}
+  {#if listError !== null}
     <Notice tone="danger" class="items-center shrink-0 border-b border-b-border" actions={retry}>
       <p>Couldn't refresh the checkpoints: {listError}</p>
     </Notice>

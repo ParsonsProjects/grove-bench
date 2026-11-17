@@ -32,8 +32,7 @@
   import { PanelHeader } from '$lib/components/ui/panel-header/index.js';
   import { Pulse } from '$lib/components/ui/pulse/index.js';
   import { menuPanel, menuItem } from '$lib/components/ui/menu/index.js';
-  import { errorMessage } from '../../shared/error-message.js';
-  import { stripIpcErrorPrefix } from '$lib/mcp-errors.js';
+  import { ipcErrorText } from '$lib/mcp-errors.js';
 
   /**
    * Shared review UI: a file sidebar (search, sections, viewed marks, comment
@@ -372,7 +371,9 @@
 
   async function loadDiff(entry: GitStatusEntry, forceReload = false) {
     const key = fileKey(entry);
-    if (!forceReload && (fileDiffs[key] !== undefined || diffInFlight.has(key))) return;
+    // A diff that failed is read again when asked for (selected, or a
+    // neighbour of the one selected), not kept as the answer.
+    if (!forceReload && (diffInFlight.has(key) || (fileDiffs[key] !== undefined && !(key in diffErrors)))) return;
     const seq = (diffRequestSeq.get(key) ?? 0) + 1;
     const gen = diffGen;
     diffRequestSeq.set(key, seq);
@@ -383,7 +384,7 @@
       diff = await fetchDiff(entry);
     } catch (e) {
       diff = { kind: 'text', patch: '' };
-      failure = stripIpcErrorPrefix(errorMessage(e));
+      failure = ipcErrorText(e);
     }
     if (gen !== diffGen || diffRequestSeq.get(key) !== seq) return;
     diffInFlight.delete(key);
@@ -783,7 +784,7 @@
       ></span>
     {/each}
     {#snippet emptyDetails()}
-      {#if error}
+      {#if error !== undefined}
         <Notice tone="danger" class="max-w-md text-left">
           {#snippet actions()}
             {#if onRefresh}
@@ -1140,7 +1141,7 @@
             onRemoveComment={(id) => reviewStore.removeComment(sessionId, id)}
             conflict={selectedEntry.status === 'conflicted' ? { operation } : null}
           />
-        {:else if diffErrors[key]}
+        {:else if key in diffErrors}
           <Notice tone="danger" class="items-center">
             {#snippet actions()}
               <Button size="2xs" variant="subtle" onclick={() => loadDiff(selectedEntry, true)}>Try again</Button>
