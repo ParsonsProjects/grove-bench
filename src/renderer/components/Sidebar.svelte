@@ -1,7 +1,7 @@
 <script lang="ts">
   import { store } from '../stores/sessions.svelte.js';
   import { messageStore } from '../stores/messages.svelte.js';
-  import { backgroundTaskStore } from '../stores/backgroundTask.svelte.js';
+  import { backgroundTaskStore, type LiveBackgroundTask } from '../stores/backgroundTask.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
   import { gitStatusStore } from '../stores/gitStatus.svelte.js';
   import { terminalStore } from '../stores/terminal.svelte.js';
@@ -10,6 +10,7 @@
   import { getRepoColor } from '../lib/repo-colors.js';
   import { addProject } from '../lib/add-project.js';
   import { backgroundAgentRunning } from '../lib/thread-working.js';
+  import { backgroundShells, shellsSummary, shellsTooltip } from '../lib/background-shells.js';
   import { draftStore } from '../stores/draft.svelte.js';
   import { groupStore } from '../stores/groups.svelte.js';
   import { todoStore } from '../stores/todo.svelte.js';
@@ -17,6 +18,7 @@
   import { skillsPanelStore } from '../stores/skillsPanel.svelte.js';
   import WandSparklesIcon from '@lucide/svelte/icons/wand-sparkles';
   import FolderIcon from '@lucide/svelte/icons/folder';
+  import TerminalIcon from '@lucide/svelte/icons/terminal';
   import SidebarGroups from './SidebarGroups.svelte';
   import SidebarSection from './SidebarSection.svelte';
   import AttentionCounts from './AttentionCounts.svelte';
@@ -146,12 +148,14 @@
   });
 
   /** A row's tooltip: its name, its goal (while goals are on and the
-   *  thread's goal bar isn't hidden), then the line under the row. */
-  function rowTitle(sessionId: string, name: string, subtitle: SessionSubtitle | null): string {
+   *  thread's goal bar isn't hidden), the line under the row, then the
+   *  shells and monitors its agent left running. */
+  function rowTitle(sessionId: string, name: string, subtitle: SessionSubtitle | null, shells: LiveBackgroundTask[]): string {
     const lines = [name];
     const goal = goalStore.get(sessionId);
     if (settingsStore.current.showConversationGoal && goal.text && !goal.hidden) lines.push(`Goal: ${goal.text}`);
     if (subtitle) lines.push(subtitle.text);
+    if (shells.length > 0) lines.push(shellsTooltip(shells));
     return lines.join('\n');
   }
 
@@ -1114,6 +1118,7 @@
     {@const repoColor = getRepoColor(store.repos, session.repoPath, settingsStore.current.repoColors)}
     {@const ts = session.lastActiveAt ?? session.createdAt}
     {@const subtitle = rowSubtitle(session)}
+    {@const shells = backgroundShells(session)}
     <!-- Changed in the worktree: the Changes tab may be listing the whole branch. -->
     {@const gitState = gitStatusStore.getStatus(session.id)}
     {@const changedCount = isStopped ? 0 : (gitState.uncommitted ?? gitState.entries.length)}
@@ -1132,7 +1137,7 @@
         onclick={(e) => { if (!isDestroying) toggleSession(session.id, e.detail); }}
         disabled={isDestroying}
         aria-current={store.activeSessionId === session.id ? 'true' : undefined}
-        title={rowTitle(session.id, label, subtitle)}
+        title={rowTitle(session.id, label, subtitle, shells)}
         class="w-full flex flex-col pl-4 pr-2 py-1.5 text-left transition-colors
           {isDestroying ? 'opacity-50 cursor-not-allowed' : store.activeSessionId === session.id ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}
           {restFade}"
@@ -1175,7 +1180,7 @@
             >{formatAge(ts)}</span>
           {/if}
         </div>
-        {#if group || showProject || subtitle || changedCount > 0}
+        {#if group || showProject || subtitle || changedCount > 0 || shells.length > 0}
           <div class="w-full flex items-center gap-1.5 {markColumn.indent} mt-0.5 min-w-0">
             <span class="text-caption truncate min-w-0">
               {#if group}<span class="text-foreground/60" title="Group: {group.name}" data-row-group>{group.name}</span>{#if showProject || subtitle}<span class="text-muted-foreground/40">{' · '}</span>{/if}{/if}
@@ -1183,13 +1188,29 @@
                 <!-- A grove character carries the project colour on its laptop, so the square is only needed with the plain dot. -->
                 {#if repoColor && !settingsStore.current.groveCharacters}<span class="inline-block w-1.5 h-1.5 align-middle mr-1" style="background-color: {repoColor}"></span>{/if}<span class="text-muted-foreground">{store.repoDisplayName(session.repoPath)}</span>{#if subtitle}<span class="text-muted-foreground/40">{' · '}</span>{/if}{/if}{#if subtitle}<span class={SUBTITLE_TONE_CLASS[subtitle.tone]}>{subtitle.text}</span>{/if}
             </span>
-            {#if changedCount > 0}
-              <Badge
-                tone="muted"
-                count
-                class="ml-auto"
-                title="{changedCount} changed file{changedCount === 1 ? '' : 's'} in the worktree"
-              >±{changedCount}</Badge>
+            {#if shells.length > 0 || changedCount > 0}
+              <span class="ml-auto shrink-0 flex items-center gap-1.5">
+                {#if shells.length > 0}
+                  <!-- Commands the agent left running (a dev server, a
+                       watcher, a monitor): not working, so not the blue of
+                       the dot, but cyan, the colour of code. -->
+                  <Badge
+                    tone="highlight"
+                    count
+                    role="img"
+                    aria-label={shellsSummary(shells)}
+                    title={shellsTooltip(shells)}
+                    data-row-shells={shells.length}
+                  ><TerminalIcon aria-hidden="true" />{shells.length}</Badge>
+                {/if}
+                {#if changedCount > 0}
+                  <Badge
+                    tone="muted"
+                    count
+                    title="{changedCount} changed file{changedCount === 1 ? '' : 's'} in the worktree"
+                  >±{changedCount}</Badge>
+                {/if}
+              </span>
             {/if}
           </div>
         {/if}
@@ -1298,7 +1319,7 @@
           oncontextmenu={(e) => { if (isDestroying) { e.preventDefault(); return; } openContextMenu(e, session.id); }}
           disabled={isDestroying}
           aria-current={store.activeSessionId === session.id ? 'true' : undefined}
-          title={rowTitle(session.id, name, subtitle)}
+          title={rowTitle(session.id, name, subtitle, backgroundShells(session))}
           aria-label={name}
           data-rail-session={session.id}
           class="w-full flex justify-center py-2 transition-colors

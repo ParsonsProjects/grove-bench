@@ -756,6 +756,27 @@ describe('transformMessage()', () => {
       }]);
     });
 
+    it("keeps a local_bash task's kind, so a monitor can be told from a shell", () => {
+      const events = transformMessage(
+        sdk({
+          type: 'system',
+          subtype: 'background_tasks_changed',
+          tasks: [
+            { task_id: 'b1', task_type: 'local_bash', description: 'npm run dev' },
+            { task_id: 'm1', task_type: 'local_bash', description: 'tail -f app.log', shell_kind: 'monitor' },
+          ],
+        }),
+        makeCtx(),
+      );
+      expect(events).toStrictEqual([{
+        type: 'background_tasks_changed',
+        tasks: [
+          { taskId: 'b1', taskType: 'local_bash', description: 'npm run dev' },
+          { taskId: 'm1', taskType: 'local_bash', description: 'tail -f app.log', shellKind: 'monitor' },
+        ],
+      }]);
+    });
+
     it('maps an empty background_tasks_changed list', () => {
       const events = transformMessage(
         sdk({ type: 'system', subtype: 'background_tasks_changed', tasks: [] }),

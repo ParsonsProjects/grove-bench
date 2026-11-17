@@ -432,11 +432,17 @@ export function transformMessage(
         const tasks = Array.isArray(m.tasks) ? m.tasks : [];
         events.push({
           type: 'background_tasks_changed',
-          tasks: tasks.filter((t) => !t.ambient).map((t) => ({
-            taskId: t.task_id ?? '',
-            taskType: t.task_type,
-            description: t.description ?? '',
-          })),
+          tasks: tasks.filter((t) => !t.ambient).map((t) => {
+            // Sent by the CLI but not in the SDK's types: what a local_bash
+            // task is ('monitor' for the Monitor tool).
+            const shellKind = (t as { shell_kind?: unknown }).shell_kind;
+            return {
+              taskId: t.task_id ?? '',
+              taskType: t.task_type,
+              description: t.description ?? '',
+              ...(typeof shellKind === 'string' && shellKind ? { shellKind } : {}),
+            };
+          }),
         });
       } else if (message.subtype === 'hook_started') {
         const m = message;

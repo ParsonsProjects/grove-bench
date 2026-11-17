@@ -313,8 +313,11 @@ export type AgentEvent =
   | { type: 'task_started'; taskId: string; toolUseId?: string; description: string; taskType?: string }
   | { type: 'task_progress'; taskId: string; toolUseId?: string; description: string; summary?: string; lastToolName?: string; totalTokens: number; toolUses: number; durationMs: number }
   | { type: 'task_notification'; taskId: string; toolUseId?: string; taskStatus: 'completed' | 'failed' | 'stopped'; summary: string; outputFile: string; totalTokens?: number; toolUses?: number; durationMs?: number }
-  /** Authoritative list of every live background task (replace semantics). */
-  | { type: 'background_tasks_changed'; tasks: Array<{ taskId: string; taskType?: string; description: string }> }
+  /** Authoritative list of every live background task (replace semantics).
+   *  Foreground tasks, which the turn waits on, aren't in it. `shellKind` is
+   *  a local_bash task's kind when the agent gives one: 'monitor' for the
+   *  Monitor tool's watch command. */
+  | { type: 'background_tasks_changed'; tasks: Array<{ taskId: string; taskType?: string; description: string; shellKind?: string }> }
   // Auth status
   | { type: 'auth_status'; isAuthenticating: boolean; output: string[]; authError?: string }
   // Tool use summary (after compaction)

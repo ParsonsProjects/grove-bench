@@ -7,6 +7,7 @@ const SID = 'test-session';
 beforeEach(() => {
   vi.useFakeTimers();
   backgroundTaskStore.tasksBySession = {};
+  backgroundTaskStore.liveBySession = {};
   mockGroveBench.stopBackgroundTask.mockClear();
 });
 
@@ -139,6 +140,42 @@ describe('backgroundTaskStore', () => {
     backgroundTaskStore.start(SID, { type: 'task_started', taskId: 't1', description: 'a' });
     backgroundTaskStore.reconcile(SID, { type: 'background_tasks_changed', tasks: [] });
     expect(backgroundTaskStore.get(SID)).toHaveLength(0);
+  });
+
+  it('runningShells lists the shells and monitors in the live list, not agents', () => {
+    backgroundTaskStore.reconcile(SID, {
+      type: 'background_tasks_changed',
+      tasks: [
+        { taskId: 'b1', taskType: 'local_bash', description: 'npm run dev' },
+        { taskId: 'm1', taskType: 'local_bash', description: 'tail -f app.log', shellKind: 'monitor' },
+        { taskId: 'm2', taskType: 'monitor_mcp', description: 'Watch deploys' },
+        { taskId: 'a1', taskType: 'local_agent', description: 'Explore' },
+        { taskId: 'x1', description: 'No type given' },
+      ],
+    });
+    expect(backgroundTaskStore.runningShells(SID).map((t) => t.taskId)).toEqual(['b1', 'm1', 'm2']);
+
+    // The next list replaces it.
+    backgroundTaskStore.reconcile(SID, { type: 'background_tasks_changed', tasks: [{ taskId: 'm2', taskType: 'monitor_mcp', description: 'Watch deploys' }] });
+    expect(backgroundTaskStore.runningShells(SID).map((t) => t.taskId)).toEqual(['m2']);
+  });
+
+  it("runningShells leaves out a shell only task_started reported (a foreground one the turn waits on)", () => {
+    backgroundTaskStore.start(SID, { type: 'task_started', taskId: 'b1', description: 'npm test', taskType: 'local_bash' });
+    expect(backgroundTaskStore.runningShells(SID)).toEqual([]);
+  });
+
+  it('drops the live list when the agent is gone or the session is cleared', () => {
+    const live = { type: 'background_tasks_changed' as const, tasks: [{ taskId: 'b1', taskType: 'local_bash', description: 'npm run dev' }] };
+    backgroundTaskStore.reconcile(SID, live);
+    backgroundTaskStore.resolveStale(SID, true);
+    expect(backgroundTaskStore.runningShells(SID)).toHaveLength(1);
+    backgroundTaskStore.resolveStale(SID, false);
+    expect(backgroundTaskStore.runningShells(SID)).toEqual([]);
+
+    backgroundTaskStore.reconcile(SID, live);
+    backgroundTaskStore.clear(SID);
+    expect(backgroundTaskStore.runningShells(SID)).toEqual([]);
   });
 
   it('stop calls the bridge and marks the task as stopping until the notification lands', async () => {

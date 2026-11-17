@@ -572,6 +572,40 @@ describe('Sidebar attention triage', () => {
     expect(group).toHaveTextContent('Unread 1');
   });
 
+  it('marks a thread whose agent left shells or monitors running, without counting it as working', async () => {
+    backgroundTaskStore.reconcile('quiet', {
+      type: 'background_tasks_changed',
+      tasks: [
+        { taskId: 'b1', taskType: 'local_bash', description: 'npm run dev' },
+        { taskId: 'm1', taskType: 'local_bash', description: 'tail -f app.log', shellKind: 'monitor' },
+        { taskId: 'a1', taskType: 'local_agent', description: 'Explore' },
+      ],
+    });
+    render(Sidebar);
+
+    const badge = screen.getAllByRole('img', { name: '1 shell and 1 monitor running' })[0];
+    expect(badge).toHaveTextContent('2');
+    expect(badge).toHaveAttribute('title', '1 shell and 1 monitor running\nnpm run dev\ntail -f app.log');
+    // The row's own tooltip says so too.
+    const row = [...document.querySelectorAll('button[title]')].find((b) => b.getAttribute('title')!.startsWith('Quiet one\n'));
+    expect(row?.getAttribute('title')).toContain('1 shell and 1 monitor running\nnpm run dev');
+    // Only the background agent makes it working.
+    expect(screen.getByRole('group', { name: 'Filter threads' })).toHaveTextContent('Working 2');
+
+    backgroundTaskStore.reconcile('quiet', { type: 'background_tasks_changed', tasks: [] });
+    await tick();
+    expect(screen.queryAllByRole('img', { name: /shells? .*running$|monitors? running$/ })).toHaveLength(0);
+  });
+
+  it("doesn't mark a shell the turn is waiting on, or a sleeping thread's leftover shell", async () => {
+    // Reported by task_started alone: a foreground shell, not in the live list.
+    backgroundTaskStore.start('working', { type: 'task_started', taskId: 'b1', description: 'npm test', taskType: 'local_bash' });
+    store.sessions = store.sessions.map((s) => (s.id === 'quiet' ? { ...s, status: 'sleeping' } : s));
+    backgroundTaskStore.reconcile('quiet', { type: 'background_tasks_changed', tasks: [{ taskId: 'b2', taskType: 'local_bash', description: 'npm run dev' }] });
+    render(Sidebar);
+    expect(screen.queryAllByRole('img', { name: /shell/ })).toHaveLength(0);
+  });
+
   it('filters the active list by the selected chip', async () => {
     render(Sidebar);
 

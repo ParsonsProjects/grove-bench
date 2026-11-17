@@ -24,6 +24,15 @@ const AUTO_REMOVE_MS = 3000;
  *  server that never ends. */
 const AGENT_TASK_TYPES = new Set(['local_agent', 'local_workflow', 'remote_agent']);
 
+/** Task types that are a command left running: a background shell (a dev
+ *  server, a watcher) or a monitor. The Monitor tool's watch command is a
+ *  local_bash task too; monitor_mcp and monitor_ws watch an MCP server or a
+ *  socket. */
+const SHELL_TASK_TYPES = new Set(['local_bash', 'monitor_mcp', 'monitor_ws']);
+
+/** One task in the agent's own list of its live background tasks. */
+export type LiveBackgroundTask = Extract<AgentEvent, { type: 'background_tasks_changed' }>['tasks'][number];
+
 /**
  * Tracks Task-tool background work per session. Owns only task state; the
  * system messages announcing task lifecycle are pushed by MessageStore, which
@@ -31,6 +40,12 @@ const AGENT_TASK_TYPES = new Set(['local_agent', 'local_workflow', 'remote_agent
  */
 class BackgroundTaskStore {
   tasksBySession = $state<Record<string, Record<string, BackgroundTask>>>({});
+
+  /** The agent's latest list of its live background tasks, per session, as
+   *  it sent it (background_tasks_changed). Unlike tasksBySession it holds
+   *  no foreground task (one the turn waits on), and only changes when the
+   *  set does, not on every progress update. */
+  liveBySession = $state<Record<string, LiveBackgroundTask[]>>({});
 
   /** Pending auto-remove timers per session, so they can be cancelled on destroy. */
   private timers = new Map<string, Set<ReturnType<typeof setTimeout>>>();
@@ -63,6 +78,14 @@ class BackgroundTaskStore {
   /** Whether the thread has a background agent running (see runningAgents). */
   hasRunningAgent(sessionId: string): boolean {
     return this.agentThreads.has(sessionId);
+  }
+
+  /** The background shells and monitors the agent says are running. Read
+   *  from its live list, so a long command the turn is waiting on doesn't
+   *  count. The sidebar reads them through backgroundShells
+   *  (lib/background-shells.ts), which counts them only while the agent is up. */
+  runningShells(sessionId: string): LiveBackgroundTask[] {
+    return (this.liveBySession[sessionId] ?? []).filter((t) => !!t.taskType && SHELL_TASK_TYPES.has(t.taskType));
   }
 
   /** Remove a completed/failed/stopped background task from the list */
@@ -140,6 +163,7 @@ class BackgroundTaskStore {
       };
     }
     this.tasksBySession[sessionId] = next;
+    this.liveBySession[sessionId] = event.tasks;
   }
 
   progress(sessionId: string, event: Extract<AgentEvent, { type: 'task_progress' }>): void {
@@ -203,6 +227,10 @@ class BackgroundTaskStore {
    */
   resolveStale(sessionId: string, agentLive: boolean): void {
     if (agentLive) return;
+    if (this.liveBySession[sessionId]) {
+      const { [sessionId]: _gone, ...live } = this.liveBySession;
+      this.liveBySession = live;
+    }
     const tasks = this.tasksBySession[sessionId];
     if (!tasks) return;
     const remaining: Record<string, BackgroundTask> = {};
@@ -223,6 +251,8 @@ class BackgroundTaskStore {
   clear(sessionId: string): void {
     const { [sessionId]: _drop, ...rest } = this.tasksBySession;
     this.tasksBySession = rest;
+    const { [sessionId]: _dropLive, ...live } = this.liveBySession;
+    this.liveBySession = live;
   }
 
   /** Cancel pending timers and drop all state for a destroyed session. */
