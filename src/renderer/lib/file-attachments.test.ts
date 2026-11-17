@@ -8,6 +8,7 @@ import {
   uniquifyFileName,
   base64Size,
   dataUrlData,
+  dataUrlMediaType,
   formatFileSize,
   attachmentPayload,
   reattach,
@@ -396,6 +397,17 @@ describe('extractClipboardImages', () => {
 });
 
 // ─── Data helpers ───
+
+describe('dataUrlMediaType', () => {
+  it('reads the type of a base64 data URL, and nothing else', () => {
+    expect(dataUrlMediaType('data:image/png;base64,iVBOR')).toBe('image/png');
+    expect(dataUrlMediaType('data:image/svg+xml;base64,PHN2Zy8+')).toBe('image/svg+xml');
+    expect(dataUrlMediaType('data:image/svg+xml,<svg/>')).toBe('');
+    expect(dataUrlMediaType('data:;base64,AAAA')).toBe('');
+    expect(dataUrlMediaType('https://example.com/a.png')).toBe('');
+    expect(dataUrlMediaType('')).toBe('');
+  });
+});
 
 describe('dataUrlData and base64Size', () => {
   it('takes the base64 data off a data: URL', () => {

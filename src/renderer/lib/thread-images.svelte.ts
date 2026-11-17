@@ -3,12 +3,13 @@
  * the thread pane has drawn, in the order it draws them, and an image's menu
  * (or the lightbox's buttons) saves a copy to Downloads or shows it in its
  * folder. A thread pane (OutputPanel, SubagentPanel) provides one of these
- * for the thumbnails in it (ImageAttachments) and draws it (ImageLightbox).
+ * for the thumbnails in it (ImageAttachments) and draws it (LazyImageLightbox).
  */
 import { getContext, setContext } from 'svelte';
 import { attachmentImageUrl, worktreeFileUrl } from '../../shared/attachments.js';
 import type { ImageSource } from '../../shared/types.js';
 import type { ThreadImage } from '../stores/messages.svelte.js';
+import { dataUrlData, dataUrlMediaType } from './file-attachments.js';
 
 /** An image as the lightbox and the menu show it. */
 export interface ShownImage {
@@ -38,11 +39,8 @@ export function shownImage(sessionId: string, img: ThreadImage): ShownImage {
  *  base64 data URL. */
 export function imageSource(img: ThreadImage): ImageSource | null {
   if ('dataUrl' in img) {
-    const url = img.dataUrl;
-    const comma = url.indexOf(',');
-    const head = comma > 0 ? url.slice(0, comma) : '';
-    if (!head.startsWith('data:') || !head.endsWith(';base64')) return null;
-    return { kind: 'inline', mediaType: head.slice('data:'.length, -';base64'.length), data: url.slice(comma + 1) };
+    const mediaType = dataUrlMediaType(img.dataUrl);
+    return mediaType ? { kind: 'inline', mediaType, data: dataUrlData(img.dataUrl) } : null;
   }
   if ('file' in img) return img.path ? { kind: 'stored', file: img.file, path: img.path } : { kind: 'stored', file: img.file };
   return { kind: 'worktree', path: img.path };
@@ -61,10 +59,16 @@ export class ThreadImages {
    *  that come in meanwhile don't move the one showing. */
   list = $state.raw<ShownImage[]>([]);
   index = $state<number | null>(null);
+  /** Images in `list` that failed to load, by src. Cleared each time it
+   *  opens: a worktree file may be back (it was being written, say). */
+  failed = $state<Record<string, true>>({});
   /** The image menu, where it opened. */
   menu = $state<{ x: number; y: number; image: ShownImage } | null>(null);
   /** What a download or Open file location came to. */
   notice = $state<{ text: string; tone: 'info' | 'danger' } | null>(null);
+  /** Whether the lightbox or the menu has been asked for: its code loads
+   *  then (LazyImageLightbox), and stays. */
+  used = $state(false);
 
   get current(): ShownImage | undefined {
     return this.index === null ? undefined : this.list[this.index];
@@ -80,6 +84,7 @@ export class ThreadImages {
   /** Open image `i` of the row drawn in `el`, among the images of every row
    *  in the pane, in page order. */
   open(el: HTMLElement, i: number): void {
+    if (i < 0) return;
     const groups = [...this.#groups]
       .filter((g) => g.el.isConnected)
       .sort((a, b) => (a.el.compareDocumentPosition(b.el) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1));
@@ -95,8 +100,10 @@ export class ThreadImages {
   /** Open `list` at `index`, without the rows (an image from a list elsewhere). */
   show(list: ShownImage[], index: number): void {
     if (index < 0 || index >= list.length) return;
+    this.failed = {};
     this.list = list;
     this.index = index;
+    this.used = true;
   }
 
   /** The image before or after the one showing. Stops at either end. */
@@ -113,9 +120,10 @@ export class ThreadImages {
 
   /** Open the image menu at the pointer (or, from the keyboard, under the
    *  element), instead of the thread's own (ActivityContextMenu, which
-   *  leaves `[data-thread-image]` alone) or Chromium's. */
+   *  leaves `[data-own-menu]` alone) or Chromium's. */
   openMenu(e: MouseEvent, image: ShownImage): void {
     e.preventDefault();
+    this.used = true;
     let { clientX: x, clientY: y } = e;
     if (x === 0 && y === 0 && e.currentTarget instanceof Element) {
       const rect = e.currentTarget.getBoundingClientRect();

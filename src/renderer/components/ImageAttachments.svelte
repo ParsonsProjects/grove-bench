@@ -1,5 +1,5 @@
 <script lang="ts">
-  import ImageLightbox from './ImageLightbox.svelte';
+  import LazyImageLightbox from './LazyImageLightbox.svelte';
   import { ThreadImages, imageLabel, imageSrc, shownImage, threadImages } from '$lib/thread-images.svelte.js';
   import type { ThreadImage } from '../stores/messages.svelte.js';
 
@@ -57,7 +57,7 @@
         type="button"
         onclick={() => open(img)}
         oncontextmenu={(e) => viewer.openMenu(e, shownImage(sessionId, img))}
-        data-thread-image
+        data-own-menu
         class="block border border-border/60 hover:border-primary/60 transition-colors
           bg-[repeating-conic-gradient(var(--checker-a)_0_25%,var(--checker-b)_0_50%)] bg-[length:16px_16px]"
         title={imageLabel(img)}
@@ -77,5 +77,5 @@
 </div>
 
 {#if !paneImages}
-  <ImageLightbox images={viewer} />
+  <LazyImageLightbox images={viewer} />
 {/if}

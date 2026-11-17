@@ -556,18 +556,23 @@ describe('downloadName', () => {
   });
 
   it('takes out what Windows does not allow, and its device names', () => {
-    expect(downloadName('a:b*c?"<d>|e.png', 'png', 'image')).toBe('a_b_c___d__e.png');
-    expect(downloadName('tab\there.png', 'png', 'image')).toBe('tab_here.png');
+    expect(downloadName('a:b*c?"<d>|e.png', 'png', 'image')).toBe('a b c d e.png');
+    expect(downloadName('tab\there.png', 'png', 'image')).toBe('tab here.png');
     expect(downloadName('CON.png', 'png', 'image')).toBe('_CON.png');
     expect(downloadName('lpt1.tar.png', 'png', 'image')).toBe('_lpt1.tar.png');
+    expect(downloadName('CONIN$.png', 'png', 'image')).toBe('_CONIN$.png');
+    expect(downloadName('com¹.png', 'png', 'image')).toBe('_com¹.png');
     expect(downloadName('dots... .png', 'png', 'image')).toBe('dots.png');
   });
 
-  it('falls back when no name is left', () => {
+  it('falls back when no name is left, made safe the same way', () => {
     expect(downloadName(undefined, 'png', 'image-0a1b2c3d')).toBe('image-0a1b2c3d.png');
     expect(downloadName('', 'gif', 'image')).toBe('image.gif');
     expect(downloadName('..', 'png', 'image')).toBe('image.png');
     expect(downloadName('out/', 'png', 'image')).toBe('image.png');
+    expect(downloadName('', 'png', '/../../x')).toBe('.. .. x.png');
+    expect(downloadName('', 'png', 'con')).toBe('_con.png');
+    expect(downloadName('', 'png', '...')).toBe('image.png');
   });
 
   it('keeps a long name short', () => {
@@ -657,6 +662,17 @@ describe('downloadImage and showImageInFolder', () => {
     expect(await downloadImage('abc123', { kind: 'worktree', path: 'secret.txt' }, 'secret.png', worktreeOf)).toBeNull();
     expect(await downloadImage('abc123', { kind: 'worktree', path: '../outside.png' }, 'x.png', worktreeOf)).toBeNull();
     expect(await downloadImage('other', { kind: 'worktree', path: 'docs/logo.webp' }, 'x.png', worktreeOf)).toBeNull();
+  });
+
+  it("names an image with no name after the file found, never after the renderer's file name", async () => {
+    inWorktree('out/chart.png', PNG);
+    // Not a stored name, so the worktree file is used; the bad name mustn't
+    // reach the path either.
+    const saved = await downloadImage('abc123', { kind: 'stored', file: '/../../x', path: 'out/chart.png' }, '', worktreeOf);
+
+    expect(saved).toBe('chart.png');
+    expect(fs.readdirSync(downloads)).toEqual(['chart.png']);
+    expect(fs.existsSync(path.join(downloads, '..', 'x.png'))).toBe(false);
   });
 
   it('is null for an image that is gone or a name that is not a stored one', async () => {

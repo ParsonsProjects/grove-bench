@@ -2,7 +2,7 @@
   // Test fixture for ImageAttachments.svelte.test.ts: a thread pane with
   // rows of thumbnails sharing its lightbox, as OutputPanel draws them.
   import ImageAttachments from './ImageAttachments.svelte';
-  import ImageLightbox from './ImageLightbox.svelte';
+  import LazyImageLightbox from './LazyImageLightbox.svelte';
   import { provideThreadImages } from '$lib/thread-images.svelte.js';
   import type { ThreadImage } from '../stores/messages.svelte.js';
 
@@ -14,4 +14,4 @@
 {#each rows as row, i (i)}
   <ImageAttachments {sessionId} images={row} />
 {/each}
-<ImageLightbox {images} />
+<LazyImageLightbox {images} />

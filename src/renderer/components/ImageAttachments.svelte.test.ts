@@ -57,6 +57,21 @@ describe('ImageAttachments in a thread pane', () => {
     expect(within(dialog).getByRole('button', { name: 'Previous image' })).toBeDisabled();
   });
 
+  it('tries an image that failed to load again the next time it opens', async () => {
+    render(Pane, { sessionId: SID, rows: ROWS });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'View out/chart.png' }));
+    let dialog = await screen.findByRole('dialog');
+    await fireEvent.error(dialog.querySelector('img')!);
+    expect(within(dialog).getByText('Image not available')).toBeInTheDocument();
+
+    await fireEvent.keyDown(document.body, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await fireEvent.click(screen.getByRole('button', { name: 'View out/chart.png' }));
+    dialog = await screen.findByRole('dialog');
+    expect(lightboxImage(dialog)).toBe(urlOf('d'));
+  });
+
   it('opens one lightbox for the pane, not one per row', async () => {
     render(Pane, { sessionId: SID, rows: ROWS });
 
@@ -80,7 +95,7 @@ describe('ImageAttachments in a thread pane', () => {
     render(Pane, { sessionId: SID, rows: ROWS });
 
     await fireEvent.contextMenu(screen.getByRole('button', { name: 'View one.png' }), { clientX: 10, clientY: 10 });
-    const menu = screen.getByRole('menu', { name: 'Image actions' });
+    const menu = await screen.findByRole('menu', { name: 'Image actions' });
     await fireEvent.click(within(menu).getByRole('menuitem', { name: 'Download' }));
 
     expect(mockGroveBench.downloadImage).toHaveBeenCalledWith(SID, { kind: 'stored', file: `${'a'.repeat(32)}.png` }, 'one.png');
@@ -92,7 +107,7 @@ describe('ImageAttachments in a thread pane', () => {
     render(Pane, { sessionId: SID, rows: ROWS });
 
     await fireEvent.contextMenu(screen.getByRole('button', { name: 'View out/chart.png' }), { clientX: 10, clientY: 10 });
-    await fireEvent.click(screen.getByRole('menuitem', { name: 'Open file location' }));
+    await fireEvent.click(await screen.findByRole('menuitem', { name: 'Open file location' }));
 
     expect(mockGroveBench.showImageInFolder).toHaveBeenCalledWith(SID, { kind: 'stored', file: `${'d'.repeat(32)}.png`, path: 'out/chart.png' });
   });
@@ -103,11 +118,11 @@ describe('ImageAttachments in a thread pane', () => {
     render(Pane, { sessionId: SID, rows: ROWS });
 
     await fireEvent.contextMenu(screen.getByRole('button', { name: 'View one.png' }), { clientX: 10, clientY: 10 });
-    await fireEvent.click(screen.getByRole('menuitem', { name: 'Open file location' }));
+    await fireEvent.click(await screen.findByRole('menuitem', { name: 'Open file location' }));
     expect(await screen.findByText('Could not open its location: the image is no longer there.')).toBeInTheDocument();
 
     await fireEvent.contextMenu(screen.getByRole('button', { name: 'View one.png' }), { clientX: 10, clientY: 10 });
-    await fireEvent.click(screen.getByRole('menuitem', { name: 'Download' }));
+    await fireEvent.click(await screen.findByRole('menuitem', { name: 'Download' }));
     expect(await screen.findByText('Could not download it: the image is no longer there.')).toBeInTheDocument();
   });
 
@@ -122,7 +137,7 @@ describe('ImageAttachments in a thread pane', () => {
     expect(mockGroveBench.showImageInFolder).toHaveBeenLastCalledWith(SID, { kind: 'stored', file: `${'c'.repeat(32)}.png` });
 
     await fireEvent.contextMenu(dialog.querySelector('img')!, { clientX: 10, clientY: 10 });
-    await fireEvent.click(screen.getByRole('menuitem', { name: 'Download' }));
+    await fireEvent.click(await screen.findByRole('menuitem', { name: 'Download' }));
     expect(mockGroveBench.downloadImage).toHaveBeenCalledTimes(2);
     // The lightbox stays open.
     await waitFor(() => expect(screen.getByRole('dialog')).toBeInTheDocument());
@@ -153,11 +168,11 @@ describe('ImageAttachments on its own', () => {
 
     expect(screen.getByRole('img', { name: 'docs/logo.svg' })).toHaveAttribute('src', `grove-attachment://worktree/${SID}/docs%2Flogo.svg`);
     await fireEvent.contextMenu(screen.getByRole('button', { name: 'View pasted.png' }), { clientX: 10, clientY: 10 });
-    await fireEvent.click(screen.getByRole('menuitem', { name: 'Download' }));
+    await fireEvent.click(await screen.findByRole('menuitem', { name: 'Download' }));
     expect(mockGroveBench.downloadImage).toHaveBeenCalledWith(SID, { kind: 'inline', mediaType: 'image/png', data: 'iVBOR' }, 'pasted.png');
 
     await fireEvent.contextMenu(screen.getByRole('button', { name: 'View docs/logo.svg' }), { clientX: 10, clientY: 10 });
-    await fireEvent.click(screen.getByRole('menuitem', { name: 'Open file location' }));
+    await fireEvent.click(await screen.findByRole('menuitem', { name: 'Open file location' }));
     expect(mockGroveBench.showImageInFolder).toHaveBeenCalledWith(SID, { kind: 'worktree', path: 'docs/logo.svg' });
   });
 });

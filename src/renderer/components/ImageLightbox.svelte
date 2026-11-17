@@ -8,22 +8,19 @@
    */
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
-  import { Notice } from '$lib/components/ui/notice/index.js';
   import type { ThreadImages } from '$lib/thread-images.svelte.js';
   import ContextMenu from './ContextMenu.svelte';
+  import Toast from './Toast.svelte';
   import ChevronLeftIcon from '@lucide/svelte/icons/chevron-left';
   import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
   import DownloadIcon from '@lucide/svelte/icons/download';
   import FolderOpenIcon from '@lucide/svelte/icons/folder-open';
-  import XIcon from '@lucide/svelte/icons/x';
 
   let { images }: { images: ThreadImages } = $props();
 
   let current = $derived(images.current);
   let count = $derived(images.list.length);
   let index = $derived(images.index ?? 0);
-  /** Images that failed to load (the file is gone), by src. */
-  let failed = $state<Record<string, true>>({});
 
   // On the window, not the dialog: a button that turns disabled (Next, at
   // the last image) drops the focus to the page.
@@ -32,12 +29,6 @@
     e.preventDefault();
     images.step(e.key === 'ArrowLeft' ? -1 : 1);
   }
-
-  $effect(() => {
-    if (!images.notice) return;
-    const timer = setTimeout(() => (images.notice = null), 5000);
-    return () => clearTimeout(timer);
-  });
 </script>
 
 <svelte:window {onkeydown} />
@@ -64,7 +55,7 @@
           <FolderOpenIcon />
         </Button>
       </div>
-      {#if failed[shown.src]}
+      {#if images.failed[shown.src]}
         <div class="h-40 w-72 max-w-full flex items-center justify-center text-xs text-muted-foreground border border-border/60">
           Image not available
         </div>
@@ -73,7 +64,7 @@
           src={shown.src}
           alt={shown.label}
           oncontextmenu={(e) => images.openMenu(e, shown)}
-          onerror={() => (failed[shown.src] = true)}
+          onerror={() => (images.failed[shown.src] = true)}
           class="max-w-full max-h-[80vh] object-contain mx-auto
             bg-[repeating-conic-gradient(var(--checker-a)_0_25%,var(--checker-b)_0_50%)] bg-[length:16px_16px]"
         />
@@ -101,24 +92,8 @@
   {/if}
 {/key}
 
-<!-- Above the dialog, and its pointerdowns kept from it, as the menu's are:
-     a click on it would otherwise close the lightbox. -->
-{#if images.notice}
-  <div
-    class="fixed bottom-4 right-4 z-[100] pointer-events-auto max-w-md animate-in"
-    role="presentation"
-    onpointerdown={(e) => e.stopPropagation()}
-    onmousedown={(e) => e.preventDefault()}
-  >
-    <div class="bg-popover border border-border shadow-xl">
-      <Notice tone={images.notice.tone}>
-        {#snippet actions()}
-          <Button size="icon-2xs" variant="quiet" aria-label="Dismiss" onclick={() => (images.notice = null)}>
-            <XIcon />
-          </Button>
-        {/snippet}
-        <p>{images.notice.text}</p>
-      </Notice>
-    </div>
-  </div>
-{/if}
+{#key images.notice}
+  {#if images.notice}
+    <Toast tone={images.notice.tone} text={images.notice.text} ondismiss={() => (images.notice = null)} />
+  {/if}
+{/key}

@@ -17,7 +17,7 @@
   import { agentCallInput, filterVisibleMessages, threadMessages } from '../lib/message-view.js';
   import { toolViewOf, toolViewSummary } from '../../shared/tool-view.js';
   import ThreadMessage from './ThreadMessage.svelte';
-  import ImageLightbox from './ImageLightbox.svelte';
+  import LazyImageLightbox from './LazyImageLightbox.svelte';
   import { provideThreadImages } from '$lib/thread-images.svelte.js';
   import ThreadViewSelect from './ThreadViewSelect.svelte';
   import MarkdownBlock from './MarkdownBlock.svelte';
@@ -197,4 +197,4 @@
   </aside>
 {/if}
 
-<ImageLightbox images={threadImages} />
+<LazyImageLightbox images={threadImages} />

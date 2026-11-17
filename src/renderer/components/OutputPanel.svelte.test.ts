@@ -1517,9 +1517,10 @@ describe('OutputPanel images from the agent', () => {
     await tick();
 
     await fireEvent.contextMenu(screen.getByRole('button', { name: 'View mock.png' }), { clientX: 5, clientY: 5 });
+    // The image menu loads with the lightbox's code; the thread's would show at once.
+    const menu = await screen.findByRole('menu', { name: 'Image actions' });
     expect(screen.getAllByRole('menu')).toHaveLength(1);
-    expect(within(screen.getByRole('menu', { name: 'Image actions' })).getAllByRole('menuitem').map((i) => i.textContent?.trim()))
-      .toEqual(['Download', 'Open file location']);
+    expect(within(menu).getAllByRole('menuitem').map((i) => i.textContent?.trim())).toEqual(['Download', 'Open file location']);
     await fireEvent.keyDown(window, { key: 'Escape' });
 
     await fireEvent.click(screen.getByRole('button', { name: 'View mock.png' }));

@@ -12,7 +12,7 @@
   import SelectionMenu from './SelectionMenu.svelte';
   import BookmarkLinks from './BookmarkLinks.svelte';
   import ActivityContextMenu from './ActivityContextMenu.svelte';
-  import ImageLightbox from './ImageLightbox.svelte';
+  import LazyImageLightbox from './LazyImageLightbox.svelte';
   import { provideThreadImages } from '$lib/thread-images.svelte.js';
   import GroveWalk from './GroveWalk.svelte';
   import { bookmarkStore } from '../stores/bookmarks.svelte.js';
@@ -937,4 +937,4 @@
 
 <SelectionMenu {sessionId} container={scrollContainer} />
 <ActivityContextMenu {sessionId} container={scrollContainer} />
-<ImageLightbox images={threadImages} />
+<LazyImageLightbox images={threadImages} />

@@ -37,7 +37,7 @@
   import StatusBarTasks from './StatusBarTasks.svelte';
   import StatusBarFiles from './StatusBarFiles.svelte';
   import StatusBarLastTurn from './StatusBarLastTurn.svelte';
-  import ImageLightbox from './ImageLightbox.svelte';
+  import LazyImageLightbox from './LazyImageLightbox.svelte';
   import { ThreadImages, type ShownImage } from '$lib/thread-images.svelte.js';
 
   let { sessionId }: { sessionId: string } = $props();
@@ -373,4 +373,4 @@
 
 <!-- Outside the popup, which closes (and would take it along) on the
      click that lands in the dialog. -->
-<ImageLightbox images={lightbox} />
+<LazyImageLightbox images={lightbox} />

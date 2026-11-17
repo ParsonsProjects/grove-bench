@@ -18,7 +18,7 @@ import type { AgentEvent, FileAttachment, ImageMediaType, ImageSource, MadeFile,
 import { ATTACHMENT_SCHEME, knownMediaType, worktreeImageType } from '../shared/attachments.js';
 import type { AdapterEvent } from './adapters/types.js';
 import type { FoundFile } from './turn-files.js';
-import { withLockRetry } from './fs-utils.js';
+import { safeFileName, withLockRetry } from './fs-utils.js';
 import { logger } from './logger.js';
 import { isThreadId } from './session-event-store.js';
 import { resolveWorktreeFile, worktreeImageResponse } from './worktree-files.js';
@@ -332,10 +332,13 @@ async function worktreeImage(worktree: string | undefined, filePath: string): Pr
   return real && worktreeImageType(real) === type ? existingFile(real) : null;
 }
 
-/** Where the saved copy of an image just sent is: it was named by its content. */
-function inlineCopy(sessionId: string, data: string, mediaType: string): string | null {
+/** Where the saved copy of an image just sent is: it was named by its
+ *  content (contentHash, a hash of the base64 text). Hashed here with
+ *  fileHash, off the main thread, since this one may be a large image. */
+async function inlineCopy(sessionId: string, data: string, mediaType: string): Promise<string | null> {
   if (!Object.hasOwn(EXT_BY_TYPE, mediaType)) return null;
-  return imagePath(sessionId, `${contentHash(data)}.${EXT_BY_TYPE[mediaType as ImageMediaType]}`)?.path ?? null;
+  const hash = await fileHash(Buffer.from(data, 'utf8'));
+  return imagePath(sessionId, `${hash}.${EXT_BY_TYPE[mediaType as ImageMediaType]}`)?.path ?? null;
 }
 
 /**
@@ -352,7 +355,7 @@ async function imageFile(
 ): Promise<string | null> {
   switch (source.kind) {
     case 'inline':
-      return existingFile(inlineCopy(sessionId, source.data, source.mediaType));
+      return existingFile(await inlineCopy(sessionId, source.data, source.mediaType));
     case 'worktree':
       return worktreeImage(worktreeOf(sessionId), source.path);
     case 'stored': {
@@ -363,27 +366,23 @@ async function imageFile(
   }
 }
 
-/** Names Windows keeps for devices, with or without an extension. */
-const RESERVED_NAME = /^(con|prn|aux|nul|com\d|lpt\d)$/i;
-
 /**
  * The file name to save an image under: the last part of `name` (a path, or
- * the name it was attached under) with what Windows doesn't allow in a file
- * name taken out, ending in `ext`, the image's real type. A name that already
- * ends in one for that type (shot.jpeg for a .jpg) keeps it. With no name
- * left, `fallback`.
+ * the name it was attached under), made safe for Windows (safeFileName),
+ * ending in `ext`, the image's real type. A name that already ends in one for
+ * that type (shot.jpeg for a .jpg) keeps it. With no name left, `fallback`,
+ * made safe the same way.
  */
 export function downloadName(name: string | undefined, ext: string, fallback: string): string {
   const given = name ?? '';
-  const last = given.slice(Math.max(given.lastIndexOf('/'), given.lastIndexOf('\\')) + 1);
-  let base = Array.from(last, (c) => (c.charCodeAt(0) < 32 || '<>:"|?*'.includes(c) ? '_' : c)).join('').trim();
+  let base = given.slice(Math.max(given.lastIndexOf('/'), given.lastIndexOf('\\')) + 1);
   const type = worktreeImageType(`image.${ext}`);
   if (type && worktreeImageType(base) === type) {
-    ext = base.slice(base.lastIndexOf('.') + 1);
-    base = base.slice(0, base.lastIndexOf('.'));
+    const dot = base.lastIndexOf('.');
+    ext = base.slice(dot + 1);
+    base = base.slice(0, dot);
   }
-  let stem = base.slice(0, 120).replace(/[. ]+$/, '').trim() || fallback;
-  if (RESERVED_NAME.test(stem.split('.')[0].trim())) stem = `_${stem}`;
+  const stem = safeFileName(base, 120, '_') || safeFileName(fallback, 120, '_') || 'image';
   return `${stem}.${ext}`;
 }
 
@@ -417,7 +416,6 @@ export async function downloadImage(
   name: string | undefined,
   worktreeOf: WorktreeLookup,
 ): Promise<string | null> {
-  const fallback = source.kind === 'stored' ? `image-${source.file.slice(0, 8)}` : 'image';
   let fileName: string;
   let write: (dest: string) => Promise<void>;
   if (source.kind === 'inline') {
@@ -425,12 +423,17 @@ export async function downloadImage(
     if (!Object.hasOwn(EXT_BY_TYPE, source.mediaType)) return null;
     const data = Buffer.from(source.data, 'base64');
     if (data.length === 0) return null;
-    fileName = downloadName(name, EXT_BY_TYPE[source.mediaType as ImageMediaType], fallback);
+    fileName = downloadName(name, EXT_BY_TYPE[source.mediaType as ImageMediaType], 'image');
     write = (dest) => fs.promises.writeFile(dest, data, { flag: 'wx' });
   } else {
     const file = await imageFile(sessionId, source, worktreeOf, 'copy');
     if (!file) return null;
-    fileName = downloadName(name, path.extname(file).slice(1).toLowerCase(), fallback);
+    // With no name (a tool's image), named after the file found, never the
+    // name the renderer sent: a saved copy by its hash, else its own name.
+    const ext = path.extname(file);
+    const own = path.basename(file, ext);
+    const fallback = FILE_RE.test(path.basename(file)) ? `image-${own.slice(0, 8)}` : own;
+    fileName = downloadName(name, ext.slice(1).toLowerCase(), fallback);
     write = (dest) => fs.promises.copyFile(file, dest, fs.constants.COPYFILE_EXCL);
   }
   const dir = app.getPath('downloads');
