@@ -658,12 +658,20 @@ describe('draftStore.start', () => {
     store.clearError();
   });
 
-  it('will not start with files and no message, or with files and a slash command', async () => {
+  it('sends an image with nothing typed as the first message', async () => {
+    draftStore.open('/repo/one');
+    await settle();
+    draftStore.addAttachments([{ name: 'shot.png', dataUrl: 'data:image/png;base64,AAAA', type: 'image' }]);
+    expect(draftStore.attachmentProblem).toBeNull();
+    expect(await draftStore.start()).toBe(true);
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith('new1', '', [{ name: 'shot.png', data: 'AAAA', mediaType: 'image/png' }], undefined);
+    arrivalScene.end('new1');
+  });
+
+  it('will not start with files and a slash command', async () => {
     draftStore.open('/repo/one');
     await settle();
     draftStore.addAttachments([{ name: 'notes.md', content: 'steps', type: 'text' }]);
-    expect(draftStore.attachmentProblem).toBe('Write a message to go with the attached files.');
-    expect(await draftStore.start()).toBe(false);
     draftStore.setText('/review this');
     expect(draftStore.attachmentProblem).toMatch(/slash command can't take attached files/);
     expect(await draftStore.start()).toBe(false);

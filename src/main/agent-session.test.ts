@@ -3537,6 +3537,26 @@ describe('AgentSessionManager.sendMessage()', () => {
     await sessionManager.destroySession('test-lost-file');
   });
 
+  it('sends nothing when every attachment was left out and nothing was typed', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-lost-only-file', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 's', model: 'm', tools: [] });
+    await new Promise((r) => setTimeout(r, 50));
+    attachments.saveFiles.mockResolvedValueOnce([]);
+
+    expect(await sessionManager.sendMessage('test-lost-only-file', '', undefined, [{ data: 'AA', mediaType: '', name: 'a.bin' }])).toBe('nothing-to-send');
+
+    const history = sessionManager.getEventHistory('test-lost-only-file');
+    expect(history.some((e) => e.type === 'status' && /An attached file could not be saved/.test(e.message))).toBe(true);
+    expect(history.some((e) => e.type === 'user_message')).toBe(false);
+    expect(mockAdapter.lastHandle!.sendMessage).not.toHaveBeenCalled();
+
+    await sessionManager.destroySession('test-lost-only-file');
+  });
+
   it('leaves images out for an agent that can\'t take them, and says so', async () => {
     (mockAdapter.capabilities as Record<string, boolean>).imageAttachments = false;
     const win = makeMockWindow();

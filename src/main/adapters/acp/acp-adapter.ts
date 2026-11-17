@@ -930,10 +930,9 @@ class AcpQuery {
     /** The tokens this turn used, when the agent reports them with its reply. */
     let turnTokens: TokenCounts | null = null;
     try {
-      const res = await this.rpc!.request<AcpPromptResponse>('session/prompt', {
-        sessionId: this.sessionId,
-        prompt: this.promptBlocks(message),
-      });
+      const prompt = this.promptBlocks(message);
+      if (!prompt) throw new Error(`Nothing was sent: ${this.def.displayName} couldn't take what was attached, and nothing was typed.`);
+      const res = await this.rpc!.request<AcpPromptResponse>('session/prompt', { sessionId: this.sessionId, prompt });
       stopReason = res?.stopReason ?? 'end_turn';
       // The turn's own token counts, when the agent reports them; the context
       // figure stays the one usage_update gave.
@@ -983,13 +982,14 @@ class AcpQuery {
     });
   }
 
-  private promptBlocks(message: UserMessage): unknown[] {
+  /** The prompt for `message`, Grove's instructions first while they are
+   *  pending. Null when nothing of the message is left to send (nothing
+   *  typed, and an image the agent can't take); the instructions then wait
+   *  for the next prompt. */
+  private promptBlocks(message: UserMessage): unknown[] | null {
     const blocks: unknown[] = [];
-    if (this.pendingInstructions) {
-      blocks.push({ type: 'text', text: this.pendingInstructions });
-      this.pendingInstructions = null;
-    }
-    blocks.push({ type: 'text', text: message.text });
+    // Nothing typed (an image sent on its own): no empty text block.
+    if (message.text.trim()) blocks.push({ type: 'text', text: message.text });
     // Every agent takes a link to a file (the protocol's baseline); images
     // and audio go inline only when it says it takes them.
     const caps = this.init?.agentCapabilities?.promptCapabilities;
@@ -1013,6 +1013,11 @@ class AcpQuery {
       } else {
         blocks.push(link(file.path, file.name, file.mediaType, file.size));
       }
+    }
+    if (blocks.length === 0) return null;
+    if (this.pendingInstructions) {
+      blocks.unshift({ type: 'text', text: this.pendingInstructions });
+      this.pendingInstructions = null;
     }
     return blocks;
   }

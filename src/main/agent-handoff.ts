@@ -14,6 +14,7 @@ import path from 'node:path';
 import type { AgentEvent } from '../shared/types.js';
 import { subagentParent } from '../shared/types.js';
 import { changesFiles, toolViewOf } from '../shared/tool-view.js';
+import { userEventText } from '../shared/prompt-text.js';
 
 /** The longest transcript sent, in characters (roughly 8k tokens). */
 export const HANDOFF_MAX_CHARS = 32_000;
@@ -97,7 +98,8 @@ export function handoffTranscript(events: readonly AgentEvent[], switched: Agent
       speaker = e.toName;
     } else if (e.type === 'user_message') {
       flush();
-      lines.push(`User: ${clip(e.text, MESSAGE_MAX_CHARS)}`);
+      // Attachments sent with nothing typed read by name, not as an empty line.
+      lines.push(`User: ${clip(e.text.trim() ? e.text : userEventText(e), MESSAGE_MAX_CHARS)}`);
       if (attachmentsDir) {
         for (const a of [...(e.images ?? []), ...(e.files ?? [])]) {
           if (a.name) attached.push(`${a.name}: ${path.join(attachmentsDir, a.file)}`);

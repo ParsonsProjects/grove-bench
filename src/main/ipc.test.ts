@@ -1043,6 +1043,16 @@ describe('agent I/O', () => {
     expect(sender.send).toHaveBeenCalledWith(channel, { type: 'process_exit' });
   });
 
+  it('says why when nothing was left to send', async () => {
+    m.sessionManager.sendMessage.mockResolvedValue('nothing-to-send');
+    invoke(IPC.AGENT_SEND, 's1', '');
+    await flush();
+
+    const channel = `${IPC.AGENT_EVENT}:s1`;
+    expect(sender.send).toHaveBeenCalledWith(channel, { type: 'error', message: expect.stringMatching(/attachments were left out and nothing was typed/) });
+    expect(sender.send).toHaveBeenCalledWith(channel, { type: 'process_exit' });
+  });
+
   it('stays quiet when the message was delivered', async () => {
     m.sessionManager.sendMessage.mockResolvedValue(true);
     invoke(IPC.AGENT_SEND, 's1', 'hello');

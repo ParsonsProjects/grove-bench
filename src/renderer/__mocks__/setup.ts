@@ -140,6 +140,7 @@ const mockGroveBench = {
   getFileLines: vi.fn((_sessionId: string, _filePath: string, _staged?: boolean) => Promise.resolve(null as import('../../shared/types.js').FileLinesResult)),
   sendMessage: vi.fn(),
   openAttachedFile: vi.fn(() => Promise.resolve(true)),
+  readAttachedFile: vi.fn((): Promise<string | null> => Promise.resolve(null)),
   openWorktreeFile: vi.fn((): Promise<OpenWorktreeFileResult> => Promise.resolve({ kind: 'opened' })),
   notify: vi.fn(),
   testNotification: vi.fn().mockResolvedValue('sent'),

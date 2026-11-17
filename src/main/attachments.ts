@@ -205,6 +205,19 @@ export async function openAttachedFile(sessionId: string, file: string): Promise
   return true;
 }
 
+/** A saved attachment's content, base64-encoded, to attach again (a rewind
+ *  puts the message's attachments back in the prompt box). Null when the
+ *  name isn't a stored one or the file is gone. */
+export async function readAttachedFile(sessionId: string, file: string): Promise<string | null> {
+  const folder = attachmentsFolder(sessionId);
+  if (!folder || !STORED_RE.test(file)) return null;
+  try {
+    return (await fs.promises.readFile(path.join(folder, file))).toString('base64');
+  } catch {
+    return null;
+  }
+}
+
 /** Save the images a tool returned and pass the tool result on with
  *  references in place of the image data. */
 export async function storeToolImages(

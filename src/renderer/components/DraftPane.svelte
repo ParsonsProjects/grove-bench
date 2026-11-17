@@ -545,7 +545,7 @@
               size="sm"
               onclick={() => draftStore.start()}
               disabled={!canStart}
-              title={startBlocker ?? `Start the thread${draft.text.trim() ? ' and send this message' : ''}`}
+              title={startBlocker ?? `Start the thread${draftStore.sendsMessage ? ' and send this message' : ''}`}
               class="ml-auto"
             >
               Start

@@ -339,17 +339,17 @@ describe('DraftPane drag and drop', () => {
     expect(draftStore.draft?.attachments).toEqual([]);
   });
 
-  it('asks for a message to go with dropped files', async () => {
+  it('sends dropped files with nothing typed as the first message', async () => {
     render(DraftPane);
     const box = screen.getByLabelText('First message');
     await fireEvent.drop(box, dropped(notes()));
     await screen.findByText('notes.md');
     const startButton = screen.getByRole('button', { name: 'Start' });
-    expect(startButton).toBeDisabled();
-    expect(startButton).toHaveAttribute('title', 'Write a message to go with the attached files.');
+    expect(startButton).toBeEnabled();
+    expect(startButton).toHaveAttribute('title', 'Start the thread and send this message');
     await fireEvent.keyDown(box, { key: 'Enter' });
-    expect(screen.getByRole('status')).toHaveTextContent('Write a message to go with the attached files.');
-    expect(createSessionMock()).not.toHaveBeenCalled();
+    await waitFor(() => expect(mockGroveBench.sendMessage).toHaveBeenCalled());
+    expect(mockGroveBench.sendMessage.mock.calls[0][1]).toBe('<file path="notes.md" length="5">\nsteps\n</file>');
   });
 
   it('keeps a files drag that has no files out of the message box', async () => {

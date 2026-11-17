@@ -1207,12 +1207,15 @@ class AgentSessionManager {
     return true;
   }
 
+  /** Send a prompt. True once the agent has it; false when the session is
+   *  gone or never connected; 'nothing-to-send' when every attachment was
+   *  left out and nothing was typed. */
   async sendMessage(
     id: string,
     content: string,
     images?: import('../shared/types.js').ImageAttachment[],
     files?: import('../shared/types.js').FileAttachment[],
-  ): Promise<boolean> {
+  ): Promise<boolean | 'nothing-to-send'> {
     // When it was sent, for the thread to show. Taken before the waits below
     // (setup, a wake), which can take minutes.
     const sentAt = Date.now();
@@ -1266,6 +1269,13 @@ class AgentSessionManager {
     if (files && savedFiles.length < files.length) {
       const lost = files.length - savedFiles.length;
       session.emit?.({ type: 'status', level: 'warning', message: `${lost === 1 ? 'An attached file' : `${lost} attached files`} could not be saved, so ${lost === 1 ? 'it was' : 'they were'} left out. See the log for details.` });
+    }
+    // Nothing typed and every attachment left out: an empty prompt would
+    // only fail at the agent. Refused before it joins the history, so the
+    // thread keeps no turn that never ran.
+    if (!content.trim() && !images?.length && savedFiles.length === 0) {
+      logger.debug(`[sendMessage] session=${id} nothing left to send`);
+      return 'nothing-to-send';
     }
     // After a switch the user wanted a transcript for, messages carry it
     // ahead of what they typed until the new agent replies; the thread shows
