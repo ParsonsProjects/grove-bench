@@ -1744,7 +1744,8 @@ export interface GroveBenchAPI {
   memoryRead(repoPath: string, relativePath: string): Promise<string | null>;
   memoryWrite(repoPath: string, relativePath: string, content: string): Promise<void>;
   memoryDelete(repoPath: string, relativePath: string): Promise<boolean>;
-  memoryCompact(repoPath: string): Promise<MemoryCompactionStatus>;
+  memoryCompactPreview(repoPath: string): Promise<MemoryCompactionPreview>;
+  memoryCompact(repoPath: string, options: MemoryCompactionOptions): Promise<MemoryCompactionStatus>;
   memoryCompactCancel(repoPath: string): Promise<boolean>;
   onMemoryCompactEvent(callback: (event: MemoryCompactionEvent) => void): () => void;
   memoryListBackups(repoPath: string): Promise<MemoryBackupInfo[]>;
@@ -2223,15 +2224,84 @@ export interface MemoryCompactionStatus {
   descriptionsAdded?: number;
   /** Merge groups planned but left for the next run. */
   remainingGroups?: number;
+  /** Nothing ran: memory changed after the confirm dialog was opened, so the
+   *  planning prompt it showed is no longer the one that would be sent. */
+  previewOutdated?: boolean;
 }
 
 export type MemoryCompactionStage = 'pruning' | 'planning' | 'merging';
 
+/** One model call of a compaction run (the planning call or one merge step),
+ *  as the Memory panel lists it: its prompt, model and timings. */
+export interface MemoryCompactionStep {
+  /** 0 is the planning call; 1 to n are the merge steps. */
+  index: number;
+  /** "Planning", or the files a merge step reads. */
+  label: string;
+  state: 'running' | 'done' | 'rejected' | 'failed' | 'timed out' | 'cancelled';
+  /** What came of the step, or why it was rejected or failed. */
+  detail?: string;
+  /** The model the reply comes from, as the agent named it; until it does,
+   *  the one asked for. Null: the agent's own default, unnamed. */
+  model: string | null;
+  systemPrompt: string;
+  userMessage: string;
+  /** When the call started (epoch ms). */
+  startedAt: number;
+  /** From the call starting to the agent's process being up, when the agent
+   *  reports it. The rest of durationMs is the model working on the reply. */
+  startupMs?: number;
+  /** The whole call, once it ended. */
+  durationMs?: number;
+  inputBytes: number;
+  outputBytes?: number;
+}
+
+/** A step as an event carries it: with its prompts when it starts, and
+ *  without them (they don't change) when it ends. */
+export type MemoryCompactionStepUpdate = Omit<MemoryCompactionStep, 'systemPrompt' | 'userMessage'>
+  & Partial<Pick<MemoryCompactionStep, 'systemPrompt' | 'userMessage'>>;
+
 /** Pushed from main over MEMORY_COMPACT_EVENT while a compaction pass runs.
- *  A merging stage says which step of how many it is. */
+ *  A merging stage says how many of its steps are done. A step event comes
+ *  when a model call starts and again when it ends. */
 export type MemoryCompactionEvent =
-  | { kind: 'stage'; repoPath: string; stage: MemoryCompactionStage; step?: number; total?: number }
+  | { kind: 'stage'; repoPath: string; stage: MemoryCompactionStage; done?: number; total?: number }
+  | { kind: 'step'; repoPath: string; step: MemoryCompactionStepUpdate }
   | { kind: 'done'; repoPath: string; status: MemoryCompactionStatus };
+
+/** What a compaction run would use, shown before it starts. */
+export interface MemoryCompactionPreview {
+  agentId: string;
+  agentName: string;
+  /** The model the run uses unless another is picked: the agent's Background
+   *  model from Settings, else its own; null for the agent's default. */
+  model: string | null;
+  /** Files compaction may change, and their size. */
+  fileCount: number;
+  totalBytes: number;
+  /** Merge steps one run does at most, and how many run at once. */
+  maxGroups: number;
+  parallelMerges: number;
+  /** The planning call's prompt as it would be sent now; null when there are
+   *  no files to compact. Merge prompts depend on the plan's reply. */
+  plan: { systemPrompt: string; userMessage: string } | null;
+  /** A hash of `plan`, which the run checks so it sends only this prompt. */
+  planDigest: string | null;
+  /** Why the run can't call a model on this agent, when it can't. */
+  unavailable?: string;
+}
+
+/** Choices for one compaction run, from its confirm dialog. */
+export interface MemoryCompactionOptions {
+  /** The agent the preview showed, so the run uses that one. */
+  agentId: string;
+  /** A model for this run only; omitted for the preview's model. */
+  model?: string;
+  /** The preview's planDigest: the run stops before calling the model if
+   *  the planning prompt is no longer the one the user saw. */
+  planDigest: string;
+}
 
 export interface MemoryStatsResult {
   promptBytes: number;       // what memory adds to the system prompt: conventions in full plus the index
@@ -2538,6 +2608,7 @@ export const IPC = {
   MEMORY_READ: 'memory:read',
   MEMORY_WRITE: 'memory:write',
   MEMORY_DELETE: 'memory:delete',
+  MEMORY_COMPACT_PREVIEW: 'memory:compactPreview',
   MEMORY_COMPACT: 'memory:compact',
   MEMORY_COMPACT_CANCEL: 'memory:compactCancel',
   MEMORY_COMPACT_EVENT: 'memory:compactEvent',

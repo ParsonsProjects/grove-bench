@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mockGroveBench } from '../__mocks__/setup.js';
 import { memoryStore } from './memory.svelte.js';
-import type { MemoryCompactionStatus, MemoryEntry } from '../../shared/types.js';
+import type { MemoryCompactionPreview, MemoryCompactionStatus, MemoryCompactionStep, MemoryEntry } from '../../shared/types.js';
 
 const DAY = 86_400_000;
 
@@ -94,6 +94,25 @@ describe('deleteFiles', () => {
   });
 });
 
+/** What a confirm dialog shows, as the main process would preview it. */
+const PREVIEW: MemoryCompactionPreview = {
+  agentId: 'claude-work', agentName: 'Claude (work)', model: 'haiku', fileCount: 2, totalBytes: 900,
+  maxGroups: 6, parallelMerges: 3, plan: { systemPrompt: 'You are planning', userMessage: 'Plan the clean-up.' },
+  planDigest: 'digest-1',
+};
+
+/** Open the confirm dialog for the shown project, as Compact does. */
+async function openPreview(preview: MemoryCompactionPreview = PREVIEW): Promise<void> {
+  mockGroveBench.memoryCompactPreview.mockResolvedValueOnce(preview);
+  await memoryStore.openCompactPreview();
+}
+
+/** Compact from the confirm dialog: open it, then press Start. */
+async function confirmAndCompact(model?: string): Promise<void> {
+  await openPreview();
+  await memoryStore.compact(model);
+}
+
 describe('compact result and undo', () => {
   it('stores the compaction result for the summary dialog when files changed', async () => {
     mockGroveBench.memoryCompact.mockResolvedValueOnce({
@@ -103,7 +122,7 @@ describe('compact result and undo', () => {
       backupId: 'snap-1',
     });
 
-    await memoryStore.compact();
+    await confirmAndCompact();
 
     expect(memoryStore.lastCompaction?.backupId).toBe('snap-1');
     expect(memoryStore.compactMessage).toBeNull();
@@ -114,7 +133,7 @@ describe('compact result and undo', () => {
       compacted: false, skippedReason: 'below threshold', filesChanged: [],
     });
 
-    await memoryStore.compact();
+    await confirmAndCompact();
 
     expect(memoryStore.lastCompaction).toBeNull();
     expect(memoryStore.compactMessage).toContain('below threshold');
@@ -125,7 +144,7 @@ describe('compact result and undo', () => {
       compacted: false, error: 'compaction timed out after 300s', filesChanged: [],
     });
 
-    await memoryStore.compact();
+    await confirmAndCompact();
 
     expect(memoryStore.lastCompaction).toBeNull();
     expect(memoryStore.compactMessage).toBeNull();
@@ -137,13 +156,15 @@ describe('compact result and undo', () => {
       compacted: false, skippedReason: 'cancelled', filesChanged: [],
     });
 
-    await memoryStore.compact();
+    await confirmAndCompact();
 
     expect(memoryStore.compactMessage).toBe('Compaction cancelled');
     expect(memoryStore.error).toBeNull();
   });
 
   it('routes skip and failure feedback to a toast when the panel is closed', async () => {
+    // Started from the dialog, then the panel closed while it ran.
+    await openPreview();
     memoryStore.panelOpen = false;
 
     mockGroveBench.memoryCompact.mockResolvedValueOnce({
@@ -157,6 +178,9 @@ describe('compact result and undo', () => {
     mockGroveBench.memoryCompact.mockResolvedValueOnce({
       compacted: false, error: 'compaction timed out after 300s', filesChanged: [],
     });
+    memoryStore.panelOpen = true;
+    await openPreview();
+    memoryStore.panelOpen = false;
     await memoryStore.compact();
     expect(memoryStore.error).toBeNull();
     expect(memoryStore.toast?.kind).toBe('error');
@@ -173,10 +197,11 @@ describe('compact result and undo', () => {
   });
 
   describe('after switching project mid-compaction', () => {
-    function startOnA() {
+    async function startOnA() {
       let finish!: (status: MemoryCompactionStatus) => void;
       mockGroveBench.memoryCompact.mockReturnValueOnce(new Promise<MemoryCompactionStatus>((r) => { finish = r; }));
       memoryStore.activeRepo = '/repo-a';
+      await openPreview();
       const running = memoryStore.compact();
       memoryStore.activeRepo = '/repo-b'; // the panel now shows another project
       memoryStore.files = [entry('repo/b.md', 1)];
@@ -184,7 +209,7 @@ describe('compact result and undo', () => {
     }
 
     it('cancels the project the compaction is running on', async () => {
-      const { running, finish } = startOnA();
+      const { running, finish } = await startOnA();
       await memoryStore.cancelCompact();
       expect(mockGroveBench.memoryCompactCancel).toHaveBeenCalledWith('/repo-a');
       finish({ compacted: false, skippedReason: 'cancelled', filesChanged: [] });
@@ -192,7 +217,7 @@ describe('compact result and undo', () => {
     });
 
     it('shows its progress only for that project', async () => {
-      const { running, finish } = startOnA();
+      const { running, finish } = await startOnA();
       (memoryStore as any).handleCompactionEvent({ kind: 'stage', repoPath: '/repo-a', stage: 'planning' });
       expect(memoryStore.compactStage).toBe('planning');
       expect(memoryStore.compactingRepo).toBe('/repo-a');
@@ -202,7 +227,7 @@ describe('compact result and undo', () => {
     });
 
     it('undoes it in its own project and leaves the shown list alone', async () => {
-      const { running, finish } = startOnA();
+      const { running, finish } = await startOnA();
       finish({ compacted: true, backupId: 'bk-a', filesChanged: ['repo/a.md'] });
       await running;
       expect(mockGroveBench.memoryList).not.toHaveBeenCalled();
@@ -221,29 +246,159 @@ describe('compact result and undo', () => {
     expect(mockGroveBench.memoryCompactCancel).not.toHaveBeenCalled();
   });
 
-  it('tracks compaction stages and merge steps for the project being compacted', () => {
+  it('tracks compaction stages and merge progress for the project being compacted', () => {
     memoryStore.compactingRepo = '/repo';
     (memoryStore as any).handleCompactionEvent({ kind: 'stage', repoPath: '/repo', stage: 'planning' });
     expect(memoryStore.compactStage).toBe('planning');
-    expect(memoryStore.compactStep).toBeNull();
+    expect(memoryStore.compactProgress).toBeNull();
 
-    (memoryStore as any).handleCompactionEvent({ kind: 'stage', repoPath: '/repo', stage: 'merging', step: 2, total: 5 });
+    (memoryStore as any).handleCompactionEvent({ kind: 'stage', repoPath: '/repo', stage: 'merging', done: 2, total: 5 });
     expect(memoryStore.compactStage).toBe('merging');
-    expect(memoryStore.compactStep).toEqual({ step: 2, total: 5 });
+    expect(memoryStore.compactProgress).toEqual({ done: 2, total: 5 });
     memoryStore.compactStage = null;
-    memoryStore.compactStep = null;
+    memoryStore.compactProgress = null;
 
     // Stage events for a different repo are ignored
-    (memoryStore as any).handleCompactionEvent({ kind: 'stage', repoPath: '/other', stage: 'merging', step: 1, total: 1 });
+    (memoryStore as any).handleCompactionEvent({ kind: 'stage', repoPath: '/other', stage: 'merging', done: 1, total: 1 });
     expect(memoryStore.compactStage).toBeNull();
     memoryStore.compactingRepo = null;
+  });
+
+  describe('steps', () => {
+    const step = (index: number, state: MemoryCompactionStep['state'], extra: Partial<MemoryCompactionStep> = {}): MemoryCompactionStep => ({
+      index, label: index === 0 ? 'Planning' : `Merge ${index}`, state, model: 'haiku',
+      systemPrompt: `prompt ${index}`, userMessage: 'JSON only', startedAt: 1000, inputBytes: 100, ...extra,
+    });
+
+    afterEach(() => {
+      memoryStore.compactingRepo = null;
+      memoryStore.compactSteps = [];
+      memoryStore.compactStepsRepo = null;
+    });
+
+    it('lists each model call in order, replacing a step when it ends', () => {
+      memoryStore.compactingRepo = '/repo';
+      const event = (s: MemoryCompactionStep, repoPath = '/repo') =>
+        (memoryStore as any).handleCompactionEvent({ kind: 'step', repoPath, step: s });
+
+      event(step(0, 'running'));
+      event(step(0, 'done', { durationMs: 4000, startupMs: 900 }));
+      event(step(2, 'running'));
+      event(step(1, 'running'));
+      event(step(1, 'rejected', { detail: 'repo/a.md changed during the step' }));
+      event(step(3, 'running'), '/other');
+
+      expect(memoryStore.compactSteps.map((s) => [s.index, s.state])).toEqual([[0, 'done'], [1, 'rejected'], [2, 'running']]);
+      expect(memoryStore.compactSteps[0].startupMs).toBe(900);
+    });
+
+    it('starts a run with no steps, kept for its project after it ends', async () => {
+      memoryStore.activeRepo = '/repo';
+      memoryStore.compactSteps = [step(0, 'done')];
+      memoryStore.compactStepsRepo = '/old';
+      let finish!: (s: MemoryCompactionStatus) => void;
+      mockGroveBench.memoryCompact.mockReturnValueOnce(new Promise<MemoryCompactionStatus>((r) => { finish = r; }));
+      await openPreview();
+
+      const running = memoryStore.compact();
+      expect(memoryStore.compactSteps).toEqual([]);
+      expect(memoryStore.compactStepsRepo).toBe('/repo');
+      (memoryStore as any).handleCompactionEvent({ kind: 'step', repoPath: '/repo', step: step(0, 'done') });
+      finish({ compacted: false, skippedReason: 'nothing to merge or describe', filesChanged: [] });
+      await running;
+
+      expect(memoryStore.compactSteps).toHaveLength(1);
+      expect(memoryStore.compactStepsRepo).toBe('/repo');
+    });
+  });
+
+  describe('confirm dialog', () => {
+    const preview = PREVIEW;
+
+    afterEach(() => memoryStore.closeCompactPreview());
+
+    it('loads what the run would use without starting it', async () => {
+      memoryStore.activeRepo = '/repo';
+      mockGroveBench.memoryCompactPreview.mockResolvedValueOnce(preview);
+
+      await memoryStore.openCompactPreview();
+
+      expect(mockGroveBench.memoryCompactPreview).toHaveBeenCalledWith('/repo');
+      expect(memoryStore.compactPreview).toEqual(preview);
+      expect(mockGroveBench.memoryCompact).not.toHaveBeenCalled();
+    });
+
+    it('drops a preview for a project the panel has left', async () => {
+      memoryStore.activeRepo = '/repo-a';
+      let answer!: (p: MemoryCompactionPreview) => void;
+      mockGroveBench.memoryCompactPreview.mockReturnValueOnce(new Promise<MemoryCompactionPreview>((r) => { answer = r; }));
+
+      const opening = memoryStore.openCompactPreview();
+      memoryStore.activeRepo = '/repo-b';
+      answer(preview);
+      await opening;
+
+      expect(memoryStore.compactPreview).toBeNull();
+    });
+
+    it('runs on the agent it showed, with the model picked for this run', async () => {
+      memoryStore.activeRepo = '/repo';
+      mockGroveBench.memoryCompactPreview.mockResolvedValueOnce(preview);
+      await memoryStore.openCompactPreview();
+
+      await memoryStore.compact('claude-sonnet-4-5');
+
+      expect(mockGroveBench.memoryCompact).toHaveBeenCalledWith('/repo', { agentId: 'claude-work', planDigest: 'digest-1', model: 'claude-sonnet-4-5' });
+      expect(memoryStore.compactPreview).toBeNull();
+    });
+
+    it("sends no model when Default is kept, so the run uses the preview's", async () => {
+      memoryStore.activeRepo = '/repo';
+      mockGroveBench.memoryCompactPreview.mockResolvedValueOnce(preview);
+      await memoryStore.openCompactPreview();
+
+      await memoryStore.compact();
+
+      expect(mockGroveBench.memoryCompact).toHaveBeenCalledWith('/repo', { agentId: 'claude-work', planDigest: 'digest-1' });
+    });
+
+    it('runs nothing without the dialog', async () => {
+      await memoryStore.compact();
+      expect(mockGroveBench.memoryCompact).not.toHaveBeenCalled();
+    });
+
+    it('drops a preview that arrives after the panel closed', async () => {
+      let answer!: (p: MemoryCompactionPreview) => void;
+      mockGroveBench.memoryCompactPreview.mockReturnValueOnce(new Promise<MemoryCompactionPreview>((r) => { answer = r; }));
+
+      const opening = memoryStore.openCompactPreview();
+      memoryStore.panelOpen = false;
+      answer(preview);
+      await opening;
+
+      expect(memoryStore.compactPreview).toBeNull();
+    });
+
+    it('opens again on the new prompt when memory changed after it opened', async () => {
+      await openPreview();
+      mockGroveBench.memoryCompact.mockResolvedValueOnce({ compacted: false, previewOutdated: true, skippedReason: 'memory changed since the preview', filesChanged: [] });
+      const fresh = { ...preview, plan: { systemPrompt: 'You are planning NEW', userMessage: 'Plan the clean-up.' }, planDigest: 'digest-2' };
+      mockGroveBench.memoryCompactPreview.mockResolvedValueOnce(fresh);
+
+      await memoryStore.compact();
+
+      expect(memoryStore.compactPreview).toEqual(fresh);
+      expect(memoryStore.compactPreviewChanged).toBe(true);
+      expect(memoryStore.compactMessage).toBeNull();
+      expect(memoryStore.compacting).toBe(false);
+    });
   });
 
   it('undoCompaction restores the recorded snapshot and clears the result', async () => {
     mockGroveBench.memoryCompact.mockResolvedValueOnce({
       compacted: true, filesChanged: ['repo/a.md'], backupId: 'snap-1',
     });
-    await memoryStore.compact();
+    await confirmAndCompact();
     mockGroveBench.memoryRestoreBackup.mockResolvedValueOnce({ restored: true, filesChanged: ['repo/a.md'] });
 
     await memoryStore.undoCompaction();

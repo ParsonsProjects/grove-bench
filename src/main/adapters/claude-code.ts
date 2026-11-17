@@ -13,7 +13,10 @@ import type {
   AdapterPrerequisiteStatus,
   ApiKeyDescriptor,
   CliSignInDescriptor,
+  GenerateTextOptions,
   ModelInfo,
+  PreparedText,
+  PrepareTextOptions,
   ToolImageData,
   UserMessage,
 } from './types.js';
@@ -1639,6 +1642,40 @@ export async function collectGeneratedText(messages: AsyncIterable<SDKMessage>, 
   return text;
 }
 
+/** The messages as they come, saying when the first arrives (the CLI sends
+ *  its init message once it is up, before the model replies) and which model
+ *  the init message names. */
+export async function* watchStart(
+  messages: AsyncIterable<SDKMessage>,
+  on: { onStarted?: () => void; onModel?: (model: string | null) => void },
+): AsyncGenerator<SDKMessage> {
+  let first = true;
+  for await (const message of messages) {
+    if (first) {
+      first = false;
+      on.onStarted?.();
+    }
+    if (message.type === 'system' && message.subtype === 'init') on.onModel?.(message.model || null);
+    yield message;
+  }
+}
+
+/** One user message, as the prompt of a one-turn text query. */
+function oneMessage(text: string): AsyncIterable<SDKUserMessage> {
+  let inputController: ReadableStreamDefaultController<SDKUserMessage> | null = null;
+  const inputStream = new ReadableStream<SDKUserMessage>({
+    start(c) { inputController = c; },
+  });
+  inputController!.enqueue({
+    type: 'user',
+    session_id: '',
+    message: { role: 'user', content: text },
+    parent_tool_use_id: null,
+  });
+  inputController!.close();
+  return readableStreamToAsyncIterable(inputStream);
+}
+
 // ─── Claude Code Adapter ───
 
 export class ClaudeCodeAdapter implements AgentAdapter {
@@ -2398,47 +2435,75 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
   // ─── Text generation (for memory extraction) ───
 
-  async generateText(systemPrompt: string, userMessage: string, options?: { cwd?: string; abortSignal?: AbortSignal; model?: string }): Promise<string> {
+  async generateText(systemPrompt: string, userMessage: string, options?: GenerateTextOptions): Promise<string> {
     const queryFn = await getQuery();
-
-    let inputController: ReadableStreamDefaultController<SDKUserMessage> | null = null;
-    const inputStream = new ReadableStream<SDKUserMessage>({
-      start(c) { inputController = c; },
-    });
-
-    inputController!.enqueue({
-      type: 'user',
-      session_id: '',
-      message: { role: 'user', content: userMessage },
-      parent_tool_use_id: null,
-    });
-    inputController!.close();
 
     const abortController = new AbortController();
     if (options?.abortSignal) {
       options.abortSignal.addEventListener('abort', () => abortController.abort());
     }
 
+    const q = queryFn({
+      prompt: oneMessage(userMessage),
+      options: this.textQueryOptions(systemPrompt, options, abortController),
+    });
+
+    return collectGeneratedText(watchStart(q, options ?? {}), this.authErrorMessage);
+  }
+
+  /** The SDK's startup() runs the CLI and its initialize handshake now, and
+   *  writes the message to the ready process when it comes. The init message
+   *  may have gone by then, so the agent counts as up once startup() is done. */
+  prepareText(systemPrompt: string, options?: PrepareTextOptions): PreparedText {
+    const abortController = new AbortController();
+    const warm = getSdk().then((sdk) => sdk.startup({ options: this.textQueryOptions(systemPrompt, options, abortController) }));
+    warm.catch(() => { /* send reports it; close has nothing to end */ });
+    let state: 'waiting' | 'sent' | 'closed' = 'waiting';
+    return {
+      send: async (userMessage, sendOptions) => {
+        if (state !== 'waiting') throw new Error('This text request was already sent or closed');
+        state = 'sent';
+        const onAbort = () => abortController.abort();
+        sendOptions?.abortSignal?.addEventListener('abort', onAbort, { once: true });
+        if (sendOptions?.abortSignal?.aborted) onAbort();
+        try {
+          const handle = await warm;
+          if (abortController.signal.aborted) {
+            handle.close();
+            throw new Error('Aborted');
+          }
+          sendOptions?.onStarted?.();
+          const q = handle.query(oneMessage(userMessage));
+          return await collectGeneratedText(watchStart(q, { onModel: sendOptions?.onModel }), this.authErrorMessage);
+        } finally {
+          sendOptions?.abortSignal?.removeEventListener('abort', onAbort);
+        }
+      },
+      close: () => {
+        if (state !== 'waiting') return;
+        state = 'closed';
+        void warm.then((handle) => handle.close(), () => {});
+      },
+    };
+  }
+
+  /** Query options for a one-turn text request (generateText, prepareText). */
+  private textQueryOptions(systemPrompt: string, options: PrepareTextOptions | undefined, abortController: AbortController): import('@anthropic-ai/claude-agent-sdk').Options {
     const keyEnv = this.savedKeyEnv();
     // `env` replaces the inherited environment rather than merging, so the
     // default account passes it only when there is a saved key to add.
     const env = this.account
       ? { ...this.agentEnv(process.env), ...keyEnv }
       : Object.keys(keyEnv).length > 0 ? { ...process.env, ...keyEnv } : undefined;
-    const q = queryFn({
-      prompt: readableStreamToAsyncIterable(inputStream),
-      options: {
-        cwd: options?.cwd ?? process.cwd(),
-        abortController,
-        systemPrompt,
-        ...TEXT_GENERATION_OPTIONS,
-        ...(options?.model ? { model: options.model } : {}),
-        ...(env ? { env } : {}),
-        spawnClaudeCodeProcess: (o: SpawnOptions) => spawnClaudeCodeProcess(o),
-      },
-    });
-
-    return collectGeneratedText(q, this.authErrorMessage);
+    return {
+      cwd: options?.cwd ?? process.cwd(),
+      abortController,
+      systemPrompt,
+      ...TEXT_GENERATION_OPTIONS,
+      ...(options?.model ? { model: options.model } : {}),
+      ...(env ? { env } : {}),
+      spawnClaudeCodeProcess: (o: SpawnOptions) => spawnClaudeCodeProcess(o),
+    };
   }
 
   // ─── Conversation title ───

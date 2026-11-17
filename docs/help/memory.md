@@ -34,12 +34,22 @@ Thread notes are archived when they haven't been updated for 30 days, and at mos
 
 Memory grows as the agent saves notes across threads, and over time it collects duplicates, stale details, and statements that contradict newer discoveries. The **Compact** button (two arrows pointing in, at the bottom of the panel) cleans up the project selected in the panel. It only runs when you press it, and only on that project.
 
+Pressing **Compact** first shows what the run will use, and nothing runs until you press **Start**:
+
+- **Agent**: the agent of the project's most recently used thread.
+- **Model**: **Default** is that agent's **Background model** (Settings → Agents). Pick another model here to use it for this run only.
+- **Planning prompt**: the exact prompt the planning step will send. The merge prompts are built from the plan's reply, so they can only be shown once the run is going.
+
+The run sends only the planning prompt you saw. If another thread saves memory while the dialog is open, pressing **Start** sends nothing and the dialog shows the new prompt, to check and start again.
+
 A run works in steps, each one model call:
 
 1. **Planning.** The model reads every file's path, size, title, description and opening text (not the full text). It picks groups of files that overlap, and writes a one-line description for each file that has none. Grove adds those descriptions to the files' frontmatter without changing anything else.
-2. **Merging**, up to 6 groups a run, largest overlaps first. Each step reads one group in full (under 48 KB) and merges it: repeated facts appear once, contradictions are resolved (the newer note wins, and your corrections always win), stale details are dropped, and sections auto-save added under "## Added" headings are folded in. Files with such sections are tidied first, even if the plan doesn't pick them. A step may only change its own files, or add new files for merged content, and each file must stay under 16 KB. A step whose files changed on disk while it ran (an auto-save in another thread, say) is skipped rather than overwriting that change.
+2. **Merging**, up to 6 groups a run, largest overlaps first, up to 3 at a time (groups never share a file, so they can't overwrite each other). The agents for these steps start while planning runs, so they are ready when the plan is. Each step reads one group in full (under 48 KB) and merges it: repeated facts appear once, contradictions are resolved (the newer note wins, and your corrections always win), stale details are dropped, and sections auto-save added under "## Added" headings are folded in. Files with such sections are tidied first, even if the plan doesn't pick them. A step may only change its own files, or add new files for merged content, and each file must stay under 16 KB. A step whose files changed on disk while it ran (an auto-save in another thread, say) is skipped rather than overwriting that change.
 
-If more groups are left, the summary says so: press **Compact** again to continue. Each step has its own timeout (**Compaction timeout** in Settings). If a step times out or fails, or you press **Cancel**, the run stops there; steps already finished stay applied and Undo still reverts them.
+If more groups are left, the summary says so: press **Compact** again to continue. Each step has its own timeout (**Compaction timeout** in Settings). If a step times out or fails, no new step starts and the ones already running finish. **Cancel** stops every running step. Either way, steps already finished stay applied and Undo still reverts them.
+
+While a run goes, the panel lists each model call: whether it is running, done, rejected (with the reason), failed or cancelled, the files it reads, the model the agent says it answered with (an agent that doesn't offer the model you picked uses its own), and how long it took, split into waiting for the agent to start and the model writing its reply, with the prompt's and reply's sizes. **Prompt** shows what the call was sent. After the run, the list stays under **Last run's model calls**. The same timings go to the performance log (`memory compact` lines), so you can tell whether a slow run is spent starting the agent or waiting on the model.
 
 Before a run changes anything, the previous contents are saved as a timestamped snapshot inside the memory folder (the 5 most recent snapshots are kept). A step whose result would destroy most of its files, or write a file over 16 KB, is rejected and the rest of the run carries on. After a run, a summary lists every file that was rewritten or removed with the reason, and **Undo** restores the snapshot, reverting the whole run in one click. **Backups** (the clock with an arrow, next to Compact) lists all snapshots: use **View** to inspect a snapshot's files before restoring it. Restoring takes a snapshot of the current state first, so the restore itself can be undone.
 

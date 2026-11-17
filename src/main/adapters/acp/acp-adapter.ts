@@ -25,7 +25,8 @@ import { pathToFileURL } from 'node:url';
 import { app } from 'electron';
 import type {
   AdapterConfig, AdapterEvent, AdapterPrerequisiteStatus, AgentAdapter, AgentCapabilities, AgentQueryHandle,
-  ApiKeyDescriptor, CliSignInDescriptor, ModelInfo, PermissionResponse, SignInCheck, UserMessage,
+  ApiKeyDescriptor, CliSignInDescriptor, GenerateTextOptions, ModelInfo, PermissionResponse, PreparedText, PrepareTextOptions,
+  SignInCheck, UserMessage,
 } from '../types.js';
 import type { AgentStage, ControlDescriptor, ControlOption, PermissionMode, ImageMediaType, SkillDefinition, TokenCounts } from '../../../shared/types.js';
 import { CONTROL_IDS, isImageMediaType } from '../../../shared/types.js';
@@ -550,7 +551,13 @@ export class AcpAdapter implements AgentAdapter {
 
   /** Ask the agent once, in a session of its own, with every tool request
    *  turned down. ACP has no system prompt, so it leads the message. */
-  async generateText(systemPrompt: string, userMessage: string, options?: { cwd?: string; abortSignal?: AbortSignal; model?: string }): Promise<string> {
+  async generateText(systemPrompt: string, userMessage: string, options?: GenerateTextOptions): Promise<string> {
+    return this.prepareText(systemPrompt, options).send(userMessage, options);
+  }
+
+  /** Start the agent and its session now (as generateText), so the message
+   *  goes to a ready session when it comes. */
+  prepareText(systemPrompt: string, options?: PrepareTextOptions): PreparedText {
     const cwd = options?.cwd ?? os.tmpdir();
     const proc = spawnAgent(this.def, cwd);
     let stderr = '';
@@ -570,12 +577,14 @@ export class AcpAdapter implements AgentAdapter {
         if (u?.sessionUpdate === 'agent_message_chunk' && u.content?.type === 'text') text += u.content.text;
       },
     });
-    const abort = () => {
-      rpc.close(new Error('Aborted'));
-      proc.kill();
+    const end = () => {
+      rpc.close();
+      if (proc.exitCode === null) proc.kill();
     };
-    options?.abortSignal?.addEventListener('abort', abort, { once: true });
-    try {
+
+    // The session, and the model its replies come from: the one asked for
+    // once switched to, else the session's own (null when it names none).
+    const ready = (async (): Promise<string | null> => {
       const init = await initializeAgent(rpc, this.displayName);
       const setup = await withTimeout(
         withKeySignIn(rpc, this.def, init, () => rpc.request<AcpSessionSetup>('session/new', { cwd, mcpServers: [] })),
@@ -584,23 +593,54 @@ export class AcpAdapter implements AgentAdapter {
       if (!setup?.sessionId) throw new Error(`${this.displayName} did not start a session`);
       sessionId = setup.sessionId;
       const models = modelList(setup.configOptions, setup.models);
+      let model = models?.current ?? null;
       if (options?.model && models && models.current !== options.model && models.models.some((m) => m.id === options.model)) {
-        await requestModel(rpc, sessionId, models, options.model).catch((e) => logger.warn(`[${this.id}] background model not set:`, e));
+        try {
+          await requestModel(rpc, sessionId, models, options.model);
+          model = options.model;
+        } catch (e) {
+          logger.warn(`[${this.id}] background model not set:`, e);
+        }
       }
-      await withTimeout(
-        rpc.request('session/prompt', { sessionId, prompt: [{ type: 'text', text: `${systemPrompt}\n\n${userMessage}` }] }),
-        GENERATE_TIMEOUT_MS,
-        `${this.displayName} background request`,
-      );
-      return text.trim();
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      throw new Error(stderr.trim() ? `${message}\n${stderr.trim().slice(-800)}` : message, { cause: e });
-    } finally {
-      options?.abortSignal?.removeEventListener('abort', abort);
-      rpc.close();
-      if (proc.exitCode === null) proc.kill();
-    }
+      return model;
+    })();
+    ready.catch(() => { /* send reports it; close has nothing to end */ });
+
+    let state: 'waiting' | 'sent' | 'closed' = 'waiting';
+    return {
+      send: async (userMessage, sendOptions) => {
+        if (state !== 'waiting') throw new Error('This text request was already sent or closed');
+        state = 'sent';
+        const abort = () => {
+          rpc.close(new Error('Aborted'));
+          proc.kill();
+        };
+        sendOptions?.abortSignal?.addEventListener('abort', abort, { once: true });
+        if (sendOptions?.abortSignal?.aborted) abort();
+        try {
+          const model = await ready;
+          sendOptions?.onStarted?.();
+          sendOptions?.onModel?.(model);
+          await withTimeout(
+            rpc.request('session/prompt', { sessionId, prompt: [{ type: 'text', text: `${systemPrompt}\n\n${userMessage}` }] }),
+            sendOptions?.timeoutMs ?? GENERATE_TIMEOUT_MS,
+            `${this.displayName} background request`,
+          );
+          return text.trim();
+        } catch (e) {
+          const message = e instanceof Error ? e.message : String(e);
+          throw new Error(stderr.trim() ? `${message}\n${stderr.trim().slice(-800)}` : message, { cause: e });
+        } finally {
+          sendOptions?.abortSignal?.removeEventListener('abort', abort);
+          end();
+        }
+      },
+      close: () => {
+        if (state !== 'waiting') return;
+        state = 'closed';
+        end();
+      },
+    };
   }
 
   // ─── A conversation query ───

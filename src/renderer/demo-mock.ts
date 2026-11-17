@@ -305,12 +305,32 @@ const api: Record<string, unknown> = {
     memoryFiles = memoryFiles.filter(f => f.relativePath !== p);
     return true;
   },
-  memoryCompact: async (repoPath: string) => {
-    // Simulate a real pass: staged progress events, cancellable, then the merge
+  memoryCompactPreview: async () => {
+    const files = memoryFiles.filter(f => !f.folder.startsWith('sessions'));
+    return {
+      agentId: 'claude-code', agentName: 'Claude Agent', model: 'claude-haiku-4-5-20251001',
+      fileCount: files.length, totalBytes: files.reduce((sum, f) => sum + f.content.length, 0),
+      maxGroups: 6, parallelMerges: 3, planDigest: 'demo-digest',
+      plan: {
+        systemPrompt: `You are planning a clean-up of a project's memory files. Each file below is shown by its path, size, title, description and opening text, not in full.\n\n## Files\n${files.map(f => `### ${f.relativePath}\ntitle: ${f.title}`).join('\n\n')}\n\n## Instructions\n1. Find groups of files that overlap...`,
+        userMessage: 'Plan the clean-up. Respond with JSON only.',
+      },
+    };
+  },
+  memoryCompact: async (repoPath: string, options?: { model?: string }) => {
+    // Simulate a real pass: staged progress events and steps, cancellable,
+    // then the merge
     compactCancelled = false;
     const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
-    const stage = (s: string, step?: number, total?: number) =>
-      compactListeners.forEach(l => l({ kind: 'stage', repoPath, stage: s, ...(step ? { step, total } : {}) }));
+    const stage = (s: string, done?: number, total?: number) =>
+      compactListeners.forEach(l => l({ kind: 'stage', repoPath, stage: s, ...(total ? { done, total } : {}) }));
+    const step = (index: number, label: string, state: string, extra: Record<string, unknown> = {}) =>
+      compactListeners.forEach(l => l({ kind: 'step', repoPath, step: {
+        index, label, state, model: options?.model ?? 'claude-haiku-4-5-20251001',
+        systemPrompt: index === 0 ? 'You are planning a clean-up of a project\'s memory files...' : `You are a memory compaction assistant. The project memory files below were picked for clean-up...\n\n## Files\n### ${label.replace(/^Merge \d+: /, '')}\n...`,
+        userMessage: index === 0 ? 'Plan the clean-up. Respond with JSON only.' : 'Compact the memory files above. Respond with JSON only.',
+        startedAt: Date.now(), inputBytes: 9000 + index * 4000, ...extra,
+      } }));
     const finish = (status: Record<string, unknown>) => {
       compactListeners.forEach(l => l({ kind: 'done', repoPath, status }));
       return status;
@@ -319,16 +339,28 @@ const api: Record<string, unknown> = {
     stage('pruning');
     await sleep(600);
     stage('planning');
+    step(0, 'Planning', 'running');
     for (let i = 0; i < 4; i++) {
       await sleep(500);
-      if (compactCancelled) return finish({ compacted: false, skippedReason: 'cancelled', filesChanged: [] });
+      if (compactCancelled) {
+        step(0, 'Planning', 'cancelled', { durationMs: (i + 1) * 500 });
+        return finish({ compacted: false, skippedReason: 'cancelled', filesChanged: [] });
+      }
     }
-    // A bounded run: 3 merge steps, with more groups left for the next run
-    for (let step = 1; step <= 3; step++) {
-      stage('merging', step, 3);
-      for (let i = 0; i < 4; i++) {
-        await sleep(500);
-        if (compactCancelled) return finish({ compacted: false, skippedReason: 'cancelled', filesChanged: [] });
+    step(0, 'Planning', 'done', { startupMs: 900, durationMs: 2000, outputBytes: 1400, detail: '5 groups to merge, 2 descriptions to add' });
+    // A bounded run: 3 merge steps side by side, with more groups left for the next run
+    const merges = ['Merge 1: repo/overview.md, repo/tech-stack.md', 'Merge 2: conventions/naming.md', 'Merge 3: architecture/ipc-flow.md'];
+    stage('merging', 0, merges.length);
+    merges.forEach((label, i) => step(i + 1, label, 'running'));
+    for (let i = 0; i < 6; i++) {
+      await sleep(500);
+      if (compactCancelled) {
+        merges.forEach((label, m) => step(m + 1, label, 'cancelled', { durationMs: (i + 1) * 500 }));
+        return finish({ compacted: false, skippedReason: 'cancelled', filesChanged: [] });
+      }
+      if (i >= 3) {
+        step(i - 2, merges[i - 3], 'done', { startupMs: 1100, durationMs: (i + 1) * 500, outputBytes: 6000, detail: '1 file changed' });
+        stage('merging', i - 2, merges.length);
       }
     }
 

@@ -1,15 +1,18 @@
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 import { logger } from './logger.js';
+import { perfLine } from './perf-log.js';
+import { formatBytes } from './freeze-log.js';
 import * as memory from './memory.js';
 import * as settings from './settings.js';
 import { backgroundAgentFor, backgroundModelFor } from './background-tasks.js';
 import { effectiveCompactTimeoutSeconds } from '../shared/compact-timeout.js';
 import { extractJsonObject } from './extract-json.js';
 import { isRecord } from './persisted-state.js';
-import type { MemoryEntry } from '../shared/types.js';
-import type { AgentAdapter } from './adapters/types.js';
+import type { MemoryCompactionPreview, MemoryCompactionStep, MemoryCompactionStepUpdate, MemoryEntry } from '../shared/types.js';
+import type { AgentAdapter, PreparedText } from './adapters/types.js';
 
 // ─── Types ───
 
@@ -60,6 +63,9 @@ export interface CompactionStatus {
   descriptionsAdded?: number;
   /** Merge groups planned but left for the next run. */
   remainingGroups?: number;
+  /** Nothing ran: memory changed after the preview, so its planning prompt
+   *  is no longer the one that would be sent. */
+  previewOutdated?: boolean;
 }
 
 export interface CompactionInfo {
@@ -88,6 +94,11 @@ export interface CompactOptions {
   cwd?: string;
   /** Which adapter to use for text generation (defaults to registry default). */
   adapterType?: string;
+  /** A model for this run only, instead of the agent's background model. */
+  model?: string;
+  /** The planning prompt's digest from the preview the user confirmed: the
+   *  run stops before any model call when the prompt is no longer that one. */
+  planDigest?: string;
 }
 
 // ─── Constants ───
@@ -95,6 +106,11 @@ export interface CompactOptions {
 /** Most merge groups one run works through; the rest wait for the next run,
  *  so a run takes minutes, not an hour, and Undo covers one run. */
 const MAX_GROUPS_PER_RUN = 6;
+
+/** Merge steps that run at once. Their groups never share a file, so they
+ *  can't overwrite each other; more at once would mostly add agent processes
+ *  and rate-limit risk. */
+const MAX_PARALLEL_MERGES = 3;
 
 /** Full text one merge step reads, at most. */
 const MAX_GROUP_BYTES = 48 * 1024;
@@ -181,6 +197,16 @@ function readNonSessionContents(repoPath: string): Record<string, string> {
 
 function totalBytes(contents: Record<string, string>): number {
   return Object.values(contents).reduce((sum, c) => sum + Buffer.byteLength(c, 'utf-8'), 0);
+}
+
+/** The files compaction may change, in index order, with their contents,
+ *  each read once and without blocking the main process. */
+async function readCompactable(repoPath: string): Promise<{ planned: MemoryEntry[]; contents: Record<string, string> }> {
+  const files = (await memory.readMemoryFilesAsync(repoPath))
+    .filter(f => f.content && isAllowedCompactionPath(f.entry.relativePath));
+  const contents: Record<string, string> = {};
+  for (const f of files) contents[f.entry.relativePath] = f.content;
+  return { planned: files.map(f => f.entry).sort(memory.byIndexOrder), contents };
 }
 
 /** A compaction result may only touch existing repo/conventions/architecture files, or create new ones there. */
@@ -501,16 +527,12 @@ Respond with ONLY valid JSON matching this schema (no markdown fences):
 }`;
 }
 
-/** One merge step: a group of files in full, rewritten into fewer, coherent files. */
-function buildMergePrompt(contents: Record<string, string>, reason: string): string {
-  const memorySection = Object.entries(contents)
-    .map(([p, c]) => `### ${p}\n${c}`)
-    .join('\n\n');
-
-  return `You are a memory compaction assistant. The project memory files below were picked for clean-up${reason ? ` (${reason})` : ''}. They may contain duplicated, stale, and contradictory information. Your job is to consolidate them into a smaller, coherent set.
-
-## Files
-${memorySection}
+/**
+ * A merge step's system prompt. It names no files, so merge agents can start
+ * before the plan says which files each one gets (prepareText); the files go
+ * in the message (buildMergeMessage).
+ */
+const MERGE_SYSTEM_PROMPT = `You are a memory compaction assistant. The user's message holds project memory files picked for clean-up. They may contain duplicated, stale, and contradictory information. Your job is to consolidate them into a smaller, coherent set.
 
 ## Instructions
 Rewrite these files so that:
@@ -520,7 +542,7 @@ Rewrite these files so that:
 - Stale, ephemeral, or session-specific details (old debugging notes, temporary state, completed one-off tasks) are dropped.
 - Files covering the same topic are merged; near-empty leftovers are deleted.
 - Each file stays concise and factual, and under ${MAX_COMPACTED_FILE_BYTES / 1024} KB: a larger file is rejected. Split a big topic across files rather than going over.
-- Nothing is invented: every retained statement must come from the files above. Prefer dropping a doubtful statement over rephrasing it into something new.
+- Nothing is invented: every retained statement must come from the files in the message. Prefer dropping a doubtful statement over rephrasing it into something new.
 - Only these files change: update or delete them, or create new files in repo/, conventions/ or architecture/ for merged content. Never write to any other existing file.
 ${FILE_RULES}
 
@@ -540,6 +562,27 @@ Respond with ONLY valid JSON matching this schema (no markdown fences):
     }
   ]
 }`;
+
+/** One merge step's message: its group of files in full, and why the plan
+ *  grouped them. */
+function buildMergeMessage(contents: Record<string, string>, reason: string): string {
+  const memorySection = Object.entries(contents)
+    .map(([p, c]) => `### ${p}\n${c}`)
+    .join('\n\n');
+  return `These project memory files were picked for clean-up${reason ? ` (${reason})` : ''}.
+
+## Files
+${memorySection}
+
+Compact the memory files above. Respond with JSON only.`;
+}
+
+const PLAN_USER_MESSAGE = 'Plan the clean-up. Respond with JSON only.';
+
+/** A hash of the planning prompt: the preview shows it, and the run checks
+ *  it so it never sends a prompt other than the one the user saw. */
+function planDigest(systemPrompt: string, userMessage: string): string {
+  return createHash('sha256').update(systemPrompt).update('\0').update(userMessage).digest('hex');
 }
 
 /** The JSON object in a model reply, tolerating fences and text around it. */
@@ -701,7 +744,8 @@ function applyCompaction(repoPath: string, result: CompactionResult): string[] {
 export type CompactionStage = 'pruning' | 'planning' | 'merging';
 
 export type CompactionEvent =
-  | { kind: 'stage'; repoPath: string; stage: CompactionStage; step?: number; total?: number }
+  | { kind: 'stage'; repoPath: string; stage: CompactionStage; done?: number; total?: number }
+  | { kind: 'step'; repoPath: string; step: MemoryCompactionStepUpdate }
   | { kind: 'done'; repoPath: string; status: CompactionStatus };
 
 const eventListeners = new Set<(event: CompactionEvent) => void>();
@@ -737,50 +781,146 @@ export function cancelCompaction(repoPath: string): boolean {
 
 type CallOutcome = { text: string } | { timedOut: true } | { cancelled: true } | { failed: string };
 
-/** One model call with its own timeout, which the run's Cancel also aborts. */
-async function callModel(
-  adapter: AgentAdapter,
-  systemPrompt: string,
-  userMessage: string,
-  cwd: string,
-  run: AbortController,
-): Promise<CallOutcome> {
-  if (run.signal.aborted) return { cancelled: true };
+/** What every model call of one run shares. */
+interface RunContext {
+  repoPath: string;
+  cwd: string;
+  adapter: AgentAdapter;
+  /** The model asked for, or null for the agent's own default. */
+  model: string | null;
+  run: AbortController;
+  /** Steps started and not yet ended, so none is left showing as running. */
+  running: Set<MemoryCompactionStep>;
+}
+
+/** Tell the panel a step's state, with its prompts only when it starts;
+ *  once it has ended, also write its timing to the performance log. */
+function reportStep(ctx: RunContext, step: MemoryCompactionStep): void {
+  if (step.state === 'running') {
+    emitEvent({ kind: 'step', repoPath: ctx.repoPath, step: { ...step } });
+    return;
+  }
+  const { systemPrompt: _systemPrompt, userMessage: _userMessage, ...ended } = step;
+  emitEvent({ kind: 'step', repoPath: ctx.repoPath, step: ended });
+  const name = step.index === 0 ? 'planning' : `merge step ${step.index}`;
+  const parts = [
+    ...(step.startupMs !== undefined ? [`agent up after ${step.startupMs} ms`] : []),
+    `${formatBytes(step.inputBytes)} in`,
+    ...(step.outputBytes !== undefined ? [`${formatBytes(step.outputBytes)} out`] : []),
+    step.model ?? "the agent's default model",
+  ];
+  const detail = step.detail ? `: ${step.detail}` : '';
+  perfLine('steps', `memory compact ${path.basename(ctx.repoPath)} ${name}: ${step.state} after ${step.durationMs ?? 0} ms (${parts.join(', ')})${detail}`);
+}
+
+/** A model call about to start, reported as running. */
+function startStep(ctx: RunContext, index: number, label: string, systemPrompt: string, userMessage: string): MemoryCompactionStep {
+  const step: MemoryCompactionStep = {
+    index,
+    label,
+    state: 'running',
+    model: ctx.model,
+    systemPrompt,
+    userMessage,
+    startedAt: Date.now(),
+    inputBytes: Buffer.byteLength(systemPrompt, 'utf-8') + Buffer.byteLength(userMessage, 'utf-8'),
+  };
+  ctx.running.add(step);
+  reportStep(ctx, step);
+  return step;
+}
+
+function endStep(ctx: RunContext, step: MemoryCompactionStep, state: MemoryCompactionStep['state'], detail?: string): void {
+  if (!ctx.running.delete(step)) return;
+  step.state = state;
+  if (detail) step.detail = detail;
+  reportStep(ctx, step);
+}
+
+/** One model call with its own timeout, which the run's Cancel also aborts:
+ *  on `prepared`, an agent started earlier with the step's system prompt,
+ *  else a fresh one. Fills in the step's timings, reply size and the model
+ *  the agent says it answered with. */
+async function callModel(ctx: RunContext, step: MemoryCompactionStep, prepared?: PreparedText): Promise<CallOutcome> {
+  if (ctx.run.signal.aborted) {
+    prepared?.close();
+    return { cancelled: true };
+  }
   const call = new AbortController();
   const onCancel = () => call.abort();
-  run.signal.addEventListener('abort', onCancel);
+  ctx.run.signal.addEventListener('abort', onCancel);
   let timedOut = false;
+  const timeoutMs = compactTimeoutSeconds() * 1000;
   const timeout = setTimeout(() => {
     timedOut = true;
     call.abort();
-  }, compactTimeoutSeconds() * 1000);
+  }, timeoutMs);
+  const start = performance.now();
+  const sendOptions = {
+    abortSignal: call.signal,
+    // The adapter's own limit (ACP: 3 minutes) would cut this one short.
+    timeoutMs,
+    onStarted: () => { step.startupMs ??= Math.round(performance.now() - start); },
+    onModel: (model: string | null) => { step.model = model; },
+  };
 
   try {
-    // runCompaction checks generateText before any call
-    const text = await adapter.generateText!(systemPrompt, userMessage, {
-      cwd,
-      abortSignal: call.signal,
-      model: backgroundModelFor(adapter),
-    });
-    if (run.signal.aborted) return { cancelled: true };
+    const text = prepared
+      ? await prepared.send(step.userMessage, sendOptions)
+      // runCompaction checks generateText before any call
+      : await ctx.adapter.generateText!(step.systemPrompt, step.userMessage, {
+        cwd: ctx.cwd,
+        ...(ctx.model ? { model: ctx.model } : {}),
+        ...sendOptions,
+      });
+    step.outputBytes = Buffer.byteLength(text, 'utf-8');
+    if (ctx.run.signal.aborted) return { cancelled: true };
     return { text };
   } catch (err) {
     if (timedOut) return { timedOut: true };
-    if (run.signal.aborted) return { cancelled: true };
+    if (ctx.run.signal.aborted) return { cancelled: true };
     return { failed: err instanceof Error ? err.message : String(err) };
   } finally {
+    step.durationMs = Math.round(performance.now() - start);
     clearTimeout(timeout);
-    run.signal.removeEventListener('abort', onCancel);
+    ctx.run.signal.removeEventListener('abort', onCancel);
   }
 }
 
 // ─── Public API ───
 
 /**
+ * What a run would use, for the dialog shown before it starts: the agent,
+ * the model and the planning prompt as it would be sent now, with its digest
+ * for the run to check. The merge prompts are built from the plan's reply,
+ * so they show while the run goes.
+ */
+export async function previewCompaction(opts: { repoPath: string; adapterType?: string }): Promise<MemoryCompactionPreview> {
+  const adapter = backgroundAgentFor(opts.adapterType);
+  const { planned, contents } = await readCompactable(opts.repoPath);
+  const plan = planned.length > 0 ? { systemPrompt: buildPlanPrompt(planned, contents), userMessage: PLAN_USER_MESSAGE } : null;
+  const preview: MemoryCompactionPreview = {
+    agentId: adapter?.id ?? opts.adapterType ?? '',
+    agentName: adapter?.displayName ?? opts.adapterType ?? '',
+    model: adapter ? (backgroundModelFor(adapter) ?? null) : null,
+    fileCount: planned.length,
+    totalBytes: totalBytes(contents),
+    maxGroups: MAX_GROUPS_PER_RUN,
+    parallelMerges: MAX_PARALLEL_MERGES,
+    plan,
+    planDigest: plan ? planDigest(plan.systemPrompt, plan.userMessage) : null,
+  };
+  if (!adapter) preview.unavailable = `The agent "${opts.adapterType}" isn't available any more.`;
+  else if (!adapter.generateText) preview.unavailable = `${adapter.displayName} can't run compaction.`;
+  return preview;
+}
+
+/**
  * Compact one project's memory: archive expired thread notes, plan from every
  * file's index line and opening text, add missing descriptions, then merge up
- * to MAX_GROUPS_PER_RUN groups of overlapping files, one model call each.
- * Runs only when asked (the Memory panel's Compact button).
+ * to MAX_GROUPS_PER_RUN groups of overlapping files, one model call each,
+ * MAX_PARALLEL_MERGES at a time. Runs only when asked (the Memory panel's
+ * Compact button, after its confirm dialog).
  */
 export async function compactMemory(opts: CompactOptions): Promise<CompactionStatus> {
   const { repoPath } = opts;
@@ -793,8 +933,8 @@ export async function compactMemory(opts: CompactOptions): Promise<CompactionSta
   const abortController = new AbortController();
   activeControllers.set(repoPath, abortController);
 
-  const emitStage = (stage: CompactionStage, step?: number, total?: number) => {
-    emitEvent({ kind: 'stage', repoPath, stage, ...(step !== undefined ? { step, total } : {}) });
+  const emitStage = (stage: CompactionStage, done?: number, total?: number) => {
+    emitEvent({ kind: 'stage', repoPath, stage, ...(done !== undefined ? { done, total } : {}) });
   };
 
   let status: CompactionStatus;
@@ -815,10 +955,20 @@ export async function compactMemory(opts: CompactOptions): Promise<CompactionSta
 async function runCompaction(
   opts: CompactOptions,
   run: AbortController,
-  emitStage: (stage: CompactionStage, step?: number, total?: number) => void,
+  emitStage: (stage: CompactionStage, done?: number, total?: number) => void,
 ): Promise<CompactionStatus> {
   const { repoPath, adapterType } = opts;
   const cwd = opts.cwd ?? repoPath;
+  const runStart = performance.now();
+
+  // The planning prompt the confirm dialog showed is the only one sent:
+  // when memory has changed since, nothing runs and the dialog shows the new one.
+  const { planned, contents } = await readCompactable(repoPath);
+  const planPrompt = planned.length > 0 ? buildPlanPrompt(planned, contents) : null;
+  if (opts.planDigest !== undefined && (planPrompt === null || planDigest(planPrompt, PLAN_USER_MESSAGE) !== opts.planDigest)) {
+    logger.info(`[memory-compact] Memory changed since the preview for ${repoPath}; nothing sent`);
+    return { compacted: false, previewOutdated: true, skippedReason: 'memory changed since the preview', filesChanged: [] };
+  }
 
   emitStage('pruning');
   const filesChanged = expireSessionNotes(repoPath);
@@ -834,160 +984,233 @@ async function runCompaction(
     return { compacted: false, skippedReason: 'adapter cannot generate text', filesChanged };
   }
 
-  const entries = memory.listMemoryFiles(repoPath)
-    .filter(e => isAllowedCompactionPath(e.relativePath))
-    .sort(memory.byIndexOrder);
-  const contents: Record<string, string> = {};
-  for (const e of entries) {
-    const content = memory.readMemoryFile(repoPath, e.relativePath);
-    if (content) contents[e.relativePath] = content;
-  }
-  const planned = entries.filter(e => e.relativePath in contents);
-  if (planned.length === 0) {
+  if (planPrompt === null) {
     return { compacted: false, skippedReason: 'no memory files', filesChanged };
   }
 
+  const ctx: RunContext = { repoPath, cwd, adapter, model: opts.model || backgroundModelFor(adapter) || null, run, running: new Set() };
   const timeoutSeconds = compactTimeoutSeconds();
-  logger.info(`[memory-compact] Planning compaction for ${repoPath} (${planned.length} files, ${totalBytes(contents)} bytes)`);
+  logger.info(`[memory-compact] Planning compaction for ${repoPath} (${planned.length} files, ${totalBytes(contents)} bytes, model ${ctx.model ?? "the agent's default"})`);
 
-  emitStage('planning');
-  const planReply = await callModel(adapter, buildPlanPrompt(planned, contents), 'Plan the clean-up. Respond with JSON only.', cwd, run);
-  if ('cancelled' in planReply) return { compacted: false, skippedReason: 'cancelled', filesChanged };
-  if ('timedOut' in planReply) {
-    logger.warn(`[memory-compact] Planning timed out after ${timeoutSeconds}s for ${repoPath}`);
-    return { compacted: false, error: `planning timed out after ${timeoutSeconds}s`, filesChanged };
-  }
-  if ('failed' in planReply) {
-    logger.error(`[memory-compact] Planning failed for ${repoPath}: ${planReply.failed}`);
-    return { compacted: false, error: planReply.failed, filesChanged };
+  // Merge agents start now, so their startup overlaps planning: one for each
+  // merge step that can run at once. Planning decides how many are used.
+  const warm: PreparedText[] = [];
+  const prepareMerge = (): PreparedText | undefined =>
+    adapter.prepareText?.(MERGE_SYSTEM_PROMPT, { cwd, ...(ctx.model ? { model: ctx.model } : {}) });
+  for (let i = 0; i < MAX_PARALLEL_MERGES; i++) {
+    const prepared = prepareMerge();
+    if (prepared) warm.push(prepared);
   }
 
-  let plan: z.infer<typeof CompactionPlanSchema>;
   try {
-    plan = CompactionPlanSchema.parse(parseJson(planReply.text));
-  } catch (err) {
-    logger.warn(`[memory-compact] Could not parse compaction plan: ${err}`);
-    return { compacted: false, skippedReason: 'unparseable plan', filesChanged };
-  }
-  const { groups, descriptions } = resolvePlan(plan, planned, contents);
-  if (groups.length === 0 && descriptions.length === 0) {
-    return { compacted: false, skippedReason: 'nothing to merge or describe', filesChanged };
+    return await planAndMerge();
+  } finally {
+    for (const prepared of warm.splice(0)) prepared.close();
+    for (const step of [...ctx.running]) endStep(ctx, step, 'failed', 'stopped by an unexpected error');
   }
 
-  // The model calls take minutes, and other threads' auto-saves keep writing
-  // meanwhile, so every write starts from the file as it is on disk now, and
-  // the snapshot Undo restores is taken just before the first write.
-  const read = (p: string) => memory.readMemoryFile(repoPath, p);
-  let backupId: string | undefined;
-  let backedUp = false;
-  const backUp = () => {
-    if (backedUp) return;
-    backedUp = true;
-    const current: Record<string, string> = {};
-    for (const e of memory.listMemoryFiles(repoPath)) {
-      if (!isAllowedCompactionPath(e.relativePath)) continue;
-      const content = read(e.relativePath);
-      if (content) current[e.relativePath] = content;
+  async function planAndMerge(): Promise<CompactionStatus> {
+    emitStage('planning');
+    const planStep = startStep(ctx, 0, 'Planning', planPrompt!, PLAN_USER_MESSAGE);
+    const planReply = await callModel(ctx, planStep);
+    if ('cancelled' in planReply) {
+      endStep(ctx, planStep, 'cancelled');
+      return { compacted: false, skippedReason: 'cancelled', filesChanged };
     }
-    backupId = backupMemory(repoPath, current) ?? undefined;
-  };
+    if ('timedOut' in planReply) {
+      logger.warn(`[memory-compact] Planning timed out after ${timeoutSeconds}s for ${repoPath}`);
+      endStep(ctx, planStep, 'timed out', `no reply within ${timeoutSeconds}s`);
+      return { compacted: false, error: `planning timed out after ${timeoutSeconds}s`, filesChanged };
+    }
+    if ('failed' in planReply) {
+      logger.error(`[memory-compact] Planning failed for ${repoPath}: ${planReply.failed}`);
+      endStep(ctx, planStep, 'failed', planReply.failed);
+      return { compacted: false, error: planReply.failed, filesChanged };
+    }
 
-  const changed = new Set<string>();
-  const changes: CompactionChange[] = [];
-
-  let descriptionsAdded = 0;
-  const titles = new Map(planned.map(e => [e.relativePath, e.title]));
-  for (const { path: p, description } of descriptions) {
-    const current = read(p);
-    if (current === null) continue;
-    const next = memory.withDescription(current, description, titles.get(p) ?? p);
-    if (next === current) continue;
-    backUp();
+    let plan: z.infer<typeof CompactionPlanSchema>;
     try {
-      memory.writeMemoryFile(repoPath, p, next);
-      changed.add(p);
-      descriptionsAdded++;
+      plan = CompactionPlanSchema.parse(parseJson(planReply.text));
     } catch (err) {
-      logger.warn(`[memory-compact] Failed to add a description to ${p}: ${err}`);
+      logger.warn(`[memory-compact] Could not parse compaction plan: ${err}`);
+      endStep(ctx, planStep, 'rejected', 'the reply was not a plan Grove could read');
+      return { compacted: false, skippedReason: 'unparseable plan', filesChanged };
     }
-  }
+    const { groups, descriptions } = resolvePlan(plan, planned, contents);
+    endStep(ctx, planStep, 'done', `${groups.length} ${groups.length === 1 ? 'group' : 'groups'} to merge, ${descriptions.length} ${descriptions.length === 1 ? 'description' : 'descriptions'} to add`);
 
-  const toRun = groups.slice(0, MAX_GROUPS_PER_RUN);
-  let finished = 0;
-  let rejected = 0;
-  let error: string | undefined;
-  let cancelled = false;
-
-  for (const [i, group] of toRun.entries()) {
-    emitStage('merging', i + 1, toRun.length);
-    const shown: Record<string, string> = {};
-    for (const p of group.paths) {
-      const content = read(p);
-      if (content !== null) shown[p] = content;
+    const toRun = groups.slice(0, MAX_GROUPS_PER_RUN);
+    // Agents started for merge steps the plan doesn't need end now.
+    for (const prepared of warm.splice(toRun.length)) prepared.close();
+    if (groups.length === 0 && descriptions.length === 0) {
+      return { compacted: false, skippedReason: 'nothing to merge or describe', filesChanged };
     }
-    if (Object.keys(shown).length === 0) {
+
+    // The model calls take minutes, and other threads' auto-saves keep writing
+    // meanwhile, so every write starts from the file as it is on disk now, and
+    // the snapshot Undo restores is taken just before the first write.
+    const read = (p: string) => memory.readMemoryFile(repoPath, p);
+    let backupId: string | undefined;
+    let backedUp = false;
+    const backUp = () => {
+      if (backedUp) return;
+      backedUp = true;
+      const current: Record<string, string> = {};
+      for (const e of memory.listMemoryFiles(repoPath)) {
+        if (!isAllowedCompactionPath(e.relativePath)) continue;
+        const content = read(e.relativePath);
+        if (content) current[e.relativePath] = content;
+      }
+      backupId = backupMemory(repoPath, current) ?? undefined;
+    };
+
+    const changed = new Set<string>();
+    const changes: CompactionChange[] = [];
+
+    let descriptionsAdded = 0;
+    const titles = new Map(planned.map(e => [e.relativePath, e.title]));
+    for (const { path: p, description } of descriptions) {
+      const current = read(p);
+      if (current === null) continue;
+      const next = memory.withDescription(current, description, titles.get(p) ?? p);
+      if (next === current) continue;
+      backUp();
+      try {
+        memory.writeMemoryFile(repoPath, p, next);
+        changed.add(p);
+        descriptionsAdded++;
+      } catch (err) {
+        logger.warn(`[memory-compact] Failed to add a description to ${p}: ${err}`);
+      }
+    }
+
+    let finished = 0;
+    let rejected = 0;
+    let error: string | undefined;
+    let cancelled = false;
+    /** Set when a step fails or times out: steps already running finish, but
+     *  no new one starts, as the next would most likely fail the same way. */
+    let stopped = false;
+    let next = 0;
+
+    /** A started agent for the next merge step, if any. While groups wait to
+     *  start, one more is kept starting, so it's up when a step frees a slot. */
+    const takeWarm = (): PreparedText | undefined => {
+      const prepared = warm.shift();
+      if (prepared && warm.length === 0 && next < toRun.length && !stopped && !run.signal.aborted) {
+        const spare = prepareMerge();
+        if (spare) warm.push(spare);
+      }
+      return prepared;
+    };
+
+    // Groups never share a file, so their steps run side by side. Each one's
+    // reply is checked and written in one go, against memory as it is then:
+    // a file another step just created counts as one this step wasn't shown.
+    async function mergeStep(i: number, group: CompactionGroup): Promise<void> {
+      const shown: Record<string, string> = {};
+      for (const p of group.paths) {
+        const content = read(p);
+        if (content !== null) shown[p] = content;
+      }
+      if (Object.keys(shown).length === 0) {
+        finished++;
+        return;
+      }
+      const step = startStep(ctx, i + 1, `Merge ${i + 1}: ${Object.keys(shown).join(', ')}`, MERGE_SYSTEM_PROMPT, buildMergeMessage(shown, group.reason));
+      const reply = await callModel(ctx, step, takeWarm());
+      if ('cancelled' in reply) {
+        cancelled = true;
+        endStep(ctx, step, 'cancelled');
+        return;
+      }
+      if ('timedOut' in reply) {
+        logger.warn(`[memory-compact] Merge step ${i + 1} timed out after ${timeoutSeconds}s for ${repoPath}`);
+        error ??= `merge step ${i + 1} timed out after ${timeoutSeconds}s`;
+        stopped = true;
+        endStep(ctx, step, 'timed out', `no reply within ${timeoutSeconds}s`);
+        return;
+      }
+      if ('failed' in reply) {
+        logger.error(`[memory-compact] Merge step ${i + 1} failed for ${repoPath}: ${reply.failed}`);
+        error ??= `merge step ${i + 1} failed: ${reply.failed}`;
+        stopped = true;
+        endStep(ctx, step, 'failed', reply.failed);
+        return;
+      }
       finished++;
-      continue;
-    }
-    const reply = await callModel(adapter, buildMergePrompt(shown, group.reason), 'Compact the memory files above. Respond with JSON only.', cwd, run);
-    if ('cancelled' in reply) {
-      cancelled = true;
-      break;
-    }
-    if ('timedOut' in reply) {
-      logger.warn(`[memory-compact] Merge step ${i + 1} timed out after ${timeoutSeconds}s for ${repoPath}`);
-      error = `merge step ${i + 1} timed out after ${timeoutSeconds}s`;
-      break;
-    }
-    if ('failed' in reply) {
-      logger.error(`[memory-compact] Merge step ${i + 1} failed for ${repoPath}: ${reply.failed}`);
-      error = `merge step ${i + 1} failed: ${reply.failed}`;
-      break;
-    }
-    finished++;
 
-    let result: CompactionResult;
-    try {
-      result = CompactionResultSchema.parse(parseJson(reply.text));
-    } catch (err) {
-      logger.warn(`[memory-compact] Could not parse merge step ${i + 1}: ${err}`);
-      rejected++;
-      continue;
-    }
-    const elsewhere = new Set(
-      memory.listMemoryFiles(repoPath).map(e => e.relativePath).filter(p => !(p in shown)),
-    );
-    // A file changed while the model worked: its merge would undo that change.
-    const moved = Object.keys(shown).find(p => read(p) !== shown[p]);
-    const invalid = moved ? `${moved} changed during the step` : validateCompactionResult(result, shown, elsewhere);
-    if (invalid) {
-      logger.warn(`[memory-compact] Rejected merge step ${i + 1}: ${invalid}`);
-      rejected++;
-      continue;
+      let result: CompactionResult;
+      try {
+        result = CompactionResultSchema.parse(parseJson(reply.text));
+      } catch (err) {
+        logger.warn(`[memory-compact] Could not parse merge step ${i + 1}: ${err}`);
+        rejected++;
+        endStep(ctx, step, 'rejected', 'the reply was not JSON Grove could read');
+        return;
+      }
+      const elsewhere = new Set(
+        memory.listMemoryFiles(repoPath).map(e => e.relativePath).filter(p => !(p in shown)),
+      );
+      // A file changed while the model worked: its merge would undo that change.
+      const moved = Object.keys(shown).find(p => read(p) !== shown[p]);
+      const invalid = moved ? `${moved} changed during the step` : validateCompactionResult(result, shown, elsewhere);
+      if (invalid) {
+        logger.warn(`[memory-compact] Rejected merge step ${i + 1}: ${invalid}`);
+        rejected++;
+        endStep(ctx, step, 'rejected', invalid);
+        return;
+      }
+
+      backUp();
+      const written = applyCompaction(repoPath, result);
+      for (const p of written) changed.add(p);
+      for (const f of result.files) {
+        if (f.action === 'keep') continue;
+        changes.push({ action: f.action, path: f.path, reason: f.reason });
+      }
+      endStep(ctx, step, 'done', `${written.length} ${written.length === 1 ? 'file' : 'files'} changed`);
     }
 
-    backUp();
-    for (const p of applyCompaction(repoPath, result)) changed.add(p);
-    for (const f of result.files) {
-      if (f.action === 'keep') continue;
-      changes.push({ action: f.action, path: f.path, reason: f.reason });
+    let endedSteps = 0;
+    async function worker(): Promise<void> {
+      while (next < toRun.length && !stopped && !cancelled && !run.signal.aborted) {
+        const i = next++;
+        try {
+          await mergeStep(i, toRun[i]);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          logger.error(`[memory-compact] Merge step ${i + 1} failed for ${repoPath}: ${message}`);
+          error ??= `merge step ${i + 1} failed: ${message}`;
+          stopped = true;
+          const step = [...ctx.running].find(s => s.index === i + 1);
+          if (step) endStep(ctx, step, 'failed', message);
+        }
+        emitStage('merging', ++endedSteps, toRun.length);
+      }
     }
+    if (toRun.length > 0) {
+      emitStage('merging', 0, toRun.length);
+      await Promise.all(Array.from({ length: Math.min(MAX_PARALLEL_MERGES, toRun.length) }, worker));
+    }
+
+    const remainingGroups = groups.length - finished;
+    if (changed.size > 0) setLastCompactedAt(repoPath, Date.now(), changed.size);
+    const runMs = Math.round(performance.now() - runStart);
+    logger.info(`[memory-compact] Compacted ${repoPath} in ${(runMs / 1000).toFixed(1)}s: ${changed.size} files changed, ${descriptionsAdded} descriptions added, ${finished} of ${groups.length} groups merged, ${rejected} rejected`);
+    perfLine('steps', `memory compact ${path.basename(repoPath)}: finished after ${runMs} ms (${finished} of ${groups.length} groups merged, up to ${MAX_PARALLEL_MERGES} at once)`);
+
+    const status: CompactionStatus = {
+      compacted: changed.size > 0,
+      filesChanged: [...filesChanged, ...changed],
+      changes,
+      descriptionsAdded,
+      remainingGroups,
+      backupId: changed.size > 0 ? backupId : undefined,
+    };
+    if (error) status.error = error;
+    if (cancelled) status.skippedReason = 'cancelled';
+    else if (changed.size === 0 && rejected > 0) status.skippedReason = `${rejected} merge ${rejected === 1 ? 'result was' : 'results were'} rejected`;
+    return status;
   }
-
-  const remainingGroups = groups.length - finished;
-  if (changed.size > 0) setLastCompactedAt(repoPath, Date.now(), changed.size);
-  logger.info(`[memory-compact] Compacted ${repoPath}: ${changed.size} files changed, ${descriptionsAdded} descriptions added, ${finished} of ${groups.length} groups merged, ${rejected} rejected`);
-
-  const status: CompactionStatus = {
-    compacted: changed.size > 0,
-    filesChanged: [...filesChanged, ...changed],
-    changes,
-    descriptionsAdded,
-    remainingGroups,
-    backupId: changed.size > 0 ? backupId : undefined,
-  };
-  if (error) status.error = error;
-  if (cancelled) status.skippedReason = 'cancelled';
-  else if (changed.size === 0 && rejected > 0) status.skippedReason = `${rejected} merge ${rejected === 1 ? 'result was' : 'results were'} rejected`;
-  return status;
 }

@@ -71,7 +71,7 @@ async function prompt(params) {
   const sid = params.sessionId;
   const text = params.prompt.find((b) => b.type === 'text')?.text ?? '';
   const cwd = process.cwd();
-  if (text === 'wait') {
+  if (text === 'wait' || text.endsWith('\n\nwait')) {
     update(sid, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Working' } });
     update(sid, { sessionUpdate: 'tool_call', toolCallId: 'slow', kind: 'execute', title: 'Sleep', status: 'in_progress', rawInput: { command: 'sleep 100' } });
     await new Promise((resolve) => { cancelRequested = resolve; });
