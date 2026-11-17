@@ -13,7 +13,7 @@ import { store as sessionStore } from './sessions.svelte.js';
 import { settingsStore } from './settings.svelte.js';
 import { previewStore } from './preview.svelte.js';
 import { prerequisitesStore } from './prerequisites.svelte.js';
-import { base64Size, type AttachedFile } from '../lib/file-attachments.js';
+import { base64Size, reattach, type AttachedFile } from '../lib/file-attachments.js';
 import { approvalRequest } from '../lib/tool-names.js';
 import { changesFiles, toolViewOf, toolViewSummary, type ToolView } from '../../shared/tool-view.js';
 import { liveEventsMissingFrom } from '../../shared/live-events.js';
@@ -1446,15 +1446,20 @@ class MessageStore {
    *  never double up. */
   appendToPrompt(sessionId: string, text: string, attachments?: AttachedFile[]) {
     const draft = this.getDraft(sessionId);
-    this.setDraft(sessionId, draft ? `${draft}\n${text}` : text);
+    // No text (a queued image-only prompt) adds no new line.
+    this.setDraft(sessionId, draft && text ? `${draft}\n${text}` : draft || text);
     // Attachments live only in a mounted editor; the draft can't carry them.
     this.requestPromptInsert(sessionId, text, attachments?.length ? { attachments } : {});
   }
 
-  /** Like appendToPrompt, but `text` takes the place of the prompt. */
-  replacePrompt(sessionId: string, text: string) {
+  /** Like appendToPrompt, but `text` takes the place of the prompt.
+   *  `attachments` are added to the ones already in the box, and kept in the
+   *  store too for a box that isn't showing, which reads them when it mounts.
+   *  One request for both: the box only sees the latest. */
+  replacePrompt(sessionId: string, text: string, attachments: AttachedFile[] = []) {
     this.setDraft(sessionId, text);
-    this.requestPromptInsert(sessionId, text, { replace: true });
+    if (attachments.length > 0) this.setAttachments(sessionId, [...this.getAttachments(sessionId), ...attachments]);
+    this.requestPromptInsert(sessionId, text, { replace: true, ...(attachments.length > 0 ? { attachments } : {}) });
   }
 
   private flushStreamingText(sessionId: string) {
@@ -2506,8 +2511,18 @@ class MessageStore {
       this.setMessagesForMutation(sessionId, msgs.slice(0, rewindIdx));
       // Live, the prompt box may be showing: it keeps its own copy of the
       // text, so tell it too. A replayed rewind is old news: only the draft.
-      if (this._replayBuffer === null && this.sideEffects) this.replacePrompt(sessionId, rewindMsg.text);
-      else this.setDraft(sessionId, rewindMsg.text);
+      if (this._replayBuffer === null && this.sideEffects) {
+        // With its attachments, once the saved ones are read back. A
+        // message without any goes back at once, as before.
+        if (rewindMsg.files?.length || rewindMsg.images?.length || rewindMsg.attachments?.length) {
+          void reattach(rewindMsg, (file) => window.groveBench.readAttachedFile(sessionId, file))
+            .then((attachments) => this.replacePrompt(sessionId, rewindMsg.text, attachments));
+        } else {
+          this.replacePrompt(sessionId, rewindMsg.text);
+        }
+      } else {
+        this.setDraft(sessionId, rewindMsg.text);
+      }
       this.setActiveTab(sessionId, 'activity');
     } else if (this._replayBuffer === null && this.sideEffects) {
       // A live rewind to a message in a history page not loaded yet: every

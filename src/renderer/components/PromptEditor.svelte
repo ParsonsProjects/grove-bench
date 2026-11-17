@@ -74,7 +74,8 @@
     const req = messageStore.promptInsertBySession[sessionId];
     if (!req || req.nonce === lastInsertNonce) return;
     lastInsertNonce = req.nonce;
-    value = req.replace ? req.text : value ? `${value}\n${req.text}` : req.text;
+    // An insert with no text (a queued image-only prompt) adds no new line.
+    value = req.replace ? req.text : value && req.text ? `${value}\n${req.text}` : value || req.text;
     if (req.attachments?.length) attachedFiles = [...attachedFiles, ...req.attachments];
     void tick().then(() => { textarea?.focus(); autoResize(); });
   });
@@ -143,7 +144,10 @@
   let suggestion = $derived(
     settingsStore.current.promptSuggestions && !isRunning ? messageStore.getPromptSuggestion(sessionId) : null,
   );
-  let showSuggestion = $derived(!!suggestion && !value);
+  // Not over an attachment: Enter would send that, not the suggestion.
+  let showSuggestion = $derived(!!suggestion && !value && attachedFiles.length === 0);
+  // Attachments alone (an image with nothing typed) are a message too.
+  let canSend = $derived(!!value.trim() || attachedFiles.length > 0);
 
   // Size the empty box to the suggestion, which may wrap, and back to one
   // line when it goes. Chromium counts a placeholder in scrollHeight. Keyed
@@ -158,9 +162,15 @@
   });
 
   function handleSubmit() {
+    if (!canSend) return;
     const text = value.trim();
-    // Attachments alone (an image with nothing typed) are a message too.
-    if (!text && attachedFiles.length === 0) return;
+
+    // A command can't take attachments, and left in the box they would go
+    // on their own with the next Enter.
+    if (attachedFiles.length > 0 && (text.startsWith('!') || text.startsWith('/'))) {
+      showDropMessage(`A ${text.startsWith('!') ? 'shell' : 'slash'} command can't take attached files. Remove them, or send them in the next message.`, true);
+      return;
+    }
 
     // Shell command: ! prefix runs directly in terminal
     if (text.startsWith('!')) {
@@ -308,7 +318,7 @@
     // Ctrl+C with no selection clears the input (terminal-style)
     if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
       const sel = window.getSelection()?.toString() || '';
-      if (!sel && value.length > 0) {
+      if (!sel && (value.length > 0 || attachedFiles.length > 0)) {
         e.preventDefault();
         value = '';
         attachedFiles = [];
@@ -631,7 +641,7 @@
         oninput={handleInput}
         onkeydown={handleKeydown}
         onpaste={handlePaste}
-        placeholder={suggestion ?? (willQueue ? 'Message (Enter to queue, sent when the agent is free)' : 'Message (Enter to send, @ for files, / for commands, ! for shell)')}
+        placeholder={(showSuggestion ? suggestion : null) ?? (willQueue ? 'Message (Enter to queue, sent when the agent is free)' : 'Message (Enter to send, @ for files, / for commands, ! for shell)')}
         aria-keyshortcuts={showSuggestion ? 'Tab' : undefined}
         rows="1"
         class="flex-1 min-w-0 bg-card border border-input px-3 py-[7px] text-sm text-foreground
@@ -648,7 +658,7 @@
       variant="default"
       size="icon"
       onclick={handleSubmit}
-      disabled={!value.trim() && attachedFiles.length === 0}
+      disabled={!canSend}
       title={willQueue ? 'Add to the queue; sent once the agent is free' : 'Send now'}
       aria-label={willQueue ? 'Queue' : 'Send'}
     >

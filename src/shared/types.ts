@@ -1464,6 +1464,9 @@ export interface GroveBenchAPI {
   /** Open a file attached to a message (PDFs and audio in their default app),
    *  or show it in its folder for other types. False when it's gone. */
   openAttachedFile(sessionId: string, file: string): Promise<boolean>;
+  /** A saved attachment's content (base64), to attach it again. Null when
+   *  it's gone. */
+  readAttachedFile(sessionId: string, file: string): Promise<string | null>;
   /** Open a file in the conversation's worktree that the agent made or
    *  linked to (main/worktree-files.ts). */
   openWorktreeFile(sessionId: string, filePath: string): Promise<OpenWorktreeFileResult>;
@@ -2354,6 +2357,7 @@ export const IPC = {
   AGENT_EVENT: 'agent:event',          // agent:event:{sessionId}
   AGENT_SEND: 'agent:send',
   ATTACHMENT_OPEN: 'attachment:open',
+  ATTACHMENT_READ: 'attachment:read',
   WORKTREE_FILE_OPEN: 'worktree:openFile',
   AGENT_PERMISSION: 'agent:permission',
   AGENT_HISTORY: 'agent:history',

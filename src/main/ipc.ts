@@ -22,7 +22,7 @@ import { prsForBranches, prCreate, prReviewComments, prJobLog, prRerunFailed, gh
 import { tempBranchName, isTempBranch, generateBranchName } from './branch-name.js';
 import { displayTextFromSent } from '../shared/prompt-text.js';
 import { EMPTY_THREAD_ITEMS, threadItems } from '../shared/thread-items.js';
-import { openAttachedFile, removeAttachments } from './attachments.js';
+import { openAttachedFile, readAttachedFile, removeAttachments } from './attachments.js';
 import { openWorktreeFile } from './worktree-files.js';
 import { generateCommitMessage } from './commit-message.js';
 import { exportFileName, threadJson, threadMarkdown, type ThreadExportInfo } from './thread-export.js';
@@ -1070,8 +1070,9 @@ export function registerHandlers() {
     };
     sessionManager.sendMessage(sessionId, content, images, files).then(
       (ok) => {
+        if (ok === 'nothing-to-send') notDelivered('Message not sent: its attachments were left out and nothing was typed.');
         // Session is dead or never connected
-        if (!ok) notDelivered('Message not delivered: the agent is not connected. Send it again once the thread shows as connected.');
+        else if (!ok) notDelivered('Message not delivered: the agent is not connected. Send it again once the thread shows as connected.');
       },
       (err) => {
         logger.warn(`[AGENT_SEND] session=${sessionId} failed:`, err);
@@ -1084,6 +1085,9 @@ export function registerHandlers() {
   // reach outside the conversation's attachments folder.
   ipcMain.handle(IPC.ATTACHMENT_OPEN, (_event, sessionId: unknown, file: unknown) =>
     typeof sessionId === 'string' && typeof file === 'string' ? openAttachedFile(sessionId, file) : false);
+  // Checked the same way: only a stored name in the conversation's own folder.
+  ipcMain.handle(IPC.ATTACHMENT_READ, (_event, sessionId: unknown, file: unknown) =>
+    typeof sessionId === 'string' && typeof file === 'string' ? readAttachedFile(sessionId, file) : null);
 
   ipcMain.handle(IPC.WORKTREE_FILE_OPEN, async (_event, sessionId: unknown, filePath: unknown): Promise<OpenWorktreeFileResult> => {
     const worktree = typeof sessionId === 'string' ? worktreeManager.getWorktree(sessionId) : undefined;

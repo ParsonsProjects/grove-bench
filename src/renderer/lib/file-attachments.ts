@@ -1,6 +1,7 @@
-import { knownMediaType } from '../../shared/attachments.js';
+import { knownMediaType, worktreeImageType } from '../../shared/attachments.js';
 import { buildContentBlock } from '../../shared/prompt-text.js';
 import type { FileAttachment, ImageAttachment, ImageMediaType } from '../../shared/types.js';
+import type { ChatUserMessage } from '../stores/messages.svelte.js';
 
 // ─── File attachment constants and utilities ───
 
@@ -234,6 +235,32 @@ export function attachmentPayload(attached: AttachedFile[]): {
     }
   }
   return { tags, images, files };
+}
+
+/**
+ * A sent message's attachments as the prompt box holds them, to attach them
+ * again (a rewind puts them back with its text). Saved ones are read back
+ * with `read`. One that is gone, or that main never saved, is left out.
+ */
+export async function reattach(
+  msg: Pick<ChatUserMessage, 'files' | 'images' | 'attachments'>,
+  read: (file: string) => Promise<string | null>,
+): Promise<AttachedFile[]> {
+  const readSafely = (file: string) => read(file).catch(() => null);
+  const texts: AttachedFile[] = (msg.files ?? []).map((f) => ({ name: f.path, content: f.content, type: 'text' }));
+  const images = await Promise.all((msg.images ?? []).map(async (img): Promise<AttachedFile | null> => {
+    if ('dataUrl' in img) return { name: img.name, dataUrl: img.dataUrl, type: 'image' };
+    if (!('file' in img)) return null;
+    const type = worktreeImageType(img.file);
+    const data = type ? await readSafely(img.file) : null;
+    return data ? { name: img.name ?? img.file, dataUrl: `data:${type};base64,${data}`, type: 'image' } : null;
+  }));
+  const others = await Promise.all((msg.attachments ?? []).map(async (f): Promise<AttachedFile | null> => {
+    const data = f.file ? await readSafely(f.file) : null;
+    if (!data) return null;
+    return { name: f.name, dataUrl: `data:${f.mediaType || 'application/octet-stream'};base64,${data}`, mediaType: f.mediaType, size: f.size, type: 'file' };
+  }));
+  return [...texts, ...images, ...others].filter((f): f is AttachedFile => f !== null);
 }
 
 /** About how many bytes an attachment takes, toward MAX_TOTAL_SIZE. */

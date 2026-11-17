@@ -96,6 +96,20 @@ describe('PromptEditor: rewind', () => {
     expect(el.value).toBe('try again');
     expect(messageStore.getDraft(SID)).toBe('try again');
   });
+
+  it('puts the rewound message\'s attachments back too, read from their saved copies', async () => {
+    const file = `${'a'.repeat(32)}.png`;
+    mockGroveBench.readAttachedFile.mockResolvedValueOnce('AAAA');
+    const { container, findByText } = render(PromptEditor, { sessionId: SID });
+
+    messageStore.ingestEvent(SID, { type: 'user_message', text: '', uuid: 'cp-1', images: [{ file, name: 'shot.png' }] });
+    messageStore.ingestEvent(SID, { type: 'rewind', toMessageId: 'cp-1' });
+
+    expect(await findByText('shot.png')).toBeInTheDocument();
+    expect(mockGroveBench.readAttachedFile).toHaveBeenCalledWith(SID, file);
+    expect(container.querySelector('textarea')!.value).toBe('');
+    expect(messageStore.getAttachments(SID)).toEqual([{ name: 'shot.png', dataUrl: 'data:image/png;base64,AAAA', type: 'image' }]);
+  });
 });
 
 describe('PromptEditor: editing a queued prompt', () => {
@@ -131,12 +145,33 @@ describe('PromptEditor: editing a queued prompt', () => {
     expect(getByText('notes.txt')).toBeInTheDocument();
     expect(messageStore.getQueue(SID)).toEqual([]);
   });
+
+  it('adds no new line when an image-only prompt comes back to a box with text in it', async () => {
+    messageStore.setIsRunning(SID, true);
+    messageStore.submitMessage(SID, {
+      displayText: '[shot.png]',
+      outgoing: '',
+      images: [{ name: 'shot.png', data: 'AAAA', mediaType: 'image/png' }],
+      typed: { text: '', attachments: [{ type: 'image', name: 'shot.png', dataUrl: 'data:image/png;base64,AAAA' }] },
+    });
+    const { container, getByText } = render(PromptEditor, { sessionId: SID });
+    const el = container.querySelector('textarea')!;
+    await fireEvent.input(el, { target: { value: 'hello' } });
+
+    await fireEvent.click(getByText('Edit'));
+    await tick();
+
+    expect(el.value).toBe('hello');
+    expect(messageStore.getDraft(SID)).toBe('hello');
+    expect(getByText('shot.png')).toBeInTheDocument();
+  });
 });
 
 describe('PromptEditor: attachments', () => {
   beforeEach(() => {
     messageStore.destroyAllSessions();
     messageStore.messagesBySession = { [SID]: [] };
+    mockGroveBench.sendMessage.mockClear();
   });
   afterEach(() => cleanup());
 
@@ -164,6 +199,31 @@ describe('PromptEditor: attachments', () => {
 
     expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, '', [{ name: 'shot.png', data: 'AAAA', mediaType: 'image/png' }], undefined);
     expect(send).toBeDisabled();
+  });
+
+  it.each([['/compact', 'slash'], ['!ls', 'shell']])('won\'t run %s with files attached, so they can\'t go on their own next', async (command, kind) => {
+    const { container, getByText } = render(PromptEditor, { sessionId: SID });
+    messageStore.requestPromptInsert(SID, command, { attachments: [{ type: 'image', name: 'shot.png', dataUrl: 'data:image/png;base64,AAAA' }] });
+    await tick();
+    const el = container.querySelector('textarea')!;
+
+    await fireEvent.keyDown(el, { key: 'Enter' });
+
+    expect(getByText(`A ${kind} command can't take attached files. Remove them, or send them in the next message.`)).toBeInTheDocument();
+    expect(el.value).toBe(command);
+    expect(getByText('shot.png')).toBeInTheDocument();
+    expect(mockGroveBench.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('clears a box holding only an attachment on Ctrl+C', async () => {
+    const { container, queryByText, getByRole } = render(PromptEditor, { sessionId: SID });
+    messageStore.requestPromptInsert(SID, '', { attachments: [{ type: 'image', name: 'shot.png', dataUrl: 'data:image/png;base64,AAAA' }] });
+    await tick();
+
+    await fireEvent.keyDown(container.querySelector('textarea')!, { key: 'c', ctrlKey: true });
+
+    expect(queryByText('shot.png')).not.toBeInTheDocument();
+    expect(getByRole('button', { name: 'Send' })).toBeDisabled();
   });
 });
 
@@ -239,6 +299,16 @@ describe('PromptEditor: suggested next prompt', () => {
     expect(el.placeholder).toBe('Run the tests');
     expect(el).toHaveAttribute('aria-keyshortcuts', 'Tab');
     expect(screen.getByText('Tab')).toBeInTheDocument();
+  });
+
+  it('hides the suggestion while a file is attached, as Enter would send only the file', async () => {
+    const { container } = render(PromptEditor, { sessionId: SID });
+    suggest('Run the tests');
+    messageStore.requestPromptInsert(SID, '', { attachments: [{ type: 'image', name: 'shot.png', dataUrl: 'data:image/png;base64,AAAA' }] });
+    await tick();
+
+    expect(container.querySelector('textarea')!.placeholder).toBe(DEFAULT_PLACEHOLDER);
+    expect(screen.queryByText('Tab')).not.toBeInTheDocument();
   });
 
   it('hides the hint once something is typed, and Tab is left alone', async () => {

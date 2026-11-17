@@ -55,6 +55,12 @@ export interface Draft {
   newGroupName?: string;
 }
 
+/** Whether a draft has a first message to send: something typed, or
+ *  attachments on their own. */
+function hasMessage(d: Pick<Draft, 'text' | 'attachments'>): boolean {
+  return !!d.text.trim() || d.attachments.length > 0;
+}
+
 /** A thread started for the caller (startThread): its project, first
  *  message and, optionally, agent, model, where it runs and control values
  *  (mode included). */
@@ -231,7 +237,7 @@ class DraftStore {
   discardWithUndo(): void {
     const d = this.draft;
     this.discard();
-    if (d && (d.text.trim() || d.attachments.length > 0)) this.discarded = d;
+    if (d && hasMessage(d)) this.discarded = d;
   }
 
   /** Bring back what discardWithUndo dropped, unless a new draft was opened
@@ -307,6 +313,11 @@ class DraftStore {
 
   removeAttachment(index: number): void {
     if (this.draft) this.draft.attachments = this.draft.attachments.filter((_, i) => i !== index);
+  }
+
+  /** Whether Start sends a first message along with starting the thread. */
+  get sendsMessage(): boolean {
+    return !!this.draft && hasMessage(this.draft);
   }
 
   /** Why the draft's files can't go with its first message, or null. */
@@ -535,7 +546,7 @@ class DraftStore {
       // Back to the draft, message and all, unless one with a message or
       // files has been opened since: that one is kept and the error goes in
       // a toast.
-      if (!this.draft?.text.trim() && !this.draft?.attachments.length) {
+      if (!this.draft || !hasMessage(this.draft)) {
         this.draft = draft;
         this.error = message;
         void this.loadAgentInfo();
@@ -609,8 +620,7 @@ class DraftStore {
     const text = d.text.trim();
     // Text files go in the message text; images and other files alongside it.
     const { tags, images, files } = attachmentPayload(d.attachments);
-    // Attachments alone (an image with nothing typed) are a first message too.
-    const sent = text || d.attachments.length > 0
+    const sent = hasMessage(d)
       ? {
           outgoing: buildOutgoingMessage(tags, text),
           ...(images.length > 0 ? { images } : {}),

@@ -44,6 +44,8 @@ Drag and drop files into the prompt editor, paste an image, or click the papercl
 
 One message's attachments can add up to 50 MB. Hover a file's chip to see its size. Click × to remove it before sending.
 
+You don't have to type anything: attachments on their own, such as a pasted screenshot, send as a message. Slash commands and `!` shell commands can't take attachments, so remove them first or send them in the next message. Rewinding to a message puts its attachments back in the box along with its text.
+
 ## While the Agent is Working
 
 While the agent is processing, the prompt editor shows a stop button (the red square). Click it to interrupt the agent mid-response.

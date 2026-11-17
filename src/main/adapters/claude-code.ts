@@ -284,16 +284,17 @@ export function fromSdkSyncMode(mode: string, ctx: MessageContext): PermissionMo
  * A user message as the SDK takes it: attached images as content blocks
  * ahead of the text, and a note with the path of every other attached file
  * (PDFs included), which Claude reads with its own tools. An image sent with
- * nothing typed goes without a text block: the API refuses an empty one.
+ * nothing typed goes without a text block: the API refuses an empty one
+ * (the CLI drops one itself today, but this doesn't rely on that).
  */
 export function userMessageContent(message: UserMessage): string | Array<Record<string, unknown>> {
   const files = message.files ?? [];
   const note = files.length > 0 ? attachedFilesNote(files) : '';
-  const text = note && message.text.trim() ? `${note}\n\n${message.text}` : note || message.text;
+  const text = [note, message.text].filter((part) => part.trim()).join('\n\n');
   if (!message.images?.length) return text;
   return [
     ...message.images.map((img) => ({ type: 'image', source: { type: 'base64', media_type: img.mediaType, data: img.data } })),
-    ...(text.trim() ? [{ type: 'text', text }] : []),
+    ...(text ? [{ type: 'text', text }] : []),
   ];
 }
 

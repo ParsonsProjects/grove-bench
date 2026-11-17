@@ -382,6 +382,20 @@ describe('AcpAdapter', () => {
       expect(blocks).toEqual([{ type: 'image', data: 'iVBOR', mimeType: 'image/png' }]);
     });
 
+    it('sends nothing when nothing was typed and the image was left out, and keeps the instructions for later', async () => {
+      const handle = await new AcpAdapter(def('noimage')).start(config({ appendSystemPrompt: 'Use relative paths.' }));
+      await until(handle, 'system_init');
+      handle.sendMessage({ text: '', images: [{ data: 'iVBOR', mediaType: 'image/png', name: 'shot.png' }] });
+      const failed = await until(handle, 'result');
+      expect(failed.at(-1)).toMatchObject({ isError: true, errors: [expect.stringMatching(/^Nothing was sent: .* couldn't take what was attached/)] });
+      expect(failed.some((e) => e.type === 'assistant_text')).toBe(false);
+
+      handle.sendMessage({ text: 'echo' });
+      const next = await until(handle, 'result');
+      handle.close();
+      expect((next.find((e) => e.type === 'assistant_text') as { text: string }).text).toMatch(/Use relative paths\.\|echo$/);
+    });
+
     it('says so when an image with no saved copy is left out', async () => {
       const handle = await new AcpAdapter(def('noimage')).start(config());
       await until(handle, 'system_init');

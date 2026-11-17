@@ -52,6 +52,13 @@ describe('handoffTranscript', () => {
     expect(text).not.toContain('subagent chatter');
   });
 
+  it('names what was attached for a message sent with nothing typed', () => {
+    const events: AgentEvent[] = [
+      { type: 'user_message', text: '', uuid: 'u1', images: [{ file: `${'a'.repeat(32)}.png`, name: 'shot.png' }] },
+    ];
+    expect(handoffTranscript(events, switched(true))).toContain('User: [shot.png]');
+  });
+
   it('names each agent for its own turns after an earlier switch', () => {
     const events: AgentEvent[] = [
       { type: 'user_message', text: 'one' },
