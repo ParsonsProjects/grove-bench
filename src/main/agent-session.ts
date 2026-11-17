@@ -2091,15 +2091,18 @@ class AgentSessionManager {
     // A close still shutting the agent down finishes first.
     await this.closing.get(id);
     const session = this.sessions.get(id);
+    // No note is written to Project Memory here. It used to write a short
+    // one (first message, turns, cost) to sessions/<branch>.md, which is
+    // where auto-save's richer note goes, so deleting a thread replaced that
+    // note (another thread's too, on the same branch). For a closed thread
+    // it also read and parsed its whole event log on the main process.
     if (!session) {
       // A closed conversation has no live session, but a memory auto-save may
-      // still be pending, its metadata hasn't been saved, and its checkpoint
-      // refs are still in the repository.
+      // still be pending, and its checkpoint refs are still in the repository.
       memoryAutosave.cancelAutoSave(id);
       const worktree = await worktreeManager.getWorktreeOrManifest(id).catch(() => undefined);
-      if (worktree) {
-        memoryAutosave.saveSessionMetadata(worktree.repoPath, id, this.getEventHistory(id), worktree.branch);
-        if (!worktree.noGit) await new CheckpointManager().cleanup(id, worktree.path).catch(err => {
+      if (worktree && !worktree.noGit) {
+        await new CheckpointManager().cleanup(id, worktree.path).catch(err => {
           logger.warn(`Checkpoint cleanup failed for ${id}:`, err);
         });
       }
@@ -2107,9 +2110,8 @@ class AgentSessionManager {
       return;
     }
 
-    // Cancel any pending auto-save debounce and save heuristic metadata
+    // Cancel any pending auto-save debounce
     memoryAutosave.cancelAutoSave(id);
-    memoryAutosave.saveSessionMetadata(session.repoPath, id, session.eventHistory, session.branch);
 
     await this.shutDown(session, 'Session destroyed');
 

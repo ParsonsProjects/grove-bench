@@ -2476,7 +2476,7 @@ describe('AgentSessionManager.closeSession()', () => {
       .toBeLessThan(vi.mocked(handle.close).mock.invocationCallOrder[0]);
   });
 
-  it('destroying a closed conversation cancels its pending auto-save and saves its metadata', async () => {
+  it('destroying a closed conversation cancels its pending auto-save, without writing a memory note or reading its log', async () => {
     await startSession('test-close-memory');
     await sessionManager.closeSession('test-close-memory');
     const { worktreeManager } = await import('./worktree-manager.js');
@@ -2486,11 +2486,27 @@ describe('AgentSessionManager.closeSession()', () => {
     const autosave = await import('./memory-autosave.js');
     vi.mocked(autosave.cancelAutoSave).mockClear();
     vi.mocked(autosave.saveSessionMetadata).mockClear();
+    const readsLog = vi.spyOn(sessionManager, 'getEventHistory');
 
     await sessionManager.destroySession('test-close-memory');
 
     expect(autosave.cancelAutoSave).toHaveBeenCalledWith('test-close-memory');
-    expect(autosave.saveSessionMetadata).toHaveBeenCalledWith('/repo', 'test-close-memory', expect.any(Array), 'feat-x');
+    // It would replace auto-save's note for the branch (sessions/<branch>.md).
+    expect(autosave.saveSessionMetadata).not.toHaveBeenCalled();
+    expect(readsLog).not.toHaveBeenCalled();
+    readsLog.mockRestore();
+  });
+
+  it('destroying a live conversation writes no memory note either', async () => {
+    await startSession('test-live-memory');
+    const autosave = await import('./memory-autosave.js');
+    vi.mocked(autosave.cancelAutoSave).mockClear();
+    vi.mocked(autosave.saveSessionMetadata).mockClear();
+
+    await sessionManager.destroySession('test-live-memory');
+
+    expect(autosave.cancelAutoSave).toHaveBeenCalledWith('test-live-memory');
+    expect(autosave.saveSessionMetadata).not.toHaveBeenCalled();
   });
 
   it('destroying a closed conversation still removes its checkpoint refs', async () => {
