@@ -310,7 +310,7 @@ const api: Record<string, unknown> = {
     return {
       agentId: 'claude-code', agentName: 'Claude Agent', model: 'claude-haiku-4-5-20251001',
       fileCount: files.length, totalBytes: files.reduce((sum, f) => sum + f.content.length, 0),
-      maxGroups: 6, parallelMerges: 3,
+      maxGroups: 6, parallelMerges: 3, planDigest: 'demo-digest',
       plan: {
         systemPrompt: `You are planning a clean-up of a project's memory files. Each file below is shown by its path, size, title, description and opening text, not in full.\n\n## Files\n${files.map(f => `### ${f.relativePath}\ntitle: ${f.title}`).join('\n\n')}\n\n## Instructions\n1. Find groups of files that overlap...`,
         userMessage: 'Plan the clean-up. Respond with JSON only.',

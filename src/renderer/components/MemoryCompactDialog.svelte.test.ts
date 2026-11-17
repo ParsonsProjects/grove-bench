@@ -17,6 +17,7 @@ const preview = (extra: Partial<MemoryCompactionPreview> = {}): MemoryCompaction
   maxGroups: 6,
   parallelMerges: 3,
   plan: { systemPrompt: 'You are planning a clean-up of THE FILES', userMessage: 'Plan the clean-up. Respond with JSON only.' },
+  planDigest: 'digest-1',
   ...extra,
 });
 
@@ -78,8 +79,16 @@ describe('MemoryCompactDialog', () => {
     expect(screen.getByRole('button', { name: 'Start' })).toBeDisabled();
   });
 
+  it('says so when it opened again because memory changed', () => {
+    render(MemoryCompactDialog, { preview: preview(), changed: true, onstart: vi.fn(), oncancel: vi.fn() });
+
+    expect(screen.getByText('Memory changed since this opened')).toBeInTheDocument();
+    expect(screen.getByText(/Nothing was sent/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Start' })).toBeEnabled();
+  });
+
   it("can't start with nothing to compact", () => {
-    render(MemoryCompactDialog, { preview: preview({ plan: null, fileCount: 0 }), onstart: vi.fn(), oncancel: vi.fn() });
+    render(MemoryCompactDialog, { preview: preview({ plan: null, planDigest: null, fileCount: 0 }), onstart: vi.fn(), oncancel: vi.fn() });
 
     expect(screen.getByText(/no repo, conventions or architecture notes/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Start' })).toBeDisabled();

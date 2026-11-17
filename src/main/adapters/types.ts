@@ -396,12 +396,38 @@ export interface CliSignInDescriptor {
   setupUrl: string;
 }
 
-/** Options for one generateText call. */
-export interface GenerateTextOptions {
+/** Options fixed when an agent is started for one text request. */
+export interface PrepareTextOptions {
   cwd?: string;
-  abortSignal?: AbortSignal;
+  /** The model to ask for. An agent that can't switch to it answers on its
+   *  own default: onModel says which. */
   model?: string;
+}
+
+/** Options for sending the message of one text request. */
+export interface SendTextOptions {
+  abortSignal?: AbortSignal;
+  /** Called once the agent's process is up and has the message, so a caller
+   *  can time startup apart from the reply (memory compaction). */
   onStarted?: () => void;
+  /** Called with the model the reply comes from, once the agent says; null
+   *  when it answers on its own default without naming it. */
+  onModel?: (model: string | null) => void;
+  /** The longest the reply may take, in place of the adapter's own limit
+   *  (ACP agents: 3 minutes), for a caller that times calls itself. */
+  timeoutMs?: number;
+}
+
+/** Options for one generateText call. */
+export interface GenerateTextOptions extends PrepareTextOptions, SendTextOptions {}
+
+/** An agent started for one text request before its message is known
+ *  (prepareText), so its startup overlaps other work. */
+export interface PreparedText {
+  /** Send the message and wait for the reply. Once only. */
+  send(userMessage: string, options?: SendTextOptions): Promise<string>;
+  /** End the agent without sending, when it isn't needed. Nothing after send. */
+  close(): void;
 }
 
 // ─── The Adapter Interface ───
@@ -523,9 +549,13 @@ export interface AgentAdapter {
   /** Generate text from a system prompt and user message.
    *  Used by memory-autosave to run extraction without being coupled to a specific SDK.
    *  `model` overrides the provider default (e.g. a cheaper model for background calls).
-   *  `onStarted` is called once the agent's process is up and has the prompt,
-   *  so a caller can time startup apart from the reply (memory compaction). */
+   *  See SendTextOptions for timing, the model used and the reply's time limit. */
   generateText?(systemPrompt: string, userMessage: string, options?: GenerateTextOptions): Promise<string>;
+
+  /** Start the agent for one text request (as generateText) before its
+   *  message is known, with the system prompt fixed now, so its process is up
+   *  by the time the message is. Optional: callers fall back to generateText. */
+  prepareText?(systemPrompt: string, options?: PrepareTextOptions): PreparedText;
 
   // ─── Optional conversation title ───
 

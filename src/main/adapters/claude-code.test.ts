@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import path from 'node:path';
-import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS, thinkingConfigFor, parseMcpListOutput, mcpServerManager, claudeMcpOrigin, mcpToolServerKey, mcpContextCostByServer, toMcpElicitationRequest, withMcpjsonApproval, mcpjsonApprovalsFrom, withoutLegacyDenyRules, buildMcpAddArgs, quoteArg, validatePluginId, validateConfigScope, claudeControlsFor, supportsAdaptiveThinking, supportsFastMode, supportsAutoMode, claudeModelCaps, effortFor, reasoningOptionsFor, toSdkPermissionMode, fromSdkSyncMode, stripAnsi, mapClaudeUsage, thinkingDisplayFor, TEXT_GENERATION_OPTIONS, collectGeneratedText, withFirstMessage, missingConversationError, userMessageContent, sandboxDecision } from './claude-code.js';
+import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS, thinkingConfigFor, parseMcpListOutput, mcpServerManager, claudeMcpOrigin, mcpToolServerKey, mcpContextCostByServer, toMcpElicitationRequest, withMcpjsonApproval, mcpjsonApprovalsFrom, withoutLegacyDenyRules, buildMcpAddArgs, quoteArg, validatePluginId, validateConfigScope, claudeControlsFor, supportsAdaptiveThinking, supportsFastMode, supportsAutoMode, claudeModelCaps, effortFor, reasoningOptionsFor, toSdkPermissionMode, fromSdkSyncMode, stripAnsi, mapClaudeUsage, thinkingDisplayFor, TEXT_GENERATION_OPTIONS, collectGeneratedText, watchStart, missingConversationError, userMessageContent, sandboxDecision } from './claude-code.js';
 import type { AgentEvent } from '../../shared/types.js';
 import { RunningCost, RunningTokens } from './running-cost.js';
 import { limitHook, LIMIT_STOP_REASON, titleListOptions, titleFromSessions } from './claude-code.js';
@@ -1270,26 +1270,30 @@ describe('TEXT_GENERATION_OPTIONS', () => {
   });
 });
 
-describe('withFirstMessage()', () => {
+describe('watchStart()', () => {
   it('says once when the CLI sends its first message, and passes every message on', async () => {
-    const onFirst = vi.fn();
+    const onStarted = vi.fn();
+    const onModel = vi.fn();
     async function* messages() {
-      yield 'init';
-      expect(onFirst).toHaveBeenCalledTimes(1);
-      yield 'reply';
-      yield 'result';
+      yield sdk({ type: 'system', subtype: 'init', model: 'claude-haiku-4-5' });
+      expect(onStarted).toHaveBeenCalledTimes(1);
+      yield sdk({ type: 'assistant', message: { content: [] } });
+      yield sdk({ type: 'result', subtype: 'success' });
     }
     const seen: string[] = [];
-    for await (const m of withFirstMessage(messages(), onFirst)) seen.push(m);
-    expect(seen).toEqual(['init', 'reply', 'result']);
-    expect(onFirst).toHaveBeenCalledTimes(1);
+    for await (const m of watchStart(messages(), { onStarted, onModel })) seen.push(m.type);
+    expect(seen).toEqual(['system', 'assistant', 'result']);
+    expect(onStarted).toHaveBeenCalledTimes(1);
+    expect(onModel).toHaveBeenCalledWith('claude-haiku-4-5');
   });
 
-  it('never calls it for a CLI that sent nothing', async () => {
-    const onFirst = vi.fn();
-    async function* none(): AsyncGenerator<string> { /* exited at once */ }
-    for await (const _ of withFirstMessage(none(), onFirst)) { /* nothing */ }
-    expect(onFirst).not.toHaveBeenCalled();
+  it('never calls them for a CLI that sent nothing', async () => {
+    const onStarted = vi.fn();
+    const onModel = vi.fn();
+    async function* none(): AsyncGenerator<SDKMessage> { /* exited at once */ }
+    for await (const _ of watchStart(none(), { onStarted, onModel })) { /* nothing */ }
+    expect(onStarted).not.toHaveBeenCalled();
+    expect(onModel).not.toHaveBeenCalled();
   });
 });
 

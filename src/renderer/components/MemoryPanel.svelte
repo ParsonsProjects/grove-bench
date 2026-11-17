@@ -460,9 +460,10 @@
 {/if}
 
 <!-- Before a run: agent, model for this run, planning prompt -->
-{#if memoryStore.compactPreview}
+{#if open && memoryStore.compactPreview}
   <MemoryCompactDialog
     preview={memoryStore.compactPreview}
+    changed={memoryStore.compactPreviewChanged}
     onstart={(model: string | undefined) => memoryStore.compact(model)}
     oncancel={() => memoryStore.closeCompactPreview()}
   />

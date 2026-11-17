@@ -2156,14 +2156,14 @@ export function registerHandlers() {
     return memoryCompact.previewCompaction({ repoPath, adapterType: adapter.id });
   });
 
-  ipcMain.handle(IPC.MEMORY_COMPACT, async (_event, repoPath: string, options?: MemoryCompactionOptions) => {
-    // The agent the confirm dialog showed, so the run uses the one the user
-    // saw; else the project's most recently used agent, as the preview picks.
-    const agentId = typeof options?.agentId === 'string' && options.agentId
-      ? options.agentId
-      : (await agentForProject(repoPath)).id;
-    const model = typeof options?.model === 'string' && options.model.trim() ? options.model.trim() : undefined;
-    return memoryCompact.compactMemory({ repoPath, adapterType: agentId, model });
+  ipcMain.handle(IPC.MEMORY_COMPACT, (_event, repoPath: string, options: MemoryCompactionOptions) => {
+    // Only from the confirm dialog: on the agent it showed, with the planning
+    // prompt it showed (planDigest), so nothing goes anywhere unseen.
+    if (typeof options?.agentId !== 'string' || !options.agentId || typeof options.planDigest !== 'string' || !options.planDigest) {
+      throw new Error('Compaction needs the agent and planning prompt from its confirm dialog');
+    }
+    const model = typeof options.model === 'string' && options.model.trim() ? options.model.trim() : undefined;
+    return memoryCompact.compactMemory({ repoPath, adapterType: options.agentId, model, planDigest: options.planDigest });
   });
 
   ipcMain.handle(IPC.MEMORY_COMPACT_CANCEL, (_event, repoPath: string) => {

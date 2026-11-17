@@ -15,6 +15,8 @@ beforeEach(() => {
     { id: 'b1', branch: 'y', repoPath: '/repo-b', status: 'running' },
   ] as never;
   store.activeSessionId = 'a1';
+  // As the Sidebar renders it: open={memoryStore.panelOpen}
+  memoryStore.panelOpen = true;
 });
 
 afterEach(() => {
@@ -23,6 +25,7 @@ afterEach(() => {
   store.repos = [];
   store.activeSessionId = null;
   memoryStore.closeCompactPreview();
+  memoryStore.panelOpen = false;
   memoryStore.compactSteps = [];
   memoryStore.compactStepsRepo = null;
 });
@@ -54,6 +57,7 @@ describe('MemoryPanel', () => {
     mockGroveBench.memoryCompactPreview.mockResolvedValueOnce({
       agentId: 'claude-code', agentName: 'Claude Agent', model: 'claude-haiku-4-5', fileCount: 1, totalBytes: 200,
       maxGroups: 6, parallelMerges: 3, plan: { systemPrompt: 'You are planning A CLEAN-UP', userMessage: 'Plan the clean-up.' },
+      planDigest: 'digest-1',
     });
     render(MemoryPanel, { open: true, onclose: vi.fn() });
     const compact = await screen.findByRole('button', { name: 'Compact' });
@@ -66,7 +70,7 @@ describe('MemoryPanel', () => {
     expect(mockGroveBench.memoryCompact).not.toHaveBeenCalled();
 
     await fireEvent.click(screen.getByRole('button', { name: 'Start' }));
-    await waitFor(() => expect(mockGroveBench.memoryCompact).toHaveBeenCalledWith('/repo-a', { agentId: 'claude-code' }));
+    await waitFor(() => expect(mockGroveBench.memoryCompact).toHaveBeenCalledWith('/repo-a', { agentId: 'claude-code', planDigest: 'digest-1' }));
   });
 
   it("lists the last run's model calls and shows each one's prompt", async () => {

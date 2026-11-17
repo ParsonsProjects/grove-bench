@@ -16,12 +16,14 @@
 
   interface Props {
     preview: MemoryCompactionPreview;
+    /** Shown again because memory changed after it first opened. */
+    changed?: boolean;
     /** Start the run; `model` is for this run only, undefined for the preview's. */
     onstart: (model: string | undefined) => void;
     oncancel: () => void;
   }
 
-  let { preview, onstart, oncancel }: Props = $props();
+  let { preview, changed = false, onstart, oncancel }: Props = $props();
 
   let models = $state<Array<{ id: string; label: string }>>([]);
   let picked = $state(DEFAULT_MODEL_VALUE);
@@ -38,7 +40,7 @@
   const choices = $derived(defaultModelChoices(models, '', preview.model));
   const pickedLabel = $derived(choices.find((c) => c.value === picked)?.label ?? picked);
   const timeoutSeconds = $derived(effectiveCompactTimeoutSeconds(settingsStore.current.memoryCompactTimeoutSeconds));
-  const canStart = $derived(!preview.unavailable && preview.plan !== null);
+  const canStart = $derived(!preview.unavailable && preview.plan !== null && preview.planDigest !== null);
   const planBytes = $derived(preview.plan
     ? new TextEncoder().encode(preview.plan.systemPrompt).length + new TextEncoder().encode(preview.plan.userMessage).length
     : 0);
@@ -62,6 +64,10 @@
 
     {#if preview.unavailable}
       <Notice tone="danger"><p>{preview.unavailable}</p></Notice>
+    {:else if changed}
+      <Notice tone="warning" title="Memory changed since this opened">
+        <p>Nothing was sent. Another thread saved memory, so the planning prompt below is the new one. Check it, then press Start again.</p>
+      </Notice>
     {/if}
 
     <div class="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-2 text-sm">

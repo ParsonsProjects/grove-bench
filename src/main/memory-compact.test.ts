@@ -28,6 +28,19 @@ vi.mock('./logger.js', () => ({
 
 vi.mock('./perf-log.js', () => ({ perfLine: vi.fn() }));
 
+/** Make listing all memory files throw, as a disk gone mid-run would. */
+const listing = vi.hoisted(() => ({ throws: false }));
+vi.mock('./memory.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./memory.js')>();
+  return {
+    ...actual,
+    listMemoryFiles: (repoPath: string, folder?: string) => {
+      if (listing.throws && folder === undefined) throw new Error('disk gone');
+      return actual.listMemoryFiles(repoPath, folder);
+    },
+  };
+});
+
 import * as memory from './memory.js';
 import * as settings from './settings.js';
 import { perfLine } from './perf-log.js';
@@ -75,6 +88,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  listing.throws = false;
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
@@ -499,6 +513,16 @@ function replies(plan: unknown, ...merges: unknown[]): void {
 
 const groupOf = (...paths: string[]) => ({ groups: [{ paths, reason: 'overlap' }], descriptions: [] });
 
+/** Wait for the model to have been called `n` times: compaction reads memory
+ *  asynchronously first, and a fake clock moved before then moves nothing. */
+const realSetImmediate = setImmediate; // useFakeTimers replaces the global
+async function callsReached(n: number): Promise<void> {
+  for (let i = 0; i < 200 && mockAdapter.generateText.mock.calls.length < n; i++) {
+    await new Promise<void>((resolve) => { realSetImmediate(resolve); });
+  }
+  expect(mockAdapter.generateText.mock.calls.length).toBeGreaterThanOrEqual(n);
+}
+
 /** A generateText that hangs until its abort signal fires, like a slow model. */
 function hang(_sys: string, _user: string, opts?: unknown): Promise<string> {
   const signal = (opts as { abortSignal: AbortSignal }).abortSignal;
@@ -507,6 +531,17 @@ function hang(_sys: string, _user: string, opts?: unknown): Promise<string> {
   });
 }
 
+/** Steps as they were reported, by index: the last state each one had. */
+async function stepsOf(run: () => Promise<unknown>): Promise<MemoryCompactionStep[]> {
+  const steps = new Map<number, MemoryCompactionStep>();
+  const unsubscribe = onCompactionEvent(e => { if (e.kind === 'step') steps.set(e.step.index, { ...steps.get(e.step.index)!, ...e.step }); });
+  try {
+    await run();
+  } finally {
+    unsubscribe();
+  }
+  return [...steps.values()].sort((a, b) => a.index - b.index);
+}
 describe('compactMemory', () => {
   it('plans from each file\'s index line and opening, not its full text', async () => {
     writeMemory('architecture/flow.md', 'Flow', `${'opening '.repeat(10)}${'z'.repeat(5000)}THE END`);
@@ -553,7 +588,7 @@ describe('compactMemory', () => {
     const status = await compactMemory({ repoPath: REPO });
 
     // The merge step got both files in full
-    const merge = mockAdapter.generateText.mock.calls[1][0];
+    const merge = mockAdapter.generateText.mock.calls[1][1];
     expect(merge).toContain('### repo/overview.md');
     expect(merge).toContain('The project uses Webpack.');
 
@@ -702,7 +737,7 @@ describe('compactMemory', () => {
 
     const status = await compactMemory({ repoPath: REPO });
 
-    expect(mockAdapter.generateText.mock.calls[1][0]).toContain('## Added 2026-10-12');
+    expect(mockAdapter.generateText.mock.calls[1][1]).toContain('## Added 2026-10-12');
     expect(status.compacted).toBe(true);
     expect(memory.readMemoryFile(REPO, 'architecture/flow.md')).not.toContain('## Added');
   });
@@ -930,6 +965,7 @@ describe('compactMemory', () => {
       mockAdapter.generateText.mockImplementation(hang);
 
       const pending = compactMemory({ repoPath: REPO });
+      await callsReached(1); // memory is read before the call sets its timeout
       await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
       const status = await pending;
 
@@ -952,6 +988,7 @@ describe('compactMemory', () => {
       mockAdapter.generateText.mockImplementation(hang);
 
       const pending = compactMemory({ repoPath: REPO });
+      await callsReached(1);
       await vi.advanceTimersByTimeAsync(30 * 1000);
       const status = await pending;
 
@@ -974,6 +1011,7 @@ describe('compactMemory', () => {
       mockAdapter.generateText.mockImplementationOnce(hang);
 
       const pending = compactMemory({ repoPath: REPO });
+      await callsReached(3);
       await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
       const status = await pending;
 
@@ -993,8 +1031,8 @@ describe('compactMemory', () => {
     mockAdapter.generateText.mockImplementation(hang);
 
     const pending = compactMemory({ repoPath: REPO });
-    // Give the pass a beat to reach the planning step, then cancel
-    await new Promise(r => setTimeout(r, 10));
+    // Let the pass reach the planning step, then cancel
+    await callsReached(1);
     expect(cancelCompaction(REPO)).toBe(true);
     const status = await pending;
 
@@ -1051,17 +1089,7 @@ describe('compactMemory', () => {
     expect(done.status.compacted).toBe(true);
   });
 
-  /** Steps as they were reported, by index: the last state each one had. */
-  async function stepsOf(run: () => Promise<unknown>): Promise<MemoryCompactionStep[]> {
-    const steps = new Map<number, MemoryCompactionStep>();
-    const unsubscribe = onCompactionEvent(e => { if (e.kind === 'step') steps.set(e.step.index, e.step); });
-    try {
-      await run();
-    } finally {
-      unsubscribe();
-    }
-    return [...steps.values()].sort((a, b) => a.index - b.index);
-  }
+
 
   it('reports each model call with the prompt it sent, its model and its timings', async () => {
     writeMemory('repo/a.md', 'A', 'a body');
@@ -1086,6 +1114,7 @@ describe('compactMemory', () => {
       expect(plan.systemPrompt).toBe(calls[0][0]);
       expect(plan.userMessage).toBe(calls[0][1]);
       expect(merge.systemPrompt).toBe(calls[1][0]);
+      expect(merge.userMessage).toBe(calls[1][1]);
       expect(plan.model).toBe('cheap-default');
       expect(plan.detail).toBe('1 group to merge, 0 descriptions to add');
       expect(merge.detail).toBe('1 file changed');
@@ -1123,7 +1152,7 @@ describe('compactMemory', () => {
 
     const lines = vi.mocked(perfLine).mock.calls.map(([kind, line]) => `${kind} ${line}`);
     expect(lines).toEqual([
-      expect.stringMatching(/^steps memory compact test-repo planning: done after \d+ ms \(.* KB in, .* KB out, the agent's default model\): 1 group to merge/),
+      expect.stringMatching(/^steps memory compact test-repo planning: done after \d+ ms \(\d+ (bytes|KB) in, \d+ (bytes|KB) out, the agent's default model\): 1 group to merge/),
       expect.stringMatching(/^steps memory compact test-repo merge step 1: done after \d+ ms/),
       expect.stringMatching(/^steps memory compact test-repo: finished after \d+ ms \(1 of 1 groups merged, up to 3 at once\)$/),
     ]);
@@ -1177,7 +1206,7 @@ describe('compactMemory', () => {
 
       pending[2].resolve(tidied(1)); // the second merge ends first
       await vi.waitFor(() => expect(pending).toHaveLength(5));
-      expect(pending[4].sys).toContain('architecture/n-3.md');
+      expect(pending[4].user).toContain('architecture/n-3.md');
 
       pending[1].resolve(tidied(0));
       pending[3].resolve(tidied(2));
@@ -1239,7 +1268,7 @@ describe('compactMemory', () => {
       mockAdapter.generateText.mockImplementation(hang);
 
       const steps = new Map<number, MemoryCompactionStep>();
-      const unsubscribe = onCompactionEvent(e => { if (e.kind === 'step') steps.set(e.step.index, e.step); });
+      const unsubscribe = onCompactionEvent(e => { if (e.kind === 'step') steps.set(e.step.index, { ...steps.get(e.step.index)!, ...e.step }); });
       try {
         const run = compactMemory({ repoPath: REPO });
         await vi.waitFor(() => expect(mockAdapter.generateText).toHaveBeenCalledTimes(4));
@@ -1262,7 +1291,7 @@ describe('previewCompaction', () => {
     (mockAdapter as { displayName?: string }).displayName = 'Mock Agent';
     (mockAdapter as { backgroundModel?: string }).backgroundModel = 'cheap-default';
     try {
-      const preview = previewCompaction({ repoPath: REPO, adapterType: 'mock' });
+      const preview = await previewCompaction({ repoPath: REPO, adapterType: 'mock' });
 
       expect(preview).toMatchObject({
         agentId: 'mock', agentName: 'Mock Agent', model: 'cheap-default', fileCount: 1, maxGroups: 6, parallelMerges: 3,
@@ -1282,23 +1311,190 @@ describe('previewCompaction', () => {
     }
   });
 
-  it('has no plan for a project without files to compact', () => {
+  it('has no plan for a project without files to compact', async () => {
     writeMemory('sessions/s.md', 'S', 'thread note');
-    const preview = previewCompaction({ repoPath: REPO });
+    const preview = await previewCompaction({ repoPath: REPO });
     expect(preview.plan).toBeNull();
+    expect(preview.planDigest).toBeNull();
     expect(preview.fileCount).toBe(0);
   });
 
-  it("says so when the agent can't run compaction", () => {
+  it("says so when the agent can't run compaction", async () => {
     writeMemory('repo/a.md', 'A', 'a body');
     const generateText = mockAdapter.generateText;
     (mockAdapter as { generateText?: unknown }).generateText = undefined;
     (mockAdapter as { displayName?: string }).displayName = 'Mock Agent';
     try {
-      expect(previewCompaction({ repoPath: REPO }).unavailable).toBe("Mock Agent can't run compaction.");
+      expect((await previewCompaction({ repoPath: REPO })).unavailable).toBe("Mock Agent can't run compaction.");
     } finally {
       mockAdapter.generateText = generateText;
       delete (mockAdapter as { displayName?: string }).displayName;
     }
+  });
+});
+
+describe('compactMemory: fixes from review', () => {
+  it('sends nothing when memory changed after the preview, and runs when it did not', async () => {
+    writeMemory('repo/a.md', 'A', 'a body');
+    const preview = await previewCompaction({ repoPath: REPO });
+    writeMemory('repo/b.md', 'B', 'written by another thread after the dialog opened');
+    const sessions = Array.from({ length: 25 }, (_, i) => `sessions/s-${String(i).padStart(2, '0')}.md`);
+    for (const p of sessions) writeMemory(p, p, 'note');
+
+    const outdated = await compactMemory({ repoPath: REPO, planDigest: preview.planDigest! });
+
+    expect(outdated).toMatchObject({ compacted: false, previewOutdated: true, filesChanged: [] });
+    expect(mockAdapter.generateText).not.toHaveBeenCalled();
+    expect(memory.listMemoryFiles(REPO, 'sessions')).toHaveLength(25); // nothing pruned either
+
+    const fresh = await previewCompaction({ repoPath: REPO });
+    replies({ groups: [], descriptions: [] });
+    const status = await compactMemory({ repoPath: REPO, planDigest: fresh.planDigest! });
+    expect(status.previewOutdated).toBeUndefined();
+    expect(mockAdapter.generateText.mock.calls[0][0]).toBe(fresh.plan!.systemPrompt);
+  });
+
+  it('names the model the agent says it answered with, not only the one asked for', async () => {
+    writeMemory('repo/a.md', 'A', 'a body');
+    mockAdapter.generateText.mockImplementationOnce(async (_sys, _user, opts) => {
+      (opts as { onModel: (m: string | null) => void }).onModel('agent-default-model');
+      return JSON.stringify({ groups: [], descriptions: [] });
+    });
+    vi.mocked(perfLine).mockClear();
+
+    const steps = await stepsOf(() => compactMemory({ repoPath: REPO, model: 'not-offered' }));
+
+    expect(steps[0].model).toBe('agent-default-model');
+    expect(vi.mocked(perfLine).mock.calls[0][1]).toContain('agent-default-model');
+  });
+
+  it("gives the agent the compaction timeout, so the adapter's own limit doesn't cut the call short", async () => {
+    writeMemory('repo/a.md', 'A', 'a body');
+    vi.mocked(settings.getSettings).mockReturnValue({
+      memoryAutoSave: true, memoryCompactTimeoutSeconds: 900,
+    } as ReturnType<typeof settings.getSettings>);
+    replies({ groups: [], descriptions: [] });
+
+    await compactMemory({ repoPath: REPO });
+
+    expect((mockAdapter.generateText.mock.calls[0][2] as { timeoutMs?: number }).timeoutMs).toBe(900_000);
+  });
+
+  it('ends a step an unexpected error stopped, instead of leaving it running', async () => {
+    writeMemory('repo/a.md', 'A', 'a body');
+    mockAdapter.generateText.mockResolvedValueOnce(JSON.stringify(groupOf('repo/a.md')));
+    mockAdapter.generateText.mockImplementationOnce(async () => {
+      listing.throws = true; // the step lists memory once the reply is in
+      return JSON.stringify({ files: [{ action: 'update', path: 'repo/a.md', content: 'a tidied', reason: '' }] });
+    });
+
+    const steps = await stepsOf(() => compactMemory({ repoPath: REPO }));
+
+    expect(steps[1]).toMatchObject({ state: 'failed', detail: 'disk gone' });
+    expect(steps.some(s => s.state === 'running')).toBe(false);
+  });
+
+  it('shows no merging stage for a plan with only descriptions', async () => {
+    writeMemory('architecture/flow.md', 'Flow', 'BODY');
+    replies({ groups: [], descriptions: [{ path: 'architecture/flow.md', description: 'Data flow' }] });
+    const events: CompactionEvent[] = [];
+    const unsubscribe = onCompactionEvent(e => events.push(e));
+    try {
+      await compactMemory({ repoPath: REPO });
+    } finally {
+      unsubscribe();
+    }
+    expect(events.filter(e => e.kind === 'stage').map(e => (e as { stage: string }).stage)).toEqual(['pruning', 'planning']);
+  });
+
+  it('sends each prompt once: with the step when it starts, not again when it ends', async () => {
+    writeMemory('repo/a.md', 'A', 'a body');
+    replies({ groups: [], descriptions: [] });
+    const updates: Array<Record<string, unknown>> = [];
+    const unsubscribe = onCompactionEvent(e => { if (e.kind === 'step') updates.push(e.step); });
+    try {
+      await compactMemory({ repoPath: REPO });
+    } finally {
+      unsubscribe();
+    }
+    expect(updates.map(u => [u.state, 'systemPrompt' in u])).toEqual([['running', true], ['done', false]]);
+  });
+
+  describe('merge agents started while planning runs', () => {
+    /** prepareText on the mock adapter: each agent started, what it was
+     *  sent, and whether it was closed unused. */
+    function prepared(reply: (user: string) => string) {
+      const agents: Array<{ system: string; sent: string | null; closed: boolean }> = [];
+      const prepareText = vi.fn((system: string) => {
+        const agent = { system, sent: null as string | null, closed: false };
+        agents.push(agent);
+        return {
+          send: vi.fn(async (user: string, opts?: { onStarted?: () => void }) => {
+            agent.sent = user;
+            opts?.onStarted?.();
+            return reply(user);
+          }),
+          close: vi.fn(() => { if (agent.sent === null) agent.closed = true; }),
+        };
+      });
+      (mockAdapter as { prepareText?: unknown }).prepareText = prepareText;
+      return { agents, prepareText };
+    }
+
+    afterEach(() => { delete (mockAdapter as { prepareText?: unknown }).prepareText; });
+
+    function writeGroups(n: number) {
+      const plan = { groups: [] as Array<{ paths: string[]; reason: string }>, descriptions: [] };
+      for (let i = 0; i < n; i++) {
+        writeMemory(`architecture/n-${i}.md`, `N${i}`, `note ${i}`);
+        plan.groups.push({ paths: [`architecture/n-${i}.md`], reason: '' });
+      }
+      return plan;
+    }
+    const tidy = (user: string) => {
+      const p = /### (architecture\/n-\d+\.md)/.exec(user)![1];
+      return JSON.stringify({ files: [{ action: 'update', path: p, content: `tidied ${p}`, reason: '' }] });
+    };
+
+    it('starts 3 before the plan is in, uses them for the merges, and ends the ones not needed', async () => {
+      const plan = writeGroups(1);
+      const { agents, prepareText } = prepared(tidy);
+      mockAdapter.generateText.mockImplementationOnce(async () => {
+        expect(prepareText).toHaveBeenCalledTimes(3); // already starting while planning runs
+        return JSON.stringify(plan);
+      });
+
+      const status = await compactMemory({ repoPath: REPO });
+
+      expect(status.compacted).toBe(true);
+      expect(mockAdapter.generateText).toHaveBeenCalledTimes(1); // the plan only
+      expect(agents.every(a => !a.system.includes('### '))).toBe(true); // no files in the system prompt
+      expect(agents.filter(a => a.sent !== null)).toHaveLength(1);
+      expect(agents.filter(a => a.closed)).toHaveLength(2);
+      expect(memory.readMemoryFile(REPO, 'architecture/n-0.md')).toBe('tidied architecture/n-0.md');
+    });
+
+    it('keeps one more starting while groups wait, and leaves none running at the end', async () => {
+      const plan = writeGroups(5);
+      const { agents } = prepared(tidy);
+      replies(plan);
+
+      const status = await compactMemory({ repoPath: REPO });
+
+      expect(status.remainingGroups).toBe(0);
+      expect(agents).toHaveLength(5);
+      expect(agents.every(a => a.sent !== null)).toBe(true);
+    });
+
+    it('ends every started agent when planning fails', async () => {
+      writeGroups(2);
+      const { agents } = prepared(tidy);
+      mockAdapter.generateText.mockRejectedValueOnce(new Error('usage limit reached'));
+
+      await compactMemory({ repoPath: REPO });
+
+      expect(agents).toHaveLength(3);
+      expect(agents.every(a => a.closed)).toBe(true);
+    });
   });
 });

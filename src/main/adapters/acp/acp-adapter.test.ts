@@ -619,6 +619,33 @@ describe('AcpAdapter', () => {
     expect(onStarted).toHaveBeenCalledTimes(1);
   });
 
+  it('names the model the reply comes from: the one asked for once switched, else its own', async () => {
+    const adapter = new AcpAdapter(def());
+    const switched = vi.fn();
+    await adapter.generateText('sys', 'diff here', { cwd, model: 'm2', onModel: switched });
+    expect(switched).toHaveBeenCalledWith('m2');
+
+    const unknown = vi.fn();
+    await adapter.generateText('sys', 'diff here', { cwd, model: 'not-offered', onModel: unknown });
+    expect(unknown).toHaveBeenCalledWith('m1');
+  });
+
+  it("gives up on the reply after the caller's time limit, not its own", async () => {
+    const adapter = new AcpAdapter(def());
+    await expect(adapter.generateText('sys', 'wait', { cwd, timeoutMs: 300 })).rejects.toThrow('Fake Agent background request timed out');
+  });
+
+  it('starts the session before the message, and ends an unused one when closed', async () => {
+    const adapter = new AcpAdapter(def());
+    const prepared = adapter.prepareText('You write commit messages.', { cwd, model: 'm2' });
+    await expect(prepared.send('diff here')).resolves.toBe('Fix the thing (no, m2)');
+    await expect(prepared.send('again')).rejects.toThrow('already sent or closed');
+
+    const unused = adapter.prepareText('sys', { cwd });
+    unused.close();
+    await expect(unused.send('late')).rejects.toThrow('already sent or closed');
+  });
+
   describe('an API key saved in Grove and per-process settings', () => {
     const keyed = (): AcpAgentDefinition => ({
       ...def(),
