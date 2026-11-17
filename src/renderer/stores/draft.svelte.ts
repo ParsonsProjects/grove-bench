@@ -314,7 +314,6 @@ class DraftStore {
     const d = this.draft;
     if (!d?.attachments.length) return null;
     const text = d.text.trim();
-    if (!text) return 'Write a message to go with the attached files.';
     // Files go ahead of the text, so the command would no longer lead it.
     if (text.startsWith('/')) return "A slash command can't take attached files. Remove them, or send them in the next message.";
     return null;
@@ -610,7 +609,8 @@ class DraftStore {
     const text = d.text.trim();
     // Text files go in the message text; images and other files alongside it.
     const { tags, images, files } = attachmentPayload(d.attachments);
-    const sent = text
+    // Attachments alone (an image with nothing typed) are a first message too.
+    const sent = text || d.attachments.length > 0
       ? {
           outgoing: buildOutgoingMessage(tags, text),
           ...(images.length > 0 ? { images } : {}),
@@ -660,7 +660,7 @@ class DraftStore {
       const mode = d.start.kind === 'folder' ? 'direct' : d.start.kind;
       trackEvent('session_created', {
         mode,
-        withPrompt: !!text,
+        withPrompt: !!sent,
         ...(d.start.kind === 'new' ? { autoBranch: !opts.branchName } : {}),
         ...(d.start.kind === 'existing' ? { picked: d.start.pr ? 'pr' : 'branch' } : {}),
         ...(opts.permissionMode ? { startMode: opts.permissionMode } : {}),

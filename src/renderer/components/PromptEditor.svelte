@@ -25,6 +25,7 @@
   } from '$lib/file-attachments.js';
   import AttachmentChips from './AttachmentChips.svelte';
   import { extractAtRefs, buildRefTags, buildOutgoingMessage } from '$lib/prompt-file-refs.js';
+  import { withAttachmentLabel } from '../../shared/prompt-text.js';
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -158,7 +159,8 @@
 
   function handleSubmit() {
     const text = value.trim();
-    if (!text) return;
+    // Attachments alone (an image with nothing typed) are a message too.
+    if (!text && attachedFiles.length === 0) return;
 
     // Shell command: ! prefix runs directly in terminal
     if (text.startsWith('!')) {
@@ -198,9 +200,7 @@
     // Text files go in the message text; images and other files alongside it
     const { tags: droppedTags, images, files } = attachmentPayload(attachedFiles);
 
-    const displayText = attachedFiles.length > 0
-      ? `[${attachedFiles.map((f) => f.name).join(', ')}] ${text}`
-      : text;
+    const displayText = withAttachmentLabel(attachedFiles.map((f) => f.name), text);
     // Kept on a queued prompt so Edit can restore it as typed.
     const typed = { text, attachments: $state.snapshot(attachedFiles) };
 
@@ -648,7 +648,7 @@
       variant="default"
       size="icon"
       onclick={handleSubmit}
-      disabled={!value.trim()}
+      disabled={!value.trim() && attachedFiles.length === 0}
       title={willQueue ? 'Add to the queue; sent once the agent is free' : 'Send now'}
       aria-label={willQueue ? 'Queue' : 'Send'}
     >

@@ -1352,6 +1352,17 @@ describe('userMessageContent()', () => {
     ]);
   });
 
+  it('sends an image with nothing typed as the image alone, with no empty text block', () => {
+    expect(userMessageContent({ text: '', images: [{ data: 'iVBOR', mediaType: 'image/png', name: 'a.png' }] })).toEqual([
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'iVBOR' } },
+    ]);
+  });
+
+  it('gives files with nothing typed as the note alone', () => {
+    const content = userMessageContent({ text: '', files: [file()] });
+    expect(content).toMatch(/^<attached_files>\n[\s\S]*<\/attached_files>$/);
+  });
+
   it('gives other files by path in a note ahead of the text', () => {
     const content = userMessageContent({ text: 'what failed?', files: [file()] });
     expect(typeof content).toBe('string');

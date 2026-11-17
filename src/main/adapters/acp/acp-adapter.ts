@@ -989,7 +989,8 @@ class AcpQuery {
       blocks.push({ type: 'text', text: this.pendingInstructions });
       this.pendingInstructions = null;
     }
-    blocks.push({ type: 'text', text: message.text });
+    // Nothing typed (an image sent on its own): no empty text block.
+    if (message.text.trim()) blocks.push({ type: 'text', text: message.text });
     // Every agent takes a link to a file (the protocol's baseline); images
     // and audio go inline only when it says it takes them.
     const caps = this.init?.agentCapabilities?.promptCapabilities;

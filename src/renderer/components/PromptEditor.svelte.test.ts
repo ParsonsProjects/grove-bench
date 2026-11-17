@@ -151,6 +151,20 @@ describe('PromptEditor: attachments', () => {
 
     expect(again.getByText('notes.txt')).toBeInTheDocument();
   });
+
+  it('sends an attached image with nothing typed', async () => {
+    const { container, getByRole } = render(PromptEditor, { sessionId: SID });
+    const send = getByRole('button', { name: 'Send' });
+    expect(send).toBeDisabled();
+    messageStore.requestPromptInsert(SID, '', { attachments: [{ type: 'image', name: 'shot.png', dataUrl: 'data:image/png;base64,AAAA' }] });
+    await tick();
+    expect(send).toBeEnabled();
+
+    await fireEvent.keyDown(container.querySelector('textarea')!, { key: 'Enter' });
+
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, '', [{ name: 'shot.png', data: 'AAAA', mediaType: 'image/png' }], undefined);
+    expect(send).toBeDisabled();
+  });
 });
 
 describe('PromptEditor: @ file picker', () => {

@@ -377,6 +377,11 @@ describe('AcpAdapter', () => {
       expect(blocks).toEqual([{ type: 'resource_link', uri: pathToFileURL(shot.path).href, name: 'shot.png', mimeType: 'image/png', size: 4 }]);
     });
 
+    it('sends an image on its own with no empty text block', async () => {
+      const [blocks] = await sentBlocks('default', { text: '', images: [{ data: 'iVBOR', mediaType: 'image/png', name: 'shot.png' }] });
+      expect(blocks).toEqual([{ type: 'image', data: 'iVBOR', mimeType: 'image/png' }]);
+    });
+
     it('says so when an image with no saved copy is left out', async () => {
       const handle = await new AcpAdapter(def('noimage')).start(config());
       await until(handle, 'system_init');
