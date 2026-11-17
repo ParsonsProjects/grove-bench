@@ -199,6 +199,10 @@
       const promptSent = messageStore.stillAwaitingResponse(sessionId, waitingOn, page.events);
       eventCount = page.events.length;
       messageStore.setPagination(sessionId, page.totalCount, page.startIndex);
+      // The agent's last report of its MCP servers and skills, when it is
+      // further back than the page. Claude Code only sends another with the
+      // next prompt, so a woken or reopened thread would show none till then.
+      if (page.lastSystemInit) messageStore.setSystemInfo(sessionId, page.lastSystemInit);
 
       // Batch-replay events. replayEvents accumulates messages in a plain
       // array and flushes to the reactive store in one assignment at the end,

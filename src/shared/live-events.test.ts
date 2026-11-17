@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { liveEventsMissingFrom } from './live-events.js';
+import { liveEventsMissingFrom, systemInitBeforePage } from './live-events.js';
 import type { AgentEvent } from './types.js';
 
 const status = (message: string): AgentEvent => ({ type: 'status', message });
@@ -33,5 +33,24 @@ describe('liveEventsMissingFrom()', () => {
   it('drops stale transient events, which are never in a page', () => {
     const held: AgentEvent[] = [{ type: 'activity', activity: 'thinking' }, { type: 'partial_text', text: 'He' }, user('hi', 'u1')];
     expect(liveEventsMissingFrom([user('hi', 'u1')], held)).toEqual([]);
+  });
+});
+
+describe('systemInitBeforePage()', () => {
+  const init = (model: string): AgentEvent => ({ type: 'system_init', sessionId: 's', model, tools: [], skills: ['review'], mcpServers: [{ name: 'linear', status: 'connected' }] });
+  // Indexes 0..5: an old report, the newest before the page, then a page of 3.
+  const history = [init('old'), user('a', 'u1'), init('newest'), user('b', 'u2'), status('x'), user('c', 'u3')];
+
+  it("gives the newest report before the newest page when the page holds none", () => {
+    expect(systemInitBeforePage(history, 3, history.length)).toEqual(init('newest'));
+  });
+
+  it('gives none when the page holds one: replaying the page sets it', () => {
+    expect(systemInitBeforePage(history, 2, history.length)).toBeUndefined();
+  });
+
+  it('gives none for an older page, or a history with no report', () => {
+    expect(systemInitBeforePage(history, 3, 5)).toBeUndefined();
+    expect(systemInitBeforePage([user('a', 'u1'), user('b', 'u2')], 1, 2)).toBeUndefined();
   });
 });

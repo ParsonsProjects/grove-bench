@@ -213,6 +213,8 @@ class MockAdapter implements AgentAdapter {
   lastHandle: AgentQueryHandle | null = null;
   /** Every handle start() has returned, to check none is left running. */
   handles: AgentQueryHandle[] = [];
+  /** When set, each handle lists the agent's MCP servers with it. */
+  mcpServers: (() => Promise<McpServerInfo[]>) | null = null;
 
   getModels() { return [{ id: 'mock-model', label: 'Mock' }, { id: 'mock-lite', label: 'Mock Lite' }]; }
   /** Two universal controls plus one ('speed') that only the full model offers,
@@ -315,6 +317,7 @@ class MockAdapter implements AgentAdapter {
       setControl: vi.fn(),
       getUsage: vi.fn(async () => ({ available: true, plan: 'max', windows: [{ id: 'five_hour', label: '5-hour', utilization: 0.4 }], fetchedAt: 1 })),
     };
+    if (this.mcpServers) handle.listMcpServers = vi.fn(this.mcpServers);
     this.lastHandle = handle;
     this.handles.push(handle);
     return handle;
@@ -2993,6 +2996,75 @@ describe('AgentSessionManager sleep and wake', () => {
     expect(triggerAutoSaveImmediate).not.toHaveBeenCalled();
 
     await sessionManager.destroySession('test-sleep-quiet');
+  });
+
+  const mcpStatusesSent = (win: ReturnType<typeof makeMockWindow>, id: string) =>
+    win._send.mock.calls
+      .filter(([channel, sessionId]: [string, string]) => channel === IPC.AGENT_MCP_STATUS && sessionId === id)
+      .map(([, , servers]: [string, string, McpServerInfo[]]) => servers);
+
+  it("tells the renderer the agent's MCP servers when it wakes, without waiting for a message", async () => {
+    // Claude Code reports them (system_init) only with the first prompt.
+    mockAdapter.mcpServers = async () => [{ name: 'linear', status: 'connected' }];
+    const { win } = await startSession('test-wake-mcp');
+    await sessionManager.sleepSession('test-wake-mcp');
+    win._send.mockClear();
+
+    sessionManager.wakeSession('test-wake-mcp');
+
+    await vi.waitFor(() => expect(mcpStatusesSent(win, 'test-wake-mcp')).toEqual([[{ name: 'linear', status: 'connected' }]]));
+    expect(mockAdapter.lastHandle!.sendMessage).not.toHaveBeenCalled();
+
+    await sessionManager.destroySession('test-wake-mcp');
+  });
+
+  it('asks again while a server is still connecting, sending only what changed', async () => {
+    const pollMs = sessionManager.mcpStartPollMs;
+    sessionManager.mcpStartPollMs = 1;
+    try {
+      const answers: McpServerInfo[][] = [
+        [],
+        [{ name: 'linear', status: 'pending' }],
+        [{ name: 'linear', status: 'pending' }],
+        [{ name: 'linear', status: 'connected' }],
+      ];
+      mockAdapter.mcpServers = async () => answers.shift() ?? [{ name: 'linear', status: 'failed' }];
+      const win = makeMockWindow();
+      await sessionManager.createSession({ id: 'test-mcp-poll', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock' });
+
+      await vi.waitFor(() => expect(answers).toHaveLength(0));
+      await new Promise((r) => setTimeout(r, 20));
+      // An empty answer keeps the last report; once none is connecting it stops.
+      expect(mcpStatusesSent(win, 'test-mcp-poll')).toEqual([
+        [{ name: 'linear', status: 'pending' }],
+        [{ name: 'linear', status: 'connected' }],
+      ]);
+      expect(mockAdapter.lastHandle!.listMcpServers).toHaveBeenCalledTimes(4);
+
+      await sessionManager.destroySession('test-mcp-poll');
+    } finally {
+      sessionManager.mcpStartPollMs = pollMs;
+    }
+  });
+
+  it('stops asking once the agent is put to sleep', async () => {
+    const pollMs = sessionManager.mcpStartPollMs;
+    sessionManager.mcpStartPollMs = 5;
+    try {
+      mockAdapter.mcpServers = async () => [{ name: 'linear', status: 'pending' }];
+      await startSession('test-mcp-poll-sleep');
+      const handle = mockAdapter.lastHandle!;
+      await vi.waitFor(() => expect(handle.listMcpServers).toHaveBeenCalled());
+
+      await sessionManager.sleepSession('test-mcp-poll-sleep');
+      const asked = vi.mocked(handle.listMcpServers!).mock.calls.length;
+      await new Promise((r) => setTimeout(r, 40));
+      expect(vi.mocked(handle.listMcpServers!).mock.calls.length).toBe(asked);
+
+      await sessionManager.destroySession('test-mcp-poll-sleep');
+    } finally {
+      sessionManager.mcpStartPollMs = pollMs;
+    }
   });
 
   it('wakes on the same transcript with its mode, controls and always-allowed tools', async () => {

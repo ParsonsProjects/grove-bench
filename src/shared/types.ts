@@ -406,6 +406,11 @@ export interface EventHistoryPage {
   totalCount: number;
   startIndex: number;
   turn: ThreadTurnState;
+  /** The agent's last report of what it has (MCP servers, skills, commands),
+   *  when it is older than the page: the newest page only. Claude Code sends
+   *  a new one only with the next prompt, so without it a thread whose last
+   *  report is further back than one page shows none until then. */
+  lastSystemInit?: Extract<AgentEvent, { type: 'system_init' }>;
 }
 
 /** A single full-history search match (main-process search over event history). */

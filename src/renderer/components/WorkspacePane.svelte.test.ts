@@ -281,6 +281,32 @@ describe('WorkspacePane loading a running thread', () => {
 
     expect(store.sessions[0].lastActiveAt).toBe(before);
   });
+
+  it("shows the agent's last MCP servers and skills when its report is older than the page", async () => {
+    // Claude Code reports them only with the next prompt: a woken or reopened
+    // thread whose last report is further back than one page had none.
+    store.sessions = [{ id: SID, branch: 'grove/x', repoPath: '/repo', status: 'running' }] as never;
+    gitStatusStore.statusBySession = { [SID]: { entries: [] } };
+    mockGroveBench.getEventHistoryPage.mockResolvedValueOnce({
+      events: [{ type: 'user_message', text: 'Run the tests', uuid: 'u1' }, { type: 'result', subtype: 'success', isError: false }],
+      totalCount: 400,
+      startIndex: 398,
+      turn: IDLE_TURN,
+      lastSystemInit: {
+        type: 'system_init', sessionId: 'p', model: 'claude-opus', tools: ['Read'],
+        skills: ['review'], slashCommands: ['review', 'compact'], mcpServers: [{ name: 'linear', status: 'connected' }],
+      },
+    } as never);
+
+    render(WorkspacePane, { sessionId: SID });
+    await waitFor(() => expect(messageStore.isHistoryLoaded(SID)).toBe(true));
+
+    expect(messageStore.getSystemInfo(SID)).toMatchObject({
+      skills: ['review'], slashCommands: ['review', 'compact'], mcpServers: [{ name: 'linear', status: 'connected' }],
+    });
+    // Only what the agent has: no "Connected" line for a report from earlier.
+    expect(messageStore.getMessages(SID).some((m) => m.kind === 'system' && /Connected/.test(m.text))).toBe(false);
+  });
 });
 
 describe('WorkspacePane taking the turn state from main', () => {

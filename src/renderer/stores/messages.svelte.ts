@@ -975,6 +975,20 @@ class MessageStore {
     return this.systemInfoBySession[sessionId] ?? { tools: [], agents: [], skills: [], slashCommands: [], mcpServers: [] };
   }
 
+  /** What the agent has (tools, skills, commands, MCP servers), as one of
+   *  its system_init reports gave it. Also for the last report from before
+   *  the history page a pane loads (EventHistoryPage.lastSystemInit), which
+   *  is nothing else of that event: no "Connected" line, no model. */
+  setSystemInfo(sessionId: string, event: Extract<AgentEvent, { type: 'system_init' }>) {
+    this.systemInfoBySession[sessionId] = {
+      tools: event.tools ?? [],
+      agents: event.agents ?? [],
+      skills: event.skills ?? [],
+      slashCommands: event.slashCommands ?? [],
+      mcpServers: event.mcpServers ?? [],
+    };
+  }
+
   /** Replace the MCP server list with a live status snapshot (from listMcpServers). */
   updateMcpServers(sessionId: string, servers: McpServerInfo[]) {
     // An agent that doesn't report its servers at startup has no entry yet.
@@ -2022,13 +2036,7 @@ class MessageStore {
     delete this.stoppingSession[sessionId];
     delete this.userExplicitMode[sessionId];
     this.modelBySession[sessionId] = event.model;
-    this.systemInfoBySession[sessionId] = {
-      tools: event.tools ?? [],
-      agents: event.agents ?? [],
-      skills: event.skills ?? [],
-      slashCommands: event.slashCommands ?? [],
-      mcpServers: event.mcpServers ?? [],
-    };
+    this.setSystemInfo(sessionId, event);
     this.pushMessage(sessionId, {
       kind: 'system',
       id: nextId(),

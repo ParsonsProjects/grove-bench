@@ -2,6 +2,7 @@ import { app, ipcMain, BrowserWindow, dialog, shell } from 'electron';
 import { isSkipped, runProcess } from './process-host.js';
 import { inBackground } from './background-work.js';
 import { IPC, isPermissionMode } from '../shared/types.js';
+import { systemInitBeforePage } from '../shared/live-events.js';
 import type { BranchSwitchResult, ClaudeAccountPreview, ClaudeAccountSetting, BranchSyncResult, ConversationGoal, CreateSessionOpts, EventHistoryPage, ThreadUsage, OpenPrSummary, PrerequisiteStatus, PermissionDecision, RegistryAgentSummary, SessionInfo, SkillDefinition, SkillReach, WorktreeInfo } from '../shared/types.js';
 import { sessionManager } from './agent-session.js';
 import { todaySpend } from './session-limits.js';
@@ -1304,7 +1305,11 @@ export function registerHandlers() {
     const all = prelaunchPrefixedEvents(sessionId);
     const end = beforeIndex !== undefined ? Math.min(beforeIndex, all.length) : all.length;
     const start = Math.max(0, end - limit);
-    return { events: all.slice(start, end), totalCount: all.length, startIndex: start, turn: sessionManager.turnState(sessionId) };
+    const lastSystemInit = systemInitBeforePage(all, start, end);
+    return {
+      events: all.slice(start, end), totalCount: all.length, startIndex: start, turn: sessionManager.turnState(sessionId),
+      ...(lastSystemInit ? { lastSystemInit } : {}),
+    };
   });
 
   ipcMain.handle(IPC.AGENT_HISTORY_COUNT, (_event, sessionId: string) => {
