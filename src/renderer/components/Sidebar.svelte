@@ -322,9 +322,17 @@
    *  answer (offline, not logged in). Absent = still checking, or gh isn't
    *  available at all. */
   let cleanupPr = $state<Record<string, PrInfo | null | 'unknown'>>({});
+  /** sessionId → how many commits its branch has that its base branch
+   *  doesn't, with that base; null when git couldn't tell. Checked only
+   *  once "Also delete their branches" is ticked: main force-deletes the
+   *  branches Grove made, so those commits go with them unless pushed (the
+   *  Delete dialog warns the same). Absent = not checked, or still checking. */
+  let cleanupUnmerged = $state<Record<string, { count: number; base: string } | null>>({});
   /** Candidates whose checks have started this dialog session (not reactive:
    *  read inside the effect without becoming a dependency). */
   const cleanupCheckedIds = new Set<string>();
+  /** Same, for the commits check. */
+  const cleanupCommitsCheckedIds = new Set<string>();
   /** Bumped each time the dialog opens so results from a previous open are dropped. */
   let cleanupGeneration = 0;
   /** Shared by every run of the check effect, so editing the cutoff queues
@@ -332,11 +340,13 @@
    *  slow gh never holds up the uncommitted-changes checks. */
   const cleanupStatusQueue = limitedQueue(CLEANUP_CONCURRENCY);
   const cleanupPrQueue = limitedQueue(CLEANUP_CONCURRENCY);
+  const cleanupCommitsQueue = limitedQueue(CLEANUP_CONCURRENCY);
   // Closing the dialog drops the checks not started; opening it starts over.
   $effect(() => {
     if (showCleanup) return;
     cleanupStatusQueue.clear();
     cleanupPrQueue.clear();
+    cleanupCommitsQueue.clear();
   });
 
   /** Days from the field, or null while it's empty or not a number (a
@@ -370,6 +380,14 @@
     ].filter(Boolean);
     return left.length ? `Select all except ${left.join(' and ')}` : 'Select all';
   });
+  /** Selected threads whose branch goes if branches are deleted (a direct
+   *  thread keeps its branch). */
+  const cleanupSelectedBranchIds = $derived(cleanupCandidates.filter((s) => cleanupSelection[s.id] && !s.direct).map((s) => s.id));
+  /** Remove waits for the commits check of every selected thread whose
+   *  branch is about to go, so a quick click can't skip its warning. */
+  const cleanupCommitsPending = $derived(cleanupDeleteBranches && cleanupSelectedBranchIds.some((id) => !(id in cleanupUnmerged)));
+  const cleanupSelectedUnmergedCount = $derived(cleanupSelectedBranchIds.filter((id) => (cleanupUnmerged[id]?.count ?? 0) > 0).length);
+  const cleanupSelectedCommitsUnknown = $derived(cleanupSelectedBranchIds.filter((id) => cleanupUnmerged[id] === null).length);
   const cleanupMergedCount = $derived(cleanupCandidates.filter((s) => isPrMerged(cleanupPrOf(s.id))).length);
   const cleanupGhAvailable = $derived(store.prerequisites?.gh?.available === true);
 
@@ -388,12 +406,15 @@
   function openCleanup() {
     cleanupGeneration++;
     cleanupCheckedIds.clear();
+    cleanupCommitsCheckedIds.clear();
     cleanupDirty = {};
     cleanupStatusUnknown = {};
     cleanupPr = {};
+    cleanupUnmerged = {};
     cleanupSelection = {};
     cleanupStatusQueue.clear();
     cleanupPrQueue.clear();
+    cleanupCommitsQueue.clear();
     showCleanup = true;
   }
 
@@ -458,6 +479,43 @@
     });
   });
 
+  // Once "Also delete their branches" is ticked (and for threads listed
+  // later while it is): check each newly listed thread's branch for commits
+  // its base branch doesn't have, as the Delete dialog does. Skipped until
+  // then, since keeping the branches keeps the commits. Direct threads keep
+  // their branch, so they are never checked.
+  $effect(() => {
+    if (!showCleanup || !cleanupDeleteBranches) return;
+    void cleanupCandidateKey; // as above: the candidate set, not the array
+    const fresh = untrack(() => cleanupCandidates).filter((s) => !s.direct && !cleanupCommitsCheckedIds.has(s.id));
+    if (fresh.length === 0) return;
+    for (const s of fresh) cleanupCommitsCheckedIds.add(s.id);
+    const generation = cleanupGeneration;
+    const timeout = { timeout: DELETE_CHECK_TIMEOUT_MS };
+    // One lookup per project, shared by its threads.
+    const bases = new Map<string, Promise<string>>();
+    const baseFor = (repoPath: string) => {
+      let base = bases.get(repoPath);
+      if (!base) bases.set(repoPath, base = resolveBaseBranch(repoPath));
+      return base;
+    };
+    untrack(() => {
+      for (const s of fresh) {
+        cleanupCommitsQueue.add(async () => {
+          let answer: { count: number; base: string } | null;
+          try {
+            const base = await baseFor(s.repoPath);
+            const result = await withTimeout(window.groveBench.getBranchCommits(s.id, base, timeout), DELETE_CHECK_GIVE_UP_MS);
+            answer = result.error ? null : { count: result.commits.length, base };
+          } catch {
+            answer = null;
+          }
+          if (generation === cleanupGeneration) cleanupUnmerged = { ...cleanupUnmerged, [s.id]: answer };
+        });
+      }
+    });
+  });
+
   /** Tick every candidate that isn't kept back (the initial state). Ones
    *  still being checked are left undecided, so they are ticked if their
    *  check comes back clean. */
@@ -490,8 +548,18 @@
     const deleteBranches = cleanupDeleteBranches;
     confirmCleanup = false;
     cleaningUp = true;
+    // One at a time, and a failure doesn't stop the rest: its thread stays,
+    // so the next clean-up lists it again. Failures are reported together,
+    // since one error message would replace the one before.
+    const failed: Array<{ label: string; message: string }> = [];
     for (const id of ids) {
-      await destroySessionById(id, deleteBranches);
+      const session = store.sessions.find((s) => s.id === id);
+      const label = session ? sessionLabel(session) : id;
+      await destroySessionById(id, deleteBranches, (message) => failed.push({ label, message }));
+    }
+    if (failed.length === 1) store.setError(failed[0].message);
+    else if (failed.length > 1) {
+      store.setError(`Couldn't remove ${failed.length} threads (${failed.map((f) => f.label).join(', ')}). First error: ${failed[0].message}`);
     }
     cleaningUp = false;
     showCleanup = false;
@@ -700,8 +768,9 @@
 
   /** Full teardown of one session: main-process destroy plus all per-session
    *  renderer state (see forgetConversation). Shared
-   *  by the per-row destroy flow and the bulk clean-up dialog. */
-  async function destroySessionById(id: string, deleteBranch: boolean): Promise<boolean> {
+   *  by the per-row destroy flow and the bulk clean-up dialog. A failure is
+   *  shown as the app's error unless `onError` takes it instead. */
+  async function destroySessionById(id: string, deleteBranch: boolean, onError: (message: string) => void = (m) => store.setError(m)): Promise<boolean> {
     destroying = new Set([...destroying, id]);
 
     // Mark stopped immediately so the tab closes right away
@@ -717,7 +786,7 @@
       forgetConversation(id);
       return true;
     } catch (e) {
-      store.setError(errorMessage(e));
+      onError(errorMessage(e));
       return false;
     } finally {
       const next = new Set(destroying);
@@ -1632,11 +1701,19 @@
 <!-- Clean up old sessions dialog -->
 {#if showCleanup}
   <Dialog.Root open={true} onOpenChange={(o) => { if (!o && !cleaningUp) showCleanup = false; }}>
-    <Dialog.Content class="max-w-md">
+    <!-- Refusing in onOpenChange alone doesn't keep it open (Root keeps its
+         own open state), so Escape, outside clicks and the X are turned off
+         while removing, as PrReviewDialog does while submitting. -->
+    <Dialog.Content
+      class="max-w-md"
+      showCloseButton={!cleaningUp}
+      escapeKeydownBehavior={cleaningUp ? 'ignore' : 'close'}
+      interactOutsideBehavior={cleaningUp ? 'ignore' : 'close'}
+    >
       <Dialog.Header>
         <Dialog.Title>Clean Up Old Threads</Dialog.Title>
         <Dialog.Description>
-          Remove closed threads you no longer need. Removing a thread kills its shell and deletes its worktree. Threads with uncommitted changes or marked To do are flagged and left unselected. Tick them only if you're sure. Each thread's pull request state is shown when the GitHub CLI is available; merged ones are the safest to remove. Branches are kept unless you choose otherwise. Running threads are never listed.
+          Remove closed threads you no longer need. Removing a thread kills its shell and deletes its worktree. Threads with uncommitted changes or marked To do are flagged and left unselected. Tick them only if you're sure. Each thread's pull request state is shown when the GitHub CLI is available; merged ones are the safest to remove. Branches are kept unless you choose otherwise; if you do, threads with commits that aren't on the base branch yet are flagged. Running threads are never listed.
         </Dialog.Description>
       </Dialog.Header>
 
@@ -1723,6 +1800,14 @@
                   {:else if cleanupDirty[session.id]}
                     <span class="text-amber-500 font-medium">· uncommitted changes</span>
                   {/if}
+                  {#if cleanupDeleteBranches && !session.direct}
+                    {@const unmerged = cleanupUnmerged[session.id]}
+                    {#if unmerged === null}
+                      <span class="text-amber-500 font-medium" title="Git couldn't check this branch for commits that aren't on its base branch yet" data-testid="cleanup-commits-{session.id}">· commits unknown</span>
+                    {:else if unmerged && unmerged.count > 0}
+                      <span class="text-amber-500 font-medium" title="Unless you've pushed them, deleting the branch can lose them" data-testid="cleanup-commits-{session.id}">· {unmerged.count} {unmerged.count === 1 ? 'commit' : 'commits'} not on {unmerged.base}</span>
+                    {/if}
+                  {/if}
                 </div>
               </div>
             </label>
@@ -1738,12 +1823,14 @@
         <Button variant="secondary" onclick={() => showCleanup = false} disabled={cleaningUp}>Cancel</Button>
         <Button
           variant="destructive"
-          disabled={cleanupSelectedIds.length === 0 || cleaningUp}
+          disabled={cleanupSelectedIds.length === 0 || cleaningUp || cleanupCommitsPending}
           onclick={() => confirmCleanup = true}
         >
           {cleaningUp
             ? 'Removing…'
-            : `Remove ${cleanupSelectedIds.length} ${cleanupSelectedIds.length === 1 ? 'thread' : 'threads'}`}
+            : cleanupCommitsPending
+              ? 'Checking commits…'
+              : `Remove ${cleanupSelectedIds.length} ${cleanupSelectedIds.length === 1 ? 'thread' : 'threads'}`}
         </Button>
       </Dialog.Footer>
     </Dialog.Content>
@@ -1766,6 +1853,20 @@
           {#if cleanupSelectedTodoCount > 0}
             <span class="text-foreground font-medium">
               {cleanupSelectedTodoCount} of them {cleanupSelectedTodoCount === 1 ? 'is' : 'are'} marked To do.
+            </span>
+          {/if}
+          {#if cleanupDeleteBranches && cleanupSelectedUnmergedCount > 0}
+            <span class="text-amber-500 font-medium">
+              {#if cleanupSelectedUnmergedCount === 1}
+                1 of them has commits that aren't on its base branch yet. Unless you've pushed them, deleting its branch can lose them.
+              {:else}
+                {cleanupSelectedUnmergedCount} of them have commits that aren't on their base branch yet. Unless you've pushed them, deleting their branches can lose them.
+              {/if}
+            </span>
+          {/if}
+          {#if cleanupDeleteBranches && cleanupSelectedCommitsUnknown > 0}
+            <span class="text-amber-500 font-medium">
+              Couldn't check {cleanupSelectedCommitsUnknown} of them for commits that aren't on the base branch yet.
             </span>
           {/if}
         </Dialog.Description>

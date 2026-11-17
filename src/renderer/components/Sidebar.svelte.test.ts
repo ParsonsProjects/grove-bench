@@ -1533,6 +1533,202 @@ describe('Sidebar clean-up dialog', () => {
     expect(await screen.findByTestId('cleanup-pr-merged')).toHaveTextContent('PR unknown');
     expect(screen.queryByRole('button', { name: /Select merged/ })).toBeDisabled();
   });
+
+  describe('Remove', () => {
+    const { destroySession, getBranchCommits } = mockGroveBench;
+
+    beforeEach(() => {
+      // Listed out of age order, so removing oldest first is what puts Alpha before Bravo.
+      store.sessions = [
+        { id: 'live', branch: 'feat-live', repoPath: '/repo-a', status: 'running', displayName: 'Live one' },
+        { id: 'b', branch: 'feat-b', repoPath: '/repo-a', status: 'stopped', displayName: 'Bravo one', lastActiveAt: longAgo },
+        { id: 'dirty', branch: 'feat-dirty', repoPath: '/repo-a', status: 'stopped', displayName: 'Dirty one', lastActiveAt: Date.now() - 20 * DAY },
+        { id: 'a', branch: 'feat-a', repoPath: '/repo-a', status: 'stopped', displayName: 'Alpha one', lastActiveAt: longAgo - 5 * DAY },
+        { id: 'recent', branch: 'feat-recent', repoPath: '/repo-a', status: 'stopped', displayName: 'Recent one', lastActiveAt: Date.now() - DAY },
+      ] as any;
+      store.prerequisites = { ...store.prerequisites, gh: { available: false } } as any;
+      mockGroveBench.getGitStatus.mockImplementation((async (id: string) => ({
+        entries: id === 'dirty' ? [{ filePath: 'x.ts', status: 'modified' as const, staged: false }] : [],
+      })));
+    });
+
+    afterEach(() => {
+      store.error = null;
+      destroySession.mockReset().mockResolvedValue(undefined);
+      getBranchCommits.mockReset().mockResolvedValue({ commits: [] });
+    });
+
+    /** Open the dialog once every row's check is back: Alpha and Bravo
+     *  ticked, Dirty flagged and left unticked. */
+    async function openChecked() {
+      const dialog = await openDialog();
+      await within(dialog).findByText('· uncommitted changes');
+      await waitFor(() => expect(within(dialog).getByText('2 of 3 selected')).toBeInTheDocument());
+      return dialog;
+    }
+
+    async function confirmRemove(dialog: HTMLElement) {
+      await fireEvent.click(await within(dialog).findByRole('button', { name: /^Remove \d+ threads?$/ }));
+      const confirm = await screen.findByRole('dialog', { name: 'Remove Threads?' });
+      await fireEvent.click(within(confirm).getByRole('button', { name: 'Remove' }));
+    }
+
+    /** The dialog closes once every removal has finished. */
+    const removalDone = () => waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+
+    const deleteBranchesBox = (dialog: HTMLElement) => within(dialog).getByRole('checkbox', { name: 'Also delete their branches' });
+
+    const commits = (n: number) => Array.from({ length: n }, (_, i) => ({ subject: `Commit ${i + 1}`, body: '' }));
+
+    it('removes the ticked threads oldest first, keeping their branches', async () => {
+      const dialog = await openChecked();
+      expect(within(dialog).queryByLabelText(/Recent one/)).not.toBeInTheDocument();
+      expect(within(dialog).queryByLabelText(/Live one/)).not.toBeInTheDocument();
+      expect(within(dialog).getByLabelText(/Dirty one/)).not.toBeChecked();
+
+      await confirmRemove(dialog);
+      await removalDone();
+
+      expect(destroySession.mock.calls).toEqual([['a', false], ['b', false]]);
+      expect(store.sessions.map((s) => s.id)).toEqual(['live', 'dirty', 'recent']);
+      // Keeping the branches keeps their commits: nothing to check.
+      expect(getBranchCommits).not.toHaveBeenCalled();
+    });
+
+    it('deletes their branches when asked, and says so before removing', async () => {
+      const dialog = await openChecked();
+      await fireEvent.click(deleteBranchesBox(dialog));
+      await fireEvent.click(await within(dialog).findByRole('button', { name: 'Remove 2 threads' }));
+
+      const confirm = await screen.findByRole('dialog', { name: 'Remove Threads?' });
+      expect(confirm).toHaveTextContent('Permanently remove 2 threads and their worktrees, and delete their branches?');
+      await fireEvent.click(within(confirm).getByRole('button', { name: 'Remove' }));
+      await removalDone();
+
+      expect(destroySession.mock.calls).toEqual([['a', true], ['b', true]]);
+    });
+
+    it('warns before removing a ticked thread with uncommitted changes', async () => {
+      const dialog = await openChecked();
+      await fireEvent.click(within(dialog).getByLabelText(/Dirty one/));
+      await fireEvent.click(within(dialog).getByRole('button', { name: 'Remove 3 threads' }));
+      const confirm = await screen.findByRole('dialog', { name: 'Remove Threads?' });
+      expect(confirm).toHaveTextContent('1 of them has uncommitted changes that will be lost.');
+    });
+
+    it('keeps going when one removal fails, and lists that thread again next time', async () => {
+      destroySession.mockImplementation(async (id: string) => {
+        if (id === 'a') throw new Error('Another thread is still working in this thread\'s worktree.');
+      });
+      const dialog = await openChecked();
+      await confirmRemove(dialog);
+      await removalDone();
+
+      expect(destroySession.mock.calls.map(([id]) => id)).toEqual(['a', 'b']);
+      expect(store.error).toBe('Another thread is still working in this thread\'s worktree.');
+      expect(store.sessions.map((s) => s.id)).toEqual(['live', 'dirty', 'a', 'recent']);
+
+      await fireEvent.click(screen.getByTitle('Clean up old threads'));
+      const again = await screen.findByRole('dialog');
+      expect(await within(again).findByLabelText(/Alpha one/)).toBeInTheDocument();
+      expect(within(again).queryByLabelText(/Bravo one/)).not.toBeInTheDocument();
+    });
+
+    it('reports every failed removal, not only the last', async () => {
+      destroySession.mockRejectedValue(new Error('locked'));
+      const dialog = await openChecked();
+      await confirmRemove(dialog);
+      await removalDone();
+
+      expect(store.error).toBe('Couldn\'t remove 2 threads (Alpha one, Bravo one). First error: locked');
+    });
+
+    it('cannot be closed while removing', async () => {
+      const finishers: Array<() => void> = [];
+      destroySession.mockImplementation(() => new Promise<void>((resolve) => { finishers.push(resolve); }));
+      const dialog = await openChecked();
+      await confirmRemove(dialog);
+
+      expect(await within(dialog).findByRole('button', { name: 'Removing…' })).toBeDisabled();
+      expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeDisabled();
+      await fireEvent.keyDown(document.body, { key: 'Escape' });
+      expect(screen.getByRole('dialog')).toBe(dialog);
+
+      finishers.shift()!();
+      await waitFor(() => expect(destroySession).toHaveBeenCalledTimes(2));
+      finishers.shift()!();
+      await removalDone();
+    });
+
+    describe('with "Also delete their branches"', () => {
+      it('checks branches for commits not on the base branch only once it is ticked', async () => {
+        getBranchCommits.mockImplementation(async (id: string) => ({ commits: id === 'a' ? commits(2) : [] }));
+        const dialog = await openChecked();
+        expect(getBranchCommits).not.toHaveBeenCalled();
+
+        await fireEvent.click(deleteBranchesBox(dialog));
+
+        expect(await within(dialog).findByTestId('cleanup-commits-a')).toHaveTextContent('2 commits not on main');
+        expect(within(dialog).queryByTestId('cleanup-commits-b')).not.toBeInTheDocument();
+        expect(getBranchCommits.mock.calls.map(([id, base]) => `${id}:${base}`).sort()).toEqual(['a:main', 'b:main', 'dirty:main']);
+      });
+
+      it('warns before removing ticked threads whose branches have such commits', async () => {
+        // Dirty has some too, but it isn't ticked, so it isn't counted.
+        getBranchCommits.mockImplementation(async (id: string) => ({ commits: id === 'b' || id === 'dirty' ? commits(1) : [] }));
+        const dialog = await openChecked();
+        await fireEvent.click(deleteBranchesBox(dialog));
+        expect(await within(dialog).findByTestId('cleanup-commits-b')).toHaveTextContent('1 commit not on main');
+
+        await fireEvent.click(await within(dialog).findByRole('button', { name: 'Remove 2 threads' }));
+        const confirm = await screen.findByRole('dialog', { name: 'Remove Threads?' });
+        expect(confirm).toHaveTextContent('1 of them has commits that aren\'t on its base branch yet. Unless you\'ve pushed them, deleting its branch can lose them.');
+
+        // Still the user's call, as in the Delete dialog.
+        await fireEvent.click(within(confirm).getByRole('button', { name: 'Remove' }));
+        await removalDone();
+        expect(destroySession.mock.calls).toEqual([['a', true], ['b', true]]);
+      });
+
+      it('waits for the check before Remove can be clicked', async () => {
+        let finish!: (r: { commits: [] }) => void;
+        getBranchCommits.mockImplementation((id: string) => (id === 'b'
+          ? new Promise((resolve) => { finish = resolve; })
+          : Promise.resolve({ commits: [] })));
+        const dialog = await openChecked();
+        await fireEvent.click(deleteBranchesBox(dialog));
+
+        expect(await within(dialog).findByRole('button', { name: 'Checking commits…' })).toBeDisabled();
+        finish({ commits: [] });
+        expect(await within(dialog).findByRole('button', { name: 'Remove 2 threads' })).toBeEnabled();
+      });
+
+      it('says when a branch could not be checked', async () => {
+        getBranchCommits.mockImplementation(async (id: string) => (id === 'a' ? { commits: [], error: 'fatal: bad revision' } : { commits: [] }));
+        const dialog = await openChecked();
+        await fireEvent.click(deleteBranchesBox(dialog));
+        expect(await within(dialog).findByTestId('cleanup-commits-a')).toHaveTextContent('commits unknown');
+
+        await fireEvent.click(await within(dialog).findByRole('button', { name: 'Remove 2 threads' }));
+        const confirm = await screen.findByRole('dialog', { name: 'Remove Threads?' });
+        expect(confirm).toHaveTextContent('Couldn\'t check 1 of them for commits that aren\'t on the base branch yet.');
+      });
+
+      it('does not check direct threads, which keep their branch', async () => {
+        store.sessions = [
+          ...store.sessions,
+          { id: 'direct', branch: 'main', repoPath: '/repo-a', status: 'stopped', direct: true, displayName: 'Direct one', lastActiveAt: longAgo },
+        ] as any;
+        const dialog = await openDialog();
+        await waitFor(() => expect(within(dialog).getByText('3 of 4 selected')).toBeInTheDocument());
+        await fireEvent.click(deleteBranchesBox(dialog));
+
+        expect(await within(dialog).findByRole('button', { name: 'Remove 3 threads' })).toBeEnabled();
+        expect(getBranchCommits).toHaveBeenCalledTimes(3);
+        expect(getBranchCommits).not.toHaveBeenCalledWith('direct', expect.anything(), expect.anything());
+      });
+    });
+  });
 });
 
 describe('Sidebar delete conversation', () => {
