@@ -21,6 +21,7 @@ import { messageStore, type ChatMessage } from '../stores/messages.svelte.js';
 import { store } from '../stores/sessions.svelte.js';
 import { settingsStore } from '../stores/settings.svelte.js';
 import { arrivalScene } from '../stores/arrivalScene.svelte.js';
+import { bookmarkStore } from '../stores/bookmarks.svelte.js';
 
 const SID = 'panel-session';
 
@@ -308,6 +309,25 @@ describe('OutputPanel — bookmark jumps', () => {
     expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
     expect(messageStore.getViewMode(SID)).toBe('summary');
     messageStore.viewModeBySession = {};
+  });
+});
+
+describe('OutputPanel: a bookmark whose text is gone', () => {
+  afterEach(() => { bookmarkStore.list = []; });
+
+  it('shows its text and its links', async () => {
+    store.activeSessionId = SID;
+    bookmarkStore.list = [{
+      id: 'gone', sessionId: SID, repoPath: '/r', sessionLabel: 'x', messageUuid: 'u-gone', eventIndex: null,
+      selectedText: 'Read the setup guide', createdAt: 0,
+      links: [{ kind: 'web', href: 'https://docs.example.dev/setup', text: 'setup guide' }],
+    }];
+    render(OutputPanel, { sessionId: SID });
+
+    messageStore.requestJump(SID, { eventIndex: null, uuid: 'u-gone', bookmarkId: 'gone' });
+
+    expect(await screen.findByText('Read the setup guide')).toBeInTheDocument();
+    expect(screen.getByRole('list', { name: 'Links in this bookmark' })).toHaveTextContent('setup guide');
   });
 });
 

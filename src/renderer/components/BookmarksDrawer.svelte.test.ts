@@ -124,13 +124,53 @@ describe('BookmarksDrawer', () => {
       expect(window.groveBench.openExternal).toHaveBeenCalledWith(web.href);
     });
 
-    it("opens a file link in its own thread's worktree", async () => {
-      store.sessions = [{ id: 's1', branch: 'feat-x', repoPath: '/repo-a', status: 'running' }] as any;
+    it("opens a file link in its own thread's worktree, showing that thread", async () => {
+      vi.mocked(window.groveBench.openWorktreeFile).mockResolvedValueOnce({ kind: 'markdown', content: '# Plan' });
+      store.sessions = [
+        { id: 's1', branch: 'feat-x', repoPath: '/repo-a', status: 'running' },
+        { id: 's2', branch: 'other', repoPath: '/repo-a', status: 'running' },
+      ] as any;
+      store.activeSessionId = 's2';
       bookmarkStore.list = [bm({ id: 'a', sessionId: 's1', links: [file] })];
       render(BookmarksDrawer);
       await fireEvent.click(screen.getByTitle(file.href));
+      expect(window.groveBench.openWorktreeFile).toHaveBeenLastCalledWith('s1', 'docs/plan.md');
+      await vi.waitFor(() => expect(store.activeSessionId).toBe('s1'));
+    });
+
+    it('stays in the thread you are in for a file another app opens', async () => {
+      vi.mocked(window.groveBench.openWorktreeFile).mockResolvedValueOnce({ kind: 'opened' });
+      store.sessions = [
+        { id: 's1', branch: 'feat-x', repoPath: '/repo-a', status: 'stopped' },
+        { id: 's2', branch: 'other', repoPath: '/repo-a', status: 'running' },
+      ] as any;
+      store.activeSessionId = 's2';
+      const pdf = { kind: 'file' as const, href: 'out/report.pdf', text: 'report' };
+      bookmarkStore.list = [bm({ id: 'a', sessionId: 's1', links: [pdf] })];
+      render(BookmarksDrawer);
+      await fireEvent.click(screen.getByTitle(pdf.href));
+      await vi.waitFor(() => expect(window.groveBench.openWorktreeFile).toHaveBeenLastCalledWith('s1', 'out/report.pdf'));
+      await new Promise((r) => setTimeout(r, 0));
+      expect(store.activeSessionId).toBe('s2');
+    });
+
+    it("opens a local page in its own thread's Preview tab, even from the landing", async () => {
+      const local = { kind: 'web' as const, href: 'http://localhost:5173/', text: 'the app' };
+      store.sessions = [{ id: 's1', branch: 'feat-x', repoPath: '/repo-a', status: 'running' }] as any;
+      bookmarkStore.list = [bm({ id: 'a', sessionId: 's1', links: [local] })];
+      render(BookmarksDrawer);
+      await fireEvent.click(screen.getByTitle(local.href));
       expect(store.activeSessionId).toBe('s1');
-      expect(window.groveBench.openWorktreeFile).toHaveBeenCalledWith('s1', 'docs/plan.md');
+      expect(messageStore.getActiveTab('s1')).toBe('preview');
+    });
+
+    it('copies its text with its links written in', async () => {
+      const writeText = vi.fn(() => Promise.resolve());
+      Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+      bookmarkStore.list = [bm({ id: 'a', selectedText: 'See the setup guide', links: [web] })];
+      render(BookmarksDrawer);
+      await fireEvent.click(screen.getByTitle('Copy'));
+      expect(writeText).toHaveBeenCalledWith('See the [setup guide](https://docs.example.dev/setup)');
     });
 
     it("says so when the file isn't in the worktree", async () => {

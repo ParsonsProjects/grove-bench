@@ -8,8 +8,14 @@ import { store } from '../stores/sessions.svelte.js';
 import { messageStore } from '../stores/messages.svelte.js';
 import { previewStore } from '../stores/preview.svelte.js';
 
+/** Whether a link goes to a Preview tab when there is a thread to open it
+ *  in: a local page, not Ctrl/Cmd+clicked. */
+export function isPreviewLink(url: string, event?: { ctrlKey?: boolean; metaKey?: boolean } | null): boolean {
+  return !(event?.ctrlKey || event?.metaKey) && isLocalHttpUrl(toBrowsableUrl(url));
+}
+
 export function opensInPreview(url: string, event?: { ctrlKey?: boolean; metaKey?: boolean } | null): boolean {
-  return !!store.activeSessionId && !(event?.ctrlKey || event?.metaKey) && isLocalHttpUrl(toBrowsableUrl(url));
+  return !!store.activeSessionId && isPreviewLink(url, event);
 }
 
 export function openLink(url: string, event?: { ctrlKey?: boolean; metaKey?: boolean } | null): void {

@@ -30,6 +30,26 @@ describe('activityMenuEntries', () => {
     expect(entries[5].action).toEqual({ kind: 'rewind', uuid: 'uuid-1' });
   });
 
+  it("puts a selection's links in what Copy and Copy to prompt give", () => {
+    const links = [
+      { kind: 'web' as const, href: 'https://x.dev/docs', text: 'the docs', shown: 'the docs' },
+      { kind: 'file' as const, href: 'src/app.ts', text: 'app', shown: 'app' },
+    ];
+    const entries = activityMenuEntries({ selection: { text: 'See the docs and app', msgId: null, links } });
+    expect(entries[0].action).toEqual({
+      kind: 'copy-rich',
+      text: 'See the docs and app',
+      html: 'See <a href="https://x.dev/docs">the docs</a> and app',
+    });
+    expect(entries[2].action).toEqual({ kind: 'to-prompt', text: 'See [the docs](https://x.dev/docs) and [app](src/app.ts)' });
+  });
+
+  it('copies a selection with only file links as plain text', () => {
+    const links = [{ kind: 'file' as const, href: 'src/app.ts', text: 'app', shown: 'app' }];
+    expect(activityMenuEntries({ selection: { text: 'open app', msgId: null, links } })[0].action)
+      .toEqual({ kind: 'copy', text: 'open app' });
+  });
+
   it('copies a table as tab-separated text plus HTML, or as Markdown', () => {
     const entries = activityMenuEntries({ table: { markdown: '| a | b |', tsv: 'a\tb', html: '<table></table>' } });
     expect(entries).toEqual([
@@ -107,7 +127,7 @@ describe('readActivityTarget selection', () => {
       expect(target.selection).toEqual({
         text: 'See the docs',
         msgId: 'm1',
-        links: [{ kind: 'web', href: 'https://example.com/docs', text: 'the docs' }],
+        links: [{ kind: 'web', href: 'https://example.com/docs', text: 'the docs', shown: 'the docs' }],
       });
       expect(activityMenuEntries(target).find((e) => e.label === 'Bookmark selection')?.action)
         .toEqual({ kind: 'bookmark', text: 'See the docs', msgId: 'm1', links: target.selection!.links });

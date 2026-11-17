@@ -2,10 +2,9 @@
   import { messageStore } from '../stores/messages.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
   import { selectionIn } from '$lib/activity-menu.js';
-  import { selectionLinks } from '$lib/selection-links.js';
+  import { markdownWithLinks, selectionLinks, type FoundLink } from '$lib/selection-links.js';
   import { bookmarkSelection } from '$lib/bookmark-selection.js';
   import { menuItem, menuPanel } from '$lib/components/ui/menu/index.js';
-  import type { BookmarkLink } from '../../shared/types.js';
 
   // A floating "Bookmark / To prompt" menu shown when the user selects text
   // inside `container`. Works for any scroll container — the activity thread
@@ -21,7 +20,7 @@
   let selAnchor = $state<{ left: number; top: number; bottom: number } | null>(null);
   let selMenuPos = $state<{ left: number; top: number }>({ left: 0, top: 0 });
   let selMenuEl = $state<HTMLDivElement>();
-  let pendingSelection: { text: string; msgId: string | null; links: BookmarkLink[] } | null = null;
+  let pendingSelection: { text: string; msgId: string | null; links: FoundLink[] } | null = null;
 
   function clear() {
     selAnchor = null;
@@ -34,8 +33,9 @@
     // (handles multi-message spans). The diff view has no [data-msg-id] → text-only.
     const sel = container ? selectionIn(container) : null;
     if (!sel) { clear(); return; }
-    // Read now: the text leaves the links out (selection-links).
-    pendingSelection = { text: sel.text, msgId: sel.msgId, links: selectionLinks(sel.range, sel.text) };
+    // Read now, while the nodes are the ones selected (a reply still
+    // streaming redraws them): the text leaves the links out.
+    pendingSelection = { text: sel.text, msgId: sel.msgId, links: selectionLinks(sel.range) };
     const rect = sel.range.getBoundingClientRect();
     selAnchor = { left: rect.left, top: rect.top, bottom: rect.bottom };
     // Rough initial position; the clamp effect refines it once measured.
@@ -108,7 +108,7 @@
     if (!pendingSelection) return;
     // Into the draft too: the Checkpoints tab's diff has no prompt input
     // showing, and one that mounts later only reads the draft.
-    messageStore.appendToPrompt(sessionId, pendingSelection.text);
+    messageStore.appendToPrompt(sessionId, markdownWithLinks(pendingSelection.text, pendingSelection.links));
     clear();
     window.getSelection()?.removeAllRanges();
   }

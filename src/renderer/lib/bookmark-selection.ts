@@ -10,7 +10,7 @@ export async function bookmarkSelection(
   sessionId: string,
   text: string,
   msgId: string | null,
-  links: BookmarkLink[] = [],
+  links: readonly BookmarkLink[],
 ): Promise<void> {
   let messageUuid: string | null = null;
   let eventIndex: number | null = null;
@@ -31,6 +31,7 @@ export async function bookmarkSelection(
     messageUuid,
     eventIndex,
     selectedText: text,
-    links,
+    // Just what's saved (a FoundLink also says how the selection shows it).
+    links: links.map(({ kind, href, text: linkText }) => ({ kind, href, text: linkText })),
   });
 }
