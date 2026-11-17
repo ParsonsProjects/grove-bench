@@ -25,7 +25,7 @@ import { pathToFileURL } from 'node:url';
 import { app } from 'electron';
 import type {
   AdapterConfig, AdapterEvent, AdapterPrerequisiteStatus, AgentAdapter, AgentCapabilities, AgentQueryHandle,
-  ApiKeyDescriptor, CliSignInDescriptor, ModelInfo, PermissionResponse, SignInCheck, UserMessage,
+  ApiKeyDescriptor, CliSignInDescriptor, GenerateTextOptions, ModelInfo, PermissionResponse, SignInCheck, UserMessage,
 } from '../types.js';
 import type { AgentStage, ControlDescriptor, ControlOption, PermissionMode, ImageMediaType, SkillDefinition, TokenCounts } from '../../../shared/types.js';
 import { CONTROL_IDS, isImageMediaType } from '../../../shared/types.js';
@@ -550,7 +550,7 @@ export class AcpAdapter implements AgentAdapter {
 
   /** Ask the agent once, in a session of its own, with every tool request
    *  turned down. ACP has no system prompt, so it leads the message. */
-  async generateText(systemPrompt: string, userMessage: string, options?: { cwd?: string; abortSignal?: AbortSignal; model?: string }): Promise<string> {
+  async generateText(systemPrompt: string, userMessage: string, options?: GenerateTextOptions): Promise<string> {
     const cwd = options?.cwd ?? os.tmpdir();
     const proc = spawnAgent(this.def, cwd);
     let stderr = '';
@@ -587,6 +587,7 @@ export class AcpAdapter implements AgentAdapter {
       if (options?.model && models && models.current !== options.model && models.models.some((m) => m.id === options.model)) {
         await requestModel(rpc, sessionId, models, options.model).catch((e) => logger.warn(`[${this.id}] background model not set:`, e));
       }
+      options?.onStarted?.();
       await withTimeout(
         rpc.request('session/prompt', { sessionId, prompt: [{ type: 'text', text: `${systemPrompt}\n\n${userMessage}` }] }),
         GENERATE_TIMEOUT_MS,

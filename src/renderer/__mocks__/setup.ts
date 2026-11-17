@@ -198,6 +198,10 @@ const mockGroveBench = {
   memoryRead: vi.fn(() => Promise.resolve(null as string | null)),
   memoryWrite: vi.fn(() => Promise.resolve()),
   memoryDelete: vi.fn(() => Promise.resolve(true)),
+  memoryCompactPreview: vi.fn(() => Promise.resolve({
+    agentId: 'claude-code', agentName: 'Claude Agent', model: 'claude-haiku-4-5', fileCount: 0, totalBytes: 0,
+    maxGroups: 6, parallelMerges: 3, plan: null,
+  } as import('../../shared/types.js').MemoryCompactionPreview)),
   memoryCompact: vi.fn(() => Promise.resolve({ compacted: false, filesChanged: [] } as import('../../shared/types.js').MemoryCompactionStatus)),
   memoryCompactCancel: vi.fn(() => Promise.resolve(true)),
   onMemoryCompactEvent: vi.fn(() => () => {}),

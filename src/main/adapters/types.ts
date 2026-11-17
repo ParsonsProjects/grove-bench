@@ -396,6 +396,14 @@ export interface CliSignInDescriptor {
   setupUrl: string;
 }
 
+/** Options for one generateText call. */
+export interface GenerateTextOptions {
+  cwd?: string;
+  abortSignal?: AbortSignal;
+  model?: string;
+  onStarted?: () => void;
+}
+
 // ─── The Adapter Interface ───
 
 export interface AgentAdapter {
@@ -514,8 +522,10 @@ export interface AgentAdapter {
 
   /** Generate text from a system prompt and user message.
    *  Used by memory-autosave to run extraction without being coupled to a specific SDK.
-   *  `model` overrides the provider default (e.g. a cheaper model for background calls). */
-  generateText?(systemPrompt: string, userMessage: string, options?: { cwd?: string; abortSignal?: AbortSignal; model?: string }): Promise<string>;
+   *  `model` overrides the provider default (e.g. a cheaper model for background calls).
+   *  `onStarted` is called once the agent's process is up and has the prompt,
+   *  so a caller can time startup apart from the reply (memory compaction). */
+  generateText?(systemPrompt: string, userMessage: string, options?: GenerateTextOptions): Promise<string>;
 
   // ─── Optional conversation title ───
 

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import path from 'node:path';
-import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS, thinkingConfigFor, parseMcpListOutput, mcpServerManager, claudeMcpOrigin, mcpToolServerKey, mcpContextCostByServer, toMcpElicitationRequest, withMcpjsonApproval, mcpjsonApprovalsFrom, withoutLegacyDenyRules, buildMcpAddArgs, quoteArg, validatePluginId, validateConfigScope, claudeControlsFor, supportsAdaptiveThinking, supportsFastMode, supportsAutoMode, claudeModelCaps, effortFor, reasoningOptionsFor, toSdkPermissionMode, fromSdkSyncMode, stripAnsi, mapClaudeUsage, thinkingDisplayFor, TEXT_GENERATION_OPTIONS, collectGeneratedText, missingConversationError, userMessageContent, sandboxDecision } from './claude-code.js';
+import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS, thinkingConfigFor, parseMcpListOutput, mcpServerManager, claudeMcpOrigin, mcpToolServerKey, mcpContextCostByServer, toMcpElicitationRequest, withMcpjsonApproval, mcpjsonApprovalsFrom, withoutLegacyDenyRules, buildMcpAddArgs, quoteArg, validatePluginId, validateConfigScope, claudeControlsFor, supportsAdaptiveThinking, supportsFastMode, supportsAutoMode, claudeModelCaps, effortFor, reasoningOptionsFor, toSdkPermissionMode, fromSdkSyncMode, stripAnsi, mapClaudeUsage, thinkingDisplayFor, TEXT_GENERATION_OPTIONS, collectGeneratedText, withFirstMessage, missingConversationError, userMessageContent, sandboxDecision } from './claude-code.js';
 import type { AgentEvent } from '../../shared/types.js';
 import { RunningCost, RunningTokens } from './running-cost.js';
 import { limitHook, LIMIT_STOP_REASON, titleListOptions, titleFromSessions } from './claude-code.js';
@@ -1267,6 +1267,29 @@ describe('TEXT_GENERATION_OPTIONS', () => {
 
   it('stays out of plan mode, whose reminder sends the model exploring', () => {
     expect(TEXT_GENERATION_OPTIONS.permissionMode).toBe('dontAsk');
+  });
+});
+
+describe('withFirstMessage()', () => {
+  it('says once when the CLI sends its first message, and passes every message on', async () => {
+    const onFirst = vi.fn();
+    async function* messages() {
+      yield 'init';
+      expect(onFirst).toHaveBeenCalledTimes(1);
+      yield 'reply';
+      yield 'result';
+    }
+    const seen: string[] = [];
+    for await (const m of withFirstMessage(messages(), onFirst)) seen.push(m);
+    expect(seen).toEqual(['init', 'reply', 'result']);
+    expect(onFirst).toHaveBeenCalledTimes(1);
+  });
+
+  it('never calls it for a CLI that sent nothing', async () => {
+    const onFirst = vi.fn();
+    async function* none(): AsyncGenerator<string> { /* exited at once */ }
+    for await (const _ of withFirstMessage(none(), onFirst)) { /* nothing */ }
+    expect(onFirst).not.toHaveBeenCalled();
   });
 });
 

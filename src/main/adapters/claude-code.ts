@@ -13,6 +13,7 @@ import type {
   AdapterPrerequisiteStatus,
   ApiKeyDescriptor,
   CliSignInDescriptor,
+  GenerateTextOptions,
   ModelInfo,
   ToolImageData,
   UserMessage,
@@ -1636,6 +1637,19 @@ export async function collectGeneratedText(messages: AsyncIterable<SDKMessage>, 
   return text;
 }
 
+/** The messages as they come, calling `onFirst` when the first arrives: the
+ *  CLI sends its init message once it is up, before the model replies. */
+export async function* withFirstMessage<T>(messages: AsyncIterable<T>, onFirst?: () => void): AsyncGenerator<T> {
+  let first = true;
+  for await (const message of messages) {
+    if (first) {
+      first = false;
+      onFirst?.();
+    }
+    yield message;
+  }
+}
+
 // ─── Claude Code Adapter ───
 
 export class ClaudeCodeAdapter implements AgentAdapter {
@@ -2386,7 +2400,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
   // ─── Text generation (for memory extraction) ───
 
-  async generateText(systemPrompt: string, userMessage: string, options?: { cwd?: string; abortSignal?: AbortSignal; model?: string }): Promise<string> {
+  async generateText(systemPrompt: string, userMessage: string, options?: GenerateTextOptions): Promise<string> {
     const queryFn = await getQuery();
 
     let inputController: ReadableStreamDefaultController<SDKUserMessage> | null = null;
@@ -2426,7 +2440,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       },
     });
 
-    return collectGeneratedText(q, this.authErrorMessage);
+    return collectGeneratedText(withFirstMessage(q, options?.onStarted), this.authErrorMessage);
   }
 
   // ─── Conversation title ───

@@ -3,8 +3,10 @@ import type {
   MemoryBackupInfo,
   MemoryBackupFile,
   MemoryCompactionEvent,
+  MemoryCompactionPreview,
   MemoryCompactionStage,
   MemoryCompactionStatus,
+  MemoryCompactionStep,
   MemoryStatsResult,
 } from '../../shared/types.js';
 import { errorMessage } from '../../shared/error-message.js';
@@ -45,10 +47,23 @@ class MemoryStore {
   panelOpen = $state(false);
   /** Current stage of the running compaction pass, from main-process events. */
   compactStage = $state<MemoryCompactionStage | null>(null);
-  /** Which merge step of how many is running, while compactStage is 'merging'. */
-  compactStep = $state<{ step: number; total: number } | null>(null);
+  /** How many merge steps of how many have ended, while compactStage is 'merging'. */
+  compactProgress = $state<{ done: number; total: number } | null>(null);
+  /** The model calls of the running or last run, with their prompts and
+   *  timings, for the project in compactStepsRepo. */
+  compactSteps = $state<MemoryCompactionStep[]>([]);
+  compactStepsRepo = $state<string | null>(null);
   /** Seconds since the manual compaction started — the panel's "still alive" ticker. */
   compactElapsedSeconds = $state(0);
+  /** The clock the running steps' elapsed times are read against (epoch ms),
+   *  ticking with compactElapsedSeconds. */
+  compactNow = $state(Date.now());
+  /** What the next run would use (agent, model, planning prompt), while its
+   *  confirm dialog is open. */
+  compactPreview = $state<MemoryCompactionPreview | null>(null);
+  compactPreviewLoading = $state(false);
+  /** Project compactPreview is for. */
+  private compactPreviewRepo: string | null = null;
   /** Transient notification shown by MemoryToast — survives the panel being closed. */
   toast = $state<MemoryToast | null>(null);
 
@@ -65,17 +80,24 @@ class MemoryStore {
 
   private handleCompactionEvent(e: MemoryCompactionEvent) {
     // A run is finalized by the compact() promise itself.
-    if (e.kind !== 'stage' || e.repoPath !== this.compactingRepo) return;
-    this.compactStage = e.stage;
-    this.compactStep = e.step !== undefined && e.total !== undefined ? { step: e.step, total: e.total } : null;
+    if (e.kind === 'done' || e.repoPath !== this.compactingRepo) return;
+    if (e.kind === 'stage') {
+      this.compactStage = e.stage;
+      this.compactProgress = e.done !== undefined && e.total !== undefined ? { done: e.done, total: e.total } : null;
+      return;
+    }
+    const others = this.compactSteps.filter((s) => s.index !== e.step.index);
+    this.compactSteps = [...others, e.step].sort((a, b) => a.index - b.index);
   }
 
   private startElapsedTimer() {
     this.compactStartedAt = Date.now();
     this.compactElapsedSeconds = 0;
+    this.compactNow = this.compactStartedAt;
     this.elapsedTimer = setInterval(() => {
       if (this.compactStartedAt !== null) {
-        this.compactElapsedSeconds = Math.floor((Date.now() - this.compactStartedAt) / 1000);
+        this.compactNow = Date.now();
+        this.compactElapsedSeconds = Math.floor((this.compactNow - this.compactStartedAt) / 1000);
       }
     }, 1000);
   }
@@ -85,7 +107,7 @@ class MemoryStore {
     this.elapsedTimer = null;
     this.compactStartedAt = null;
     this.compactStage = null;
-    this.compactStep = null;
+    this.compactProgress = null;
   }
 
   /** Group files by folder for tree display */
@@ -176,8 +198,39 @@ class MemoryStore {
     }
   }
 
-  async compact() {
+  /** Show what a run would use (agent, model, planning prompt) before it
+   *  starts: the Compact button's confirm dialog. */
+  async openCompactPreview() {
     const repo = this.activeRepo;
+    if (!repo || this.compacting || this.compactPreviewLoading) return;
+    this.compactPreviewLoading = true;
+    this.error = null;
+    try {
+      const preview = await window.groveBench.memoryCompactPreview(repo);
+      // The panel may have moved to another project meanwhile.
+      if (this.activeRepo === repo) {
+        this.compactPreview = preview;
+        this.compactPreviewRepo = repo;
+      }
+    } catch (e) {
+      this.error = errorMessage(e);
+    } finally {
+      this.compactPreviewLoading = false;
+    }
+  }
+
+  closeCompactPreview() {
+    this.compactPreview = null;
+    this.compactPreviewRepo = null;
+  }
+
+  /** Run compaction: for the confirm dialog's project, on its agent, with
+   *  `model` for this run only (omitted: the model the dialog showed).
+   *  Without an open dialog, the shown project on the main process's pick. */
+  async compact(model?: string) {
+    const preview = this.compactPreview;
+    const repo = preview ? this.compactPreviewRepo : this.activeRepo;
+    this.closeCompactPreview();
     if (!repo || this.compacting) return;
     this.compacting = true;
     this.compactingRepo = repo;
@@ -185,9 +238,13 @@ class MemoryStore {
     this.compactMessage = null;
     this.lastCompaction = null;
     this.toast = null;
+    this.compactSteps = [];
+    this.compactStepsRepo = repo;
     this.startElapsedTimer();
     try {
-      const status = await window.groveBench.memoryCompact(repo);
+      const status = preview
+        ? await window.groveBench.memoryCompact(repo, { agentId: preview.agentId, ...(model ? { model } : {}) })
+        : await window.groveBench.memoryCompact(repo);
       if (status.compacted) {
         this.lastCompaction = status; // opens the change-summary dialog with Undo
         this.lastCompactionRepo = repo;

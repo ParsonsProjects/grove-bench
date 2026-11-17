@@ -611,6 +611,14 @@ describe('AcpAdapter', () => {
     expect(text).toBe('Fix the thing (no, m2)');
   });
 
+  it('says once when the agent is up, before the reply', async () => {
+    const adapter = new AcpAdapter(def());
+    const onStarted = vi.fn();
+    const text = adapter.generateText('You write commit messages.', 'diff here', { cwd, onStarted });
+    await expect(text).resolves.toBe('Fix the thing (no, m1)');
+    expect(onStarted).toHaveBeenCalledTimes(1);
+  });
+
   describe('an API key saved in Grove and per-process settings', () => {
     const keyed = (): AcpAgentDefinition => ({
       ...def(),
