@@ -2,6 +2,8 @@ import type { ChatMessage } from '../stores/messages.svelte.js';
 import { isRenderedCopyButton, renderedCode, renderedTable } from './copy-mark.js';
 import { isPreviewableMarkdown } from './markdown-detect.js';
 import { toolViewOf } from '../../shared/tool-view.js';
+import { selectionLinks } from './selection-links.js';
+import type { BookmarkLink } from '../../shared/types.js';
 
 /** Text selected inside a pane, and the Activity row the selection starts in
  *  (null outside the Activity thread, e.g. the diff view). */
@@ -30,7 +32,8 @@ export function selectionIn(container: Element): PaneSelection | null {
 
 /** What sits under the pointer when the Activity context menu opens. */
 export interface ActivityMenuTarget {
-  selection?: { text: string; msgId: string | null };
+  /** `links`: the links in it, which `text` leaves out (selection-links). */
+  selection?: { text: string; msgId: string | null; links: BookmarkLink[] };
   /** Source of the code block under the pointer. */
   code?: string;
   /** Table under the pointer: its Markdown source, tab-separated text and
@@ -52,7 +55,7 @@ export function readActivityTarget(
 ): ActivityMenuTarget {
   const target: ActivityMenuTarget = {};
   const sel = selectionIn(container);
-  if (sel) target.selection = { text: sel.text, msgId: sel.msgId };
+  if (sel) target.selection = { text: sel.text, msgId: sel.msgId, links: selectionLinks(sel.range, sel.text) };
 
   const codeBtn = el.closest('.code-block-wrapper')?.querySelector(':scope > .code-copy-btn');
   const code = isRenderedCopyButton(codeBtn) ? renderedCode(codeBtn) : null;
@@ -76,7 +79,7 @@ export function readActivityTarget(
 export type ActivityMenuAction =
   | { kind: 'copy'; text: string }
   | { kind: 'copy-rich'; text: string; html: string }
-  | { kind: 'bookmark'; text: string; msgId: string | null }
+  | { kind: 'bookmark'; text: string; msgId: string | null; links: BookmarkLink[] }
   | { kind: 'to-prompt'; text: string }
   | { kind: 'rewind'; uuid: string }
   | { kind: 'focus'; content: string };
@@ -143,10 +146,10 @@ function messageEntries(msg: ChatMessage): Entry[] {
 export function activityMenuEntries(target: ActivityMenuTarget): ActivityMenuEntry[] {
   const groups: Entry[][] = [];
   if (target.selection) {
-    const { text, msgId } = target.selection;
+    const { text, msgId, links } = target.selection;
     groups.push([
       copy('Copy', text),
-      { label: 'Bookmark selection', action: { kind: 'bookmark', text, msgId } },
+      { label: 'Bookmark selection', action: { kind: 'bookmark', text, msgId, links } },
       { label: 'Copy to prompt', action: { kind: 'to-prompt', text } },
     ]);
   }

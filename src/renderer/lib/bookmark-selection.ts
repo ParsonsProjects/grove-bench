@@ -1,10 +1,17 @@
 import { messageStore } from '../stores/messages.svelte.js';
 import { bookmarkStore } from '../stores/bookmarks.svelte.js';
 import { store } from '../stores/sessions.svelte.js';
+import type { BookmarkLink } from '../../shared/types.js';
 
 /** Bookmark selected text, linked to the Activity row it came from when there
- *  is one (`msgId`); without one it is a text-only bookmark. */
-export async function bookmarkSelection(sessionId: string, text: string, msgId: string | null): Promise<void> {
+ *  is one (`msgId`); without one it is a text-only bookmark. `links`: the
+ *  links in the selection (selection-links), which `text` leaves out. */
+export async function bookmarkSelection(
+  sessionId: string,
+  text: string,
+  msgId: string | null,
+  links: BookmarkLink[] = [],
+): Promise<void> {
   let messageUuid: string | null = null;
   let eventIndex: number | null = null;
   if (msgId) {
@@ -24,5 +31,6 @@ export async function bookmarkSelection(sessionId: string, text: string, msgId: 
     messageUuid,
     eventIndex,
     selectedText: text,
+    links,
   });
 }

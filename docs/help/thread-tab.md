@@ -76,7 +76,7 @@ Extended thinking from the agent appears as expandable sections. Click to see th
 
 Hover a code block or a table to reveal its copy icon. A table copies as cells: spreadsheets and documents paste a real table, and places that take plain text get the columns separated by tabs. For the Markdown source, Shift+click the copy icon, or right-click the table and choose **Copy table as Markdown**.
 
-Select text to get **Bookmark** and **To prompt**. Your bookmarks open with `Ctrl+B` or the bookmark button at the foot of the sidebar, docked on the right like the Focus panel.
+Select text to get **Bookmark** and **To prompt**. Your bookmarks open with `Ctrl+B` or the bookmark button at the foot of the sidebar, docked on the right like the Focus panel. A bookmark keeps the links in the text you selected, listed under it: web links, addresses written as plain text, and links to files in the thread's worktree. Click one to open it as you would in the thread. A file link opens in its own thread, so it needs that thread to still be open.
 
 Right-click anything in the thread for a menu of what you can do there. It lists the most specific things first:
 

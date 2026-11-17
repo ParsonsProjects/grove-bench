@@ -2251,8 +2251,21 @@ export interface Bookmark {
   messageUuid: string | null; // primary durable anchor (SDK event uuid); null if unavailable
   eventIndex: number | null;  // cached fast-jump hint; may go stale -> re-resolve via uuid
   selectedText: string;       // the bookmarked snippet (preview + ultimate fallback)
+  /** Links in the selection, which selectedText (plain text) leaves out.
+   *  Missing on bookmarks saved before links were kept. */
+  links?: BookmarkLink[];
   note?: string;              // optional user note
   createdAt: number;
+}
+
+/** A link in a bookmarked selection. */
+export interface BookmarkLink {
+  /** 'web': an http(s) address. 'file': a file in the thread's worktree,
+   *  `href` as the link wrote it (worktree-files: localFileTarget). */
+  kind: 'web' | 'file';
+  href: string;
+  /** What the link said; the address itself for one written as plain text. */
+  text: string;
 }
 
 // ─── Auto-Update ───

@@ -2,8 +2,10 @@
   import { messageStore } from '../stores/messages.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
   import { selectionIn } from '$lib/activity-menu.js';
+  import { selectionLinks } from '$lib/selection-links.js';
   import { bookmarkSelection } from '$lib/bookmark-selection.js';
   import { menuItem, menuPanel } from '$lib/components/ui/menu/index.js';
+  import type { BookmarkLink } from '../../shared/types.js';
 
   // A floating "Bookmark / To prompt" menu shown when the user selects text
   // inside `container`. Works for any scroll container — the activity thread
@@ -19,7 +21,7 @@
   let selAnchor = $state<{ left: number; top: number; bottom: number } | null>(null);
   let selMenuPos = $state<{ left: number; top: number }>({ left: 0, top: 0 });
   let selMenuEl = $state<HTMLDivElement>();
-  let pendingSelection: { text: string; msgId: string | null } | null = null;
+  let pendingSelection: { text: string; msgId: string | null; links: BookmarkLink[] } | null = null;
 
   function clear() {
     selAnchor = null;
@@ -32,7 +34,8 @@
     // (handles multi-message spans). The diff view has no [data-msg-id] → text-only.
     const sel = container ? selectionIn(container) : null;
     if (!sel) { clear(); return; }
-    pendingSelection = { text: sel.text, msgId: sel.msgId };
+    // Read now: the text leaves the links out (selection-links).
+    pendingSelection = { text: sel.text, msgId: sel.msgId, links: selectionLinks(sel.range, sel.text) };
     const rect = sel.range.getBoundingClientRect();
     selAnchor = { left: rect.left, top: rect.top, bottom: rect.bottom };
     // Rough initial position; the clamp effect refines it once measured.
@@ -95,8 +98,8 @@
 
   async function addBookmark() {
     if (!pendingSelection) return;
-    const { text, msgId } = pendingSelection;
-    await bookmarkSelection(sessionId, text, msgId);
+    const { text, msgId, links } = pendingSelection;
+    await bookmarkSelection(sessionId, text, msgId, links);
     clear();
     window.getSelection()?.removeAllRanges();
   }
