@@ -49,7 +49,6 @@
   } = $props();
 
   let session = $derived(store.sessions.find((s) => s.id === sessionId));
-  let sessionStatus = $derived(session?.status);
   let sessionAgentType = $derived(session?.agentType);
   let isRunning = $derived(messageStore.getIsRunning(sessionId));
   let systemInfo = $derived(messageStore.getSystemInfo(sessionId));
@@ -154,15 +153,6 @@
     const turnEnded = mcpWasRunning && !running;
     mcpWasRunning = running;
     if (turnEnded) untrack(() => { if (mcpRows.length > 0 || mcpControls.list) void refreshMcpServers(); });
-  });
-
-  // Not every agent reports its servers when it starts. One that can list
-  // them gets asked once it is running, so the badge appears either way.
-  let mcpListedOnStart = false;
-  $effect(() => {
-    if (sessionStatus !== 'running' || !mcpControls.list || mcpListedOnStart) return;
-    mcpListedOnStart = true;
-    untrack(() => { if (mcpKnown.length === 0) void refreshMcpServers(); });
   });
 
   // Opening the drawer starts clean and reads the servers' status afresh.

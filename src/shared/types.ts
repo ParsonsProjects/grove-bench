@@ -406,11 +406,18 @@ export interface EventHistoryPage {
   totalCount: number;
   startIndex: number;
   turn: ThreadTurnState;
-  /** The agent's last report of what it has (MCP servers, skills, commands),
-   *  when it is older than the page: the newest page only. Claude Code sends
-   *  a new one only with the next prompt, so without it a thread whose last
-   *  report is further back than one page shows none until then. */
-  lastSystemInit?: Extract<AgentEvent, { type: 'system_init' }>;
+}
+
+/** What a thread's agent has, as main last learned it: from its reports
+ *  (system_init) and, for an agent that reports only with the first prompt
+ *  (Claude Code), from asking it as it starts. Main keeps it, so a pane
+ *  shows it whatever its history page holds. */
+export interface AgentSystemInfo {
+  tools: string[];
+  agents: string[];
+  skills: string[];
+  slashCommands: string[];
+  mcpServers: { name: string; status: string }[];
 }
 
 /** A single full-history search match (main-process search over event history). */
@@ -1609,9 +1616,11 @@ export interface GroveBenchAPI {
   reconnectDownMcpServers(sessionId: string, serverName?: string): Promise<void>;
   /** A thread's live MCP status, sent after a background reconnect. */
   onMcpStatus(callback: (sessionId: string, servers: McpServerInfo[]) => void): () => void;
-  /** A thread's slash commands (its skills among them), sent as its agent
-   *  starts, for an agent that otherwise reports them with the first prompt. */
-  onSlashCommands(callback: (sessionId: string, names: string[]) => void): () => void;
+  /** What a thread's agent has (AgentSystemInfo), or null when it has never
+   *  said. */
+  getSystemInfo(sessionId: string): Promise<AgentSystemInfo | null>;
+  /** A thread's AgentSystemInfo, each time main learns more of it. */
+  onSystemInfo(callback: (sessionId: string, info: AgentSystemInfo) => void): () => void;
 
   // File operations (for @ file picker)
   listFiles(sessionId: string): Promise<string[]>;
@@ -2435,8 +2444,9 @@ export const IPC = {
   AGENT_MCP_RECONNECT_DOWN: 'agent:mcpReconnectDown',
   /** main → renderer: a thread's live MCP status after a background reconnect. */
   AGENT_MCP_STATUS: 'agent:mcpStatus',
-  /** main → renderer: a thread's slash commands as its agent starts. */
-  AGENT_SLASH_COMMANDS: 'agent:slashCommands',
+  AGENT_SYSTEM_INFO: 'agent:systemInfo',
+  /** main → renderer: a thread's AgentSystemInfo changed. */
+  AGENT_SYSTEM_INFO_CHANGED: 'agent:systemInfoChanged',
   AGENT_ELICITATION: 'agent:elicitation',
   AGENT_LIMIT: 'agent:limit',
   LIMITS_DAILY_SPEND: 'limits:dailySpend',

@@ -167,11 +167,13 @@ const api: GroveBenchAPI = {
       ipcRenderer.removeListener(IPC.AGENT_MCP_STATUS, handler);
     };
   },
-  onSlashCommands: (callback: (sessionId: string, names: string[]) => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, sessionId: string, names: string[]) => callback(sessionId, names);
-    ipcRenderer.on(IPC.AGENT_SLASH_COMMANDS, handler);
+  getSystemInfo: (sessionId: string) => ipcRenderer.invoke(IPC.AGENT_SYSTEM_INFO, sessionId),
+  onSystemInfo: (callback: (sessionId: string, info: import('../shared/types.js').AgentSystemInfo) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, sessionId: string, info: import('../shared/types.js').AgentSystemInfo) =>
+      callback(sessionId, info);
+    ipcRenderer.on(IPC.AGENT_SYSTEM_INFO_CHANGED, handler);
     return () => {
-      ipcRenderer.removeListener(IPC.AGENT_SLASH_COMMANDS, handler);
+      ipcRenderer.removeListener(IPC.AGENT_SYSTEM_INFO_CHANGED, handler);
     };
   },
 

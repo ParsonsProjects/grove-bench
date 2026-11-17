@@ -1,4 +1,4 @@
-import type { AgentEvent, ControlDescriptor, FileAttachment, ImageAttachment, MadeFile, McpElicitationRequest, McpElicitationResponse, McpServerInfo, PermissionDecision, PermissionMode, SessionControls, StoredFile, StoredImage, ThreadTurnState } from '../../shared/types.js';
+import type { AgentEvent, AgentSystemInfo, ControlDescriptor, FileAttachment, ImageAttachment, MadeFile, McpElicitationRequest, McpElicitationResponse, McpServerInfo, PermissionDecision, PermissionMode, SessionControls, StoredFile, StoredImage, ThreadTurnState } from '../../shared/types.js';
 import { CONTROL_IDS, DEFAULT_DENY_MESSAGE, subagentParent } from '../../shared/types.js';
 import { attachedFilesFromSent, type SentBlock } from '../../shared/prompt-text.js';
 import { userMessageLabel } from '../lib/message-label.js';
@@ -416,14 +416,11 @@ class MessageStore {
    *  count of the whole context (after a compaction), not split by cache. */
   usageBySession = $state<Record<string, { inputTokens: number; cacheReadTokens: number; cacheCreationTokens: number; noCacheSplit?: boolean }>>({});
 
-  /** System info per session (from system_init) */
-  systemInfoBySession = $state<Record<string, {
-    tools: string[];
-    agents: string[];
-    skills: string[];
-    slashCommands: string[];
-    mcpServers: { name: string; status: string }[];
-  }>>({});
+  /** What each thread's agent has, as main keeps it (AgentSystemInfo):
+   *  loaded with the pane, then sent each time it changes, and the MCP part
+   *  from each live status. Never taken from replayed reports, which may be
+   *  older. */
+  systemInfoBySession = $state<Record<string, AgentSystemInfo>>({});
 
   /** Live MCP status per session (listMcpServers, or a background reconnect
    *  in main), with tools and errors. Absent until fetched. */
@@ -495,9 +492,6 @@ class MessageStore {
    *  page is loaded; cleared once the whole history is. */
   private orphanReplayEvents = new Map<string, AgentEvent[]>();
   private _replaySessionId: string | null = null;
-  /** Slash commands the agent listed as it started, since its last report
-   *  arrived live (see updateSlashCommands). */
-  private liveSlashCommands = new Map<string, string[]>();
 
   /** Absolute (prelaunch-prefixed) index of the event currently being replayed,
    *  or null for live events. Used to stamp messages so full-history search hits
@@ -978,28 +972,20 @@ class MessageStore {
     return this.systemInfoBySession[sessionId] ?? { tools: [], agents: [], skills: [], slashCommands: [], mcpServers: [] };
   }
 
-  /** What the agent has (tools, skills, commands, MCP servers), as one of
-   *  its system_init reports gave it. `remembered`: one from the history (a
-   *  replayed page, or the last report from before it, which is nothing
-   *  else of that event: no "Connected" line, no model). Those are older
-   *  than the commands the agent listed as it started, which stay. A report
-   *  that arrives live is the newest. */
-  setSystemInfo(sessionId: string, event: Extract<AgentEvent, { type: 'system_init' }>, remembered = false) {
-    if (!remembered) this.liveSlashCommands.delete(sessionId);
-    this.systemInfoBySession[sessionId] = {
-      tools: event.tools ?? [],
-      agents: event.agents ?? [],
-      skills: event.skills ?? [],
-      slashCommands: this.liveSlashCommands.get(sessionId) ?? event.slashCommands ?? [],
-      mcpServers: event.mcpServers ?? [],
-    };
+  /** What the thread's agent has, as main sent it. */
+  setSystemInfo(sessionId: string, info: AgentSystemInfo) {
+    this.systemInfoBySession[sessionId] = info;
   }
 
-  /** The agent's slash commands (its skills among them) as it listed them
-   *  when it started, before it reports itself with the first prompt. */
-  updateSlashCommands(sessionId: string, names: string[]) {
-    this.liveSlashCommands.set(sessionId, names);
-    this.systemInfoBySession[sessionId] = { ...this.getSystemInfo(sessionId), slashCommands: names };
+  /** Ask main what the thread's agent has: as a pane opens, whatever its
+   *  history page holds. */
+  async loadSystemInfo(sessionId: string) {
+    try {
+      const info = await window.groveBench.getSystemInfo(sessionId);
+      if (info) this.setSystemInfo(sessionId, info);
+    } catch (e) {
+      console.warn('[loadSystemInfo] failed:', e);
+    }
   }
 
   /** Replace the MCP server list with a live status snapshot (from listMcpServers). */
@@ -2049,7 +2035,6 @@ class MessageStore {
     delete this.stoppingSession[sessionId];
     delete this.userExplicitMode[sessionId];
     this.modelBySession[sessionId] = event.model;
-    this.setSystemInfo(sessionId, event, this._replayBuffer !== null);
     this.pushMessage(sessionId, {
       kind: 'system',
       id: nextId(),
@@ -2869,7 +2854,7 @@ class MessageStore {
   }
 
   private perSessionMaps(): Map<string, unknown>[] {
-    return [this.sourceIndexBySession, this.orphanReplayEvents, this.streamBuf, this.turnsStarted, this.userStops, this.liveSlashCommands];
+    return [this.sourceIndexBySession, this.orphanReplayEvents, this.streamBuf, this.turnsStarted, this.userStops];
   }
 
   /** Live events that arrived while a pane was loading the history page,

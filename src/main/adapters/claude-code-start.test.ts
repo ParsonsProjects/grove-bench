@@ -541,9 +541,12 @@ describe('ClaudeCodeAdapter.start(): the handle', () => {
       { name: 'myplug:plug-skill', description: '(myplug) A plugin skill', argumentHint: '' },
       { name: 'tiny:greet (MCP)', description: 'A greeting prompt', argumentHint: '' },
       { name: 'compact', description: 'Compact', argumentHint: '', builtin: true },
+      // Rows can share a name: a builtin and the user's own.
+      { name: 'review', description: 'Review', argumentHint: '', builtin: true },
+      { name: 'review', description: 'My review (project)', argumentHint: '' },
     ]);
     expect(await handle.listSlashCommands!(['old-skill', 'compact', 'mcp__tiny__greet'])).toEqual([
-      'hello-skill', 'myplug:plug-skill', 'compact', 'mcp__tiny__greet',
+      'hello-skill', 'myplug:plug-skill', 'compact', 'review', 'mcp__tiny__greet',
     ]);
   });
 });
