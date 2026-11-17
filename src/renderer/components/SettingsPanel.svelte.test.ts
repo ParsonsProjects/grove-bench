@@ -730,7 +730,7 @@ describe('SettingsPanel system prompt', () => {
 
     await fireEvent.click(within(views).getByRole('radio', { name: 'Preview' }));
 
-    const preview = await screen.findByTestId('system-prompt-preview');
+    const preview = await screen.findByRole('region', { name: 'System prompt append preview' });
     expect(within(preview).getByRole('heading', { name: 'Style' })).toBeInTheDocument();
     expect(within(preview).getByText('British').tagName).toBe('STRONG');
     expect(screen.queryByLabelText('System prompt append')).not.toBeInTheDocument();
@@ -751,6 +751,15 @@ describe('SettingsPanel system prompt', () => {
 
     await fireEvent.click(within(editor).getByRole('radio', { name: 'Preview' }));
     expect(within(editor).getByRole('heading', { name: 'Style' })).toBeInTheDocument();
+  });
+
+  it('is found by searching, with the cursor in its text box', async () => {
+    await renderPanel();
+    await fireEvent.input(screen.getByRole('searchbox', { name: 'Search settings' }), { target: { value: 'system prompt' } });
+
+    await fireEvent.click(await screen.findByRole('button', { name: /System prompt append/ }));
+
+    await waitFor(() => expect(screen.getByLabelText('System prompt append')).toHaveFocus());
   });
 
   it('closes on Escape and leaves Settings open', async () => {

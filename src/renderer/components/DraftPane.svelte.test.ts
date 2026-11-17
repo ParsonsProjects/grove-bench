@@ -679,7 +679,8 @@ describe('DraftPane larger editor', () => {
     expect(within(editor).getByRole('button', { name: 'Start' })).toBeDisabled();
     await fireEvent.keyDown(within(editor).getByRole('textbox'), { key: 'Enter', ctrlKey: true });
 
-    expect(within(editor).getByText('Add credentials above to start.')).toBeInTheDocument();
+    // The form is behind the editor, so it says to go back to it.
+    expect(within(editor).getByText('Add credentials to start. Click Done to see the form.')).toBeInTheDocument();
     expect(createSessionMock()).not.toHaveBeenCalled();
   });
 
@@ -692,6 +693,37 @@ describe('DraftPane larger editor', () => {
 
     expect(await within(editor).findByText('notes.md')).toBeInTheDocument();
     expect(draftStore.draft?.attachments.map((f) => f.name)).toEqual(['notes.md']);
+  });
+
+  it('gives the editor the cursor back after a file is removed in it', async () => {
+    render(DraftPane);
+    const editor = await openEditor();
+    const big = within(editor).getByRole('textbox');
+    await fireEvent.drop(big, { dataTransfer: { types: ['Files'], files: [new File(['steps'], 'notes.md', { type: 'text/markdown' })] } });
+
+    // As from the keyboard: the button has focus, then goes with the file.
+    const remove = await within(editor).findByRole('button', { name: 'Remove notes.md' });
+    remove.focus();
+    await fireEvent.click(remove);
+
+    expect(draftStore.draft?.attachments).toEqual([]);
+    expect(big).toHaveFocus();
+  });
+
+  it('shows the / menu again, back in the box, for a /word typed in the editor', async () => {
+    mockGroveBench.listAgentSkills.mockResolvedValue([{ name: 'triage', description: 'Sort new issues', source: 'project' as const }]);
+    Element.prototype.scrollIntoView ??= function scrollIntoView() {};
+    render(DraftPane);
+    const editor = await openEditor();
+    await fireEvent.input(within(editor).getByRole('textbox'), { target: { value: '/tri' } });
+
+    await fireEvent.click(within(editor).getByRole('button', { name: 'Done' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+
+    expect(await screen.findByText('/triage')).toBeInTheDocument();
+    await fireEvent.keyDown(screen.getByLabelText('First message'), { key: 'Enter' });
+    expect(draftStore.draft?.text).toBe('Use the `triage` skill for this task.\n\n');
+    expect(createSessionMock()).not.toHaveBeenCalled();
   });
 });
 

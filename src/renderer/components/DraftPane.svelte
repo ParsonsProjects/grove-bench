@@ -265,9 +265,10 @@
     refocus();
   }
 
-  /** Give the message box the cursor back, unless the larger editor is open. */
+  /** Give the cursor back to the box in use: the larger editor when open. */
   function refocus() {
-    if (!expanded) textEl?.focus();
+    if (expanded) expandedEditor?.focus();
+    else textEl?.focus();
   }
 
   // ─── The larger editor ───
@@ -278,6 +279,7 @@
   const loadTextEditor = lazyComponent(() => import('./TextEditorDialog.svelte'));
   let expanded = $state(false);
   let expandedEditorWanted = $state(false);
+  let expandedEditor: { focus(): void } | undefined = $state();
   function expand() {
     slashClosed = true;
     expandedEditorWanted = true;
@@ -299,6 +301,23 @@
       e.preventDefault();
       startExpanded();
     }
+  }
+  /** Why Start is off, said in the editor. What to do about credentials or
+   *  the branch is in the pane behind it, so it says to go back first. */
+  const expandedBlocker = $derived.by(() => {
+    if (credentials === 'missing') return 'Add credentials to start. Click Done to see the form.';
+    if (credentials === 'ready' && start?.kind === 'existing' && !start.branch) {
+      return 'Pick a branch or pull request first. Click Done to see the options.';
+    }
+    return startBlocker;
+  });
+  /** Back in the message box: the / menu shows again for a /word message
+   *  (expanding closed it), and the cursor goes to the end. */
+  function backToBox() {
+    slashClosed = false;
+    slashIndex = 0;
+    if (slashOpen) void draftStore.loadSkills();
+    void focusEnd();
   }
 
   // ─── Skills: / at the start of the message ───
@@ -643,6 +662,7 @@
 {#if expandedEditorWanted}
   {#await loadTextEditor() then TextEditor}
     <TextEditor
+      bind:this={expandedEditor}
       bind:open={expanded}
       bind:value={() => draft.text, (v: string) => draftStore.setText(v)}
       title="First message"
@@ -653,7 +673,7 @@
       ondragover={handleDragOver}
       ondragleave={handleDragLeave}
       ondrop={handleDrop}
-      returnFocus={() => void focusEnd()}
+      returnFocus={backToBox}
     >
       {#snippet above()}
         {#if draft.attachments.length > 0}
@@ -662,8 +682,8 @@
       {/snippet}
       {#snippet footer()}
         <span class="mr-auto flex min-w-0 items-center gap-3 text-xs text-muted-foreground">
-          {#if nudged && startBlocker}
-            <span class="text-amber-500" role="status">{startBlocker}</span>
+          {#if nudged && expandedBlocker}
+            <span class="text-amber-500" role="status">{expandedBlocker}</span>
           {:else}
             <span class="flex items-center gap-1"><Kbd variant="key">Enter</Kbd> new line</span>
             <span class="flex items-center gap-1"><Kbd variant="key">Ctrl+Enter</Kbd> start</span>
@@ -674,7 +694,7 @@
           size="sm"
           onclick={startExpanded}
           disabled={!canStart}
-          title={startBlocker ?? `Start the thread${draft.text.trim() ? ' and send this message' : ''}`}
+          title={expandedBlocker ?? `Start the thread${draft.text.trim() ? ' and send this message' : ''}`}
         >
           Start
         </Button>

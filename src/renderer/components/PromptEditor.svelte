@@ -93,17 +93,33 @@
   const loadTextEditor = lazyComponent(() => import('./TextEditorDialog.svelte'));
   let expanded = $state(false);
   let expandedEditorWanted = $state(false);
+  let expandedEditor: { focus(): void } | undefined = $state();
   function expand() {
     closePicker();
     closeCommandPicker();
     expandedEditorWanted = true;
     expanded = true;
   }
+  // Another thread or the draft opened over this one (Ctrl+N, the finder)
+  // leaves this pane mounted but hidden. Its editor closes too, or it would
+  // stay on screen over the other one and send into this thread.
+  const onScreen = $derived(sessionStore.activeSessionId === sessionId);
+  $effect(() => {
+    if (expanded && !onScreen) expanded = false;
+  });
   function handleExpandedKeydown(e: KeyboardEvent) {
-    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && !e.isComposing) {
       e.preventDefault();
       sendExpanded();
     }
+  }
+  // The editor takes dropped files. Dragged text moves or drops in it as
+  // usual, which the small box's handlers would stop.
+  function handleExpandedDragOver(e: DragEvent) {
+    if (e.dataTransfer?.types.includes('Files')) handleDragOver(e);
+  }
+  function handleExpandedDrop(e: DragEvent) {
+    if (e.dataTransfer?.types.includes('Files')) void handleDrop(e);
   }
   function sendExpanded() {
     handleSubmit();
@@ -112,14 +128,15 @@
   }
   /** Back in the small box, with the cursor at the end of the text. */
   function returnToBox() {
-    if (!textarea) return;
+    if (!textarea || !onScreen) return;
     textarea.focus();
     textarea.setSelectionRange(value.length, value.length);
     autoResize();
   }
-  /** Give the small box the cursor back, unless the larger editor is open. */
+  /** Give the cursor back to the box in use: the larger editor when open. */
   function refocus() {
-    if (!expanded) textarea?.focus();
+    if (expanded) expandedEditor?.focus();
+    else textarea?.focus();
   }
 
   // File attachments (drag-drop, paste, file picker), restored and kept in
@@ -712,6 +729,7 @@
 {#if expandedEditorWanted}
   {#await loadTextEditor() then TextEditor}
     <TextEditor
+      bind:this={expandedEditor}
       bind:open={expanded}
       bind:value
       title="Message"
@@ -720,9 +738,9 @@
       aria-keyshortcuts="Control+Enter"
       onkeydown={handleExpandedKeydown}
       onpaste={handlePaste}
-      ondragover={handleDragOver}
+      ondragover={handleExpandedDragOver}
       ondragleave={handleDragLeave}
-      ondrop={handleDrop}
+      ondrop={handleExpandedDrop}
       returnFocus={returnToBox}
     >
       {#snippet above()}

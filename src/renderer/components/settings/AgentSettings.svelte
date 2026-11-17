@@ -461,7 +461,7 @@
   <SettingRow
     setting="system-prompt"
     label="System prompt append"
-    for="settings-prompt"
+    for={promptView === 'write' ? 'settings-prompt' : undefined}
     description="Instructions added to every thread."
   >
     {#snippet actions()}
@@ -480,7 +480,11 @@
       </Button>
     {/snippet}
     {#if promptView === 'preview'}
-      <div class="min-h-20 max-h-52 overflow-auto border border-input bg-background dark:bg-input/30 px-3 py-2 text-sm" data-testid="system-prompt-preview">
+      <div
+        role="region"
+        aria-label="System prompt append preview"
+        class="min-h-20 max-h-52 overflow-auto border border-input bg-background dark:bg-input/30 px-3 py-2 text-sm"
+      >
         {#if settingsStore.draft.defaultSystemPromptAppend.trim()}
           <MarkdownBlock content={settingsStore.draft.defaultSystemPromptAppend} />
         {:else}

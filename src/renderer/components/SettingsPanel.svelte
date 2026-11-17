@@ -139,7 +139,12 @@
       fold.open = true;
     }
     row.scrollIntoView?.({ block: 'center' });
-    row.querySelector<HTMLElement>('input, textarea, button')?.focus({ preventScroll: true });
+    // The control the row's label names, else its first one: a row can have
+    // buttons on its label's line (the system prompt's Write / Preview).
+    const forId = row.querySelector('label[for]')?.getAttribute('for');
+    const named = forId ? document.getElementById(forId) : null;
+    const control = named && row.contains(named) ? named : row.querySelector<HTMLElement>('input, textarea, button');
+    control?.focus({ preventScroll: true });
     row.animate?.(
       [{ backgroundColor: 'var(--accent)' }, { backgroundColor: 'transparent' }],
       { duration: 1500, easing: 'ease-out' },

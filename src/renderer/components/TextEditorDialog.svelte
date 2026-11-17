@@ -53,6 +53,12 @@
     textarea.setSelectionRange(textarea.value.length, textarea.value.length);
   }
 
+  /** Give the text the cursor back, where it was: after a button in the
+   *  dialog (an attached file's remove) had it. */
+  export function focus() {
+    textarea?.focus();
+  }
+
   function restoreFocus(e: Event) {
     if (!returnFocus) return;
     e.preventDefault();
