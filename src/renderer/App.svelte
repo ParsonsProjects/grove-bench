@@ -22,6 +22,7 @@
   import ErrorToast from './components/ErrorToast.svelte';
   import DraftUndoToast from './components/DraftUndoToast.svelte';
   import MemoryToast from './components/MemoryToast.svelte';
+  import CleanupToast from './components/CleanupToast.svelte';
   import PlanUsageToast from './components/PlanUsageToast.svelte';
   import { memoryStore } from './stores/memory.svelte.js';
   import { prerequisitesStore } from './stores/prerequisites.svelte.js';
@@ -663,6 +664,7 @@
 <div class="fixed bottom-16 right-4 z-50 flex max-w-md flex-col items-end gap-2 pointer-events-none *:pointer-events-auto">
   <PlanUsageToast />
   <MemoryToast />
+  <CleanupToast />
 </div>
 
 <SpellcheckMenu />

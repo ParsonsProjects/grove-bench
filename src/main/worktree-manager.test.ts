@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import path from 'node:path';
 import crypto from 'node:crypto';
 
@@ -10,6 +10,7 @@ const mockFs = vi.hoisted(() => ({
   rm: vi.fn(),
   cp: vi.fn(),
   readdir: vi.fn(),
+  rmdir: vi.fn(),
   access: vi.fn(),
   stat: vi.fn(),
   realpath: vi.fn(),
@@ -57,6 +58,10 @@ const mockFsUtils = vi.hoisted(() => ({
   writeFileAtomic: vi.fn((p: string, data: string) => mockFs.writeFile(p, data)),
 }));
 vi.mock('./fs-utils.js', () => mockFsUtils);
+// Worktree folders are deleted in the delete thread; here it deletes with
+// the mocked removeDirectory, so a test scripts both the same way.
+const mockRemoveTree = vi.hoisted(() => vi.fn((dir: string) => mockFsUtils.removeDirectory(dir) as Promise<void>));
+vi.mock('./remove-tree.js', () => ({ removeTree: mockRemoveTree }));
 
 import {
   git, excludeFromGit, branchExists, branchHasRemote, getGitIdentity, getDefaultBranch, validateBranchName, currentBranch,
@@ -424,11 +429,21 @@ describe('migration from claudeSessionId', () => {
   });
 });
 
-describe('remove', () => {
+describe('remove, deleting in place', () => {
   const manifest = {
     'wt-a': { repoPath: '/repo', branch: 'feat-a', createdAt: 1000 },
     'wt-b': { repoPath: '/repo', branch: 'feat-b', createdAt: 2000 },
   };
+
+  // The folder can't be moved aside (a file in it held open, as Windows
+  // does), so removal deletes it where it is. The move is tested below.
+  beforeEach(() => {
+    mockFs.rename.mockRejectedValue(Object.assign(new Error('EBUSY'), { code: 'EBUSY' }));
+  });
+
+  afterEach(() => {
+    mockFs.rename.mockReset();
+  });
 
   it('removes worktree from manifest and calls git worktree remove', async () => {
     mockFs.readFile.mockResolvedValue(JSON.stringify({ ...manifest }));
@@ -568,6 +583,119 @@ describe('remove', () => {
     // Branch deletion is deferred too: it would fail while the worktree still holds it
     expect(mockGit).not.toHaveBeenCalledWith(['branch', '-d', 'feat-a'], '/repo');
     expect(mockGit).not.toHaveBeenCalledWith(['branch', '-D', 'feat-a'], '/repo');
+  });
+});
+
+describe('remove, moving the folder aside', () => {
+  const root = path.join('/mock/userData/worktrees');
+  const hash = crypto.createHash('sha256').update('/repo').digest('hex').slice(0, 8);
+  const wtPath = path.join(root, hash, 'wt-a');
+  const manifest = {
+    'wt-a': { repoPath: '/repo', branch: 'feat-a', createdAt: 1000, createdBranches: ['feat-a'] },
+    'wt-b': { repoPath: '/repo', branch: 'feat-b', createdAt: 2000 },
+  };
+  /** Where the folder was moved: the rename's destination. */
+  const movedTo = () => mockFs.rename.mock.calls[0][1] as string;
+  let finishDelete: () => void;
+
+  beforeEach(() => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify(manifest));
+    mockFs.rename.mockResolvedValue(undefined);
+    mockFs.readdir.mockResolvedValue(['wt-b']);
+    mockGit.mockResolvedValue('');
+    // The background delete waits until a test lets it finish.
+    mockFsUtils.removeDirectory.mockImplementation(() => new Promise<void>((resolve) => { finishDelete = resolve; }));
+  });
+
+  afterEach(() => {
+    mockFs.rename.mockReset();
+    mockFsUtils.removeDirectory.mockReset();
+    mockFsUtils.pathExists.mockReset();
+  });
+
+  it('moves the folder into .removing and lets git forget it, without waiting for the files to go', async () => {
+    await manager.remove('wt-a');
+
+    expect(mockFs.rename).toHaveBeenCalledWith(wtPath, expect.stringMatching(/wt-a~[0-9a-z]{8,9}$/));
+    expect(path.dirname(movedTo())).toBe(path.join(root, '.removing'));
+    expect(mockGit).toHaveBeenCalledWith(['worktree', 'prune'], '/repo');
+    expect(mockGit).not.toHaveBeenCalledWith(['worktree', 'remove', wtPath], '/repo');
+    expect(mockGit).not.toHaveBeenCalledWith(['worktree', 'remove', '--force', wtPath], '/repo');
+    // Hidden until its files are deleted, so a quit before then leaves the sweep a known folder.
+    expect(savedManifest['wt-a']).toMatchObject({ pendingRemoval: true, removingPath: movedTo() });
+    expect(await manager.getWorktreeOrManifest('wt-a')).toBeUndefined();
+    // In the delete thread, where asar support is off.
+    expect(mockRemoveTree).toHaveBeenCalledWith(movedTo());
+
+    finishDelete();
+    await manager.backgroundRemovalsDone();
+    expect(savedManifest).not.toHaveProperty('wt-a');
+    expect(savedManifest).toHaveProperty('wt-b');
+    // .removing goes once empty (rmdir refuses one that isn't).
+    expect(mockFs.rmdir).toHaveBeenCalledWith(path.join(root, '.removing'));
+  });
+
+  it('deletes the branch at once, after prune frees it', async () => {
+    await manager.remove('wt-a', true);
+
+    const ran = mockGit.mock.calls.map((c) => c[0].join(' '));
+    expect(ran).toContain('branch -d feat-a');
+    expect(ran.indexOf('worktree prune')).toBeLessThan(ran.indexOf('branch -d feat-a'));
+    expect(savedManifest['wt-a']).not.toHaveProperty('pendingBranchDelete');
+  });
+
+  it('leaves the branch to the sweep when prune fails, as it is still checked out there', async () => {
+    mockGit.mockImplementation(async (args: string[]) => {
+      if (args.join(' ') === 'worktree prune') throw new Error('prune failed');
+      return '';
+    });
+
+    await manager.remove('wt-a', true);
+
+    expect(mockGit).not.toHaveBeenCalledWith(['branch', '-d', 'feat-a'], '/repo');
+    expect(savedManifest['wt-a']).toMatchObject({ pendingRemoval: true, pendingBranchDelete: true });
+
+    // The files go, but the entry stays for the sweep to prune and delete the branch.
+    finishDelete();
+    await manager.backgroundRemovalsDone();
+    expect(savedManifest['wt-a']).toMatchObject({ pendingRemoval: true, pendingBranchDelete: true });
+    expect(savedManifest['wt-a']).not.toHaveProperty('removingPath');
+  });
+
+  it('deletes in place, as before, when the folder cannot be moved', async () => {
+    mockFs.rename.mockRejectedValue(Object.assign(new Error('EBUSY'), { code: 'EBUSY' }));
+
+    await manager.remove('wt-a');
+
+    expect(mockGit).toHaveBeenCalledWith(['worktree', 'remove', wtPath], '/repo');
+    expect(savedManifest).not.toHaveProperty('wt-a');
+  });
+
+  it('leaves a folder it could not delete to the sweep, which deletes it from where it went', async () => {
+    mockFsUtils.removeDirectory.mockRejectedValueOnce(Object.assign(new Error('EBUSY'), { code: 'EBUSY' }));
+    await manager.remove('wt-a');
+    await manager.backgroundRemovalsDone();
+    expect(savedManifest['wt-a']).toMatchObject({ pendingRemoval: true, removingPath: movedTo() });
+
+    mockFsUtils.pathExists.mockResolvedValue(true);
+    mockFsUtils.removeDirectory.mockResolvedValue(undefined);
+    mockRemoveTree.mockClear();
+    expect(await manager.processPendingRemovals()).toBe(1);
+    expect(mockRemoveTree).toHaveBeenCalledWith(movedTo());
+    expect(savedManifest).not.toHaveProperty('wt-a');
+    // And tidies up after itself, as the background delete does.
+    expect(mockFs.rmdir).toHaveBeenCalledWith(path.join(root, '.removing'));
+    expect(mockFs.readdir).toHaveBeenCalledWith(path.join(root, hash));
+  });
+
+  it('the sweep leaves a folder still being deleted in the background', async () => {
+    await manager.remove('wt-a');
+    mockFsUtils.pathExists.mockResolvedValue(true);
+
+    expect(await manager.processPendingRemovals()).toBe(0);
+    expect(mockFsUtils.removeDirectory).toHaveBeenCalledTimes(1); // the background delete only
+    finishDelete();
+    await manager.backgroundRemovalsDone();
   });
 });
 
@@ -1511,6 +1639,59 @@ describe('worktree trash', () => {
     expect(mockFsUtils.removeDirectory).not.toHaveBeenCalled();
   });
 
+  it('the sweep does not take .removing for a project folder, nor its folders for orphans', async () => {
+    const removing = path.join(root, '.removing');
+    mockFs.readdir.mockImplementation(async (p: string) => (p === root ? ['.removing'] : p === removing ? [`wt-a~${Date.now().toString(36)}`] : []));
+
+    await manager.sweepStaleWorktrees();
+
+    expect(mockFs.rename).not.toHaveBeenCalled();
+    expect(mockFsUtils.removeDirectory).not.toHaveBeenCalled();
+  });
+
+  describe('purgeRemoving', () => {
+    const removing = path.join(root, '.removing');
+    const named = (id: string, at: number) => `${id}~${at.toString(36)}`;
+
+    beforeEach(() => {
+      mockFsUtils.removeDirectory.mockResolvedValue(undefined);
+    });
+
+    it('deletes folders left in .removing with no manifest entry, once past the grace period', async () => {
+      const now = Date.now();
+      const recorded = named('wt-a', now - DAY);
+      const leftOver = named('wt-b', now - 11 * 60_000);
+      const justMoved = named('wt-c', now - 60_000);
+      mockFs.readFile.mockResolvedValue(JSON.stringify({
+        'wt-a': { repoPath: '/repo', branch: 'a', createdAt: 1, pendingRemoval: true, removingPath: path.join(removing, recorded) },
+      }));
+      mockFs.readdir.mockImplementation(async (p: string) => (p === removing ? [recorded, leftOver, justMoved] : []));
+
+      expect(await manager.purgeRemoving(now)).toBe(1);
+      expect(mockRemoveTree).toHaveBeenCalledTimes(1);
+      expect(mockRemoveTree).toHaveBeenCalledWith(path.join(removing, leftOver));
+      // Not yet empty here (readdir is scripted), but tried.
+      expect(mockFs.rmdir).toHaveBeenCalledWith(removing);
+    });
+
+    it("leaves names it doesn't give: a .removing in the user's folder may hold their own folders", async () => {
+      const now = Date.now();
+      const theirs = [
+        'backup-20240101', // ends in digits, as Grove's names once did
+        `${hash}-wt-b-${now - DAY}`, // the old long form
+        named('old', Date.UTC(2020, 0, 1)), // before Grove gave such names
+        'notes~zzzzzzzz', // a time in the future
+        'notes~abc', // too short to be a time
+        `holidays-${(now - DAY).toString(36)}`, // a recent time, but not after a ~
+        `my notes~${(now - DAY).toString(36)}`, // a space: not an id Grove gives
+      ];
+      mockFs.readdir.mockImplementation(async (p: string) => (p === removing ? theirs : []));
+
+      expect(await manager.purgeRemoving(now)).toBe(0);
+      expect(mockRemoveTree).not.toHaveBeenCalled();
+    });
+  });
+
   it('purges only folders older than the retention period', async () => {
     const now = Date.now();
     const expired = `${now - 8 * DAY}-${hash}-a0000001`;
@@ -1521,6 +1702,8 @@ describe('worktree trash', () => {
     expect(await manager.purgeTrash(now)).toBe(1);
     expect(mockFsUtils.removeDirectory).toHaveBeenCalledTimes(1);
     expect(mockFsUtils.removeDirectory).toHaveBeenCalledWith(path.join(trash, expired));
+    // A trashed worktree may hold .asar files: deleted in the delete thread.
+    expect(mockRemoveTree).toHaveBeenCalledWith(path.join(trash, expired));
   });
 
   it('an orphan whose folder git no longer lists goes to the trash', async () => {
@@ -1675,12 +1858,31 @@ describe("Settings > Git's worktree folder", () => {
     mockFs.readFile.mockResolvedValue(JSON.stringify({ a1: { repoPath: '/repo', branch: 'feat', createdAt: 1, path: inFolder('a1') } }));
     mockFs.readdir.mockResolvedValue([]);
     mockFs.rm.mockResolvedValue(undefined);
+    mockFs.rename.mockRejectedValue(errno('EBUSY')); // deleted in place
 
     await manager.remove('a1');
 
     const ran = mockGit.mock.calls.map((c) => c[0].join(' '));
     expect(ran.slice(0, 2)).toEqual([`worktree unlock ${inFolder('a1')}`, `worktree remove ${inFolder('a1')}`]);
     expect(savedManifest).toEqual({});
+    mockFs.rename.mockReset();
+  });
+
+  it('moves a worktree there aside within that folder, so the move stays on its drive', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({ a1: { repoPath: '/repo', branch: 'feat', createdAt: 1, path: inFolder('a1') } }));
+    mockFs.readdir.mockResolvedValue([]);
+    mockFs.rename.mockResolvedValue(undefined);
+    mockFsUtils.removeDirectory.mockResolvedValue(undefined);
+
+    await manager.remove('a1');
+    await manager.backgroundRemovalsDone();
+
+    const ran = mockGit.mock.calls.map((c) => c[0].join(' '));
+    expect(ran.slice(0, 2)).toEqual([`worktree unlock ${inFolder('a1')}`, 'worktree prune']);
+    expect(path.dirname(mockFs.rename.mock.calls[0][1] as string)).toBe(path.join(folder, '.removing'));
+    expect(savedManifest).toEqual({});
+    mockFs.rename.mockReset();
+    mockFsUtils.removeDirectory.mockReset();
   });
 
   it("keeps a worktree whose folder isn't there (a drive not connected yet); its lock keeps git's record through prune", async () => {
