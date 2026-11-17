@@ -2647,6 +2647,21 @@ describe('AgentSessionManager turn state for a loading history', () => {
     await sessionManager.destroySession('test-turn-state');
   });
 
+  it("sends the agent's live background tasks with the page, and drops them with a new process", async () => {
+    await startSession('test-turn-tasks');
+    const devServer = { taskId: 'b1', taskType: 'local_bash', description: 'npm run dev' };
+    mockAdapter.control!.emitEvent({ type: 'background_tasks_changed', tasks: [devServer] });
+    await vi.waitFor(() => expect(sessionManager.turnState('test-turn-tasks')).toEqual({ ...idle, backgroundTasks: [devServer] }));
+    // With the page however short it is: the event that listed it may be older.
+    expect(sessionManager.getEventHistoryPage('test-turn-tasks', 1).turn.backgroundTasks).toEqual([devServer]);
+
+    mockAdapter.control!.emitEvent({ type: 'background_tasks_changed', tasks: [] });
+    await vi.waitFor(() => expect(sessionManager.turnState('test-turn-tasks')).toEqual(idle));
+
+    await sessionManager.destroySession('test-turn-tasks');
+    expect(sessionManager.turnState('test-turn-tasks')).toEqual(none);
+  });
+
   it('lists MCP questions and limit questions too', async () => {
     const limitSettings = { defaultSystemPromptAppend: null, toolAllowRules: [], toolDenyRules: [], cavemanMode: 'off', turnToolCallLimit: 1 };
     settingsMock.getSettings.mockImplementation(() => limitSettings);

@@ -493,5 +493,17 @@ describe('WorkspacePane taking the turn state from main', () => {
 
       expect(backgroundTaskStore.get(SID)).toEqual([]);
     });
+
+    it("takes main's list of the live agent's shells, which the page may not reach back to", async () => {
+      const listed = { taskId: 'bg-1', taskType: 'local_bash', description: 'npm run dev' };
+      await load([prompt, done], { midTurn: false, pendingPromptIds: [], agentLive: true, backgroundTasks: [listed] });
+      expect(backgroundTaskStore.runningShells(SID)).toEqual([listed]);
+    });
+
+    it("leaves out shells the page listed that main says aren't running any more", async () => {
+      const level = { type: 'background_tasks_changed', tasks: [{ taskId: 'bg-1', taskType: 'local_bash', description: 'npm run dev' }] };
+      await load([...devServer, level], { midTurn: false, pendingPromptIds: [], agentLive: true });
+      expect(backgroundTaskStore.runningShells(SID)).toEqual([]);
+    });
   });
 });

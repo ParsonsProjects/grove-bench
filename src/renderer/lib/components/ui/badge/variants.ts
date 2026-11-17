@@ -20,6 +20,8 @@ export const badgeVariants = tv({
 			danger: "text-red-400 border-red-400/50",
 			accent: "text-purple-400 border-purple-400/50",
 			highlight: "text-cyan-400 border-cyan-400/50",
+			// Something still running, in the thread status colour (BRAND.md: blue is in progress).
+			working: "text-status-working border-status-working/40",
 		},
 		variant: {
 			outline: "",

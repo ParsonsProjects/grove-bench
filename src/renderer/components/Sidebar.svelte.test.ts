@@ -585,6 +585,8 @@ describe('Sidebar attention triage', () => {
 
     const badge = screen.getAllByRole('img', { name: '1 shell and 1 monitor running' })[0];
     expect(badge).toHaveTextContent('2');
+    // Blue, as something still running is (BRAND.md), not the dot's pulse.
+    expect(badge).toHaveClass('text-status-working');
     expect(badge).toHaveAttribute('title', '1 shell and 1 monitor running\nnpm run dev\ntail -f app.log');
     // The row's own tooltip says so too.
     const row = [...document.querySelectorAll('button[title]')].find((b) => b.getAttribute('title')!.startsWith('Quiet one\n'));
@@ -595,6 +597,22 @@ describe('Sidebar attention triage', () => {
     backgroundTaskStore.reconcile('quiet', { type: 'background_tasks_changed', tasks: [] });
     await tick();
     expect(screen.queryAllByRole('img', { name: /shells? .*running$|monitors? running$/ })).toHaveLength(0);
+  });
+
+  it('puts the shells badge before the changed-files badge, at the end of the line', async () => {
+    const entry = (filePath: string) => ({ filePath, status: 'modified' as const, staged: false });
+    gitStatusStore.statusBySession = { quiet: { entries: [entry('a.ts'), entry('b.ts')], baseRef: 'main', uncommitted: 2 } };
+    backgroundTaskStore.reconcile('quiet', { type: 'background_tasks_changed', tasks: [{ taskId: 'b1', taskType: 'local_bash', description: 'npm run dev' }] });
+    try {
+      render(Sidebar);
+      const changed = (await screen.findAllByTitle('2 changed files in the worktree'))[0];
+      const badges = changed.closest('[data-row-badges]')!;
+      expect(badges).toHaveClass('ml-auto');
+      expect([...badges.children].map((b) => b.textContent?.trim())).toEqual(['1', '±2']);
+      expect(badges.querySelector('[data-row-shells]')).toHaveAttribute('aria-label', '1 shell running');
+    } finally {
+      gitStatusStore.statusBySession = {};
+    }
   });
 
   it("doesn't mark a shell the turn is waiting on, or a sleeping thread's leftover shell", async () => {
@@ -1992,6 +2010,7 @@ describe('Sidebar rail', () => {
     expect(aside.style.width).toBe('48px');
     const s2 = container.querySelector('[data-rail-session="s2"]') as HTMLButtonElement;
     expect(s2.getAttribute('aria-label')).toBe('repo-a / Fix login');
+    expect(s2.querySelector('[data-rail-shells]')).toBeNull();
 
     await fireEvent.click(s2);
     expect(store.activeSessionId).toBe('s2');
@@ -2008,6 +2027,28 @@ describe('Sidebar rail', () => {
     await fireEvent.click(within(container.querySelector('[data-rail]') as HTMLElement).getByLabelText('Expand sidebar'));
     expect(container.querySelector('[data-rail-session]')).toBeNull();
     expect(aside.style.width).toBe('300px');
+  });
+
+  it("marks a thread whose agent left shells running, and says what they run", async () => {
+    store.sessions = [
+      { id: 's1', branch: 'feat-x', repoPath: '/repo-a', status: 'running', displayName: 'Sidebar revamp' },
+      { id: 's2', branch: 'feat-y', repoPath: '/repo-a', status: 'running', displayName: 'Fix login' },
+    ] as any;
+    backgroundTaskStore.reconcile('s2', { type: 'background_tasks_changed', tasks: [{ taskId: 'b1', taskType: 'local_bash', description: 'npm run dev' }] });
+    const { container } = render(Sidebar);
+    await fireEvent.click(screen.getByLabelText('Collapse sidebar'));
+
+    const s1 = container.querySelector('[data-rail-session="s1"]') as HTMLButtonElement;
+    const s2 = container.querySelector('[data-rail-session="s2"]') as HTMLButtonElement;
+    expect(s1.querySelector('[data-rail-shells]')).toBeNull();
+    expect(s2.querySelector('[data-rail-shells]')).toHaveClass('text-status-working');
+    expect(s2.getAttribute('aria-label')).toBe('repo-a / Fix login, 1 shell running');
+    expect(s2.getAttribute('title')).toContain('1 shell running\nnpm run dev');
+
+    backgroundTaskStore.reconcile('s2', { type: 'background_tasks_changed', tasks: [] });
+    await tick();
+    expect(s2.querySelector('[data-rail-shells]')).toBeNull();
+    expect(s2.getAttribute('aria-label')).toBe('repo-a / Fix login');
   });
 
   it('starts a new conversation from the top of the rail, then marks it as the draft', async () => {

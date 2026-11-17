@@ -697,6 +697,7 @@ class AgentSessionManager {
     // for good (after a rewind, or reopening a closed thread). Kept in the
     // history, so a replay ends with them gone as well.
     session.backgroundTasks = new Map();
+    session.liveBackgroundTasks = [];
     if (historyShowsBackgroundTasks(session.eventHistory)) emit({ type: 'background_tasks_changed', tasks: [] });
     // Only a resumed conversation can turn out to be missing.
     session.promptsBeforeInit = resumingProviderSession ? { handle, prompts: [] } : null;
@@ -788,6 +789,7 @@ class AgentSessionManager {
         // task running for good.
         if (event.type === 'background_tasks_changed' && session.queryHandle === handle) {
           session.backgroundTasks = new Map(event.tasks.map((t) => [t.taskId, t.taskType]));
+          session.liveBackgroundTasks = event.tasks;
         }
         if (event.type === 'assistant_tool_use') {
           toolCallSeen(session.limits, event.toolUseId);
@@ -1774,6 +1776,8 @@ class AgentSessionManager {
   turnState(id: string): ThreadTurnState {
     const session = this.sessions.get(id);
     if (!session) return { midTurn: false, pendingPromptIds: [], agentLive: false };
+    const agentLive = !!session.queryHandle && session.status !== 'stopped';
+    const backgroundTasks = agentLive ? session.liveBackgroundTasks ?? [] : [];
     return {
       midTurn: turnInFlight(session),
       pendingPromptIds: [
@@ -1781,7 +1785,8 @@ class AgentSessionManager {
         ...session.pendingElicitations.keys(),
         ...(session.limits.pending ? [session.limits.pending.requestId] : []),
       ],
-      agentLive: !!session.queryHandle && session.status !== 'stopped',
+      agentLive,
+      ...(backgroundTasks.length > 0 ? { backgroundTasks } : {}),
     };
   }
 

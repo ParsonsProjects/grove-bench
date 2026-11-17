@@ -756,7 +756,7 @@ describe('transformMessage()', () => {
       }]);
     });
 
-    it("keeps a local_bash task's kind, so a monitor can be told from a shell", () => {
+    it("keeps a local_bash task's kind and whether an observer owns it", () => {
       const events = transformMessage(
         sdk({
           type: 'system',
@@ -764,6 +764,7 @@ describe('transformMessage()', () => {
           tasks: [
             { task_id: 'b1', task_type: 'local_bash', description: 'npm run dev' },
             { task_id: 'm1', task_type: 'local_bash', description: 'tail -f app.log', shell_kind: 'monitor' },
+            { task_id: 'o1', task_type: 'local_bash', description: 'observer watch', observer_owned: true },
           ],
         }),
         makeCtx(),
@@ -773,6 +774,7 @@ describe('transformMessage()', () => {
         tasks: [
           { taskId: 'b1', taskType: 'local_bash', description: 'npm run dev' },
           { taskId: 'm1', taskType: 'local_bash', description: 'tail -f app.log', shellKind: 'monitor' },
+          { taskId: 'o1', taskType: 'local_bash', description: 'observer watch', observerOwned: true },
         ],
       }]);
     });

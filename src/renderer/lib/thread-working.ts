@@ -5,12 +5,19 @@ import { backgroundTaskStore } from '../stores/backgroundTask.svelte.js';
 
 type Thread = { id: string; status: SessionStatus };
 
-/** Whether a background agent is still running for the thread. Only while
- *  its agent is up: closing it or letting it sleep shuts the agent down, and
- *  its background agents with it, though their tasks stay listed until it
- *  starts again (main then sends an empty task list). */
+/** Whether the thread's agent is up, so the background work it started
+ *  (agents, shells, monitors) can still be running. Closing the thread or
+ *  letting it sleep shuts the agent down, and that work with it, though its
+ *  tasks stay listed until it starts again (main then sends an empty task
+ *  list). */
+export function agentUp(thread: Thread): boolean {
+  return thread.status === 'running';
+}
+
+/** Whether a background agent is still running for the thread (only while
+ *  its agent is up). */
 export function backgroundAgentRunning(thread: Thread): boolean {
-  return thread.status === 'running' && backgroundTaskStore.hasRunningAgent(thread.id);
+  return agentUp(thread) && backgroundTaskStore.hasRunningAgent(thread.id);
 }
 
 /** Whether a thread is in the middle of a turn or has a background agent

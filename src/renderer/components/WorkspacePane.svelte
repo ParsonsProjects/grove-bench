@@ -212,8 +212,11 @@
       // events held meanwhile go on from here when released below.
       messageStore.applyTurnState(sessionId, page.turn, promptSent);
       // Background tasks (a dev server) run on between turns while the
-      // agent's process is up, so they go only once it is gone.
+      // agent's process is up, so they go only once it is gone. While it is
+      // up, main's copy of its live list says which are running: the page
+      // may not reach back to the event that listed a long-running one.
       backgroundTaskStore.resolveStale(sessionId, page.turn.agentLive);
+      if (page.turn.agentLive) backgroundTaskStore.setLive(sessionId, page.turn.backgroundTasks ?? []);
       timing.step('replay');
 
       // If the session is already running but system_init was missed during

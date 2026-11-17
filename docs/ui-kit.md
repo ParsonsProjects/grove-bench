@@ -123,7 +123,7 @@ A disabled `Button` still gets hover events, so its `title` tooltip can say why 
 
 ### Badge
 
-`tone`: `neutral`, `muted`, `primary`, `info`, `success`, `warning`, `danger`, `accent`, `highlight`. `variant`: `outline` (default), `soft` (tinted fill) or `solid` (counts only; neutral, muted, primary and danger). Add `count` for numbers.
+`tone`: `neutral`, `muted`, `primary`, `info`, `success`, `warning`, `danger`, `accent`, `highlight`, `working` (something still running, in `status-working` blue: a thread's background shells). `variant`: `outline` (default), `soft` (tinted fill) or `solid` (counts only; neutral, muted, primary and danger). Add `count` for numbers.
 
 ```svelte
 <Badge tone="warning">alpha</Badge>

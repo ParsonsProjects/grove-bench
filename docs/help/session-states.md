@@ -27,11 +27,11 @@ With **Show grove characters** on, a small pixel agent shows the state instead, 
 
 If your system is set to reduce motion, the dots stay still; the colour still tells you the state.
 
+The same colours carry through the app: blue is always something in progress, green something done (or a button that acts), amber something waiting for you. In the Thread tab, a permission, a question and an MCP form that wait for an answer are all amber, and turn grey once answered (an allowed permission turns green, a denied one red).
+
 ## Background Commands
 
-A cyan terminal badge with a count, on the line under a thread's name, means its agent left commands running in the background: a shell such as a dev server or a test watcher, or a monitor. They don't turn the thread blue, since a dev server can run for as long as the thread is open. Hover the badge to see what each one is running. A long command the agent is waiting on in the middle of a turn isn't counted: the thread shows as working instead. Closing the thread stops them.
-
-The same colours carry through the app: blue is always something in progress, green something done (or a button that acts), amber something waiting for you. In the Thread tab, a permission, a question and an MCP form that wait for an answer are all amber, and turn grey once answered (an allowed permission turns green, a denied one red).
+A blue terminal badge with a count, on the line under a thread's name, means its agent left commands running in the background: a shell such as a dev server or a test watcher, or a monitor. The badge is blue, as anything still running is, but the thread's dot isn't: a dev server can run for as long as the thread is open, and the thread would never look done. Hover the badge to see what each one is running. With the sidebar folded to a rail, a small terminal icon beside the thread's dot or character says the same. A long command the agent is waiting on in the middle of a turn isn't counted: the thread shows as working instead. Closing the thread stops them.
 
 ## What to Do
 

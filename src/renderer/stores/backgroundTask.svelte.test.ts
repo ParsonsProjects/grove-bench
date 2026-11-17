@@ -7,7 +7,7 @@ const SID = 'test-session';
 beforeEach(() => {
   vi.useFakeTimers();
   backgroundTaskStore.tasksBySession = {};
-  backgroundTaskStore.liveBySession = {};
+  backgroundTaskStore.shellsBySession = {};
   mockGroveBench.stopBackgroundTask.mockClear();
 });
 
@@ -151,6 +151,8 @@ describe('backgroundTaskStore', () => {
         { taskId: 'm2', taskType: 'monitor_mcp', description: 'Watch deploys' },
         { taskId: 'a1', taskType: 'local_agent', description: 'Explore' },
         { taskId: 'x1', description: 'No type given' },
+        // Started by one of the agent's observers, not by the agent.
+        { taskId: 'o1', taskType: 'local_bash', description: 'observer watch', observerOwned: true },
       ],
     });
     expect(backgroundTaskStore.runningShells(SID).map((t) => t.taskId)).toEqual(['b1', 'm1', 'm2']);
@@ -163,6 +165,42 @@ describe('backgroundTaskStore', () => {
   it("runningShells leaves out a shell only task_started reported (a foreground one the turn waits on)", () => {
     backgroundTaskStore.start(SID, { type: 'task_started', taskId: 'b1', description: 'npm test', taskType: 'local_bash' });
     expect(backgroundTaskStore.runningShells(SID)).toEqual([]);
+  });
+
+  it('setLive takes main\'s copy of the list, and an empty one leaves other sessions alone', () => {
+    backgroundTaskStore.setLive(SID, [{ taskId: 'b1', taskType: 'local_bash', description: 'npm run dev' }]);
+    expect(backgroundTaskStore.runningShells(SID).map((t) => t.taskId)).toEqual(['b1']);
+    backgroundTaskStore.setLive(SID, []);
+    expect(backgroundTaskStore.runningShells(SID)).toEqual([]);
+
+    // Nothing to drop: the record isn't replaced, so rows reading another
+    // session's shells don't run again.
+    backgroundTaskStore.setLive('other', [{ taskId: 'b2', taskType: 'local_bash', description: 'npm run dev' }]);
+    const record = backgroundTaskStore.shellsBySession;
+    backgroundTaskStore.setLive(SID, []);
+    backgroundTaskStore.clear(SID);
+    expect(backgroundTaskStore.shellsBySession).toBe(record);
+    backgroundTaskStore.clear('other');
+  });
+
+  it('listed leaves out a running shell the live list doesn\'t hold, as the sidebar does', () => {
+    backgroundTaskStore.start(SID, { type: 'task_started', taskId: 'fg', description: 'npm test', taskType: 'local_bash' });
+    backgroundTaskStore.start(SID, { type: 'task_started', taskId: 'bg', description: 'npm run dev', taskType: 'local_bash' });
+    backgroundTaskStore.start(SID, { type: 'task_started', taskId: 'a1', description: 'Explore', taskType: 'local_agent' });
+    backgroundTaskStore.start(SID, { type: 'task_started', taskId: 'x1', description: 'No type given' });
+    backgroundTaskStore.reconcile(SID, {
+      type: 'background_tasks_changed',
+      tasks: [{ taskId: 'bg', taskType: 'local_bash', description: 'npm run dev' }, { taskId: 'a1', taskType: 'local_agent', description: 'Explore' }],
+    });
+    // reconcile drops fg and x1 (running, not listed); started again, as a
+    // foreground task's progress would add it back.
+    backgroundTaskStore.start(SID, { type: 'task_started', taskId: 'fg', description: 'npm test', taskType: 'local_bash' });
+    backgroundTaskStore.start(SID, { type: 'task_started', taskId: 'x1', description: 'No type given' });
+    expect(backgroundTaskStore.listed(SID).map((t) => t.taskId).sort()).toEqual(['a1', 'bg', 'x1']);
+
+    // Finished, it shows (until it's removed) whatever the list says.
+    backgroundTaskStore.notify(SID, { type: 'task_notification', taskId: 'fg', taskStatus: 'completed', summary: '', outputFile: '' });
+    expect(backgroundTaskStore.listed(SID).map((t) => t.taskId).sort()).toEqual(['a1', 'bg', 'fg', 'x1']);
   });
 
   it('drops the live list when the agent is gone or the session is cleared', () => {

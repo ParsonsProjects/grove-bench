@@ -434,13 +434,15 @@ export function transformMessage(
           type: 'background_tasks_changed',
           tasks: tasks.filter((t) => !t.ambient).map((t) => {
             // Sent by the CLI but not in the SDK's types: what a local_bash
-            // task is ('monitor' for the Monitor tool).
-            const shellKind = (t as { shell_kind?: unknown }).shell_kind;
+            // task is ('monitor' for the Monitor tool), and whether one of
+            // the agent's observers started it.
+            const extra = t as { shell_kind?: unknown; observer_owned?: unknown };
             return {
               taskId: t.task_id ?? '',
               taskType: t.task_type,
               description: t.description ?? '',
-              ...(typeof shellKind === 'string' && shellKind ? { shellKind } : {}),
+              ...(typeof extra.shell_kind === 'string' && extra.shell_kind ? { shellKind: extra.shell_kind } : {}),
+              ...(extra.observer_owned === true ? { observerOwned: true } : {}),
             };
           }),
         });
