@@ -228,7 +228,7 @@ export function attachmentPayload(attached: AttachedFile[]): {
       tags.push(buildContentBlock('file', f.name, f.content));
     } else if (f.type === 'image') {
       // dataUrl format: "data:image/png;base64,iVBOR..."
-      const mediaType = f.dataUrl.match(/^data:(image\/\w+)/)?.[1] ?? 'image/png';
+      const mediaType = dataUrlMediaType(f.dataUrl) || 'image/png';
       images.push({ data: dataUrlData(f.dataUrl), mediaType: mediaType as ImageMediaType, name: f.name });
     } else {
       files.push({ data: dataUrlData(f.dataUrl), mediaType: f.mediaType, name: f.name });
@@ -288,6 +288,13 @@ export function base64Size(data: string): number {
 export function dataUrlData(dataUrl: string): string {
   const comma = dataUrl.indexOf(',');
   return comma < 0 ? '' : dataUrl.slice(comma + 1);
+}
+
+/** The media type of a base64 data URL ("data:image/png;base64,..."), or ''
+ *  for anything else. */
+export function dataUrlMediaType(dataUrl: string): string {
+  const comma = dataUrl.indexOf(',');
+  return (comma > 0 && /^data:([^;,]+);base64$/.exec(dataUrl.slice(0, comma))?.[1]) || '';
 }
 
 /**

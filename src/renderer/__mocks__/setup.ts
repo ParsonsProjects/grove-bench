@@ -144,6 +144,8 @@ const mockGroveBench = {
   openAttachedFile: vi.fn(() => Promise.resolve(true)),
   readAttachedFile: vi.fn((): Promise<string | null> => Promise.resolve(null)),
   openWorktreeFile: vi.fn((): Promise<OpenWorktreeFileResult> => Promise.resolve({ kind: 'opened' })),
+  downloadImage: vi.fn((): Promise<string | null> => Promise.resolve('image.png')),
+  showImageInFolder: vi.fn(() => Promise.resolve(true)),
   notify: vi.fn(),
   testNotification: vi.fn().mockResolvedValue('sent'),
   getSettings: vi.fn(),

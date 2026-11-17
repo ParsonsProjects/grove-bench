@@ -8,6 +8,7 @@ import { buildContentBlock } from '../../shared/prompt-text.js';
 
 import StatusBarFiles from './StatusBarFiles.svelte';
 import type { ThreadFile } from '../../shared/thread-items.js';
+import type { ShownImage } from '$lib/thread-images.svelte.js';
 
 const SID = 's1';
 const FILES: ThreadFile[] = [
@@ -26,7 +27,7 @@ afterEach(() => {
 });
 
 /** The list, as the activity popup shows it. */
-function openPopover(props: { onclose?: () => void; onimage?: (image: { src: string; label: string }) => void } = {}) {
+function openPopover(props: { onclose?: () => void; onimage?: (image: ShownImage) => void } = {}) {
   const { container } = render(StatusBarFiles, { sessionId: SID, files: FILES, onimage: () => {}, ...props });
   return container;
 }
@@ -66,7 +67,12 @@ describe('StatusBarFiles', () => {
     const onclose = vi.fn();
     const popover = openPopover({ onimage, onclose });
     await fireEvent.click(within(popover).getByTitle(/^Open mock\.png/));
-    expect(onimage).toHaveBeenCalledWith({ src: `grove-attachment://image/${SID}/a.png`, label: 'mock.png' });
+    expect(onimage).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: SID,
+      src: `grove-attachment://image/${SID}/a.png`,
+      label: 'mock.png',
+      image: expect.objectContaining({ file: 'a.png' }),
+    }));
     expect(onclose).toHaveBeenCalledOnce();
   });
 
