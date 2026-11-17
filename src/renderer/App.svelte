@@ -22,6 +22,7 @@
   import ErrorToast from './components/ErrorToast.svelte';
   import DraftUndoToast from './components/DraftUndoToast.svelte';
   import MemoryToast from './components/MemoryToast.svelte';
+  import CleanupToast from './components/CleanupToast.svelte';
   import PlanUsageToast from './components/PlanUsageToast.svelte';
   import { memoryStore } from './stores/memory.svelte.js';
   import { prerequisitesStore } from './stores/prerequisites.svelte.js';
@@ -483,6 +484,11 @@
       // Not for a thread closed or deleted meanwhile.
       if (store.sessions.some((s) => s.id === sessionId)) messageStore.updateMcpServers(sessionId, servers);
     });
+    // Main learned more of what a thread's agent has (its report, or what
+    // it listed as it started).
+    const unsubSystemInfo = window.groveBench.onSystemInfo((sessionId, info) => {
+      if (store.sessions.some((s) => s.id === sessionId)) messageStore.setSystemInfo(sessionId, info);
+    });
 
     // Put idle conversations to sleep to free their agent processes.
     const stopIdleManager = startIdleManager();
@@ -492,6 +498,7 @@
       unsubPower();
       unsubFocus();
       unsubMcp();
+      unsubSystemInfo();
       unsubAppError();
       uninstallErrors();
       uninstallTooltips();
@@ -657,6 +664,7 @@
 <div class="fixed bottom-16 right-4 z-50 flex max-w-md flex-col items-end gap-2 pointer-events-none *:pointer-events-auto">
   <PlanUsageToast />
   <MemoryToast />
+  <CleanupToast />
 </div>
 
 <SpellcheckMenu />

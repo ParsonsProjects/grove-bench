@@ -2,6 +2,7 @@
   import { messageStore } from '../stores/messages.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
   import { selectionIn } from '$lib/activity-menu.js';
+  import { markdownWithLinks, selectionLinks, type FoundLink } from '$lib/selection-links.js';
   import { bookmarkSelection } from '$lib/bookmark-selection.js';
   import { menuItem, menuPanel } from '$lib/components/ui/menu/index.js';
 
@@ -19,7 +20,7 @@
   let selAnchor = $state<{ left: number; top: number; bottom: number } | null>(null);
   let selMenuPos = $state<{ left: number; top: number }>({ left: 0, top: 0 });
   let selMenuEl = $state<HTMLDivElement>();
-  let pendingSelection: { text: string; msgId: string | null } | null = null;
+  let pendingSelection: { text: string; msgId: string | null; links: FoundLink[] } | null = null;
 
   function clear() {
     selAnchor = null;
@@ -32,7 +33,9 @@
     // (handles multi-message spans). The diff view has no [data-msg-id] → text-only.
     const sel = container ? selectionIn(container) : null;
     if (!sel) { clear(); return; }
-    pendingSelection = { text: sel.text, msgId: sel.msgId };
+    // Read now, while the nodes are the ones selected (a reply still
+    // streaming redraws them): the text leaves the links out.
+    pendingSelection = { text: sel.text, msgId: sel.msgId, links: selectionLinks(sel.range) };
     const rect = sel.range.getBoundingClientRect();
     selAnchor = { left: rect.left, top: rect.top, bottom: rect.bottom };
     // Rough initial position; the clamp effect refines it once measured.
@@ -95,8 +98,8 @@
 
   async function addBookmark() {
     if (!pendingSelection) return;
-    const { text, msgId } = pendingSelection;
-    await bookmarkSelection(sessionId, text, msgId);
+    const { text, msgId, links } = pendingSelection;
+    await bookmarkSelection(sessionId, text, msgId, links);
     clear();
     window.getSelection()?.removeAllRanges();
   }
@@ -105,7 +108,7 @@
     if (!pendingSelection) return;
     // Into the draft too: the Checkpoints tab's diff has no prompt input
     // showing, and one that mounts later only reads the draft.
-    messageStore.appendToPrompt(sessionId, pendingSelection.text);
+    messageStore.appendToPrompt(sessionId, markdownWithLinks(pendingSelection.text, pendingSelection.links));
     clear();
     window.getSelection()?.removeAllRanges();
   }

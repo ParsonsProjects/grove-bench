@@ -5,7 +5,7 @@
    * thread's agent has, how many are on and how many suggestions wait
    * (Claude Code). Draws nothing itself.
    */
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { messageStore } from '../stores/messages.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
@@ -57,6 +57,16 @@
     const open = skillsPanelStore.open;
     if (wasOpen && !open) void refresh();
     wasOpen = open;
+  });
+
+  // Skills added while the thread slept (in the Skills drawer, by another
+  // thread, a pull): count again as it wakes.
+  let status = $derived(store.sessions.find((s) => s.id === sessionId)?.status);
+  let wasAsleep = false;
+  $effect(() => {
+    const asleep = status === 'sleeping';
+    if (wasAsleep && !asleep) untrack(() => void refresh());
+    wasAsleep = asleep;
   });
 
   $effect(() => { count = allSkills.length; });

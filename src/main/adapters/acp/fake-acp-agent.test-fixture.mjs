@@ -9,6 +9,7 @@
 //   noimage  - takes nothing beyond the baseline (no images)
 // Prompt texts pick a turn: 'wait', 'titled-exec', 'env', 'unasked', 'unasked-read',
 // 'echo', 'blocks', 'mcp', 'mcp-call', 'self-mode', 'cost'; anything else runs the default turn.
+// A prompt with no text block gets its blocks back as JSON.
 import { createInterface } from 'node:readline';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
@@ -70,7 +71,7 @@ async function prompt(params) {
   const sid = params.sessionId;
   const text = params.prompt.find((b) => b.type === 'text')?.text ?? '';
   const cwd = process.cwd();
-  if (text === 'wait') {
+  if (text === 'wait' || text.endsWith('\n\nwait')) {
     update(sid, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Working' } });
     update(sid, { sessionUpdate: 'tool_call', toolCallId: 'slow', kind: 'execute', title: 'Sleep', status: 'in_progress', rawInput: { command: 'sleep 100' } });
     await new Promise((resolve) => { cancelRequested = resolve; });
@@ -139,6 +140,11 @@ async function prompt(params) {
       options: [{ optionId: 'ok', name: 'Allow', kind: 'allow_once' }, { optionId: 'no', name: 'Reject', kind: 'reject_once' }],
     });
     update(sid, { sessionUpdate: 'tool_call_update', toolCallId: 'p1', status: answer.outcome.optionId === 'ok' ? 'completed' : 'failed' });
+    return { stopReason: 'end_turn' };
+  }
+  if (!params.prompt.some((b) => b.type === 'text')) {
+    // No text at all (an image sent on its own): every block, as JSON.
+    update(sid, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: JSON.stringify(params.prompt) } });
     return { stopReason: 'end_turn' };
   }
   if (text === 'blocks') {

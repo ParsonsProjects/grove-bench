@@ -75,6 +75,8 @@ const api: GroveBenchAPI = {
   ) => ipcRenderer.send(IPC.AGENT_SEND, sessionId, content, images, files),
   openAttachedFile: (sessionId: string, file: string) =>
     ipcRenderer.invoke(IPC.ATTACHMENT_OPEN, sessionId, file),
+  readAttachedFile: (sessionId: string, file: string) =>
+    ipcRenderer.invoke(IPC.ATTACHMENT_READ, sessionId, file),
   openWorktreeFile: (sessionId: string, filePath: string) =>
     ipcRenderer.invoke(IPC.WORKTREE_FILE_OPEN, sessionId, filePath),
   respondToPermission: (sessionId: string, decision: PermissionDecision) =>
@@ -165,6 +167,15 @@ const api: GroveBenchAPI = {
     ipcRenderer.on(IPC.AGENT_MCP_STATUS, handler);
     return () => {
       ipcRenderer.removeListener(IPC.AGENT_MCP_STATUS, handler);
+    };
+  },
+  getSystemInfo: (sessionId: string) => ipcRenderer.invoke(IPC.AGENT_SYSTEM_INFO, sessionId),
+  onSystemInfo: (callback: (sessionId: string, info: import('../shared/types.js').AgentSystemInfo) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, sessionId: string, info: import('../shared/types.js').AgentSystemInfo) =>
+      callback(sessionId, info);
+    ipcRenderer.on(IPC.AGENT_SYSTEM_INFO_CHANGED, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC.AGENT_SYSTEM_INFO_CHANGED, handler);
     };
   },
 
@@ -358,8 +369,10 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.MEMORY_WRITE, repoPath, relativePath, content),
   memoryDelete: (repoPath: string, relativePath: string) =>
     ipcRenderer.invoke(IPC.MEMORY_DELETE, repoPath, relativePath),
-  memoryCompact: (repoPath: string) =>
-    ipcRenderer.invoke(IPC.MEMORY_COMPACT, repoPath),
+  memoryCompactPreview: (repoPath: string) =>
+    ipcRenderer.invoke(IPC.MEMORY_COMPACT_PREVIEW, repoPath),
+  memoryCompact: (repoPath: string, options: import('../shared/types.js').MemoryCompactionOptions) =>
+    ipcRenderer.invoke(IPC.MEMORY_COMPACT, repoPath, options),
   memoryCompactCancel: (repoPath: string) =>
     ipcRenderer.invoke(IPC.MEMORY_COMPACT_CANCEL, repoPath),
   onMemoryCompactEvent: (callback: (event: import('../shared/types.js').MemoryCompactionEvent) => void) => {

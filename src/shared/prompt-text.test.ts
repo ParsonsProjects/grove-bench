@@ -115,6 +115,10 @@ describe('userEventText', () => {
       files: [{ name: 'spec.pdf' }],
     })).toBe('[a.ts, shot.png, spec.pdf] fix it');
   });
+
+  it('is just the label for an image sent with nothing typed', () => {
+    expect(userEventText({ text: '', images: [{ name: 'shot.png' }] })).toBe('[shot.png]');
+  });
 });
 
 describe('userEventParts', () => {

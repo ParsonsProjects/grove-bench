@@ -377,6 +377,25 @@ describe('AcpAdapter', () => {
       expect(blocks).toEqual([{ type: 'resource_link', uri: pathToFileURL(shot.path).href, name: 'shot.png', mimeType: 'image/png', size: 4 }]);
     });
 
+    it('sends an image on its own with no empty text block', async () => {
+      const [blocks] = await sentBlocks('default', { text: '', images: [{ data: 'iVBOR', mediaType: 'image/png', name: 'shot.png' }] });
+      expect(blocks).toEqual([{ type: 'image', data: 'iVBOR', mimeType: 'image/png' }]);
+    });
+
+    it('sends nothing when nothing was typed and the image was left out, and keeps the instructions for later', async () => {
+      const handle = await new AcpAdapter(def('noimage')).start(config({ appendSystemPrompt: 'Use relative paths.' }));
+      await until(handle, 'system_init');
+      handle.sendMessage({ text: '', images: [{ data: 'iVBOR', mediaType: 'image/png', name: 'shot.png' }] });
+      const failed = await until(handle, 'result');
+      expect(failed.at(-1)).toMatchObject({ isError: true, errors: [expect.stringMatching(/^Nothing was sent: .* couldn't take what was attached/)] });
+      expect(failed.some((e) => e.type === 'assistant_text')).toBe(false);
+
+      handle.sendMessage({ text: 'echo' });
+      const next = await until(handle, 'result');
+      handle.close();
+      expect((next.find((e) => e.type === 'assistant_text') as { text: string }).text).toMatch(/Use relative paths\.\|echo$/);
+    });
+
     it('says so when an image with no saved copy is left out', async () => {
       const handle = await new AcpAdapter(def('noimage')).start(config());
       await until(handle, 'system_init');
@@ -609,6 +628,41 @@ describe('AcpAdapter', () => {
     const adapter = new AcpAdapter(def());
     const text = await adapter.generateText('You write commit messages.', 'diff here', { cwd, model: 'm2' });
     expect(text).toBe('Fix the thing (no, m2)');
+  });
+
+  it('says once when the agent is up, before the reply', async () => {
+    const adapter = new AcpAdapter(def());
+    const onStarted = vi.fn();
+    const text = adapter.generateText('You write commit messages.', 'diff here', { cwd, onStarted });
+    await expect(text).resolves.toBe('Fix the thing (no, m1)');
+    expect(onStarted).toHaveBeenCalledTimes(1);
+  });
+
+  it('names the model the reply comes from: the one asked for once switched, else its own', async () => {
+    const adapter = new AcpAdapter(def());
+    const switched = vi.fn();
+    await adapter.generateText('sys', 'diff here', { cwd, model: 'm2', onModel: switched });
+    expect(switched).toHaveBeenCalledWith('m2');
+
+    const unknown = vi.fn();
+    await adapter.generateText('sys', 'diff here', { cwd, model: 'not-offered', onModel: unknown });
+    expect(unknown).toHaveBeenCalledWith('m1');
+  });
+
+  it("gives up on the reply after the caller's time limit, not its own", async () => {
+    const adapter = new AcpAdapter(def());
+    await expect(adapter.generateText('sys', 'wait', { cwd, timeoutMs: 300 })).rejects.toThrow('Fake Agent background request timed out');
+  });
+
+  it('starts the session before the message, and ends an unused one when closed', async () => {
+    const adapter = new AcpAdapter(def());
+    const prepared = adapter.prepareText('You write commit messages.', { cwd, model: 'm2' });
+    await expect(prepared.send('diff here')).resolves.toBe('Fix the thing (no, m2)');
+    await expect(prepared.send('again')).rejects.toThrow('already sent or closed');
+
+    const unused = adapter.prepareText('sys', { cwd });
+    unused.close();
+    await expect(unused.send('late')).rejects.toThrow('already sent or closed');
   });
 
   describe('an API key saved in Grove and per-process settings', () => {

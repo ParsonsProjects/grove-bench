@@ -6,6 +6,7 @@
     "src/main/preload.ts",
     "src/main/process-host-child.ts",
     "src/main/turn-files-worker.ts",
+    "src/main/remove-tree-worker.ts",
     "src/main/adapters/mcp-bridge/main.mjs",
     "src/main/adapters/acp/fake-acp-agent.test-fixture.mjs",
     "src/renderer/demo-mock.ts",

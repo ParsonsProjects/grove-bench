@@ -70,6 +70,7 @@ function fakeQuery() {
     applyFlagSettings: vi.fn((_settings: Record<string, unknown>) => Promise.resolve()),
     supportedModels: vi.fn(() => Promise.resolve([])),
     getContextUsage: vi.fn((_opts?: { detail?: string }) => Promise.resolve({ totalTokens: 31_000 })),
+    supportedCommands: vi.fn(() => Promise.resolve([] as { name: string; description: string; argumentHint: string; builtin?: boolean }[])),
   };
   return {
     q,
@@ -530,5 +531,87 @@ describe('ClaudeCodeAdapter.start(): the handle', () => {
     const { handle, fake } = await start();
     expect(await handle.getContextTokens!()).toBe(31_000);
     expect(fake.q.getContextUsage).toHaveBeenCalledWith({ detail: 'full' });
+  });
+
+  it("lists the slash commands by system_init's names, MCP prompts as the last report named them", async () => {
+    const { handle, fake } = await start();
+    // Rows as CLI 2.1.326 gave them before any prompt.
+    fake.q.supportedCommands.mockResolvedValueOnce([
+      { name: 'hello-skill', description: 'Says hello (project)', argumentHint: '' },
+      { name: 'myplug:plug-skill', description: '(myplug) A plugin skill', argumentHint: '' },
+      { name: 'tiny:greet (MCP)', description: 'A greeting prompt', argumentHint: '' },
+      { name: 'compact', description: 'Compact', argumentHint: '', builtin: true },
+      // Rows can share a name: a builtin and the user's own.
+      { name: 'review', description: 'Review', argumentHint: '', builtin: true },
+      { name: 'review', description: 'My review (project)', argumentHint: '' },
+    ]);
+    expect(await handle.listSlashCommands!(['old-skill', 'compact', 'mcp__tiny__greet'])).toEqual([
+      'hello-skill', 'myplug:plug-skill', 'compact', 'review', 'mcp__tiny__greet',
+    ]);
+  });
+});
+
+describe('ClaudeCodeAdapter.prepareText(): an agent started before its message', () => {
+  /** A stand-in for the SDK's startup(): the warm handle and its query. */
+  function warmStart() {
+    const fake = fakeQuery();
+    let ready!: () => void;
+    const handle = { query: vi.fn((_prompt: unknown) => fake.q), close: vi.fn() };
+    const startup = vi.fn((_params: { options: Options }) => new Promise((resolve) => { ready = () => resolve(handle); }));
+    setSdkForTests({ query, startup } as never);
+    // startup() runs once the SDK has loaded, a tick after prepareText.
+    const start = async () => {
+      await vi.waitFor(() => expect(startup).toHaveBeenCalled());
+      ready();
+    };
+    return { fake, handle, startup, ready: start };
+  }
+
+  it('starts the CLI with the system prompt and model now, and sends the message to it later', async () => {
+    const warm = warmStart();
+    const prepared = adapter().prepareText('You compact memory.', { cwd: '/repo', model: 'claude-haiku-4-5' });
+    await vi.waitFor(() => expect(warm.startup).toHaveBeenCalledTimes(1));
+    const { options } = warm.startup.mock.calls[0][0];
+    expect(options).toMatchObject({ cwd: '/repo', systemPrompt: 'You compact memory.', model: 'claude-haiku-4-5', maxTurns: 1, tools: [] });
+    expect(warm.handle.query).not.toHaveBeenCalled();
+
+    const onStarted = vi.fn();
+    const onModel = vi.fn();
+    const reply = prepared.send('the files', { onStarted, onModel });
+    await warm.ready();
+    await vi.waitFor(() => expect(warm.handle.query).toHaveBeenCalledTimes(1));
+    expect(onStarted).toHaveBeenCalledTimes(1);
+    warm.fake.send(init('s1'));
+    warm.fake.send({ type: 'assistant', message: { content: [{ type: 'text', text: '{"files":[]}' }] }, parent_tool_use_id: null });
+    warm.fake.end();
+
+    await expect(reply).resolves.toBe('{"files":[]}');
+    expect(onModel).toHaveBeenCalledWith('claude-opus-4-8');
+    const sent: unknown[] = [];
+    for await (const m of warm.handle.query.mock.calls[0][0] as AsyncIterable<unknown>) sent.push(m);
+    expect(sent).toEqual([expect.objectContaining({ type: 'user', message: { role: 'user', content: 'the files' } })]);
+  });
+
+  it('ends the CLI unused when closed, and refuses a second send', async () => {
+    const warm = warmStart();
+    const prepared = adapter().prepareText('sys');
+    prepared.close();
+    await warm.ready();
+    await vi.waitFor(() => expect(warm.handle.close).toHaveBeenCalledTimes(1));
+    await expect(prepared.send('late')).rejects.toThrow('already sent or closed');
+    expect(warm.handle.query).not.toHaveBeenCalled();
+  });
+
+  it('sends nothing when aborted while the CLI starts', async () => {
+    const warm = warmStart();
+    const prepared = adapter().prepareText('sys');
+    const abort = new AbortController();
+    const reply = prepared.send('msg', { abortSignal: abort.signal });
+    abort.abort();
+    await warm.ready();
+    await expect(reply).rejects.toThrow('Aborted');
+    expect(warm.handle.query).not.toHaveBeenCalled();
+    expect(warm.handle.close).toHaveBeenCalled();
+    expect((warm.startup.mock.calls[0][0].options.abortController as AbortController).signal.aborted).toBe(true);
   });
 });

@@ -123,7 +123,7 @@ class WorktreeManager {
 
 **Worktree location strategy:**
 
-Worktrees are created in the app's data folder, `%APPDATA%\grove-bench\worktrees\<repo-hash>\<short-id>\`, where `repo-hash` is the first 8 hex characters of the project path's SHA-256 and `short-id` the first 8 characters of a UUID. The manifest (`manifest.json`), each project's `config.json` and the trash (`.trash`) live there too. Short IDs help avoid Windows' 260-character PATH_MAX limit, which is a real concern when combined with deep `node_modules` paths. (An earlier version of this document put worktrees in `<repoPath>/.grove-wt/<short-id>/`.)
+Worktrees are created in the app's data folder, `%APPDATA%\grove-bench\worktrees\<repo-hash>\<short-id>\`, where `repo-hash` is the first 8 hex characters of the project path's SHA-256 and `short-id` the first 8 characters of a UUID. The manifest (`manifest.json`), each project's `config.json`, the trash (`.trash`) and the folders of removed threads still being deleted (`.removing`, Section 7.2) live there too. Short IDs help avoid Windows' 260-character PATH_MAX limit, which is a real concern when combined with deep `node_modules` paths. (An earlier version of this document put worktrees in `<repoPath>/.grove-wt/<short-id>/`.)
 
 Settings > Git > **Worktree folder** puts new worktrees in another folder instead, as `<folder>\<repo-hash>\<short-id>\`: a short folder on a Dev Drive, say, which can make installs faster. The manifest and config stay in the data folder. How that folder is handled:
 
@@ -435,12 +435,23 @@ User clicks "X" on agent pane OR closes app
     → Wait 500ms for Windows file handles to release
   → Prompt: "Delete branch <branch-name>?" (default: yes for clean branches, no if commits exist)
   → WorktreeManager.remove()
-    → Try: git worktree remove <path>
-    → If EACCES/EPERM: git worktree remove --force <path>
-    → If still fails: fs.rm(path, {recursive: true, force: true}) then git worktree prune
-    → If even that fails: log warning, flag for manual cleanup on next startup
-    → Optionally: git branch -d <branch>
+    → Move the folder to <root>\.removing\<id>~<time> (a rename on the same drive)
+    → git worktree prune (git forgets it, and its branch is free)
+    → Optionally: git branch -d <branch> (-D for a branch Grove created)
+    → Manifest entry kept hidden (pendingRemoval, removingPath) until the files go
+    → The delete thread (remove-tree.ts) deletes the files in the background,
+      one folder at a time, with Electron's asar support off; then the entry goes
+    → If the folder can't be moved (a file in it held open):
+      → Try: git worktree remove <path>
+      → If EACCES/EPERM: git worktree remove --force <path>
+      → If still fails: fs.rm(path, {recursive: true, force: true}) then git worktree prune
+      → If even that fails: log warning, flag for manual cleanup on next startup
 ```
+
+Deleting many threads at once (Clean Up Old Threads) runs one after another,
+each returning once its folder has moved, so the wait isn't the deletes'.
+The sweep finishes a delete that a quit cut short, and deletes anything in
+`.removing` with no manifest entry once it is 10 minutes old.
 
 ### 7.3 App Shutdown
 
@@ -636,7 +647,7 @@ An account agent:
 - signs in with Claude Code's own `claude auth login`, which the user runs in PowerShell with the folder set (the command clears the variable afterwards, and doubles every character PowerShell reads as a single quote, including the typographic ones), so the authentication rules below still hold: Grove never reads the sign-in.
 - has no provider title for its threads: the SDK's `getSessionInfo` reads transcripts in Grove's own process, from Grove's `CLAUDE_CONFIG_DIR`, and takes no folder.
 
-**Background tasks.** Memory notes, memory compaction, commit messages and skill suggestions call `adapter.generateText()` (`src/main/background-tasks.ts`). Each runs on the agent of the conversation it belongs to, so a conversation's content only goes to the provider chosen for it. The manifest records every conversation's agent (`adapterType`), which also lets a restart resume it on the same agent. When that agent is gone (a custom agent taken out of Settings, a removed Claude account, after a restart), nothing is sent to another provider unasked: a task the user starts (a commit message, a new goal) asks which agent to use instead (`backgroundAgentStore`, `BackgroundAgentDialog`) and keeps the answer for that thread until restart, and automatic ones (memory notes) are skipped (`backgroundAgentFor` returns null, `recordedAgent` throws without a `substitute`). Project-level tasks use the project's most recently used agent that is still there, else the default agent: manual compaction any agent, skill suggestions only an agent with skills, and suggestions only read that agent's conversations. The model is the user's pick in `settings.backgroundModels`, else the adapter's own `backgroundModel` (Claude: the SDK's current Haiku), else the agent's default.
+**Background tasks.** Memory notes, memory compaction, commit messages and skill suggestions call `adapter.generateText()` (`src/main/background-tasks.ts`). Each runs on the agent of the conversation it belongs to, so a conversation's content only goes to the provider chosen for it. The manifest records every conversation's agent (`adapterType`), which also lets a restart resume it on the same agent. When that agent is gone (a custom agent taken out of Settings, a removed Claude account, after a restart), nothing is sent to another provider unasked: a task the user starts (a commit message, a new goal) asks which agent to use instead (`backgroundAgentStore`, `BackgroundAgentDialog`) and keeps the answer for that thread until restart, and automatic ones (memory notes) are skipped (`backgroundAgentFor` returns null, `recordedAgent` throws without a `substitute`). Project-level tasks use the project's most recently used agent that is still there, else the default agent: manual compaction any agent, skill suggestions only an agent with skills, and suggestions only read that agent's conversations. The model is the user's pick in `settings.backgroundModels`, else the adapter's own `backgroundModel` (Claude: the SDK's current Haiku), else the agent's default. Manual compaction is the one exception: its confirm dialog (`previewCompaction`) shows the agent, the model and the planning prompt before anything runs, and a model picked there applies to that run only. The run sends only the planning prompt the dialog showed (it checks `planDigest`, and when memory changed meanwhile it sends nothing and the dialog opens again), and each step reports the model the agent says it answered with (`onModel`), which can differ from the one asked for when the agent doesn't offer it. Its merge steps run up to 3 at once, on agents started while planning runs (`prepareText`; Claude: the SDK's `startup()`), with the merge instructions as the system prompt and the files in the message.
 
 **Model lists.** The Claude adapter reads the SDK's list (`Query.supportedModels()`) when a conversation starts, once per run, and caches it in `app-state.json` (`modelCatalogs`) for the next launch; `FALLBACK_MODELS` covers the first launch. The SDK lists aliases (`opus`, `sonnet`, `haiku`) with the model each resolves to; Grove keeps the resolved id so saved choices keep matching, skips the account's `default` row (Grove has its own Default), and lists Opus first so new conversations still start on Opus. The SDK's effort levels, adaptive thinking, fast mode and auto mode drive the session controls; each model's default effort and whether thinking can be switched off still come from the adapter's table, since the SDK doesn't report them. When the list changes, the main process sends `agent:modelsChanged` and the status bar and Settings refetch.
 

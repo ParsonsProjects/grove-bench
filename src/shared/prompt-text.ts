@@ -109,9 +109,12 @@ export function attachedFilesFromSent(sent: string): { files: SentBlock[]; typed
   return { files: blocks.slice(0, end), typed };
 }
 
-/** A typed prompt with its attachment names as a leading "[a.ts, b.png] " label. */
+/** A typed prompt with its attachment names as a leading "[a.ts, b.png] "
+ *  label, or just the label for attachments sent with nothing typed. */
 export function withAttachmentLabel(names: string[], typed: string): string {
-  return names.length > 0 ? `[${names.join(', ')}] ${typed}` : typed;
+  if (names.length === 0) return typed;
+  const label = `[${names.join(', ')}]`;
+  return typed ? `${label} ${typed}` : label;
 }
 
 /**

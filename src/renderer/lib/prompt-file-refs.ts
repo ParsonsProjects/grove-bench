@@ -39,5 +39,6 @@ export async function buildRefTags(
  * attachments first, then @-references) followed by the user's text.
  */
 export function buildOutgoingMessage(tags: string[], text: string): string {
-  return tags.length > 0 ? tags.join('\n') + '\n\n' + text : text;
+  if (tags.length === 0) return text;
+  return text ? tags.join('\n') + '\n\n' + text : tags.join('\n');
 }

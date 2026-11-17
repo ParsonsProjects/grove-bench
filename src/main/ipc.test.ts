@@ -22,7 +22,7 @@ const m = vi.hoisted(() => {
       'listMcpServers', 'getMcpContextCost', 'reconnectMcpServer', 'setMcpServerEnabled', 'authenticateMcpServer', 'reconnectDownMcpServers',
       'getSessionAdapter', 'getWorktreePath', 'analyzeSkillSuggestionsForRepo', 'respondToPermission',
       'respondToElicitation', 'rewindFiles', 'bringBackFiles', 'getCheckpointDiff', 'listCheckpoints', 'getDiffHistory',
-      'getCheckpointFiles', 'getCheckpointFileDiff', 'getCheckpointFileLines', 'threadUsage',
+      'getCheckpointFiles', 'getCheckpointFileDiff', 'getCheckpointFileLines', 'threadUsage', 'getSystemInfo',
     ),
     worktreeManager: fns(
       'validateRepo', 'cleanupOrphans', 'getWorktreeOrManifest', 'registerDirect', 'create', 'getRepoConfig',
@@ -1032,6 +1032,20 @@ describe('LIMITS_THREAD_USAGE', () => {
   });
 });
 
+describe('AGENT_SYSTEM_INFO', () => {
+  it("gives what the thread's agent has, and nothing for a malformed id", async () => {
+    const info = { tools: [], agents: [], skills: ['review'], slashCommands: ['review'], mcpServers: [] };
+    m.sessionManager.getSystemInfo.mockReturnValue(info);
+    expect(await invoke(IPC.AGENT_SYSTEM_INFO, 's1')).toEqual(info);
+    expect(m.sessionManager.getSystemInfo).toHaveBeenCalledWith('s1');
+
+    m.sessionManager.getSystemInfo.mockClear();
+    // The id names a log file a closed thread's is read from.
+    expect(await invoke(IPC.AGENT_SYSTEM_INFO, '../../x')).toBeNull();
+    expect(m.sessionManager.getSystemInfo).not.toHaveBeenCalled();
+  });
+});
+
 describe('agent I/O', () => {
   it('tells the tab when a message could not be delivered', async () => {
     m.sessionManager.sendMessage.mockResolvedValue(false);
@@ -1040,6 +1054,16 @@ describe('agent I/O', () => {
 
     const channel = `${IPC.AGENT_EVENT}:s1`;
     expect(sender.send).toHaveBeenCalledWith(channel, expect.objectContaining({ type: 'error' }));
+    expect(sender.send).toHaveBeenCalledWith(channel, { type: 'process_exit' });
+  });
+
+  it('says why when nothing was left to send', async () => {
+    m.sessionManager.sendMessage.mockResolvedValue('nothing-to-send');
+    invoke(IPC.AGENT_SEND, 's1', '');
+    await flush();
+
+    const channel = `${IPC.AGENT_EVENT}:s1`;
+    expect(sender.send).toHaveBeenCalledWith(channel, { type: 'error', message: expect.stringMatching(/attachments were left out and nothing was typed/) });
     expect(sender.send).toHaveBeenCalledWith(channel, { type: 'process_exit' });
   });
 

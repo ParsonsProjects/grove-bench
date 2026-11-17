@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   classifyFile,
   mediaTypeOf,
@@ -10,6 +10,7 @@ import {
   dataUrlData,
   formatFileSize,
   attachmentPayload,
+  reattach,
   TEXT_EXTENSIONS,
   IMAGE_MIME_TYPES,
   MAX_TEXT_SIZE,
@@ -467,5 +468,45 @@ describe('IMAGE_MIME_TYPES', () => {
   it('does not include bmp or tiff', () => {
     expect(IMAGE_MIME_TYPES.has('image/bmp')).toBe(false);
     expect(IMAGE_MIME_TYPES.has('image/tiff')).toBe(false);
+  });
+});
+
+describe('reattach', () => {
+  const png = `${'a'.repeat(32)}.png`;
+  const pdf = `${'b'.repeat(32)}.pdf`;
+
+  it('gives back text files, images and other files as the prompt box holds them', async () => {
+    const read = vi.fn(async (file: string) => (file === png ? 'AAAA' : 'JVBE'));
+    const attached = await reattach({
+      files: [{ path: 'notes.md', content: 'steps' }],
+      images: [{ name: 'pasted.png', dataUrl: 'data:image/png;base64,BBBB' }, { file: png, name: 'shot.png' }],
+      attachments: [{ file: pdf, name: 'spec.pdf', mediaType: 'application/pdf', size: 3 }],
+    }, read);
+
+    expect(attached).toEqual([
+      { name: 'notes.md', content: 'steps', type: 'text' },
+      { name: 'pasted.png', dataUrl: 'data:image/png;base64,BBBB', type: 'image' },
+      { name: 'shot.png', dataUrl: 'data:image/png;base64,AAAA', type: 'image' },
+      { name: 'spec.pdf', dataUrl: 'data:application/pdf;base64,JVBE', mediaType: 'application/pdf', size: 3, type: 'file' },
+    ]);
+    // What it holds is what it sends again.
+    expect(attachmentPayload(attached).images).toEqual([
+      { data: 'BBBB', mediaType: 'image/png', name: 'pasted.png' },
+      { data: 'AAAA', mediaType: 'image/png', name: 'shot.png' },
+    ]);
+  });
+
+  it('leaves out what is gone, failed to read, or was never saved', async () => {
+    const read = vi.fn(async (file: string) => {
+      if (file === png) return null;
+      throw new Error('ipc failed');
+    });
+    const attached = await reattach({
+      images: [{ file: png, name: 'gone.png' }, { name: 'remote.png', url: 'https://example.com/a.png' }],
+      attachments: [{ file: pdf, name: 'spec.pdf', mediaType: 'application/pdf', size: 3 }, { name: 'unsaved.zip', mediaType: 'application/zip', size: 3 }],
+    }, read);
+
+    expect(attached).toEqual([]);
+    expect(read).toHaveBeenCalledTimes(2);
   });
 });

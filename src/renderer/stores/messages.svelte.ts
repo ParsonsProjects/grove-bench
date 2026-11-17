@@ -1,4 +1,4 @@
-import type { AgentEvent, ControlDescriptor, FileAttachment, ImageAttachment, MadeFile, McpElicitationRequest, McpElicitationResponse, McpServerInfo, PermissionDecision, PermissionMode, SessionControls, StoredFile, StoredImage, ThreadTurnState } from '../../shared/types.js';
+import type { AgentEvent, AgentSystemInfo, ControlDescriptor, FileAttachment, ImageAttachment, MadeFile, McpElicitationRequest, McpElicitationResponse, McpServerInfo, PermissionDecision, PermissionMode, SessionControls, StoredFile, StoredImage, ThreadTurnState } from '../../shared/types.js';
 import { CONTROL_IDS, DEFAULT_DENY_MESSAGE, subagentParent } from '../../shared/types.js';
 import { attachedFilesFromSent, type SentBlock } from '../../shared/prompt-text.js';
 import { userMessageLabel } from '../lib/message-label.js';
@@ -13,11 +13,11 @@ import { store as sessionStore } from './sessions.svelte.js';
 import { settingsStore } from './settings.svelte.js';
 import { previewStore } from './preview.svelte.js';
 import { prerequisitesStore } from './prerequisites.svelte.js';
-import { base64Size, type AttachedFile } from '../lib/file-attachments.js';
+import { base64Size, reattach, type AttachedFile } from '../lib/file-attachments.js';
 import { approvalRequest } from '../lib/tool-names.js';
 import { changesFiles, toolViewOf, toolViewSummary, type ToolView } from '../../shared/tool-view.js';
 import { liveEventsMissingFrom } from '../../shared/live-events.js';
-import { agentCallInput, isAgentCall, subagentOf } from '../lib/message-view.js';
+import { agentCallInput, isAgentCall, isMessageVisible, subagentOf, threadMessages, type MessageViewMode } from '../lib/message-view.js';
 import { limitName, type LimitKind } from '../../shared/limits.js';
 
 // ─── Chat message types ───
@@ -416,14 +416,11 @@ class MessageStore {
    *  count of the whole context (after a compaction), not split by cache. */
   usageBySession = $state<Record<string, { inputTokens: number; cacheReadTokens: number; cacheCreationTokens: number; noCacheSplit?: boolean }>>({});
 
-  /** System info per session (from system_init) */
-  systemInfoBySession = $state<Record<string, {
-    tools: string[];
-    agents: string[];
-    skills: string[];
-    slashCommands: string[];
-    mcpServers: { name: string; status: string }[];
-  }>>({});
+  /** What each thread's agent has, as main keeps it (AgentSystemInfo):
+   *  loaded with the pane, then sent each time it changes, and the MCP part
+   *  from each live status. Never taken from replayed reports, which may be
+   *  older. */
+  systemInfoBySession = $state<Record<string, AgentSystemInfo>>({});
 
   /** Live MCP status per session (listMcpServers, or a background reconnect
    *  in main), with tools and errors. Absent until fetched. */
@@ -532,17 +529,48 @@ class MessageStore {
     this.paginationBySession[sessionId] = { totalCount, loadedFromIndex, loading: false };
   }
 
+  /** The older page each conversation is loading (see loadOlderEvents). */
+  private olderLoads = new Map<string, Promise<void>>();
+
   /**
    * Load an older page of events and prepend its messages. The page is
    * replayed in a scratch store, so only its messages come back: replaying
    * old events here would set this conversation's running state, mode, model,
    * usage and background tasks back to what they were then. Tool results and
    * answers from newer events whose calls are in this page are applied to it.
+   * Called while a page loads, it waits for that one: a caller paging on
+   * (loadOlderUntil, for a jump) would otherwise see nothing load and stop.
    */
-  async loadOlderEvents(sessionId: string, pageSize = 200) {
+  async loadOlderEvents(sessionId: string, pageSize = 200): Promise<void> {
     const p = this.paginationBySession[sessionId];
-    if (!p || p.loadedFromIndex <= 0 || p.loading) return;
+    if (p?.loading) return this.olderLoads.get(sessionId);
+    if (!p || p.loadedFromIndex <= 0) return;
+    const load = this.loadOlderPage(sessionId, p, pageSize);
+    this.olderLoads.set(sessionId, load);
+    try {
+      await load;
+    } finally {
+      // Not a newer load's (the history was replaced meanwhile).
+      if (this.olderLoads.get(sessionId) === load) this.olderLoads.delete(sessionId);
+    }
+  }
 
+  /** Page older events until the thread shows something in `mode` (its own
+   *  messages, not a subagent's), reading at most `maxEvents`. The newest
+   *  page can hold nothing a view shows (Focus over a long run of tool calls
+   *  or a subagent's work), and the thread would open on just the "Load
+   *  older" row, with its last reply in the page before. */
+  async loadOlderUntilShown(sessionId: string, mode: MessageViewMode, maxEvents: number) {
+    const from = this.olderEventCount(sessionId);
+    const shows = () => threadMessages(this.getMessages(sessionId)).some((m) => isMessageVisible(m, mode));
+    while (!shows() && this.hasOlderEvents(sessionId) && from - this.olderEventCount(sessionId) < maxEvents) {
+      const before = this.olderEventCount(sessionId);
+      await this.loadOlderEvents(sessionId);
+      if (this.olderEventCount(sessionId) >= before) break; // no progress: stop
+    }
+  }
+
+  private async loadOlderPage(sessionId: string, p: { totalCount: number; loadedFromIndex: number; loading: boolean }, pageSize: number) {
     this.paginationBySession[sessionId] = { ...p, loading: true };
     try {
       const skipDuringReplay = new Set([
@@ -973,6 +1001,22 @@ class MessageStore {
 
   getSystemInfo(sessionId: string) {
     return this.systemInfoBySession[sessionId] ?? { tools: [], agents: [], skills: [], slashCommands: [], mcpServers: [] };
+  }
+
+  /** What the thread's agent has, as main sent it. */
+  setSystemInfo(sessionId: string, info: AgentSystemInfo) {
+    this.systemInfoBySession[sessionId] = info;
+  }
+
+  /** Ask main what the thread's agent has: as a pane opens, whatever its
+   *  history page holds. */
+  async loadSystemInfo(sessionId: string) {
+    try {
+      const info = await window.groveBench.getSystemInfo(sessionId);
+      if (info) this.setSystemInfo(sessionId, info);
+    } catch (e) {
+      console.warn('[loadSystemInfo] failed:', e);
+    }
   }
 
   /** Replace the MCP server list with a live status snapshot (from listMcpServers). */
@@ -1446,15 +1490,20 @@ class MessageStore {
    *  never double up. */
   appendToPrompt(sessionId: string, text: string, attachments?: AttachedFile[]) {
     const draft = this.getDraft(sessionId);
-    this.setDraft(sessionId, draft ? `${draft}\n${text}` : text);
+    // No text (a queued image-only prompt) adds no new line.
+    this.setDraft(sessionId, draft && text ? `${draft}\n${text}` : draft || text);
     // Attachments live only in a mounted editor; the draft can't carry them.
     this.requestPromptInsert(sessionId, text, attachments?.length ? { attachments } : {});
   }
 
-  /** Like appendToPrompt, but `text` takes the place of the prompt. */
-  replacePrompt(sessionId: string, text: string) {
+  /** Like appendToPrompt, but `text` takes the place of the prompt.
+   *  `attachments` are added to the ones already in the box, and kept in the
+   *  store too for a box that isn't showing, which reads them when it mounts.
+   *  One request for both: the box only sees the latest. */
+  replacePrompt(sessionId: string, text: string, attachments: AttachedFile[] = []) {
     this.setDraft(sessionId, text);
-    this.requestPromptInsert(sessionId, text, { replace: true });
+    if (attachments.length > 0) this.setAttachments(sessionId, [...this.getAttachments(sessionId), ...attachments]);
+    this.requestPromptInsert(sessionId, text, { replace: true, ...(attachments.length > 0 ? { attachments } : {}) });
   }
 
   private flushStreamingText(sessionId: string) {
@@ -2022,13 +2071,6 @@ class MessageStore {
     delete this.stoppingSession[sessionId];
     delete this.userExplicitMode[sessionId];
     this.modelBySession[sessionId] = event.model;
-    this.systemInfoBySession[sessionId] = {
-      tools: event.tools ?? [],
-      agents: event.agents ?? [],
-      skills: event.skills ?? [],
-      slashCommands: event.slashCommands ?? [],
-      mcpServers: event.mcpServers ?? [],
-    };
     this.pushMessage(sessionId, {
       kind: 'system',
       id: nextId(),
@@ -2506,8 +2548,18 @@ class MessageStore {
       this.setMessagesForMutation(sessionId, msgs.slice(0, rewindIdx));
       // Live, the prompt box may be showing: it keeps its own copy of the
       // text, so tell it too. A replayed rewind is old news: only the draft.
-      if (this._replayBuffer === null && this.sideEffects) this.replacePrompt(sessionId, rewindMsg.text);
-      else this.setDraft(sessionId, rewindMsg.text);
+      if (this._replayBuffer === null && this.sideEffects) {
+        // With its attachments, once the saved ones are read back. A
+        // message without any goes back at once, as before.
+        if (rewindMsg.files?.length || rewindMsg.images?.length || rewindMsg.attachments?.length) {
+          void reattach(rewindMsg, (file) => window.groveBench.readAttachedFile(sessionId, file))
+            .then((attachments) => this.replacePrompt(sessionId, rewindMsg.text, attachments));
+        } else {
+          this.replacePrompt(sessionId, rewindMsg.text);
+        }
+      } else {
+        this.setDraft(sessionId, rewindMsg.text);
+      }
       this.setActiveTab(sessionId, 'activity');
     } else if (this._replayBuffer === null && this.sideEffects) {
       // A live rewind to a message in a history page not loaded yet: every
@@ -2848,7 +2900,7 @@ class MessageStore {
   }
 
   private perSessionMaps(): Map<string, unknown>[] {
-    return [this.sourceIndexBySession, this.orphanReplayEvents, this.streamBuf, this.turnsStarted, this.userStops];
+    return [this.sourceIndexBySession, this.orphanReplayEvents, this.olderLoads, this.streamBuf, this.turnsStarted, this.userStops];
   }
 
   /** Live events that arrived while a pane was loading the history page,

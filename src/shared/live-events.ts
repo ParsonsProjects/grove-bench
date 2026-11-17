@@ -1,4 +1,4 @@
-import type { AgentEvent } from './types.js';
+import type { AgentEvent, AgentSystemInfo } from './types.js';
 
 /** Event types that are never persisted or replayed: live UI feedback only.
  *  A prompt suggestion is for the turn that just ended: a reopened thread
@@ -32,4 +32,26 @@ export function liveEventsMissingFrom(page: readonly AgentEvent[], held: readonl
     if (match) return live.slice(k);
   }
   return live;
+}
+
+/** The agent's newest report of what it has (system_init). */
+export function lastSystemInit(
+  events: readonly AgentEvent[],
+): Extract<AgentEvent, { type: 'system_init' }> | undefined {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i];
+    if (event.type === 'system_init') return event;
+  }
+  return undefined;
+}
+
+/** What one of the agent's reports says it has. */
+export function systemInfoOf(event: Extract<AgentEvent, { type: 'system_init' }>): AgentSystemInfo {
+  return {
+    tools: event.tools ?? [],
+    agents: event.agents ?? [],
+    skills: event.skills ?? [],
+    slashCommands: event.slashCommands ?? [],
+    mcpServers: (event.mcpServers ?? []).map((s) => ({ name: s.name, status: s.status })),
+  };
 }

@@ -16,6 +16,7 @@
   import ArrowUpIcon from '@lucide/svelte/icons/arrow-up';
   import ListPlusIcon from '@lucide/svelte/icons/list-plus';
   import PaperclipIcon from '@lucide/svelte/icons/paperclip';
+  import Maximize2Icon from '@lucide/svelte/icons/maximize-2';
   import SquareIcon from '@lucide/svelte/icons/square';
   import {
     type AttachedFile,
@@ -25,6 +26,7 @@
   } from '$lib/file-attachments.js';
   import AttachmentChips from './AttachmentChips.svelte';
   import { extractAtRefs, buildRefTags, buildOutgoingMessage } from '$lib/prompt-file-refs.js';
+  import { withAttachmentLabel } from '../../shared/prompt-text.js';
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -73,7 +75,8 @@
     const req = messageStore.promptInsertBySession[sessionId];
     if (!req || req.nonce === lastInsertNonce) return;
     lastInsertNonce = req.nonce;
-    value = req.replace ? req.text : value ? `${value}\n${req.text}` : req.text;
+    // An insert with no text (a queued image-only prompt) adds no new line.
+    value = req.replace ? req.text : value && req.text ? `${value}\n${req.text}` : value || req.text;
     if (req.attachments?.length) attachedFiles = [...attachedFiles, ...req.attachments];
     void tick().then(() => { textarea?.focus(); autoResize(); });
   });
@@ -85,6 +88,58 @@
   // The @ file picker (and fuse.js, which only it uses here) loads the first
   // time @ is typed.
   const loadFilePicker = lazyComponent(() => import('./FilePickerPopup.svelte'));
+
+  // The larger editor: the same text in a dialog, for a long message. Loads
+  // the first time it opens, then stays mounted so it closes with its
+  // animation. Enter adds a line there; Ctrl+Enter sends.
+  const loadTextEditor = lazyComponent(() => import('./TextEditorDialog.svelte'));
+  let expanded = $state(false);
+  let expandedEditorWanted = $state(false);
+  let expandedEditor: { focus(): void } | undefined = $state();
+  function expand() {
+    closePicker();
+    closeCommandPicker();
+    expandedEditorWanted = true;
+    expanded = true;
+  }
+  // Another thread or the draft opened over this one (Ctrl+N, the finder)
+  // leaves this pane mounted but hidden. Its editor closes too, or it would
+  // stay on screen over the other one and send into this thread.
+  const onScreen = $derived(sessionStore.activeSessionId === sessionId);
+  $effect(() => {
+    if (expanded && !onScreen) expanded = false;
+  });
+  function handleExpandedKeydown(e: KeyboardEvent) {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && !e.isComposing) {
+      e.preventDefault();
+      sendExpanded();
+    }
+  }
+  // The editor takes dropped files. Dragged text moves or drops in it as
+  // usual, which the small box's handlers would stop.
+  function handleExpandedDragOver(e: DragEvent) {
+    if (e.dataTransfer?.types.includes('Files')) handleDragOver(e);
+  }
+  function handleExpandedDrop(e: DragEvent) {
+    if (e.dataTransfer?.types.includes('Files')) void handleDrop(e);
+  }
+  function sendExpanded() {
+    handleSubmit();
+    // Sent (or queued) empties the box; anything else leaves it to edit.
+    if (!value) expanded = false;
+  }
+  /** Back in the small box, with the cursor at the end of the text. */
+  function returnToBox() {
+    if (!textarea || !onScreen) return;
+    textarea.focus();
+    textarea.setSelectionRange(value.length, value.length);
+    autoResize();
+  }
+  /** Give the cursor back to the box in use: the larger editor when open. */
+  function refocus() {
+    if (expanded) expandedEditor?.focus();
+    else textarea?.focus();
+  }
 
   // File attachments (drag-drop, paste, file picker), restored and kept in
   // the store like the draft so they outlive this editor.
@@ -142,7 +197,10 @@
   let suggestion = $derived(
     settingsStore.current.promptSuggestions && !isRunning ? messageStore.getPromptSuggestion(sessionId) : null,
   );
-  let showSuggestion = $derived(!!suggestion && !value);
+  // Not over an attachment: Enter would send that, not the suggestion.
+  let showSuggestion = $derived(!!suggestion && !value && attachedFiles.length === 0);
+  // Attachments alone (an image with nothing typed) are a message too.
+  let canSend = $derived(!!value.trim() || attachedFiles.length > 0);
 
   // Size the empty box to the suggestion, which may wrap, and back to one
   // line when it goes. Chromium counts a placeholder in scrollHeight. Keyed
@@ -157,8 +215,15 @@
   });
 
   function handleSubmit() {
+    if (!canSend) return;
     const text = value.trim();
-    if (!text) return;
+
+    // A command can't take attachments, and left in the box they would go
+    // on their own with the next Enter.
+    if (attachedFiles.length > 0 && (text.startsWith('!') || text.startsWith('/'))) {
+      showDropMessage(`A ${text.startsWith('!') ? 'shell' : 'slash'} command can't take attached files. Remove them, or send them in the next message.`, true);
+      return;
+    }
 
     // Shell command: ! prefix runs directly in terminal
     if (text.startsWith('!')) {
@@ -198,9 +263,7 @@
     // Text files go in the message text; images and other files alongside it
     const { tags: droppedTags, images, files } = attachmentPayload(attachedFiles);
 
-    const displayText = attachedFiles.length > 0
-      ? `[${attachedFiles.map((f) => f.name).join(', ')}] ${text}`
-      : text;
+    const displayText = withAttachmentLabel(attachedFiles.map((f) => f.name), text);
     // Kept on a queued prompt so Edit can restore it as typed.
     const typed = { text, attachments: $state.snapshot(attachedFiles) };
 
@@ -308,7 +371,7 @@
     // Ctrl+C with no selection clears the input (terminal-style)
     if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
       const sel = window.getSelection()?.toString() || '';
-      if (!sel && value.length > 0) {
+      if (!sel && (value.length > 0 || attachedFiles.length > 0)) {
         e.preventDefault();
         value = '';
         attachedFiles = [];
@@ -466,7 +529,7 @@
     if (skipped.length > 0) {
       showDropMessage(`Skipped: ${skipped.join(', ')}`, true);
     }
-    textarea?.focus();
+    refocus();
   }
 
   // ─── Clipboard paste ───
@@ -489,7 +552,7 @@
     if (skipped.length > 0) {
       showDropMessage(`Skipped: ${skipped.join(', ')}`, true);
     }
-    textarea?.focus();
+    refocus();
   }
 
   // ─── File picker ───
@@ -513,12 +576,12 @@
     }
     // Reset so the same file can be re-selected
     fileInput.value = '';
-    textarea?.focus();
+    refocus();
   }
 
   function removeAttachedFile(index: number) {
     attachedFiles = attachedFiles.filter((_, i) => i !== index);
-    textarea?.focus();
+    refocus();
   }
 </script>
 
@@ -621,6 +684,17 @@
       <PaperclipIcon />
     </Button>
 
+    <Button
+      variant="quiet"
+      size="icon-xs"
+      onclick={expand}
+      title="Open in a larger editor"
+      aria-label="Expand the message box"
+      class="self-center -ml-1.5"
+    >
+      <Maximize2Icon />
+    </Button>
+
     <div class="relative flex-1 min-w-0 flex">
       <!-- py-[7px]: 1px border + 7px + one 20px line + 7px + 1px = 36px, the
            height of the buttons beside it -->
@@ -631,7 +705,7 @@
         oninput={handleInput}
         onkeydown={handleKeydown}
         onpaste={handlePaste}
-        placeholder={suggestion ?? (willQueue ? 'Message (Enter to queue, sent when the agent is free)' : 'Message (Enter to send, @ for files, / for commands, ! for shell)')}
+        placeholder={(showSuggestion ? suggestion : null) ?? (willQueue ? 'Message (Enter to queue, sent when the agent is free)' : 'Message (Enter to send, @ for files, / for commands, ! for shell)')}
         aria-keyshortcuts={showSuggestion ? 'Tab' : undefined}
         rows="1"
         class="flex-1 min-w-0 bg-card border border-input px-3 py-[7px] text-sm text-foreground
@@ -648,7 +722,7 @@
       variant="default"
       size="icon"
       onclick={handleSubmit}
-      disabled={!value.trim()}
+      disabled={!canSend}
       title={willQueue ? 'Add to the queue; sent once the agent is free' : 'Send now'}
       aria-label={willQueue ? 'Queue' : 'Send'}
     >
@@ -661,3 +735,39 @@
     {/if}
   </div>
 </div>
+
+{#if expandedEditorWanted}
+  {#await loadTextEditor() then TextEditor}
+    <TextEditor
+      bind:this={expandedEditor}
+      bind:open={expanded}
+      bind:value
+      title="Message"
+      placeholder={willQueue ? 'Message (Ctrl+Enter to queue, sent when the agent is free)' : 'Message (Ctrl+Enter to send)'}
+      spellcheck={settingsStore.current.spellcheck}
+      aria-keyshortcuts="Control+Enter"
+      onkeydown={handleExpandedKeydown}
+      onpaste={handlePaste}
+      ondragover={handleExpandedDragOver}
+      ondragleave={handleDragLeave}
+      ondrop={handleExpandedDrop}
+      returnFocus={returnToBox}
+    >
+      {#snippet above()}
+        {#if attachedFiles.length > 0}
+          <AttachmentChips files={attachedFiles} onremove={removeAttachedFile} />
+        {/if}
+      {/snippet}
+      {#snippet footer()}
+        <span class="mr-auto flex items-center gap-3 text-xs text-muted-foreground">
+          <span class="flex items-center gap-1"><Kbd variant="key">Enter</Kbd> new line</span>
+          <span class="flex items-center gap-1"><Kbd variant="key">Ctrl+Enter</Kbd> {willQueue ? 'queue' : 'send'}</span>
+        </span>
+        <Button variant="subtle" size="sm" onclick={() => (expanded = false)}>Done</Button>
+        <Button size="sm" onclick={sendExpanded} disabled={!value.trim()}>
+          {#if willQueue}<ListPlusIcon />Queue{:else}<ArrowUpIcon />Send{/if}
+        </Button>
+      {/snippet}
+    </TextEditor>
+  {/await}
+{/if}

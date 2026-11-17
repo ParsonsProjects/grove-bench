@@ -69,6 +69,17 @@ describe('StatusBarCapabilities', () => {
     await waitFor(async () => expect(await lozenge()).toHaveTextContent('Skills 2'));
   });
 
+  it('counts the skills again as the thread wakes: some may have been added while it slept', async () => {
+    store.sessions = [{ id: 't1', branch: 'b', repoPath: '/repo', status: 'sleeping', agentType: 'claude-code', createdAt: 0 }] as typeof store.sessions;
+    render(StatusBarCapabilities, { sessionId: 't1' });
+    await waitFor(async () => expect(await lozenge()).toHaveTextContent('Skills 1/2'));
+    mockGroveBench.listSkills.mockResolvedValue([...skills, { name: 'deploy', description: 'Ship it', source: 'project' }]);
+
+    store.updateStatus('t1', 'running');
+
+    await waitFor(async () => expect(await lozenge()).toHaveTextContent('Skills 2/3'));
+  });
+
   it('shows both counts with one dot, the MCP servers\' health', async () => {
     thread('claude-code');
     messageStore.updateMcpServers('t1', [

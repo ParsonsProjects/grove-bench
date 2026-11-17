@@ -49,7 +49,7 @@
         writeRichText(action.text, action.html).catch(() => {});
         break;
       case 'bookmark':
-        bookmarkSelection(sessionId, action.text, action.msgId).catch(() => {});
+        bookmarkSelection(sessionId, action.text, action.msgId, action.links).catch(() => {});
         window.getSelection()?.removeAllRanges();
         break;
       case 'to-prompt':

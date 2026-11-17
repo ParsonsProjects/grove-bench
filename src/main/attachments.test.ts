@@ -18,6 +18,7 @@ import {
   handleAttachmentProtocol,
   openAttachedFile,
   pruneAttachments,
+  readAttachedFile,
   registerAttachmentScheme,
   removeDeletedFolders,
   removeAttachments,
@@ -219,6 +220,22 @@ describe('openAttachedFile', () => {
     expect(await openAttachedFile('../x', `${'0'.repeat(32)}.pdf`)).toBe(false);
     expect(shell.openPath).not.toHaveBeenCalled();
     expect(shell.showItemInFolder).not.toHaveBeenCalled();
+  });
+});
+
+describe('readAttachedFile', () => {
+  it('gives a saved file back as it was attached', async () => {
+    const [pdf] = await saveFiles('abc123', [{ data: 'JVBERi0=', mediaType: 'application/pdf', name: 'a.pdf' }]);
+    const [png] = await saveImages('abc123', [{ data: PNG, mediaType: 'image/png' }]);
+
+    expect(await readAttachedFile('abc123', pdf.stored.file)).toBe('JVBERi0=');
+    expect(await readAttachedFile('abc123', png.file)).toBe(PNG);
+  });
+
+  it('is null for a missing file or a name that is not a stored one', async () => {
+    expect(await readAttachedFile('abc123', `${'0'.repeat(32)}.pdf`)).toBeNull();
+    expect(await readAttachedFile('abc123', '../../secrets.pdf')).toBeNull();
+    expect(await readAttachedFile('../x', `${'0'.repeat(32)}.pdf`)).toBeNull();
   });
 });
 

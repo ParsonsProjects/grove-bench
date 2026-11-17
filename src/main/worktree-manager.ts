@@ -5,6 +5,7 @@ import { app } from 'electron';
 import { git, excludeFromGit, FETCH_TIMEOUT_MS, isGitRepo, renameBranch as gitRenameBranch, branchHasRemote, validateBranchName, branchExists, getDefaultBranch, currentBranch, localBranchExists, remoteTrackingRef, isWorkingTreeClean, worktreeBranches, checkoutBranch } from './git.js';
 import { logger } from './logger.js';
 import { removeDirectory, removeDirectoryWithRetry, pathExists, readFileWithRetry, writeFileAtomic } from './fs-utils.js';
+import { removeTree } from './remove-tree.js';
 import type { BranchSwitchResult, BranchSyncResult, ConversationGoal, ConversationGoalSource, WorktreeConfig, WorktreeInfo, WorktreeRepoConfig } from '../shared/types.js';
 import { adapterRegistry } from './adapters/index.js';
 import type { AutoNameDecision, DisplayNameSource, DisplayNameState } from './session-auto-name.js';
@@ -26,6 +27,46 @@ const TRASH_DIR = '.trash';
 const TRASH_NAME = /^(\d+)-[0-9a-f]{8}-./;
 /** How long a folder stays in the trash before it is deleted. */
 export const TRASH_RETENTION_MS = 7 * 24 * 60 * 60_000;
+/** Where remove() moves a thread's worktree folder while its files are
+ *  deleted in the background: in the folder that holds the worktree, so the
+ *  move is a rename on the same drive. Unlike the trash, nothing here is
+ *  kept: the user asked for it to go. The manifest records each folder
+ *  (removingPath) until it is gone, so the sweep finishes a delete that a
+ *  quit cut short. */
+const REMOVING_DIR = '.removing';
+/** How old a folder in REMOVING_DIR with no manifest entry must be before
+ *  the sweep deletes it (purgeRemoving): younger, a remove() may still be
+ *  about to record it. */
+const REMOVING_GRACE_MS = 10 * 60_000;
+/** The name moveAside gives: the worktree's id, `~`, and when it was moved
+ *  (milliseconds, base 36). No longer than the `<hash>/<id>` it replaces,
+ *  so a deep node_modules path stays about as far from Windows' 260
+ *  characters as it was. */
+const REMOVING_NAME = /^[0-9A-Za-z_-]{1,64}~([0-9a-z]{8,9})$/;
+/** Earliest time a REMOVING_NAME can carry (the year this was written): an
+ *  earlier one isn't Grove's. */
+const REMOVING_EPOCH_MS = Date.UTC(2026, 0, 1);
+
+function removingName(id: string, now: number): string {
+  return `${id}~${now.toString(36)}`;
+}
+
+/** When a REMOVING_NAME was given; null for any other name, or a time that
+ *  can't be one (before REMOVING_EPOCH_MS, or after `now`). */
+function removingNameTime(name: string, now: number): number | null {
+  const match = REMOVING_NAME.exec(name);
+  if (!match) return null;
+  const at = parseInt(match[1], 36);
+  return at >= REMOVING_EPOCH_MS && at <= now ? at : null;
+}
+
+/** Delete a folder if it is empty; anything else (not empty, not there,
+ *  in use) leaves it. */
+async function removeIfEmpty(dir: string): Promise<void> {
+  try {
+    await fs.rmdir(dir);
+  } catch { /* not empty, or gone */ }
+}
 const DEFAULT_COPY_PATTERNS = ['.env', '.env.local', '.env.development', '.npmrc', '.nvmrc'];
 
 /** Entries written before the agent was recorded all ran Claude Code. */
@@ -90,6 +131,10 @@ interface ManifestEntry {
   pendingRemoval?: boolean;
   /** Whether the deferred removal should also delete the branch. */
   pendingBranchDelete?: boolean;
+  /** Where remove() moved the worktree folder to be deleted in the
+   *  background (under REMOVING_DIR). Set with pendingRemoval: git has
+   *  already forgotten the worktree, and the entry goes once this is deleted. */
+  removingPath?: string;
   /** Branches Grove created for this conversation: its own branch, and any
    *  created from the branch picker. Only these may be force-deleted on
    *  removal; a branch the conversation merely switched onto may hold work
@@ -128,6 +173,9 @@ export class WorktreeManager {
   /** Ids whose worktree directory is being created: on disk before it is in
    *  the manifest or in `worktrees`, so the sweep must leave it alone. */
   private creating = new Set<string>();
+  /** Ids whose moved-aside folder is being deleted in the background right
+   *  now (finishRemoval), so the sweep doesn't delete it at the same time. */
+  private finishing = new Map<string, Promise<void>>();
   /** The manifest with every change made this run, on disk or still being
    *  written. Read from disk once: this is the only copy of the app
    *  (single-instance lock) and the only writer, so later reads never touch
@@ -775,6 +823,39 @@ export class WorktreeManager {
       let dirRemoved = true;
       if (!info.direct) {
         await this.unlockWorktree(repoPath, wtPath);
+        // Fast path. Deleting a worktree's files (node_modules and all) is
+        // what made removal slow, on Windows above all: move the folder
+        // aside instead (a rename), let git forget it, and delete the files
+        // in the background. Only Grove's own layout (<root>/<hash>/<id>).
+        const moved = path.basename(wtPath) === id ? await this.moveAside(wtPath) : null;
+        if (moved) {
+          // The folder is gone from where git expects it, so prune drops
+          // the worktree and frees its branch. If it fails, the branch is
+          // still checked out there: the sweep prunes and deletes it later.
+          let pruned = true;
+          try {
+            await git(['worktree', 'prune'], repoPath);
+          } catch (e) {
+            pruned = false;
+            logger.warn(`git worktree prune failed after moving ${id} aside; the sweep will retry: ${e}`);
+          }
+          this.worktrees.delete(id);
+          if (deleteBranch && pruned) {
+            await this.deleteConversationBranches(repoPath, wtPath, branch, createdBranches);
+          }
+          // Kept (hidden) until the files are deleted, so a quit before then
+          // leaves the sweep a known folder to finish.
+          await this.withManifest((manifest) => {
+            const entry = manifest[id];
+            if (!entry) return;
+            entry.pendingRemoval = true;
+            entry.removingPath = moved;
+            if (deleteBranch && !pruned) entry.pendingBranchDelete = true;
+            else delete entry.pendingBranchDelete;
+          });
+          void this.finishRemoval(id, moved, path.dirname(wtPath));
+          return;
+        }
         // Retry chain for Windows file locking
         try {
           await git(['worktree', 'remove', wtPath], repoPath);
@@ -884,6 +965,8 @@ export class WorktreeManager {
 
     let cleaned = 0;
     for (const [id, entry] of pending) {
+      // Still being deleted in the background: not twice at once.
+      if (this.finishing.has(id)) continue;
       const wtPath = this.checkoutPath(id, entry);
       // In a folder that isn't there (a drive not connected yet) there is
       // nothing to remove yet: it stays pending, or it would be left behind.
@@ -891,10 +974,12 @@ export class WorktreeManager {
         logger.info(`Sweep: worktree ${id} is in ${rootOf(wtPath)}, which isn't there; will retry next sweep`);
         continue;
       }
+      // A folder remove() moved aside is deleted from where it went.
+      const folder = entry.removingPath ?? wtPath;
       try {
         await this.withRepoLock(entry.repoPath, async () => {
-          if (!entry.direct && (await pathExists(wtPath))) {
-            await removeDirectory(wtPath);
+          if (!entry.direct && (await pathExists(folder))) {
+            await removeTree(folder);
           }
           if (!entry.direct) await this.unlockWorktree(entry.repoPath, wtPath);
           try { await git(['worktree', 'prune'], entry.repoPath); } catch { /* repo may be gone */ }
@@ -903,6 +988,8 @@ export class WorktreeManager {
           }
         });
         await this.withManifest((m) => { delete m[id]; });
+        if (entry.removingPath) await removeIfEmpty(path.dirname(entry.removingPath));
+        if (!entry.direct) await this.removeEmptyHashDir(path.dirname(wtPath));
         cleaned++;
         logger.info(`Sweep: completed deferred removal of worktree ${id}`);
       } catch (e) {
@@ -1244,6 +1331,97 @@ export class WorktreeManager {
     }
   }
 
+  /** Move a worktree folder into REMOVING_DIR of the folder that holds it
+   *  (<root>/<hash>/<id>), to be deleted in the background, under a name
+   *  no longer than <hash>/<id> was (removingName). Null when it can't be
+   *  moved (a file in it is held open, or it isn't there): remove() then
+   *  deletes it in place, as it did before. */
+  private async moveAside(wtPath: string, now = Date.now()): Promise<string | null> {
+    const dir = path.join(rootOf(wtPath), REMOVING_DIR);
+    const dest = path.join(dir, removingName(path.basename(wtPath), now));
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await fs.mkdir(dir, { recursive: true });
+        await fs.rename(wtPath, dest);
+        return dest;
+      } catch (e) {
+        const code = (e as NodeJS.ErrnoException).code;
+        // A background delete that just emptied REMOVING_DIR may have
+        // removed it between the mkdir and the rename: make it again.
+        if (code === 'ENOENT' && attempt === 1 && (await pathExists(wtPath))) continue;
+        if (code !== 'ENOENT') logger.info(`Could not move ${wtPath} aside (${code ?? String(e)}); deleting it in place`);
+        return null;
+      }
+    }
+  }
+
+  /** Delete a folder remove() moved aside (in the delete thread, one folder
+   *  at a time), then drop its manifest entry, and REMOVING_DIR and the
+   *  project's folder of worktrees if they are now empty. A delete that
+   *  fails (a file still held open) leaves the entry for the sweep. */
+  private finishRemoval(id: string, movedPath: string, hashDir: string): Promise<void> {
+    const done = (async () => {
+      try {
+        await removeTree(movedPath);
+      } catch (e) {
+        logger.warn(`Could not delete ${movedPath} yet; the sweep will retry: ${String(e)}`);
+        return;
+      }
+      // Only the entry for this folder: removed again meanwhile, it is gone.
+      await this.withManifest((manifest) => {
+        const entry = manifest[id];
+        if (entry?.removingPath !== movedPath) return;
+        // Its branch still waits on a prune that failed: the sweep does both.
+        if (entry.pendingBranchDelete) delete entry.removingPath;
+        else delete manifest[id];
+      });
+      await removeIfEmpty(path.dirname(movedPath));
+      await this.removeEmptyHashDir(hashDir);
+      logger.info(`Deleted the files of removed worktree ${id}`);
+    })().finally(() => this.finishing.delete(id));
+    this.finishing.set(id, done);
+    return done;
+  }
+
+  /** Delete what is in REMOVING_DIR with no manifest entry: moved there by a
+   *  remove() that stopped before it saved where (a quit or crash in
+   *  between). Only names moveAside gives (removingName), moved there at
+   *  least REMOVING_GRACE_MS ago: a remove() may be about to record a newer
+   *  one, and Settings > Git's folder is the user's, so a .removing there
+   *  may hold folders of their own. Returns how many. */
+  async purgeRemoving(now = Date.now()): Promise<number> {
+    const manifest = await this.loadManifest().catch((): ReadonlyManifest => ({}));
+    const recorded = new Set(Object.values(manifest).flatMap((e) => (e.removingPath ? [pathKey(e.removingPath)] : [])));
+    let purged = 0;
+    for (const root of this.worktreeRoots(manifest)) {
+      const dir = path.join(root, REMOVING_DIR);
+      let names: string[];
+      try {
+        names = await fs.readdir(dir);
+      } catch {
+        continue;
+      }
+      for (const name of names) {
+        const folder = path.join(dir, name);
+        const movedAt = removingNameTime(name, now);
+        if (movedAt === null || now - movedAt < REMOVING_GRACE_MS || recorded.has(pathKey(folder))) continue;
+        try {
+          await removeTree(folder);
+          purged++;
+        } catch (e) {
+          logger.warn(`Could not delete ${folder}, will retry: ${String(e)}`);
+        }
+      }
+      await removeIfEmpty(dir);
+    }
+    return purged;
+  }
+
+  /** Resolves once every background delete started so far has finished. */
+  async backgroundRemovalsDone(): Promise<void> {
+    await Promise.all(this.finishing.values());
+  }
+
   /**
    * Move a worktree folder the app can't account for into the trash instead
    * of deleting it. Such a folder may still hold uncommitted work: a lost or
@@ -1280,7 +1458,7 @@ export class WorktreeManager {
         const match = TRASH_NAME.exec(name);
         if (!match || now - Number(match[1]) < TRASH_RETENTION_MS) continue;
         try {
-          await removeDirectory(path.join(trash, name));
+          await removeTree(path.join(trash, name));
           purged++;
         } catch (e) {
           logger.warn(`Could not purge ${name} from the worktree trash, will retry: ${e}`);
@@ -1407,6 +1585,7 @@ export class WorktreeManager {
       logger.warn('Sweep: failed to process pending removals:', e);
     }
     await this.purgeTrash();
+    await this.purgeRemoving();
 
     const manifest = await this.loadManifest();
 
@@ -1439,7 +1618,9 @@ export class WorktreeManager {
     try {
       const hashDirs = await fs.readdir(root);
       for (const hashDir of hashDirs) {
-        if (hashDir === MANIFEST_FILE || hashDir === TRASH_DIR) continue;
+        // .removing holds folders being deleted, each in the manifest
+        // (removingPath): not project folders, and not orphans to trash.
+        if (hashDir === MANIFEST_FILE || hashDir === TRASH_DIR || hashDir === REMOVING_DIR) continue;
         const hashDirPath = path.join(root, hashDir);
         const stat = await fs.stat(hashDirPath).catch(() => null);
         if (!stat?.isDirectory()) continue;

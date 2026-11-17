@@ -22,11 +22,11 @@ import { prsForBranches, prCreate, prReviewComments, prJobLog, prRerunFailed, gh
 import { tempBranchName, isTempBranch, generateBranchName } from './branch-name.js';
 import { displayTextFromSent } from '../shared/prompt-text.js';
 import { EMPTY_THREAD_ITEMS, threadItems } from '../shared/thread-items.js';
-import { openAttachedFile, removeAttachments } from './attachments.js';
+import { openAttachedFile, readAttachedFile, removeAttachments } from './attachments.js';
 import { openWorktreeFile } from './worktree-files.js';
 import { generateCommitMessage } from './commit-message.js';
 import { exportFileName, threadJson, threadMarkdown, type ThreadExportInfo } from './thread-export.js';
-import type { PreviewBounds, PreviewCommand, PreviewPageKind } from '../shared/types.js';
+import type { MemoryCompactionOptions, PreviewBounds, PreviewCommand, PreviewPageKind } from '../shared/types.js';
 import type { BranchCommitsResult, CheckpointDiffScope, FileDiffResult, GitOperation, FileLinesResult, GitStatusOptions, GitStatusResult, GitStatusEntry, ImageDiffContent, OpenWorktreeFileResult, PrCreateOpts, PrReviewSubmitResult } from '../shared/types.js';
 import { parsePrReviewSubmit, submitPrReview } from './pr-review.js';
 import { showOsNotification, showTestNotification } from './notifications.js';
@@ -1070,8 +1070,9 @@ export function registerHandlers() {
     };
     sessionManager.sendMessage(sessionId, content, images, files).then(
       (ok) => {
+        if (ok === 'nothing-to-send') notDelivered('Message not sent: its attachments were left out and nothing was typed.');
         // Session is dead or never connected
-        if (!ok) notDelivered('Message not delivered: the agent is not connected. Send it again once the thread shows as connected.');
+        else if (!ok) notDelivered('Message not delivered: the agent is not connected. Send it again once the thread shows as connected.');
       },
       (err) => {
         logger.warn(`[AGENT_SEND] session=${sessionId} failed:`, err);
@@ -1084,6 +1085,9 @@ export function registerHandlers() {
   // reach outside the conversation's attachments folder.
   ipcMain.handle(IPC.ATTACHMENT_OPEN, (_event, sessionId: unknown, file: unknown) =>
     typeof sessionId === 'string' && typeof file === 'string' ? openAttachedFile(sessionId, file) : false);
+  // Checked the same way: only a stored name in the conversation's own folder.
+  ipcMain.handle(IPC.ATTACHMENT_READ, (_event, sessionId: unknown, file: unknown) =>
+    typeof sessionId === 'string' && typeof file === 'string' ? readAttachedFile(sessionId, file) : null);
 
   ipcMain.handle(IPC.WORKTREE_FILE_OPEN, async (_event, sessionId: unknown, filePath: unknown): Promise<OpenWorktreeFileResult> => {
     const worktree = typeof sessionId === 'string' ? worktreeManager.getWorktree(sessionId) : undefined;
@@ -1306,6 +1310,9 @@ export function registerHandlers() {
     const start = Math.max(0, end - limit);
     return { events: all.slice(start, end), totalCount: all.length, startIndex: start, turn: sessionManager.turnState(sessionId) };
   });
+
+  ipcMain.handle(IPC.AGENT_SYSTEM_INFO, (_event, sessionId: unknown) =>
+    isThreadId(sessionId) ? sessionManager.getSystemInfo(sessionId) : null);
 
   ipcMain.handle(IPC.AGENT_HISTORY_COUNT, (_event, sessionId: string) => {
     const prelaunch = prelaunchEvents.get(sessionId) ?? [];
@@ -2149,11 +2156,21 @@ export function registerHandlers() {
     return memory.deleteMemoryFile(repoPath, relativePath);
   });
 
-  ipcMain.handle(IPC.MEMORY_COMPACT, async (_event, repoPath: string) => {
+  ipcMain.handle(IPC.MEMORY_COMPACT_PREVIEW, async (_event, repoPath: string) => {
     // Manual compaction belongs to no one conversation: run it on the agent the
     // project was most recently used with.
     const adapter = await agentForProject(repoPath);
-    return memoryCompact.compactMemory({ repoPath, adapterType: adapter.id });
+    return memoryCompact.previewCompaction({ repoPath, adapterType: adapter.id });
+  });
+
+  ipcMain.handle(IPC.MEMORY_COMPACT, (_event, repoPath: string, options: MemoryCompactionOptions) => {
+    // Only from the confirm dialog: on the agent it showed, with the planning
+    // prompt it showed (planDigest), so nothing goes anywhere unseen.
+    if (typeof options?.agentId !== 'string' || !options.agentId || typeof options.planDigest !== 'string' || !options.planDigest) {
+      throw new Error('Compaction needs the agent and planning prompt from its confirm dialog');
+    }
+    const model = typeof options.model === 'string' && options.model.trim() ? options.model.trim() : undefined;
+    return memoryCompact.compactMemory({ repoPath, adapterType: options.agentId, model, planDigest: options.planDigest });
   });
 
   ipcMain.handle(IPC.MEMORY_COMPACT_CANCEL, (_event, repoPath: string) => {

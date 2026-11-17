@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { liveEventsMissingFrom } from './live-events.js';
+import { lastSystemInit, liveEventsMissingFrom, systemInfoOf } from './live-events.js';
 import type { AgentEvent } from './types.js';
 
 const status = (message: string): AgentEvent => ({ type: 'status', message });
@@ -33,5 +33,20 @@ describe('liveEventsMissingFrom()', () => {
   it('drops stale transient events, which are never in a page', () => {
     const held: AgentEvent[] = [{ type: 'activity', activity: 'thinking' }, { type: 'partial_text', text: 'He' }, user('hi', 'u1')];
     expect(liveEventsMissingFrom([user('hi', 'u1')], held)).toEqual([]);
+  });
+});
+
+describe('lastSystemInit() and systemInfoOf()', () => {
+  const init = (model: string): AgentEvent => ({ type: 'system_init', sessionId: 's', model, tools: [], skills: ['review'], mcpServers: [{ name: 'linear', status: 'connected' }] });
+
+  it("gives the agent's newest report, or none in a history without one", () => {
+    expect(lastSystemInit([init('old'), user('a', 'u1'), init('newest'), user('b', 'u2')])).toEqual(init('newest'));
+    expect(lastSystemInit([user('a', 'u1')])).toBeUndefined();
+  });
+
+  it('reads what a report says the agent has, with nothing for what it leaves out', () => {
+    expect(systemInfoOf({ type: 'system_init', sessionId: 's', model: 'm', tools: ['Read'], mcpServers: [{ name: 'linear', status: 'connected' }] })).toEqual({
+      tools: ['Read'], agents: [], skills: [], slashCommands: [], mcpServers: [{ name: 'linear', status: 'connected' }],
+    });
   });
 });

@@ -15,6 +15,11 @@
   import PlusIcon from '@lucide/svelte/icons/plus';
   import HistoryIcon from '@lucide/svelte/icons/history';
   import Minimize2Icon from '@lucide/svelte/icons/minimize-2';
+  import MemoryCompactDialog from './MemoryCompactDialog.svelte';
+  import MemoryCompactSteps from './MemoryCompactSteps.svelte';
+  import MemoryPromptView from './MemoryPromptView.svelte';
+  import { stepTiming } from '$lib/compaction-steps.js';
+  import type { MemoryCompactionStep } from '../../shared/types.js';
 
   interface Props {
     open: boolean;
@@ -49,10 +54,20 @@
     planning: 'Planning: reading every file\'s title and opening',
   };
   let compactStageLabel = $derived(
-    memoryStore.compactStage === 'merging' && memoryStore.compactStep
-      ? `Merging group ${memoryStore.compactStep.step} of ${memoryStore.compactStep.total}`
+    memoryStore.compactStage === 'merging' && memoryStore.compactProgress
+      ? `Merging: ${memoryStore.compactProgress.done} of ${memoryStore.compactProgress.total} ${memoryStore.compactProgress.total === 1 ? 'group' : 'groups'} done`
       : compactStageLabels[memoryStore.compactStage ?? ''] ?? `Compacting ${memoryStore.stats?.fileCount ?? ''} memory files`
   );
+  /** The steps of the running or last run, when they are this project's. */
+  let compactSteps = $derived(
+    memoryStore.compactStepsRepo === memoryStore.activeRepo ? memoryStore.compactSteps : []
+  );
+  /** The step whose prompt is shown, by index. */
+  let viewingStepIndex = $state<number | null>(null);
+  let viewingStep = $derived(compactSteps.find((s) => s.index === viewingStepIndex) ?? null);
+  function viewStep(step: MemoryCompactionStep) {
+    viewingStepIndex = step.index;
+  }
   let compactTimeoutSeconds = $derived(effectiveCompactTimeoutSeconds(settingsStore.current.memoryCompactTimeoutSeconds));
 
   function formatElapsed(seconds: number): string {
@@ -359,14 +374,31 @@
       <p class="text-xs text-muted-foreground mt-2">{memoryStore.compactMessage}</p>
     {/if}
 
+    {#if compactSteps.length > 0}
+      {#if memoryStore.compacting}
+        <div class="mt-2">
+          <MemoryCompactSteps steps={compactSteps} now={memoryStore.compactNow} onview={viewStep} />
+        </div>
+      {:else}
+        <details class="mt-2 text-xs">
+          <summary class="cursor-pointer text-muted-foreground hover:text-foreground select-none">
+            Last run's model calls ({compactSteps.length})
+          </summary>
+          <div class="mt-1">
+            <MemoryCompactSteps steps={compactSteps} now={memoryStore.compactNow} onview={viewStep} />
+          </div>
+        </details>
+      {/if}
+    {/if}
+
     <Dialog.Footer class="sm:justify-between">
       <div class="flex items-center gap-1">
         <Button
           size="icon-sm"
           variant="secondary"
-          onclick={() => memoryStore.compact()}
-          disabled={memoryStore.compacting || memoryStore.files.length === 0}
-          title="Compact: merge overlapping notes, resolve contradictions, and describe files that have no description. Each run merges up to 6 groups; press again to continue. Shows a summary you can undo."
+          onclick={() => memoryStore.openCompactPreview()}
+          disabled={memoryStore.compacting || memoryStore.compactPreviewLoading || memoryStore.files.length === 0}
+          title="Compact: merge overlapping notes, resolve contradictions, and describe files that have no description. Shows the agent, model and prompt before it starts. Each run merges up to 6 groups; press again to continue. Shows a summary you can undo."
           aria-label={memoryStore.compacting ? 'Compacting…' : 'Compact'}
         >
           <Minimize2Icon />
@@ -422,6 +454,34 @@
       <Dialog.Footer>
         <Button variant="secondary" onclick={() => showNewFile = false}>Cancel</Button>
         <Button onclick={createNewFile}>Create</Button>
+      </Dialog.Footer>
+    </Dialog.Content>
+  </Dialog.Root>
+{/if}
+
+<!-- Before a run: agent, model for this run, planning prompt -->
+{#if open && memoryStore.compactPreview}
+  <MemoryCompactDialog
+    preview={memoryStore.compactPreview}
+    changed={memoryStore.compactPreviewChanged}
+    onstart={(model: string | undefined) => memoryStore.compact(model)}
+    oncancel={() => memoryStore.closeCompactPreview()}
+  />
+{/if}
+
+<!-- One compaction step's prompt -->
+{#if viewingStep}
+  <Dialog.Root open={true} onOpenChange={(o) => { if (!o) viewingStepIndex = null; }}>
+    <Dialog.Content class="sm:max-w-2xl">
+      <Dialog.Header>
+        <Dialog.Title>{viewingStep.label}</Dialog.Title>
+        <Dialog.Description>
+          {viewingStep.state} · model {viewingStep.model ?? "the agent's default"} · {stepTiming(viewingStep, memoryStore.compactNow)}{viewingStep.detail ? ` · ${viewingStep.detail}` : ''}
+        </Dialog.Description>
+      </Dialog.Header>
+      <MemoryPromptView systemPrompt={viewingStep.systemPrompt} userMessage={viewingStep.userMessage} maxHeight="max-h-[55vh]" />
+      <Dialog.Footer>
+        <Button onclick={() => viewingStepIndex = null}>Close</Button>
       </Dialog.Footer>
     </Dialog.Content>
   </Dialog.Root>

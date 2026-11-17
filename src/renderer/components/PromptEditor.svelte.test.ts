@@ -1,11 +1,12 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi, onTestFinished } from 'vitest';
 import '@testing-library/jest-dom/vitest';
-import { render, cleanup, fireEvent, screen } from '@testing-library/svelte';
+import { render, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/svelte';
 import { tick } from 'svelte';
 
 import PromptEditor from './PromptEditor.svelte';
 import { messageStore } from '../stores/messages.svelte.js';
 import { settingsStore } from '../stores/settings.svelte.js';
+import { store as sessionStore } from '../stores/sessions.svelte.js';
 import { mockGroveBench } from '../__mocks__/setup.js';
 
 const SID = 'prompt-session';
@@ -96,6 +97,20 @@ describe('PromptEditor: rewind', () => {
     expect(el.value).toBe('try again');
     expect(messageStore.getDraft(SID)).toBe('try again');
   });
+
+  it('puts the rewound message\'s attachments back too, read from their saved copies', async () => {
+    const file = `${'a'.repeat(32)}.png`;
+    mockGroveBench.readAttachedFile.mockResolvedValueOnce('AAAA');
+    const { container, findByText } = render(PromptEditor, { sessionId: SID });
+
+    messageStore.ingestEvent(SID, { type: 'user_message', text: '', uuid: 'cp-1', images: [{ file, name: 'shot.png' }] });
+    messageStore.ingestEvent(SID, { type: 'rewind', toMessageId: 'cp-1' });
+
+    expect(await findByText('shot.png')).toBeInTheDocument();
+    expect(mockGroveBench.readAttachedFile).toHaveBeenCalledWith(SID, file);
+    expect(container.querySelector('textarea')!.value).toBe('');
+    expect(messageStore.getAttachments(SID)).toEqual([{ name: 'shot.png', dataUrl: 'data:image/png;base64,AAAA', type: 'image' }]);
+  });
 });
 
 describe('PromptEditor: editing a queued prompt', () => {
@@ -131,12 +146,33 @@ describe('PromptEditor: editing a queued prompt', () => {
     expect(getByText('notes.txt')).toBeInTheDocument();
     expect(messageStore.getQueue(SID)).toEqual([]);
   });
+
+  it('adds no new line when an image-only prompt comes back to a box with text in it', async () => {
+    messageStore.setIsRunning(SID, true);
+    messageStore.submitMessage(SID, {
+      displayText: '[shot.png]',
+      outgoing: '',
+      images: [{ name: 'shot.png', data: 'AAAA', mediaType: 'image/png' }],
+      typed: { text: '', attachments: [{ type: 'image', name: 'shot.png', dataUrl: 'data:image/png;base64,AAAA' }] },
+    });
+    const { container, getByText } = render(PromptEditor, { sessionId: SID });
+    const el = container.querySelector('textarea')!;
+    await fireEvent.input(el, { target: { value: 'hello' } });
+
+    await fireEvent.click(getByText('Edit'));
+    await tick();
+
+    expect(el.value).toBe('hello');
+    expect(messageStore.getDraft(SID)).toBe('hello');
+    expect(getByText('shot.png')).toBeInTheDocument();
+  });
 });
 
 describe('PromptEditor: attachments', () => {
   beforeEach(() => {
     messageStore.destroyAllSessions();
     messageStore.messagesBySession = { [SID]: [] };
+    mockGroveBench.sendMessage.mockClear();
   });
   afterEach(() => cleanup());
 
@@ -150,6 +186,45 @@ describe('PromptEditor: attachments', () => {
     const again = render(PromptEditor, { sessionId: SID });
 
     expect(again.getByText('notes.txt')).toBeInTheDocument();
+  });
+
+  it('sends an attached image with nothing typed', async () => {
+    const { container, getByRole } = render(PromptEditor, { sessionId: SID });
+    const send = getByRole('button', { name: 'Send' });
+    expect(send).toBeDisabled();
+    messageStore.requestPromptInsert(SID, '', { attachments: [{ type: 'image', name: 'shot.png', dataUrl: 'data:image/png;base64,AAAA' }] });
+    await tick();
+    expect(send).toBeEnabled();
+
+    await fireEvent.keyDown(container.querySelector('textarea')!, { key: 'Enter' });
+
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, '', [{ name: 'shot.png', data: 'AAAA', mediaType: 'image/png' }], undefined);
+    expect(send).toBeDisabled();
+  });
+
+  it.each([['/compact', 'slash'], ['!ls', 'shell']])('won\'t run %s with files attached, so they can\'t go on their own next', async (command, kind) => {
+    const { container, getByText } = render(PromptEditor, { sessionId: SID });
+    messageStore.requestPromptInsert(SID, command, { attachments: [{ type: 'image', name: 'shot.png', dataUrl: 'data:image/png;base64,AAAA' }] });
+    await tick();
+    const el = container.querySelector('textarea')!;
+
+    await fireEvent.keyDown(el, { key: 'Enter' });
+
+    expect(getByText(`A ${kind} command can't take attached files. Remove them, or send them in the next message.`)).toBeInTheDocument();
+    expect(el.value).toBe(command);
+    expect(getByText('shot.png')).toBeInTheDocument();
+    expect(mockGroveBench.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('clears a box holding only an attachment on Ctrl+C', async () => {
+    const { container, queryByText, getByRole } = render(PromptEditor, { sessionId: SID });
+    messageStore.requestPromptInsert(SID, '', { attachments: [{ type: 'image', name: 'shot.png', dataUrl: 'data:image/png;base64,AAAA' }] });
+    await tick();
+
+    await fireEvent.keyDown(container.querySelector('textarea')!, { key: 'c', ctrlKey: true });
+
+    expect(queryByText('shot.png')).not.toBeInTheDocument();
+    expect(getByRole('button', { name: 'Send' })).toBeDisabled();
   });
 });
 
@@ -227,6 +302,16 @@ describe('PromptEditor: suggested next prompt', () => {
     expect(screen.getByText('Tab')).toBeInTheDocument();
   });
 
+  it('hides the suggestion while a file is attached, as Enter would send only the file', async () => {
+    const { container } = render(PromptEditor, { sessionId: SID });
+    suggest('Run the tests');
+    messageStore.requestPromptInsert(SID, '', { attachments: [{ type: 'image', name: 'shot.png', dataUrl: 'data:image/png;base64,AAAA' }] });
+    await tick();
+
+    expect(container.querySelector('textarea')!.placeholder).toBe(DEFAULT_PLACEHOLDER);
+    expect(screen.queryByText('Tab')).not.toBeInTheDocument();
+  });
+
   it('hides the hint once something is typed, and Tab is left alone', async () => {
     suggest('Run the tests');
     const { container } = render(PromptEditor, { sessionId: SID });
@@ -276,5 +361,139 @@ describe('PromptEditor: suggested next prompt', () => {
     await tick();
     expect(el.placeholder).not.toBe('Run the tests');
     expect(screen.queryByText('Tab')).not.toBeInTheDocument();
+  });
+});
+
+describe('PromptEditor: larger editor', () => {
+  beforeEach(() => {
+    messageStore.destroyAllSessions();
+    messageStore.messagesBySession = { [SID]: [] };
+    // The editor shows only over the thread on screen.
+    sessionStore.activeSessionId = SID;
+  });
+  afterEach(() => {
+    cleanup();
+    sessionStore.activeSessionId = null;
+  });
+
+  const notes = () => new File(['steps'], 'notes.md', { type: 'text/markdown' });
+
+  async function openEditor() {
+    await fireEvent.click(screen.getByRole('button', { name: 'Expand the message box' }));
+    return screen.findByRole('textbox', { name: 'Message' });
+  }
+
+  it('opens with the text typed so far, and edits the same message', async () => {
+    const { container } = render(PromptEditor, { sessionId: SID });
+    const box = container.querySelector('textarea')!;
+    await fireEvent.input(box, { target: { value: 'half a thought' } });
+
+    const big = await openEditor();
+    expect(big).toHaveValue('half a thought');
+
+    await fireEvent.input(big, { target: { value: 'half a thought\nand the rest' } });
+    expect(box.value).toBe('half a thought\nand the rest');
+    expect(messageStore.getDraft(SID)).toBe('half a thought\nand the rest');
+  });
+
+  it('adds a line on Enter and sends on Ctrl+Enter, then closes', async () => {
+    const submit = vi.spyOn(messageStore, 'submitMessage');
+    onTestFinished(() => submit.mockRestore());
+    const { container } = render(PromptEditor, { sessionId: SID });
+    const big = await openEditor();
+    await fireEvent.input(big, { target: { value: 'line one' } });
+
+    const enter = new KeyboardEvent('keydown', { key: 'Enter', cancelable: true, bubbles: true });
+    big.dispatchEvent(enter);
+    expect(enter.defaultPrevented).toBe(false);
+    expect(submit).not.toHaveBeenCalled();
+
+    await fireEvent.keyDown(big, { key: 'Enter', ctrlKey: true });
+
+    expect(submit).toHaveBeenCalledWith(SID, expect.objectContaining({ displayText: 'line one' }));
+    expect(container.querySelector('textarea')!.value).toBe('');
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
+
+  it('does not send on Ctrl+Enter while an input method is composing', async () => {
+    const submit = vi.spyOn(messageStore, 'submitMessage');
+    onTestFinished(() => submit.mockRestore());
+    render(PromptEditor, { sessionId: SID });
+    const big = await openEditor();
+    await fireEvent.input(big, { target: { value: 'half compo' } });
+
+    const key = new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, isComposing: true, cancelable: true, bubbles: true });
+    big.dispatchEvent(key);
+
+    expect(key.isComposing).toBe(true);
+    expect(key.defaultPrevented).toBe(false);
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  it('closes, without sending, when another thread is opened over this one', async () => {
+    const submit = vi.spyOn(messageStore, 'submitMessage');
+    onTestFinished(() => submit.mockRestore());
+    const { container } = render(PromptEditor, { sessionId: SID });
+    const big = await openEditor();
+    await fireEvent.input(big, { target: { value: 'for this thread' } });
+
+    sessionStore.activeSessionId = 'another-thread';
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(submit).not.toHaveBeenCalled();
+    expect(container.querySelector('textarea')!.value).toBe('for this thread');
+    expect(container.querySelector('textarea')).not.toHaveFocus();
+  });
+
+  it('takes dropped files, and leaves dragged text to move as usual', async () => {
+    render(PromptEditor, { sessionId: SID });
+    const big = await openEditor();
+
+    expect(await fireEvent.dragOver(big, { dataTransfer: { types: ['text/plain'] } })).toBe(true);
+    expect(await fireEvent.drop(big, { dataTransfer: { types: ['text/plain'], files: [] } })).toBe(true);
+
+    expect(await fireEvent.dragOver(big, { dataTransfer: { types: ['Files'], files: [notes()] } })).toBe(false);
+    await fireEvent.drop(big, { dataTransfer: { types: ['Files'], files: [notes()] } });
+    expect(await within(screen.getByRole('dialog')).findByText('notes.md')).toBeInTheDocument();
+  });
+
+  it('gives the editor the cursor back after a file is removed in it', async () => {
+    render(PromptEditor, { sessionId: SID });
+    messageStore.requestPromptInsert(SID, 'see this', { attachments: [{ type: 'text', name: 'notes.txt', content: 'hi' }] });
+    await tick();
+    const big = await openEditor();
+
+    // As from the keyboard: the button has focus, then goes with the file.
+    const remove = within(screen.getByRole('dialog')).getByRole('button', { name: 'Remove notes.txt' });
+    remove.focus();
+    await fireEvent.click(remove);
+
+    expect(within(screen.getByRole('dialog')).queryByText('notes.txt')).not.toBeInTheDocument();
+    expect(big).toHaveFocus();
+  });
+
+  it('keeps the text in the box when closed with Done', async () => {
+    const { container } = render(PromptEditor, { sessionId: SID });
+    const big = await openEditor();
+    await fireEvent.input(big, { target: { value: 'not ready yet' } });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(container.querySelector('textarea')!.value).toBe('not ready yet');
+  });
+
+  it('shows the attached files, and queues while the agent works', async () => {
+    messageStore.setIsRunning(SID, true);
+    render(PromptEditor, { sessionId: SID });
+    messageStore.requestPromptInsert(SID, 'see this', { attachments: [{ type: 'text', name: 'notes.txt', content: 'hi' }] });
+    await tick();
+
+    await openEditor();
+    const dialog = screen.getByRole('dialog');
+
+    expect(within(dialog).getByText('notes.txt')).toBeInTheDocument();
+    await fireEvent.click(within(dialog).getByRole('button', { name: /Queue/ }));
+    expect(messageStore.getQueue(SID)[0].typed).toEqual({ text: 'see this', attachments: [{ type: 'text', name: 'notes.txt', content: 'hi' }] });
   });
 });

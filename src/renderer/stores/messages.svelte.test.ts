@@ -196,22 +196,16 @@ describe('ingestEvent — system_init', () => {
     return vi.waitFor(() => expect(refresh).toHaveBeenCalledWith(SID)).finally(() => refresh.mockRestore());
   });
 
-  it('stores system info (tools, agents, skills)', () => {
-    messageStore.ingestEvent(SID, {
-      type: 'system_init',
-      sessionId: SID,
-      model: 'opus',
-      tools: ['Read', 'Edit'],
-      agents: ['agent1'],
-      skills: ['commit'],
-      slashCommands: ['/help'],
-      mcpServers: [{ name: 'github', status: 'connected' }],
-    });
+  it("leaves what the agent has to main: a report, replayed or live, doesn't set it", () => {
+    // A replayed report may be older than what main sent; a live one comes
+    // from main too (AGENT_SYSTEM_INFO_CHANGED).
+    const info = { tools: ['Read'], agents: [], skills: ['commit'], slashCommands: ['commit'], mcpServers: [] };
+    messageStore.setSystemInfo(SID, info);
+    const report = { type: 'system_init' as const, sessionId: SID, model: 'opus', tools: ['Edit'], skills: ['old'], slashCommands: ['old'] };
+    messageStore.replayEvents(SID, [report]);
+    messageStore.ingestEvent(SID, report);
 
-    const info = messageStore.getSystemInfo(SID);
-    expect(info.tools).toEqual(['Read', 'Edit']);
-    expect(info.agents).toEqual(['agent1']);
-    expect(info.skills).toEqual(['commit']);
+    expect(messageStore.getSystemInfo(SID)).toEqual(info);
   });
 });
 
@@ -1991,15 +1985,26 @@ describe('session controls', () => {
   });
 });
 
+describe('loadSystemInfo', () => {
+  it("takes what main says the thread's agent has", async () => {
+    const info = { tools: [], agents: [], skills: ['review'], slashCommands: ['review'], mcpServers: [{ name: 'linear', status: 'connected' }] };
+    mockGroveBench.getSystemInfo.mockResolvedValueOnce(info);
+    await messageStore.loadSystemInfo(SID);
+    expect(messageStore.getSystemInfo(SID)).toEqual(info);
+  });
+
+  it('keeps what it has when main knows nothing', async () => {
+    const info = { tools: [], agents: [], skills: ['review'], slashCommands: [], mcpServers: [] };
+    messageStore.setSystemInfo(SID, info);
+    mockGroveBench.getSystemInfo.mockResolvedValueOnce(null);
+    await messageStore.loadSystemInfo(SID);
+    expect(messageStore.getSystemInfo(SID)).toEqual(info);
+  });
+});
+
 describe('updateMcpServers', () => {
   it('replaces the MCP snapshot while preserving other system info', () => {
-    messageStore.ingestEvent(SID, {
-      type: 'system_init',
-      sessionId: SID,
-      model: 'test-model-v1',
-      tools: ['Read'],
-      mcpServers: [{ name: 'docs', status: 'connected' }],
-    });
+    messageStore.setSystemInfo(SID, { tools: ['Read'], agents: [], skills: [], slashCommands: [], mcpServers: [{ name: 'docs', status: 'connected' }] });
 
     messageStore.updateMcpServers(SID, [
       { name: 'docs', status: 'failed', error: 'boom' },
@@ -2576,6 +2581,99 @@ describe('pagination — loadOlderUntil', () => {
     messageStore.setPagination(SID, 500, 100);
     await messageStore.loadOlderUntil(SID, 100);
     expect(mockGroveBench.getEventHistoryPage).not.toHaveBeenCalled();
+  });
+});
+
+describe('pagination — a page already loading', () => {
+  type Page = import('../../shared/types.js').EventHistoryPage;
+
+  it('makes a second caller wait for it, not read it again', async () => {
+    messageStore.setPagination(SID, 500, 300);
+    let answer!: (page: Page) => void;
+    mockGroveBench.getEventHistoryPage.mockImplementationOnce(() => new Promise<Page>((r) => { answer = r; }));
+    const first = messageStore.loadOlderEvents(SID);
+    let secondDone = false;
+    const second = messageStore.loadOlderEvents(SID).then(() => { secondDone = true; });
+    await Promise.resolve();
+    expect(secondDone).toBe(false);
+
+    answer({ events: [], totalCount: 500, startIndex: 100, turn: IDLE_TURN });
+    await Promise.all([first, second]);
+
+    expect(mockGroveBench.getEventHistoryPage).toHaveBeenCalledTimes(1);
+    expect(messageStore.olderEventCount(SID)).toBe(100);
+  });
+
+  it('lets loadOlderUntil page on past it (a jump while the chat reads on)', async () => {
+    messageStore.setPagination(SID, 500, 400);
+    let answer!: (page: Page) => void;
+    mockGroveBench.getEventHistoryPage
+      .mockImplementationOnce(() => new Promise<Page>((r) => { answer = r; }))
+      .mockResolvedValueOnce({ events: [], totalCount: 500, startIndex: 0, turn: IDLE_TURN });
+    const reading = messageStore.loadOlderEvents(SID);
+
+    const jump = messageStore.loadOlderUntil(SID, 50);
+    answer({ events: [], totalCount: 500, startIndex: 200, turn: IDLE_TURN });
+    await Promise.all([reading, jump]);
+
+    expect(messageStore.olderEventCount(SID)).toBe(0);
+    expect(mockGroveBench.getEventHistoryPage).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('pagination — loadOlderUntilShown', () => {
+  const toolPage = (startIndex: number) => ({
+    events: [
+      { type: 'assistant_tool_use', toolName: 'Read', toolInput: { file_path: 'a.ts' }, toolUseId: `tu${startIndex}`, uuid: `a${startIndex}` },
+      { type: 'tool_result', toolUseId: `tu${startIndex}`, content: 'ok' },
+    ] as AgentEvent[],
+    totalCount: 1000, startIndex, turn: IDLE_TURN,
+  });
+
+  it('reads back until the thread shows something in its view', async () => {
+    messageStore.setPagination(SID, 1000, 800);
+    mockGroveBench.getEventHistoryPage
+      .mockResolvedValueOnce(toolPage(600))
+      .mockResolvedValueOnce({ events: [{ type: 'assistant_text', text: 'Done', uuid: 'a-done' }], totalCount: 1000, startIndex: 400, turn: IDLE_TURN });
+
+    await messageStore.loadOlderUntilShown(SID, 'focus', 2000);
+
+    expect(mockGroveBench.getEventHistoryPage).toHaveBeenCalledTimes(2);
+    expect(messageStore.getMessages(SID).some((m) => m.kind === 'text' && m.text === 'Done')).toBe(true);
+    expect(messageStore.olderEventCount(SID)).toBe(400);
+  });
+
+  it('reads no more than it is given', async () => {
+    messageStore.setPagination(SID, 1000, 800);
+    mockGroveBench.getEventHistoryPage
+      .mockResolvedValueOnce(toolPage(600))
+      .mockResolvedValueOnce(toolPage(400));
+
+    // A third read would get the mock's empty history and load to 0.
+    await messageStore.loadOlderUntilShown(SID, 'focus', 400);
+
+    expect(mockGroveBench.getEventHistoryPage).toHaveBeenCalledTimes(2);
+    expect(messageStore.olderEventCount(SID)).toBe(400);
+  });
+
+  it('reads nothing when the thread already shows something', async () => {
+    messageStore.messagesBySession = { [SID]: [{ kind: 'text', id: 'm1', text: 'Done', uuid: 'a1' }] };
+    messageStore.setPagination(SID, 1000, 800);
+
+    await messageStore.loadOlderUntilShown(SID, 'focus', 2000);
+
+    expect(mockGroveBench.getEventHistoryPage).not.toHaveBeenCalled();
+  });
+
+  it("doesn't count a subagent's messages as the thread's", async () => {
+    messageStore.setPagination(SID, 1000, 800);
+    mockGroveBench.getEventHistoryPage
+      .mockResolvedValueOnce({ events: [{ type: 'assistant_text', text: 'sub', uuid: 's1', parentToolUseId: 'task1' }], totalCount: 1000, startIndex: 600, turn: IDLE_TURN })
+      .mockResolvedValueOnce({ events: [{ type: 'assistant_text', text: 'Done', uuid: 'a-done' }], totalCount: 1000, startIndex: 400, turn: IDLE_TURN });
+
+    await messageStore.loadOlderUntilShown(SID, 'focus', 2000);
+
+    expect(mockGroveBench.getEventHistoryPage).toHaveBeenCalledTimes(2);
   });
 });
 

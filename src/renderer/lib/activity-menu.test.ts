@@ -16,7 +16,7 @@ describe('activityMenuEntries', () => {
 
   it('lists the selection first, then the element, then the row, with a divider between groups', () => {
     const entries = activityMenuEntries({
-      selection: { text: 'picked', msgId: 'm1' },
+      selection: { text: 'picked', msgId: 'm1', links: [] },
       code: 'const a = 1;',
       message: { kind: 'user', id: 'm1', text: 'prompt', uuid: 'uuid-1' },
     });
@@ -26,8 +26,28 @@ describe('activityMenuEntries', () => {
       'Copy message', 'Rewind to this message',
     ]);
     expect(entries.filter((e) => e.separator).map((e) => e.label)).toEqual(['Copy code', 'Copy message']);
-    expect(entries[1].action).toEqual({ kind: 'bookmark', text: 'picked', msgId: 'm1' });
+    expect(entries[1].action).toEqual({ kind: 'bookmark', text: 'picked', msgId: 'm1', links: [] });
     expect(entries[5].action).toEqual({ kind: 'rewind', uuid: 'uuid-1' });
+  });
+
+  it("puts a selection's links in what Copy and Copy to prompt give", () => {
+    const links = [
+      { kind: 'web' as const, href: 'https://x.dev/docs', text: 'the docs', shown: 'the docs' },
+      { kind: 'file' as const, href: 'src/app.ts', text: 'app', shown: 'app' },
+    ];
+    const entries = activityMenuEntries({ selection: { text: 'See the docs and app', msgId: null, links } });
+    expect(entries[0].action).toEqual({
+      kind: 'copy-rich',
+      text: 'See the docs and app',
+      html: 'See <a href="https://x.dev/docs">the docs</a> and app',
+    });
+    expect(entries[2].action).toEqual({ kind: 'to-prompt', text: 'See [the docs](https://x.dev/docs) and [app](src/app.ts)' });
+  });
+
+  it('copies a selection with only file links as plain text', () => {
+    const links = [{ kind: 'file' as const, href: 'src/app.ts', text: 'app', shown: 'app' }];
+    expect(activityMenuEntries({ selection: { text: 'open app', msgId: null, links } })[0].action)
+      .toEqual({ kind: 'copy', text: 'open app' });
   });
 
   it('copies a table as tab-separated text plus HTML, or as Markdown', () => {
@@ -91,6 +111,30 @@ describe('activityMenuEntries', () => {
     it('leaves out a copy whose text is missing', () => {
       expect(activityMenuEntries({ message: toolCall('Bash', {}) })).toEqual([]);
     });
+  });
+});
+
+describe('readActivityTarget selection', () => {
+  it("reads the selection's links, which its text leaves out, for a bookmark", () => {
+    const container = document.createElement('div');
+    container.innerHTML = '<div data-msg-id="m1">See <a href="https://example.com/docs">the docs</a></div>';
+    document.body.appendChild(container);
+    const range = document.createRange();
+    range.selectNodeContents(container.querySelector('[data-msg-id]')!);
+    window.getSelection()!.addRange(range);
+    try {
+      const target = readActivityTarget(container.querySelector('a')!, container, []);
+      expect(target.selection).toEqual({
+        text: 'See the docs',
+        msgId: 'm1',
+        links: [{ kind: 'web', href: 'https://example.com/docs', text: 'the docs', shown: 'the docs' }],
+      });
+      expect(activityMenuEntries(target).find((e) => e.label === 'Bookmark selection')?.action)
+        .toEqual({ kind: 'bookmark', text: 'See the docs', msgId: 'm1', links: target.selection!.links });
+    } finally {
+      window.getSelection()!.removeAllRanges();
+      container.remove();
+    }
   });
 });
 

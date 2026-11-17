@@ -47,6 +47,7 @@ src/
     attachments.ts     # Attached files and images tools return, served over grove-attachment://
     worktree-files.ts  # Worktree files the thread shows or opens (agent's images, links, files made)
     turn-files*.ts     # Watches the worktree during a turn for the files it makes ("Files made"), from a worker thread (4th Vite entry)
+    remove-tree*.ts    # Deletes removed threads' worktree folders one at a time, from a worker thread with asar support off (5th Vite entry)
     adapters/          # Agent adapter pattern
       index.ts         # Adapter exports
       types.ts         # Adapter interfaces

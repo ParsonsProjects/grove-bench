@@ -16,7 +16,9 @@
   import { store } from '../stores/sessions.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
   import { getRepoColor } from '../lib/repo-colors.js';
+  import { markdownWithLinks } from '$lib/selection-links.js';
   import CopyButton from './CopyButton.svelte';
+  import BookmarkLinks from './BookmarkLinks.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
   import { PanelHeader } from '$lib/components/ui/panel-header/index.js';
   import XIcon from '@lucide/svelte/icons/x';
@@ -128,6 +130,8 @@
                 <div class="group mb-2 border border-border bg-card/80 p-2">
                   <pre class="whitespace-pre-wrap break-words text-xs text-foreground/90 max-h-24 overflow-y-auto m-0">{b.selectedText}</pre>
 
+                  <BookmarkLinks bookmark={b} />
+
                   {#if editingId === b.id}
                     <!-- svelte-ignore a11y_autofocus -->
                     <input
@@ -159,7 +163,8 @@
                         title="Add note"
                       >Note</Button>
                     {/if}
-                    <CopyButton text={b.selectedText} class="size-5" />
+                    <!-- With its links written in, as To prompt does. -->
+                    <CopyButton text={markdownWithLinks(b.selectedText, b.links ?? [])} class="size-5" />
                     <Button
                       variant="quiet-destructive"
                       size="2xs"

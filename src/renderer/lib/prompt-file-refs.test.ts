@@ -77,6 +77,10 @@ describe('buildOutgoingMessage()', () => {
   it('returns the text unchanged when there are no tags', () => {
     expect(buildOutgoingMessage([], 'hello')).toBe('hello');
   });
+
+  it('is just the tags when nothing was typed', () => {
+    expect(buildOutgoingMessage(['<file path="a.ts">\nx\n</file>'], '')).toBe('<file path="a.ts">\nx\n</file>');
+  });
 });
 
 // End-to-end shape: what the LLM receives for a prompt with an @-reference.

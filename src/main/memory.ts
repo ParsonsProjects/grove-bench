@@ -160,15 +160,7 @@ export function listMemoryFiles(repoPath: string, folder?: string): MemoryEntry[
         walk(fullPath, relPath);
       } else if (item.name.endsWith('.md')) {
         try {
-          const content = fs.readFileSync(fullPath, 'utf-8');
-          const { title, description, updatedAt } = parseFrontmatter(content);
-          entries.push({
-            relativePath: relPath,
-            title: title || item.name.replace(/\.md$/, ''),
-            description,
-            updatedAt,
-            folder: prefix || '.',
-          });
+          entries.push(memoryEntry(relPath, prefix, fs.readFileSync(fullPath, 'utf-8')));
         } catch {
           // Skip unreadable files
         }
@@ -178,6 +170,51 @@ export function listMemoryFiles(repoPath: string, folder?: string): MemoryEntry[
 
   walk(root, folder ?? '');
   return entries;
+}
+
+/** A file's index entry, from its frontmatter. */
+function memoryEntry(relativePath: string, folder: string, content: string): MemoryEntry {
+  const { title, description, updatedAt } = parseFrontmatter(content);
+  return {
+    relativePath,
+    title: title || path.basename(relativePath).replace(/\.md$/, ''),
+    description,
+    updatedAt,
+    folder: folder || '.',
+  };
+}
+
+/** Every memory file with its content, as listMemoryFiles lists them, read
+ *  once each without blocking the main process (memory compaction). */
+export async function readMemoryFilesAsync(repoPath: string): Promise<Array<{ entry: MemoryEntry; content: string }>> {
+  const files: Array<{ entry: MemoryEntry; content: string }> = [];
+
+  async function walk(currentDir: string, prefix: string) {
+    let items: fs.Dirent[];
+    try {
+      items = await fs.promises.readdir(currentDir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const item of items) {
+      if (item.name.startsWith('_')) continue;
+      const fullPath = path.join(currentDir, item.name);
+      const relPath = prefix ? `${prefix}/${item.name}` : item.name;
+      if (item.isDirectory()) {
+        await walk(fullPath, relPath);
+      } else if (item.name.endsWith('.md')) {
+        try {
+          const content = await fs.promises.readFile(fullPath, 'utf-8');
+          files.push({ entry: memoryEntry(relPath, prefix, content), content });
+        } catch {
+          // Skip unreadable files
+        }
+      }
+    }
+  }
+
+  await walk(getMemoryDir(repoPath), '');
+  return files;
 }
 
 export function readMemoryFile(repoPath: string, relativePath: string): string | null {

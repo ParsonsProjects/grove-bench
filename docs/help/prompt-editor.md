@@ -8,6 +8,10 @@ Type your message and press **Enter** to send. The agent will begin processing i
 
 For multi-line messages, use **Shift+Enter** to add a new line without sending.
 
+## Larger Editor
+
+For a long message, click the expand button beside the paperclip. The same message opens in a larger editor, where **Enter** adds a new line and **Ctrl+Enter** sends it (or adds it to the queue while the agent works). **Done** or **Escape** takes you back to the prompt editor with the text kept. You can paste images and drop files there too.
+
 ## Suggested Next Prompt
 
 After a turn, the empty prompt editor may show a grey guess at your next message, such as "Run the tests". Press **Tab** to put it in the box, then **Enter** to send it or edit it first. Start typing to ignore it.
@@ -43,6 +47,8 @@ Drag and drop files into the prompt editor, paste an image, or click the papercl
 - **Any other file** up to 25 MB is saved with the thread and the agent gets its path, so it can open the file with its own tools. Text files over 100 KB and images over 5 MB are attached this way too, and so are images sent to an agent that can't take images.
 
 One message's attachments can add up to 50 MB. Hover a file's chip to see its size. Click × to remove it before sending.
+
+You don't have to type anything: attachments on their own, such as a pasted screenshot, send as a message. Slash commands and `!` shell commands can't take attachments, so remove them first or send them in the next message. Rewinding to a message puts its attachments back in the box along with its text.
 
 ## While the Agent is Working
 

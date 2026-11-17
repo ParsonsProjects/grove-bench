@@ -1,6 +1,6 @@
 import type { BrowserWindow } from 'electron';
 import { IPC } from '../shared/types.js';
-import type { SessionInfo, SessionStatus, AgentEvent, ThreadUsage, PermissionDecision, PermissionMode, McpServerInfo, McpAuthStartResult, McpElicitationResponse, McpServerContextCost, ProviderUsage, SessionControls, ThreadTurnState, EventHistoryPage } from '../shared/types.js';
+import type { AgentSystemInfo, SessionInfo, SessionStatus, AgentEvent, ThreadUsage, PermissionDecision, PermissionMode, McpServerInfo, McpAuthStartResult, McpElicitationResponse, McpServerContextCost, ProviderUsage, SessionControls, ThreadTurnState, EventHistoryPage } from '../shared/types.js';
 import { CONTROL_IDS, MCP_SIGN_IN_TIMEOUT_MS, isMcpServerDown, isPermissionMode, subagentParent } from '../shared/types.js';
 import { userEventText } from '../shared/prompt-text.js';
 import { errorMessage } from '../shared/error-message.js';
@@ -35,6 +35,7 @@ import { within } from './within.js';
 import { previewManager } from './preview.js';
 import type { Emit, ManagedSession, SessionCompletionResult } from './session-types.js';
 import { SessionEventStore, TRANSIENT_EVENT_TYPES, eventLogPath } from './session-event-store.js';
+import { lastSystemInit, systemInfoOf } from '../shared/live-events.js';
 import { StreamDeltas, isStreamDelta } from './session-stream.js';
 import {
   requestPermission, respondToPermission as answerPermission, denyPendingPermissions,
@@ -129,6 +130,9 @@ function historyShowsBackgroundTasks(history: AgentEvent[]): boolean {
   return false;
 }
 
+/** What an agent has before it has said anything. */
+const NO_SYSTEM_INFO: AgentSystemInfo = { tools: [], agents: [], skills: [], slashCommands: [], mcpServers: [] };
+
 /** The start in flight has ended: let sends waiting for its query handle go
  *  (see awaitQueryHandle), and shutDown(). */
 function settleQueryReady(session: ManagedSession): void {
@@ -157,6 +161,11 @@ class AgentSessionManager {
    *  releases the files its processes held before the worktree is removed.
    *  Tests set it to 0. */
   handleReleaseMs = 500;
+  /** A starting agent is asked for its MCP servers and commands this often,
+   *  and at most this many times, while one of its servers is still
+   *  connecting (see reportOnStart): 30 s in all. Tests change both. */
+  mcpStartPollMs = 2_000;
+  mcpStartPolls = 15;
   /** How long a close or delete waits for an agent that is still starting.
    *  Tests shorten it. */
   agentStartWaitMs = 10_000;
@@ -351,6 +360,9 @@ class AgentSessionManager {
       createdAt: Date.now(),
       adapter,
       queryHandle: null,
+      // Its last report, so a pane shows what it had until it says more.
+      systemInfo: (() => { const init = lastSystemInit(eventHistory); return init ? systemInfoOf(init) : null; })(),
+      systemInfoReportedBy: null,
       abortController,
       pendingPermissions: new Map(),
       pendingElicitations: new Map(),
@@ -721,6 +733,7 @@ class AgentSessionManager {
 
     // Show a connecting message in the thread while waiting for system_init
     emit({ type: 'status', message: `Connecting to ${session.adapter.displayName} — ${session.branch || 'project folder'} · ${session.permissionMode}` });
+    void this.reportOnStart(session, handle);
 
     // Process event stream from the adapter
     try {
@@ -801,6 +814,8 @@ class AgentSessionManager {
         if (event.type === 'system_init') {
           session.status = 'running';
           session.providerSessionId = handle.getSessionId();
+          this.setSystemInfo(session, systemInfoOf(event));
+          session.systemInfoReportedBy = handle;
           if (session.promptsBeforeInit?.handle === handle) session.promptsBeforeInit = null;
           // A message that asks for a skill the agent doesn't have (turned
           // off, renamed, or not on this branch) gets nowhere: say so once.
@@ -1209,12 +1224,15 @@ class AgentSessionManager {
     return true;
   }
 
+  /** Send a prompt. True once the agent has it; false when the session is
+   *  gone or never connected; 'nothing-to-send' when every attachment was
+   *  left out and nothing was typed. */
   async sendMessage(
     id: string,
     content: string,
     images?: import('../shared/types.js').ImageAttachment[],
     files?: import('../shared/types.js').FileAttachment[],
-  ): Promise<boolean> {
+  ): Promise<boolean | 'nothing-to-send'> {
     // When it was sent, for the thread to show. Taken before the waits below
     // (setup, a wake), which can take minutes.
     const sentAt = Date.now();
@@ -1268,6 +1286,13 @@ class AgentSessionManager {
     if (files && savedFiles.length < files.length) {
       const lost = files.length - savedFiles.length;
       session.emit?.({ type: 'status', level: 'warning', message: `${lost === 1 ? 'An attached file' : `${lost} attached files`} could not be saved, so ${lost === 1 ? 'it was' : 'they were'} left out. See the log for details.` });
+    }
+    // Nothing typed and every attachment left out: an empty prompt would
+    // only fail at the agent. Refused before it joins the history, so the
+    // thread keeps no turn that never ran.
+    if (!content.trim() && !images?.length && savedFiles.length === 0) {
+      logger.debug(`[sendMessage] session=${id} nothing left to send`);
+      return 'nothing-to-send';
     }
     // After a switch the user wanted a transcript for, messages carry it
     // ahead of what they typed until the new agent replies; the thread shows
@@ -1609,7 +1634,10 @@ class AgentSessionManager {
     const session = this.sessions.get(id);
     if (!session?.queryHandle?.listMcpServers) return [];
     try {
-      return await session.queryHandle.listMcpServers();
+      const servers = await session.queryHandle.listMcpServers();
+      // None means no live status to the renderer, which keeps the last.
+      if (servers.length > 0) this.noteMcpServers(session, servers);
+      return servers;
     } catch (e) {
       logger.warn(`Failed to list MCP servers for session ${id}:`, e);
       return [];
@@ -1730,12 +1758,82 @@ class AgentSessionManager {
           });
         }
         if (session.destroying || session.queryHandle !== handle) return;
-        const servers = await handle.listMcpServers!();
-        if (!session.window.isDestroyed()) session.window.webContents.send(IPC.AGENT_MCP_STATUS, session.id, servers);
+        this.sendMcpStatus(session, await handle.listMcpServers!());
       } catch (e) {
         logger.warn(`Failed to reconnect MCP servers for session ${session.id}:`, e);
       }
     });
+  }
+
+  /**
+   * Ask an agent that has just started for its MCP servers and slash
+   * commands (skills among them), and again as the servers still connecting
+   * finish. Claude Code's own report of them (system_init) only comes with
+   * the first prompt, so a thread woken from sleep or reopened showed none,
+   * or the ones it last reported, until a message was sent. Commands are
+   * asked twice, as it starts and one poll later, in case it hadn't loaded
+   * them all, and not once it has sent its own report. All of it ends once
+   * this run is replaced (a stop, a sleep, a close). An agent that can't
+   * list them reports them as it starts.
+   */
+  private async reportOnStart(session: ManagedSession, handle: AgentQueryHandle): Promise<void> {
+    if (!handle.listMcpServers && !handle.listSlashCommands) return;
+    const current = () => session.queryHandle === handle && !session.destroying;
+    // Its last report's, for what it can only name that way (see
+    // listSlashCommands), not what an ask below put there.
+    const lastReported = session.systemInfo?.slashCommands ?? [];
+    let sentServers = '';
+    for (let i = 0; i < this.mcpStartPolls; i++) {
+      if (i > 0) await new Promise((resolve) => setTimeout(resolve, this.mcpStartPollMs));
+      if (!current()) return;
+      let connecting = false;
+      if (handle.listMcpServers) {
+        try {
+          const servers = await handle.listMcpServers();
+          if (!current()) return;
+          // Only what changed. None is an answer too: the agent answers once
+          // it has read its config (CLI 2.1.326), so there are none.
+          const key = JSON.stringify(servers);
+          if (key !== sentServers) this.sendMcpStatus(session, servers);
+          sentServers = key;
+          connecting = servers.some((s) => s.status === 'pending');
+        } catch (e) {
+          logger.debug(`[mcp] session=${session.id} could not list MCP servers at start:`, e);
+        }
+      }
+      const askCommands = i < 2 && !!handle.listSlashCommands && session.systemInfoReportedBy !== handle;
+      if (askCommands) {
+        try {
+          const names = await handle.listSlashCommands!(lastReported);
+          // Its own report may have come meanwhile: that is the newer.
+          if (!current()) return;
+          if (session.systemInfoReportedBy !== handle) this.setSystemInfo(session, { ...(session.systemInfo ?? NO_SYSTEM_INFO), slashCommands: names });
+        } catch (e) {
+          logger.debug(`[skills] session=${session.id} could not list slash commands at start:`, e);
+        }
+      }
+      // Commands get their second ask; servers are asked while one connects.
+      if (!connecting && !(askCommands && i === 0)) return;
+    }
+  }
+
+  /** Keep `info` as what the agent has, and tell the renderer if it changed. */
+  private setSystemInfo(session: ManagedSession, info: AgentSystemInfo): void {
+    const changed = JSON.stringify(info) !== JSON.stringify(session.systemInfo);
+    session.systemInfo = info;
+    if (changed && !session.window.isDestroyed()) session.window.webContents.send(IPC.AGENT_SYSTEM_INFO_CHANGED, session.id, info);
+  }
+
+  /** The agent's live MCP status, into what it has (the renderer updates its
+   *  own copy from the list it gets). */
+  private noteMcpServers(session: ManagedSession, servers: McpServerInfo[]): void {
+    session.systemInfo = { ...(session.systemInfo ?? NO_SYSTEM_INFO), mcpServers: servers.map((s) => ({ name: s.name, status: s.status })) };
+  }
+
+  /** Send the renderer the agent's live MCP status. */
+  private sendMcpStatus(session: ManagedSession, servers: McpServerInfo[]): void {
+    this.noteMcpServers(session, servers);
+    if (!session.window.isDestroyed()) session.window.webContents.send(IPC.AGENT_MCP_STATUS, session.id, servers);
   }
 
   /** Add `only` to the reconnects `session` runs once its turn ends. */
@@ -2096,15 +2194,18 @@ class AgentSessionManager {
     // A close still shutting the agent down finishes first.
     await this.closing.get(id);
     const session = this.sessions.get(id);
+    // No note is written to Project Memory here. It used to write a short
+    // one (first message, turns, cost) to sessions/<branch>.md, which is
+    // where auto-save's richer note goes, so deleting a thread replaced that
+    // note (another thread's too, on the same branch). For a closed thread
+    // it also read and parsed its whole event log on the main process.
     if (!session) {
       // A closed conversation has no live session, but a memory auto-save may
-      // still be pending, its metadata hasn't been saved, and its checkpoint
-      // refs are still in the repository.
+      // still be pending, and its checkpoint refs are still in the repository.
       memoryAutosave.cancelAutoSave(id);
       const worktree = await worktreeManager.getWorktreeOrManifest(id).catch(() => undefined);
-      if (worktree) {
-        memoryAutosave.saveSessionMetadata(worktree.repoPath, id, this.getEventHistory(id), worktree.branch);
-        if (!worktree.noGit) await new CheckpointManager().cleanup(id, worktree.path).catch(err => {
+      if (worktree && !worktree.noGit) {
+        await new CheckpointManager().cleanup(id, worktree.path).catch(err => {
           logger.warn(`Checkpoint cleanup failed for ${id}:`, err);
         });
       }
@@ -2112,9 +2213,8 @@ class AgentSessionManager {
       return;
     }
 
-    // Cancel any pending auto-save debounce and save heuristic metadata
+    // Cancel any pending auto-save debounce
     memoryAutosave.cancelAutoSave(id);
-    memoryAutosave.saveSessionMetadata(session.repoPath, id, session.eventHistory, session.branch);
 
     await this.shutDown(session, 'Session destroyed');
 
@@ -2628,6 +2728,16 @@ class AgentSessionManager {
       startIndex: start,
       turn: this.turnState(id),
     };
+  }
+
+  /** What a thread's agent has (AgentSystemInfo): a live thread's as main
+   *  last learned it, a closed one's from its last report. Null when it has
+   *  never said. */
+  getSystemInfo(id: string): AgentSystemInfo | null {
+    const session = this.sessions.get(id);
+    if (session) return session.systemInfo;
+    const init = lastSystemInit(this.events.load(id));
+    return init ? systemInfoOf(init) : null;
   }
 
   /** Clear event history (in-memory and on disk) for a session.

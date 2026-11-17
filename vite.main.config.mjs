@@ -31,6 +31,10 @@ export default defineConfig({
         // (src/main/turn-files.ts), so libuv's work on each change isn't the
         // main process's. Loaded from inside app.asar like the host.
         'turn-files-worker': path.resolve('src/main/turn-files-worker.ts'),
+        // The worker thread that deletes the worktree folders removed threads
+        // leave behind (src/main/remove-tree.ts), with Electron's asar support
+        // off there. Loaded from inside app.asar like the others.
+        'remove-tree-worker': path.resolve('src/main/remove-tree-worker.ts'),
       },
       formats: ['cjs'],
       fileName: (_format, entryName) => `${entryName}.js`,
