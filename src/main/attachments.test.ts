@@ -14,9 +14,12 @@ vi.mock('./logger.js', () => ({
 import {
   attachmentResponse,
   attachmentsFolder,
+  downloadImage,
+  downloadName,
   getAttachmentsDir,
   handleAttachmentProtocol,
   openAttachedFile,
+  parseImageSource,
   pruneAttachments,
   readAttachedFile,
   registerAttachmentScheme,
@@ -24,6 +27,7 @@ import {
   removeAttachments,
   saveFiles,
   saveImages,
+  showImageInFolder,
   storeMadeFiles,
   storeToolImages,
 } from './attachments.js';
@@ -534,5 +538,165 @@ describe('pruneAttachments', () => {
     await pruneAttachments('abc123', []);
 
     expect(fs.readdirSync(folder('abc123'))).toEqual(['saving.png.1234.tmp']);
+  });
+});
+
+describe('downloadName', () => {
+  it('keeps the last part of a name or path, ending in the image type', () => {
+    expect(downloadName('shot.png', 'png', 'image')).toBe('shot.png');
+    expect(downloadName('out/shots/home.png', 'png', 'image')).toBe('home.png');
+    expect(downloadName('C:\\Users\\me\\Pictures\\mock.png', 'png', 'image')).toBe('mock.png');
+    expect(downloadName('mock', 'jpg', 'image')).toBe('mock.jpg');
+  });
+
+  it("keeps the name's own extension for the same type, and adds the real one otherwise", () => {
+    expect(downloadName('photo.jpeg', 'jpg', 'image')).toBe('photo.jpeg');
+    expect(downloadName('Shot.PNG', 'png', 'image')).toBe('Shot.PNG');
+    expect(downloadName('chart.png', 'webp', 'image')).toBe('chart.png.webp');
+  });
+
+  it('takes out what Windows does not allow, and its device names', () => {
+    expect(downloadName('a:b*c?"<d>|e.png', 'png', 'image')).toBe('a_b_c___d__e.png');
+    expect(downloadName('tab\there.png', 'png', 'image')).toBe('tab_here.png');
+    expect(downloadName('CON.png', 'png', 'image')).toBe('_CON.png');
+    expect(downloadName('lpt1.tar.png', 'png', 'image')).toBe('_lpt1.tar.png');
+    expect(downloadName('dots... .png', 'png', 'image')).toBe('dots.png');
+  });
+
+  it('falls back when no name is left', () => {
+    expect(downloadName(undefined, 'png', 'image-0a1b2c3d')).toBe('image-0a1b2c3d.png');
+    expect(downloadName('', 'gif', 'image')).toBe('image.gif');
+    expect(downloadName('..', 'png', 'image')).toBe('image.png');
+    expect(downloadName('out/', 'png', 'image')).toBe('image.png');
+  });
+
+  it('keeps a long name short', () => {
+    expect(downloadName(`${'a'.repeat(300)}.png`, 'png', 'image')).toBe(`${'a'.repeat(120)}.png`);
+  });
+});
+
+describe('parseImageSource', () => {
+  it('takes the three kinds as sent', () => {
+    expect(parseImageSource({ kind: 'stored', file: 'a.png' })).toEqual({ kind: 'stored', file: 'a.png' });
+    expect(parseImageSource({ kind: 'stored', file: 'a.png', path: 'out/a.png' })).toEqual({ kind: 'stored', file: 'a.png', path: 'out/a.png' });
+    expect(parseImageSource({ kind: 'worktree', path: 'out/a.png' })).toEqual({ kind: 'worktree', path: 'out/a.png' });
+    expect(parseImageSource({ kind: 'inline', data: PNG, mediaType: 'image/png', extra: 1 })).toEqual({ kind: 'inline', data: PNG, mediaType: 'image/png' });
+  });
+
+  it('refuses anything else', () => {
+    for (const bad of [null, 'a.png', {}, { kind: 'stored' }, { kind: 'stored', file: 1 }, { kind: 'worktree' }, { kind: 'inline', data: PNG }, { kind: 'file', path: '/etc/passwd' }]) {
+      expect(parseImageSource(bad)).toBeNull();
+    }
+  });
+});
+
+describe('downloadImage and showImageInFolder', () => {
+  let downloads: string;
+  let worktree: string;
+  const worktreeOf = (id: string) => (id === 'abc123' ? worktree : undefined);
+
+  beforeEach(() => {
+    downloads = fs.mkdtempSync(path.join(os.tmpdir(), 'grove-downloads-'));
+    worktree = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'grove-wt-')));
+    vi.mocked(app.getPath).mockImplementation((name: string) => (name === 'downloads' ? downloads : userData));
+    vi.mocked(shell.showItemInFolder).mockClear();
+  });
+
+  afterEach(() => {
+    fs.rmSync(downloads, { recursive: true, force: true });
+    fs.rmSync(worktree, { recursive: true, force: true });
+  });
+
+  function inWorktree(rel: string, data: string): string {
+    const abs = path.join(worktree, rel);
+    fs.mkdirSync(path.dirname(abs), { recursive: true });
+    fs.writeFileSync(abs, Buffer.from(data, 'base64'));
+    return abs;
+  }
+
+  it('saves a copy of an attached image under the name it was attached as, numbering ones taken', async () => {
+    const [stored] = await saveImages('abc123', [{ data: PNG, mediaType: 'image/png', name: 'shot.png' }]);
+    const source = { kind: 'stored' as const, file: stored.file };
+
+    expect(await downloadImage('abc123', source, 'shot.png', worktreeOf)).toBe('shot.png');
+    expect(await downloadImage('abc123', source, 'shot.png', worktreeOf)).toBe('shot (1).png');
+    expect(await downloadImage('abc123', source, 'shot.png', worktreeOf)).toBe('shot (2).png');
+    expect(fs.readFileSync(path.join(downloads, 'shot (1).png')).toString('base64')).toBe(PNG);
+  });
+
+  it("names a tool's image, which has no name, after its content", async () => {
+    const [stored] = await saveImages('abc123', [{ data: GIF, mediaType: 'image/gif' }]);
+
+    expect(await downloadImage('abc123', { kind: 'stored', file: stored.file }, undefined, worktreeOf))
+      .toBe(`image-${stored.file.slice(0, 8)}.gif`);
+  });
+
+  it('saves an image just sent from its data, before main has saved its copy', async () => {
+    const saved = await downloadImage('abc123', { kind: 'inline', data: GIF, mediaType: 'image/gif' }, 'pasted.gif', worktreeOf);
+
+    expect(saved).toBe('pasted.gif');
+    expect(fs.readFileSync(path.join(downloads, 'pasted.gif')).toString('base64')).toBe(GIF);
+    expect(await downloadImage('abc123', { kind: 'inline', data: GIF, mediaType: 'image/svg+xml' }, 'x.svg', worktreeOf)).toBeNull();
+  });
+
+  it("saves the copy an agent's image had that turn, not the file it wrote again since", async () => {
+    const abs = inWorktree('out/chart.png', PNG);
+    const [made] = await storeMadeFiles('abc123', [{ path: 'out/chart.png', absPath: abs, kind: 'image', size: 70 }]);
+    fs.writeFileSync(abs, Buffer.from(GIF, 'base64'));
+
+    const saved = await downloadImage('abc123', { kind: 'stored', file: made.image!.file, path: 'out/chart.png' }, 'out/chart.png', worktreeOf);
+    expect(saved).toBe('chart.png');
+    expect(fs.readFileSync(path.join(downloads, 'chart.png')).toString('base64')).toBe(PNG);
+  });
+
+  it('saves an image in the worktree, but only an image inside it', async () => {
+    inWorktree('docs/logo.webp', PNG);
+    fs.writeFileSync(path.join(worktree, 'secret.txt'), 'token');
+
+    expect(await downloadImage('abc123', { kind: 'worktree', path: 'docs/logo.webp' }, 'docs/logo.webp', worktreeOf)).toBe('logo.webp');
+    expect(await downloadImage('abc123', { kind: 'worktree', path: 'secret.txt' }, 'secret.png', worktreeOf)).toBeNull();
+    expect(await downloadImage('abc123', { kind: 'worktree', path: '../outside.png' }, 'x.png', worktreeOf)).toBeNull();
+    expect(await downloadImage('other', { kind: 'worktree', path: 'docs/logo.webp' }, 'x.png', worktreeOf)).toBeNull();
+  });
+
+  it('is null for an image that is gone or a name that is not a stored one', async () => {
+    expect(await downloadImage('abc123', { kind: 'stored', file: `${'0'.repeat(32)}.png` }, 'a.png', worktreeOf)).toBeNull();
+    expect(await downloadImage('abc123', { kind: 'stored', file: '../../evil.png' }, 'a.png', worktreeOf)).toBeNull();
+    expect(fs.readdirSync(downloads)).toEqual([]);
+  });
+
+  it("shows an attached image's saved copy in its folder", async () => {
+    const [stored] = await saveImages('abc123', [{ data: PNG, mediaType: 'image/png', name: 'shot.png' }]);
+
+    expect(await showImageInFolder('abc123', { kind: 'stored', file: stored.file }, worktreeOf)).toBe(true);
+    expect(shell.showItemInFolder).toHaveBeenCalledWith(path.join(folder('abc123'), stored.file));
+  });
+
+  it('finds the saved copy of an image just sent by its content', async () => {
+    const [stored] = await saveImages('abc123', [{ data: PNG, mediaType: 'image/png', name: 'shot.png' }]);
+
+    expect(await showImageInFolder('abc123', { kind: 'inline', data: PNG, mediaType: 'image/png' }, worktreeOf)).toBe(true);
+    expect(shell.showItemInFolder).toHaveBeenCalledWith(path.join(folder('abc123'), stored.file));
+    // Not saved yet (or never): nothing to show.
+    expect(await showImageInFolder('abc123', { kind: 'inline', data: GIF, mediaType: 'image/gif' }, worktreeOf)).toBe(false);
+  });
+
+  it("shows the agent's own file for an image it made, and the copy once that's gone", async () => {
+    const abs = inWorktree('out/chart.png', PNG);
+    const [made] = await storeMadeFiles('abc123', [{ path: 'out/chart.png', absPath: abs, kind: 'image', size: 70 }]);
+    const source = { kind: 'stored' as const, file: made.image!.file, path: 'out/chart.png' };
+
+    expect(await showImageInFolder('abc123', source, worktreeOf)).toBe(true);
+    expect(shell.showItemInFolder).toHaveBeenLastCalledWith(abs);
+
+    fs.rmSync(abs);
+    expect(await showImageInFolder('abc123', source, worktreeOf)).toBe(true);
+    expect(shell.showItemInFolder).toHaveBeenLastCalledWith(path.join(folder('abc123'), made.image!.file));
+  });
+
+  it('is false when the image is gone', async () => {
+    expect(await showImageInFolder('abc123', { kind: 'worktree', path: 'out/gone.png' }, worktreeOf)).toBe(false);
+    expect(await showImageInFolder('abc123', { kind: 'stored', file: `${'0'.repeat(32)}.png` }, worktreeOf)).toBe(false);
+    expect(shell.showItemInFolder).not.toHaveBeenCalled();
   });
 });

@@ -1504,6 +1504,31 @@ describe('OutputPanel: notes while working', () => {
 describe('OutputPanel images from the agent', () => {
   const SHOT = { file: `${'a'.repeat(32)}.png` };
 
+  it('steps through the images of the whole thread, and gives a thumbnail only its own menu', async () => {
+    const MOCK = { file: `${'b'.repeat(32)}.png`, name: 'mock.png' };
+    messageStore.messagesBySession = {
+      [SID]: [
+        { kind: 'user', id: 'u1', text: 'Match this', uuid: 'uuid-1', images: [MOCK] },
+        { kind: 'tool_call', id: 't1', toolName: 'mcp__playwright__browser_take_screenshot', toolInput: {}, toolUseId: 'tu1', uuid: 'u1', pending: false, images: [SHOT] },
+      ],
+    };
+    messageStore.setViewMode(SID, 'focus');
+    render(OutputPanel, { sessionId: SID });
+    await tick();
+
+    await fireEvent.contextMenu(screen.getByRole('button', { name: 'View mock.png' }), { clientX: 5, clientY: 5 });
+    expect(screen.getAllByRole('menu')).toHaveLength(1);
+    expect(within(screen.getByRole('menu', { name: 'Image actions' })).getAllByRole('menuitem').map((i) => i.textContent?.trim()))
+      .toEqual(['Download', 'Open file location']);
+    await fireEvent.keyDown(window, { key: 'Escape' });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'View mock.png' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByTestId('lightbox-position')).toHaveTextContent('1 of 2');
+    await fireEvent.keyDown(dialog, { key: 'ArrowRight' });
+    expect(dialog.querySelector('img')).toHaveAttribute('src', `grove-attachment://image/${SID}/${SHOT.file}`);
+  });
+
   it('keeps a screenshot a tool returned in Focus, without the tool call', async () => {
     messageStore.messagesBySession = {
       [SID]: [

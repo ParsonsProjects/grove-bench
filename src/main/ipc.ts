@@ -22,7 +22,7 @@ import { prsForBranches, prCreate, prReviewComments, prJobLog, prRerunFailed, gh
 import { tempBranchName, isTempBranch, generateBranchName } from './branch-name.js';
 import { displayTextFromSent } from '../shared/prompt-text.js';
 import { EMPTY_THREAD_ITEMS, threadItems } from '../shared/thread-items.js';
-import { openAttachedFile, readAttachedFile, removeAttachments } from './attachments.js';
+import { downloadImage, openAttachedFile, parseImageSource, readAttachedFile, removeAttachments, showImageInFolder } from './attachments.js';
 import { openWorktreeFile } from './worktree-files.js';
 import { generateCommitMessage } from './commit-message.js';
 import { exportFileName, threadJson, threadMarkdown, type ThreadExportInfo } from './thread-export.js';
@@ -1093,6 +1093,20 @@ export function registerHandlers() {
     const worktree = typeof sessionId === 'string' ? worktreeManager.getWorktree(sessionId) : undefined;
     if (!worktree || typeof filePath !== 'string') return { kind: 'missing' };
     return openWorktreeFile(worktree.path, filePath);
+  });
+
+  // An image in the thread: a saved copy (checked against the stored-name
+  // pattern), or a file in the worktree (checked to be an image inside it).
+  const worktreeOf = (id: string) => worktreeManager.getWorktree(id)?.path;
+  ipcMain.handle(IPC.IMAGE_DOWNLOAD, (_event, sessionId: unknown, source: unknown, name: unknown) => {
+    const image = parseImageSource(source);
+    return typeof sessionId === 'string' && image
+      ? downloadImage(sessionId, image, typeof name === 'string' ? name : undefined, worktreeOf)
+      : null;
+  });
+  ipcMain.handle(IPC.IMAGE_SHOW_IN_FOLDER, (_event, sessionId: unknown, source: unknown) => {
+    const image = parseImageSource(source);
+    return typeof sessionId === 'string' && image ? showImageInFolder(sessionId, image, worktreeOf) : false;
   });
 
   ipcMain.handle(IPC.AGENT_SET_MODE, (_event, sessionId: string, mode: string) => {

@@ -38,6 +38,7 @@
   import StatusBarFiles from './StatusBarFiles.svelte';
   import StatusBarLastTurn from './StatusBarLastTurn.svelte';
   import ImageLightbox from './ImageLightbox.svelte';
+  import { ThreadImages, type ShownImage } from '$lib/thread-images.svelte.js';
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -125,7 +126,7 @@
   let view = $state<'summary' | 'tasks' | 'files'>('summary');
   $effect(() => { if (!open) view = 'summary'; });
   /** An image from the files list, shown full size outside the popup. */
-  let lightbox = $state<{ src: string; label: string } | null>(null);
+  const lightbox = new ThreadImages();
 
   let lozengeTitle = $derived(
     `${now.word}${toolSeconds ? ` (${toolSeconds}s)` : ''}${rateMark ? ', rate limit warning' : ''}. Click for tools, background tasks, tasks, files and usage`,
@@ -192,7 +193,7 @@
     <button class="flex items-center gap-0.5 mb-2 text-muted-foreground hover:text-foreground transition-colors" onclick={() => (view = 'summary')}>
       <ChevronLeftIcon class="size-3" />Activity
     </button>
-    <StatusBarFiles {sessionId} {files} onclose={() => (open = false)} onimage={(image: { src: string; label: string }) => (lightbox = image)} />
+    <StatusBarFiles {sessionId} {files} onclose={() => (open = false)} onimage={(image: ShownImage) => lightbox.show([image], 0)} />
   {:else}
     <!-- What the agent is doing, in words. -->
     <div class="flex items-center gap-1.5 min-w-0" data-testid="activity-now">
@@ -372,4 +373,4 @@
 
 <!-- Outside the popup, which closes (and would take it along) on the
      click that lands in the dialog. -->
-<ImageLightbox src={lightbox?.src ?? null} label={lightbox?.label ?? ''} onclose={() => (lightbox = null)} />
+<ImageLightbox images={lightbox} />

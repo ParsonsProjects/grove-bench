@@ -502,7 +502,7 @@ describe('reattach', () => {
       throw new Error('ipc failed');
     });
     const attached = await reattach({
-      images: [{ file: png, name: 'gone.png' }, { name: 'remote.png', url: 'https://example.com/a.png' }],
+      images: [{ file: png, name: 'gone.png' }, { name: 'out/shot.png', path: 'out/shot.png' }],
       attachments: [{ file: pdf, name: 'spec.pdf', mediaType: 'application/pdf', size: 3 }, { name: 'unsaved.zip', mediaType: 'application/zip', size: 3 }],
     }, read);
 
