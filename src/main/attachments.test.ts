@@ -602,7 +602,9 @@ describe('downloadImage and showImageInFolder', () => {
 
   beforeEach(() => {
     downloads = fs.mkdtempSync(path.join(os.tmpdir(), 'grove-downloads-'));
-    worktree = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'grove-wt-')));
+    // The real path, as resolveWorktreeFile reads it: only the native realpath
+    // expands short names (RUNNER~1) that the JS realpathSync keeps.
+    worktree = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'grove-wt-')));
     vi.mocked(app.getPath).mockImplementation((name: string) => (name === 'downloads' ? downloads : userData));
     vi.mocked(shell.showItemInFolder).mockClear();
   });
