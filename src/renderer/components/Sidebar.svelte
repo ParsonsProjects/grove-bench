@@ -14,6 +14,7 @@
   import { draftStore } from '../stores/draft.svelte.js';
   import { groupStore } from '../stores/groups.svelte.js';
   import { todoStore } from '../stores/todo.svelte.js';
+  import { dueText } from '../lib/todo-due.js';
   import { cleanupStore } from '../stores/cleanup.svelte.js';
   import { schedulesStore } from '../stores/schedules.svelte.js';
   import { skillsPanelStore } from '../stores/skillsPanel.svelte.js';
@@ -159,9 +160,19 @@
     const lines = [name];
     const goal = goalStore.get(sessionId);
     if (settingsStore.current.showConversationGoal && goal.text && !goal.hidden) lines.push(`Goal: ${goal.text}`);
+    const todo = todoLine(sessionId);
+    if (todo) lines.push(todo);
     if (subtitle) lines.push(subtitle.text);
     if (shellsTooltip) lines.push(shellsTooltip);
     return lines.join('\n');
+  }
+
+  /** A flagged thread's note and date, for its tooltip and its ring. */
+  function todoLine(sessionId: string): string | null {
+    if (!todoStore.has(sessionId)) return null;
+    const d = todoStore.getDetails(sessionId);
+    const parts = [d.note ? `To do: ${d.note}` : 'To do', d.due ? dueText(d.due, todoStore.now) : ''];
+    return parts.filter(Boolean).join(' · ');
   }
 
   /** Context line under a session row: waiting-reason > live activity >
@@ -179,6 +190,10 @@
     const lastText = quiet ? ((loaded ? lastTextSnippet(msgs) : null) ?? (preview?.lastText || null)) : null;
     const firstPrompt = quiet && !lastText ? ((loaded ? firstPromptSnippet(msgs) : null) ?? (preview?.firstPrompt || null)) : null;
     const pendingToolView = pendingTool ? pendingPermissionView(msgs) : undefined;
+    // A due To do's note is what you need to see, unless the agent is
+    // working or waiting on you right now.
+    const todoNote = quiet && todoStore.isDue(session.id) ? todoStore.getDetails(session.id).note : undefined;
+    if (todoNote) return { text: `To do: ${todoNote}`, tone: 'waiting' };
     return sessionSubtitle({ isRunning, activity: messageStore.getActivity(session.id), pendingTool, pendingToolView, backgroundAgents, lastText, firstPrompt });
   }
 
@@ -249,9 +264,17 @@
     const items: MenuItem[] = [];
     // Until the saved flags are read, changing them could write over them.
     if (todoStore.ready) {
-      items.push(todoStore.has(sessionId)
-        ? { label: 'Clear To Do', icon: 'todo', action: () => todoStore.set(sessionId, false) }
-        : { label: 'Mark as To Do', icon: 'todo', action: () => todoStore.set(sessionId, true) });
+      // The menu's point, so the To do popup opens where the menu was.
+      const at = contextMenu ?? { x: 0, y: 0 };
+      if (todoStore.has(sessionId)) {
+        items.push(
+          { label: 'Edit To Do…', icon: 'todo', action: () => todoStore.openEditor(sessionId, at.x, at.y) },
+          { label: 'Clear To Do', icon: 'todo', action: () => todoStore.set(sessionId, false) },
+        );
+      } else {
+        // Flags at once; the popup that opens takes an optional note and date.
+        items.push({ label: 'Mark as To Do', icon: 'todo', action: () => todoStore.openEditor(sessionId, at.x, at.y) });
+      }
     }
     if (store.isUnread(session)) {
       items.push({ label: 'Mark as Read', icon: 'read', action: () => store.clearNeedsAttention(sessionId) });
@@ -1272,7 +1295,14 @@
           {/if}
           <span class="text-sm truncate min-w-0 flex-1">{label}</span>
           {#if todoStore.has(session.id)}
-            <span class="shrink-0 flex text-foreground/80" role="img" aria-label="To do" title="To do (right-click to clear)" data-row-todo><TodoMark /></span>
+            {@const todoDue = todoStore.isDue(session.id)}
+            <span
+              class="shrink-0 flex {todoDue ? 'text-status-attention' : 'text-foreground/80'}"
+              role="img"
+              aria-label={todoDue ? 'To do, due' : 'To do'}
+              title="{todoLine(session.id)} (right-click to change or clear)"
+              data-row-todo={todoDue ? 'due' : ''}
+            ><TodoMark /></span>
           {/if}
           {#if ts}
             <!-- Invisible, not hidden, while the quick action sits over it, so the name doesn't reflow. -->
@@ -1485,13 +1515,16 @@
             title="{TRIAGE_FILTER_LABELS[f]}: {n}{active ? '. Click again to show all' : ''}"
           >
             {#if f === 'todo'}
-              <TodoMark class="text-foreground/80" />
+              <TodoMark class={todoStore.dueCount > 0 ? 'text-status-attention' : 'text-foreground/80'} />
             {:else}
               <span class="w-1.5 h-1.5 shrink-0 {TRIAGE_DOT[f]}"></span>
             {/if}
             <!-- Narrow sidebar: dot and count only, the label is in the tooltip. -->
             {#if !compact}{TRIAGE_FILTER_LABELS[f]}{/if}
             <span class="text-muted-foreground">{n}</span>
+            {#if f === 'todo' && todoStore.dueCount > 0}
+              <span class="text-status-attention" data-testid="todo-due-count">· {todoStore.dueCount} due</span>
+            {/if}
           </button>
         {/each}
       </div>

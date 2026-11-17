@@ -1198,7 +1198,9 @@ export interface McpAddServerOpts {
 /** Renderer → main request to show a desktop notification. Main gates on
  *  window focus and the per-kind settings, so callers can fire unconditionally. */
 export interface OsNotificationRequest {
-  kind: 'turn_complete' | 'permission_request' | 'pr_alert' | 'plan_usage';
+  /** `todo_due`: a To do's alert time came (prototype: no setting yet; you
+   *  chose the time, so it always shows). */
+  kind: 'turn_complete' | 'permission_request' | 'pr_alert' | 'plan_usage' | 'todo_due';
   /** Session to focus when the notification is clicked. */
   sessionId: string;
   title: string;

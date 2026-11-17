@@ -11,6 +11,8 @@ function saved() {
 beforeEach(() => {
   vi.clearAllMocks();
   todoStore.ids = [];
+  todoStore.details = {};
+  todoStore.alert = null;
   todoStore.ready = true;
 });
 
@@ -77,5 +79,67 @@ describe('todoStore', () => {
     todoStore.ids = ['a', 'b'];
     todoStore.forget('a');
     expect(saved()).toEqual(['b']);
+  });
+});
+
+describe('todoStore notes and dates', () => {
+  const NOON = new Date(2025, 10, 17, 12, 0).getTime();
+  const min = 60_000;
+
+  it('drops the note and date when the flag is cleared', () => {
+    todoStore.set('a', true);
+    todoStore.setDetails('a', { note: 'check by hand' });
+    todoStore.set('a', false);
+    expect(todoStore.getDetails('a')).toEqual({});
+  });
+
+  it('counts flagged threads whose date has come', () => {
+    todoStore.ids = ['a', 'b', 'c'];
+    todoStore.setDetails('a', { due: { at: NOON - min, timed: true } });
+    todoStore.setDetails('b', { due: { at: NOON + min, timed: true } });
+    todoStore.setDetails('gone', { due: { at: NOON - min, timed: false } });
+    todoStore.tick(NOON);
+    expect(todoStore.isDue('a')).toBe(true);
+    expect(todoStore.isDue('b')).toBe(false);
+    expect(todoStore.dueCount).toBe(1);
+  });
+
+  it('alerts once when a timed To do comes due', () => {
+    todoStore.ids = ['a'];
+    todoStore.setDetails('a', { note: 'look at the logs', due: { at: NOON, timed: true } });
+    todoStore.tick(NOON - min);
+    expect(mockGroveBench.notify).not.toHaveBeenCalled();
+
+    todoStore.tick(NOON + min);
+    expect(todoStore.alert).toEqual({ sessionId: 'a', note: 'look at the logs' });
+    expect(mockGroveBench.notify).toHaveBeenCalledTimes(1);
+
+    todoStore.tick(NOON + 2 * min);
+    expect(mockGroveBench.notify).toHaveBeenCalledTimes(1);
+  });
+
+  it('a missed alert only shows as due, with no late notification', () => {
+    todoStore.ids = ['a'];
+    todoStore.setDetails('a', { due: { at: NOON, timed: true } });
+    todoStore.tick(NOON + 60 * min);
+    expect(todoStore.alert).toBeNull();
+    expect(mockGroveBench.notify).not.toHaveBeenCalled();
+    expect(todoStore.isDue('a')).toBe(true);
+  });
+
+  it('a date-only To do never alerts', () => {
+    todoStore.ids = ['a'];
+    todoStore.setDetails('a', { due: { at: NOON, timed: false } });
+    todoStore.tick(NOON + min);
+    expect(mockGroveBench.notify).not.toHaveBeenCalled();
+  });
+
+  it('a new date sets a new alert', () => {
+    todoStore.ids = ['a'];
+    todoStore.setDetails('a', { due: { at: NOON, timed: true } });
+    todoStore.tick(NOON + min);
+    todoStore.setDetails('a', { due: { at: NOON + 10 * min, timed: true } });
+    todoStore.tick(NOON + 11 * min);
+    expect(mockGroveBench.notify).toHaveBeenCalledTimes(2);
   });
 });

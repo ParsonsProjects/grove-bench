@@ -9,6 +9,7 @@
   import StatusBar from './StatusBar.svelte';
   import ThreadViewSelect from './ThreadViewSelect.svelte';
   import ConversationGoal from './ConversationGoal.svelte';
+  import TodoBar from './TodoBar.svelte';
   import GoalFlagIcon from './GoalFlagIcon.svelte';
   import { goalStore } from '../stores/goals.svelte.js';
   import PromptEditor from './PromptEditor.svelte';
@@ -416,6 +417,7 @@
   <div class="flex-1 min-h-0 flex">
     <div class="flex-1 min-w-0 flex flex-col">
       <div class="flex-1 overflow-hidden flex flex-col {activeTab === 'activity' ? '' : 'hidden'}">
+        <TodoBar {sessionId} />
         <ConversationGoal {sessionId} />
         <OutputPanel {sessionId} />
       </div>

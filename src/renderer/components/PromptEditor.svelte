@@ -10,6 +10,7 @@
   import { lazyComponent } from '../lib/lazy-component.js';
   import { canCompact } from '../lib/agent-commands.js';
   import MessageQueue from './MessageQueue.svelte';
+  import ParkedMessages from './ParkedMessages.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Kbd } from '$lib/components/ui/kbd/index.js';
   import * as Command from '$lib/components/ui/command/index.js';
@@ -18,6 +19,7 @@
   import PaperclipIcon from '@lucide/svelte/icons/paperclip';
   import Maximize2Icon from '@lucide/svelte/icons/maximize-2';
   import SquareIcon from '@lucide/svelte/icons/square';
+  import SquareParkingIcon from '@lucide/svelte/icons/square-parking';
   import {
     type AttachedFile,
     processFiles,
@@ -123,8 +125,8 @@
   function handleExpandedDrop(e: DragEvent) {
     if (e.dataTransfer?.types.includes('Files')) void handleDrop(e);
   }
-  function sendExpanded() {
-    handleSubmit();
+  function sendExpanded(mode: 'send' | 'park' = 'send') {
+    handleSubmit(mode);
     // Sent (or queued) empties the box; anything else leaves it to edit.
     if (!value) expanded = false;
   }
@@ -214,9 +216,17 @@
     });
   });
 
-  function handleSubmit() {
+  /** Send (or queue) what's in the box, or with `park`, keep it in the
+   *  thread's parked list without sending it. */
+  function handleSubmit(mode: 'send' | 'park' = 'send') {
     if (!canSend) return;
     const text = value.trim();
+    const park = mode === 'park';
+
+    if (park && text.startsWith('!')) {
+      showDropMessage("A shell command can't be parked. It runs in the Terminal tab as soon as you send it.", true);
+      return;
+    }
 
     // A command can't take attachments, and left in the box they would go
     // on their own with the next Enter.
@@ -247,7 +257,8 @@
 
     // Check if it's a slash command
     if (text.startsWith('/')) {
-      messageStore.submitCommand(sessionId, text);
+      if (park) messageStore.parkMessage(sessionId, { displayText: text, outgoing: text, isCommand: true });
+      else messageStore.submitCommand(sessionId, text);
       value = '';
       closePicker();
       closeCommandPicker();
@@ -267,15 +278,18 @@
     // Kept on a queued prompt so Edit can restore it as typed.
     const typed = { text, attachments: $state.snapshot(attachedFiles) };
 
-    // Sends now if the agent is idle, otherwise parks the prompt in the queue.
+    // Sends now if the agent is idle, otherwise puts the prompt in the
+    // queue. Parking keeps it in the thread until you send it.
     function send(outgoing: string) {
-      messageStore.submitMessage(sessionId, {
+      const msg = {
         displayText,
         outgoing,
         images: images.length > 0 ? images : undefined,
         files: files.length > 0 ? files : undefined,
         typed,
-      });
+      };
+      if (park) messageStore.parkMessage(sessionId, msg);
+      else messageStore.submitMessage(sessionId, msg);
     }
 
     if (refs.length > 0) {
@@ -391,9 +405,10 @@
       return;
     }
 
+    // Alt+Enter parks the message instead of sending it.
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      handleSubmit();
+      handleSubmit(e.altKey ? 'park' : 'send');
     }
   }
 
@@ -660,7 +675,9 @@
     <AttachmentChips files={attachedFiles} onremove={removeAttachedFile} class="px-4 pt-2" />
   {/if}
 
-  <!-- Queued messages (waiting for the agent to be free) -->
+  <!-- Parked messages (kept until you send them), then queued ones
+       (waiting for the agent to be free) -->
+  <ParkedMessages {sessionId} />
   <MessageQueue {sessionId} />
 
   <div class="flex gap-2 items-end px-4 pb-3 pt-2">
@@ -719,9 +736,20 @@
     </div>
 
     <Button
+      variant="subtle"
+      size="icon"
+      onclick={() => handleSubmit('park')}
+      disabled={!canSend}
+      title="Park: keep it in this thread without sending (Alt+Enter)"
+      aria-label="Park"
+      aria-keyshortcuts="Alt+Enter"
+    >
+      <SquareParkingIcon />
+    </Button>
+    <Button
       variant="default"
       size="icon"
-      onclick={handleSubmit}
+      onclick={() => handleSubmit()}
       disabled={!canSend}
       title={willQueue ? 'Add to the queue; sent once the agent is free' : 'Send now'}
       aria-label={willQueue ? 'Queue' : 'Send'}
@@ -764,7 +792,10 @@
           <span class="flex items-center gap-1"><Kbd variant="key">Ctrl+Enter</Kbd> {willQueue ? 'queue' : 'send'}</span>
         </span>
         <Button variant="subtle" size="sm" onclick={() => (expanded = false)}>Done</Button>
-        <Button size="sm" onclick={sendExpanded} disabled={!value.trim()}>
+        <Button variant="subtle" size="sm" onclick={() => sendExpanded('park')} disabled={!value.trim()} title="Keep it in this thread without sending">
+          <SquareParkingIcon />Park
+        </Button>
+        <Button size="sm" onclick={() => sendExpanded()} disabled={!value.trim()}>
           {#if willQueue}<ListPlusIcon />Queue{:else}<ArrowUpIcon />Send{/if}
         </Button>
       {/snippet}

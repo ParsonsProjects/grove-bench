@@ -24,6 +24,8 @@
   import MemoryToast from './components/MemoryToast.svelte';
   import CleanupToast from './components/CleanupToast.svelte';
   import PlanUsageToast from './components/PlanUsageToast.svelte';
+  import TodoDueToast from './components/TodoDueToast.svelte';
+  import TodoEditor from './components/TodoEditor.svelte';
   import { memoryStore } from './stores/memory.svelte.js';
   import { prerequisitesStore } from './stores/prerequisites.svelte.js';
   import { lazyComponent } from './lib/lazy-component.js';
@@ -403,6 +405,16 @@
     void bookmarkStore.load();
     void groupStore.load();
     void todoStore.load();
+    // Follow-ups: To do dates come due (and alert), parked messages reach
+    // their send-at time. Checked every 15 s, and once on start so a date
+    // that passed while the app was closed shows as due straight away.
+    const followUpTick = () => {
+      const now = Date.now();
+      todoStore.tick(now);
+      messageStore.sendDueParked(now);
+    };
+    followUpTick();
+    const followUpTimer = setInterval(followUpTick, 15_000);
     // Listens before the restore ends: main's scheduler starts after it.
     schedulesStore.init();
     void panelStore.load();
@@ -503,6 +515,7 @@
       uninstallErrors();
       uninstallTooltips();
       uninstallFreezeWatch();
+      clearInterval(followUpTimer);
       stopFocusRefresh();
       stopIdleManager();
       window.removeEventListener('keydown', handleGlobalKeydown);
@@ -671,8 +684,15 @@
      above the other instead of on top of each other. -->
 <div class="fixed bottom-16 right-4 z-50 flex max-w-md flex-col items-end gap-2 pointer-events-none *:pointer-events-auto">
   <PlanUsageToast />
+  <TodoDueToast />
   <MemoryToast />
   <CleanupToast />
 </div>
+
+{#if todoStore.editing}
+  {#key todoStore.editing}
+    <TodoEditor sessionId={todoStore.editing.sessionId} x={todoStore.editing.x} y={todoStore.editing.y} />
+  {/key}
+{/if}
 
 <SpellcheckMenu />

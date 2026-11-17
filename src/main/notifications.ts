@@ -14,6 +14,7 @@ export function kindEnabled(settings: GroveBenchSettings, kind: OsNotificationRe
     case 'permission_request': return settings.notifyOnPermission;
     case 'pr_alert': return settings.notifyOnPrAlert;
     case 'plan_usage': return settings.notifyOnPlanUsage;
+    case 'todo_due': return true;
   }
 }
 

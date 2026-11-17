@@ -20,6 +20,19 @@ window.addEventListener('unhandledrejection', (e) => {
 const now = Date.now();
 const min = 60_000;
 
+// /demo.html?followups adds To do notes and dates and parked messages
+// (the follow-ups prototype), leaving the plain demo as it was.
+const FOLLOW_UPS = new URLSearchParams(location.search).has('followups');
+const DEMO_TODO_IDS = FOLLOW_UPS ? ['s-e2e', 's-readme', 's-perf'] : [];
+if (FOLLOW_UPS) {
+  const today = new Date(now); today.setHours(0, 0, 0, 0);
+  const tomorrow9 = new Date(today); tomorrow9.setDate(tomorrow9.getDate() + 1); tomorrow9.setHours(9, 0, 0, 0);
+  localStorage.setItem('grove-bench:todo-details', JSON.stringify({
+    's-e2e': { note: 'Check the e2e dashboard by hand: did the retries stop the flaky failures?', due: { at: today.getTime(), timed: false } },
+    's-readme': { note: 'Ask Maya if the install steps still match the new installer', due: { at: tomorrow9.getTime(), timed: true } },
+  }));
+}
+
 // The Claude Code adapter's mode options (PERMISSION_MODE_OPTIONS in
 // src/main/adapters/claude-code.ts), for both the draft and the live
 // conversation, so the two don't drift apart.
@@ -523,7 +536,7 @@ const api: Record<string, unknown> = {
   ],
   getUnreadSessions: async () => [],
   setUnreadSessions: () => {},
-  getTodoSessions: async () => [],
+  getTodoSessions: async () => DEMO_TODO_IDS,
   setTodoSessions: () => {},
   listSkillSchedules: async () => structuredClone(demoSchedules),
   saveSkillSchedule: async (input: SkillScheduleInput) => {
@@ -839,6 +852,17 @@ async function seedConversations() {
   messageStore.setIsReady('s-oauth', true);
   messageStore.setIsRunning('s-e2e', false);
   messageStore.setIsReady('s-e2e', true);
+
+  if (FOLLOW_UPS) {
+    const tomorrow9 = new Date(now); tomorrow9.setDate(tomorrow9.getDate() + 1); tomorrow9.setHours(9, 0, 0, 0);
+    messageStore.parkedBySession = {
+      ...messageStore.parkedBySession,
+      's-sidebar': [
+        { id: 'p1', displayText: 'Once the tests pass, update docs/help/sidebar.md for the two-line rows', outgoing: 'Once the tests pass, update docs/help/sidebar.md for the two-line rows' },
+        { id: 'p2', displayText: 'Re-run the e2e suite and list any test that failed twice', outgoing: 'Re-run the e2e suite and list any test that failed twice', sendAt: tomorrow9.getTime() },
+      ],
+    };
+  }
 }
 
 export {};

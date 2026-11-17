@@ -3481,3 +3481,49 @@ describe('ingestEvent — tool_progress summary', () => {
     expect(messageStore.getActivity(SID)).toMatchObject({ toolSummary: 'npm run build', elapsedSeconds: 2 });
   });
 });
+
+describe('parked messages', () => {
+  it('keeps a parked message without sending it', () => {
+    messageStore.parkMessage(SID, { displayText: 'later', outgoing: 'later' });
+    expect(mockGroveBench.sendMessage).not.toHaveBeenCalled();
+    expect(messageStore.getParked(SID)).toMatchObject([{ displayText: 'later' }]);
+    expect(messageStore.getQueue(SID)).toEqual([]);
+  });
+
+  it('Send sends it now when the agent is free, and queues it when busy', () => {
+    messageStore.parkMessage(SID, { displayText: 'a', outgoing: 'a' });
+    messageStore.parkMessage(SID, { displayText: 'b', outgoing: 'b' });
+    const [a, b] = messageStore.getParked(SID);
+
+    expect(messageStore.sendParked(SID, a.id)).toBe('sent');
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, 'a', undefined, undefined);
+    expect(messageStore.sendParked(SID, b.id)).toBe('queued');
+    expect(messageStore.getQueue(SID)).toMatchObject([{ displayText: 'b' }]);
+    expect(messageStore.getParked(SID)).toEqual([]);
+  });
+
+  it('Edit moves it back to the message box', () => {
+    messageStore.parkMessage(SID, { displayText: 'fix it', outgoing: 'fix it', typed: { text: 'fix it', attachments: [] } });
+    const [item] = messageStore.getParked(SID);
+    expect(messageStore.editParked(SID, item.id)).toBe(true);
+    expect(messageStore.getDraft(SID)).toBe('fix it');
+    expect(messageStore.getParked(SID)).toEqual([]);
+  });
+
+  it('sends one whose send-at time has come, and leaves the rest', () => {
+    messageStore.parkMessage(SID, { displayText: 'due', outgoing: 'due', sendAt: 1000 });
+    messageStore.parkMessage(SID, { displayText: 'later', outgoing: 'later', sendAt: 5000 });
+    messageStore.parkMessage(SID, { displayText: 'whenever', outgoing: 'whenever' });
+
+    messageStore.sendDueParked(2000);
+
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, 'due', undefined, undefined);
+    expect(messageStore.getParked(SID).map((m) => m.displayText)).toEqual(['later', 'whenever']);
+  });
+
+  it('goes when the thread is removed', () => {
+    messageStore.parkMessage(SID, { displayText: 'x', outgoing: 'x' });
+    messageStore.destroyAllSessions();
+    expect(messageStore.getParked(SID)).toEqual([]);
+  });
+});

@@ -272,6 +272,13 @@ export interface QueuedMessage {
   typed?: { text: string; attachments: AttachedFile[] };
 }
 
+/** A message kept and not sent: it waits until you send it, or until its
+ *  send-at time, when it goes the way Send does (now if the agent is free,
+ *  otherwise to the queue). */
+export interface ParkedMessage extends QueuedMessage {
+  sendAt?: number;
+}
+
 function nextId(): string {
   return `msg_${++msgCounter}_${Date.now()}`;
 }
@@ -460,6 +467,10 @@ class MessageStore {
   /** Set when the user intervened (Stop, rewind). Queued prompts stay put until
    *  the user clicks Resume, so a stale follow-up doesn't fire right after a stop. */
   queuePausedBySession = $state<Record<string, boolean>>({});
+
+  /** Parked messages, oldest first. PROTOTYPE: kept in memory only; saved
+   *  with the thread once the design is settled. */
+  parkedBySession = $state<Record<string, ParkedMessage[]>>({});
 
   /** Preserved edit history after conversation-only rewind (keyed by session) */
   preservedEditHistory = $state<Record<string, { filePath: string; toolName: string; toolInput: unknown; edits: ChatToolCallMessage[] }[]>>({});
@@ -1167,6 +1178,62 @@ class MessageStore {
     this.removeQueuedMessage(sessionId, id);
     this.appendToPrompt(sessionId, item.typed?.text ?? item.displayText, item.typed?.attachments);
     return true;
+  }
+
+  // ── Parked messages ──────────────────────────────────────────────────
+
+  getParked(sessionId: string): ParkedMessage[] {
+    return this.parkedBySession[sessionId] ?? [];
+  }
+
+  /** Keep a message without sending it. */
+  parkMessage(sessionId: string, msg: Omit<ParkedMessage, 'id'>): void {
+    this.parkedBySession = {
+      ...this.parkedBySession,
+      [sessionId]: [...this.getParked(sessionId), { ...msg, id: nextId() }],
+    };
+  }
+
+  removeParked(sessionId: string, id: string): void {
+    const remaining = this.getParked(sessionId).filter((m) => m.id !== id);
+    const next = { ...this.parkedBySession };
+    if (remaining.length > 0) next[sessionId] = remaining;
+    else delete next[sessionId];
+    this.parkedBySession = next;
+  }
+
+  /** Send a parked message now (or queue it behind the agent's turn). */
+  sendParked(sessionId: string, id: string): 'sent' | 'queued' | null {
+    const item = this.getParked(sessionId).find((m) => m.id === id);
+    if (!item) return null;
+    this.removeParked(sessionId, id);
+    const { sendAt: _sendAt, id: _id, ...msg } = item;
+    return this.submitOrQueue(sessionId, msg);
+  }
+
+  /** Put a parked message back in the message box to change it. */
+  editParked(sessionId: string, id: string): boolean {
+    const item = this.getParked(sessionId).find((m) => m.id === id);
+    if (!item) return false;
+    this.removeParked(sessionId, id);
+    this.appendToPrompt(sessionId, item.typed?.text ?? item.displayText, item.typed?.attachments);
+    return true;
+  }
+
+  setParkedSendAt(sessionId: string, id: string, sendAt: number | undefined): void {
+    this.parkedBySession = {
+      ...this.parkedBySession,
+      [sessionId]: this.getParked(sessionId).map((m) => (m.id === id ? { ...m, sendAt } : m)),
+    };
+  }
+
+  /** Send every parked message whose time has come. */
+  sendDueParked(now: number): void {
+    for (const [sessionId, items] of Object.entries(this.parkedBySession)) {
+      for (const item of items) {
+        if (item.sendAt !== undefined && item.sendAt <= now) this.sendParked(sessionId, item.id);
+      }
+    }
   }
 
   /** Lift a pause set by Stop/rewind or a usage limit and send the next
@@ -2893,7 +2960,7 @@ class MessageStore {
       this.activeTabBySession, this.viewModeBySession,
       this.draftBySession, this.attachmentsBySession, this.preservedEditHistory, this.paginationBySession,
       this.rewindDialogOpen, this.rewindDialogTarget, this.pendingJumpBySession, this.promptInsertBySession,
-      this.queuedBySession, this.queuePausedBySession,
+      this.queuedBySession, this.queuePausedBySession, this.parkedBySession,
       // Plain (non-reactive) bookkeeping
       this.pendingMessageAfterClear, this.stoppingSession, this.awaitingResponse, this.userExplicitMode,
     ] as Record<string, unknown>[];
