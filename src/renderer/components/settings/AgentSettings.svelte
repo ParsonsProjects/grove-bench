@@ -22,8 +22,12 @@
   import { Input } from '$lib/components/ui/input/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Notice } from '$lib/components/ui/notice/index.js';
+  import * as Segmented from '$lib/components/ui/segmented/index.js';
+  import MarkdownBlock from '../MarkdownBlock.svelte';
+  import { lazyComponent } from '$lib/lazy-component.js';
   import XIcon from '@lucide/svelte/icons/x';
   import PlusIcon from '@lucide/svelte/icons/plus';
+  import Maximize2Icon from '@lucide/svelte/icons/maximize-2';
 
   // ── Per-agent defaults ──
   // One group per registered agent: its credentials, its default model and
@@ -190,6 +194,18 @@
     removingAccount = null;
     await agentsStore.refresh();
     await reloadGroups();
+  }
+
+  // System prompt append: Write shows the text to edit, Preview its Markdown
+  // rendered. The larger editor shares the choice, and loads when first
+  // opened, then stays mounted so it closes with its animation.
+  let promptView = $state<'write' | 'preview'>('write');
+  let promptExpanded = $state(false);
+  let promptEditorWanted = $state(false);
+  const loadTextEditor = lazyComponent(() => import('../TextEditorDialog.svelte'));
+  function expandPrompt() {
+    promptEditorWanted = true;
+    promptExpanded = true;
   }
 
   // The user's own ACP agents (read at launch).
@@ -448,12 +464,51 @@
     for="settings-prompt"
     description="Instructions added to every thread."
   >
-    <Textarea
-      id="settings-prompt"
-      bind:value={settingsStore.draft.defaultSystemPromptAppend}
-      class="min-h-20 max-h-52 resize-y"
-    />
+    {#snippet actions()}
+      <Segmented.Root bind:value={() => promptView, (v) => (promptView = v === 'preview' ? 'preview' : 'write')} aria-label="System prompt view">
+        <Segmented.Item value="write">Write</Segmented.Item>
+        <Segmented.Item value="preview">Preview</Segmented.Item>
+      </Segmented.Root>
+      <Button
+        variant="quiet"
+        size="icon-xs"
+        onclick={expandPrompt}
+        title="Open in a larger editor"
+        aria-label="Expand the system prompt"
+      >
+        <Maximize2Icon aria-hidden="true" />
+      </Button>
+    {/snippet}
+    {#if promptView === 'preview'}
+      <div class="min-h-20 max-h-52 overflow-auto border border-input bg-background dark:bg-input/30 px-3 py-2 text-sm" data-testid="system-prompt-preview">
+        {#if settingsStore.draft.defaultSystemPromptAppend.trim()}
+          <MarkdownBlock content={settingsStore.draft.defaultSystemPromptAppend} />
+        {:else}
+          <p class="text-muted-foreground">Nothing to preview.</p>
+        {/if}
+      </div>
+    {:else}
+      <Textarea
+        id="settings-prompt"
+        bind:value={settingsStore.draft.defaultSystemPromptAppend}
+        class="min-h-20 max-h-52 resize-y"
+      />
+    {/if}
   </SettingRow>
+
+  {#if promptEditorWanted}
+    {#await loadTextEditor() then TextEditor}
+      <TextEditor
+        bind:open={promptExpanded}
+        bind:value={settingsStore.draft.defaultSystemPromptAppend}
+        bind:view={promptView}
+        title="System prompt append"
+        description="Instructions added to every thread. Changes save as you type."
+        markdown
+        spellcheck={settingsStore.current.spellcheck}
+      />
+    {/await}
+  {/if}
 
   <ListSetting
     setting="working-directories"

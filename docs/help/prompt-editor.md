@@ -8,6 +8,10 @@ Type your message and press **Enter** to send. The agent will begin processing i
 
 For multi-line messages, use **Shift+Enter** to add a new line without sending.
 
+## Larger Editor
+
+For a long message, click the expand button beside the paperclip. The same message opens in a larger editor, where **Enter** adds a new line and **Ctrl+Enter** sends it (or adds it to the queue while the agent works). **Done** or **Escape** takes you back to the prompt editor with the text kept. You can paste images and drop files there too.
+
 ## Suggested Next Prompt
 
 After a turn, the empty prompt editor may show a grey guess at your next message, such as "Run the tests". Press **Tab** to put it in the box, then **Enter** to send it or edit it first. Start typing to ignore it.
