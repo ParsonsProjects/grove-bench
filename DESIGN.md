@@ -123,7 +123,7 @@ class WorktreeManager {
 
 **Worktree location strategy:**
 
-Worktrees are created in the app's data folder, `%APPDATA%\grove-bench\worktrees\<repo-hash>\<short-id>\`, where `repo-hash` is the first 8 hex characters of the project path's SHA-256 and `short-id` the first 8 characters of a UUID. The manifest (`manifest.json`), each project's `config.json` and the trash (`.trash`) live there too. Short IDs help avoid Windows' 260-character PATH_MAX limit, which is a real concern when combined with deep `node_modules` paths. (An earlier version of this document put worktrees in `<repoPath>/.grove-wt/<short-id>/`.)
+Worktrees are created in the app's data folder, `%APPDATA%\grove-bench\worktrees\<repo-hash>\<short-id>\`, where `repo-hash` is the first 8 hex characters of the project path's SHA-256 and `short-id` the first 8 characters of a UUID. The manifest (`manifest.json`), each project's `config.json`, the trash (`.trash`) and the folders of removed threads still being deleted (`.removing`, Section 7.2) live there too. Short IDs help avoid Windows' 260-character PATH_MAX limit, which is a real concern when combined with deep `node_modules` paths. (An earlier version of this document put worktrees in `<repoPath>/.grove-wt/<short-id>/`.)
 
 Settings > Git > **Worktree folder** puts new worktrees in another folder instead, as `<folder>\<repo-hash>\<short-id>\`: a short folder on a Dev Drive, say, which can make installs faster. The manifest and config stay in the data folder. How that folder is handled:
 
@@ -435,12 +435,23 @@ User clicks "X" on agent pane OR closes app
     → Wait 500ms for Windows file handles to release
   → Prompt: "Delete branch <branch-name>?" (default: yes for clean branches, no if commits exist)
   → WorktreeManager.remove()
-    → Try: git worktree remove <path>
-    → If EACCES/EPERM: git worktree remove --force <path>
-    → If still fails: fs.rm(path, {recursive: true, force: true}) then git worktree prune
-    → If even that fails: log warning, flag for manual cleanup on next startup
-    → Optionally: git branch -d <branch>
+    → Move the folder to <root>\.removing\<id>~<time> (a rename on the same drive)
+    → git worktree prune (git forgets it, and its branch is free)
+    → Optionally: git branch -d <branch> (-D for a branch Grove created)
+    → Manifest entry kept hidden (pendingRemoval, removingPath) until the files go
+    → The delete thread (remove-tree.ts) deletes the files in the background,
+      one folder at a time, with Electron's asar support off; then the entry goes
+    → If the folder can't be moved (a file in it held open):
+      → Try: git worktree remove <path>
+      → If EACCES/EPERM: git worktree remove --force <path>
+      → If still fails: fs.rm(path, {recursive: true, force: true}) then git worktree prune
+      → If even that fails: log warning, flag for manual cleanup on next startup
 ```
+
+Deleting many threads at once (Clean Up Old Threads) runs one after another,
+each returning once its folder has moved, so the wait isn't the deletes'.
+The sweep finishes a delete that a quit cut short, and deletes anything in
+`.removing` with no manifest entry once it is 10 minutes old.
 
 ### 7.3 App Shutdown
 

@@ -20,6 +20,7 @@
   import FolderIcon from '@lucide/svelte/icons/folder';
   import CheckIcon from '@lucide/svelte/icons/check';
   import XIcon from '@lucide/svelte/icons/x';
+  import MinusIcon from '@lucide/svelte/icons/minus';
   import { Pulse } from '$lib/components/ui/pulse/index.js';
   import SidebarGroups from './SidebarGroups.svelte';
   import SidebarSection from './SidebarSection.svelte';
@@ -568,6 +569,19 @@
     // the run carries on, and the toast says how it went (failures included,
     // so they aren't also shown as the app's error).
     for (const item of items) {
+      // Checked again just before its turn, since the dialog can be closed
+      // meanwhile: one opened again since (it is showing, running, or
+      // waiting to reconnect) is in use, so it is left alone; one deleted
+      // meanwhile is already gone.
+      const session = store.sessions.find((s) => s.id === item.id);
+      if (!session) {
+        item.state = 'done';
+        continue;
+      }
+      if (store.activeSessionId === item.id || store.isOpenTab(session)) {
+        item.state = 'skipped';
+        continue;
+      }
       item.state = 'removing';
       const removed = await destroySessionById(item.id, deleteBranches, (message) => { item.error = message; });
       item.state = removed ? 'done' : 'failed';
@@ -1760,6 +1774,8 @@
                     <CheckIcon class="size-3 text-green-400" />
                   {:else if item.state === 'failed'}
                     <XIcon class="size-3 text-red-400" />
+                  {:else if item.state === 'skipped'}
+                    <MinusIcon class="size-3 text-muted-foreground" />
                   {:else}
                     <Pulse size="xs" tone="muted" motion="none" />
                   {/if}
@@ -1774,6 +1790,8 @@
                       removed
                     {:else if item.state === 'failed'}
                       <span class="text-red-400">couldn't remove: {item.error}</span>
+                    {:else if item.state === 'skipped'}
+                      left alone: opened again
                     {:else}
                       waiting
                     {/if}

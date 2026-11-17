@@ -6,7 +6,9 @@
  * went.
  */
 
-type CleanupItemState = 'waiting' | 'removing' | 'done' | 'failed';
+/** `skipped`: opened again while the run waited to reach it, so left alone
+ *  (the dialog can be closed mid-run, and the thread finder still opens it). */
+type CleanupItemState = 'waiting' | 'removing' | 'done' | 'failed' | 'skipped';
 
 interface CleanupItem {
   id: string;
@@ -20,6 +22,8 @@ interface CleanupItem {
 interface CleanupResult {
   removed: number;
   failed: Array<{ label: string; error: string }>;
+  /** Labels of the threads left alone because they were opened again. */
+  skipped: string[];
 }
 
 class CleanupStore {
@@ -30,8 +34,8 @@ class CleanupStore {
 
   readonly running = $derived(this.run !== null);
   readonly total = $derived(this.run?.items.length ?? 0);
-  /** Threads the run has finished with, removed or not. */
-  readonly settled = $derived(this.run?.items.filter((i) => i.state === 'done' || i.state === 'failed').length ?? 0);
+  /** Threads the run has finished with: removed, failed or left alone. */
+  readonly settled = $derived(this.run?.items.filter((i) => i.state !== 'waiting' && i.state !== 'removing').length ?? 0);
 
   /** Start a run over these threads, all waiting. Replaces the last result. */
   start(items: Array<Omit<CleanupItem, 'state' | 'error'>>): CleanupItem[] {
@@ -46,6 +50,7 @@ class CleanupStore {
     this.result = {
       removed: items.filter((i) => i.state === 'done').length,
       failed: items.filter((i) => i.state === 'failed').map((i) => ({ label: i.label, error: i.error ?? 'Unknown error' })),
+      skipped: items.filter((i) => i.state === 'skipped').map((i) => i.label),
     };
     this.run = null;
   }

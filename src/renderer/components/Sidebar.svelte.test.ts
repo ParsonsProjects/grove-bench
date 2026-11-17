@@ -1635,6 +1635,7 @@ describe('Sidebar clean-up dialog', () => {
       expect(cleanupStore.result).toEqual({
         removed: 1,
         failed: [{ label: 'Alpha one', error: 'Another thread is still working in this thread\'s worktree.' }],
+        skipped: [],
       });
       expect(store.error).toBeNull();
       expect(store.sessions.map((s) => s.id)).toEqual(['live', 'dirty', 'a', 'recent']);
@@ -1654,6 +1655,7 @@ describe('Sidebar clean-up dialog', () => {
       expect(cleanupStore.result).toEqual({
         removed: 0,
         failed: [{ label: 'Alpha one', error: 'locked' }, { label: 'Bravo one', error: 'locked' }],
+        skipped: [],
       });
     });
 
@@ -1693,7 +1695,7 @@ describe('Sidebar clean-up dialog', () => {
 
         finishers.shift()!();
         await removalDone();
-        expect(cleanupStore.result).toEqual({ removed: 2, failed: [] });
+        expect(cleanupStore.result).toEqual({ removed: 2, failed: [], skipped: [] });
       });
 
       it('marks a thread that could not be removed, and carries on', async () => {
@@ -1706,6 +1708,42 @@ describe('Sidebar clean-up dialog', () => {
         await waitFor(() => expect(within(dialog).getByTestId('cleanup-item-a')).toHaveAttribute('data-state', 'failed'));
         expect(within(dialog).getByTestId('cleanup-item-a')).toHaveTextContent('couldn\'t remove: locked');
         expect(within(dialog).getByTestId('cleanup-item-b')).toHaveAttribute('data-state', 'removing');
+        finishers.shift()!();
+        await removalDone();
+      });
+
+      it('leaves alone a thread opened again while it waited, and says so', async () => {
+        const dialog = await openChecked();
+        await confirmRemove(dialog);
+        await within(dialog).findByRole('progressbar');
+        await fireEvent.click(within(dialog).getByRole('button', { name: 'Hide' }));
+
+        // Bravo waits behind Alpha; the user opens it from the thread finder meanwhile.
+        store.activeSessionId = 'b';
+        store.updateStatus('b', 'running');
+
+        finishers.shift()!();
+        await waitFor(() => expect(cleanupStore.running).toBe(false));
+        expect(destroySession.mock.calls.map(([id]) => id)).toEqual(['a']);
+        expect(store.sessions.some((s) => s.id === 'b')).toBe(true);
+        expect(cleanupStore.result).toEqual({ removed: 1, failed: [], skipped: ['Bravo one'] });
+      });
+
+      it('shows a thread left alone in the progress view', async () => {
+        const dialog = await openChecked();
+        // Dirty one too, so Bravo isn't the last and the dialog is still open after it.
+        await fireEvent.click(within(dialog).getByLabelText(/Dirty one/));
+        await confirmRemove(dialog);
+        await within(dialog).findByRole('progressbar');
+        store.updateStatus('b', 'running');
+
+        await finishOne(2);
+        expect(within(dialog).getByTestId('cleanup-item-b')).toHaveAttribute('data-state', 'skipped');
+        expect(within(dialog).getByTestId('cleanup-item-b')).toHaveTextContent('left alone: opened again');
+        expect(within(dialog).getByTestId('cleanup-item-dirty')).toHaveAttribute('data-state', 'removing');
+        expect(within(dialog).getByText('2 of 3 done')).toBeInTheDocument();
+        expect(destroySession.mock.calls.map(([id]) => id)).toEqual(['a', 'dirty']);
+
         finishers.shift()!();
         await removalDone();
       });
@@ -1735,7 +1773,7 @@ describe('Sidebar clean-up dialog', () => {
         await waitFor(() => expect(cleanupStore.running).toBe(false));
         expect(screen.getByTitle('Clean up old threads')).toHaveAttribute('aria-busy', 'false');
         expect(destroySession.mock.calls.map(([id]) => id)).toEqual(['a', 'b']);
-        expect(cleanupStore.result).toEqual({ removed: 2, failed: [] });
+        expect(cleanupStore.result).toEqual({ removed: 2, failed: [], skipped: [] });
       });
     });
 
