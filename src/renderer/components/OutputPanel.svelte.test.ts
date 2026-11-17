@@ -772,6 +772,105 @@ describe('OutputPanel: scrolling up loads older messages', () => {
   });
 });
 
+describe('OutputPanel: a thread too short to scroll reads on', () => {
+  const texts = (prefix: string, n: number): ChatMessage[] =>
+    Array.from({ length: n }, (_, i) => ({ kind: 'text', id: `${prefix}${i}`, text: `${prefix} ${i}`, uuid: `${prefix}-${i}` }));
+  const tools = (prefix: string, n: number): ChatMessage[] =>
+    Array.from({ length: n }, (_, i) => ({ kind: 'tool_call', id: `${prefix}${i}`, toolName: 'Read', toolInput: { file_path: 'a.ts' }, toolUseId: `${prefix}-tu${i}`, uuid: `${prefix}-${i}`, pending: false }));
+  const drawn = (container: HTMLElement) => [...container.querySelectorAll<HTMLElement>('[data-msg-id]')].map((el) => el.dataset.msgId);
+  const nextFrame = () => new Promise((r) => requestAnimationFrame(r));
+
+  /** loadOlderEvents, prepending `pages` (newest first) one per call, with
+   *  `left[i]` events still unloaded after page i. */
+  function pagesOfHistory(pages: ChatMessage[][], left: number[]) {
+    return vi.spyOn(messageStore, 'loadOlderEvents').mockImplementation(async () => {
+      messageStore.messagesBySession = { [SID]: [...pages.shift()!, ...messageStore.getMessages(SID)] };
+      messageStore.setPagination(SID, 600, left.shift()!);
+    });
+  }
+
+  beforeEach(() => {
+    store.activeSessionId = SID;
+    messageStore.setViewMode(SID, 'detailed');
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it('reads older history until a Focus thread whose newest page shows nothing fills the view', async () => {
+    messageStore.setViewMode(SID, 'focus');
+    // The newest page: tool calls only, which Focus hides.
+    messageStore.messagesBySession = { [SID]: tools('t', 30) };
+    messageStore.setPagination(SID, 600, 400);
+    // The prompt and its reply, two rows; then ten more rows of replies.
+    const load = pagesOfHistory(
+      [[{ kind: 'user', id: 'u1', text: 'fix it' }, { kind: 'text', id: 'ans', text: 'Done', uuid: 'a-ans' }], texts('o', 10)],
+      [200, 100],
+    );
+    const { container, queryByText } = render(OutputPanel, { sessionId: SID });
+    layOut(container);
+    // Not an empty new thread.
+    expect(queryByText('Waiting for input...')).not.toBeInTheDocument();
+
+    await vi.waitFor(() => expect(drawn(container)).toContain('o0'));
+    expect(drawn(container)).toContain('ans');
+    // Twelve rows of 100px scroll in 500px: scrolling up reads the rest.
+    await nextFrame();
+    await tick();
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
+  it('reads nothing more while the thread fills the view', async () => {
+    messageStore.messagesBySession = { [SID]: texts('r', 20) };
+    messageStore.setPagination(SID, 300, 100);
+    const load = pagesOfHistory([texts('o', 60)], [0]);
+    const { container } = render(OutputPanel, { sessionId: SID });
+    layOut(container);
+
+    await vi.waitFor(() => expect(drawn(container)).toHaveLength(20));
+    await nextFrame();
+    await nextFrame();
+    await tick();
+    expect(load).not.toHaveBeenCalled();
+  });
+
+  it('reads on only once a hidden conversation is opened', async () => {
+    store.activeSessionId = 'another-session';
+    messageStore.setViewMode(SID, 'focus');
+    messageStore.messagesBySession = { [SID]: tools('t', 30) };
+    messageStore.setPagination(SID, 600, 400);
+    const load = pagesOfHistory([texts('o', 10)], [0]);
+    const { container } = render(OutputPanel, { sessionId: SID });
+    layOut(container);
+    await nextFrame();
+    await nextFrame();
+    expect(load).not.toHaveBeenCalled();
+
+    store.activeSessionId = SID;
+
+    await vi.waitFor(() => expect(drawn(container)).toContain('o0'));
+    expect(load).toHaveBeenCalledTimes(1);
+  });
+
+  it('draws the loaded messages it held back first, a batch per frame', async () => {
+    messageStore.setViewMode(SID, 'focus');
+    // One run of notes between tool calls (hidden in Focus): the newest 50
+    // messages draw as a fold of notes and the answer, two rows.
+    const run = Array.from({ length: 70 }, (_, i) => [texts('n', 70)[i], tools('t', 70)[i]]).flat();
+    messageStore.messagesBySession = { [SID]: [{ kind: 'user', id: 'u1', text: 'fix it' }, ...run, { kind: 'text', id: 'ans', text: 'Done', uuid: 'a-ans' }] };
+    const load = vi.spyOn(messageStore, 'loadOlderEvents');
+    const { container } = render(OutputPanel, { sessionId: SID });
+    const el = layOut(container);
+    const added: number[] = [];
+    new MutationObserver((records) => {
+      added.push(records.reduce((n, r) => n + [...r.addedNodes].filter((node) => node instanceof HTMLElement && node.dataset.msgId).length, 0));
+    }).observe(el, { childList: true, subtree: true });
+
+    await vi.waitFor(() => expect(drawn(container)).toContain('u1'));
+    expect(Math.max(...added)).toBeLessThanOrEqual(10);
+    // Nothing more to read.
+    expect(load).not.toHaveBeenCalled();
+  });
+});
+
 describe("OutputPanel: a hidden conversation's chat", () => {
   const replies = (n: number) => Array.from({ length: n }, (_, i) => ({ kind: 'text', id: `m${i}`, text: `reply ${i}`, uuid: `a${i}` }));
   const drawn = (container: HTMLElement) => [...container.querySelectorAll<HTMLElement>('[data-msg-id]')].map((el) => el.dataset.msgId);

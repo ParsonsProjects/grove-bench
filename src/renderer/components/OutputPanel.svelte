@@ -57,6 +57,8 @@
 
   // ─── Lazy loading: only render recent messages, load older on demand ───
   const PAGE_SIZE = 50;
+  /** Within this many px of the bottom, the view follows new output. */
+  const FOLLOW_PX = 100;
   let visibleCount = $state(PAGE_SIZE);
   let hasOlderMessages = $derived(filteredMessages.length > visibleCount);
 
@@ -299,6 +301,53 @@
       visibleCount = Math.min(drawn + PAGE_SIZE, filteredMessages.length);
       renderCap = drawn + RENDER_BATCH;
     });
+  }
+
+  // ─── A thread too short to scroll reads on by itself ───
+  // Scrolling is what loads older messages, so a thread whose newest page
+  // shows too little to scroll would stop at the "Load older" row: Focus
+  // over a long run of tool calls or a subagent's work, say, where the
+  // newest page held nothing it shows, or only a line, and the last reply
+  // sat in the page before. Until the reader can scroll up (FOLLOW_PX past
+  // the bottom, as handleScroll needs), the loaded messages are drawn, then
+  // the next page of history is read, until there is no more.
+  $effect(() => {
+    // Checked again as messages join, a page finishes drawing or a load ends.
+    const _len = filteredMessages.length;
+    if (!paneShown || renderCap !== Infinity || held || isLoadingOlderEvents) return;
+    if (!hasOlderMessages && !hasUnloadedEvents) return;
+    // A frame later, once the rows just drawn are laid out.
+    const frame = requestAnimationFrame(() => void fillView());
+    return () => cancelAnimationFrame(frame);
+  });
+
+  let filling = false;
+  async function fillView() {
+    if (filling) return;
+    filling = true;
+    try {
+      while (paneShown && !jumpScrolling && renderCap === Infinity && !held) {
+        const el = scrollContainer;
+        // No layout (hidden), or it scrolls: scrolling up reads the rest.
+        if (!el || el.clientHeight === 0 || el.scrollHeight - el.clientHeight >= FOLLOW_PX) return;
+        if (hasOlderMessages) {
+          // Loaded but not drawn: the next of them, a batch per frame. The
+          // effect above checks again once they're drawn.
+          const drawn = Math.min(visibleCount, filteredMessages.length);
+          visibleCount = Math.min(drawn + PAGE_SIZE, filteredMessages.length);
+          renderCap = drawn + RENDER_BATCH;
+          return;
+        }
+        if (!hasUnloadedEvents || isLoadingOlderEvents) return;
+        const unloaded = unloadedEventCount;
+        await messageStore.loadOlderEvents(sessionId);
+        await tick();
+        // The page didn't load.
+        if (unloadedEventCount >= unloaded) return;
+      }
+    } finally {
+      filling = false;
+    }
   }
 
   function endJumpScroll() {
@@ -545,12 +594,15 @@
   // Output that arrived meanwhile then sits below the view, and a pane that
   // loaded its history while hidden opens at the top. Showing it resizes the
   // container from 0, so pin to the bottom then, and on any other resize
-  // (window, prompt box), while following the conversation.
+  // (window, prompt box), while following the conversation. Taller, it may
+  // no longer scroll, so it reads on (fillView).
   $effect(() => {
     const el = scrollContainer;
     if (!el || typeof ResizeObserver === 'undefined') return;
     const observer = new ResizeObserver(() => {
-      if (shouldAutoScroll && el.clientHeight > 0) el.scrollTop = el.scrollHeight;
+      if (el.clientHeight === 0) return;
+      if (shouldAutoScroll) el.scrollTop = el.scrollHeight;
+      void fillView();
     });
     observer.observe(el);
     return () => observer.disconnect();
@@ -574,7 +626,7 @@
     const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
     // Hidden: no layout, so this says nothing about where the user is.
     if (clientHeight === 0) return;
-    shouldAutoScroll = scrollHeight - scrollTop - clientHeight < 100;
+    shouldAutoScroll = scrollHeight - scrollTop - clientHeight < FOLLOW_PX;
     if (!shouldAutoScroll && scrollTop < clientHeight) void loadOlderOnScroll();
   }
 
@@ -631,7 +683,9 @@
     {/each}
   </div>
 
-  {#if messages.length === 0 && !streamingText && arrival === null}
+  <!-- Not over history still to read: it isn't a new thread, and it reads on
+       by itself (fillView). -->
+  {#if messages.length === 0 && !streamingText && arrival === null && !hasUnloadedEvents}
     <div class="flex items-center justify-center h-full text-muted-foreground">
       <div class="text-center relative z-10">
         <p class="text-sm mb-1">Waiting for input...</p>
