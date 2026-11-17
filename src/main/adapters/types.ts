@@ -6,7 +6,7 @@
  */
 import type { ToolView } from '../../shared/tool-view.js';
 import type { SkillDirs } from '../skills.js';
-import type { AgentStage, AgentEvent, MemoryEntry, TokenCounts, PermissionMode, ControlDescriptor, ProviderUsage, McpServerInfo, McpAuthStartResult, McpConfiguredServer, McpAddServerOpts, McpConfigScope, McpElicitationRequest, McpElicitationResponse, McpServerContextCost, McpSupport, SkillDefinition, SkillInfo, ToolCategory, ToolRule, ImageAttachment, ImageMediaType } from '../../shared/types.js';
+import type { AgentStage, AgentEvent, MemoryEntry, ModelTotals, TokenCounts, PermissionMode, ControlDescriptor, ProviderUsage, McpServerInfo, McpAuthStartResult, McpConfiguredServer, McpAddServerOpts, McpConfigScope, McpElicitationRequest, McpElicitationResponse, McpServerContextCost, McpSupport, SkillDefinition, SkillInfo, ToolCategory, ToolRule, ImageAttachment, ImageMediaType } from '../../shared/types.js';
 
 // ─── Capability Flags ───
 
@@ -223,6 +223,9 @@ export interface AdapterConfig {
   priorCostUsd?: number | null;
   /** The running token totals it had reached, for the same reason. */
   priorTokens?: TokenCounts | null;
+  /** And each model's running totals (lastRunningModels), so the first
+   *  turn after resuming splits by what it did rather than by the totals. */
+  priorModels?: Record<string, ModelTotals> | null;
   onPermissionRequest: PermissionHandler;
   /** Called before a tool call runs, wherever the adapter can hold one:
    *  every call for Claude Code (a PreToolUse hook), the calls the agent

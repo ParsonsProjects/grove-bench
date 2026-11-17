@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { AgentEvent } from '../../shared/types.js';
-import { RunningCost, RunningTokens, lastRunningCost, lastRunningTokens } from './running-cost.js';
+import { RunningCost, RunningModels, RunningTokens, lastRunningCost, lastRunningModels, lastRunningTokens, type RunningModel } from './running-cost.js';
 
 describe('RunningCost', () => {
   it('turns running totals into each turn\'s cost', () => {
@@ -102,5 +102,103 @@ describe('lastRunningTokens', () => {
       result({ sessionTokens: { input: 10, output: 1 } }),
       { type: 'agent_changed', from: 'a', to: 'b', fromName: 'A', toName: 'B', transcript: false },
     ])).toBeNull();
+  });
+});
+
+describe('RunningModels', () => {
+  const opus = (input: number, output: number, costUsd: number): RunningModel => ({ key: 'claude-opus-5-5[1m]', model: 'claude-opus-5-5', input, output, costUsd });
+  const haiku = (input: number, output: number, costUsd: number): RunningModel => ({ key: 'claude-haiku-5-5', model: 'claude-haiku-5-5', input, output, costUsd });
+
+  it('splits a turn by how much each model did since the last result', () => {
+    const models = new RunningModels();
+    expect(models.turnModels([opus(1000, 100, 1)], { input: 1000, output: 100, costUsd: 1 }, false))
+      .toEqual([{ model: 'claude-opus-5-5', input: 1000, output: 100, costUsd: 1 }]);
+    // Opus did 500 more in, Haiku 1500 (a subagent): the turn is 2000 in.
+    const turn = models.turnModels([opus(1500, 140, 1.5), haiku(1500, 60, 0.1)], { input: 2000, output: 100, costUsd: 0.6 }, false);
+    expect(turn).toEqual([
+      { model: 'claude-haiku-5-5', input: 1500, output: 60, costUsd: expect.closeTo(0.1, 6) },
+      { model: 'claude-opus-5-5', input: 500, output: 40, costUsd: expect.closeTo(0.5, 6) },
+    ]);
+  });
+
+  it('always adds up to the turn, rounding to whole tokens', () => {
+    const models = new RunningModels();
+    const turn = models.turnModels([opus(1, 1, 1), haiku(1, 1, 1), { ...haiku(1, 1, 1), key: 'other', model: 'other' }], { input: 10, output: 7, costUsd: 0.3 }, false);
+    expect(turn.reduce((a, m) => a + m.input, 0)).toBe(10);
+    expect(turn.reduce((a, m) => a + m.output, 0)).toBe(7);
+    expect(turn.reduce((a, m) => a + (m.costUsd ?? 0), 0)).toBeCloseTo(0.3);
+  });
+
+  it('carries on from the totals a resumed conversation had reached', () => {
+    const models = new RunningModels({ 'claude-opus-5-5[1m]': { input: 5000, output: 500, costUsd: 3 } });
+    // The resumed query starts from its transcript's totals: Haiku's 300 is
+    // this turn's, and Opus's 200 more.
+    expect(models.turnModels([opus(5200, 520, 3.2), haiku(300, 10, 0.01)], { input: 500, output: 30, costUsd: 0.21 }, false)).toEqual([
+      { model: 'claude-haiku-5-5', input: 300, output: 10, costUsd: expect.closeTo(0.01, 6) },
+      { model: 'claude-opus-5-5', input: 200, output: 20, costUsd: expect.closeTo(0.2, 6) },
+    ]);
+  });
+
+  it('splits by the running totals when a resumed conversation saved none', () => {
+    const models = new RunningModels();
+    // A conversation from before models were saved: its whole totals show up
+    // in the first result, but the turn is only 100 in.
+    const turn = models.turnModels([opus(9000, 900, 9), haiku(1000, 100, 1)], { input: 100, output: 10, costUsd: 0.1 }, false);
+    expect(turn).toEqual([
+      { model: 'claude-opus-5-5', input: 90, output: 9, costUsd: expect.closeTo(0.09, 6) },
+      { model: 'claude-haiku-5-5', input: 10, output: 1, costUsd: expect.closeTo(0.01, 6) },
+    ]);
+  });
+
+  it('counts the whole total after /clear starts a model again', () => {
+    const models = new RunningModels();
+    models.turnModels([opus(5000, 500, 5)], { input: 5000, output: 500, costUsd: 5 }, false);
+    expect(models.turnModels([opus(100, 10, 0.1), haiku(100, 10, 0.1)], { input: 200, output: 20, costUsd: 0.2 }, false)
+      .map((m) => [m.model, m.input])).toEqual([['claude-opus-5-5', 100], ['claude-haiku-5-5', 100]]);
+  });
+
+  it('ignores zeroed totals on an error result', () => {
+    const models = new RunningModels();
+    models.turnModels([opus(1000, 100, 1)], { input: 1000, output: 100, costUsd: 1 }, false);
+    expect(models.turnModels([opus(0, 0, 0)], { input: 0, output: 0, costUsd: 0 }, true)).toEqual([]);
+    expect(models.totals).toEqual({ 'claude-opus-5-5[1m]': { input: 1000, output: 100, costUsd: 1 } });
+    expect(models.turnModels([opus(1200, 110, 1.2)], { input: 200, output: 10, costUsd: 0.2 }, false)[0]).toMatchObject({ input: 200, output: 10 });
+  });
+
+  it('shows two names for one model as one', () => {
+    const models = new RunningModels();
+    const alias = { ...opus(500, 50, 0.5), key: 'us.anthropic.claude-opus-5-5' };
+    expect(models.turnModels([opus(500, 50, 0.5), alias], { input: 1000, output: 100, costUsd: 1 }, false))
+      .toEqual([{ model: 'claude-opus-5-5', input: 1000, output: 100, costUsd: expect.closeTo(1, 6) }]);
+  });
+
+  it('gives a turn that used no tokens to the model that has done the most', () => {
+    const models = new RunningModels();
+    models.turnModels([opus(1000, 100, 1), haiku(10, 1, 0.01)], { input: 1010, output: 101, costUsd: 1.01 }, false);
+    expect(models.turnModels([opus(1000, 100, 1), haiku(10, 1, 0.01)], { input: 0, output: 0, costUsd: 0 }, false))
+      .toEqual([{ model: 'claude-opus-5-5', input: 0, output: 0, costUsd: 0 }]);
+  });
+
+  it('leaves out cost when the turn has none, and names no models without any', () => {
+    const models = new RunningModels();
+    expect(models.turnModels([opus(100, 10, 0)], { input: 100, output: 10 }, false)).toEqual([{ model: 'claude-opus-5-5', input: 100, output: 10 }]);
+    expect(models.turnModels([], { input: 100, output: 10 }, false)).toEqual([]);
+  });
+});
+
+describe('lastRunningModels', () => {
+  const result = (extra: Partial<Extract<AgentEvent, { type: 'result' }>>): AgentEvent => ({ type: 'result', subtype: 'success', isError: false, ...extra });
+
+  it('reads the last result\'s totals by model', () => {
+    const totals = { opus: { input: 10, output: 1, costUsd: 0.1 } };
+    expect(lastRunningModels([result({ sessionTokens: { input: 1, output: 1 } }), result({ sessionTokens: { input: 10, output: 1 }, sessionModels: totals })])).toEqual(totals);
+  });
+
+  it('is null when the last result has none, or a new conversation began since', () => {
+    const totals = { opus: { input: 10, output: 1, costUsd: 0.1 } };
+    expect(lastRunningModels([result({ sessionModels: totals }), result({ sessionTokens: { input: 20, output: 2 } })])).toBeNull();
+    expect(lastRunningModels([result({ sessionModels: totals }), { type: 'status', message: 'New', newConversation: true }])).toBeNull();
+    expect(lastRunningModels([result({ sessionModels: totals }), { type: 'agent_changed', from: 'a', to: 'b', fromName: 'A', toName: 'B', transcript: true }])).toBeNull();
+    expect(lastRunningModels([])).toBeNull();
   });
 });

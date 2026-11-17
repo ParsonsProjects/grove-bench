@@ -35,7 +35,7 @@ import * as skillsModule from '../skills.js';
 import { accountEnv, accountSignInCommand, type ClaudeAccount } from './claude-accounts.js';
 import { logger } from '../logger.js';
 import { writeFileAtomic } from '../fs-utils.js';
-import { RunningCost, RunningTokens } from './running-cost.js';
+import { RunningCost, RunningModels, RunningTokens, type RunningModel } from './running-cost.js';
 import { runProcess, spawnProcess, type HostedOptions, type HostedProcess, type ProcessResult } from '../process-host.js';
 import { runInAgentHost, type AgentHostRunOptions } from '../process-host-run.js';
 import { windowsExeName } from '../process-memory.js';
@@ -222,6 +222,8 @@ interface MessageContext {
   cost?: RunningCost;
   /** The same for its running token totals. */
   tokens?: RunningTokens;
+  /** Splits each turn's tokens and cost by model. */
+  models?: RunningModels;
   /** Shown when the API refuses the sign-in. CLAUDE_AUTH_ERROR_MESSAGE when
    *  unset; an account agent names its own. */
   authErrorMessage?: string;
@@ -606,6 +608,8 @@ export function transformMessage(
         outputTokens?: number;
         cacheReadInputTokens?: number;
         cacheCreationInputTokens?: number;
+        costUSD?: number;
+        canonicalModel?: string;
       }> | undefined;
       const mainUsage = modelUsage
         ? Object.values(modelUsage).reduce<(typeof modelUsage)[string] | undefined>((best, u) => {
@@ -630,23 +634,41 @@ export function transformMessage(
         input: sum.input + (u.inputTokens ?? 0) + (u.cacheReadInputTokens ?? 0) + (u.cacheCreationInputTokens ?? 0),
         output: sum.output + (u.outputTokens ?? 0),
       }), { input: 0, output: 0 }) : undefined;
+      // Each model's running totals, for the turn's split by model. Shown
+      // under the id its price was looked up by, which leaves off provider
+      // prefixes and aliases.
+      const runningModels: RunningModel[] = modelUsage ? Object.entries(modelUsage).map(([key, u]) => ({
+        key,
+        model: u.canonicalModel || key,
+        input: (u.inputTokens ?? 0) + (u.cacheReadInputTokens ?? 0) + (u.cacheCreationInputTokens ?? 0),
+        output: u.outputTokens ?? 0,
+        costUsd: typeof u.costUSD === 'number' && Number.isFinite(u.costUSD) && u.costUSD > 0 ? u.costUSD : 0,
+      })) : [];
       // The session totals are the trackers' rather than the result's, which
       // a failed start or crash can report zeroed: saved as the totals to
       // resume from, those would count the earlier turns again.
       const cost = ctx.cost ?? new RunningCost();
       const tokens = ctx.tokens ?? new RunningTokens();
+      const models = ctx.models ?? new RunningModels();
+      const turnCostUsd = runningCost !== undefined ? cost.turnCost(runningCost, message.is_error) : undefined;
+      const turnTokens = runningTokens ? tokens.turnTokens(runningTokens, message.is_error) : undefined;
+      const turnModels = models.turnModels(runningModels, { ...(turnTokens ?? { input: 0, output: 0 }), ...(turnCostUsd !== undefined ? { costUsd: turnCostUsd } : {}) }, message.is_error);
       events.push({
         type: 'result',
         subtype: message.subtype,
         result: 'result' in message ? message.result : undefined,
         structured_output: 'structured_output' in message ? message.structured_output : undefined,
-        ...(runningCost !== undefined ? {
-          totalCostUsd: cost.turnCost(runningCost, message.is_error),
+        ...(turnCostUsd !== undefined ? {
+          totalCostUsd: turnCostUsd,
           sessionCostUsd: cost.total,
         } : {}),
-        ...(runningTokens ? {
-          turnTokens: tokens.turnTokens(runningTokens, message.is_error),
+        ...(turnTokens ? {
+          turnTokens,
           sessionTokens: tokens.total,
+        } : {}),
+        ...(runningModels.length > 0 ? {
+          ...(turnModels.length > 0 ? { models: turnModels } : {}),
+          sessionModels: models.totals,
         } : {}),
         durationMs: message.duration_ms,
         isError: message.is_error,
@@ -744,6 +766,7 @@ export function transformMessage(
       if (message.trigger === 'clear') {
         ctx.cost = new RunningCost();
         ctx.tokens = new RunningTokens();
+        ctx.models = new RunningModels();
       }
       break;
     }
@@ -2146,6 +2169,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       groveMode: config.permissionMode,
       cost: new RunningCost(config.resumeSessionId ? (config.priorCostUsd ?? null) : null),
       tokens: new RunningTokens(config.resumeSessionId ? (config.priorTokens ?? null) : null),
+      models: new RunningModels(config.resumeSessionId ? (config.priorModels ?? null) : null),
       authErrorMessage: this.authErrorMessage,
     };
 

@@ -703,6 +703,29 @@ const api: Record<string, unknown> = {
   getCachedUsage: async () => null,
   getDailySpend: async () => 3.42,
   getThreadUsage: async () => ({ spendUsd: 1.84, tokens: { input: 1_240_000, output: 45_300 } }),
+  getUsageSummary: async (since: number | null) => {
+    // A week's figures, scaled down for shorter ranges.
+    const share = since === null ? 1.6 : now - since < 26 * 60 * min ? 0.2 : now - since < 8 * 24 * 60 * min ? 1 : 1.4;
+    const t = (usd: number, input: number, output: number, ms: number, turns: number) => ({
+      usd: usd * share, input: Math.round(input * share), output: Math.round(output * share), ms: Math.round(ms * share), turns: turns === 0 ? 0 : Math.max(1, Math.round(turns * share)),
+    });
+    return {
+      total: t(14.62, 9_800_000, 312_000, 4.1 * 60 * 60 * 1000, 96),
+      byModel: [
+        { model: 'claude-opus-5-5', agent: 'claude-code', ...t(12.9, 8_100_000, 270_000, 3.5 * 60 * 60 * 1000, 78) },
+        { model: 'claude-haiku-5-5', agent: 'claude-code', ...t(0.42, 1_100_000, 22_000, 0, 0) },
+        { model: 'gpt-5.5-codex', agent: 'codex', ...t(1.3, 600_000, 20_000, 0.6 * 60 * 60 * 1000, 18) },
+      ],
+      byThread: [
+        { thread: 's-sidebar', title: 'Sidebar revamp', repoPath: REPO_A, agent: 'claude-code', removed: false, lastAt: now - 20 * min, ...t(6.1, 4_200_000, 130_000, 1.7 * 60 * 60 * 1000, 40) },
+        { thread: 's-e2e', title: 'Flaky e2e retries', repoPath: REPO_B, agent: 'claude-code', removed: false, lastAt: now - 3 * 60 * min, ...t(4.4, 3_000_000, 98_000, 1.2 * 60 * 60 * 1000, 30) },
+        { thread: 's-old-parser', title: 'Try the new parser', repoPath: REPO_A, agent: 'codex', removed: true, lastAt: now - 2 * 24 * 60 * min, ...t(1.3, 600_000, 20_000, 0.6 * 60 * 60 * 1000, 18) },
+      ],
+      undated: since === null ? t(2.1, 1_400_000, 41_000, 0.5 * 60 * 60 * 1000, 12) : { usd: 0, input: 0, output: 0, ms: 0, turns: 0 },
+      recordingSince: now - 9 * 24 * 60 * min,
+      backfilling: false,
+    };
+  },
   exportThread: async () => null,
   switchAgent: async () => {},
   // Mirrors the Claude Code adapter's declared controls (for Opus 5.5, the

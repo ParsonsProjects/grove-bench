@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import path from 'node:path';
 import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS, thinkingConfigFor, parseMcpListOutput, mcpServerManager, claudeMcpOrigin, mcpToolServerKey, mcpContextCostByServer, toMcpElicitationRequest, withMcpjsonApproval, mcpjsonApprovalsFrom, withoutLegacyDenyRules, buildMcpAddArgs, quoteArg, validatePluginId, validateConfigScope, claudeControlsFor, supportsAdaptiveThinking, supportsFastMode, supportsAutoMode, claudeModelCaps, effortFor, reasoningOptionsFor, toSdkPermissionMode, fromSdkSyncMode, stripAnsi, mapClaudeUsage, thinkingDisplayFor, TEXT_GENERATION_OPTIONS, collectGeneratedText, watchStart, missingConversationError, userMessageContent, sandboxDecision } from './claude-code.js';
 import type { AgentEvent } from '../../shared/types.js';
-import { RunningCost, RunningTokens } from './running-cost.js';
+import { RunningCost, RunningModels, RunningTokens } from './running-cost.js';
 import { limitHook, LIMIT_STOP_REASON, titleListOptions, titleFromSessions } from './claude-code.js';
 import type { MessageFile } from './types.js';
 import type { HookInput, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
@@ -1211,6 +1211,26 @@ describe('transformMessage()', () => {
       result(0.1);
       transformMessage(sdk({ type: 'conversation_reset', trigger: 'plan_mode_exit', new_conversation_id: 'c2', uuid: 'u', session_id: 's2' }), ctx);
       expect(result(0.3).totalCostUsd).toBeCloseTo(0.2);
+    });
+
+    it('splits each turn by model, under the id its price was looked up by, with totals to resume from', () => {
+      const ctx = { ...makeCtx(), cost: new RunningCost(), tokens: new RunningTokens(), models: new RunningModels() };
+      const usage = (opus: number, haiku: number) => ({
+        'claude-opus-5-5[1m]': { inputTokens: opus, outputTokens: opus / 10, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, costUSD: opus / 1000, canonicalModel: 'claude-opus-5-5' },
+        'claude-haiku-5-5': { inputTokens: haiku, outputTokens: haiku / 10, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, costUSD: haiku / 10_000 },
+      });
+      const result = (usd: number, opus: number, haiku: number) => transformMessage(
+        sdk({ type: 'result', subtype: 'success', total_cost_usd: usd, modelUsage: usage(opus, haiku), duration_ms: 1, is_error: false, num_turns: 1 }),
+        ctx,
+      )[0] as Extract<AgentEvent, { type: 'result' }>;
+
+      result(1.01, 1000, 100);
+      const second = result(1.21, 1200, 100);
+      expect(second.models).toEqual([{ model: 'claude-opus-5-5', input: 200, output: 20, costUsd: expect.closeTo(0.2, 6) }]);
+      expect(second.sessionModels).toEqual({
+        'claude-opus-5-5[1m]': { input: 1200, output: 120, costUsd: 1.2 },
+        'claude-haiku-5-5': { input: 100, output: 10, costUsd: 0.01 },
+      });
     });
 
     it('reports no tokens for a result without modelUsage', () => {

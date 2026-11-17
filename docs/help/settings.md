@@ -110,6 +110,15 @@ Control how the agent handles actions that need approval. The mode new threads s
 - Spend is the agent's own estimate, counted when each turn ends, so a turn already running finishes before a spend limit can pause it. For Claude Code signed in with a plan, it is the list price of what the turn used, not what you are billed. Agents that don't report a cost are never paused for spend. Background work (memory notes, commit messages) isn't counted
 - Claude Code is checked before every tool call. Other agents can only be paused before the calls they ask you about, so one set to act without asking runs on until it next asks
 
+## The harvest (Usage)
+
+What every thread has used, removed threads included, over **Today**, **7 days**, **30 days** or **All time**: cost, tokens in and out, agent time and turns, then the same **By model** and **By thread**. The status bar's **All usage** link (in the Activity popup) opens it as a dialog.
+
+- **Cost** is each agent's own estimate, as the spend limits count it. On a Claude subscription (Pro, Max and others) your plan covers it; see [Claude Code costs](https://code.claude.com/docs/en/costs). An agent that reports no cost shows $0.00
+- **Agent time** adds up how long each turn took, so threads running side by side can add up to more than the clock. A turn's time goes to the model that did most of it; a subagent's model gets its tokens and cost but not the time
+- Turns are recorded as they end, so a thread's figures stay after it's removed, rewound or cleared. Turns from before Grove recorded them are added from threads' history the first time you open it: they have no model (**Model not recorded**) and are dated by the prompt before them, or show only in **All time** when that has no date either
+- Background work (memory notes, commit messages) isn't counted
+
 ## Tending (Background work)
 
 Memory, skill suggestions and thread goals run on each thread's own agent, using its background model (see [Grovekeepers (Agents)](#grovekeepers-agents)).
