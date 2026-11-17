@@ -408,6 +408,18 @@ export interface EventHistoryPage {
   turn: ThreadTurnState;
 }
 
+/** What a thread's agent has, as main last learned it: from its reports
+ *  (system_init) and, for an agent that reports only with the first prompt
+ *  (Claude Code), from asking it as it starts. Main keeps it, so a pane
+ *  shows it whatever its history page holds. */
+export interface AgentSystemInfo {
+  tools: string[];
+  agents: string[];
+  skills: string[];
+  slashCommands: string[];
+  mcpServers: { name: string; status: string }[];
+}
+
 /** A single full-history search match (main-process search over event history). */
 export interface EventSearchHit {
   /** Index of the matching event in the session's (prelaunch-prefixed) history. */
@@ -1607,6 +1619,11 @@ export interface GroveBenchAPI {
   reconnectDownMcpServers(sessionId: string, serverName?: string): Promise<void>;
   /** A thread's live MCP status, sent after a background reconnect. */
   onMcpStatus(callback: (sessionId: string, servers: McpServerInfo[]) => void): () => void;
+  /** What a thread's agent has (AgentSystemInfo), or null when it has never
+   *  said. */
+  getSystemInfo(sessionId: string): Promise<AgentSystemInfo | null>;
+  /** A thread's AgentSystemInfo, each time main learns more of it. */
+  onSystemInfo(callback: (sessionId: string, info: AgentSystemInfo) => void): () => void;
 
   // File operations (for @ file picker)
   listFiles(sessionId: string): Promise<string[]>;
@@ -2444,6 +2461,9 @@ export const IPC = {
   AGENT_MCP_RECONNECT_DOWN: 'agent:mcpReconnectDown',
   /** main → renderer: a thread's live MCP status after a background reconnect. */
   AGENT_MCP_STATUS: 'agent:mcpStatus',
+  AGENT_SYSTEM_INFO: 'agent:systemInfo',
+  /** main → renderer: a thread's AgentSystemInfo changed. */
+  AGENT_SYSTEM_INFO_CHANGED: 'agent:systemInfoChanged',
   AGENT_ELICITATION: 'agent:elicitation',
   AGENT_LIMIT: 'agent:limit',
   LIMITS_DAILY_SPEND: 'limits:dailySpend',

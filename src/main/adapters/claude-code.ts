@@ -2248,6 +2248,15 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         return usage.totalTokens;
       },
 
+      async listSlashCommands(lastReported: readonly string[]) {
+        // The same list as system_init's slash_commands (CLI 2.1.326), but
+        // an MCP prompt is "server:prompt (MCP)" here and "mcp__server__prompt"
+        // there, which is what runs it: those keep the last report's names.
+        // Rows can share a name (a builtin and the user's own): once each.
+        const live = (await q.supportedCommands()).map((c) => c.name).filter((name) => !name.endsWith(' (MCP)'));
+        return [...new Set([...live, ...lastReported.filter((name) => name.startsWith('mcp__'))])];
+      },
+
       async listMcpServers(): Promise<McpServerInfo[]> {
         const statuses = await q.mcpServerStatus();
         return statuses.map((s) => ({

@@ -317,6 +317,11 @@ export interface AgentQueryHandle {
   /** The tokens the context window holds now, counted rather than taken
    *  from the last reply. Read after a compaction, which no reply follows. */
   getContextTokens?(): Promise<number>;
+  /** The agent's slash commands (its skills among them) as it has them now,
+   *  by the names its system_init gives them, for an agent that reports
+   *  that only with the first prompt. Ones it can't name that way are taken
+   *  from `lastReported`, its last report's list. */
+  listSlashCommands?(lastReported: readonly string[]): Promise<string[]>;
 
   // ─── Optional MCP server control — declare each in AgentAdapter.mcp.controls ───
 

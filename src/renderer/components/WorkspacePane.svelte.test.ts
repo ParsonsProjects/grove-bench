@@ -300,6 +300,20 @@ describe('WorkspacePane loading a running thread', () => {
 
     expect(store.sessions[0].lastActiveAt).toBe(before);
   });
+
+  it("shows what main says the agent has, whatever the page holds", async () => {
+    // Claude Code reports it only with the next prompt: a woken or reopened
+    // thread whose last report is further back than one page had none.
+    store.sessions = [{ id: SID, branch: 'grove/x', repoPath: '/repo', status: 'running' }] as never;
+    gitStatusStore.statusBySession = { [SID]: { entries: [] } };
+    const info = { tools: ['Read'], agents: [], skills: ['review'], slashCommands: ['review', 'compact'], mcpServers: [{ name: 'linear', status: 'connected' }] };
+    mockGroveBench.getSystemInfo.mockResolvedValueOnce(info);
+
+    render(WorkspacePane, { sessionId: SID });
+
+    await waitFor(() => expect(messageStore.getSystemInfo(SID)).toEqual(info));
+    expect(mockGroveBench.getSystemInfo).toHaveBeenCalledWith(SID);
+  });
 });
 
 describe('WorkspacePane taking the turn state from main', () => {

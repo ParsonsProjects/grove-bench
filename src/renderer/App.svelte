@@ -483,6 +483,11 @@
       // Not for a thread closed or deleted meanwhile.
       if (store.sessions.some((s) => s.id === sessionId)) messageStore.updateMcpServers(sessionId, servers);
     });
+    // Main learned more of what a thread's agent has (its report, or what
+    // it listed as it started).
+    const unsubSystemInfo = window.groveBench.onSystemInfo((sessionId, info) => {
+      if (store.sessions.some((s) => s.id === sessionId)) messageStore.setSystemInfo(sessionId, info);
+    });
 
     // Put idle conversations to sleep to free their agent processes.
     const stopIdleManager = startIdleManager();
@@ -492,6 +497,7 @@
       unsubPower();
       unsubFocus();
       unsubMcp();
+      unsubSystemInfo();
       unsubAppError();
       uninstallErrors();
       uninstallTooltips();

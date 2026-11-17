@@ -196,22 +196,16 @@ describe('ingestEvent — system_init', () => {
     return vi.waitFor(() => expect(refresh).toHaveBeenCalledWith(SID)).finally(() => refresh.mockRestore());
   });
 
-  it('stores system info (tools, agents, skills)', () => {
-    messageStore.ingestEvent(SID, {
-      type: 'system_init',
-      sessionId: SID,
-      model: 'opus',
-      tools: ['Read', 'Edit'],
-      agents: ['agent1'],
-      skills: ['commit'],
-      slashCommands: ['/help'],
-      mcpServers: [{ name: 'github', status: 'connected' }],
-    });
+  it("leaves what the agent has to main: a report, replayed or live, doesn't set it", () => {
+    // A replayed report may be older than what main sent; a live one comes
+    // from main too (AGENT_SYSTEM_INFO_CHANGED).
+    const info = { tools: ['Read'], agents: [], skills: ['commit'], slashCommands: ['commit'], mcpServers: [] };
+    messageStore.setSystemInfo(SID, info);
+    const report = { type: 'system_init' as const, sessionId: SID, model: 'opus', tools: ['Edit'], skills: ['old'], slashCommands: ['old'] };
+    messageStore.replayEvents(SID, [report]);
+    messageStore.ingestEvent(SID, report);
 
-    const info = messageStore.getSystemInfo(SID);
-    expect(info.tools).toEqual(['Read', 'Edit']);
-    expect(info.agents).toEqual(['agent1']);
-    expect(info.skills).toEqual(['commit']);
+    expect(messageStore.getSystemInfo(SID)).toEqual(info);
   });
 });
 
@@ -1991,15 +1985,26 @@ describe('session controls', () => {
   });
 });
 
+describe('loadSystemInfo', () => {
+  it("takes what main says the thread's agent has", async () => {
+    const info = { tools: [], agents: [], skills: ['review'], slashCommands: ['review'], mcpServers: [{ name: 'linear', status: 'connected' }] };
+    mockGroveBench.getSystemInfo.mockResolvedValueOnce(info);
+    await messageStore.loadSystemInfo(SID);
+    expect(messageStore.getSystemInfo(SID)).toEqual(info);
+  });
+
+  it('keeps what it has when main knows nothing', async () => {
+    const info = { tools: [], agents: [], skills: ['review'], slashCommands: [], mcpServers: [] };
+    messageStore.setSystemInfo(SID, info);
+    mockGroveBench.getSystemInfo.mockResolvedValueOnce(null);
+    await messageStore.loadSystemInfo(SID);
+    expect(messageStore.getSystemInfo(SID)).toEqual(info);
+  });
+});
+
 describe('updateMcpServers', () => {
   it('replaces the MCP snapshot while preserving other system info', () => {
-    messageStore.ingestEvent(SID, {
-      type: 'system_init',
-      sessionId: SID,
-      model: 'test-model-v1',
-      tools: ['Read'],
-      mcpServers: [{ name: 'docs', status: 'connected' }],
-    });
+    messageStore.setSystemInfo(SID, { tools: ['Read'], agents: [], skills: [], slashCommands: [], mcpServers: [{ name: 'docs', status: 'connected' }] });
 
     messageStore.updateMcpServers(SID, [
       { name: 'docs', status: 'failed', error: 'boom' },

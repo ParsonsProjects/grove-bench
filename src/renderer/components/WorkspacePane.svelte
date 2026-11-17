@@ -180,6 +180,9 @@
       // twice.
       messageStore.subscribe(sessionId);
       messageStore.holdLiveEvents(sessionId);
+      // What its agent has (MCP servers, skills, commands), from main: the
+      // page may not reach back to its last report.
+      void messageStore.loadSystemInfo(sessionId);
 
       // Suppress this session's git refreshes during replay to avoid N IPC
       // calls (per-session so concurrent pane mounts don't clear each other's).

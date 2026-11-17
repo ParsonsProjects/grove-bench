@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { AdapterEvent, AgentAdapter, AgentQueryHandle, AdapterConfig, PermissionResponse } from './adapters/types.js';
 import type { ManagedSession } from './session-types.js';
-import { IPC, PERMISSION_TIMEOUT_MINUTES, type AgentEvent, type McpServerInfo } from '../shared/types.js';
+import { IPC, PERMISSION_TIMEOUT_MINUTES, type AgentEvent, type AgentSystemInfo, type McpServerInfo } from '../shared/types.js';
 import * as fs from 'node:fs';
 import { perfSteps } from './perf-steps.js';
 import { worktreeManager } from './worktree-manager.js';
@@ -213,6 +213,10 @@ class MockAdapter implements AgentAdapter {
   lastHandle: AgentQueryHandle | null = null;
   /** Every handle start() has returned, to check none is left running. */
   handles: AgentQueryHandle[] = [];
+  /** When set, each handle lists the agent's MCP servers with it. */
+  mcpServers: (() => Promise<McpServerInfo[]>) | null = null;
+  /** When set, each handle lists the agent's slash commands with it. */
+  slashCommands: ((lastReported: readonly string[]) => Promise<string[]>) | null = null;
 
   getModels() { return [{ id: 'mock-model', label: 'Mock' }, { id: 'mock-lite', label: 'Mock Lite' }]; }
   /** Two universal controls plus one ('speed') that only the full model offers,
@@ -315,6 +319,8 @@ class MockAdapter implements AgentAdapter {
       setControl: vi.fn(),
       getUsage: vi.fn(async () => ({ available: true, plan: 'max', windows: [{ id: 'five_hour', label: '5-hour', utilization: 0.4 }], fetchedAt: 1 })),
     };
+    if (this.mcpServers) handle.listMcpServers = vi.fn(this.mcpServers);
+    if (this.slashCommands) handle.listSlashCommands = vi.fn(this.slashCommands);
     this.lastHandle = handle;
     this.handles.push(handle);
     return handle;
@@ -871,6 +877,28 @@ describe('AgentSessionManager event processing', () => {
     expect(textEvents).toHaveLength(2);
 
     await sessionManager.destroySession('test-history');
+  });
+
+  it("gives a closed thread's agent's last report from its log, and that for its next run", async () => {
+    const report = { type: 'system_init', sessionId: 'p', model: 'm', tools: [], skills: ['review'], slashCommands: ['review'] };
+    const log = `${JSON.stringify(report)}\n${JSON.stringify({ type: 'assistant_text', text: 'later', uuid: 'a1' })}\n`;
+    const isLog = (p: unknown) => String(p).endsWith('test-info-log.jsonl');
+    const missing = () => { throw new Error('ENOENT'); };
+    vi.mocked(fs.statSync).mockImplementation(((p: fs.PathLike) => isLog(p) ? { mtimeMs: 1, size: log.length } : missing()) as typeof fs.statSync);
+    vi.mocked(fs.readFileSync).mockImplementation((p: fs.PathOrFileDescriptor) => isLog(p) ? log : missing());
+    const info = { tools: [], agents: [], skills: ['review'], slashCommands: ['review'], mcpServers: [] };
+    try {
+      expect(sessionManager.getSystemInfo('test-info-log')).toEqual(info);
+      await sessionManager.createSession({
+        id: 'test-info-log', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+      });
+      expect(sessionManager.getSystemInfo('test-info-log')).toEqual(info);
+      expect(sessionManager.getSystemInfo('test-info-none')).toBeNull();
+    } finally {
+      vi.mocked(fs.statSync).mockImplementation(missing);
+      vi.mocked(fs.readFileSync).mockImplementation(missing);
+      await sessionManager.destroySession('test-info-log');
+    }
   });
 
   it('resumes from the log its pane already read, without parsing it again', async () => {
@@ -2994,6 +3022,169 @@ describe('AgentSessionManager sleep and wake', () => {
 
     await sessionManager.destroySession('test-sleep-quiet');
   });
+
+  const mcpStatusesSent = (win: ReturnType<typeof makeMockWindow>, id: string): McpServerInfo[][] =>
+    win._send.mock.calls
+      .filter(([channel, sessionId]: [string, string]) => channel === IPC.AGENT_MCP_STATUS && sessionId === id)
+      .map(([, , servers]: [string, string, McpServerInfo[]]) => servers);
+
+  it("tells the renderer the agent's MCP servers when it wakes, without waiting for a message", async () => {
+    // Claude Code reports them (system_init) only with the first prompt.
+    mockAdapter.mcpServers = async () => [{ name: 'linear', status: 'connected' }];
+    const { win } = await startSession('test-wake-mcp');
+    await sessionManager.sleepSession('test-wake-mcp');
+    win._send.mockClear();
+
+    sessionManager.wakeSession('test-wake-mcp');
+
+    await vi.waitFor(() => expect(mcpStatusesSent(win, 'test-wake-mcp')).toEqual([[{ name: 'linear', status: 'connected' }]]));
+    expect(mockAdapter.lastHandle!.sendMessage).not.toHaveBeenCalled();
+
+    await sessionManager.destroySession('test-wake-mcp');
+  });
+
+  /** Run `body` with the start-up asks `pollMs` apart, `polls` at most. */
+  async function withPolls(pollMs: number, polls: number, body: () => Promise<void>) {
+    const { mcpStartPollMs, mcpStartPolls } = sessionManager;
+    Object.assign(sessionManager, { mcpStartPollMs: pollMs, mcpStartPolls: polls });
+    try {
+      await body();
+    } finally {
+      Object.assign(sessionManager, { mcpStartPollMs, mcpStartPolls });
+    }
+  }
+
+  it('asks again while a server is still connecting, sending only what changed', () => withPolls(1, 15, async () => {
+    const answers: McpServerInfo[][] = [
+      [{ name: 'linear', status: 'pending' }],
+      [{ name: 'linear', status: 'pending' }],
+      [{ name: 'linear', status: 'connected' }],
+    ];
+    mockAdapter.mcpServers = async () => answers.shift() ?? [{ name: 'linear', status: 'failed' }];
+    const win = makeMockWindow();
+    await sessionManager.createSession({ id: 'test-mcp-poll', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock' });
+
+    await vi.waitFor(() => expect(answers).toHaveLength(0));
+    await new Promise((r) => setTimeout(r, 20));
+    // Once none is connecting it stops.
+    expect(mcpStatusesSent(win, 'test-mcp-poll')).toEqual([
+      [{ name: 'linear', status: 'pending' }],
+      [{ name: 'linear', status: 'connected' }],
+    ]);
+    expect(mockAdapter.lastHandle!.listMcpServers).toHaveBeenCalledTimes(3);
+
+    await sessionManager.destroySession('test-mcp-poll');
+  }));
+
+  it('asks an agent with no MCP servers once, and says it has none', () => withPolls(1, 15, async () => {
+    mockAdapter.mcpServers = async () => [];
+    const win = makeMockWindow();
+    await sessionManager.createSession({ id: 'test-mcp-none', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock' });
+
+    await vi.waitFor(() => expect(mcpStatusesSent(win, 'test-mcp-none')).toEqual([[]]));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(mockAdapter.lastHandle!.listMcpServers).toHaveBeenCalledTimes(1);
+
+    await sessionManager.destroySession('test-mcp-none');
+  }));
+
+  const systemInfoSent = (win: ReturnType<typeof makeMockWindow>, id: string): AgentSystemInfo[] =>
+    win._send.mock.calls
+      .filter(([channel, sessionId]: [string, string]) => channel === IPC.AGENT_SYSTEM_INFO_CHANGED && sessionId === id)
+      .map(([, , info]: [string, string, AgentSystemInfo]) => info);
+
+  /** A session whose agent has reported `report` (its system_init). */
+  async function reported(id: string, report: Partial<Extract<AgentEvent, { type: 'system_init' }>>) {
+    const win = makeMockWindow();
+    await sessionManager.createSession({ id, branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock' });
+    await vi.waitFor(() => expect(sessionManager.getSession(id)?.queryHandle).toBeTruthy());
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 'provider-1', model: 'mock-model', tools: [], ...report });
+    await vi.waitFor(() => expect(sessionManager.getSession(id)?.status).toBe('running'));
+    return win;
+  }
+
+  it("keeps what the agent has from its report, and tells the renderer", async () => {
+    const win = await reported('test-info-init', { tools: ['Read'], skills: ['review'], slashCommands: ['review'], mcpServers: [{ name: 'linear', status: 'connected' }] });
+    const info = { tools: ['Read'], agents: [], skills: ['review'], slashCommands: ['review'], mcpServers: [{ name: 'linear', status: 'connected' }] };
+
+    expect(sessionManager.getSystemInfo('test-info-init')).toEqual(info);
+    expect(systemInfoSent(win, 'test-info-init').at(-1)).toEqual(info);
+
+    await sessionManager.destroySession('test-info-init');
+  });
+
+  it("asks a woken agent for its slash commands, given its last report's, and keeps its live MCP status", () => withPolls(1, 15, async () => {
+    const win = await reported('test-wake-cmds', { skills: ['review'], slashCommands: ['review', 'mcp__tiny__greet'], mcpServers: [{ name: 'linear', status: 'needs-auth' }] });
+    await sessionManager.sleepSession('test-wake-cmds');
+    mockAdapter.slashCommands = async (last) => ['new-skill', ...last];
+    mockAdapter.mcpServers = async () => [{ name: 'linear', status: 'connected' }];
+    win._send.mockClear();
+
+    sessionManager.wakeSession('test-wake-cmds');
+
+    const info = { tools: [], agents: [], skills: ['review'], slashCommands: ['new-skill', 'review', 'mcp__tiny__greet'], mcpServers: [{ name: 'linear', status: 'connected' }] };
+    await vi.waitFor(() => expect(systemInfoSent(win, 'test-wake-cmds')).toEqual([info]));
+    expect(mockAdapter.lastHandle!.listSlashCommands).toHaveBeenCalledWith(['review', 'mcp__tiny__greet']);
+    expect(sessionManager.getSystemInfo('test-wake-cmds')).toEqual(info);
+    // Asked once more a poll later, in case it hadn't loaded them all; no more.
+    await new Promise((r) => setTimeout(r, 20));
+    expect(mockAdapter.lastHandle!.listSlashCommands).toHaveBeenCalledTimes(2);
+    expect(mockAdapter.lastHandle!.sendMessage).not.toHaveBeenCalled();
+
+    await sessionManager.destroySession('test-wake-cmds');
+  }));
+
+  it('stops asking for slash commands once the agent has reported its own', () => withPolls(200, 1_000, async () => {
+    // A server connecting forever: the asks go on, commands' don't.
+    mockAdapter.mcpServers = async () => [{ name: 'linear', status: 'pending' }];
+    mockAdapter.slashCommands = async () => ['early-skill'];
+    const win = makeMockWindow();
+    await sessionManager.createSession({ id: 'test-cmds-init', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock' });
+    await vi.waitFor(() => expect(mockAdapter.lastHandle?.listSlashCommands).toHaveBeenCalledTimes(1));
+
+    // A prompt went: the agent's report is the newest now.
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 'provider-1', model: 'mock-model', tools: [], slashCommands: ['review'] });
+    await vi.waitFor(() => expect(sessionManager.getSession('test-cmds-init')?.status).toBe('running'));
+    const asked = vi.mocked(mockAdapter.lastHandle!.listMcpServers!).mock.calls.length;
+    // Past the second ask's poll.
+    await new Promise((r) => setTimeout(r, 450));
+
+    expect(vi.mocked(mockAdapter.lastHandle!.listMcpServers!).mock.calls.length).toBeGreaterThan(asked);
+    expect(mockAdapter.lastHandle!.listSlashCommands).toHaveBeenCalledTimes(1);
+    expect(sessionManager.getSystemInfo('test-cmds-init')?.slashCommands).toEqual(['review']);
+    expect(systemInfoSent(win, 'test-cmds-init').at(-1)?.slashCommands).toEqual(['review']);
+
+    await sessionManager.destroySession('test-cmds-init');
+  }));
+
+  it('keeps the MCP status the renderer reads, but not an asleep agent\'s none', async () => {
+    await reported('test-info-drawer', { mcpServers: [{ name: 'linear', status: 'needs-auth' }] });
+    const handle = sessionManager.getSession('test-info-drawer')!.queryHandle!;
+    handle.listMcpServers = vi.fn(async () => [{ name: 'linear', status: 'connected' as const }]);
+
+    await sessionManager.listMcpServers('test-info-drawer');
+    expect(sessionManager.getSystemInfo('test-info-drawer')?.mcpServers).toEqual([{ name: 'linear', status: 'connected' }]);
+
+    await sessionManager.sleepSession('test-info-drawer');
+    expect(await sessionManager.listMcpServers('test-info-drawer')).toEqual([]);
+    expect(sessionManager.getSystemInfo('test-info-drawer')?.mcpServers).toEqual([{ name: 'linear', status: 'connected' }]);
+
+    await sessionManager.destroySession('test-info-drawer');
+  });
+
+  it('stops asking once the agent is put to sleep', () => withPolls(5, 1_000, async () => {
+    mockAdapter.mcpServers = async () => [{ name: 'linear', status: 'pending' }];
+    await startSession('test-mcp-poll-sleep');
+    const handle = mockAdapter.lastHandle!;
+    await vi.waitFor(() => expect(handle.listMcpServers).toHaveBeenCalled());
+
+    await sessionManager.sleepSession('test-mcp-poll-sleep');
+    const asked = vi.mocked(handle.listMcpServers!).mock.calls.length;
+    await new Promise((r) => setTimeout(r, 40));
+    expect(vi.mocked(handle.listMcpServers!).mock.calls.length).toBe(asked);
+
+    await sessionManager.destroySession('test-mcp-poll-sleep');
+  }));
 
   it('wakes on the same transcript with its mode, controls and always-allowed tools', async () => {
     const { win, session } = await startSession('test-wake');
@@ -5751,6 +5942,8 @@ describe('AgentSessionManager streamed text and thinking', () => {
   const sent = (win: ReturnType<typeof makeMockWindow>): string[] =>
     win._send.mock.calls.map(([channel, a, b]: [string, any, any]) => {
       if (channel === IPC.SESSION_STATUS) return `status:${b}`;
+      // Not an event (what the agent has, its MCP status): the channel.
+      if (typeof a !== 'object') return channel;
       return a.type === 'partial_text' || a.type === 'partial_thinking' ? `${a.type}:${a.text}` : a.type;
     });
   const deltasSent = (win: ReturnType<typeof makeMockWindow>) =>

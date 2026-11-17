@@ -70,6 +70,7 @@ function fakeQuery() {
     applyFlagSettings: vi.fn((_settings: Record<string, unknown>) => Promise.resolve()),
     supportedModels: vi.fn(() => Promise.resolve([])),
     getContextUsage: vi.fn((_opts?: { detail?: string }) => Promise.resolve({ totalTokens: 31_000 })),
+    supportedCommands: vi.fn(() => Promise.resolve([] as { name: string; description: string; argumentHint: string; builtin?: boolean }[])),
   };
   return {
     q,
@@ -530,5 +531,22 @@ describe('ClaudeCodeAdapter.start(): the handle', () => {
     const { handle, fake } = await start();
     expect(await handle.getContextTokens!()).toBe(31_000);
     expect(fake.q.getContextUsage).toHaveBeenCalledWith({ detail: 'full' });
+  });
+
+  it("lists the slash commands by system_init's names, MCP prompts as the last report named them", async () => {
+    const { handle, fake } = await start();
+    // Rows as CLI 2.1.326 gave them before any prompt.
+    fake.q.supportedCommands.mockResolvedValueOnce([
+      { name: 'hello-skill', description: 'Says hello (project)', argumentHint: '' },
+      { name: 'myplug:plug-skill', description: '(myplug) A plugin skill', argumentHint: '' },
+      { name: 'tiny:greet (MCP)', description: 'A greeting prompt', argumentHint: '' },
+      { name: 'compact', description: 'Compact', argumentHint: '', builtin: true },
+      // Rows can share a name: a builtin and the user's own.
+      { name: 'review', description: 'Review', argumentHint: '', builtin: true },
+      { name: 'review', description: 'My review (project)', argumentHint: '' },
+    ]);
+    expect(await handle.listSlashCommands!(['old-skill', 'compact', 'mcp__tiny__greet'])).toEqual([
+      'hello-skill', 'myplug:plug-skill', 'compact', 'review', 'mcp__tiny__greet',
+    ]);
   });
 });

@@ -1,4 +1,4 @@
-import type { AgentEvent, ControlDescriptor, FileAttachment, ImageAttachment, MadeFile, McpElicitationRequest, McpElicitationResponse, McpServerInfo, PermissionDecision, PermissionMode, SessionControls, StoredFile, StoredImage, ThreadTurnState } from '../../shared/types.js';
+import type { AgentEvent, AgentSystemInfo, ControlDescriptor, FileAttachment, ImageAttachment, MadeFile, McpElicitationRequest, McpElicitationResponse, McpServerInfo, PermissionDecision, PermissionMode, SessionControls, StoredFile, StoredImage, ThreadTurnState } from '../../shared/types.js';
 import { CONTROL_IDS, DEFAULT_DENY_MESSAGE, subagentParent } from '../../shared/types.js';
 import { attachedFilesFromSent, type SentBlock } from '../../shared/prompt-text.js';
 import { userMessageLabel } from '../lib/message-label.js';
@@ -416,14 +416,11 @@ class MessageStore {
    *  count of the whole context (after a compaction), not split by cache. */
   usageBySession = $state<Record<string, { inputTokens: number; cacheReadTokens: number; cacheCreationTokens: number; noCacheSplit?: boolean }>>({});
 
-  /** System info per session (from system_init) */
-  systemInfoBySession = $state<Record<string, {
-    tools: string[];
-    agents: string[];
-    skills: string[];
-    slashCommands: string[];
-    mcpServers: { name: string; status: string }[];
-  }>>({});
+  /** What each thread's agent has, as main keeps it (AgentSystemInfo):
+   *  loaded with the pane, then sent each time it changes, and the MCP part
+   *  from each live status. Never taken from replayed reports, which may be
+   *  older. */
+  systemInfoBySession = $state<Record<string, AgentSystemInfo>>({});
 
   /** Live MCP status per session (listMcpServers, or a background reconnect
    *  in main), with tools and errors. Absent until fetched. */
@@ -1004,6 +1001,22 @@ class MessageStore {
 
   getSystemInfo(sessionId: string) {
     return this.systemInfoBySession[sessionId] ?? { tools: [], agents: [], skills: [], slashCommands: [], mcpServers: [] };
+  }
+
+  /** What the thread's agent has, as main sent it. */
+  setSystemInfo(sessionId: string, info: AgentSystemInfo) {
+    this.systemInfoBySession[sessionId] = info;
+  }
+
+  /** Ask main what the thread's agent has: as a pane opens, whatever its
+   *  history page holds. */
+  async loadSystemInfo(sessionId: string) {
+    try {
+      const info = await window.groveBench.getSystemInfo(sessionId);
+      if (info) this.setSystemInfo(sessionId, info);
+    } catch (e) {
+      console.warn('[loadSystemInfo] failed:', e);
+    }
   }
 
   /** Replace the MCP server list with a live status snapshot (from listMcpServers). */
@@ -2058,13 +2071,6 @@ class MessageStore {
     delete this.stoppingSession[sessionId];
     delete this.userExplicitMode[sessionId];
     this.modelBySession[sessionId] = event.model;
-    this.systemInfoBySession[sessionId] = {
-      tools: event.tools ?? [],
-      agents: event.agents ?? [],
-      skills: event.skills ?? [],
-      slashCommands: event.slashCommands ?? [],
-      mcpServers: event.mcpServers ?? [],
-    };
     this.pushMessage(sessionId, {
       kind: 'system',
       id: nextId(),

@@ -4,7 +4,7 @@
  */
 import type { BrowserWindow } from 'electron';
 import type { TurnFiles } from './turn-files.js';
-import type { AgentEvent, McpElicitationResponse, PermissionMode, SessionStatus } from '../shared/types.js';
+import type { AgentEvent, AgentSystemInfo, McpElicitationResponse, PermissionMode, SessionStatus } from '../shared/types.js';
 import type { AgentAdapter, AgentQueryHandle, PermissionResponse, UserMessage } from './adapters/types.js';
 import type { Checkpoints } from './no-git-checkpoints.js';
 import type { SessionLimits } from './session-limits.js';
@@ -37,6 +37,13 @@ export interface ManagedSession {
   createdAt: number;
   adapter: AgentAdapter;
   queryHandle: AgentQueryHandle | null;
+  /** What the agent has, as main last learned it (see AgentSystemInfo):
+   *  its last report, from the history at first, then what it lists as it
+   *  starts and its live MCP status. Null until it has said anything. */
+  systemInfo: AgentSystemInfo | null;
+  /** The run whose own report (system_init) systemInfo holds. Asking that
+   *  run for its commands stops then: its report is the newest. */
+  systemInfoReportedBy: AgentQueryHandle | null;
   abortController: AbortController;
   pendingPermissions: Map<string, PendingPermission>;
   pendingElicitations: Map<string, PendingElicitation>;

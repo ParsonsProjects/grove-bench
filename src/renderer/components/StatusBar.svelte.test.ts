@@ -178,10 +178,11 @@ describe('StatusBar MCP controls follow the agent', () => {
     expect(screen.queryByRole('button', { name: 'Reconnect' })).toBeNull();
   });
 
-  it('counts the servers of an agent that only reports them when asked', async () => {
+  it('counts the servers main lists as the agent starts, before it reports them', async () => {
+    // Main asks the agent and sends its live status (AGENT_MCP_STATUS).
     useAgent({ controls: { ...NONE, list: true }, disconnectHint: '' });
-    vi.mocked(window.groveBench.listMcpServers).mockResolvedValueOnce([{ name: 'docs', status: 'connected' }]);
     render(StatusBar, { props: { sessionId: ID } });
+    messageStore.updateMcpServers(ID, [{ name: 'docs', status: 'connected' }]);
 
     await waitFor(() => expect(screen.getByTestId('capabilities')).toHaveTextContent('MCP 1'));
   });

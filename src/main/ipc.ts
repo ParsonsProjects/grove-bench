@@ -1311,6 +1311,9 @@ export function registerHandlers() {
     return { events: all.slice(start, end), totalCount: all.length, startIndex: start, turn: sessionManager.turnState(sessionId) };
   });
 
+  ipcMain.handle(IPC.AGENT_SYSTEM_INFO, (_event, sessionId: unknown) =>
+    isThreadId(sessionId) ? sessionManager.getSystemInfo(sessionId) : null);
+
   ipcMain.handle(IPC.AGENT_HISTORY_COUNT, (_event, sessionId: string) => {
     const prelaunch = prelaunchEvents.get(sessionId) ?? [];
     return sessionManager.getEventHistoryCount(sessionId) + prelaunch.length;
