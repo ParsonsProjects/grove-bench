@@ -72,16 +72,14 @@ describe('TerminalManager', () => {
 
   describe('spawn and kill basics', () => {
     it('spawns a PTY and marks session alive', () => {
-      const ok = tm.spawnPty('s1', '/tmp', sender);
-      expect(ok).toBe(true);
+      expect(tm.spawnPty('s1', '/tmp', sender)).toEqual({ ok: true });
       expect(tm.isAlive('s1')).toBe(true);
       expect(pty.spawn).toHaveBeenCalledOnce();
     });
 
-    it('returns false and marks dead when pty.spawn throws', () => {
+    it('says why and marks dead when pty.spawn throws', () => {
       vi.mocked(pty.spawn).mockImplementationOnce(() => { throw new Error('fail'); });
-      const ok = tm.spawnPty('s1', '/tmp', sender);
-      expect(ok).toBe(false);
+      expect(tm.spawnPty('s1', '/tmp', sender)).toEqual({ ok: false, error: 'fail' });
       expect(tm.isAlive('s1')).toBe(false);
     });
 

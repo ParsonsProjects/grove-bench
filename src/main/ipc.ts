@@ -26,7 +26,7 @@ import { openAttachedFile, readAttachedFile, removeAttachments } from './attachm
 import { openWorktreeFile } from './worktree-files.js';
 import { generateCommitMessage } from './commit-message.js';
 import { exportFileName, threadJson, threadMarkdown, type ThreadExportInfo } from './thread-export.js';
-import type { MemoryCompactionOptions, PreviewBounds, PreviewCommand, PreviewPageKind } from '../shared/types.js';
+import type { MemoryCompactionOptions, PreviewBounds, PreviewCommand, PreviewPageKind, PtySpawnResult } from '../shared/types.js';
 import type { BranchCommitsResult, CheckpointDiffScope, FileDiffResult, GitOperation, FileLinesResult, GitStatusOptions, GitStatusResult, GitStatusEntry, ImageDiffContent, OpenWorktreeFileResult, PrCreateOpts, PrReviewSubmitResult } from '../shared/types.js';
 import { parsePrReviewSubmit, submitPrReview } from './pr-review.js';
 import { showOsNotification, showTestNotification } from './notifications.js';
@@ -105,6 +105,10 @@ const MAX_BRANCH_AUTO_NAME_ATTEMPTS = 2;
 const goalInFlight = new Set<string>();
 const goalAutoAttempts = new Map<string, number>();
 const MAX_GOAL_AUTO_ATTEMPTS = 2;
+
+/** How often the Terminal's start checks whether a new thread's worktree
+ *  is there yet (PTY_SPAWN). */
+const PTY_WORKTREE_POLL_MS = 200;
 
 /** Longest idle sleep loop line written to the app log (APP_LOG_IDLE). */
 export const IDLE_LOG_MAX_CHARS = 500;
@@ -2003,14 +2007,21 @@ export function registerHandlers() {
 
   // ─── PTY Terminal (per-session persistent shell) ───
 
-  ipcMain.handle(IPC.PTY_SPAWN, (event, sessionId: string) => {
-    const worktree = worktreeManager.getWorktree(sessionId);
-    if (!worktree) {
-      // Worktree may not exist yet (still being created in background).
-      // Return false so the renderer can retry later instead of showing an error.
-      logger.debug(`[PTY_SPAWN] Worktree not ready for session ${sessionId}`);
-      return false;
+  ipcMain.handle(IPC.PTY_SPAWN, async (event, sessionId: string): Promise<PtySpawnResult> => {
+    // A new thread's tab opens before its worktree is made (see
+    // SESSION_CREATE): wait for it while the setup runs, so the terminal
+    // opens once it's there. The setup ends either way (made, failed, or
+    // the thread deleted), and so does this.
+    let worktree = worktreeManager.getWorktree(sessionId);
+    while (!worktree && sessionManager.hasPendingSetup(sessionId)) {
+      await new Promise((resolve) => setTimeout(resolve, PTY_WORKTREE_POLL_MS));
+      worktree = worktreeManager.getWorktree(sessionId);
     }
+    if (!worktree) {
+      logger.debug(`[PTY_SPAWN] No worktree for session ${sessionId}`);
+      return { ok: false, error: "This thread has no worktree, so there's nowhere to open the terminal." };
+    }
+    if (event.sender.isDestroyed()) return { ok: false, error: 'The window closed.' };
     return terminalManager.spawnPty(sessionId, worktree.path, event.sender);
   });
 

@@ -61,3 +61,38 @@ describe('terminalStore: a command typed in the terminal', () => {
     expect(asked()).toHaveLength(0);
   });
 });
+
+describe('terminalStore: starting the shell', () => {
+  it('says Starting while the shell starts, and Running once it has', async () => {
+    let answer: ((r: { ok: true }) => void) | undefined;
+    mockGroveBench.ptyIsAlive.mockResolvedValueOnce(false);
+    mockGroveBench.ptySpawn.mockImplementationOnce(() => new Promise((r) => { answer = r; }));
+    const starting = terminalStore.ensureAlive(SID);
+    expect(terminalStore.isStarting(SID)).toBe(true);
+    await vi.waitFor(() => expect(answer).toBeDefined());
+    answer!({ ok: true });
+    await expect(starting).resolves.toBe(true);
+    expect(terminalStore.isStarting(SID)).toBe(false);
+    expect(terminalStore.isAlive(SID)).toBe(true);
+    expect(terminalStore.startError(SID)).toBeNull();
+  });
+
+  it('keeps why a start failed, until a start works', async () => {
+    mockGroveBench.ptyIsAlive.mockResolvedValueOnce(false);
+    mockGroveBench.ptySpawn.mockResolvedValueOnce({ ok: false, error: 'cmd.exe not found' });
+    await expect(terminalStore.ensureAlive(SID)).resolves.toBe(false);
+    expect(terminalStore.isStarting(SID)).toBe(false);
+    expect(terminalStore.isAlive(SID)).toBe(false);
+    expect(terminalStore.startError(SID)).toBe('cmd.exe not found');
+
+    mockGroveBench.ptySpawn.mockResolvedValueOnce({ ok: true });
+    await expect(terminalStore.restart(SID)).resolves.toBe(true);
+    expect(terminalStore.startError(SID)).toBeNull();
+  });
+
+  it('reads a failed request as a failed start', async () => {
+    mockGroveBench.ptySpawn.mockRejectedValueOnce(new Error("Error invoking remote method 'pty:spawn': Error: boom"));
+    await expect(terminalStore.spawn(SID)).resolves.toBe(false);
+    expect(terminalStore.startError(SID)).toBe('boom');
+  });
+});

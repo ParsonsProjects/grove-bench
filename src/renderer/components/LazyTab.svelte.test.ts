@@ -1,11 +1,14 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
 import { render, cleanup, screen } from '@testing-library/svelte';
 import { createRawSnippet } from 'svelte';
 
 import LazyTab from './LazyTab.svelte';
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 
 /** What the tab shows once its code is in: here, the loaded value. */
 const children = createRawSnippet((loaded: () => unknown) => ({ render: () => `<p>${String(loaded())}</p>` }));
@@ -45,5 +48,30 @@ describe('LazyTab', () => {
       render(LazyTab, { load: () => Promise.reject(new TypeError()), tab: 'Terminal', children });
       expect(await screen.findByRole('alert')).toHaveTextContent(/^Couldn't load the Terminal tab \(TypeError\)\./);
     });
+  });
+});
+
+describe('LazyTab while its code loads', () => {
+  it('says nothing for a quick load, so nothing flashes', async () => {
+    vi.useFakeTimers();
+    render(LazyTab, { load: () => Promise.resolve('the Preview panel'), tab: 'Preview', children });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(screen.getByText('the Preview panel')).toBeInTheDocument();
+    expect(screen.queryByRole('status')).toBeNull();
+  });
+
+  it('says it is loading the tab when its code is slow to come in', async () => {
+    vi.useFakeTimers();
+    let answer: ((v: string) => void) | undefined;
+    render(LazyTab, { load: () => new Promise<string>((r) => { answer = r; }), tab: 'Terminal', children });
+    await vi.advanceTimersByTimeAsync(50);
+    expect(screen.queryByRole('status')).toBeNull();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(screen.getByRole('status')).toHaveTextContent('Loading the Terminal tab…');
+
+    answer!('the Terminal panel');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.getByText('the Terminal panel')).toBeInTheDocument();
+    expect(screen.queryByRole('status')).toBeNull();
   });
 });

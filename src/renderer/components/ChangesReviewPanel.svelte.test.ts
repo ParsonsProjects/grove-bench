@@ -85,6 +85,7 @@ afterEach(() => {
 describe('ChangesReviewPanel — live diff while the agent is running', () => {
   it('shows the empty state while running instead of a "wait for the turn" placeholder', async () => {
     messageStore.setIsRunning(SID, true);
+    gitStatusStore.statusBySession = { [SID]: { entries: [] } };
     const { getByText, queryByText } = render(ChangesReviewPanel, { sessionId: SID });
     await tick();
 
@@ -665,6 +666,7 @@ describe('ChangesReviewPanel with grove characters', () => {
   });
 
   it("puts the conversation's agent on its bench above the empty message, typing while it works", async () => {
+    gitStatusStore.statusBySession = { [SID]: { entries: [] } };
     const { getByText, getByRole, findByRole, container } = render(ChangesReviewPanel, { sessionId: SID });
     expect(getByText('Working tree clean')).toBeInTheDocument();
     expect(getByRole('img', { name: 'Ready' })).toBeInTheDocument();
@@ -699,6 +701,7 @@ describe('ChangesReviewPanel with grove characters', () => {
 
   it('shows only the message when grove characters are off', () => {
     settingsStore.current.groveCharacters = false;
+    gitStatusStore.statusBySession = { [SID]: { entries: [] } };
     const { getByText, queryByRole } = render(ChangesReviewPanel, { sessionId: SID });
     expect(getByText('Working tree clean')).toBeInTheDocument();
     expect(queryByRole('img', { name: 'Ready' })).toBeNull();
@@ -1217,5 +1220,75 @@ describe('ChangesReviewPanel: a merge or rebase stopped part way', () => {
     gitStatusStore.statusBySession = { [SID]: { entries: staged } };
     await tick();
     expect(message().value).toBe("Merge branch 'main' into feat, by hand");
+  });
+});
+
+describe('ChangesReviewPanel: before and when the status is read', () => {
+  it('says it is loading until the first status is read, not that the tree is clean', async () => {
+    let answer: ((r: { entries: GitStatusEntry[] }) => void) | undefined;
+    mockGroveBench.getGitStatus.mockImplementationOnce(() => new Promise((r) => { answer = r; }));
+    messageStore.setIsRunning(SID, true);
+    const { getByText, queryByText, findByText } = render(ChangesReviewPanel, { sessionId: SID });
+    void gitStatusStore.refresh(SID);
+    await tick();
+
+    expect(getByText('Loading changes…')).toBeInTheDocument();
+    expect(queryByText('Working tree clean')).toBeNull();
+    // Nor that edits are on their way: nothing is known yet.
+    expect(queryByText('Edits show up here as the agent makes them')).toBeNull();
+
+    answer!({ entries: [] });
+    expect(await findByText('Working tree clean')).toBeInTheDocument();
+  });
+
+  it("shows why git couldn't read the status, and Try again reads it again", async () => {
+    gitStatusStore.statusBySession = { [SID]: { entries: [], error: 'fatal: not a git repository' } };
+    const { getByText, getByRole, queryByText, findByText } = render(ChangesReviewPanel, { sessionId: SID });
+    await tick();
+
+    expect(getByText("Couldn't read the changes")).toBeInTheDocument();
+    expect(getByText('fatal: not a git repository')).toBeInTheDocument();
+    expect(queryByText('Working tree clean')).toBeNull();
+
+    mockGroveBench.getGitStatus.mockResolvedValueOnce({ entries: [] });
+    await fireEvent.click(getByRole('button', { name: 'Try again' }));
+    expect(await findByText('Working tree clean')).toBeInTheDocument();
+    expect(queryByText('fatal: not a git repository')).toBeNull();
+  });
+
+  it('says why when the first read fails outright, rather than loading for good', async () => {
+    mockGroveBench.getGitStatus.mockRejectedValueOnce(new Error("Error invoking remote method 'git:status': Error: process host restarting"));
+    const { findByText } = render(ChangesReviewPanel, { sessionId: SID });
+    await gitStatusStore.refresh(SID);
+    expect(await findByText('process host restarting')).toBeInTheDocument();
+  });
+});
+
+describe('ChangesReviewPanel: a file diff on its way, or failed', () => {
+  it("says the diff is loading on its first read, not that there's none", async () => {
+    let answer: ((r: { kind: 'text'; patch: string }) => void) | undefined;
+    mockGroveBench.getFileDiff.mockImplementationOnce(() => new Promise((r) => { answer = r; }));
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('src/a.ts')] } };
+    const { container, findByText, queryByText } = render(ChangesReviewPanel, { sessionId: SID });
+
+    expect(await findByText('Loading diff…')).toBeInTheDocument();
+    expect(queryByText('No diff available')).toBeNull();
+    answer!({ kind: 'text', patch: patch('first') });
+    await waitFor(() => expect(diffText(container)).toContain('first'));
+    expect(queryByText('Loading diff…')).toBeNull();
+  });
+
+  it("says why a diff couldn't be read, and Try again reads it", async () => {
+    mockGroveBench.getFileDiff
+      .mockRejectedValueOnce(new Error("Error invoking remote method 'git:fileDiff': Error: git timed out"))
+      .mockResolvedValue({ kind: 'text', patch: patch('second') });
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('src/a.ts')] } };
+    const { container, findByText, getByRole, queryByText } = render(ChangesReviewPanel, { sessionId: SID });
+
+    expect(await findByText("Couldn't load the diff: git timed out")).toBeInTheDocument();
+    expect(queryByText('No diff available')).toBeNull();
+    await fireEvent.click(getByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(diffText(container)).toContain('second'));
+    expect(queryByText(/Couldn't load the diff/)).toBeNull();
   });
 });

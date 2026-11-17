@@ -1,5 +1,8 @@
 import { previewStore } from './preview.svelte.js';
 import { gitStatusStore } from './gitStatus.svelte.js';
+import { errorMessage } from '../../shared/error-message.js';
+import { stripIpcErrorPrefix } from '../lib/mcp-errors.js';
+import type { PtySpawnResult } from '../../shared/types.js';
 
 /** After Enter in a thread's terminal, how long its output must stay quiet
  *  before the git status is read again: the command has likely finished. */
@@ -21,6 +24,12 @@ export const COMMAND_WINDOW_MS = 120_000;
 class TerminalStore {
   /** Whether the PTY is alive for each session. */
   aliveBySession = $state<Record<string, boolean>>({});
+  /** Starts (or checks before one) in flight per session: the panel says
+   *  Starting rather than Stopped meanwhile. A count, since a `!command`
+   *  and the panel mounting can each be waiting. */
+  startingBySession = $state<Record<string, number>>({});
+  /** Why the last start failed, until the next one. */
+  startErrorBySession = $state<Record<string, string>>({});
 
   private dataCleanups = new Map<string, () => void>();
   private exitCleanups = new Map<string, () => void>();
@@ -39,6 +48,26 @@ class TerminalStore {
 
   isAlive(sessionId: string): boolean {
     return this.aliveBySession[sessionId] ?? false;
+  }
+
+  /** A shell is being started (or looked for) for this session. A new
+   *  thread's waits for its worktree (main's PTY_SPAWN). */
+  isStarting(sessionId: string): boolean {
+    return (this.startingBySession[sessionId] ?? 0) > 0;
+  }
+
+  /** Why the shell didn't start, or null. */
+  startError(sessionId: string): string | null {
+    return this.startErrorBySession[sessionId] ?? null;
+  }
+
+  private async whileStarting<T>(sessionId: string, run: () => Promise<T>): Promise<T> {
+    this.startingBySession[sessionId] = (this.startingBySession[sessionId] ?? 0) + 1;
+    try {
+      return await run();
+    } finally {
+      this.startingBySession[sessionId] = Math.max(0, (this.startingBySession[sessionId] ?? 1) - 1);
+    }
   }
 
   /** Register a handler to receive raw PTY data (called by TerminalPanel). */
@@ -100,13 +129,24 @@ class TerminalStore {
     this.unsubscribe(sessionId);
     const { [sessionId]: _drop, ...rest } = this.aliveBySession;
     this.aliveBySession = rest;
+    const { [sessionId]: _starting, ...restStarting } = this.startingBySession;
+    this.startingBySession = restStarting;
+    const { [sessionId]: _error, ...restErrors } = this.startErrorBySession;
+    this.startErrorBySession = restErrors;
   }
 
   /** Spawn a PTY for the session. */
   async spawn(sessionId: string): Promise<boolean> {
-    const ok = await window.groveBench.ptySpawn(sessionId);
-    this.aliveBySession[sessionId] = ok;
-    return ok;
+    delete this.startErrorBySession[sessionId];
+    let result: PtySpawnResult;
+    try {
+      result = await window.groveBench.ptySpawn(sessionId);
+    } catch (e) {
+      result = { ok: false, error: stripIpcErrorPrefix(errorMessage(e)) };
+    }
+    this.aliveBySession[sessionId] = result.ok;
+    if (!result.ok) this.startErrorBySession[sessionId] = result.error;
+    return result.ok;
   }
 
   private ensuring = new Map<string, Promise<boolean>>();
@@ -117,10 +157,10 @@ class TerminalStore {
   ensureAlive(sessionId: string): Promise<boolean> {
     const pending = this.ensuring.get(sessionId);
     if (pending) return pending;
-    const run = (async () => {
+    const run = this.whileStarting(sessionId, async () => {
       const alive = await this.checkAlive(sessionId);
       return alive ? true : this.spawn(sessionId);
-    })().finally(() => this.ensuring.delete(sessionId));
+    }).finally(() => this.ensuring.delete(sessionId));
     this.ensuring.set(sessionId, run);
     return run;
   }
@@ -148,8 +188,10 @@ class TerminalStore {
 
   /** Kill and respawn the PTY (same as what happens on tab open). */
   async restart(sessionId: string): Promise<boolean> {
-    await this.kill(sessionId);
-    return this.spawn(sessionId);
+    return this.whileStarting(sessionId, async () => {
+      await this.kill(sessionId);
+      return this.spawn(sessionId);
+    });
   }
 
   /** Check if the PTY is alive (queries main process). */

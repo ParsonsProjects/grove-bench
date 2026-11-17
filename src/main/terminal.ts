@@ -1,7 +1,7 @@
 import * as pty from 'node-pty';
 import type { IPty } from 'node-pty';
 import type { WebContents } from 'electron';
-import { IPC } from '../shared/types.js';
+import { IPC, type PtySpawnResult } from '../shared/types.js';
 import { logger } from './logger.js';
 import { killDescendants } from './process-tree.js';
 
@@ -15,8 +15,8 @@ interface PtySession {
 export class TerminalManager {
   private sessions = new Map<string, PtySession>();
 
-  /** Spawn a persistent PTY shell for a session. Returns true if spawned. */
-  spawnPty(sessionId: string, cwd: string, sender: WebContents): boolean {
+  /** Spawn a persistent PTY shell for a session. */
+  spawnPty(sessionId: string, cwd: string, sender: WebContents): PtySpawnResult {
     // Kill existing PTY if any (it leaves the map synchronously)
     if (this.sessions.has(sessionId)) {
       void this.killPty(sessionId);
@@ -96,10 +96,11 @@ export class TerminalManager {
 
       this.sessions.set(sessionId, { pty: ptyProcess, sessionId, sender, cwd });
       logger.info(`PTY spawned: session=${sessionId}, shell=${shell}, cwd=${cwd}`);
-      return true;
+      return { ok: true };
     } catch (err) {
-      logger.error(`PTY spawn failed for session ${sessionId}:`, err instanceof Error ? err.message : String(err));
-      return false;
+      const error = err instanceof Error ? err.message : String(err);
+      logger.error(`PTY spawn failed for session ${sessionId}:`, error);
+      return { ok: false, error };
     }
   }
 

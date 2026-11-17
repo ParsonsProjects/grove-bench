@@ -419,8 +419,11 @@
               </Button>
             </div>
           </div>
-        {:else}
-          <!-- The page itself is a native view placed over this box. -->
+        {:else if user.loading}
+          <!-- The page itself is a native view placed over this box. This
+               shows until it draws, so only while it loads: a page that has
+               loaded, hidden under a menu with no picture of it (snapshot),
+               leaves the box plain rather than saying Loading. -->
           <div class="h-full flex items-center justify-center text-xs text-muted-foreground">Loading…</div>
         {/if}
         {#if snapshot}

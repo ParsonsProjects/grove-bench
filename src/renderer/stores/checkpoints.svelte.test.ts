@@ -101,6 +101,54 @@ describe('refresh()', () => {
     // Should not throw, loading should be cleared
     expect(checkpointStore.isLoading(SID)).toBe(false);
     expect(checkpointStore.getCheckpoints(SID)).toEqual([]);
+    // Said, so the panel doesn't read it as no checkpoints.
+    expect(checkpointStore.getError(SID)).toBe('fail');
+    expect(checkpointStore.hasLoaded(SID)).toBe(false);
+  });
+
+  it('keeps the list read last when a later read fails, and drops the error once one works', async () => {
+    mockGroveBench.listCheckpoints.mockResolvedValueOnce(MOCK_CHECKPOINTS);
+    await checkpointStore.refresh(SID);
+    mockGroveBench.listCheckpoints.mockRejectedValueOnce(new Error('fail'));
+    await checkpointStore.reload(SID);
+    expect(checkpointStore.getCheckpoints(SID)).toEqual(MOCK_CHECKPOINTS);
+    expect(checkpointStore.getError(SID)).toBe('fail');
+
+    mockGroveBench.listCheckpoints.mockResolvedValueOnce(MOCK_CHECKPOINTS.slice(1));
+    await checkpointStore.reload(SID);
+    expect(checkpointStore.getCheckpoints(SID)).toEqual(MOCK_CHECKPOINTS.slice(1));
+    expect(checkpointStore.getError(SID)).toBeNull();
+  });
+
+  it('drops an older, slower reply, and stays loading until the newest is in', async () => {
+    let resolveOld: ((v: CheckpointListItem[]) => void) | undefined;
+    let resolveNew: ((v: CheckpointListItem[]) => void) | undefined;
+    mockGroveBench.listCheckpoints
+      .mockReturnValueOnce(new Promise<CheckpointListItem[]>((r) => { resolveOld = r; }))
+      .mockReturnValueOnce(new Promise<CheckpointListItem[]>((r) => { resolveNew = r; }));
+    const older = checkpointStore.refresh(SID);
+    const newer = checkpointStore.reload(SID);
+
+    resolveNew!(MOCK_CHECKPOINTS);
+    await newer;
+    resolveOld!(MOCK_CHECKPOINTS.slice(2));
+    await older;
+    expect(checkpointStore.getCheckpoints(SID)).toEqual(MOCK_CHECKPOINTS);
+    expect(checkpointStore.isLoading(SID)).toBe(false);
+  });
+
+  it('keeps loading while a newer read is still out', async () => {
+    let resolveNew: ((v: CheckpointListItem[]) => void) | undefined;
+    mockGroveBench.listCheckpoints
+      .mockResolvedValueOnce(MOCK_CHECKPOINTS.slice(2))
+      .mockReturnValueOnce(new Promise<CheckpointListItem[]>((r) => { resolveNew = r; }));
+    const older = checkpointStore.refresh(SID);
+    const newer = checkpointStore.reload(SID);
+    await older;
+    expect(checkpointStore.isLoading(SID)).toBe(true);
+    resolveNew!(MOCK_CHECKPOINTS);
+    await newer;
+    expect(checkpointStore.isLoading(SID)).toBe(false);
   });
 
   it('still stores checkpoints when only the history fetch fails', async () => {
@@ -161,14 +209,39 @@ describe('selectCheckpoint()', () => {
     expect(checkpointStore.isDiffLoading(SID)).toBe(false);
   });
 
-  it('handles a load error by surfacing a scope error', async () => {
-    mockGroveBench.getCheckpointFiles.mockRejectedValueOnce(new Error('fail'));
+  it('handles a load error by saying why', async () => {
+    mockGroveBench.getCheckpointFiles.mockRejectedValueOnce(new Error("Error invoking remote method 'checkpoint:files': Error: fail"));
 
     await checkpointStore.selectCheckpoint(SID, 'uuid-1');
 
     expect(checkpointStore.isDiffLoading(SID)).toBe(false);
     expect(checkpointStore.getFiles(SID)?.entries).toEqual([]);
-    expect(checkpointStore.getFiles(SID)?.scopeError).toBeTruthy();
+    expect(checkpointStore.getFiles(SID)?.error).toBe('fail');
+  });
+
+  it("drops the last comparison's files on another pick, but keeps them on a reload", async () => {
+    mockGroveBench.getCheckpointFiles.mockResolvedValueOnce(files('first.ts'));
+    await checkpointStore.selectCheckpoint(SID, 'uuid-1');
+
+    let resolve: ((v: GitStatusResult) => void) | undefined;
+    mockGroveBench.getCheckpointFiles.mockReturnValueOnce(new Promise<GitStatusResult>((r) => { resolve = r; }));
+    const reloading = checkpointStore.reloadFiles(SID);
+    expect(checkpointStore.getFiles(SID)).toEqual(files('first.ts'));
+    resolve!(files('first.ts', 'more.ts'));
+    await reloading;
+
+    mockGroveBench.getCheckpointFiles.mockReturnValueOnce(new Promise<GitStatusResult>((r) => { resolve = r; }));
+    const picking = checkpointStore.selectCheckpoint(SID, 'uuid-2');
+    expect(checkpointStore.getFiles(SID)).toBeNull();
+    resolve!(files('second.ts'));
+    await picking;
+    expect(checkpointStore.getFiles(SID)).toEqual(files('second.ts'));
+
+    mockGroveBench.getCheckpointFiles.mockReturnValueOnce(new Promise<GitStatusResult>((r) => { resolve = r; }));
+    const switching = checkpointStore.setDiffMode(SID, 'since');
+    expect(checkpointStore.getFiles(SID)).toBeNull();
+    resolve!(files('since.ts'));
+    await switching;
   });
 
   it('discards a stale response after the selection changed', async () => {

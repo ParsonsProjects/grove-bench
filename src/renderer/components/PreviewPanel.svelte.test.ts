@@ -72,6 +72,17 @@ describe('PreviewPanel', () => {
     expect(mockGroveBench.previewCommand).toHaveBeenCalledWith('s1', 'user', 'reload');
   });
 
+  it('says Loading behind your page only while it loads', async () => {
+    previewStore.applyState('s1', 'user', page({ loading: true }));
+    render(PreviewPanel, { sessionId: 's1', active: true });
+    expect(screen.getByText('Loading…')).toBeInTheDocument();
+
+    // Loaded: the page draws over the box, and a menu over it with no
+    // picture of the page shows the box, which mustn't say Loading.
+    previewStore.applyState('s1', 'user', page({ loading: false }));
+    await waitFor(() => expect(screen.queryByText('Loading…')).toBeNull());
+  });
+
   it('keeps the address bar on the page URL', () => {
     previewStore.applyState('s1', 'user', page({ url: 'http://localhost:5173/about' }));
     render(PreviewPanel, { sessionId: 's1', active: true });

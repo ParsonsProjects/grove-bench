@@ -5,7 +5,7 @@
  * mocked except pure helpers (event search, auto-naming, git status parsing,
  * prompt text) and the file system, which is a temp directory.
  */
-import { describe, it, expect, vi, beforeAll, beforeEach, afterAll, type Mock } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach, afterAll, afterEach, type Mock } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -1782,10 +1782,45 @@ describe('renderer input checks', () => {
     ]);
   });
 
-  it('PTY_SPAWN waits for the worktree instead of failing', () => {
-    expect(invoke(IPC.PTY_SPAWN, 'nope')).toBe(false);
-    invoke(IPC.PTY_SPAWN, 's1');
+  it('PTY_SPAWN opens the terminal in the thread\'s worktree', async () => {
+    m.terminalManager.spawnPty.mockReturnValue({ ok: true });
+    await expect(invoke(IPC.PTY_SPAWN, 's1')).resolves.toEqual({ ok: true });
     expect(m.terminalManager.spawnPty).toHaveBeenCalledWith('s1', wt, sender);
+  });
+
+  it('PTY_SPAWN says why when the thread has no worktree', async () => {
+    await expect(invoke(IPC.PTY_SPAWN, 'nope')).resolves.toEqual({ ok: false, error: expect.stringContaining('no worktree') });
+    expect(m.terminalManager.spawnPty).not.toHaveBeenCalled();
+  });
+
+  describe('PTY_SPAWN for a thread still being set up', () => {
+    beforeEach(() => { vi.useFakeTimers(); });
+    afterEach(() => { vi.useRealTimers(); });
+
+    it('waits for its worktree instead of failing', async () => {
+      let made = false;
+      m.sessionManager.hasPendingSetup.mockImplementation((id: string) => id === 'new');
+      m.worktreeManager.getWorktree.mockImplementation((id: string) => (id === 'new' && made ? { ...wtInfo(), id: 'new' } : undefined));
+      m.terminalManager.spawnPty.mockReturnValue({ ok: true });
+      const spawning = invoke(IPC.PTY_SPAWN, 'new');
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(m.terminalManager.spawnPty).not.toHaveBeenCalled();
+      made = true;
+      await vi.advanceTimersByTimeAsync(500);
+      await expect(spawning).resolves.toEqual({ ok: true });
+      expect(m.terminalManager.spawnPty).toHaveBeenCalledWith('new', wt, sender);
+    });
+
+    it('stops waiting when the setup ends without one', async () => {
+      let settingUp = true;
+      m.sessionManager.hasPendingSetup.mockImplementation((id: string) => id === 'new' && settingUp);
+      const spawning = invoke(IPC.PTY_SPAWN, 'new');
+      await vi.advanceTimersByTimeAsync(1000);
+      settingUp = false;
+      await vi.advanceTimersByTimeAsync(500);
+      await expect(spawning).resolves.toEqual({ ok: false, error: expect.stringContaining('no worktree') });
+      expect(m.terminalManager.spawnPty).not.toHaveBeenCalled();
+    });
   });
 });
 

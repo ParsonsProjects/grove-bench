@@ -96,7 +96,7 @@ describe('CheckpointsPanel on the shared review panel', () => {
     const { container, getByText, getByLabelText } = render(CheckpointsPanel, { sessionId: SID });
 
     await fireEvent.click(getByText('Add polling'));
-    await waitFor(() => expect(getByText('Loading diff...')).toBeInTheDocument());
+    await waitFor(() => expect(getByText('Loading diff…')).toBeInTheDocument());
     const sidebar = getByLabelText('Changed files');
 
     resolveFiles!({ entries: [{ filePath: 'src/a.ts', status: 'modified', staged: false }] });
@@ -275,5 +275,66 @@ describe('CheckpointsPanel rewinds', () => {
     expect(mockGroveBench.rewindSession).not.toHaveBeenCalled();
     await fireEvent.click(getByRole('button', { name: 'Restore' }));
     await waitFor(() => expect(mockGroveBench.rewindSession).toHaveBeenCalledWith(SID, 'u1', { filesOnly: true }));
+  });
+});
+
+describe('CheckpointsPanel: before and when the list is read', () => {
+  afterEach(() => {
+    mockGroveBench.listCheckpoints.mockReset();
+    mockGroveBench.listCheckpoints.mockResolvedValue([]);
+  });
+
+  it('says it is loading until the list is read, then that there are none', async () => {
+    checkpointStore.clear(SID);
+    let answer: ((v: never[]) => void) | undefined;
+    mockGroveBench.listCheckpoints.mockReturnValueOnce(new Promise((r) => { answer = r; }));
+    const { getByText, queryByText, findByText } = render(CheckpointsPanel, { sessionId: SID });
+
+    expect(getByText('Loading checkpoints…')).toBeInTheDocument();
+    expect(queryByText(/No checkpoints yet/)).toBeNull();
+    answer!([]);
+    expect(await findByText(/No checkpoints yet/)).toBeInTheDocument();
+  });
+
+  it("doesn't flash Loading over an empty list it has read when it reads again", async () => {
+    checkpointStore.checkpointsBySession = { [SID]: [] };
+    mockGroveBench.listCheckpoints.mockReturnValueOnce(new Promise(() => {}));
+    const { getByText, queryByText } = render(CheckpointsPanel, { sessionId: SID });
+    void checkpointStore.reload(SID);
+    await Promise.resolve();
+    expect(checkpointStore.isLoading(SID)).toBe(true);
+    expect(getByText(/No checkpoints yet/)).toBeInTheDocument();
+    expect(queryByText('Loading checkpoints…')).toBeNull();
+  });
+
+  it("says why the list couldn't be read, and Try again reads it", async () => {
+    checkpointStore.clear(SID);
+    mockGroveBench.listCheckpoints.mockRejectedValueOnce(new Error("Error invoking remote method 'checkpoint:list': Error: git lock held"));
+    const { findByText, getByRole, queryByText } = render(CheckpointsPanel, { sessionId: SID });
+
+    expect(await findByText("Couldn't load the checkpoints")).toBeInTheDocument();
+    expect(queryByText(/No checkpoints yet/)).toBeNull();
+    expect(await findByText('git lock held')).toBeInTheDocument();
+
+    mockGroveBench.listCheckpoints.mockResolvedValueOnce([{ uuid: 'u1', turn: 1, ref: 'r1', text: 'Initial change' }]);
+    await fireEvent.click(getByRole('button', { name: 'Try again' }));
+    expect(await findByText('Initial change')).toBeInTheDocument();
+    expect(queryByText("Couldn't load the checkpoints")).toBeNull();
+  });
+
+  it('keeps the list read last when reading it again fails, and says so above it', async () => {
+    mockGroveBench.listCheckpoints.mockRejectedValueOnce(new Error('git lock held'));
+    const { getByText, findByText } = render(CheckpointsPanel, { sessionId: SID });
+    await checkpointStore.reload(SID);
+    expect(await findByText("Couldn't refresh the checkpoints: git lock held")).toBeInTheDocument();
+    expect(getByText('Add polling')).toBeInTheDocument();
+  });
+
+  it("says why a checkpoint's files couldn't be read", async () => {
+    mockGroveBench.getCheckpointFiles.mockRejectedValueOnce(new Error('bad ref'));
+    const { getByText, findByText } = render(CheckpointsPanel, { sessionId: SID });
+    await fireEvent.click(getByText('Add polling'));
+    expect(await findByText("Couldn't read the changes")).toBeInTheDocument();
+    expect(getByText('bad ref')).toBeInTheDocument();
   });
 });

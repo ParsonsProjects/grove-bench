@@ -252,7 +252,7 @@ const mockGroveBench = {
   getEventHistoryCount: vi.fn(() => Promise.resolve(0)),
   getImageDiffContent: vi.fn(() => Promise.resolve({ working: null, head: null } as import('../../shared/types.js').ImageDiffContent)),
   readFile: vi.fn(() => Promise.resolve('')),
-  ptySpawn: vi.fn(() => Promise.resolve(true)),
+  ptySpawn: vi.fn(() => Promise.resolve({ ok: true } as import('../../shared/types.js').PtySpawnResult)),
   ptyWrite: vi.fn(),
   ptyResize: vi.fn(),
   ptyKill: vi.fn(() => Promise.resolve()),

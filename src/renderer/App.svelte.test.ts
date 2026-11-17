@@ -337,3 +337,32 @@ describe('App: back in the window', () => {
     }
   });
 });
+
+describe('App: a thread whose history is loading', () => {
+  async function openLoadingThread(groveCharacters: boolean) {
+    mockGroveBench.getSettings.mockResolvedValue({ ...JSON.parse(JSON.stringify(settingsStore.current)), groveCharacters });
+    mockGroveBench.listRepos.mockResolvedValue([]);
+    getOpenTabs.mockResolvedValue([]);
+    mockGroveBench.notifyRestoreComplete.mockClear();
+    render(App);
+    await vi.waitFor(() => expect(mockGroveBench.notifyRestoreComplete).toHaveBeenCalled(), { timeout: 5000 });
+    // Its agent is up; only the history is still on its way.
+    store.sessions = [{ id: 'h', branch: 'feat-h', repoPath: '/repo', status: 'running' }] as any;
+    store.activeSessionId = 'h';
+    flushSync();
+  }
+
+  const original = mockGroveBench.getEventHistoryPage.getMockImplementation();
+  afterEach(() => {
+    if (original) mockGroveBench.getEventHistoryPage.mockImplementation(original);
+    messageStore.destroySession('h');
+    settingsStore.current.groveCharacters = true;
+  });
+
+  it.each([true, false])('says it is loading the thread, not starting its agent (grove characters %s)', async (grove) => {
+    mockGroveBench.getEventHistoryPage.mockImplementation(() => new Promise(() => {}));
+    await openLoadingThread(grove);
+    expect(await screen.findByText('Loading thread...')).toBeInTheDocument();
+    expect(screen.queryByText('Starting agent...')).toBeNull();
+  });
+});

@@ -1382,6 +1382,9 @@ export type PreviewKeyForward =
   | { action: 'focusAddress' }
   | { action: 'key'; key: string; ctrlKey: boolean; shiftKey: boolean; altKey: boolean; metaKey: boolean };
 
+/** What starting a thread's terminal did; `error` says why it didn't. */
+export type PtySpawnResult = { ok: true } | { ok: false; error: string };
+
 export interface GroveBenchAPI {
   // Repo operations
   /** Pick a folder to add as a project. Null when cancelled. */
@@ -1755,7 +1758,8 @@ export interface GroveBenchAPI {
   memoryReadBackupFile(repoPath: string, backupId: string, relativePath: string): Promise<string | null>;
 
   // PTY Terminal (per-session persistent shell)
-  ptySpawn(sessionId: string): Promise<boolean>;
+  /** Waits for a new thread's worktree if it's still being made. */
+  ptySpawn(sessionId: string): Promise<PtySpawnResult>;
   ptyWrite(sessionId: string, data: string): void;
   ptyResize(sessionId: string, cols: number, rows: number): void;
   ptyKill(sessionId: string): Promise<void>;
