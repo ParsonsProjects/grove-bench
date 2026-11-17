@@ -28,7 +28,7 @@ const m = vi.hoisted(() => {
       'validateRepo', 'cleanupOrphans', 'getWorktreeOrManifest', 'registerDirect', 'create', 'getRepoConfig',
       'copyUntrackedFiles', 'getProviderSessionId', 'getModel', 'getAdapterType', 'getThreadLimits', 'remove',
       'saveDisplayName', 'getDisplayNameState', 'saveAutoDisplayName', 'renameBranch', 'switchBranch',
-      'syncBranch', 'list', 'register', 'listRepos', 'getWorktree', 'whenRegistered', 'assertRemovable', 'checkoutSharers',
+      'syncBranch', 'list', 'listChecked', 'register', 'listRepos', 'getWorktree', 'whenRegistered', 'assertRemovable', 'checkoutSharers',
       'getGoal', 'getGoals', 'saveGoal', 'setGoalHidden',
     ),
     terminalManager: fns('killAllForSession', 'spawnPty', 'write', 'resize', 'killPty', 'isAlive', 'openTicket', 'holdsTicket'),

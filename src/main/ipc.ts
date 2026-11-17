@@ -954,8 +954,10 @@ export function registerHandlers() {
 
   // ─── Worktrees ───
 
+  // Throws when the threads can't be read, so the sidebar says so rather
+  // than show the project empty.
   ipcMain.handle(IPC.WORKTREE_LIST, async (_event, repoPath: string) => {
-    const worktrees = await worktreeManager.list(repoPath);
+    const worktrees = await worktreeManager.listChecked(repoPath);
     for (const wt of worktrees) {
       worktreeManager.register(wt);
     }

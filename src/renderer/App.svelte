@@ -7,6 +7,7 @@
   import { prStore } from './stores/pr.svelte.js';
   import { setAnalyticsEnabled, setCrashReportsEnabled, trackEvent, reportCrash } from './lib/analytics.js';
   import { installRendererErrorHandlers, reportFromError, shortMessage, ErrorDeduper } from './lib/error-handling.js';
+  import { ipcErrorText } from './lib/mcp-errors.js';
   import { installFreezeWatch } from './lib/freeze-watch.js';
   import { attentionCount, renderBadgeDataUrl } from './lib/attention-badge.js';
   import { restoreWorktrees } from './lib/restore-worktrees.js';
@@ -102,6 +103,17 @@
   // waiting to reconnect on first focus. These are persisted so they reopen
   // on restart.
   let openTabs = $derived(store.sessions.filter((s) => store.isOpenTab(s)));
+
+  /** The projects, then their threads (restoreApp). A failure is said in
+   *  the sidebar, with Try again (this, again), rather than leave it
+   *  saying there are no projects. */
+  function loadProjects() {
+    store.reposError = null;
+    store.loadRepos().then(() => restoreApp()).catch((e: unknown) => {
+      console.error('Failed to load projects:', e);
+      store.reposError = ipcErrorText(e);
+    });
+  }
 
   async function restoreApp() {
     const restoredIds = await restoreWorktrees();
@@ -408,9 +420,7 @@
     void panelStore.load();
     memoryStore.init();
     previewStore.init();
-    store.loadRepos().then(() => restoreApp()).catch((e) => {
-      console.error('Failed to load repos:', e);
-    });
+    loadProjects();
     window.addEventListener('keydown', handleGlobalKeydown);
     window.addEventListener('keydown', skipWakeScene, true);
 
@@ -533,7 +543,7 @@
 <TitleBar />
 <div class="flex flex-1 min-h-0">
   <svelte:boundary onerror={sidebarError}>
-    <Sidebar />
+    <Sidebar onRetryProjects={loadProjects} />
     {#snippet failed(error, reset)}
       {@render crashed('The sidebar', error, reset)}
     {/snippet}

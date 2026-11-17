@@ -39,6 +39,9 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  // The layout the sidebar keeps for its first frame (sidebar-layout): one
+  // test's open project or width must not reach the next.
+  localStorage.removeItem('grove-bench:sidebar-layout');
   settingsStore.panelOpen = false;
   vi.restoreAllMocks();
   mockGroveBench.getSessionPreviews.mockReset();
@@ -1121,6 +1124,66 @@ describe('Sidebar rename', () => {
 
     expect(await screen.findByText('Faster sidebar')).toBeInTheDocument();
   });
+
+  it('says it is saving the name, and a second Enter or click saves it only once', async () => {
+    let finish!: () => void;
+    mockGroveBench.renameSession.mockImplementationOnce(() => new Promise<void>((r) => { finish = r; }));
+    render(Sidebar);
+    await fireEvent.contextMenu(await screen.findByText('Sidebar revamp'));
+    await fireEvent.click(await screen.findByText('Rename'));
+    const input = await screen.findByDisplayValue('Sidebar revamp');
+    await fireEvent.input(input, { target: { value: 'Faster sidebar' } });
+    await fireEvent.keyDown(input, { key: 'Enter' });
+
+    const saving = await screen.findByRole('button', { name: 'Renaming…' });
+    expect(saving).toBeDisabled();
+    await fireEvent.keyDown(input, { key: 'Enter' });
+    expect(mockGroveBench.renameSession).toHaveBeenCalledTimes(1);
+
+    finish();
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+});
+
+describe('Sidebar: a closed thread whose preview is on its way', () => {
+  const closed = { id: 'c1', branch: 'feat-c', repoPath: '/repo-a', status: 'stopped', displayName: 'Closed one' };
+  afterEach(() => { sessionPreviewStore.failed = {}; });
+
+  it('keeps room for its line under the name until the preview lands', async () => {
+    store.sessions = [closed] as any;
+    let answer!: (previews: Record<string, { firstPrompt: string; lastText: string }>) => void;
+    mockGroveBench.getSessionPreviews.mockImplementationOnce(() => new Promise((r) => { answer = r; }));
+    mockGroveBench.getCollapsedRepos.mockResolvedValueOnce({ '/repo-a': false });
+    const { container } = render(Sidebar);
+    await waitFor(() => expect(container.querySelector('[data-preview-pending]')).not.toBeNull());
+
+    answer({ c1: { firstPrompt: 'Fix the login bug', lastText: 'Done: the login works again' } });
+    expect(await screen.findByText(/the login works again/)).toBeInTheDocument();
+    expect(container.querySelector('[data-preview-pending]')).toBeNull();
+  });
+
+  it('keeps no empty line when the preview fails', async () => {
+    store.sessions = [closed] as any;
+    mockGroveBench.getSessionPreviews.mockRejectedValueOnce(new Error('history unreadable'));
+    mockGroveBench.getCollapsedRepos.mockResolvedValueOnce({ '/repo-a': false });
+    const { container } = render(Sidebar);
+    await waitFor(() => expect(sessionPreviewStore.failed).toEqual({ c1: true }));
+    expect(container.querySelector('[data-preview-pending]')).toBeNull();
+    // Noting the failure doesn't fetch it again straight away (a loop).
+    await new Promise((r) => setTimeout(r, 50));
+    expect(mockGroveBench.getSessionPreviews).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('Sidebar: its first frame', () => {
+  it("draws last run's width and open projects before main's copy is back", () => {
+    localStorage.setItem('grove-bench:sidebar-layout', JSON.stringify({ width: 400, collapsedRepos: { '/repo-a': false } }));
+    // Main's answer never comes in this test: only the first frame is drawn.
+    mockGroveBench.getCollapsedRepos.mockReturnValueOnce(new Promise(() => {}));
+    const { container } = render(Sidebar);
+    expect(container.querySelector('[style*="width: 400px"]')).not.toBeNull();
+    expect(screen.getByTitle('Collapse project')).toHaveAttribute('aria-expanded', 'true');
+  });
 });
 
 describe('Sidebar export', () => {
@@ -1468,7 +1531,7 @@ describe('Sidebar clean-up dialog', () => {
     // The new candidate is checked and preselected; the earlier untick survives.
     await waitFor(() => expect(screen.getByLabelText(/Recent one/)).toBeChecked());
     expect(mockGroveBench.getGitStatus).toHaveBeenCalledTimes(4);
-    expect(mockGroveBench.getGitStatus).toHaveBeenLastCalledWith('recent');
+    expect(mockGroveBench.getGitStatus).toHaveBeenLastCalledWith('recent', { timeout: 15_000 });
     expect(screen.getByLabelText(/Open one/)).not.toBeChecked();
   });
 
@@ -1611,6 +1674,29 @@ describe('Sidebar clean-up dialog', () => {
       cleanupStore.result = null;
       destroySession.mockReset().mockResolvedValue(undefined);
       getBranchCommits.mockReset().mockResolvedValue({ commits: [] });
+    });
+
+    it("waits for a ticked thread's changes check before Remove, so the warning can't be skipped", async () => {
+      let answer: ((status: GitStatusResult) => void) | undefined;
+      mockGroveBench.getGitStatus.mockImplementation(async (id: string) => {
+        if (id === 'dirty') return new Promise<GitStatusResult>((r) => { answer = r; });
+        return { entries: [] };
+      });
+      const dialog = await openDialog();
+      await waitFor(() => expect(within(dialog).getByText('2 of 3 selected')).toBeInTheDocument());
+      expect(within(dialog).getByTestId('cleanup-changes-dirty')).toHaveTextContent('checking changes…');
+
+      // Ticked while its check is still out: Remove waits for it.
+      const row = within(dialog).getByText('Dirty one').closest('label')!;
+      await fireEvent.click(within(row).getByRole('checkbox'));
+      const waiting = within(dialog).getByRole('button', { name: 'Checking changes…' });
+      expect(waiting).toBeDisabled();
+
+      answer!({ entries: [{ filePath: 'x.ts', status: 'modified', staged: false }] });
+      await within(dialog).findByText('· uncommitted changes');
+      await fireEvent.click(within(dialog).getByRole('button', { name: 'Remove 3 threads' }));
+      const confirm = await screen.findByRole('dialog', { name: 'Remove Threads?' });
+      expect(within(confirm).getByText(/1 of them has uncommitted changes that will be lost/)).toBeInTheDocument();
     });
 
     /** Open the dialog once every row's check is back: Alpha and Bravo
@@ -2490,5 +2576,67 @@ describe('Sidebar sections', () => {
     await fireEvent.click(toggle('projectsSection'));
     await waitFor(() => expect(list.scrollTo).toHaveBeenCalledWith({ top: 800, behavior: 'smooth' }));
     expect(screen.getByRole('button', { name: 'New thread in api' })).toBeInTheDocument();
+  });
+});
+
+describe('Sidebar: projects still loading, or that could not be', () => {
+  afterEach(() => {
+    store.reposLoaded = false;
+    store.reposError = null;
+    store.projectLoad = {};
+    mockGroveBench.repoKind.mockReset().mockResolvedValue('git');
+    mockGroveBench.listWorktrees.mockReset().mockResolvedValue([]);
+  });
+
+  it('says it is loading the projects until they are read, and only then to add one', async () => {
+    store.repos = [];
+    store.sessions = [];
+    render(Sidebar);
+    expect(screen.getByText('Loading projects…')).toBeInTheDocument();
+    expect(screen.queryByText('Add a project to get started.')).toBeNull();
+
+    store.reposLoaded = true;
+    expect(await screen.findByText('Add a project to get started.')).toBeInTheDocument();
+  });
+
+  it("says why the projects couldn't be loaded, and Try again loads them", async () => {
+    store.repos = [];
+    store.sessions = [];
+    store.reposError = 'listRepos failed';
+    const onRetryProjects = vi.fn();
+    render(Sidebar, { onRetryProjects });
+    expect(screen.getByText("Couldn't load your projects and threads: listRepos failed")).toBeInTheDocument();
+    expect(screen.queryByText('Loading projects…')).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(onRetryProjects).toHaveBeenCalledTimes(1);
+  });
+
+  it('says threads are loading in an open project, not that it has none', async () => {
+    store.sessions = [];
+    store.projectLoad = { '/repo-a': { state: 'loading' } };
+    mockGroveBench.getCollapsedRepos.mockResolvedValueOnce({ '/repo-a': false });
+    render(Sidebar);
+    expect(await screen.findByText('Loading threads…')).toBeInTheDocument();
+    expect(screen.queryByText('No threads in this project')).toBeNull();
+  });
+
+  it("says a project's folder is gone even folded, and Try again lists its threads", async () => {
+    store.sessions = [];
+    store.projectLoad = { '/repo-a': { state: 'missing' } };
+    render(Sidebar);
+    expect(screen.getByText("Folder not found, so its threads aren't listed.")).toBeInTheDocument();
+
+    mockGroveBench.listWorktrees.mockResolvedValueOnce([{ id: 'w1', branch: 'feat-w', path: '/wt/w1', repoPath: '/repo-a', createdAt: 1, displayName: 'Back again' }]);
+    await fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(screen.queryByText(/Folder not found/)).toBeNull());
+    expect(store.sessions.map((s) => s.id)).toEqual(['w1']);
+  });
+
+  it("says why a project's threads couldn't be listed", () => {
+    store.sessions = [];
+    store.projectLoad = { '/repo-a': { state: 'failed', error: "git couldn't list its worktrees: fatal: bad index" } };
+    render(Sidebar);
+    expect(screen.getByText(/Couldn't list its threads: git couldn't list its worktrees: fatal: bad index/)).toBeInTheDocument();
+    expect(screen.queryByText('No threads in this project')).toBeNull();
   });
 });

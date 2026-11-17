@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mockGroveBench } from '../__mocks__/setup.js';
 import { store } from '../stores/sessions.svelte.js';
-import { restoreWorktrees } from './restore-worktrees.js';
+import { restoreWorktrees, retryProject } from './restore-worktrees.js';
 import type { WorktreeInfo, SessionInfo } from '../../shared/types.js';
 
 function makeWorktree(overrides: Partial<WorktreeInfo> & { id: string; branch: string }): WorktreeInfo {
@@ -18,6 +18,16 @@ beforeEach(() => {
   store.activeSessionId = null;
   store.error = null;
   store.repos = [];
+  store.projectLoad = {};
+  store.deferredResume = {};
+});
+
+afterEach(() => {
+  // Back to the shared defaults: an implementation set by one test must not
+  // reach the next (CI shuffles them).
+  mockGroveBench.repoKind.mockReset().mockResolvedValue('git');
+  mockGroveBench.listWorktrees.mockReset().mockResolvedValue([]);
+  mockGroveBench.listSessions.mockReset().mockResolvedValue([]);
 });
 
 describe('restoreWorktrees', () => {
@@ -186,5 +196,55 @@ describe('restoreWorktrees', () => {
     expect(store.repos).toEqual(['/repo/a', '/repo/b']);
     expect(store.sessions).toHaveLength(1);
     expect(store.sessions[0].repoPath).toBe('/repo/b');
+  });
+});
+
+describe('restoreWorktrees: how each project went', () => {
+  it('clears a project once its threads are listed, and says which are gone or failed', async () => {
+    store.repos = ['/ok', '/gone', '/broken'];
+    store.projectLoad = { '/ok': { state: 'loading' }, '/gone': { state: 'loading' }, '/broken': { state: 'loading' } };
+    mockGroveBench.listSessions.mockResolvedValueOnce([]);
+    mockGroveBench.repoKind.mockImplementation((async (repo: string) => (repo === '/gone' ? 'missing' : 'git')) as never);
+    mockGroveBench.listWorktrees.mockImplementation((async (repo: string) => {
+      if (repo === '/broken') throw new Error("Error invoking remote method 'worktree:list': Error: git couldn't list its worktrees: fatal: bad index");
+      return [makeWorktree({ id: 'w1', branch: 'feat', repoPath: repo })];
+    }) as never);
+
+    await restoreWorktrees();
+
+    expect(store.projectLoad).toEqual({
+      '/gone': { state: 'missing' },
+      '/broken': { state: 'failed', error: "git couldn't list its worktrees: fatal: bad index" },
+    });
+    expect(store.sessions.map((s) => s.id)).toEqual(['w1']);
+  });
+});
+
+describe('retryProject', () => {
+  it('lists the threads again, and brings back the ones that were open', async () => {
+    store.repos = ['/broken'];
+    store.projectLoad = { '/broken': { state: 'failed', error: 'fatal: bad index' } };
+    mockGroveBench.listSessions.mockResolvedValueOnce([]);
+    mockGroveBench.repoKind.mockResolvedValueOnce('git');
+    mockGroveBench.listWorktrees.mockResolvedValueOnce([
+      makeWorktree({ id: 'open', branch: 'a', repoPath: '/broken' }),
+      makeWorktree({ id: 'closed', branch: 'b', repoPath: '/broken' }),
+    ]);
+    mockGroveBench.getOpenTabs.mockResolvedValueOnce(['open']);
+
+    const retrying = retryProject('/broken');
+    expect(store.projectLoad['/broken']).toEqual({ state: 'loading' });
+    await retrying;
+
+    expect(store.projectLoad).toEqual({});
+    expect(store.sessions.map((s) => s.id).sort()).toEqual(['closed', 'open']);
+    expect(store.deferredResume).toEqual({ open: true });
+  });
+
+  it('says why when it fails again', async () => {
+    store.repos = ['/broken'];
+    mockGroveBench.listSessions.mockRejectedValueOnce(new Error('host restarting'));
+    await retryProject('/broken');
+    expect(store.projectLoad['/broken']).toEqual({ state: 'failed', error: 'host restarting' });
   });
 });

@@ -1001,78 +1001,92 @@ export class WorktreeManager {
     return cleaned;
   }
 
+  /** The project's conversations, or none when they can't be read. For
+   *  callers that can carry on without them; the sidebar uses listChecked. */
   async list(repoPath: string): Promise<WorktreeInfo[]> {
-    try {
-      const manifest = await this.loadManifest();
-      // A folder project isn't a git repository: only its direct
-      // conversations are listed, and they need no git.
-      const output = await git(['worktree', 'list', '--porcelain'], repoPath).catch(() => '');
-      const blocks = output.split('\n\n').filter(Boolean);
+    return this.listChecked(repoPath).catch(() => []);
+  }
 
-      // Collect all worktree paths git knows about (normalized for cross-platform comparison)
-      const gitWorktrees = new Map<string, string>(); // normalized path → raw block
-      for (const block of blocks) {
-        const lines = block.split('\n');
-        const wtPathLine = lines.find((l) => l.startsWith('worktree '));
-        if (wtPathLine) {
-          const raw = wtPathLine.replace('worktree ', '');
-          gitWorktrees.set(pathKey(raw), block);
-        }
+  /** The project's conversations. Throws when they can't be read (the
+   *  manifest, or git for its worktrees), rather than read as none: a
+   *  project whose threads vanished would look empty. */
+  async listChecked(repoPath: string): Promise<WorktreeInfo[]> {
+    const manifest = await this.loadManifest();
+    // Git confirms worktree conversations only. A folder project isn't a
+    // git repository, and its direct conversations need no git, so git
+    // runs only when there is a worktree to confirm.
+    const needsGit = Object.values(manifest).some((e) => e.repoPath === repoPath && !e.pendingRemoval && !e.direct);
+    let output = '';
+    if (needsGit) {
+      try {
+        output = await git(['worktree', 'list', '--porcelain'], repoPath);
+      } catch (e) {
+        throw new Error(`git couldn't list its worktrees: ${e instanceof Error ? e.message : String(e)}`, { cause: e });
       }
+    }
+    const blocks = output.split('\n\n').filter(Boolean);
 
-      const entries: WorktreeInfo[] = [];
+    // Collect all worktree paths git knows about (normalized for cross-platform comparison)
+    const gitWorktrees = new Map<string, string>(); // normalized path → raw block
+    for (const block of blocks) {
+      const lines = block.split('\n');
+      const wtPathLine = lines.find((l) => l.startsWith('worktree '));
+      if (wtPathLine) {
+        const raw = wtPathLine.replace('worktree ', '');
+        gitWorktrees.set(pathKey(raw), block);
+      }
+    }
 
-      // Return manifest entries for this repo that git still knows about
-      for (const [id, entry] of Object.entries(manifest)) {
-        if (entry.repoPath !== repoPath) continue;
-        if (entry.pendingRemoval) continue;
+    const entries: WorktreeInfo[] = [];
 
-        // Direct sessions don't create their own worktree on disk. Plain ones
-        // run on the repo checkout; attached ones carry an explicit path to the
-        // worktree they share.
-        if (entry.direct) {
-          entries.push({
-            id,
-            path: entry.path ?? repoPath,
-            branch: entry.branch,
-            repoPath,
-            createdAt: entry.createdAt,
-            lastActiveAt: entry.lastActiveAt,
-            direct: true,
-            ...(entry.noGit ? { noGit: true } : {}),
-            displayName: entry.displayName ?? null,
-            agentType: agentTypeOf(entry),
-          });
-          continue;
-        }
+    // Return manifest entries for this repo that git still knows about
+    for (const [id, entry] of Object.entries(manifest)) {
+      if (entry.repoPath !== repoPath) continue;
+      if (entry.pendingRemoval) continue;
 
-        const wtPath = this.checkoutPath(id, entry);
-        const block = gitWorktrees.get(pathKey(wtPath));
-        if (!block) continue;
-
-        // Get branch from git porcelain output for accuracy
-        let branch = entry.branch;
-        const branchLine = block.split('\n').find((l) => l.startsWith('branch '));
-        if (branchLine) {
-          branch = branchLine.replace('branch refs/heads/', '');
-        }
-
+      // Direct sessions don't create their own worktree on disk. Plain ones
+      // run on the repo checkout; attached ones carry an explicit path to the
+      // worktree they share.
+      if (entry.direct) {
         entries.push({
           id,
-          path: wtPath,
-          branch,
+          path: entry.path ?? repoPath,
+          branch: entry.branch,
           repoPath,
           createdAt: entry.createdAt,
           lastActiveAt: entry.lastActiveAt,
+          direct: true,
+          ...(entry.noGit ? { noGit: true } : {}),
           displayName: entry.displayName ?? null,
           agentType: agentTypeOf(entry),
         });
+        continue;
       }
 
-      return entries;
-    } catch {
-      return [];
+      const wtPath = this.checkoutPath(id, entry);
+      const block = gitWorktrees.get(pathKey(wtPath));
+      if (!block) continue;
+
+      // Get branch from git porcelain output for accuracy
+      let branch = entry.branch;
+      const branchLine = block.split('\n').find((l) => l.startsWith('branch '));
+      if (branchLine) {
+        branch = branchLine.replace('branch refs/heads/', '');
+      }
+
+      entries.push({
+        id,
+        path: wtPath,
+        branch,
+        repoPath,
+        createdAt: entry.createdAt,
+        lastActiveAt: entry.lastActiveAt,
+        displayName: entry.displayName ?? null,
+        agentType: agentTypeOf(entry),
+      });
     }
+
+    return entries;
   }
 
   /** Return all unique repo paths recorded in the manifest. */

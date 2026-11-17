@@ -435,4 +435,21 @@ describe('loadRepos', () => {
     expect(localStorage.getItem('grove-bench:repos')).toBeNull();
     store.repos = [];
   });
+
+  it('marks the list read, and each project loading until its threads are listed', async () => {
+    store.reposLoaded = false;
+    store.projectLoad = {};
+    mockGroveBench.listRepos.mockResolvedValueOnce(['/repo/a', '/repo/b']);
+
+    await store.loadRepos();
+
+    expect(store.reposLoaded).toBe(true);
+    expect(store.projectLoad).toEqual({ '/repo/a': { state: 'loading' }, '/repo/b': { state: 'loading' } });
+    // Removing one forgets how it went.
+    store.removeRepo('/repo/a');
+    expect(store.projectLoad).toEqual({ '/repo/b': { state: 'loading' } });
+    store.repos = [];
+    store.projectLoad = {};
+    store.reposLoaded = false;
+  });
 });

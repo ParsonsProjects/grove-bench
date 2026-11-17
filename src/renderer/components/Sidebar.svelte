@@ -44,6 +44,7 @@
   import ContextMenu from './ContextMenu.svelte';
   import { formatAge } from '../lib/format-age.js';
   import { isRepoCollapsed } from '../lib/repo-collapse.js';
+  import { cachedSidebarLayout, cacheSidebarLayout } from '../lib/sidebar-layout.js';
   import { sortSessions, defaultDirFor } from '../lib/session-sort.js';
   import { triageForSprite, triageCounts, matchesTriageFilter, TRIAGE_FILTERS, TRIAGE_FILTER_LABELS, type TriageFilter, type TriageEntry } from '../lib/session-triage.js';
   import { sessionSubtitle, pendingPermissionTool, pendingPermissionView, lastTextSnippet, firstPromptSnippet, type SessionSubtitle } from '../lib/session-subtitle.js';
@@ -67,6 +68,12 @@
   import { deriveSessionName } from '../../shared/session-name.js';
   import { onMount, untrack } from 'svelte';
   import { errorMessage } from '../../shared/error-message.js';
+  import { Notice } from '$lib/components/ui/notice/index.js';
+  import { retryProject } from '../lib/restore-worktrees.js';
+
+  /** Load the projects and their threads again, after that failed at
+   *  startup (App's loadProjects). */
+  let { onRetryProjects }: { onRetryProjects?: () => void } = $props();
 
   /** The draft's row: its first line, or for a skill run the name the
    *  thread will get ("triage: Fix the login bug"), not the line every one
@@ -79,9 +86,10 @@
 
   // Per-repo accordion collapse state, persisted via app-state. An explicit
   // entry wins; otherwise repos default to collapsed (see isRepoCollapsed).
-  // Loaded on mount; the empty map renders the correct default immediately, so
-  // there's no flash of expanded content.
-  let collapsedRepos = $state<Record<string, boolean>>({});
+  // The first frame draws last run's (sidebar-layout); main's copy, the one
+  // that counts, replaces it on mount.
+  const cachedLayout = cachedSidebarLayout();
+  let collapsedRepos = $state<Record<string, boolean>>(cachedLayout.collapsedRepos ?? {});
 
   // User-resizable sidebar width (px), persisted via app-state.
   const SIDEBAR_MIN = 240;
@@ -91,7 +99,8 @@
   // one line, so the chips show just their dot and count. Idle wraps onto a
   // second line until the sidebar is about 336px wide, and To do after it.
   const SIDEBAR_COMPACT_BELOW = 280;
-  let sidebarWidth = $state(SIDEBAR_DEFAULT);
+  const clampWidth = (width: number) => Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, width));
+  let sidebarWidth = $state(clampWidth(cachedLayout.width ?? SIDEBAR_DEFAULT));
   let compact = $derived(sidebarWidth < SIDEBAR_COMPACT_BELOW);
   let resizing = $state(false);
   // Folded down to a rail: the open conversations' status marks and the
@@ -113,8 +122,9 @@
       window.groveBench.getSidebarWidth(),
     ]);
     if (savedWidth != null) {
-      sidebarWidth = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, savedWidth));
+      sidebarWidth = clampWidth(savedWidth);
     }
+    cacheSidebarLayout({ collapsedRepos: $state.snapshot(collapsedRepos), sort: $state.snapshot(store.sessionSort), width: sidebarWidth });
   });
 
   function startResize(e: PointerEvent) {
@@ -123,13 +133,14 @@
     const startWidth = sidebarWidth;
     resizing = true;
     const onMove = (ev: PointerEvent) => {
-      sidebarWidth = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, startWidth + (ev.clientX - startX)));
+      sidebarWidth = clampWidth(startWidth + (ev.clientX - startX));
     };
     const onUp = () => {
       resizing = false;
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
       window.groveBench.setSidebarWidth(sidebarWidth);
+      cacheSidebarLayout({ width: sidebarWidth });
     };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
@@ -192,6 +203,7 @@
     const current = isRepoCollapsed(collapsedRepos, repo);
     collapsedRepos = { ...collapsedRepos, [repo]: !current };
     window.groveBench.setCollapsedRepos($state.snapshot(collapsedRepos));
+    cacheSidebarLayout({ collapsedRepos: $state.snapshot(collapsedRepos) });
   }
 
   /** Click a sort key: flip its direction if already active, else switch to it
@@ -202,6 +214,7 @@
       ? { key, dir: sort.dir === 'asc' ? 'desc' : 'asc' }
       : { key, dir: defaultDirFor(key) };
     window.groveBench.setSessionSort($state.snapshot(store.sessionSort));
+    cacheSidebarLayout({ sort: $state.snapshot(store.sessionSort) });
   }
 
   let contextMenu = $state<{ x: number; y: number; sessionId: string } | null>(null);
@@ -305,6 +318,9 @@
   let renamingSessionId = $state<string | null>(null);
   let renameValue = $state('');
   let renameError = $state<string | null>(null);
+  /** The thread whose new name is being saved: the dialog says so, and a
+   *  second Enter or click doesn't save it again. */
+  let renameSavingId = $state<string | null>(null);
 
   // ─── Bulk session clean-up ───
   let showCleanup = $state(false);
@@ -399,6 +415,10 @@
   /** Remove waits for the commits check of every selected thread whose
    *  branch is about to go, so a quick click can't skip its warning. */
   const cleanupCommitsPending = $derived(cleanupDeleteBranches && cleanupSelectedBranchIds.some((id) => !(id in cleanupUnmerged)));
+  /** And for the uncommitted-changes check of every selected thread: one
+   *  still being checked would count as clean in the warning, and its
+   *  worktree is removed with --force. */
+  const cleanupStatusPending = $derived(cleanupSelectedIds.some((id) => !(id in cleanupDirty)));
   const cleanupSelectedUnmergedCount = $derived(cleanupSelectedBranchIds.filter((id) => (cleanupUnmerged[id]?.count ?? 0) > 0).length);
   const cleanupSelectedCommitsUnknown = $derived(cleanupSelectedBranchIds.filter((id) => cleanupUnmerged[id] === null).length);
   const cleanupMergedCount = $derived(cleanupCandidates.filter((s) => isPrMerged(cleanupPrOf(s.id))).length);
@@ -470,7 +490,9 @@
           let dirty: boolean;
           let unknown: boolean;
           try {
-            const status = await window.groveBench.getGitStatus(s.id);
+            // Timed like the Delete dialog's check, so a hung git can't keep
+            // Remove waiting on this row: it reads as unknown instead.
+            const status = await withTimeout(window.groveBench.getGitStatus(s.id, { timeout: DELETE_CHECK_TIMEOUT_MS }), DELETE_CHECK_GIVE_UP_MS);
             // A status git couldn't read may hide changes: treat it as dirty.
             unknown = !!status.error;
             dirty = unsavedFileCount(status.entries, agentsStore.generatedFiles()) > 0 || unknown;
@@ -994,7 +1016,10 @@
 
     const session = store.sessions.find(s => s.id === id);
     if (session && newName === sessionLabel(session)) { renamingSessionId = null; return; }
+    if (renameSavingId === id) return;
 
+    renameSavingId = id;
+    renameError = null;
     try {
       await window.groveBench.renameSession(id, newName);
       store.updateDisplayName(id, newName);
@@ -1004,6 +1029,8 @@
       }
     } catch (e) {
       if (renamingSessionId === id) renameError = errorMessage(e);
+    } finally {
+      if (renameSavingId === id) renameSavingId = null;
     }
   }
 
@@ -1219,6 +1246,9 @@
     {@const repoColor = getRepoColor(store.repos, session.repoPath, settingsStore.current.repoColors)}
     {@const ts = session.lastActiveAt ?? session.createdAt}
     {@const subtitle = rowSubtitle(session)}
+    <!-- Its line under the name comes from the preview, still on its way:
+         kept as room now, so the row doesn't grow when the text lands. -->
+    {@const previewPending = !subtitle && messageStore.getMessages(session.id).length === 0 && sessionPreviewStore.isPending(session.id)}
     <!-- Shells and monitors its agent left running: their words, worked out once for the badge and the tooltip. -->
     {@const shells = describeShells(backgroundShells(session))}
     <!-- Changed in the worktree: the Changes tab may be listing the whole branch. -->
@@ -1282,13 +1312,13 @@
             >{formatAge(ts)}</span>
           {/if}
         </div>
-        {#if group || showProject || subtitle || changedCount > 0 || shells}
+        {#if group || showProject || subtitle || previewPending || changedCount > 0 || shells}
           <div class="w-full flex items-center gap-1.5 {markColumn.indent} mt-0.5 min-w-0">
             <span class="text-caption truncate min-w-0">
               {#if group}<span class="text-foreground/60" title="Group: {group.name}" data-row-group>{group.name}</span>{#if showProject || subtitle}<span class="text-muted-foreground/40">{' · '}</span>{/if}{/if}
               {#if showProject}
                 <!-- A grove character carries the project colour on its laptop, so the square is only needed with the plain dot. -->
-                {#if repoColor && !settingsStore.current.groveCharacters}<span class="inline-block w-1.5 h-1.5 align-middle mr-1" style="background-color: {repoColor}"></span>{/if}<span class="text-muted-foreground">{store.repoDisplayName(session.repoPath)}</span>{#if subtitle}<span class="text-muted-foreground/40">{' · '}</span>{/if}{/if}{#if subtitle}<span class={SUBTITLE_TONE_CLASS[subtitle.tone]}>{subtitle.text}</span>{/if}
+                {#if repoColor && !settingsStore.current.groveCharacters}<span class="inline-block w-1.5 h-1.5 align-middle mr-1" style="background-color: {repoColor}"></span>{/if}<span class="text-muted-foreground">{store.repoDisplayName(session.repoPath)}</span>{#if subtitle}<span class="text-muted-foreground/40">{' · '}</span>{/if}{/if}{#if subtitle}<span class={SUBTITLE_TONE_CLASS[subtitle.tone]}>{subtitle.text}</span>{:else if previewPending}<span aria-hidden="true" data-preview-pending>&nbsp;</span>{/if}
             </span>
             {#if shells || changedCount > 0}
               <span class="ml-auto shrink-0 flex items-center gap-1.5" data-row-badges>
@@ -1592,11 +1622,20 @@
       {/snippet}
 
       <div class="pt-1 pb-2">
+        {#if store.reposError !== null}
+          <Notice tone="danger" class="mb-2">
+            {#snippet actions()}
+              {#if onRetryProjects}<Button size="2xs" variant="subtle" onclick={onRetryProjects}>Try again</Button>{/if}
+            {/snippet}
+            <p class="break-words">Couldn't load your projects and threads: {store.reposError}</p>
+          </Notice>
+        {/if}
         {#each store.repos as repo (repo)}
           {@const repoColor = getRepoColor(store.repos, repo, settingsStore.current.repoColors)}
           {@const branchGroups = getBranchGroups(repo)}
           {@const rowCount = branchGroups.reduce((n, [, s]) => n + s.length, 0)}
           {@const repoCollapsed = isRepoCollapsed(collapsedRepos, repo)}
+          {@const load = store.projectLoad[repo]}
           <div class="mb-3">
             <!-- Repo header (click to collapse/expand the repo's conversation tree) -->
             <div class="flex items-center justify-between group px-1 py-1">
@@ -1616,6 +1655,11 @@
                 </span>
                 {#if rowCount}
                   <span class="text-xs text-muted-foreground shrink-0">{rowCount}</span>
+                {/if}
+                {#if load?.state === 'missing' || load?.state === 'failed'}
+                  <!-- Shown folded too: its threads aren't listed. -->
+                  {@const problem = load.state === 'missing' ? 'Folder not found' : "Couldn't list its threads"}
+                  <span class="text-xs text-amber-500 shrink-0" role="img" aria-label={problem} title={problem} data-project-problem>!</span>
                 {/if}
                 <!-- Per-repo attention counts, same dots as the filter chips -->
                 <AttentionCounts counts={repoCounts(repo)} />
@@ -1657,6 +1701,18 @@
               </div>
             </div>
 
+            <!-- Its threads aren't listed: say why, folded or not, with Try again. -->
+            {#if load?.state === 'missing' || load?.state === 'failed'}
+              <p class="text-xs text-amber-500 pl-4 py-1 break-words" data-project-load={load.state}>
+                {#if load.state === 'missing'}
+                  <span title={repo}>Folder not found, so its threads aren't listed.</span>
+                {:else}
+                  Couldn't list its threads: {load.error}
+                {/if}
+                <Button variant="link" size="inline" onclick={() => void retryProject(repo)}>Try again</Button>
+              </p>
+            {/if}
+
             <!-- The project's conversations, grouped by branch -->
             {#if !repoCollapsed}
               {#each branchGroups as [branch, sessions] (branch)}
@@ -1684,15 +1740,21 @@
                 {/if}
               {/each}
 
-              {#if branchGroups.length === 0}
+              {#if branchGroups.length === 0 && load?.state === 'loading'}
+                <!-- Not while the startup error above stands: it says why. -->
+                {#if store.reposError === null}
+                  <p class="text-xs text-muted-foreground pl-4 py-1">Loading threads…</p>
+                {/if}
+              {:else if branchGroups.length === 0 && !load}
                 <p class="text-xs text-muted-foreground pl-4 py-1">{triageFilter === 'all' ? 'No threads in this project' : `No threads match "${TRIAGE_FILTER_LABELS[triageFilter]}"`}</p>
               {/if}
             {/if}
           </div>
         {/each}
 
-        {#if store.repos.length === 0}
-          <p class="text-xs text-muted-foreground mt-2">Add a project to get started.</p>
+        {#if store.repos.length === 0 && store.reposError === null}
+          <!-- Not before the list is read: there may well be some. -->
+          <p class="text-xs text-muted-foreground mt-2">{store.reposLoaded ? 'Add a project to get started.' : 'Loading projects…'}</p>
         {/if}
       </div>
     </SidebarSection>
@@ -1754,7 +1816,9 @@
       {/if}
       <Dialog.Footer>
         <Button variant="secondary" onclick={() => renamingSessionId = null}>Cancel</Button>
-        <Button onclick={confirmRename}>Rename</Button>
+        <Button onclick={confirmRename} disabled={renameSavingId === renamingSessionId}>
+          {renameSavingId === renamingSessionId ? 'Renaming…' : 'Rename'}
+        </Button>
       </Dialog.Footer>
     </Dialog.Content>
   </Dialog.Root>
@@ -1910,7 +1974,9 @@
                   {#if todoStore.has(session.id)}
                     <span class="text-foreground/80 font-medium" title="Marked To do in the sidebar" data-testid="cleanup-todo-{session.id}">· to do</span>
                   {/if}
-                  {#if cleanupStatusUnknown[session.id]}
+                  {#if !(session.id in cleanupDirty)}
+                    <span data-testid="cleanup-changes-{session.id}">· checking changes…</span>
+                  {:else if cleanupStatusUnknown[session.id]}
                     <span class="text-amber-500 font-medium" title="Git couldn't read this worktree's status, so it may have uncommitted changes">· changes unknown</span>
                   {:else if cleanupDirty[session.id]}
                     <span class="text-amber-500 font-medium">· uncommitted changes</span>
@@ -1942,12 +2008,14 @@
           <Button variant="secondary" onclick={() => showCleanup = false}>Cancel</Button>
           <Button
             variant="destructive"
-            disabled={cleanupSelectedIds.length === 0 || cleanupCommitsPending}
+            disabled={cleanupSelectedIds.length === 0 || cleanupStatusPending || cleanupCommitsPending}
             onclick={() => confirmCleanup = true}
           >
-            {cleanupCommitsPending
-              ? 'Checking commits…'
-              : `Remove ${cleanupSelectedIds.length} ${cleanupSelectedIds.length === 1 ? 'thread' : 'threads'}`}
+            {cleanupStatusPending
+              ? 'Checking changes…'
+              : cleanupCommitsPending
+                ? 'Checking commits…'
+                : `Remove ${cleanupSelectedIds.length} ${cleanupSelectedIds.length === 1 ? 'thread' : 'threads'}`}
           </Button>
         {/if}
       </Dialog.Footer>

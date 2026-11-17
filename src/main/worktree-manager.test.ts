@@ -801,6 +801,23 @@ describe('registerDirect (direct sessions, and older attached ones)', () => {
     expect(listed).toEqual([expect.objectContaining({ id: 'wt-folder', path: '/notes', direct: true, noGit: true })]);
   });
 
+  it("doesn't run git for a folder project, which has no worktrees to confirm", async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({
+      'wt-folder': { repoPath: '/notes', branch: '', createdAt: 1000, direct: true, noGit: true },
+    }));
+    await expect(manager.listChecked('/notes')).resolves.toHaveLength(1);
+    expect(mockGit).not.toHaveBeenCalled();
+  });
+
+  it("says so when git can't list a project's worktrees, rather than list none", async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({ 'wt-1': { repoPath: '/repo', branch: 'b', createdAt: 1 } }));
+    mockGit.mockRejectedValue(new Error('fatal: unable to read index'));
+
+    await expect(manager.listChecked('/repo')).rejects.toThrow("git couldn't list its worktrees: fatal: unable to read index");
+    // Callers that can carry on without them still get none.
+    await expect(manager.list('/repo')).resolves.toEqual([]);
+  });
+
   it('reconstructs the shared worktree path from the manifest after restart', async () => {
     const wtPath = '/worktrees/abc/wt-src';
     mockFs.readFile.mockResolvedValue(JSON.stringify({

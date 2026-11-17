@@ -1,5 +1,6 @@
 import type { PrerequisiteStatus, SessionStatus } from '../../shared/types.js';
 import { sortSessions, DEFAULT_SORT, type SessionSortState } from '../lib/session-sort.js';
+import { cachedSidebarLayout } from '../lib/sidebar-layout.js';
 
 interface SessionEntry {
   id: string;
@@ -21,9 +22,22 @@ interface SessionEntry {
   lastActiveAt?: number;
 }
 
+/** A project whose threads aren't listed yet, or couldn't be (see
+ *  projectLoad): its tree says so rather than "No threads". */
+export type ProjectLoad = { state: 'loading' } | { state: 'missing' } | { state: 'failed'; error: string };
+
 class SessionStore {
   sessions = $state<SessionEntry[]>([]);
   repos = $state<string[]>([]);
+  /** Whether the project list has been read (loadRepos): until then none
+   *  listed means not read yet, not that there are none. */
+  reposLoaded = $state(false);
+  /** Why the projects and their threads couldn't be loaded at startup. */
+  reposError = $state<string | null>(null);
+  /** Projects whose threads are still being read at startup, whose folder
+   *  is gone, or whose threads couldn't be read. A project with none listed
+   *  here is loaded. */
+  projectLoad = $state<Record<string, ProjectLoad>>({});
   /** Projects that are plain folders, not git repositories. */
   folderRepos = $state<string[]>([]);
   /** The open thread, or null (the landing, the draft). Moving off a thread
@@ -63,7 +77,9 @@ class SessionStore {
   /** Conversation ordering (name/age, asc/desc). Loaded and persisted by the
    *  sidebar via app-state; kept here so the landing lists conversations in
    *  the same order. */
-  sessionSort = $state<SessionSortState>({ ...DEFAULT_SORT });
+  /** Last run's, from the sidebar's layout cache, for the first frame;
+   *  main's saved one replaces it as the sidebar mounts. */
+  sessionSort = $state<SessionSortState>(cachedSidebarLayout().sort ?? { ...DEFAULT_SORT });
 
   /** Pending status updates for sessions not yet added to the store.
    *  SESSION_STATUS can arrive before addSession during fast worktree setup. */
@@ -138,9 +154,14 @@ class SessionStore {
       .sort((a, b) => a.ts - b.ts);
   }
 
-  /** Load repos from the worktree manifest (main process). Must be called before restoreWorktrees. */
+  /** Load repos from the worktree manifest (main process). Must be called
+   *  before restoreWorktrees, which lists each one's threads: they're marked
+   *  loading here, with the list, so no project shows empty meanwhile. */
   async loadRepos() {
-    this.repos = await window.groveBench.listRepos();
+    const repos = await window.groveBench.listRepos();
+    this.projectLoad = { ...this.projectLoad, ...Object.fromEntries(repos.map((r) => [r, { state: 'loading' } as const])) };
+    this.repos = repos;
+    this.reposLoaded = true;
     // Migrate any repos stuck in legacy localStorage
     try {
       const legacy = localStorage.getItem('grove-bench:repos');
@@ -148,6 +169,7 @@ class SessionStore {
         const legacyRepos = JSON.parse(legacy) as string[];
         for (const r of legacyRepos) {
           if (!this.repos.includes(r)) {
+            this.projectLoad = { ...this.projectLoad, [r]: { state: 'loading' } };
             this.repos = [...this.repos, r];
             // Main keeps the list now; without this a project with no
             // conversations would be gone at the next launch.
@@ -171,6 +193,17 @@ class SessionStore {
   removeRepo(path: string) {
     this.repos = this.repos.filter((r) => r !== path);
     this.setFolderProject(path, false);
+    this.setProjectLoad(path, null);
+  }
+
+  /** Where listing a project's threads has got (null: they're listed). */
+  setProjectLoad(repo: string, load: ProjectLoad | null) {
+    if (load) {
+      this.projectLoad = { ...this.projectLoad, [repo]: load };
+    } else if (repo in this.projectLoad) {
+      const { [repo]: _done, ...rest } = this.projectLoad;
+      this.projectLoad = rest;
+    }
   }
 
   isFolderProject(path: string): boolean {

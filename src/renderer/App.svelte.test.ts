@@ -26,6 +26,7 @@ Object.assign(mockGroveBench, {
 afterEach(() => {
   vi.useRealTimers();
   cleanup();
+  localStorage.removeItem('grove-bench:sidebar-layout');
   store.sessions = [];
   store.repos = [];
   store.activeSessionId = null;
@@ -364,5 +365,30 @@ describe('App: a thread whose history is loading', () => {
     await openLoadingThread(grove);
     expect(await screen.findByText('Loading thread...')).toBeInTheDocument();
     expect(screen.queryByText('Starting agent...')).toBeNull();
+  });
+});
+
+describe('App: projects that fail to load at startup', () => {
+  afterEach(() => {
+    store.reposError = null;
+    store.reposLoaded = false;
+    store.projectLoad = {};
+    mockGroveBench.listRepos.mockReset().mockResolvedValue([]);
+  });
+
+  it('says so in the sidebar rather than that there are none, and Try again loads them', async () => {
+    mockGroveBench.getSettings.mockResolvedValue(JSON.parse(JSON.stringify(settingsStore.current)));
+    mockGroveBench.listRepos.mockRejectedValueOnce(new Error('manifest unreadable')).mockResolvedValueOnce([]);
+    getOpenTabs.mockResolvedValue([]);
+    mockGroveBench.notifyRestoreComplete.mockClear();
+    render(App);
+
+    expect(await screen.findByText("Couldn't load your projects and threads: manifest unreadable")).toBeInTheDocument();
+    expect(screen.queryByText('Add a project to get started.')).toBeNull();
+    expect(mockGroveBench.notifyRestoreComplete).not.toHaveBeenCalled();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    await vi.waitFor(() => expect(mockGroveBench.notifyRestoreComplete).toHaveBeenCalled());
+    expect(screen.queryByText(/Couldn't load your projects/)).toBeNull();
   });
 });
