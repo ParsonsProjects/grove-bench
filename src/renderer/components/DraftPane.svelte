@@ -17,6 +17,7 @@
   import { CONTROL_IDS } from '../../shared/types.js';
   import { controlHint } from '../lib/control-hint.js';
   import { processFiles } from '$lib/file-attachments.js';
+  import { lazyComponent } from '$lib/lazy-component.js';
   import AttachmentChips from './AttachmentChips.svelte';
   import ApiKeyField from './ApiKeyField.svelte';
   import CommandLine from './CommandLine.svelte';
@@ -26,10 +27,12 @@
   import DraftOptions from './DraftOptions.svelte';
   import DraftSkillsButton from './DraftSkillsButton.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
+  import { Kbd } from '$lib/components/ui/kbd/index.js';
   import { Notice } from '$lib/components/ui/notice/index.js';
   import { PanelHeader } from '$lib/components/ui/panel-header/index.js';
   import { Pulse } from '$lib/components/ui/pulse/index.js';
   import * as Command from '$lib/components/ui/command/index.js';
+  import Maximize2Icon from '@lucide/svelte/icons/maximize-2';
 
   let textEl = $state<HTMLTextAreaElement | null>(null);
 
@@ -167,15 +170,15 @@
 
   /** The message box's placeholder. A ticket ID is asked for only when the
    *  branch will be named from the message (branch-name.ts keeps it there). */
-  const placeholder = $derived.by(() => {
-    const naming = start?.kind === 'new' && !start.branchName.trim();
-    return [
-      'What should the agent work on?',
-      naming ? 'Include a ticket ID to put it in the branch name.' : '',
-      draftStore.skills.length > 0 ? 'Type / for a skill.' : '',
-      'Enter to start.',
-    ].filter(Boolean).join(' ');
-  });
+  const namingHint = $derived(start?.kind === 'new' && !start.branchName.trim() ? 'Include a ticket ID to put it in the branch name.' : '');
+  const placeholder = $derived([
+    'What should the agent work on?',
+    namingHint,
+    draftStore.skills.length > 0 ? 'Type / for a skill.' : '',
+    'Enter to start.',
+  ].filter(Boolean).join(' '));
+  /** The larger editor's: no / menu there, and Ctrl+Enter starts. */
+  const expandedPlaceholder = $derived(['What should the agent work on?', namingHint, 'Ctrl+Enter to start.'].filter(Boolean).join(' '));
 
   /** Git has no name and email for this project, so the agent's commits
    *  would fail. Said before the first message rather than mid-task. */
@@ -254,12 +257,67 @@
       dropMessage = `Skipped: ${skipped.join(', ')}`;
       dropMessageTimer = setTimeout(() => { dropMessage = ''; }, 3000);
     }
-    textEl?.focus();
+    refocus();
   }
 
   function removeAttachment(index: number) {
     draftStore.removeAttachment(index);
-    textEl?.focus();
+    refocus();
+  }
+
+  /** Give the cursor back to the box in use: the larger editor when open. */
+  function refocus() {
+    if (expanded) expandedEditor?.focus();
+    else textEl?.focus();
+  }
+
+  // ─── The larger editor ───
+
+  // The same message in a dialog, for a long one. Loads the first time it
+  // opens, then stays mounted so it closes with its animation. Enter adds a
+  // line there; Ctrl+Enter starts.
+  const loadTextEditor = lazyComponent(() => import('./TextEditorDialog.svelte'));
+  let expanded = $state(false);
+  let expandedEditorWanted = $state(false);
+  let expandedEditor: { focus(): void } | undefined = $state();
+  function expand() {
+    slashClosed = true;
+    expandedEditorWanted = true;
+    expanded = true;
+  }
+  /** Start from the larger editor. Closed first: starting takes the draft,
+   *  and this pane with it, away. When Start is off, why shows in the
+   *  editor, which covers the note under the box. */
+  function startExpanded() {
+    if (!canStart) {
+      if (startBlocker) nudged = true;
+      return;
+    }
+    expanded = false;
+    void draftStore.start();
+  }
+  function handleExpandedKeydown(e: KeyboardEvent) {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && !e.isComposing) {
+      e.preventDefault();
+      startExpanded();
+    }
+  }
+  /** Why Start is off, said in the editor. What to do about credentials or
+   *  the branch is in the pane behind it, so it says to go back first. */
+  const expandedBlocker = $derived.by(() => {
+    if (credentials === 'missing') return 'Add credentials to start. Click Done to see the form.';
+    if (credentials === 'ready' && start?.kind === 'existing' && !start.branch) {
+      return 'Pick a branch or pull request first. Click Done to see the options.';
+    }
+    return startBlocker;
+  });
+  /** Back in the message box: the / menu shows again for a /word message
+   *  (expanding closed it), and the cursor goes to the end. */
+  function backToBox() {
+    slashClosed = false;
+    slashIndex = 0;
+    if (slashOpen) void draftStore.loadSkills();
+    void focusEnd();
   }
 
   // ─── Skills: / at the start of the message ───
@@ -539,7 +597,19 @@
           </div>
           <!-- Two items, so the row never wraps and Start never moves. -->
           <div class="flex items-center gap-x-4 px-3 py-1.5 border-t border-border text-xs text-muted-foreground">
-            <DraftSkillsButton onpick={focusEnd} />
+            <div class="flex items-center gap-2 min-w-0">
+              <DraftSkillsButton onpick={focusEnd} />
+              <Button
+                variant="quiet"
+                size="icon-xs"
+                onclick={expand}
+                title="Open in a larger editor"
+                aria-label="Expand the message box"
+                class="shrink-0"
+              >
+                <Maximize2Icon />
+              </Button>
+            </div>
             <Button
               variant="default"
               size="sm"
@@ -588,4 +658,48 @@
     </div>
   </div>
 </div>
+
+{#if expandedEditorWanted}
+  {#await loadTextEditor() then TextEditor}
+    <TextEditor
+      bind:this={expandedEditor}
+      bind:open={expanded}
+      bind:value={() => draft.text, (v: string) => draftStore.setText(v)}
+      title="First message"
+      placeholder={expandedPlaceholder}
+      spellcheck={settingsStore.current.spellcheck}
+      aria-keyshortcuts="Control+Enter"
+      onkeydown={handleExpandedKeydown}
+      ondragover={handleDragOver}
+      ondragleave={handleDragLeave}
+      ondrop={handleDrop}
+      returnFocus={backToBox}
+    >
+      {#snippet above()}
+        {#if draft.attachments.length > 0}
+          <AttachmentChips files={draft.attachments} onremove={removeAttachment} />
+        {/if}
+      {/snippet}
+      {#snippet footer()}
+        <span class="mr-auto flex min-w-0 items-center gap-3 text-xs text-muted-foreground">
+          {#if nudged && expandedBlocker}
+            <span class="text-amber-500" role="status">{expandedBlocker}</span>
+          {:else}
+            <span class="flex items-center gap-1"><Kbd variant="key">Enter</Kbd> new line</span>
+            <span class="flex items-center gap-1"><Kbd variant="key">Ctrl+Enter</Kbd> start</span>
+          {/if}
+        </span>
+        <Button variant="subtle" size="sm" onclick={() => (expanded = false)}>Done</Button>
+        <Button
+          size="sm"
+          onclick={startExpanded}
+          disabled={!canStart}
+          title={expandedBlocker ?? `Start the thread${draft.text.trim() ? ' and send this message' : ''}`}
+        >
+          Start
+        </Button>
+      {/snippet}
+    </TextEditor>
+  {/await}
+{/if}
 {/if}

@@ -16,6 +16,7 @@
   import ArrowUpIcon from '@lucide/svelte/icons/arrow-up';
   import ListPlusIcon from '@lucide/svelte/icons/list-plus';
   import PaperclipIcon from '@lucide/svelte/icons/paperclip';
+  import Maximize2Icon from '@lucide/svelte/icons/maximize-2';
   import SquareIcon from '@lucide/svelte/icons/square';
   import {
     type AttachedFile,
@@ -87,6 +88,58 @@
   // The @ file picker (and fuse.js, which only it uses here) loads the first
   // time @ is typed.
   const loadFilePicker = lazyComponent(() => import('./FilePickerPopup.svelte'));
+
+  // The larger editor: the same text in a dialog, for a long message. Loads
+  // the first time it opens, then stays mounted so it closes with its
+  // animation. Enter adds a line there; Ctrl+Enter sends.
+  const loadTextEditor = lazyComponent(() => import('./TextEditorDialog.svelte'));
+  let expanded = $state(false);
+  let expandedEditorWanted = $state(false);
+  let expandedEditor: { focus(): void } | undefined = $state();
+  function expand() {
+    closePicker();
+    closeCommandPicker();
+    expandedEditorWanted = true;
+    expanded = true;
+  }
+  // Another thread or the draft opened over this one (Ctrl+N, the finder)
+  // leaves this pane mounted but hidden. Its editor closes too, or it would
+  // stay on screen over the other one and send into this thread.
+  const onScreen = $derived(sessionStore.activeSessionId === sessionId);
+  $effect(() => {
+    if (expanded && !onScreen) expanded = false;
+  });
+  function handleExpandedKeydown(e: KeyboardEvent) {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && !e.isComposing) {
+      e.preventDefault();
+      sendExpanded();
+    }
+  }
+  // The editor takes dropped files. Dragged text moves or drops in it as
+  // usual, which the small box's handlers would stop.
+  function handleExpandedDragOver(e: DragEvent) {
+    if (e.dataTransfer?.types.includes('Files')) handleDragOver(e);
+  }
+  function handleExpandedDrop(e: DragEvent) {
+    if (e.dataTransfer?.types.includes('Files')) void handleDrop(e);
+  }
+  function sendExpanded() {
+    handleSubmit();
+    // Sent (or queued) empties the box; anything else leaves it to edit.
+    if (!value) expanded = false;
+  }
+  /** Back in the small box, with the cursor at the end of the text. */
+  function returnToBox() {
+    if (!textarea || !onScreen) return;
+    textarea.focus();
+    textarea.setSelectionRange(value.length, value.length);
+    autoResize();
+  }
+  /** Give the cursor back to the box in use: the larger editor when open. */
+  function refocus() {
+    if (expanded) expandedEditor?.focus();
+    else textarea?.focus();
+  }
 
   // File attachments (drag-drop, paste, file picker), restored and kept in
   // the store like the draft so they outlive this editor.
@@ -476,7 +529,7 @@
     if (skipped.length > 0) {
       showDropMessage(`Skipped: ${skipped.join(', ')}`, true);
     }
-    textarea?.focus();
+    refocus();
   }
 
   // ─── Clipboard paste ───
@@ -499,7 +552,7 @@
     if (skipped.length > 0) {
       showDropMessage(`Skipped: ${skipped.join(', ')}`, true);
     }
-    textarea?.focus();
+    refocus();
   }
 
   // ─── File picker ───
@@ -523,12 +576,12 @@
     }
     // Reset so the same file can be re-selected
     fileInput.value = '';
-    textarea?.focus();
+    refocus();
   }
 
   function removeAttachedFile(index: number) {
     attachedFiles = attachedFiles.filter((_, i) => i !== index);
-    textarea?.focus();
+    refocus();
   }
 </script>
 
@@ -631,6 +684,17 @@
       <PaperclipIcon />
     </Button>
 
+    <Button
+      variant="quiet"
+      size="icon-xs"
+      onclick={expand}
+      title="Open in a larger editor"
+      aria-label="Expand the message box"
+      class="self-center -ml-1.5"
+    >
+      <Maximize2Icon />
+    </Button>
+
     <div class="relative flex-1 min-w-0 flex">
       <!-- py-[7px]: 1px border + 7px + one 20px line + 7px + 1px = 36px, the
            height of the buttons beside it -->
@@ -671,3 +735,39 @@
     {/if}
   </div>
 </div>
+
+{#if expandedEditorWanted}
+  {#await loadTextEditor() then TextEditor}
+    <TextEditor
+      bind:this={expandedEditor}
+      bind:open={expanded}
+      bind:value
+      title="Message"
+      placeholder={willQueue ? 'Message (Ctrl+Enter to queue, sent when the agent is free)' : 'Message (Ctrl+Enter to send)'}
+      spellcheck={settingsStore.current.spellcheck}
+      aria-keyshortcuts="Control+Enter"
+      onkeydown={handleExpandedKeydown}
+      onpaste={handlePaste}
+      ondragover={handleExpandedDragOver}
+      ondragleave={handleDragLeave}
+      ondrop={handleExpandedDrop}
+      returnFocus={returnToBox}
+    >
+      {#snippet above()}
+        {#if attachedFiles.length > 0}
+          <AttachmentChips files={attachedFiles} onremove={removeAttachedFile} />
+        {/if}
+      {/snippet}
+      {#snippet footer()}
+        <span class="mr-auto flex items-center gap-3 text-xs text-muted-foreground">
+          <span class="flex items-center gap-1"><Kbd variant="key">Enter</Kbd> new line</span>
+          <span class="flex items-center gap-1"><Kbd variant="key">Ctrl+Enter</Kbd> {willQueue ? 'queue' : 'send'}</span>
+        </span>
+        <Button variant="subtle" size="sm" onclick={() => (expanded = false)}>Done</Button>
+        <Button size="sm" onclick={sendExpanded} disabled={!value.trim()}>
+          {#if willQueue}<ListPlusIcon />Queue{:else}<ArrowUpIcon />Send{/if}
+        </Button>
+      {/snippet}
+    </TextEditor>
+  {/await}
+{/if}

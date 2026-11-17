@@ -720,6 +720,61 @@ describe('SettingsPanel thinking summaries', () => {
   });
 });
 
+describe('SettingsPanel system prompt', () => {
+  const PROMPT = '## Style\n\n- Use **British** spelling';
+
+  it('shows its Markdown rendered in Preview, and the text again in Write', async () => {
+    mockGroveBench.getSettings.mockResolvedValue({ ...settings(), defaultSystemPromptAppend: PROMPT });
+    await openAgentSection();
+    const views = screen.getByRole('radiogroup', { name: 'System prompt view' });
+
+    await fireEvent.click(within(views).getByRole('radio', { name: 'Preview' }));
+
+    const preview = await screen.findByRole('region', { name: 'System prompt append preview' });
+    expect(within(preview).getByRole('heading', { name: 'Style' })).toBeInTheDocument();
+    expect(within(preview).getByText('British').tagName).toBe('STRONG');
+    expect(screen.queryByLabelText('System prompt append')).not.toBeInTheDocument();
+
+    await fireEvent.click(within(views).getByRole('radio', { name: 'Write' }));
+    expect(screen.getByLabelText('System prompt append')).toHaveValue(PROMPT);
+  });
+
+  it('opens in a larger editor that edits and saves the same setting', async () => {
+    await openAgentSection();
+    await fireEvent.click(screen.getByRole('button', { name: 'Expand the system prompt' }));
+    const editor = await screen.findByRole('dialog', { name: 'System prompt append' });
+
+    await fireEvent.input(within(editor).getByRole('textbox'), { target: { value: PROMPT } });
+
+    expect(screen.getByLabelText('System prompt append', { selector: '#settings-prompt' })).toHaveValue(PROMPT);
+    await waitFor(() => expect(lastSaved().defaultSystemPromptAppend).toBe(PROMPT), { timeout: 2000 });
+
+    await fireEvent.click(within(editor).getByRole('radio', { name: 'Preview' }));
+    expect(within(editor).getByRole('heading', { name: 'Style' })).toBeInTheDocument();
+  });
+
+  it('is found by searching, with the cursor in its text box', async () => {
+    await renderPanel();
+    await fireEvent.input(screen.getByRole('searchbox', { name: 'Search settings' }), { target: { value: 'system prompt' } });
+
+    await fireEvent.click(await screen.findByRole('button', { name: /System prompt append/ }));
+
+    await waitFor(() => expect(screen.getByLabelText('System prompt append')).toHaveFocus());
+  });
+
+  it('closes on Escape and leaves Settings open', async () => {
+    const { onclose } = await renderPanel();
+    await openSection('Agents');
+    await fireEvent.click(screen.getByRole('button', { name: 'Expand the system prompt' }));
+    const editor = await screen.findByRole('dialog', { name: 'System prompt append' });
+
+    await fireEvent.keyDown(within(editor).getByRole('textbox'), { key: 'Escape' });
+
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'System prompt append' })).not.toBeInTheDocument());
+    expect(onclose).not.toHaveBeenCalled();
+  });
+});
+
 describe('SettingsPanel MCP servers', () => {
   beforeEach(() => {
     agentsStore.list = [{ ...claude, capabilities: { mcpConfig: true } }];
