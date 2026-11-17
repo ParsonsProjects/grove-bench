@@ -1,12 +1,13 @@
 <script lang="ts">
   /**
-   * Mockup of the agent monitor window (docs/agent-monitor-plan.md): every
-   * thread in every project, its subagents and background shells, what each
-   * is running now, and the processes under each agent. Made-up data that
-   * moves on every second (monitor.svelte.ts). Dev server only: npm start,
-   * then open /agent-monitor.html.
+   * The agent monitor mockup (docs/agent-monitor-plan.md): every thread in
+   * every project, its subagents and background shells, what each is running
+   * now, and the processes under each agent. Made-up data that moves on every
+   * second (monitor.svelte.ts). Shown as its own window
+   * (/agent-monitor.html) or as a dialog over the demo app
+   * (/agent-monitor-dialog.html, MonitorDialog.svelte). Dev server only.
    */
-  import { onMount } from 'svelte';
+  import { onMount, type Snippet } from 'svelte';
   import { monitor, isActive, flattenProcesses, treeBytes, type Selection } from './monitor.svelte.js';
   import { AGENT_HOST_PID, type MockThread, type TaskStatus } from './mock-data.js';
   import { bytes, duration } from './format.js';
@@ -27,6 +28,15 @@
   import RefreshIcon from '@lucide/svelte/icons/refresh-cw';
   import SearchIcon from '@lucide/svelte/icons/search';
   import TerminalIcon from '@lucide/svelte/icons/terminal';
+  import XIcon from '@lucide/svelte/icons/x';
+
+  let { heading, onclose, class: className = '' }: {
+    /** The title, in place of the window's own (a dialog's Dialog.Title). */
+    heading?: Snippet;
+    /** Shows a close button at the end of the toolbar (the dialog). */
+    onclose?: () => void;
+    class?: string;
+  } = $props();
 
   let view = $state<'agents' | 'processes'>('agents');
   let show = $state<'running' | 'all'>('running');
@@ -110,11 +120,11 @@
   <button class="absolute inset-0 focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-ring" aria-label="Show {label}" onclick={() => monitor.select(sel)}></button>
 {/snippet}
 
-<div class="flex h-screen flex-col bg-background text-xs text-foreground">
-  <!-- The window's toolbar -->
+<div class="flex flex-col bg-background text-xs text-foreground {className}">
+  <!-- The toolbar -->
   <header class="flex h-10 shrink-0 items-center gap-3 border-b border-border bg-card/50 px-3">
     <ActivityIcon class="size-4 text-muted-foreground" aria-hidden="true" />
-    <h1 class="text-sm font-medium">Agent monitor</h1>
+    {#if heading}{@render heading()}{:else}<h1 class="text-sm font-medium">Agent monitor</h1>{/if}
     <Badge tone="warning" title="Made-up data. The buttons change it, nothing else.">mockup</Badge>
     <Segmented.Root bind:value={view} aria-label="Show">
       <Segmented.Item value="agents">Agents</Segmented.Item>
@@ -129,8 +139,11 @@
     <div class="flex-1"></div>
     <div class="relative w-72">
       <SearchIcon class="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-      <Input bind:value={query} placeholder="Filter threads, tools, processes" class="h-7 pl-7 text-xs md:text-xs" aria-label="Filter" />
+      <Input bind:value={query} placeholder="Filter threads, tools, processes" class="h-7 pl-7 text-xs md:text-xs" aria-label="Filter" data-monitor-filter />
     </div>
+    {#if onclose}
+      <Button variant="quiet" size="icon-xs" title="Close (Esc)" aria-label="Close" onclick={onclose}><XIcon /></Button>
+    {/if}
   </header>
 
   <!-- Totals across every project, whatever the filter -->

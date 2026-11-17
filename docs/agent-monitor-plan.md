@@ -6,7 +6,10 @@ Today this is spread out and per thread: the status bar's Activity popup lists t
 
 ## The mockup
 
-`agent-monitor.html` on the dev server (`npm start`, then open `/agent-monitor.html`), code in `src/renderer/agent-monitor-mockup/`. Made-up data that moves every second, built from the UI kit so it looks like the app. Like the UI kit page, it is never bundled into the app.
+Two pages on the dev server (`npm start`), code in `src/renderer/agent-monitor-mockup/`. Made-up data that moves every second, built from the UI kit so it looks like the app. Like the UI kit page, neither is bundled into the app.
+
+- `/agent-monitor.html`: the monitor as a window of its own.
+- `/agent-monitor-dialog.html`: the same monitor as a dialog over the demo app. **Open thread** really switches the app to that thread and closes the dialog. **Ctrl+Shift+A** (proposed; nothing in the app uses it) opens and closes it, and it opens with the cursor in the filter box.
 
 - **Agents view.** Threads grouped by project, with their subagents and background shells or monitors under them. Columns: what it is doing now (tool and target, Thinking, or what it is waiting for you on), how long, tokens, memory. **Running** hides threads with nothing running or waiting; **All threads** shows the rest.
 - **Processes view.** Each agent's process tree under the agent host: executable, PID, thread, memory, how long it has run.
@@ -33,12 +36,17 @@ Today this is spread out and per thread: the status bar's Activity popup lists t
 3. **No CPU.** The sample doesn't read a CPU counter. Adding one is possible but not checked yet: CPU use is a rate, so it may need two samples.
 4. **Sampling cost.** The health line samples every 10 minutes (`HEALTH_MS`, `perf-health.ts`). A live monitor would want every few seconds, and each sample starts typeperf. It should only sample while the window is open, and the cost of each launch on Windows needs measuring first.
 5. **Foreground subagents can't be stopped alone.** `stopTask` stops background tasks only (comment in `adapters/claude-code.ts`). One the turn waits on stops when the turn is interrupted; the mockup's Stop is disabled on those and says why.
-6. **ACP agents don't report subagents** (Gemini CLI, Copilot CLI, OpenCode). The tree is Claude Code only for now (see `adapters/acp/opencode.ts` and the OpenCode entry in TODO.md).
+6. **ACP agents don't report subagents** (Gemini CLI, Copilot CLI, OpenCode), so the tree is Claude Code only for now. Partly Grove, partly the providers:
+   - ACP only has a draft for it ([Subagent Sessions RFD](https://agentclientprotocol.com/rfds/subagents)): each subagent gets its own session, announced with `subagent_update`, and a client opts in with `clientCapabilities.subagents`. Grove's ACP client doesn't implement it (`adapters/acp/protocol.ts` has no `subagent_update` and no parent on tool calls). The Claude and Codex ACP adapters are the only agents found sending it.
+   - OpenCode: Grove turns its subagents off (`task: 'deny'`, `adapters/acp/opencode.ts`) because OpenCode doesn't send a subagent's permission requests over ACP, so one that asks hangs the turn. An upstream bug.
+   - Gemini CLI: has subagents (v0.38.1, April 2026), but no sign it sends subagent sessions. Another client reports a subagent arrives as one `invoke_agent` tool call, so in Grove it is probably one plain tool call. Not checked on a real run; recognising it as a subagent row (without its inner calls) would be a cheap step.
+   - Copilot CLI: has subagents and ACP (public preview), nothing found on whether ACP shows them.
 7. **Windows only.** Process sampling is Windows only, like the app.
 
 ## Decisions before building it
 
-- **Where the state lives.** A second window is a second renderer, so it can't read the main window's stores. Either main builds a small per-thread summary from the events it already forwards and sends it to the monitor, or main relays the main window's stores. The first is cleaner; keeping the reducing code in `src/shared` would let both windows agree on what "running" means.
+- **Dialog or window.** As a dialog in the main window it reads the stores that window already keeps (`messageStore`, `backgroundTaskStore`), so the Agents view needs no new plumbing, and Open thread is a store change. But it is modal: it covers the app, so it is for a quick look and a jump, not for watching while you work in a thread. A window can stay open beside the app or on another screen, at the cost of the data plumbing below.
+- **Where a window's state comes from.** A second window is its own renderer process, so it can't share the main window's stores in memory, though the two can message each other (through main, or over a MessagePort main sets up). Main already sends every agent event to the main window (`agent-session.ts`), so the simplest source is main sending them to the monitor too, with the reducing code in `src/shared` so both windows agree on what "running" means. Reading the saved history (`<userData>/worktrees/events/<id>.jsonl`) doesn't fit: the renderer can't read files (context isolation on, Node off), the log is written in batches every 250 ms, and the live events a monitor needs (`activity`, `tool_progress`) are never written (`shared/live-events.ts`).
 - **A narrower preload.** The main preload can reach the shell and PTYs. The monitor only needs to read the summary and send stop, interrupt, end process and focus thread, so it should get its own small bridge.
 - **Ending processes safely.** Only offer PIDs from the latest sample that sit under a thread's agent, and check the PID still has the same start time before killing it, since Windows reuses PIDs.
 - **Build entry.** The renderer build only bundles `index.html` today; the window needs its page added to the Vite inputs.

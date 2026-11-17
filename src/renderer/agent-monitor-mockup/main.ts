@@ -1,6 +1,6 @@
 import '../styles/fonts.js';
 import '../styles/globals.css';
 import { mount } from 'svelte';
-import AgentMonitorMockup from './AgentMonitorMockup.svelte';
+import MonitorView from './MonitorView.svelte';
 
-mount(AgentMonitorMockup, { target: document.getElementById('app')! });
+mount(MonitorView, { target: document.getElementById('app')!, props: { class: 'h-screen' } });

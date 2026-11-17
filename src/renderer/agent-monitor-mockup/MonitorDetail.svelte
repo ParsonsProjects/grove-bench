@@ -138,7 +138,7 @@
     </div>
 
     <div class="flex flex-wrap gap-2">
-      <Button variant="subtle" size="xs" onclick={() => monitor.openInMain(`“${t.title}”`)}><AppWindowIcon />Open thread</Button>
+      <Button variant="subtle" size="xs" onclick={() => monitor.openThread(t.id, `“${t.title}”`)}><AppWindowIcon />Open thread</Button>
       {#if t.state === 'working'}
         <Button variant="outline-destructive" size="xs" onclick={() => monitor.interrupt(t.id)}>{@render stopIcon()}Interrupt turn</Button>
       {/if}
@@ -146,7 +146,7 @@
 
     {#if t.doing.kind === 'waiting'}
       <Notice tone="warning" title="Waiting for you" layout="stacked">
-        {#snippet actions()}<Button variant="link" size="2xs" onclick={() => monitor.openInMain('the prompt')}>Answer in the thread</Button>{/snippet}
+        {#snippet actions()}<Button variant="link" size="2xs" onclick={() => monitor.openThread(t.id, 'the prompt')}>Answer in the thread</Button>{/snippet}
         <p>{t.doing.prompt}</p>
       </Notice>
     {:else if t.error}
@@ -244,7 +244,7 @@
     </div>
 
     <div class="flex flex-wrap gap-2">
-      <Button variant="subtle" size="xs" onclick={() => monitor.openInMain("this subagent's thread")}><AppWindowIcon />Open its thread</Button>
+      <Button variant="subtle" size="xs" onclick={() => monitor.openThread(t.id, "this subagent's thread")}><AppWindowIcon />Open its thread</Button>
       {#if running && a.background}
         <Button variant="outline-destructive" size="xs" disabled={a.status === 'stopping'} class="disabled:cursor-wait" onclick={() => monitor.stopSubagent(t.id, a.id)}>{@render stopIcon()}{a.status === 'stopping' ? 'Stopping…' : 'Stop subagent'}</Button>
       {:else if running}
