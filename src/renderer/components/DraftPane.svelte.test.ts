@@ -624,6 +624,77 @@ describe('DraftPane git identity heads-up', () => {
   });
 });
 
+describe('DraftPane larger editor', () => {
+  async function openEditor() {
+    await fireEvent.click(screen.getByRole('button', { name: 'Expand the message box' }));
+    return screen.findByRole('dialog', { name: 'First message' });
+  }
+
+  it('opens with the message so far, and edits the same draft', async () => {
+    render(DraftPane);
+    const box = screen.getByLabelText<HTMLTextAreaElement>('First message');
+    await fireEvent.input(box, { target: { value: 'Fix the login' } });
+
+    const editor = await openEditor();
+    const big = within(editor).getByRole('textbox');
+    expect(big).toHaveValue('Fix the login');
+    expect(big).toHaveAttribute('placeholder', 'What should the agent work on? Include a ticket ID to put it in the branch name. Ctrl+Enter to start.');
+
+    await fireEvent.input(big, { target: { value: 'Fix the login\nand add a test' } });
+    expect(draftStore.draft?.text).toBe('Fix the login\nand add a test');
+    expect(box.value).toBe('Fix the login\nand add a test');
+
+    await fireEvent.click(within(editor).getByRole('button', { name: 'Done' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    await waitFor(() => expect(box).toHaveFocus());
+  });
+
+  it('adds a line on Enter and starts on Ctrl+Enter', async () => {
+    render(DraftPane);
+    const editor = await openEditor();
+    const big = within(editor).getByRole('textbox');
+    await fireEvent.input(big, { target: { value: 'Fix API-12 login crash' } });
+
+    const enter = new KeyboardEvent('keydown', { key: 'Enter', cancelable: true, bubbles: true });
+    big.dispatchEvent(enter);
+    expect(enter.defaultPrevented).toBe(false);
+    await settle();
+    expect(createSessionMock()).not.toHaveBeenCalled();
+
+    await fireEvent.keyDown(big, { key: 'Enter', ctrlKey: true });
+
+    await waitFor(() => expect(createSessionMock()).toHaveBeenCalled());
+    const { id } = createSessionMock().mock.calls[0][0];
+    await waitFor(() => expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(id, 'Fix API-12 login crash', undefined, undefined));
+    expect(draftStore.draft).toBeNull();
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
+
+  it('says in the editor why it can\'t start yet', async () => {
+    store.prerequisites = status(false);
+    render(DraftPane);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Start' })).toBeDisabled());
+    const editor = await openEditor();
+
+    expect(within(editor).getByRole('button', { name: 'Start' })).toBeDisabled();
+    await fireEvent.keyDown(within(editor).getByRole('textbox'), { key: 'Enter', ctrlKey: true });
+
+    expect(within(editor).getByText('Add credentials above to start.')).toBeInTheDocument();
+    expect(createSessionMock()).not.toHaveBeenCalled();
+  });
+
+  it('shows the attached files, and takes dropped ones', async () => {
+    render(DraftPane);
+    const editor = await openEditor();
+    const notes = new File(['steps'], 'notes.md', { type: 'text/markdown' });
+
+    await fireEvent.drop(within(editor).getByRole('textbox'), { dataTransfer: { types: ['Files'], files: [notes] } });
+
+    expect(await within(editor).findByText('notes.md')).toBeInTheDocument();
+    expect(draftStore.draft?.attachments.map((f) => f.name)).toEqual(['notes.md']);
+  });
+});
+
 describe('DraftPane layout', () => {
   // jsdom can't lay out: the width picks the strip or the column in CSS
   // (draft-narrow / draft-wide), so these check what CSS works on.

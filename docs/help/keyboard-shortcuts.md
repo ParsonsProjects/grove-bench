@@ -44,7 +44,7 @@ Inside a Preview page, browser keys work as usual (`F5`, `F12`, `Alt+Left`). See
 | `Ctrl+,` | Open or close Settings |
 | `Enter` | Send message |
 | `Shift+Enter` | New line in prompt editor |
-| `Ctrl+Enter` | Send message from the larger editor (where `Enter` adds a line) |
+| `Ctrl+Enter` | Send message, or start the new thread, from the larger editor (where `Enter` adds a line) |
 | `Tab` | Use the suggested next prompt (shown in the empty prompt editor) |
 | `Escape` | Close a popup, picker or panel |
 | `Ctrl+S` | Save the skill open in the Skills drawer's editor |
