@@ -10,6 +10,7 @@
   import { getRepoColor } from '../lib/repo-colors.js';
   import { addProject } from '../lib/add-project.js';
   import { backgroundAgentRunning } from '../lib/thread-working.js';
+  import { backgroundShells, describeShells } from '../lib/background-shells.js';
   import { draftStore } from '../stores/draft.svelte.js';
   import { groupStore } from '../stores/groups.svelte.js';
   import { todoStore } from '../stores/todo.svelte.js';
@@ -18,6 +19,7 @@
   import { skillsPanelStore } from '../stores/skillsPanel.svelte.js';
   import WandSparklesIcon from '@lucide/svelte/icons/wand-sparkles';
   import FolderIcon from '@lucide/svelte/icons/folder';
+  import TerminalIcon from '@lucide/svelte/icons/terminal';
   import CheckIcon from '@lucide/svelte/icons/check';
   import XIcon from '@lucide/svelte/icons/x';
   import MinusIcon from '@lucide/svelte/icons/minus';
@@ -151,12 +153,14 @@
   });
 
   /** A row's tooltip: its name, its goal (while goals are on and the
-   *  thread's goal bar isn't hidden), then the line under the row. */
-  function rowTitle(sessionId: string, name: string, subtitle: SessionSubtitle | null): string {
+   *  thread's goal bar isn't hidden), the line under the row, then the
+   *  shells and monitors its agent left running (describeShells' tooltip). */
+  function rowTitle(sessionId: string, name: string, subtitle: SessionSubtitle | null, shellsTooltip: string | undefined): string {
     const lines = [name];
     const goal = goalStore.get(sessionId);
     if (settingsStore.current.showConversationGoal && goal.text && !goal.hidden) lines.push(`Goal: ${goal.text}`);
     if (subtitle) lines.push(subtitle.text);
+    if (shellsTooltip) lines.push(shellsTooltip);
     return lines.join('\n');
   }
 
@@ -1215,6 +1219,8 @@
     {@const repoColor = getRepoColor(store.repos, session.repoPath, settingsStore.current.repoColors)}
     {@const ts = session.lastActiveAt ?? session.createdAt}
     {@const subtitle = rowSubtitle(session)}
+    <!-- Shells and monitors its agent left running: their words, worked out once for the badge and the tooltip. -->
+    {@const shells = describeShells(backgroundShells(session))}
     <!-- Changed in the worktree: the Changes tab may be listing the whole branch. -->
     {@const gitState = gitStatusStore.getStatus(session.id)}
     {@const changedCount = isStopped ? 0 : (gitState.uncommitted ?? gitState.entries.length)}
@@ -1233,7 +1239,7 @@
         onclick={(e) => { if (!isDestroying) toggleSession(session.id, e.detail); }}
         disabled={isDestroying}
         aria-current={store.activeSessionId === session.id ? 'true' : undefined}
-        title={rowTitle(session.id, label, subtitle)}
+        title={rowTitle(session.id, label, subtitle, shells?.tooltip)}
         class="w-full flex flex-col pl-4 pr-2 py-1.5 text-left transition-colors
           {isDestroying ? 'opacity-50 cursor-not-allowed' : store.activeSessionId === session.id ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}
           {restFade}"
@@ -1276,7 +1282,7 @@
             >{formatAge(ts)}</span>
           {/if}
         </div>
-        {#if group || showProject || subtitle || changedCount > 0}
+        {#if group || showProject || subtitle || changedCount > 0 || shells}
           <div class="w-full flex items-center gap-1.5 {markColumn.indent} mt-0.5 min-w-0">
             <span class="text-caption truncate min-w-0">
               {#if group}<span class="text-foreground/60" title="Group: {group.name}" data-row-group>{group.name}</span>{#if showProject || subtitle}<span class="text-muted-foreground/40">{' · '}</span>{/if}{/if}
@@ -1284,13 +1290,30 @@
                 <!-- A grove character carries the project colour on its laptop, so the square is only needed with the plain dot. -->
                 {#if repoColor && !settingsStore.current.groveCharacters}<span class="inline-block w-1.5 h-1.5 align-middle mr-1" style="background-color: {repoColor}"></span>{/if}<span class="text-muted-foreground">{store.repoDisplayName(session.repoPath)}</span>{#if subtitle}<span class="text-muted-foreground/40">{' · '}</span>{/if}{/if}{#if subtitle}<span class={SUBTITLE_TONE_CLASS[subtitle.tone]}>{subtitle.text}</span>{/if}
             </span>
-            {#if changedCount > 0}
-              <Badge
-                tone="muted"
-                count
-                class="ml-auto"
-                title="{changedCount} changed file{changedCount === 1 ? '' : 's'} in the worktree"
-              >±{changedCount}</Badge>
+            {#if shells || changedCount > 0}
+              <span class="ml-auto shrink-0 flex items-center gap-1.5" data-row-badges>
+                {#if shells}
+                  <!-- Commands the agent left running (a dev server, a
+                       watcher, a monitor). Blue, as something still running
+                       is (BRAND.md), but a still badge, not the dot: the
+                       thread itself isn't working. -->
+                  <Badge
+                    tone="working"
+                    count
+                    role="img"
+                    aria-label={shells.summary}
+                    title={shells.tooltip}
+                    data-row-shells
+                  ><TerminalIcon aria-hidden="true" />{shells.count}</Badge>
+                {/if}
+                {#if changedCount > 0}
+                  <Badge
+                    tone="muted"
+                    count
+                    title="{changedCount} changed file{changedCount === 1 ? '' : 's'} in the worktree"
+                  >±{changedCount}</Badge>
+                {/if}
+              </span>
             {/if}
           </div>
         {/if}
@@ -1394,19 +1417,26 @@
         {@const isSleeping = sessionSpriteState(session, isDestroying) === 'sleeping'}
         {@const subtitle = rowSubtitle(session)}
         {@const name = `${store.repoDisplayName(session.repoPath)} / ${sessionRowLabel(session)}`}
+        {@const shells = describeShells(backgroundShells(session))}
         <button
           onclick={(e) => { if (!isDestroying) toggleSession(session.id, e.detail); }}
           oncontextmenu={(e) => { if (isDestroying) { e.preventDefault(); return; } openContextMenu(e, session.id); }}
           disabled={isDestroying}
           aria-current={store.activeSessionId === session.id ? 'true' : undefined}
-          title={rowTitle(session.id, name, subtitle)}
-          aria-label={name}
+          title={rowTitle(session.id, name, subtitle, shells?.tooltip)}
+          aria-label={shells ? `${name}, ${shells.summary}` : name}
           data-rail-session={session.id}
-          class="w-full flex justify-center py-2 transition-colors
+          class="relative w-full flex justify-center py-2 transition-colors
             {isDestroying ? 'opacity-50 cursor-not-allowed' : store.activeSessionId === session.id ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}
             {isSleeping ? 'opacity-70' : ''}"
         >
           {@render statusMark(session, isDestroying, getRepoColor(store.repos, session.repoPath, settingsStore.current.repoColors))}
+          {#if shells}
+            <!-- The row's badge doesn't fit the rail: its icon, in the corner. -->
+            <span class="absolute right-1.5 bottom-0.5 flex text-status-working" aria-hidden="true" data-rail-shells>
+              <TerminalIcon class="size-2.5" />
+            </span>
+          {/if}
         </button>
       {/each}
     </div>

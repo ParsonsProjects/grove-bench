@@ -36,7 +36,7 @@
 
   const buttonVariants = ['default', 'secondary', 'subtle', 'subtle-primary', 'quiet', 'quiet-destructive', 'outline-success', 'outline-destructive', 'destructive', 'link', 'external'] as const;
   const buttonSizes = ['2xs', 'xs', 'sm', 'default'] as const;
-  const badgeTones = ['neutral', 'muted', 'primary', 'info', 'success', 'warning', 'danger', 'accent', 'highlight'] as const;
+  const badgeTones = ['neutral', 'muted', 'primary', 'info', 'success', 'warning', 'danger', 'accent', 'highlight', 'working'] as const;
   const noticeTones = ['info', 'success', 'warning', 'danger', 'neutral'] as const;
   const statusStates: AgentSpriteState[] = ['permission', 'working', 'unread', 'error', 'ready', 'sleeping', 'stopped'];
 

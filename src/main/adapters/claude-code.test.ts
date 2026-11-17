@@ -756,6 +756,29 @@ describe('transformMessage()', () => {
       }]);
     });
 
+    it("keeps a local_bash task's kind and whether an observer owns it", () => {
+      const events = transformMessage(
+        sdk({
+          type: 'system',
+          subtype: 'background_tasks_changed',
+          tasks: [
+            { task_id: 'b1', task_type: 'local_bash', description: 'npm run dev' },
+            { task_id: 'm1', task_type: 'local_bash', description: 'tail -f app.log', shell_kind: 'monitor' },
+            { task_id: 'o1', task_type: 'local_bash', description: 'observer watch', observer_owned: true },
+          ],
+        }),
+        makeCtx(),
+      );
+      expect(events).toStrictEqual([{
+        type: 'background_tasks_changed',
+        tasks: [
+          { taskId: 'b1', taskType: 'local_bash', description: 'npm run dev' },
+          { taskId: 'm1', taskType: 'local_bash', description: 'tail -f app.log', shellKind: 'monitor' },
+          { taskId: 'o1', taskType: 'local_bash', description: 'observer watch', observerOwned: true },
+        ],
+      }]);
+    });
+
     it('maps an empty background_tasks_changed list', () => {
       const events = transformMessage(
         sdk({ type: 'system', subtype: 'background_tasks_changed', tasks: [] }),

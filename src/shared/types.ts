@@ -313,8 +313,9 @@ export type AgentEvent =
   | { type: 'task_started'; taskId: string; toolUseId?: string; description: string; taskType?: string }
   | { type: 'task_progress'; taskId: string; toolUseId?: string; description: string; summary?: string; lastToolName?: string; totalTokens: number; toolUses: number; durationMs: number }
   | { type: 'task_notification'; taskId: string; toolUseId?: string; taskStatus: 'completed' | 'failed' | 'stopped'; summary: string; outputFile: string; totalTokens?: number; toolUses?: number; durationMs?: number }
-  /** Authoritative list of every live background task (replace semantics). */
-  | { type: 'background_tasks_changed'; tasks: Array<{ taskId: string; taskType?: string; description: string }> }
+  /** Authoritative list of every live background task (replace semantics).
+   *  Foreground tasks, which the turn waits on, aren't in it. */
+  | { type: 'background_tasks_changed'; tasks: LiveBackgroundTask[] }
   // Auth status
   | { type: 'auth_status'; isAuthenticating: boolean; output: string[]; authError?: string }
   // Tool use summary (after compaction)
@@ -396,6 +397,23 @@ export interface ThreadTurnState {
    *  started (a dev server) run on until it stops, so the history's
    *  running ones are still running; without it they are gone. */
   agentLive: boolean;
+  /** While the agent is live, its latest list of live background tasks,
+   *  when it isn't empty. The history page may not reach back to the event
+   *  that listed a long-running one (a dev server), and /clear wipes it. */
+  backgroundTasks?: LiveBackgroundTask[];
+}
+
+/** One task in the agent's own list of its live background tasks
+ *  (background_tasks_changed). `shellKind` is a local_bash task's kind when
+ *  the agent gives one: 'monitor' for the Monitor tool's watch command.
+ *  `observerOwned`: a shell or monitor started by one of the agent's
+ *  observers rather than by the agent or its subagents. */
+export interface LiveBackgroundTask {
+  taskId: string;
+  taskType?: string;
+  description: string;
+  shellKind?: string;
+  observerOwned?: boolean;
 }
 
 /** A page of a thread's history. `turn` is read in the same step as the

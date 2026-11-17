@@ -15,7 +15,7 @@ With **Show grove characters** on, a small pixel agent shows the state instead, 
 | Color | Animation | State | Description |
 |-------|-----------|-------|-------------|
 | 🟠 Amber | Pulsing | **Waiting for you** | The agent is waiting for you to approve an action, answer a question, or say whether to go on past a limit |
-| 🔵 Blue | Pulsing | **Working** | The agent is processing, reading files, or generating a response, or a background agent it started is still running. The row says which: **Background agent:** and its task. A background command such as a dev server doesn't count |
+| 🔵 Blue | Pulsing | **Working** | The agent is processing, reading files, or generating a response, or a background agent it started is still running. The row says which: **Background agent:** and its task. A background command such as a dev server doesn't count: it gets a badge of its own (see Background Commands below) |
 | 🔵 Blue | Pulsing | **Starting** | Thread is initializing |
 | 🔵 Blue | Pulsing | **Installing** | Dependencies are being installed |
 | 🟢 Green | Flashing | **Finished a turn** | The agent finished while you were in another thread, or you marked it unread. If a background agent was still running, it shows once that's done too |
@@ -28,6 +28,10 @@ With **Show grove characters** on, a small pixel agent shows the state instead, 
 If your system is set to reduce motion, the dots stay still; the colour still tells you the state.
 
 The same colours carry through the app: blue is always something in progress, green something done (or a button that acts), amber something waiting for you. In the Thread tab, a permission, a question and an MCP form that wait for an answer are all amber, and turn grey once answered (an allowed permission turns green, a denied one red).
+
+## Background Commands
+
+A blue terminal badge with a count, on the line under a thread's name, means its agent left commands running in the background: a shell such as a dev server or a test watcher, or a monitor. The badge is blue, as anything still running is, but the thread's dot isn't: a dev server can run for as long as the thread is open, and the thread would never look done. Hover the badge to see what each one is running. With the sidebar folded to a rail, a small terminal icon beside the thread's dot or character says the same. A long command the agent is waiting on in the middle of a turn isn't counted: the thread shows as working instead. Closing the thread stops them.
 
 ## What to Do
 

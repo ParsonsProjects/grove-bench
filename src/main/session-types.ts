@@ -4,7 +4,7 @@
  */
 import type { BrowserWindow } from 'electron';
 import type { TurnFiles } from './turn-files.js';
-import type { AgentEvent, AgentSystemInfo, McpElicitationResponse, PermissionMode, SessionStatus } from '../shared/types.js';
+import type { AgentEvent, AgentSystemInfo, LiveBackgroundTask, McpElicitationResponse, PermissionMode, SessionStatus } from '../shared/types.js';
 import type { AgentAdapter, AgentQueryHandle, PermissionResponse, UserMessage } from './adapters/types.js';
 import type { Checkpoints } from './no-git-checkpoints.js';
 import type { SessionLimits } from './session-limits.js';
@@ -196,6 +196,10 @@ export interface ManagedSession {
    *  emptied when its process starts again. Idle sleep would kill them, so it
    *  waits. Not their descriptions, which can hold a command line's secrets. */
   backgroundTasks?: Map<string, string | undefined>;
+  /** The same live set as the agent sent it, descriptions included, for the
+   *  renderer's history replay (turnState) only. Never logged: a
+   *  description can hold a command line's secrets. */
+  liveBackgroundTasks?: LiveBackgroundTask[];
   /** Set when the agent compacts the context, with the size it estimated
    *  after (if it gave one), and cleared by its next usage event or the next
    *  message sent. A turn that ends with it set has no newer size, so one is

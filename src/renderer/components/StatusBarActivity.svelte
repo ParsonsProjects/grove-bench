@@ -62,7 +62,8 @@
     if (!repo) return false;
     return memoryStore.compacting && memoryStore.compactingRepo === repo;
   });
-  let backgroundTasks = $derived(backgroundTaskStore.get(sessionId));
+  /** Not a foreground shell the turn waits on, as the sidebar's badge. */
+  let backgroundTasks = $derived(backgroundTaskStore.listed(sessionId));
   /** The Agent calls in the conversation, so a background subagent's task
    *  can open its thread. */
   let agentCalls = $derived.by(whileShown(() => threadOpen, () => new Set(

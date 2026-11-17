@@ -1126,6 +1126,19 @@ describe('StatusBar activity', () => {
       expect(screen.queryByRole('dialog', { name: 'Activity' })).toBeNull();
     });
 
+    it("doesn't list a shell the turn waits on as a background task, as the sidebar doesn't", async () => {
+      backgroundTaskStore.start(ACTIVE, { type: 'task_started', taskId: 'fg', description: 'npm test', taskType: 'local_bash' });
+      backgroundTaskStore.start(ACTIVE, { type: 'task_started', taskId: 'bg', description: 'npm run dev', taskType: 'local_bash' });
+      backgroundTaskStore.setLive(ACTIVE, [{ taskId: 'bg', taskType: 'local_bash', description: 'npm run dev' }]);
+      render(StatusBar, { props: { sessionId: ACTIVE } });
+      expect(screen.getByTestId('activity').textContent?.trim()).toBe('Background');
+      await openActivity();
+
+      expect(screen.getByText('npm run dev')).toBeInTheDocument();
+      expect(screen.queryByText('npm test')).toBeNull();
+      backgroundTaskStore.destroy(ACTIVE);
+    });
+
     it('opens a background subagent\'s thread from its task, and leaves other tasks alone', async () => {
       messageStore.messagesBySession[ACTIVE] = [agentCall];
       const task = { description: '', status: 'running', totalTokens: 0, toolUses: 0, durationMs: 0 } as const;
