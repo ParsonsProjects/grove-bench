@@ -17,7 +17,7 @@ import { base64Size, type AttachedFile } from '../lib/file-attachments.js';
 import { approvalRequest } from '../lib/tool-names.js';
 import { changesFiles, toolViewOf, toolViewSummary, type ToolView } from '../../shared/tool-view.js';
 import { liveEventsMissingFrom } from '../../shared/live-events.js';
-import { agentCallInput, isAgentCall, subagentOf } from '../lib/message-view.js';
+import { agentCallInput, isAgentCall, isMessageVisible, subagentOf, threadMessages, type MessageViewMode } from '../lib/message-view.js';
 import { limitName, type LimitKind } from '../../shared/limits.js';
 
 // ─── Chat message types ───
@@ -532,17 +532,48 @@ class MessageStore {
     this.paginationBySession[sessionId] = { totalCount, loadedFromIndex, loading: false };
   }
 
+  /** The older page each conversation is loading (see loadOlderEvents). */
+  private olderLoads = new Map<string, Promise<void>>();
+
   /**
    * Load an older page of events and prepend its messages. The page is
    * replayed in a scratch store, so only its messages come back: replaying
    * old events here would set this conversation's running state, mode, model,
    * usage and background tasks back to what they were then. Tool results and
    * answers from newer events whose calls are in this page are applied to it.
+   * Called while a page loads, it waits for that one: a caller paging on
+   * (loadOlderUntil, for a jump) would otherwise see nothing load and stop.
    */
-  async loadOlderEvents(sessionId: string, pageSize = 200) {
+  async loadOlderEvents(sessionId: string, pageSize = 200): Promise<void> {
     const p = this.paginationBySession[sessionId];
-    if (!p || p.loadedFromIndex <= 0 || p.loading) return;
+    if (p?.loading) return this.olderLoads.get(sessionId);
+    if (!p || p.loadedFromIndex <= 0) return;
+    const load = this.loadOlderPage(sessionId, p, pageSize);
+    this.olderLoads.set(sessionId, load);
+    try {
+      await load;
+    } finally {
+      // Not a newer load's (the history was replaced meanwhile).
+      if (this.olderLoads.get(sessionId) === load) this.olderLoads.delete(sessionId);
+    }
+  }
 
+  /** Page older events until the thread shows something in `mode` (its own
+   *  messages, not a subagent's), reading at most `maxEvents`. The newest
+   *  page can hold nothing a view shows (Focus over a long run of tool calls
+   *  or a subagent's work), and the thread would open on just the "Load
+   *  older" row, with its last reply in the page before. */
+  async loadOlderUntilShown(sessionId: string, mode: MessageViewMode, maxEvents: number) {
+    const from = this.olderEventCount(sessionId);
+    const shows = () => threadMessages(this.getMessages(sessionId)).some((m) => isMessageVisible(m, mode));
+    while (!shows() && this.hasOlderEvents(sessionId) && from - this.olderEventCount(sessionId) < maxEvents) {
+      const before = this.olderEventCount(sessionId);
+      await this.loadOlderEvents(sessionId);
+      if (this.olderEventCount(sessionId) >= before) break; // no progress: stop
+    }
+  }
+
+  private async loadOlderPage(sessionId: string, p: { totalCount: number; loadedFromIndex: number; loading: boolean }, pageSize: number) {
     this.paginationBySession[sessionId] = { ...p, loading: true };
     try {
       const skipDuringReplay = new Set([
@@ -2848,7 +2879,7 @@ class MessageStore {
   }
 
   private perSessionMaps(): Map<string, unknown>[] {
-    return [this.sourceIndexBySession, this.orphanReplayEvents, this.streamBuf, this.turnsStarted, this.userStops];
+    return [this.sourceIndexBySession, this.orphanReplayEvents, this.olderLoads, this.streamBuf, this.turnsStarted, this.userStops];
   }
 
   /** Live events that arrived while a pane was loading the history page,
