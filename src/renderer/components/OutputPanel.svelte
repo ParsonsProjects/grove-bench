@@ -10,6 +10,7 @@
   import ThreadMessage from './ThreadMessage.svelte';
   import MessageSearchBar from './MessageSearchBar.svelte';
   import SelectionMenu from './SelectionMenu.svelte';
+  import BookmarkLinks from './BookmarkLinks.svelte';
   import ActivityContextMenu from './ActivityContextMenu.svelte';
   import GroveWalk from './GroveWalk.svelte';
   import { bookmarkStore } from '../stores/bookmarks.svelte.js';
@@ -20,7 +21,7 @@
   import { whileShown } from '$lib/while-shown.js';
   import { sessionRepoColor } from '$lib/session-repo-color.js';
   import { sessionSpriteState } from '$lib/session-sprite-state.js';
-  import type { EventSearchHit } from '../../shared/types.js';
+  import type { Bookmark, EventSearchHit } from '../../shared/types.js';
   import type { ChatMessage } from '../stores/messages.svelte.js';
 
   let { sessionId }: { sessionId: string } = $props();
@@ -462,7 +463,8 @@
   }
 
   // ─── Bookmark jump (cross-session, driven by messageStore.pendingJumpBySession) ───
-  let fallbackBookmarkText = $state<string | null>(null);
+  /** The bookmark whose text (and links) the notice shows. */
+  let fallbackBookmark = $state<Bookmark | null>(null);
   let jumpInFlight = false;
 
   // Bookmark jumps ring the target, then clear on the next user scroll/click
@@ -551,8 +553,7 @@
   }
 
   function showBookmarkFallback(bookmarkId: string) {
-    const bm = bookmarkStore.list.find((b) => b.id === bookmarkId);
-    fallbackBookmarkText = bm?.selectedText ?? null;
+    fallbackBookmark = bookmarkStore.list.find((b) => b.id === bookmarkId) ?? null;
   }
 
   // Text-selection actions (Bookmark / To prompt) are handled by the reusable
@@ -575,7 +576,7 @@
       if (!searchOpen) currentMatchId = null;
     }
     if (e.key === 'Escape') {
-      fallbackBookmarkText = null;
+      fallbackBookmark = null;
       clearHighlightOnInteraction = false;
       currentMatchId = null;
     }
@@ -910,19 +911,20 @@
 {/if}
 
 <!-- Bookmark text fallback: shown when a jump can't locate the source message -->
-{#if fallbackBookmarkText}
+{#if fallbackBookmark}
   <div class="absolute top-2 left-3 right-16 z-30 bg-popover border border-border shadow-xl">
     <Notice tone="warning" title="Bookmarked text — source no longer in history">
       {#snippet actions()}
         <Button
           variant="quiet"
           size="icon-2xs"
-          onclick={() => fallbackBookmarkText = null}
+          onclick={() => fallbackBookmark = null}
           title="Dismiss"
           aria-label="Dismiss"
         ><XIcon /></Button>
       {/snippet}
-      <pre class="whitespace-pre-wrap break-words max-h-40 overflow-y-auto">{fallbackBookmarkText}</pre>
+      <pre class="whitespace-pre-wrap break-words max-h-40 overflow-y-auto">{fallbackBookmark.selectedText}</pre>
+      <BookmarkLinks bookmark={fallbackBookmark} />
     </Notice>
   </div>
 {/if}

@@ -105,6 +105,38 @@ describe('addBookmark', () => {
     expect(mockWriteFileSync).toHaveBeenCalled();
     expect(disk).toContain('const x = 1;');
   });
+
+  it("keeps the selection's links, and saves them", () => {
+    const links = [
+      { kind: 'web' as const, href: 'https://example.com/docs', text: 'the docs' },
+      { kind: 'file' as const, href: 'src/app.ts:42', text: 'app.ts' },
+    ];
+    expect(addBookmark({ ...base, links }).links).toEqual(links);
+    expect(JSON.parse(disk!)[0].links).toEqual(links);
+  });
+
+  it('leaves links out when there are none', () => {
+    expect(addBookmark(base)).not.toHaveProperty('links');
+    expect(addBookmark({ ...base, links: [] })).not.toHaveProperty('links');
+  });
+
+  it("drops links that aren't well formed, an address twice, and any past the cap", () => {
+    const links = [
+      { kind: 'web', href: 'javascript:alert(1)', text: 'x' },
+      { kind: 'ftp', href: 'ftp://example.com', text: 'x' },
+      { kind: 'web', href: 'https://example.com/' + 'a'.repeat(3000), text: 'too long' },
+      { kind: 'web', href: 42, text: 'x' },
+      null,
+      { kind: 'web', href: 'https://example.com/one', text: '  ' },
+      { kind: 'web', href: 'https://example.com/one', text: 'again' },
+      ...Array.from({ length: 30 }, (_, i) => ({ kind: 'web', href: `https://example.com/${i}`, text: 't'.repeat(500) })),
+    ];
+    const kept = addBookmark({ ...base, links: links as never }).links!;
+    expect(kept).toHaveLength(20);
+    // A blank text reads as the address.
+    expect(kept[0]).toEqual({ kind: 'web', href: 'https://example.com/one', text: 'https://example.com/one' });
+    expect(kept[1].text).toHaveLength(200);
+  });
 });
 
 describe('removeBookmark', () => {

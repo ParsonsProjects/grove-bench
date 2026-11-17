@@ -103,9 +103,18 @@ export function pathFrom(folder: string, path: string): string {
 /** Open a file in the thread's worktree: a web page in the Preview tab (at
  *  `hash`, an anchor in it), a Markdown file in the Focus panel, another text
  *  file there as numbered lines (scrolled to `lines`, if given), anything
- *  else as main decides (worktree-files.ts). False when it's gone. */
-export async function openWorktreeFile(sessionId: string, filePath: string, hash = '', lines?: LineRange): Promise<boolean> {
+ *  else as main decides (worktree-files.ts). False when it's gone.
+ *  `beforeShow` runs only when it shows in the app, not when another app
+ *  opens it (a bookmark shows its thread first). */
+export async function openWorktreeFile(
+  sessionId: string,
+  filePath: string,
+  hash = '',
+  lines?: LineRange,
+  beforeShow?: () => void,
+): Promise<boolean> {
   const result = await window.groveBench.openWorktreeFile(sessionId, filePath);
+  if (result.kind === 'preview' || result.kind === 'markdown' || result.kind === 'text') beforeShow?.();
   if (result.kind === 'preview') {
     previewStore.setMode(sessionId, 'user');
     messageStore.setActiveTab(sessionId, 'preview');
