@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
 import { render, cleanup, screen, fireEvent, within, waitFor } from '@testing-library/svelte';
 import { mockGroveBench } from '../__mocks__/setup.js';
@@ -23,6 +23,11 @@ afterEach(() => {
   cleanup();
   vi.clearAllMocks();
 });
+
+// The lightbox loads on first use (LazyImageLightbox). Load it here once,
+// since transforming it cold can take longer than a test waits for the
+// dialog on a slow runner, as with Help (TitleBar.svelte.test.ts).
+beforeAll(async () => { await import('./ImageLightbox.svelte'); }, 30_000);
 
 function lightboxImage(dialog: HTMLElement): string | null {
   return dialog.querySelector('img')?.getAttribute('src') ?? null;

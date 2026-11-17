@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
 import { render, cleanup, fireEvent, screen, within } from '@testing-library/svelte';
 import { tick } from 'svelte';
@@ -1502,6 +1502,11 @@ describe('OutputPanel: notes while working', () => {
 });
 
 describe('OutputPanel images from the agent', () => {
+  // The lightbox loads on first use (LazyImageLightbox). Load it here once,
+  // since transforming it cold can take longer than a test waits for the
+  // dialog on a slow runner, as with Help (TitleBar.svelte.test.ts).
+  beforeAll(async () => { await import('./ImageLightbox.svelte'); }, 30_000);
+
   const SHOT = { file: `${'a'.repeat(32)}.png` };
 
   it('steps through the images of the whole thread, and gives a thumbnail only its own menu', async () => {

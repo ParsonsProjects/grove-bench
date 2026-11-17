@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
 import { render, cleanup, screen, fireEvent, waitFor } from '@testing-library/svelte';
 import { mockGroveBench } from '../__mocks__/setup.js';
@@ -15,6 +15,11 @@ afterEach(() => {
 });
 
 describe('UserPromptBlock attachments', () => {
+  // The lightbox loads on first use (LazyImageLightbox). Load it here once,
+  // since transforming it cold can take longer than a test waits for the
+  // dialog on a slow runner, as with Help (TitleBar.svelte.test.ts).
+  beforeAll(async () => { await import('./ImageLightbox.svelte'); }, 30_000);
+
   it('shows attached text files as chips that open them in the Focus panel', async () => {
     render(UserPromptBlock, {
       sessionId: SID,
