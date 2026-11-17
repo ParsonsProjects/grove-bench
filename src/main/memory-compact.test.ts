@@ -62,6 +62,10 @@ import {
   type CompactionEvent,
 } from './memory-compact.js';
 
+// Compaction reads memory from disk asynchronously; on a busy Windows runner
+// the waits below (SLOW_IO) can need longer than the 5 s default.
+vi.setConfig({ testTimeout: 30_000 });
+
 // ─── Helpers ───
 
 // Unique per test — memory-compact caches cooldown state per repo path in module scope.
@@ -88,6 +92,9 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  // A run a failed test left going must not take the next test's replies.
+  cancelCompaction(REPO);
+  vi.useRealTimers();
   listing.throws = false;
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
@@ -513,12 +520,17 @@ function replies(plan: unknown, ...merges: unknown[]): void {
 
 const groupOf = (...paths: string[]) => ({ groups: [{ paths, reason: 'overlap' }], descriptions: [] });
 
-/** Wait for the model to have been called `n` times: compaction reads memory
- *  asynchronously first, and a fake clock moved before then moves nothing. */
-const realSetImmediate = setImmediate; // useFakeTimers replaces the global
+/** Compaction reads memory asynchronously before its first model call,
+ *  which on a busy Windows runner can take a good while. */
+const SLOW_IO = { timeout: 10_000 };
+
+/** Wait, by the real clock, for the model to have been called `n` times:
+ *  a fake clock moved before the call has set its timeout moves nothing. */
+const realSetTimeout = setTimeout; // useFakeTimers replaces the global
 async function callsReached(n: number): Promise<void> {
-  for (let i = 0; i < 200 && mockAdapter.generateText.mock.calls.length < n; i++) {
-    await new Promise<void>((resolve) => { realSetImmediate(resolve); });
+  const deadline = Date.now() + SLOW_IO.timeout;
+  while (mockAdapter.generateText.mock.calls.length < n && Date.now() < deadline) {
+    await new Promise<void>((resolve) => { realSetTimeout(resolve, 5); });
   }
   expect(mockAdapter.generateText.mock.calls.length).toBeGreaterThanOrEqual(n);
 }
@@ -1054,7 +1066,7 @@ describe('compactMemory', () => {
     mockAdapter.generateText.mockImplementationOnce(hang);
 
     const pending = compactMemory({ repoPath: REPO });
-    await vi.waitFor(() => expect(mockAdapter.generateText).toHaveBeenCalledTimes(3));
+    await vi.waitFor(() => expect(mockAdapter.generateText).toHaveBeenCalledTimes(3), SLOW_IO);
     cancelCompaction(REPO);
     const status = await pending;
 
@@ -1197,20 +1209,20 @@ describe('compactMemory', () => {
       const pending = heldReplies();
 
       const run = compactMemory({ repoPath: REPO });
-      await vi.waitFor(() => expect(pending).toHaveLength(1));
+      await vi.waitFor(() => expect(pending).toHaveLength(1), SLOW_IO);
       pending[0].resolve(JSON.stringify(plan));
 
-      await vi.waitFor(() => expect(pending).toHaveLength(4)); // the plan + 3 merges
+      await vi.waitFor(() => expect(pending).toHaveLength(4), SLOW_IO); // the plan + 3 merges
       await new Promise(r => setTimeout(r, 10));
       expect(pending).toHaveLength(4);
 
       pending[2].resolve(tidied(1)); // the second merge ends first
-      await vi.waitFor(() => expect(pending).toHaveLength(5));
+      await vi.waitFor(() => expect(pending).toHaveLength(5), SLOW_IO);
       expect(pending[4].user).toContain('architecture/n-3.md');
 
       pending[1].resolve(tidied(0));
       pending[3].resolve(tidied(2));
-      await vi.waitFor(() => expect(pending).toHaveLength(6));
+      await vi.waitFor(() => expect(pending).toHaveLength(6), SLOW_IO);
       pending[4].resolve(tidied(3));
       pending[5].resolve(tidied(4));
 
@@ -1224,9 +1236,9 @@ describe('compactMemory', () => {
       const pending = heldReplies();
 
       const run = compactMemory({ repoPath: REPO });
-      await vi.waitFor(() => expect(pending).toHaveLength(1));
+      await vi.waitFor(() => expect(pending).toHaveLength(1), SLOW_IO);
       pending[0].resolve(JSON.stringify(plan));
-      await vi.waitFor(() => expect(pending).toHaveLength(4));
+      await vi.waitFor(() => expect(pending).toHaveLength(4), SLOW_IO);
 
       pending[1].reject(new Error('usage limit reached'));
       pending[2].resolve(tidied(1));
@@ -1271,7 +1283,7 @@ describe('compactMemory', () => {
       const unsubscribe = onCompactionEvent(e => { if (e.kind === 'step') steps.set(e.step.index, { ...steps.get(e.step.index)!, ...e.step }); });
       try {
         const run = compactMemory({ repoPath: REPO });
-        await vi.waitFor(() => expect(mockAdapter.generateText).toHaveBeenCalledTimes(4));
+        await vi.waitFor(() => expect(mockAdapter.generateText).toHaveBeenCalledTimes(4), SLOW_IO);
         cancelCompaction(REPO);
         const status = await run;
 
