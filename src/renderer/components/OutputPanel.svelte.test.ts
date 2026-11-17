@@ -772,6 +772,232 @@ describe('OutputPanel: scrolling up loads older messages', () => {
   });
 });
 
+describe('OutputPanel: a thread too short to scroll reads on', () => {
+  const texts = (prefix: string, n: number): ChatMessage[] =>
+    Array.from({ length: n }, (_, i) => ({ kind: 'text', id: `${prefix}${i}`, text: `${prefix} ${i}`, uuid: `${prefix}-${i}` }));
+  const tools = (prefix: string, n: number): ChatMessage[] =>
+    Array.from({ length: n }, (_, i) => ({ kind: 'tool_call', id: `${prefix}${i}`, toolName: 'Read', toolInput: { file_path: 'a.ts' }, toolUseId: `${prefix}-tu${i}`, uuid: `${prefix}-${i}`, pending: false }));
+  const drawn = (container: HTMLElement) => [...container.querySelectorAll<HTMLElement>('[data-msg-id]')].map((el) => el.dataset.msgId);
+  const nextFrame = () => new Promise((r) => requestAnimationFrame(r));
+
+  /** loadOlderEvents, prepending `pages` (newest first) one per call, with
+   *  `left[i]` events still unloaded after page i. */
+  function pagesOfHistory(pages: ChatMessage[][], left: number[]) {
+    return vi.spyOn(messageStore, 'loadOlderEvents').mockImplementation(async () => {
+      messageStore.messagesBySession = { [SID]: [...pages.shift()!, ...messageStore.getMessages(SID)] };
+      messageStore.setPagination(SID, 600, left.shift()!);
+    });
+  }
+
+  beforeEach(() => {
+    store.activeSessionId = SID;
+    messageStore.setViewMode(SID, 'detailed');
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it('reads older history until a Focus thread whose newest page shows nothing fills the view', async () => {
+    messageStore.setViewMode(SID, 'focus');
+    // The newest page: tool calls only, which Focus hides.
+    messageStore.messagesBySession = { [SID]: tools('t', 30) };
+    messageStore.setPagination(SID, 600, 400);
+    // The prompt and its reply, two rows; then ten more rows of replies.
+    const load = pagesOfHistory(
+      [[{ kind: 'user', id: 'u1', text: 'fix it' }, { kind: 'text', id: 'ans', text: 'Done', uuid: 'a-ans' }], texts('o', 10)],
+      [200, 100],
+    );
+    const { container, queryByText } = render(OutputPanel, { sessionId: SID });
+    layOut(container);
+    // Not an empty new thread.
+    expect(queryByText('Waiting for input...')).not.toBeInTheDocument();
+
+    await vi.waitFor(() => expect(drawn(container)).toContain('o0'));
+    expect(drawn(container)).toContain('ans');
+    // Twelve rows of 100px scroll in 500px: scrolling up reads the rest.
+    await nextFrame();
+    await tick();
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
+  it('reads nothing more while the thread fills the view', async () => {
+    messageStore.messagesBySession = { [SID]: texts('r', 20) };
+    messageStore.setPagination(SID, 300, 100);
+    const load = pagesOfHistory([texts('o', 60)], [0]);
+    const { container } = render(OutputPanel, { sessionId: SID });
+    layOut(container);
+
+    await vi.waitFor(() => expect(drawn(container)).toHaveLength(20));
+    await nextFrame();
+    await nextFrame();
+    await tick();
+    expect(load).not.toHaveBeenCalled();
+  });
+
+  it('reads on only once a hidden conversation is opened', async () => {
+    store.activeSessionId = 'another-session';
+    messageStore.setViewMode(SID, 'focus');
+    messageStore.messagesBySession = { [SID]: tools('t', 30) };
+    messageStore.setPagination(SID, 600, 400);
+    const load = pagesOfHistory([texts('o', 10)], [0]);
+    const { container } = render(OutputPanel, { sessionId: SID });
+    layOut(container);
+    await nextFrame();
+    await nextFrame();
+    expect(load).not.toHaveBeenCalled();
+
+    store.activeSessionId = SID;
+
+    await vi.waitFor(() => expect(drawn(container)).toContain('o0'));
+    expect(load).toHaveBeenCalledTimes(1);
+  });
+
+  /** One run of notes between tool calls (hidden in Focus) after a prompt,
+   *  then the answer: 72 messages Focus shows, the newest 50 of them drawn
+   *  as a fold of notes and the answer, two rows. */
+  const foldedThread = (): ChatMessage[] => {
+    const run = Array.from({ length: 70 }, (_, i) => [texts('n', 70)[i], tools('t', 70)[i]]).flat();
+    return [{ kind: 'user', id: 'u1', text: 'fix it' }, ...run, { kind: 'text', id: 'ans', text: 'Done', uuid: 'a-ans' }];
+  };
+
+  it('draws the loaded messages it held back first, a batch per frame', async () => {
+    messageStore.setViewMode(SID, 'focus');
+    messageStore.messagesBySession = { [SID]: foldedThread() };
+    const load = vi.spyOn(messageStore, 'loadOlderEvents');
+    const { container } = render(OutputPanel, { sessionId: SID });
+    layOut(container);
+
+    // How many are drawn, frame by frame.
+    const counts = [drawn(container).length];
+    for (let i = 0; i < 30 && !drawn(container).includes('u1'); i++) {
+      await nextFrame();
+      await tick();
+      counts.push(drawn(container).length);
+    }
+
+    expect(drawn(container)).toContain('u1');
+    const steps = counts.slice(1).map((n, i) => n - counts[i]);
+    expect(Math.max(...steps)).toBeLessThanOrEqual(10);
+    // Past the 50 a load draws, so the fill drew some of them, in batches.
+    expect(counts.some((n) => n > 50 && n < 72)).toBe(true);
+    // Nothing more to read.
+    expect(load).not.toHaveBeenCalled();
+  });
+
+  it('keeps what it drew when a prompt is sent', async () => {
+    messageStore.setViewMode(SID, 'focus');
+    messageStore.messagesBySession = { [SID]: foldedThread() };
+    const { container } = render(OutputPanel, { sessionId: SID });
+    layOut(container);
+    await vi.waitFor(() => expect(drawn(container)).toContain('u1'));
+
+    messageStore.messagesBySession = { [SID]: [...messageStore.getMessages(SID), { kind: 'user', id: 'u2', text: 'and the tests' }] };
+    await tick();
+
+    // Not back to the newest 50, which start at n21.
+    expect(drawn(container)).toContain('n0');
+    expect(drawn(container)).toContain('u2');
+  });
+
+  it('stops reading by itself after 2000 events, until Load older is clicked', async () => {
+    messageStore.setViewMode(SID, 'focus');
+    messageStore.messagesBySession = { [SID]: tools('t', 5) };
+    messageStore.setPagination(SID, 10_000, 9_800);
+    // Every page holds only tool calls, which Focus hides.
+    let page = 0;
+    const load = vi.spyOn(messageStore, 'loadOlderEvents').mockImplementation(async () => {
+      page++;
+      messageStore.messagesBySession = { [SID]: [...tools(`p${page}-`, 2), ...messageStore.getMessages(SID)] };
+      messageStore.setPagination(SID, 10_000, 9_800 - page * 200);
+    });
+    const { container, findByRole } = render(OutputPanel, { sessionId: SID });
+    layOut(container);
+
+    await vi.waitFor(() => expect(load).toHaveBeenCalledTimes(10));
+    await nextFrame();
+    await nextFrame();
+    expect(load).toHaveBeenCalledTimes(10);
+
+    await fireEvent.click(await findByRole('button', { name: /Load 7800 older events/ }));
+
+    // The click's page, then ten more by itself.
+    await vi.waitFor(() => expect(load).toHaveBeenCalledTimes(21));
+    await nextFrame();
+    await nextFrame();
+    expect(load).toHaveBeenCalledTimes(21);
+  });
+
+  it("doesn't try a page that failed to read again by itself", async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    messageStore.setViewMode(SID, 'focus');
+    messageStore.messagesBySession = { [SID]: tools('t', 5) };
+    messageStore.setPagination(SID, 600, 400);
+    const load = vi.spyOn(messageStore, 'loadOlderEvents').mockRejectedValue(new Error('unreadable'));
+    const { container, getByRole } = render(OutputPanel, { sessionId: SID });
+    layOut(container);
+
+    await vi.waitFor(() => expect(logged).toHaveBeenCalled());
+    for (let i = 0; i < 5; i++) await nextFrame();
+    expect(load).toHaveBeenCalledTimes(1);
+    // Still offered, to try by hand.
+    expect(getByRole('button', { name: /Load 400 older events/ })).toBeInTheDocument();
+  });
+
+  describe('as the view or its rows change height', () => {
+    type Callback = () => void;
+    let observers: { callback: Callback; targets: Set<Element> }[];
+    beforeEach(() => {
+      observers = [];
+      vi.stubGlobal('ResizeObserver', class {
+        private entry: { callback: Callback; targets: Set<Element> };
+        constructor(callback: Callback) {
+          this.entry = { callback, targets: new Set() };
+          observers.push(this.entry);
+        }
+        observe(el: Element) { this.entry.targets.add(el); }
+        unobserve(el: Element) { this.entry.targets.delete(el); }
+        disconnect() { this.entry.targets.clear(); }
+      });
+    });
+    afterEach(() => vi.unstubAllGlobals());
+
+    /** A thread of eight 100px replies (scrolling 300px in 500px) with
+     *  history left to read. */
+    async function scrollingThread() {
+      messageStore.messagesBySession = { [SID]: texts('r', 8) };
+      messageStore.setPagination(SID, 600, 400);
+      const load = pagesOfHistory([texts('o', 10)], [200]);
+      const { container } = render(OutputPanel, { sessionId: SID });
+      const el = layOut(container);
+      await vi.waitFor(() => expect(drawn(container)).toHaveLength(8));
+      await nextFrame();
+      await tick();
+      expect(load).not.toHaveBeenCalled();
+      return { el, load, container };
+    }
+
+    it('reads on when the view gets taller', async () => {
+      const { el, load } = await scrollingThread();
+
+      Object.defineProperty(el, 'clientHeight', { configurable: true, value: 2000 });
+      observers.find((o) => o.targets.has(el))!.callback();
+
+      await vi.waitFor(() => expect(load).toHaveBeenCalledTimes(1));
+    });
+
+    it('reads on when a row gets shorter', async () => {
+      const { el, load, container } = await scrollingThread();
+      const rows = observers.find((o) => [...o.targets].some((t) => t !== el))!;
+      expect(rows.targets.size).toBe(8);
+
+      // A tall block in one of them closed: 500px of rows in all.
+      Object.defineProperty(el, 'scrollHeight', { configurable: true, value: 500 });
+      rows.callback();
+
+      await vi.waitFor(() => expect(load).toHaveBeenCalledTimes(1));
+      expect(drawn(container)).toContain('o0');
+    });
+  });
+});
+
 describe("OutputPanel: a hidden conversation's chat", () => {
   const replies = (n: number) => Array.from({ length: n }, (_, i) => ({ kind: 'text', id: `m${i}`, text: `reply ${i}`, uuid: `a${i}` }));
   const drawn = (container: HTMLElement) => [...container.querySelectorAll<HTMLElement>('[data-msg-id]')].map((el) => el.dataset.msgId);

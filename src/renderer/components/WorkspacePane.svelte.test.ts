@@ -159,6 +159,25 @@ describe('WorkspacePane load timing', () => {
     expect(report.detail).toMatch(/^\d+ events, shown$/);
   });
 
+  it("reads back past a newest page that shows nothing in the thread's view, and times it", async () => {
+    store.prerequisites = { git: { available: true, meetsMinimum: true }, agents };
+    messageStore.setViewMode('n1', 'focus');
+    mockGroveBench.getEventHistoryPage
+      // The newest page: a tool call, which Focus hides.
+      .mockResolvedValueOnce({
+        events: [{ type: 'assistant_tool_use', toolName: 'Read', toolInput: { file_path: 'a.ts' }, toolUseId: 'tu1', uuid: 'a1' }],
+        totalCount: 400, startIndex: 200, turn: IDLE_TURN,
+      })
+      .mockResolvedValueOnce({ events: [{ type: 'assistant_text', text: 'Done', uuid: 'a-done' }], totalCount: 400, startIndex: 0, turn: IDLE_TURN });
+    render(WorkspacePane, { sessionId: 'n1' });
+
+    await waitFor(() => expect(messageStore.isHistoryLoaded('n1')).toBe(true));
+    expect(messageStore.getMessages('n1').some((m) => m.kind === 'text' && m.text === 'Done')).toBe(true);
+    await waitFor(() => expect(mockGroveBench.reportTiming).toHaveBeenCalled());
+    const [report] = mockGroveBench.reportTiming.mock.calls[0] as [{ steps: { name: string }[] }];
+    expect(report.steps.map((s) => s.name)).toEqual(['history fetch', 'replay', 'older history', 'first draw']);
+  });
+
   it('reports nothing for a pane closed before it drew, so a later one never gets its numbers', async () => {
     store.prerequisites = { git: { available: true, meetsMinimum: true }, agents };
     let answerPage: (page: unknown) => void = () => {};

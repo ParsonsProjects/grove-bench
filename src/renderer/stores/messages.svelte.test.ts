@@ -2579,6 +2579,99 @@ describe('pagination — loadOlderUntil', () => {
   });
 });
 
+describe('pagination — a page already loading', () => {
+  type Page = import('../../shared/types.js').EventHistoryPage;
+
+  it('makes a second caller wait for it, not read it again', async () => {
+    messageStore.setPagination(SID, 500, 300);
+    let answer!: (page: Page) => void;
+    mockGroveBench.getEventHistoryPage.mockImplementationOnce(() => new Promise<Page>((r) => { answer = r; }));
+    const first = messageStore.loadOlderEvents(SID);
+    let secondDone = false;
+    const second = messageStore.loadOlderEvents(SID).then(() => { secondDone = true; });
+    await Promise.resolve();
+    expect(secondDone).toBe(false);
+
+    answer({ events: [], totalCount: 500, startIndex: 100, turn: IDLE_TURN });
+    await Promise.all([first, second]);
+
+    expect(mockGroveBench.getEventHistoryPage).toHaveBeenCalledTimes(1);
+    expect(messageStore.olderEventCount(SID)).toBe(100);
+  });
+
+  it('lets loadOlderUntil page on past it (a jump while the chat reads on)', async () => {
+    messageStore.setPagination(SID, 500, 400);
+    let answer!: (page: Page) => void;
+    mockGroveBench.getEventHistoryPage
+      .mockImplementationOnce(() => new Promise<Page>((r) => { answer = r; }))
+      .mockResolvedValueOnce({ events: [], totalCount: 500, startIndex: 0, turn: IDLE_TURN });
+    const reading = messageStore.loadOlderEvents(SID);
+
+    const jump = messageStore.loadOlderUntil(SID, 50);
+    answer({ events: [], totalCount: 500, startIndex: 200, turn: IDLE_TURN });
+    await Promise.all([reading, jump]);
+
+    expect(messageStore.olderEventCount(SID)).toBe(0);
+    expect(mockGroveBench.getEventHistoryPage).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('pagination — loadOlderUntilShown', () => {
+  const toolPage = (startIndex: number) => ({
+    events: [
+      { type: 'assistant_tool_use', toolName: 'Read', toolInput: { file_path: 'a.ts' }, toolUseId: `tu${startIndex}`, uuid: `a${startIndex}` },
+      { type: 'tool_result', toolUseId: `tu${startIndex}`, content: 'ok' },
+    ] as AgentEvent[],
+    totalCount: 1000, startIndex, turn: IDLE_TURN,
+  });
+
+  it('reads back until the thread shows something in its view', async () => {
+    messageStore.setPagination(SID, 1000, 800);
+    mockGroveBench.getEventHistoryPage
+      .mockResolvedValueOnce(toolPage(600))
+      .mockResolvedValueOnce({ events: [{ type: 'assistant_text', text: 'Done', uuid: 'a-done' }], totalCount: 1000, startIndex: 400, turn: IDLE_TURN });
+
+    await messageStore.loadOlderUntilShown(SID, 'focus', 2000);
+
+    expect(mockGroveBench.getEventHistoryPage).toHaveBeenCalledTimes(2);
+    expect(messageStore.getMessages(SID).some((m) => m.kind === 'text' && m.text === 'Done')).toBe(true);
+    expect(messageStore.olderEventCount(SID)).toBe(400);
+  });
+
+  it('reads no more than it is given', async () => {
+    messageStore.setPagination(SID, 1000, 800);
+    mockGroveBench.getEventHistoryPage
+      .mockResolvedValueOnce(toolPage(600))
+      .mockResolvedValueOnce(toolPage(400));
+
+    // A third read would get the mock's empty history and load to 0.
+    await messageStore.loadOlderUntilShown(SID, 'focus', 400);
+
+    expect(mockGroveBench.getEventHistoryPage).toHaveBeenCalledTimes(2);
+    expect(messageStore.olderEventCount(SID)).toBe(400);
+  });
+
+  it('reads nothing when the thread already shows something', async () => {
+    messageStore.messagesBySession = { [SID]: [{ kind: 'text', id: 'm1', text: 'Done', uuid: 'a1' }] };
+    messageStore.setPagination(SID, 1000, 800);
+
+    await messageStore.loadOlderUntilShown(SID, 'focus', 2000);
+
+    expect(mockGroveBench.getEventHistoryPage).not.toHaveBeenCalled();
+  });
+
+  it("doesn't count a subagent's messages as the thread's", async () => {
+    messageStore.setPagination(SID, 1000, 800);
+    mockGroveBench.getEventHistoryPage
+      .mockResolvedValueOnce({ events: [{ type: 'assistant_text', text: 'sub', uuid: 's1', parentToolUseId: 'task1' }], totalCount: 1000, startIndex: 600, turn: IDLE_TURN })
+      .mockResolvedValueOnce({ events: [{ type: 'assistant_text', text: 'Done', uuid: 'a-done' }], totalCount: 1000, startIndex: 400, turn: IDLE_TURN });
+
+    await messageStore.loadOlderUntilShown(SID, 'focus', 2000);
+
+    expect(mockGroveBench.getEventHistoryPage).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe('pagination — loadOlderEvents', () => {
   it('updates loadedFromIndex after loading older events', async () => {
     // Set pagination indicating 300 older events remain

@@ -188,6 +188,10 @@
       // Load only the most recent events to avoid stalling on large histories.
       // Older events are loaded on demand when the user scrolls up.
       const INITIAL_PAGE_SIZE = 200;
+      /** Events read back past the newest page for something the view
+       *  shows (ten pages), so a thread that hides nearly all of its
+       *  history isn't read whole before it opens. */
+      const FIRST_READ_MAX_EVENTS = 2000;
       const skipDuringReplay = new Set([
         'partial_text', 'activity', 'tool_progress', 'usage',
       ]);
@@ -223,6 +227,23 @@
       const session = store.sessions.find((s) => s.id === sessionId);
       if (session && (session.status === 'running' || session.status === 'error') && !messageStore.getIsReady(sessionId)) {
         messageStore.setIsReady(sessionId, true);
+      }
+
+      // The newest page can hold nothing the thread's view shows (Focus
+      // over a long run of tool calls or a subagent's work). Read back to
+      // something it shows now, while the walk still covers the chat and
+      // also for a pane mounted hidden (a sleeping thread), rather than open
+      // on the "Load older" row. The chat reads on from there to fill the
+      // view once it shows (OutputPanel).
+      const unloaded = messageStore.olderEventCount(sessionId);
+      if (unloaded > 0) {
+        try {
+          await messageStore.loadOlderUntilShown(sessionId, messageStore.getViewMode(sessionId), FIRST_READ_MAX_EVENTS);
+        } catch (e) {
+          // The newest page is in: the chat's Load older can try again.
+          console.error(`[WorkspacePane] reading older history failed for ${sessionId}:`, e);
+        }
+        if (messageStore.olderEventCount(sessionId) !== unloaded) timing.step('older history');
       }
     } catch (e) {
       historyFailed = true;

@@ -57,7 +57,23 @@
 
   // ─── Lazy loading: only render recent messages, load older on demand ───
   const PAGE_SIZE = 50;
+  /** Within this many px of the bottom, the view follows new output. */
+  const FOLLOW_PX = 100;
   let visibleCount = $state(PAGE_SIZE);
+  // The fill (fillView): a thread too short to scroll reads on by itself.
+  /** Events of history the fill reads by itself, since the thread was
+   *  opened, its view changed or Load older was clicked: one whose view
+   *  hides nearly all of it isn't read whole. */
+  const FILL_MAX_EVENTS = 2000;
+  let fillRead = 0;
+  /** Where reading a page failed. The fill doesn't try it again by itself,
+   *  or a page that can't be read would be tried every frame; scrolling and
+   *  Load older still do. */
+  let fillFailedAt: number | null = null;
+  /** How many messages the fill drew. followLatest keeps that many, or each
+   *  prompt sent would drop them and the fill draw them all again. */
+  let filledCount = 0;
+
   let hasOlderMessages = $derived(filteredMessages.length > visibleCount);
 
   // ─── A loaded page draws newest first, a batch per frame ───
@@ -73,7 +89,7 @@
   let batchNextLoad = true;
   $effect.pre(() => {
     const len = filteredMessages.length;
-    if (len === 0) { batchNextLoad = true; return; }
+    if (len === 0) { batchNextLoad = true; filledCount = 0; return; }
     if (!batchNextLoad) return;
     batchNextLoad = false;
     if (len > RENDER_BATCH) renderCap = RENDER_BATCH;
@@ -241,6 +257,7 @@
   $effect(() => {
     sessionId; // track
     visibleCount = PAGE_SIZE;
+    filledCount = 0;
   });
 
   function expandVisibleCount(newCount: number) {
@@ -259,6 +276,9 @@
   }
 
   async function loadOlderEvents() {
+    // Asked for: the fill may read on from here again, a failed page too.
+    fillRead = 0;
+    fillFailedAt = null;
     await messageStore.loadOlderEvents(sessionId);
     // Show all messages after loading older events (they're already in the
     // store). Counted there: switched away meanwhile, this chat stands still.
@@ -284,21 +304,99 @@
     if (jumpScrolling || renderCap !== Infinity || held) return;
     while (!hasOlderMessages) {
       if (!hasUnloadedEvents || isLoadingOlderEvents) return;
-      const unloaded = unloadedEventCount;
-      await messageStore.loadOlderEvents(sessionId);
-      await tick();
+      const loaded = await readOlderPage();
       // Back at the bottom, jumping or switched away meanwhile (this chat
       // stands still), or the page didn't load.
       if (shouldAutoScroll || jumpScrolling || !paneShown || renderCap !== Infinity || held) return;
-      if (unloadedEventCount >= unloaded) return;
+      if (!loaded) return;
     }
-    const drawn = Math.min(visibleCount, filteredMessages.length);
     // The first batch now: the "Load older" row may go with it, and at the
     // very top there is no scrolling up to make up for that alone.
-    await keepingPlace(() => {
-      visibleCount = Math.min(drawn + PAGE_SIZE, filteredMessages.length);
-      renderCap = drawn + RENDER_BATCH;
-    });
+    await keepingPlace(drawNextOlder);
+  }
+
+  /** Draw the next page of the loaded messages above the ones drawn: a
+   *  batch now, the rest a batch per frame (drawOlderBatch). */
+  function drawNextOlder() {
+    const drawn = Math.min(visibleCount, filteredMessages.length);
+    visibleCount = Math.min(drawn + PAGE_SIZE, filteredMessages.length);
+    renderCap = drawn + RENDER_BATCH;
+  }
+
+  /** Read the next page of history into the store. False if none loaded
+   *  (there was none, or the history was replaced meanwhile); throws if
+   *  reading it failed. */
+  async function readOlderPage(): Promise<boolean> {
+    const unloaded = unloadedEventCount;
+    await messageStore.loadOlderEvents(sessionId);
+    await tick();
+    return unloadedEventCount < unloaded;
+  }
+
+  // ─── A thread too short to scroll reads on by itself ───
+  // Scrolling is what loads older messages, so a thread that shows too
+  // little to scroll would stop at the "Load older" row: Focus over a long
+  // run of tool calls or a subagent's work, say, where the newest page held
+  // nothing it shows, or only a line. (WorkspacePane reads back to the last
+  // thing it shows as the history loads; this fills the screen from there.)
+  // Until the reader can scroll up (FOLLOW_PX past the bottom, as
+  // handleScroll needs), the loaded messages are drawn, then the next page
+  // of history is read, until there is no more or FILL_MAX_EVENTS are read.
+  // Checked when the thread is shown, its view changes, a page finishes
+  // drawing or a load ends (below), when it follows new output (the scroll
+  // effect), and when the view or a row changes height (the observers).
+
+  // A view of its own: what the fill drew and read was for the last one.
+  $effect(() => {
+    viewMode; // track
+    filledCount = 0;
+    fillRead = 0;
+  });
+  // Opened again: it may read as much again.
+  $effect(() => {
+    if (paneShown) fillRead = 0;
+  });
+  $effect(() => {
+    viewMode; // track
+    if (!paneShown || renderCap !== Infinity || held || isLoadingOlderEvents) return;
+    if (!hasOlderMessages && !hasUnloadedEvents) return;
+    // A frame later, once the rows just drawn are laid out.
+    const frame = requestAnimationFrame(() => void fillView());
+    return () => cancelAnimationFrame(frame);
+  });
+
+  let filling = false;
+  async function fillView() {
+    if (filling) return;
+    filling = true;
+    try {
+      while (paneShown && !jumpScrolling && renderCap === Infinity && !held) {
+        const el = scrollContainer;
+        // No layout (hidden), or it scrolls: scrolling up reads the rest.
+        if (!el || el.clientHeight === 0 || el.scrollHeight - el.clientHeight >= FOLLOW_PX) return;
+        if (hasOlderMessages) {
+          // Loaded but not drawn: the next of them. The effect above checks
+          // again once they're drawn.
+          drawNextOlder();
+          filledCount = visibleCount;
+          return;
+        }
+        const unloaded = unloadedEventCount;
+        if (!hasUnloadedEvents || isLoadingOlderEvents || fillRead >= FILL_MAX_EVENTS || fillFailedAt === unloaded) return;
+        let loaded: boolean;
+        try {
+          loaded = await readOlderPage();
+        } catch (e) {
+          fillFailedAt = unloaded;
+          console.error(`[OutputPanel] reading older history failed for ${sessionId}:`, e);
+          return;
+        }
+        fillRead += Math.max(0, unloaded - unloadedEventCount);
+        if (!loaded) return;
+      }
+    } finally {
+      filling = false;
+    }
   }
 
   function endJumpScroll() {
@@ -534,6 +632,8 @@
         // asks for this on every batch).
         if (shouldAutoScroll && scrollContainer) {
           scrollContainer.scrollTop = scrollContainer.scrollHeight;
+          // New output may still leave it too short to scroll.
+          if (hasOlderMessages || hasUnloadedEvents) void fillView();
         }
       });
     }
@@ -545,16 +645,34 @@
   // Output that arrived meanwhile then sits below the view, and a pane that
   // loaded its history while hidden opens at the top. Showing it resizes the
   // container from 0, so pin to the bottom then, and on any other resize
-  // (window, prompt box), while following the conversation.
+  // (window, prompt box), while following the conversation. Taller, it may
+  // no longer scroll, so it reads on (fillView).
   $effect(() => {
     const el = scrollContainer;
     if (!el || typeof ResizeObserver === 'undefined') return;
     const observer = new ResizeObserver(() => {
-      if (shouldAutoScroll && el.clientHeight > 0) el.scrollTop = el.scrollHeight;
+      if (el.clientHeight === 0) return;
+      if (shouldAutoScroll) el.scrollTop = el.scrollHeight;
+      void fillView();
     });
     observer.observe(el);
     return () => observer.disconnect();
   });
+
+  // Rows change height while the container stays the same (a tool block or
+  // fold of notes opened or closed, an image loaded or failed, a row drawn),
+  // which the observer above doesn't see: the thread may no longer scroll.
+  // A frame's changes come in one call.
+  const rowObserver = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(() => {
+    if (scrollContainer && scrollContainer.clientHeight > 0) void fillView();
+  });
+  onDestroy(() => rowObserver?.disconnect());
+  /** Watch a row of the thread. A message in a fold of notes is left out
+   *  (`watch` false): the fold's own height changes with it. */
+  function watchRow(node: HTMLElement, watch = true) {
+    if (watch) rowObserver?.observe(node);
+    return { destroy: () => rowObserver?.unobserve(node) };
+  }
 
   // Thread images (attachments, tool screenshots) load after the scroll
   // above and make the content taller without resizing the container, so
@@ -574,7 +692,7 @@
     const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
     // Hidden: no layout, so this says nothing about where the user is.
     if (clientHeight === 0) return;
-    shouldAutoScroll = scrollHeight - scrollTop - clientHeight < 100;
+    shouldAutoScroll = scrollHeight - scrollTop - clientHeight < FOLLOW_PX;
     if (!shouldAutoScroll && scrollTop < clientHeight) void loadOlderOnScroll();
   }
 
@@ -592,7 +710,7 @@
    *  a jump's smooth scroll passes near the bottom and would lose its target. */
   function followLatest() {
     shouldAutoScroll = true;
-    visibleCount = PAGE_SIZE;
+    visibleCount = Math.max(PAGE_SIZE, filledCount);
   }
 </script>
 
@@ -631,7 +749,9 @@
     {/each}
   </div>
 
-  {#if messages.length === 0 && !streamingText && arrival === null}
+  <!-- Not over history still to read: it isn't a new thread, and it reads on
+       by itself (fillView). -->
+  {#if messages.length === 0 && !streamingText && arrival === null && !hasUnloadedEvents}
     <div class="flex items-center justify-center h-full text-muted-foreground">
       <div class="text-center relative z-10">
         <p class="text-sm mb-1">Waiting for input...</p>
@@ -680,7 +800,7 @@
     </div>
   {/if}
 
-  {#snippet messageRow(msg: ChatMessage)}
+  {#snippet messageRow(msg: ChatMessage, top = false)}
     {@const day = dividers.get(msg.id)}
     {#if day}
       <div role="separator" aria-label={day} class="flex items-center gap-3 mt-3 mb-1 text-caption text-muted-foreground select-none">
@@ -692,6 +812,7 @@
     <div
       data-msg-id={msg.id}
       class={currentMatchId === msg.id ? 'ring-1 ring-yellow-500/60 bg-yellow-500/10' : ''}
+      use:watchRow={top}
     >
       <ThreadMessage {sessionId} {msg} {viewMode} />
     </div>
@@ -699,10 +820,10 @@
 
   {#each rows as row (row.kind === 'message' ? row.msg.id : `notes-${row.msgs[0].id}`)}
     {#if row.kind === 'message'}
-      {@render messageRow(row.msg)}
+      {@render messageRow(row.msg, true)}
     {:else}
       <!-- Keyed by its first note, so it stays open as more notes join. -->
-      <details data-notes class="py-1 text-xs">
+      <details data-notes class="py-1 text-xs" use:watchRow>
         <summary class="cursor-pointer text-muted-foreground hover:text-foreground/60 italic select-none">
           {row.msgs.length === 1 ? '1 note' : `${row.msgs.length} notes`} while working
         </summary>
