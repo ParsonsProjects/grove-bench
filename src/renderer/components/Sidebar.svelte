@@ -13,10 +13,14 @@
   import { draftStore } from '../stores/draft.svelte.js';
   import { groupStore } from '../stores/groups.svelte.js';
   import { todoStore } from '../stores/todo.svelte.js';
+  import { cleanupStore } from '../stores/cleanup.svelte.js';
   import { schedulesStore } from '../stores/schedules.svelte.js';
   import { skillsPanelStore } from '../stores/skillsPanel.svelte.js';
   import WandSparklesIcon from '@lucide/svelte/icons/wand-sparkles';
   import FolderIcon from '@lucide/svelte/icons/folder';
+  import CheckIcon from '@lucide/svelte/icons/check';
+  import XIcon from '@lucide/svelte/icons/x';
+  import { Pulse } from '$lib/components/ui/pulse/index.js';
   import SidebarGroups from './SidebarGroups.svelte';
   import SidebarSection from './SidebarSection.svelte';
   import AttentionCounts from './AttentionCounts.svelte';
@@ -303,7 +307,11 @@
   let cleanupSelection = $state<Record<string, boolean>>({});
   let cleanupDeleteBranches = $state(false);
   let confirmCleanup = $state(false);
-  let cleaningUp = $state(false);
+  /** A removal run is under way (cleanupStore): it carries on with the
+   *  dialog closed, and the dialog shows its progress when opened. */
+  const cleaningUp = $derived(cleanupStore.running);
+  /** Share of the run's threads finished with, for its progress bar. */
+  const cleanupProgressPct = $derived(cleanupStore.total ? Math.round((cleanupStore.settled / cleanupStore.total) * 100) : 0);
   const cleanupDayPresets = [7, 14, 30, 90];
 
   /** Checks run at most this many at once per kind (git status, gh), so a
@@ -404,6 +412,11 @@
   }
 
   function openCleanup() {
+    // A run under way: show its progress, with the choices it was started with.
+    if (cleaningUp) {
+      showCleanup = true;
+      return;
+    }
     cleanupGeneration++;
     cleanupCheckedIds.clear();
     cleanupCommitsCheckedIds.clear();
@@ -544,24 +557,22 @@
   }
 
   async function runCleanup() {
-    const ids = cleanupSelectedIds;
-    const deleteBranches = cleanupDeleteBranches;
     confirmCleanup = false;
-    cleaningUp = true;
+    if (cleaningUp) return;
+    const deleteBranches = cleanupDeleteBranches;
+    const items = cleanupStore.start(cleanupCandidates
+      .filter((s) => cleanupSelection[s.id])
+      .map((s) => ({ id: s.id, label: sessionRowLabel(s), project: repoShortName(s.repoPath) })));
     // One at a time, and a failure doesn't stop the rest: its thread stays,
-    // so the next clean-up lists it again. Failures are reported together,
-    // since one error message would replace the one before.
-    const failed: Array<{ label: string; message: string }> = [];
-    for (const id of ids) {
-      const session = store.sessions.find((s) => s.id === id);
-      const label = session ? sessionLabel(session) : id;
-      await destroySessionById(id, deleteBranches, (message) => failed.push({ label, message }));
+    // so the next clean-up lists it again. The dialog may close meanwhile;
+    // the run carries on, and the toast says how it went (failures included,
+    // so they aren't also shown as the app's error).
+    for (const item of items) {
+      item.state = 'removing';
+      const removed = await destroySessionById(item.id, deleteBranches, (message) => { item.error = message; });
+      item.state = removed ? 'done' : 'failed';
     }
-    if (failed.length === 1) store.setError(failed[0].message);
-    else if (failed.length > 1) {
-      store.setError(`Couldn't remove ${failed.length} threads (${failed.map((f) => f.label).join(', ')}). First error: ${failed[0].message}`);
-    }
-    cleaningUp = false;
+    cleanupStore.finish();
     showCleanup = false;
   }
 
@@ -1143,14 +1154,21 @@
     >
       <WandSparklesIcon class="size-4" />
     </Button>
+    <!-- While a clean-up runs (its dialog may be closed), the broom turns
+         into a turning square; clicking shows the run's progress. -->
     <Button
       onclick={openCleanup}
       variant="quiet"
       size="sm"
       class="px-2 shrink-0"
-      title="Clean up old threads"
+      title={cleaningUp ? `Removing old threads: ${cleanupStore.settled} of ${cleanupStore.total} done` : 'Clean up old threads'}
+      aria-busy={cleaningUp}
     >
-      <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m13 11 9-9"/><path d="M14.6 12.6c.8.8.9 2.1.2 3L10 22l-8-8 6.4-4.8c.9-.7 2.2-.6 3 .2Z"/><path d="m6.8 10.4 6.8 6.8"/><path d="m5 17 1.4-1.4"/></svg>
+      {#if cleaningUp}
+        <span class="flex size-4 items-center justify-center"><Pulse size="sm" motion="spin" /></span>
+      {:else}
+        <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m13 11 9-9"/><path d="M14.6 12.6c.8.8.9 2.1.2 3L10 22l-8-8 6.4-4.8c.9-.7 2.2-.6 3 .2Z"/><path d="m6.8 10.4 6.8 6.8"/><path d="m5 17 1.4-1.4"/></svg>
+      {/if}
     </Button>
     <Button
       onclick={() => settingsStore.panelOpen = true}
@@ -1700,23 +1718,72 @@
 
 <!-- Clean up old sessions dialog -->
 {#if showCleanup}
-  <Dialog.Root open={true} onOpenChange={(o) => { if (!o && !cleaningUp) showCleanup = false; }}>
-    <!-- Refusing in onOpenChange alone doesn't keep it open (Root keeps its
-         own open state), so Escape, outside clicks and the X are turned off
-         while removing, as PrReviewDialog does while submitting. -->
-    <Dialog.Content
-      class="max-w-md"
-      showCloseButton={!cleaningUp}
-      escapeKeydownBehavior={cleaningUp ? 'ignore' : 'close'}
-      interactOutsideBehavior={cleaningUp ? 'ignore' : 'close'}
-    >
+  <!-- Closing it while removing only hides it: the run carries on
+       (cleanupStore), the sidebar's clean-up button shows it, and a toast
+       says when it's done (CleanupToast). -->
+  <Dialog.Root open={true} onOpenChange={(o) => { if (!o) showCleanup = false; }}>
+    <Dialog.Content class="max-w-md">
       <Dialog.Header>
         <Dialog.Title>Clean Up Old Threads</Dialog.Title>
         <Dialog.Description>
-          Remove closed threads you no longer need. Removing a thread kills its shell and deletes its worktree. Threads with uncommitted changes or marked To do are flagged and left unselected. Tick them only if you're sure. Each thread's pull request state is shown when the GitHub CLI is available; merged ones are the safest to remove. Branches are kept unless you choose otherwise; if you do, threads with commits that aren't on the base branch yet are flagged. Running threads are never listed.
+          {#if cleanupStore.run}
+            Removing the threads you chose. You can close this: removal carries on, the clean-up button in the sidebar shows it, and you'll be told when it's done.
+          {:else}
+            Remove closed threads you no longer need. Removing a thread kills its shell and deletes its worktree. Threads with uncommitted changes or marked To do are flagged and left unselected. Tick them only if you're sure. Each thread's pull request state is shown when the GitHub CLI is available; merged ones are the safest to remove. Branches are kept unless you choose otherwise; if you do, threads with commits that aren't on the base branch yet are flagged. Running threads are never listed.
+          {/if}
         </Dialog.Description>
       </Dialog.Header>
 
+      {#if cleanupStore.run}
+        {@const run = cleanupStore.run}
+        <div class="flex flex-col gap-2">
+          <div class="text-xs text-muted-foreground" aria-live="polite">
+            {cleanupStore.settled} of {cleanupStore.total} done
+          </div>
+          <div
+            role="progressbar"
+            aria-label="Clean-up progress"
+            aria-valuemin={0}
+            aria-valuemax={cleanupStore.total}
+            aria-valuenow={cleanupStore.settled}
+            class="h-1 bg-muted"
+          >
+            <div class="h-full bg-status-working transition-[width] duration-200" style="width: {cleanupProgressPct}%"></div>
+          </div>
+          <ul class="flex flex-col gap-1 max-h-64 overflow-auto" aria-label="Threads being removed">
+            {#each run.items as item (item.id)}
+              <li class="flex items-center gap-2 px-2 py-1.5 bg-card border border-border" data-testid="cleanup-item-{item.id}" data-state={item.state}>
+                <span class="flex size-3 shrink-0 items-center justify-center">
+                  {#if item.state === 'removing'}
+                    <Pulse size="sm" motion="spin" />
+                  {:else if item.state === 'done'}
+                    <CheckIcon class="size-3 text-green-400" />
+                  {:else if item.state === 'failed'}
+                    <XIcon class="size-3 text-red-400" />
+                  {:else}
+                    <Pulse size="xs" tone="muted" motion="none" />
+                  {/if}
+                </span>
+                <div class="min-w-0 flex-1">
+                  <div class="text-sm text-foreground truncate">{item.label}</div>
+                  <div class="text-xs text-muted-foreground truncate" title={item.error}>
+                    {item.project} ·
+                    {#if item.state === 'removing'}
+                      removing…
+                    {:else if item.state === 'done'}
+                      removed
+                    {:else if item.state === 'failed'}
+                      <span class="text-red-400">couldn't remove: {item.error}</span>
+                    {:else}
+                      waiting
+                    {/if}
+                  </div>
+                </div>
+              </li>
+            {/each}
+          </ul>
+        </div>
+      {:else}
       <div class="flex items-center gap-2">
         <Label class="shrink-0">Inactive for</Label>
         <input
@@ -1818,20 +1885,23 @@
           Also delete their branches
         </label>
       {/if}
+      {/if}
 
       <Dialog.Footer>
-        <Button variant="secondary" onclick={() => showCleanup = false} disabled={cleaningUp}>Cancel</Button>
-        <Button
-          variant="destructive"
-          disabled={cleanupSelectedIds.length === 0 || cleaningUp || cleanupCommitsPending}
-          onclick={() => confirmCleanup = true}
-        >
-          {cleaningUp
-            ? 'Removing…'
-            : cleanupCommitsPending
+        {#if cleanupStore.run}
+          <Button variant="secondary" onclick={() => showCleanup = false}>Hide</Button>
+        {:else}
+          <Button variant="secondary" onclick={() => showCleanup = false}>Cancel</Button>
+          <Button
+            variant="destructive"
+            disabled={cleanupSelectedIds.length === 0 || cleanupCommitsPending}
+            onclick={() => confirmCleanup = true}
+          >
+            {cleanupCommitsPending
               ? 'Checking commits…'
               : `Remove ${cleanupSelectedIds.length} ${cleanupSelectedIds.length === 1 ? 'thread' : 'threads'}`}
-        </Button>
+          </Button>
+        {/if}
       </Dialog.Footer>
     </Dialog.Content>
   </Dialog.Root>
