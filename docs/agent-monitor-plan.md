@@ -9,13 +9,26 @@ Today this is spread out and per thread: the status bar's Activity popup lists t
 Two pages on the dev server (`npm start`), code in `src/renderer/agent-monitor-mockup/`. Made-up data that moves every second, built from the UI kit so it looks like the app. Like the UI kit page, neither is bundled into the app.
 
 - `/agent-monitor.html`: the monitor as a window of its own.
-- `/agent-monitor-dialog.html`: the same monitor as a dialog over the demo app. **Open thread** really switches the app to that thread and closes the dialog. **Ctrl+Shift+A** (proposed; nothing in the app uses it) opens and closes it, and it opens with the cursor in the filter box.
+- `/agent-monitor-dialog.html`: the same monitor as a dialog over the demo app, with the trigger that opens it (below). It starts closed; add `?open` to start with it open. **Open thread** really switches the app to that thread and closes the dialog. **Ctrl+Shift+A** (proposed; nothing in the app uses it) opens and closes it, and it opens with the cursor in the filter box. The made-up threads follow the demo's states, so the dialog's totals match the sidebar's.
 
 - **Agents view.** Threads grouped by project, with their subagents and background shells or monitors under them. Columns: what it is doing now (tool and target, Thinking, or what it is waiting for you on), how long, tokens, memory. **Running** hides threads with nothing running or waiting; **All threads** shows the rest.
 - **Processes view.** Each agent's process tree under the agent host: executable, PID, thread, memory, how long it has run.
 - **Side pane.** The selected thread, subagent, shell or process: what it is doing, what it was asked (subagents), recent tool calls, its processes, and its actions.
 - **Actions.** Interrupt a thread's turn. Stop a background subagent, shell or monitor. End a process and what it started (asks first; never the agent itself). Open thread, which in the app would bring the main window forward on it.
 - Filter box across thread names, tools, files, subagents and processes.
+
+### The trigger
+
+Mocked in two places, so they can be compared (`MonitorTrigger.svelte`):
+
+- **Title bar**, before Help: an activity icon and the counts, amber for threads that need you, blue for those working. Always in view, sidebar open or collapsed.
+- **Sidebar footer tools**, before Bookmarks, and down the collapsed rail with them: the same icon with a square on its corner, amber if anything needs you, else blue while anything works.
+
+Both count threads the way the sidebar's filter chips do (`sessionSpriteState`, `triageForSprite`, `triageCounts`) and draw them with the chips' marks (`AttentionCounts`), so they can't disagree with the chips. Their tooltip gives the counts and the shortcut.
+
+The chips themselves (Needs you, Working, Unread, Idle, To do) are not a trigger: clicking one already filters the thread list (`Sidebar.svelte`, `lib/session-triage.ts`).
+
+On the mockup page the triggers are put into the demo app from outside (`inject-triggers.ts`), so the app's code is unchanged. In the app they would go in `TitleBar.svelte` and in `footerTools` in `Sidebar.svelte`.
 
 ## Where the real data would come from
 
