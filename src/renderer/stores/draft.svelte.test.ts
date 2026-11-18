@@ -404,6 +404,47 @@ describe('draftStore.buildOpts', () => {
   });
 });
 
+describe('draftStore other projects the thread works in', () => {
+  beforeEach(async () => {
+    store.repos = ['/repo/one', '/repo/two', '/repo/notes'];
+    store.setFolderProject('/repo/notes', true);
+    draftStore.open('/repo/one');
+    await settle();
+  });
+  afterEach(() => store.setFolderProject('/repo/notes', false));
+
+  it("offers the git projects other than the draft's own", () => {
+    expect(draftStore.linkableRepos).toEqual(['/repo/two']);
+  });
+
+  it('sends the linked projects for a thread on a branch, and none for one in the project folder', () => {
+    draftStore.toggleLinkedRepo('/repo/two');
+    expect(draftStore.buildOpts(draftStore.draft!, 'main')).toMatchObject({ linkedRepos: ['/repo/two'] });
+    draftStore.setStart({ kind: 'folder' });
+    expect(draftStore.buildOpts(draftStore.draft!, '')).not.toHaveProperty('linkedRepos');
+    // Unticked: gone again.
+    draftStore.setStart({ kind: 'new', branchName: '', baseBranch: '' });
+    draftStore.toggleLinkedRepo('/repo/two');
+    expect(draftStore.buildOpts(draftStore.draft!, 'main')).not.toHaveProperty('linkedRepos');
+  });
+
+  it('drops a linked project that becomes the draft\'s own', () => {
+    draftStore.toggleLinkedRepo('/repo/two');
+    draftStore.setRepo('/repo/two');
+    expect(draftStore.draft?.linkedRepos).toEqual([]);
+    draftStore.toggleLinkedRepo('/repo/two');
+    expect(draftStore.draft?.linkedRepos).toEqual([]);
+  });
+
+  it("shows the thread's row with its linked projects from the start", async () => {
+    draftStore.toggleLinkedRepo('/repo/two');
+    draftStore.setText('fix the login');
+    await draftStore.start();
+    expect(createSessionMock()).toHaveBeenCalledWith(expect.objectContaining({ linkedRepos: ['/repo/two'] }));
+    expect(store.sessions.find((s) => s.id === 'new1')?.linkedRepos).toEqual(['/repo/two']);
+  });
+});
+
 describe('draftStore.start', () => {
   it('creates the conversation, sends the message and clears the draft', async () => {
     const addUserMessage = vi.spyOn(messageStore, 'addUserMessage');

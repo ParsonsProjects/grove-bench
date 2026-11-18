@@ -139,6 +139,10 @@ Type to filter local and remote branches, then click one or press `Enter`. If th
 - Threads that share a checkout move together. For a direct thread that checkout is your project folder, so your editor sees the switch too.
 - Closing a thread with "Also delete the branch" never deletes the project's default branch, even if the thread switched onto it.
 
+### Linked projects
+
+A thread that also works in other projects (**Also works in** on the draft) has one more button for each, after **Branch**: the project's name, the branch its copy has checked out, `±` and the number of uncommitted files, `↑` and `↓` for commits to push and to pull, and the pull request's number when there is one. Its popup says the same in words, adds how many commits aren't on the project's default branch yet, and has **Open folder** for the copy. It only shows: commit, push and open pull requests there yourself, or ask the agent. It's read when the thread is shown, then every minute, after each turn and when the window comes back into focus. If the copy's folder is gone, the button says so, and Grove Bench drops it the next time it starts.
+
 ## Speed
 
 On models that support it, a **Speed** column switches between **Standard** and **Fast** output. Fast keeps the same model but returns responses more quickly.

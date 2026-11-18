@@ -1,7 +1,8 @@
 # Linked Projects: One Thread Working in a Second Project
 
-> **Status: Agreed, not built.** The open questions are settled (see
-> "Decisions"). This is a smaller slice of Goal 2
+> **Status: Phases 0 and 1 built; 2 and 3 not started.** The open
+> questions are settled (see "Decisions"). Where the build differs from
+> this plan, "What was built" says so. This is a smaller slice of Goal 2
 > in `docs/projects-plan.md` ("one conversation, several repositories"). It
 > adds linked checkouts next to a thread's own checkout and leaves the
 > existing single-checkout fields alone.
@@ -135,8 +136,10 @@ linked?: LinkedCheckout[];
 - **After that, B keeps its own branch.** If the thread switches branch, or
   the agent checks out another branch in B, B's branch isn't moved to
   follow. The status shows whatever B has checked out.
-- **Direct threads** (running in A's project folder) link B on A's current
-  branch name.
+- **Direct threads** (running in A's project folder) can't link yet. Main
+  refuses it and the draft doesn't offer it with Project folder: a direct
+  thread is set up without the background step that makes worktrees and
+  installs their dependencies.
 - **Threads without git** (folder projects) can't link: there's no branch
   name. The menu says why.
 
@@ -317,7 +320,7 @@ fills it from the setting. It is useful by itself and is the base for links.
   Changes switcher with no staging in B's view, the delete dialog naming a
   dirty link.
 
-## To check before building
+## Still to check
 
 - Does a deny rule in flag settings stop an edit in `bypassPermissions` mode,
   as the docs say? One test with a real agent settles it.
@@ -330,6 +333,26 @@ fills it from the setting. It is useful by itself and is the base for links.
   but the page couldn't be opened from where this plan was written, so that is
   unconfirmed. Gemini CLI and Copilot CLI are unknown. Checking each agent's
   `initialize` answer settles it.
+
+## What was built
+
+Phases 0 and 1, with these differences from the plan above:
+
+- **Direct threads can't link** (see "Branch").
+- **The edit check** is a deny rule in Claude Code's settings
+  (`editDenyRule`, `src/main/adapters/claude-code.ts`) plus Grove's policy
+  (`protectedEditRoots` in `tool-policy.ts`), not a PreToolUse hook.
+- **A link that fails at setup** is left out with an error in the thread;
+  the thread still starts. Its row keeps the project in `linkedRepos` until
+  the app restarts, while the status bar shows only links that exist.
+- **The sidebar badge** counts the linked projects, with their names in its
+  tooltip.
+- **Code:** `createLink`, `removeLinks`, `cleanupOrphanLinks` and the
+  linked rename in `worktree-manager.ts`; `planLinks` and
+  `GIT_LINKED_STATUS` in `ipc.ts`; `linked-projects.ts` (folders, deny
+  roots, instruction files); `linkedProjectsPrompt` in `session-config.ts`;
+  `StatusBarLinked` and `StatusBarLinkedItem` in the renderer, with
+  `linkedStore`.
 
 ## Decisions
 

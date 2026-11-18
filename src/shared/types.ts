@@ -813,6 +813,28 @@ export interface GitSyncStatus {
   behind: number;
 }
 
+/** A thread's linked project as git sees it now (git:linkedStatus): for its
+ *  status bar item and the delete checks. Each null is "couldn't tell". */
+export interface LinkedProjectStatus {
+  repoPath: string;
+  /** The thread's worktree of it. */
+  path: string;
+  /** The worktree's folder is gone. */
+  missing?: boolean;
+  /** The branch checked out there now (null: none, or detached). */
+  branch: string | null;
+  /** Files changed there and not committed. */
+  uncommitted: number | null;
+  sync: GitSyncStatus | null;
+  /** The project's default branch, which `unmerged` counts against. */
+  base: string | null;
+  /** Commits on the branch that `base` doesn't have. */
+  unmerged: number | null;
+  /** The branch's pull request: only when asked for (`pr`), and null when
+   *  there is none or GitHub couldn't be asked. */
+  pr: PrInfo | null;
+}
+
 /** One commit on the session branch that isn't on the base branch. */
 export interface BranchCommit {
   subject: string;
@@ -1704,6 +1726,9 @@ export interface GroveBenchAPI {
   generateCommitMessage(sessionId: string, substituteAgent?: string): Promise<string>;
   push(sessionId: string): Promise<void>;
   getGitSyncStatus(sessionId: string): Promise<GitSyncStatus>;
+  /** The thread's linked projects as git sees them now, in the order they
+   *  were linked. `pr`: also look up each branch's pull request (GitHub). */
+  getLinkedStatus(sessionId: string, opts?: { pr?: boolean }): Promise<LinkedProjectStatus[]>;
   /** Commits on the thread's branch that `base` doesn't have. Check `error`
    *  before reading an empty list as none. `timeout`: kill each git command
    *  after this many ms. */
@@ -1792,7 +1817,9 @@ export interface GroveBenchAPI {
   pluginDisable(pluginId: string): Promise<void>;
 
   // Folder
-  openSessionFolder(sessionId: string): Promise<void>;
+  /** Open the thread's folder, or with `linkedRepo` its worktree of that
+   *  linked project. */
+  openSessionFolder(sessionId: string, linkedRepo?: string): Promise<void>;
 
   // Memory
   memoryList(repoPath: string): Promise<MemoryEntry[]>;
@@ -2549,6 +2576,7 @@ export const IPC = {
   GIT_OPERATION_ABORT: 'git:operation-abort',
   GIT_PUSH: 'git:push',
   GIT_SYNC_STATUS: 'git:syncStatus',
+  GIT_LINKED_STATUS: 'git:linkedStatus',
   GIT_BRANCH_COMMITS: 'git:branchCommits',
   GIT_LOG_COMMITS: 'git:logCommits',
   GIT_REBASE: 'git:rebase',

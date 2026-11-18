@@ -78,6 +78,7 @@ const mockGroveBench = {
   generateCommitMessage: vi.fn(() => Promise.resolve('feat: mock commit message')),
   push: vi.fn(() => Promise.resolve()),
   getGitSyncStatus: vi.fn(() => Promise.resolve({ upstream: null, ahead: 0, behind: 0 } as import('../../shared/types.js').GitSyncStatus)),
+  getLinkedStatus: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').LinkedProjectStatus[])),
   getBranchCommits: vi.fn((_sessionId: string, _base?: string, _opts?: { timeout?: number }) => Promise.resolve({ commits: [] } as import('../../shared/types.js').BranchCommitsResult)),
   gitLogCommits: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').CommitEntry[])),
   gitRebase: vi.fn(() => Promise.resolve({ success: true } as import('../../shared/types.js').GitOpResult)),

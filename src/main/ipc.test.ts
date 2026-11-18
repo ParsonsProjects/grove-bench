@@ -1602,6 +1602,61 @@ describe('git handlers', () => {
     vi.mocked(git.syncStatus).mockRejectedValue(new Error('boom'));
     expect(await invoke(IPC.GIT_SYNC_STATUS, 's1')).toEqual({ upstream: null, ahead: 0, behind: 0 });
   });
+
+  describe('GIT_LINKED_STATUS', () => {
+    const linkedInfo = () => ({
+      ...wtInfo(),
+      linked: [
+        { repoPath: '/b', path: wt, branch: 'feat' },
+        { repoPath: '/c', path: path.join(tmp, 'gone'), branch: 'feat' },
+      ],
+    });
+
+    it("reads each linked worktree's branch, changes, sync, unmerged commits and, when asked, its PR", async () => {
+      m.worktreeManager.getWorktree.mockImplementation((id: string) => (id === 's1' ? linkedInfo() : undefined));
+      vi.mocked(git.currentBranch).mockResolvedValue('feat');
+      vi.mocked(git.git).mockResolvedValue(' M a.ts\n?? b.ts\n');
+      vi.mocked(git.syncStatus).mockResolvedValue({ upstream: 'origin/feat', ahead: 1, behind: 0 });
+      vi.mocked(git.getDefaultBranch).mockResolvedValue('main');
+      vi.mocked(git.branchCommits).mockResolvedValue([{ sha: 'a', subject: 'x' }, { sha: 'b', subject: 'y' }] as never);
+      vi.mocked(gh.ghLogin).mockResolvedValue('me');
+      vi.mocked(gh.prsForBranches).mockResolvedValue([{ number: 7, url: 'u', state: 'OPEN', headRefName: 'feat' }]);
+
+      const [b, c] = await invoke(IPC.GIT_LINKED_STATUS, 's1', { pr: true });
+
+      expect(b).toEqual({
+        repoPath: '/b', path: wt, branch: 'feat', uncommitted: 2, sync: { upstream: 'origin/feat', ahead: 1, behind: 0 },
+        base: 'main', unmerged: 2, pr: { number: 7, url: 'u', state: 'OPEN', headRefName: 'feat' },
+      });
+      expect(gh.prsForBranches).toHaveBeenCalledWith('/b', ['feat'], 'me');
+      // Its folder is gone: said, nothing read.
+      expect(c).toMatchObject({ repoPath: '/c', missing: true, branch: null, uncommitted: null });
+    });
+
+    it("asks GitHub nothing unless asked, and reads what git can't as null", async () => {
+      m.worktreeManager.getWorktree.mockImplementation((id: string) => (id === 's1' ? linkedInfo() : undefined));
+      vi.mocked(git.currentBranch).mockResolvedValue('feat');
+      vi.mocked(git.git).mockRejectedValue(new Error('locked'));
+      vi.mocked(git.syncStatus).mockRejectedValue(new Error('boom'));
+      vi.mocked(git.getDefaultBranch).mockResolvedValue('main');
+      vi.mocked(git.branchCommits).mockRejectedValue(new Error('boom'));
+
+      const [b] = await invoke(IPC.GIT_LINKED_STATUS, 's1');
+
+      expect(b).toMatchObject({ branch: 'feat', uncommitted: null, sync: null, unmerged: null, pr: null });
+      expect(gh.prsForBranches).not.toHaveBeenCalled();
+      expect(await invoke(IPC.GIT_LINKED_STATUS, 'unknown')).toEqual([]);
+    });
+  });
+
+  it("OPEN_SESSION_FOLDER opens one of the thread's linked worktrees, and nothing it doesn't have", async () => {
+    m.worktreeManager.getWorktreeOrManifest.mockResolvedValue({ ...wtInfo(), linked: [{ repoPath: '/b', path: '/wt/b/s1', branch: 'feat' }] });
+    await invoke(IPC.OPEN_SESSION_FOLDER, 's1', '/b');
+    expect(shell.openPath).toHaveBeenCalledWith('/wt/b/s1');
+    vi.mocked(shell.openPath).mockClear();
+    await invoke(IPC.OPEN_SESSION_FOLDER, 's1', '/elsewhere');
+    expect(shell.openPath).not.toHaveBeenCalled();
+  });
 });
 
 // ─── Pull requests ───

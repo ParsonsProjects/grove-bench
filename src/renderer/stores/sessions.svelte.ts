@@ -19,6 +19,9 @@ interface SessionEntry {
   /** Timestamp (ms) of the last activity: a message sent, or a turn the
    *  agent finished. */
   lastActiveAt?: number;
+  /** Other projects the thread also works in, through linked worktrees
+   *  (docs/linked-projects-plan.md). Their state comes from linkedStore. */
+  linkedRepos?: string[];
 }
 
 class SessionStore {

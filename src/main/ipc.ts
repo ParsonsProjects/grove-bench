@@ -27,7 +27,7 @@ import { openWorktreeFile } from './worktree-files.js';
 import { generateCommitMessage } from './commit-message.js';
 import { exportFileName, threadJson, threadMarkdown, type ThreadExportInfo } from './thread-export.js';
 import type { MemoryCompactionOptions, PreviewBounds, PreviewCommand, PreviewPageKind, PtySpawnResult } from '../shared/types.js';
-import type { BranchCommitsResult, CheckpointDiffScope, FileDiffResult, GitOperation, FileLinesResult, GitStatusOptions, GitStatusResult, GitStatusEntry, ImageDiffContent, OpenWorktreeFileResult, PrCreateOpts, PrReviewSubmitResult } from '../shared/types.js';
+import type { BranchCommitsResult, CheckpointDiffScope, FileDiffResult, GitOperation, FileLinesResult, GitStatusOptions, GitStatusResult, GitStatusEntry, ImageDiffContent, OpenWorktreeFileResult, LinkedProjectStatus, PrCreateOpts, PrInfo, PrReviewSubmitResult } from '../shared/types.js';
 import { parsePrReviewSubmit, submitPrReview } from './pr-review.js';
 import { showOsNotification, showTestNotification } from './notifications.js';
 import { parseGitStatusPorcelain, parseNumstat, parseNameStatus, parseHashObjectOutput } from './git-status-parser.js';
@@ -58,6 +58,7 @@ import { applyAttentionBadge } from './attention-badge.js';
 import { replaceMisspelling, addWordToDictionary } from './spellcheck.js';
 import crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
+import { pathExists } from './fs-utils.js';
 import * as path from 'node:path';
 import { EventEmitter } from 'node:events';
 
@@ -1566,7 +1567,13 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.PREVIEW_GET_STATES, () => previewManager.getStates());
 
-  ipcMain.handle(IPC.OPEN_SESSION_FOLDER, async (_event, sessionId: string) => {
+  ipcMain.handle(IPC.OPEN_SESSION_FOLDER, async (_event, sessionId: string, linkedRepo?: unknown) => {
+    // One of the thread's linked projects' worktrees: only one it has.
+    if (typeof linkedRepo === 'string') {
+      const link = (await worktreeManager.getWorktreeOrManifest(sessionId))?.linked?.find((l) => l.repoPath === linkedRepo);
+      if (link) await shell.openPath(link.path);
+      return;
+    }
     const session = sessionManager.getSession(sessionId);
     if (session) {
       await shell.openPath(session.worktreePath);
@@ -1740,6 +1747,40 @@ export function registerHandlers() {
       logger.warn(`git sync status failed for session ${sessionId}:`, e);
       return { upstream: null, ahead: 0, behind: 0 };
     }
+  }));
+
+  // Polled to keep what's shown current: background work (background-work.ts).
+  // Answered, not thrown: each thing that can't be read is null.
+  ipcMain.handle(IPC.GIT_LINKED_STATUS, (_event, sessionId: string, opts?: { pr?: unknown }) => inBackground(async (): Promise<LinkedProjectStatus[]> => {
+    const links = worktreeManager.getWorktree(sessionId)?.linked ?? [];
+    if (links.length === 0) return [];
+    const withPr = opts?.pr === true;
+    const selfLogin = withPr ? await ghLogin().catch(() => null) : null;
+    return Promise.all(links.map(async (link): Promise<LinkedProjectStatus> => {
+      const empty = { repoPath: link.repoPath, path: link.path, branch: null, uncommitted: null, sync: null, base: null, unmerged: null, pr: null };
+      if (!(await pathExists(link.path))) return { ...empty, missing: true };
+      const [branch, porcelain, sync, base] = await Promise.all([
+        currentBranch(link.path).catch(() => null),
+        git(['status', '--porcelain'], link.path).catch(() => null),
+        syncStatus(link.path).catch(() => null),
+        getDefaultBranch(link.repoPath).catch(() => null),
+      ]);
+      const unmerged = base ? await branchCommits(link.path, base).then((c) => c.length, () => null) : null;
+      let pr: PrInfo | null = null;
+      if (withPr && branch && branch !== base) {
+        const prs = await prsForBranches(link.repoPath, [branch], selfLogin).catch(() => []);
+        pr = prs.find((p) => p.headRefName === branch && p.state === 'OPEN') ?? prs.find((p) => p.headRefName === branch) ?? null;
+      }
+      return {
+        ...empty,
+        branch,
+        uncommitted: porcelain === null ? null : porcelain.split('\n').filter((l) => l.trim() !== '').length,
+        sync,
+        base,
+        unmerged,
+        pr,
+      };
+    }));
   }));
 
   // ─── Branch operations ───

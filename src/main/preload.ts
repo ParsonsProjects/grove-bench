@@ -241,6 +241,8 @@ const api: GroveBenchAPI = {
   push: (sessionId: string) => ipcRenderer.invoke(IPC.GIT_PUSH, sessionId),
   getGitSyncStatus: (sessionId: string) =>
     ipcRenderer.invoke(IPC.GIT_SYNC_STATUS, sessionId),
+  getLinkedStatus: (sessionId: string, opts?: { pr?: boolean }) =>
+    ipcRenderer.invoke(IPC.GIT_LINKED_STATUS, sessionId, opts),
   getBranchCommits: (sessionId: string, base: string, opts?: { timeout?: number }) =>
     ipcRenderer.invoke(IPC.GIT_BRANCH_COMMITS, sessionId, base, opts),
 
@@ -360,8 +362,8 @@ const api: GroveBenchAPI = {
   },
 
   // Folder
-  openSessionFolder: (sessionId: string) =>
-    ipcRenderer.invoke(IPC.OPEN_SESSION_FOLDER, sessionId),
+  openSessionFolder: (sessionId: string, linkedRepo?: string) =>
+    ipcRenderer.invoke(IPC.OPEN_SESSION_FOLDER, sessionId, linkedRepo),
   exportThread: (sessionId: string) =>
     ipcRenderer.invoke(IPC.SESSION_EXPORT, sessionId) as Promise<string | null>,
 

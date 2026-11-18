@@ -29,10 +29,13 @@
   import { menuItem, menuPanel } from '$lib/components/ui/menu/index.js';
   import { placeInPane } from '../lib/keep-in-viewport.js';
   import XIcon from '@lucide/svelte/icons/x';
+  import { agentsStore } from '../stores/agents.svelte.js';
 
   let pickerOpen = $state(false);
   let projectMenuOpen = $state(false);
+  let linkMenuOpen = $state(false);
   let stackRef = $state<HTMLDivElement | null>(null);
+  let linkRef = $state<HTMLDivElement | null>(null);
 
   const draft = $derived(draftStore.draft);
   const start = $derived(draft?.start);
@@ -58,19 +61,41 @@
     return start.branchName.trim() ? from : `${from} · named from your message`;
   });
 
+  // ── Other projects the thread also works in (docs/linked-projects-plan.md) ──
+  const linkable = $derived(draftStore.linkableRepos);
+  const linked = $derived((draft?.linkedRepos ?? []).filter((r) => linkable.includes(r)));
+  /** Links need a worktree of the thread's own, for its branch name. */
+  const inFolder = $derived(start?.kind === 'folder');
+  const linkedLabel = $derived(inFolder || linked.length === 0 ? 'no other project' : linked.map((r) => store.repoDisplayName(r)).join(', '));
+  /** Claude Code's adapter is the one known to take folders outside the
+   *  project (it loads their CLAUDE.md too); another agent may not say it
+   *  can until it starts. */
+  const agentId = $derived(draft?.agentId || agentsStore.defaultId);
+  const mayNotTakeFolders = $derived(!!agentsStore.get(agentId) && agentsStore.get(agentId)?.capabilities.additionalDirectoryInstructions !== true);
+  const linkedNote = $derived.by(() => {
+    if (inFolder) return 'needs a branch: pick one to work in other projects too';
+    if (linked.length === 0) return '';
+    const each = `its own worktree of ${linked.length === 1 ? 'it' : 'each'}, on this branch name`;
+    return mayNotTakeFolders
+      ? `${each} · ${agentsStore.get(agentId)?.displayName ?? 'This agent'} is told where, but may not be able to edit there`
+      : each;
+  });
+
   function handleClickOutside(e: MouseEvent) {
     const target = e.target as Node;
     if ((pickerOpen || projectMenuOpen) && stackRef && target.isConnected && !stackRef.contains(target)) {
       pickerOpen = false;
       projectMenuOpen = false;
     }
+    if (linkMenuOpen && linkRef && target.isConnected && !linkRef.contains(target)) linkMenuOpen = false;
   }
 
   function handleKeydown(e: KeyboardEvent) {
-    if ((pickerOpen || projectMenuOpen) && e.key === 'Escape') {
+    if ((pickerOpen || projectMenuOpen || linkMenuOpen) && e.key === 'Escape') {
       e.stopPropagation();
       pickerOpen = false;
       projectMenuOpen = false;
+      linkMenuOpen = false;
     }
   }
 
@@ -161,6 +186,53 @@
         {/if}
       </div>
     </div>
+
+    {#if linkable.length > 0}
+      <span class="w-px self-stretch bg-border shrink-0 draft-wide:hidden"></span>
+      <div class="min-w-0 draft-wide:flex draft-wide:flex-col draft-wide:gap-1.5 draft-wide:px-3 draft-wide:py-2 draft-wide:border-t draft-wide:border-border">
+        <SectionLabel class="draft-narrow:hidden">Also works in</SectionLabel>
+        <div class="relative flex flex-col gap-px leading-snug min-w-0" bind:this={linkRef}>
+          <span class="flex items-center gap-1 min-w-0">
+            <span class="text-muted-foreground shrink-0 draft-wide:hidden">Also in</span>
+            <button
+              type="button"
+              onclick={() => { linkMenuOpen = !linkMenuOpen; pickerOpen = false; projectMenuOpen = false; }}
+              disabled={inFolder}
+              class="text-foreground/80 hover:text-foreground text-left truncate max-w-40 transition-colors border-b border-dashed border-muted-foreground/40
+                disabled:opacity-60 disabled:hover:text-foreground/80 draft-wide:max-w-full draft-wide:whitespace-normal"
+              title={inFolder
+                ? 'Working in another project needs this thread on a branch of its own: pick a new or existing branch first'
+                : 'Other projects the agent also works in, each through a worktree of its own on this thread\'s branch name. Click to pick'}
+              aria-haspopup="menu"
+              aria-expanded={linkMenuOpen}
+              data-testid="draft-linked"
+            >
+              {linkedLabel}
+            </button>
+          </span>
+          {#if linkedNote}
+            <span class="text-caption text-muted-foreground truncate max-w-80 draft-wide:max-w-none draft-wide:whitespace-normal" title={linkedNote}>{linkedNote}</span>
+          {/if}
+
+          {#if linkMenuOpen && !inFolder}
+            <div transition:fade={{ duration: 120 }} use:placeInPane class="{menuPanel()} absolute top-full left-0 mt-2 z-50 min-w-48" role="menu" aria-label="Also works in">
+              {#each linkable as repo (repo)}
+                <button
+                  type="button"
+                  role="menuitemcheckbox"
+                  aria-checked={linked.includes(repo)}
+                  onclick={() => draftStore.toggleLinkedRepo(repo)}
+                  class={menuItem({ selected: linked.includes(repo) })}
+                  title={repo}
+                >
+                  <span class="truncate">{store.repoDisplayName(repo)}</span>
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      </div>
+    {/if}
 
     {#if groupName}
       <span class="w-px self-stretch bg-border shrink-0 draft-wide:hidden"></span>

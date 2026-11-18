@@ -1910,6 +1910,35 @@ describe('Sidebar delete conversation', () => {
     return screen.findByRole('dialog');
   }
 
+  it("warns about uncommitted files in a linked project's worktree, which goes with it", async () => {
+    mockGroveBench.getLinkedStatus.mockResolvedValueOnce([{
+      repoPath: '/repo-b', path: '/wt/b/s2', branch: 'fix-parser', uncommitted: 2, sync: null, base: 'main', unmerged: 1, pr: null,
+    }]);
+    store.repos = ['/repo-a', '/repo-b'];
+    store.sessions = [{ id: 's2', branch: 'fix-parser', repoPath: '/repo-a', status: 'stopped', linkedRepos: ['/repo-b'] }] as any;
+    store.activeSessionId = null;
+    mockGroveBench.getCollapsedRepos.mockResolvedValue({ '/repo-a': false });
+    render(Sidebar);
+    await fireEvent.click(await screen.findByTitle('Delete thread'));
+    expect(await screen.findByTestId('destroy-linked-uncommitted')).toHaveTextContent('Its worktree of repo-b goes too, and 2 files have uncommitted changes there that will be lost.');
+    expect(mockGroveBench.getLinkedStatus).toHaveBeenCalledWith('s2');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Delete' })).toBeEnabled());
+    store.repos = [];
+  });
+
+  it("asks for Delete anyway when a linked project's worktree can't be read", async () => {
+    mockGroveBench.getLinkedStatus.mockRejectedValueOnce(new Error('git died'));
+    store.sessions = [{ id: 's2', branch: 'fix-parser', repoPath: '/repo-a', status: 'stopped', linkedRepos: ['/repo-b'] }] as any;
+    store.activeSessionId = null;
+    mockGroveBench.getCollapsedRepos.mockResolvedValue({ '/repo-a': false });
+    render(Sidebar);
+    await fireEvent.click(await screen.findByTitle('Delete thread'));
+    expect(await screen.findByTestId('destroy-linked-failed')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Delete' })).toBeDisabled());
+    await fireEvent.click(screen.getByLabelText('Delete anyway'));
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeEnabled();
+  });
+
   it('warns about uncommitted files before deleting', async () => {
     mockGroveBench.getGitStatus.mockResolvedValueOnce({ entries: [{ filePath: 'a.ts', status: 'modified', staged: false }, { filePath: 'b.ts', status: 'untracked', staged: false }] });
     const dialog = await openDeleteDialog();
@@ -2119,6 +2148,17 @@ describe('Sidebar remove project', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Remove project repo-a' }));
     return screen.findByRole('dialog');
   }
+
+  it('refuses to remove a project a thread in another project works in, before deleting anything', async () => {
+    store.sessions = [
+      ...store.sessions,
+      { id: 'linker', branch: 'feat-y', repoPath: '/repo-b', status: 'stopped', displayName: 'Uses A too', linkedRepos: ['/repo-a'] },
+    ] as any;
+    const dialog = await openRemoveDialog();
+    expect(await within(dialog).findByTestId('remove-repo-linked')).toHaveTextContent('A thread in another project works in this project: Uses A too. Delete it first.');
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Remove' })).toBeDisabled());
+    expect(destroySession).not.toHaveBeenCalled();
+  });
 
   it('is offered while the project still has conversations, and says they go too', async () => {
     const dialog = await openRemoveDialog();
