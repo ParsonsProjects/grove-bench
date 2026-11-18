@@ -277,8 +277,9 @@ export interface UsageRecord {
   tokens: TokenCounts;
   /** How long the turn took, as the agent reported it. */
   ms: number;
-  /** The models that did the turn, the one that did most of it first.
-   *  None for turns from before models were recorded. */
+  /** The models that did the turn, the thread's main model (which the
+   *  turn's time goes to) first. None for turns from before models were
+   *  recorded, or whose agent didn't name one. */
   models?: ModelTurnUsage[];
   /** Added up from a thread's history when the ledger began, so `at` is the
    *  prompt's time, not the turn's end. */
@@ -295,9 +296,10 @@ export interface UsageTotals extends TokenCounts {
 /** Usage across every thread over a range, for the Usage dialog. */
 export interface UsageSummary {
   total: UsageTotals;
-  /** By model and agent. Turns from before models were recorded are under
-   *  model '' for their agent. Time goes to the model that did most of the
-   *  turn. Largest cost first, then most tokens. */
+  /** By model and agent. Turns with no model recorded (from before models
+   *  were, or whose agent didn't name one) are under model '' for their
+   *  agent. A turn and its time go to the thread's main model. Largest cost
+   *  first, then most tokens. */
   byModel: (UsageTotals & { model: string; agent: string })[];
   /** By thread, largest cost first, then most tokens. `removed`: the thread
    *  is gone; title and project are from when it last ran. */
@@ -350,8 +352,8 @@ export type AgentEvent =
    *  `sessionTokens`: the conversation's running total it came from (Claude
    *  Code reports totals, which a resume starts from). */
   /** `at`: when the turn ended (epoch ms), stamped by main; older history
-   *  has none. `models`: the turn's tokens and cost by model, the model that
-   *  did most of it first. `sessionModels`: each model's running totals, to
+   *  has none. `models`: the turn's tokens and cost by model, the thread's
+   *  main model first. `sessionModels`: each model's running totals, to
    *  resume from (Claude Code). */
   | { type: 'result'; subtype: string; result?: string; structured_output?: unknown; totalCostUsd?: number; sessionCostUsd?: number; turnTokens?: TokenCounts; sessionTokens?: TokenCounts; models?: ModelTurnUsage[]; sessionModels?: Record<string, ModelTotals>; durationMs?: number; isError: boolean; errors?: string[]; numTurns?: number; contextWindow?: number; at?: number }
   | { type: 'permission_request'; toolName: string; toolInput: unknown; toolUseId: string; requestId: string; decisionReason?: string; suggestions?: unknown[]; isPlanExecution?: boolean; toolCategory?: ToolCategory; toolView?: ToolView; planText?: string }

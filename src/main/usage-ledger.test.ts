@@ -85,6 +85,15 @@ describe('summarize', () => {
     ]);
   });
 
+  it('names a removed thread from its latest record, in any order', () => {
+    const s = summarize([
+      rec({ thread: 'gone', at: 9, title: 'Latest', repoPath: '/new' }),
+      rec({ thread: 'gone', at: 2, title: 'Older', repoPath: '/old' }),
+      rec({ thread: 'gone', title: 'Undated', backfilled: true }),
+    ], null, labels);
+    expect(s.byThread[0]).toMatchObject({ title: 'Latest', repoPath: '/new', removed: true });
+  });
+
   it('says when live recording began, not counting backfilled turns', () => {
     expect(summarize([rec({ at: 1, backfilled: true }), rec({ at: 7 }), rec({ at: 5 })], 6, labels).recordingSince).toBe(5);
     expect(summarize([rec({ at: 1, backfilled: true })], null, labels).recordingSince).toBeNull();
@@ -115,6 +124,17 @@ describe('the ledger on disk', () => {
       { at: 1000, thread: 't1', title: 'T', agent: 'claude-code', usd: 1, tokens: { input: 10, output: 1 }, ms: 5, backfilled: true },
       { thread: 't1', title: 'T', agent: 'codex', usd: 2, tokens: { input: 0, output: 0 }, ms: 6, backfilled: true },
     ]);
+  });
+
+  it('dates a turn by its own prompt only, leaving one the agent started undated', async () => {
+    const log = path.join(dir, 't1.jsonl');
+    fs.writeFileSync(log, [
+      line({ type: 'user_message', text: 'one', at: 1000 }),
+      line(costed(1, { durationMs: 5 })),
+      // A background task finished and the agent went on by itself.
+      line(costed(2, { durationMs: 6 })),
+    ].join(''));
+    expect((await backfillThread(log, { id: 't1', agent: 'claude-code' })).map((r) => r.at)).toEqual([1000, undefined]);
   });
 
   it('gives turns the thread\'s agent when it never switched', async () => {
@@ -151,7 +171,7 @@ describe('the ledger on disk', () => {
     expect((await again.read()).records.map((r) => r.at)).toEqual([1, 2]);
   });
 
-  it('adds older history once, older turns first', async () => {
+  it('adds older history once, after what was recorded, as the file has it', async () => {
     const file = path.join(dir, 'usage-ledger.jsonl');
     const log = path.join(dir, 't1.jsonl');
     fs.writeFileSync(log, line(costed(1, { durationMs: 5 })));
@@ -163,13 +183,49 @@ describe('the ledger on disk', () => {
     await ledger.settled();
     const { records, backfilling } = await ledger.read();
     expect(backfilling).toBe(false);
-    expect(records.map((r) => [r.at, r.backfilled])).toEqual([[undefined, true], [50, undefined]]);
+    expect(records.map((r) => [r.at, r.backfilled])).toEqual([[50, undefined], [undefined, true]]);
     expect(listed).toBe(1);
 
+    // A new launch reads them back in the same order, and adds nothing more.
     const again = new UsageLedger(() => file, sources);
     await again.settled();
-    expect((await again.read()).records).toHaveLength(2);
+    expect((await again.read()).records.map((r) => [r.at, r.backfilled])).toEqual([[50, undefined], [undefined, true]]);
     expect(listed).toBe(1);
+  });
+
+  it('won\'t add older history over a ledger it couldn\'t read, and reads it again next time', async () => {
+    const file = path.join(dir, 'usage-ledger.jsonl');
+    // A folder where the file should be: reading fails, but not as missing.
+    fs.mkdirSync(file);
+    let listed = 0;
+    const ledger = new UsageLedger(() => file, async () => { listed++; return []; });
+    await expect(ledger.read()).rejects.toThrow();
+    expect(listed).toBe(0);
+
+    fs.rmdirSync(file);
+    fs.writeFileSync(file, JSON.stringify(rec({ at: 1 })) + '\n' + JSON.stringify({ backfilledAt: 1 }) + '\n');
+    const { records, backfilling } = await ledger.read();
+    expect(records.map((r) => r.at)).toEqual([1]);
+    expect(backfilling).toBe(false);
+    expect(listed).toBe(0);
+  });
+
+  it('cleans a line\'s figures, so a bad line can\'t make the totals NaN', async () => {
+    const file = path.join(dir, 'usage-ledger.jsonl');
+    fs.writeFileSync(file, [
+      '{"thread":"t1","tokens":{}}',
+      '{"thread":"t2","usd":"lots","ms":-5,"tokens":{"input":10,"output":null},"models":[{"model":"m","input":"x"},{"input":3}],"at":"soon"}',
+      '{"tokens":{"input":1,"output":1}}',
+      '[1,2]',
+      '{"backfilledAt":1}',
+    ].join('\n') + '\n');
+    const ledger = new UsageLedger(() => file, async () => []);
+    const { records } = await ledger.read();
+    expect(records).toEqual([
+      { thread: 't1', agent: '', usd: 0, tokens: { input: 0, output: 0 }, ms: 0 },
+      { thread: 't2', agent: '', usd: 0, tokens: { input: 10, output: 0 }, ms: 0, models: [{ model: 'm', input: 0, output: 0 }] },
+    ]);
+    expect(summarize(records, null, new Map()).total).toEqual({ usd: 0, input: 10, output: 0, ms: 0, turns: 2 });
   });
 
   it('tries the backfill again next time when the threads can\'t be listed', async () => {

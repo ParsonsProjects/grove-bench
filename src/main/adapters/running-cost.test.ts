@@ -114,10 +114,12 @@ describe('RunningModels', () => {
     expect(models.turnModels([opus(1000, 100, 1)], { input: 1000, output: 100, costUsd: 1 }, false))
       .toEqual([{ model: 'claude-opus-5-5', input: 1000, output: 100, costUsd: 1 }]);
     // Opus did 500 more in, Haiku 1500 (a subagent): the turn is 2000 in.
+    // Opus is still the thread's main model, so it comes first (the turn's
+    // time goes to it).
     const turn = models.turnModels([opus(1500, 140, 1.5), haiku(1500, 60, 0.1)], { input: 2000, output: 100, costUsd: 0.6 }, false);
     expect(turn).toEqual([
-      { model: 'claude-haiku-5-5', input: 1500, output: 60, costUsd: expect.closeTo(0.1, 6) },
       { model: 'claude-opus-5-5', input: 500, output: 40, costUsd: expect.closeTo(0.5, 6) },
+      { model: 'claude-haiku-5-5', input: 1500, output: 60, costUsd: expect.closeTo(0.1, 6) },
     ]);
   });
 
@@ -134,8 +136,8 @@ describe('RunningModels', () => {
     // The resumed query starts from its transcript's totals: Haiku's 300 is
     // this turn's, and Opus's 200 more.
     expect(models.turnModels([opus(5200, 520, 3.2), haiku(300, 10, 0.01)], { input: 500, output: 30, costUsd: 0.21 }, false)).toEqual([
-      { model: 'claude-haiku-5-5', input: 300, output: 10, costUsd: expect.closeTo(0.01, 6) },
       { model: 'claude-opus-5-5', input: 200, output: 20, costUsd: expect.closeTo(0.2, 6) },
+      { model: 'claude-haiku-5-5', input: 300, output: 10, costUsd: expect.closeTo(0.01, 6) },
     ]);
   });
 
@@ -163,6 +165,28 @@ describe('RunningModels', () => {
     expect(models.turnModels([opus(0, 0, 0)], { input: 0, output: 0, costUsd: 0 }, true)).toEqual([]);
     expect(models.totals).toEqual({ 'claude-opus-5-5[1m]': { input: 1000, output: 100, costUsd: 1 } });
     expect(models.turnModels([opus(1200, 110, 1.2)], { input: 200, output: 10, costUsd: 0.2 }, false)[0]).toMatchObject({ input: 200, output: 10 });
+  });
+
+  it('puts the main model first only while it has done the most', () => {
+    const models = new RunningModels();
+    models.turnModels([opus(1000, 100, 1), haiku(0, 0, 0)], { input: 1000, output: 100, costUsd: 1 }, false);
+    // A turn of mostly Haiku: Opus has still done the most overall.
+    expect(models.turnModels([opus(1100, 110, 1.1), haiku(800, 80, 0.08)], { input: 900, output: 90, costUsd: 0.18 }, false)[0].model).toBe('claude-opus-5-5');
+    // Once Haiku has done more over the thread, it is the main one.
+    expect(models.turnModels([opus(1150, 115, 1.15), haiku(2000, 200, 0.2)], { input: 1250, output: 125, costUsd: 0.17 }, false)[0].model).toBe('claude-haiku-5-5');
+  });
+
+  it('keeps a model\'s totals through an error that reports them lower', () => {
+    const models = new RunningModels();
+    models.turnModels([opus(1000, 100, 1), haiku(500, 50, 0.05)], { input: 1500, output: 150, costUsd: 1.05 }, false);
+    // A crash reports Opus lower but not zeroed: as RunningCost, it did
+    // nothing this turn and its total stays.
+    const crashed = models.turnModels([opus(400, 40, 0.4), haiku(600, 60, 0.06)], { input: 100, output: 10, costUsd: 0.01 }, true);
+    expect(crashed).toEqual([{ model: 'claude-haiku-5-5', input: 100, output: 10, costUsd: expect.closeTo(0.01, 6) }]);
+    expect(models.totals['claude-opus-5-5[1m]']).toEqual({ input: 1000, output: 100, costUsd: 1 });
+    // The next turn measures from the totals before the crash.
+    expect(models.turnModels([opus(1200, 120, 1.2), haiku(600, 60, 0.06)], { input: 200, output: 20, costUsd: 0.2 }, false))
+      .toEqual([{ model: 'claude-opus-5-5', input: 200, output: 20, costUsd: expect.closeTo(0.2, 6) }]);
   });
 
   it('shows two names for one model as one', () => {

@@ -4,7 +4,7 @@
    * by model and by thread, over a range of days (main's usage ledger). In
    * the Usage dialog and the Usage section of Settings.
    */
-  import { untrack } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import type { UsageSummary } from '../../shared/types.js';
   import { formatUsd } from '../../shared/limits.js';
   import { formatTokens } from '../lib/context-usage.js';
@@ -41,11 +41,19 @@
     }
   }
 
+  // Ask on open and for each range. The last range's figures go while the
+  // new ones come, so they're never shown under the wrong range.
   $effect(() => {
     void range;
-    void agentsStore.load();
-    untrack(() => void load());
+    untrack(() => {
+      summary = null;
+      void load();
+    });
   });
+
+  // Agents' names for the tables. Not in the effect above: load() reads
+  // whether they're loaded, which would ask for usage again once they are.
+  onMount(() => void agentsStore.load());
 
   // Ask again while main is still adding up threads' older history.
   $effect(() => {
@@ -65,7 +73,13 @@
   };
 
   let empty = $derived(summary !== null && summary.total.turns === 0);
-  let rangeLabel = $derived(USAGE_RANGES.find((r) => r.id === range)?.label.toLowerCase() ?? '');
+  let emptyText = $derived.by(() => {
+    if (summary?.backfilling) return 'Nothing added up yet.';
+    if (range === 'all') return 'No turns recorded yet.';
+    if (range === 'today') return 'No turns today.';
+    return `No turns in the last ${USAGE_RANGES.find((r) => r.id === range)?.label ?? ''}.`;
+  });
+  let unrecordedModel = $derived(summary?.byModel.some((m) => !m.model) ?? false);
 </script>
 
 <div class="flex flex-col gap-4 text-xs" data-testid="usage-report">
@@ -97,7 +111,7 @@
     <div class="flex items-center gap-2 py-6 text-muted-foreground"><Pulse />Loading usage…</div>
   {:else if empty}
     <p class="py-6 text-muted-foreground" data-testid="usage-empty">
-      {summary.backfilling ? 'Nothing added up yet.' : range === 'all' ? 'No turns recorded yet.' : `No turns in the last ${rangeLabel}.`}
+      {emptyText}
     </p>
   {:else}
     <dl class="grid grid-cols-5 gap-2" data-testid="usage-totals">
@@ -201,10 +215,13 @@
         Other agents' costs are as they reported them; one that reports none shows $0.00.
       </p>
       <p>
-        Tokens in count what the model read, prompt cache included. Agent time adds up how long each turn took, so threads running side by side can add up to more than the clock. A turn's time goes to the model that did most of it.
+        Tokens in count what the model read, prompt cache included. Agent time adds up how long each turn took, so threads running side by side can add up to more than the clock. A turn's time goes to its thread's main model.
       </p>
       {#if summary.recordingSince !== null}
-        <p>Dates and models recorded since {day(summary.recordingSince)}. Older turns come from threads' history, dated by their prompt, with no model.</p>
+        <p>Dates and models recorded since {day(summary.recordingSince)}. Older turns come from threads' history, dated by their prompt.</p>
+      {/if}
+      {#if unrecordedModel}
+        <p data-testid="usage-unrecorded">Model not recorded: those older turns, and any turn whose agent didn't name a model.</p>
       {/if}
       {#if range === 'all' && summary.undated.turns > 0}
         <p data-testid="usage-undated">{summary.undated.turns} older {summary.undated.turns === 1 ? 'turn has' : 'turns have'} no date, so {summary.undated.turns === 1 ? 'it shows' : 'they show'} only in All time.</p>

@@ -3,6 +3,7 @@ import '@testing-library/jest-dom/vitest';
 import { render, cleanup, screen, fireEvent, waitFor, within } from '@testing-library/svelte';
 import type { UsageSummary, UsageTotals } from '../../shared/types.js';
 import { rangeSince } from '../lib/usage-report.js';
+import { agentsStore } from '../stores/agents.svelte.js';
 import UsageReport from './UsageReport.svelte';
 
 const totals = (usd: number, input: number, output: number, ms: number, turns: number): UsageTotals => ({ usd, input, output, ms, turns });
@@ -57,6 +58,33 @@ describe('UsageReport', () => {
     expect(within(table).getByText('Model not recorded')).toBeInTheDocument();
   });
 
+  it('explains Model not recorded only when that row is there', async () => {
+    render(UsageReport);
+    expect(await screen.findByTestId('usage-unrecorded')).toHaveTextContent('any turn whose agent didn\'t name a model');
+    cleanup();
+
+    api().getUsageSummary.mockResolvedValue(summary({ byModel: [summary().byModel[0]] }));
+    render(UsageReport);
+    await screen.findByTestId('usage-totals');
+    expect(screen.queryByTestId('usage-unrecorded')).toBeNull();
+  });
+
+  it('asks once on open, even when the agents finish loading after', async () => {
+    agentsStore.loaded = false;
+    let listed!: (list: unknown[]) => void;
+    const listAdapters = vi.spyOn(window.groveBench, 'listAdapters').mockReturnValue(new Promise((resolve) => { listed = resolve; }) as never);
+    try {
+      render(UsageReport);
+      await screen.findByTestId('usage-totals');
+      listed([]);
+      await waitFor(() => expect(agentsStore.loaded).toBe(true));
+      await new Promise((r) => setTimeout(r, 20));
+      expect(api().getUsageSummary).toHaveBeenCalledTimes(1);
+    } finally {
+      listAdapters.mockRestore();
+    }
+  });
+
   it('lists threads, marking removed ones', async () => {
     render(UsageReport);
     const rows = await screen.findAllByTestId('usage-thread-row');
@@ -64,6 +92,15 @@ describe('UsageReport', () => {
     expect(rows[0]).not.toHaveTextContent('removed');
     expect(rows[1]).toHaveTextContent('Old spike');
     expect(rows[1]).toHaveTextContent('removed');
+  });
+
+  it('drops the last range\'s figures while the next ones load', async () => {
+    render(UsageReport);
+    await screen.findByTestId('usage-totals');
+    api().getUsageSummary.mockReturnValue(new Promise(() => {}));
+    await fireEvent.click(screen.getByRole('radio', { name: 'Today' }));
+    await waitFor(() => expect(screen.queryByTestId('usage-totals')).toBeNull());
+    expect(screen.getByText('Loading usage…')).toBeInTheDocument();
   });
 
   it('asks again for another range', async () => {
@@ -86,6 +123,10 @@ describe('UsageReport', () => {
     api().getUsageSummary.mockResolvedValue(summary({ total: none, byModel: [], byThread: [] }));
     render(UsageReport);
     expect(await screen.findByTestId('usage-empty')).toHaveTextContent('No turns in the last 7 days.');
+    await fireEvent.click(screen.getByRole('radio', { name: 'Today' }));
+    await waitFor(() => expect(screen.getByTestId('usage-empty')).toHaveTextContent('No turns today.'));
+    await fireEvent.click(screen.getByRole('radio', { name: 'All time' }));
+    await waitFor(() => expect(screen.getByTestId('usage-empty')).toHaveTextContent('No turns recorded yet.'));
   });
 
   it('asks again while older threads are being added up', async () => {

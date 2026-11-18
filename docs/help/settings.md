@@ -115,8 +115,9 @@ Control how the agent handles actions that need approval. The mode new threads s
 What every thread has used, removed threads included, over **Today**, **7 days**, **30 days** or **All time**: cost, tokens in and out, agent time and turns, then the same **By model** and **By thread**. The status bar's **All usage** link (in the Activity popup) opens it as a dialog.
 
 - **Cost** is each agent's own estimate, as the spend limits count it. On a Claude subscription (Pro, Max and others) your plan covers it; see [Claude Code costs](https://code.claude.com/docs/en/costs). An agent that reports no cost shows $0.00
-- **Agent time** adds up how long each turn took, so threads running side by side can add up to more than the clock. A turn's time goes to the model that did most of it; a subagent's model gets its tokens and cost but not the time
-- Turns are recorded as they end, so a thread's figures stay after it's removed, rewound or cleared. Turns from before Grove recorded them are added from threads' history the first time you open it: they have no model (**Model not recorded**) and are dated by the prompt before them, or show only in **All time** when that has no date either
+- **Agent time** adds up how long each turn took, so threads running side by side can add up to more than the clock. A turn's time goes to the thread's main model (the one that has done the most in the thread), so a subagent's model gets its tokens and cost but not the time
+- Turns are recorded as they end, so a thread's figures stay after it's removed, rewound or cleared. Turns from before Grove recorded them are added from threads' history the first time you open it: they have no model and are dated by the prompt before them. A turn the agent started itself, with no prompt of its own, or whose prompt has no date, shows only in **All time**
+- **Model not recorded** holds those older turns, and any turn whose agent didn't name a model (some agents don't, and a turn that failed to start has none)
 - Background work (memory notes, commit messages) isn't counted
 
 ## Tending (Background work)

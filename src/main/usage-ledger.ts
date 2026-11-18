@@ -15,6 +15,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { app } from 'electron';
 import type { AgentEvent, ModelTurnUsage, UsageRecord, UsageSummary, UsageTotals } from '../shared/types.js';
+import { nonNegative } from '../shared/limits.js';
 import { turnSpend, turnTokens } from './session-limits.js';
 import { logger } from './logger.js';
 
@@ -45,16 +46,13 @@ function add(to: UsageTotals, r: { usd: number; tokens: { input: number; output:
 
 const biggestFirst = (a: UsageTotals, b: UsageTotals) => b.usd - a.usd || (b.input + b.output) - (a.input + a.output) || b.ms - a.ms;
 
-/** A finite, non-negative number, or 0. */
-const count = (n: unknown): number => (typeof n === 'number' && Number.isFinite(n) && n > 0 ? n : 0);
-
 /** The ledger record for a result, or null when it reports nothing at all
  *  (no cost, tokens or time). */
 export function recordOf(result: AgentEvent, thread: { id: string; agent: string; repoPath?: string; title?: string }): UsageRecord | null {
   if (result.type !== 'result') return null;
   const usd = turnSpend(result);
   const tokens = turnTokens(result);
-  const ms = count(result.durationMs);
+  const ms = nonNegative(result.durationMs);
   if (usd === 0 && tokens.input === 0 && tokens.output === 0 && ms === 0) return null;
   const models = result.models?.filter((m) => typeof m.model === 'string' && m.model);
   return {
@@ -91,6 +89,8 @@ export function summarize(
   const undated = emptyTotals();
   const byModel = new Map<string, UsageSummary['byModel'][number]>();
   const byThread = new Map<string, UsageSummary['byThread'][number]>();
+  /** When the name a removed thread shows was recorded (undated: -1). */
+  const namedAt = new Map<string, number>();
   let recordingSince: number | null = null;
 
   for (const r of records) {
@@ -107,10 +107,11 @@ export function summarize(
     shares.forEach((share, i) => {
       const key = `${r.agent}\u0000${share.model}`;
       const row = byModel.get(key) ?? { model: share.model, agent: r.agent, ...emptyTotals() };
-      row.usd += count(share.costUsd);
-      row.input += count(share.input);
-      row.output += count(share.output);
-      // A turn's time and the turn itself go to the model that did most of it.
+      row.usd += nonNegative(share.costUsd);
+      row.input += nonNegative(share.input);
+      row.output += nonNegative(share.output);
+      // A turn's time and the turn itself go to the thread's main model,
+      // listed first.
       if (i === 0) {
         row.ms += r.ms;
         row.turns++;
@@ -129,9 +130,14 @@ export function summarize(
     };
     add(row, r);
     if (r.at !== undefined && (row.lastAt === undefined || r.at > row.lastAt)) row.lastAt = r.at;
-    // A removed thread shows the last title and project it had.
-    if (!label && r.title) row.title = r.title;
-    if (!label && r.repoPath) row.repoPath = r.repoPath;
+    // A removed thread shows the title and project it last had: from its
+    // latest record, whatever order the ledger holds them in.
+    const at = r.at ?? -1;
+    if (!label && (r.title || r.repoPath) && at >= (namedAt.get(r.thread) ?? -Infinity)) {
+      namedAt.set(r.thread, at);
+      if (r.title) row.title = r.title;
+      if (r.repoPath) row.repoPath = r.repoPath;
+    }
     byThread.set(r.thread, row);
   }
 
@@ -174,8 +180,11 @@ export async function backfillThread(logPath: string, thread: Omit<BackfillSourc
     } else if (event.type === 'result' && event.at === undefined) {
       const record = recordOf(event, { id: thread.id, agent: agent ?? '', repoPath: thread.repoPath, title: thread.title });
       if (!record) continue;
-      // The prompt's time stands in for the turn's end.
+      // The prompt's time stands in for the turn's end. Once only: a turn
+      // the agent started itself has no prompt of its own, and is better
+      // left undated than given an older prompt's day.
       if (promptAt !== undefined) record.at = promptAt;
+      promptAt = undefined;
       record.backfilled = true;
       records.push(record);
       beforeSwitch?.push(record);
@@ -211,12 +220,44 @@ export async function eventLogSources(dir: string, labels: ReadonlyMap<string, T
   });
 }
 
+/** A ledger line as a record, its figures cleaned (a line written by hand
+ *  or cut short can hold anything), or null when it isn't one. */
+function cleanRecord(raw: unknown): UsageRecord | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Partial<Record<keyof UsageRecord, unknown>>;
+  if (typeof r.thread !== 'string' || !r.thread) return null;
+  const tokens = (r.tokens && typeof r.tokens === 'object' ? r.tokens : {}) as Partial<Record<'input' | 'output', unknown>>;
+  const models = Array.isArray(r.models)
+    ? (r.models as unknown[]).flatMap((m): ModelTurnUsage[] => {
+      if (!m || typeof m !== 'object') return [];
+      const { model, input, output, costUsd } = m as Partial<Record<keyof ModelTurnUsage, unknown>>;
+      if (typeof model !== 'string' || !model) return [];
+      return [{ model, input: nonNegative(input), output: nonNegative(output), ...(costUsd !== undefined ? { costUsd: nonNegative(costUsd) } : {}) }];
+    })
+    : [];
+  return {
+    ...(typeof r.at === 'number' && Number.isFinite(r.at) ? { at: r.at } : {}),
+    thread: r.thread,
+    ...(typeof r.repoPath === 'string' && r.repoPath ? { repoPath: r.repoPath } : {}),
+    ...(typeof r.title === 'string' && r.title ? { title: r.title } : {}),
+    agent: typeof r.agent === 'string' ? r.agent : '',
+    usd: nonNegative(r.usd),
+    tokens: { input: nonNegative(tokens.input), output: nonNegative(tokens.output) },
+    ms: nonNegative(r.ms),
+    ...(models.length > 0 ? { models } : {}),
+    ...(r.backfilled === true ? { backfilled: true as const } : {}),
+  };
+}
+
 const yieldToMain = () => new Promise<void>((resolve) => setImmediate(resolve));
 
 export class UsageLedger {
-  /** Loaded on first read; until then turns are only appended. */
+  /** Loaded on first read; until then turns are only appended. In file
+   *  order, so a launch sees them as the last one did. */
   private records: UsageRecord[] | null = null;
   private backfilled = false;
+  /** The ledger's folder exists (made on the first append). */
+  private madeDir = false;
   private backfill: Promise<void> | null = null;
   /** Appends and the first read, in order, so a turn is never in memory
    *  twice or not at all. */
@@ -231,14 +272,16 @@ export class UsageLedger {
 
   /** Add a turn. */
   record(record: UsageRecord): void {
-    void this.enqueue(async () => {
+    this.enqueue(async () => {
       await this.append(JSON.stringify(record) + '\n');
       this.records?.push(record);
-    });
+    }).catch(() => { /* logged by the queue */ });
   }
 
   /** Everything recorded, the older history added first if it hasn't been.
-   *  `backfilling`: still being added; ask again when it's done. */
+   *  `backfilling`: still being added; ask again when it's done. Rejects
+   *  when the ledger can't be read, and tries again on the next read: a
+   *  backfill over a ledger it couldn't see would add the older turns twice. */
   async read(): Promise<{ records: readonly UsageRecord[]; backfilling: boolean }> {
     await this.enqueue(async () => {
       if (!this.records) await this.load();
@@ -254,14 +297,19 @@ export class UsageLedger {
     await this.backfill;
   }
 
+  /** Run `work` after what is already queued. The returned promise
+   *  rejects with its error; the queue goes on either way. */
   private enqueue(work: () => Promise<void>): Promise<void> {
     const next = this.queue.then(work);
     this.queue = next.catch((e: unknown) => logger.warn('[usage-ledger]', e));
-    return this.queue;
+    return next;
   }
 
   private async append(text: string): Promise<void> {
-    await fs.promises.mkdir(path.dirname(this.file()), { recursive: true });
+    if (!this.madeDir) {
+      await fs.promises.mkdir(path.dirname(this.file()), { recursive: true });
+      this.madeDir = true;
+    }
     await fs.promises.appendFile(this.file(), text, 'utf-8');
   }
 
@@ -270,28 +318,39 @@ export class UsageLedger {
     try {
       data = await fs.promises.readFile(this.file(), 'utf-8');
     } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') logger.warn('[usage-ledger] could not read the ledger:', e);
+      // None yet is an empty ledger; any other failure (the file held open
+      // by a scanner) leaves it unread, to try again.
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
     }
     const records: UsageRecord[] = [];
+    let backfilled = false;
     const lines = data.split('\n');
     for (let i = 0; i < lines.length; i++) {
       if (i > 0 && i % PARSE_CHUNK === 0) await yieldToMain();
       const line = lines[i];
       if (!line) continue;
+      let parsed: unknown;
       try {
-        const parsed = JSON.parse(line) as UsageRecord | BackfillMark;
-        if ('backfilledAt' in parsed) this.backfilled = true;
-        else if (typeof parsed.thread === 'string' && parsed.tokens) records.push(parsed);
+        parsed = JSON.parse(line);
       } catch {
         logger.warn('[usage-ledger] skipping a corrupt line');
+        continue;
       }
+      if (parsed && typeof (parsed as Partial<BackfillMark>).backfilledAt === 'number') {
+        backfilled = true;
+        continue;
+      }
+      const record = cleanRecord(parsed);
+      if (record) records.push(record);
     }
     this.records = records;
+    this.backfilled ||= backfilled;
   }
 
   /** Add the turns in every thread's log from before the ledger began,
    *  with the mark that says so in the same write, so they're added once. */
   private async runBackfill(): Promise<void> {
+    const started = Date.now();
     const found: UsageRecord[] = [];
     try {
       for (const source of await this.sources()) {
@@ -311,10 +370,12 @@ export class UsageLedger {
     await this.enqueue(async () => {
       if (this.backfilled) return;
       await this.append(found.map((r) => JSON.stringify(r) + '\n').join('') + JSON.stringify(mark) + '\n');
-      this.records?.unshift(...found);
+      // On disk now: whatever happens next, it mustn't be added again.
       this.backfilled = true;
-      logger.info(`[usage-ledger] added ${found.length} older turns`);
-    });
+      // After the turns already read, as in the file.
+      if (this.records) this.records = this.records.concat(found);
+      logger.info(`[usage-ledger] added ${found.length} older turns in ${Date.now() - started} ms`);
+    }).catch(() => { /* logged by the queue; tried again on the next read */ });
   }
 }
 

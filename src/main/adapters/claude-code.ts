@@ -27,6 +27,7 @@ import { z } from 'zod';
 import { asarUnpackedPath, cleanEnv, isPathInside, toolCallSpecifier, readableStreamToAsyncIterable } from '../agent-utils.js';
 import { decideToolCall, groveServersOf, type PolicyDecision } from '../tool-policy.js';
 import { categoryForView, claudeToolView } from '../../shared/tool-view.js';
+import { nonNegative } from '../../shared/limits.js';
 import { attachedFilesNote } from './file-attachments.js';
 import { checkKeyWithGet, type KeyCheckFetch } from './key-check.js';
 import { createMemoryMcpServer } from './memory-mcp-server.js';
@@ -642,7 +643,7 @@ export function transformMessage(
         model: u.canonicalModel || key,
         input: (u.inputTokens ?? 0) + (u.cacheReadInputTokens ?? 0) + (u.cacheCreationInputTokens ?? 0),
         output: u.outputTokens ?? 0,
-        costUsd: typeof u.costUSD === 'number' && Number.isFinite(u.costUSD) && u.costUSD > 0 ? u.costUSD : 0,
+        costUsd: nonNegative(u.costUSD),
       })) : [];
       // The session totals are the trackers' rather than the result's, which
       // a failed start or crash can report zeroed: saved as the totals to

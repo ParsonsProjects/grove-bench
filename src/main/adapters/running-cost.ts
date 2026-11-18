@@ -160,8 +160,10 @@ export class RunningModels {
     return Object.fromEntries([...this.last].map(([k, t]) => [k, { ...t }]));
   }
 
-  /** The turn's tokens and cost (`turn`) by model, the model that did most
-   *  of it first. Empty when the result names no models. */
+  /** The turn's tokens and cost (`turn`) by model, the thread's main model
+   *  first: the one that has done the most in the conversation, which a
+   *  turn's time goes to, so a subagent that read more this turn doesn't
+   *  take it. Empty when the result names no models. */
   turnModels(running: readonly RunningModel[], turn: TokenCounts & { costUsd?: number }, isError: boolean): ModelTurnUsage[] {
     if (running.length === 0) return [];
     // A failed start or crash can report zeroed totals: the real ones carry
@@ -169,12 +171,16 @@ export class RunningModels {
     const zeroed = running.every((r) => r.input === 0 && r.output === 0 && r.costUsd === 0);
     if (zeroed && isError) return [];
     // A total below where it was started again (/clear): all of it is new.
+    // On an error it is a crash's figure instead, as RunningCost reads it:
+    // that model did nothing this turn, and its total stays where it was.
     const rise = (now: number, was = 0) => (now >= was ? now - was : now);
     const rises = running.map((r) => {
       const before = this.last.get(r.key);
+      const dropped = !!before && (r.input < before.input || r.output < before.output || r.costUsd < before.costUsd);
+      if (dropped && isError) return { input: 0, output: 0, costUsd: 0 };
+      this.last.set(r.key, { input: r.input, output: r.output, costUsd: r.costUsd });
       return { input: rise(r.input, before?.input), output: rise(r.output, before?.output), costUsd: rise(r.costUsd, before?.costUsd) };
     });
-    for (const r of running) this.last.set(r.key, { input: r.input, output: r.output, costUsd: r.costUsd });
 
     const tokenRise = rises.map((d) => d.input + d.output);
     const tokenTotal = running.map((r) => r.input + r.output);
@@ -185,21 +191,29 @@ export class RunningModels {
 
     // Providers can name one model two ways: show them as one.
     const merged = new Map<string, ModelTurnUsage>();
+    /** Each model's tokens over the conversation, for which is the main one. */
+    const overall = new Map<string, number>();
     running.forEach((r, i) => {
       const entry = merged.get(r.model) ?? { model: r.model, input: 0, output: 0, ...(turn.costUsd !== undefined ? { costUsd: 0 } : {}) };
       entry.input += input[i];
       entry.output += output[i];
       if (entry.costUsd !== undefined && turn.costUsd !== undefined && costSum > 0) entry.costUsd += (turn.costUsd * costWeights[i]) / costSum;
       merged.set(r.model, entry);
+      overall.set(r.model, (overall.get(r.model) ?? 0) + tokenTotal[i]);
     });
     const did = (m: ModelTurnUsage) => m.input + m.output;
-    const models = [...merged.values()].sort((a, b) => did(b) - did(a) || (b.costUsd ?? 0) - (a.costUsd ?? 0));
-    const used = models.filter((m) => did(m) > 0 || (m.costUsd ?? 0) > 0);
-    if (used.length > 0) return used;
+    const most = (m: ModelTurnUsage) => overall.get(m.model) ?? 0;
+    const used = [...merged.values()]
+      .filter((m) => did(m) > 0 || (m.costUsd ?? 0) > 0)
+      .sort((a, b) => did(b) - did(a) || (b.costUsd ?? 0) - (a.costUsd ?? 0));
+    if (used.length > 0) {
+      const main = used.reduce((best, m) => (most(m) > most(best) ? m : best), used[0]);
+      return [main, ...used.filter((m) => m !== main)];
+    }
     // Nothing to split (a turn that used no tokens): the turn still took
-    // time, which goes to the model that has done the most.
-    const main = tokenTotal.reduce((best, t, i) => (t > tokenTotal[best] ? i : best), 0);
-    return [{ model: running[main].model, input: 0, output: 0, ...(turn.costUsd !== undefined ? { costUsd: 0 } : {}) }];
+    // time, which goes to the main model.
+    const main = [...merged.values()].reduce((best, m) => (most(m) > most(best) ? m : best));
+    return [{ model: main.model, input: 0, output: 0, ...(turn.costUsd !== undefined ? { costUsd: 0 } : {}) }];
   }
 }
 
