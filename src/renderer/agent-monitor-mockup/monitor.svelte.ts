@@ -178,14 +178,8 @@ class MockMonitor {
     this.say(`Ended ${tree[0].name} (PID ${pid})${under ? ` and ${under} under it` : ''}. The agent sees its command fail.`);
   }
 
-  /** Set by the dialog, which sits over the app: opens the thread there and
-   *  returns true. The window page has no app behind it. */
-  openThreadIn: ((threadId: string) => boolean) | null = null;
-
-  /** Open thread: in the dialog it switches the app to the thread; in the
-   *  window it says what would happen. */
-  openThread(threadId: string, what: string) {
-    if (this.openThreadIn?.(threadId)) return;
+  /** Open thread: the page has no app behind it, so it says what would happen. */
+  openThread(_threadId: string, what: string) {
     this.say(`In the app this brings the main window forward with ${what} open.`);
   }
 }

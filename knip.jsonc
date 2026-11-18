@@ -12,7 +12,6 @@
     "src/renderer/demo-mock.ts",
     "src/renderer/ui-kit/main.ts",
     "src/renderer/agent-monitor-mockup/main.ts",
-    "src/renderer/agent-monitor-mockup/dialog-main.ts",
     "scripts/*.mjs",
     // The landing page draws its art with the app's own code, imported from
     // src/ here, so knip counts those exports as used.

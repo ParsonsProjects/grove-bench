@@ -3,7 +3,7 @@
  * (`ExitPlanMode`, `mcp__linear__create_issue`); the UI says what the tool
  * does, or at least drops the plumbing.
  */
-import { claudeMcpTool, claudeToolView, type ToolView } from '../../shared/tool-view.js';
+import { claudeMcpTool, claudeToolView, toolViewOf, toolViewSummary, type ToolView } from '../../shared/tool-view.js';
 
 /** `mcp__<server>__<tool_name>` → its server and `tool name`, for display. */
 export function parseMcpToolName(toolName: string): { server: string; tool: string } | null {
@@ -37,4 +37,14 @@ export function approvalRequest(toolName: string, view: ToolView = claudeToolVie
     default:
       return `wants to use ${toolLabel(toolName)}`;
   }
+}
+
+/** A tool call's target on one line, as the status bar and the agent
+ *  monitor list it: the command, path or pattern. Commands and summaries can
+ *  run long; paths and patterns show whole. */
+export function toolCallSummary(call: { toolName: string; toolInput: unknown; toolView?: ToolView }): string {
+  const view = toolViewOf(call);
+  if (view.command) return view.command.slice(0, 60);
+  if (view.path || view.pattern) return toolViewSummary(view);
+  return toolViewSummary(view).slice(0, 60);
 }

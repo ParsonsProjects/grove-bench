@@ -39,6 +39,7 @@
   import { todoStore } from './stores/todo.svelte.js';
   import { schedulesStore } from './stores/schedules.svelte.js';
   import { skillsPanelStore } from './stores/skillsPanel.svelte.js';
+  import { agentMonitorStore } from './stores/agentMonitor.svelte.js';
   import { goalStore } from './stores/goals.svelte.js';
   import { panelStore } from './stores/panels.svelte.js';
   import { previewStore } from './stores/preview.svelte.js';
@@ -57,6 +58,10 @@
   const loadSessionFinder = lazyComponent(() => import('./components/SessionFinder.svelte'));
   const loadBackgroundAgentDialog = lazyComponent(() => import('./components/BackgroundAgentDialog.svelte'));
   const loadSkillsPanel = lazyComponent(() => import('./components/SkillsPanel.svelte'));
+  const loadAgentMonitor = lazyComponent(() => import('./components/AgentMonitorDialog.svelte'));
+  // Mounted once opened, so its close animation plays.
+  let agentMonitorOpened = $state(false);
+  $effect(() => { if (agentMonitorStore.open) agentMonitorOpened = true; });
   // The Skills drawer stays mounted once opened, as Settings and Memory do.
   let skillsPanelOpened = $state(false);
   $effect(() => { if (skillsPanelStore.open) skillsPanelOpened = true; });
@@ -299,6 +304,10 @@
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key === ',') {
       e.preventDefault();
       settingsStore.panelOpen = !settingsStore.panelOpen;
+    }
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'a') {
+      e.preventDefault();
+      agentMonitorStore.toggle();
     }
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key === 'n') {
       e.preventDefault();
@@ -655,6 +664,13 @@
 {#if backgroundAgentStore.ask}
   {#await loadBackgroundAgentDialog() then BackgroundAgentDialog}
     <BackgroundAgentDialog />
+  {/await}
+{/if}
+
+<!-- Opened from the title bar's activity counts, or Ctrl+Shift+A. -->
+{#if agentMonitorStore.open || agentMonitorOpened}
+  {#await loadAgentMonitor() then AgentMonitorDialog}
+    <AgentMonitorDialog />
   {/await}
 {/if}
 

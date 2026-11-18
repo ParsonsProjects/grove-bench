@@ -8,6 +8,7 @@ import App from './App.svelte';
 import { store } from './stores/sessions.svelte.js';
 import { messageStore } from './stores/messages.svelte.js';
 import { settingsStore } from './stores/settings.svelte.js';
+import { agentMonitorStore } from './stores/agentMonitor.svelte.js';
 import { TURN_SETTLE_MS } from './lib/turn-end.js';
 import { mockGroveBench } from './__mocks__/setup.js';
 
@@ -92,6 +93,16 @@ describe('App shortcuts', () => {
     expect(settingsStore.panelOpen).toBe(true);
     await fireEvent.keyDown(window, { key: ',', ctrlKey: true });
     expect(settingsStore.panelOpen).toBe(false);
+  });
+
+  it('opens and closes the agent monitor with Ctrl+Shift+A', async () => {
+    mockGroveBench.getSettings.mockResolvedValue(JSON.parse(JSON.stringify(settingsStore.current)));
+    render(App);
+
+    await fireEvent.keyDown(window, { key: 'A', ctrlKey: true, shiftKey: true });
+    expect(await screen.findByRole('dialog', { name: 'Agent monitor' })).toBeInTheDocument();
+    await fireEvent.keyDown(window, { key: 'A', ctrlKey: true, shiftKey: true });
+    expect(agentMonitorStore.open).toBe(false);
   });
 
   it('docks Bookmarks beside the landing when no thread is open, and Ctrl+B closes it again', async () => {

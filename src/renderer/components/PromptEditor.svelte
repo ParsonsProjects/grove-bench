@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick, untrack } from 'svelte';
   import { messageStore } from '../stores/messages.svelte.js';
-  import { arrivalScene } from '../stores/arrivalScene.svelte.js';
+  import { interruptTurn } from '../lib/interrupt-turn.js';
   import { settingsStore } from '../stores/settings.svelte.js';
   import { terminalStore } from '../stores/terminal.svelte.js';
   import { agentsStore } from '../stores/agents.svelte.js';
@@ -486,10 +486,7 @@
   }
 
   function handleStop() {
-    messageStore.markSessionStopped(sessionId, { byUser: true });
-    // A stopped turn may report no result, so nothing else would end it.
-    arrivalScene.end(sessionId);
-    void window.groveBench.stopSession(sessionId);
+    interruptTurn(sessionId);
   }
 
   // ─── Drag & Drop ───

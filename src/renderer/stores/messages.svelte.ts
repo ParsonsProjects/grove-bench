@@ -14,8 +14,8 @@ import { settingsStore } from './settings.svelte.js';
 import { previewStore } from './preview.svelte.js';
 import { prerequisitesStore } from './prerequisites.svelte.js';
 import { base64Size, reattach, type AttachedFile } from '../lib/file-attachments.js';
-import { approvalRequest } from '../lib/tool-names.js';
-import { changesFiles, toolViewOf, toolViewSummary, type ToolView } from '../../shared/tool-view.js';
+import { approvalRequest, toolCallSummary } from '../lib/tool-names.js';
+import { changesFiles, toolViewOf, type ToolView } from '../../shared/tool-view.js';
 import { liveEventsMissingFrom } from '../../shared/live-events.js';
 import { agentCallInput, isAgentCall, isMessageVisible, subagentOf, threadMessages, type MessageViewMode } from '../lib/message-view.js';
 import { limitName, type LimitKind } from '../../shared/limits.js';
@@ -1235,7 +1235,7 @@ class MessageStore {
         pending.push({
           toolName: m.toolName,
           toolUseId: m.toolUseId,
-          summary: this.summarizeToolInput(m),
+          summary: toolCallSummary(m),
           elapsedSeconds: p?.elapsedSeconds,
           ...this.subagentOfPendingTool(msgs, m),
         });
@@ -1253,14 +1253,6 @@ class MessageStore {
       return { subagentCall: parent, inSubagent: agentCallInput(agentCall).agentType ?? 'subagent' };
     }
     return isAgentCall(call) ? { subagentCall: call.toolUseId } : {};
-  }
-
-  private summarizeToolInput(call: { toolName: string; toolInput: unknown; toolView?: ToolView }): string {
-    const view = toolViewOf(call);
-    // Commands and summaries can run long; paths and patterns show whole.
-    if (view.command) return view.command.slice(0, 60);
-    if (view.path || view.pattern) return toolViewSummary(view);
-    return toolViewSummary(view).slice(0, 60);
   }
 
   /**
@@ -1693,7 +1685,7 @@ class MessageStore {
         this.activityBySession[sessionId] = {
           activity: 'tool_starting',
           toolName: event.toolName,
-          toolSummary: this.summarizeToolInput(event),
+          toolSummary: toolCallSummary(event),
           toolUseId: event.toolUseId,
         };
         this.pushMessage(sessionId, {
@@ -1833,7 +1825,7 @@ class MessageStore {
           activity: 'tool_starting',
           toolName: event.toolName,
           elapsedSeconds: event.elapsedSeconds,
-          toolSummary: call ? this.summarizeToolInput(call) : prev?.toolUseId === event.toolUseId ? prev.toolSummary : undefined,
+          toolSummary: call ? toolCallSummary(call) : prev?.toolUseId === event.toolUseId ? prev.toolSummary : undefined,
           toolUseId: event.toolUseId,
         };
         // Track per-tool progress
@@ -2120,7 +2112,7 @@ class MessageStore {
     // output too), so only a new name or summary is worth a redraw.
     const activity = this.activityBySession[sessionId];
     if (call && activity?.activity === 'tool_starting' && activity.toolUseId === event.toolUseId) {
-      const toolSummary = this.summarizeToolInput(call);
+      const toolSummary = toolCallSummary(call);
       if (call.toolName !== activity.toolName || toolSummary !== activity.toolSummary) {
         this.activityBySession[sessionId] = { ...activity, toolName: call.toolName, toolSummary };
       }

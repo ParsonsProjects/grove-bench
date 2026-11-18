@@ -4,8 +4,7 @@
  * and current tool (messageStore), its subagents and background shells
  * (backgroundTaskStore), and its agent's process tree (process-memory.ts).
  * Thread ids, names and states follow demo-mock.ts (Sidebar revamp working,
- * Fix OAuth refresh waiting on you, two idle, two closed), so the dialog over
- * the demo app agrees with the sidebar's counts.
+ * Fix OAuth refresh waiting on you, two idle, two closed).
  */
 import type { AgentSpriteState } from '$lib/agent-sprite.js';
 
