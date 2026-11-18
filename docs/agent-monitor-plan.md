@@ -19,16 +19,16 @@ Two pages on the dev server (`npm start`), code in `src/renderer/agent-monitor-m
 
 ### The trigger
 
-Mocked in two places, so they can be compared (`MonitorTrigger.svelte`):
+**In the title bar**, before Help (`MonitorTrigger.svelte`): an activity icon and the counts, amber for threads that need you, blue for those working. It is always in view, sidebar open or collapsed, and shows the counts without hovering. Its tooltip gives the counts and the shortcut.
 
-- **Title bar**, before Help: an activity icon and the counts, amber for threads that need you, blue for those working. Always in view, sidebar open or collapsed.
-- **Sidebar footer tools**, before Bookmarks, and down the collapsed rail with them: the same icon with a square on its corner, amber if anything needs you, else blue while anything works.
+It counts threads the way the sidebar's filter chips do (`sessionSpriteState`, `triageForSprite`, `triageCounts`) and draws them with the chips' marks (`AttentionCounts`), so it can't disagree with the chips.
 
-Both count threads the way the sidebar's filter chips do (`sessionSpriteState`, `triageForSprite`, `triageCounts`) and draw them with the chips' marks (`AttentionCounts`), so they can't disagree with the chips. Their tooltip gives the counts and the shortcut.
+Decided against:
 
-The chips themselves (Needs you, Working, Unread, Idle, To do) are not a trigger: clicking one already filters the thread list (`Sidebar.svelte`, `lib/session-triage.ts`).
+- **An icon in the sidebar's footer tools** (mocked, then dropped): a sixth icon in a busy footer, and it needs a hover to give the counts.
+- **The filter chips** (Needs you, Working, Unread, Idle, To do): clicking one already filters the thread list (`Sidebar.svelte`, `lib/session-triage.ts`).
 
-On the mockup page the triggers are put into the demo app from outside (`inject-triggers.ts`), so the app's code is unchanged. In the app they would go in `TitleBar.svelte` and in `footerTools` in `Sidebar.svelte`.
+On the mockup page the trigger is put into the demo app from outside (`inject-trigger.ts`), so the app's code is unchanged. In the app it would go in `TitleBar.svelte`.
 
 ## Where the real data would come from
 

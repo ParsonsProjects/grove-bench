@@ -4,9 +4,8 @@
    * lived in the main window rather than a window of its own. The page
    * (/agent-monitor-dialog.html) runs the demo app (demo-mock.ts) behind it,
    * so Open thread really switches the app to that thread. It opens from
-   * the trigger (MonitorTrigger.svelte) in the sidebar's footer, the
-   * collapsed rail and the title bar, or with Ctrl+Shift+A, the shortcut
-   * proposed for it. It starts closed; add ?open to the address to start
+   * the trigger in the title bar (MonitorTrigger.svelte), or with
+   * Ctrl+Shift+A, the shortcut proposed for it. It starts closed; add ?open to the address to start
    * with it open.
    *
    * In the app it would read the threads from the stores the main window
@@ -17,12 +16,12 @@
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import { store } from '../stores/sessions.svelte.js';
   import { monitor } from './monitor.svelte.js';
-  import { injectTriggers } from './inject-triggers.js';
+  import { injectTrigger } from './inject-trigger.js';
   import MonitorView from './MonitorView.svelte';
 
   let open = $state(new URLSearchParams(location.search).has('open'));
 
-  onMount(() => injectTriggers(() => (open = true)));
+  onMount(() => injectTrigger(() => (open = true)));
 
   monitor.openThreadIn = (threadId) => {
     if (store.sessions.some((s) => s.id === threadId)) {
