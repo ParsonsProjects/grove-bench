@@ -37,6 +37,7 @@
   import { bookmarkStore } from './stores/bookmarks.svelte.js';
   import { groupStore } from './stores/groups.svelte.js';
   import { todoStore } from './stores/todo.svelte.js';
+  import { followUpsStore } from './stores/followUps.svelte.js';
   import { schedulesStore } from './stores/schedules.svelte.js';
   import { skillsPanelStore } from './stores/skillsPanel.svelte.js';
   import { agentMonitorStore } from './stores/agentMonitor.svelte.js';
@@ -414,6 +415,7 @@
     void bookmarkStore.load();
     void groupStore.load();
     void todoStore.load();
+    void followUpsStore.load();
     // Listens before the restore ends: main's scheduler starts after it.
     schedulesStore.init();
     void panelStore.load();
@@ -652,7 +654,7 @@
   <!-- Bookmarks, docked here when no thread shows (the draft, the landing, a
        thread still reconnecting). In a thread it docks in the thread's pane,
        above its bottom bar. -->
-  <SideDock bookmarks={!threadPaneShown} />
+  <SideDock shared={!threadPaneShown} />
 </div>
 <AnalyticsConsent visible={showAnalyticsConsent} />
 </div>

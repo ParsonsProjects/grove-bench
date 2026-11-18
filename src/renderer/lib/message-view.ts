@@ -24,6 +24,10 @@ export const VIEW_MODE_DESCRIPTIONS: Record<MessageViewMode, string> = {
  *  too frequent for Summary. */
 const GROVE_MCP_SERVERS: ReadonlySet<string> = new Set(GROVE_SERVER_NAMES);
 
+/** Grove's tools Summary still shows: adding a follow-up and marking one
+ *  done change what is left for later threads, which you'd want to see. */
+const GROVE_TOOLS_IN_SUMMARY: ReadonlySet<string> = new Set(['followup_add', 'followup_done']);
+
 /** A call that started a subagent. It stays in every view as one line that
  *  opens the subagent's own thread, so its work is never out of reach. */
 export function isAgentCall(msg: ChatMessage): boolean {
@@ -78,7 +82,7 @@ export function threadMessages(messages: ChatMessage[], parentToolUseId?: string
 function shownInSummary(call: Extract<ChatMessage, { kind: 'tool_call' }>): boolean {
   const view = toolViewOf(call);
   if (changesFiles(view, call.toolCategory)) return true;
-  if (view.mcp) return !GROVE_MCP_SERVERS.has(view.mcp.server);
+  if (view.mcp) return !GROVE_MCP_SERVERS.has(view.mcp.server) || GROVE_TOOLS_IN_SUMMARY.has(view.mcp.tool);
   return !!call.toolView && view.kind === 'other' && (call.toolCategory ?? 'other') === 'other'
     && !titledAsGroveTool(call.toolName) && !taskListOf(call.toolName, call.toolInput);
 }

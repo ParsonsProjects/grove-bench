@@ -6,6 +6,7 @@
 
 import type { ThreadItems } from '../shared/thread-items.js';
 import type { SkillSchedule, SkillScheduleInput } from '../shared/skill-schedules.js';
+import type { FollowUp } from '../shared/follow-ups.js';
 
 // Capture uncaught errors (a template error can kill Svelte's effect loop).
 const errs: string[] = [];
@@ -33,6 +34,31 @@ const CLAUDE_MODE_OPTIONS = [
 
 const REPO_A = 'C:/dev/grove-bench';
 const REPO_B = 'C:/dev/api-service';
+
+/** Work the demo threads' agents left for later threads. */
+const demoFollowUps: FollowUp[] = [
+  {
+    id: '3fa2c1', repoPath: REPO_A, title: 'Collapse the sidebar footer into a menu below 260px',
+    details: 'The footer icons wrap onto two rows when the sidebar is narrow (Sidebar.svelte, footerTools). '
+      + 'Move everything but Settings into an overflow menu under 260px. Done when the footer stays one row at the narrowest width.',
+    createdAt: now - 40 * min, fromSessionId: 's-sidebar', fromLabel: 'Sidebar revamp', fromBranch: 'claude/sidebar-revamp',
+  },
+  {
+    id: '8b10e4', repoPath: REPO_A, title: 'Add a test for the retry banner on a second 401',
+    details: 'The banner hides after the first retry, but a second 401 should show it again. Cover it in SignInBanner.svelte.test.ts.',
+    createdAt: now - 90 * min, fromSessionId: 's-oauth-ui', fromLabel: 'Sign-in retry banner', fromBranch: 'claude/fix-oauth-refresh',
+    startedSessionIds: ['s-readme'],
+  },
+  {
+    id: 'c2d9a7', repoPath: REPO_B, title: 'Expire refresh tokens that were issued before the key rotation',
+    details: 'Found while fixing the refresh: tokens signed with the old key still pass verify() in auth/tokens.ts.',
+    createdAt: now - 3 * 60 * min, fromSessionId: 's-oauth', fromLabel: 'claude/fix-oauth-refresh', fromBranch: 'claude/fix-oauth-refresh',
+  },
+  {
+    id: '51ee02', repoPath: REPO_B, title: 'Drop the unused retry helper', details: '',
+    createdAt: now - 2 * 24 * 60 * min, doneAt: now - 26 * 60 * min, doneBySessionId: 's-perf', doneNote: 'Removed retryWithJitter and its test.',
+  },
+];
 
 /** Branches checked out per project: main in each project folder, the
  *  threads' branches in their copies, and a worktree made outside Grove Bench. */
@@ -512,6 +538,7 @@ const api: Record<string, unknown> = {
     setTimeout(() => void seedSessions(), 150);
   },
   listBookmarks: async () => [],
+  listFollowUps: async () => structuredClone(demoFollowUps),
   getOpenTabs: async () => [],
   getCollapsedRepos: async () => ({ [REPO_A]: false, [REPO_B]: false }),
   getSessionSort: async () => ({ key: 'age', dir: 'desc' }),

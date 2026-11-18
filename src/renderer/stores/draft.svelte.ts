@@ -16,6 +16,8 @@ import { resolveBaseBranch } from '../lib/base-branch.js';
 import { attachmentPayload, type AttachedFile } from '../lib/file-attachments.js';
 import { buildOutgoingMessage } from '../lib/prompt-file-refs.js';
 import { trackEvent } from '../lib/analytics.js';
+import { followUpsStore } from './followUps.svelte.js';
+import { followUpPrompt, type FollowUp } from '../../shared/follow-ups.js';
 
 /**
  * A new conversation before its first message. Opening one creates nothing:
@@ -53,6 +55,9 @@ export interface Draft {
    *  Not made before, so a discarded draft leaves no empty group. Never set
    *  together with groupId. */
   newGroupName?: string;
+  /** The follow-up this draft was started from (openFollowUp): the thread
+   *  is noted against it once it starts. */
+  followUpId?: string;
 }
 
 /** Whether a draft has a first message to send: something typed, or
@@ -253,6 +258,21 @@ class DraftStore {
 
   setText(text: string): void {
     if (this.draft) this.draft.text = text;
+  }
+
+  /** Open the draft in a follow-up's project with the follow-up as its first
+   *  message, to look over and send. A draft with a message or files of its
+   *  own is only shown, so nothing typed is lost: false. */
+  openFollowUp(f: FollowUp): boolean {
+    if (this.draft && hasMessage(this.draft)) {
+      this.show();
+      return false;
+    }
+    this.open(f.repoPath);
+    if (!this.draft || this.draft.repoPath !== f.repoPath) return false;
+    this.draft.text = followUpPrompt(f);
+    this.draft.followUpId = f.id;
+    return true;
   }
 
   /** List the draft agent's skills in its project: when either changes, and
@@ -687,6 +707,7 @@ class DraftStore {
       // A group ungrouped while this ran is gone, and add() does nothing.
       if (d.groupId) groupStore.add(d.groupId, id);
       else if (d.newGroupName) groupStore.create(d.newGroupName, [id]);
+      if (d.followUpId) void followUpsStore.started(d.followUpId, id);
       // Main holds a prompt sent during setup until the agent is ready. Not
       // for a thread closed or deleted meanwhile: main closes that one once
       // it's up.

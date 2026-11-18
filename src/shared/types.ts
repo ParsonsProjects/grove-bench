@@ -4,6 +4,7 @@ import type { LimitKind } from './limits.js';
 import type { ThreadItems } from './thread-items.js';
 import type { ScheduleOutcome, SkillSchedule, SkillScheduleInput } from './skill-schedules.js';
 import type { CiLogTail } from './ci-log.js';
+import type { FollowUp } from './follow-ups.js';
 
 // ─── Worktree ───
 
@@ -1631,6 +1632,15 @@ export interface GroveBenchAPI {
   removeBookmark(id: string): Promise<void>;
   updateBookmark(id: string, patch: Partial<Pick<Bookmark, 'note' | 'eventIndex'>>): Promise<void>;
 
+  // Follow-ups (shared/follow-ups.ts)
+  /** Every project's follow-ups, or null while the file can't be read. */
+  listFollowUps(): Promise<FollowUp[] | null>;
+  setFollowUpDone(id: string, done: boolean): Promise<void>;
+  followUpStarted(id: string, sessionId: string): Promise<void>;
+  removeFollowUp(id: string): Promise<void>;
+  /** The whole list after every change, from an agent or another window. */
+  onFollowUpsChanged(callback: (list: FollowUp[]) => void): () => void;
+
   // Prerequisites
   /** Full check of git + agent CLI (spawns processes; excludes gh). */
   checkPrerequisites(): Promise<PrerequisiteStatus>;
@@ -2718,6 +2728,14 @@ export const IPC = {
   BOOKMARK_ADD: 'bookmarks:add',
   BOOKMARK_REMOVE: 'bookmarks:remove',
   BOOKMARK_UPDATE: 'bookmarks:update',
+  FOLLOW_UPS_LIST: 'followUps:list',
+  /** Renderer → main: mark one done (true) or open it again (false). */
+  FOLLOW_UP_SET_DONE: 'followUps:setDone',
+  /** Renderer → main: a thread was started from one. */
+  FOLLOW_UP_STARTED: 'followUps:started',
+  FOLLOW_UP_REMOVE: 'followUps:remove',
+  /** Main → renderer: the follow-ups changed (an agent added one, say). */
+  FOLLOW_UPS_CHANGED: 'followUps:changed',
   FIND_EVENT_INDEX_BY_UUID: 'agent:findEventIndexByUuid',
   MEMORY_LIST: 'memory:list',
   MEMORY_READ: 'memory:read',

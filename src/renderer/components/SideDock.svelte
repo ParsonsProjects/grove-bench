@@ -2,44 +2,49 @@
   import { lazyComponent } from '../lib/lazy-component.js';
 
   const loadSubagentPanel = lazyComponent(() => import('./SubagentPanel.svelte'));
+  const loadFollowUpsDrawer = lazyComponent(() => import('./FollowUpsDrawer.svelte'));
 </script>
 
 <script lang="ts">
   /**
    * The dock beside a thread's tabs (stores/dock.svelte): the Focus panel, a
-   * subagent's thread or Bookmarks, between the tab bar and the bottom bar,
-   * so the status bar and message box stay full width and usable while you
-   * read. The Focus panel and a subagent's thread dock in the thread they
-   * came from and stay there while another thread is open. Bookmarks, from
-   * every thread, docks wherever you are: `bookmarks` says this is the place.
-   * Without a `sessionId` (beside the draft or the landing) only Bookmarks
-   * can dock here.
+   * subagent's thread, Bookmarks or Follow-ups, between the tab bar and the
+   * bottom bar, so the status bar and message box stay full width and usable
+   * while you read. The Focus panel and a subagent's thread dock in the
+   * thread they came from and stay there while another thread is open.
+   * Bookmarks and Follow-ups, from every thread, dock wherever you are:
+   * `shared` says this is the place. Without a `sessionId` (beside the draft
+   * or the landing) only those two can dock here.
    */
   import { markdownPreviewStore } from '../stores/markdownPreview.svelte.js';
   import { subagentPanelStore } from '../stores/subagentPanel.svelte.js';
   import { bookmarkStore } from '../stores/bookmarks.svelte.js';
+  import { followUpsStore } from '../stores/followUps.svelte.js';
   import { dockStore, lastOpened, DOCK_MIN_WIDTH, DOCK_THREAD_MIN_WIDTH, type DockPanel } from '../stores/dock.svelte.js';
   import MarkdownPreviewPanel from './MarkdownPreviewPanel.svelte';
   import BookmarksDrawer from './BookmarksDrawer.svelte';
 
-  let { sessionId = null, bookmarks = false }: { sessionId?: string | null; bookmarks?: boolean } = $props();
+  let { sessionId = null, shared = false }: { sessionId?: string | null; shared?: boolean } = $props();
 
   let focusHere = $derived(markdownPreviewStore.open && sessionId !== null && markdownPreviewStore.threadId === sessionId);
   let subagentHere = $derived(subagentPanelStore.open && sessionId !== null && subagentPanelStore.sessionId === sessionId);
-  let bookmarksHere = $derived(bookmarks && bookmarkStore.drawerOpen);
+  let bookmarksHere = $derived(shared && bookmarkStore.drawerOpen);
+  let followUpsHere = $derived(shared && followUpsStore.drawerOpen);
   let showing = $derived(lastOpened([
     ...(focusHere ? [{ panel: 'focus' as const, opening: markdownPreviewStore.opening }] : []),
     ...(subagentHere ? [{ panel: 'subagent' as const, opening: subagentPanelStore.opening }] : []),
     ...(bookmarksHere ? [{ panel: 'bookmarks' as const, opening: bookmarkStore.opening }] : []),
+    ...(followUpsHere ? [{ panel: 'followups' as const, opening: followUpsStore.opening }] : []),
   ]));
 
-  /** Until dragged: up to 720px for reading (Bookmarks 24rem), never more
+  /** Until dragged: up to 720px for reading (Bookmarks and Follow-ups 24rem), never more
    *  than half the room, which leaves about 490px of thread in a 1280px
    *  window with the sidebar open. */
   const DEFAULT_WIDTH: Record<DockPanel, string> = {
     focus: 'min(720px, 50%)',
     subagent: 'min(720px, 50%)',
     bookmarks: 'min(24rem, 50%)',
+    followups: 'min(24rem, 50%)',
   };
   let width = $derived.by(() => {
     if (!showing) return undefined;
@@ -124,6 +129,13 @@
     {/if}
     {#if bookmarksHere}
       <div class={paneClass('bookmarks')}><BookmarksDrawer /></div>
+    {/if}
+    {#if followUpsHere}
+      <div class={paneClass('followups')}>
+        {#await loadFollowUpsDrawer() then FollowUpsDrawer}
+          <FollowUpsDrawer />
+        {/await}
+      </div>
     {/if}
   </div>
 {/if}

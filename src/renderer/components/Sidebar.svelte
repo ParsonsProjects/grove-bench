@@ -6,6 +6,7 @@
   import { gitStatusStore } from '../stores/gitStatus.svelte.js';
   import { terminalStore } from '../stores/terminal.svelte.js';
   import { bookmarkStore } from '../stores/bookmarks.svelte.js';
+  import { followUpsStore } from '../stores/followUps.svelte.js';
   import { trackEvent } from '../lib/analytics.js';
   import { getRepoColor } from '../lib/repo-colors.js';
   import { addProject } from '../lib/add-project.js';
@@ -18,6 +19,7 @@
   import { schedulesStore } from '../stores/schedules.svelte.js';
   import { skillsPanelStore } from '../stores/skillsPanel.svelte.js';
   import WandSparklesIcon from '@lucide/svelte/icons/wand-sparkles';
+  import ListTodoIcon from '@lucide/svelte/icons/list-todo';
   import FolderIcon from '@lucide/svelte/icons/folder';
   import TerminalIcon from '@lucide/svelte/icons/terminal';
   import CheckIcon from '@lucide/svelte/icons/check';
@@ -1121,6 +1123,9 @@
    *  Projects tree), with each group's sessions ordered by the active sort.
    *  Open conversations are listed here too, and work the same as in the
    *  Conversations list above. */
+  let followUpsLabel = $derived(followUpsStore.openCount === 0 ? 'Follow-ups'
+    : `Follow-ups: ${followUpsStore.openCount} open`);
+
   function getBranchGroups(repo: string): [string, typeof store.sessions][] {
     const groups: Record<string, typeof store.sessions> = {};
     for (const s of store.sessionsForRepo(repo)) {
@@ -1140,7 +1145,7 @@
 >
   <!-- Described once, for every row's ✕. -->
   <span id="close-conversation-hint" hidden>{CLOSE_HINT}</span>
-  <!-- Bookmarks, memory, skills, clean-up and settings: in the footer, or down the rail -->
+  <!-- Bookmarks, follow-ups, memory, skills, clean-up and settings: in the footer, or down the rail -->
   {#snippet footerTools()}
     <Button
       onclick={() => bookmarkStore.toggleDrawer()}
@@ -1150,6 +1155,20 @@
       title="Bookmarks (Ctrl+B)"
     >
       <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></svg>
+    </Button>
+    <!-- Work agents left for later threads, with how many are open. -->
+    <Button
+      onclick={() => followUpsStore.toggleDrawer()}
+      variant="quiet"
+      size="sm"
+      class="relative px-2 shrink-0"
+      title={followUpsLabel}
+      aria-label={followUpsLabel}
+    >
+      <ListTodoIcon class="size-4" />
+      {#if followUpsStore.openCount > 0}
+        <span class="absolute top-0.5 right-0.5 text-micro leading-none tabular-nums text-primary" aria-hidden="true">{followUpsStore.openCount > 99 ? '99+' : followUpsStore.openCount}</span>
+      {/if}
     </Button>
     <Button
       onclick={() => memoryStore.panelOpen = true}

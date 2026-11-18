@@ -19,6 +19,7 @@ import * as settings from './settings.js';
 import * as memory from './memory.js';
 import * as memoryAutosave from './memory-autosave.js';
 import * as memoryCompact from './memory-compact.js';
+import * as followUps from './follow-ups.js';
 import { adapterRegistry } from './adapters/index.js';
 import { isClaudeAccountId, removedAccountMessage } from './adapters/claude-accounts.js';
 import type { AgentAdapter, AgentQueryHandle, UserMessage } from './adapters/types.js';
@@ -620,6 +621,7 @@ class AgentSessionManager {
         write: (p, c) => memory.writeMemoryFile(session.repoPath, p, c),
         delete: (p) => memory.deleteMemoryFile(session.repoPath, p),
       },
+      followUpOperations: followUps.followUpOperationsFor(session),
       previewOperations: currentSettings.previewAgentTools
         ? previewManager.operationsFor(id, session.worktreePath, session.repoPath)
         : null,
