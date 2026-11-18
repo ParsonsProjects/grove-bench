@@ -800,3 +800,32 @@ describe('onAgentEnd', () => {
     expect(ended([{ type: 'error', message: 'spawn gemini ENOENT' }])).toEqual([[undefined, 'spawn gemini ENOENT']]);
   });
 });
+
+describe('AcpAdapter folders outside the project', () => {
+  async function rootsSeen(scenario: string, overrides: Partial<AdapterConfig>): Promise<{ roots: unknown; warnings: string[] }> {
+    const handle = await new AcpAdapter(def(scenario)).start(config(overrides));
+    const started = await until(handle, 'system_init');
+    handle.sendMessage({ text: 'roots' });
+    const seen = await until(handle, 'result');
+    handle.close();
+    const text = seen.find((e) => e.type === 'assistant_text') as { text: string };
+    const warnings = started.flatMap((e) => (e.type === 'status' && e.level === 'warning' && e.message ? [e.message] : []));
+    return { roots: JSON.parse(text.text), warnings };
+  }
+
+  it('sends them to an agent that advertises them, on a new session and on reopening one', async () => {
+    const dirs = [path.join(os.tmpdir(), 'linked-b'), path.join(os.tmpdir(), 'shared')];
+    expect(await rootsSeen('roots', { additionalDirectories: dirs })).toEqual({ roots: dirs, warnings: [] });
+    // session/load: the list replaces the session's earlier one.
+    expect((await rootsSeen('roots', { additionalDirectories: dirs, resumeSessionId: 'old-session' })).roots).toEqual(dirs);
+    // None to send: no field.
+    expect((await rootsSeen('roots', { additionalDirectories: [] })).roots).toBeNull();
+  });
+
+  it("sends none to an agent that doesn't advertise them, and says it may not edit them", async () => {
+    const { roots, warnings } = await rootsSeen('default', { additionalDirectories: [path.join(os.tmpdir(), 'linked-b')] });
+    expect(roots).toBeNull();
+    expect(warnings).toEqual(["Fake Agent didn't say it can use folders outside the project, so it may not be able to edit linked-b."]);
+    expect((await rootsSeen('default', {})).warnings).toEqual([]);
+  });
+});

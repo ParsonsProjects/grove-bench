@@ -3,6 +3,7 @@ import type { AdapterEvent, AgentAdapter, AgentQueryHandle, AdapterConfig, Permi
 import type { ManagedSession } from './session-types.js';
 import { IPC, PERMISSION_TIMEOUT_MINUTES, type AgentEvent, type AgentSystemInfo, type McpServerInfo } from '../shared/types.js';
 import * as fs from 'node:fs';
+import path from 'node:path';
 import { perfSteps } from './perf-steps.js';
 import { worktreeManager } from './worktree-manager.js';
 import { STREAM_FLUSH_MS } from './session-stream.js';
@@ -60,7 +61,7 @@ vi.mock('./settings.js', () => ({
   getSettings: vi.fn(() => ({
     defaultSystemPromptAppend: null,
     toolAllowRules: [],
-    toolDenyRules: [],
+    toolDenyRules: [], workingDirectories: [],
     cavemanMode: 'off',
   })),
   loadSettings: vi.fn(() => ({ alwaysOnTop: false, theme: 'system' })),
@@ -678,7 +679,7 @@ describe('AgentSessionManager caveman mode', () => {
     settingsMock.getSettings.mockReturnValue({
       defaultSystemPromptAppend: null,
       toolAllowRules: [],
-      toolDenyRules: [],
+      toolDenyRules: [], workingDirectories: [],
       cavemanMode: 'off',
     });
   });
@@ -704,7 +705,7 @@ describe('AgentSessionManager caveman mode', () => {
     settingsMock.getSettings.mockReturnValue({
         defaultSystemPromptAppend: null,
       toolAllowRules: [],
-      toolDenyRules: [],
+      toolDenyRules: [], workingDirectories: [],
       cavemanMode: 'full',
     });
 
@@ -728,7 +729,7 @@ describe('AgentSessionManager caveman mode', () => {
     settingsMock.getSettings.mockReturnValue({
         defaultSystemPromptAppend: null,
       toolAllowRules: [],
-      toolDenyRules: [],
+      toolDenyRules: [], workingDirectories: [],
       cavemanMode: 'lite',
     });
 
@@ -1192,9 +1193,29 @@ describe('AgentSessionManager event processing', () => {
   });
 });
 
+describe('AgentSessionManager folders outside the project', () => {
+  const baseSettings = () => ({ defaultSystemPromptAppend: null, toolAllowRules: [], toolDenyRules: [], workingDirectories: [], cavemanMode: 'off' });
+  afterEach(() => {
+    settingsMock.getSettings.mockImplementation(baseSettings);
+  });
+
+  it("gives the agent the setting's folders and the thread's linked worktrees, and protects the linked projects' own folders", async () => {
+    settingsMock.getSettings.mockImplementation(() => ({ ...baseSettings(), workingDirectories: ['/shared', 'not/absolute'] }));
+    await sessionManager.createSession({
+      id: 'test-folders', branch: 'feat', cwd: '/wt/a1', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+      linked: [{ repoPath: '/code/b', path: '/wt/b1', branch: 'feat' }],
+    });
+    await vi.waitFor(() => expect(mockAdapter.lastConfig).not.toBeNull());
+    expect(mockAdapter.lastConfig!.additionalDirectories).toEqual([path.resolve('/wt/b1'), path.resolve('/shared')]);
+    expect(mockAdapter.lastConfig!.protectedEditRoots).toEqual([path.resolve('/code/b')]);
+
+    await sessionManager.destroySession('test-folders');
+  });
+});
+
 describe('AgentSessionManager prompt suggestions', () => {
   // As the settings mock at the top of this file returns them.
-  const baseSettings = () => ({ defaultSystemPromptAppend: null, toolAllowRules: [], toolDenyRules: [], cavemanMode: 'off' });
+  const baseSettings = () => ({ defaultSystemPromptAppend: null, toolAllowRules: [], toolDenyRules: [], workingDirectories: [], cavemanMode: 'off' });
   const withSuggestions = (on: boolean) => () => ({ ...baseSettings(), promptSuggestions: on });
   const sentSuggestions = (win: ReturnType<typeof makeMockWindow>) =>
     win._send.mock.calls.filter(([, event]: [string, AgentEvent]) => event?.type === 'prompt_suggestion');
@@ -1281,7 +1302,7 @@ describe('AgentSessionManager prompt suggestions', () => {
 
 describe('AgentSessionManager limits', () => {
   // As the settings mock at the top of this file returns them.
-  const baseSettings = () => ({ defaultSystemPromptAppend: null, toolAllowRules: [], toolDenyRules: [], cavemanMode: 'off' });
+  const baseSettings = () => ({ defaultSystemPromptAppend: null, toolAllowRules: [], toolDenyRules: [], workingDirectories: [], cavemanMode: 'off' });
   afterEach(() => {
     settingsMock.getSettings.mockImplementation(baseSettings);
   });
@@ -2717,7 +2738,7 @@ describe('AgentSessionManager turn state for a loading history', () => {
   });
 
   it('lists MCP questions and limit questions too', async () => {
-    const limitSettings = { defaultSystemPromptAppend: null, toolAllowRules: [], toolDenyRules: [], cavemanMode: 'off', turnToolCallLimit: 1 };
+    const limitSettings = { defaultSystemPromptAppend: null, toolAllowRules: [], toolDenyRules: [], workingDirectories: [], cavemanMode: 'off', turnToolCallLimit: 1 };
     settingsMock.getSettings.mockImplementation(() => limitSettings);
     try {
       await startSession('test-turn-asks');
@@ -2738,7 +2759,7 @@ describe('AgentSessionManager turn state for a loading history', () => {
 
       await sessionManager.destroySession('test-turn-asks');
     } finally {
-      settingsMock.getSettings.mockImplementation(() => ({ defaultSystemPromptAppend: null, toolAllowRules: [], toolDenyRules: [], cavemanMode: 'off' }));
+      settingsMock.getSettings.mockImplementation(() => ({ defaultSystemPromptAppend: null, toolAllowRules: [], toolDenyRules: [], workingDirectories: [], cavemanMode: 'off' }));
     }
   });
 
@@ -4650,7 +4671,7 @@ describe('AgentSessionManager model handling', () => {
     await sessionManager.destroySession('test-model-default');
   });
 
-  const BASE_SETTINGS = { defaultSystemPromptAppend: null, toolAllowRules: [], toolDenyRules: [], cavemanMode: 'off' };
+  const BASE_SETTINGS = { defaultSystemPromptAppend: null, toolAllowRules: [], toolDenyRules: [], workingDirectories: [], cavemanMode: 'off' };
 
   it('records which agent the conversation runs', async () => {
     await sessionManager.createSession({ id: 'test-agent-recorded', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
@@ -5106,7 +5127,7 @@ describe('AgentSessionManager session controls', () => {
   const SETTINGS = {
     defaultSystemPromptAppend: null,
     toolAllowRules: [],
-    toolDenyRules: [],
+    toolDenyRules: [], workingDirectories: [],
     cavemanMode: 'off',
   };
 

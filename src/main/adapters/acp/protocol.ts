@@ -21,7 +21,14 @@ export interface AcpInitializeResponse {
     loadSession?: boolean;
     promptCapabilities?: { image?: boolean; audio?: boolean; embeddedContext?: boolean };
     mcpCapabilities?: { http?: boolean; sse?: boolean };
-    sessionCapabilities?: { resume?: object | null; close?: object | null; list?: object | null } | null;
+    sessionCapabilities?: {
+      resume?: object | null;
+      close?: object | null;
+      list?: object | null;
+      /** `{}`: session/new, session/load and session/resume take
+       *  `additionalDirectories` (absolute paths outside cwd). */
+      additionalDirectories?: object | null;
+    } | null;
   };
   agentInfo?: AcpImplementation | null;
   authMethods?: Array<{ id: string; name: string; description?: string | null; type?: string }>;

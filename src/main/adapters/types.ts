@@ -178,6 +178,16 @@ export interface PreviewOperations {
 
 export interface AdapterConfig {
   cwd: string;
+  /** Folders outside cwd the agent may also work in, as absolute paths: the
+   *  "Additional working directories" setting and the thread's linked
+   *  projects' worktrees. Claude Code takes them as additionalDirectories
+   *  (--add-dir); an ACP agent gets them only when it advertises
+   *  sessionCapabilities.additionalDirectories. */
+  additionalDirectories?: string[] | null;
+  /** Folders the agent must not edit, as absolute paths: each linked
+   *  project's own folder, whose worktree (in additionalDirectories) it edits
+   *  instead. */
+  protectedEditRoots?: string[] | null;
   /** The folder files attached to this conversation's messages are saved in,
    *  outside cwd. Claude Code lets the agent read there without a prompt. */
   attachmentsDir?: string | null;

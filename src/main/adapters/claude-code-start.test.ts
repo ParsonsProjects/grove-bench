@@ -27,7 +27,7 @@ const servers = vi.hoisted(() => ({
 vi.mock('./memory-mcp-server.js', () => ({ createMemoryMcpServer: servers.createMemoryMcpServer }));
 vi.mock('./preview-mcp-server.js', () => ({ createPreviewMcpServer: servers.createPreviewMcpServer }));
 
-import { ClaudeCodeAdapter, CONTEXT_1M_BETA, LIMIT_STOP_REASON, THINKING_LEVEL_TOKENS, setSdkForTests } from './claude-code.js';
+import { ClaudeCodeAdapter, CONTEXT_1M_BETA, LIMIT_STOP_REASON, THINKING_LEVEL_TOKENS, editDenyRule, setSdkForTests } from './claude-code.js';
 import { ResumeNotFoundError, type AdapterConfig, type AdapterEvent, type AgentQueryHandle, type PermissionResponse } from './types.js';
 import type { ClaudeAccount } from './claude-accounts.js';
 import type { Options } from '@anthropic-ai/claude-agent-sdk';
@@ -204,6 +204,16 @@ describe('ClaudeCodeAdapter.start(): what it asks the SDK for', () => {
     const fast = (await start({ model: 'claude-opus-4-8', disabledSkills: ['deploy'], controls: { speed: 'fast' } })).options;
     expect(fast.settings).toEqual({ fastMode: true, skillOverrides: { deploy: 'off' } });
     expect((await start({ disabledSkills: [] })).options).not.toHaveProperty('settings');
+  });
+
+  it('gives the agent folders outside the project, and refuses edits in the ones it must not touch', async () => {
+    const { options } = await start({ additionalDirectories: ['/work/b-wt', '/work/shared'], protectedEditRoots: ['/work/b', 'relative/x'] });
+    expect(options.additionalDirectories).toEqual(['/work/b-wt', '/work/shared']);
+    // A path that isn't absolute can't be a rule; the rest are refused in every mode.
+    expect(options.settings).toEqual({ permissions: { deny: ['Edit(//work/b/**)'] } });
+    const plain = (await start({ additionalDirectories: [], protectedEditRoots: [] })).options;
+    expect(plain).not.toHaveProperty('additionalDirectories');
+    expect(plain).not.toHaveProperty('settings');
   });
 
   it('turns the reasoning controls into thinking, effort and fast mode', async () => {
@@ -613,5 +623,20 @@ describe('ClaudeCodeAdapter.prepareText(): an agent started before its message',
     expect(warm.handle.query).not.toHaveBeenCalled();
     expect(warm.handle.close).toHaveBeenCalled();
     expect((warm.startup.mock.calls[0][0].options.abortController as AbortController).signal.aborted).toBe(true);
+  });
+});
+
+describe('editDenyRule', () => {
+  it('writes a folder as a rule from the filesystem root, Windows paths in POSIX form', () => {
+    expect(editDenyRule('C:\\code\\b')).toBe('Edit(//c/code/b/**)');
+    expect(editDenyRule('D:/Work/B Project/')).toBe('Edit(//d/Work/B Project/**)');
+    expect(editDenyRule('/home/me/b')).toBe('Edit(//home/me/b/**)');
+  });
+
+  it('makes no rule for a relative path, a root, or one with pattern characters', () => {
+    expect(editDenyRule('code/b')).toBeNull();
+    expect(editDenyRule('/')).toBeNull();
+    expect(editDenyRule('C:\\code\\[old]')).toBeNull();
+    expect(editDenyRule('/home/me/b*')).toBeNull();
   });
 });

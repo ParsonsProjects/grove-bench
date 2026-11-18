@@ -46,6 +46,21 @@ export interface WorktreeInfo {
   displayName?: string | null;
   /** Adapter id of the agent the session runs, from the manifest. */
   agentType?: string;
+  /** Other projects the thread also works in, each through its own
+   *  worktree (docs/linked-projects-plan.md). */
+  linked?: LinkedCheckout[];
+}
+
+/** Another project a thread works in besides its own: a worktree of that
+ *  project, made for the thread, on the thread's branch name. */
+export interface LinkedCheckout {
+  /** The linked project's folder. */
+  repoPath: string;
+  /** The thread's worktree of it: <worktree folder>/<project hash>/<thread id>. */
+  path: string;
+  /** The branch it was linked on. The worktree may have another checked out
+   *  since; its status reads what is checked out now. */
+  branch: string;
 }
 
 export interface WorktreeRepoConfig {

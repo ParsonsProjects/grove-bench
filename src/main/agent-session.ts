@@ -1,6 +1,6 @@
 import type { BrowserWindow } from 'electron';
 import { IPC } from '../shared/types.js';
-import type { AgentSystemInfo, SessionInfo, SessionStatus, AgentEvent, ThreadUsage, PermissionDecision, PermissionMode, McpServerInfo, McpAuthStartResult, McpElicitationResponse, McpServerContextCost, ProviderUsage, SessionControls, ThreadTurnState, EventHistoryPage } from '../shared/types.js';
+import type { AgentSystemInfo, SessionInfo, SessionStatus, AgentEvent, ThreadUsage, PermissionDecision, PermissionMode, McpServerInfo, McpAuthStartResult, McpElicitationResponse, McpServerContextCost, ProviderUsage, SessionControls, ThreadTurnState, EventHistoryPage, LinkedCheckout } from '../shared/types.js';
 import { CONTROL_IDS, MCP_SIGN_IN_TIMEOUT_MS, isMcpServerDown, isPermissionMode, subagentParent } from '../shared/types.js';
 import { userEventText } from '../shared/prompt-text.js';
 import { errorMessage } from '../shared/error-message.js';
@@ -52,6 +52,7 @@ import {
   readSafeWarning, readSafeSandbox, hasSandboxWarning, startingPermissionMode,
   initialControls, normalizeModelId, appendedSystemPrompt,
 } from './session-config.js';
+import { agentFolders } from './linked-projects.js';
 
 // SDK teardown rejections (a query closed with control responses in flight)
 // are filtered in crash-handling.ts, which owns the process-wide handler.
@@ -302,6 +303,8 @@ class AgentSessionManager {
     adoptSetupEvents?: () => AgentEvent[];
     /** The thread's spend and spend allowance when last saved (worktree manifest). */
     savedLimits?: SavedThreadLimits;
+    /** Other projects' worktrees the thread also works in. */
+    linked?: LinkedCheckout[];
   }): Promise<SessionInfo> {
     const { id, branch, cwd, repoPath, window: win } = opts;
 
@@ -354,6 +357,7 @@ class AgentSessionManager {
       id,
       branch,
       worktreePath: cwd,
+      linked: opts.linked ?? [],
       repoPath,
       status: 'starting',
       agentType: adapterType,
@@ -592,8 +596,11 @@ class AgentSessionManager {
     }
     let handle: AgentQueryHandle;
     try {
+    const folders = agentFolders(session.worktreePath, currentSettings.workingDirectories, session.linked);
     handle = await session.adapter.start({
       cwd: session.worktreePath,
+      additionalDirectories: folders.additionalDirectories,
+      protectedEditRoots: folders.protectedEditRoots,
       attachmentsDir: attachmentsFolder(id),
       // session.model is the source of truth — it survives stop/restart and
       // resume cycles, so the user's selected model isn't lost when the query

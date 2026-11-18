@@ -240,6 +240,26 @@ export function stripAnsi(text: string): string {
 export const LIMIT_STOP_REASON = 'The user stopped this turn at a limit they set in Grove Bench (spend, tool calls or time). Do not retry.';
 
 /**
+ * A Claude Code deny rule that stops its file-editing tools in `root` and
+ * below. `Edit` rules "apply to all built-in tools that edit files", and
+ * `//path` is a path from the filesystem root; on Windows paths are matched
+ * in POSIX form, `C:\Users\alice` as `/c/Users/alice`
+ * (https://code.claude.com/docs/en/permissions). Null for a path that isn't
+ * absolute, or that holds a character the rule would read as a pattern.
+ */
+export function editDenyRule(root: string): string | null {
+  const drive = /^([A-Za-z]):[\\/]/.exec(root);
+  let posix: string;
+  if (drive) posix = `/${drive[1].toLowerCase()}/${root.slice(3).replace(/\\/g, '/')}`;
+  else if (root.startsWith('/')) posix = root;
+  else return null;
+  posix = posix.replace(/\/+$/, '');
+  // Gitignore syntax: these would match more than the folder (or escape).
+  if (posix === '' || /[*?[\]\\]/.test(posix)) return null;
+  return `Edit(/${posix}/**)`;
+}
+
+/**
  * A PreToolUse hook for Grove's limits (AdapterConfig.beforeToolUse).
  * PreToolUse fires on every tool call, ahead of the permission flow
  * (https://code.claude.com/docs/en/hooks), unlike canUseTool, which only
@@ -2061,15 +2081,20 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     const skillOverrides = config.disabledSkills?.length
       ? Object.fromEntries(config.disabledSkills.map((name) => [name, 'off' as const]))
       : null;
+    const denyEdits = (config.protectedEditRoots ?? []).flatMap((root) => editDenyRule(root) ?? []);
     const flagSettings = {
       ...(fastMode ? { fastMode: true } : {}),
       ...(skillOverrides ? { skillOverrides } : {}),
+      // Deny rules hold in every permission mode, bypassPermissions too
+      // (https://code.claude.com/docs/en/permission-modes).
+      ...(denyEdits.length > 0 ? { permissions: { deny: denyEdits } } : {}),
     };
 
     const q: Query = queryFn({
       prompt: readableStreamToAsyncIterable(inputStream),
       options: {
         cwd: config.cwd,
+        ...(config.additionalDirectories?.length ? { additionalDirectories: [...config.additionalDirectories] } : {}),
         abortController,
         includePartialMessages: true,
         // Subagents' text and thinking too, not only their tool calls: the

@@ -819,17 +819,19 @@ class AcpQuery {
     const rpc = this.rpc!;
     const { cwd, resumeSessionId } = this.config;
     const caps = this.init?.agentCapabilities;
+    const roots = this.rootsParams();
+    this.warnUnusedRoots();
     if (resumeSessionId) {
       try {
         if (caps?.sessionCapabilities?.resume) {
-          this.takeSetup(await this.signedIn(() => rpc.request<AcpSessionSetup>('session/resume', { sessionId: resumeSessionId, cwd, mcpServers })), false);
+          this.takeSetup(await this.signedIn(() => rpc.request<AcpSessionSetup>('session/resume', { sessionId: resumeSessionId, cwd, mcpServers, ...roots })), false);
           this.sessionId = resumeSessionId;
           return;
         }
         if (caps?.loadSession) {
           this.replaying = true;
           try {
-            this.takeSetup(await this.signedIn(() => rpc.request<AcpSessionSetup>('session/load', { sessionId: resumeSessionId, cwd, mcpServers })), false);
+            this.takeSetup(await this.signedIn(() => rpc.request<AcpSessionSetup>('session/load', { sessionId: resumeSessionId, cwd, mcpServers, ...roots })), false);
           } finally {
             this.replaying = false;
           }
@@ -845,7 +847,7 @@ class AcpQuery {
         this.emit({ type: 'status', level: 'warning', newConversation: true, message: `${this.def.displayName} couldn't reopen this thread, so it starts afresh. The thread above stays, but the agent won't remember it.` });
       }
     }
-    const setup = await this.signedIn(() => rpc.request<AcpSessionSetup>('session/new', { cwd, mcpServers }));
+    const setup = await this.signedIn(() => rpc.request<AcpSessionSetup>('session/new', { cwd, mcpServers, ...roots }));
     if (!setup?.sessionId) throw new Error(`${this.def.displayName} did not start a session`);
     this.sessionId = setup.sessionId;
     this.takeSetup(setup, true);
@@ -858,6 +860,29 @@ class AcpQuery {
     const result = await withKeySignIn(this.rpc!, this.def, this.init, request);
     this.adapter.recordSignIn(true);
     return result;
+  }
+
+  /** The folders outside cwd a session request carries
+   *  (AdapterConfig.additionalDirectories), sent only to an agent that
+   *  advertises sessionCapabilities.additionalDirectories. On load and
+   *  resume the list replaces the session's earlier one. */
+  private rootsParams(): { additionalDirectories?: string[] } {
+    const dirs = this.config.additionalDirectories ?? [];
+    if (dirs.length === 0 || !this.init?.agentCapabilities?.sessionCapabilities?.additionalDirectories) return {};
+    return { additionalDirectories: [...dirs] };
+  }
+
+  /** Says so when there are folders outside cwd that the agent can't be
+   *  given, because it didn't advertise them. */
+  private warnUnusedRoots(): void {
+    const dirs = this.config.additionalDirectories ?? [];
+    if (dirs.length === 0 || this.init?.agentCapabilities?.sessionCapabilities?.additionalDirectories) return;
+    const names = dirs.map((d) => path.basename(d) || d).join(', ');
+    this.emit({
+      type: 'status',
+      level: 'warning',
+      message: `${this.def.displayName} didn't say it can use folders outside the project, so it may not be able to edit ${names}.`,
+    });
   }
 
   private instructions(): string | null {
@@ -1068,6 +1093,7 @@ class AcpQuery {
       const setup = await this.rpc!.request<AcpSessionSetup>('session/new', {
         cwd: this.config.cwd,
         mcpServers: this.mcpServers,
+        ...this.rootsParams(),
       });
       if (!setup?.sessionId) throw new Error(`${this.def.displayName} did not start a session`);
       this.sessionId = setup.sessionId;
