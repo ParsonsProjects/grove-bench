@@ -1301,7 +1301,7 @@ class AcpQuery {
     if (decision === 'allow') return;
     // Read-safe approves read-only calls when the user is asked
     // (session-permissions.ts), so one that wasn't asked about lost nothing.
-    if (decision === 'ask' && this.groveMode === 'readSafe' && isReadOnlyToolCall(d.toolName, d.toolInput, this.config.cwd, d.toolView)) return;
+    if (decision === 'ask' && this.groveMode === 'readSafe' && isReadOnlyToolCall(d.toolName, d.toolInput, this.config.cwd, d.toolView, this.config.linkedWorktrees ?? [])) return;
     this.warnedUnasked = true;
     const raw = d.toolView.command ?? d.toolView.path ?? d.toolView.summary ?? call.title ?? 'a tool';
     const what = raw.length > 80 ? `${raw.slice(0, 79)}…` : raw;
@@ -1455,6 +1455,8 @@ class AcpQuery {
       alwaysAllowedTools: config.alwaysAllowedTools,
       groveServers: groveServersOf(config),
       approveEditsInWorktree: this.groveMode === 'acceptEdits' || this.groveMode === 'readSafe',
+      linkedWorktrees: config.linkedWorktrees,
+      protectedEditRoots: config.protectedEditRoots,
     }).behavior;
   }
 }

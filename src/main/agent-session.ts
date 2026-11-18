@@ -1,3 +1,4 @@
+import path from 'node:path';
 import type { BrowserWindow } from 'electron';
 import { IPC } from '../shared/types.js';
 import type { AgentSystemInfo, SessionInfo, SessionStatus, AgentEvent, ThreadUsage, PermissionDecision, PermissionMode, McpServerInfo, McpAuthStartResult, McpElicitationResponse, McpServerContextCost, ProviderUsage, SessionControls, ThreadTurnState, EventHistoryPage, LinkedCheckout } from '../shared/types.js';
@@ -52,7 +53,7 @@ import {
   readSafeWarning, readSafeSandbox, hasSandboxWarning, startingPermissionMode,
   initialControls, normalizeModelId, appendedSystemPrompt,
 } from './session-config.js';
-import { agentFolders } from './linked-projects.js';
+import { agentFolders, linkInstructionFiles } from './linked-projects.js';
 
 // SDK teardown rejections (a query closed with control responses in flight)
 // are filtered in crash-handling.ts, which owns the process-wide handler.
@@ -341,6 +342,12 @@ class AgentSessionManager {
       repoPath,
       userAppend: opts.appendSystemPrompt ?? (appSettings.defaultSystemPromptAppend || null),
       cavemanMode: appSettings.cavemanMode,
+      linked: (opts.linked ?? []).map((l) => ({
+        name: path.basename(l.repoPath),
+        path: l.path,
+        repoPath: l.repoPath,
+        instructions: linkInstructionFiles(l.path, adapter.capabilities.additionalDirectoryInstructions === true),
+      })),
     });
 
     // Ensure memory directory exists for this repo
@@ -600,6 +607,9 @@ class AgentSessionManager {
     handle = await session.adapter.start({
       cwd: session.worktreePath,
       additionalDirectories: folders.additionalDirectories,
+      linkedWorktrees: session.linked.map((l) => l.path),
+      // B's CLAUDE.md, as a linked project's instructions.
+      additionalDirectoryInstructions: session.linked.length > 0,
       protectedEditRoots: folders.protectedEditRoots,
       attachmentsDir: attachmentsFolder(id),
       // session.model is the source of truth — it survives stop/restart and
@@ -617,7 +627,7 @@ class AgentSessionManager {
       // Mode is read at query start: switching into read-safe mid-query keeps
       // classifier-only protection until the next query (re)start.
       sandbox: !caps.sandbox ? null
-        : session.sandbox ?? (session.permissionMode === 'readSafe' ? readSafeSandbox(session.worktreePath) : null),
+        : session.sandbox ?? (session.permissionMode === 'readSafe' ? readSafeSandbox([session.worktreePath, ...session.linked.map((l) => l.path)]) : null),
       memoryOperations: {
         list: () => memory.listMemoryFiles(session.repoPath),
         read: (p) => memory.readMemoryFile(session.repoPath, p),

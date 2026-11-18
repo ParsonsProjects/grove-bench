@@ -216,6 +216,19 @@ describe('ClaudeCodeAdapter.start(): what it asks the SDK for', () => {
     expect(plain).not.toHaveProperty('settings');
   });
 
+  it("loads the extra folders' CLAUDE.md only when asked", async () => {
+    // Not inherited from the shell running the tests, which may set it.
+    vi.stubEnv('CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD', undefined);
+    try {
+      const asked = (await start({ additionalDirectories: ['/work/b-wt'], additionalDirectoryInstructions: true })).options;
+      expect(asked.env.CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD).toBe('1');
+      const notAsked = (await start({ additionalDirectories: ['/work/shared'] })).options;
+      expect(notAsked.env.CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD).toBeUndefined();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('turns the reasoning controls into thinking, effort and fast mode', async () => {
     const { options } = await start({ model: 'claude-opus-4-8', controls: { thinking: 'adaptive', effort: 'high', speed: 'fast' }, thinkingSummaries: false });
     expect(options).toMatchObject({ thinking: { type: 'adaptive', display: 'omitted' }, effort: 'high', settings: { fastMode: true } });

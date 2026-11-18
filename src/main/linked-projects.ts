@@ -5,6 +5,7 @@
  * Pure functions: the session manager passes their results to the adapter.
  */
 
+import fs from 'node:fs';
 import path from 'node:path';
 import type { LinkedCheckout } from '../shared/types.js';
 import { isPathInside } from './agent-utils.js';
@@ -46,4 +47,18 @@ export function agentFolders(
     protectedEditRoots.push(root);
   }
   return { additionalDirectories, protectedEditRoots };
+}
+
+/**
+ * The instruction files in a linked worktree the agent should be told to
+ * read, by name. An agent that loads an extra folder's CLAUDE.md itself
+ * (Claude Code) is told only of an AGENTS.md standing in for one, as it
+ * doesn't load those from extra folders
+ * (https://code.claude.com/docs/en/memory); any other is told of both.
+ */
+export function linkInstructionFiles(worktree: string, loadsClaudeMd: boolean, exists: (p: string) => boolean = fs.existsSync): string[] {
+  const claude = exists(path.join(worktree, 'CLAUDE.md'));
+  const agents = exists(path.join(worktree, 'AGENTS.md'));
+  if (loadsClaudeMd) return !claude && agents ? ['AGENTS.md'] : [];
+  return [...(claude ? ['CLAUDE.md'] : []), ...(agents ? ['AGENTS.md'] : [])];
 }

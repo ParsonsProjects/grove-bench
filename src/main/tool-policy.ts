@@ -45,10 +45,15 @@ export interface PolicyContext {
   /** Grove's own MCP servers this agent was given (groveServersOf): their
    *  memory and Preview looking tools run without a prompt. */
   groveServers?: ReadonlySet<GroveServerName>;
-  /** Approve edits whose every path is inside `cwd`: Edit and Read-safe
-   *  modes, for agents whose modes Grove applies itself (ACP). Claude Code
-   *  applies its own. */
+  /** Approve edits whose every path is inside `cwd`, or inside one of
+   *  `linkedWorktrees`: Edit and Read-safe modes, for agents whose modes
+   *  Grove applies itself (ACP). Claude Code applies its own. */
   approveEditsInWorktree?: boolean;
+  /** The thread's linked projects' worktrees (AdapterConfig.linkedWorktrees). */
+  linkedWorktrees?: readonly string[] | null;
+  /** Linked projects' own folders (AdapterConfig.protectedEditRoots): an
+   *  edit there is refused, whatever the rules say. */
+  protectedEditRoots?: readonly string[] | null;
   /** The agent's own checks, run after the rules and before standing
    *  approvals, so "always allow" can't get past them (Claude's sandbox). */
   guard?: () => PolicyDecision | null;
@@ -62,6 +67,16 @@ export type PolicyDecision =
 export function decideToolCall(call: PolicyCall, ctx: PolicyContext): PolicyDecision {
   if (ctx.allowedTools && !ctx.allowedTools.has(call.toolName)) {
     return { behavior: 'deny', reason: 'not-allowed', message: `Tool "${call.toolName}" is not allowed in this session` };
+  }
+
+  // A linked project's own folder: the thread works there through its worktree.
+  const protectedRoot = call.category === 'edit' ? editedProtectedRoot(call.view, ctx.cwd, ctx.protectedEditRoots) : null;
+  if (protectedRoot) {
+    return {
+      behavior: 'deny',
+      reason: 'guard',
+      message: `${protectedRoot} is a linked project's own folder, which this thread doesn't edit. Make the change in that project's worktree for this thread instead.`,
+    };
   }
 
   const rule = ruleVerdict(call, ctx);
@@ -79,7 +94,7 @@ export function decideToolCall(call: PolicyCall, ctx: PolicyContext): PolicyDeci
 
   if (ctx.alwaysAllowedTools.has(call.toolName)) return { behavior: 'allow' };
 
-  if (ctx.approveEditsInWorktree && call.category === 'edit' && editsInsideWorktree(call.view, ctx.cwd)) {
+  if (ctx.approveEditsInWorktree && call.category === 'edit' && editsInsideWorktree(call.view, ctx.cwd, ctx.linkedWorktrees ?? [])) {
     return { behavior: 'allow' };
   }
   return { behavior: 'ask' };
@@ -122,8 +137,23 @@ export function readsAttachedFiles(view: ToolView, cwd: string, attachmentsDir: 
   return paths.length > 0 && paths.every((p) => isPathInside(attachmentsDir, path.resolve(cwd, p)));
 }
 
-/** Whether every path an edit names is inside the worktree (none named: no). */
-export function editsInsideWorktree(view: ToolView, cwd: string): boolean {
+/** Whether every path an edit names is inside the worktree, or one of the
+ *  thread's linked worktrees (none named: no). */
+export function editsInsideWorktree(view: ToolView, cwd: string, linkedWorktrees: readonly string[] = []): boolean {
   const paths = pathsOf(view);
-  return paths.length > 0 && paths.every((p) => isPathInside(cwd, path.resolve(cwd, p)));
+  return paths.length > 0 && paths.every((p) => {
+    const resolved = path.resolve(cwd, p);
+    return isPathInside(cwd, resolved) || linkedWorktrees.some((w) => isPathInside(w, resolved));
+  });
+}
+
+/** The protected folder an edit names a path in, if any. */
+function editedProtectedRoot(view: ToolView, cwd: string, roots: readonly string[] | null | undefined): string | null {
+  if (!roots?.length) return null;
+  for (const p of pathsOf(view)) {
+    const resolved = path.resolve(cwd, p);
+    const root = roots.find((r) => isPathInside(r, resolved));
+    if (root) return root;
+  }
+  return null;
 }

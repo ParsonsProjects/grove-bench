@@ -100,6 +100,32 @@ describe('decideToolCall', () => {
   });
 });
 
+describe("decideToolCall with a thread's linked projects", () => {
+  const linkedWt = path.resolve('/wt/b1');
+  const projectB = path.resolve('/code/b');
+
+  it("refuses an edit in a linked project's own folder, over an allow rule and always-allow", () => {
+    const decision = decideToolCall(claude('Edit', { file_path: path.join(projectB, 'src', 'a.ts'), old_string: 'a', new_string: 'b' }), ctx({
+      protectedEditRoots: [projectB],
+      toolAllowRules: [{ pattern: 'edit' }],
+      alwaysAllowedTools: new Set(['Edit']),
+    }));
+    expect(decision).toMatchObject({ behavior: 'deny', reason: 'guard' });
+    expect((decision as { message: string }).message).toContain(`${projectB} is a linked project's own folder`);
+  });
+
+  it('leaves reads there alone, and edits elsewhere', () => {
+    expect(decideToolCall(claude('Read', { file_path: path.join(projectB, 'a.ts') }), ctx({ protectedEditRoots: [projectB] })).behavior).toBe('ask');
+    expect(decideToolCall(claude('Edit', { file_path: path.join(linkedWt, 'a.ts'), old_string: 'a', new_string: 'b' }), ctx({ protectedEditRoots: [projectB] })).behavior).toBe('ask');
+  });
+
+  it("approves edits in the linked worktrees in the modes that approve the thread's own", () => {
+    const edit = call('write', { kind: 'edit', path: path.join(linkedWt, 'a.ts') });
+    expect(decideToolCall(edit, ctx({ approveEditsInWorktree: true, linkedWorktrees: [linkedWt] })).behavior).toBe('allow');
+    expect(decideToolCall(edit, ctx({ approveEditsInWorktree: true })).behavior).toBe('ask');
+  });
+});
+
 describe('readsAttachedFiles / editsInsideWorktree', () => {
   it("needs a path, and doesn't let one climb out", () => {
     expect(readsAttachedFiles({ kind: 'read', path: path.join(att, '..', 's2', 'a.pdf') }, cwd, att)).toBe(false);

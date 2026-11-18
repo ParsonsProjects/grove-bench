@@ -1738,6 +1738,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     imageAttachments: true,
     structuredOutput: true,
     sandbox: true,
+    additionalDirectoryInstructions: true,
     accounts: true,
   };
 
@@ -2038,6 +2039,9 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         toolDenyRules: config.toolDenyRules,
         alwaysAllowedTools: config.alwaysAllowedTools,
         groveServers,
+        // The deny rules hold its own tools in every mode; this covers the
+        // calls that are asked about, such as an MCP server's edits.
+        protectedEditRoots: config.protectedEditRoots,
         guard: () => sandboxDecision(toolName, input, config),
       });
       if (decision.behavior === 'deny') return { behavior: 'deny' as const, message: decision.message };
@@ -2153,6 +2157,11 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         env: {
           ...this.agentEnv(cleanEnv()),
           CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR: '1',
+          // "By default, CLAUDE.md files from these directories are not
+          // loaded" (https://code.claude.com/docs/en/memory).
+          ...(config.additionalDirectoryInstructions && config.additionalDirectories?.length
+            ? { CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '1' }
+            : {}),
           ...this.savedKeyEnv(),
           ...(config.extraEnv ?? {}),
         },

@@ -22,10 +22,12 @@ vi.mock('node:fs', () => ({
   default: {
     readFileSync: vi.fn(() => { throw new Error('ENOENT'); }),
     statSync: vi.fn(() => { throw new Error('ENOENT'); }),
+    existsSync: vi.fn(() => false),
     writeFileSync: vi.fn(),
     appendFileSync: vi.fn(),
     mkdirSync: vi.fn(),
   },
+  existsSync: vi.fn(() => false),
   readFileSync: vi.fn(() => { throw new Error('ENOENT'); }),
   statSync: vi.fn(() => { throw new Error('ENOENT'); }),
   writeFileSync: vi.fn(),
@@ -1208,6 +1210,10 @@ describe('AgentSessionManager folders outside the project', () => {
     await vi.waitFor(() => expect(mockAdapter.lastConfig).not.toBeNull());
     expect(mockAdapter.lastConfig!.additionalDirectories).toEqual([path.resolve('/wt/b1'), path.resolve('/shared')]);
     expect(mockAdapter.lastConfig!.protectedEditRoots).toEqual([path.resolve('/code/b')]);
+    expect(mockAdapter.lastConfig!.linkedWorktrees).toEqual(['/wt/b1']);
+    expect(mockAdapter.lastConfig!.additionalDirectoryInstructions).toBe(true);
+    // The agent is told where the linked worktree is, and what not to edit.
+    expect(mockAdapter.lastConfig!.appendSystemPrompt).toContain("- b: /wt/b1 (the project's own folder, /code/b, is not yours to edit)");
 
     await sessionManager.destroySession('test-folders');
   });
