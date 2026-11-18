@@ -14,6 +14,7 @@ Multi-agent git worktree orchestrator for [Claude Code](https://docs.anthropic.c
 - **Integrated terminal** — Built-in xterm.js terminals with full PTY support
 - **Thread management** — Start, monitor, and stop threads across projects from a single UI
 - **Project memory** — Persistent notes per project, shared across threads
+- **Usage**: cost, tokens and agent time across threads and models, removed threads included
 
 ## Tech Stack
 
