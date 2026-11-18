@@ -25,6 +25,7 @@
 | `Ctrl+N` | New thread draft (in the open thread's project) |
 | `Ctrl+Shift+T` | Reopen the last thread you closed |
 | `Ctrl+B` | Open or close bookmarks |
+| `Ctrl+Shift+A` | Open or close the [agent monitor](agent-monitor.md): what every thread is running |
 | `Ctrl+L` | Go to the address bar (Preview tab) |
 
 Inside a Preview page, browser keys work as usual (`F5`, `F12`, `Alt+Left`). See [Preview tab](preview-tab.md#keys-inside-the-page).

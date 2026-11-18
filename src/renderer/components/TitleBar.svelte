@@ -1,6 +1,7 @@
 <script lang="ts">
   import { PIXEL_TREE } from '../lib/pixel-tree.js';
   import UpdateNotification from './UpdateNotification.svelte';
+  import AgentMonitorTrigger from './AgentMonitorTrigger.svelte';
   import { lazyComponent } from '../lib/lazy-component.js';
   import { helpStore } from '../stores/help.svelte.js';
 
@@ -164,6 +165,7 @@
     <UpdateNotification />
   </div>
   <div class="flex items-center h-full relative z-10">
+    <AgentMonitorTrigger />
     <button
       onclick={() => helpStore.show()}
       class="win-btn h-full px-3 flex items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"

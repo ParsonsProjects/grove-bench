@@ -1828,6 +1828,37 @@ describe('settlePrompts (one way to settle unanswered prompts, for every caller)
     const msgs = messageStore.getMessages(SID);
     expect(settlePrompts(msgs)).toBe(msgs);
   });
+
+  /** The turn's own call, a subagent it waits on, and one in the background
+   *  (its Agent call returned, its task runs), each running a command. */
+  function seedSubagents() {
+    const call = (toolUseId: string, extra: Record<string, unknown> = {}) =>
+      ({ kind: 'tool_call', id: toolUseId, uuid: toolUseId, toolUseId, toolName: 'Bash', toolInput: { command: 'npm test' }, pending: true, ...extra });
+    messageStore.messagesBySession = {
+      ...messageStore.messagesBySession,
+      [SID]: [
+        call('own'),
+        call('fg', { toolName: 'Agent', toolInput: { subagent_type: 'Explore', prompt: 'Look' } }),
+        call('fg-child', { parentToolUseId: 'fg' }),
+        call('bg', { toolName: 'Agent', toolInput: { subagent_type: 'general-purpose', prompt: 'Check' }, pending: false }),
+        call('bg-child', { parentToolUseId: 'bg' }),
+      ] as never,
+    };
+    backgroundTaskStore.start(SID, { type: 'task_started', taskId: 'task-bg', toolUseId: 'bg', description: 'Check', taskType: 'local_agent' });
+  }
+  const pendingById = () => Object.fromEntries(messageStore.getMessages(SID).map((m) => [(m as { toolUseId: string }).toolUseId, (m as { pending: boolean }).pending]));
+
+  it("an interrupt leaves a background subagent's running calls running: it works on after the turn", () => {
+    seedSubagents();
+    messageStore.markSessionStopped(SID, { byUser: true, keepBackground: true });
+    expect(pendingById()).toEqual({ own: false, fg: false, 'fg-child': false, bg: false, 'bg-child': true });
+  });
+
+  it("settles a background subagent's calls too when the agent itself stopped", () => {
+    seedSubagents();
+    messageStore.markSessionStopped(SID);
+    expect(pendingById()['bg-child']).toBe(false);
+  });
 });
 
 describe('background task cleanup (delegates to backgroundTaskStore)', () => {
