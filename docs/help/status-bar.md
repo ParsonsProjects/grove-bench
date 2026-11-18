@@ -70,7 +70,7 @@ A file that came in more than once is listed once, at the latest message. A suba
 
 ### Last turn
 
-The **Last turn** row says how long the last turn took. With an API key sign-in it also shows what the turn cost, estimated at list price (hover for the exact figure), with the thread's and today's totals and the tokens used. On a plan such as Pro or Max the cost is left out, because turns count toward the plan's limits rather than a bill; **Usage** in Agent settings shows how much of the plan you've used. **Limits & alerts** opens the settings for spending alerts.
+The **Last turn** row says how long the last turn took. With an API key sign-in it also shows what the turn cost, estimated at list price (hover for the exact figure), with the thread's and today's totals and the tokens used. On a plan such as Pro or Max the cost is left out, because turns count toward the plan's limits rather than a bill; **Usage** in Agent settings shows how much of the plan you've used. **All usage** opens cost, tokens and time across every thread and model (see **The harvest** in [Settings](settings.md#the-harvest-usage)). **Limits & alerts** opens the settings for spending alerts.
 
 ## Branch
 

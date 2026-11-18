@@ -1305,6 +1305,9 @@ export function registerHandlers() {
   ipcMain.handle(IPC.LIMITS_THREAD_USAGE, (_event, sessionId: unknown): Promise<ThreadUsage> | ThreadUsage =>
     isThreadId(sessionId) ? sessionManager.threadUsage(sessionId) : { spendUsd: 0, tokens: { input: 0, output: 0 } });
 
+  ipcMain.handle(IPC.USAGE_SUMMARY, (_event, since: unknown) =>
+    sessionManager.usageSummary(typeof since === 'number' && Number.isFinite(since) ? since : null));
+
   ipcMain.handle(IPC.AGENT_HISTORY, (_event, sessionId: string) => {
     const prelaunch = prelaunchEvents.get(sessionId) ?? [];
     const history = sessionManager.getEventHistory(sessionId);

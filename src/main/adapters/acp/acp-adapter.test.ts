@@ -120,6 +120,8 @@ describe('AcpAdapter', () => {
     const second = await until(handle, 'result');
 
     expect(first.at(-1)).toMatchObject({ type: 'result', totalCostUsd: 0.01, sessionCostUsd: 0.01 });
+    // The whole turn goes to the session's model.
+    expect((first.at(-1) as { models?: unknown }).models).toEqual([expect.objectContaining({ costUsd: 0.01 })]);
     expect((second.at(-1) as { totalCostUsd: number }).totalCostUsd).toBeCloseTo(0.01, 10);
     expect((second.at(-1) as { sessionCostUsd: number }).sessionCostUsd).toBeCloseTo(0.02, 10);
     expect(first.filter((e) => e.type === 'usage').at(-1)).toEqual({ type: 'usage', inputTokens: 900, outputTokens: 40 });

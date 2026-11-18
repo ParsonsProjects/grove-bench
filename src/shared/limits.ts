@@ -98,6 +98,12 @@ export function limitSetting(settings: LimitSettings, limit: LimitKind): number 
   }
 }
 
+/** A figure an agent reported (cost, tokens, time), or 0 when it is
+ *  missing, not a finite number, or below zero. */
+export function nonNegative(n: unknown): number {
+  return typeof n === 'number' && Number.isFinite(n) && n > 0 ? n : 0;
+}
+
 /** Dollars for a limit: estimates, so cents are enough. */
 export function formatUsd(usd: number): string {
   if (usd > 0 && usd < 0.01) return '<$0.01';

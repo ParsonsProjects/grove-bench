@@ -25,6 +25,7 @@ src/
     worktree-manager.ts
     agent-session.ts   # Session lifecycle management
     session-*.ts       # Session types, event log + history, permission prompts, limits, skills, agent config, streamed text merged before IPC
+    usage-ledger.ts    # Every turn's cost, tokens, time and models across threads (usage-ledger.jsonl), for the Usage dialog
     agent-utils.ts     # Agent helper utilities
     terminal.ts        # node-pty management
     app-state.ts       # Persistent app state
