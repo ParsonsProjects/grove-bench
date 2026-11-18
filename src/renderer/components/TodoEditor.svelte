@@ -2,10 +2,11 @@
   /**
    * The To do popup: why you flagged the thread (a note) and when to come
    * back (one optional date, with an optional time that sets an alert).
-   * Opens from Mark as To Do and Edit To Do… in the sidebar's menu, and from
-   * the thread's To do bar. The flag is already on when it opens, so closing
-   * it without typing leaves a plain To do, as before. Clicking away or
-   * Enter saves; Escape leaves the note and date as they were.
+   * Opens from Add (or Edit) To Do Note or Date… in the sidebar's menu, and
+   * from the thread's To do bar. Mark as To Do stays one click and opens
+   * nothing. The flag is already on when it opens, so closing it without
+   * typing leaves a plain To do. Clicking away or Enter saves; Escape leaves
+   * the note and date as they were.
    */
   import { onMount, onDestroy, untrack } from 'svelte';
   import { todoStore, MAX_TODO_NOTE_LENGTH } from '../stores/todo.svelte.js';

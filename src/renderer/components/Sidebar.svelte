@@ -268,12 +268,16 @@
       const at = contextMenu ?? { x: 0, y: 0 };
       if (todoStore.has(sessionId)) {
         items.push(
-          { label: 'Edit To Do…', icon: 'todo', action: () => todoStore.openEditor(sessionId, at.x, at.y) },
+          { label: 'Edit To Do Note or Date…', icon: 'todo', action: () => todoStore.openEditor(sessionId, at.x, at.y) },
           { label: 'Clear To Do', icon: 'todo', action: () => todoStore.set(sessionId, false) },
         );
       } else {
-        // Flags at once; the popup that opens takes an optional note and date.
-        items.push({ label: 'Mark as To Do', icon: 'todo', action: () => todoStore.openEditor(sessionId, at.x, at.y) });
+        // One click flags it. The second item flags it too and opens the
+        // popup for a note and a date.
+        items.push(
+          { label: 'Mark as To Do', icon: 'todo', action: () => todoStore.set(sessionId, true) },
+          { label: 'Add To Do Note or Date…', icon: 'todo', action: () => todoStore.openEditor(sessionId, at.x, at.y) },
+        );
       }
     }
     if (store.isUnread(session)) {

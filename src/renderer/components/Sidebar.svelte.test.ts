@@ -867,6 +867,36 @@ describe('Sidebar follow-up flags', () => {
     expect(chips()).toHaveTextContent('Idle 1');
   });
 
+  it('Mark as To Do is one click: it flags the thread and opens nothing', async () => {
+    render(Sidebar);
+    await fireEvent.contextMenu(screen.getByText('Quiet one'));
+    await fireEvent.click(screen.getByText('Mark as To Do'));
+
+    expect(todoStore.has('quiet')).toBe(true);
+    expect(todoStore.editing).toBeNull();
+  });
+
+  it('Add To Do Note or Date… flags the thread and opens the popup for it', async () => {
+    render(Sidebar);
+    await fireEvent.contextMenu(screen.getByText('Quiet one'));
+    await fireEvent.click(screen.getByText('Add To Do Note or Date…'));
+
+    expect(todoStore.has('quiet')).toBe(true);
+    expect(todoStore.editing).toMatchObject({ sessionId: 'quiet' });
+    todoStore.closeEditor();
+  });
+
+  it('a flagged thread offers Edit To Do Note or Date… and Clear To Do', async () => {
+    todoStore.ids = ['quiet'];
+    render(Sidebar);
+    await fireEvent.contextMenu(screen.getByText('Quiet one'));
+
+    expect(screen.queryByText('Add To Do Note or Date…')).toBeNull();
+    await fireEvent.click(screen.getByText('Edit To Do Note or Date…'));
+    expect(todoStore.editing).toMatchObject({ sessionId: 'quiet' });
+    todoStore.closeEditor();
+  });
+
   it('clears To do from the menu', async () => {
     todoStore.ids = ['quiet'];
     render(Sidebar);
